@@ -68,8 +68,9 @@ namespace XREngine.Rendering.Vulkan
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanParallelRecordingValidate), "1", StringComparison.Ordinal);
         private static readonly bool OpenXrVulkanTraceEnabled =
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanTrace), "1", StringComparison.Ordinal);
-        private static readonly bool OpenXrVulkanPrimaryReuseEnabled =
-            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanPrimaryReuse), "1", StringComparison.Ordinal);
+        private static readonly bool? OpenXrVulkanPrimaryReuseOverride =
+            ReadOptionalBooleanEnvironmentOverride(
+                XREngineEnvironmentVariables.OpenXrVulkanPrimaryReuse);
         private static readonly bool? VulkanPrimaryCommandBufferReuseOverride =
             ReadOptionalBooleanEnvironmentOverride(XREngineEnvironmentVariables.VulkanPrimaryCommandBufferReuse);
         // Every cached primary is checked against an immutable dependency
@@ -80,6 +81,9 @@ namespace XREngine.Rendering.Vulkan
             VulkanPrimaryCommandBufferReuseSafe &&
             (VulkanPrimaryCommandBufferReuseOverride ??
              RuntimeRenderingHostServices.Settings.EnableVulkanPrimaryCommandBufferReuse);
+        private bool OpenXrVulkanPrimaryReuseEnabled =>
+            VulkanPrimaryCommandBufferReuseEnabled &&
+            (OpenXrVulkanPrimaryReuseOverride ?? true);
         private static bool VulkanFrameDiagnosticsTraceEnabled =>
             CommandRecordingDiagnosticsEnabled ||
             XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||

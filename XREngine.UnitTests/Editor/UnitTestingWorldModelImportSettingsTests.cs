@@ -504,6 +504,70 @@ public sealed class UnitTestingWorldModelImportSettingsTests
 
     [Test]
     [NonParallelizable]
+    public void ResolveSettingsFilePath_UsesConfiguredJsoncRelativeToWorkingDirectory()
+    {
+        string previousCurrentDirectory = Environment.CurrentDirectory;
+        string? previousSettingsPath = Environment.GetEnvironmentVariable(
+            XREngineEnvironmentVariables.UnitTestWorldSettingsPath);
+        string tempRoot = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+
+        try
+        {
+            Directory.CreateDirectory(tempRoot);
+            Environment.CurrentDirectory = tempRoot;
+            Environment.SetEnvironmentVariable(
+                XREngineEnvironmentVariables.UnitTestWorldSettingsPath,
+                @"Profiles\vulkan-zero-readback.jsonc");
+
+            string resolvedPath = UnitTestingWorldSettingsStore.ResolveSettingsFilePath();
+
+            resolvedPath.ShouldBe(
+                Path.Combine(tempRoot, "Profiles", "vulkan-zero-readback.jsonc"));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(
+                XREngineEnvironmentVariables.UnitTestWorldSettingsPath,
+                previousSettingsPath);
+            Environment.CurrentDirectory = previousCurrentDirectory;
+
+            if (Directory.Exists(tempRoot))
+                Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void Load_RejectsMissingExplicitSettingsPath()
+    {
+        string? previousSettingsPath = Environment.GetEnvironmentVariable(
+            XREngineEnvironmentVariables.UnitTestWorldSettingsPath);
+        string missingPath = Path.Combine(
+            Path.GetTempPath(),
+            Path.GetRandomFileName(),
+            UnitTestingWorldSettingsStore.SettingsFileName);
+
+        try
+        {
+            Environment.SetEnvironmentVariable(
+                XREngineEnvironmentVariables.UnitTestWorldSettingsPath,
+                missingPath);
+
+            FileNotFoundException exception = Should.Throw<FileNotFoundException>(
+                () => UnitTestingWorldSettingsStore.Load(writeBackAfterRead: false));
+
+            exception.FileName.ShouldBe(missingPath);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(
+                XREngineEnvironmentVariables.UnitTestWorldSettingsPath,
+                previousSettingsPath);
+        }
+    }
+
+    [Test]
+    [NonParallelizable]
     public void ResolveModelPath_ResolvesPathsRelativeToCurrentWorkingDirectory()
     {
         string previousCurrentDirectory = Environment.CurrentDirectory;

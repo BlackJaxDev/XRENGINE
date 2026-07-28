@@ -66,6 +66,7 @@ public static class XREngineEnvironmentVariables
     public const string PoseReceiveEnabled = "XRE_POSE_RECEIVE_ENABLED";
 
     public const string UnitTestWorldKind = "XRE_UNIT_TEST_WORLD_KIND";
+    public const string UnitTestWorldSettingsPath = "XRE_UNIT_TEST_WORLD_SETTINGS_PATH";
     public const string UnitTestVrMode = "XRE_UNIT_TEST_VR_MODE";
     public const string UnitTestVrPawn = "XRE_UNIT_TEST_VR_PAWN";
     public const string UnitTestUseOpenXr = "XRE_UNIT_TEST_USE_OPENXR";
@@ -114,6 +115,7 @@ public static class XREngineEnvironmentVariables
     public const string ProfileCapture = "XRE_PROFILE_CAPTURE";
     public const string ProfileAutoDump = "XRE_PROFILE_AUTO_DUMP";
     public const string ProfileRunLabel = "XRE_PROFILE_RUN_LABEL";
+    public const string ProfileMode = "XRE_PROFILE_MODE";
     public const string TargetRefreshHz = "XRE_TARGET_REFRESH_HZ";
     public const string UpdateFps = "XRE_UPDATE_FPS";
     public const string ProfileScene = "XRE_PROFILE_SCENE";

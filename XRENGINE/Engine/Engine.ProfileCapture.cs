@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using XREngine.Data.Profiling;
 using XREngine.Timers;
 using OcclusionTelemetry = XREngine.Rendering.Occlusion.OcclusionTelemetry;
 
@@ -408,6 +409,7 @@ public static partial class Engine
                 VrViewRenderModeEffective: CaptureString(() => RuntimeEngine.Rendering.Stats.RendererState.ActiveVrViewRenderModeEffective),
                 VrViewRenderImplementationPath: CaptureString(() => RuntimeEngine.Rendering.Stats.RendererState.ActiveVrViewRenderImplementationPath),
                 VrTemporalHistoryPolicy: CaptureString(() => RuntimeEngine.Rendering.Stats.RendererState.ActiveVrTemporalHistoryPolicy),
+                VrFoveationMode: CaptureString(() => RuntimeEngine.Rendering.Settings.VrFoveationMode.ToString()),
                 VrMirrorMode: CaptureString(() => RuntimeEngine.Rendering.Settings.VrMirrorMode.ToString()),
                 RenderWindowsWhileInVR: CaptureString(() => RuntimeEngine.Rendering.Settings.RenderWindowsWhileInVR ? "true" : "false"),
                 VrMirrorComposeFromEyeTextures: CaptureString(() => RuntimeEngine.Rendering.Settings.VrMirrorComposeFromEyeTextures ? "true" : "false"),
@@ -427,6 +429,7 @@ public static partial class Engine
                 ShaderCacheState: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ShaderCacheMode) ?? string.Empty,
                 TextureCacheState: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.TextureCacheMode) ?? string.Empty,
                 CacheMode: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileCacheMode) ?? string.Empty,
+                ProfileMode: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileMode) ?? string.Empty,
                 GpuClockPolicy: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GpuClockPolicy) ?? string.Empty,
                 TargetRefreshHz: targetRefreshHz,
                 XrFrameBudgetMs: xrFrameBudgetMs,
@@ -510,6 +513,7 @@ public static partial class Engine
             AppendStringField(s_lineBuilder, "vr_view_render_mode_effective", RuntimeEngine.Rendering.Stats.RendererState.ActiveVrViewRenderModeEffective, ref first);
             AppendStringField(s_lineBuilder, "vr_view_render_implementation_path", RuntimeEngine.Rendering.Stats.RendererState.ActiveVrViewRenderImplementationPath, ref first);
             AppendStringField(s_lineBuilder, "vr_temporal_history_policy", RuntimeEngine.Rendering.Stats.RendererState.ActiveVrTemporalHistoryPolicy, ref first);
+            AppendStringField(s_lineBuilder, "vr_foveation_mode", RuntimeEngine.Rendering.Settings.VrFoveationMode.ToString(), ref first);
             AppendStringField(s_lineBuilder, "vr_mirror_mode", frameOutputs.MirrorMode.ToString(), ref first);
             AppendStringField(s_lineBuilder, "vr_visibility_policy", frameOutputs.VisibilityPolicy.ToString(), ref first);
             AppendBoolField(s_lineBuilder, "render_windows_while_in_vr", RuntimeEngine.Rendering.Settings.RenderWindowsWhileInVR, ref first);
@@ -518,6 +522,7 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vr_cyclopean_desktop_target_rate_hz", RuntimeEngine.Rendering.Settings.VrCyclopeanDesktopTargetRateHz, ref first);
             AppendBoolField(s_lineBuilder, "vr_desktop_auto_skip_when_over_budget", RuntimeEngine.Rendering.Settings.VrDesktopAutoSkipWhenOverBudget, ref first);
             AppendStringField(s_lineBuilder, "active_render_backend", RuntimeEngine.Rendering.Stats.RendererState.ActiveRenderBackend, ref first);
+            AppendStringField(s_lineBuilder, "profile_mode", metadata.ProfileMode, ref first);
             AppendBoolField(s_lineBuilder, "validation_layers_enabled", RuntimeEngine.Rendering.Stats.RendererState.ValidationLayersEnabled, ref first);
             AppendBoolField(s_lineBuilder, "debug_output_enabled", RuntimeEngine.Rendering.Stats.RendererState.DebugOutputEnabled, ref first);
             AppendNumberField(s_lineBuilder, "deferred_debug_view", global::XREngine.Rendering.RenderDiagnosticsFlags.DeferredDebugView, ref first);
@@ -525,6 +530,14 @@ public static partial class Engine
             AppendBoolField(s_lineBuilder, "gpu_timestamps_dense_mode", RuntimeEngine.Rendering.Stats.RendererState.GpuTimestampsDenseMode, ref first);
 
             AppendNumberField(s_lineBuilder, "render_dispatch_ms", renderMs, ref first);
+            AppendNumberField(
+                s_lineBuilder,
+                "render_outside_vulkan_frame_ms",
+                Math.Max(
+                    0.0,
+                    renderMs -
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameTotalMs),
+                ref first);
             AppendNumberField(s_lineBuilder, "update_ms", updateMs, ref first);
             AppendNumberField(s_lineBuilder, "collect_visible_ms", collectVisibleMs, ref first);
             AppendNumberField(s_lineBuilder, "fixed_update_ms", fixedUpdateMs, ref first);
@@ -663,6 +676,24 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "cpu_query_async_occluded", OcclusionTelemetry.CpuQueryAsyncOccluded, ref first);
             AppendNumberField(s_lineBuilder, "cpu_soc_tested", OcclusionTelemetry.CpuSocTested, ref first);
             AppendNumberField(s_lineBuilder, "cpu_soc_culled", OcclusionTelemetry.CpuSocCulled, ref first);
+            AppendNumberField(s_lineBuilder, "cpu_soc_occluders_selected", OcclusionTelemetry.CpuSocOccludersSelected, ref first);
+            AppendNumberField(s_lineBuilder, "cpu_soc_occluders_rasterized", OcclusionTelemetry.CpuSocOccludersRasterized, ref first);
+            AppendNumberField(s_lineBuilder, "cpu_soc_tiles_closed", OcclusionTelemetry.CpuSocTilesClosed, ref first);
+            AppendNumberField(s_lineBuilder, "cpu_soc_begin_ms", OcclusionTelemetry.CpuSocBeginMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "cpu_soc_selection_ms", OcclusionTelemetry.CpuSocSelectionMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "cpu_soc_sort_ms", OcclusionTelemetry.CpuSocSortMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "cpu_soc_raster_ms", OcclusionTelemetry.CpuSocRasterMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "cpu_soc_test_ms", OcclusionTelemetry.CpuSocTestMilliseconds, ref first);
+            AppendBoolField(s_lineBuilder, "cpu_soc_force_visible", OcclusionTelemetry.CpuSocForceVisible, ref first);
+            AppendNumberField(s_lineBuilder, "cpu_soc_self_occluder_skipped", OcclusionTelemetry.CpuSocSelfOccluderSkipped, ref first);
+            AppendNumberField(s_lineBuilder, "profiler_ui_ingestion_ms", ProfilerObserverTelemetry.IngestionMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "profiler_ui_aggregation_ms", ProfilerObserverTelemetry.AggregationMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "profiler_ui_graph_preparation_ms", ProfilerObserverTelemetry.GraphPreparationMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "profiler_ui_table_preparation_ms", ProfilerObserverTelemetry.TablePreparationMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "profiler_ui_imgui_draw_ms", ProfilerObserverTelemetry.ImGuiDrawMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "profiler_ui_visible_rows", ProfilerObserverTelemetry.VisibleRows, ref first);
+            AppendNumberField(s_lineBuilder, "profiler_ui_graph_samples", ProfilerObserverTelemetry.GraphSamples, ref first);
+            AppendRenderThreadJobFields(s_lineBuilder, ref first);
             AppendNumberField(s_lineBuilder, "directional_cascade_stale_sampled", RuntimeEngine.Rendering.Stats.RendererState.DirectionalCascadeStaleSampled, ref first);
             AppendNumberField(s_lineBuilder, "directional_cascade_mixed_generation_prevented", RuntimeEngine.Rendering.Stats.RendererState.DirectionalCascadeMixedGenerationPrevented, ref first);
             AppendNumberField(s_lineBuilder, "directional_cascade_physical_reprojected", RuntimeEngine.Rendering.Stats.RendererState.DirectionalCascadePhysicalReprojected, ref first);
@@ -814,6 +845,23 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_command_buffer_decision_structural_signature", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandBufferDecisionStructuralSignature, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_buffer_decision_descriptor_generation", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandBufferDecisionDescriptorGeneration, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_buffer_decision_swapchain_slot", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandBufferDecisionSwapchainSlot, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_primary_entry_state_mismatch", (int)RuntimeEngine.Rendering.Stats.Vulkan.VulkanPrimaryEntryStateMismatch, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_primary_entry_state_image_handle", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPrimaryEntryStateImageHandle, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_primary_entry_state_mip_level", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPrimaryEntryStateMipLevel, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_primary_entry_state_array_layer", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPrimaryEntryStateArrayLayer, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_primary_entry_state_aspect", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPrimaryEntryStateAspect, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_primary_entry_state_expected_layout", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPrimaryEntryStateExpectedLayout, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_primary_entry_state_expected_stage_mask", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPrimaryEntryStateExpectedStageMask, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_primary_entry_state_expected_access_mask", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPrimaryEntryStateExpectedAccessMask, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_primary_entry_state_expected_descriptor_layout", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPrimaryEntryStateExpectedDescriptorLayout, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_primary_entry_state_expected_queue_family", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPrimaryEntryStateExpectedQueueFamily, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_primary_entry_state_expected_resource_generation", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPrimaryEntryStateExpectedResourceGeneration, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_primary_entry_state_actual_layout", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPrimaryEntryStateActualLayout, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_primary_entry_state_actual_stage_mask", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPrimaryEntryStateActualStageMask, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_primary_entry_state_actual_access_mask", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPrimaryEntryStateActualAccessMask, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_primary_entry_state_actual_descriptor_layout", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPrimaryEntryStateActualDescriptorLayout, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_primary_entry_state_actual_queue_family", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPrimaryEntryStateActualQueueFamily, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_primary_entry_state_actual_resource_generation", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPrimaryEntryStateActualResourceGeneration, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_exact_variants_dirtied", RuntimeEngine.Rendering.Stats.Vulkan.VulkanExactVariantsDirtied, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_exact_command_chains_dirtied", RuntimeEngine.Rendering.Stats.Vulkan.VulkanExactCommandChainsDirtied, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_unrelated_variants_preserved", RuntimeEngine.Rendering.Stats.Vulkan.VulkanUnrelatedVariantsPreserved, ref first);
@@ -878,6 +926,11 @@ public static partial class Engine
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_frame_data_manifest", EVulkanCpuStage.PrimaryFrameDataManifest, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_prewarm", EVulkanCpuStage.PrimaryPrewarm, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_command_encoding", EVulkanCpuStage.PrimaryCommandEncoding, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "queue_lock_acquisition", EVulkanCpuStage.QueueLockAcquisition, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "auxiliary_fence_wait", EVulkanCpuStage.AuxiliaryFenceWait, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "context_pass_transitions", EVulkanCpuStage.ContextPassTransitions, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "barrier_planning_emission", EVulkanCpuStage.BarrierPlanningEmission, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "op_dispatch", EVulkanCpuStage.OpDispatch, ref first);
             AppendStringField(s_lineBuilder, "vulkan_command_buffer_dirty_summary", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandBufferDirtySummary, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_chains_scheduled", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandChainsScheduled, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_chains_recorded", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandChainsRecorded, ref first);
@@ -1230,6 +1283,38 @@ public static partial class Engine
             AppendNumberField(builder, $"vulkan_cpu_{name}_allocation_high_water_bytes", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageAllocationHighWaterBytes(stage), ref first);
         }
 
+        private static void AppendRenderThreadJobFields(StringBuilder builder, ref bool first)
+        {
+            long totalCount = 0L;
+            long totalDurationMicros = 0L;
+            long totalQueueDelayMicros = 0L;
+            long totalOverBudgetMicros = 0L;
+
+            for (int index = 0; index < _lastRenderThreadJobCountByKind.Length; index++)
+            {
+                string source = ((RenderThreadJobKind)index).ToString().ToLowerInvariant();
+                long count = Volatile.Read(ref _lastRenderThreadJobCountByKind[index]);
+                long durationMicros = Volatile.Read(ref _lastRenderThreadJobDurationMicrosByKind[index]);
+                long queueDelayMicros = Volatile.Read(ref _lastRenderThreadJobQueueDelayMicrosByKind[index]);
+                long overBudgetMicros = Volatile.Read(ref _lastRenderThreadJobOverBudgetMicrosByKind[index]);
+
+                AppendNumberField(builder, $"render_thread_jobs_{source}_count", count, ref first);
+                AppendNumberField(builder, $"render_thread_jobs_{source}_duration_ms", durationMicros / 1000.0, ref first);
+                AppendNumberField(builder, $"render_thread_jobs_{source}_queue_delay_ms", queueDelayMicros / 1000.0, ref first);
+                AppendNumberField(builder, $"render_thread_jobs_{source}_over_budget_ms", overBudgetMicros / 1000.0, ref first);
+
+                totalCount += count;
+                totalDurationMicros += durationMicros;
+                totalQueueDelayMicros += queueDelayMicros;
+                totalOverBudgetMicros += overBudgetMicros;
+            }
+
+            AppendNumberField(builder, "render_thread_jobs_total_count", totalCount, ref first);
+            AppendNumberField(builder, "render_thread_jobs_total_duration_ms", totalDurationMicros / 1000.0, ref first);
+            AppendNumberField(builder, "render_thread_jobs_total_queue_delay_ms", totalQueueDelayMicros / 1000.0, ref first);
+            AppendNumberField(builder, "render_thread_jobs_total_over_budget_ms", totalOverBudgetMicros / 1000.0, ref first);
+        }
+
         private static void AppendStringField(StringBuilder builder, string name, string value, ref bool first)
         {
             AppendFieldPrefix(builder, name, ref first);
@@ -1367,6 +1452,13 @@ public static partial class Engine
                 "MaterialTable",
                 "BindlessMaterialTable");
             ValidateEnvEnum(errors, XREngineEnvironmentVariables.ProfileCacheMode, "Cold", "Warm");
+            ValidateEnvEnum(
+                errors,
+                XREngineEnvironmentVariables.ProfileMode,
+                "Diagnostics",
+                "DevelopmentProfile",
+                "CleanProfile",
+                "ReleaseBenchmark");
             ValidateEnvEnum(errors, XREngineEnvironmentVariables.ShaderCacheMode, "Cold", "Warm");
             ValidateEnvEnum(errors, XREngineEnvironmentVariables.TextureCacheMode, "Cold", "Warm");
 
@@ -1586,6 +1678,7 @@ public static partial class Engine
             string VrViewRenderModeEffective,
             string VrViewRenderImplementationPath,
             string VrTemporalHistoryPolicy,
+            string VrFoveationMode,
             string VrMirrorMode,
             string RenderWindowsWhileInVR,
             string VrMirrorComposeFromEyeTextures,
@@ -1605,6 +1698,7 @@ public static partial class Engine
             string ShaderCacheState,
             string TextureCacheState,
             string CacheMode,
+            string ProfileMode,
             string GpuClockPolicy,
             double? TargetRefreshHz,
             double? XrFrameBudgetMs,

@@ -47,6 +47,8 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Engine API](developer-guides/runtime/engine-api.md)
 - [Hot-Path Memory Control](developer-guides/runtime/hot-path-memory.md)
 - [Job System](developer-guides/runtime/job-system.md)
+- [Profiler](developer-guides/diagnostics/profiler.md)
+- [Self-Iterating Rendering Performance Loop](developer-guides/diagnostics/self-iterating-performance-loop.md)
 - [Skinning](developer-guides/rendering/skinning.md)
 - [Blendshaping](developer-guides/rendering/blendshaping.md)
 - [Poiyomi Toon Material Conversion](developer-guides/rendering/poiyomi-toon-material-conversion.md)

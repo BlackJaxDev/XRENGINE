@@ -6,6 +6,9 @@ param(
     [string[]]$Strategies = @('CpuDirect', 'GpuIndirectInstrumented', 'GpuIndirectZeroReadback', 'GpuMeshletInstrumented', 'GpuMeshletZeroReadback'),
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
+    [ValidateSet('Configured', 'OpenGL', 'Vulkan')]
+    [string]$RenderBackend = 'Configured',
+    [string]$UnitTestingWorldSettingsPath = '',
     [ValidateSet('Cold', 'Warm')]
     [string]$CacheMode = 'Cold',
     [ValidateSet('FullBucketScan', 'ActiveBucketList', 'MaterialTable', 'BindlessMaterialTable')]
@@ -34,6 +37,11 @@ param(
     [int]$NoSampleHangSec = 15,
     [int]$RetainedRunCount = 3,
     [string]$RunLabel = '',
+    [ValidateSet('Diagnostics', 'DevelopmentProfile', 'CleanProfile', 'ReleaseBenchmark')]
+    [string]$ProfileMode = 'DevelopmentProfile',
+    [string]$OutputDirectory = '',
+    [string]$EditorExecutablePath = '',
+    [switch]$DisableMcpDiagnostics,
     [ValidateSet('Configured', 'Desktop', 'Emulated', 'MonadoOpenXR', 'OpenVR', 'OpenXR')]
     [string]$UnitTestVrMode = 'Configured',
     [ValidateSet('Configured', 'DynamicRendering', 'LegacyRenderPass')]
@@ -91,7 +99,16 @@ public static class XREngineMeasurementNativeWindow
 '@
 }
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$exe = Join-Path $repoRoot "Build\Editor\$Configuration\AnyCPU\$Configuration\net10.0-windows7.0\XREngine.Editor.exe"
+$exe = if ([string]::IsNullOrWhiteSpace($EditorExecutablePath)) {
+    Join-Path $repoRoot "Build\Editor\$Configuration\AnyCPU\$Configuration\net10.0-windows7.0\XREngine.Editor.exe"
+} else {
+    [System.IO.Path]::GetFullPath(
+        $(if ([System.IO.Path]::IsPathRooted($EditorExecutablePath)) {
+            $EditorExecutablePath
+        } else {
+            Join-Path $repoRoot $EditorExecutablePath
+        }))
+}
 if (-not (Test-Path -LiteralPath $exe)) {
     throw "Editor executable not found for $Configuration. Build XREngine.Editor first: $exe"
 }
@@ -119,8 +136,89 @@ function Get-SpeedProfileRoot {
     Join-Path (Join-Path $repoRoot 'Build\Logs') 'speed-profiles\game-loop-render-pipeline'
 }
 
+function Get-FreeMcpPort {
+    $listener = [System.Net.Sockets.TcpListener]::new(
+        [System.Net.IPAddress]::Loopback,
+        0)
+    try {
+        $listener.Start()
+        return ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+    }
+    finally {
+        $listener.Stop()
+    }
+}
+
+function Invoke-ProfileMcpTool {
+    param(
+        [int]$Port,
+        [string]$Name,
+        [hashtable]$Arguments = @{},
+        [int]$ReadyTimeoutSec = 10
+    )
+
+    $endpoint = "http://localhost:$Port/mcp/"
+    $statusUri = $endpoint.TrimEnd('/') + '/status'
+    $deadline = [DateTime]::UtcNow.AddSeconds($ReadyTimeoutSec)
+    do {
+        try {
+            $status = Invoke-RestMethod -Method Get -Uri $statusUri -TimeoutSec 2
+            if ([bool]$status.isRunning) {
+                break
+            }
+        }
+        catch {
+            # The MCP listener can become ready after the first rendered frame.
+        }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    if ([DateTime]::UtcNow -ge $deadline) {
+        throw "MCP did not become ready on port $Port within $ReadyTimeoutSec seconds."
+    }
+
+    $body = @{
+        jsonrpc = '2.0'
+        id = [guid]::NewGuid().ToString()
+        method = 'tools/call'
+        params = @{
+            name = $Name
+            arguments = $Arguments
+        }
+    } | ConvertTo-Json -Depth 12 -Compress
+
+    $response = Invoke-RestMethod `
+        -Uri $endpoint `
+        -Method Post `
+        -Body $body `
+        -ContentType 'application/json' `
+        -TimeoutSec 60
+    if ($null -ne $response.error) {
+        throw "MCP tool '$Name' returned JSON-RPC error: $($response.error | ConvertTo-Json -Compress)"
+    }
+    if ($null -ne $response.result -and [bool]$response.result.isError) {
+        throw "MCP tool '$Name' reported isError=true."
+    }
+    return $response
+}
+
 function New-SpeedProfileRunDirectory {
     param([string]$Stamp)
+
+    if (-not [string]::IsNullOrWhiteSpace($OutputDirectory)) {
+        $outputPath = [System.IO.Path]::GetFullPath(
+            $(if ([System.IO.Path]::IsPathRooted($OutputDirectory)) {
+                $OutputDirectory
+            } else {
+                Join-Path $repoRoot $OutputDirectory
+            }))
+        $repoWithSeparator = $repoRoot.TrimEnd('\') + '\'
+        if (-not $outputPath.StartsWith($repoWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "OutputDirectory must remain inside the repository: $outputPath"
+        }
+        New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
+        return $outputPath
+    }
 
     $profileRoot = Get-SpeedProfileRoot
     if (-not (Test-Path -LiteralPath $profileRoot)) {
@@ -483,27 +581,142 @@ function Sum-NumericProperty {
     return [Math]::Round($sum, 3)
 }
 
+function New-RenderStatsStabilityState {
+    return [pscustomobject]@{
+        Path = ''
+        Offset = [long]0
+        PendingText = ''
+        Samples = [System.Collections.Generic.List[object]]::new()
+    }
+}
+
+function Initialize-RenderStatsStabilityState {
+    param(
+        [string]$LogDir,
+        [object]$State
+    )
+
+    $State.Samples.Clear()
+    $State.PendingText = ''
+    $State.Path = if ([string]::IsNullOrWhiteSpace($LogDir)) {
+        ''
+    } else {
+        Join-Path $LogDir 'profiler-render-stats.ndjson'
+    }
+    $item = if ([string]::IsNullOrWhiteSpace($State.Path)) {
+        $null
+    } else {
+        Get-Item -LiteralPath $State.Path -ErrorAction SilentlyContinue
+    }
+    $State.Offset = if ($null -eq $item) { [long]0 } else { [long]$item.Length }
+}
+
+function Update-RenderStatsStabilityState {
+    param(
+        [string]$LogDir,
+        [int]$WindowSec,
+        [object]$State
+    )
+
+    if ([string]::IsNullOrWhiteSpace($LogDir)) {
+        return
+    }
+
+    $path = Join-Path $LogDir 'profiler-render-stats.ndjson'
+    $item = Get-Item -LiteralPath $path -ErrorAction SilentlyContinue
+    if ($null -eq $item) {
+        return
+    }
+
+    if ($State.Path -ne $path -or [long]$item.Length -lt [long]$State.Offset) {
+        $State.Path = $path
+        $State.Offset = [long]$item.Length
+        $State.PendingText = ''
+        $State.Samples.Clear()
+        return
+    }
+    if ([long]$item.Length -eq [long]$State.Offset) {
+        return
+    }
+
+    $stream = [System.IO.FileStream]::new(
+        $path,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::ReadWrite)
+    try {
+        $null = $stream.Seek([long]$State.Offset, [System.IO.SeekOrigin]::Begin)
+        $reader = [System.IO.StreamReader]::new(
+            $stream,
+            [System.Text.UTF8Encoding]::new($false, $false),
+            $false,
+            65536,
+            $true)
+        try {
+            $newText = $reader.ReadToEnd()
+            $State.Offset = [long]$stream.Position
+        }
+        finally {
+            $reader.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+
+    $segments = [System.Text.RegularExpressions.Regex]::Split(
+        "$($State.PendingText)$newText",
+        "\r?\n")
+    if ($segments.Count -eq 0) {
+        return
+    }
+
+    $State.PendingText = $segments[$segments.Count - 1]
+    for ($index = 0; $index -lt $segments.Count - 1; $index++) {
+        $trimmed = $segments[$index].Trim()
+        if (-not $trimmed.StartsWith('{')) {
+            continue
+        }
+
+        try {
+            $sample = $trimmed | ConvertFrom-Json -ErrorAction Stop
+            $timestamp = [datetimeoffset]::Parse(
+                [string]$sample.ts_utc,
+                [System.Globalization.CultureInfo]::InvariantCulture)
+            $State.Samples.Add(
+                [pscustomobject]@{
+                    Sample = $sample
+                    Utc = $timestamp.UtcDateTime
+                }) | Out-Null
+        }
+        catch {
+            continue
+        }
+    }
+
+    if ($State.Samples.Count -eq 0) {
+        return
+    }
+
+    $latestUtc = $State.Samples[$State.Samples.Count - 1].Utc
+    $retainAfterUtc = $latestUtc.AddSeconds(-($WindowSec + 2))
+    while ($State.Samples.Count -gt 0 -and $State.Samples[0].Utc -lt $retainAfterUtc) {
+        $State.Samples.RemoveAt(0)
+    }
+}
+
 function Test-RenderStatsStability {
     param(
         [string]$LogDir,
         [int]$WindowSec,
-        [string]$Strategy
+        [string]$Strategy,
+        [object]$State
     )
 
-    $allSamples = Read-AllRenderStatsSamples -LogDir $LogDir
-    if ($allSamples.Count -lt 2) {
-        return [pscustomobject]@{ Stable = $false; Reason = 'waiting for profiler samples'; WorkloadIdentityHash = ''; Samples = 0 }
-    }
-
-    $timestamped = New-Object System.Collections.Generic.List[object]
-    foreach ($sample in $allSamples) {
-        try {
-            $timestamp = [datetimeoffset]::Parse([string]$sample.ts_utc, [System.Globalization.CultureInfo]::InvariantCulture)
-            $timestamped.Add([pscustomobject]@{ Sample = $sample; Utc = $timestamp.UtcDateTime }) | Out-Null
-        } catch { }
-    }
+    Update-RenderStatsStabilityState -LogDir $LogDir -WindowSec $WindowSec -State $State
+    $timestamped = @($State.Samples)
     if ($timestamped.Count -lt 2) {
-        return [pscustomobject]@{ Stable = $false; Reason = 'waiting for timestamped profiler samples'; WorkloadIdentityHash = ''; Samples = 0 }
+        return [pscustomobject]@{ Stable = $false; Reason = 'waiting for profiler samples'; WorkloadIdentityHash = ''; Samples = 0 }
     }
 
     $latestUtc = $timestamped[$timestamped.Count - 1].Utc
@@ -645,6 +858,8 @@ function Measure-Variant {
 
     $envNames = @(
         'XRE_WORLD_MODE',
+        'XRE_UNIT_TEST_WORLD_SETTINGS_PATH',
+        'XRE_UNIT_TEST_RENDER_API',
         'XRE_UNIT_TEST_VR_MODE',
         'XRE_VK_RENDER_TARGET_MODE',
         'XRE_VULKAN_PRIMARY_COMMAND_BUFFER_REUSE',
@@ -671,11 +886,13 @@ function Measure-Variant {
         'XRE_PROFILE_RENDER_SCALE',
         'XRE_PROFILE_WARMUP_SEC',
         'XRE_PROFILE_CAPTURE_SEC',
+        'XRE_PROFILE_MODE',
         'XRE_PROFILE_PHASE',
         'XRE_GPU_CLOCK_POLICY',
         'XRE_TARGET_REFRESH_HZ',
         'XRE_GPU_TIMESTAMP_DENSE',
         'XRE_P3_LOGGING',
+        'XRE_SKIP_IMGUI',
         'XRE_WINDOW_TITLE',
         'XRE_BUCKET_LOOP_DRY_RUN',
         'XRE_SKIP_COMMAND_SWAP_IF_CLEAN',
@@ -703,14 +920,39 @@ function Measure-Variant {
     $hangAt = $null
     $lastStatsState = ''
     $lastStatsProgressUtc = [datetime]::UtcNow
+    $stabilityStatsState = New-RenderStatsStabilityState
     $stabilityReady = [bool]$NoStabilityGate
     $stabilityTimedOut = $false
     $stabilityWaitSec = 0
     $stabilityReason = if ($NoStabilityGate) { 'disabled by NoStabilityGate' } else { 'not evaluated' }
     $stableWorkloadIdentityHash = ''
+    $mcpPort = Get-FreeMcpPort
+    $mcpDiagnosticsSucceeded = $false
+    $mcpDiagnosticError = ''
 
     try {
         Set-BenchmarkEnvValue 'XRE_WORLD_MODE' 'UnitTesting' -AllowedValues @('UnitTesting')
+        if ([string]::IsNullOrWhiteSpace($UnitTestingWorldSettingsPath)) {
+            Clear-EnvValue 'XRE_UNIT_TEST_WORLD_SETTINGS_PATH'
+        }
+        else {
+            $resolvedSettingsPath = if ([System.IO.Path]::IsPathRooted($UnitTestingWorldSettingsPath)) {
+                [System.IO.Path]::GetFullPath($UnitTestingWorldSettingsPath)
+            }
+            else {
+                [System.IO.Path]::GetFullPath((Join-Path $repoRoot $UnitTestingWorldSettingsPath))
+            }
+            if (-not (Test-Path -LiteralPath $resolvedSettingsPath -PathType Leaf)) {
+                throw "Unit Testing World settings file not found: $resolvedSettingsPath"
+            }
+            Set-EnvValue 'XRE_UNIT_TEST_WORLD_SETTINGS_PATH' $resolvedSettingsPath
+        }
+        if ($RenderBackend -eq 'Configured') {
+            Clear-EnvValue 'XRE_UNIT_TEST_RENDER_API'
+        }
+        else {
+            Set-BenchmarkEnvValue 'XRE_UNIT_TEST_RENDER_API' $RenderBackend -AllowedValues @('OpenGL', 'Vulkan')
+        }
         if ($UnitTestVrMode -eq 'Configured') {
             Clear-EnvValue 'XRE_UNIT_TEST_VR_MODE'
         } else {
@@ -764,6 +1006,7 @@ function Measure-Variant {
         Set-BenchmarkEnvValue 'XRE_PROFILER_ENABLED' '1' -Boolean
         Set-BenchmarkEnvValue 'XRE_PROFILE_CAPTURE' '1' -Boolean
         Set-BenchmarkEnvValue 'XRE_PROFILE_AUTO_DUMP' '1' -Boolean
+        Set-BenchmarkEnvValue 'XRE_PROFILE_MODE' $ProfileMode -AllowedValues @('Diagnostics', 'DevelopmentProfile', 'CleanProfile', 'ReleaseBenchmark')
         Set-EnvValue 'XRE_PROFILE_RUN_LABEL' $runName
         Set-BenchmarkEnvValue 'XRE_FORCE_MESH_SUBMISSION_STRATEGY' $Strategy -AllowedValues $validStrategies
         Set-BenchmarkEnvValue 'XRE_ZERO_READBACK_MATERIAL_DRAW_PATH' $ZeroReadbackMaterialDrawPath -AllowedValues @('FullBucketScan', 'ActiveBucketList', 'MaterialTable', 'BindlessMaterialTable')
@@ -802,10 +1045,19 @@ function Measure-Variant {
 
         Set-EnvValue 'XRE_WINDOW_TITLE' "XRE Editor (Profile $Strategy r$Repetition)"
 
-        if ($NoP3Logging) {
+        $cleanProfile = $ProfileMode -in @('CleanProfile', 'ReleaseBenchmark')
+        if ($cleanProfile) {
+            if ($GpuTimestampDense -or $VulkanCommandBufferLabels -or $VulkanValidation -or
+                $VulkanDiagnosticPreset -notin @('Configured', 'Off')) {
+                throw "$ProfileMode does not permit dense GPU timestamps, Vulkan validation, debug labels, or diagnostic presets."
+            }
+            Set-BenchmarkEnvValue 'XRE_SKIP_IMGUI' '1' -Boolean
+            Clear-EnvValue 'XRE_P3_LOGGING'
+        } elseif ($NoP3Logging) {
             Clear-EnvValue 'XRE_P3_LOGGING'
         } else {
             Set-BenchmarkEnvValue 'XRE_P3_LOGGING' '1' -Boolean
+            Clear-EnvValue 'XRE_SKIP_IMGUI'
         }
 
         Clear-EnvValue 'XRE_BUCKET_LOOP_DRY_RUN'
@@ -815,7 +1067,26 @@ function Measure-Variant {
         Clear-EnvValue 'XRE_HIZ_CULL_TRACE'
 
         Write-Host "[measure] $runName launching..." -ForegroundColor Cyan
-        $proc = Start-Process -FilePath $exe -WorkingDirectory $repoRoot -PassThru
+        $editorArguments = if ($DisableMcpDiagnostics) {
+            @('--no-mcp')
+        } else {
+            @(
+                '--mcp',
+                '--mcp-permission-policy',
+                'AllowReadOnly',
+                '--mcp-port',
+                [string]$mcpPort
+            )
+        }
+        $startProcessArguments = @{
+            FilePath = $exe
+            WorkingDirectory = $repoRoot
+            PassThru = $true
+        }
+        if ($editorArguments.Count -gt 0) {
+            $startProcessArguments.ArgumentList = $editorArguments
+        }
+        $proc = Start-Process @startProcessArguments
         Write-Host "[measure] $runName PID=$($proc.Id) warmup ${WarmupSec}s..."
         for ($second = 0; $second -lt $WarmupSec; $second++) {
             Start-Sleep -Seconds 1
@@ -828,22 +1099,12 @@ function Measure-Variant {
                 break
             }
 
-            $logDir = Get-RunLogDir -EditorProcessId $proc.Id
-            if (Test-RenderStatsHung -LogDir $logDir -LastStatsState ([ref]$lastStatsState) -LastStatsProgressUtc ([ref]$lastStatsProgressUtc) -NoSampleHangSec $NoSampleHangSec) {
-                $hangDetected = $true
-                $hangPhase = 'warmup'
-                $hangAt = $second
-                Write-Host "[measure] $runName no render-stats progress for ${NoSampleHangSec}s during warmup; forcing process stop" -ForegroundColor Yellow
-                Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-                $proc.WaitForExit(5000) | Out-Null
-                $forcedStop = $true
-                break
-            }
         }
 
         $logDir = Get-RunLogDir -EditorProcessId $proc.Id
 
         if (-not $exitedEarly -and -not $hangDetected -and -not $NoStabilityGate) {
+            Initialize-RenderStatsStabilityState -LogDir $logDir -State $stabilityStatsState
             Write-Host "[measure] $runName waiting for a ${StabilityWindowSec}s stable workload window (timeout ${StabilityTimeoutSec}s)..."
             for ($second = 0; $second -lt $StabilityTimeoutSec; $second++) {
                 Start-Sleep -Seconds 1
@@ -856,18 +1117,7 @@ function Measure-Variant {
                     break
                 }
 
-                $logDir = Get-RunLogDir -EditorProcessId $proc.Id
-                if (Test-RenderStatsHung -LogDir $logDir -LastStatsState ([ref]$lastStatsState) -LastStatsProgressUtc ([ref]$lastStatsProgressUtc) -NoSampleHangSec $NoSampleHangSec) {
-                    $hangDetected = $true
-                    $hangPhase = 'stability'
-                    $hangAt = $second
-                    Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-                    $proc.WaitForExit(5000) | Out-Null
-                    $forcedStop = $true
-                    break
-                }
-
-                $stability = Test-RenderStatsStability -LogDir $logDir -WindowSec $StabilityWindowSec -Strategy $strategy
+                $stability = Test-RenderStatsStability -LogDir $logDir -WindowSec $StabilityWindowSec -Strategy $strategy -State $stabilityStatsState
                 $stabilityReason = $stability.Reason
                 $stableWorkloadIdentityHash = $stability.WorkloadIdentityHash
                 if ($stability.Stable) {
@@ -916,6 +1166,52 @@ function Measure-Variant {
         }
 
         if (-not $exitedEarly -and -not $hangDetected) {
+            if (-not $DisableMcpDiagnostics) {
+                $logDir = Get-RunLogDir -EditorProcessId $proc.Id
+                $mcpErrors = [System.Collections.Generic.List[string]]::new()
+                $mcpRequests = @(
+                    [pscustomobject]@{
+                        Name = 'dump_cpu_frame_profile'
+                        Arguments = @{}
+                        ResponseFile = 'profiler-mcp-cpu-dump-response.json'
+                    },
+                    [pscustomobject]@{
+                        Name = 'dump_gpu_render_pipeline_profile'
+                        Arguments = @{ all_pipelines = $true }
+                        ResponseFile = 'profiler-mcp-gpu-dump-response.json'
+                    },
+                    [pscustomobject]@{
+                        Name = 'get_render_profiler_stats'
+                        Arguments = @{}
+                        ResponseFile = 'profiler-mcp-render-stats.json'
+                    }
+                )
+                foreach ($request in $mcpRequests) {
+                    try {
+                        $response = Invoke-ProfileMcpTool `
+                            -Port $mcpPort `
+                            -Name $request.Name `
+                            -Arguments $request.Arguments
+                        if (-not [string]::IsNullOrWhiteSpace($logDir)) {
+                            $response | ConvertTo-Json -Depth 30 | Set-Content `
+                                -LiteralPath (Join-Path $logDir $request.ResponseFile) `
+                                -Encoding UTF8
+                        }
+                    }
+                    catch {
+                        $mcpErrors.Add("$($request.Name): $($_.Exception.Message)") | Out-Null
+                    }
+                }
+
+                $mcpDiagnosticsSucceeded = $mcpErrors.Count -eq 0
+                if (-not $mcpDiagnosticsSucceeded) {
+                    $mcpDiagnosticError = $mcpErrors -join '; '
+                    Write-Host "[measure] $runName MCP diagnostic dump failed: $mcpDiagnosticError" -ForegroundColor Yellow
+                }
+            } else {
+                $mcpDiagnosticError = 'Disabled for clean performance capture.'
+            }
+
             $forcedStop = Stop-EditorGracefully -Process $proc -GraceSeconds $ShutdownGraceSec
         }
 
@@ -1035,6 +1331,15 @@ function Measure-Variant {
         $value = Get-SamplePropertyValue -Sample $_ -Property 'frame_output_workload_identity_hash'
         if ($null -ne $value -and [string]$value -ne '0') { [string]$value }
     } | Select-Object -Unique)
+    $identitySamples = if ($samples.Count -gt 0) { $samples } else { $allSamples }
+    $activeRenderBackends = @($identitySamples | ForEach-Object {
+        $value = Get-SamplePropertyValue -Sample $_ -Property 'active_render_backend'
+        if (-not [string]::IsNullOrWhiteSpace([string]$value)) { [string]$value }
+    } | Select-Object -Unique)
+    $effectiveStrategies = @($identitySamples | ForEach-Object {
+        $value = Get-SamplePropertyValue -Sample $_ -Property 'effective_strategy'
+        if (-not [string]::IsNullOrWhiteSpace([string]$value)) { [string]$value }
+    } | Select-Object -Unique)
     [double]$collectGenerationAgeMax = 0
     foreach ($sample in $samples) {
         [double]$requestedGeneration = Get-SamplePropertyValue -Sample $sample -Property 'collect_generation_requested'
@@ -1055,9 +1360,17 @@ function Measure-Variant {
     } else {
         0
     }
+    $cpuDumpCount = if ($logDir -and (Test-Path -LiteralPath $logDir)) {
+        @(Get-ChildItem -LiteralPath $logDir -Filter 'profiler-cpu-frame-*.log' -File -ErrorAction SilentlyContinue).Count
+    } else {
+        0
+    }
 
     $noteParts = New-Object System.Collections.Generic.List[string]
     if ($forcedStop) { $noteParts.Add('forced stop; GPU timing dump may be missing') | Out-Null }
+    if (-not $mcpDiagnosticsSucceeded) {
+        $noteParts.Add("MCP CPU/GPU diagnostics unavailable: $mcpDiagnosticError") | Out-Null
+    }
     if ($hangDetected) { $noteParts.Add("no render-stats progress for ${NoSampleHangSec}s during $hangPhase at +${hangAt}s") | Out-Null }
     if ($exitedEarly) { $noteParts.Add("exited early during $exitPhase at +${exitAt}s exit=0x$([Convert]::ToString($exitCode, 16))") | Out-Null }
     if ($stabilityTimedOut) { $noteParts.Add("stability gate timeout after ${stabilityWaitSec}s: $stabilityReason") | Out-Null }
@@ -1085,6 +1398,13 @@ function Measure-Variant {
     if ($workloadIdentityHashes.Count -ne 1) {
         $noteParts.Add("capture workload identity changed or missing: identities=$($workloadIdentityHashes -join ',')") | Out-Null
     }
+    if ($RenderBackend -ne 'Configured' -and
+        ($activeRenderBackends.Count -ne 1 -or $activeRenderBackends[0] -ine $RenderBackend)) {
+        $noteParts.Add("requested backend $RenderBackend but captured backends were $($activeRenderBackends -join ',')") | Out-Null
+    }
+    if ($effectiveStrategies.Count -ne 1 -or $effectiveStrategies[0] -ine $Strategy) {
+        $noteParts.Add("requested strategy $Strategy but captured strategies were $($effectiveStrategies -join ',')") | Out-Null
+    }
     if ($unapprovedPolicyEventTotal -gt 0) {
         $noteParts.Add("unapproved output policy events=$unapprovedPolicyEventTotal") | Out-Null
     }
@@ -1102,6 +1422,10 @@ function Measure-Variant {
         Strategy = $Strategy
         Repetition = $Repetition
         Configuration = $Configuration
+        RequestedRenderBackend = $RenderBackend
+        ActiveRenderBackend = $activeRenderBackends -join ','
+        EffectiveStrategy = $effectiveStrategies -join ','
+        UnitTestingWorldSettingsPath = $UnitTestingWorldSettingsPath
         CacheMode = $CacheMode
         UnitTestVrMode = $UnitTestVrMode
         VulkanRenderTargetMode = $VulkanRenderTargetMode
@@ -1342,6 +1666,9 @@ function Measure-Variant {
         LastGpuMappedBuffers = $lastMappedBuffers
         LastFallbackEvents = $lastFallbackEvents
         LastForbiddenFallbackEvents = $lastForbiddenFallbackEvents
+        McpDiagnosticsSucceeded = $mcpDiagnosticsSucceeded
+        McpDiagnosticError = $mcpDiagnosticError
+        CpuTimingDumpFiles = $cpuDumpCount
         GpuTimingDumpFiles = $gpuDumpCount
         LogDir = $logDir
         Note = ($noteParts -join '; ')
@@ -1372,6 +1699,9 @@ $results | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $summaryJson -Enco
     "Created: $(Get-Date -Format o)"
     "ProfileRunDir: $profileRunDir"
     "Configuration: $Configuration"
+    "RequestedRenderBackend: $RenderBackend"
+    "UnitTestingWorldSettingsPath: $UnitTestingWorldSettingsPath"
+    "ProfileMode: $ProfileMode"
     "CacheMode: $CacheMode"
     "ZeroReadbackMaterialDrawPath: $ZeroReadbackMaterialDrawPath"
     "Scene: $ProfileScene"
@@ -1403,7 +1733,9 @@ $results | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $summaryJson -Enco
     Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
     Select-Object -Unique) | Set-Content -LiteralPath $runLogDirs -Encoding UTF8
 
-Enforce-SpeedProfileRetention -ProfileRoot (Get-SpeedProfileRoot) -RetainedRunCount $RetainedRunCount
+if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
+    Enforce-SpeedProfileRetention -ProfileRoot (Get-SpeedProfileRoot) -RetainedRunCount $RetainedRunCount
+}
 
 Write-Host "Wrote $summaryJson"
 Write-Host "Wrote $summaryText"
@@ -1468,5 +1800,5 @@ if ($invalidCaptureFailures.Count -gt 0) {
     $details = $invalidCaptureFailures | ForEach-Object {
         "$($_.Strategy) r$($_.Repetition): stable=$($_.StabilityReady) identities=$($_.CaptureWorkloadIdentityCount) unapprovedPolicy=$($_.UnapprovedOutputPolicyEventsTotal) rejectedSubmissions=$($_.VulkanSubmissionRejectionsTotal) reason=$($_.StabilityReason)"
     }
-    throw "Invalid Vulkan performance capture: $($details -join '; ')"
+    throw "Invalid render-pipeline performance capture: $($details -join '; ')"
 }

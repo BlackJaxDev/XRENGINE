@@ -373,6 +373,206 @@ Dense GPU timestamps were used once as a diagnostic, but that mode forced the
 primary dirty on every sample and was excluded from CPU comparisons. Normal
 runtime command-buffer timestamps supplied the GPU values in the tables.
 
+## Performance truth and regression gates implementation
+
+Workstream 01 is implemented. The tracked contract is
+`XREngine.Benchmarks/VulkanPerformance/vulkan-performance-cohorts.json`; it
+defines `Quick`, `Compare`, and `Gate`, the four observer modes, a 7.5% maximum
+run-to-run range, a 5% baseline-regression threshold, four desktop cohorts, and
+four Vulkan RVC cohorts. The RVC cohorts require one `DesktopScene` view and two
+`OpenXREyeSubmit` views in every measured frame. Foveation-off and
+foveation-fixed are distinct identities, so an unavailable runtime or
+unsupported foveation mode is reported rather than substituted.
+
+The canonical command is:
+
+```powershell
+pwsh Tools/Benchmarks/Invoke-VulkanPerf.ps1 -Preset Quick -Cohort desktop-deferred-static
+```
+
+`Compare` and `Gate` require an explicit baseline path. Baseline replacement is
+a separate `-AcceptBaseline` action, and the evaluator refuses to write a
+candidate that has any issue. The standalone evaluator is built from
+`XREngine.Benchmarks` with `VulkanPerformanceToolOnly=true`; it does not load
+the editor or renderer. Its fixture suite covers percentile and variance
+calculation, exact manifest-mismatch fields, absolute budgets, baseline
+regressions, missing required outputs, forbidden fallbacks, readback
+violations, exit codes, Quick non-promotion, and rejected baseline writes.
+
+### First canonical Quick result
+
+Evidence root:
+`Build/_AgentValidation/20260728-143000-vulkan-perf-quick-final/`.
+
+The run used the tracked Deferred large-scene settings, static camera,
+Release build, warm cache, Vulkan `GpuIndirectZeroReadback`,
+`BindlessMaterialTable`, `CleanProfile`, 1920x1080 windowed with VSync off, an
+NVIDIA GeForce RTX 4070 Laptop GPU, driver 581.57, and Windows
+10.0.26200.0. The manifest records source commit
+`62738e2519e021bdf41f38959cbab07093ef184d`, dirty-worktree state, executable
+SHA-256, settings SHA-256, output extents, feature state, and the exact engine
+log session.
+
+The stability gate passed with one workload identity and 449 samples. Evaluator
+statistics were:
+
+| Metric | p50 | p95 | p99 | Worst |
+| --- | ---: | ---: | ---: | ---: |
+| Render dispatch | 28.394 ms | 58.887 ms | 125.456 ms | 1946.813 ms |
+| Render outside `Vulkan.Frame.Total` | 26.102 ms | 52.199 ms | 118.353 ms | 255.458 ms |
+
+All 449 frames missed the 5.00 ms desktop budget and the evaluator classified
+the failure as CPU-bound. The result was explicitly
+`NonPromotableQuickRun` and `Fail`. It also found current-frame readback
+(including frames with 1,048 bytes and two mappings) and the capture harness
+rejected 3,442,176 bytes of steady-state command-buffer-recording allocation.
+This is the intended gate behavior: the current renderer does not yet qualify
+for a zero-readback or zero-allocation promotion baseline, so no baseline was
+accepted.
+
+### Observer overhead
+
+Evidence root:
+`Build/_AgentValidation/20260728-145000-vulkan-profile-overhead-final/`.
+All four modes used the same cohort and five-second stable capture window:
+
+| Mode | Render p50 | Render p95 | p95 delta from Release | Samples |
+| --- | ---: | ---: | ---: | ---: |
+| `ReleaseBenchmark` | 4.765 ms | 6.768 ms | 0.000 ms | 881 |
+| `CleanProfile` | 4.262 ms | 6.027 ms | -0.741 ms | 1041 |
+| `DevelopmentProfile` | 7.047 ms | 9.647 ms | +2.879 ms (+42.5%) | 539 |
+| `Diagnostics` | 13.517 ms | 25.754 ms | +18.986 ms (+280.5%) | 243 |
+
+The short single-repetition result is observer-overhead evidence, not promotion
+evidence. It confirms why `DevelopmentProfile` and `Diagnostics` are excluded
+from pass/fail performance totals. MCP was explicitly disabled for all four
+runs because it is not part of the profile-mode contract.
+
+### Added attribution and counters
+
+- Vulkan queue-lock acquisition, auxiliary/resource/OpenXR fence waits,
+  context/pass transitions, barrier planning/emission, and op dispatch.
+- Render work outside `Vulkan.Frame.Total` plus existing frame preparation,
+  descriptor, binding, draw/dispatch, upload, secondary, and overlay stages.
+- Software-occlusion selection, sort/compaction, raster, query, Hi-Z, tile,
+  selected-object, rasterized-object, self-skip, and force-visible values.
+- Profiler ingestion, aggregation, graph/table preparation, ImGui draw, visible
+  rows, and graph samples.
+- Render-thread jobs by source kind with count, execution duration, queue delay,
+  and over-budget duration.
+- Existing exact primary/secondary record/reuse/dirty reasons, resource and
+  command counters, allocation stages, and GPU readback bytes/mappings are now
+  evaluated as validity gates rather than informational values.
+
+### Validation
+
+- Standalone Vulkan-performance evaluator Release build: zero warnings and zero
+  errors.
+- GPU-free evaluator fixture suite: 5 passed.
+- `UnitTestingWorldModelImportSettingsTests`: 22 passed; existing Magick.NET
+  advisory warnings remain.
+- Release editor build: zero errors; existing dependency advisory warnings
+  remain.
+- Quick editor-process launch/capture/evaluation: completed with a meaningful
+  nonzero gate result and durable manifest/evaluation files.
+- PowerShell parsing: `Invoke-VulkanPerf.ps1`,
+  `Measure-VulkanProfileOverhead.ps1`,
+  `Measure-GameLoopRenderPipeline.ps1`, and `Measure-VulkanFrameLoop.ps1`
+  passed.
+- JSON parsing: `.vscode/tasks.json` and the cohort contract passed.
+- `rdc doctor`: passed, including Vulkan layer and replay support.
+
+## Workstream 02 - Primary reuse correctness
+
+Status: implementation complete on 2026-07-28.
+
+### Root cause and repair
+
+The first Deferred CPU-direct reproduction recorded all 466 captured primaries
+and reused none. Exact rejection telemetry reduced the stable
+`PrimaryFrameState` bit to a stage-mask conflict on an image whose layout was
+already `ShaderReadOnlyOptimal`: the primary expected shader-read stages/access
+(`2184` / `32`), while submitted state paired that layout with
+color-attachment stages/access (`1024` / `384`).
+
+`RecordFboAttachmentAccessState` was publishing the attachment's final layout
+with stage/access masks derived from its earlier reference layout. Barrier
+tracking could manufacture the same contradictory tuple. The repair now:
+
+- derives framebuffer final stage/access state from the final layout;
+- normalizes incompatible non-`General` access scopes from final layout and
+  aspect while preserving compatible precise scopes;
+- keeps `General` explicit because its layout does not identify an access
+  domain;
+- merges complete secondary entry/exit snapshots into primary state, while
+  unknown or conflicting secondary state forces a typed record reason;
+- transitions descriptor-backed secondary images even when the layout is
+  unchanged but the dependency scope differs;
+- publishes recorded image state only after successful queue submission;
+- keeps OpenXR primary reuse on by default with explicit diagnostic overrides.
+
+The reusable tuple, ownership boundaries, unknown-versus-conflict behavior,
+cache identity, and data-only mutations are documented in
+`docs/architecture/rendering/vulkan-primary-command-buffer-reuse.md`.
+
+### Runtime evidence
+
+All paths below used Release, warm cache, Vulkan, CPU-direct, clean profiling,
+command chains enabled, validation/fallback/rejection counters retained, and
+the workstream-01 evaluator. Evidence is under
+`Build/_AgentValidation/20260728-vulkan-framerate-root-cause/`.
+
+| Cohort | Samples | Primary reused / recorded | Chain reused / recorded | Render p50 / p95 / p99 |
+| --- | ---: | ---: | ---: | ---: |
+| Deferred static, final code | 1,260 | 1,260 / 0 | 27,114 / 0 | 7.988 / 23.611 / 92.621 ms |
+| Deferred moving | 814 | 814 / 0 | 15,282 / 0 | 9.190 / 49.937 / 419.528 ms |
+| Uber static | 1,243 | 1,243 / 0 | 48,509 / 0 | 10.886 / 18.736 / 23.763 ms |
+| Uber moving | 1,351 | 1,351 / 0 | 22,967 / 0 | 10.959 / 13.783 / 15.473 ms |
+| Deferred legacy render pass | 714 | 712 / 2 | 12,138 / 0 | 10.574 / 15.335 / 22.947 ms |
+
+The four canonical dynamic-rendering cohorts achieved 100% captured primary
+reuse after the stability gate. Legacy render-pass reuse was 99.72%. The
+Deferred static starting reproduction was 0 / 466 reused with p50/p95/p99 of
+31.327 / 43.094 / 62.579 ms; its final-code p95 is therefore lower despite
+normal short-run variance and outliers. The clean final-code run reported zero
+primary-recording allocation, zero submission rejection, zero VUID, and no
+forbidden fallback. The evaluator's `NonPromotableQuickRun` classification is
+expected for this short preset; no primary-reuse-ratio issue was emitted.
+
+A dynamic-rendering StandardValidation run enabled Vulkan validation and
+command labels. It was intentionally diagnostic and produced only three
+capture samples because of validation overhead, but reported zero VUID and
+zero rejected submission. The legacy clean run also reported zero VUID and
+zero rejected submission.
+
+The configured `MonadoOpenXR` probe rendered 1,064 clean frames with 100%
+primary reuse, but runtime telemetry reported mono output and `vr_active=false`.
+No OpenXR or OpenVR runtime was available, so this is desktop-fallback evidence
+only. OpenXR primary/mirror defaults and invalidations remain covered by the
+focused source-contract tests; an actual eye-submit run remains hardware/runtime
+validation rather than an implementation gap.
+
+### Correctness and tooling validation
+
+- Focused primary-reuse plus Vulkan/OpenXR regression suite: 297 passed, zero
+  failed.
+- Release editor build completed; pre-existing Magick.NET advisory warnings
+  remain.
+- Tests cover equal/broader/narrower tuples, unknown/incomplete state,
+  recreation generations, per-image queue ownership, descriptor layout,
+  framebuffer final-state normalization, compatible precise scopes,
+  successful-submit-only publication, resize/resource/query/overlay topology,
+  camera/data-only behavior, `LinesBuffer` capacity growth, and OpenXR policy.
+- The benchmark contract contains four explicit `primary-reuse-*` cohorts and
+  fails any repetition below 99% reuse or with missing decisions.
+- `rdc doctor` passed, including the registered Vulkan layer. Automated
+  RenderDoc captures repeatedly timed out or disconnected before producing an
+  `.rdc`; the isolated MCP fallback build then stalled on unreachable package
+  sources, and a copied Release session exposed a host `Path`/`PATH` collision
+  in `Start-Process`. No visual artifact is claimed. Runtime required-output
+  counts, clean rendering, zero VUID/rejection, and the forced-record starting
+  cohort provide the available non-visual comparison evidence.
+
 ## User validation
 
-The user has not yet evaluated any attempted fix because no fix is in scope.
+The user has not yet evaluated the completed workstream-02 repair.

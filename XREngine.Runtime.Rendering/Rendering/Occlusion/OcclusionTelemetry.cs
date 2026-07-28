@@ -281,6 +281,8 @@ namespace XREngine.Rendering.Occlusion
         private static int _cpuSocOccludersRasterized;
         private static int _cpuSocTilesClosed;
         private static long _cpuSocBeginMicros;
+        private static long _cpuSocSelectionMicros;
+        private static long _cpuSocSortMicros;
         private static long _cpuSocRasterMicros;
         private static long _cpuSocTestMicros;
         private static int _cpuSocForceVisible;
@@ -291,6 +293,8 @@ namespace XREngine.Rendering.Occlusion
         private static int _lastFrameCpuSocOccludersRasterized;
         private static int _lastFrameCpuSocTilesClosed;
         private static long _lastFrameCpuSocBeginMicros;
+        private static long _lastFrameCpuSocSelectionMicros;
+        private static long _lastFrameCpuSocSortMicros;
         private static long _lastFrameCpuSocRasterMicros;
         private static long _lastFrameCpuSocTestMicros;
         private static int _lastFrameCpuSocForceVisible;
@@ -419,7 +423,11 @@ namespace XREngine.Rendering.Occlusion
         public static int CpuSocTilesClosed => _lastFrameCpuSocTilesClosed;
         /// <summary>Last completed frame: SOC frame setup time in milliseconds.</summary>
         public static double CpuSocBeginMilliseconds => _lastFrameCpuSocBeginMicros / 1000.0;
-        /// <summary>Last completed frame: SOC occluder selection plus rasterization time in milliseconds.</summary>
+        /// <summary>Last completed frame: SOC occluder candidate-selection time in milliseconds.</summary>
+        public static double CpuSocSelectionMilliseconds => _lastFrameCpuSocSelectionMicros / 1000.0;
+        /// <summary>Last completed frame: SOC occluder sorting and budget-compaction time in milliseconds.</summary>
+        public static double CpuSocSortMilliseconds => _lastFrameCpuSocSortMicros / 1000.0;
+        /// <summary>Last completed frame: SOC occluder rasterization time in milliseconds.</summary>
         public static double CpuSocRasterMilliseconds => _lastFrameCpuSocRasterMicros / 1000.0;
         /// <summary>Last completed frame: SOC AABB test time in milliseconds.</summary>
         public static double CpuSocTestMilliseconds => _lastFrameCpuSocTestMicros / 1000.0;
@@ -644,6 +652,8 @@ namespace XREngine.Rendering.Occlusion
             _lastFrameCpuSocOccludersRasterized = _cpuSocOccludersRasterized;
             _lastFrameCpuSocTilesClosed = _cpuSocTilesClosed;
             _lastFrameCpuSocBeginMicros = _cpuSocBeginMicros;
+            _lastFrameCpuSocSelectionMicros = _cpuSocSelectionMicros;
+            _lastFrameCpuSocSortMicros = _cpuSocSortMicros;
             _lastFrameCpuSocRasterMicros = _cpuSocRasterMicros;
             _lastFrameCpuSocTestMicros = _cpuSocTestMicros;
             _lastFrameCpuSocForceVisible = _cpuSocForceVisible;
@@ -696,6 +706,8 @@ namespace XREngine.Rendering.Occlusion
             _cpuSocOccludersRasterized = 0;
             _cpuSocTilesClosed = 0;
             _cpuSocBeginMicros = 0;
+            _cpuSocSelectionMicros = 0;
+            _cpuSocSortMicros = 0;
             _cpuSocRasterMicros = 0;
             _cpuSocTestMicros = 0;
             _cpuSocForceVisible = 0;
@@ -991,8 +1003,14 @@ namespace XREngine.Rendering.Occlusion
                 Interlocked.Exchange(ref _cpuSocForceVisible, 1);
         }
 
-        /// <summary>Records CPU SOC occluder selection and rasterization summary.</summary>
-        public static void RecordCpuSocOccluders(int selected, int rasterized, int tilesClosed, double milliseconds)
+        /// <summary>Records CPU SOC occluder selection, sorting, and rasterization summary.</summary>
+        public static void RecordCpuSocOccluders(
+            int selected,
+            int rasterized,
+            int tilesClosed,
+            double selectionMilliseconds,
+            double sortMilliseconds,
+            double rasterMilliseconds)
         {
             if (selected > 0)
                 Interlocked.Add(ref _cpuSocOccludersSelected, selected);
@@ -1000,7 +1018,9 @@ namespace XREngine.Rendering.Occlusion
                 Interlocked.Add(ref _cpuSocOccludersRasterized, rasterized);
             if (tilesClosed > 0)
                 Interlocked.Add(ref _cpuSocTilesClosed, tilesClosed);
-            Interlocked.Add(ref _cpuSocRasterMicros, ToMicroseconds(milliseconds));
+            Interlocked.Add(ref _cpuSocSelectionMicros, ToMicroseconds(selectionMilliseconds));
+            Interlocked.Add(ref _cpuSocSortMicros, ToMicroseconds(sortMilliseconds));
+            Interlocked.Add(ref _cpuSocRasterMicros, ToMicroseconds(rasterMilliseconds));
         }
 
         /// <summary>Records one CPU SOC visibility decision.</summary>

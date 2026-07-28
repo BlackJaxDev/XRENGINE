@@ -1254,6 +1254,135 @@
 			"problemMatcher": []
 		},
 		{
+			"label": "Benchmark-Vulkan-Quick",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Benchmarks\\Invoke-VulkanPerf.ps1",
+				"-Preset",
+				"Quick"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Benchmark-Vulkan-Compare-Desktop",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Benchmarks\\Invoke-VulkanPerf.ps1",
+				"-Preset",
+				"Compare",
+				"-BaselinePath",
+				"${workspaceFolder}\\Build\\_AgentValidation\\vulkan-perf-baselines\\desktop.json"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Benchmark-Vulkan-Gate",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Benchmarks\\Invoke-VulkanPerf.ps1",
+				"-Preset",
+				"Gate",
+				"-BaselinePath",
+				"${workspaceFolder}\\Build\\_AgentValidation\\vulkan-perf-baselines\\gate.json"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Benchmark-Vulkan-Accept-Gate-Baseline",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Benchmarks\\Invoke-VulkanPerf.ps1",
+				"-Preset",
+				"Gate",
+				"-BaselinePath",
+				"${workspaceFolder}\\Build\\_AgentValidation\\vulkan-perf-baselines\\gate.json",
+				"-AcceptBaseline"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Benchmark-SelfIteration-Validate",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Benchmarks\\Invoke-SelfIteration.ps1",
+				"-ValidateOnly"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Benchmark-SelfIteration-Baseline",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Benchmarks\\Invoke-SelfIteration.ps1",
+				"-BaselineOnly"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Benchmark-SelfIteration-Run",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Benchmarks\\Invoke-SelfIteration.ps1"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
 			"label": "Build Editor Validation",
 			"type": "shell",
 			"command": "dotnet",

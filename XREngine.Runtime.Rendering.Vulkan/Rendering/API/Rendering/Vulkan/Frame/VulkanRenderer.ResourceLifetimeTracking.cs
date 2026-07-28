@@ -2776,12 +2776,17 @@ public unsafe partial class VulkanRenderer
         long waitStart = Stopwatch.GetTimestamp();
         while (true)
         {
-            Result waitResult = Api!.WaitForFences(
-                device,
-                1,
-                &fence,
-                true,
-                TimelineWaitPollTimeoutNanoseconds);
+            Result waitResult;
+            using (VulkanCpuStageScope fenceWaitStage =
+                new(EVulkanCpuStage.AuxiliaryFenceWait))
+            {
+                waitResult = Api!.WaitForFences(
+                    device,
+                    1,
+                    &fence,
+                    true,
+                    TimelineWaitPollTimeoutNanoseconds);
+            }
             if (waitResult == Result.Success)
             {
                 NotifyVulkanFenceCompleted(fence);

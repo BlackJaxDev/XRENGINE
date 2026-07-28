@@ -95,6 +95,23 @@ namespace XREngine
                     private static long _vulkanCommandBufferDecisionStructuralSignature;
                     private static long _vulkanCommandBufferDecisionDescriptorGeneration;
                     private static int _vulkanCommandBufferDecisionSwapchainSlot = -1;
+                    private static int _vulkanPrimaryEntryStateMismatch;
+                    private static long _vulkanPrimaryEntryStateImageHandle;
+                    private static int _vulkanPrimaryEntryStateMipLevel;
+                    private static int _vulkanPrimaryEntryStateArrayLayer;
+                    private static int _vulkanPrimaryEntryStateAspect;
+                    private static int _vulkanPrimaryEntryStateExpectedLayout;
+                    private static long _vulkanPrimaryEntryStateExpectedStageMask;
+                    private static long _vulkanPrimaryEntryStateExpectedAccessMask;
+                    private static int _vulkanPrimaryEntryStateExpectedDescriptorLayout;
+                    private static int _vulkanPrimaryEntryStateExpectedQueueFamily;
+                    private static long _vulkanPrimaryEntryStateExpectedResourceGeneration;
+                    private static int _vulkanPrimaryEntryStateActualLayout;
+                    private static long _vulkanPrimaryEntryStateActualStageMask;
+                    private static long _vulkanPrimaryEntryStateActualAccessMask;
+                    private static int _vulkanPrimaryEntryStateActualDescriptorLayout;
+                    private static int _vulkanPrimaryEntryStateActualQueueFamily;
+                    private static long _vulkanPrimaryEntryStateActualResourceGeneration;
                     private static readonly long[] _vulkanCpuStageTicks = new long[(int)EVulkanCpuStage.Count];
                     private static readonly long[] _lastFrameVulkanCpuStageTicks = new long[(int)EVulkanCpuStage.Count];
                     private static readonly long[] _vulkanCpuStageAllocatedBytes = new long[(int)EVulkanCpuStage.Count];
@@ -184,6 +201,23 @@ namespace XREngine
                     private static long _lastFrameVulkanCommandBufferDecisionStructuralSignature;
                     private static long _lastFrameVulkanCommandBufferDecisionDescriptorGeneration;
                     private static int _lastFrameVulkanCommandBufferDecisionSwapchainSlot = -1;
+                    private static int _lastFrameVulkanPrimaryEntryStateMismatch;
+                    private static long _lastFrameVulkanPrimaryEntryStateImageHandle;
+                    private static int _lastFrameVulkanPrimaryEntryStateMipLevel;
+                    private static int _lastFrameVulkanPrimaryEntryStateArrayLayer;
+                    private static int _lastFrameVulkanPrimaryEntryStateAspect;
+                    private static int _lastFrameVulkanPrimaryEntryStateExpectedLayout;
+                    private static long _lastFrameVulkanPrimaryEntryStateExpectedStageMask;
+                    private static long _lastFrameVulkanPrimaryEntryStateExpectedAccessMask;
+                    private static int _lastFrameVulkanPrimaryEntryStateExpectedDescriptorLayout;
+                    private static int _lastFrameVulkanPrimaryEntryStateExpectedQueueFamily;
+                    private static long _lastFrameVulkanPrimaryEntryStateExpectedResourceGeneration;
+                    private static int _lastFrameVulkanPrimaryEntryStateActualLayout;
+                    private static long _lastFrameVulkanPrimaryEntryStateActualStageMask;
+                    private static long _lastFrameVulkanPrimaryEntryStateActualAccessMask;
+                    private static int _lastFrameVulkanPrimaryEntryStateActualDescriptorLayout;
+                    private static int _lastFrameVulkanPrimaryEntryStateActualQueueFamily;
+                    private static long _lastFrameVulkanPrimaryEntryStateActualResourceGeneration;
                     private static int _vulkanDeviceLocalAllocationCount;
                     private static long _vulkanDeviceLocalAllocatedBytes;
                     private static int _vulkanUploadAllocationCount;
@@ -547,6 +581,24 @@ namespace XREngine
                     public static ulong VulkanCommandBufferDecisionStructuralSignature => unchecked((ulong)_lastFrameVulkanCommandBufferDecisionStructuralSignature);
                     public static ulong VulkanCommandBufferDecisionDescriptorGeneration => unchecked((ulong)_lastFrameVulkanCommandBufferDecisionDescriptorGeneration);
                     public static int VulkanCommandBufferDecisionSwapchainSlot => _lastFrameVulkanCommandBufferDecisionSwapchainSlot;
+                    public static EVulkanPrimaryEntryStateMismatch VulkanPrimaryEntryStateMismatch
+                        => (EVulkanPrimaryEntryStateMismatch)_lastFrameVulkanPrimaryEntryStateMismatch;
+                    public static ulong VulkanPrimaryEntryStateImageHandle => unchecked((ulong)_lastFrameVulkanPrimaryEntryStateImageHandle);
+                    public static int VulkanPrimaryEntryStateMipLevel => _lastFrameVulkanPrimaryEntryStateMipLevel;
+                    public static int VulkanPrimaryEntryStateArrayLayer => _lastFrameVulkanPrimaryEntryStateArrayLayer;
+                    public static int VulkanPrimaryEntryStateAspect => _lastFrameVulkanPrimaryEntryStateAspect;
+                    public static int VulkanPrimaryEntryStateExpectedLayout => _lastFrameVulkanPrimaryEntryStateExpectedLayout;
+                    public static ulong VulkanPrimaryEntryStateExpectedStageMask => unchecked((ulong)_lastFrameVulkanPrimaryEntryStateExpectedStageMask);
+                    public static ulong VulkanPrimaryEntryStateExpectedAccessMask => unchecked((ulong)_lastFrameVulkanPrimaryEntryStateExpectedAccessMask);
+                    public static int VulkanPrimaryEntryStateExpectedDescriptorLayout => _lastFrameVulkanPrimaryEntryStateExpectedDescriptorLayout;
+                    public static int VulkanPrimaryEntryStateExpectedQueueFamily => _lastFrameVulkanPrimaryEntryStateExpectedQueueFamily;
+                    public static ulong VulkanPrimaryEntryStateExpectedResourceGeneration => unchecked((ulong)_lastFrameVulkanPrimaryEntryStateExpectedResourceGeneration);
+                    public static int VulkanPrimaryEntryStateActualLayout => _lastFrameVulkanPrimaryEntryStateActualLayout;
+                    public static ulong VulkanPrimaryEntryStateActualStageMask => unchecked((ulong)_lastFrameVulkanPrimaryEntryStateActualStageMask);
+                    public static ulong VulkanPrimaryEntryStateActualAccessMask => unchecked((ulong)_lastFrameVulkanPrimaryEntryStateActualAccessMask);
+                    public static int VulkanPrimaryEntryStateActualDescriptorLayout => _lastFrameVulkanPrimaryEntryStateActualDescriptorLayout;
+                    public static int VulkanPrimaryEntryStateActualQueueFamily => _lastFrameVulkanPrimaryEntryStateActualQueueFamily;
+                    public static ulong VulkanPrimaryEntryStateActualResourceGeneration => unchecked((ulong)_lastFrameVulkanPrimaryEntryStateActualResourceGeneration);
                     public static double VulkanCpuStageMs(EVulkanCpuStage stage)
                         => TimeSpan.FromTicks(Volatile.Read(ref _lastFrameVulkanCpuStageTicks[(int)stage])).TotalMilliseconds;
                     public static long VulkanCpuStageAllocatedBytes(EVulkanCpuStage stage)
@@ -1207,6 +1259,47 @@ namespace XREngine
                         }
                     }
 
+                    public static void RecordVulkanPrimaryEntryStateMismatch(
+                        EVulkanPrimaryEntryStateMismatch mismatch,
+                        ulong imageHandle,
+                        uint mipLevel,
+                        uint arrayLayer,
+                        int aspect,
+                        int expectedLayout,
+                        ulong expectedStageMask,
+                        ulong expectedAccessMask,
+                        int expectedDescriptorLayout,
+                        uint expectedQueueFamily,
+                        ulong expectedResourceGeneration,
+                        int actualLayout,
+                        ulong actualStageMask,
+                        ulong actualAccessMask,
+                        int actualDescriptorLayout,
+                        uint actualQueueFamily,
+                        ulong actualResourceGeneration)
+                    {
+                        if (!EnableTracking || mismatch == EVulkanPrimaryEntryStateMismatch.None)
+                            return;
+
+                        Interlocked.Exchange(ref _vulkanPrimaryEntryStateMismatch, (int)mismatch);
+                        Interlocked.Exchange(ref _vulkanPrimaryEntryStateImageHandle, unchecked((long)imageHandle));
+                        Interlocked.Exchange(ref _vulkanPrimaryEntryStateMipLevel, unchecked((int)mipLevel));
+                        Interlocked.Exchange(ref _vulkanPrimaryEntryStateArrayLayer, unchecked((int)arrayLayer));
+                        Interlocked.Exchange(ref _vulkanPrimaryEntryStateAspect, aspect);
+                        Interlocked.Exchange(ref _vulkanPrimaryEntryStateExpectedLayout, expectedLayout);
+                        Interlocked.Exchange(ref _vulkanPrimaryEntryStateExpectedStageMask, unchecked((long)expectedStageMask));
+                        Interlocked.Exchange(ref _vulkanPrimaryEntryStateExpectedAccessMask, unchecked((long)expectedAccessMask));
+                        Interlocked.Exchange(ref _vulkanPrimaryEntryStateExpectedDescriptorLayout, expectedDescriptorLayout);
+                        Interlocked.Exchange(ref _vulkanPrimaryEntryStateExpectedQueueFamily, unchecked((int)expectedQueueFamily));
+                        Interlocked.Exchange(ref _vulkanPrimaryEntryStateExpectedResourceGeneration, unchecked((long)expectedResourceGeneration));
+                        Interlocked.Exchange(ref _vulkanPrimaryEntryStateActualLayout, actualLayout);
+                        Interlocked.Exchange(ref _vulkanPrimaryEntryStateActualStageMask, unchecked((long)actualStageMask));
+                        Interlocked.Exchange(ref _vulkanPrimaryEntryStateActualAccessMask, unchecked((long)actualAccessMask));
+                        Interlocked.Exchange(ref _vulkanPrimaryEntryStateActualDescriptorLayout, actualDescriptorLayout);
+                        Interlocked.Exchange(ref _vulkanPrimaryEntryStateActualQueueFamily, unchecked((int)actualQueueFamily));
+                        Interlocked.Exchange(ref _vulkanPrimaryEntryStateActualResourceGeneration, unchecked((long)actualResourceGeneration));
+                    }
+
                     public static void RecordVulkanCommandBuffersDirty(string? reason)
                     {
                         if (!EnableTracking || string.IsNullOrWhiteSpace(reason))
@@ -1812,6 +1905,23 @@ namespace XREngine
                         _lastFrameVulkanCommandBufferDecisionStructuralSignature = Interlocked.Exchange(ref _vulkanCommandBufferDecisionStructuralSignature, 0);
                         _lastFrameVulkanCommandBufferDecisionDescriptorGeneration = Interlocked.Exchange(ref _vulkanCommandBufferDecisionDescriptorGeneration, 0);
                         _lastFrameVulkanCommandBufferDecisionSwapchainSlot = Interlocked.Exchange(ref _vulkanCommandBufferDecisionSwapchainSlot, -1);
+                        _lastFrameVulkanPrimaryEntryStateMismatch = Interlocked.Exchange(ref _vulkanPrimaryEntryStateMismatch, 0);
+                        _lastFrameVulkanPrimaryEntryStateImageHandle = Interlocked.Exchange(ref _vulkanPrimaryEntryStateImageHandle, 0);
+                        _lastFrameVulkanPrimaryEntryStateMipLevel = Interlocked.Exchange(ref _vulkanPrimaryEntryStateMipLevel, 0);
+                        _lastFrameVulkanPrimaryEntryStateArrayLayer = Interlocked.Exchange(ref _vulkanPrimaryEntryStateArrayLayer, 0);
+                        _lastFrameVulkanPrimaryEntryStateAspect = Interlocked.Exchange(ref _vulkanPrimaryEntryStateAspect, 0);
+                        _lastFrameVulkanPrimaryEntryStateExpectedLayout = Interlocked.Exchange(ref _vulkanPrimaryEntryStateExpectedLayout, 0);
+                        _lastFrameVulkanPrimaryEntryStateExpectedStageMask = Interlocked.Exchange(ref _vulkanPrimaryEntryStateExpectedStageMask, 0);
+                        _lastFrameVulkanPrimaryEntryStateExpectedAccessMask = Interlocked.Exchange(ref _vulkanPrimaryEntryStateExpectedAccessMask, 0);
+                        _lastFrameVulkanPrimaryEntryStateExpectedDescriptorLayout = Interlocked.Exchange(ref _vulkanPrimaryEntryStateExpectedDescriptorLayout, 0);
+                        _lastFrameVulkanPrimaryEntryStateExpectedQueueFamily = Interlocked.Exchange(ref _vulkanPrimaryEntryStateExpectedQueueFamily, 0);
+                        _lastFrameVulkanPrimaryEntryStateExpectedResourceGeneration = Interlocked.Exchange(ref _vulkanPrimaryEntryStateExpectedResourceGeneration, 0);
+                        _lastFrameVulkanPrimaryEntryStateActualLayout = Interlocked.Exchange(ref _vulkanPrimaryEntryStateActualLayout, 0);
+                        _lastFrameVulkanPrimaryEntryStateActualStageMask = Interlocked.Exchange(ref _vulkanPrimaryEntryStateActualStageMask, 0);
+                        _lastFrameVulkanPrimaryEntryStateActualAccessMask = Interlocked.Exchange(ref _vulkanPrimaryEntryStateActualAccessMask, 0);
+                        _lastFrameVulkanPrimaryEntryStateActualDescriptorLayout = Interlocked.Exchange(ref _vulkanPrimaryEntryStateActualDescriptorLayout, 0);
+                        _lastFrameVulkanPrimaryEntryStateActualQueueFamily = Interlocked.Exchange(ref _vulkanPrimaryEntryStateActualQueueFamily, 0);
+                        _lastFrameVulkanPrimaryEntryStateActualResourceGeneration = Interlocked.Exchange(ref _vulkanPrimaryEntryStateActualResourceGeneration, 0);
                         for (int stageIndex = 0; stageIndex < (int)EVulkanCpuStage.Count; stageIndex++)
                         {
                             _lastFrameVulkanCpuStageTicks[stageIndex] = Interlocked.Exchange(ref _vulkanCpuStageTicks[stageIndex], 0);

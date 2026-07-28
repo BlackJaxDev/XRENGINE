@@ -58,11 +58,19 @@ public static class UnitTestingWorldSettingsStore
     {
         UnitTestingWorldSettings settings;
 
-        string dir = Environment.CurrentDirectory;
-        string filePath = Path.Combine(dir, "Assets", SettingsFileName);
+        string filePath = ResolveSettingsFilePath();
+        bool explicitSettingsPath = !string.IsNullOrWhiteSpace(
+            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestWorldSettingsPath));
 
         if (!File.Exists(filePath))
         {
+            if (explicitSettingsPath)
+            {
+                throw new FileNotFoundException(
+                    $"The unit-testing world settings file selected by {XREngineEnvironmentVariables.UnitTestWorldSettingsPath} does not exist.",
+                    filePath);
+            }
+
             settings = new UnitTestingWorldSettings();
             NormalizeRenderSettings(settings);
             NormalizeVrSettings(settings);
@@ -95,6 +103,29 @@ public static class UnitTestingWorldSettingsStore
             $"asyncSource={linkSettings.AsyncProgramCompilation}, sharedWorkers={linkSettings.ProgramCompileLinkWorkerCount}, maxAsyncPerFrame={linkSettings.MaxAsyncShaderProgramsPerFrame}, " +
             $"compilerThreads={linkSettings.DriverCompilerThreadCount}, probe={linkSettings.DriverParallelProbeEnabled}, probeTimeoutMs={linkSettings.DriverParallelProbeTimeoutMs})");
         return settings;
+    }
+
+    /// <summary>
+    /// Resolves the JSONC file used to configure the Unit Testing World.
+    /// </summary>
+    /// <remarks>
+    /// A relative <c>XRE_UNIT_TEST_WORLD_SETTINGS_PATH</c> value is resolved from
+    /// the editor working directory. When the variable is absent, the canonical
+    /// <c>Assets/UnitTestingWorldSettings.jsonc</c> file is used.
+    /// </remarks>
+    public static string ResolveSettingsFilePath()
+    {
+        string currentDirectory = Environment.CurrentDirectory;
+        string? configuredPath = Environment.GetEnvironmentVariable(
+            XREngineEnvironmentVariables.UnitTestWorldSettingsPath);
+        string path = string.IsNullOrWhiteSpace(configuredPath)
+            ? Path.Combine(currentDirectory, "Assets", SettingsFileName)
+            : configuredPath.Trim();
+
+        return Path.GetFullPath(
+            Path.IsPathRooted(path)
+                ? path
+                : Path.Combine(currentDirectory, path));
     }
 
     public static UnitTestingWorldSettings ParseJsonc(string? content)

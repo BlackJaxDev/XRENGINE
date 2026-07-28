@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Numerics;
 using ImGuiNET;
 using XREngine.Data.Profiling;
@@ -273,6 +274,9 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         if (_paused) return;
         if (!visibility.NeedsAnyData) return;
 
+        long aggregationStart = Stopwatch.GetTimestamp();
+        double graphPreparationMilliseconds = 0.0;
+        double tablePreparationMilliseconds = 0.0;
         var nowUtc = DateTime.UtcNow;
         double updateIntervalSeconds = GetEffectiveUpdateIntervalSeconds();
         var minInterval = updateIntervalSeconds <= 0.0
@@ -315,13 +319,23 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
 
         // Push render stats independently of frame logging so GPU/render graphs keep updating
         if (renderStats is not null && shouldRefreshDisplay)
+        {
+            long graphStart = Stopwatch.GetTimestamp();
             PushRenderStatsSample(renderStats, includeGpuPipeline: visibility.GpuPipeline);
+            graphPreparationMilliseconds =
+                Stopwatch.GetElapsedTime(graphStart).TotalMilliseconds;
+        }
 
         if (visibility.ProfilerTree)
             RefreshThreadCacheState(nowUtc);
 
+        double aggregationMilliseconds =
+            Stopwatch.GetElapsedTime(aggregationStart).TotalMilliseconds -
+            graphPreparationMilliseconds;
+
         if (shouldRefreshDisplay)
         {
+            long tableStart = Stopwatch.GetTimestamp();
             if (visibility.ProfilerTree)
             {
                 PruneRootMethodCache(nowUtc);
@@ -343,7 +357,23 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 UpdateGpuPipelineDisplay(renderStats);
 
             _lastDisplayRefreshUtc = nowUtc;
+            tablePreparationMilliseconds =
+                Stopwatch.GetElapsedTime(tableStart).TotalMilliseconds;
         }
+
+        int visibleRows =
+            (visibility.ProfilerTree ? _cachedHierarchyList.Count : 0) +
+            (visibility.FpsDropSpikes ? _fpsDropSpikePaths.Count : 0) +
+            (visibility.GpuPipeline ? _gpuPipelineDisplayRoots.Length : 0);
+        int graphSamples =
+            (visibility.ProfilerTree ? _cachedGraphList.Count * _graphSampleCount : 0) +
+            (visibility.GpuPipeline ? _gpuPipelineRootHistory.Count * RenderStatsHistorySamples : 0);
+        ProfilerObserverTelemetry.RecordProcessing(
+            Math.Max(0.0, aggregationMilliseconds),
+            graphPreparationMilliseconds,
+            tablePreparationMilliseconds,
+            visibleRows,
+            graphSamples);
     }
 
     // ═══════════════════════════════════════════════════════════════

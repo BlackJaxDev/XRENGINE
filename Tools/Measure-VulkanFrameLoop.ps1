@@ -32,6 +32,11 @@ param(
     [int]$NoSampleHangSec = 15,
     [int]$RetainedRunCount = 5,
     [string]$RunLabel = 'vulkan-frame-loop',
+    [string]$OutputDirectory = '',
+    [string]$EditorExecutablePath = '',
+    [switch]$DisableMcpDiagnostics,
+    [ValidateSet('Diagnostics', 'DevelopmentProfile', 'CleanProfile', 'ReleaseBenchmark')]
+    [string]$ProfileMode = 'DevelopmentProfile',
     [ValidateSet('Configured', 'Desktop', 'Emulated', 'MonadoOpenXR', 'OpenVR', 'OpenXR')]
     [string]$UnitTestVrMode = 'Desktop',
     [ValidateSet('Configured', 'Disabled', 'CpuQueryAsync', 'CpuSoftwareOcclusion', 'GpuHiZ')]
@@ -71,6 +76,9 @@ $arguments = @{
     NoSampleHangSec = $NoSampleHangSec
     RetainedRunCount = $RetainedRunCount
     RunLabel = $RunLabel
+    OutputDirectory = $OutputDirectory
+    EditorExecutablePath = $EditorExecutablePath
+    ProfileMode = $ProfileMode
     OcclusionCullingMode = $OcclusionCullingMode
     VulkanDiagnosticPreset = $VulkanDiagnosticPreset
     UnitTestVrMode = $UnitTestVrMode
@@ -106,6 +114,10 @@ if ($NoStabilityGate) {
 
 if ($VulkanCommandBufferLabels) {
     $arguments['VulkanCommandBufferLabels'] = $true
+}
+
+if ($DisableMcpDiagnostics) {
+    $arguments['DisableMcpDiagnostics'] = $true
 }
 
 & $measureScript @arguments

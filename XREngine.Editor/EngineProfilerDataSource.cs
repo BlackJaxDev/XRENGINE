@@ -62,6 +62,7 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
     /// </summary>
     public void CollectFromEngine(ProfilerPanelRenderer.PanelVisibility visibility)
     {
+        long start = Stopwatch.GetTimestamp();
         _latestFrame = visibility.NeedsFrame
             ? CollectProfilerFrame(visibility.NeedsThreadTiming, visibility.ComponentTimings)
             : null;
@@ -74,6 +75,7 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
         _latestBvhMetrics = visibility.BvhMetrics ? CollectBvhMetrics() : null;
         _latestJobStats = visibility.JobSystem ? CollectJobSystemStats() : null;
         _latestMainThreadInvokes = visibility.MainThreadInvokes ? CollectMainThreadInvokes() : null;
+        ProfilerObserverTelemetry.RecordIngestion(Stopwatch.GetElapsedTime(start).TotalMilliseconds);
     }
 
     // ═══════════════════════════════════════════════════════════════

@@ -8,14 +8,25 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
-  <ItemGroup>
+  <PropertyGroup Condition="'$(VulkanPerformanceToolOnly)' == 'true'">
+    <DefineConstants>$(DefineConstants);VULKAN_PERFORMANCE_TOOL_ONLY</DefineConstants>
+    <BaseOutputPath>..\Build\Tools\VulkanPerformance\bin\</BaseOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(VulkanPerformanceToolOnly)' == 'true'">
+    <Compile Remove="**\*.cs" />
+    <Compile Include="Program.cs" />
+    <Compile Include="VulkanPerformance\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(VulkanPerformanceToolOnly)' != 'true'">
     <PackageReference Include="BenchmarkDotNet" Version="0.14.0" />
     <PackageReference Include="SharpFont.Dependencies" Version="2.6.0" />
     <PackageReference Include="Silk.NET.OpenGL" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Windowing" Version="2.23.0" />
   </ItemGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(VulkanPerformanceToolOnly)' != 'true'">
     <ProjectReference Include="..\XREngine.Fbx\XREngine.Fbx.csproj" />
     <ProjectReference Include="..\XREngine.Gltf\XREngine.Gltf.csproj" />
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />

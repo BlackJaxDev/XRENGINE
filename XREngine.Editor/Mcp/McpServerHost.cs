@@ -115,6 +115,10 @@ namespace XREngine.Editor.Mcp
             // Check for command-line override to force enable
             bool cliEnabled = args.Any(arg => string.Equals(arg, "--mcp", StringComparison.OrdinalIgnoreCase) ||
                                               string.Equals(arg, "--mcp-server", StringComparison.OrdinalIgnoreCase));
+            bool cliDisabled = HasArgument(args, "--no-mcp", "--disable-mcp");
+            if (cliEnabled && cliDisabled)
+                throw new ArgumentException("MCP cannot be both enabled and disabled on the command line.");
+
             int? cliPort = TryReadPort(args, out var parsedPort) ? parsedPort : null;
             McpPermissionPolicy? cliPermissionPolicy = HasArgument(args, "--mcp-allow-all", "--mcp-no-prompts")
                 ? McpPermissionPolicy.AllowAll
@@ -129,17 +133,17 @@ namespace XREngine.Editor.Mcp
                 SetCliOverride(overrides.McpServerPortOverride, cliPort.Value);
             if (cliPermissionPolicy.HasValue)
                 SetCliOverride(overrides.McpPermissionPolicyOverride, cliPermissionPolicy.Value);
-            if (cliEnabled)
-                SetCliOverride(overrides.McpServerEnabledOverride, true);
+            if (cliEnabled || cliDisabled)
+                SetCliOverride(overrides.McpServerEnabledOverride, cliEnabled);
 
             // CLI overrides must be reflected before UpdateServerState reads the
             // effective preferences. Depending on when the project settings root
             // was loaded, nested override notifications may not be tracked yet.
-            if (cliPort.HasValue || cliPermissionPolicy.HasValue || cliEnabled)
+            if (cliPort.HasValue || cliPermissionPolicy.HasValue || cliEnabled || cliDisabled)
                 Engine.RefreshEffectiveEditorPreferences();
 
             Debug.Out(
-                $"[MCP] initialize cli_enabled={cliEnabled} cli_port={cliPort?.ToString() ?? "<none>"} " +
+                $"[MCP] initialize cli_enabled={cliEnabled} cli_disabled={cliDisabled} cli_port={cliPort?.ToString() ?? "<none>"} " +
                 $"cli_permission={cliPermissionPolicy?.ToString() ?? "<none>"} " +
                 $"effective_enabled={Engine.EditorPreferences.McpServerEnabled} " +
                 $"effective_port={Engine.EditorPreferences.McpServerPort}");

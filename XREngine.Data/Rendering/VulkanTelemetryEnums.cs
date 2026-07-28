@@ -28,6 +28,11 @@ public enum EVulkanCpuStage
     PrimaryFrameDataManifest,
     PrimaryPrewarm,
     PrimaryCommandEncoding,
+    QueueLockAcquisition,
+    AuxiliaryFenceWait,
+    ContextPassTransitions,
+    BarrierPlanningEmission,
+    OpDispatch,
     Count,
 }
 

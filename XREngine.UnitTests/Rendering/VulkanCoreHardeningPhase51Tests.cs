@@ -38,9 +38,8 @@ public sealed class VulkanCoreHardeningPhase51Tests
         synchronization.ShouldContain("EntryStateIncomplete");
         synchronization.ShouldContain("SeedRecordedImageLayoutState(");
         synchronization.ShouldContain("ValidateOrderedCommandBufferImageStateContracts(");
-        synchronization.ShouldContain("actual.ResourceGeneration != expected.ResourceGeneration");
-        synchronization.ShouldContain("HasRecordedImageEntryStateMismatch(");
-        synchronization.ShouldContain("AreRecordedImageEntryStatesCompatible(");
+        synchronization.ShouldContain("VulkanImageEntryStateContract.Compare(");
+        synchronization.ShouldContain("TryGetRecordedImageEntryStateMismatch(");
         imgui.ShouldContain("SeedRecordedImageLayoutState(commandBuffer, predecessorCommandBuffer)");
         dynamicText.ShouldContain("SeedRecordedImageLayoutState(commandBuffer, predecessorCommandBuffer)");
     }
@@ -58,7 +57,8 @@ public sealed class VulkanCoreHardeningPhase51Tests
             "private bool IsCommandBufferVariantImageLayoutStateDirty(",
             "private void LogCommandChainSecondaryInheritanceMismatch(");
 
-        reuseValidation.ShouldContain("HasRecordedImageEntryStateMismatch(variant.PrimaryCommandBuffer)");
+        reuseValidation.ShouldContain("TryGetRecordedImageEntryStateMismatch(");
+        reuseValidation.ShouldContain("variant.PrimaryCommandBuffer");
         reuseValidation.ShouldNotContain("variant.RecordedImageLayoutStartSignature != imageLayoutStartSignature");
         synchronization.ShouldContain("recorded.EntrySubresources[key] = submittedState.Submitted");
         synchronization.ShouldContain("recorded.EntryStateIncomplete = true");

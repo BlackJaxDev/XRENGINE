@@ -30,15 +30,53 @@ param(
 
     [hashtable]$SessionEnvironment = @{},
 
+    [string]$SessionEnvironmentFile = '',
+
     [switch]$NoBuild,
     [switch]$NoWait,
     [switch]$NoUnitTesting,
+    [switch]$RendererDevelopment,
     [switch]$Force,
     [switch]$AsJson
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if (-not [string]::IsNullOrWhiteSpace($SessionEnvironmentFile)) {
+    $environmentFilePath = if ([System.IO.Path]::IsPathRooted($SessionEnvironmentFile)) {
+        [System.IO.Path]::GetFullPath($SessionEnvironmentFile)
+    }
+    else {
+        [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\$SessionEnvironmentFile"))
+    }
+    if (-not (Test-Path -LiteralPath $environmentFilePath -PathType Leaf)) {
+        throw "Session environment file does not exist: $environmentFilePath"
+    }
+
+    $fileEnvironment = Get-Content -LiteralPath $environmentFilePath -Raw | ConvertFrom-Json
+    if ($null -eq $fileEnvironment -or
+        ($fileEnvironment -isnot [System.Collections.IDictionary] -and
+         $fileEnvironment -isnot [System.Management.Automation.PSCustomObject])) {
+        throw "Session environment file must contain one JSON object: $environmentFilePath"
+    }
+
+    $fileEnvironmentEntries = if ($fileEnvironment -is [System.Collections.IDictionary]) {
+        @($fileEnvironment.GetEnumerator())
+    }
+    else {
+        @($fileEnvironment.PSObject.Properties | ForEach-Object {
+            [pscustomobject]@{ Key = $_.Name; Value = $_.Value }
+        })
+    }
+    foreach ($entry in $fileEnvironmentEntries) {
+        if ($null -eq $entry.Value -or $entry.Value -is [System.Collections.IDictionary] -or
+            ($entry.Value -is [System.Collections.IEnumerable] -and $entry.Value -isnot [string])) {
+            throw "Session environment value '$($entry.Key)' must be a scalar string, number, or boolean."
+        }
+        $SessionEnvironment[[string]$entry.Key] = [string]$entry.Value
+    }
+}
 
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $sessionsRoot = Join-Path $repoRoot 'Build\_AgentValidation\mcp-sessions'
@@ -548,6 +586,8 @@ function Start-Session {
                 "-p:Platform=$Platform",
                 '-p:RestoreIgnoreFailedSources=true',
                 '-p:XREngineUseExistingNativeBridges=true',
+                '-p:UseSharedCompilation=false',
+                '/nodeReuse:false',
                 '/property:GenerateFullPaths=true',
                 '/consoleloggerparameters:NoSummary'
             )
@@ -572,6 +612,9 @@ function Start-Session {
         $launchArguments = [System.Collections.Generic.List[string]]::new()
         if (-not $NoUnitTesting) {
             $launchArguments.Add('--unit-testing')
+        }
+        if ($RendererDevelopment) {
+            $launchArguments.Add('--renderer-development')
         }
         $launchArguments.Add('--mcp')
         $launchArguments.Add('--mcp-permission-policy')

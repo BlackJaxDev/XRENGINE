@@ -163,7 +163,8 @@ public sealed class OpenXrTimingPipelineContractTests
         vulkanRendererOpenXr.ShouldContain("TryRenderOpenXrEyeSwapchains");
         vulkanRendererOpenXr.ShouldContain("OpenXrVulkanPrimaryReuseEnabled");
         vulkanCommandBufferState.ShouldContain("OpenXrVulkanPrimaryReuseEnabled");
-        vulkanCommandBufferState.ShouldContain("XREngineEnvironmentVariables.OpenXrVulkanPrimaryReuse), \"1\"");
+        vulkanCommandBufferState.ShouldContain("OpenXrVulkanPrimaryReuseOverride ?? true");
+        vulkanCommandBufferState.ShouldContain("VulkanPrimaryCommandBufferReuseEnabled &&");
         vulkanRendererOpenXr.ShouldContain("OpenXrEyePreviewCopyRequest");
         vulkanRendererOpenXr.ShouldContain("RecordOpenXrEyeSwapchainPreviewCopy(scope.CommandBuffer, in plan)");
         vulkanRendererOpenXr.ShouldContain("TryPrepareOpenXrEyeSwapchainCommandBuffer(firstEye");

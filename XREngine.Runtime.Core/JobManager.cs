@@ -24,6 +24,7 @@ namespace XREngine
         public static Action<string>? LogMessage { get; set; }
         public static Func<string, IDisposable?>? ProfilerScopeFactory { get; set; }
         public static Action<JobAffinity, string, RenderThreadJobKind>? JobDispatchObserver { get; set; }
+        public static Action<string, RenderThreadJobKind, double, double, double>? RenderThreadJobExecutionObserver { get; set; }
 
         private const int PriorityLevels = 5; // Matches JobPriority enum
         private const int DefaultWorkerCap = 16;
@@ -943,6 +944,11 @@ namespace XREngine
             int processed = 0;
             while (processed < remaining && TryDequeueWithAging(_pendingMainThreadByPriority, JobAffinity.RenderThread, out var job, out var bucket))
             {
+                long dequeuedAt = Stopwatch.GetTimestamp();
+                long queuedAt = job.LastEnqueuedTimestamp;
+                double queueDelayMilliseconds = queuedAt == 0L
+                    ? 0.0
+                    : Math.Max(0L, dequeuedAt - queuedAt) * 1000.0 / Stopwatch.Frequency;
                 RecordWait(job, bucket);
                 string label = job.GetProfilerLabel();
                 JobDispatchObserver?.Invoke(JobAffinity.RenderThread, label, job.RenderThreadKind);
@@ -952,6 +958,16 @@ namespace XREngine
                     ExecuteJob(job);
                 }
                 long jobElapsedTicks = Stopwatch.GetTimestamp() - jobStart;
+                double durationMilliseconds = jobElapsedTicks * 1000.0 / Stopwatch.Frequency;
+                double overBudgetMilliseconds = budgetMilliseconds <= 0.0
+                    ? 0.0
+                    : Math.Max(0.0, (Stopwatch.GetTimestamp() - start) * 1000.0 / Stopwatch.Frequency - budgetMilliseconds);
+                RenderThreadJobExecutionObserver?.Invoke(
+                    label,
+                    job.RenderThreadKind,
+                    durationMilliseconds,
+                    queueDelayMilliseconds,
+                    overBudgetMilliseconds);
                 MaybeLogSlowRenderThreadJob(job, label, jobElapsedTicks, budgetMilliseconds);
                 processed++;
 

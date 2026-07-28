@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Threading;
 
 namespace XREngine.Rendering.Vulkan;
@@ -25,7 +26,12 @@ internal readonly struct VulkanQueueOperationLease : IDisposable
     /// <returns>A VulkanQueueOperationLease representing the acquired lease if successful; otherwise, a default lease indicating failure.</returns>
     public static VulkanQueueOperationLease TryEnter(object gate, VulkanDeviceStateMachine deviceState)
     {
+        long waitStart = Stopwatch.GetTimestamp();
         Monitor.Enter(gate);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCpuStage(
+            EVulkanCpuStage.QueueLockAcquisition,
+            Stopwatch.GetElapsedTime(waitStart),
+            allocatedBytes: 0);
         if (deviceState.IsOperational)
             return new VulkanQueueOperationLease(gate);
 
