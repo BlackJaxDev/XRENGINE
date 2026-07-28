@@ -31,7 +31,7 @@ public sealed class VulkanPipelineReadinessPhase525Tests
     }
 
     [Test]
-    public void PipelinePrewarmHappensBeforeCommandBufferBeginAndOptionalNodesDeferLocally()
+    public void PipelinePrewarmHappensBeforeCommandBufferBeginAndPendingDrawsDeferLocally()
     {
         string source = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
@@ -40,9 +40,17 @@ public sealed class VulkanPipelineReadinessPhase525Tests
         int begin = source.IndexOf("Api!.BeginCommandBuffer", manifest, StringComparison.Ordinal);
         manifest.ShouldBeGreaterThanOrEqualTo(0);
         begin.ShouldBeGreaterThan(manifest);
-        source.ShouldContain("optionalPipelineDeferredOpIndices.Add(opIndex)");
-        source.ShouldContain("if (optionalPipelineDeferredOpIndices.Contains(opIndex))");
+        source.ShouldContain("pipelineDeferredOps.Add(ops[opIndex])");
+        source.ShouldContain("if (pipelineDeferredOps.Contains(ops[opIndex]))");
+        source.ShouldContain("if (pipelineDeferredOps.Contains(ops[i]))");
+        source.ShouldContain("the rest of the frame will still submit");
+        source.ShouldContain("Recording a partial frame with {0} draw operation(s) deferred");
         source.ShouldContain("Required graphics pipeline became pending after declared warmup");
+        source.ShouldContain("reuseDeferredPipelineReadiness");
+        source.ShouldContain("VulkanPipelineCompileActivityGeneration");
+        source.ShouldContain("SharedGraphicsPipelineGeneration");
+        source.ShouldContain("deferredRequirementIndices.Contains(requirementIndex)");
+        source.ShouldNotContain("Vulkan.PipelineDrawDeferred.");
     }
 
     [Test]

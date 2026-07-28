@@ -2615,7 +2615,8 @@ public unsafe partial class VulkanRenderer
         {
             ulong descriptorResourceSignature = draw.Draw.Renderer.ComputeRecordedDescriptorResourceSignature(
                 material,
-                draw.Draw.PreparedProgram);
+                draw.Draw.PreparedProgram,
+                draw.Draw.ProgramBindingSnapshot);
             if (descriptorResourceSignature != 0UL)
                 descriptorGeneration = MixSignature(descriptorGeneration, descriptorResourceSignature);
         }

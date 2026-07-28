@@ -6,6 +6,7 @@ public unsafe partial class VulkanRenderer
 {
     private DescriptorSet[]? descriptorSets;
     private long _descriptorSetContentUpdateGeneration;
+    private int _descriptorUpdateInvalidationDiagnosticCount;
 
     private long SnapshotDescriptorSetContentUpdateGeneration()
         => Volatile.Read(ref _descriptorSetContentUpdateGeneration);
@@ -27,6 +28,7 @@ public unsafe partial class VulkanRenderer
         ulong[]? dependentCommandBuffers;
         int dependentCommandBufferCount;
         bool invalidatesRecordedCommandBuffers;
+        VulkanDescriptorUpdateInvalidation firstInvalidation;
         lock (_vulkanResourceLifetimeLock)
         {
             ValidateAndRecordVulkanDescriptorWrites(descriptorWriteCount, descriptorWrites);
@@ -35,13 +37,15 @@ public unsafe partial class VulkanRenderer
                 descriptorWriteCount,
                 descriptorWrites,
                 out dependentCommandBuffers,
-                out dependentCommandBufferCount);
+                out dependentCommandBufferCount,
+                out firstInvalidation);
         }
 
         PublishDescriptorSetContentUpdate(
             invalidatesRecordedCommandBuffers,
             dependentCommandBuffers,
             dependentCommandBufferCount,
+            firstInvalidation,
             "vkUpdateDescriptorSets");
     }
 
@@ -65,6 +69,7 @@ public unsafe partial class VulkanRenderer
         ulong[]? dependentCommandBuffers;
         int dependentCommandBufferCount;
         bool invalidatesRecordedCommandBuffers;
+        VulkanDescriptorUpdateInvalidation firstInvalidation;
         lock (_vulkanResourceLifetimeLock)
         {
             if (!TryPrevalidateVulkanDescriptorWrites_NoLock(
@@ -84,13 +89,15 @@ public unsafe partial class VulkanRenderer
                 descriptorWriteCount,
                 descriptorWrites,
                 out dependentCommandBuffers,
-                out dependentCommandBufferCount);
+                out dependentCommandBufferCount,
+                out firstInvalidation);
         }
 
         PublishDescriptorSetContentUpdate(
             invalidatesRecordedCommandBuffers,
             dependentCommandBuffers,
             dependentCommandBufferCount,
+            firstInvalidation,
             "vkUpdateDescriptorSets");
         failureReason = string.Empty;
         return true;
@@ -104,10 +111,12 @@ public unsafe partial class VulkanRenderer
         uint descriptorWriteCount,
         WriteDescriptorSet* descriptorWrites,
         out ulong[]? dependentCommandBuffers,
-        out int dependentCommandBufferCount)
+        out int dependentCommandBufferCount,
+        out VulkanDescriptorUpdateInvalidation firstInvalidation)
     {
         dependentCommandBuffers = null;
         dependentCommandBufferCount = 0;
+        firstInvalidation = default;
         if (descriptorWriteCount == 0 || descriptorWrites is null)
             return false;
 
@@ -122,7 +131,18 @@ public unsafe partial class VulkanRenderer
             invalidatesRecordedCommandBuffers = true;
             VulkanResourceLifetimeKey setKey = ResourceKey(ObjectType.DescriptorSet, write.DstSet.Handle);
             if (_vulkanResourceCommandBufferDependencies.TryGetValue(setKey, out HashSet<ulong>? dependents))
+            {
                 dependentCapacity = checked(dependentCapacity + dependents.Count);
+                if (firstInvalidation.DescriptorSetHandle == 0 && dependents.Count > 0)
+                {
+                    firstInvalidation = new VulkanDescriptorUpdateInvalidation(
+                        write.DstSet.Handle,
+                        write.DstBinding,
+                        write.DstArrayElement,
+                        write.DescriptorType,
+                        write.DescriptorCount);
+                }
+            }
         }
 
         if (!invalidatesRecordedCommandBuffers || dependentCapacity == 0)
@@ -181,6 +201,7 @@ public unsafe partial class VulkanRenderer
         bool invalidatesRecordedCommandBuffers,
         ulong[]? dependentCommandBuffers,
         int dependentCommandBufferCount,
+        in VulkanDescriptorUpdateInvalidation firstInvalidation,
         string updateKind)
     {
         try
@@ -191,6 +212,14 @@ public unsafe partial class VulkanRenderer
             Interlocked.Increment(ref _descriptorSetContentUpdateGeneration);
             if (dependentCommandBufferCount == 0 || dependentCommandBuffers is null)
                 return;
+
+            if (CommandRecordingDiagnosticsEnabled &&
+                Interlocked.Increment(ref _descriptorUpdateInvalidationDiagnosticCount) <= 128)
+            {
+                Debug.WriteAuxiliaryLog(
+                    "vulkan-descriptor-invalidations.log",
+                    $"frame={VulkanFrameCounter} update={updateKind} set=0x{firstInvalidation.DescriptorSetHandle:X} binding={firstInvalidation.Binding} array={firstInvalidation.ArrayElement} type={firstInvalidation.DescriptorType} count={firstInvalidation.DescriptorCount} dependentCommandBuffers={dependentCommandBufferCount}");
+            }
 
             VulkanExactInvalidationResult result = InvalidateCachedCommandBuffersByHandle(
                 dependentCommandBuffers.AsSpan(0, dependentCommandBufferCount),

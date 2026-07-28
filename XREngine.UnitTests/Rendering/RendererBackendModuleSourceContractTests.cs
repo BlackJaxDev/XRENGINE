@@ -95,6 +95,49 @@ public sealed class RendererBackendModuleSourceContractTests
     }
 
     [Test]
+    public void BackendGeneration_IsInstalledBeforeApiWrappersAreCreated()
+    {
+        string renderer = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Generic/AbstractRenderer.cs");
+        string catalog = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Runtime/RendererModules/RendererBackendCatalog.cs");
+        string openGlFactory = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/OpenGLRendererBackendFactory.cs");
+        string vulkanFactory = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/VulkanRendererBackendFactory.cs");
+
+        int generationAssignment = renderer.IndexOf(
+            "BackendGeneration = backendGeneration;", StringComparison.Ordinal);
+        int wrapperCreation = renderer.IndexOf(
+            "CreateObjectsForOwner(this)", generationAssignment, StringComparison.Ordinal);
+        generationAssignment.ShouldBeGreaterThanOrEqualTo(0);
+        wrapperCreation.ShouldBeGreaterThan(generationAssignment);
+
+        catalog.ShouldContain(
+            "renderer.BackendGeneration != registration.Metadata.Generation");
+        openGlFactory.ShouldContain("context.ModuleGeneration");
+        vulkanFactory.ShouldContain("context.ModuleGeneration");
+    }
+
+    [Test]
+    public void ReplacementAcceptance_RequiresBackendValidatedFrameContent()
+    {
+        string coordinator = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Runtime/RendererReload/RendererReplacementCoordinator.cs");
+        string rendererContract = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRendererHost.cs");
+        string vulkanPresentation = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Presentation.cs");
+
+        coordinator.ShouldContain("!window.Renderer.IsBackendReplacementFrameReady");
+        rendererContract.ShouldContain("bool IsBackendReplacementFrameReady => true;");
+        vulkanPresentation.ShouldContain(
+            "attempt.SceneSwapchainWriteCount > 0");
+        vulkanPresentation.ShouldContain(
+            "Volatile.Write(ref _hasPresentedCompleteSceneFrame, 1)");
+    }
+
+    [Test]
     public void EditorConcreteRendererReferences_AreRestrictedToExactWrapperInspectorAllowlist()
     {
         string[] expected =

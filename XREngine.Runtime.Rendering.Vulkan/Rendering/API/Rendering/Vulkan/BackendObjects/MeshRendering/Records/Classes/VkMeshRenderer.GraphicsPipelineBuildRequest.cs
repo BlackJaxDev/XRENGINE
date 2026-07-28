@@ -9,6 +9,7 @@ public unsafe partial class VulkanRenderer
         internal sealed class GraphicsPipelineBuildRequest(
             VulkanRenderer.VkMeshRenderer owner,
             VulkanRenderer.VkRenderProgram program,
+            long dependencyGeneration,
             VkMeshRenderer.PipelineKey key,
             string pipelineName,
             uint colorAttachmentCount,
@@ -31,6 +32,7 @@ public unsafe partial class VulkanRenderer
         {
             public VkMeshRenderer Owner { get; } = owner;
             public VkRenderProgram Program { get; } = program;
+            public long DependencyGeneration { get; } = dependencyGeneration;
             public PipelineKey Key { get; } = key;
             public GraphicsPipelineCompileKey CompileKey { get; } = new GraphicsPipelineCompileKey(key);
             public string PipelineName { get; } = pipelineName;

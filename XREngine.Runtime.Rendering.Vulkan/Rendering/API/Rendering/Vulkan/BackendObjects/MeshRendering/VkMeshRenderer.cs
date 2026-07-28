@@ -840,8 +840,11 @@ public unsafe partial class VulkanRenderer
                     hash.Add(copy.DestinationOffset);
                     hash.Add(copy.ByteCount);
                     break;
-                case SubmissionMarkerOp marker:
-                    hash.Add(marker.Fence.GetHashCode());
+                case SubmissionMarkerOp:
+                    // The fence object is CPU-side submission state and is rebound
+                    // whenever a cached primary is reused. Marker position remains
+                    // part of the structural signature because recording it closes
+                    // the active render pass.
                     break;
                 case TextureUploadFrameOp upload:
                     hash.Add(upload.Upload.PublicationToken);
@@ -1352,6 +1355,7 @@ public unsafe partial class VulkanRenderer
         private VkRenderProgram? _program;
         private XRRenderProgram? _generatedProgram;
         private string? _activeProgramIdentity;
+        private ulong _activeProgramLinkGeneration;
         private readonly Dictionary<string, GeneratedProgramCacheEntry> _programCache = new(4, StringComparer.Ordinal);
         private readonly Dictionary<GeneratedProgramState, GeneratedProgramCacheEntry> _programStateCache = new(4);
         private VertexInputBindingDescription[] _vertexBindings = [];

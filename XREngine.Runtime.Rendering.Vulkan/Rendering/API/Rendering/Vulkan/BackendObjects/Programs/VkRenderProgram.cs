@@ -1047,8 +1047,7 @@ public unsafe partial class VulkanRenderer
                     Backend: "Vulkan",
                     Detail: DescribeShaderStages()));
 
-                BuildStageLookup();
-                BuildDescriptorLayouts();
+                BuildProgramInterface();
             }
             catch (Exception ex)
             {
@@ -1065,8 +1064,6 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
-            IsLinked = true;
-            Interlocked.Increment(ref _linkGeneration);
             _linkedShaderConfigVersion = shaderConfigVersion;
             _linkedUsesVulkanClipDepthRemap = usesVulkanClipDepthRemap;
             _linkedVulkanClipDepthRemapStage = vulkanClipDepthRemapStage;
@@ -1459,9 +1456,15 @@ public unsafe partial class VulkanRenderer
             }
         }
 
-        private void BuildDescriptorLayouts()
+        private void BuildProgramInterface()
+            => Renderer.ExecuteWithVulkanPipelineCompilationQuiesced(
+                BuildProgramInterfaceAfterPipelineCompileDrain,
+                $"program interface rebuild for '{Data.Name ?? "<unnamed program>"}'");
+
+        private void BuildProgramInterfaceAfterPipelineCompileDrain()
         {
-            DestroyLayouts();
+            BuildStageLookup();
+            DestroyLayoutsAfterPipelineCompileDrain();
 
             IEnumerable<DescriptorBindingInfo> shaderBindings = EnumerateShaderDescriptorBindings();
             string programName = Data.Name ?? "UnnamedProgram";
@@ -1496,6 +1499,8 @@ public unsafe partial class VulkanRenderer
             }
 
             CreatePipelineLayout(_descriptorSetLayouts);
+            IsLinked = true;
+            Interlocked.Increment(ref _linkGeneration);
         }
 
         /// <summary>
@@ -1636,7 +1641,13 @@ public unsafe partial class VulkanRenderer
         }
 
         private void DestroyLayouts()
+            => Renderer.ExecuteWithVulkanPipelineCompilationQuiesced(
+                DestroyLayoutsAfterPipelineCompileDrain,
+                $"pipeline layout mutation for '{Data.Name ?? "<unnamed program>"}'");
+
+        private void DestroyLayoutsAfterPipelineCompileDrain()
         {
+            bool invalidatedPublishedInterface = IsLinked;
             DestroyComputeUniformBuffers();
             _reusableComputeDescriptorRefreshKeys.Clear();
 
@@ -1665,6 +1676,8 @@ public unsafe partial class VulkanRenderer
             _descriptorSetsRequireUpdateAfterBind = false;
             _descriptorSetsRequireVariableDescriptorCount = false;
             IsLinked = false;
+            if (invalidatedPublishedInterface)
+                Interlocked.Increment(ref _linkGeneration);
         }
 
         private void DestroyPipelineLayout(string owner)

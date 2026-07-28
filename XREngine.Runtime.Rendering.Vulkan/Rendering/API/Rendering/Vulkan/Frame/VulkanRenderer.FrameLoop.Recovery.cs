@@ -355,7 +355,8 @@ namespace XREngine.Rendering.Vulkan
             bool commandBuffersDirtiedAfterSceneRecord,
             int recordedSwapchainWriteCount,
             string rejectionStage,
-            Result? rejectedSubmitResult)
+            Result? rejectedSubmitResult,
+            ImGuiFrameSnapshot? recoveryOverlaySnapshot = null)
         {
             RejectedDesktopFramePolicyDecision policy =
                 ResolveRejectedDesktopRecoveryPolicy(
@@ -365,15 +366,15 @@ namespace XREngine.Rendering.Vulkan
                     out bool imageHasValidPresentedContent,
                     out bool acquireAvailable);
 
-            if (acquireAvailable && !_deviceLost)
-            {
-                ReleaseUnsubmittedDesktopUpload(
-                    ref attempt,
-                    "desktop frame rejected before submit");
-            }
-
             if (!policy.ShouldPresent)
             {
+                if (acquireAvailable && !_deviceLost)
+                {
+                    ReleaseUnsubmittedDesktopUpload(
+                        ref attempt,
+                        "desktop frame rejected without a legal recovery submit");
+                }
+
                 RecordRejectedDesktopSkip(
                     ref attempt,
                     in policy,
@@ -389,6 +390,7 @@ namespace XREngine.Rendering.Vulkan
             int clearedLayoutCount = ClearAllTrackedImageLayouts();
             CommandPool abortCommandPool = default;
             CommandBuffer abortCommandBuffer = default;
+            CommandBuffer recoveryOverlayCommandBuffer = default;
             bool abortSubmitted = false;
             try
             {
@@ -398,12 +400,33 @@ namespace XREngine.Rendering.Vulkan
                     imageWasEverPresented,
                     out abortCommandPool,
                     out abortCommandBuffer);
+                bool hasRecoveryOverlay =
+                    TryRecordRejectedDesktopRecoveryOverlay(
+                        ref attempt,
+                        recoveryOverlaySnapshot,
+                        abortCommandBuffer,
+                        out recoveryOverlayCommandBuffer);
+                attempt.HasImGuiOverlayCommandBuffer = hasRecoveryOverlay;
+                attempt.ImGuiOverlayCommandBuffer =
+                    hasRecoveryOverlay
+                        ? recoveryOverlayCommandBuffer
+                        : default;
+                attempt.RecoverySwapchainWriteCount =
+                    policy.ShouldClearBeforePresent || hasRecoveryOverlay
+                        ? 1
+                        : 0;
                 if (!TrySubmitRejectedDesktopAbort(
                         ref attempt,
                         abortCommandPool,
                         abortCommandBuffer,
+                        recoveryOverlayCommandBuffer,
                         ref abortSubmitted))
+                {
+                    ReleaseUnsubmittedDesktopUpload(
+                        ref attempt,
+                        "rejected desktop recovery submit failed");
                     return false;
+                }
 
                 return PresentRejectedDesktopImageAndFinalize(
                     ref attempt,
@@ -414,10 +437,21 @@ namespace XREngine.Rendering.Vulkan
                     rejectedSubmitResult,
                     commandBufferDirtyFlagSet,
                     commandBuffersDirtiedAfterSceneRecord,
-                    clearedLayoutCount);
+                    clearedLayoutCount,
+                    attempt.RecoverySwapchainWriteCount > 0);
             }
             finally
             {
+                if (!abortSubmitted &&
+                    !_deviceLost &&
+                    attempt.UploadOwnership ==
+                        EVulkanDesktopUploadOwnership.Recorded)
+                {
+                    ReleaseUnsubmittedDesktopUpload(
+                        ref attempt,
+                        "rejected desktop recovery was not submitted");
+                }
+
                 ReleaseUnsubmittedRejectedDesktopAbortCommand(
                     abortCommandPool,
                     ref abortCommandBuffer,

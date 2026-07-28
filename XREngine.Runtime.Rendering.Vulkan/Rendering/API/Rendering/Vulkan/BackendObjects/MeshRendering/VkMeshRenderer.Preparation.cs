@@ -70,7 +70,11 @@ public unsafe partial class VulkanRenderer
 			ApplyScopedProgramBindingsForPreparation(material);
 			BuildVertexInputState();
 
-			if (!TryEnsureDescriptorSetsForPreparation(material, 0, out string descriptorDetail))
+			if (!TryEnsureDescriptorSetsForPreparation(
+					material,
+					0,
+					bindingSnapshot: null,
+					out string descriptorDetail))
 				return SetPrepareResult(false, "DescriptorsPending", descriptorDetail, out reason);
 
 			return SetPrepareResult(true, "Ready", BuildPrepareSuccessDetail("Ready"), out reason);
@@ -108,7 +112,9 @@ public unsafe partial class VulkanRenderer
 			if (MeshRenderer.HasRenderDataPreparation)
 				MeshRenderer.OnPreparingRenderData();
 
-			ActivateCapturedProgram(material, preparedProgram, preparedProgramIdentity);
+			if (!ActivateCapturedProgram(material, preparedProgram, preparedProgramIdentity))
+				return SetPrepareResult(false, "ProgramsPending", "The captured Vulkan program is being relinked.", out reason);
+
 			EnsureRuntimeDeformationBuffersCurrent();
 			if (CanReuseCapturedPreparedRenderState(material, preparedProgram, preparedProgramIdentity))
 			{
@@ -116,7 +122,11 @@ public unsafe partial class VulkanRenderer
 				if (programBindingSnapshot is not null)
 					_program?.ApplyBindingSnapshot(programBindingSnapshot);
 
-				if (!TryEnsureDescriptorSetsForPreparation(material, drawUniformSlot, out string reuseDescriptorDetail))
+				if (!TryEnsureDescriptorSetsForPreparation(
+						material,
+						drawUniformSlot,
+						programBindingSnapshot,
+						out string reuseDescriptorDetail))
 					return SetPrepareResult(false, "DescriptorsPending", reuseDescriptorDetail, out reason);
 
 				return SetPrepareResult(true, "Ready", BuildPrepareSuccessDetail("Deferred"), out reason);
@@ -133,7 +143,11 @@ public unsafe partial class VulkanRenderer
 				_program?.ApplyBindingSnapshot(programBindingSnapshot);
 			BuildVertexInputState();
 
-			if (!TryEnsureDescriptorSetsForPreparation(material, drawUniformSlot, out string descriptorDetail))
+			if (!TryEnsureDescriptorSetsForPreparation(
+					material,
+					drawUniformSlot,
+					programBindingSnapshot,
+					out string descriptorDetail))
 				return SetPrepareResult(false, "DescriptorsPending", descriptorDetail, out reason);
 
 			return SetPrepareResult(true, "Ready", BuildPrepareSuccessDetail("Ready"), out reason);
@@ -171,7 +185,9 @@ public unsafe partial class VulkanRenderer
 			if (MeshRenderer.HasRenderDataPreparation)
 				MeshRenderer.OnPreparingRenderData();
 
-			ActivateCapturedProgram(material, preparedProgram, preparedProgramIdentity);
+			if (!ActivateCapturedProgram(material, preparedProgram, preparedProgramIdentity))
+				return SetPrepareResult(false, "ProgramsPending", "The captured Vulkan program is being relinked.", out reason);
+
 			EnsureRuntimeDeformationBuffersCurrent();
 			bool usesShaderGeneratedVertices = ProgramUsesShaderGeneratedVertices();
 			EnsureBuffers(usesShaderGeneratedVertices);
@@ -184,7 +200,12 @@ public unsafe partial class VulkanRenderer
 				_program?.ApplyBindingSnapshot(programBindingSnapshot);
 			BuildVertexInputState();
 
-			if (!CanReuseRecordedDescriptorSets(material, drawUniformSlot, programBindingSnapshot is not null, out string descriptorReason))
+			if (!CanReuseRecordedDescriptorSets(
+					material,
+					drawUniformSlot,
+					programBindingSnapshot is not null,
+					programBindingSnapshot,
+					out string descriptorReason))
 			{
 				// This method is an allocation-free probe used immediately before the
 				// legal prewarm fallback. A cache miss is not a failed draw and must not
@@ -197,7 +218,7 @@ public unsafe partial class VulkanRenderer
 			return SetPrepareResult(true, "Ready", BuildPrepareSuccessDetail("Reused"), out reason);
 		}
 
-		private void ActivateCapturedProgram(XRMaterial material, VkRenderProgram preparedProgram, string? preparedProgramIdentity)
+		private bool ActivateCapturedProgram(XRMaterial material, VkRenderProgram preparedProgram, string? preparedProgramIdentity)
 		{
 			string? identity = preparedProgramIdentity ?? preparedProgram.Data?.Name;
 			if (!ReferenceEquals(_program, preparedProgram) ||
@@ -218,12 +239,35 @@ public unsafe partial class VulkanRenderer
 
 			_generatedProgram = preparedProgram.Data;
 			_program = preparedProgram;
+			_program.Generate();
+			if (!_program.Link(MeshRenderer?.GenerateAsync ?? false))
+				return false;
+
+			ObserveActiveProgramLinkGeneration(_program);
+			return true;
+		}
+
+		/// <summary>
+		/// Invalidates every mesh-local object whose compatibility depends on a
+		/// program interface when that interface is rebuilt in place.
+		/// </summary>
+		private void ObserveActiveProgramLinkGeneration(VkRenderProgram program)
+		{
+			ulong linkGeneration = program.LinkGeneration;
+			if (_activeProgramLinkGeneration == linkGeneration)
+				return;
+
+			_activeProgramLinkGeneration = linkGeneration;
+			_pipelineDirty = true;
+			_descriptorDirty = true;
+			_vertexInputStateDirty = true;
 		}
 
 		private bool CanReusePreparedRenderState(XRMaterial material)
 		{
 			if (!ReferenceEquals(_lastPreparedMaterial, material) ||
 				_program is null ||
+				_activeProgramLinkGeneration != _program.LinkGeneration ||
 				_pipelineDirty ||
 				_buffersDirty ||
 				_descriptorDirty ||
@@ -281,11 +325,18 @@ public unsafe partial class VulkanRenderer
 			   _program.TryGetVertexStageInputCount(out int vertexInputCount) &&
 			   vertexInputCount == 0;
 
-		private bool TryEnsureDescriptorSetsForPreparation(XRMaterial material, int drawUniformSlot, out string detail)
+		private bool TryEnsureDescriptorSetsForPreparation(
+			XRMaterial material,
+			int drawUniformSlot,
+			ComputeDispatchSnapshot? bindingSnapshot,
+			out string detail)
 		{
 			try
 			{
-				if (EnsureDescriptorSets(material, drawUniformSlot))
+				if (EnsureDescriptorSets(
+						material,
+						drawUniformSlot,
+						bindingSnapshot: bindingSnapshot))
 				{
 					detail = string.Empty;
 					return true;

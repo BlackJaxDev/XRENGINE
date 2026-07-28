@@ -25,7 +25,7 @@ public class SpatialCoordinateConversionTests
         SpatialCoordinateSystem.Mmd.ShouldBe(RightHandedYUp);
         SpatialCoordinateSystem.OpenXR.ShouldBe(Engine);
         SpatialCoordinateSystem.OpenVR.ShouldBe(Engine);
-        SpatialCoordinateSystem.Unreal.IsLeftHanded.ShouldBeTrue();
+        SpatialCoordinateSystem.Unreal.IsRightHanded.ShouldBeTrue();
     }
 
     [Test]

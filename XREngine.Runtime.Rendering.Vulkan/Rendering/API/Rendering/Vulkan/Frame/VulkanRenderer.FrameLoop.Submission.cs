@@ -171,12 +171,6 @@ namespace XREngine.Rendering.Vulkan
             attempt.TransitionAcquireOwnership(
                 EVulkanDesktopAcquireOwnership
                     .ConsumedBySubmissionImagePendingPresent);
-            if (attempt.TextureUploadCommandBuffer.Handle != 0)
-            {
-                attempt.TransitionUploadOwnership(
-                    EVulkanDesktopUploadOwnership
-                        .SubmittedDeferredFree);
-            }
             attempt.Submitted = true;
             attempt.AdvanceTo(EDesktopFramePhase.Submitted);
             MarkFrameTimingSubmitted(
@@ -193,20 +187,10 @@ namespace XREngine.Rendering.Vulkan
                     attempt.GraphicsSignalValue;
             }
 
-            QueueRecordedTextureUploadsForTimeline(
+            CommitSubmittedDesktopTextureUpload(
+                ref attempt,
                 attempt.GraphicsSignalValue,
                 "graphics frame");
-            if (attempt.TextureUploadCommandBuffer.Handle != 0)
-            {
-                DeferSecondaryCommandBufferFree(
-                    attempt.ImageIndex,
-                    attempt.TextureUploadCommandPool,
-                    attempt.TextureUploadCommandBuffer);
-                attempt.TextureUploadCommandBuffer = default;
-                attempt.TextureUploadCommandPool = default;
-                attempt.TransitionUploadOwnership(
-                    EVulkanDesktopUploadOwnership.Retired);
-            }
 
             try
             {
@@ -268,6 +252,33 @@ namespace XREngine.Rendering.Vulkan
             }
 
             commandBuffers[commandBufferCount++] = commandBuffer;
+        }
+
+        /// <summary>
+        /// Transfers a successfully submitted texture-upload batch to timeline
+        /// publication and deferred command-buffer reclamation.
+        /// </summary>
+        private void CommitSubmittedDesktopTextureUpload(
+            ref DesktopFrameAttempt attempt,
+            ulong signalValue,
+            string uploadSource)
+        {
+            if (attempt.TextureUploadCommandBuffer.Handle == 0)
+                return;
+
+            attempt.TransitionUploadOwnership(
+                EVulkanDesktopUploadOwnership.SubmittedDeferredFree);
+            QueueRecordedTextureUploadsForTimeline(
+                signalValue,
+                uploadSource);
+            DeferSecondaryCommandBufferFree(
+                attempt.ImageIndex,
+                attempt.TextureUploadCommandPool,
+                attempt.TextureUploadCommandBuffer);
+            attempt.TextureUploadCommandBuffer = default;
+            attempt.TextureUploadCommandPool = default;
+            attempt.TransitionUploadOwnership(
+                EVulkanDesktopUploadOwnership.Retired);
         }
 
         private EDesktopFrameFlow HandleDesktopSubmitFailure(

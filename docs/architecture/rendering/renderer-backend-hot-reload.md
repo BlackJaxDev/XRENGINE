@@ -1,11 +1,16 @@
 # Renderer Backend Hot Reload
 
-Status: Implemented (2026-07-25)
+Status: shader reload and managed method-body reload are implemented. OpenGL
+collectible replacement is implemented. Vulkan collectible replacement has a
+known process-global NVIDIA Streamline defect and currently requires a full
+editor restart for structural changes (updated 2026-07-27).
 
 Renderer development has three reload levels. Shader dependency changes rebuild
 only affected programs and pipelines. Compatible method-body edits use .NET Hot
-Reload. Structural OpenGL or Vulkan edits build a new collectible backend
-generation and replace the renderer without restarting the editor.
+Reload. Structural OpenGL edits can build a new collectible backend generation
+and replace the renderer without restarting the editor. The same mechanism
+exists for Vulkan, but must not currently be used after Streamline has
+initialized; see [Current Vulkan limitation](#current-vulkan-limitation).
 
 ## Assembly and ownership boundary
 
@@ -21,6 +26,12 @@ workers, UI renderer resources, diagnostics, and backend-specific native
 integration. The leaf projects reference the stable host, never each other or
 an executable.
 
+Process-global native SDK ownership is a stricter boundary than ordinary leaf
+implementation ownership. The stable host already owns native callback
+bridges, but Streamline runtime/library state is still held by collectible
+Vulkan-generation statics. That incomplete ownership split is the current
+Level 3 Vulkan limitation.
+
 The applications have packaging references so both leaf DLLs are copied, while
 runtime creation goes through `IRendererBackendCatalog`. Production and AOT use
 static registration. Renderer-development mode may replace the registration
@@ -35,6 +46,10 @@ creation, and cooperative unload preparation. Metadata validates:
 - target framework and process architecture;
 - the complete staged-file hash set; and
 - explicit reload limitations.
+
+Factories must pass `RendererBackendCreateContext.ModuleGeneration` into the
+renderer constructor. The renderer installs that generation before creating API
+wrappers, so no wrapper can capture the previous generation identity.
 
 The loader uses one collectible `AssemblyLoadContext` and
 `AssemblyDependencyResolver` per generation. Stable engine assemblies are
@@ -63,7 +78,8 @@ completed builds remove their disposable output in `finally`.
 8. validates and registers the candidate;
 9. recreates renderers, swapchains/contexts, UI resources, and physical
    pipeline generations from stable logical state;
-10. waits for a valid frame before accepting the candidate; and
+10. waits for a backend-validated complete scene frame before accepting the
+    candidate (recovery clears and overlay-only frames do not count); and
 11. uses the same primitives to clean the candidate and restore last-good on
     failure.
 
@@ -109,13 +125,27 @@ publishes only when its source revision is current and at a legal render
 boundary. Interface changes invalidate material/reflection, descriptor,
 pipeline, transform-feedback, vertex-input, and recorded-command state.
 Replaced GPU objects retire behind the backend's in-flight-use boundary.
+Vulkan shader-module and pipeline-layout replacement first blocks new native
+graphics-pipeline jobs and drains the bounded in-flight compile. A source reload
+can therefore pause for the current driver call, but it cannot free native
+dependencies underneath `vkCreateGraphicsPipelines`.
+
+Vulkan source invalidations are batched on the render thread so a multi-stage
+program cannot observe a partially invalidated dependency set. Shader modules,
+program layouts, pipeline build requests, mesh prepared state, cached pipelines,
+pipeline libraries, and recorded-command dependency signatures carry the
+program link generation. Results compiled or recorded against an older
+generation are rejected or rebuilt even when the managed program object itself
+did not change identity.
 
 The `Watch-Editor-RendererDevelopment` task applies supported method-body
 deltas. Decline any `dotnet watch` process restart for a rude edit and use
-`Build and Reload Renderer`; structural edits are a Level 3 operation.
-Metadata-update handlers invalidate renderer caches and report which mechanism
-handled the change. Level 2 and Level 3 share the coordinator gate and cannot
-run concurrently.
+`Build and Reload Renderer`; structural edits are a Level 3 operation. For
+Vulkan, decline the process restart only for a compatible method-body edit.
+Accept a full editor restart for a structural edit until the Streamline
+limitation below is resolved. Metadata-update handlers invalidate renderer
+caches and report which mechanism handled the change. Level 2 and Level 3 share
+the coordinator gate and cannot run concurrently.
 
 ## Developer workflow
 
@@ -131,6 +161,36 @@ MCP exposes `get_renderer_reload_status`, `reload_renderer_shaders`,
 `restart_renderer`, and `build_and_reload_renderer`; ordinary authorization,
 read-only, allow-list, and deny-list policy still applies.
 
+Use this current routing matrix:
+
+| Change | Vulkan action | Process retained |
+|---|---|---|
+| GLSL, include, or generated shader source | **Reload Shaders** or `reload_renderer_shaders` | Yes |
+| Compatible C# method body | `dotnet watch` Hot Reload | Yes |
+| Recreate device, swapchain, or backend resources without changing types | **Restart Renderer** or `restart_renderer` | Yes |
+| Structural OpenGL leaf edit | **Build and Reload Renderer** | Yes |
+| Structural Vulkan leaf edit | Full editor restart | No |
+
+### Current Vulkan limitation
+
+The `build_and_reload_renderer` Vulkan path can terminate the editor with
+Windows fast-fail `0xc0000409` when a candidate collectible generation
+reinitializes NVIDIA Streamline. Each collectible generation currently owns
+independent managed Streamline state and function pointers, but
+`sl.interposer.dll` and its SDK state are process-global. Shutting down/freeing
+the old generation and initializing the candidate is therefore not yet a legal
+collectible boundary.
+
+This failure is native and cannot be rolled back by the managed replacement
+coordinator. Do not invoke structural Vulkan reload after Streamline
+initialization. The required architectural fix is a stable-host,
+process-lifetime Streamline broker (or a pre-teardown rejection that visibly
+requires an editor restart). Shader reload and same-generation Vulkan restart
+do not unload the collectible module and are the supported fast iteration paths.
+See the
+[2026-07-27 investigation](../../work/investigations/rendering/vulkan-uber-pipeline-stall-black-recovery-2026-07-27.md)
+for the crash evidence and validation captures.
+
 ## Reload limitations
 
 - `XREngine.Runtime.Rendering`, ABI, target-framework, dependency-version,
@@ -138,6 +198,9 @@ read-only, allow-list, and deny-list policy still applies.
   stable host.
 - A loaded native DLL can only be reused when its registered identity/hash is
   compatible. It is never silently replaced.
+- NVIDIA Streamline is process-global. Until its runtime ownership moves out of
+  the collectible Vulkan module, structural Vulkan replacement requires an
+  editor restart even when the native DLL hash is unchanged.
 - Mixed-backend windows are independent only when they share no process-global
   integration; same-backend windows always move as one atomic generation.
 - Active OpenXR/OpenVR blocks ordinary replacement. OpenXR has an explicit

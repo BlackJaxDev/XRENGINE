@@ -102,6 +102,7 @@ public unsafe partial class VulkanRenderer
             ulong[]? dependentCommandBuffers;
             int dependentCommandBufferCount;
             bool invalidatesRecordedCommandBuffers;
+            VulkanDescriptorUpdateInvalidation firstInvalidation;
             fixed (WriteDescriptorSet* writePtr = writes)
             {
                 lock (_vulkanResourceLifetimeLock)
@@ -126,7 +127,8 @@ public unsafe partial class VulkanRenderer
                         unchecked((uint)writes.Length),
                         writePtr,
                         out dependentCommandBuffers,
-                        out dependentCommandBufferCount);
+                        out dependentCommandBufferCount,
+                        out firstInvalidation);
                 }
             }
 
@@ -134,6 +136,7 @@ public unsafe partial class VulkanRenderer
                 invalidatesRecordedCommandBuffers,
                 dependentCommandBuffers,
                 dependentCommandBufferCount,
+                firstInvalidation,
                 "vkUpdateDescriptorSetWithTemplate");
             return true;
         }

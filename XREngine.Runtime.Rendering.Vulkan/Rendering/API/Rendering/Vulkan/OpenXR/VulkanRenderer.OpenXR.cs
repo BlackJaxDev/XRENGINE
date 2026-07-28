@@ -1159,6 +1159,7 @@ public unsafe partial class VulkanRenderer
                     frameOpContextId,
                     "openxr-eye-primary");
                 commandBuffer = variant.PrimaryCommandBuffer;
+                PrepareSubmissionMarkersForCommandBufferReuse(commandBuffer, ops);
                 if (OpenXrVulkanTraceEnabled)
                 {
                     Debug.Vulkan(
@@ -1597,7 +1598,7 @@ public unsafe partial class VulkanRenderer
         return "all-reusable";
     }
 
-    private static string ClassifyOpenXrPrimaryVariantMismatch(
+    private string ClassifyOpenXrPrimaryVariantMismatch(
         List<CommandBufferCacheVariant> variants,
         bool mirror,
         bool requiresExactFrameOps,
@@ -1657,7 +1658,7 @@ public unsafe partial class VulkanRenderer
         return mirror ? "openxr-mirror-primary-miss:unknown" : "openxr-primary-miss:unknown";
     }
 
-    private static string DescribeOpenXrPrimaryVariantMismatch(
+    private string DescribeOpenXrPrimaryVariantMismatch(
         List<CommandBufferCacheVariant> variants,
         bool requiresExactFrameOps,
         bool usingCommandChains,
@@ -2478,6 +2479,7 @@ public unsafe partial class VulkanRenderer
                     frameOpContextId,
                     "openxr-mirror-primary");
                 commandBuffer = variant.PrimaryCommandBuffer;
+                PrepareSubmissionMarkersForCommandBufferReuse(commandBuffer, ops);
                 if (OpenXrVulkanTraceEnabled)
                 {
                     Debug.Vulkan(

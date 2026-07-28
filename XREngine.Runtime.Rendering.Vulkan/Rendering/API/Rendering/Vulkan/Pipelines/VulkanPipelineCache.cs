@@ -17,6 +17,7 @@ public unsafe partial class VulkanRenderer
     private const int PipelineCacheAutoSaveCreateThreshold = 64;
     private const long PipelineCacheAutoSaveMinIntervalMs = 30_000;
     private PipelineCache _pipelineCache;
+    private PipelineCache _backgroundPipelineCache;
     private string? _pipelineCacheFilePath;
     private int _pipelineCacheCreatesSinceSave;
     private int _pipelineCacheInitialDataBytes;
@@ -28,6 +29,14 @@ public unsafe partial class VulkanRenderer
 
     internal PipelineCache ActivePipelineCache
         => _pipelineCache;
+
+    /// <summary>
+    /// A cache synchronization domain dedicated to native background compiles.
+    /// Sharing the foreground cache lets a long driver compile serialize later
+    /// render-thread pipeline creation inside the Vulkan implementation.
+    /// </summary>
+    internal PipelineCache BackgroundPipelineCache
+        => _backgroundPipelineCache;
 
     internal bool HasPersistedVulkanPipelineCacheData
         => _pipelineCache.Handle != 0 && _pipelineCacheInitialDataBytes > 0;
@@ -81,6 +90,20 @@ public unsafe partial class VulkanRenderer
                 Debug.VulkanWarning($"[Vulkan] Failed to create pipeline cache ({result}); continuing without persistent cache.");
                 return;
             }
+
+            Result backgroundResult = Api.CreatePipelineCache(
+                device,
+                ref info,
+                null,
+                out _backgroundPipelineCache);
+            if (backgroundResult != Result.Success)
+            {
+                _backgroundPipelineCache = default;
+                Debug.VulkanWarning(
+                    "[Vulkan] Failed to create isolated background pipeline cache ({0}); " +
+                    "background compiles will use no cache rather than serialize foreground creation.",
+                    backgroundResult);
+            }
         }
 
         _pipelineCacheInitialDataBytes = initialData?.Length ?? 0;
@@ -93,6 +116,36 @@ public unsafe partial class VulkanRenderer
             properties.DeviceID,
             properties.DriverVersion,
             properties.ApiVersion);
+    }
+
+    /// <summary>
+    /// Publishes pipeline-cache entries produced by the isolated compiler cache
+    /// into the foreground persistent cache after a native compile returns.
+    /// </summary>
+    internal void PublishVulkanBackgroundPipelineCache(double compileMilliseconds)
+    {
+        if (_pipelineCache.Handle == 0 || _backgroundPipelineCache.Handle == 0)
+            return;
+
+        PipelineCache source = _backgroundPipelineCache;
+        Result mergeResult = Api!.MergePipelineCaches(
+            device,
+            _pipelineCache,
+            1,
+            &source);
+        if (mergeResult != Result.Success)
+        {
+            Debug.VulkanWarning(
+                "[Vulkan] Failed to merge isolated background pipeline cache ({0}).",
+                mergeResult);
+            return;
+        }
+
+        // Expensive cold compiles are exactly the entries that must survive a
+        // forced or impatient editor exit. Fast cache hits use the existing
+        // threshold/interval policy to avoid repeated large disk writes.
+        if (compileMilliseconds >= 1_000.0)
+            QueueVulkanPipelineCacheAutoSave();
     }
 
     internal Result CreateGraphicsPipelineWithCachePolicy(
@@ -291,12 +344,35 @@ public unsafe partial class VulkanRenderer
     {
         SaveVulkanPipelinePrewarmDatabase();
 
-        if (_pipelineCache.Handle == 0)
-            return;
+        if (_pipelineCache.Handle != 0 && _backgroundPipelineCache.Handle != 0)
+        {
+            PipelineCache source = _backgroundPipelineCache;
+            Result mergeResult = Api!.MergePipelineCaches(
+                device,
+                _pipelineCache,
+                1,
+                &source);
+            if (mergeResult != Result.Success)
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] Final background pipeline cache merge failed ({0}).",
+                    mergeResult);
+            }
+        }
 
-        SaveVulkanPipelineCache();
-        Api!.DestroyPipelineCache(device, _pipelineCache, null);
-        _pipelineCache = default;
+        if (_backgroundPipelineCache.Handle != 0)
+        {
+            Api!.DestroyPipelineCache(device, _backgroundPipelineCache, null);
+            _backgroundPipelineCache = default;
+        }
+
+        if (_pipelineCache.Handle != 0)
+        {
+            SaveVulkanPipelineCache();
+            Api!.DestroyPipelineCache(device, _pipelineCache, null);
+            _pipelineCache = default;
+        }
+
         _pipelineCacheInitialDataBytes = 0;
     }
 }

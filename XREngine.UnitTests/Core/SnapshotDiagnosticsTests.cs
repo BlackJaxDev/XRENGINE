@@ -12,6 +12,7 @@ using XREngine.Rendering.Models;
 using XREngine.Scene;
 using XREngine.Scene.Physics.Jitter2;
 using XREngine.Scene.Transforms;
+using XREngine.UnitTests.Rendering;
 
 namespace XREngine.UnitTests.Core;
 
@@ -279,16 +280,21 @@ public sealed class SnapshotDiagnosticsTests
     [NonParallelizable]
     public void WorldSnapshot_PreservesCapturedRuntimeRootsAndRemovesLaterSpawns()
     {
-        var sceneRoot = new SceneNode("Serialized Root");
-        var scene = new XRScene("Snapshot Runtime Root Scene", sceneRoot);
-        var world = new XRWorld("Snapshot Runtime Root World", scene);
-        var worldInstance = new XRWorldInstance(world, new VisualScene3D(), new JitterScene());
-        var editorRoot = new SceneNode("Editor Runtime Root");
-        worldInstance.RootNodes.Add(editorRoot);
-        XRWorldInstance.WorldInstances.Add(world, worldInstance);
+        IRuntimeShaderServices? previousShaderServices = RuntimeShaderServices.Current;
+        RuntimeShaderServices.Current = new GltfImportTestUtilities.TestRuntimeShaderServices();
+        XRWorld? world = null;
+        XRWorldInstance? worldInstance = null;
 
         try
         {
+            var sceneRoot = new SceneNode("Serialized Root");
+            var scene = new XRScene("Snapshot Runtime Root Scene", sceneRoot);
+            world = new XRWorld("Snapshot Runtime Root World", scene);
+            worldInstance = new XRWorldInstance(world, new VisualScene3D(), new JitterScene());
+            var editorRoot = new SceneNode("Editor Runtime Root");
+            worldInstance.RootNodes.Add(editorRoot);
+            XRWorldInstance.WorldInstances.Add(world, worldInstance);
+
             WorldStateSnapshot snapshot = WorldStateSnapshot.Capture(world)!;
             var spawnedRoot = new SceneNode("Play Spawned Root");
             worldInstance.RootNodes.Add(spawnedRoot);
@@ -303,8 +309,11 @@ public sealed class SnapshotDiagnosticsTests
         }
         finally
         {
-            XRWorldInstance.WorldInstances.Remove(world);
-            worldInstance.TargetWorld = null;
+            if (world is not null)
+                XRWorldInstance.WorldInstances.Remove(world);
+            if (worldInstance is not null)
+                worldInstance.TargetWorld = null;
+            RuntimeShaderServices.Current = previousShaderServices;
         }
     }
 

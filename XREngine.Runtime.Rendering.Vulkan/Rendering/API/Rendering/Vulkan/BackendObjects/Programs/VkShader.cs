@@ -601,6 +601,11 @@ public unsafe partial class VulkanRenderer
         }
 
         private void DestroyShaderResources()
+            => Renderer.ExecuteWithVulkanPipelineCompilationQuiesced(
+                DestroyShaderResourcesAfterPipelineCompileDrain,
+                $"shader module mutation for '{SourceLabel}'");
+
+        private void DestroyShaderResourcesAfterPipelineCompileDrain()
         {
             if (_shaderModule.Handle != 0)
             {
@@ -681,7 +686,21 @@ public unsafe partial class VulkanRenderer
 
         private void Invalidate()
         {
-            DestroyShaderResources();
+            // Source dependency notifications can originate on the MCP/file-watcher
+            // thread. Keep module teardown and the owning-program invalidation in one
+            // render-thread transaction so a recorder cannot observe a still-linked
+            // program after one of its shader modules has already been destroyed.
+            if (RuntimeEngine.InvokeOnMainThread(Invalidate, "VkShader.Invalidate"))
+                return;
+
+            Renderer.ExecuteWithVulkanPipelineCompilationQuiesced(
+                InvalidateAfterPipelineCompileDrain,
+                $"shader invalidation for '{SourceLabel}'");
+        }
+
+        private void InvalidateAfterPipelineCompileDrain()
+        {
+            DestroyShaderResourcesAfterPipelineCompileDrain();
             lock (_asyncCompileLock)
                 _asyncCompileTask = null;
             _descriptorBindings.Clear();

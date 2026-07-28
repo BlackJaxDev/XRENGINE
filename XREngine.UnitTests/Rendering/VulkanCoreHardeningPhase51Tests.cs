@@ -35,11 +35,33 @@ public sealed class VulkanCoreHardeningPhase51Tests
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
 
         synchronization.ShouldContain("EntrySubresources");
+        synchronization.ShouldContain("EntryStateIncomplete");
         synchronization.ShouldContain("SeedRecordedImageLayoutState(");
         synchronization.ShouldContain("ValidateOrderedCommandBufferImageStateContracts(");
         synchronization.ShouldContain("actual.ResourceGeneration != expected.ResourceGeneration");
+        synchronization.ShouldContain("HasRecordedImageEntryStateMismatch(");
+        synchronization.ShouldContain("AreRecordedImageEntryStatesCompatible(");
         imgui.ShouldContain("SeedRecordedImageLayoutState(commandBuffer, predecessorCommandBuffer)");
         dynamicText.ShouldContain("SeedRecordedImageLayoutState(commandBuffer, predecessorCommandBuffer)");
+    }
+
+    [Test]
+    public void PrimaryReuse_ValidatesOnlyTouchedImageEntryStates()
+    {
+        string synchronization = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+        string allocation = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs");
+
+        string reuseValidation = SliceBetween(
+            allocation,
+            "private bool IsCommandBufferVariantImageLayoutStateDirty(",
+            "private void LogCommandChainSecondaryInheritanceMismatch(");
+
+        reuseValidation.ShouldContain("HasRecordedImageEntryStateMismatch(variant.PrimaryCommandBuffer)");
+        reuseValidation.ShouldNotContain("variant.RecordedImageLayoutStartSignature != imageLayoutStartSignature");
+        synchronization.ShouldContain("recorded.EntrySubresources[key] = submittedState.Submitted");
+        synchronization.ShouldContain("recorded.EntryStateIncomplete = true");
     }
 
     [Test]

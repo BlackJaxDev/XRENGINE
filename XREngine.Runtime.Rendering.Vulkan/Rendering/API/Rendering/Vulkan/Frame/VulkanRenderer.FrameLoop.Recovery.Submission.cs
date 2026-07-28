@@ -10,9 +10,25 @@ namespace XREngine.Rendering.Vulkan
             ref DesktopFrameAttempt attempt,
             CommandPool commandPool,
             CommandBuffer commandBuffer,
+            CommandBuffer overlayCommandBuffer,
             ref bool submitted)
         {
-            CommandBuffer submittedCommandBuffer = commandBuffer;
+            CommandBuffer* submittedCommandBuffers =
+                stackalloc CommandBuffer[3];
+            uint submittedCommandBufferCount = 0;
+            if (attempt.TextureUploadCommandBuffer.Handle != 0)
+            {
+                submittedCommandBuffers[submittedCommandBufferCount++] =
+                    attempt.TextureUploadCommandBuffer;
+            }
+
+            submittedCommandBuffers[submittedCommandBufferCount++] =
+                commandBuffer;
+            if (overlayCommandBuffer.Handle != 0)
+            {
+                submittedCommandBuffers[submittedCommandBufferCount++] =
+                    overlayCommandBuffer;
+            }
             ulong signalValue = Math.Max(
                 _graphicsTimelineValue + 1,
                 attempt.AcquireTimelineValue + 1);
@@ -25,8 +41,8 @@ namespace XREngine.Rendering.Vulkan
                     attempt.AcquireSemaphore,
                     signalValue,
                     attempt.PresentSemaphore,
-                    &submittedCommandBuffer,
-                    1);
+                    submittedCommandBuffers,
+                    submittedCommandBufferCount);
             }
 
             attempt.Timing.AcquireBridgeSubmit +=
@@ -69,6 +85,10 @@ namespace XREngine.Rendering.Vulkan
                     signalValue;
             }
 
+            CommitSubmittedDesktopTextureUpload(
+                ref attempt,
+                signalValue,
+                "rejected desktop recovery frame");
             DeferSecondaryCommandBufferFree(
                 attempt.ImageIndex,
                 commandPool,

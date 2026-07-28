@@ -7,11 +7,13 @@ internal sealed class RendererBackendTestFactory(IRuntimeRendererHost renderer) 
     public int CreateCount { get; private set; }
 
     public IRuntimeRenderWindowHost? LastWindow { get; private set; }
+    public long LastModuleGeneration { get; private set; }
 
     public IRuntimeRendererHost Create(in RendererBackendCreateContext context)
     {
         CreateCount++;
         LastWindow = context.Window;
+        LastModuleGeneration = context.ModuleGeneration;
         return renderer;
     }
 }

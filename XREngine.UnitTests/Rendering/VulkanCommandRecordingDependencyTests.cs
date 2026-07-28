@@ -291,6 +291,30 @@ public sealed class VulkanCommandRecordingDependencyTests
     }
 
     [Test]
+    public void PrimaryVariantCache_PreservesCleanRotatingOutputAttachments()
+    {
+        CommandRecordingDependencyMismatch attachmentMismatch = new(
+            CommandRecordingDependencyField.OutputPassAttachment,
+            CommandRecordingInvalidationClass.Structural);
+        CommandRecordingDependencyMismatch pipelineMismatch = new(
+            CommandRecordingDependencyField.PipelineGeneration,
+            CommandRecordingInvalidationClass.Structural);
+
+        VulkanRenderer.ShouldPreserveCleanVariantForAttachmentMismatch(
+                variantDirty: false,
+                attachmentMismatch)
+            .ShouldBeTrue();
+        VulkanRenderer.ShouldPreserveCleanVariantForAttachmentMismatch(
+                variantDirty: true,
+                attachmentMismatch)
+            .ShouldBeFalse();
+        VulkanRenderer.ShouldPreserveCleanVariantForAttachmentMismatch(
+                variantDirty: false,
+                pipelineMismatch)
+            .ShouldBeFalse();
+    }
+
+    [Test]
     public void CommandChainUniformSlotSignature_TracksOrderedBakedOffsets()
     {
         int[] baseline = [4, 8, 12, 16];
@@ -481,6 +505,25 @@ public sealed class VulkanCommandRecordingDependencyTests
         recording.ShouldContain("descriptor contents changed without UPDATE_AFTER_BIND");
         allocation.ShouldContain("ContainsCommandBufferHandle(");
         allocation.ShouldNotContain("HashSet<ulong> dependentHandles = new");
+    }
+
+    [Test]
+    public void CapturedDrawBindings_SelectImmutableDescriptorAllocationVariants()
+    {
+        string descriptors = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs");
+        string drawing = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
+
+		descriptors.ShouldContain("ComputeDispatchSnapshot? bindingSnapshot = null");
+		descriptors.ShouldContain("resourcesCapturedByFrameSignature &&\n\t\t\t\tbindingSnapshot is null &&");
+		descriptors.ShouldContain("usesSharedMaterialTier,\n\t\t\t\tbindingSnapshot);");
+        descriptors.ShouldContain("resourceFingerprint,\n\t\t\t\tbindingSnapshot,");
+        descriptors.ShouldContain("out int imageStart,\n\t\t\tComputeDispatchSnapshot? bindingSnapshot = null)");
+        descriptors.ShouldContain("i,\n\t\t\t\t\t\tbindingSnapshot))");
+        drawing.ShouldContain("EnsureDescriptorSets(material, drawUniformSlot, imageIndex, draw.ProgramBindingSnapshot)");
+        drawing.ShouldContain("EnsureDescriptorSets(material, drawUniformSlot, frameIndex, draw.ProgramBindingSnapshot)");
+        drawing.ShouldContain("frameIndex,\n\t\t\t\tdraw.ProgramBindingSnapshot,\n\t\t\t\tout string descriptorReason)");
     }
 
     [TestCase(0UL, 1UL, 256UL)]

@@ -486,7 +486,6 @@ namespace XREngine.Rendering.Vulkan
         private static void AddSubmissionMarkerSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, SubmissionMarkerOp marker)
         {
             HashCode hash = new();
-            hash.Add(marker.Fence.GetHashCode());
             hash.Add(marker.Label, StringComparer.Ordinal);
             AddSignaturePart(parts, opIndex, opType, "submissionMarker", hash, $"label='{marker.Label}'");
         }

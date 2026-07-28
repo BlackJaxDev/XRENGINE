@@ -1556,6 +1556,17 @@ namespace XREngine.Rendering
                 return false;
             }
 
+            bool retirementBegan = TryRendererCleanupStep(
+                renderer,
+                reason,
+                "BeginBackendRetirement",
+                renderer.BeginBackendRetirement);
+            if (!retirementBegan)
+            {
+                renderer.AbandonShutdownTeardown();
+                return false;
+            }
+
             TryPrepareOpenXrForRendererTeardown(renderer, reason);
 
             if (waitForGpu)
@@ -1622,7 +1633,6 @@ namespace XREngine.Rendering
 
             _rendererRecreationInProgress = true;
             AbstractRenderer retiring = _renderer;
-            retiring.BeginBackendRetirement();
             if (ReferenceEquals(AbstractRenderer.Current, retiring))
                 AbstractRenderer.Current = null;
 

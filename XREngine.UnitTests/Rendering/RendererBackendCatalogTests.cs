@@ -136,6 +136,30 @@ public sealed class RendererBackendCatalogTests
     }
 
     [Test]
+    public void CreateRequired_RejectsFactoryThatDoesNotPropagateModuleGeneration()
+    {
+        using RendererBackendCatalog catalog = new();
+        RendererBackendTestFactory factory = new(
+            CreateProxy<IRuntimeRendererHost, RendererBackendTestProxy>());
+        using IDisposable lease = catalog.Register(
+            CreateRegistration(
+                RendererBackendId.Vulkan,
+                factory: factory,
+                generation: 7));
+
+        InvalidOperationException exception = Should.Throw<InvalidOperationException>(
+            () => catalog.CreateRequired(
+                RuntimeGraphicsApiKind.Vulkan,
+                new RendererBackendCreateContext(
+                    CreateProxy<IRuntimeRenderWindowHost, RendererBackendTestProxy>())));
+
+        exception.Message.ShouldContain(nameof(RendererBackendCreateContext.ModuleGeneration));
+        exception.Message.ShouldContain("generation 0");
+        exception.Message.ShouldContain("generation is 7");
+        factory.LastModuleGeneration.ShouldBe(7);
+    }
+
+    [Test]
     public void CatalogDispose_TearsDownEveryModuleOnce()
     {
         RendererBackendCatalog catalog = new();
@@ -176,7 +200,8 @@ public sealed class RendererBackendCatalogTests
         RendererBackendId id,
         RendererBackendCapabilities capabilities = RendererBackendCapabilities.None,
         IRendererBackendFactory? factory = null,
-        IRendererBackendLifecycle? lifecycle = null)
+        IRendererBackendLifecycle? lifecycle = null,
+        long generation = 0)
         => new(
             new RendererBackendMetadata(
                 id,
@@ -186,7 +211,8 @@ public sealed class RendererBackendCatalogTests
                 $"Test {id}",
                 new Version(1, 0),
                 capabilities,
-                RendererBackendReloadLimitations.None),
+                RendererBackendReloadLimitations.None,
+                generation: generation),
             factory ?? new RendererBackendTestFactory(CreateProxy<IRuntimeRendererHost, RendererBackendTestProxy>()),
             lifecycle);
 

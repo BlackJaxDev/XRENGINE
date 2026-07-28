@@ -13,6 +13,7 @@ public unsafe partial class VulkanRenderer
             DynamicRenderingFormatSignature DynamicRenderingFormats,
             PrimitiveTopology Topology,
             ulong ProgramPipelineHash,
+            ulong ProgramLinkGeneration,
             ulong VertexLayoutHash,
             ulong DescriptorLayoutHash,
             ulong FeatureProfileHash,

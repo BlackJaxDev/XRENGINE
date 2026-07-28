@@ -356,8 +356,12 @@ public sealed class VulkanDesktopPlanStabilityTests
         recovery.ShouldContain("ActiveLastActiveFrameOpContext");
         recovery.ShouldContain("RecordPhase524bInjectedDesktopRejection(");
         recovery.ShouldContain("ConsumedByRecoveryImagePendingPresent");
-        recovery.IndexOf("ReleaseUnsubmittedDesktopUpload", StringComparison.Ordinal)
-            .ShouldBeLessThan(recovery.IndexOf("if (!policy.ShouldPresent)", StringComparison.Ordinal));
+        recovery.ShouldContain(
+            "desktop frame rejected without a legal recovery submit");
+        recovery.ShouldContain(
+            "CommitSubmittedDesktopTextureUpload(");
+        recovery.ShouldContain(
+            "attempt.TextureUploadCommandBuffer");
         swapchain.ShouldContain("_swapchainImageHasValidPresentedContent = new bool[imageCount];");
         swapchain.ShouldContain("_swapchainImageHasValidPresentedContent = null;");
     }
@@ -372,7 +376,9 @@ public sealed class VulkanDesktopPlanStabilityTests
             ReadWorkspaceFile(
                 "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recovery.Policy.cs"),
             ReadWorkspaceFile(
-                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recovery.Recording.cs"));
+                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recovery.Recording.cs"),
+            ReadWorkspaceFile(
+                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recovery.Submission.cs"));
         string policy = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.DesktopPresentationPolicy.cs");
 
@@ -382,6 +388,9 @@ public sealed class VulkanDesktopPlanStabilityTests
         recoverySource.ShouldContain(".PresentInitializationClear");
         recoverySource.ShouldContain("policy.ShouldClearBeforePresent");
         recoverySource.ShouldContain("CmdClearColorImageTracked");
+        recoverySource.ShouldContain("TryRecordRejectedDesktopRecoveryOverlay");
+        recoverySource.ShouldContain("submittedCommandBufferCount");
+        recoverySource.ShouldContain("new(0.06f, 0.015f, 0.08f, 1.0f)");
         policy.ShouldContain("DeferredInitializationClear");
         policy.ShouldContain("public bool ShouldClearBeforePresent");
         recoverySource.ShouldNotContain("TryRecreateSwapchainNow(\"Command buffer recording deferred");

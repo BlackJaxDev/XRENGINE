@@ -13,6 +13,7 @@ public unsafe partial class VulkanRenderer
             ulong RenderPassHandle,
             DynamicRenderingFormatSignature DynamicRenderingFormats,
             ulong ProgramPipelineHash,
+            ulong ProgramLinkGeneration,
             ulong VertexLayoutHash,
             ulong DescriptorLayoutHash,
             ulong PassMetadataHash,
@@ -45,6 +46,7 @@ public unsafe partial class VulkanRenderer
                    RenderPassHandle == other.RenderPassHandle &&
                    DynamicRenderingFormats.Equals(other.DynamicRenderingFormats) &&
                    ProgramPipelineHash == other.ProgramPipelineHash &&
+                   ProgramLinkGeneration == other.ProgramLinkGeneration &&
                    VertexLayoutHash == other.VertexLayoutHash &&
                    DescriptorLayoutHash == other.DescriptorLayoutHash &&
                    PassMetadataHash == other.PassMetadataHash &&
@@ -79,6 +81,7 @@ public unsafe partial class VulkanRenderer
                 hash.Add(RenderPassHandle);
                 hash.Add(DynamicRenderingFormats);
                 hash.Add(ProgramPipelineHash);
+                hash.Add(ProgramLinkGeneration);
                 hash.Add(VertexLayoutHash);
                 hash.Add(DescriptorLayoutHash);
                 hash.Add(PassMetadataHash);

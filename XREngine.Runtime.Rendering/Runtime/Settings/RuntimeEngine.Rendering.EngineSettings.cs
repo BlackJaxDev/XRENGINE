@@ -171,6 +171,7 @@ public static partial class RuntimeEngine
                 /// Whether to enable frame logging for performance profiling.
                 /// </summary>
                 [Category("Debug")]
+                [DefaultValue(true)]
                 [Description("Whether to enable frame logging for performance profiling.")]
                 public bool EnableFrameLogging
                 {

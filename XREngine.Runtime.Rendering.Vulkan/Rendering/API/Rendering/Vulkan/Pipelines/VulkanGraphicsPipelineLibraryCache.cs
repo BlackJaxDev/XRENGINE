@@ -7,25 +7,46 @@ namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     private readonly Dictionary<VkMeshRenderer.GraphicsPipelineLibraryKey, Pipeline> _sharedGraphicsPipelineLibraries = new();
+    private readonly HashSet<VkMeshRenderer.GraphicsPipelineLibraryKey> _sharedGraphicsPipelineLibraryCreations = new();
     private readonly object _sharedGraphicsPipelineLibraryLock = new();
 
-    internal bool TryGetSharedGraphicsPipelineLibrary(
+    /// <summary>
+    /// Returns an existing shared library or reserves its key for exactly one creator.
+    /// A caller that does not receive the reservation must defer instead of entering
+    /// the Vulkan driver for the same library concurrently.
+    /// </summary>
+    internal bool TryGetOrReserveSharedGraphicsPipelineLibrary(
         in VkMeshRenderer.GraphicsPipelineLibraryKey key,
-        out Pipeline library)
+        out Pipeline library,
+        out bool creationReserved)
     {
         lock (_sharedGraphicsPipelineLibraryLock)
-            return _sharedGraphicsPipelineLibraries.TryGetValue(key, out library) && library.Handle != 0;
+        {
+            if (_sharedGraphicsPipelineLibraries.TryGetValue(key, out library) &&
+                library.Handle != 0)
+            {
+                creationReserved = false;
+                return true;
+            }
+
+            creationReserved = _sharedGraphicsPipelineLibraryCreations.Add(key);
+            return false;
+        }
     }
 
-    internal Pipeline StoreSharedGraphicsPipelineLibrary(
+    internal Pipeline CompleteSharedGraphicsPipelineLibraryCreation(
         in VkMeshRenderer.GraphicsPipelineLibraryKey key,
         Pipeline library)
     {
         if (library.Handle == 0)
+        {
+            CancelSharedGraphicsPipelineLibraryCreation(key);
             return library;
+        }
 
         lock (_sharedGraphicsPipelineLibraryLock)
         {
+            _sharedGraphicsPipelineLibraryCreations.Remove(key);
             if (_sharedGraphicsPipelineLibraries.TryGetValue(key, out Pipeline existing) &&
                 existing.Handle != 0)
             {
@@ -37,11 +58,19 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    internal void CancelSharedGraphicsPipelineLibraryCreation(
+        in VkMeshRenderer.GraphicsPipelineLibraryKey key)
+    {
+        lock (_sharedGraphicsPipelineLibraryLock)
+            _sharedGraphicsPipelineLibraryCreations.Remove(key);
+    }
+
     private void DestroySharedGraphicsPipelineLibraries()
     {
         Pipeline[] libraries;
         lock (_sharedGraphicsPipelineLibraryLock)
         {
+            _sharedGraphicsPipelineLibraryCreations.Clear();
             if (_sharedGraphicsPipelineLibraries.Count == 0)
                 return;
 
