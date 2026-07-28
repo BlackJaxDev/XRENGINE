@@ -1,0 +1,24 @@
+fileFormatVersion: 2
+guid: 50000000000000000000000000000005
+TextureImporter:
+  serializedVersion: 13
+  mipmaps:
+    enableMipMap: 1
+    sRGBTexture: 0
+  bumpmap:
+    convertToNormalMap: 1
+    normalMapFilter: 1
+    flipGreenChannel: 1
+  textureSettings:
+    serializedVersion: 2
+    filterMode: 2
+    aniso: 8
+    mipBias: -0.5
+    wrapU: 2
+    wrapV: 1
+    wrapW: 0
+  alphaSource: 1
+  alphaIsTransparency: 1
+  textureType: 1
+  textureShape: 4
+  legacyUnknownTextureSetting: preserve-me

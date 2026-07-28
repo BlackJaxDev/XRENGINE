@@ -91,10 +91,9 @@ public sealed class PoiyomiVisualPerformanceTests
         string todo = File.ReadAllText(PoiyomiParityCorpusTests.FindRepositoryFile(
             "docs", "work", "todo", "rendering", "poiyomi-toon-93-parity-checklist.md"));
         todo.ShouldContain("Use RenderDoc for pass/resource discrepancies");
-        Directory.Exists(Path.Combine(
-            Path.GetDirectoryName(PoiyomiParityCorpusTests.FindRepositoryFile("XRENGINE.slnx"))!,
-            "Build",
-            "_AgentValidation")).ShouldBeTrue();
+        string fixturePolicy = File.ReadAllText(PoiyomiParityCorpusTests.FindRepositoryFile(
+            "XREngine.UnitTests", "TestData", "Poiyomi", "README.md"));
+        fixturePolicy.ShouldContain("Build/_AgentValidation/");
     }
 
     [Test]
