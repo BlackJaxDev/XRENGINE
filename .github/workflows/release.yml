@@ -33,7 +33,7 @@ jobs:
 
     steps:
       - name: Checkout repository and submodules
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           lfs: true
           submodules: recursive
@@ -51,7 +51,7 @@ jobs:
           }
 
       - name: Set up .NET 10
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "10.0.x"
 
@@ -71,7 +71,7 @@ jobs:
           "DOCS_ARCHIVE=$archive" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Upload DocFX site
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: xrengine-docs-${{ github.sha }}
           path: ${{ env.DOCS_ARCHIVE }}
@@ -85,7 +85,7 @@ jobs:
 
     steps:
       - name: Checkout tagged source and submodules
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           lfs: true
           submodules: recursive
@@ -111,7 +111,7 @@ jobs:
           "RELEASE_VERSION=$($Matches.version)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Set up .NET 10
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "10.0.x"
 
@@ -156,7 +156,7 @@ jobs:
           "RELEASE_ASSET_ROOT=$archiveRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Upload packaged applications
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-binaries-${{ github.ref_name }}
           path: ${{ env.RELEASE_ASSET_ROOT }}/*.zip
@@ -175,13 +175,13 @@ jobs:
 
     steps:
       - name: Download DocFX site
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: xrengine-docs-${{ github.sha }}
           path: artifacts/docs
 
       - name: Download packaged applications
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-binaries-${{ github.ref_name }}
           path: artifacts/applications
