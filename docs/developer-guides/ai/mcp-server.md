@@ -112,7 +112,7 @@ http://localhost:5467/mcp/
 To use the XREngine MCP server with GitHub Copilot in VS Code, add the server configuration to your MCP settings:
 
 1. Open VS Code Settings (`Ctrl+,`)
-2. Search for "mcp" 
+2. Search for "mcp"
 3. Click "Edit in settings.json" under **Github > Copilot > Chat: Mcp Servers**
 4. Add the XREngine server configuration:
 
@@ -796,4 +796,5 @@ public static Task<McpToolResponse> MyNewToolAsync(
 
 ## License
 
-See the main project [LICENSE](../../../LICENSE) file for licensing information.
+See the project [legal guide](../../../LEGAL/README.md) for licensing
+information.

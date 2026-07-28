@@ -5,6 +5,8 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Architecture](architecture/README.md): engine internals, subsystem boundaries, lifecycle, data flow, invariants, and design tradeoffs.
 - [Developer Guides](developer-guides/README.md): code-facing guides for implemented features, extension points, diagnostics, tests, and implementation references.
 - [User Guide](user-guide/README.md): surface-level engine concepts, editor-facing settings, workflows, and common usage.
+- [Legal and Licensing](../LEGAL/README.md): license terms, commercial
+  information, contribution terms, and release guidance.
 - [Work Docs](work/README.md): active design docs, TODOs, audits, testing notes, and historical implementation plans.
 
 ## Architecture

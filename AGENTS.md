@@ -41,6 +41,9 @@ XRENGINE is a Windows-first C# XR engine and editor. It has not shipped v1, so t
 - `.vscode/tasks.json` / `.vscode/launch.json` - canonical local run/debug orchestration.
 - `ExecTool.bat` - interactive launcher for scripts under `Tools/`.
 - `docs/` - architecture, API guides, rendering notes, backlog/design docs.
+- `LICENSE.md` - controlling XRENGINE Community Source License.
+- `LEGAL/` - commercial information, contributor agreement,
+  engine/application boundary guidance, and release guidance.
 - `docs/architecture/rendering/default-render-pipeline-notes.md` - DefaultRenderPipeline invariants and known issues.
 - `docs/architecture/rendering/mesh-submission-strategies.md` - CPU/GPU mesh submission strategy contract and resolver rules.
 - `docs/features/mcp-server.md` - MCP server documentation.
@@ -284,7 +287,7 @@ Ask for approval before:
 - Large build/release/deployment script changes.
 - Changes likely to break editor/server/client launch flows.
 
-Dependency license rule: every NuGet package or submodule must permit open-source and commercial use. GPL/AGPL are acceptable only for engine-owned code or isolated linking models; LGPL must remain dynamically linked or otherwise isolated.
+Dependency license rule: every NuGet package or submodule must permit use under both the XRENGINE Community Source License and commercial distributions. Do not assume the custom community license is GPL/AGPL-compatible; GPL/AGPL dependencies require an isolated process/aggregation boundary, a separate compatible license, or owner review. LGPL dependencies must remain dynamically linked or otherwise isolated.
 
 After adding, upgrading, or replacing a dependency:
 
@@ -295,6 +298,42 @@ pwsh Tools/Generate-Dependencies.ps1
 Then review and include updated `docs/DEPENDENCIES.md` and `docs/licenses/`. Do not merge unknown or incompatible licenses; escalate for owner review.
 
 Repository-managed native/tooling dependencies include CoACD scripts, MagicPhysX interop binaries, Rive native DLL submodule flow, optional `yt-dlp`, optional nvCOMP/CUDA binaries, and optional NVIDIA SDK binaries under `ThirdParty/NVIDIA/SDK/win-x64/`. Do not silently change these supply paths.
+
+## Project Licensing
+
+- XRENGINE uses a custom source-available Community Source License, not an
+  OSI-approved open-source license. Do not describe the current repository
+  license as MIT, LGPL, GPL, AGPL, or simply "open source." The controlling
+  terms are in the root `LICENSE.md`.
+- Transaction-free applications may keep Independent Application Code closed,
+  but their distributed or externally deployed Engine Modifications must be
+  public. Use `LEGAL/README.md` to classify code.
+- Any Monetization requires a signed Commercial License. Private Engine
+  Modifications require a separate signed Private Engine Modification License,
+  even for a non-monetized application. Neither agreement grants the other;
+  users needing both permissions must request both contracts. There is no
+  public order form; direct users to `blackjax0@gmail.com`.
+- While XRENGINE is pre-v1, all Indie and Enterprise financial terms,
+  eligibility thresholds, fees, royalties, reporting terms, and contract
+  duration are negotiated privately. Do not publish numeric commercial terms.
+- Do not change licensing scope, pricing, thresholds, required notices,
+  contributor grants, or commercial terms as a drive-by edit. Treat those
+  as owner-reviewed legal and business policy.
+- Do not merge an external contribution until `LEGAL/CONTRIBUTING.md` is
+  accepted and the Owner has retained the acceptance record. Disclose material
+  AI assistance and verify the submitter can grant the required rights.
+  Individual acceptance uses the submitting GitHub account and pull-request
+  checkbox; never require a contributor to publish a legal name in a pull
+  request. Handle any additional verification privately.
+- Historical GPLv3 and AGPLv3 releases remain under their original terms. Do
+  not imply that relicensing revoked permissions in earlier releases. The
+  Community Source License is additionally offered for covered code dating
+  back to 12 June 2023, but it imposes no retroactive obligations or liability
+  for conduct before 27 July 2026.
+- The maintainer’s primary online username is `BlackJax`; `BlackJaxVR`,
+  `BlackJaxDev`, `Jax`, and `BlackJax96` are aliases for the same person. Do
+  not treat those names as separate contributors. BlackJax represents the
+  company identified in the controlling license and signed agreements.
 
 ## Docs And Work Items
 
