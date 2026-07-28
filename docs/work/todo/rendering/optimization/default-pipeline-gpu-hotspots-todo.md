@@ -1,9 +1,14 @@
 # Default Pipeline GPU Hotspots TODO
 
-Last Updated: 2026-07-01
+Last Updated: 2026-07-28
 Owner: Rendering
-Status: Proposed
-Target Branch: `rendering-default-pipeline-gpu-hotspots`
+Status: Technical Child Of Workstream 06; VR-Only Acceptance Remains Cross-Cutting
+Execution: Desktop subset uses the active workstream 06 branch/worktree; any
+later VR-only branch requires separate approval.
+
+Parent tracker:
+
+- [06 - Forward+ Prepass And Render-Graph Cost](06-forward-prepass-and-render-graph-cost-todo.md)
 
 Evidence source:
 
@@ -19,9 +24,31 @@ Related local docs:
 
 ## Goal
 
-Reduce the real GPU cost of the default pipeline after CPU render-thread
-blocking is separated out. The current GPU hotspots are not the cause of
-200 ms frames, but they are still too expensive for VR budgets.
+Reduce the real shader and quality-profile GPU cost of the minimal default
+pipeline after workstream 06 establishes which passes, producers, consumers,
+copies, and resolves are actually required. The current GPU hotspots are not
+the cause of 200 ms frames, but they are still too expensive for VR budgets.
+
+## Ownership Boundary
+
+Workstream 06 exclusively owns current Default-pipeline graph topology:
+prepass and velocity geometry replays, attachment lifetimes and aliases,
+full-resolution copies/resolves, transitions/barriers, and removal of hidden
+producer or consumer passes.
+
+This child tracker retains:
+
+- AO shader resolution, sample-count, denoise, and quality tuning;
+- exposure algorithm and policy tuning after required execution is known;
+- LightCombine/clustered-light shader cost and GBuffer format analysis;
+- bloom, TSR, motion-blur, and post-process quality profiles;
+- desktop, editor, and VR quality defaults plus pass-level quality metadata.
+
+Do not independently redesign graph topology here. Record topology findings in
+workstream 06, then measure shader and quality changes against its accepted
+minimal graph. The desktop subset executes as part of workstream 06 and cannot
+be used as a later parallel performance track. VR-only completion remains
+governed by the independent VR performance contract.
 
 ## Issue
 
@@ -54,8 +81,9 @@ implementations.
 ## Fix Direction
 
 - Treat GPU optimization as a second-stage effort after CPU/sync attribution is
-  clean. Do not tune shaders based on a run where the render thread is still
-  spending hundreds of milliseconds.
+  clean and workstream 06's pass/resource ledger is accepted. Do not tune
+  shaders based on a run where the render thread is still spending hundreds of
+  milliseconds.
 - Add quality profiles for desktop, editor, and VR:
   AO mode/resolution, auto exposure policy, bloom, TSR, motion blur, and
   light-combine quality.
@@ -63,8 +91,8 @@ implementations.
   should be opt-in or dynamically quality-scaled for XR.
 - Optimize GTAO:
   half/quarter resolution where acceptable, tighter denoise radius, lower slice
-  or step count in VR, view-array-aware sampling, and no redundant resolve
-  passes.
+  or step count in VR, and view-array-aware sampling. Redundant resolve removal
+  belongs to workstream 06.
 - Optimize or bypass auto exposure:
   do not run the compute pass when the active VR exposure policy skips or
   cannot consume the result; support stereo-array input correctly when used.
@@ -94,7 +122,10 @@ on DEBUG builds no longer include validation-layer CPU cost by default.
 
 ## Phase 0 - Clean GPU Baseline
 
-- [ ] Create dedicated branch `rendering-default-pipeline-gpu-hotspots`.
+- [ ] Execute the required desktop subset inside workstream 06; do not create a
+  competing desktop performance branch.
+- [ ] Confirm workstream 06 has an accepted pass/resource ledger and record the
+  exact graph revision used by this child tracker.
 - [ ] Re-capture GPU pipeline dumps after disabling profiler UI and diagnostic
   logging overhead.
 - [ ] Capture desktop mono, OpenXR stereo, and mirror-off VR modes separately.
@@ -114,8 +145,8 @@ Acceptance criteria:
 - [ ] Add a VR performance quality profile for AO, exposure, bloom, TSR, and
   post-processing.
 - [ ] Ensure auto exposure does not run when the active policy skips the result.
-- [ ] Ensure disabled effects do not leave full-screen resolve or copy passes
-  active.
+- [ ] Verify workstream 06 removes disabled effects' producers, resolves, and
+  copies; retain only quality-policy and shader-side skip logic here.
 - [ ] Add diagnostics for effect enabled/disabled state and skip reason.
 
 Acceptance criteria:
@@ -128,8 +159,8 @@ Acceptance criteria:
 - [ ] Validate GTAO resolution divisor and denoise settings in VR.
 - [ ] Add half-resolution or quarter-resolution GTAO modes with explicit
   upsample/resolve policy.
-- [ ] Avoid redundant AO intermediate copies where the render graph can alias or
-  combine passes safely.
+- [ ] Feed redundant AO intermediate-copy or aliasing findings into workstream
+  06; benchmark AO kernels only after its graph decision is applied.
 - [ ] Add a debug view comparing AO quality/perf modes.
 
 Acceptance criteria:

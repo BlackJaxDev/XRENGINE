@@ -1,9 +1,16 @@
 # GPU-Driven Occlusion Culling Architecture TODO
 
-Last Updated: 2026-07-20
+Last Updated: 2026-07-28
 Owner: Rendering
-Status: Active supporting tracker for Vulkan Core Hardening Phase 5.2B/5.2C
+Status: Active child architecture tracker for
+[07 - Occlusion Systems Performance](../optimization/07-occlusion-systems-performance-todo.md)
 Execution: Current worktree only; do not create or switch branches for this effort.
+
+Ownership: this document owns persistent GPU visibility, two-phase Hi-Z,
+BVH/meshlet integration, and stereo architecture. Workstream 07 owns execution
+order, comparative performance evidence, production/diagnostic disposition,
+and any default-enable or promotion decision. Completing this architecture
+tracker does not waive the workstream 07 exit gate.
 
 Research sources:
 
@@ -19,9 +26,9 @@ Related local docs:
 - [Frame Lifecycle And Dispatch Paths](../../../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
 - [Mesh Submission Strategies](../../../../architecture/rendering/mesh-submission-strategies.md)
 - [Default Render Pipeline Notes](../../../../architecture/rendering/default-render-pipeline-notes.md)
-- [GPU Meshlet Zero-Readback Rendering Design](../../design/rendering/gpu-meshlet-zero-readback-rendering-design.md)
-- [Render Submission Perf Debug Plan](../../design/rendering/render-submission-perf-debug-plan.md)
-- [CPU Async Hardware Query Occlusion TODO](../optimization/cpu-async-hardware-query-occlusion-todo.md)
+- [GPU Meshlet Zero-Readback Rendering Design](../../../design/rendering/gpu-meshlet-zero-readback-rendering-design.md)
+- [Render Submission Perf Debug Plan](../../../design/rendering/render-submission-perf-debug-plan.md)
+- [CPU Async Hardware Query Occlusion TODO](../../COMPLETED/cpu-async-hardware-query-occlusion-todo.md)
 - [Masked Software Occlusion Culling TODO](../masked-software-occlusion-culling-todo.md)
 - [Production Rendering Pipeline Roadmap](production-rendering-pipeline-roadmap.md)
 
@@ -321,10 +328,12 @@ Acceptance criteria:
 - [ ] RenderDoc: capture one frame per phase milestone; export pyramid mips
   and phase-2 append buffers; verify barrier placement matches the Phase-1
   contract doc.
-- [ ] Perf gates vs. Phase-0 baseline in the high-occlusion scene:
-  - [ ] GPU cull+occlusion time ≤ baseline GpuHiZ refine time + 15%.
-  - [ ] Total draws reduced in occluded viewpoints (target ≥ 30% fewer than
-    frustum-only).
+- [ ] Publish implementation evidence vs. the Phase-0 high-occlusion baseline;
+  these child metrics do not replace workstream 07's end-to-end promotion gate:
+  - [ ] GPU cull+occlusion time meets the stage budget assigned by
+    workstream 07.
+  - [ ] Report the actual draw reduction in occluded viewpoints without using
+    a fixed reduction percentage as a substitute for net frame-time benefit.
   - [ ] Zero CPU readback bytes per frame in zero-readback modes
     (`Stats.GpuReadback`).
 - [ ] Canonical command-reuse counters show zero warmed primary rerecords caused

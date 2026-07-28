@@ -10,7 +10,7 @@ Owner: Rendering
 - [Deferred+ Render Path Design](deferred-plus-render-path-design.md)
 - [Deferred+ Render Path TODO](../../todo/rendering/optimization/deferred-plus-render-path-todo.md)
 - [Retinal Visibility Cache Rendering Design](retinal-visibility-cache-rendering-design.md)
-- [Retinal Visibility Cache Rendering TODO](../../todo/rendering/vr/retinal-visibility-cache-rendering-todo.md)
+- [Retinal Visibility Cache Rendering Validation Plan](../../testing/rendering/retinal-visibility-cache-rendering-todo.md)
 - [Dynamic Indirect Material Bindings](dynamic-indirect-material-bindings.md)
 - [GPU Meshlet Zero-Readback Rendering Design](gpu-meshlet-zero-readback-rendering-design.md)
 - [Material Binding Policy](../../../architecture/rendering/material-binding-policy.md)

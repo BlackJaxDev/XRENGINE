@@ -1,12 +1,19 @@
 # Masked Software Occlusion Culling Remaining Todos
 
-Last Updated: 2026-05-29
+Last Updated: 2026-07-28
 Owner: Rendering
-Status: Scalar implementation is in place and opt-in. Selector/budget
+Status: Child implementation/correctness tracker for
+[07 - Occlusion Systems Performance](optimization/07-occlusion-systems-performance-todo.md).
+Scalar implementation is in place and opt-in. Selector/budget
 hardening, stereo-safe buffers, material rejection coverage, and scalar hot-loop
 cleanup are implemented. Remaining work is viewport texture presentation,
-runtime smoke/scene validation, optional AVX2 specialization, and promotion.
+runtime smoke/scene validation, and optional AVX2 specialization.
 Target Branch: `rendering-masked-software-occlusion`
+
+Ownership: this document owns selector/rasterizer implementation, scalar/SIMD
+parity, visualization, and mono/stereo correctness. Workstream 07 exclusively
+owns comparative performance acceptance and the production, default,
+diagnostic-only, or retired disposition.
 
 Design sources:
 
@@ -167,22 +174,21 @@ rendering-stat namespace imports in `Engine.Rendering.Stats*.cs`.
    - Add at least one stereo/OpenVR smoke capture before any default-enable
      decision.
 
-7. Harden promotion documentation.
-   - Update user-facing settings docs if SOC becomes recommended for any
-     workflow.
-   - Document when to enable SOC if it remains opt-in.
+7. Harden disposition documentation.
+   - Update user-facing settings docs only after workstream 07 records the
+     mode disposition.
+   - Document when to enable SOC if workstream 07 retains it as opt-in.
    - Keep the setting and env kill switches prominent.
    - Record known limitations for unsupported occluder classes, stereo before
      per-eye buffers, and non-meshlet GPU indirect zero-readback.
 
-8. Make the promotion decision.
+8. Supply evidence to the workstream 07 disposition decision.
    - Review false-occlusion risk, false-visible rate, CPU cost, and launch-flow
      smoke results.
-   - Decide whether `CpuSoftwareOcclusion` can become the recommended/default
-     CPU direct occlusion mode.
-   - If promoted, update settings docs, editor labels, troubleshooting notes,
-     and release/PR notes.
-   - If not promoted, document recommended opt-in scenarios and limits.
+   - Publish selector, rasterizer, AABB-test, and total end-to-end timings to
+     workstream 07; tested/cull counts alone are insufficient.
+   - Apply the disposition selected by workstream 07 to settings docs, editor
+     labels, troubleshooting notes, and release/PR notes.
    - Re-run runtime, editor, targeted tests, rendering-adjacent tests, and
      chosen smoke captures before merge.
 
@@ -196,8 +202,8 @@ rendering-stat namespace imports in `Engine.Rendering.Stats*.cs`.
   scope unless a future compute-cull SSBO visibility mask is implemented.
 - No known render hot-path allocations, locks, GPU readbacks, or GPU buffer
   builds occur in SOC testing for the implemented scalar path.
-- SOC remains disabled by default until the promotion decision explicitly
-  changes that.
+- SOC remains disabled by default unless workstream 07's full promotion gate
+  explicitly changes that.
 - Hardware CPU-query behavior is preserved when SOC is disabled.
 - Selected occluders bypass self-occlusion via `StableQueryKey`.
 - Masked, transparent, skinned, and deformed content are not occluders by

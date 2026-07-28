@@ -1,9 +1,21 @@
 # VR Rendering Performance Contract TODO
 
-Last Updated: 2026-05-29
+Last Updated: 2026-07-28
 Owner: Rendering / XR
 Status: Active
 Target Branch: `rendering-vr-performance-contract`
+
+Cross-cutting relationship:
+
+- This tracker is an independent acceptance overlay across every renderer
+  strategy. It is not a child phase of the Default pipeline, Deferred+, or any
+  one backend.
+- [06 - Forward+ Prepass And Render-Graph Cost](06-forward-prepass-and-render-graph-cost-todo.md)
+  owns current Default-pipeline prepass/copy/replay topology; this tracker owns
+  whether that resulting graph satisfies whole-frame XR budgets and per-eye
+  correctness.
+- [Deferred+ Render Path](deferred-plus-render-path-todo.md) owns Deferred+
+  implementation; its stereo and headset claims must satisfy this contract.
 
 Design source:
 
@@ -20,6 +32,13 @@ Renderer paths should report the active stereo mode, benchmark against the
 whole submitted XR frame budget, produce correct depth and motion vectors, and
 avoid hidden two-pass stereo regressions.
 
+For the Vulkan RVC production lane with `GpuIndirectZeroReadback`, the minimum
+promotion target is 120 Hz, or 8.33 ms p95 for the complete frame. The measured
+workload must contain at least one desktop render plus both RVC eye renders.
+This is one whole-frame budget, not an allowance per eye or per render, and it
+applies whether foveation is disabled or enabled. The separate desktop-only
+promotion target is at least 200 Hz, or 5.00 ms p95.
+
 ## Scope
 
 - Whole-frame XR frame budgets.
@@ -29,6 +48,8 @@ avoid hidden two-pass stereo regressions.
 - VRS/foveation integration.
 - Reprojection-friendly depth and velocity.
 - VR benchmarking and diagnostics.
+- Cross-render-path acceptance for current Deferred/Forward+, Deferred+,
+  visibility-producing, CPU-direct, indirect, meshlet, and fallback paths.
 
 ## Non-Goals
 
@@ -41,12 +62,17 @@ avoid hidden two-pass stereo regressions.
 ## Phase 0 - Branch, Baseline, And Runtime Matrix
 
 - [ ] Create dedicated branch `rendering-vr-performance-contract`.
+- [ ] Record the active render-path tracker and graph revision for every
+  capture, including workstream 06's accepted Default graph or the selected
+  Deferred+ mode.
 - [ ] Inventory active VR paths: OpenVR, OpenXR, no-HMD/Monado test lane, editor
   stereo, and desktop mono mirror.
 - [ ] Record which backends support `GL_OVR_multiview2`, Vulkan multiview,
   DX12 view instancing, or instanced stereo fallback.
 - [ ] Capture current frame budgets and measured timings for 72 Hz, 90 Hz, and
   120 Hz target modes where hardware/runtime is available.
+- [ ] Include the Vulkan RVC zero-readback promotion workload with at least
+  three executed renders per frame: desktop, left eye, and right eye.
 - [ ] Add profile manifest fields for XR runtime, HMD, refresh rate, render
   resolution, stereo path, foveation/VRS state, and reprojection state.
 
@@ -169,6 +195,8 @@ Acceptance criteria:
 
 - [ ] Standardize VR benchmark scenes and camera paths.
 - [ ] Report whole-frame budget, not per-eye budget, in all benchmark notes.
+- [ ] Require Vulkan RVC `GpuIndirectZeroReadback` p95 <= 8.33 ms for the
+  complete minimum-three-render frame in both supported foveation states.
 - [ ] Include serial two-pass eye-slice estimate only as a warning for naive
   two-pass paths.
 - [ ] Disable validation layers, synchronous debug output, and debug callbacks

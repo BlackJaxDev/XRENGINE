@@ -1,7 +1,9 @@
 # Shadow Atlas Allocation Efficiency And Off-Render-Thread Solve TODO
 
-Status: implementation complete, validation follow-ups pending, created
-2026-07-02. Analysis of `ShadowAtlasManager` allocation strategy,
+Status: child implementation tracker for
+[08 - Render Tail Latency](../optimization/08-render-tail-latency-shadows-streaming-jobs-todo.md);
+implementation complete and validation follow-ups pending. Created 2026-07-02,
+updated 2026-07-28. Analysis of `ShadowAtlasManager` allocation strategy,
 hot-game-loop cost, and thread placement.
 Branch: skipped by explicit request; implementation was done in the current
 worktree without creating `rendering/shadow-atlas-plan-execute-split`.
@@ -10,6 +12,12 @@ Goal: allocate shadow map tiles with minimal per-frame latency and memory
 overhead, and move every CPU-side allocation/solve/publish step off the render
 thread. The render thread should only execute an already-frozen tile render
 plan.
+
+Ownership: this document owns the persistent allocator and
+collect/SwapBuffers/render plan-execute architecture. Workstream 08 owns the
+measured render-thread budget and final acceptance. Its remaining validation is
+a workstream 08 Phase 1 prerequisite; archive this tracker after that evidence
+is accepted.
 
 Primary code:
 

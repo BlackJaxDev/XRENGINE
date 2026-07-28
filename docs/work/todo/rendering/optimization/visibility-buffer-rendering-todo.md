@@ -1,9 +1,37 @@
 # Visibility Buffer Rendering TODO
 
-Last Updated: 2026-05-29
+Last Updated: 2026-07-28
 Owner: Rendering
-Status: Active
-Target Branch: `rendering-visibility-buffer`
+Status: Superseded By Deferred+ Render Path TODO
+Historical Target Branch: `rendering-visibility-buffer` (do not create;
+implementation moved to Deferred+)
+
+> **Consolidated 2026-07-28:** This tracker is retained as historical design
+> and checklist provenance. Its active implementation requirements now live in
+> [Deferred+ Render Path TODO](deferred-plus-render-path-todo.md). Do not execute
+> this file as an independent branch plan or mark its historical checkboxes
+> complete.
+
+## Supersession Map
+
+| Historical visibility-buffer scope | Canonical Deferred+ phase |
+| --- | --- |
+| Payload, resources, lifetime, selection | Phase 2 - Deferred+ Resource Layout And Selection |
+| Traditional, indirect, meshlet, and cluster geometry producers | Phase 3 - Visibility Geometry Pass |
+| Tile/froxel classification, subgroup fallback, overflow | Phase 4 - Froxel And Material Classification |
+| Attribute reconstruction, derivatives, MikkTSpace | Phase 5 - Attribute Reconstruction And Derivatives |
+| Material-table compatibility shading | Phase 6 - Compatibility Material Resolve |
+| Native material-region compute/graphics shading | Phase 7 - Native Material-Region Shading |
+| Strategy integration, editor identity, diagnostics, fallbacks | Phases 2, 3, 8, and 9 |
+| Motion vectors, multiview, per-eye resources, upscaler contract | Phase 10 plus the independent [VR Rendering Performance Contract](vr-rendering-performance-contract-todo.md) |
+
+Unique requirements from this historical tracker were deliberately preserved
+in Deferred+: traditional-mesh bring-up must not depend on cluster avatars;
+CPU-direct, indirect, meshlet, cluster, and virtual-geometry producers share
+one payload; subgroup classification has a bounded fallback; editor selection
+identity remains reconstructable; tangent reconstruction follows MikkTSpace;
+and VR diagnostics report per-eye visibility, material work, velocity coverage,
+and fallback mode.
 
 Design source:
 
@@ -39,7 +67,7 @@ opaque virtual geometry viable without CPU binding fan-out.
 
 ## Phase 0 - Branch, Baseline, And Contract
 
-- [ ] Create dedicated branch `rendering-visibility-buffer`.
+- [ ] Historical item; branch creation is superseded by Deferred+.
 - [ ] Define initial target scenes: material-diverse avatar, dense static
   opaque scene, and mixed fallback scene.
 - [ ] Capture forward/deferred reference images and profiler captures for each

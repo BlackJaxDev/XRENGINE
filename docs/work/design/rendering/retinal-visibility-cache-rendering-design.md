@@ -7,7 +7,7 @@ Scope: advanced quad-view foveated VR rendering for opaque geometry, shared ligh
 ## Related Docs
 
 - [OpenXR VR Rendering](../../../architecture/rendering/openxr-vr-rendering.md)
-- [Retinal Visibility Cache Rendering TODO](../../todo/rendering/vr/retinal-visibility-cache-rendering-todo.md)
+- [Retinal Visibility Cache Rendering Validation Plan](../../testing/rendering/retinal-visibility-cache-rendering-todo.md)
 - [OpenXR Future Work TODO](../../todo/rendering/vr/openxr-future-work-todo.md)
 - [Engine Rendering Optimization Design](engine-optimization-and-avatar-optimizer-design.md)
 - [GPU Meshlet Zero-Readback Rendering Design](gpu-meshlet-zero-readback-rendering-design.md)

@@ -1,9 +1,28 @@
 # Vulkan Primary Command Recording Fast Path TODO
 
-Last Updated: 2026-07-20
+Last Updated: 2026-07-28
 Owner: Rendering / Vulkan
-Status: Active supporting tracker for Vulkan Core Hardening Phase 5.2A-5.2C
+Status: Superseded By Workstreams 01, 02, 04, And 05
 Execution: Current worktree only; do not create or switch branches for this effort.
+
+## Canonical Ownership
+
+This broad tracker is retained for its original evidence and design rationale,
+but it no longer has independent completion authority:
+
+- measurement, attribution, allocations, and actual-encoding counters belong to
+  [01 - Vulkan Performance Truth And Regression Gates](01-vulkan-performance-truth-and-regression-gates-todo.md);
+- primary dependency, image-state, invalidation, and stable-range reuse belong
+  to [02 - Vulkan Primary Reuse Correctness](02-vulkan-primary-reuse-correctness-todo.md);
+- immutable pre-resolved planning and render-thread work removal belong to
+  [04 - Next-Frame Preparation And Collect-Visible Handoff](04-next-frame-preparation-and-collect-visible-handoff-todo.md);
+- production secondary recording workers belong to
+  [05 - Vulkan Command Recording Worker Architecture](05-vulkan-command-recording-worker-architecture-todo.md).
+
+Backend-neutral upload arenas, constant publication, state sorting, and warmup
+remain in [CPU Direct Fast Path](cpu-direct-fast-path-todo.md). Do not mark this
+legacy umbrella complete independently; migrate newly discovered live work to
+its canonical owner.
 
 Evidence source:
 

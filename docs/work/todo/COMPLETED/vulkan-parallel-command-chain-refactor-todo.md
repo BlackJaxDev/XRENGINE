@@ -1,10 +1,22 @@
 # Vulkan Parallel Command Chain Refactor TODO
 
-Last Updated: 2026-06-21
+Last Updated: 2026-07-28
 Owner: Rendering
 Status: Complete - Phase 14 validation passed; command-chain path remains feature-flagged
 Target Branch: `vulkan-parallel-command-chain-refactor`
 Design Doc: `docs/work/design/rendering/vulkan-parallel-command-chain-refactor-design.md`
+
+## Successor And Canonical Ownership
+
+This document records the completed packet/chain migration and its historical
+validation. It does not claim that production worker recording is enabled,
+lock-free, or measurably parallel. That work is owned by
+[05 - Vulkan Command Recording Worker Architecture](../rendering/optimization/05-vulkan-command-recording-worker-architecture-todo.md).
+
+The successor must preserve this tracker's primary-owned secondary lifetime,
+chain-key ownership, dynamic-rendering inheritance, signature, volatility,
+ordering, and visual-validation contracts. Do not reopen or erase the completed
+migration evidence; do not use it as proof that workstream 05 has passed.
 
 ## Purpose
 

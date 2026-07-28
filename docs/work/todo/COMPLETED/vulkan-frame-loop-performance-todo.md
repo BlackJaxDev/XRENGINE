@@ -1,9 +1,22 @@
 # Vulkan Frame Loop Performance Testing
 
-Last Updated: 2026-06-18
+Last Updated: 2026-07-28
 Owner: Rendering
-Status: Testing Guide
+Status: Historical Testing Guide; Current Measurement Authority Is Workstream 01
 Target Branch: `vulkan-frame-loop-performance`
+
+## Successor And Canonical Ownership
+
+This document preserves the June frame-loop evidence, visual regression
+checklists, and historical investigation backlog. Current stage definitions,
+benchmark manifests, counter correctness, and performance gates are owned by
+[01 - Vulkan Performance Truth And Regression Gates](../rendering/optimization/01-vulkan-performance-truth-and-regression-gates-todo.md).
+
+Open items below are historical routing inputs, not a competing active
+performance program. Route command reuse to workstream 02, production
+zero-readback to workstream 03, handoff preparation to workstream 04, worker
+recording to workstream 05, and pass/occlusion/streaming issues to their
+numbered successor workstreams or investigations.
 
 ## Purpose
 

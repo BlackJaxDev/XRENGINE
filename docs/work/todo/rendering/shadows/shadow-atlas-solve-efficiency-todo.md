@@ -1,7 +1,9 @@
 # Shadow Atlas Solve Efficiency TODO
 
-Status: code implementation complete, live benchmark/merge follow-up pending,
-created 2026-06-12, updated 2026-06-12.
+Status: child implementation tracker for
+[08 - Render Tail Latency](../optimization/08-render-tail-latency-shadows-streaming-jobs-todo.md);
+code implementation complete, live benchmark/merge follow-up pending. Created
+2026-06-12, updated 2026-07-28.
 Branch: `rendering/shadow-atlas-solve-efficiency` (create before Phase 1, merge
 to `main` after Phase 5 validation).
 
@@ -10,6 +12,12 @@ cost without weakening the v1 shadow-atlas contract. The immediate symptom is a
 single solve taking tens of milliseconds in the Unit Testing World while render
 thread logs also show directional cascade fallback and shadow tile budget
 overruns.
+
+Ownership: this document owns solver retry, grouping, allocation data
+structures, and its narrow validation ledger. Workstream 08 owns the
+directional-shadow frame budget, tail-latency acceptance, and final promotion
+gate. Archive this tracker after its remaining benchmark evidence is recorded
+under workstream 08.
 
 Primary files:
 

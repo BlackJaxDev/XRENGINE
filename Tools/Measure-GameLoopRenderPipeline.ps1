@@ -188,12 +188,20 @@ function Get-RunLogDir {
         [switch]$AllowFallback
     )
 
-    $logsRoot = Join-Path $repoRoot 'Build\Logs'
-    if (-not (Test-Path -LiteralPath $logsRoot)) {
+    $logsRoots = [System.Collections.Generic.List[string]]::new()
+    $editorSessionRoot = [Environment]::GetEnvironmentVariable('XRE_EDITOR_SESSION_ROOT', 'Process')
+    if (-not [string]::IsNullOrWhiteSpace($editorSessionRoot)) {
+        $logsRoots.Add((Join-Path ([System.IO.Path]::GetFullPath($editorSessionRoot)) 'logs'))
+    }
+    $logsRoots.Add((Join-Path $repoRoot 'Build\Logs'))
+
+    $existingLogsRoots = @($logsRoots | Where-Object { Test-Path -LiteralPath $_ })
+    if ($existingLogsRoots.Count -eq 0) {
         return $null
     }
 
-    $match = Get-ChildItem -LiteralPath $logsRoot -Recurse -Directory -ErrorAction SilentlyContinue |
+    $match = $existingLogsRoots |
+        ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -Directory -ErrorAction SilentlyContinue } |
         Where-Object { $_.Name -match "pid$EditorProcessId$" } |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
@@ -203,7 +211,8 @@ function Get-RunLogDir {
     }
 
     if ($AllowFallback) {
-        $latest = Get-ChildItem -LiteralPath $logsRoot -Recurse -Directory -ErrorAction SilentlyContinue |
+        $latest = $existingLogsRoots |
+            ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -Directory -ErrorAction SilentlyContinue } |
             Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
 

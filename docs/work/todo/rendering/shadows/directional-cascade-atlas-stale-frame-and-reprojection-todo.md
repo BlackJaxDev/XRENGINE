@@ -1,6 +1,14 @@
 # Directional Cascade Atlas Stale Frame And Reprojection TODO
 
-Status: active, created 2026-07-02.
+Status: active child correctness/temporal tracker for
+[08 - Render Tail Latency](../optimization/08-render-tail-latency-shadows-streaming-jobs-todo.md);
+created 2026-07-02, updated 2026-07-28.
+
+Ownership: this document owns stale-frame correctness, cascade slot provenance,
+atomic publication, shader reprojection, and physical-atlas reuse experiments.
+Workstream 08 owns directional-update performance budgets, comparative
+camera-motion evidence, and the final desktop 200+ Hz and Vulkan RVC
+zero-readback 120 Hz promotion gates.
 
 Latest update 2026-07-02: framerate is stable. The latest user report ruled out
 the arbitrary camera/exposure frame-count hold and exposed a separate black

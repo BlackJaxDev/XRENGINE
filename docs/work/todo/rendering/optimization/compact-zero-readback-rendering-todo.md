@@ -1,9 +1,26 @@
 # Compact Zero-Readback Rendering TODO
 
-Last Updated: 2026-07-20
+Last Updated: 2026-07-28
 Owner: Rendering
-Status: Active supporting tracker for Vulkan Core Hardening Phase 5.2B
+Status: Split Technical Child Of Workstreams 03 And 07
 Execution: Current worktree only; do not create or switch branches for this effort.
+
+## Canonical Ownership
+
+This document remains the technical implementation child for active-list
+compaction, overflow, Hi-Z, barrier batching, indirect-count submission, and
+delayed diagnostics.
+
+- [03 - True GPU-Driven Zero-Readback Submission](03-vulkan-true-zero-readback-submission-todo.md)
+  owns Phases 0-3 and 5-7 plus the production zero-readback completion gate.
+- [07 - Occlusion Systems Performance](07-occlusion-systems-performance-todo.md)
+  owns Phase 4, Hi-Z effectiveness, and any production promotion decision.
+
+Do not promote this child independently. Do not begin Phase 4 while executing
+workstream 03; it remains blocked until workstream 07 opens. The other
+applicable phase evidence is consumed by workstream 03 after
+[02 - Vulkan Primary Reuse Correctness](02-vulkan-primary-reuse-correctness-todo.md)
+is complete.
 
 Design source:
 
@@ -11,7 +28,7 @@ Design source:
 - [Engine Rendering Optimization Design](../../../design/rendering/engine-optimization-and-avatar-optimizer-design.md)
 - [Zero-Readback GPU-Driven Rendering Plan](../../../design/rendering/zero-readback-gpu-driven-rendering-plan.md)
 - [Production GPU-Driven Rendering Roadmap](../gpu/production-rendering-pipeline-roadmap.md)
-- [Occlusion And Meshlet Execution TODO](../occlusion-and-meshlet-execution-todo.md)
+- [GPU-Driven Occlusion Culling Architecture TODO](../gpu/gpu-driven-occlusion-culling-architecture-todo.md)
 
 ## Goal
 
@@ -124,6 +141,9 @@ Acceptance criteria:
 - [ ] Overflow cannot corrupt adjacent buffers or indirect-count arguments.
 
 ## Phase 4 - One-Phase And Two-Phase Hi-Z
+
+Execution gate: this phase is owned by workstream 07 and must not begin during
+workstream 03.
 
 - [ ] Define a single render-graph contract for last-frame Hi-Z and
   current-frame Hi-Z consumers.
