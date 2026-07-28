@@ -2,7 +2,16 @@
 
 Last Updated: 2026-06-21
 Owner: Rendering
-Status: implementation complete; validation pending
+Status: historical implementation tracker. Implementation is complete; live
+performance/publication validation moved to
+[08 - Render Tail Latency](../rendering/optimization/08-render-tail-latency-shadows-streaming-jobs-todo.md)
+and feature/residency follow-up moved to the
+[Texture Runtime, Streaming, And Virtual Texturing TODO](../texturing/texture-runtime-streaming-virtual-texturing-todo.md).
+
+This document no longer owns execution or completion status. Its unchecked
+worker-preparation, transfer, descriptor-publication, dirty-scope, retirement,
+and performance items are successor requirements in workstream 08 Phase 2.
+Sparse/virtual-texture items belong to the canonical texture roadmap.
 Related:
 - [Vulkan Imported Texture Streaming TODO](vulkan-imported-texture-streaming-todo.md)
 - [Vulkan Frame Loop Performance TODO](vulkan-frame-loop-performance-todo.md)

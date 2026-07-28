@@ -1,7 +1,18 @@
 # Rendering Profiler Counter Audit
 
-Last Updated: 2026-05-29
+Last Updated: 2026-07-28
+Status: Historical Audit; Current Measurement Authority Is Workstream 01
 Branch: `rendering-profiler-benchmarking`
+
+## Canonical Ownership
+
+This pre-v2 inventory is historical evidence, not a current completion
+checklist. Current Vulkan measurement definitions and regression gates are
+owned by
+[01 - Vulkan Performance Truth And Regression Gates](01-vulkan-performance-truth-and-regression-gates-todo.md).
+The broader OpenGL, asset-attribution, shader-cache, texture-streaming, VR, and
+environment-validation gaps remain useful audit inputs until a current tracker
+or implementation evidence explicitly closes them.
 
 This audit was captured before adding the v2 profiler fields required by
 `rendering-profiler-and-benchmarking-todo.md`.

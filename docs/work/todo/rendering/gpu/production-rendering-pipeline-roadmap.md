@@ -1,7 +1,23 @@
 # Production GPU-Driven Rendering Roadmap
 
-Last Updated: 2026-07-20
-Status: Canonical production GPU-driven rendering roadmap and supporting owner for Vulkan Core Hardening Phase 5.2B/5.2C. Supersedes the retired broad `gpu-rendering.md` checklist, whose remaining work is folded into this roadmap and the dedicated meshlet design.
+Last Updated: 2026-07-28
+Status: Canonical GPU-Driven Architecture Roadmap; Vulkan Performance Promotion Delegated To Workstreams 03, 07, And 08
+
+Execution ownership:
+
+- [Workstream 03](../optimization/03-vulkan-true-zero-readback-submission-todo.md)
+  owns the ordered Vulkan zero-readback submission gate.
+- [Workstream 07](../optimization/07-occlusion-systems-performance-todo.md)
+  owns occlusion effectiveness and production promotion.
+- [Workstream 08](../optimization/08-render-tail-latency-shadows-streaming-jobs-todo.md)
+  owns render-thread upload/publication tail latency.
+- This roadmap retains the broader GPUScene, material, meshlet, LOD,
+  residency, cross-backend, and production-architecture implementation detail.
+  It does not authorize work out of the numbered 01-08 sequence.
+
+It remains the supporting architecture owner for Vulkan Core Hardening Phase
+5.2B/5.2C and supersedes the retired broad `gpu-rendering.md` checklist, whose
+remaining work is folded into this roadmap and the dedicated meshlet design.
 
 Source documents folded in:
 
@@ -231,6 +247,10 @@ Acceptance: Phase E source contracts are complete: LOD selection is projected-ra
 
 Goal: stop redoing work that did not change, and extend Hi-Z to shadows.
 
+Vulkan performance and promotion are governed by workstream 07. These items are
+architecture children and cannot bypass its scenario, correctness, or
+net-benefit exit gate.
+
 - [ ] **F1.** Static-scene short-circuit. If BVH generation id + visible command count + camera VP + active pass set are unchanged, reuse last frame's visibility list. (Internal W8; this is the safe version of the retracted P7 attempt.) Requires that the visibility-list buffer is rotated, not aliased, so the previous frame's data is still valid.
 - [ ] **F2.** Per-light shadow HZB cull pass (perf-doc C-GPU-6 backlog). One HZB per active shadow caster; mesh atlas + indirect path reused. (Internal W16.)
 - [ ] **F3.** Previous-frame depth-only occluder pass for primary view (two-pass occlusion). Standard GPU-driven pattern; eliminates first-frame popping for newly-visible occluders. (Report §"hierarchical occlusion using previous-frame depth or Hi-Z".)
@@ -243,6 +263,10 @@ Acceptance: B1 stable at >60 fps Release with HZB enabled (currently borderline 
 ### Phase G — Residency, streaming, and sparse resources
 
 Goal: bring the residency story up to the report's level without locking into Vulkan-only features prematurely.
+
+Workstream 08 owns only the Vulkan frame-tail budget for upload and publication.
+This phase retains residency, eviction, sparse-resource, and virtual-geometry
+feature ownership.
 
 - [x] **G0.** Interim on-demand mesh LOD stream-in wiring. Done 2026-07-01: `StreamMeshLodsOnDemand` (default off, host-services bridged, ImGui-exposed under "LOD Streaming") defers non-essential LOD atlas uploads at logical-mesh registration — LOD0, each command's own mesh, and already-resident levels always stay resident, so `GPURenderLODSelect.comp`'s `FindNearestLoadedMeshDataId` clamp always has valid data. `GPUScene.ServiceLodStreamingRequests()` runs after the LOD-select dispatch, drains `LODRequestBuffer` at a throttled frame interval (`MeshLodStreamingDrainIntervalFrames`), and services GPU-raised requests through `RequestLODLoad` under a per-drain budget (`MeshLodStreamingMaxLoadsPerDrain`). Covered by `LOD_StreamOnDemand_*` backlog tests. Known interim limits: stream-in only (no eviction), the drain maps the request buffer directly (bounded by the throttle, see G7), CPU-side `XRMesh` LOD data stays fully loaded (see G9), and uploads happen mid-pass outside a shared budget (see G10).
 

@@ -1,9 +1,21 @@
 # Editor Profiler And UI Render Cost TODO
 
-Last Updated: 2026-07-01
+Last Updated: 2026-07-28
 Owner: Editor / Rendering
-Status: Proposed
-Target Branch: `editor-profiler-ui-render-cost`
+Status: Proposed Technical Child Of Workstream 01
+Execution: Work required for benchmark truth uses the active workstream 01
+branch/worktree; later editor-only UX tuning may be scheduled separately.
+
+## Canonical Ownership
+
+This focused tracker owns bounded editor-profiler processing, UI virtualization,
+overlay recording cost, and self-observation diagnostics. Benchmark profiles,
+capture manifests, stage definitions, and pass/fail performance evidence are
+owned by
+[01 - Vulkan Performance Truth And Regression Gates](01-vulkan-performance-truth-and-regression-gates-todo.md).
+
+This child may reduce observer overhead, but it cannot redefine workstream 01's
+benchmark contract or independently certify a performance result.
 
 Evidence source:
 
@@ -125,7 +137,8 @@ visibility gating.
 
 ## Phase 0 - Prove UI Self-Interference
 
-- [ ] Create dedicated branch `editor-profiler-ui-render-cost`.
+- [ ] Execute the benchmark-observer subset inside workstream 01; do not create
+  a competing measurement branch.
 - [ ] Record the capture environment for every measurement: build
   configuration, whether `VkLayer_khronos_validation` is loaded (check
   `log_vulkan.log` for "Loading layer library"), and which profiler

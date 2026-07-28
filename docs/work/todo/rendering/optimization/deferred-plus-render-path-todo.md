@@ -1,14 +1,28 @@
 # Deferred+ Render Path TODO
 
-Last Updated: 2026-07-01
+Last Updated: 2026-07-28
 Owner: Rendering
 Status: Proposed
 Target Branch: `rendering-deferred-plus-render-path`
 
+Consolidation note:
+
+- The former standalone
+  [Visibility Buffer Rendering TODO](visibility-buffer-rendering-todo.md) is
+  superseded by this tracker. Its unique traditional-mesh, cluster-producer,
+  subgroup-fallback, editor-identity, MikkTSpace, and VR diagnostic
+  requirements are folded into the phases below.
+- [06 - Forward+ Prepass And Render-Graph Cost](06-forward-prepass-and-render-graph-cost-todo.md)
+  remains canonical for optimizing the current Default-pipeline graph.
+  Deferred+ is a separate future opaque render path and does not replace
+  workstream 06's exit gate.
+- [VR Rendering Performance Contract](vr-rendering-performance-contract-todo.md)
+  is the independent acceptance overlay for Deferred+ stereo or headset claims.
+
 Design source:
 
 - [Deferred+ Render Path Design](../../../design/rendering/deferred-plus-render-path-design.md)
-- [Visibility Buffer Rendering TODO](visibility-buffer-rendering-todo.md)
+- [Superseded Visibility Buffer Rendering TODO](visibility-buffer-rendering-todo.md)
 - [Material Table And Texture Binding Ladder TODO](material-table-and-texture-binding-ladder-todo.md)
 - [Clustered Light Binning And Deferred MSAA Design](../../../design/rendering/clustered-light-binning-and-deferred-msaa-design.md)
 - [Dynamic Indirect Material Bindings](../../../design/rendering/dynamic-indirect-material-bindings.md)
@@ -43,6 +57,11 @@ diagnostics are stable.
 - Meshlet, zero-readback indirect, and future virtual-geometry integration.
 - Debug views, profiler counters, RenderDoc-friendly resources, and validation
   scenes.
+- Traditional-mesh bring-up independent of cluster-virtualized avatars, with a
+  shared visibility payload for CPU-direct, indirect, meshlet, cluster, and
+  future virtual-geometry producers.
+- Correct depth, velocity, transform/editor selection identity, and explicit
+  deferred/forward fallback for unsupported material and pass classes.
 
 ## Non-Goals
 
@@ -53,6 +72,8 @@ diagnostics are stable.
   first usable Deferred+ slice.
 - Do not silently fall back from explicitly requested accelerated paths. Report
   the selected path and reason.
+- Do not delay traditional-mesh validation until cluster-virtualized avatar
+  rendering exists.
 
 ## Phase 0 - Branch, Baseline, And Contract
 
@@ -62,6 +83,8 @@ diagnostics are stable.
   `MaterialRangeStress`.
 - [ ] Capture baseline images and profiler captures for current `Deferred`,
   `ForwardPlus`, and `DeferredTexturing` where available.
+- [ ] Include a traditional-mesh dense scene, a material-diverse hero avatar,
+  and a mixed Deferred+/deferred/forward fallback scene in the baseline.
 - [ ] Record current 2D Forward+ tile-light behavior so clustered froxel
   migration can be compared against it.
 - [ ] Define `DeferredPlus` render-path enum value and mode selection policy.
@@ -116,6 +139,8 @@ Acceptance criteria:
 
 - [ ] Declare `DeferredPlusVisibility` as an integer texture with explicit
   format, dimensions, stereo policy, resize behavior, and debug name.
+- [ ] Preserve enough payload identity to resolve instance, transform/editor
+  selection, material, mesh/cluster, and primitive or local-triangle records.
 - [ ] Declare optional sidecar resources: `DeferredPlusBarycentrics`,
   `DeferredPlusUvGrad`, and `DeferredPlusNormalBasis`.
 - [ ] Declare classification resources:
@@ -125,13 +150,16 @@ Acceptance criteria:
   `DeferredPlusOverflowCounters`.
 - [ ] Add resource aliases to classic GBuffer targets when compatibility mode is
   active.
+- [ ] Declare transient lifetime and aliasing metadata that remains safe beside
+  deferred, forward, post-process, Hi-Z, and velocity resources.
 - [ ] Add render-path selection plumbing for `Disabled`, `Auto`,
   `Compatibility`, `Native`, and `Required`.
 - [ ] Fail visibly or report selected fallback when a requested Deferred+ mode
   lacks required backend features.
 - [ ] Add profile capture fields for selected Deferred+ mode, region backend,
   payload format, derivative mode, descriptor backend, texture binding rung,
-  fallback reason, and GPU timings.
+  fallback reason, active visibility-buffer frames, fallback frames, material
+  tile/region dispatch count, reconstruction time, and GPU timings.
 
 Acceptance criteria:
 
@@ -152,10 +180,13 @@ Acceptance criteria:
 - [ ] Add zero-readback indirect visibility path where active draw IDs are
   production-capable.
 - [ ] Add meshlet visibility path where backend support exists.
+- [ ] Add cluster or virtualized-avatar visibility producers only after the
+  traditional-mesh payload is proven; all producers must emit the same
+  backend-neutral payload contract.
 - [ ] Route unsupported material/pass classes to current deferred or forward
   fallback with visible counters.
-- [ ] Add debug views for visibility ID, material ID, transform ID, depth, and
-  invalid payload.
+- [ ] Add debug views for visibility ID, material ID, transform/editor
+  selection ID, depth, and invalid payload.
 
 Acceptance criteria:
 
@@ -169,6 +200,11 @@ Acceptance criteria:
 
 - [ ] Implement compute classification that reads depth and visibility and
   builds per-froxel material metadata.
+- [ ] Use subgroup ballot/scan operations where supported and provide a
+  deterministic bounded fallback for hardware without the required subgroup
+  operations.
+- [ ] Skip empty tiles, froxels, material ranges, and pixel lists without CPU
+  readback.
 - [ ] Group material work by shader compatibility first:
   `shadingKernelId + materialLayoutHash + materialStateClass`, with optional
   `MaterialId` only when needed.
@@ -186,6 +222,8 @@ Acceptance criteria:
   scoping.
 - [ ] Define and implement overflow behavior: compatibility resolve, forward
   fallback, or conservative full-tile pass with visible counter.
+- [ ] Add counters for classified pixels, active tiles/froxels, material
+  tile/region dispatches, classification overflows, and classification time.
 - [ ] Add tests for empty scene, single-material scene, mixed-material scene,
   invalid payload, material range false positives, and overflow.
 
@@ -210,6 +248,9 @@ Acceptance criteria:
 - [ ] Prefer analytical barycentric partial derivatives as the long-term path.
 - [ ] Validate hard edges, UV seams, mirrored tangents, normal map handedness,
   flat/smooth normal boundaries, and ordinary material boundaries.
+- [ ] Validate reconstructed tangent frames against the engine's MikkTSpace
+  convention after UV remap, generated optimization, skinning, and
+  blendshaping.
 - [ ] Add debug views for reconstructed UVs, gradients, normals, tangents,
   roughness, metallic, albedo, and reconstruction error.
 
@@ -235,6 +276,8 @@ Acceptance criteria:
 - [ ] Reconstruct `AlbedoOpacity`, `Normal`, and `RMSE` outputs.
 - [ ] Preserve `TransformId`, depth, and velocity inputs needed by downstream
   passes.
+- [ ] Support masked materials only after alpha coverage, discard ordering,
+  depth, and visibility-payload behavior are proven correct.
 - [ ] Keep existing deferred decals, AO, GI, clustered deferred lighting, and
   post-processing after compatibility resolve.
 - [ ] Add missing texture and nonresident texture fallback diagnostics.
@@ -261,6 +304,10 @@ Acceptance criteria:
 - [ ] Add unlit/emissive native kernel.
 - [ ] Add graphics-region backend with range-map/mask scoping for bring-up.
 - [ ] Add compute pixel-list backend for production native Deferred+.
+- [ ] Write every native-path post-process input required by the selected
+  profile, including dense velocity or an explicitly documented compatible
+  substitute; never leave depth, normal, material, or velocity inputs
+  undefined.
 - [ ] Add difference/debug view against compatibility material resolve.
 - [ ] Keep classic GBuffer reconstruction available on demand for debug or
   compatibility consumers.
@@ -281,6 +328,8 @@ Acceptance criteria:
   contract is ready.
 - [ ] Add one additional engine-owned material family after standard PBR:
   unlit, cloth, terrain, toon, or another validated family.
+- [ ] Add bounded per-instance customization/material data required by
+  material-diverse avatar paths without restoring CPU binding per material.
 - [ ] Define material metadata for required vertex attributes, derivative
   requirements, lighting model, fallback path, feature flags, and layout hash.
 - [ ] Reject unknown material uniforms as `PerMaterialRequired` or `Invalid`;
@@ -300,12 +349,16 @@ Acceptance criteria:
   available.
 - [ ] Require classic, meshlet, and virtual-geometry visibility producers to
   write the same Deferred+ payload contract.
+- [ ] Require cluster-virtualized avatar producers to write that same payload
+  contract rather than introducing a second material-classification path.
 - [ ] Require GPU-driven Deferred+ material paths to resolve descriptor heap
   indices from draw/material GPU data, not from CPU push data per indirect draw.
 - [ ] Avoid CPU readbacks for material region counts, visible cluster counts,
   and dispatch counts in production mode.
 - [ ] Add delayed-readback diagnostics only for counters and debugging.
 - [ ] Validate with material-diverse avatar and dense static scenes.
+- [ ] Preserve editor overlays, selection, gizmos, debug views, and capture
+  tooling when Deferred+ and fallback content share a frame.
 
 Acceptance criteria:
 
@@ -322,10 +375,19 @@ Acceptance criteria:
 - [ ] Add per-sample visibility or explicit edge/complex-pixel masks.
 - [ ] Add simple and complex tile lists for MSAA material shading.
 - [ ] Add stereo-array or per-eye resource declarations.
+- [ ] Run view-independent classification/material preparation once per frame
+  where possible; document and profile every producer that must run per eye.
 - [ ] Validate one froxel grid per eye unless a proven shared head-space grid is
   available.
 - [ ] Validate per-eye projection in attribute reconstruction.
 - [ ] Validate motion vectors and temporal history isolation.
+- [ ] Follow the active temporal upscaler's jitter convention exactly and add
+  coverage diagnostics for missing, NaN, or out-of-range velocity.
+- [ ] Report per-eye visibility cost, material tile/region dispatches, velocity
+  coverage, selected Deferred+ mode, and fallback reason.
+- [ ] Apply the independent
+  [VR Rendering Performance Contract](vr-rendering-performance-contract-todo.md)
+  before claiming Deferred+ stereo or headset readiness.
 
 Acceptance criteria:
 

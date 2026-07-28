@@ -1,6 +1,6 @@
 # Vulkan Core Hardening And Device-Loss TODO
 
-Last Updated: 2026-07-20
+Last Updated: 2026-07-28
 Owner: Rendering
 Status: P0 Complete; Inherited Validation Debt And Phase 5.2+ Remain Open
 Execution: Current worktree only; do not create or switch branches for this effort.
@@ -13,7 +13,9 @@ evidence are in the
 The former Vulkan frame-wide render-loop TODO has been merged into Phase 5.2 of
 this tracker. Its architectural rationale remains in the
 [Vulkan render-loop design](../../design/rendering/vulkan-render-loop-design.md);
-this file is the sole execution checklist for that work.
+this file is the product-level promotion checklist for that work. The focused
+Vulkan desktop performance implementation order is delegated to the numbered
+01-08 documents listed in Phase 5.2.
 
 ## Goal
 
@@ -228,6 +230,45 @@ Complete Phase 5.2 before Phase 6. The target data flow is:
 
 `Immutable frame snapshot + logical view set -> output requests -> compatible view families/batches -> shared visibility -> cached plans/resources -> record or reuse -> deadline-ordered submit DAG`
 
+### Ordered Vulkan Desktop 200+ Hz And RVC 120 Hz Implementation Authority
+
+The current desktop framerate investigation is executed through the following
+strictly serial workstreams:
+
+1. [Performance truth and regression gates](optimization/01-vulkan-performance-truth-and-regression-gates-todo.md)
+2. [Primary reuse correctness](optimization/02-vulkan-primary-reuse-correctness-todo.md)
+3. [True GPU-driven zero-readback submission](optimization/03-vulkan-true-zero-readback-submission-todo.md)
+4. [Next-frame preparation and collect-visible handoff](optimization/04-next-frame-preparation-and-collect-visible-handoff-todo.md)
+5. [Command-recording worker architecture](optimization/05-vulkan-command-recording-worker-architecture-todo.md)
+6. [Forward+ prepass and render-graph cost](optimization/06-forward-prepass-and-render-graph-cost-todo.md)
+7. [Occlusion systems performance](optimization/07-occlusion-systems-performance-todo.md)
+8. [Tail latency: shadows, streaming, and jobs](optimization/08-render-tail-latency-shadows-streaming-jobs-todo.md)
+
+These documents own implementation order, focused checklists, measured exit
+gates, the final 5.00 ms desktop-only promotion result, and the final 8.33 ms
+Vulkan RVC zero-readback result with at least three renders per frame. This
+Phase 5.2 section remains the canonical product-level owner for multi-output,
+XR, retirement, device-loss containment, and Phase 5.2A/5.2B/5.2C lane
+promotion.
+
+No unchecked item below authorizes work on a later numbered workstream before
+its predecessor is marked `Complete`. Duplicated implementation requirements
+below are satisfied through their numbered owner and the evidence is then
+referenced here.
+
+Ownership mapping:
+
+| Phase 5.2 concern | Numbered implementation owner |
+| --- | --- |
+| Measurement, stage attribution, allocations, waits, promotion manifests | 01 |
+| Primary state contract, invalidation, and stable reuse | 02 |
+| Compact production zero-readback and indirect submission | 03 |
+| Immutable prepared frame package and collect/render ownership | 04 |
+| Persistent safe secondary-command workers | 05 |
+| Default-pipeline prepass, copies, barriers, and GPU pass cost | 06 |
+| CPU-query, CPU-software, and GPU Hi-Z disposition | 07 |
+| Shadows, upload publication, queue waits, jobs, and final desktop/RVC gates | 08 |
+
 This phase owns output-neutral scheduling, stable identity, command reuse,
 targeted invalidation, local tracking, asynchronous retirement, the canonical
 logical-view contract, frame-scoped visibility integration, graph dataflow, and
@@ -236,23 +277,27 @@ the multi-output performance contract. Related ownership remains with the
 [dynamic-rendering migration todo](vulkan-dynamic-rendering-migration-todo.md),
 the [GPU-driven occlusion TODO](gpu/gpu-driven-occlusion-culling-architecture-todo.md),
 the [VR rendering performance contract](optimization/vr-rendering-performance-contract-todo.md),
-and [primary command-recording fast-path TODO](optimization/vulkan-primary-command-recording-fast-path-todo.md).
+the [primary-reuse workstream](optimization/02-vulkan-primary-reuse-correctness-todo.md),
+and the [worker-recording workstream](optimization/05-vulkan-command-recording-worker-architecture-todo.md).
 Those efforts must consume this same frame-view/output/plan contract and must
 not introduce a desktop-only scheduler, a second attachment identity model, or
 another independently constructed runtime view set.
 
 Phase 5.2 has three separately reported promotion gates:
 
-- **Phase 5.2A - CpuDirect production gate.** This is the current blocking gate
-  for beginning Phase 6 and owns the immediate Vulkan/OpenGL CPU-direct
-  regression boundary.
+- **Phase 5.2A - CpuDirect production gate.** This is the first production-lane
+  gate and owns the immediate Vulkan/OpenGL CPU-direct regression boundary. It
+  does not independently unblock Phase 6 during the ordered 01-08 program.
 - **Phase 5.2B - GPU indirect production gate.** This opens after the compact
   zero-readback and GPU visibility readiness checklists are complete. It owns
   instrumented-reference parity plus production zero-readback performance.
 - **Phase 5.2C - GPU meshlet production gate.** This opens only on supported
   hardware after meshlet parity/readiness is complete.
 
-Phase 6 may begin after Phase 5.2A passes while 5.2B/5.2C continue independently.
+The A/B/C labels remain separately reported production lanes, but they are not
+parallel-work authorization during the ordered performance program. Phase 6 may
+begin only after workstream 08 completes, unless the owner explicitly changes
+the numbered sequence and its exit gates.
 The entire Vulkan hardening tracker must not be marked complete until every
 supported production lane is promoted, explicitly removed from the v1 contract,
 or deferred by a recorded owner decision with replacement acceptance criteria.
@@ -260,6 +305,11 @@ An unsupported hardware lane reports `unsupported`; an unfinished lane reports
 `not ready`, never a zero-cost or passing result.
 
 ### 5.2.5 - Make Render Plans And Resource Arenas Versioned And Nonblocking
+
+Numbered ownership: primary reuse acceptance is workstream 02. Prepared
+snapshot and render-thread ownership work is workstream 04. This section keeps
+the broader resource lifetime, retirement, resize, OpenXR, and device-loss
+acceptance contract.
 
 Completed implementation has moved to the
 [completed-work record](vulkan-core-hardening-and-device-loss-completed.md).
@@ -348,6 +398,10 @@ Acceptance criteria:
 
 ### 5.2.6 - Build The Immutable Snapshot, Logical View Set, And View-Family DAG
 
+Numbered ownership: the desktop next-frame package and collect/render handoff
+are workstream 04. This section retains multi-output logical-view, XR batching,
+mirror/probe, and view-family requirements.
+
 This section is the canonical runtime contract formerly tracked by the
 frame-wide render-loop TODO. It must support mono, stereo, quad-view, desktop,
 secondary/published textures, mirrors, captures, and probes without assuming a
@@ -409,6 +463,10 @@ Acceptance criteria:
 
 ### 5.2.7 - Add A Deadline-Aware CPU/GPU Output Scheduler
 
+Numbered ownership: desktop package scheduling and ownership are workstream 04;
+tail-latency budgets and auxiliary render jobs are workstream 08. This section
+retains the multi-output and XR deadline scheduler contract.
+
 - [ ] Represent OpenXR submission, desktop present, secondary publication, and
   capture/debug completion as explicit terminal nodes. Attach priority,
   deadline, predicted/measured duration, and authorized reuse/degradation policy
@@ -468,6 +526,10 @@ Acceptance criteria:
 
 ### 5.2.8 - Decompose Submission And Remove CPU Serialization
 
+Numbered ownership: submit/wait attribution is workstream 01, worker command
+recording is workstream 05, and upload/queue/fence tail latency is workstream
+08.
+
 - [ ] Split submit telemetry into queue-lock wait, diagnostic-context build,
   image-contract validation, lifetime validation, native submit, lifetime
   publication, layout publication, and completion advancement.
@@ -503,6 +565,10 @@ Acceptance criteria:
 
 ### 5.2.9 - Remove Remaining Hot-Path Allocation And Superlinear Work
 
+Numbered ownership: measurement and allocation proof are workstream 01,
+prepared-frame data structures are workstream 04, and worker hot paths are
+workstream 05.
+
 - [ ] Remove per-FBO attachment-layout arrays, dynamic UI split arrays,
   exact-length frame-op drain arrays, image-layout snapshot arrays/sorts,
   planner registry merge arrays, and retirement-drain temporary arrays from
@@ -527,6 +593,11 @@ Acceptance criteria:
   actual draws, not total cached outputs times total scene size.
 
 ### 5.2.10 - Validation Matrix And Promotion Gate
+
+Numbered ownership: workstream 01 defines the reproducible measurement contract
+and workstream 08 owns final desktop 200+ Hz and Vulkan RVC zero-readback
+120 Hz promotion after all intermediate gates complete. This section retains
+the broader Vulkan/OpenGL, XR, multi-output, device-loss, and hardware matrix.
 
 This first matrix is the Phase 5.2A `CpuDirect` production gate and the shared
 baseline inherited by later lanes. `GpuIndirectInstrumented`,
@@ -591,6 +662,14 @@ debt and prevents whole-tracker completion under the promotion semantics above.
 - [ ] On the RTX 3090 / 0.67-scale desktop diagnostic scene, require CPU frame
   p50 <= 10 ms, p95 <= 12 ms, and p99 <= 14 ms, or approve and document a new
   workload-equivalent baseline before promotion.
+- [ ] For the canonical warm desktop-only Deferred and Uber static/moving
+  cohorts, also require the stricter workstream 08 target of render
+  p95 <= 5.00 ms. The legacy diagnostic-scene threshold above cannot waive the
+  desktop 200+ Hz gate.
+- [ ] For Vulkan `GpuIndirectZeroReadback` with RVC eye rendering, require
+  whole-frame render p95 <= 8.33 ms with at least one desktop render plus both
+  eye renders per frame. Apply the same budget with foveation disabled or
+  enabled; extra RVC views or renders do not relax it.
 - [ ] By default, require warmed Vulkan `CpuDirect` CPU p95 to remain within 10%
   of matched OpenGL `CpuDirect` p95 or beat the absolute Vulkan target above.
   Any exception requires a repeated profile that attributes the delta to named
@@ -630,21 +709,24 @@ Final acceptance criteria:
   retirement, resize, hot reload, target rotation, and device-loss injection.
 - [ ] No tested workload hides a requested accelerated path behind a CPU fallback
   or unreported quality/cadence reduction.
-- [ ] Only after all shared and Phase 5.2A acceptance criteria pass may Phase 6
-  begin. Phase 5.2B/5.2C remain independently visible promotion gates and still
-  govern whole-tracker completion.
+- [ ] Only after all numbered workstreams through 08 and their shared
+  acceptance criteria pass may Phase 6 begin. Phase 5.2A/5.2B/5.2C remain
+  separately visible lane results and still govern whole-tracker completion.
 
-Phase 5.2B/5.2C accelerated-lane promotion requirements, activated separately
-when their readiness checklists are complete:
+Phase 5.2B/5.2C accelerated-lane promotion requirements are evaluated after
+their numbered prerequisites complete. During the ordered program,
+workstream 03 owns GPU-indirect submission readiness and workstream 07 owns
+occlusion promotion:
 
 - [ ] Validate GPU indirect instrumented, GPU indirect zero-readback, and each
   supported meshlet strategy independently across mono, sequential stereo,
   parallel recording, true two-eye multiview, supported quad view, desktop
   mirror, and secondary output.
 - [ ] Require Phase 5.2B to complete the active-list, overflow, barrier batching,
-  indirect-count, delayed-diagnostics, and final-validation contracts in the
-  compact zero-readback tracker. Phase 5.2C additionally requires its meshlet
-  readiness/parity checklist on each supported hardware lane.
+  indirect-count, delayed-diagnostics, and workstream 03 validation contracts
+  in the compact zero-readback tracker. Its Hi-Z phase is separately owned by
+  workstream 07. Phase 5.2C additionally requires its meshlet readiness/parity
+  checklist on each supported hardware lane.
 - [ ] Compare disabled, temporal Hi-Z, and current-frame Hi-Z, including camera
   cuts, tracking jumps, moving occluders, and scene/BVH revisions.
 - [ ] Require exact GPU visibility to match the per-view reference collector,
@@ -671,7 +753,11 @@ when their readiness checklists are complete:
   crossover or scaling advantage in a retained high-count/occluded workload.
   If it does not, it remains correctness-ready rather than performance-promoted.
 
-Recommended implementation order:
+Historical Phase 5.2 implementation outline:
+
+The numbered 01-08 sequence above supersedes this outline for current work.
+The list remains as architectural context for the broader multi-output and XR
+program and must not be used to start work out of order.
 
 1. Stabilize deterministic resource generations and versioned graph dataflow.
 2. Publish the immutable scene snapshot and canonical live

@@ -8,7 +8,7 @@ Target Branch: `rendering-rvc-quad-view-foundation`
 This document is now the validation plan for Retinal Visibility Cache (RVC).
 Implementation scope and design rationale live in the architecture document:
 
-- [Retinal Visibility Cache Rendering](../../../../architecture/rendering/retinal-visibility-cache-rendering.md)
+- [Retinal Visibility Cache Rendering](../../../architecture/rendering/retinal-visibility-cache-rendering.md)
 
 Use this plan to prove that the implemented RVC contracts, render-graph
 resources, renderer capability hooks, OpenXR quad-view plumbing, visibility-mask
@@ -355,6 +355,13 @@ Exit evidence:
 
 Goal: prove RVC performance claims with delayed counters and profiler evidence.
 
+- [ ] Capture the Vulkan `GpuIndirectZeroReadback` promotion workload.
+  - Render at least the desktop output and both RVC eye outputs in every
+    measured frame.
+  - Run with foveation disabled and enabled wherever both are supported.
+  - Require whole-frame render p95 <= 8.33 ms; this is not a per-eye or
+    per-render budget.
+  - Additional quad/foveated views or renders do not relax the target.
 - [ ] Validate delayed GPU counter readback.
   - Evidence: no synchronous render-loop readback for RVC counters.
 - [ ] Validate per-view GPU timing.
@@ -375,6 +382,8 @@ Goal: prove RVC performance claims with delayed counters and profiler evidence.
 Exit evidence:
 
 - [ ] RVC reports complete timing and counter data.
+- [ ] The minimum-three-render Vulkan zero-readback workload sustains the
+  120 Hz whole-frame promotion budget in every supported foveation state.
 - [ ] Performance report compares RVC to foveated Forward+.
 - [ ] No performance result depends on synchronous GPU readback.
 

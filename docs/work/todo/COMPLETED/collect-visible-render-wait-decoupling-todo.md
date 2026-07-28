@@ -1,9 +1,21 @@
 # Collect-Visible Render Wait Decoupling TODO
 
-Last Updated: 2026-07-01
+Last Updated: 2026-07-28
 Owner: Rendering
 Status: Implemented through Phase 1; Phase 2 gated on a clean collect-hot capture
 Target Branch: none; implemented on current branch per user request on 2026-07-01
+
+## Successor And Canonical Ownership
+
+The completed attribution and bounded late-policy work in Phases 0-1 remains
+historical implementation evidence. Backend-ready immutable next-frame
+preparation is now owned by
+[04 - Next-Frame Preparation And Collect-Visible Handoff](../rendering/optimization/04-next-frame-preparation-and-collect-visible-handoff-todo.md).
+
+The open Phase 2 below is deferred into the successor when it concerns package
+construction or handoff, and into the occlusion performance workstream when a
+clean capture proves traversal or culling itself is hot. This completed tracker
+has no independent promotion authority.
 
 Evidence source:
 
@@ -13,13 +25,13 @@ Evidence source:
 
 Related local docs:
 
-- [Engine Rendering Optimization Roadmap](engine-rendering-optimization-roadmap.md)
-- [CPU Direct Fast Path TODO](cpu-direct-fast-path-todo.md)
+- [Engine Rendering Optimization Roadmap](../rendering/optimization/engine-rendering-optimization-roadmap.md)
+- [CPU Direct Fast Path TODO](../rendering/optimization/cpu-direct-fast-path-todo.md)
 - [CPU Async Hardware Query Occlusion TODO](cpu-async-hardware-query-occlusion-todo.md)
 - [Rendering Profiler Counter Audit](rendering-profiler-counter-audit.md)
-- [Default Pipeline GPU Hotspots TODO](default-pipeline-gpu-hotspots-todo.md)
+- [Default Pipeline GPU Hotspots TODO](../rendering/optimization/default-pipeline-gpu-hotspots-todo.md)
 - [Desktop And VR Shared Render-Thread Frame Pacing TODO](desktop-vr-shared-render-thread-frame-pacing-todo.md)
-- [Frame Lifecycle And Dispatch Paths](../../../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
+- [Frame Lifecycle And Dispatch Paths](../../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
 
 ## Goal
 

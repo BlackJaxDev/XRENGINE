@@ -1,9 +1,20 @@
 # Vulkan Desktop Frame Loop Decomposition TODO
 
-Last Updated: 2026-07-24
+Last Updated: 2026-07-28
 Owner: Rendering / Vulkan
 Status: Implementation Complete; Runtime Validation Pending
 Target Branch: `rendering-vulkan-frame-loop-decomposition`
+
+Execution ownership:
+
+- This tracker owns structural frame-lifecycle correctness and its remaining
+  runtime validation.
+- [Workstream 01](optimization/01-vulkan-performance-truth-and-regression-gates-todo.md)
+  owns current performance measurement and attribution.
+- [Workstream 04](optimization/04-next-frame-preparation-and-collect-visible-handoff-todo.md)
+  owns changes to the collect/render prepared-frame handoff.
+- The numbered workstreams must preserve this tracker's acquire, image
+  ownership, recovery, retirement, submission, and device-loss invariants.
 
 Related source:
 
@@ -25,7 +36,7 @@ Related documentation and work:
 - [Vulkan Upscale Bridge](../../../developer-guides/rendering/vulkan-upscale-bridge.md)
 - [Vulkan Core Hardening And Device-Loss TODO](vulkan-core-hardening-and-device-loss-todo.md)
 - [Vulkan Dynamic Rendering Migration TODO](vulkan-dynamic-rendering-migration-todo.md)
-- [Vulkan Primary Command Recording Fast Path TODO](optimization/vulkan-primary-command-recording-fast-path-todo.md)
+- [Vulkan Primary Reuse Correctness TODO](optimization/02-vulkan-primary-reuse-correctness-todo.md)
 - [OpenXR Vulkan Submit Fence Wait TODO](vr/openxr-vulkan-submit-fence-wait-todo.md)
 - [Vulkan Frame Loop Performance TODO](../COMPLETED/vulkan-frame-loop-performance-todo.md)
 - [Backend Renderer Folder Organization TODO](../COMPLETED/backend-renderer-folder-organization-todo.md)

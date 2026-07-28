@@ -1,17 +1,26 @@
 # Texture Runtime, Streaming, And Virtual Texturing TODO
 
-Last Updated: 2026-05-19
-Status: active phased roadmap
+Last Updated: 2026-07-28
+Status: canonical active texture residency and virtual-texturing roadmap.
+Vulkan upload/publication tail performance is governed by
+[08 - Render Tail Latency](../rendering/optimization/08-render-tail-latency-shadows-streaming-jobs-todo.md).
 Source design: [Texture Runtime, Streaming, And Virtual Texturing Design](../../design/texturing/texture-runtime-streaming-virtual-texturing-design.md)
 Compression/cache design: [Texture Compression And Cooked Texture Cache Design](../../design/texturing/texture-compression-and-cooked-cache-design.md)
 Compression/cache tracker: [Texture Compression And Cooked Texture Cache TODO](texture-compression-and-cooked-cache-todo.md)
 Validation ledger: [Texture Runtime Streaming Validation](../../testing/texture-runtime-streaming-validation.md)
 
+Ownership: this document owns residency policy, sparse/virtual texturing,
+texture metadata, compression integration, bindless texturing, and feature
+validation. Workstream 08 owns the bounded render-thread cost of Vulkan upload
+preparation/finalization, transfer and graphics queue synchronization,
+descriptor publication, retirement, and command-buffer invalidation. The
+historical Vulkan upload trackers are evidence, not parallel execution owners.
+
 Supersedes:
 
-- [Texture Streaming Consolidation TODO](texture-streaming-consolidation-todo.md)
-- [Texture Management Runtime TODO](texture-management-runtime-todo.md)
-- [Texture Streaming Cooked Cache TODO](texture-streaming-cooked-cache-todo.md)
+- [Texture Streaming Consolidation TODO](../COMPLETED/texture-streaming-consolidation-todo.md)
+- [Texture Management Runtime TODO](../COMPLETED/texture-management-runtime-todo.md)
+- [Texture Streaming Cooked Cache TODO](../COMPLETED/texture-streaming-cooked-cache-todo.md)
 
 ## Goal
 
@@ -42,7 +51,10 @@ Known current limits:
 - [ ] Cooked payloads are mip-addressable, not page-addressable.
 - [ ] Color-space and texture-role metadata are incomplete.
 - [ ] GPU-native compressed texture payloads and compressed uploads are not implemented.
-- [ ] Vulkan sparse/image-upload parity is not implemented.
+- [ ] True Vulkan sparse-image residency parity is not implemented. Dense,
+  generation-gated synchronized upload, worker preparation, transfer
+  submission, and descriptor publication exist and require final tail-latency
+  validation under workstream 08.
 - [ ] Bindless deferred texturing is design-only.
 - [ ] Neural texture compression is design-only.
 
@@ -98,6 +110,9 @@ Known current limits:
 - [ ] Confirm `TextureStreaming.FinalizeSparseTransitions` never waits for multi-second spans.
 - [ ] Confirm texture/shadow shared-budget counters explain any delayed promotion.
 - [ ] Confirm the ImGui texture streaming panel remains responsive with hundreds of tracked textures.
+- [ ] Complete workstream 08 Phase 2 before claiming Vulkan v1 streaming
+  performance closure; this includes bounded publication/finalization cost,
+  queue/fence ownership, dirty-scope containment, and warm-zero-work proof.
 
 ## Phase 2: Harden The Current Streamer
 

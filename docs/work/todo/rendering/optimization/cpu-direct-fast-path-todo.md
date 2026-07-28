@@ -1,9 +1,25 @@
 # CPU Direct Fast Path TODO
 
-Last Updated: 2026-07-20
+Last Updated: 2026-07-28
 Owner: Rendering
-Status: Active supporting tracker for Vulkan Core Hardening Phase 5.2A
+Status: Technical Child Of Workstreams 01, 02, And 04
 Execution: Current worktree only; do not create or switch branches for this effort.
+
+## Canonical Ownership
+
+This remains the backend-neutral technical child for CPU-direct constants,
+dirty-range uploads, persistent mapped arenas, state sorting/caching, and
+warmup. It does not independently own Vulkan measurement or primary reuse:
+
+- baselines, trustworthy counters, and regression gates are owned by
+  [01 - Vulkan Performance Truth And Regression Gates](01-vulkan-performance-truth-and-regression-gates-todo.md);
+- Vulkan primary reuse and invalidation are owned by
+  [02 - Vulkan Primary Reuse Correctness](02-vulkan-primary-reuse-correctness-todo.md);
+- backend-ready collect-side preparation is owned by
+  [04 - Next-Frame Preparation And Collect-Visible Handoff](04-next-frame-preparation-and-collect-visible-handoff-todo.md).
+
+Complete this child through the canonical workstream and Phase 5.2A gates, not
+as a separate promotion claim.
 
 Design source:
 
@@ -16,11 +32,13 @@ Design source:
 
 Related todos (overlap guard):
 
-- [Vulkan Primary Command Recording Fast Path](vulkan-primary-command-recording-fast-path-todo.md)
-  owns Vulkan submission-side cost (primary recording, descriptor churn); do
-  not duplicate its items here.
-- [Default Pipeline GPU Hotspots](default-pipeline-gpu-hotspots-todo.md) owns
-  GPU-side pass cost; this TODO covers CPU submission cost only.
+- [Vulkan Primary Reuse Correctness](02-vulkan-primary-reuse-correctness-todo.md)
+  owns primary state and invalidation; do not duplicate it here.
+- [Next-Frame Preparation And Collect-Visible Handoff](04-next-frame-preparation-and-collect-visible-handoff-todo.md)
+  owns backend-ready command handoff and preparation placement.
+- [Default Pipeline GPU Hotspots](default-pipeline-gpu-hotspots-todo.md) is a
+  child of workstream 06 and owns shader/quality pass cost; this TODO covers
+  CPU submission cost only.
 
 ## Goal
 

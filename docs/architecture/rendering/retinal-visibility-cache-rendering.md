@@ -16,7 +16,7 @@ sharing opt-in.
 
 Related docs:
 
-- [RVC validation plan](../../work/todo/rendering/vr/retinal-visibility-cache-rendering-todo.md)
+- [RVC validation plan](../../work/testing/rendering/retinal-visibility-cache-rendering-todo.md)
 - [RVC design source](../../work/design/rendering/retinal-visibility-cache-rendering-design.md)
 - [OpenXR VR rendering](openxr-vr-rendering.md)
 - [Material binding policy](material-binding-policy.md)
@@ -95,6 +95,19 @@ RVC's production path assumes Vulkan features such as explicit synchronization,
 dynamic rendering, descriptor heap/indexing, fragment shading rate or density
 map, and optional mesh shaders. OpenGL is useful for correctness slices and
 regression checks, but it is not expected to reach feature parity.
+
+### Performance Contract
+
+The Vulkan production acceptance lane uses `GpuIndirectZeroReadback` and must
+sustain at least 120 Hz, measured as a whole-frame p95 of at most 8.33 ms. The
+minimum measured frame contains three actual renders: the desktop output and
+both RVC eye outputs. The target applies with foveation disabled or enabled;
+foveation, quad-view expansion, and any additional internal views or renders do
+not multiply or relax the whole-frame budget. Synchronous current-frame
+readback, skipped eye rendering, or a silent fallback invalidates the result.
+
+Desktop-only rendering is governed by the separate 200+ Hz, 5.00 ms p95
+promotion target.
 
 ## Overall Flow
 

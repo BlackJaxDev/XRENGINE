@@ -1,6 +1,15 @@
 # CPU async-query occlusion during camera motion TODO
 
-Status: critical regression fixed and validated. Stationary, slow-translation, slow-rotation, and return-to-stable Vulkan cases pass; the edge/cut/stereo/hierarchy stress matrix remains open.
+Status: child correctness tracker for
+[07 - Occlusion Systems Performance](optimization/07-occlusion-systems-performance-todo.md).
+The critical regression is fixed and validated. Stationary, slow-translation,
+slow-rotation, and return-to-stable Vulkan cases pass; the
+edge/cut/stereo/hierarchy stress matrix remains open.
+
+Ownership: this document owns temporal-query correctness and the remaining
+camera, hierarchy, and physical-eye validation. Workstream 07 owns end-to-end
+performance acceptance, query-cadence tail limits, and the decision to retain,
+promote, keep diagnostic-only, or retire CPU query occlusion.
 
 Related investigation: [CPU async-query occlusion during camera motion](../../investigations/rendering/cpu-query-camera-motion-2026-07-20.md)
 

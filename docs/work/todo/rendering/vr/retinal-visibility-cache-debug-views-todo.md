@@ -3,7 +3,7 @@
 Last Updated: 2026-07-02
 Owner: Rendering / XR
 Status: Proposed
-Parent Plan: [Retinal Visibility Cache Rendering TODO](retinal-visibility-cache-rendering-todo.md)
+Parent Plan: [Retinal Visibility Cache Rendering Validation Plan](../../../testing/rendering/retinal-visibility-cache-rendering-todo.md)
 
 Related docs:
 

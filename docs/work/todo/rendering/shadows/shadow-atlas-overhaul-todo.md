@@ -1,6 +1,14 @@
 # Shadow Atlas Overhaul TODO
 
-Status: active master tracker, audited and rewritten 2026-06-18.
+Status: active master feature/quality tracker, audited and rewritten
+2026-06-18; performance execution for directional updates is governed by
+[08 - Render Tail Latency](../optimization/08-render-tail-latency-shadows-streaming-jobs-todo.md).
+
+Ownership: this document remains canonical for receiver relevance, grouping
+and paging, moment encodings/filtering, temporal shadow features, diagnostics,
+and contact shadows. Workstream 08 owns only the ordered directional-shadow
+tail-latency work and 120 Hz performance gate; it does not supersede this broad
+roadmap.
 
 This is the working TODO for the dynamic shadow atlas, shadow-map update
 scheduling, atlas-aware filtering, and related diagnostics. The older version

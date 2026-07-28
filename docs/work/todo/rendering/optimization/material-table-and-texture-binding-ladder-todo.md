@@ -1,9 +1,24 @@
 # Material Table And Texture Binding Ladder TODO
 
-Last Updated: 2026-05-29
+Last Updated: 2026-07-28
 Owner: Rendering
-Status: Active
-Target Branch: `rendering-material-table-texture-ladder`
+Status: Technical Child Of Workstream 03
+Execution: The bounded Vulkan production rung uses the active workstream 03
+branch/worktree; later cross-backend or sparse/virtual feature work may be
+scheduled separately.
+
+## Canonical Ownership
+
+This remains the focused technical child for material rows, runtime binding-rung
+selection, texture arrays, bindless lifetime, sparse/virtual texture
+interfaces, coarse buckets, and dirty updates. The production zero-readback
+sequence and promotion decision are owned by
+[03 - True GPU-Driven Zero-Readback Submission](03-vulkan-true-zero-readback-submission-todo.md).
+
+Workstream 03 may consume a bounded supported rung without requiring every
+future sparse/virtual-texturing phase to be complete, but any production coarse
+bucket must consume compact active work rather than full material-table
+capacity. This child cannot independently promote the GPU-driven path.
 
 Design source:
 
@@ -40,7 +55,8 @@ render correctly while the profiler reports the active rung.
 
 ## Phase 0 - Branch, Baseline, And Audit
 
-- [ ] Create dedicated branch `rendering-material-table-texture-ladder`.
+- [ ] Execute the bounded Vulkan production-rung subset inside workstream 03;
+  do not create a competing Vulkan promotion branch.
 - [ ] Capture material-table baselines for `MaterialTable`,
   `BindlessMaterialTable`, and coarse per-material/per-bucket fallback paths.
 - [ ] Inventory all material table buffers, texture handle buffers, row packers,

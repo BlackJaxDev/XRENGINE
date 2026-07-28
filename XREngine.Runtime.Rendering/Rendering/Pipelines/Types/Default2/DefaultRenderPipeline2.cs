@@ -1597,6 +1597,10 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
     public DefaultRenderPipeline2(bool stereo = false) : base(true)
     {
         Stereo = stereo;
+        _forwardDepthPrePassEnabled = !string.Equals(
+            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileDisableForwardDepthPrePass),
+            "1",
+            StringComparison.OrdinalIgnoreCase);
         // Honor the deferred-debug pref (seeded from XRE_DEFERRED_DEBUG, also settable from the
         // editor Diagnostics preferences). 0..18: Disabled/RawAlbedo/DirectLighting/Rmse/Normal/Depth plus directional shadow, AO, and shadow-UV probes.
         int debugMode = RenderDiagnosticsFlags.DeferredDebugView;

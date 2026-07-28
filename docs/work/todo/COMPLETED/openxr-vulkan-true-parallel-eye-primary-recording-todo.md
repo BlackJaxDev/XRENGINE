@@ -8,7 +8,8 @@ Related progress doc: `docs/work/progress/rendering/openxr-monado-vulkan-120hz-p
 
 Related flicker investigation: `docs/work/investigations/rendering/editor-origin-eye-camera-flicker-2026-06-28.md`
 
-Related foveation/RVC design: `docs/work/todo/rendering/vr/retinal-visibility-cache-rendering-todo.md`
+Related foveation/RVC validation:
+`docs/work/testing/rendering/retinal-visibility-cache-rendering-todo.md`
 
 ## Goal
 

@@ -1,9 +1,21 @@
 # Rendering Clean Performance Baseline Profile Contract TODO
 
-Last Updated: 2026-07-01
+Last Updated: 2026-07-28
 Owner: Rendering / Editor
-Status: Proposed
-Target Branch: `rendering-clean-performance-baselines`
+Status: Superseded By Workstream 01
+Historical Target Branch: `rendering-clean-performance-baselines` (do not
+create; execution moved to workstream 01)
+
+## Canonical Ownership
+
+This document is retained as historical design input. Its named profile modes,
+manifest fields, clean desktop/OpenXR launch requirements, warmup policy, and
+diagnostic-overhead requirements have moved to
+[01 - Vulkan Performance Truth And Regression Gates](01-vulkan-performance-truth-and-regression-gates-todo.md).
+
+Do not complete or promote this tracker independently. New measurement-contract
+work belongs in workstream 01. Keep this document for the July 1 evidence and
+the rationale behind the named-profile model.
 
 Evidence source:
 
@@ -69,7 +81,7 @@ as diagnostic and should report the known measurement overhead.
 
 ## Phase 0 - Define The Modes
 
-- [ ] Create dedicated branch `rendering-clean-performance-baselines`.
+- [ ] Historical item; branch creation is superseded by workstream 01.
 - [ ] Define `Diagnostics`, `DevelopmentProfile`, `CleanProfile`, and
   `ReleaseBenchmark` settings.
 - [ ] Document which logging categories, validation layers, editor UI panels,

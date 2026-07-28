@@ -2,7 +2,15 @@
 
 Last Updated: 2026-06-18
 Owner: Rendering
-Status: Dense synchronized upload service implemented; progressive/sparse follow-ups deferred
+Status: historical implementation tracker. Dense synchronized upload is
+implemented. Live Vulkan upload/publication performance validation moved to
+[08 - Render Tail Latency](../rendering/optimization/08-render-tail-latency-shadows-streaming-jobs-todo.md);
+progressive/sparse residency belongs to the
+[Texture Runtime, Streaming, And Virtual Texturing TODO](../texturing/texture-runtime-streaming-virtual-texturing-todo.md).
+
+This document no longer owns execution or completion status. Remaining
+transfer/barrier, publication-lifetime, promotion/demotion, dirty-scope, and
+performance checks are successor requirements in workstream 08 Phase 2.
 Source investigation: [Vulkan Frame Loop Performance Testing](vulkan-frame-loop-performance-todo.md)
 Related roadmap: [Texture Runtime, Streaming, And Virtual Texturing TODO](../texturing/texture-runtime-streaming-virtual-texturing-todo.md)
 

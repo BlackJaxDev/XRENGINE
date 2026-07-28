@@ -41,6 +41,7 @@ public static class XREngineEnvironmentVariables
     public const string WindowPumpHost = "XRE_WINDOW_PUMP_HOST";
     public const string EditorSessionName = "XRE_EDITOR_SESSION_NAME";
     public const string EditorSessionRoot = "XRE_EDITOR_SESSION_ROOT";
+    public const string ProfileDisableForwardDepthPrePass = "XRE_PROFILE_DISABLE_FORWARD_DEPTH_PREPASS";
     public const string VrClientGameName = "XRE_VRCLIENT_GAMENAME";
     public const string NetworkingPoseRole = "XRE_NETWORKING_POSE_ROLE";
 
