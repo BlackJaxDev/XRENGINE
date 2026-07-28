@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -50,6 +51,14 @@ namespace XREngine
             }
 
             if (!IsPolymorphicDeclaredType(expectedType))
+            {
+                value = null;
+                return false;
+            }
+
+            // Collection interfaces have their own concrete-type resolver. Capturing their
+            // mappings here would consume the node before that deserializer can handle it.
+            if (expectedType != typeof(object) && typeof(IEnumerable).IsAssignableFrom(expectedType))
             {
                 value = null;
                 return false;

@@ -47,6 +47,7 @@ namespace XREngine.Networking
     }
 
     [MemoryPackable(GenerateType.NoGenerate)]
+    [MemoryPackUnion(0, typeof(CharacterPawnInputSnapshot))]
     public partial interface IPawnInputSnapshot
     {
     }

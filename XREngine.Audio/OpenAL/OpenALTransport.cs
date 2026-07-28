@@ -79,11 +79,32 @@ namespace XREngine.Audio
             // Open device and context
             Context = ALContext.GetApi(false);
             DeviceHandle = Context.OpenDevice(deviceName);
-            ContextHandle = Context.CreateContext(DeviceHandle, null);
-            DeviceName = deviceName;
-            IsOpen = true;
+            if (DeviceHandle == null)
+                throw new InvalidOperationException(
+                    $"OpenAL could not open playback device '{deviceName ?? "default"}'.");
 
-            MakeCurrent();
+            ContextHandle = Context.CreateContext(DeviceHandle, null);
+            if (ContextHandle == null)
+            {
+                Context.CloseDevice(DeviceHandle);
+                throw new InvalidOperationException(
+                    $"OpenAL could not create a context for playback device '{deviceName ?? "default"}'.");
+            }
+
+            DeviceName = deviceName;
+
+            try
+            {
+                MakeCurrent();
+            }
+            catch
+            {
+                Context.DestroyContext(ContextHandle);
+                Context.CloseDevice(DeviceHandle);
+                throw;
+            }
+
+            IsOpen = true;
             VerifyError();
         }
 
@@ -94,8 +115,10 @@ namespace XREngine.Audio
             if (CurrentTransport == this)
                 return;
 
+            if (!Context.MakeContextCurrent(ContextHandle))
+                throw new InvalidOperationException("OpenAL could not make the transport context current.");
+
             CurrentTransport = this;
-            Context.MakeContextCurrent(ContextHandle);
         }
 
         public void VerifyError()
@@ -125,11 +148,14 @@ namespace XREngine.Audio
                 return;
 
             IsOpen = false;
+            if (CurrentTransport == this)
+            {
+                Context.MakeContextCurrent((Context*)null);
+                CurrentTransport = null;
+            }
+
             Context.DestroyContext(ContextHandle);
             Context.CloseDevice(DeviceHandle);
-
-            if (CurrentTransport == this)
-                CurrentTransport = null;
         }
 
         // --- IAudioTransport: Listener ---

@@ -576,6 +576,15 @@ public sealed class NetworkingContractsTests
         {
             ServerPlayerIndex = 2,
             EntityId = entityId,
+            Input = new CharacterPawnInputSnapshot
+            {
+                Movement = new Vector2(0.25f, -0.75f),
+                ViewAngles = new Vector2(45.0f, -15.0f),
+                JumpPressed = true,
+                JumpHeld = true,
+                ToggleCrouch = false,
+                ToggleProne = true,
+            },
             TimestampUtc = 123.5,
             ClientSendTimestampUtc = 123.6,
             InputSequence = 4,
@@ -645,11 +654,11 @@ public sealed class NetworkingContractsTests
     }
 
     private static T RoundTripThroughStateChangeSerializer<T>(T payload)
-        where T : class
     {
         string serialized = InvokeSerializerSerialize(payload);
         InvokeSerializerTryDeserialize(serialized, out T? clone).ShouldBeTrue();
-        clone.ShouldNotBeNull();
+        if (clone is null)
+            Assert.Fail($"Deserializing {typeof(T).FullName} returned null.");
         return clone!;
     }
 

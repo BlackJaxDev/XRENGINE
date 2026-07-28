@@ -35,6 +35,7 @@ jobs:
       - name: Checkout repository and submodules
         uses: actions/checkout@v6
         with:
+          lfs: true
           submodules: recursive
           fetch-depth: 0
 
@@ -86,6 +87,7 @@ jobs:
       - name: Checkout tagged source and submodules
         uses: actions/checkout@v6
         with:
+          lfs: true
           submodules: recursive
           fetch-depth: 0
 

@@ -159,8 +159,29 @@ namespace XREngine.Audio
             Context = ALContext.GetApi(false);
 
             DeviceHandle = Context.OpenDevice(null);
+            if (DeviceHandle == null)
+                throw new InvalidOperationException(
+                    "OpenAL could not open the default playback device.");
+
             ContextHandle = Context.CreateContext(DeviceHandle, null);
-            MakeCurrent();
+            if (ContextHandle == null)
+            {
+                Context.CloseDevice(DeviceHandle);
+                throw new InvalidOperationException(
+                    "OpenAL could not create a context for the default playback device.");
+            }
+
+            try
+            {
+                MakeCurrent();
+            }
+            catch
+            {
+                Context.DestroyContext(ContextHandle);
+                Context.CloseDevice(DeviceHandle);
+                throw;
+            }
+
             VerifyError();
 
             _gain = GetGain();
@@ -188,8 +209,10 @@ namespace XREngine.Audio
             if (CurrentContext == this)
                 return;
 
+            if (!Context.MakeContextCurrent(ContextHandle))
+                throw new InvalidOperationException("OpenAL could not make the listener context current.");
+
             CurrentContext = this;
-            Context.MakeContextCurrent(ContextHandle);
         }
 
         public void VerifyError()
@@ -669,8 +692,15 @@ namespace XREngine.Audio
 
         public event Action<ListenerContext>? Disposed;
 
+        private bool _disposed;
+
         public void Dispose()
         {
+            if (_disposed)
+                return;
+
+            _disposed = true;
+
             foreach (AudioSource source in Sources.Values)
                 source.Dispose();
             foreach (AudioBuffer buffer in Buffers.Values)
@@ -683,6 +713,18 @@ namespace XREngine.Audio
             // Dispose V2 resources
             EffectsProcessor?.Dispose();
             Transport?.Dispose();
+
+            if (!IsV2)
+            {
+                if (CurrentContext == this)
+                {
+                    Context.MakeContextCurrent((Silk.NET.OpenAL.Context*)null);
+                    CurrentContext = null;
+                }
+
+                Context.DestroyContext(ContextHandle);
+                Context.CloseDevice(DeviceHandle);
+            }
 
             AudioDiagnostics.RecordListenerDisposed(Name);
             Disposed?.Invoke(this);

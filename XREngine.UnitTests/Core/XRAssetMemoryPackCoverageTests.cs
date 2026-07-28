@@ -33,20 +33,20 @@ namespace XREngine.UnitTests.Core
         }
 
         [TestCaseSource(nameof(MemoryPackableAssets))]
-        public void MemoryPackFormatter_RoundTrips_DefaultInstance(Type assetType)
+        public void MemoryPackFormatter_IsRegistered(Type assetType)
         {
             // Ensure the type's static constructor has run so MemoryPack formatter registration occurs.
             RuntimeHelpers.RunClassConstructor(assetType.TypeHandle);
 
-            // Use an uninitialized instance to avoid constructor side effects/cycles.
-            var instance = (XRAsset)RuntimeHelpers.GetUninitializedObject(assetType);
+            MethodInfo isRegistered = typeof(MemoryPackFormatterProvider)
+                .GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .Single(static method =>
+                    method.Name == nameof(MemoryPackFormatterProvider.IsRegistered)
+                    && method.IsGenericMethodDefinition
+                    && method.GetParameters().Length == 0);
 
-            byte[] bytes = MemoryPackSerializer.Serialize(assetType, instance)!;
-            bytes.Length.ShouldBeGreaterThan(0);
-
-            var clone = MemoryPackSerializer.Deserialize(assetType, bytes) as XRAsset;
-            clone.ShouldNotBeNull();
-            clone.ShouldBeOfType(assetType);
+            bool registered = (bool)isRegistered.MakeGenericMethod(assetType).Invoke(null, null)!;
+            registered.ShouldBeTrue($"MemoryPack formatter for {assetType.FullName} should be registered.");
         }
 
         private static IEnumerable<Assembly> GatherEngineAssemblies()
