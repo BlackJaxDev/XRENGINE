@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -14,6 +14,60 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
+        private bool TryEnsureMutableDynamicUiSecondaryCommandBuffer(
+            uint imageIndex,
+            CommandBufferCacheVariant variant,
+            out CommandBuffer secondaryCommandBuffer)
+        {
+            secondaryCommandBuffer = variant.DynamicUiSecondaryCommandBuffer;
+            if (secondaryCommandBuffer.Handle != 0 &&
+                CanResetVulkanCommandBuffer(secondaryCommandBuffer, out _))
+            {
+                return true;
+            }
+
+            CommandPool pool = variant.DynamicUiSecondaryCommandPool;
+            if (pool.Handle == 0)
+                return false;
+
+            CommandBufferAllocateInfo allocateInfo = new()
+            {
+                SType = StructureType.CommandBufferAllocateInfo,
+                CommandPool = pool,
+                Level = CommandBufferLevel.Secondary,
+                CommandBufferCount = 1,
+            };
+            Result allocateResult = AllocateVulkanCommandBuffersTracked(
+                ref allocateInfo,
+                out CommandBuffer replacement,
+                "DynamicUiText.SecondaryReplacement");
+            if (allocateResult != Result.Success || replacement.Handle == 0)
+                return false;
+
+            CommandBuffer previous = secondaryCommandBuffer;
+            if (previous.Handle != 0 && variant.OwnsDynamicUiSecondaryCommandBuffer)
+                DeferSecondaryCommandBufferFree(imageIndex, pool, previous);
+
+            variant.DynamicUiSecondaryCommandBuffer = replacement;
+            variant.OwnsDynamicUiSecondaryCommandBuffer = true;
+            variant.DynamicUiSecondaryRecorded = false;
+            RegisterCommandBufferImageIndex(replacement, imageIndex);
+            SetDebugObjectName(
+                ObjectType.CommandBuffer,
+                unchecked((ulong)replacement.Handle),
+                $"DynamicUiText.SecondaryReplacement[{imageIndex}]");
+            secondaryCommandBuffer = replacement;
+
+            Debug.VulkanEvery(
+                $"Vulkan.DynamicUiText.SecondaryCopyOnWrite.{GetHashCode()}.{imageIndex}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Replaced immutable dynamic UI secondary. image={0} old=0x{1:X} new=0x{2:X}",
+                imageIndex,
+                previous.Handle,
+                replacement.Handle);
+            return true;
+        }
+
         private bool RecordDynamicUiBatchTextSecondaryCommandBuffer(
             uint imageIndex,
             CommandBufferCacheVariant variant,
@@ -49,14 +103,16 @@ namespace XREngine.Rendering.Vulkan
                 return true;
             }
 
-            CommandBuffer secondaryCommandBuffer = variant.DynamicUiSecondaryCommandBuffer;
-            if (secondaryCommandBuffer.Handle == 0)
+            if (!TryEnsureMutableDynamicUiSecondaryCommandBuffer(
+                    imageIndex,
+                    variant,
+                    out CommandBuffer secondaryCommandBuffer))
             {
                 LogCommandChainSecondaryInheritanceMismatch(
                     "dynamic-ui-text",
                     null,
                     dynamicUiBatchTextOps[0].PassIndex,
-                    "secondary command buffer handle is zero");
+                    "a mutable secondary command buffer could not be allocated");
                 variant.DynamicUiSecondaryRecorded = false;
                 return false;
             }
@@ -147,7 +203,7 @@ namespace XREngine.Rendering.Vulkan
             CommandBufferBeginInfo beginInfo = new()
             {
                 SType = StructureType.CommandBufferBeginInfo,
-                Flags = CommandBufferUsageFlags.RenderPassContinueBit,
+                Flags = CommandBufferUsageFlags.RenderPassContinueBit | CommandBufferUsageFlags.SimultaneousUseBit,
                 PInheritanceInfo = &inheritanceInfo,
             };
 
@@ -443,6 +499,7 @@ namespace XREngine.Rendering.Vulkan
 
             ResetCommandBufferBindState(commandBuffer);
             SeedRecordedImageLayoutState(commandBuffer, predecessorCommandBuffer);
+            TransitionSecondaryDescriptorImagesForExecution(commandBuffer, secondaryCommandBuffer);
             CmdBeginLabel(commandBuffer, "DynamicUIBatchTextOverlay");
 
             RecordDynamicUiBatchTextStreamlineUi(
@@ -649,7 +706,7 @@ namespace XREngine.Rendering.Vulkan
             CommandBufferBeginInfo beginInfo = new()
             {
                 SType = StructureType.CommandBufferBeginInfo,
-                Flags = CommandBufferUsageFlags.RenderPassContinueBit,
+                Flags = CommandBufferUsageFlags.RenderPassContinueBit | CommandBufferUsageFlags.SimultaneousUseBit,
                 PInheritanceInfo = &inheritanceInfo,
             };
 
@@ -727,6 +784,14 @@ namespace XREngine.Rendering.Vulkan
 
             chain.State = CommandChainState.Recorded;
             chain.FrameDataRefreshTouchedDescriptors = false;
+            StoreCommandChainSecondaryInheritance(
+                chain,
+                batch.DynamicRendering,
+                batch.RenderPass,
+                batch.Framebuffer,
+                batch.DynamicRenderingFormats,
+                batch.DepthStencilReadOnly,
+                batch.Samples);
             MarkCommandChainSecondaryCommandBufferRecorded(chain);
         }
 

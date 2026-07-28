@@ -72,7 +72,7 @@ public sealed class OctahedralMappingTests
             LoadTextFile(Path.Combine(ShaderBasePath, "Scene3D", "SkyboxOctahedral.fs")),
             "vec2 EncodeOcta(vec3 dir)");
         string fallbackFunction = ExtractFunctionBlock(
-            LoadTextFile(Path.Combine(RepoRoot, "XRENGINE", "Scene", "Components", "Misc", "SkyboxComponent.cs")),
+            LoadTextFile(Path.Combine(RepoRoot, "XREngine.Runtime.Rendering", "Scene", "Components", "Misc", "SkyboxComponent.cs")),
             "vec2 EncodeOcta(vec3 dir)");
 
         shaderFunction.ShouldBe(fallbackFunction);
@@ -304,7 +304,7 @@ public sealed class OctahedralMappingTests
         if (!File.Exists(filePath))
             throw new FileNotFoundException($"File not found: {filePath}", filePath);
 
-        return File.ReadAllText(filePath);
+        return File.ReadAllText(filePath).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveShaderPath(string relativePath)

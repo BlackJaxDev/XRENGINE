@@ -167,7 +167,7 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         source.ShouldContain("switch (_LightingDirectionMode)");
         source.ShouldContain("switch (_LightingColorMode)");
         source.ShouldContain("light.indirectColor = mix(light.indirectColor, neutralAmbient, saturate(_LightingIgnoreAmbientColor));");
-        source.ShouldContain("vec4 shadowTex = texture(_ShadowColorTex, mesh.uv[0]);");
+        source.ShouldContain("vec3 shadowColor = _LightingShadowColor;");
         source.ShouldContain("if (_LightingWrappedNormalization > 0.5)");
         source.ShouldContain("case 3: // Skin");
         source.ShouldContain("case 4: // ShadeMap");
@@ -183,7 +183,7 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         string source = LoadShaderSource(Path.Combine("Uber", "UberShader.frag"));
         string flipbook = LoadShaderSource(Path.Combine("Uber", "flipbook.glsl"));
 
-        source.ShouldContain("pbr.specularColor = max(specTex.rgb * _SpecularTint.rgb, vec3(0.0));");
+        source.ShouldContain("pbr.specularColor *= max(specTex.rgb * _SpecularTint.rgb, vec3(0.0));");
         source.ShouldContain("fragData.finalColor += calculateAdvancedSpecular(mesh, mesh.worldNormal, light, surfacePbr);");
         source.ShouldContain("mesh.worldNormal = applyDetailNormal(mesh, mesh.worldNormal);");
         source.ShouldContain("emissionUV += mesh.vertexColor.rg * _EmissionScrollingVertexColor;");
@@ -214,7 +214,7 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         parallax.ShouldContain("const int PARALLAX_OCCLUSION = 1;");
         parallax.ShouldContain("const int PARALLAX_SILHOUETTE_OCCLUSION = 2;");
         dissolve.ShouldContain("const int DISSOLVE_SPHERICAL = 1;");
-        dissolve.ShouldContain("const int DISSOLVE_DIRECTIONAL = 2;");
+        dissolve.ShouldContain("const int DISSOLVE_POINT_TO_POINT = 2;");
     }
 
     [Test]
@@ -455,7 +455,8 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
 
         source.ShouldContain("bool perLightShadowEnabled = perLightShadowTex is not null || perLightCascadeTex is not null;");
         source.ShouldNotContain("bool perLightShadowEnabled = perLightUseAtlas || perLightShadowTex is not null || perLightCascadeTex is not null;");
-        source.ShouldContain("bool perLightAtlasSampleable = directionalAtlasTextureAvailable &&");
+        source.ShouldContain("bool perLightAtlasSampleable =");
+        source.ShouldContain("directionalAtlasTextureAvailable &&");
         source.ShouldContain("if (perLightAtlasSampleable)\n                    {\n                        _directionalShadowMapEnabled[i] = 1;");
     }
 
@@ -867,7 +868,7 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         if (!File.Exists(fullPath))
             throw new FileNotFoundException($"Shader file not found: {fullPath}", fullPath);
 
-        return File.ReadAllText(fullPath);
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ReadWorkspaceFile(string relativePath)
@@ -879,7 +880,7 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         if (!File.Exists(fullPath))
             throw new FileNotFoundException($"Workspace file not found: {fullPath}", fullPath);
 
-        return File.ReadAllText(fullPath);
+        return global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType(relativePath);
     }
 
     private static string ResolveShaderRoot()

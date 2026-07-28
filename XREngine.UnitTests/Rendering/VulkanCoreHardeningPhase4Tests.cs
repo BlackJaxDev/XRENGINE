@@ -342,7 +342,7 @@ public sealed class VulkanCoreHardeningPhase4Tests
     {
         string vulkanRoot = Path.Combine(
             ResolveRepoRoot(),
-            "XREngine.Runtime.Rendering",
+            "XREngine.Runtime.Rendering.Vulkan",
             "Rendering",
             "API",
             "Rendering",
@@ -374,7 +374,7 @@ public sealed class VulkanCoreHardeningPhase4Tests
             ResolveRepoRoot(),
             relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(path).ShouldBeTrue($"Expected workspace file '{relativePath}'.");
-        return File.ReadAllText(path).Replace("\r\n", "\n");
+        return File.ReadAllText(path).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveRepoRoot()

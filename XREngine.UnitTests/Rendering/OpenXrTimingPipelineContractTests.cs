@@ -2362,7 +2362,7 @@ public sealed class OpenXrTimingPipelineContractTests
         {
             string fullPath = Path.Combine(dir.FullName, platformPath);
             if (File.Exists(fullPath))
-                return File.ReadAllText(fullPath).Replace("\r\n", "\n");
+                return File.ReadAllText(fullPath).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
 
             string marker = $"{Path.DirectorySeparatorChar}Commands{Path.DirectorySeparatorChar}VulkanRenderer.";
             string relocatedPath = fullPath.Replace(
@@ -2370,7 +2370,7 @@ public sealed class OpenXrTimingPipelineContractTests
                 $"{Path.DirectorySeparatorChar}Commands{Path.DirectorySeparatorChar}CommandBuffers{Path.DirectorySeparatorChar}VulkanRenderer.",
                 StringComparison.Ordinal);
             if (File.Exists(relocatedPath))
-                return File.ReadAllText(relocatedPath).Replace("\r\n", "\n");
+                return File.ReadAllText(relocatedPath).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
 
             dir = dir.Parent;
         }

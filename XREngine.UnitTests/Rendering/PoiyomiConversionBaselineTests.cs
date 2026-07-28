@@ -472,7 +472,7 @@ public sealed class PoiyomiConversionBaselineTests
         {
             string path = Path.Combine(directory.FullName, relativePath.Replace('/', Path.DirectorySeparatorChar));
             if (File.Exists(path))
-                return File.ReadAllText(path);
+                return File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
 
             directory = directory.Parent;
         }

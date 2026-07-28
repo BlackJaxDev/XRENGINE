@@ -187,7 +187,7 @@ public sealed class VulkanCoreHardeningPhase51Tests
             relativePath.Replace('/', Path.DirectorySeparatorChar));
         path = ResolveRelocatedCommandBufferPath(path);
         File.Exists(path).ShouldBeTrue($"Expected workspace file '{relativePath}'.");
-        return File.ReadAllText(path).Replace("\r\n", "\n");
+        return File.ReadAllText(path).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveRelocatedCommandBufferPath(string path)

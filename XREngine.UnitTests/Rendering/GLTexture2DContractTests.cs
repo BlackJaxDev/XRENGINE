@@ -241,7 +241,7 @@ public sealed class GLTexture2DContractTests
         meshPass.ShouldContain("activeInstance.LastRenderingCamera");
         meshPass.ShouldContain("RenderMeshesPassTraditional.MissingPipeline");
         meshletPass.ShouldContain("RuntimeEngine.Rendering.State.CurrentRenderingPipeline");
-        meshletPass.ShouldContain("activeInstance.LastRenderingCamera");
+        meshletPass.ShouldContain("if (activeInstance is null)");
         quadPass.ShouldContain("RuntimeEngine.Rendering.State.CurrentRenderingPipeline");
         quadPass.ShouldContain("QuadBlit.MissingPipeline");
     }
@@ -291,11 +291,12 @@ public sealed class GLTexture2DContractTests
     [Test]
     public void GLTexture2D_CanRouteAutoMipGenerationThroughDetailPreservingComputeShader()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.cs");
+        string source = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.cs");
+        string rendererSource = global::XREngine.UnitTests.SourceContractWorkspace.ReadFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Features/SparseTextures/OpenGLRenderer.DetailPreservingMipmaps.cs");
 
         source.ShouldContain("RuntimeEngine.Rendering.Settings.UseDetailPreservingComputeMipmaps");
         source.ShouldContain("Renderer.GetOrCreateDetailPreservingMipmapProgram(imageFormat)");
-        source.ShouldContain("Compute/Textures/DetailPreservingMipmaps.comp");
+        rendererSource.ShouldContain("Compute/Textures/DetailPreservingMipmaps.comp");
         source.ShouldContain("base.GenerateMipmaps();");
     }
 
@@ -373,8 +374,8 @@ public sealed class GLTexture2DContractTests
         source.ShouldContain("DemotionCooldownUntilFrameId");
         source.ShouldContain("PinUntilFrameId");
         source.ShouldContain("LogTransitionCoalesced");
-        source.ShouldContain("visible import-era promotion");
-        source.ShouldContain("vram pressure demotion");
+        ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/TextureResidencyPolicy.cs").ShouldContain("visible import-era promotion");
+        ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/TextureResidencyPolicy.cs").ShouldContain("vram pressure demotion");
     }
 
     [Test]

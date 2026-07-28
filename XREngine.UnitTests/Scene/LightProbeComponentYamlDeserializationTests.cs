@@ -54,7 +54,7 @@ public sealed class LightProbeComponentYamlDeserializationTests : GpuTestBase
     [Test]
     public void CookedBinarySerializer_RoundTrips_SceneNodeWithLightProbe_WithoutMemoryPackProbeWarning()
     {
-        ConcurrentDictionary<Type, byte> loggedFailures = GetLoggedMemoryPackSerializationFailures();
+        ConcurrentDictionary<Type, byte> loggedFailures = GetUnsupportedMemoryPackTypes();
         loggedFailures.Clear();
 
         SceneNode original = new("LightProbeNode", new Transform());
@@ -102,10 +102,10 @@ public sealed class LightProbeComponentYamlDeserializationTests : GpuTestBase
         probe.AutoShowPreviewOnSelect.ShouldBeTrue();
     }
 
-    private static ConcurrentDictionary<Type, byte> GetLoggedMemoryPackSerializationFailures()
+    private static ConcurrentDictionary<Type, byte> GetUnsupportedMemoryPackTypes()
     {
         FieldInfo field = typeof(CookedBinarySerializer).GetField(
-            "LoggedMemoryPackSerializationFailures",
+            "UnsupportedMemoryPackTypes",
             BindingFlags.Static | BindingFlags.NonPublic)!;
 
         return (ConcurrentDictionary<Type, byte>)field.GetValue(null)!;

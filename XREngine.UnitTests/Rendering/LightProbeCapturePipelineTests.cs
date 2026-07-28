@@ -40,8 +40,8 @@ public sealed class LightProbeCapturePipelineTests
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Capture/LightProbeComponent.IBL.cs");
 
-        source.ShouldContain("viewport.Camera.OutputHDROverride = true;");
-        source.ShouldContain("viewport.Camera.AntiAliasingModeOverride = EAntiAliasingMode.None;");
+        source.ShouldContain("viewport.ApplyCapturePolicy(CaptureRenderPolicy);");
+        source.ShouldContain("=> RenderCapturePolicy.LightProbe;");
         source.ShouldContain("viewport.RenderPipeline ??= RuntimeEngine.Rendering.NewRenderPipeline();");
         source.ShouldContain("viewport.SetRenderPipelineFromCamera = false;");
     }
@@ -61,7 +61,7 @@ public sealed class LightProbeCapturePipelineTests
         string repoRoot = ResolveRepoRoot();
         string path = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(path).ShouldBeTrue($"Expected workspace file '{path}' to exist.");
-        return File.ReadAllText(path);
+        return File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveRepoRoot()

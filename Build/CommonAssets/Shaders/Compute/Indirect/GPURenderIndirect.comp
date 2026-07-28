@@ -88,19 +88,8 @@ struct GPUViewDescriptor
     vec4 FoveationB;
 };
 
-struct GPUViewConstants
-{
-    mat4 View;
-    mat4 Projection;
-    mat4 ViewProjection;
-    mat4 PrevViewProjection;
-    vec4 CameraPositionAndNear;
-    vec4 CameraForwardAndFar;
-};
 
 layout(std430, binding = 11) readonly buffer ViewDescriptorBuffer { GPUViewDescriptor ViewDescriptors[]; };
-layout(std430, binding = 12) readonly buffer ViewConstantsBuffer { GPUViewConstants ViewConstants[]; };
-layout(std430, binding = 13) readonly buffer CommandViewMaskBuffer { uvec2 CommandViewMasks[]; };
 layout(std430, binding = 14) readonly buffer PerViewVisibleIndicesBuffer { uint PerViewVisibleIndices[]; };
 layout(std430, binding = 15) readonly buffer PerViewDrawCountBuffer { uint PerViewDrawCount[]; };
 layout(std430, binding = 17) readonly buffer ViewBatchClassificationBuffer { uint classifications[]; };

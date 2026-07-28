@@ -493,7 +493,7 @@ public sealed class VulkanCommandChainDataModelTests
         textureSource.ShouldContain("if (_physicalGroup.IsAllocated)");
         textureSource.ShouldContain("else\n\t\t\t\t\tDestroyCurrentViews(removeActiveCacheEntry: true);");
         textureSource.ShouldContain("if (!TryRestorePhysicalImageViewCache(_physicalGroup, current))");
-        textureSource.ShouldContain("private sealed record class PhysicalImageViewCacheEntry");
+        textureSource.ShouldContain("private sealed class PhysicalImageViewCacheEntry");
         textureSource.ShouldContain("DestroyCurrentViews(removeActiveCacheEntry: true);");
         viewLifetimeSource.ShouldContain("private void RetireImageViewsForBackingImage(ulong imageHandle)");
         viewLifetimeSource.ShouldContain("foreach (KeyValuePair<ulong, ImageViewCreateInfo> pair in _descriptorHeapImageViewCreateInfos)");
@@ -559,7 +559,7 @@ public sealed class VulkanCommandChainDataModelTests
         descriptorSource.ShouldContain("ReferenceEquals(allocation.Program, _program)");
         descriptorSource.ShouldContain("viewFamilyIdentity,");
         descriptorSource.ShouldContain("immutableResourceFingerprint);");
-        descriptorSource.ShouldContain("EnsureDescriptorSlotReady(cachedAllocation, material, bindings, frameIndex, drawUniformSlot, resourceFingerprint)");
+        descriptorSource.ShouldContain("EnsureDescriptorSlotReady(cachedAllocation, material, bindings, frameIndex, drawUniformSlot, resourceFingerprint, bindingSnapshot)");
     }
 
     [Test]
@@ -2331,7 +2331,7 @@ public sealed class VulkanCommandChainDataModelTests
         {
             string fullPath = Path.Combine(dir.FullName, platformPath);
             if (File.Exists(fullPath))
-                return File.ReadAllText(fullPath).Replace("\r\n", "\n");
+                return File.ReadAllText(fullPath).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
 
             string marker = $"{Path.DirectorySeparatorChar}Commands{Path.DirectorySeparatorChar}VulkanRenderer.";
             string relocatedPath = fullPath.Replace(
@@ -2339,7 +2339,7 @@ public sealed class VulkanCommandChainDataModelTests
                 $"{Path.DirectorySeparatorChar}Commands{Path.DirectorySeparatorChar}CommandBuffers{Path.DirectorySeparatorChar}VulkanRenderer.",
                 StringComparison.Ordinal);
             if (File.Exists(relocatedPath))
-                return File.ReadAllText(relocatedPath).Replace("\r\n", "\n");
+                return File.ReadAllText(relocatedPath).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
 
             dir = dir.Parent;
         }

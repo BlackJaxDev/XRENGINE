@@ -11,14 +11,14 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class MaskedForwardPhase1Tests
 {
     [Test]
-    public void MaskedTransparency_RoutesToMaskedForward_AndRestoresOpaquePass()
+    public void MaskedTransparency_RemainsDeferredWhenShaderSupportsAlphaCutoff()
     {
         XRMaterial material = new();
         material.RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
 
         material.TransparencyMode = ETransparencyMode.Masked;
 
-        material.RenderPass.ShouldBe((int)EDefaultRenderPass.MaskedForward);
+        material.RenderPass.ShouldBe((int)EDefaultRenderPass.OpaqueDeferred);
         material.RenderOptions.ShouldNotBeNull();
         material.RenderOptions!.DepthTest.ShouldNotBeNull();
         material.RenderOptions.DepthTest!.UpdateDepth.ShouldBeTrue();

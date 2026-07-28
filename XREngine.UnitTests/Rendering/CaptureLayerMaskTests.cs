@@ -14,7 +14,7 @@ public sealed class CaptureLayerMaskTests
         string oneViewSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Lights/Types/OneViewLightComponent.cs");
         string pointLightSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Lights/Types/PointLightComponent.cs");
 
-        oneViewSource.ShouldContain("cam.CullingMask = DefaultLayers.EverythingExceptGizmos;");
+        oneViewSource.ShouldContain("CullingMask = DefaultLayers.EverythingExceptGizmos");
         pointLightSource.ShouldContain("cam.CullingMask = DefaultLayers.EverythingExceptGizmos;");
     }
 
@@ -32,7 +32,7 @@ public sealed class CaptureLayerMaskTests
         string repoRoot = ResolveRepoRoot();
         string path = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(path).ShouldBeTrue($"Expected workspace file '{path}' to exist.");
-        return File.ReadAllText(path);
+        return File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveRepoRoot()

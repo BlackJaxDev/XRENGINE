@@ -1079,6 +1079,7 @@ public static partial class RuntimeEngine
 
             public IDisposable PushRenderGraphPassIndex(int passIndex)
             {
+                CurrentRenderingPipeline?.RegisterExecutedRenderGraphPass(passIndex);
                 Stack<RenderGraphPassScopeState> stack = RenderGraphPasses;
                 stack.Push(new RenderGraphPassScopeState(passIndex, CurrentRenderingPipeline));
                 return StateObject.New(PopRenderGraphPassAction, stack);

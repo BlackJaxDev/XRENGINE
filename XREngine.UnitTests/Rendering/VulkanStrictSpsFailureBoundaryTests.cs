@@ -162,7 +162,7 @@ internal sealed class VulkanStrictSpsFailureBoundaryTests
         {
             string fullPath = Path.Combine(directory.FullName, platformPath);
             if (File.Exists(fullPath))
-                return File.ReadAllText(fullPath);
+                return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
 
             directory = directory.Parent;
         }

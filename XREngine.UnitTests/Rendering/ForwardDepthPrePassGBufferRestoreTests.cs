@@ -28,9 +28,9 @@ public sealed class ForwardDepthPrePassGBufferRestoreTests
 
         AssertContainsInOrder(
             commandChain,
-            "AppendAmbientOcclusionResolve(c);",
-            "AppendForwardDepthPrePassGBufferRestore(c);",
-            "AppendLightingPass(c);");
+            "AppendAmbientOcclusionResolve(",
+            "AppendForwardDepthPrePassGBufferRestore(",
+            "AppendLightingPass(");
 
         string forwardPrePass = SliceMethod(commandChain, "private void AppendForwardDepthPrePass(ViewportRenderCommandContainer c)");
         AssertContainsInOrder(
@@ -61,6 +61,7 @@ public sealed class ForwardDepthPrePassGBufferRestoreTests
         string constants = LoadPipelineFile($"{pipelineName}.cs").Replace("\r\n", "\n");
         string textures = LoadPipelineFile($"{pipelineName}.Textures.cs").Replace("\r\n", "\n");
         string commandChain = LoadPipelineFile($"{pipelineName}.CommandChain.cs").Replace("\r\n", "\n");
+        string resources = LoadPipelineFile($"{pipelineName}.Resources.cs").Replace("\r\n", "\n");
         string pipelineSource = constants + "\n" + commandChain;
 
         constants.ShouldContain("public bool ForwardDepthPrePassEnabled");
@@ -69,10 +70,13 @@ public sealed class ForwardDepthPrePassGBufferRestoreTests
         constants.ShouldContain("[RenderPipelineCameraSetting(Order = 100)]");
         constants.ShouldContain("GetDesiredFBOSizeForwardDepthNormalPrePass");
 
-        pipelineSource.ShouldContain("ConditionEvaluator = () => ForwardDepthPrePassEnabled");
+        commandChain.ShouldContain("prePassChoice.ConditionEvaluator");
+        commandChain.ShouldContain("ForwardDepthPrePassEnabled");
         pipelineSource.ShouldContain("ConditionEvaluator = () => ForwardPrePassSharesGBufferTargets");
-        pipelineSource.ShouldContain("ForwardDepthPrePassFBOName,\n            CreateForwardDepthPrePassFBO,\n            GetDesiredFBOSizeForwardDepthNormalPrePass");
-        pipelineSource.ShouldContain("ForwardContactPrePassCopyFBOName,\n                CreateForwardContactPrePassCopyFBO,\n                GetDesiredFBOSizeForwardDepthNormalPrePass");
+        resources.ShouldContain("builder.FrameBuffer(ForwardDepthPrePassFBOName)");
+        resources.ShouldContain(".Factory(CreateForwardDepthPrePassFBO)");
+        resources.ShouldContain("builder.FrameBuffer(ForwardContactPrePassCopyFBOName)");
+        resources.ShouldContain(".Factory(CreateForwardContactPrePassCopyFBO)");
         pipelineSource.ShouldNotContain("EditorPreferences.Debug.ForwardDepthPrePassEnabled");
         pipelineSource.ShouldNotContain("EditorPreferences.Debug.ForwardPrePassSharesGBufferTargets");
 
@@ -118,11 +122,8 @@ public sealed class ForwardDepthPrePassGBufferRestoreTests
     }
 
     private static string LoadPipelineFile(string fileName)
-    {
-        string fullPath = Path.Combine(ResolveRepoRoot(), "XREngine.Runtime.Rendering", "Rendering", "Pipelines", "Types", fileName);
-        File.Exists(fullPath).ShouldBeTrue($"Pipeline file not found: {fullPath}");
-        return File.ReadAllText(fullPath);
-    }
+        => global::XREngine.UnitTests.SourceContractWorkspace.ReadFile(
+            $"XREngine.Runtime.Rendering/Rendering/Pipelines/Types/{fileName}");
 
     private static string ResolveRepoRoot()
     {

@@ -280,7 +280,7 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
         shadowCollectionSource.ShouldContain("renderCascades = needsCascadeAtlas;");
 
         deferredBindings.ShouldContain("useDirectionalShadowAtlas = directionalLight.UsesDirectionalShadowAtlasForCurrentEncoding && directionalLight.CastsShadows;");
-        deferredBindings.ShouldContain("XRTexture2DArray? directionalCascadeReceiverTexture = directionalLight.GetCascadedShadowReceiverTexture(activeRenderingCamera);");
+        deferredBindings.ShouldContain("XRTexture2DArray? directionalCascadeReceiverTexture = directionalLight.GetSampleableCascadedShadowReceiverTexture(activeRenderingCamera);");
         deferredBindings.ShouldNotContain("!directionalMomentSingleMap &&");
         deferredBindings.ShouldContain("if (useCascadedDirectionalShadows && directionalCascadeReceiverTexture is not null)");
         deferredBindings.ShouldContain("directionalHasShadowMap |= !useDirectionalShadowAtlas && hasShadowMap;");
@@ -295,13 +295,13 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
         string forwardBindings = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Lights3DCollection.ForwardLighting.cs"));
         string deferredBindings = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Pipelines", "Commands", "Features", "VPRC_LightCombinePass.cs"));
 
-        directionalSource.ShouldContain("program.Uniform($\"{flatPrefix}CascadeSplits\", cascadeSplits);");
-        directionalSource.ShouldContain("program.Uniform($\"{flatPrefix}CascadeBlendWidths\", cascadeBlendWidths);");
-        directionalSource.ShouldContain("program.Uniform($\"{flatPrefix}CascadeBiasMin\", cascadeBiasMins);");
-        directionalSource.ShouldContain("program.Uniform($\"{flatPrefix}CascadeBiasMax\", cascadeBiasMaxes);");
-        directionalSource.ShouldContain("program.Uniform($\"{flatPrefix}CascadeReceiverOffsets\", cascadeReceiverOffsets);");
-        directionalSource.ShouldContain("program.Uniform($\"{flatPrefix}CascadeMatrices\", cascadeMatrices);");
-        directionalSource.ShouldContain("program.Uniform($\"{flatPrefix}CascadeSplits[{i}]\", cascadeSplits[i]);");
+        directionalSource.ShouldContain("program.Uniform(names.CascadeSplits, cascadeSplits);");
+        directionalSource.ShouldContain("program.Uniform(names.CascadeBlendWidths, cascadeBlendWidths);");
+        directionalSource.ShouldContain("program.Uniform(names.CascadeBiasMin, cascadeBiasMins);");
+        directionalSource.ShouldContain("program.Uniform(names.CascadeBiasMax, cascadeBiasMaxes);");
+        directionalSource.ShouldContain("program.Uniform(names.CascadeReceiverOffsets, cascadeReceiverOffsets);");
+        directionalSource.ShouldContain("program.Uniform(names.CascadeMatrices, cascadeMatrices);");
+        directionalSource.ShouldContain("program.Uniform(names.IndexedCascadeSplits[i], cascadeSplits[i]);");
 
         cascadeSource.ShouldContain("SteamVR and ordinary Vulkan sessions exercise the atlas toggle");
         cascadeSource.ShouldContain("Grouped atlas rendering is still gated separately");
@@ -320,7 +320,7 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
             .ShouldBeLessThan(cascadeSource.IndexOf("DirectionalCascadeShadowFallbackReason.UnsupportedLayeredFramebuffer", StringComparison.Ordinal));
 
         forwardBindings.ShouldContain("if (perLightUseCascades)");
-        forwardBindings.ShouldContain("XRTexture2DArray? perLightCascadeReceiverTexture = dirLight.GetCascadedShadowReceiverTexture(directionalShadowCamera);");
+        forwardBindings.ShouldContain("XRTexture2DArray? perLightCascadeReceiverTexture = dirLight.GetSampleableCascadedShadowReceiverTexture(directionalShadowCamera);");
         forwardBindings.ShouldContain("perLightCascadeTex = perLightCascadeReceiverTexture;");
         forwardBindings.ShouldNotContain("if (perLightUseCascades && !perLightUseAtlas)");
 
@@ -346,6 +346,7 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
     public void ShadowAtlasMomentPath_UsesEncodingSpecificPagesAndMomentArraySampling()
     {
         string atlasManager = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Shadows", "ShadowAtlasManager.cs"));
+        string atlasState = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Shadows", "ShadowAtlasManager.ShadowAtlasEncodingState.cs"));
         string forwardBindings = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Lights3DCollection.ForwardLighting.cs"));
         string deferredBindings = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Pipelines", "Commands", "Features", "VPRC_LightCombinePass.cs"));
         string forwardLighting = LoadShaderSource("Snippets/ForwardLighting.glsl");
@@ -353,8 +354,8 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
         string deferredSpot = LoadShaderSource("Scene3D/DeferredLightingSpot.fs");
 
         atlasManager.ShouldContain("GetEncodingState(allocation.AtlasKind, request.Encoding)");
-        atlasManager.ShouldContain("GetEncodingState(group.AtlasKind, group.Encoding)");
-        atlasManager.ShouldContain("ShadowAtlas_{AtlasKind}_{Encoding}");
+        atlasManager.ShouldContain("ShadowAtlasEncodingState state = GetEncodingState(atlasKind, encoding);");
+        atlasState.ShouldContain("ShadowAtlas_{AtlasKind}_{Encoding}");
         atlasManager.ShouldNotContain("request.Encoding != EShadowMapEncoding.Depth");
         atlasManager.ShouldNotContain("group.Encoding != EShadowMapEncoding.Depth");
 
@@ -418,7 +419,7 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
         {
             string candidate = Path.Combine(dir, relativePath);
             if (File.Exists(candidate))
-                return File.ReadAllText(candidate);
+                return File.ReadAllText(candidate).Replace("\r\n", "\n", StringComparison.Ordinal);
 
             dir = Path.GetDirectoryName(dir) ?? dir;
         }

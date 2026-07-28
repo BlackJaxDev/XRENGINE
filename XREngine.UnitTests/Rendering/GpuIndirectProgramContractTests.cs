@@ -25,12 +25,14 @@ public sealed class GpuIndirectProgramContractTests
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
 
-        source.ShouldContain("private readonly Dictionary<(uint materialId, int rendererKey), MaterialProgramCache> _pendingMaterialPrograms = [];");
-        source.ShouldContain("pending.ShaderStateRevision == shaderStateRevision");
+        source.ShouldContain("private readonly Dictionary<XRRenderProgramDescriptor, MaterialProgramCache> _pendingMaterialPrograms = [];");
+        source.ShouldContain("!previousDescriptor.Equals(descriptor)");
+        source.ShouldContain("_materialPrograms.TryGetValue(previousDescriptor, out MaterialProgramCache previousCache)");
         source.ShouldContain("if (IsProgramReadyForCurrentRenderer(pending.Program))");
         source.ShouldContain("return existing.Program;");
         source.ShouldContain("program.APIWrappers");
-        source.ShouldContain("glProgram?.IsLinked == true");
+        source.ShouldContain("TryGetBackendCapability<IRenderProgramBackendCapability>");
+        source.ShouldContain("return capability.IsProgramReady(program);");
     }
 
     [Test]
@@ -40,7 +42,7 @@ public sealed class GpuIndirectProgramContractTests
         string programSource = ReadGlRenderProgramLinkingSources();
 
         rendererSource.ShouldContain("if (glProgram is null || glMesh is null || !glProgram.IsLinked)");
-        programSource.ShouldContain("if (!Data.LinkReady || !Link())");
+        programSource.ShouldContain("if (!Data.LinkReady || !Link(nonBlocking: true))");
     }
 
     [Test]
@@ -49,7 +51,7 @@ public sealed class GpuIndirectProgramContractTests
         string programSource = ReadGlRenderProgramLinkingSources();
         string selectorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Pipelines/OpenGLShaderLinkBackendSelector.cs");
 
-        programSource.ShouldContain("DriverParallelLargeSourceSharedContextThresholdBytes");
+        programSource.ShouldContain("LargeSourceSharedContextPreferenceThresholdBytes");
         programSource.ShouldContain("ShouldPreferSharedContextForLargeSource(inputs)");
         selectorSource.ShouldContain("PreferSharedContextForLargeSource");
         selectorSource.ShouldContain("large source program routed to shared-context lane to avoid driver-parallel timeout");
@@ -87,8 +89,9 @@ public sealed class GpuIndirectProgramContractTests
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
 
-        source.ShouldContain("vec4 c0 = vec4(culled[base+0],  culled[base+1],  culled[base+2],  culled[base+3]);");
-        source.ShouldContain("vec4 c3 = vec4(culled[base+12], culled[base+13], culled[base+14], culled[base+15]);");
+        source.ShouldContain("CPU Matrix4x4 rows are intentionally reinterpreted as GLSL columns, matching uniform upload.");
+        source.ShouldContain("vec4 c0 = vec4({transformAccess}[base+0],  {transformAccess}[base+1],  {transformAccess}[base+2],  {transformAccess}[base+3]);");
+        source.ShouldContain("vec4 c3 = vec4({transformAccess}[base+12], {transformAccess}[base+13], {transformAccess}[base+14], {transformAccess}[base+15]);");
         source.ShouldContain("vec4 c0 = vec4(instanceWorld[base+0],  instanceWorld[base+1],  instanceWorld[base+2],  instanceWorld[base+3]);");
         source.ShouldContain("vec4 c3 = vec4(instanceWorld[base+12], instanceWorld[base+13], instanceWorld[base+14], instanceWorld[base+15]);");
         source.ShouldNotContain("vec4 c0 = vec4(culled[base+0], culled[base+4], culled[base+8],  culled[base+12]);");
@@ -117,9 +120,9 @@ public sealed class GpuIndirectProgramContractTests
 
         CountOccurrences(source, "layout(location=2) out vec3 FragTan;").ShouldBeGreaterThanOrEqualTo(2);
         CountOccurrences(source, "layout(location=3) out vec3 FragBinorm;").ShouldBeGreaterThanOrEqualTo(2);
-        CountOccurrences(source, "layout(location=4) out vec2 {string.Format(DefaultVertexShaderGenerator.FragUVName, 0)};").ShouldBeGreaterThanOrEqualTo(2);
+        CountOccurrences(source, "layout(location={4 + i}) out vec2 {string.Format(DefaultVertexShaderGenerator.FragUVName, i)};").ShouldBeGreaterThanOrEqualTo(2);
         CountOccurrences(source, "layout(location=12) out vec4 {string.Format(DefaultVertexShaderGenerator.FragColorName, 0)};").ShouldBeGreaterThanOrEqualTo(2);
-        CountOccurrences(source, "{string.Format(DefaultVertexShaderGenerator.FragUVName, 0)} = vec2(0.0);").ShouldBeGreaterThanOrEqualTo(2);
+        CountOccurrences(source, "string uv0Source = texCoordBindings.Count > 0 ? texCoordBindings[0] : \"vec2(0.0)\";").ShouldBeGreaterThanOrEqualTo(2);
         CountOccurrences(source, "{string.Format(DefaultVertexShaderGenerator.FragColorName, 0)} = vec4(1.0);").ShouldBeGreaterThanOrEqualTo(2);
     }
 
@@ -139,7 +142,7 @@ public sealed class GpuIndirectProgramContractTests
     {
         string fullPath = ResolveWorkspacePath(relativePath);
         File.Exists(fullPath).ShouldBeTrue($"Expected file does not exist: {fullPath}");
-        return File.ReadAllText(fullPath);
+        return global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType(relativePath);
     }
 
     private static string ResolveWorkspacePath(string relativePath)

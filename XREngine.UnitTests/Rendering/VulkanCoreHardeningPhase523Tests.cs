@@ -26,7 +26,7 @@ public sealed class VulkanCoreHardeningPhase523Tests
         source.ShouldContain("existing.ReferenceCount++");
         source.ShouldContain("ReleaseInternedImageView");
         source.ShouldContain("entry.ReferenceCount--");
-        source.ShouldContain("RetireInternedImageViewsForBackingImage");
+        source.ShouldContain("RetireImageViewsForBackingImage");
         source.ShouldContain("entry.ReferenceCount = 0");
 
         string imageBacked = ReadWorkspaceFile(
@@ -38,7 +38,7 @@ public sealed class VulkanCoreHardeningPhase523Tests
     [Test]
     public void MeshAndDeformationBuffers_CompareStableStructuralIdentity()
     {
-        string source = ReadWorkspaceFile(
+        string source = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Buffers.cs");
 
         foreach (string identityField in new[]
@@ -79,7 +79,7 @@ public sealed class VulkanCoreHardeningPhase523Tests
         lifetime.ShouldContain("InvalidateCachedCommandBuffersForRetiringResource(key, generation, resourceOwner, dependentCommandBuffers)");
         lifetime.ShouldContain("InvalidateCachedCommandBuffersByHandle(");
         allocation.ShouldContain("VulkanExactInvalidationResult");
-        allocation.ShouldContain("dependentHandles.Contains(unchecked((ulong)variant.PrimaryCommandBuffer.Handle))");
+        allocation.ShouldContain("ContainsCommandBufferHandle(");
         allocation.ShouldContain("UnrelatedVariantsPreserved");
         allocation.ShouldContain("GlobalFallbackInvalidations");
     }
@@ -120,7 +120,7 @@ public sealed class VulkanCoreHardeningPhase523Tests
             ResolveRepoRoot(),
             relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(path).ShouldBeTrue($"Expected workspace file '{relativePath}'.");
-        return File.ReadAllText(path).Replace("\r\n", "\n");
+        return File.ReadAllText(path).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveRepoRoot()

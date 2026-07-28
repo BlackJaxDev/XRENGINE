@@ -13,11 +13,11 @@ namespace XREngine.Rendering.Vulkan
             bool ownsDynamicUiSecondaryCommandBuffer)
         {
             public CommandBuffer PrimaryCommandBuffer { get; } = primaryCommandBuffer;
-            public CommandBuffer DynamicUiSecondaryCommandBuffer { get; } = dynamicUiSecondaryCommandBuffer;
+            public CommandBuffer DynamicUiSecondaryCommandBuffer { get; set; } = dynamicUiSecondaryCommandBuffer;
             public CommandPool PrimaryCommandPool { get; } = primaryCommandPool;
             public CommandPool DynamicUiSecondaryCommandPool { get; } = dynamicUiSecondaryCommandPool;
             public bool OwnsPrimaryCommandBuffer { get; } = ownsPrimaryCommandBuffer;
-            public bool OwnsDynamicUiSecondaryCommandBuffer { get; } = ownsDynamicUiSecondaryCommandBuffer;
+            public bool OwnsDynamicUiSecondaryCommandBuffer { get; set; } = ownsDynamicUiSecondaryCommandBuffer;
             public bool Dirty { get; set; } = true;
             public string? DirtyReason { get; set; } = "new variant";
             public ulong FrameOpsSignature { get; set; } = ulong.MaxValue;

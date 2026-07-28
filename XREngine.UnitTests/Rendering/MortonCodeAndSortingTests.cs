@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
@@ -41,7 +41,7 @@ public class MortonCodeAndSortingTests
         var fullPath = Path.Combine(ShaderBasePath, relativePath);
         if (!File.Exists(fullPath))
             throw new FileNotFoundException($"Shader file not found: {fullPath}");
-        return File.ReadAllText(fullPath);
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     #region Shader Loading Tests
@@ -53,7 +53,7 @@ public class MortonCodeAndSortingTests
 
         source.ShouldNotBeNullOrEmpty();
         source.ShouldContain("#version 460 core");
-        source.ShouldContain("CurrentRenderPass");
+        source.ShouldContain("uint renderPass = floatBitsToUint(culled[base + 8u]);");
         source.ShouldContain("MaxSortKeys");
         source.ShouldContain("StateBitMask");
         source.ShouldContain("SortDomain");

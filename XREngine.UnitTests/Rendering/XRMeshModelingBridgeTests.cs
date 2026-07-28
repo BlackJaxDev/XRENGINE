@@ -84,10 +84,13 @@ public class XRMeshModelingBridgeTests
     public void SaveContract_InvalidatesIndexCacheAndUpdatesBounds()
     {
         XRMesh mesh = CreateIndexedQuadMesh();
+        mesh.AllowBVHGeneration = true;
         mesh.GenerateBVH();
         mesh.HasAccelerationCache().ShouldBeTrue();
 
-        _ = mesh.GetIndexBuffer(EPrimitiveType.Triangles, out _);
+        using ManualResetEventSlim indexBufferReady = new();
+        _ = mesh.GetIndexBuffer(EPrimitiveType.Triangles, out _, onReady: (_, _) => indexBufferReady.Set());
+        indexBufferReady.Wait(TimeSpan.FromSeconds(5)).ShouldBeTrue("Index-buffer generation should complete within the test timeout.");
         mesh.HasCachedIndexBuffer(EPrimitiveType.Triangles).ShouldBeTrue();
 
         mesh.SetPosition(0, new Vector3(10f, 0f, 0f));

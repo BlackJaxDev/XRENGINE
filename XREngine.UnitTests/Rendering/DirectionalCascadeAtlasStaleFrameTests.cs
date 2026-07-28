@@ -350,7 +350,7 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
         while (!string.IsNullOrEmpty(directory))
         {
             if (File.Exists(Path.Combine(directory, "XREngine.slnx")))
-                return File.ReadAllText(Path.Combine(directory, relativePath));
+                return File.ReadAllText(Path.Combine(directory, relativePath)).Replace("\r\n", "\n", StringComparison.Ordinal);
 
             directory = Directory.GetParent(directory)?.FullName;
         }

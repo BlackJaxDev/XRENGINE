@@ -120,22 +120,19 @@ public sealed class GizmoStencilStateIsolationTests
     {
         string fullPath = Path.Combine(ResolveRepoRoot(), "XREngine.Runtime.Rendering", "Rendering", "Pipelines", "Commands", fileName);
         File.Exists(fullPath).ShouldBeTrue($"Command file not found: {fullPath}");
-        return File.ReadAllText(fullPath);
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string LoadMaterialFile(string fileName)
     {
         string fullPath = Path.Combine(ResolveRepoRoot(), "XREngine.Runtime.Rendering", "Objects", "Materials", fileName);
         File.Exists(fullPath).ShouldBeTrue($"Material file not found: {fullPath}");
-        return File.ReadAllText(fullPath);
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string LoadOpenGlRendererFile(string fileName)
-    {
-        string fullPath = Path.Combine(ResolveRepoRoot(), "XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "OpenGL", fileName);
-        File.Exists(fullPath).ShouldBeTrue($"OpenGL renderer file not found: {fullPath}");
-        return File.ReadAllText(fullPath);
-    }
+        => global::XREngine.UnitTests.SourceContractWorkspace.ReadFile(
+            $"XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/{fileName}");
 
     private static string ResolveRepoRoot()
     {

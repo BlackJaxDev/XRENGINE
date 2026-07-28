@@ -75,7 +75,13 @@ namespace XREngine.Rendering.UI
         {
             RenderPass = material.RenderPass;
             material.RenderOptions = _renderParameters;
-            RemakeMesh(material);
+            if (Mesh is null)
+                RemakeMesh(material);
+            else
+            {
+                Mesh.Material = material;
+                Material = material;
+            }
             RenderCommand2D.MarkDirty();
             RenderCommand3D.MarkDirty();
         }

@@ -884,6 +884,7 @@ namespace XREngine.Rendering.Vulkan
             "VK_EXT_graphics_pipeline_library",
             "VK_EXT_pipeline_creation_cache_control",
             "VK_EXT_transform_feedback",
+            "VK_EXT_primitives_generated_query",
             "VK_KHR_fragment_shading_rate",
             "VK_EXT_fragment_density_map",
             "VK_EXT_mesh_shader",

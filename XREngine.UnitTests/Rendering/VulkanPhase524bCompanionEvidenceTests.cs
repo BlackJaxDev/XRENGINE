@@ -283,7 +283,7 @@ public sealed class VulkanPhase524bCompanionEvidenceTests
             {
                 string path = Path.Combine(directory, relativePath.Replace('/', Path.DirectorySeparatorChar));
                 File.Exists(path).ShouldBeTrue($"Expected workspace file '{relativePath}'.");
-                return File.ReadAllText(path).Replace("\r\n", "\n");
+                return File.ReadAllText(path).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
             }
 
             directory = Directory.GetParent(directory)?.FullName;

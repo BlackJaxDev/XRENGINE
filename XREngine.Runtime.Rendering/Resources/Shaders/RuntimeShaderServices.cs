@@ -1,4 +1,5 @@
 using XREngine.Core.Files;
+using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering;
 
@@ -26,6 +27,7 @@ public static class RuntimeShaderServices
                 previousChangeSource.ShaderSourceFileChanged -= OnShaderSourceFileChanged;
 
             _current = value;
+            ShaderHelper.ClearServiceBoundCaches();
             if (value is IRuntimeShaderChangeSource nextChangeSource)
                 nextChangeSource.ShaderSourceFileChanged += OnShaderSourceFileChanged;
         }

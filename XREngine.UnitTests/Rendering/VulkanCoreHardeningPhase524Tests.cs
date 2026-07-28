@@ -217,7 +217,7 @@ public sealed class VulkanCoreHardeningPhase524Tests
         frameBuffer.ShouldNotContain("List<int> colorMatches");
         frameBuffer.ShouldNotContain("string slot = usage.ResourceName[prefix.Length..]");
 
-        scratch.ShouldContain("ConditionalWeakTable<XRFrameBuffer, FboAttachmentLayoutScratch>");
+        scratch.ShouldContain("Dictionary<XRFrameBuffer, FboAttachmentLayoutScratch>");
         recording.ShouldContain("GetFboAttachmentLayoutScratch(fbo, count)");
         recording.ShouldContain("recordingScratch.FboAttachmentLayouts.TryGetValue");
         recording.ShouldContain("fboLayoutTracking.Clear()");
@@ -383,17 +383,17 @@ public sealed class VulkanCoreHardeningPhase524Tests
     }
 
     [Test]
-    public void McpVulkanScreenshotReadback_FailsBeforeUnsafeTransferSubmission()
+    public void McpVulkanScreenshotReadback_UsesQueuedSafeTransferSubmission()
     {
         string viewportActions = ReadWorkspaceFile("XREngine.Editor/Mcp/Actions/EditorMcpActions.Viewport.cs");
         int captureStart = viewportActions.IndexOf("static void BeginCapture", StringComparison.Ordinal);
         int captureEnd = viewportActions.IndexOf("var tcs =", captureStart, StringComparison.Ordinal);
         string capture = viewportActions[captureStart..captureEnd];
 
-        capture.ShouldContain("if (renderer is VulkanRenderer)");
-        capture.ShouldContain("temporarily disabled because its synchronous transfer path can trigger a GPU watchdog reset");
-        capture.IndexOf("if (renderer is VulkanRenderer)", StringComparison.Ordinal)
-            .ShouldBeLessThan(capture.IndexOf("renderer.GetScreenshotAsync", StringComparison.Ordinal));
+        capture.ShouldContain("renderer.TryQueueScreenshotReadback(");
+        capture.ShouldContain("if (!result.Succeeded || result.Image is null)");
+        capture.IndexOf("renderer.TryQueueScreenshotReadback(", StringComparison.Ordinal)
+            .ShouldBeLessThan(capture.IndexOf("tcs.TrySetResult", StringComparison.Ordinal));
     }
 
     [Test]
@@ -433,7 +433,7 @@ public sealed class VulkanCoreHardeningPhase524Tests
     {
         string path = Path.Combine(ResolveRepoRoot(), relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(path).ShouldBeTrue($"Expected workspace file '{relativePath}'.");
-        return File.ReadAllText(path).Replace("\r\n", "\n");
+        return File.ReadAllText(path).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveRepoRoot()

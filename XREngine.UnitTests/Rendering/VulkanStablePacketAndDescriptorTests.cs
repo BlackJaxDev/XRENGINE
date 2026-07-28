@@ -112,6 +112,46 @@ public sealed class VulkanStablePacketAndDescriptorTests
     }
 
     [Test]
+    public void CapturedDescriptorAllocation_AlwaysKeepsItsResourceFingerprintVariant()
+    {
+        const ulong resourceFingerprint = 0x123456789ABCDEF0UL;
+
+        VulkanRenderer.VkMeshRenderer.ResolveDescriptorAllocationResourceVariantFingerprint(
+            allActiveSetsUpdateAfterBind: true,
+            hasCapturedBindingSnapshot: true,
+            resourceFingerprint).ShouldBe(resourceFingerprint);
+        VulkanRenderer.VkMeshRenderer.ResolveDescriptorAllocationResourceVariantFingerprint(
+            allActiveSetsUpdateAfterBind: false,
+            hasCapturedBindingSnapshot: true,
+            resourceFingerprint).ShouldBe(resourceFingerprint);
+        VulkanRenderer.VkMeshRenderer.ResolveDescriptorAllocationResourceVariantFingerprint(
+            allActiveSetsUpdateAfterBind: false,
+            hasCapturedBindingSnapshot: false,
+            resourceFingerprint).ShouldBe(resourceFingerprint);
+        VulkanRenderer.VkMeshRenderer.ResolveDescriptorAllocationResourceVariantFingerprint(
+            allActiveSetsUpdateAfterBind: true,
+            hasCapturedBindingSnapshot: false,
+            resourceFingerprint).ShouldBe(0UL);
+    }
+
+    [Test]
+    public void PublishedDescriptorSnapshots_DriveExactSamplingTransitions()
+    {
+        string drawing = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
+        string recording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+
+        drawing.ShouldContain("TryTransitionPreparedDescriptorImagesForSampling(");
+        drawing.ShouldContain("TransitionPublishedDescriptorSetImagesForSampling(");
+        recording.ShouldContain("_vulkanPublishedDescriptorSets.TryGetValue(");
+        AssertOrdered(
+            recording,
+            "VulkanPublishedDescriptorImageReference published = snapshot.ImageReferences[i];",
+            "TransitionDescriptorImageForSampling(commandBuffer, published.Reference.View, published.Reference.Layout, target);");
+    }
+
+    [Test]
     public void BindingSnapshot_NamedSamplerLookupUsesCapturedDictionary()
     {
         VulkanRenderer.ComputeDispatchSnapshot snapshot = new();
@@ -517,7 +557,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         string recording = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         recording.ShouldContain("if (!IndirectCommandChainSecondaryRecordingSafe ||");
-        recording.ShouldContain("RecordIndirectDrawIntoCommandBuffer(commandBuffer, indirectOp, opPassIndex);");
+        recording.ShouldContain("RecordIndirectDrawIntoCommandBuffer(commandBuffer, indirectOp, opPassIndex, opIndex);");
         recording.ShouldContain("usedSecondary: false");
     }
 
@@ -603,7 +643,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
     }
 
     [Test]
-    public void VulkanRecording_UsesPacketSecondariesWithoutSimultaneousUse()
+    public void VulkanRecording_SharedPacketSecondariesUseSimultaneousUseAndExactInheritance()
     {
         string source = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
@@ -615,8 +655,10 @@ public sealed class VulkanStablePacketAndDescriptorTests
 
         source.ShouldContain("scheduledOpCount += chain.SourceCount;");
         source.ShouldContain("CmdExecuteCommandsTracked(commandBuffer, (uint)secondaryCount, secondaryPtr)");
-        worker.ShouldContain("Flags = CommandBufferUsageFlags.RenderPassContinueBit,");
-        worker.ShouldNotContain("SimultaneousUseBit");
+        worker.ShouldContain("CommandBufferUsageFlags.RenderPassContinueBit | CommandBufferUsageFlags.SimultaneousUseBit");
+        worker.ShouldContain("StoreCommandChainSecondaryInheritance(");
+        source.ShouldContain("CommandChainSecondaryInheritanceMatches(");
+        source.ShouldContain("ActiveMeshSecondaryInheritanceMatches(");
         worker.ShouldContain("using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(firstDraw.Context);");
         worker.ShouldContain("lock (_frameOpResourcePlannerReadbackLock)");
         worker.IndexOf("lock (_frameOpResourcePlannerReadbackLock)", StringComparison.Ordinal)
@@ -760,9 +802,13 @@ public sealed class VulkanStablePacketAndDescriptorTests
         lifetime.ShouldContain("private bool CanResetVulkanCommandBuffer(");
         lifetime.IndexOf("CanResetVulkanCommandBuffer(commandBuffer, out string reason)", StringComparison.Ordinal)
             .ShouldBeLessThan(lifetime.IndexOf("return Api!.ResetCommandBuffer(commandBuffer, 0);", StringComparison.Ordinal));
+        lifetime.ShouldContain("commandRecord.Pins.HasRecordedReferences");
+        lifetime.ShouldContain("commandRecord.Pins.RecordedReferenceCount");
         lowering.ShouldContain("CanResetVulkanCommandBuffer(secondary, out _)");
         recording.ShouldNotContain("Api!.ResetCommandBuffer(");
         secondaries.ShouldNotContain("Api!.ResetCommandBuffer(");
+        secondaries.ShouldContain("TryEnsureMutableDynamicUiSecondaryCommandBuffer(");
+        secondaries.ShouldContain("DeferSecondaryCommandBufferFree(imageIndex, pool, previous);");
     }
 
     [Test]
@@ -863,8 +909,9 @@ public sealed class VulkanStablePacketAndDescriptorTests
         string state = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
 
+        descriptors.ShouldContain("bool allowCompletedDescriptorSlotRefresh = bindingSnapshot is null &&");
         descriptors.ShouldContain(
-            "bool allowCompletedDescriptorSlotRefresh = refreshFrameIndex is { } completedFrameIndex &&");
+            "refreshFrameIndex is { } completedFrameIndex &&");
         descriptors.ShouldContain("Renderer.CanUpdateCompletedDescriptorFrameSlot(completedFrameIndex)");
         descriptors.ShouldContain("!Renderer.CanUpdateCompletedDescriptorFrameSlot(frameIndex)");
         descriptors.ShouldContain("captured descriptor frame slot {frameIndex} is still in flight");
@@ -938,6 +985,104 @@ public sealed class VulkanStablePacketAndDescriptorTests
             "touchedGenerations.TryGetValue(key, out ulong trackedGeneration)");
         lifetime.ShouldNotContain("for (int i = 0; i < touched.Count; i++)");
         lifetime.ShouldNotContain("new Dictionary<VulkanResourceLifetimeKey, ulong>(touched.Count)");
+    }
+
+    [Test]
+    public void DescriptorLayoutTracking_PreservesSecondaryExecutionAndFirstUseInvariants()
+    {
+        string lifetime = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+        string recording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+
+        lifetime.ShouldContain("lifetime.Level = allocateInfo.Level;");
+        lifetime.ShouldContain("lifetime.Level == CommandBufferLevel.Secondary;");
+        lifetime.ShouldContain("RecordSecondaryDescriptorImageLayoutRequirements(commandBuffer, descriptorSet, snapshotToValidate);");
+        lifetime.ShouldContain("ValidateVulkanDescriptorImageLayouts(commandBuffer, descriptorSet, snapshotToValidate);");
+        lifetime.ShouldContain("private bool RecordSecondaryDescriptorImageLayoutRequirement(");
+        lifetime.ShouldContain("ImageLayout requiredLayout = reference.Type == DescriptorType.StorageImage");
+
+        int transitionStart = recording.IndexOf(
+            "private void TransitionDescriptorImageForSampling(",
+            StringComparison.Ordinal);
+        int transitionEnd = recording.IndexOf(
+            "private bool IsImageRangeAttachedToFrameBuffer(",
+            transitionStart,
+            StringComparison.Ordinal);
+        transitionStart.ShouldBeGreaterThanOrEqualTo(0);
+        transitionEnd.ShouldBeGreaterThan(transitionStart);
+        string transition = recording[transitionStart..transitionEnd];
+        AssertOrdered(
+            transition,
+            "GetCurrentVulkanResourceGeneration(",
+            "if (resourceGeneration == 0)",
+            "priorState = VulkanImageAccessState.Undefined with",
+            "CmdPipelineBarrierTracked(");
+    }
+
+    [Test]
+    public void DescriptorSubmission_AllowsOnlyAlreadyRecordedPendingRetirementGenerations()
+    {
+        string lifetime = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+        int methodStart = lifetime.IndexOf(
+            "private bool TryAppendSubmittedDescriptorDependency_NoLock(",
+            StringComparison.Ordinal);
+        int methodEnd = lifetime.IndexOf("\n    private ", methodStart + 1, StringComparison.Ordinal);
+        methodStart.ShouldBeGreaterThanOrEqualTo(0);
+        methodEnd.ShouldBeGreaterThan(methodStart);
+        string method = lifetime[methodStart..methodEnd];
+
+        AssertOrdered(
+            method,
+            "if ((resource.State & EVulkanResourceLifetimeState.Destroyed) != 0)",
+            "if (touchedGenerations.TryGetValue(key, out ulong trackedGeneration))",
+            "else",
+            "if ((resource.State & EVulkanResourceLifetimeState.PendingRetirement) != 0)");
+        method.ShouldContain("touched.Add(new KeyValuePair<VulkanResourceLifetimeKey, ulong>(key, resource.Generation));");
+    }
+
+    [Test]
+    public void StreamingDescriptorRefresh_RejectsStaleResourceAndLayoutGenerations()
+    {
+        string material = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Materials/VkMaterial.cs");
+        string synchronization = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+
+        int reusableStart = material.IndexOf(
+            "internal bool TryGetValidatedReusableMaterialDescriptorSet(",
+            StringComparison.Ordinal);
+        int reusableEnd = material.IndexOf(
+            "\n\t\t\tinternal static bool DescriptorSlotRequiresPublication(",
+            reusableStart,
+            StringComparison.Ordinal);
+        reusableStart.ShouldBeGreaterThanOrEqualTo(0);
+        reusableEnd.ShouldBeGreaterThan(reusableStart);
+        string reusable = material[reusableStart..reusableEnd];
+        AssertOrdered(
+            reusable,
+            "ulong currentResourceFingerprint = ComputeResourceFingerprint(program);",
+            "state.ResourceFingerprint != currentResourceFingerprint",
+            "state.SlotResourceFingerprints[resolvedFrame] != state.ResourceFingerprint");
+
+        int publicationStart = synchronization.IndexOf(
+            "private void PublishRecordedImageLayouts(",
+            StringComparison.Ordinal);
+        int publicationEnd = synchronization.IndexOf(
+            "\n    private void AdvanceCompletedImageLayouts(",
+            publicationStart,
+            StringComparison.Ordinal);
+        publicationStart.ShouldBeGreaterThanOrEqualTo(0);
+        publicationEnd.ShouldBeGreaterThan(publicationStart);
+        string publication = synchronization[publicationStart..publicationEnd];
+        AssertOrdered(
+            publication,
+            "ulong currentGeneration = GetCurrentVulkanResourceGeneration(",
+            "if (pair.Value.ResourceGeneration != 0 &&",
+            "currentGeneration != pair.Value.ResourceGeneration)",
+            "continue;",
+            "state.Submitted = pair.Value;");
     }
 
     [Test]

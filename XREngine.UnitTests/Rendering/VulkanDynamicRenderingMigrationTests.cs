@@ -25,8 +25,8 @@ public sealed class VulkanDynamicRenderingMigrationTests
         modeSource.ShouldContain("dynamic rendering was explicitly requested");
         modeSource.ShouldContain("public EVulkanRenderTargetMode EffectiveRenderTargetMode");
         modeSource.ShouldContain("? EVulkanRenderTargetMode.DynamicRendering");
-        smokeControllerSource.ShouldContain("AbstractRenderer.Current is VulkanRenderer vulkanRenderer");
-        smokeControllerSource.ShouldContain("vulkanRenderer.EffectiveRenderTargetMode.ToString()");
+        smokeControllerSource.ShouldContain("EditorRendererCapabilityResolver.TryGetForBackend(");
+        smokeControllerSource.ShouldContain("diagnostics.EffectiveRenderTargetMode");
         logicalDeviceSource.ShouldContain("ResolveRenderTargetMode();");
         logicalDeviceSource.ShouldContain("[Vulkan] Render target mode:");
     }
@@ -538,14 +538,14 @@ public sealed class VulkanDynamicRenderingMigrationTests
 
         retirementSource.ShouldContain("private readonly HashSet<ulong>[] _retiredImageHandles");
         retirementSource.ShouldContain("private readonly HashSet<ulong>[] _retiredImageMemoryHandles");
-        retirementSource.ShouldContain("private readonly HashSet<ulong>[] _retiredImageViewHandles");
+        retirementSource.ShouldContain("private readonly HashSet<VulkanPinnedResourceGeneration>[] _retiredImageViewHandles");
         retirementSource.ShouldContain("private readonly HashSet<ulong>[] _retiredSamplerHandles");
         retirementSource.ShouldContain("private ImageView[] FilterRetiredAttachmentViews");
         retirementSource.ShouldContain("_retiredImageHandles[frameSlot].Add(image.Handle)");
         retirementSource.ShouldContain("_retiredImageMemoryHandles[frameSlot].Add(memory.Handle)");
-        retirementSource.ShouldContain("_retiredImageViewHandles[frameSlot].Add(primaryView.Handle)");
+        retirementSource.ShouldContain("_retiredImageViewHandles[frameSlot].Add(primaryViewKey)");
         retirementSource.ShouldContain("_retiredSamplerHandles[frameSlot].Add(sampler.Handle)");
-        retirementSource.ShouldContain("CompleteRetiredImageDeduplication(frameSlot, in r)");
+        retirementSource.ShouldContain("CompleteRetiredImageDeduplication(frameSlot, in entry)");
         retirementSource.ShouldContain("_retiredImageHandles[frameSlot].Remove(resources.Image.Handle)");
         retirementSource.ShouldContain("TryBeginDestroyVulkanResourceGeneration(");
         retirementSource.ShouldContain("entry.ImageGeneration");
@@ -645,15 +645,15 @@ public sealed class VulkanDynamicRenderingMigrationTests
     }
 
     [Test]
-    public void GeneratedProgramIdentity_UsesStableShaderAndVariantIdentityInsteadOfMaterialRevision()
+    public void GeneratedProgramIdentity_IncludesShaderAndMaterialStateAxes()
     {
         string meshPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
 
-        meshPipeline.ShouldContain("BuildShaderIdentityList(material, generatedVertexIdentity)");
-        meshPipeline.ShouldContain("material.ActiveUberVariant.VariantHash.ToString(\"X16\")");
-        meshPipeline.ShouldContain("StringComparer.Ordinal.GetHashCode(sourceText)");
-        meshPipeline.ShouldNotContain(";shaderRevision=");
-        meshPipeline.ShouldNotContain("material.ShaderStateRevision.ToString");
+        meshPipeline.ShouldContain("BuildGeneratedProgramIdentity(programState, generatedProgramAxes, shaderStageList, generatedVertexIdentity)");
+        meshPipeline.ShouldContain("uberVariant={state.MaterialVariantHash:X16}");
+        meshPipeline.ShouldContain("shaderSignature={state.ShaderSourceSignature:X16}");
+        meshPipeline.ShouldContain("shaderRevision={state.ShaderStateRevision}");
+        meshPipeline.ShouldContain("generatedVertex={generatedVertexIdentity ?? string.Empty}");
     }
 
     [Test]
@@ -687,7 +687,7 @@ public sealed class VulkanDynamicRenderingMigrationTests
         string editorPawn = ReadWorkspaceFile("XREngine.Editor/EditorFlyingCameraPawnComponent.cs");
 
         editorPawn.ShouldContain("GetDepthReadbackCoordinate(fbo, internalSizeCoordinate)");
-        editorPawn.ShouldContain("RuntimeRenderingHostServices.Current.CurrentRenderBackend");
+        editorPawn.ShouldContain("RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend");
         editorPawn.ShouldContain("RenderClipSpacePolicy.FramebufferTextureYDirection(backend)");
         editorPawn.ShouldContain("int maxY = Math.Max((int)fbo.Height - 1, 0);");
         editorPawn.ShouldContain("coordinate.Y = maxY - coordinate.Y;");
@@ -745,37 +745,24 @@ public sealed class VulkanDynamicRenderingMigrationTests
         string meshPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
         string frameBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
 
-        string passUsesReadOnly = SliceMethod(meshPipeline, "private static bool PassUsesReadOnlyDepthStencil(");
+        string passUsesReadOnly = SliceMethod(meshPipeline, "private static bool PassHasReadOnlyDepthStencilUsage(");
         passUsesReadOnly.ShouldContain("bool hasDepthStencilWriteUsage = false;");
         passUsesReadOnly.ShouldContain("usage.Access is ERenderGraphAccess.Write or ERenderGraphAccess.ReadWrite");
         passUsesReadOnly.ShouldContain("return hasDepthStencilUsage && !hasDepthStencilWriteUsage;");
 
-        frameBuffer.ShouldContain("HashSet<int> writeCapableDepthStencilAttachments = CollectWriteCapableDepthStencilAttachments(planned, pass, frameBufferName);");
-        frameBuffer.ShouldContain("ResolveAttachmentReferenceLayout(updated, usage, writeCapableDepthStencilAttachments.Contains(index))");
+        frameBuffer.ShouldContain("Span<bool> writeCapableDepthStencilAttachments = stackalloc bool[planned.Length];");
+        frameBuffer.ShouldContain("ResolveAttachmentReferenceLayout(updated, usage, writeCapableDepthStencilAttachments[index])");
 
-        string collectWrites = SliceMethod(frameBuffer, "private static HashSet<int> CollectWriteCapableDepthStencilAttachments(");
+        string collectWrites = SliceMethod(frameBuffer, "private static void CollectWriteCapableDepthStencilAttachments(");
         collectWrites.ShouldContain("usage.Access == ERenderGraphAccess.Read");
-        collectWrites.ShouldContain("ResolveMatchingAttachmentIndices(signatures, slot, usage, pass)");
+        collectWrites.ShouldContain("ResolveMatchingAttachmentIndices(signatures, slot, usage, pass, matchingIndices)");
 
         string referenceLayout = SliceMethod(frameBuffer, "private static ImageLayout ResolveAttachmentReferenceLayout(");
         referenceLayout.ShouldContain("usage.Access == ERenderGraphAccess.Read && !passHasWriteCapableDepthStencilUsage");
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string repoRoot = ResolveRepoRoot();
-        string path = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
-        if (!File.Exists(path))
-        {
-            string marker = $"{Path.DirectorySeparatorChar}Commands{Path.DirectorySeparatorChar}VulkanRenderer.";
-            path = path.Replace(
-                marker,
-                $"{Path.DirectorySeparatorChar}Commands{Path.DirectorySeparatorChar}CommandBuffers{Path.DirectorySeparatorChar}VulkanRenderer.",
-                StringComparison.Ordinal);
-        }
-        File.Exists(path).ShouldBeTrue($"Expected workspace file '{path}' to exist.");
-        return File.ReadAllText(path);
-    }
+        => global::XREngine.UnitTests.SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ReadWorkspaceDirectory(string relativePath, string searchPattern)
     {

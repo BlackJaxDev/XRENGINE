@@ -51,6 +51,6 @@ public sealed class GpuBvhSelectorIntegrationTests
         string root = AppContext.BaseDirectory;
         while (!File.Exists(Path.Combine(root, "XRENGINE.slnx")))
             root = Directory.GetParent(root)?.FullName ?? throw new DirectoryNotFoundException("Could not locate workspace root.");
-        return File.ReadAllText(Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar))).Replace("\r\n", "\n");
+        return File.ReadAllText(Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar))).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 }

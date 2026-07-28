@@ -1135,7 +1135,7 @@ MatchDestinationRenderArea: true
         XRAssetGraphUtility.RefreshAssetGraph(material);
         string yaml = AssetManager.Serializer.Serialize(material);
 
-        yaml.ShouldContain($"Source: {shaderPath}");
+        yaml.ShouldContain("Source: Shaders/Common/TexturedNormalMetallicRoughnessDeferred.fs");
         yaml.ShouldNotContain("Text:");
 
         XRMaterial clone = AssetManager.Deserializer.Deserialize<XRMaterial>(yaml).ShouldNotBeNull();
@@ -1394,7 +1394,22 @@ NonVertexShadersOverride:
         }
 
         File.SetAttributes(directoryPath, FileAttributes.Normal);
-        Directory.Delete(directoryPath, recursive: true);
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                Directory.Delete(directoryPath, recursive: true);
+                return;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return;
+            }
+            catch (IOException) when (attempt < 4)
+            {
+                Thread.Sleep(50 << attempt);
+            }
+        }
     }
 
     private sealed class LayerMaskContainer

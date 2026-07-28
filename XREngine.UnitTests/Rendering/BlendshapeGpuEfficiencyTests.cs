@@ -46,20 +46,21 @@ public sealed class BlendshapeGpuEfficiencyTests
     }
 
     [Test]
-    public void PushBlendshapeWeightsToGpu_UploadsContiguousDirtyRange()
+    public void PushBlendshapeWeightsToGpu_CollapsesHighCoverageDirtyRangeToFullUpload()
     {
         XRMeshRenderer renderer = CreateBlendshapeRenderer();
         renderer.BlendshapeWeights.ShouldNotBeNull();
 
         (int offset, uint length)? weightUpload = null;
         renderer.BlendshapeWeights!.PushSubDataRequested += (offset, length) => weightUpload = (offset, length);
+        renderer.BlendshapeWeights.PushDataRequested += () => weightUpload = (0, renderer.BlendshapeWeights.Length);
 
         renderer.SetBlendshapeWeightNormalized(0u, 0.25f);
         renderer.SetBlendshapeWeightNormalized(2u, -0.75f);
         renderer.PushBlendshapeWeightsToGPU();
 
         renderer.ActiveBlendshapeCount.ShouldBe(2);
-        weightUpload.ShouldBe((0, (uint)(sizeof(float) * 3)));
+        weightUpload.ShouldBe((0, renderer.BlendshapeWeights.Length));
     }
 
     [Test]

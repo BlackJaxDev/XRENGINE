@@ -82,7 +82,7 @@ public sealed class AmbientOcclusionGtaoDefaultsTests
         string blurPassSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/AO/VPRC_GTAOPass.cs").Replace("\r\n", "\n");
         blurPassSource.ShouldContain("program.Uniform(\"DenoiseRadius\", Math.Clamp(settings?.GTAODenoiseRadius ?? GroundTruthAmbientOcclusionSettings.DefaultDenoiseRadius, 0, 16));");
         blurPassSource.ShouldContain("program.Uniform(\"DenoiseSharpness\", settings?.GTAODenoiseSharpness is > 0.0f ? settings.GTAODenoiseSharpness : GroundTruthAmbientOcclusionSettings.DefaultDenoiseSharpness);");
-        blurPassSource.ShouldContain("SetDynamicFBO(instance, outputFbo, RenderResourceSizePolicy.Internal());");
+        blurPassSource.ShouldContain("forceRebuild = !HasDeclaredFrameBuffers(instance);");
 
         AssertShaderContainsDefaults("Build/CommonAssets/Shaders/Scene3D/GTAOGen.fs");
         AssertShaderContainsDefaults("Build/CommonAssets/Shaders/Scene3D/GTAOGenStereo.fs");
@@ -121,7 +121,7 @@ public sealed class AmbientOcclusionGtaoDefaultsTests
     {
         string fullPath = ResolveWorkspacePath(relativePath);
         File.Exists(fullPath).ShouldBeTrue($"Expected file does not exist: {fullPath}");
-        return File.ReadAllText(fullPath);
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveWorkspacePath(string relativePath)

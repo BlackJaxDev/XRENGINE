@@ -14,7 +14,7 @@ public sealed class RenderingNamingConventionTests
     public void MeshRendering_PathIntentSuffixes_AreExplicit()
     {
         string root = ResolveWorkspaceRoot();
-        string meshRoot = Path.Combine(root, "XRENGINE", "Rendering", "Pipelines", "Commands", "MeshRendering");
+        string meshRoot = Path.Combine(root, "XREngine.Runtime.Rendering", "Rendering", "Pipelines", "Commands", "MeshRendering");
 
         AssertPathIntentSuffix(meshRoot, "Traditional");
         AssertPathIntentSuffix(meshRoot, "Meshlet");
@@ -90,7 +90,7 @@ public sealed class RenderingNamingConventionTests
         var rules = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
         {
             ["Culling"] = ["Cull", "Culling", "Extract"],
-            ["Indirect"] = ["Indirect", "Build", "Copy", "Reset"],
+            ["Indirect"] = ["Indirect", "Build", "Classify", "Clear", "Copy", "Expand", "Select", "Scatter", "Reset"],
             ["Occlusion"] = ["Occlusion", "HiZ"],
             ["Sorting"] = ["Sort", "Sorting", "Radix"],
             ["Debug"] = ["Debug", "Gather"],

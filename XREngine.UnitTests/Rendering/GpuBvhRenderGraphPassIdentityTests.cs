@@ -50,7 +50,7 @@ public sealed class GpuBvhRenderGraphPassIdentityTests
         scope.ShouldBeGreaterThan(resolve);
         skinnedBounds.ShouldBeGreaterThan(scope);
         bvhBuild.ShouldBeGreaterThan(skinnedBounds);
-        source.ShouldContain("passIndex == int.MinValue && AbstractRenderer.Current is VulkanRenderer");
+        source.ShouldContain("passIndex == int.MinValue && AbstractRenderer.Current?.BackendId == RendererBackendId.Vulkan");
         source.ShouldContain("Skipping acceleration-structure compute because no render-graph pass metadata was generated");
         source.ShouldContain("GetOrCreateSyntheticPass(RenderGraphPassName, ERenderGraphPassStage.Compute)");
     }

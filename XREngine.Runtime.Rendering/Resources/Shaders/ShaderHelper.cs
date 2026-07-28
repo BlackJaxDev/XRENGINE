@@ -57,6 +57,13 @@ public static class ShaderHelper
         DefinedVariantShaderCache.Clear();
     }
 
+    internal static void ClearServiceBoundCaches()
+    {
+        EngineShaderLoadTasks.Clear();
+        ClearDefinedVariantSourceCache();
+    }
+
+
     private static EngineShaderCacheKey CreateEngineShaderCacheKey(string relativePath, EShaderType shaderType)
     {
         string normalizedPath = relativePath.Replace('\\', '/');

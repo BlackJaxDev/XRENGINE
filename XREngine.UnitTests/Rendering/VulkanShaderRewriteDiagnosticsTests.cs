@@ -270,7 +270,7 @@ void main()
         GetProperty<uint>(cascadeSplits, "ArrayStride").ShouldBe(16u);
 
         object cascadeCount = GetStructMember(lightData, "CascadeCount");
-        GetProperty<uint>(cascadeCount, "Offset").ShouldBe(1376u);
+        GetProperty<uint>(cascadeCount, "Offset").ShouldBe(2656u);
     }
 
     private static string RewriteForVulkanFragment(string source)

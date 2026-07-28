@@ -105,6 +105,7 @@ public unsafe partial class VulkanRenderer
     private sealed class VulkanRecordedImageLayoutState
     {
         public readonly Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> EntrySubresources = new(8);
+        public readonly Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> SecondaryDescriptorRequirements = new(8);
         public readonly Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> Subresources = new(32);
         public readonly List<KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState>> TouchedSubresources = new(32);
         public bool EntryStateIncomplete;
@@ -1081,6 +1082,7 @@ public unsafe partial class VulkanRenderer
             foreach (VulkanRecordedImageLayoutState recorded in _recordedImageLayoutsByCommandBuffer.Values)
             {
                 RemoveImageKeys(recorded.EntrySubresources, imageHandle);
+                RemoveImageKeys(recorded.SecondaryDescriptorRequirements, imageHandle);
                 RemoveImageKeys(recorded.Subresources, imageHandle);
             }
         }
@@ -1421,6 +1423,7 @@ public unsafe partial class VulkanRenderer
 
             recorded.Subresources.Clear();
             recorded.EntrySubresources.Clear();
+            recorded.SecondaryDescriptorRequirements.Clear();
             recorded.TouchedSubresources.Clear();
             recorded.EntryStateIncomplete = false;
             recorded.RecordingGeneration = ResolveCommandBufferRecordingGeneration(commandBuffer);
@@ -1457,6 +1460,7 @@ public unsafe partial class VulkanRenderer
             }
 
             recorded.EntrySubresources.Clear();
+            recorded.SecondaryDescriptorRequirements.Clear();
             foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> pair in predecessorState.TouchedSubresources)
                 recorded.EntrySubresources[pair.Key] = pair.Value;
         }
@@ -1591,6 +1595,129 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Emits the image barriers required by descriptors baked into a secondary
+    /// command buffer. This must run on the primary before its rendering scope
+    /// begins; a secondary can declare its entry layout but cannot perform the
+    /// external transition that establishes it.
+    /// </summary>
+    private void TransitionSecondaryDescriptorImagesForExecution(
+        CommandBuffer primary,
+        CommandBuffer secondary)
+    {
+        if (primary.Handle == 0 || secondary.Handle == 0)
+            return;
+
+        CommandBufferRecordingScratch scratch = _commandBufferRecordingScratch.Value!;
+        List<KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState>> requirements =
+            scratch.SecondaryDescriptorImageRequirements;
+        requirements.Clear();
+        lock (_vulkanImageLayoutLock)
+        {
+            if (_recordedImageLayoutsByCommandBuffer.TryGetValue(
+                    unchecked((ulong)secondary.Handle),
+                    out VulkanRecordedImageLayoutState? secondaryState))
+            {
+                requirements.EnsureCapacity(secondaryState.SecondaryDescriptorRequirements.Count);
+                foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> requirement in
+                         secondaryState.SecondaryDescriptorRequirements)
+                {
+                    requirements.Add(requirement);
+                }
+            }
+        }
+
+        if (requirements.Count == 0)
+            return;
+
+        ImageMemoryBarrier[] barriers = ArrayPool<ImageMemoryBarrier>.Shared.Rent(requirements.Count);
+        int barrierCount = 0;
+        PipelineStageFlags sourceStages = PipelineStageFlags.None;
+        PipelineStageFlags destinationStages = PipelineStageFlags.None;
+        try
+        {
+            for (int i = 0; i < requirements.Count; i++)
+            {
+                KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> requirement = requirements[i];
+                VulkanTrackedImageSubresource key = requirement.Key;
+                VulkanImageAccessState requiredState = requirement.Value;
+                Image image = new(key.ImageHandle);
+                ImageSubresourceRange range = new()
+                {
+                    AspectMask = key.Aspect,
+                    BaseMipLevel = key.MipLevel,
+                    LevelCount = 1,
+                    BaseArrayLayer = key.ArrayLayer,
+                    LayerCount = 1,
+                };
+
+                ulong currentGeneration = GetCurrentVulkanResourceGeneration(ObjectType.Image, key.ImageHandle);
+                if (requiredState.ResourceGeneration != 0 &&
+                    currentGeneration != requiredState.ResourceGeneration)
+                {
+                    throw new InvalidOperationException(
+                        $"Secondary command buffer 0x{secondary.Handle:X} requires image 0x{key.ImageHandle:X} " +
+                        $"generation {requiredState.ResourceGeneration}, but generation {currentGeneration} is published.");
+                }
+
+                VulkanImageAccessState priorState;
+                if (!TryGetRecordedImageAccessState(primary, image, range, out priorState))
+                {
+                    if (currentGeneration == 0)
+                        continue;
+
+                    priorState = VulkanImageAccessState.Undefined with
+                    {
+                        ResourceGeneration = currentGeneration,
+                    };
+                }
+
+                if (priorState.Layout == requiredState.Layout)
+                    continue;
+
+                uint queueFamilyIndex = priorState.QueueFamilyIndex;
+                barriers[barrierCount++] = new ImageMemoryBarrier
+                {
+                    SType = StructureType.ImageMemoryBarrier,
+                    SrcAccessMask = (AccessFlags)(ulong)priorState.AccessMask,
+                    DstAccessMask = (AccessFlags)(ulong)requiredState.AccessMask,
+                    OldLayout = priorState.Layout,
+                    NewLayout = requiredState.Layout,
+                    SrcQueueFamilyIndex = queueFamilyIndex,
+                    DstQueueFamilyIndex = queueFamilyIndex,
+                    Image = image,
+                    SubresourceRange = range,
+                };
+                sourceStages |= (PipelineStageFlags)(ulong)priorState.StageMask;
+                destinationStages |= (PipelineStageFlags)(ulong)requiredState.StageMask;
+            }
+
+            if (barrierCount == 0)
+                return;
+
+            fixed (ImageMemoryBarrier* barrierPtr = barriers)
+            {
+                CmdPipelineBarrierTracked(
+                    primary,
+                    sourceStages,
+                    destinationStages,
+                    DependencyFlags.None,
+                    0,
+                    null,
+                    0,
+                    null,
+                    (uint)barrierCount,
+                    barrierPtr,
+                    nameof(TransitionSecondaryDescriptorImagesForExecution));
+            }
+        }
+        finally
+        {
+            ArrayPool<ImageMemoryBarrier>.Shared.Return(barriers, clearArray: true);
+            requirements.Clear();
+        }
+    }
+
     private void PublishRecordedImageLayouts(
         ref SubmitInfo submitInfo,
         in VulkanLifetimeSubmission submission)
@@ -1611,6 +1738,18 @@ public unsafe partial class VulkanRenderer
 
                 foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> pair in recorded.TouchedSubresources)
                 {
+                    ulong currentGeneration = GetCurrentVulkanResourceGeneration(
+                        ObjectType.Image,
+                        pair.Key.ImageHandle);
+                    if (pair.Value.ResourceGeneration != 0 &&
+                        currentGeneration != pair.Value.ResourceGeneration)
+                    {
+                        // The numeric VkImage handle was recycled after this submission
+                        // was queued. Its layout belongs to the retired generation and
+                        // must not repopulate state cleared for the replacement image.
+                        continue;
+                    }
+
                     if (!_trackedImageSubresourceStates.TryGetValue(pair.Key, out VulkanImageSubresourceState? state))
                     {
                         state = new VulkanImageSubresourceState();

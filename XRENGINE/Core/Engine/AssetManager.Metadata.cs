@@ -44,18 +44,8 @@ namespace XREngine
                     if (!ShouldDeleteMetadataFile(metaFile, assetsRoot))
                         continue;
 
-                    try
-                    {
-                        File.Delete(metaFile);
-                    }
-                    catch (IOException)
-                    {
+                    if (!TryDeleteMetadataFile(metaFile))
                         continue;
-                    }
-                    catch (UnauthorizedAccessException)
-                    {
-                        continue;
-                    }
 
                     TryPruneEmptyMetadataDirectories(Path.GetDirectoryName(metaFile));
                 }
@@ -200,6 +190,9 @@ namespace XREngine
 
             lock (_metadataLock)
             {
+                if (!AssetPathExists(assetPath, isDirectory))
+                    return;
+
                 string? directory = Path.GetDirectoryName(metaPath);
                 if (!string.IsNullOrWhiteSpace(directory))
                     Directory.CreateDirectory(directory);
@@ -243,9 +236,24 @@ namespace XREngine
                 }
 
                 meta.LastSyncedUtc = DateTime.UtcNow;
-                WriteMetadataFile(metaPath, meta);
+                try
+                {
+                    WriteMetadataFile(metaPath, meta);
+                }
+                catch (DirectoryNotFoundException) when (!AssetPathExists(assetPath, isDirectory))
+                {
+                    // A delayed FileSystemWatcher create/change callback can race the
+                    // corresponding delete callback. The delete owns final metadata state.
+                }
+                catch (IOException) when (!AssetPathExists(assetPath, isDirectory))
+                {
+                    // The asset disappeared while the metadata file was being published.
+                }
             }
         }
+
+        private static bool AssetPathExists(string assetPath, bool isDirectory)
+            => isDirectory ? Directory.Exists(assetPath) : File.Exists(assetPath);
 
         /// <summary>
         /// Deletes the metadata file for the given asset path if it exists.
@@ -260,10 +268,31 @@ namespace XREngine
 
             lock (_metadataLock)
             {
-                if (File.Exists(metaPath))
-                    File.Delete(metaPath);
+                if (!TryDeleteMetadataFile(metaPath))
+                    return;
 
                 TryPruneEmptyMetadataDirectories(Path.GetDirectoryName(metaPath));
+            }
+        }
+
+        /// <summary>
+        /// Deletes a metadata file without allowing transient Windows file locks to escape
+        /// a <see cref="FileSystemWatcher"/> callback and terminate the process.
+        /// </summary>
+        private static bool TryDeleteMetadataFile(string metaPath)
+        {
+            try
+            {
+                File.Delete(metaPath);
+                return true;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return false;
             }
         }
 
@@ -303,7 +332,7 @@ namespace XREngine
                     catch (System.IO.IOException)
                     {
                         File.Copy(oldMeta, newMeta, true);
-                        File.Delete(oldMeta);
+                        TryDeleteMetadataFile(oldMeta);
                     }
                 }
 
@@ -505,6 +534,17 @@ namespace XREngine
                 {
                     break;
                 }
+                catch (IOException)
+                {
+                    // File-system watcher callbacks can race another callback or a test cleanup.
+                    // Metadata pruning is best-effort, so leave the directory for a later pass.
+                    break;
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    // Antivirus and indexers can briefly retain handles on Windows.
+                    break;
+                }
 
                 if (hasEntries)
                     break;
@@ -515,6 +555,16 @@ namespace XREngine
                 }
                 catch (DirectoryNotFoundException)
                 {
+                    break;
+                }
+                catch (IOException)
+                {
+                    // Another watcher callback may already be deleting the same directory.
+                    break;
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    // Treat transient Windows access denial as deferred cleanup.
                     break;
                 }
 

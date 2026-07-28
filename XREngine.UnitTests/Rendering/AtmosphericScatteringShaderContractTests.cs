@@ -18,12 +18,12 @@ public sealed class AtmosphericScatteringShaderContractTests
         source.ShouldContain("XRENGINE_Atmosphere_ClassifySegment");
         source.ShouldContain("XRENGINE_Atmosphere_RayleighDensity");
         source.ShouldContain("XRENGINE_Atmosphere_MieDensity");
-        source.ShouldContain("XRENGINE_Atmosphere_RayleighPhase");
-        source.ShouldContain("XRENGINE_Atmosphere_MiePhase");
-        source.ShouldContain("clamp(g, -0.99, 0.99)");
+        source.ShouldContain("XRENGINE_Atmosphere_PhaseRayleigh");
+        source.ShouldContain("XRENGINE_Atmosphere_PhaseMie");
+        source.ShouldContain("clamp(anisotropy, -0.99f, 0.99f)");
         source.ShouldContain("XRENGINE_Atmosphere_OpticalDepthScaleApproximation");
         source.ShouldContain("XRENGINE_Atmosphere_ReferenceOpticalDepth");
-        source.ShouldContain("for (int depthSample = 0;");
+        source.ShouldContain("for (int i = 0; i < 32; ++i)");
     }
 
     [Test]
@@ -33,19 +33,19 @@ public sealed class AtmosphericScatteringShaderContractTests
         string reproject = LoadShader("Scene3D/Atmosphere/AtmosphereReproject.fs");
         string upscale = LoadShader("Scene3D/Atmosphere/AtmosphereUpscale.fs");
 
-        aerial.ShouldContain("vec4(0.0, 0.0, 0.0, 1.0)");
+        aerial.ShouldContain("vec4(0.0f, 0.0f, 0.0f, 1.0f)");
         aerial.ShouldContain("InverseProjMatrix");
         aerial.ShouldContain("InverseViewMatrix");
         aerial.ShouldContain("XRENGINE_Atmosphere_ComputeScattering");
 
         reproject.ShouldContain("AtmosphereHistoryReady");
         reproject.ShouldContain("AtmospherePreviousViewProjection");
-        reproject.ShouldContain("vec4(0.0, 0.0, 0.0, 1.0)");
+        reproject.ShouldContain("bool IsNeutralAtmosphere(vec4 value)");
 
         upscale.ShouldContain("AtmosphereHalfTemporal");
         upscale.ShouldContain("AtmosphereHalfDepth");
-        upscale.ShouldContain("DepthView");
-        upscale.ShouldContain("vec4(0.0, 0.0, 0.0, 1.0)");
+        upscale.ShouldContain("XRENGINE_FramebufferTextureUVToClipXY");
+        upscale.ShouldContain("vec4(0.0f, 0.0f, 0.0f, 1.0f)");
     }
 
     [Test]
@@ -54,7 +54,7 @@ public sealed class AtmosphericScatteringShaderContractTests
         string source = LoadShader("Scene3D/PostProcess.fs");
 
         source.ShouldContain("uniform sampler2D AtmosphereColor;");
-        source.ShouldContain("hdrSceneColor = hdrSceneColor * atmosphere.a + atmosphere.rgb;");
+        source.ShouldContain("hdrSceneColor = SafeColor(hdrSceneColor * atmosphere.a + atmosphere.rgb);");
         source.ShouldNotContain("AtmosphereCommon.glsl");
         source.ShouldNotContain("XRENGINE_Atmosphere_ComputeScattering");
 
@@ -71,9 +71,9 @@ public sealed class AtmosphericScatteringShaderContractTests
         string source = LoadShader("Scene3D/Atmosphere/AtmosphereSky.fs");
 
         source.ShouldContain("#include \"AtmosphereCommon.glsl\"");
-        source.ShouldContain("XRENGINE_Atmosphere_ClassifySegment");
+        source.ShouldContain("XRENGINE_Atmosphere_DebugOutput");
         source.ShouldContain("XRENGINE_Atmosphere_ComputeScattering");
-        source.ShouldContain("DebugMode");
+        source.ShouldContain("atmosphere = XRENGINE_Atmosphere_DebugOutput");
     }
 
     private static string LoadShader(string relativePath)
@@ -81,7 +81,7 @@ public sealed class AtmosphericScatteringShaderContractTests
         string normalizedRelativePath = relativePath.Replace('/', Path.DirectorySeparatorChar);
         string fullPath = Path.Combine(ResolveShaderRoot(), normalizedRelativePath);
         File.Exists(fullPath).ShouldBeTrue($"Shader file not found: {fullPath}");
-        return File.ReadAllText(fullPath);
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveShaderRoot()

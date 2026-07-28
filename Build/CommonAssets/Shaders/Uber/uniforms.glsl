@@ -487,7 +487,9 @@ uniform float _OutlineVertexColorTint;
 uniform int _OutlineExpansionMode;
 //@property(name="_OutlineSpace", display="Sizing Space", mode=static, enum="0:Object|1:World|2:Screen")
 uniform int _OutlineSpace;
+//@property(name="_OutlinePersonaDirection", display="Persona Direction", mode=animated)
 uniform vec3 _OutlinePersonaDirection;
+//@property(name="_OutlineDropShadowOffset", display="Drop Shadow Offset", mode=animated)
 uniform vec3 _OutlineDropShadowOffset;
 //@property(name="_OutlineFixedSize", display="Fixed Screen Width", mode=animated, range=[0,1])
 uniform float _OutlineFixedSize;
@@ -498,12 +500,16 @@ uniform float _OutlineZOffset;
 uniform vec4 _OutlineTexture_ST;
 uniform vec2 _OutlineTexturePan;
 uniform int _OutlineTextureUV;
+//@property(name="_OutlineTexture", display="Outline Texture", slot=texture)
 uniform sampler2D _OutlineTexture;
 uniform vec4 _OutlineMask_ST;
 uniform vec2 _OutlineMaskPan;
 uniform int _OutlineMaskUV;
+//@property(name="_OutlineHueShift", display="Hue Shift", mode=animated, range=[-1,1])
 uniform float _OutlineHueShift;
+//@property(name="_OutlineHueShiftSpeed", display="Hue Shift Speed", mode=animated)
 uniform float _OutlineHueShiftSpeed;
+//@property(name="_OutlineShadowStrength", display="Shadow Strength", mode=animated, range=[0,1])
 uniform float _OutlineShadowStrength;
 #endif
 

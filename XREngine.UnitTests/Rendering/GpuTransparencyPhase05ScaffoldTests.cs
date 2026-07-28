@@ -44,7 +44,7 @@ public sealed class GpuTransparencyPhase05ScaffoldTests
         hostSource.ShouldContain("RuntimeEngine.Rendering.Stats.GpuTransparency.RecordGpuTransparencyDomainCounts(");
         hostSource.ShouldContain("GPUTransparencyBindings.ClassifyDomainCounts");
 
-        string sceneSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.cs");
+        string sceneSource = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.cs");
         sceneSource.ShouldContain("AllLoadedTransparencyMetadataBuffer");
         sceneSource.ShouldContain("GPUTransparencyMetadata.FromMaterial");
 
@@ -59,7 +59,7 @@ public sealed class GpuTransparencyPhase05ScaffoldTests
     {
         string fullPath = ResolveWorkspacePath(relativePath);
         File.Exists(fullPath).ShouldBeTrue($"Expected file does not exist: {fullPath}");
-        return File.ReadAllText(fullPath);
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveWorkspacePath(string relativePath)

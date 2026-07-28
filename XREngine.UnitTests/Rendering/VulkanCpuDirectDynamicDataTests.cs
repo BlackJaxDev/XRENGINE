@@ -74,7 +74,7 @@ public sealed class VulkanCpuDirectDynamicDataTests
         string debugLines = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Physics/DebugVisualization/InstancedDebugVisualizer.cs");
 
         debugLines.ShouldContain("_debugLinesBuffer.Resize(elementCount, true, true)");
-        debugLines.ShouldContain("_debugLinesBuffer.PushSubData()");
+        debugLines.ShouldContain("_debugLinesBuffer.CommitDirtyBytes(0u, _lineDirtyBytes)");
     }
 
     [Test]
@@ -135,7 +135,7 @@ public sealed class VulkanCpuDirectDynamicDataTests
             ResolveRepoRoot(),
             relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(path).ShouldBeTrue($"Expected workspace file '{relativePath}'.");
-        return File.ReadAllText(path).Replace("\r\n", "\n");
+        return File.ReadAllText(path).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveRepoRoot()

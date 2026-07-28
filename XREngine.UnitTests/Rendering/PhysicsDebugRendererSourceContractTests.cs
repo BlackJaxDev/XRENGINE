@@ -77,7 +77,7 @@ public sealed class PhysicsDebugRendererSourceContractTests
         {
             string candidate = Path.Combine(current, relativePath);
             if (File.Exists(candidate))
-                return File.ReadAllText(candidate).Replace("\r\n", "\n");
+                return File.ReadAllText(candidate).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
             current = Directory.GetParent(current)?.FullName;
         }
 

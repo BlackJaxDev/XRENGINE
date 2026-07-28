@@ -13,6 +13,12 @@ namespace XREngine.UnitTests.Rendering;
 [NonParallelizable]
 public sealed class RendererBackendCollectibleModuleTests
 {
+#if DEBUG
+    private const string TestConfiguration = "Debug";
+#else
+    private const string TestConfiguration = "Release";
+#endif
+
     private RendererBackendBuildService? _buildService;
     private string _manifestPath = string.Empty;
 
@@ -25,7 +31,7 @@ public sealed class RendererBackendCollectibleModuleTests
         };
         RendererBackendBuildResult result = await _buildService.BuildAsync(
             RendererBackendId.OpenGL,
-            "Debug");
+            TestConfiguration);
         result.Succeeded.ShouldBeTrue(result.Output);
         _manifestPath = result.ManifestPath.ShouldNotBeNull();
     }
@@ -174,7 +180,7 @@ public sealed class RendererBackendCollectibleModuleTests
             RendererReloadInjectedFailure.BackendBuild;
         RendererBackendBuildResult result = await _buildService!.BuildAsync(
             RendererBackendId.OpenGL,
-            "Debug");
+            TestConfiguration);
         result.Succeeded.ShouldBeFalse();
         result.ManifestPath.ShouldBeNull();
         result.Diagnostics.ShouldContain(

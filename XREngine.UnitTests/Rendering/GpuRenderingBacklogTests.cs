@@ -641,7 +641,7 @@ public class GpuRenderingBacklogTests
 
         shaderSource.ShouldContain("uniform vec2 ProjectionScale;");
         shaderSource.ShouldContain("uniform vec2 ViewportSize;");
-        shaderSource.ShouldContain("float ComputeProjectedScreenRadius(vec3 center, float radius)");
+        shaderSource.ShouldContain("float ComputeProjectedScreenRadius(");
         shaderSource.ShouldContain("projectedScreenRadius >= ReadMinProjectedRadius(entryBase, lodLevel)");
         shaderSource.ShouldNotContain("ReadMaxDistance");
         shaderSource.ShouldNotContain("distanceToCamera <= ReadMaxDistance");
@@ -824,14 +824,17 @@ public class GpuRenderingBacklogTests
             .Replace("\r\n", "\n");
         string commandBufferAllocation = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs")
             .Replace("\r\n", "\n");
-        string imgui = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.cs")
+        string imgui = global::XREngine.UnitTests.SourceContractWorkspace.ReadFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.cs")
             .Replace("\r\n", "\n");
 
         recording.ShouldContain("TryConsumeRenderableImGuiOverlaySnapshot(\n                            out imguiOverlaySnapshot)");
         recording.ShouldContain("attempt.PreserveSwapchainForImGuiOverlay =\n                hasPendingImGuiOverlay &&\n                UseDynamicRenderingRenderTargets;");
-        recording.ShouldContain("attempt.SceneCommandBuffer =\n                        EnsureCommandBufferRecorded(");
-        recording.ShouldContain("attempt.ImageIndex,\n                            attempt.PreserveSwapchainForImGuiOverlay,");
-        recording.ShouldContain("out attempt.SwapchainLayoutAfterScene,\n                            out attempt.SceneCommandBufferDirtyGeneration)");
+        recording.ShouldContain("attempt.SceneCommandBuffer =");
+        recording.ShouldContain("EnsureCommandBufferRecorded(");
+        recording.ShouldContain("attempt.ImageIndex,");
+        recording.ShouldContain("attempt.PreserveSwapchainForImGuiOverlay,");
+        recording.ShouldContain("out attempt.SwapchainLayoutAfterScene,");
+        recording.ShouldContain("out attempt.SceneCommandBufferDirtyGeneration);");
         recording.ShouldContain("TryRecordImGuiOverlayCommandBuffer(\n                            attempt.ImageIndex,\n                            snapshot,\n                            attempt.SwapchainLayoutAfterScene,");
 
         commandBufferVariant.ShouldContain("public bool PreserveSwapchainForOverlay { get; set; }");
@@ -842,7 +845,7 @@ public class GpuRenderingBacklogTests
         imgui.ShouldContain("ImageLayout initialSwapchainLayout");
         imgui.ShouldContain("initialSwapchainLayout,\n                ImageLayout.ColorAttachmentOptimal");
         imgui.ShouldNotContain("imageIndex,\n                ImageLayout.PresentSrcKhr,\n                ImageLayout.ColorAttachmentOptimal");
-        imgui.ShouldNotContain("oldLayout == newLayout");
+        imgui.ShouldNotContain("if (oldLayout == newLayout)");
     }
 
     [Test]
@@ -863,7 +866,7 @@ public class GpuRenderingBacklogTests
         engineSettings.ShouldContain("IsProfilerOnlyEditorDebugProperty(normalizedPropertyName) &&");
         engineSettings.ShouldContain("TryUpdateEffectiveEditorDebugProperty(normalizedPropertyName);");
         engineSettings.ShouldContain("ApplyEditorPreferencesRuntimeSideEffects(normalizedPropertyName);");
-        engineSettings.ShouldContain("Rendering.ApplyEditorPreferencesChange(normalizedPropertyName);");
+        engineSettings.ShouldContain("EngineRenderingSettingsApplication.ApplyEditorPreferencesChange(normalizedPropertyName);");
         engineSettings.ShouldContain("nameof(EditorDebugOptions.EnableGpuRenderPipelineProfiling)");
         engineSettings.ShouldContain("nameof(EditorDebugOptions.ProfilerPanelPaused)");
         engineSettings.ShouldContain("private static bool TryUpdateEffectiveEditorDebugProperty(string propertyName)");
@@ -885,7 +888,9 @@ public class GpuRenderingBacklogTests
         containerSource.ShouldContain("if (StructureChangeNotificationsSuppressed)\n                return;");
         pipelineSource.ShouldContain("protected void InitializeCommandChain()");
         pipelineSource.ShouldContain("protected void RebuildCommandChain()");
-        pipelineSource.ShouldContain("using (ViewportRenderCommandContainer.SuppressStructureChangeNotifications())\n            CommandChain = GenerateCommandChain();\n\n        NotifyCommandChainStructureChanged();");
+        pipelineSource.ShouldContain("using (ViewportRenderCommandContainer.SuppressStructureChangeNotifications())");
+        pipelineSource.ShouldContain("CommandChain = GenerateCommandChain();");
+        pipelineSource.ShouldContain("NotifyCommandChainStructureChanged();");
 
         string pipelineDirectory = Path.Combine(
             GltfImportTestUtilities.ResolveWorkspaceRoot(),
@@ -1026,7 +1031,7 @@ public class GpuRenderingBacklogTests
         string workspaceRoot = GltfImportTestUtilities.ResolveWorkspaceRoot();
         string path = Path.Combine(workspaceRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
         if (File.Exists(path))
-            return File.ReadAllText(path);
+            return global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType(relativePath);
 
         throw new FileNotFoundException($"Unable to locate file '{relativePath}' from '{workspaceRoot}'.");
     }

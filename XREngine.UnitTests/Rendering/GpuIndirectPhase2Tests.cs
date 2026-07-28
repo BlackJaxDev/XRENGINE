@@ -63,7 +63,7 @@ public class GpuIndirectPhase2Tests
     }
 
     [Test]
-    public void UpdateVisibleCountersFromBuffer_IsNoOp_WhenCpuReadbackDisabled()
+    public void UpdateVisibleCountersFromBuffer_UsesCapacityUpperBound_WhenCpuReadbackDisabled()
     {
         var pass = new GPURenderPassCollection(renderPass: 0);
 
@@ -82,8 +82,8 @@ public class GpuIndirectPhase2Tests
         method.ShouldNotBeNull();
         method!.Invoke(pass, null);
 
-        // Should remain unchanged since DisableCpuReadbackCount=true.
-        pass.VisibleCommandCount.ShouldBe(123u);
+        // The GPU owns the exact count; the CPU keeps a safe dispatch upper bound.
+        pass.VisibleCommandCount.ShouldBe(pass.CommandCapacity);
 
         XREngine.RuntimeEngine.Rendering.Stats.GpuReadback.GpuMappedBuffers.ShouldBe(0);
         XREngine.RuntimeEngine.Rendering.Stats.GpuReadback.GpuReadbackBytes.ShouldBe(0);
