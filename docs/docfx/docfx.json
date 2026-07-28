@@ -71,7 +71,8 @@
         {
           "src": "../..",
           "files": [
-            "LICENSE"
+            "LICENSE.md",
+            "LEGAL/**"
           ]
       }
     ],

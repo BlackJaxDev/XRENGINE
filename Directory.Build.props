@@ -9,12 +9,13 @@
     <Nullable>disable</Nullable>
     <DefaultItemExcludes>$(DefaultItemExcludes);**/Build/Temp/**;**/Build/TempValidation/**</DefaultItemExcludes>
     <PackageVersion Condition="'$(PackageVersion)' == ''">0.1.0-dev</PackageVersion>
-    <Authors Condition="'$(Authors)' == ''">BlackJaxVR</Authors>
-    <Company Condition="'$(Company)' == ''">BlackJaxVR</Company>
+    <Authors Condition="'$(Authors)' == ''">BlackJax</Authors>
+    <Company Condition="'$(Company)' == ''">BlackJax LLC</Company>
     <PackageProjectUrl Condition="'$(PackageProjectUrl)' == ''">https://blackjaxvr.com</PackageProjectUrl>
     <RepositoryType Condition="'$(RepositoryType)' == ''">git</RepositoryType>
-    <PackageTags Condition="'$(PackageTags)' == ''">xre xr vr game-engine blackjaxvr</PackageTags>
-    <PackageLicenseFile Condition="'$(PackageLicenseFile)' == ''">LICENSE</PackageLicenseFile>
+    <PackageTags Condition="'$(PackageTags)' == ''">xre xr vr game-engine blackjaxvr source-available</PackageTags>
+    <PackageLicenseFile Condition="'$(PackageLicenseFile)' == '' and '$(PackageLicenseExpression)' == ''">LICENSE.md</PackageLicenseFile>
+    <PackageRequireLicenseAcceptance Condition="'$(PackageRequireLicenseAcceptance)' == ''">true</PackageRequireLicenseAcceptance>
     <PackageReadmeFile Condition="'$(PackageReadmeFile)' == '' and Exists('$(MSBuildThisFileDirectory)README.md')">README.md</PackageReadmeFile>
   </PropertyGroup>
 
@@ -24,7 +25,10 @@
   </PropertyGroup>
 
   <ItemGroup Condition="'$(IsPackable)' != 'false'">
-    <None Include="$(MSBuildThisFileDirectory)LICENSE" Pack="true" PackagePath="\" Visible="false" Condition="Exists('$(MSBuildThisFileDirectory)LICENSE')" />
+    <None Include="$(MSBuildThisFileDirectory)LICENSE.md" Pack="true" PackagePath="\" Visible="false" Condition="Exists('$(MSBuildThisFileDirectory)LICENSE.md')" />
+    <None Include="$(MSBuildThisFileDirectory)LEGAL\README.md" Pack="true" PackagePath="LEGAL\" Visible="false" Condition="Exists('$(MSBuildThisFileDirectory)LEGAL\README.md')" />
+    <None Include="$(MSBuildThisFileDirectory)LEGAL\COMMERCIAL.md" Pack="true" PackagePath="LEGAL\" Visible="false" Condition="Exists('$(MSBuildThisFileDirectory)LEGAL\COMMERCIAL.md')" />
+    <None Include="$(MSBuildThisFileDirectory)LEGAL\CONTRIBUTING.md" Pack="true" PackagePath="LEGAL\" Visible="false" Condition="Exists('$(MSBuildThisFileDirectory)LEGAL\CONTRIBUTING.md')" />
     <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Visible="false" Condition="Exists('$(MSBuildThisFileDirectory)README.md')" />
   </ItemGroup>
 </Project>

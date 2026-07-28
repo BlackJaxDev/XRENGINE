@@ -68,7 +68,7 @@
       "license": "Proprietary (Oculus SDK License Agreement)",
       "owner": "Meta Platforms, Inc.",
       "licenseLink": "https://developers.meta.com/horizon/licenses/oculussdk/",
-      "notes": "Redistributable in binary form under the Oculus SDK License. Not open-source and not GPL-compatible, but can be included alongside AGPL-3.0 code as a separate proprietary component."
+      "notes": "Redistributable in binary form under the Oculus SDK License. Keep it as a separately licensed proprietary component and satisfy both the Oculus SDK terms and XRENGINE's Community Source License or applicable commercial license."
     },
 
     "binary-item|XREngine.csproj|$(MetaOvrLipSyncWinX64Dir)OVRLipSync.dll": {
@@ -131,7 +131,7 @@
       "license": "Proprietary (Oculus SDK License Agreement)",
       "owner": "Meta Platforms, Inc.",
       "licenseLink": "https://developers.meta.com/horizon/licenses/oculussdk/",
-      "notes": "Binary redistribution permitted under the Oculus SDK License. Must remain separate from AGPL-3.0 code."
+      "notes": "Binary redistribution permitted under the Oculus SDK License. Keep it separately licensed from XRENGINE and satisfy both the Oculus SDK terms and the applicable XRENGINE license when redistributing it."
     },
 
     "checked-binary|XRENGINE/RestirGI.Native.dll": {

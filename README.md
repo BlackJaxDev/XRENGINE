@@ -1,10 +1,33 @@
 ﻿# XRENGINE
 
-Scroll down a bit for to see technical details & how to bootstrap your own build. Fastest: run `./ExecTool --bootstrap` after cloning.
+## License
+
+XRENGINE is source-available. Free, transaction-free games may keep their game
+code closed, but engine changes must be public, including server changes.
+Monetization requires a signed Commercial License. Keeping engine changes
+private requires an additional, separate Private Engine Modification License.
+Contact [blackjax0@gmail.com](mailto:blackjax0@gmail.com).
+
+See the [legal guide](LEGAL/README.md) and
+[Community Source License](LICENSE.md).
+
+## Contributing
+
+Contributions require the
+[XRENGINE Contributor Agreement](LEGAL/CONTRIBUTING.md).
+
+Scroll down a bit to see technical details and how to bootstrap your own build. Fastest: run `./ExecTool --bootstrap` after cloning.
 
 ## THE WHO
 
-Hi, I'm BlackJax. I figure you'd prefer to read a fully human-written readme, so I'll be writing this from first-person. Maybe you'll find some ✨spelling, punctuation, or grammatical errors✨! I'll try to not rant. I lived through the 2020 COVID pandemic as a newly-single 20-something year-old with a studio apartment and a comfy job that let me work from home and I've been a VR streamer ever since, so I think I have a solid understanding of what people are looking for in a more adult-oriented social VR experience.
+Hi, I'm BlackJax. I also use BlackJaxVR, BlackJaxDev, Jax, and BlackJax96
+online. I maintain XRENGINE and represent the company behind it. The project
+overview below is written from my first-person perspective. Maybe you'll find
+some ✨spelling, punctuation, or grammatical errors✨! I'll try not to rant. I
+lived through the 2020 COVID pandemic as a newly-single 20-something year-old
+with a studio apartment and a comfy job that let me work from home, and I've
+been a VR streamer ever since, so I think I have a solid understanding of what
+people are looking for in a more adult-oriented social VR experience.
 
 ## THE WHY
 
@@ -18,7 +41,7 @@ This TBA game engine is my solution for a high-performance social VR platform. I
 
 ## THE WHAT
 
-XREngine is a cross-platform XR engine, built on C# with .NET 10. It ships with an editor, a dedicated server, and a sample networking control plane to connect player clients to server instances. 
+XREngine is a cross-platform XR engine, built on C# with .NET 10. It ships with an editor, a dedicated server, and a sample networking control plane to connect player clients to server instances.
 
 I chose C# over the obvious C++ because I believe C# is a perfect balance between the simplicity and maintainability of languages like Python or Java, and the raw control of C++ or Rust. It's got a great ecosystem and support, and it's fast when wielded well.
 
@@ -26,7 +49,11 @@ This is early-stage software. The APIs and documentation will change often and t
 
 ## THE WHEN
 
-This engine is being developed in conjunction with a closed-source platform running on top of it. Anyone is free to develop personal open-source software on top of this engine or as a fork, or to contact me to license this engine for private commercial use.
+This engine is being developed alongside a closed-source commercial platform
+built on top of it. The Community Source License similarly allows
+transaction-free games to keep their independent game code closed while
+requiring all distributed or server-deployed engine modifications to remain
+public. Monetized games require a separate commercial license.
 
 This is the roadmap for my own platform:
 - Q1 2027: release a full-body-tracked avatar demo app for people to try out in VR
@@ -56,7 +83,7 @@ Silk.NET operates as the main C# backend glue for supporting most typical render
 
 - **Input:** Silk.NET.Input for keyboard, mouse, and gamepad. OpenXR and OpenVR are used for VR controller input.
 
-- **Asset import:** FBX uses the native `XREngine.Fbx` importer and glTF/GLB uses the native `XREngine.Gltf` importer by default. Other model formats load through Assimp (via AssimpNetter). *Wishlisted: .usd, .blend, .max* 
+- **Asset import:** FBX uses the native `XREngine.Fbx` importer and glTF/GLB uses the native `XREngine.Gltf` importer by default. Other model formats load through Assimp (via AssimpNetter). *Wishlisted: .usd, .blend, .max*
 
 - **Animation:** Fully in-house animation support & compression.
 
@@ -216,17 +243,7 @@ Good starting points:
 - `docs/developer-guides/runtime/native-dependencies.md` - native and external setup reference
 - `docs/work/README.md` - active TODOs and design docs
 
-## Contributing
-
-No formal `CONTRIBUTING.md` yet. Open an issue or discussion first, then submit a PR.
-
-If you are getting oriented in the codebase, start with `docs/architecture/getting-started-in-codebase.md`.
-
-## License
-
-Licensed under **AGPLv3**. See `LICENSE` for the full terms.
-
-The short version: you can use, modify, and redistribute the code, but any distribution (including network use) must stay under AGPLv3 and provide source. Third-party dependencies have their own licenses. See `docs/DEPENDENCIES.md` for the full inventory.
+## Project Links
 
 - Issues: https://github.com/BlackJaxDev/XRENGINE/issues
 - Discussions: https://github.com/BlackJaxDev/XRENGINE/discussions
