@@ -372,6 +372,107 @@ test explicitly measures validation cost. Pin GPU clocks manually through the
 vendor tool when possible and record that policy in `-GpuClockPolicy`; the
 harness documents the policy but does not change driver power settings.
 
+### Vulkan Performance Presets And Gates
+
+`Tools/Benchmarks/Invoke-VulkanPerf.ps1` is the canonical one-command path for
+Vulkan baseline and regression work. It rebuilds the Release editor unless
+`-NoBuild` is supplied, selects tracked unit-testing-world settings through
+`XRE_UNIT_TEST_WORLD_SETTINGS_PATH`, runs the existing process capture harness,
+writes a run manifest, and evaluates the result through
+`XREngine.Benchmarks --vulkan-perf`.
+
+```powershell
+# Short, one-cohort feedback; always reported as non-promotable.
+pwsh Tools/Benchmarks/Invoke-VulkanPerf.ps1 -Preset Quick
+
+# Three warm desktop repetitions per selected Deferred/Uber cohort.
+pwsh Tools/Benchmarks/Invoke-VulkanPerf.ps1 `
+  -Preset Compare `
+  -BaselinePath Build/_AgentValidation/vulkan-perf-baselines/desktop.json
+
+# Full desktop and available Vulkan RVC matrix.
+pwsh Tools/Benchmarks/Invoke-VulkanPerf.ps1 `
+  -Preset Gate `
+  -BaselinePath Build/_AgentValidation/vulkan-perf-baselines/gate.json
+
+# Baselines are replaced only by this explicit action.
+pwsh Tools/Benchmarks/Invoke-VulkanPerf.ps1 `
+  -Preset Gate `
+  -BaselinePath Build/_AgentValidation/vulkan-perf-baselines/gate.json `
+  -AcceptBaseline
+```
+
+The tracked contract is
+`XREngine.Benchmarks/VulkanPerformance/vulkan-performance-cohorts.json`.
+Captured machine evidence remains under
+`Build/_AgentValidation/<timestamp>-vulkan-perf-<preset>/`. A Gate or Compare
+run returns nonzero for capture invalidity, manifest mismatches, excessive
+variance, absolute-budget failures, baseline regressions, fallbacks, readbacks,
+or missing required desktop/eye renders. Unsupported requested foveation is an
+explicit failure, never a silent substitution.
+
+The four profile modes have distinct intent:
+
+| Mode | Validation and labels | Editor diagnostics | Comparison use |
+| --- | --- | --- | --- |
+| `Diagnostics` | Allowed/enabled by the selected diagnostic preset | Profiler panels, ImGui, dynamic text, and verbose logging may be enabled | Intrusive investigation only |
+| `DevelopmentProfile` | Explicitly selected; labels and detailed scopes allowed | Normal editor and profiling tools allowed | Development trend only |
+| `CleanProfile` | Validation, dense timestamps, command labels, and P3 logging prohibited | ImGui and dynamic diagnostic overlays skipped | Quick feedback; non-promotable |
+| `ReleaseBenchmark` | Same non-intrusive restrictions as CleanProfile | ImGui and dynamic diagnostic overlays skipped | Compare/Gate promotion evidence |
+
+Warmup covers shader/pipeline and texture residency. Capture begins only after
+the existing stability window reports a stable workload and no streaming or
+resource-retirement churn. Cold-start and streaming-churn studies remain
+separate diagnostic captures and cannot be used as warm steady-state promotion
+evidence. Clean and ReleaseBenchmark launches also pass `--no-mcp`, so a saved
+MCP preference cannot add a listener or profiler RPC work to the benchmark.
+
+Measure observer overhead for all four modes against the same ReleaseBenchmark
+capture with:
+
+```powershell
+pwsh Tools/Benchmarks/Measure-VulkanProfileOverhead.ps1 `
+  -Cohort desktop-deferred-static
+```
+
+The report records p50/p95/p99/worst and the p95 absolute/percentage delta for
+each mode. Diagnostic and DevelopmentProfile captures deliberately enable
+validation, command labels, and dense timestamps; CleanProfile and
+ReleaseBenchmark force those observers off. The overhead comparison disables
+MCP in every mode because MCP is not part of the profile-mode contract.
+
+The evaluator itself has GPU-free fixtures:
+
+```powershell
+dotnet run -c Release `
+  -p:VulkanPerformanceToolOnly=true `
+  -p:BuildProjectReferences=false `
+  --no-restore `
+  --project XREngine.Benchmarks/XREngine.Benchmarks.csproj `
+  -- --vulkan-perf --self-test
+```
+
+### LLM Self-Iteration Campaigns
+
+`XREngine.Benchmarks --self-iterate` composes the editor build, process
+measurement harness, MCP CPU/GPU dumps, renderer reload tools, crash recovery,
+formal scenario-matrix comparison, and accepted/rejected attempt ledgers into a
+bounded autonomous loop. Campaign JSONC can mix Vulkan/OpenGL,
+CPU-direct/GPU-zero-readback, Unit Testing World settings files, and
+scenario-specific rendering controls.
+
+Each scenario normally records a short dense `DevelopmentProfile` cohort for
+LLM CPU/per-pipeline GPU diagnosis and a separate repeated `CleanProfile`
+cohort for acceptance. Detailed timestamp overhead therefore does not
+contaminate the formal before/after result.
+
+Use `Tools/Benchmarks/Invoke-SelfIteration.ps1 -ValidateOnly` to validate a
+campaign without launching an editor or LLM, `-BaselineOnly` to capture the
+formal matrix without permitting edits, and the command without either switch
+to run the bounded loop. See
+[Self-Iterating Rendering Performance Loop](self-iterating-performance-loop.md)
+for configuration, safety, reload, evidence, and acceptance details.
+
 ### Sampling CPU Profilers
 
 Counter streams explain what changed; sampled CPU profilers explain where the

@@ -1,0 +1,495 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xrengine.dev/schemas/self-iteration-benchmark.schema.json",
+  "title": "XRENGINE self-iterating performance campaign",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "campaignId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "objective": {
+      "type": "string",
+      "minLength": 1
+    },
+    "maxIterations": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    },
+    "maxProposalAttemptsPerIteration": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20
+    },
+    "requireCleanTrackedWorktree": {
+      "type": "boolean"
+    },
+    "allowedPathPrefixes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "progressDocument": {
+      "type": "string"
+    },
+    "rejectedAttemptsDocument": {
+      "type": "string"
+    },
+    "agent": {
+      "$ref": "#/$defs/agent"
+    },
+    "measurement": {
+      "$ref": "#/$defs/measurement"
+    },
+    "acceptance": {
+      "$ref": "#/$defs/acceptance"
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/scenario"
+      }
+    }
+  },
+  "required": [
+    "scenarios"
+  ],
+  "$defs": {
+    "environment": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "executable": {
+          "type": "string"
+        },
+        "proposalArguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "implementationArguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "promptViaStandardInput": {
+          "type": "boolean"
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 86400
+        },
+        "environment": {
+          "$ref": "#/$defs/environment"
+        }
+      }
+    },
+    "measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "configuration": {
+          "enum": [
+            "Debug",
+            "Release"
+          ]
+        },
+        "profileMode": {
+          "enum": [
+            "Diagnostics",
+            "DevelopmentProfile",
+            "CleanProfile",
+            "ReleaseBenchmark"
+          ]
+        },
+        "cacheMode": {
+          "enum": [
+            "Cold",
+            "Warm"
+          ]
+        },
+        "warmupSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "captureSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "repetitions": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "stabilityWindowSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "stabilityTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "shutdownGraceSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "noSampleHangSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxLaunchAttempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "runDetailedDiagnosticCapture": {
+          "type": "boolean"
+        },
+        "diagnosticProfileMode": {
+          "enum": [
+            "Diagnostics",
+            "DevelopmentProfile",
+            "CleanProfile",
+            "ReleaseBenchmark"
+          ]
+        },
+        "diagnosticWarmupSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "diagnosticCaptureSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "diagnosticRepetitions": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "diagnosticGpuTimestampDense": {
+          "type": "boolean"
+        },
+        "diagnosticVulkanCommandBufferLabels": {
+          "type": "boolean"
+        },
+        "zeroReadbackMaterialDrawPath": {
+          "$ref": "#/$defs/zeroReadbackMaterialDrawPath"
+        },
+        "unitTestVrMode": {
+          "$ref": "#/$defs/unitTestVrMode"
+        },
+        "vulkanRenderTargetMode": {
+          "$ref": "#/$defs/vulkanRenderTargetMode"
+        },
+        "vulkanPrimaryReuse": {
+          "$ref": "#/$defs/triState"
+        },
+        "vulkanCommandChains": {
+          "$ref": "#/$defs/triState"
+        },
+        "vulkanParallelCommandChainRecording": {
+          "$ref": "#/$defs/triState"
+        },
+        "vulkanParallelSecondaryRecording": {
+          "$ref": "#/$defs/triState"
+        },
+        "occlusionCullingMode": {
+          "$ref": "#/$defs/occlusionCullingMode"
+        },
+        "vulkanDiagnosticPreset": {
+          "$ref": "#/$defs/vulkanDiagnosticPreset"
+        },
+        "vulkanCommandBufferLabels": {
+          "type": "boolean"
+        },
+        "gpuTimestampDense": {
+          "type": "boolean"
+        },
+        "gpuClockPolicy": {
+          "type": "string"
+        },
+        "targetRefreshHz": {
+          "type": "number",
+          "minimum": 0
+        },
+        "profileScene": {
+          "type": "string"
+        },
+        "profileCamera": {
+          "type": "string"
+        },
+        "profileLights": {
+          "type": "string"
+        },
+        "profileViewport": {
+          "type": "string"
+        },
+        "renderScale": {
+          "type": "string"
+        },
+        "noRestore": {
+          "type": "boolean"
+        },
+        "validateHotReload": {
+          "type": "boolean"
+        },
+        "captureScreenshotAfterReload": {
+          "type": "boolean"
+        },
+        "reloadFirstFrameTimeoutMilliseconds": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 120000
+        },
+        "additionalMeasureArguments": {
+          "$ref": "#/$defs/stringArray"
+        }
+      }
+    },
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "minimumAggregateImprovementPercent": {
+          "type": "number",
+          "minimum": 0
+        },
+        "maximumMetricCoefficientOfVariationPercent": {
+          "type": "number",
+          "minimum": 0
+        },
+        "requireAnyMaterialImprovement": {
+          "type": "boolean"
+        },
+        "requireCpuAndGpuDiagnosticDumps": {
+          "type": "boolean"
+        },
+        "requireStableWorkloadIdentity": {
+          "type": "boolean"
+        },
+        "metrics": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/metric"
+          }
+        }
+      }
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lowerIsBetter": {
+          "type": "boolean"
+        },
+        "weight": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "minimumImprovementPercent": {
+          "type": "number",
+          "minimum": 0
+        },
+        "maximumRegressionPercent": {
+          "type": "number",
+          "minimum": 0
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "maximumCandidateValue": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "renderBackend": {
+          "enum": [
+            "OpenGL",
+            "Vulkan"
+          ]
+        },
+        "meshSubmissionStrategy": {
+          "enum": [
+            "CpuDirect",
+            "GpuIndirectInstrumented",
+            "GpuIndirectZeroReadback",
+            "GpuMeshletInstrumented",
+            "GpuMeshletZeroReadback"
+          ]
+        },
+        "unitTestingWorldSettingsPath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "overrides": {
+          "$ref": "#/$defs/scenarioOverrides"
+        },
+        "environment": {
+          "$ref": "#/$defs/environment"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "scenarioOverrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "zeroReadbackMaterialDrawPath": {
+          "$ref": "#/$defs/zeroReadbackMaterialDrawPath"
+        },
+        "unitTestVrMode": {
+          "$ref": "#/$defs/unitTestVrMode"
+        },
+        "vulkanRenderTargetMode": {
+          "$ref": "#/$defs/vulkanRenderTargetMode"
+        },
+        "vulkanPrimaryReuse": {
+          "$ref": "#/$defs/triState"
+        },
+        "vulkanCommandChains": {
+          "$ref": "#/$defs/triState"
+        },
+        "vulkanParallelCommandChainRecording": {
+          "$ref": "#/$defs/triState"
+        },
+        "vulkanParallelSecondaryRecording": {
+          "$ref": "#/$defs/triState"
+        },
+        "occlusionCullingMode": {
+          "$ref": "#/$defs/occlusionCullingMode"
+        },
+        "vulkanDiagnosticPreset": {
+          "$ref": "#/$defs/vulkanDiagnosticPreset"
+        },
+        "vulkanCommandBufferLabels": {
+          "type": "boolean"
+        },
+        "gpuTimestampDense": {
+          "type": "boolean"
+        },
+        "gpuClockPolicy": {
+          "type": "string"
+        },
+        "targetRefreshHz": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "profileScene": {
+          "type": "string"
+        },
+        "profileCamera": {
+          "type": "string"
+        },
+        "profileLights": {
+          "type": "string"
+        },
+        "profileViewport": {
+          "type": "string"
+        },
+        "renderScale": {
+          "type": "string"
+        },
+        "additionalMeasureArguments": {
+          "$ref": "#/$defs/stringArray"
+        }
+      }
+    },
+    "triState": {
+      "enum": [
+        "Configured",
+        "Enabled",
+        "Disabled"
+      ]
+    },
+    "zeroReadbackMaterialDrawPath": {
+      "enum": [
+        "FullBucketScan",
+        "ActiveBucketList",
+        "MaterialTable",
+        "BindlessMaterialTable"
+      ]
+    },
+    "unitTestVrMode": {
+      "enum": [
+        "Configured",
+        "Desktop",
+        "Emulated",
+        "MonadoOpenXR",
+        "OpenVR",
+        "OpenXR"
+      ]
+    },
+    "vulkanRenderTargetMode": {
+      "enum": [
+        "Configured",
+        "DynamicRendering",
+        "LegacyRenderPass"
+      ]
+    },
+    "occlusionCullingMode": {
+      "enum": [
+        "Configured",
+        "Disabled",
+        "CpuQueryAsync",
+        "CpuSoftwareOcclusion",
+        "GpuHiZ"
+      ]
+    },
+    "vulkanDiagnosticPreset": {
+      "enum": [
+        "Configured",
+        "Off",
+        "StandardValidation",
+        "SyncValidation",
+        "GpuAssisted",
+        "BestPractices",
+        "CrashDiagnostics",
+        "RenderDocFriendly"
+      ]
+    },
+    "stringArray": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

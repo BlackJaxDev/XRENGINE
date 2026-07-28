@@ -350,6 +350,14 @@ The editor loads `Assets/UnitTestingWorldSettings.jsonc` relative to the process
 
 If you launch the editor some other way, make sure the working directory is the repo root, or the settings file may not be found where you expect.
 
+Automated benchmark cohorts can select a different JSONC without copying over
+the local default by setting
+`XRE_UNIT_TEST_WORLD_SETTINGS_PATH=<path-to-settings.jsonc>`. Relative paths are
+resolved from the editor working directory. An explicitly selected file must
+already exist; the bootstrap fails instead of silently generating a different
+workload. The self-iteration benchmark sets this variable independently for
+each configured scenario.
+
 ### I changed the settings type and now the JSONC file looks stale
 
 Run `pwsh Tools/Generate-UnitTestingWorldSettings.ps1`, `powershell -ExecutionPolicy Bypass -File Tools\Generate-UnitTestingWorldSettings.ps1`, or the `Generate-UnitTestingWorldSettings` task.

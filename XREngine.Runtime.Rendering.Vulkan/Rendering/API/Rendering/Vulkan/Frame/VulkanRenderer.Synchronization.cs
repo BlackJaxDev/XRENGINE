@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using Silk.NET.Vulkan;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.DLSS;
 
 namespace XREngine.Rendering.Vulkan;
@@ -109,6 +110,7 @@ public unsafe partial class VulkanRenderer
         public readonly Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> Subresources = new(32);
         public readonly List<KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState>> TouchedSubresources = new(32);
         public bool EntryStateIncomplete;
+        public VulkanImageEntryStateMismatch EntryStateFailure;
         public ulong RecordingGeneration;
 
         public void RefreshTouchedSubresources()
@@ -286,6 +288,60 @@ public unsafe partial class VulkanRenderer
             descriptorLayout,
             serial,
             resourceGeneration);
+    }
+
+    /// <summary>
+    /// Produces the state published by the command-buffer tracker. Layouts
+    /// whose Vulkan access domain is unambiguous own their stage/access tuple;
+    /// a caller-provided barrier scope must not manufacture contradictory
+    /// state such as shader-read layout plus color-attachment writes.
+    /// <see cref="ImageLayout.General"/> retains the explicit scope because it
+    /// deliberately supports multiple access domains.
+    /// </summary>
+    internal static VulkanImageAccessState ResolveRecordedVulkanImageAccessState(
+        ImageLayout layout,
+        ImageAspectFlags aspectMask,
+        PipelineStageFlags stageMask,
+        AccessFlags accessMask,
+        uint queueFamilyIndex,
+        ulong serial,
+        ulong resourceGeneration)
+    {
+        VulkanImageAccessState canonical = ResolveVulkanImageAccessState(
+            layout,
+            aspectMask,
+            queueFamilyIndex,
+            serial,
+            resourceGeneration);
+        PipelineStageFlags2 requestedStages = NormalizePipelineStages2(stageMask);
+        AccessFlags2 requestedAccess = NormalizeAccessFlags2(accessMask);
+        if (layout == ImageLayout.General)
+        {
+            return canonical with
+            {
+                StageMask = requestedStages == 0 ? canonical.StageMask : requestedStages,
+                AccessMask = requestedAccess == 0 ? canonical.AccessMask : requestedAccess,
+            };
+        }
+
+        // Keep precise scopes when they agree with the semantic layout, but do
+        // not publish contradictory tuples such as ShaderReadOnlyOptimal paired
+        // with color-attachment writes. Those tuples cannot describe a real
+        // post-execution state and make otherwise stable primaries reject reuse.
+        bool stagesAreCompatible =
+            requestedStages != 0 &&
+            (requestedStages & ~canonical.StageMask) == 0;
+        bool accessIsCompatible =
+            requestedAccess != 0 &&
+            (requestedAccess & ~canonical.AccessMask) == 0;
+        if (!stagesAreCompatible || !accessIsCompatible)
+            return canonical;
+
+        return canonical with
+        {
+            StageMask = requestedStages,
+            AccessMask = requestedAccess,
+        };
     }
 
     private static PipelineStageFlags2 ResolveSignalStageMask2(uint commandBufferCount)
@@ -1158,6 +1214,17 @@ public unsafe partial class VulkanRenderer
                 // contract is published, then record a reusable variant on the next
                 // frame instead of assuming that first-use transition is replay-safe.
                 recorded.EntryStateIncomplete = true;
+                if (!recorded.EntryStateFailure.RequiresRecording)
+                {
+                    recorded.EntryStateFailure = new VulkanImageEntryStateMismatch(
+                        EVulkanPrimaryEntryStateMismatch.MissingSubmittedState,
+                        imageHandle,
+                        mip,
+                        layer,
+                        trackedAspect,
+                        VulkanImageAccessState.Undefined,
+                        VulkanImageAccessState.Undefined);
+                }
             }
         }
 
@@ -1171,20 +1238,15 @@ public unsafe partial class VulkanRenderer
         }
 
         ulong serial = unchecked((ulong)Interlocked.Increment(ref _vulkanImageLayoutTransitionSerial));
-        VulkanImageAccessState layoutState = ResolveVulkanImageAccessState(
+        VulkanImageAccessState layoutState = ResolveRecordedVulkanImageAccessState(
             layout,
             trackedAspect,
+            stageMask,
+            accessMask,
             resolvedQueueFamily,
             serial,
             resourceGeneration);
-        PipelineStageFlags2 recordedStages = stageMask == 0
-            ? layoutState.StageMask
-            : NormalizePipelineStages2(stageMask);
-        recorded.Subresources[key] = layoutState with
-        {
-            StageMask = recordedStages,
-            AccessMask = NormalizeAccessFlags2(accessMask),
-        };
+        recorded.Subresources[key] = layoutState;
     }
 
     private bool TryGetTrackedImageLayout(Image image, ImageSubresourceRange range, out ImageLayout layout)
@@ -1426,6 +1488,7 @@ public unsafe partial class VulkanRenderer
             recorded.SecondaryDescriptorRequirements.Clear();
             recorded.TouchedSubresources.Clear();
             recorded.EntryStateIncomplete = false;
+            recorded.EntryStateFailure = default;
             recorded.RecordingGeneration = ResolveCommandBufferRecordingGeneration(commandBuffer);
         }
     }
@@ -1461,6 +1524,8 @@ public unsafe partial class VulkanRenderer
 
             recorded.EntrySubresources.Clear();
             recorded.SecondaryDescriptorRequirements.Clear();
+            recorded.EntryStateIncomplete = predecessorState.EntryStateIncomplete;
+            recorded.EntryStateFailure = predecessorState.EntryStateFailure;
             foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> pair in predecessorState.TouchedSubresources)
                 recorded.EntrySubresources[pair.Key] = pair.Value;
         }
@@ -1493,6 +1558,15 @@ public unsafe partial class VulkanRenderer
                     {
                         if (!_trackedImageSubresourceStates.TryGetValue(pair.Key, out VulkanImageSubresourceState? submitted))
                         {
+                            RecordPrimaryImageEntryStateMismatch(
+                                new VulkanImageEntryStateMismatch(
+                                    EVulkanPrimaryEntryStateMismatch.MissingSubmittedState,
+                                    pair.Key.ImageHandle,
+                                    pair.Key.MipLevel,
+                                    pair.Key.ArrayLayer,
+                                    pair.Key.Aspect,
+                                    pair.Value,
+                                    VulkanImageAccessState.Undefined));
                             failureReason =
                                 $"commandBuffer[{commandIndex}]=0x{handle:X} requires missing entry state for image=0x{pair.Key.ImageHandle:X} " +
                                 $"mip={pair.Key.MipLevel} layer={pair.Key.ArrayLayer} aspect={pair.Key.Aspect}";
@@ -1502,19 +1576,23 @@ public unsafe partial class VulkanRenderer
                     }
 
                     VulkanImageAccessState expected = pair.Value;
-                    if (actual.Layout != expected.Layout ||
-                        (actual.ResourceGeneration != 0 &&
-                         expected.ResourceGeneration != 0 &&
-                         actual.ResourceGeneration != expected.ResourceGeneration) ||
-                        (actual.QueueFamilyIndex != Vk.QueueFamilyIgnored &&
-                         expected.QueueFamilyIndex != Vk.QueueFamilyIgnored &&
-                         actual.QueueFamilyIndex != expected.QueueFamilyIndex))
+                    EVulkanPrimaryEntryStateMismatch mismatch =
+                        VulkanImageEntryStateContract.Compare(actual, expected);
+                    if (mismatch != EVulkanPrimaryEntryStateMismatch.None)
                     {
+                        RecordPrimaryImageEntryStateMismatch(
+                            new VulkanImageEntryStateMismatch(
+                                mismatch,
+                                pair.Key.ImageHandle,
+                                pair.Key.MipLevel,
+                                pair.Key.ArrayLayer,
+                                pair.Key.Aspect,
+                                expected,
+                                actual));
                         failureReason =
                             $"commandBuffer[{commandIndex}]=0x{handle:X} entry-state mismatch for image=0x{pair.Key.ImageHandle:X} " +
-                            $"mip={pair.Key.MipLevel} layer={pair.Key.ArrayLayer} aspect={pair.Key.Aspect} " +
-                            $"expected={expected.Layout}/queue={expected.QueueFamilyIndex}/generation={expected.ResourceGeneration} " +
-                            $"actual={actual.Layout}/queue={actual.QueueFamilyIndex}/generation={actual.ResourceGeneration}";
+                            $"mip={pair.Key.MipLevel} layer={pair.Key.ArrayLayer} aspect={pair.Key.Aspect} kind={mismatch} " +
+                            $"expected={expected} actual={actual}";
                         return false;
                     }
                 }
@@ -1572,18 +1650,80 @@ public unsafe partial class VulkanRenderer
                     continue;
                 }
 
-                primaryState.EntryStateIncomplete |= secondaryState.EntryStateIncomplete;
+                if (secondaryState.EntryStateIncomplete)
+                {
+                    primaryState.EntryStateIncomplete = true;
+                    if (!primaryState.EntryStateFailure.RequiresRecording)
+                    {
+                        primaryState.EntryStateFailure =
+                            secondaryState.EntryStateFailure.RequiresRecording
+                                ? secondaryState.EntryStateFailure
+                                : new VulkanImageEntryStateMismatch(
+                                    EVulkanPrimaryEntryStateMismatch.IncompleteSnapshot,
+                                    0,
+                                    0,
+                                    0,
+                                    ImageAspectFlags.None,
+                                    VulkanImageAccessState.Undefined,
+                                    VulkanImageAccessState.Undefined);
+                    }
+                }
                 foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> pair in secondaryState.EntrySubresources)
                 {
                     if (primaryState.Subresources.TryGetValue(pair.Key, out VulkanImageAccessState priorPrimaryState))
                     {
-                        if (!AreRecordedImageEntryStatesCompatible(priorPrimaryState, pair.Value))
+                        EVulkanPrimaryEntryStateMismatch mismatch =
+                            VulkanImageEntryStateContract.Compare(
+                                priorPrimaryState,
+                                pair.Value);
+                        if (mismatch != EVulkanPrimaryEntryStateMismatch.None)
+                        {
                             primaryState.EntryStateIncomplete = true;
+                            if (!primaryState.EntryStateFailure.RequiresRecording)
+                            {
+                                primaryState.EntryStateFailure =
+                                    new VulkanImageEntryStateMismatch(
+                                        mismatch,
+                                        pair.Key.ImageHandle,
+                                        pair.Key.MipLevel,
+                                        pair.Key.ArrayLayer,
+                                        pair.Key.Aspect,
+                                        pair.Value,
+                                        priorPrimaryState);
+                            }
+                        }
                         continue;
                     }
 
-                    if (!primaryState.EntrySubresources.ContainsKey(pair.Key))
+                    if (primaryState.EntrySubresources.TryGetValue(
+                            pair.Key,
+                            out VulkanImageAccessState existingEntryState))
+                    {
+                        EVulkanPrimaryEntryStateMismatch mismatch =
+                            VulkanImageEntryStateContract.Compare(
+                                existingEntryState,
+                                pair.Value);
+                        if (mismatch != EVulkanPrimaryEntryStateMismatch.None)
+                        {
+                            primaryState.EntryStateIncomplete = true;
+                            if (!primaryState.EntryStateFailure.RequiresRecording)
+                            {
+                                primaryState.EntryStateFailure =
+                                    new VulkanImageEntryStateMismatch(
+                                        mismatch,
+                                        pair.Key.ImageHandle,
+                                        pair.Key.MipLevel,
+                                        pair.Key.ArrayLayer,
+                                        pair.Key.Aspect,
+                                        pair.Value,
+                                        existingEntryState);
+                            }
+                        }
+                    }
+                    else
+                    {
                         primaryState.EntrySubresources[pair.Key] = pair.Value;
+                    }
                 }
 
                 foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> pair in secondaryState.TouchedSubresources)
@@ -1672,8 +1812,22 @@ public unsafe partial class VulkanRenderer
                     };
                 }
 
-                if (priorState.Layout == requiredState.Layout)
+                EVulkanPrimaryEntryStateMismatch mismatch =
+                    VulkanImageEntryStateContract.Compare(
+                        priorState,
+                        requiredState);
+                if (mismatch == EVulkanPrimaryEntryStateMismatch.None)
                     continue;
+                if (mismatch is
+                    EVulkanPrimaryEntryStateMismatch.ResourceGeneration or
+                    EVulkanPrimaryEntryStateMismatch.QueueFamily)
+                {
+                    throw new InvalidOperationException(
+                        $"Secondary command buffer 0x{secondary.Handle:X} cannot establish image 0x{key.ImageHandle:X} " +
+                        $"entry state because {mismatch} differs. " +
+                        $"expected={requiredState.Layout}/queue={requiredState.QueueFamilyIndex}/generation={requiredState.ResourceGeneration} " +
+                        $"actual={priorState.Layout}/queue={priorState.QueueFamilyIndex}/generation={priorState.ResourceGeneration}.");
+                }
 
                 uint queueFamilyIndex = priorState.QueueFamilyIndex;
                 barriers[barrierCount++] = new ImageMemoryBarrier
@@ -1836,9 +1990,27 @@ public unsafe partial class VulkanRenderer
     /// an otherwise compatible cached primary.
     /// </summary>
     private bool HasRecordedImageEntryStateMismatch(CommandBuffer commandBuffer)
+        => TryGetRecordedImageEntryStateMismatch(
+            commandBuffer,
+            out _);
+
+    private bool HasCompleteRecordedImageEntrySnapshot(
+        CommandBuffer commandBuffer,
+        out VulkanImageEntryStateMismatch failure)
     {
+        failure = default;
         if (commandBuffer.Handle == 0)
-            return true;
+        {
+            failure = new VulkanImageEntryStateMismatch(
+                EVulkanPrimaryEntryStateMismatch.MissingCommandBufferState,
+                0,
+                0,
+                0,
+                ImageAspectFlags.None,
+                VulkanImageAccessState.Undefined,
+                VulkanImageAccessState.Undefined);
+            return false;
+        }
 
         lock (_vulkanImageLayoutLock)
         {
@@ -1846,42 +2018,154 @@ public unsafe partial class VulkanRenderer
                     unchecked((ulong)commandBuffer.Handle),
                     out VulkanRecordedImageLayoutState? recorded))
             {
+                failure = new VulkanImageEntryStateMismatch(
+                    EVulkanPrimaryEntryStateMismatch.MissingCommandBufferState,
+                    0,
+                    0,
+                    0,
+                    ImageAspectFlags.None,
+                    VulkanImageAccessState.Undefined,
+                    VulkanImageAccessState.Undefined);
+                return false;
+            }
+
+            if (!recorded.EntryStateIncomplete)
+                return true;
+
+            failure = recorded.EntryStateFailure.RequiresRecording
+                ? recorded.EntryStateFailure
+                : new VulkanImageEntryStateMismatch(
+                    EVulkanPrimaryEntryStateMismatch.IncompleteSnapshot,
+                    0,
+                    0,
+                    0,
+                    ImageAspectFlags.None,
+                    VulkanImageAccessState.Undefined,
+                    VulkanImageAccessState.Undefined);
+            return false;
+        }
+    }
+
+    private bool TryGetRecordedImageEntryStateMismatch(
+        CommandBuffer commandBuffer,
+        out VulkanImageEntryStateMismatch mismatch)
+    {
+        mismatch = default;
+        if (commandBuffer.Handle == 0)
+        {
+            mismatch = new VulkanImageEntryStateMismatch(
+                EVulkanPrimaryEntryStateMismatch.MissingCommandBufferState,
+                0,
+                0,
+                0,
+                ImageAspectFlags.None,
+                VulkanImageAccessState.Undefined,
+                VulkanImageAccessState.Undefined);
+            return true;
+        }
+
+        lock (_vulkanImageLayoutLock)
+        {
+            if (!_recordedImageLayoutsByCommandBuffer.TryGetValue(
+                    unchecked((ulong)commandBuffer.Handle),
+                    out VulkanRecordedImageLayoutState? recorded))
+            {
+                mismatch = new VulkanImageEntryStateMismatch(
+                    EVulkanPrimaryEntryStateMismatch.MissingCommandBufferState,
+                    0,
+                    0,
+                    0,
+                    ImageAspectFlags.None,
+                    VulkanImageAccessState.Undefined,
+                    VulkanImageAccessState.Undefined);
                 return true;
             }
 
             if (recorded.EntryStateIncomplete)
+            {
+                mismatch = recorded.EntryStateFailure.RequiresRecording
+                    ? recorded.EntryStateFailure
+                    : new VulkanImageEntryStateMismatch(
+                        EVulkanPrimaryEntryStateMismatch.IncompleteSnapshot,
+                        0,
+                        0,
+                        0,
+                        ImageAspectFlags.None,
+                        VulkanImageAccessState.Undefined,
+                        VulkanImageAccessState.Undefined);
                 return true;
+            }
 
             foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> pair in recorded.EntrySubresources)
             {
                 if (!_trackedImageSubresourceStates.TryGetValue(
                         pair.Key,
-                        out VulkanImageSubresourceState? submittedState) ||
-                    !AreRecordedImageEntryStatesCompatible(
-                        submittedState.Submitted,
-                        pair.Value))
+                        out VulkanImageSubresourceState? submittedState))
                 {
+                    mismatch = new VulkanImageEntryStateMismatch(
+                        EVulkanPrimaryEntryStateMismatch.MissingSubmittedState,
+                        pair.Key.ImageHandle,
+                        pair.Key.MipLevel,
+                        pair.Key.ArrayLayer,
+                        pair.Key.Aspect,
+                        pair.Value,
+                        VulkanImageAccessState.Undefined);
                     return true;
                 }
+
+                EVulkanPrimaryEntryStateMismatch kind =
+                    VulkanImageEntryStateContract.Compare(
+                        submittedState.Submitted,
+                        pair.Value);
+                if (kind == EVulkanPrimaryEntryStateMismatch.None)
+                    continue;
+
+                mismatch = new VulkanImageEntryStateMismatch(
+                    kind,
+                    pair.Key.ImageHandle,
+                    pair.Key.MipLevel,
+                    pair.Key.ArrayLayer,
+                    pair.Key.Aspect,
+                    pair.Value,
+                    submittedState.Submitted);
+                return true;
             }
         }
 
         return false;
     }
 
+    private static void RecordPrimaryImageEntryStateMismatch(
+        in VulkanImageEntryStateMismatch mismatch)
+    {
+        if (!mismatch.RequiresRecording)
+            return;
+
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPrimaryEntryStateMismatch(
+            mismatch.Kind,
+            mismatch.ImageHandle,
+            mismatch.MipLevel,
+            mismatch.ArrayLayer,
+            (int)mismatch.Aspect,
+            (int)mismatch.Expected.Layout,
+            (ulong)mismatch.Expected.StageMask,
+            (ulong)mismatch.Expected.AccessMask,
+            (int)mismatch.Expected.ExpectedDescriptorLayout,
+            mismatch.Expected.QueueFamilyIndex,
+            mismatch.Expected.ResourceGeneration,
+            (int)mismatch.Actual.Layout,
+            (ulong)mismatch.Actual.StageMask,
+            (ulong)mismatch.Actual.AccessMask,
+            (int)mismatch.Actual.ExpectedDescriptorLayout,
+            mismatch.Actual.QueueFamilyIndex,
+            mismatch.Actual.ResourceGeneration);
+    }
+
     private static bool AreRecordedImageEntryStatesCompatible(
         in VulkanImageAccessState actual,
         in VulkanImageAccessState expected)
-        => actual.Layout == expected.Layout &&
-           actual.StageMask == expected.StageMask &&
-           actual.AccessMask == expected.AccessMask &&
-           actual.ExpectedDescriptorLayout == expected.ExpectedDescriptorLayout &&
-           (actual.ResourceGeneration == 0 ||
-            expected.ResourceGeneration == 0 ||
-            actual.ResourceGeneration == expected.ResourceGeneration) &&
-           (actual.QueueFamilyIndex == Vk.QueueFamilyIgnored ||
-            expected.QueueFamilyIndex == Vk.QueueFamilyIgnored ||
-            actual.QueueFamilyIndex == expected.QueueFamilyIndex);
+        => VulkanImageEntryStateContract.Compare(actual, expected) ==
+           EVulkanPrimaryEntryStateMismatch.None;
 
     private ulong ComputeImageLayoutStateSignature(CommandBuffer commandBuffer = default)
     {

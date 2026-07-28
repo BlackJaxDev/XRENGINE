@@ -26,6 +26,14 @@ namespace XREngine
             (long)Math.Max(1.0, RenderThreadJobBudgetMs * Stopwatch.Frequency / 1000.0);
         private static ulong _renderThreadJobBudgetFrameId = ulong.MaxValue;
         private static long _renderThreadJobBudgetConsumedTicks;
+        private static readonly long[] _renderThreadJobCountByKind = new long[Enum.GetValues<RenderThreadJobKind>().Length];
+        private static readonly long[] _renderThreadJobDurationMicrosByKind = new long[Enum.GetValues<RenderThreadJobKind>().Length];
+        private static readonly long[] _renderThreadJobQueueDelayMicrosByKind = new long[Enum.GetValues<RenderThreadJobKind>().Length];
+        private static readonly long[] _renderThreadJobOverBudgetMicrosByKind = new long[Enum.GetValues<RenderThreadJobKind>().Length];
+        private static readonly long[] _lastRenderThreadJobCountByKind = new long[Enum.GetValues<RenderThreadJobKind>().Length];
+        private static readonly long[] _lastRenderThreadJobDurationMicrosByKind = new long[Enum.GetValues<RenderThreadJobKind>().Length];
+        private static readonly long[] _lastRenderThreadJobQueueDelayMicrosByKind = new long[Enum.GetValues<RenderThreadJobKind>().Length];
+        private static readonly long[] _lastRenderThreadJobOverBudgetMicrosByKind = new long[Enum.GetValues<RenderThreadJobKind>().Length];
 
         #region Public Properties - Threading
 
@@ -128,6 +136,38 @@ namespace XREngine
                     "Pass a RenderThreadJobKind for GPU work, or move scene/editor/networking work to AppThread or UpdateThread.");
             }
 #endif
+        }
+
+        private static void ObserveRenderThreadJobExecution(
+            string label,
+            RenderThreadJobKind renderThreadKind,
+            double durationMilliseconds,
+            double queueDelayMilliseconds,
+            double overBudgetMilliseconds)
+        {
+            _ = label;
+            int index = (int)renderThreadKind;
+            if ((uint)index >= (uint)_renderThreadJobCountByKind.Length)
+                index = (int)RenderThreadJobKind.Unknown;
+
+            Interlocked.Increment(ref _renderThreadJobCountByKind[index]);
+            Interlocked.Add(ref _renderThreadJobDurationMicrosByKind[index], MillisecondsToMicroseconds(durationMilliseconds));
+            Interlocked.Add(ref _renderThreadJobQueueDelayMicrosByKind[index], MillisecondsToMicroseconds(queueDelayMilliseconds));
+            Interlocked.Add(ref _renderThreadJobOverBudgetMicrosByKind[index], MillisecondsToMicroseconds(overBudgetMilliseconds));
+        }
+
+        private static long MillisecondsToMicroseconds(double milliseconds)
+            => milliseconds <= 0.0 ? 0L : (long)Math.Round(milliseconds * 1000.0);
+
+        private static void PublishRenderThreadJobTelemetry()
+        {
+            for (int i = 0; i < _renderThreadJobCountByKind.Length; i++)
+            {
+                _lastRenderThreadJobCountByKind[i] = Interlocked.Exchange(ref _renderThreadJobCountByKind[i], 0L);
+                _lastRenderThreadJobDurationMicrosByKind[i] = Interlocked.Exchange(ref _renderThreadJobDurationMicrosByKind[i], 0L);
+                _lastRenderThreadJobQueueDelayMicrosByKind[i] = Interlocked.Exchange(ref _renderThreadJobQueueDelayMicrosByKind[i], 0L);
+                _lastRenderThreadJobOverBudgetMicrosByKind[i] = Interlocked.Exchange(ref _renderThreadJobOverBudgetMicrosByKind[i], 0L);
+            }
         }
 
         private static void LogJobManagerMessage(string message)
@@ -636,6 +676,8 @@ namespace XREngine
             ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
             if (_renderThreadJobBudgetFrameId != frameId)
             {
+                if (_renderThreadJobBudgetFrameId != ulong.MaxValue)
+                    PublishRenderThreadJobTelemetry();
                 _renderThreadJobBudgetFrameId = frameId;
                 _renderThreadJobBudgetConsumedTicks = 0L;
             }

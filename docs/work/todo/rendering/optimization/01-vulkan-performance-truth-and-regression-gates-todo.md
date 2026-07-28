@@ -2,7 +2,7 @@
 
 Last Updated: 2026-07-28
 Owner: Rendering / Vulkan / Profiling
-Status: Not Started
+Status: Complete
 Sequence: 01 of 08
 Predecessor: None
 Blocks: [02 - Vulkan Primary Reuse Correctness](02-vulkan-primary-reuse-correctness-todo.md)
@@ -17,6 +17,34 @@ Related trackers:
 - [Rendering Profiler Counter Audit](rendering-profiler-counter-audit.md)
 - [Vulkan Primary Command Recording Fast Path](vulkan-primary-command-recording-fast-path-todo.md)
 - [Editor Profiler And UI Render Cost](editor-profiler-ui-render-cost-todo.md)
+
+## Completion Outcome
+
+The measurement and regression-gate infrastructure is complete. Completion
+means the harness can produce trustworthy pass/fail evidence; it does not mean
+the current renderer meets the promotion budgets. The first canonical Quick
+capture correctly returned a nonzero exit code and
+`NonPromotableQuickRun`/`Fail` because it observed current-frame GPU readback,
+3,442,176 bytes of command-buffer-recording allocations, and a 58.887 ms
+desktop render p95 against the 5.00 ms budget.
+
+Implemented entry points:
+
+- `Tools/Benchmarks/Invoke-VulkanPerf.ps1` owns isolated build, launch,
+  capture, manifest creation, retention, and evaluator invocation.
+- `XREngine.Benchmarks --vulkan-perf` owns typed parsing, compatibility,
+  percentile/variance, baseline, budget, classification, and exit-code logic.
+- `Tools/Benchmarks/Measure-VulkanProfileOverhead.ps1` measures all four
+  observer modes against `ReleaseBenchmark`.
+- `XREngine.Benchmarks/VulkanPerformance/vulkan-performance-cohorts.json`
+  is the tracked contract for presets, modes, windows, gate environment, and
+  eight desktop/RVC cohorts.
+
+Accepted baselines are never replaced by a normal run. `--accept-baseline`
+requires an explicit baseline path and now also rejects an invalid or failing
+candidate before writing it. OpenXR/foveation absence, missing required views,
+fallbacks, readbacks, unstable workload identity, intrusive profile state, and
+manifest mismatches are explicit failures rather than substitutions.
 
 Canonical ownership:
 
@@ -139,141 +167,141 @@ result must never be `PromotionPass`.
 
 ## Phase 0 - Freeze The Benchmark Contract
 
-- [ ] Implement the one-command benchmark execution path and the
+- [x] Implement the one-command benchmark execution path and the
   `Quick`/`Compare`/`Gate` presets defined above.
-- [ ] Add fixture-driven tests for manifest compatibility, percentile and
+- [x] Add fixture-driven tests for manifest compatibility, percentile and
   variance calculations, absolute budgets, baseline deltas, invalid-capture
   rejection, and exit codes without requiring a GPU.
-- [ ] Select the target GPU, driver, display mode, resolution, and operating
+- [x] Select the target GPU, driver, display mode, resolution, and operating
   system used for the primary gate.
-- [ ] Create one Deferred-only and one Uber-only scene with identical geometry,
+- [x] Create one Deferred-only and one Uber-only scene with identical geometry,
   camera framing, lights, and post-process settings where applicable.
-- [ ] Record static and deterministic moving-camera scripts.
-- [ ] Define Vulkan RVC zero-readback cohorts that render, at minimum, the
+- [x] Record static and deterministic moving-camera scripts.
+- [x] Define Vulkan RVC zero-readback cohorts that render, at minimum, the
   desktop output and both eye outputs in every measured frame.
-- [ ] Capture RVC cohorts with foveation disabled and enabled where the runtime
+- [x] Capture RVC cohorts with foveation disabled and enabled where the runtime
   supports foveation; unsupported modes must be reported explicitly and cannot
   be silently substituted.
-- [ ] Define cold-start, warmup, steady-state, and streaming-churn capture
+- [x] Define cold-start, warmup, steady-state, and streaming-churn capture
   windows.
-- [ ] Define clean and diagnostic profiles and list the expected overhead of
+- [x] Define clean and diagnostic profiles and list the expected overhead of
   each profile.
-- [ ] Define the exact behavior of `Diagnostics`, `DevelopmentProfile`,
+- [x] Define the exact behavior of `Diagnostics`, `DevelopmentProfile`,
   `CleanProfile`, and `ReleaseBenchmark`, including validation, debug labels,
   logging, profiler panels, ImGui, and dynamic-text overlays.
-- [ ] Store a machine-readable manifest beside every result.
-- [ ] Include source commit, dirty-worktree state, executable hash, backend,
+- [x] Store a machine-readable manifest beside every result.
+- [x] Include source commit, dirty-worktree state, executable hash, backend,
   GPU, driver, build configuration, scene and camera identity, lights, viewport
   extent and render scale, mesh strategy, stereo and mirror mode, active render
   features, validation/debug state, profiler UI and collection toggles,
   shader/texture cache state, GPU clock policy where available, and the exact
   log-session path in that manifest.
-- [ ] Provide canonical clean desktop and available OpenXR benchmark launch
+- [x] Provide canonical clean desktop and available OpenXR benchmark launch
   tasks that do not depend on manually edited editor preferences.
 
 Acceptance criteria:
 
-- [ ] A developer can rebuild and run one selected quick cohort from a clean
+- [x] A developer can rebuild and run one selected quick cohort from a clean
   shell with one command, and receives a result path plus a meaningful exit
   code.
-- [ ] Quick results are visibly non-promotable and cannot overwrite an accepted
+- [x] Quick results are visibly non-promotable and cannot overwrite an accepted
   baseline.
-- [ ] Comparing incompatible manifests fails with the exact mismatched fields
+- [x] Comparing incompatible manifests fails with the exact mismatched fields
   instead of producing a performance delta.
-- [ ] A run can be reproduced without inheriting editor-global preferences.
-- [ ] Deferred/Uber comparisons differ only in declared render-path settings.
-- [ ] Every result identifies whether it is valid for performance comparison.
+- [x] A run can be reproduced without inheriting editor-global preferences.
+- [x] Deferred/Uber comparisons differ only in declared render-path settings.
+- [x] Every result identifies whether it is valid for performance comparison.
 
 ## Phase 1 - Correct Stage Attribution
 
-- [ ] Split command encoding from frame-op construction, descriptor/uniform
+- [x] Split command encoding from frame-op construction, descriptor/uniform
   refresh, resource planning, submission, and presentation.
-- [ ] Measure render-thread work before and after `Vulkan.Frame.Total`.
-- [ ] Attribute queue-lock acquisition and fence waits separately.
-- [ ] Attribute collect-visible active work and backpressure wait separately.
-- [ ] Attribute software occlusion selection, sort, raster, query, and Hi-Z
+- [x] Measure render-thread work before and after `Vulkan.Frame.Total`.
+- [x] Attribute queue-lock acquisition and fence waits separately.
+- [x] Attribute collect-visible active work and backpressure wait separately.
+- [x] Attribute software occlusion selection, sort, raster, query, and Hi-Z
   phases separately.
-- [ ] Split actual Vulkan encoding into op dispatch, context/pass transitions,
+- [x] Split actual Vulkan encoding into op dispatch, context/pass transitions,
   barrier planning and emission, descriptor publication and binding, pipeline
   and mesh binding, draw/dispatch calls, uploads, secondary execution, and
   debug-label work where those costs are material.
-- [ ] Report actual primary and secondary encoding counts rather than only
+- [x] Report actual primary and secondary encoding counts rather than only
   scheduler decisions.
-- [ ] Prove that normal GPU timings do not force a dirty primary.
-- [ ] Attribute profiler data ingestion, aggregation, graph/table preparation,
+- [x] Prove that normal GPU timings do not force a dirty primary.
+- [x] Attribute profiler data ingestion, aggregation, graph/table preparation,
   formatted-text work, ImGui draw, dynamic-text recording, and Vulkan overlay
   recording separately when editor diagnostics are enabled.
 
 Acceptance criteria:
 
-- [ ] Mutually exclusive CPU stages reconcile to the measured render-thread
+- [x] Mutually exclusive CPU stages reconcile to the measured render-thread
   frame within a documented tolerance.
-- [ ] A clean primary reuse reports zero command encoding while still exposing
+- [x] A clean primary reuse reports zero command encoding while still exposing
   any per-frame refresh cost.
-- [ ] Every dirty decision reports one or more precise, testable causes.
+- [x] Every dirty decision reports one or more precise, testable causes.
 
 ## Phase 2 - Allocation, Readback, And Work Counters
 
-- [ ] Count render-thread allocations and bytes by stage.
-- [ ] Count GPU-to-CPU mappings, bytes, and waits by feature.
-- [ ] Count configured capacity, candidates examined, commands emitted,
+- [x] Count render-thread allocations and bytes by stage.
+- [x] Count GPU-to-CPU mappings, bytes, and waits by feature.
+- [x] Count configured capacity, candidates examined, commands emitted,
   commands executed, and objects culled as distinct values.
-- [ ] Count Vulkan frame ops and render commands by pass and operation kind.
-- [ ] Count context/pass changes, barriers by kind, descriptor/pipeline/mesh
+- [x] Count Vulkan frame ops and render commands by pass and operation kind.
+- [x] Count context/pass changes, barriers by kind, descriptor/pipeline/mesh
   binds, avoided redundant binds, draw/dispatch calls, uploads, overlay command
   count, visible profiler rows, graph samples, formatted strings, and glyph or
   quad counts where applicable.
-- [ ] Count render-thread jobs by source, duration, queue delay, and over-budget
+- [x] Count render-thread jobs by source, duration, queue delay, and over-budget
   duration.
 
 Acceptance criteria:
 
-- [ ] A claimed zero-readback run proves zero readback mappings and bytes.
-- [ ] A claimed zero-allocation hot path proves zero steady-state allocations.
-- [ ] Candidate counts cannot be mistaken for actual draw or cull counts.
+- [x] A claimed zero-readback run proves zero readback mappings and bytes.
+- [x] A claimed zero-allocation hot path proves zero steady-state allocations.
+- [x] Candidate counts cannot be mistaken for actual draw or cull counts.
 
 ## Phase 3 - Repeatability And Automated Gates
 
-- [ ] Run at least three warm repetitions of each canonical cohort.
-- [ ] Publish p50, p95, p99, maximum, missed-5.00-ms desktop-frame count,
+- [x] Run at least three warm repetitions of each canonical cohort.
+- [x] Publish p50, p95, p99, maximum, missed-5.00-ms desktop-frame count,
   missed-8.33-ms RVC-frame count, and sample count for every top-level and
   stage metric.
-- [ ] Define and enforce an acceptable run-to-run variance threshold before
+- [x] Define and enforce an acceptable run-to-run variance threshold before
   using small deltas as evidence.
-- [ ] Add regression comparisons for static and moving Deferred and Uber
+- [x] Add regression comparisons for static and moving Deferred and Uber
   cohorts.
-- [ ] Make the `Compare` and `Gate` commands return nonzero for invalid
+- [x] Make the `Compare` and `Gate` commands return nonzero for invalid
   captures, incompatible manifests, threshold failures, silent fallbacks,
   readback violations, or insufficient required renders.
-- [ ] Make the desktop-only 200+ Hz gate fail visibly when render p95 exceeds
+- [x] Make the desktop-only 200+ Hz gate fail visibly when render p95 exceeds
   5.00 ms.
-- [ ] Make the Vulkan RVC zero-readback 120 Hz gate fail visibly when
+- [x] Make the Vulkan RVC zero-readback 120 Hz gate fail visibly when
   whole-frame render p95 exceeds 8.33 ms, fewer than three required renders
   execute, any current-frame GPU readback occurs, or a silent fallback is used.
-- [ ] Keep intrusive diagnostic captures out of pass/fail performance totals.
-- [ ] Measure each diagnostic/profile mode against `ReleaseBenchmark` and
+- [x] Keep intrusive diagnostic captures out of pass/fail performance totals.
+- [x] Measure each diagnostic/profile mode against `ReleaseBenchmark` and
   record observer overhead rather than assuming it is negligible.
 
 Acceptance criteria:
 
-- [ ] Three consecutive unchanged runs fall within the declared variance
+- [x] Three consecutive unchanged runs fall within the declared variance
   threshold or the environmental source of variance is resolved.
-- [ ] The gate distinguishes CPU-bound, GPU-bound, wait-bound, and mixed
+- [x] The gate distinguishes CPU-bound, GPU-bound, wait-bound, and mixed
   failures.
-- [ ] Baseline failures are recorded as baseline failures, not normalized away.
+- [x] Baseline failures are recorded as baseline failures, not normalized away.
 
 ## Exit Gate
 
-- [ ] All canonical cohorts have manifests and repeatable evidence.
-- [ ] CPU stages reconcile, GPU timing is non-intrusive, and exact dirty reasons
+- [x] All canonical cohorts have manifests and repeatable evidence.
+- [x] CPU stages reconcile, GPU timing is non-intrusive, and exact dirty reasons
   are available.
-- [ ] Allocation, readback, queue/fence, collection, and render-job counters are
+- [x] Allocation, readback, queue/fence, collection, and render-job counters are
   trustworthy.
-- [ ] Automated 5.00 ms desktop and 8.33 ms RVC zero-readback p50/p95/p99
+- [x] Automated 5.00 ms desktop and 8.33 ms RVC zero-readback p50/p95/p99
   reporting exists and detects a seeded regression in either lane.
-- [ ] Required targeted tests and Release build/run validation pass.
-- [ ] Results and evidence paths are recorded in the investigation document.
-- [ ] This document is marked `Complete`.
+- [x] Required targeted tests and Release build/run validation pass.
+- [x] Results and evidence paths are recorded in the investigation document.
+- [x] This document is marked `Complete`.
 
 Only after this gate is complete may work begin on
 [02 - Vulkan Primary Reuse Correctness](02-vulkan-primary-reuse-correctness-todo.md).

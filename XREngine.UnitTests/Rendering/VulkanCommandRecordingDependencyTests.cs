@@ -395,7 +395,7 @@ public sealed class VulkanCommandRecordingDependencyTests
         string cameraPoseDirtyCheck = Slice(
             recording,
             "// An inline desktop primary owns the swapchain writer and must be re-recorded",
-            "if (!dirty && IsCommandBufferVariantImageLayoutStateDirty");
+            "IsCommandBufferVariantImageLayoutStateDirty(");
 
         fastReuse.ShouldNotContain("variant.RecordedGenerations.CameraPose != currentGenerations.CameraPose");
         cameraPoseDirtyCheck.ShouldContain("variant.RecordedGenerations.CameraPose != currentGenerations.CameraPose");

@@ -634,7 +634,11 @@ public static partial class EditorImGuiUI
     /// </summary>
     private static void DrawProfilerPanel()
     {
-        if (!_showProfiler) return;
+        if (!_showProfiler)
+        {
+            ProfilerObserverTelemetry.Clear();
+            return;
+        }
 
         EditorDebugOptions debug = Engine.EditorPreferences.Debug;
         _profilerUdpEnabled = debug.EnableProfilerUdpSending;
@@ -721,6 +725,7 @@ public static partial class EditorImGuiUI
         }
 
         // Draw shared profiler panels.
+        long profilerImGuiStart = Stopwatch.GetTimestamp();
         using (Engine.Profiler.Start("UI.DrawProfilerPanel.CorePanels"))
         {
             _engineProfilerRenderer!.DrawProfilerTreePanel(ref _showProfilerTree, drawHeader: ProfilerFrameLoggingHeader);
@@ -734,6 +739,8 @@ public static partial class EditorImGuiUI
             _engineProfilerRenderer!.DrawMainThreadInvokesPanel(ref _showMainThreadInvokes, drawHeader: ProfilerMainThreadInvokeHeader);
             PersistProfilerPanelVisibilitySettings();
         }
+        ProfilerObserverTelemetry.RecordImGuiDraw(
+            Stopwatch.GetElapsedTime(profilerImGuiStart).TotalMilliseconds);
 
         if (!IsAnyProfilerChildPanelVisible())
             _showProfiler = false;

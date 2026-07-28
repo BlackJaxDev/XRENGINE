@@ -13,6 +13,8 @@ These docs are intentionally closer to the code than the user guide. They should
 - [Assets](assets/model-import.md)
 - [Audio](audio/openal-streaming-audio.md)
 - [Components](components/component-api.md)
+- [Diagnostics And Profiler](diagnostics/profiler.md)
+- [Self-Iterating Rendering Performance Loop](diagnostics/self-iterating-performance-loop.md)
 - [Global Illumination](gi/global-illumination.md)
 - [Networking](networking/networking.md)
 - [Physics](physics/physics-api.md)

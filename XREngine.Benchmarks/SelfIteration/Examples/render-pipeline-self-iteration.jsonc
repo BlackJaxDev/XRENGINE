@@ -1,0 +1,156 @@
+{
+  "$schema": "../../../.vscode/schemas/self-iteration-benchmark.schema.json",
+
+  "campaignId": "render-pipeline-throughput",
+  "objective": "Reduce steady-state CPU and GPU frame time without changing the requested backend, draw path, workload, or rendered behavior.",
+  "maxIterations": 5,
+  "maxProposalAttemptsPerIteration": 3,
+
+  // Accepted source changes remain in the working tree. Rejected changes are
+  // restored to the previous accepted checkpoint.
+  "requireCleanTrackedWorktree": true,
+  "allowedPathPrefixes": [
+    "XRENGINE/Rendering",
+    "XREngine.Runtime.Rendering",
+    "XREngine.Runtime.Rendering.OpenGL",
+    "XREngine.Runtime.Rendering.Vulkan"
+  ],
+  "progressDocument": "docs/work/progress/rendering/render-pipeline-throughput-self-improvement.md",
+  "rejectedAttemptsDocument": "docs/work/investigations/rendering/render-pipeline-throughput-rejected-attempts.md",
+
+  // This uses the standalone Codex CLI protocol as an example. Any autonomous
+  // agent command is valid if it reads the prompt from stdin, edits the current
+  // workspace only during implementation, and returns the requested JSON.
+  "agent": {
+    "executable": "codex",
+    "proposalArguments": [
+      "exec",
+      "--sandbox",
+      "read-only",
+      "--ask-for-approval",
+      "never",
+      "--output-last-message",
+      "{responsePath}",
+      "-"
+    ],
+    "implementationArguments": [
+      "exec",
+      "--sandbox",
+      "workspace-write",
+      "--ask-for-approval",
+      "never",
+      "--output-last-message",
+      "{responsePath}",
+      "-"
+    ],
+    "promptViaStandardInput": true,
+    "timeoutSeconds": 1800,
+    "environment": {}
+  },
+
+  "measurement": {
+    "configuration": "Release",
+    "profileMode": "CleanProfile",
+    "cacheMode": "Warm",
+    "warmupSeconds": 25,
+    "captureSeconds": 30,
+    "repetitions": 3,
+    "stabilityWindowSeconds": 5,
+    "stabilityTimeoutSeconds": 120,
+    "shutdownGraceSeconds": 20,
+    "noSampleHangSeconds": 15,
+    "maxLaunchAttempts": 2,
+    "runDetailedDiagnosticCapture": true,
+    "diagnosticProfileMode": "DevelopmentProfile",
+    "diagnosticWarmupSeconds": 15,
+    "diagnosticCaptureSeconds": 15,
+    "diagnosticRepetitions": 1,
+    "diagnosticGpuTimestampDense": true,
+    "diagnosticVulkanCommandBufferLabels": false,
+    "unitTestVrMode": "Desktop",
+    "zeroReadbackMaterialDrawPath": "FullBucketScan",
+    "vulkanRenderTargetMode": "Configured",
+    "vulkanPrimaryReuse": "Configured",
+    "vulkanCommandChains": "Enabled",
+    "vulkanParallelCommandChainRecording": "Enabled",
+    "vulkanParallelSecondaryRecording": "Enabled",
+    "occlusionCullingMode": "Disabled",
+    "vulkanDiagnosticPreset": "Off",
+    "vulkanCommandBufferLabels": false,
+    "gpuTimestampDense": false,
+    "gpuClockPolicy": "Unspecified",
+    "noRestore": true,
+    "validateHotReload": true,
+    "captureScreenshotAfterReload": true,
+    "reloadFirstFrameTimeoutMilliseconds": 30000
+  },
+
+  "acceptance": {
+    "minimumAggregateImprovementPercent": 1.0,
+    "maximumMetricCoefficientOfVariationPercent": 10.0,
+    "requireAnyMaterialImprovement": true,
+    "requireCpuAndGpuDiagnosticDumps": true,
+    "requireStableWorkloadIdentity": true,
+    "metrics": [
+      {
+        "name": "RenderP95Ms",
+        "weight": 3.0,
+        "minimumImprovementPercent": 1.0,
+        "maximumRegressionPercent": 1.0,
+        "required": true
+      },
+      {
+        "name": "RenderP99Ms",
+        "weight": 2.0,
+        "minimumImprovementPercent": 1.0,
+        "maximumRegressionPercent": 2.0,
+        "required": true
+      },
+      {
+        "name": "GpuP95Ms",
+        "weight": 2.0,
+        "minimumImprovementPercent": 1.0,
+        "maximumRegressionPercent": 2.0,
+        "required": false
+      },
+      {
+        "name": "CollectVisibleP95Ms",
+        "weight": 1.0,
+        "minimumImprovementPercent": 2.0,
+        "maximumRegressionPercent": 3.0,
+        "required": false
+      }
+    ]
+  },
+
+  // Each entry is a complete formal workload. A candidate is accepted only if
+  // the entire matrix remains valid and clears the configured comparison gates.
+  "scenarios": [
+    {
+      "name": "vulkan-gpu-zero-readback",
+      "renderBackend": "Vulkan",
+      "meshSubmissionStrategy": "GpuIndirectZeroReadback",
+      "unitTestingWorldSettingsPath": "Assets/UnitTestingWorldSettings.jsonc",
+      "overrides": {
+        "vulkanRenderTargetMode": "DynamicRendering",
+        "vulkanCommandChains": "Enabled",
+        "vulkanParallelCommandChainRecording": "Enabled",
+        "vulkanParallelSecondaryRecording": "Enabled"
+      },
+      "environment": {}
+    },
+    {
+      // With requireCpuAndGpuDiagnosticDumps=true, this scenario intentionally
+      // fails closed if the OpenGL timestamp profiler cannot resolve a
+      // per-pipeline history.
+      "name": "opengl-cpu-direct",
+      "renderBackend": "OpenGL",
+      "meshSubmissionStrategy": "CpuDirect",
+      "unitTestingWorldSettingsPath": "Assets/UnitTestingWorldSettings.jsonc",
+      "overrides": {
+        "occlusionCullingMode": "Disabled"
+      },
+      "environment": {}
+    }
+  ]
+}

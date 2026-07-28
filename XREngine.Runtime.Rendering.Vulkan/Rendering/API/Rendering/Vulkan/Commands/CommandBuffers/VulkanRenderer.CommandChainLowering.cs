@@ -476,6 +476,17 @@ public unsafe partial class VulkanRenderer
             chain.LastUsedScheduleGeneration = scheduleGeneration;
             CommandChainDirtyReason dirtyReason = EvaluateCommandChainDirtyReason(chain, packet);
             bool secondaryExecutable = chain.SecondaryCommandBuffer.Handle != 0 && chain.SecondaryCommandBufferExecutable;
+            if (secondaryExecutable &&
+                !HasCompleteRecordedImageEntrySnapshot(
+                    chain.SecondaryCommandBuffer,
+                    out _))
+            {
+                // A first-use secondary can be executed once while its old
+                // image state is unknown, but it is not a reusable artifact.
+                // Re-record after successful submission establishes the
+                // per-image state instead of poisoning every merged primary.
+                secondaryExecutable = false;
+            }
             CommandChainDirtyReason effectiveDirtyReason = dirtyReason == CommandChainDirtyReason.None && !secondaryExecutable
                 ? CommandChainDirtyReason.SecondaryCommandBufferInvalid
                 : dirtyReason;

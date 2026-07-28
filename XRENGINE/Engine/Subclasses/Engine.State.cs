@@ -102,6 +102,9 @@ namespace XREngine
             JobManager.LogMessage = LogJobManagerMessage;
             JobManager.ProfilerScopeFactory = static name => Engine.Profiler.Start(name);
             JobManager.JobDispatchObserver = static (affinity, label, kind) => ObserveJobDispatch(affinity, label, kind);
+            JobManager.RenderThreadJobExecutionObserver =
+                static (label, kind, durationMs, queueDelayMs, overBudgetMs) =>
+                    ObserveRenderThreadJobExecution(label, kind, durationMs, queueDelayMs, overBudgetMs);
         }
 
         public static GameState LoadOrGenerateGameState(

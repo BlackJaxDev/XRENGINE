@@ -358,14 +358,37 @@ namespace XREngine.Rendering.Vulkan
         private bool IsCommandBufferVariantImageLayoutStateDirty(
             CommandBufferCacheVariant variant,
             ulong imageLayoutStartSignature)
+            => IsCommandBufferVariantImageLayoutStateDirty(
+                variant,
+                imageLayoutStartSignature,
+                out _);
+
+        private bool IsCommandBufferVariantImageLayoutStateDirty(
+            CommandBufferCacheVariant variant,
+            ulong imageLayoutStartSignature,
+            out VulkanImageEntryStateMismatch mismatch)
         {
             // Keep the global signature for diagnostics, but scope reuse validity to
             // the entry states of images actually consumed by this command buffer.
             // Texture streaming and unrelated render outputs legitimately mutate the
             // renderer-wide layout map without changing this primary's contract.
             _ = imageLayoutStartSignature;
-            return variant.RecordedImageLayoutEndState is null ||
-                   HasRecordedImageEntryStateMismatch(variant.PrimaryCommandBuffer);
+            if (variant.RecordedImageLayoutEndState is null)
+            {
+                mismatch = new VulkanImageEntryStateMismatch(
+                    EVulkanPrimaryEntryStateMismatch.MissingCommandBufferState,
+                    0,
+                    0,
+                    0,
+                    ImageAspectFlags.None,
+                    VulkanImageAccessState.Undefined,
+                    VulkanImageAccessState.Undefined);
+                return true;
+            }
+
+            return TryGetRecordedImageEntryStateMismatch(
+                variant.PrimaryCommandBuffer,
+                out mismatch);
         }
 
         private void LogCommandChainSecondaryInheritanceMismatch(

@@ -61,9 +61,12 @@ You can also launch the editor with MCP enabled:
 XREngine.Editor.exe --mcp
 XREngine.Editor.exe --mcp --mcp-port 8080
 XREngine.Editor.exe --mcp --mcp-allow-all
+XREngine.Editor.exe --no-mcp
 ```
 
 Use `--mcp-allow-all` only for trusted local automation because it bypasses permission prompts.
+Use `--no-mcp` to force MCP off for an isolated benchmark or unattended run,
+even when the saved editor preference enables it.
 
 ## VS Code
 

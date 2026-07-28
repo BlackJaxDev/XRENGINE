@@ -90,6 +90,7 @@ namespace XREngine.Rendering.Vulkan
             bool commandChainPrimaryDirty = false;
             bool primaryFrameStateDirty = false;
             string? primaryFrameStateDirtyReason = null;
+            VulkanImageEntryStateMismatch primaryImageEntryStateMismatch = default;
             PrimaryCommandBufferDirtyReason commandChainPrimaryDirtyReason = PrimaryCommandBufferDirtyReason.None;
             int commandBufferImageSlot = unchecked((int)Math.Min(imageIndex, int.MaxValue));
             bool swapchainImageEverPresentedAtRecord = IsSwapchainImageEverPresented(imageIndex);
@@ -562,13 +563,19 @@ namespace XREngine.Rendering.Vulkan
                     _lastReusableFrameDataRefreshFailureReason = "inline primary camera pose changed";
                 }
 
-                if (!dirty && IsCommandBufferVariantImageLayoutStateDirty(variant, imageLayoutStartSignature))
+                if (!dirty &&
+                    IsCommandBufferVariantImageLayoutStateDirty(
+                        variant,
+                        imageLayoutStartSignature,
+                        out primaryImageEntryStateMismatch))
                 {
                     dirty = true;
                     primaryFrameStateDirty = true;
                     primaryFrameStateDirtyReason = variant.RecordedImageLayoutEndState is null
                         ? "missing-layout-state"
                         : "image-layout-entry-state";
+                    RecordPrimaryImageEntryStateMismatch(
+                        primaryImageEntryStateMismatch);
                 }
 
                 if (!dirty && variant.RecordedSwapchainImageEverPresented != swapchainImageEverPresentedAtRecord)
@@ -775,6 +782,7 @@ namespace XREngine.Rendering.Vulkan
                     commandChainPrimaryGroupCount,
                     primaryFrameStateDirty,
                     primaryFrameStateDirtyReason,
+                    primaryImageEntryStateMismatch,
                     plannerRevision,
                     imageLayoutStartSignature,
                     swapchainImageEverPresentedAtRecord)
@@ -1548,6 +1556,7 @@ namespace XREngine.Rendering.Vulkan
             int commandChainPrimaryGroupCount,
             bool primaryFrameStateDirty,
             string? primaryFrameStateDirtyReason,
+            in VulkanImageEntryStateMismatch primaryImageEntryStateMismatch,
             ulong plannerRevision,
             ulong imageLayoutStartSignature,
             bool swapchainImageEverPresented)
@@ -1588,7 +1597,10 @@ namespace XREngine.Rendering.Vulkan
                 if (string.Equals(primaryFrameStateDirtyReason, "query-pool-prepare", StringComparison.Ordinal))
                     return $"query-generation old=0x{previous.Query:X16} new=0x{current.Query:X16}";
                 if (string.Equals(primaryFrameStateDirtyReason, "image-layout-entry-state", StringComparison.Ordinal))
-                    return $"image-layout-entry-state mismatch; global snapshots old=0x{variant.RecordedImageLayoutStartSignature:X16} new=0x{imageLayoutStartSignature:X16}";
+                    return DescribePrimaryImageEntryStateMismatch(
+                        primaryImageEntryStateMismatch,
+                        variant.RecordedImageLayoutStartSignature,
+                        imageLayoutStartSignature);
                 return $"primary-frame-state old=cached new=record-required field={primaryFrameStateDirtyReason ?? "unknown"}";
             }
 
@@ -1598,6 +1610,20 @@ namespace XREngine.Rendering.Vulkan
                 return $"resource-allocation-generation old={previous.ResourceAllocation} new={current.ResourceAllocation}";
             return "cache-state old=unknown new=record-required reason=unclassified";
         }
+
+        private static string DescribePrimaryImageEntryStateMismatch(
+            in VulkanImageEntryStateMismatch mismatch,
+            ulong recordedGlobalSignature,
+            ulong currentGlobalSignature)
+            => $"image-layout-entry-state kind={mismatch.Kind} image=0x{mismatch.ImageHandle:X} " +
+               $"mip={mismatch.MipLevel} layer={mismatch.ArrayLayer} aspect={mismatch.Aspect} " +
+               $"expected=(layout={mismatch.Expected.Layout},stage=0x{(ulong)mismatch.Expected.StageMask:X}," +
+               $"access=0x{(ulong)mismatch.Expected.AccessMask:X},descriptor={mismatch.Expected.ExpectedDescriptorLayout}," +
+               $"queue={mismatch.Expected.QueueFamilyIndex},generation={mismatch.Expected.ResourceGeneration}) " +
+               $"actual=(layout={mismatch.Actual.Layout},stage=0x{(ulong)mismatch.Actual.StageMask:X}," +
+               $"access=0x{(ulong)mismatch.Actual.AccessMask:X},descriptor={mismatch.Actual.ExpectedDescriptorLayout}," +
+               $"queue={mismatch.Actual.QueueFamilyIndex},generation={mismatch.Actual.ResourceGeneration}) " +
+               $"global=(recorded=0x{recordedGlobalSignature:X16},current=0x{currentGlobalSignature:X16})";
 
         private static string DescribePrimaryCommandChainReuseMiss(
             CommandBufferCacheVariant variant,
@@ -7037,6 +7063,8 @@ namespace XREngine.Rendering.Vulkan
                                 passTransitionProfileScope = RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.PassTransition");
                             try
                             {
+                            using VulkanCpuStageScope transitionStage =
+                                new(EVulkanCpuStage.ContextPassTransitions);
                             // Barriers are safest outside render passes.
                             EndActiveRenderPass();
 
@@ -7053,7 +7081,11 @@ namespace XREngine.Rendering.Vulkan
                                     $"Pass={opPassIndex} Pipe={op.Context.PipelineIdentity} Vp={op.Context.ViewportIdentity}");
                             }
 
-                            EmitPassBarriers(opPassIndex);
+                            using (VulkanCpuStageScope barrierStage =
+                                new(EVulkanCpuStage.BarrierPlanningEmission))
+                            {
+                                EmitPassBarriers(opPassIndex);
+                            }
                             TransitionFrameOpDescriptorSnapshotsForSampling(
                                 commandBuffer,
                                 ops,
@@ -7081,6 +7113,8 @@ namespace XREngine.Rendering.Vulkan
                             frameOpProfileScope = RuntimeRenderingHostServices.Profiling.StartProfileScope(GetRecordPrimaryFrameOpProfileScopeName(op));
                         try
                         {
+                        using VulkanCpuStageScope opDispatchStage =
+                            new(EVulkanCpuStage.OpDispatch);
                         switch (op)
                         {
                     case BlitOp blit:
@@ -9938,9 +9972,13 @@ namespace XREngine.Rendering.Vulkan
                 range.AspectMask = NormalizeBarrierAspectMask(signature.Format, range.AspectMask);
                 range.LevelCount = Math.Max(range.LevelCount, 1u);
                 range.LayerCount = Math.Max(range.LayerCount, 1u);
-                ImageLayout accessLayout = signature.ReferenceLayout != ImageLayout.Undefined
-                    ? signature.ReferenceLayout
-                    : layout;
+                // The published access state must describe the same point in
+                // time as the published layout. A render-pass final layout can
+                // differ from its attachment reference layout (for example,
+                // color attachment -> shader read). Pairing FinalLayout with
+                // reference-time color-write masks creates a contradictory
+                // state and makes a reusable primary reject the next frame.
+                ImageLayout accessLayout = layout;
                 PipelineStageFlags stageMask = ResolveFboAttachmentStage(
                     accessLayout,
                     signature,

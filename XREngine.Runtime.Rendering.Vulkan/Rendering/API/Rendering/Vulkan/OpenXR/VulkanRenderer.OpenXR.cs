@@ -1092,6 +1092,13 @@ public unsafe partial class VulkanRenderer
             for (int i = 0; i < variants.Count; i++)
             {
                 CommandBufferCacheVariant variant = variants[i];
+                bool imageEntryStateDirty =
+                    IsCommandBufferVariantImageLayoutStateDirty(
+                        variant,
+                        imageLayoutStartSignature,
+                        out VulkanImageEntryStateMismatch imageEntryStateMismatch);
+                if (imageEntryStateDirty)
+                    RecordPrimaryImageEntryStateMismatch(imageEntryStateMismatch);
                 if (variant.Dirty ||
                     variant.PrimaryCommandBuffer.Handle == 0 ||
                     (requiresExactFrameOps && variant.FrameOpsSignature != frameOpsSignature) ||
@@ -1102,7 +1109,7 @@ public unsafe partial class VulkanRenderer
                         frameOpContextId,
                         "openxr-eye-primary") ||
                     (!usingCommandChains && variant.PlannerRevision != plannerRevision) ||
-                    IsCommandBufferVariantImageLayoutStateDirty(variant, imageLayoutStartSignature) ||
+                    imageEntryStateDirty ||
                     variant.RecordedSwapchainImageEverPresented != swapchainImageEverPresented ||
                     variant.CommandChainScheduleSignature != (commandChainSchedule?.StructuralSignature ?? ulong.MaxValue) ||
                     variant.CommandChainPrimaryGroupSignature != (commandChainSchedule is null ? ulong.MaxValue : commandChainPrimaryGroupSignature) ||
@@ -1689,8 +1696,16 @@ public unsafe partial class VulkanRenderer
             return $"context recordedId={variant.RecordedFrameOpContextId} recorded=0x{variant.RecordedFrameOpContextFingerprint:X16} currentId={frameOpContextId} current=0x{frameOpContextFingerprint:X16}";
         if (!usingCommandChains && variant.PlannerRevision != plannerRevision)
             return $"planner recorded={variant.PlannerRevision} current={plannerRevision}";
-        if (IsCommandBufferVariantImageLayoutStateDirty(variant, imageLayoutStartSignature))
-            return $"image-layout recorded=0x{variant.RecordedImageLayoutStartSignature:X16} current=0x{imageLayoutStartSignature:X16} hasEnd={variant.RecordedImageLayoutEndState is not null}";
+        if (IsCommandBufferVariantImageLayoutStateDirty(
+                variant,
+                imageLayoutStartSignature,
+                out VulkanImageEntryStateMismatch imageEntryStateMismatch))
+        {
+            return DescribePrimaryImageEntryStateMismatch(
+                imageEntryStateMismatch,
+                variant.RecordedImageLayoutStartSignature,
+                imageLayoutStartSignature);
+        }
         if (compareSwapchainImageEverPresented && variant.RecordedSwapchainImageEverPresented != swapchainImageEverPresented)
             return $"swapchain-presented recorded={variant.RecordedSwapchainImageEverPresented} current={swapchainImageEverPresented}";
 
@@ -2413,6 +2428,13 @@ public unsafe partial class VulkanRenderer
             for (int i = 0; i < variants.Count; i++)
             {
                 CommandBufferCacheVariant variant = variants[i];
+                bool imageEntryStateDirty =
+                    IsCommandBufferVariantImageLayoutStateDirty(
+                        variant,
+                        imageLayoutStartSignature,
+                        out VulkanImageEntryStateMismatch imageEntryStateMismatch);
+                if (imageEntryStateDirty)
+                    RecordPrimaryImageEntryStateMismatch(imageEntryStateMismatch);
                 if (variant.Dirty ||
                     variant.PrimaryCommandBuffer.Handle == 0 ||
                     (requiresExactFrameOps && variant.FrameOpsSignature != frameOpsSignature) ||
@@ -2423,7 +2445,7 @@ public unsafe partial class VulkanRenderer
                         frameOpContextId,
                         "openxr-mirror-primary") ||
                     (!usingCommandChains && variant.PlannerRevision != plannerRevision) ||
-                    IsCommandBufferVariantImageLayoutStateDirty(variant, imageLayoutStartSignature) ||
+                    imageEntryStateDirty ||
                     variant.CommandChainScheduleSignature != (commandChainSchedule?.StructuralSignature ?? ulong.MaxValue) ||
                     variant.CommandChainPrimaryGroupSignature != (commandChainSchedule is null ? ulong.MaxValue : commandChainPrimaryGroupSignature) ||
                     variant.CommandChainPrimaryGroupCount != (commandChainSchedule is null ? -1 : commandChainPrimaryGroupCount) ||
@@ -6265,7 +6287,16 @@ public unsafe partial class VulkanRenderer
             long waitStart = Stopwatch.GetTimestamp();
             Result waitResult;
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.SubmitFenceWait"))
-                waitResult = Api!.WaitForFences(device, 1, &fence, true, ulong.MaxValue);
+            using (VulkanCpuStageScope fenceWaitStage =
+                new(EVulkanCpuStage.AuxiliaryFenceWait))
+            {
+                waitResult = Api!.WaitForFences(
+                    device,
+                    1,
+                    &fence,
+                    true,
+                    ulong.MaxValue);
+            }
             long waitEnd = Stopwatch.GetTimestamp();
             if (waitResult != Result.Success)
             {

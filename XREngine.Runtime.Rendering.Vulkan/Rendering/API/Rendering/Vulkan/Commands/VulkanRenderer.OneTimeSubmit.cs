@@ -142,7 +142,17 @@ namespace XREngine.Rendering.Vulkan
 
                 if (submitFence.Handle != 0)
                 {
-                    Result waitResult = Api!.WaitForFences(device, 1, &submitFence, true, ulong.MaxValue);
+                    Result waitResult;
+                    using (VulkanCpuStageScope fenceWaitStage =
+                        new(EVulkanCpuStage.AuxiliaryFenceWait))
+                    {
+                        waitResult = Api!.WaitForFences(
+                            device,
+                            1,
+                            &submitFence,
+                            true,
+                            ulong.MaxValue);
+                    }
                     waitSucceeded = waitResult == Result.Success;
                     if (waitSucceeded)
                         NotifyVulkanFenceCompleted(submitFence);

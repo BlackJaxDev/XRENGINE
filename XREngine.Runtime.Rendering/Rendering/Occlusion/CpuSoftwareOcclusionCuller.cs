@@ -120,9 +120,12 @@ namespace XREngine.Rendering.Occlusion
 
             _occludersSubmitted = true;
             _sourceCommands = commands;
-            long start = Stopwatch.GetTimestamp();
-            SelectOccluders(commands);
+            SelectOccluders(
+                commands,
+                out double selectionMilliseconds,
+                out double sortMilliseconds);
 
+            long rasterStart = Stopwatch.GetTimestamp();
             int triangleBudget = Math.Clamp(RuntimeEngine.EffectiveSettings.CpuSocOccluderTriangleBudget, 0, 1_000_000);
             int rasterized = 0;
             for (int i = 0; i < _occluderCandidates.Count && triangleBudget > 0; i++)
@@ -158,9 +161,16 @@ namespace XREngine.Rendering.Occlusion
             }
 
             _frameOccludersRasterized = rasterized;
-            double elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            double rasterMilliseconds =
+                Stopwatch.GetElapsedTime(rasterStart).TotalMilliseconds;
             int tilesClosed = _leftBuffer.TilesClosed + (_stereo ? _rightBuffer.TilesClosed : 0);
-            OcclusionTelemetry.RecordCpuSocOccluders(_frameOccludersSelected, rasterized, tilesClosed, elapsedMs);
+            OcclusionTelemetry.RecordCpuSocOccluders(
+                _frameOccludersSelected,
+                rasterized,
+                tilesClosed,
+                selectionMilliseconds,
+                sortMilliseconds,
+                rasterMilliseconds);
         }
 
         public bool TestVisible(uint stableQueryKey, in AABB worldBounds)
@@ -215,8 +225,14 @@ namespace XREngine.Rendering.Occlusion
                    value.Equals("true".AsSpan(), StringComparison.OrdinalIgnoreCase);
         }
 
-        private void SelectOccluders(RenderCommandCollection commands)
+        private void SelectOccluders(
+            RenderCommandCollection commands,
+            out double selectionMilliseconds,
+            out double sortMilliseconds)
         {
+            long selectionStart = Stopwatch.GetTimestamp();
+            selectionMilliseconds = 0.0;
+            sortMilliseconds = 0.0;
             _occluderCandidates.Clear();
             int maxOccluders = Math.Clamp(RuntimeEngine.EffectiveSettings.CpuSocMaxOccluders, 0, 4096);
             int triangleBudget = Math.Clamp(RuntimeEngine.EffectiveSettings.CpuSocOccluderTriangleBudget, 0, 1_000_000);
@@ -226,7 +242,10 @@ namespace XREngine.Rendering.Occlusion
             float minScreenArea = Math.Clamp(RuntimeEngine.EffectiveSettings.CpuSocMinOccluderScreenArea, 0.0f, 1.0f);
             TryCollectOccludersForPass(commands, (int)EDefaultRenderPass.OpaqueDeferred, minScreenArea);
             TryCollectOccludersForPass(commands, (int)EDefaultRenderPass.OpaqueForward, minScreenArea);
+            selectionMilliseconds =
+                Stopwatch.GetElapsedTime(selectionStart).TotalMilliseconds;
 
+            long sortStart = Stopwatch.GetTimestamp();
             _occluderCandidates.Sort(static (a, b) =>
             {
                 int scoreCompare = b.Score.CompareTo(a.Score);
@@ -248,6 +267,8 @@ namespace XREngine.Rendering.Occlusion
             if (_occluderCandidates.Count > write)
                 _occluderCandidates.RemoveRange(write, _occluderCandidates.Count - write);
             _frameOccludersSelected = _occluderCandidates.Count;
+            sortMilliseconds =
+                Stopwatch.GetElapsedTime(sortStart).TotalMilliseconds;
         }
 
         private void TryCollectOccludersForPass(RenderCommandCollection commands, int renderPass, float minScreenArea)

@@ -393,17 +393,14 @@ public unsafe partial class VulkanRenderer
                     ? ImageAspectFlags.DepthBit
                     : ImageAspectFlags.StencilBit;
             ulong serial = unchecked((ulong)Interlocked.Increment(ref _vulkanImageLayoutTransitionSerial));
-            VulkanImageAccessState resolved = ResolveVulkanImageAccessState(
+            VulkanImageAccessState resolved = ResolveRecordedVulkanImageAccessState(
                 layout,
                 primaryAspect,
+                stageMask,
+                accessMask,
                 queueFamilyIndex,
                 serial,
                 GetCurrentVulkanResourceGeneration(ObjectType.Image, image.Handle));
-            resolved = resolved with
-            {
-                StageMask = stageMask == 0 ? resolved.StageMask : NormalizePipelineStages2(stageMask),
-                AccessMask = NormalizeAccessFlags2(accessMask),
-            };
             batch.RecordImageAccess(new VulkanImageAccessRangeDelta(image.Handle, range, resolved));
             return true;
         }
