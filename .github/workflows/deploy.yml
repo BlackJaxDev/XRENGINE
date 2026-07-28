@@ -24,6 +24,8 @@ jobs:
     if: github.ref == 'refs/heads/deploy'
     runs-on: windows-latest
     timeout-minutes: 90
+    env:
+      ALSOFT_DRIVERS: "null"
     permissions:
       contents: read
       security-events: write
@@ -32,6 +34,7 @@ jobs:
       - name: Checkout repository and submodules
         uses: actions/checkout@v6
         with:
+          lfs: true
           submodules: recursive
 
       - name: Set up .NET 10
@@ -94,6 +97,7 @@ jobs:
       - name: Checkout repository and submodules
         uses: actions/checkout@v6
         with:
+          lfs: true
           submodules: recursive
 
       - name: Set up .NET 10

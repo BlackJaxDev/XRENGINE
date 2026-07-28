@@ -1,5 +1,4 @@
 using XREngine.Extensions;
-using MemoryPack;
 using System.Numerics;
 using XREngine.Components.Movement;
 using XREngine.Core.Attributes;
@@ -33,49 +32,6 @@ namespace XREngine.Components
     [RequireComponents(typeof(CharacterMovement3DComponent))]
     public partial class CharacterPawnComponent : PawnComponent
     {
-        #region Nested Types
-
-        /// <summary>
-        /// Serializable snapshot of the pawn's input state for network synchronization.
-        /// Captures movement direction, view angles, and action states (jump, crouch, prone).
-        /// </summary>
-        [MemoryPackable]
-        public partial struct NetworkInputState : IPawnInputSnapshot
-        {
-            /// <summary>
-            /// Combined movement input direction (X = strafe, Y = forward/backward).
-            /// Values are clamped to [-1, 1] range.
-            /// </summary>
-            public Vector2 Movement;
-
-            /// <summary>
-            /// Current view angles (X = yaw, Y = pitch) in degrees.
-            /// </summary>
-            public Vector2 ViewAngles;
-
-            /// <summary>
-            /// True if jump was pressed this frame (edge-triggered).
-            /// </summary>
-            public bool JumpPressed;
-
-            /// <summary>
-            /// True if jump is currently held down (level-triggered).
-            /// </summary>
-            public bool JumpHeld;
-
-            /// <summary>
-            /// True if crouch toggle was requested this frame.
-            /// </summary>
-            public bool ToggleCrouch;
-
-            /// <summary>
-            /// True if prone toggle was requested this frame.
-            /// </summary>
-            public bool ToggleProne;
-        }
-
-        #endregion
-
         #region Private Fields
 
         // Component reference (cached via sibling lookup)
@@ -710,7 +666,13 @@ namespace XREngine.Components
         /// Set to false for prediction/replay scenarios.
         /// </param>
         /// <returns>A snapshot of the current input state.</returns>
-        public NetworkInputState CaptureNetworkInputState(bool resetEdgeStates = true)
+        public override CharacterPawnInputSnapshot CaptureNetworkInputState()
+            => CaptureNetworkInputState(resetEdgeStates: true);
+
+        /// <summary>
+        /// Captures the current input state and optionally preserves one-shot input flags.
+        /// </summary>
+        public CharacterPawnInputSnapshot CaptureNetworkInputState(bool resetEdgeStates)
         {
             // Combine and clamp keyboard + gamepad movement
             Vector2 movement = Vector2.Clamp(
@@ -718,7 +680,7 @@ namespace XREngine.Components
                 new Vector2(-1.0f, -1.0f),
                 new Vector2(1.0f, 1.0f));
 
-            NetworkInputState snapshot = new()
+            CharacterPawnInputSnapshot snapshot = new()
             {
                 Movement = movement,
                 ViewAngles = new Vector2(_viewRotation.Yaw, _viewRotation.Pitch),

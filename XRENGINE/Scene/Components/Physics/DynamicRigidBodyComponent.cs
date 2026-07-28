@@ -651,8 +651,7 @@ namespace XREngine.Components.Physics
             };
             set
             {
-                if (!SetField(ref _cachedLinearVelocity, value))
-                    return;
+                SetField(ref _cachedLinearVelocity, value);
                 switch (RigidBody)
                 {
                     case PhysxDynamicRigidBody physx:
@@ -678,8 +677,7 @@ namespace XREngine.Components.Physics
             };
             set
             {
-                if (!SetField(ref _cachedAngularVelocity, value))
-                    return;
+                SetField(ref _cachedAngularVelocity, value);
                 switch (RigidBody)
                 {
                     case PhysxDynamicRigidBody physx:
