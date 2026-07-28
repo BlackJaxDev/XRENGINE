@@ -111,9 +111,10 @@ public unsafe partial class VulkanRenderer
 				usesSharedMaterialTier);
 			int materialIdentity = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(material);
 			int viewFamilyIdentity = Renderer.ResolveMeshDescriptorViewFamilyIdentity();
-			ulong immutableResourceFingerprint = DescriptorSetsAreUpdateAfterBind(activeSetMask)
-				? 0UL
-				: resourceFingerprint;
+			ulong immutableResourceFingerprint = ResolveDescriptorAllocationResourceVariantFingerprint(
+				DescriptorSetsAreUpdateAfterBind(activeSetMask),
+				bindingSnapshot is not null,
+				resourceFingerprint);
 			DescriptorAllocationKey allocationKey = new(
 				layoutFingerprint,
 				schemaFingerprint,
@@ -783,9 +784,10 @@ public unsafe partial class VulkanRenderer
 			uint activeSetMask = ComputeActiveDescriptorSetMask(bindings, setCount);
 			if (usesSharedMaterialTier)
 				activeSetMask &= ~(1u << (int)DescriptorSetMaterial);
-			ulong immutableResourceFingerprint = DescriptorSetsAreUpdateAfterBind(activeSetMask)
-				? 0UL
-				: resourceFingerprint;
+			ulong immutableResourceFingerprint = ResolveDescriptorAllocationResourceVariantFingerprint(
+				DescriptorSetsAreUpdateAfterBind(activeSetMask),
+				bindingSnapshot is not null,
+				resourceFingerprint);
 			DescriptorAllocationKey allocationKey = new(
 				layoutFingerprint,
 				schemaFingerprint,
@@ -1022,6 +1024,7 @@ public unsafe partial class VulkanRenderer
 			int viewFamilyIdentity,
 			ulong bindingIdentityFingerprint,
 			ulong resourceFingerprint,
+			bool requireImmutableResourceVariant,
 			bool allowCompletedDescriptorSlotRefresh,
 			out DescriptorAllocation allocation,
 			out string reason)
@@ -1041,6 +1044,7 @@ public unsafe partial class VulkanRenderer
 				viewFamilyIdentity,
 				bindingIdentityFingerprint,
 				resourceFingerprint,
+				requireImmutableResourceVariant,
 				allowCompletedDescriptorSlotRefresh))
 			{
 				allocation = active!;
@@ -1076,9 +1080,10 @@ public unsafe partial class VulkanRenderer
 
 				if (candidate.BindingIdentityFingerprint != bindingIdentityFingerprint)
 					continue;
-				if (!allowCompletedDescriptorSlotRefresh &&
-					!DescriptorSetsAreUpdateAfterBind(candidate.ActiveSetMask) &&
-					candidate.ResourceFingerprint != resourceFingerprint)
+				if (candidate.ResourceFingerprint != resourceFingerprint &&
+					(requireImmutableResourceVariant ||
+					 (!allowCompletedDescriptorSlotRefresh &&
+					  !DescriptorSetsAreUpdateAfterBind(candidate.ActiveSetMask))))
 				{
 					continue;
 				}
@@ -1108,6 +1113,7 @@ public unsafe partial class VulkanRenderer
 			int viewFamilyIdentity,
 			ulong bindingIdentityFingerprint,
 			ulong resourceFingerprint,
+			bool requireImmutableResourceVariant,
 			bool allowCompletedDescriptorSlotRefresh)
 			=> allocation is not null &&
 				allocation.LayoutFingerprint == layoutFingerprint &&
@@ -1120,9 +1126,10 @@ public unsafe partial class VulkanRenderer
 				allocation.ViewFamilyIdentity == viewFamilyIdentity &&
 				allocation.DrawUniformSlot == drawUniformSlot &&
 				allocation.BindingIdentityFingerprint == bindingIdentityFingerprint &&
-				(allowCompletedDescriptorSlotRefresh ||
-					DescriptorSetsAreUpdateAfterBind(allocation.ActiveSetMask) ||
-					allocation.ResourceFingerprint == resourceFingerprint) &&
+				(allocation.ResourceFingerprint == resourceFingerprint ||
+					(!requireImmutableResourceVariant &&
+					 (allowCompletedDescriptorSlotRefresh ||
+					  DescriptorSetsAreUpdateAfterBind(allocation.ActiveSetMask)))) &&
 				IsDescriptorAllocationValid(allocation, descriptorFrameSlotCount, setCount);
 
 		private bool TryActivateReusableDescriptorSetsForCapturedResources(
@@ -1165,6 +1172,7 @@ public unsafe partial class VulkanRenderer
 				viewFamilyIdentity,
 				bindingIdentityFingerprint,
 				resourceFingerprint,
+				bindingSnapshot is not null,
 				allowCompletedDescriptorSlotRefresh,
 				out DescriptorAllocation allocation,
 				out reason))
@@ -1250,6 +1258,12 @@ public unsafe partial class VulkanRenderer
 			reason = "reusable";
 			if (_program is null)
 				return true;
+			if (bindingSnapshot is not null)
+			{
+				reason = "captured descriptor resource variant is immutable";
+				return false;
+			}
+
 			if (!DescriptorSetsAreUpdateAfterBind(allocation.ActiveSetMask) &&
 				!Renderer.CanUpdateCompletedDescriptorFrameSlot(frameIndex))
 			{
@@ -1441,6 +1455,17 @@ public unsafe partial class VulkanRenderer
 			int resolved = frameIndex % frameCount;
 			return resolved < 0 ? resolved + frameCount : resolved;
 		}
+
+		/// <summary>
+		/// Keeps captured draw variants keyed by their exact descriptor resources.
+		/// UPDATE_AFTER_BIND permits legal updates; it does not preserve earlier
+		/// descriptor contents for commands that already bound the same set handle.
+		/// </summary>
+		internal static ulong ResolveDescriptorAllocationResourceVariantFingerprint(
+			bool allActiveSetsUpdateAfterBind,
+			bool hasCapturedBindingSnapshot,
+			ulong resourceFingerprint)
+			=> hasCapturedBindingSnapshot || !allActiveSetsUpdateAfterBind ? resourceFingerprint : 0UL;
 
 		private bool DescriptorSetsAreUpdateAfterBind(uint activeSetMask)
 		{

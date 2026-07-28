@@ -333,7 +333,7 @@ public sealed class VulkanCpuDirectOcclusionTests
         string root = ResolveWorkspaceRoot();
         string fullPath = Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(fullPath).ShouldBeTrue($"Expected workspace file to exist: {relativePath}");
-        return File.ReadAllText(fullPath).Replace("\r\n", "\n");
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveWorkspaceRoot()

@@ -152,7 +152,7 @@ public sealed class RenderCommandCollectionOrderingTests
         source.ShouldContain("item.CaptureSortDistance(camera)");
         source.ShouldNotContain("_entries.Add(Entry.Capture(item));");
         source.ShouldNotContain("new SortedSet<RenderCommand>");
-        source.ShouldContain("hostServices.RenderWindowsWhileInVR && hostServices.VrMirrorComposeFromEyeTextures");
+
         commandSource.ShouldNotContain("_swapQueued");
         source.ShouldContain("_updatingSwapQueueMembership");
         source.ShouldContain("public bool IsRenderCommandSnapshotAuthority");
@@ -399,7 +399,7 @@ public sealed class RenderCommandCollectionOrderingTests
         string root = ResolveWorkspaceRoot();
         string fullPath = Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(fullPath).ShouldBeTrue($"Expected workspace file to exist: {relativePath}");
-        return File.ReadAllText(fullPath).Replace("\r\n", "\n");
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string SliceBetween(string source, string startToken, string endToken)

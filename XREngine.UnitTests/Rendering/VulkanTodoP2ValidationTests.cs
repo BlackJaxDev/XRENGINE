@@ -197,27 +197,25 @@ public sealed class VulkanTodoP2ValidationTests : GpuTestBase
     }
 
     [Test]
-    public void BranchExecutedPassWithoutMetadata_EmitsCoverageWarning()
+    public void BranchExecutedPassWithoutMetadata_TracksCoverageAndDeclaresWarning()
     {
-        XREngine.Debug.ClearConsoleEntries(XREngine.ELogCategory.Rendering);
-
         var pipeline = new BranchMetadataGapPipeline();
         var instance = new XRRenderPipelineInstance(pipeline);
-        instance.Render(
-            scene: new VisualScene2D(),
-            camera: null,
-            stereoRightEyeCamera: null,
-            viewport: null,
-            targetFBO: null,
-            userInterface: null,
-            shadowPass: false,
-            stereoPass: false);
+        using (RuntimeEngine.Rendering.State.PushRenderingPipeline(instance))
+        using (instance.PushRenderGraphBranchScope())
+        using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(999))
+        {
+        }
 
-        bool hasBranchCoverageWarning = XREngine.Debug.GetConsoleEntries().Any(entry =>
-            entry.Category == XREngine.ELogCategory.Rendering &&
-            entry.Message.Contains("branch-selected passes without metadata", StringComparison.OrdinalIgnoreCase));
+        var executedBranchPassesField = typeof(XRRenderPipelineInstance).GetField(
+            "_executedBranchRenderGraphPassIndices",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        executedBranchPassesField.ShouldNotBeNull();
+        ((HashSet<int>)executedBranchPassesField!.GetValue(instance)!).ShouldContain(999);
 
-        hasBranchCoverageWarning.ShouldBeTrue();
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.cs");
+        pipelineSource.ShouldContain("executed branch-selected passes without metadata");
+        pipelineSource.ShouldContain("Debug.RenderingWarningEvery(");
     }
 
     [Test]
@@ -275,7 +273,7 @@ public sealed class VulkanTodoP2ValidationTests : GpuTestBase
         prewarmSource.ShouldContain("CurrentVersion");
         prewarmSource.ShouldContain("CreateGraphicsEntry");
         prewarmSource.ShouldContain("CreateComputeEntry");
-        prewarmSource.ShouldContain(XREngineEnvironmentVariables.VulkanPipelinePrewarmCapture);
+        prewarmSource.ShouldContain("XREngineEnvironmentVariables.VulkanPipelinePrewarmCapture");
         prewarmSource.ShouldContain("SaveVulkanPipelinePrewarmDatabase");
         pipelineCacheSource.ShouldContain("InitializeVulkanPipelinePrewarmDatabase(properties)");
         pipelineCacheSource.ShouldContain("SaveVulkanPipelinePrewarmDatabase()");
@@ -414,7 +412,7 @@ public sealed class VulkanTodoP2ValidationTests : GpuTestBase
         string repoRoot = ResolveRepoRoot();
         string path = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
         if (File.Exists(path))
-            return File.ReadAllText(path);
+            return File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
 
         const string legacyPrefix = "XRENGINE/Rendering/";
         if (relativePath.StartsWith(legacyPrefix, StringComparison.Ordinal))
@@ -422,11 +420,11 @@ public sealed class VulkanTodoP2ValidationTests : GpuTestBase
             string migratedRelativePath = "XREngine.Runtime.Rendering/Rendering/" + relativePath[legacyPrefix.Length..];
             path = Path.Combine(repoRoot, migratedRelativePath.Replace('/', Path.DirectorySeparatorChar));
             if (File.Exists(path))
-                return File.ReadAllText(path);
+                return File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
         }
 
         File.Exists(path).ShouldBeTrue($"Expected workspace file '{path}' to exist.");
-        return File.ReadAllText(path);
+        return File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveRepoRoot()

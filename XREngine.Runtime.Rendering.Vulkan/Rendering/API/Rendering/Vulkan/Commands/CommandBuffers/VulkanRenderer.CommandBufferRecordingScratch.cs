@@ -60,12 +60,29 @@ namespace XREngine.Rendering.Vulkan
                 new(ReferenceEqualityComparer.Instance);
             public CommandChainKey[] ScheduledCommandChainKeysByOpIndex { get; set; } = [];
             public List<KeyValuePair<int, int>> SwapchainWriterCountSort { get; } = new();
+            public List<KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState>> SecondaryDescriptorImageRequirements { get; } =
+                new();
             public StringBuilder SwapchainWriterSummaryBuilder { get; } = new(256);
             public int SecondaryBucketByStartCapacityHint { get; set; } = 1;
             public int RecordSwapchainWriterCapacityHint { get; set; } = 1;
             public int RecordPipelineNameCapacityHint { get; set; } = 1;
             public int RecordMeshDrawSlotCapacityHint { get; set; } = 1;
             public int RecordFboLayoutCapacityHint { get; set; } = 1;
+            private int[] _primaryMeshDrawUniformSlotsByOpIndex = [];
+
+            public int[] PreparePrimaryMeshDrawUniformSlots(int opCount)
+            {
+                if (_primaryMeshDrawUniformSlotsByOpIndex.Length < opCount)
+                {
+                    int capacity = Math.Max(
+                        opCount,
+                        Math.Max(4, _primaryMeshDrawUniformSlotsByOpIndex.Length * 2));
+                    Array.Resize(ref _primaryMeshDrawUniformSlotsByOpIndex, capacity);
+                }
+
+                Array.Fill(_primaryMeshDrawUniformSlotsByOpIndex, -1, 0, opCount);
+                return _primaryMeshDrawUniformSlotsByOpIndex;
+            }
 
             public sealed class FboAttachmentLayoutScratch
             {

@@ -119,7 +119,7 @@ public sealed class XRMaterialAndShaderVulkanParityContractTests
         string glProgramSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.UniformBinding.cs");
 
         vkMaterialStateSource.ShouldContain("private sealed class ProgramDescriptorState");
-        vkMaterialStateSource.ShouldContain("public required IReadOnlyList<DescriptorBindingInfo> Bindings { get; init; }");
+        vkMaterialStateSource.ShouldContain("public required DescriptorBindingInfo[] Bindings { get; init; }");
         vkMaterialStateSource.ShouldContain("public required Dictionary<(uint set, uint binding), UniformBindingResource> UniformBindings { get; init; }");
         vkMaterialStateSource.ShouldContain("public required bool HasMaterialParameterOrSamplerBindings { get; init; }");
         vkUniformBindingSource.ShouldContain("public AutoUniformBlockInfo? ReflectedBlock { get; init; }");
@@ -186,7 +186,7 @@ public sealed class XRMaterialAndShaderVulkanParityContractTests
         vkShaderSource.ShouldContain("VulkanShaderArtifact");
         vkShaderSource.ShouldContain("VulkanShaderCompileFailure");
         vkShaderSource.ShouldContain("internal event Action<VkShader>? ShaderInvalidated;");
-        vkShaderSource.ShouldContain("nameof(XRShader.Type)");
+        vkShaderSource.ShouldContain("Data.SourceChanged += OnShaderSourceChanged;");
         vkShaderSource.ShouldContain("WriteCompileFailureDiagnosticsFile");
 
         vkProgramSource.ShouldContain("vkShader.ShaderInvalidated += OnShaderInvalidated;");
@@ -214,7 +214,7 @@ public sealed class XRMaterialAndShaderVulkanParityContractTests
         string artifactCacheSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/VulkanShaderArtifactCache.cs");
         string prewarmSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelinePrewarmDatabase.cs");
         string glDiagnosticsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.Diagnostics.cs");
-        string glLifecycleSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Pipelines/ShaderProgramLifecycleDiagnostics.cs");
+        string glLifecycleSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/ShaderProgramLifecycleDiagnostics.cs");
 
         resolvedSource.ShouldContain("SourceIdentity");
         resolverSource.ShouldContain("IncludeExpansionCacheKey");
@@ -264,7 +264,7 @@ public sealed class XRMaterialAndShaderVulkanParityContractTests
     {
         string fullPath = Path.Combine(ResolveWorkspaceRoot(), relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(fullPath).ShouldBeTrue($"Expected file does not exist: {fullPath}");
-        return File.ReadAllText(fullPath);
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveWorkspaceRoot()

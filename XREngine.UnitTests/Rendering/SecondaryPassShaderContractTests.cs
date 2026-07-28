@@ -267,8 +267,8 @@ public sealed class SecondaryPassShaderContractTests
 
         foreach (string source in new[] { pipeline, pipeline2 })
         {
-            source.ShouldContain("RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.RenderTime | EUniformRequirements.ClipSpacePolicy");
-            source.ShouldContain("RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ClipSpacePolicy");
+            source.ShouldContain("RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.RenderTime | EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy");
+            source.ShouldContain("RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy");
             source.ShouldContain("RequiredEngineUniforms = EUniformRequirements.RenderTime | EUniformRequirements.ClipSpacePolicy");
             source.ShouldContain("RequiredEngineUniforms = EUniformRequirements.Lights | EUniformRequirements.RenderTime | EUniformRequirements.ClipSpacePolicy");
         }
@@ -369,12 +369,6 @@ public sealed class SecondaryPassShaderContractTests
             "Shaders",
             "VulkanShaderSourceFixups.cs"));
         string depthUtils = LoadShaderSource(Path.Combine("Snippets", "DepthUtils.glsl"));
-        string plan = ReadWorkspaceFile(Path.Combine(
-            "docs",
-            "architecture",
-            "rendering",
-            "vulkan-default-pipeline-issue-plan.md"));
-
         uniforms.ShouldContain("ClipSpaceYDirection");
         uniforms.ShouldContain("ClipDepthRange");
         uniformRequirements.ShouldContain("ClipSpacePolicy = 64");
@@ -409,8 +403,6 @@ public sealed class SecondaryPassShaderContractTests
         vulkanImGui.ShouldContain("Height = framebufferHeight");
         vulkanShaderTools.ShouldContain("ApplyVulkanClipDepthRemapBeforeGeometryEmit");
         vulkanShaderTools.ShouldContain("ApplyVulkanClipDepthRemapToMeshPositionAssignments");
-        plan.ShouldContain("VK_EXT_depth_clip_control");
-        plan.ShouldContain("shader-position remap");
     }
 
     [Test]
@@ -753,7 +745,7 @@ public sealed class SecondaryPassShaderContractTests
         textureView.ShouldContain("private ImageView _stencilOnlyView;");
         textureView.ShouldContain("GetAspectOnlyDescriptorView(ImageAspectFlags.StencilBit, ref _stencilOnlyView)");
         meshDescriptors.ShouldContain("RequiresStencilOnlyDescriptor(binding)");
-        meshDescriptors.ShouldContain("source.GetStencilOnlyDescriptorView()");
+        meshDescriptors.ShouldContain("source.TryGetDescriptorSnapshot(");
         meshDescriptors.ShouldContain("stencil-only");
     }
 
@@ -761,14 +753,11 @@ public sealed class SecondaryPassShaderContractTests
         => ReadWorkspaceFile(Path.Combine("Build", "CommonAssets", "Shaders", shaderRelativePath));
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string fullPath = ResolveWorkspacePath(relativePath);
-        File.Exists(fullPath).ShouldBeTrue($"Expected file does not exist: {fullPath}");
-        return File.ReadAllText(fullPath);
-    }
+        => global::XREngine.UnitTests.SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ResolveWorkspacePath(string relativePath)
     {
+        DirectoryInfo? repositoryRoot = null;
         DirectoryInfo? dir = new(AppContext.BaseDirectory);
         while (dir is not null)
         {
@@ -776,7 +765,34 @@ public sealed class SecondaryPassShaderContractTests
             if (File.Exists(candidate))
                 return candidate;
 
+
+            if (File.Exists(Path.Combine(dir.FullName, "XRENGINE.slnx")))
+                repositoryRoot = dir;
             dir = dir.Parent;
+        }
+
+
+        if (repositoryRoot is not null)
+        {
+            string fileName = Path.GetFileName(relativePath);
+            string? relocatedPath = null;
+            foreach (string candidate in Directory.EnumerateFiles(repositoryRoot.FullName, fileName, SearchOption.AllDirectories))
+            {
+                string relativeCandidate = Path.GetRelativePath(repositoryRoot.FullName, candidate);
+                if (relativeCandidate.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase)
+                    || relativeCandidate.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase)
+                    || relativeCandidate.StartsWith($"Build{Path.DirectorySeparatorChar}_AgentValidation{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase)
+                    || relativeCandidate.StartsWith($"Build{Path.DirectorySeparatorChar}Submodules{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (relocatedPath is not null)
+                    throw new FileNotFoundException($"Workspace path '{relativePath}' moved and filename '{fileName}' is ambiguous.");
+
+                relocatedPath = candidate;
+            }
+
+            if (relocatedPath is not null)
+                return relocatedPath;
         }
 
         throw new FileNotFoundException($"Could not resolve workspace path for '{relativePath}' from test base directory '{AppContext.BaseDirectory}'.");

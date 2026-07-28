@@ -300,11 +300,11 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
         string source = File.ReadAllText(shaderPath);
 
         source.ShouldContain("uint safeNodeCount = min(nodeCount, uint(nodes.length()));");
-        source.ShouldContain("if (!SelectPartitionRoot(safeNodeCount, partitionRoot))");
-        source.ShouldContain("TraversalQueue[0] = uvec2(partitionRoot");
+        source.ShouldContain("if (!SelectPartitionRoot(safeNodeCount, partitionRoot, partitionViewMask))");
+        source.ShouldContain("TraversalQueue[0] = TraversalWork(partitionRoot");
         source.ShouldContain("if (!AabbVisibleMasked(node.minBounds, node.maxBounds");
-        source.ShouldContain("TryEnqueue(child, childPlaneMask)");
-        source.ShouldContain("ProcessRange(nodes[child].primitiveRange, childPlaneMask, false)");
+        source.ShouldContain("TryEnqueue(child, childPlaneMask, childViewMask)");
+        source.ShouldContain("ProcessRange(overflowChild.primitiveRange, childPlaneMask, overflowViewMask, false)");
         source.ShouldNotContain("node.parentIndex");
         source.ShouldNotContain("uint stack[32]");
     }
@@ -1281,7 +1281,8 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             uint culledBuffer = gl.GenBuffer();
             uint culledCountBuffer = gl.GenBuffer();
             uint keyIndexBuffer = gl.GenBuffer();
-            uint materialIdsBuffer = gl.GenBuffer();
+            uint classificationBuffer = gl.GenBuffer();
+            uint transparencyMetadataBuffer = gl.GenBuffer();
 
             gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, culledBuffer);
             gl.BufferData<float>(BufferTargetARB.ShaderStorageBuffer, culledCommands.AsSpan(), BufferUsageARB.StaticDraw);
@@ -1298,11 +1299,16 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, keyIndexOut.AsSpan(), BufferUsageARB.DynamicCopy);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 2, keyIndexBuffer);
 
-            // MaterialIDs is optional; bind a dummy buffer to satisfy the declared binding.
-            uint[] dummyMaterialIds = [0u, 0u, 0u];
-            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, materialIdsBuffer);
-            gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, dummyMaterialIds.AsSpan(), BufferUsageARB.StaticDraw);
-            gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 3, materialIdsBuffer);
+            uint[] classifications = new uint[numCommands * 8];
+            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, classificationBuffer);
+            gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, classifications.AsSpan(), BufferUsageARB.DynamicCopy);
+            gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 3, classificationBuffer);
+
+            // Draw IDs are used to index four transparency-metadata lanes.
+            uint[] transparencyMetadata = new uint[44 * 4];
+            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, transparencyMetadataBuffer);
+            gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, transparencyMetadata.AsSpan(), BufferUsageARB.StaticDraw);
+            gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 4, transparencyMetadataBuffer);
 
             gl.UseProgram(program);
             gl.Uniform1(gl.GetUniformLocation(program, "MaxSortKeys"), numCommands);
@@ -1344,7 +1350,8 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             gl.DeleteBuffer(culledBuffer);
             gl.DeleteBuffer(culledCountBuffer);
             gl.DeleteBuffer(keyIndexBuffer);
-            gl.DeleteBuffer(materialIdsBuffer);
+            gl.DeleteBuffer(classificationBuffer);
+            gl.DeleteBuffer(transparencyMetadataBuffer);
             gl.DeleteProgram(program);
             gl.DeleteShader(shader);
         }

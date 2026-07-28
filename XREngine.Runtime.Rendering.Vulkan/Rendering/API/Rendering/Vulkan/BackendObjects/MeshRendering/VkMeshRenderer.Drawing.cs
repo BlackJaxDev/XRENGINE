@@ -972,6 +972,48 @@ public unsafe partial class VulkanRenderer
 				return TryPrewarmFrameDataForRecordingNoLock(draw, drawUniformSlot, frameIndex, out reason);
 		}
 
+		/// <summary>
+		/// Transitions the native images published by the exact descriptor allocation
+		/// that this draw will bind. A logical texture can rotate to a newer physical
+		/// generation after submission, so re-resolving the texture is not sufficient.
+		/// </summary>
+		internal bool TryTransitionPreparedDescriptorImagesForSampling(
+			CommandBuffer commandBuffer,
+			in PendingMeshDraw draw,
+			int drawUniformSlot,
+			int frameIndex,
+			XRFrameBuffer? target)
+		{
+			lock (_recordDrawSync)
+			{
+				if (!TryPrewarmFrameDataForRecordingNoLock(
+						draw,
+						drawUniformSlot,
+						frameIndex,
+						out _) ||
+					Renderer.IsDescriptorHeapDrawBindingActive ||
+					_descriptorSets is not { Length: > 0 })
+				{
+					return false;
+				}
+
+				int descriptorSlotIndex = ResolveDescriptorFrameIndex(frameIndex, _descriptorSets.Length);
+				DescriptorSet[] sets = _descriptorSets[descriptorSlotIndex];
+				bool resolvedPublishedSet = false;
+				for (int setIndex = 0; setIndex < sets.Length; setIndex++)
+				{
+					DescriptorSet set = sets[setIndex];
+					if (set.Handle != 0)
+						resolvedPublishedSet |= Renderer.TransitionPublishedDescriptorSetImagesForSampling(
+							commandBuffer,
+							set,
+							target);
+				}
+
+				return resolvedPublishedSet;
+			}
+		}
+
 		private bool TryPrewarmFrameDataForRecordingNoLock(
 			in PendingMeshDraw draw,
 			int drawUniformSlot,

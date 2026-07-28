@@ -264,7 +264,7 @@ public sealed class GpuIndirectPhase3PolicyTests
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs");
 
-        source.ShouldContain("ValidateViewDescriptorLayout(descriptors.Slice(0, (int)cursor), gpuPass.CommandCapacity);");
+        source.ShouldContain("ValidateViewDescriptorLayout(activeDescriptors, gpuPass.CommandCapacity);");
         source.ShouldContain("private static void ValidateViewDescriptorLayout(ReadOnlySpan<GPUViewDescriptor> descriptors, uint commandCapacity)");
         source.ShouldContain("if (requestedSourceView != gpuPass.IndirectSourceViewId)");
     }
@@ -298,7 +298,7 @@ public sealed class GpuIndirectPhase3PolicyTests
     {
         string fullPath = ResolveWorkspacePath(relativePath);
         File.Exists(fullPath).ShouldBeTrue($"Expected file does not exist: {fullPath}");
-        return File.ReadAllText(fullPath);
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveWorkspacePath(string relativePath)

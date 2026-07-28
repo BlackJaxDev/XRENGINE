@@ -178,12 +178,15 @@ public sealed class VkDataBufferParityContractTests
     public void VkDataBuffer_SourceContracts_CoverSteadyStateCountersAndZeroReadbackTelemetry()
     {
         string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
-        string runtimeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEngine.cs");
+        string runtimeSource =
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Forwarders.cs") +
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vulkan.cs") +
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Readback.cs");
         string telemetrySource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Buffers/XRBufferWriteTelemetry.cs");
         string stagingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Uploads/VulkanStagingManager.cs");
 
         bufferSource.ShouldContain("private readonly VulkanStagingManager _stagingManager = new();");
-        bufferSource.ShouldContain("_lastUploadRoute = ResolveHostVisibleUploadRoute(_lastMemProps) + \"SubData\";");
+        bufferSource.ShouldContain("_lastUploadRoute = ResolveHostVisibleSubDataUploadRoute(_lastMemProps);");
         bufferSource.ShouldContain("MemoryPropertyFlags.HostVisibleBit");
         bufferSource.ShouldContain("MemoryPropertyFlags.HostCachedBit");
         bufferSource.ShouldContain("RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(count);");
@@ -212,7 +215,7 @@ public sealed class VkDataBufferParityContractTests
     {
         string fullPath = ResolveWorkspacePath(relativePath);
         File.Exists(fullPath).ShouldBeTrue($"Expected file does not exist: {fullPath}");
-        return File.ReadAllText(fullPath);
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveWorkspacePath(string relativePath)

@@ -497,7 +497,7 @@ namespace XREngine.Rendering
                 return;
 
             _clientSideSource?.Dispose();
-            _clientSideSource = DataSource.Allocate(byteLength);
+            _clientSideSource = DataSource.Allocate(byteLength, zeroMemory: true);
         }
 
         private static unsafe void WriteStructValue<T>(VoidPtr address, in T value) where T : unmanaged

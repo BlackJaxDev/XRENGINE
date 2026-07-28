@@ -40,7 +40,7 @@ public sealed class OpenXrSteamVrParityToolingContractTests
         {
             string candidate = Path.Combine(dir.FullName, platformPath);
             if (File.Exists(candidate))
-                return File.ReadAllText(candidate);
+                return File.ReadAllText(candidate).Replace("\r\n", "\n", StringComparison.Ordinal);
 
             dir = dir.Parent;
         }

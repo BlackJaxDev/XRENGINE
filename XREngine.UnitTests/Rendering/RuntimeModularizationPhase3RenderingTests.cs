@@ -235,7 +235,7 @@ public sealed class RuntimeModularizationPhase3RenderingTests
         string root = ResolveWorkspaceRoot();
         string fullPath = Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(fullPath).ShouldBeTrue($"Expected workspace file to exist: {relativePath}");
-        return File.ReadAllText(fullPath);
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ReadRuntimeRenderingContracts()

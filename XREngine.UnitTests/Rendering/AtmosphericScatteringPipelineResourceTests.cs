@@ -28,8 +28,8 @@ public sealed class AtmosphericScatteringPipelineResourceTests
         constants.ShouldContain("AtmosphereUpscaleQuadFBOName");
         constants.ShouldContain("atmosphericScattering");
 
-        textures.ShouldContain("EFrameBufferTextureFormat.Rgba16f");
-        textures.ShouldContain("EFrameBufferTextureFormat.R32f");
+        textures.ShouldContain("EPixelInternalFormat.Rgba16f");
+        textures.ShouldContain("EPixelInternalFormat.R32f");
         textures.ShouldContain("SamplerName = AtmosphereColorTextureName");
         textures.ShouldContain("SamplerName = AtmosphereHalfDepthTextureName");
 
@@ -38,8 +38,8 @@ public sealed class AtmosphericScatteringPipelineResourceTests
         fbos.ShouldContain("CreateAtmosphereReprojectQuadFBO");
         fbos.ShouldContain("CreateAtmosphereHistoryFBO");
         fbos.ShouldContain("CreateAtmosphereUpscaleQuadFBO");
-        fbos.ShouldContain("GetTexture<XRTexture>(AtmosphereColorTextureName)!, // binding 5");
-        fbos.ShouldContain("GetTexture<XRTexture>(VolumetricFogColorTextureName)!, // binding 6");
+        fbos.ShouldContain("GetTexture<XRTexture>(AtmosphereColorTextureName)!");
+        fbos.ShouldContain("GetTexture<XRTexture>(VolumetricFogColorTextureName)!");
     }
 
     [TestCase("DefaultRenderPipeline")]
@@ -48,8 +48,8 @@ public sealed class AtmosphericScatteringPipelineResourceTests
     {
         string commandChain = LoadPipelineFile($"{pipelineName}.CommandChain.cs");
 
-        int appendAtmosphere = commandChain.IndexOf("AppendAtmosphericScattering(c);", StringComparison.Ordinal);
-        int appendVolumetric = commandChain.IndexOf("AppendVolumetricFog(c);", StringComparison.Ordinal);
+        int appendAtmosphere = commandChain.IndexOf("AppendAtmosphericScattering(", StringComparison.Ordinal);
+        int appendVolumetric = commandChain.IndexOf("AppendVolumetricFog(", StringComparison.Ordinal);
 
         appendAtmosphere.ShouldBeGreaterThanOrEqualTo(0);
         appendVolumetric.ShouldBeGreaterThan(appendAtmosphere);
@@ -77,9 +77,11 @@ public sealed class AtmosphericScatteringPipelineResourceTests
 
     private static string LoadPipelineFile(string fileName)
     {
-        string fullPath = Path.Combine(ResolveRepoRoot(), "XREngine.Runtime.Rendering", "Rendering", "Pipelines", "Types", fileName);
-        File.Exists(fullPath).ShouldBeTrue($"Pipeline file not found: {fullPath}");
-        return File.ReadAllText(fullPath);
+        string pipelineDirectory = fileName.StartsWith("DefaultRenderPipeline2", StringComparison.Ordinal)
+            ? "Default2"
+            : "Default";
+        return global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType(
+            $"XREngine.Runtime.Rendering/Rendering/Pipelines/Types/{pipelineDirectory}/{fileName}");
     }
 
     private static string ResolveRepoRoot()

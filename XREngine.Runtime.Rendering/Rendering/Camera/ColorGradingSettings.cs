@@ -184,7 +184,7 @@ namespace XREngine.Rendering
             float min = float.IsFinite(MinExposure) ? MinExposure : DefaultMinExposure;
             float max = float.IsFinite(MaxExposure) ? MaxExposure : DefaultMaxExposure;
             min = MathF.Max(min, 0.0f);
-            max = MathF.Max(max, min > 0.0f ? min : DefaultMaxExposure);
+            max = MathF.Max(max, 0.0f);
 
             minExposure = MathF.Min(min, max);
             maxExposure = MathF.Max(min, max);
@@ -193,7 +193,7 @@ namespace XREngine.Rendering
         internal float ClampExposureToResolvedBounds(float exposure)
         {
             GetResolvedExposureBounds(out float minExposure, out float maxExposure);
-            if (!float.IsFinite(exposure) || exposure <= 0.0f)
+            if (!float.IsFinite(exposure))
                 exposure = DefaultExposure;
             return Math.Clamp(exposure, minExposure, maxExposure);
         }

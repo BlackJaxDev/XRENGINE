@@ -136,7 +136,7 @@ public sealed class RuntimeModularizationPhase4WorldComputeTests
             ResolveWorkspaceRoot(),
             relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(path).ShouldBeTrue($"Expected workspace file to exist: {relativePath}");
-        return File.ReadAllText(path);
+        return File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveWorkspaceRoot()

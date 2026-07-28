@@ -87,8 +87,8 @@ public sealed class DeferredOpacityShaderContractTests
         string source = LoadShaderSource("Snippets/SurfaceDetailNormalMapping.glsl");
 
         source.ShouldContain("XRENGINE_IsFiniteVec3");
-        source.ShouldContain("tangentLengthSq <= 1e-6");
-        source.ShouldContain("bitangentLengthSq <= 1e-6");
+        source.ShouldContain("tangentLengthSq < 1e-10");
+        source.ShouldContain("bitangentLengthSq < 1e-10");
         source.ShouldContain("return N;");
     }
 
@@ -96,7 +96,7 @@ public sealed class DeferredOpacityShaderContractTests
     {
         string fullPath = ResolveWorkspacePath(Path.Combine("Build", "CommonAssets", "Shaders", shaderRelativePath));
         File.Exists(fullPath).ShouldBeTrue($"Expected shader file does not exist: {fullPath}");
-        return File.ReadAllText(fullPath);
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveWorkspacePath(string relativePath)

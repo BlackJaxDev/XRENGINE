@@ -275,10 +275,12 @@ namespace XREngine.Rendering.Vulkan
                         return false;
                     }
 
+                    ulong currentResourceFingerprint = ComputeResourceFingerprint(program);
                     int resolvedFrame = Math.Clamp(frameIndex, 0, state.FrameCount - 1);
                     if ((uint)resolvedFrame >= (uint)state.SlotUniformValueGenerations.Length ||
                         state.SlotUniformValueGenerations[resolvedFrame] != Volatile.Read(ref _parameterValueGeneration) ||
                         (uint)resolvedFrame >= (uint)state.SlotResourceFingerprints.Length ||
+                        state.ResourceFingerprint != currentResourceFingerprint ||
                         state.SlotResourceFingerprints[resolvedFrame] != state.ResourceFingerprint ||
                         (uint)resolvedFrame >= (uint)state.DescriptorSets.Length)
                     {

@@ -1656,8 +1656,55 @@ public unsafe partial class VulkanRenderer
         MarkCommandChainSecondaryCommandBufferChanged(chain);
     }
 
+    private static bool CommandChainSecondaryInheritanceMatches(
+        CommandChain chain,
+        bool dynamicRendering,
+        RenderPass renderPass,
+        Framebuffer framebuffer,
+        DynamicRenderingFormatSignature dynamicRenderingFormats,
+        bool depthStencilReadOnly,
+        SampleCountFlags samples)
+    {
+        if (!chain.HasSecondaryInheritance ||
+            chain.SecondaryInheritanceDynamicRendering != dynamicRendering)
+        {
+            return false;
+        }
+
+        if (dynamicRendering)
+        {
+            return chain.SecondaryInheritanceDynamicRenderingFormats.Equals(dynamicRenderingFormats) &&
+                chain.SecondaryInheritanceDepthStencilReadOnly == depthStencilReadOnly &&
+                chain.SecondaryInheritanceSamples == samples;
+        }
+
+        return chain.SecondaryInheritanceRenderPass.Handle == renderPass.Handle &&
+            chain.SecondaryInheritanceFramebuffer.Handle == framebuffer.Handle;
+    }
+
+    private static void StoreCommandChainSecondaryInheritance(
+        CommandChain chain,
+        bool dynamicRendering,
+        RenderPass renderPass,
+        Framebuffer framebuffer,
+        DynamicRenderingFormatSignature dynamicRenderingFormats,
+        bool depthStencilReadOnly,
+        SampleCountFlags samples)
+    {
+        chain.SecondaryInheritanceDynamicRendering = dynamicRendering;
+        chain.SecondaryInheritanceRenderPass = dynamicRendering ? default : renderPass;
+        chain.SecondaryInheritanceFramebuffer = dynamicRendering ? default : framebuffer;
+        chain.SecondaryInheritanceDynamicRenderingFormats = dynamicRendering ? dynamicRenderingFormats : default;
+        chain.SecondaryInheritanceDepthStencilReadOnly = depthStencilReadOnly;
+        chain.SecondaryInheritanceSamples = samples;
+        chain.HasSecondaryInheritance = true;
+    }
+
     private static void MarkCommandChainSecondaryCommandBufferInvalid(CommandChain chain)
-        => chain.SecondaryCommandBufferExecutable = false;
+    {
+        chain.SecondaryCommandBufferExecutable = false;
+        chain.HasSecondaryInheritance = false;
+    }
 
     private static void MarkCommandChainSecondaryCommandBufferChanged(CommandChain chain)
     {
@@ -1710,6 +1757,7 @@ public unsafe partial class VulkanRenderer
         chain.SecondaryCommandPool = default;
         chain.OwnsSecondaryCommandPool = false;
         chain.SecondaryCommandBufferExecutable = false;
+        chain.HasSecondaryInheritance = false;
         MarkCommandChainSecondaryCommandBufferChanged(chain);
     }
 

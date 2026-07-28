@@ -129,7 +129,9 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
         cpuQueryAsync.ShouldContain("ECpuOcclusionMotionTier motionTier = GetCpuQueryAsyncMotionTier(");
         cpuQueryAsync.ShouldContain("if (motionTier == ECpuOcclusionMotionTier.CameraCut)");
         cpuQueryAsync.ShouldContain("SubmitCpuOcclusionQueryBatch(scene, camera, candidates, motionTier);");
-        cpuQueryAsync.ShouldContain("ApplyTemporalCpuOcclusionFilter(candidates, motionTier, ref temporalOverrides, ref falsePositiveRecoveries);");
+        cpuQueryAsync.ShouldContain("uint occluded = ApplyTemporalCpuOcclusionFilter(");
+        cpuQueryAsync.ShouldContain("scene,");
+        cpuQueryAsync.ShouldContain("camera,");
 
         string submit = Slice(
             occlusionSource,
@@ -147,9 +149,10 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
             "private void ResolveCpuOcclusionQueryResults",
             StringComparison.Ordinal);
 
-        filter.ShouldContain("if (motionTier == ECpuOcclusionMotionTier.CameraCut)");
+        filter.ShouldContain("CpuOcclusionTemporalPolicy.CanReuseNegativeResult(");
+        filter.ShouldContain("if (!reusable)");
         filter.ShouldContain("temporalOverrides++;");
-        filter.ShouldContain("else if (state.ConsecutiveOccludedFrames >= TemporalOcclusionHysteresisFrames)");
+        filter.ShouldContain("if (state.ConsecutiveOccludedFrames >= TemporalOcclusionHysteresisFrames)");
     }
 
     [Test]
@@ -158,7 +161,7 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Meshlet/VPRC_RenderMeshesPassMeshlet.cs");
 
         source.ShouldContain("gpuPass.UseMeshletPipeline = true;");
-        source.ShouldContain("activeInstance.MeshRenderCommands.RenderGPU(command.RenderPass, command.MeshSubmissionStrategy);");
+        source.ShouldContain("commands.RenderGPU(command.RenderPass, meshSubmissionStrategy);");
         source.ShouldContain("ShouldUseOpenGLMeshletProgramWarmupFallback");
         source.ShouldContain("RenderCPUMeshOnly(command.RenderPass);");
         source.ShouldNotContain("RenderCPU(");
@@ -177,8 +180,8 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
         renderGpu.ShouldContain("bool meshletStrategy = meshSubmissionStrategy.IsAnyMeshletStrategy();");
         renderGpu.ShouldContain("bool previousUseMeshletPipeline = gpuPass.UseMeshletPipeline;");
         renderGpu.ShouldContain("gpuPass.UseMeshletPipeline = true;");
-        renderGpu.ShouldContain("scene is GPUScene gpuScene");
-        renderGpu.ShouldContain("gpuScene.EnsureRuntimeMeshletPayloadsForMeshletDispatch();");
+        renderGpu.ShouldContain("worldSnapshot is RenderWorldSnapshot snapshot");
+        renderGpu.ShouldContain("snapshot.GpuScene.EnsureRuntimeMeshletPayloadsForMeshletDispatch();");
         renderGpu.ShouldContain("finally");
         renderGpu.ShouldContain("gpuPass.UseMeshletPipeline = previousUseMeshletPipeline;");
     }
@@ -223,7 +226,7 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
         string execute = Slice(
             source,
             "protected override void Execute()",
-            "private static List<ForwardPlusLocalLight> BuildLocalLights",
+            "private void BuildLocalLights",
             StringComparison.Ordinal);
 
         execute.ShouldContain("ResolvePassIndex(nameof(VPRC_ForwardPlusLightCullingPass))");
@@ -245,15 +248,15 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
 
         string ensureBuffers = Slice(
             source,
-            "private void EnsureBuffers",
-            "private static void DestroyBuffer",
+            "private bool RefreshDeclaredBuffers",
+            "public static uint ComputeForwardPlusElementCount",
             StringComparison.Ordinal);
 
-        ensureBuffers.ShouldContain("GrowCapacity(ComputeForwardPlusElementCount(tileCountX, tileCountY, eyeCount, MaxLightsPerTile))");
-        ensureBuffers.ShouldContain("_visibleIndicesBuffer.ElementCount < visibleCount");
-        ensureBuffers.ShouldContain("_tileLightCountsBuffer.ElementCount < tileCount");
-        ensureBuffers.ShouldNotContain("_visibleIndicesBuffer.ElementCount != visibleCount");
-        ensureBuffers.ShouldNotContain("_tileLightCountsBuffer.ElementCount != tileCount");
+        ensureBuffers.ShouldContain("ComputeForwardPlusElementCount(tileCountX, tileCountY, viewCount, MaxLightsPerTile)");
+        ensureBuffers.ShouldContain("_visibleIndicesBuffer.ElementCount < requiredVisibleCount");
+        ensureBuffers.ShouldContain("_tileLightCountsBuffer.ElementCount < requiredTileCount");
+        ensureBuffers.ShouldNotContain("_visibleIndicesBuffer.ElementCount != requiredVisibleCount");
+        ensureBuffers.ShouldNotContain("_tileLightCountsBuffer.ElementCount != requiredTileCount");
         source.ShouldNotContain("_lastTileCountX");
         source.ShouldNotContain("_lastTileCountY");
 
@@ -269,13 +272,14 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
     [Test]
     public void SkinnedBounds_ZeroReadbackPath_UsesGpuResidentDirectWriteWithoutWaitForGpu()
     {
-        string renderableSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Mesh/RenderableMesh.cs");
+        string renderableSource = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType(
+            "XREngine.Runtime.Rendering/Scene/Components/Mesh/RenderableMesh.cs");
         string bvhCommandSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_BuildAccelerationStructure.cs");
 
         renderableSource.ShouldContain("ShouldUseGpuResidentSkinnedBoundsPath");
         renderableSource.ShouldContain("RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy()");
         renderableSource.ShouldContain("ApplyGpuResidentSkinnedBoundsDispatchLocked()");
-        bvhCommandSource.ShouldContain("RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy()");
+        bvhCommandSource.ShouldContain("strategy.IsGpuZeroReadbackStrategy()");
 
         string directPath = Slice(
             renderableSource,
@@ -285,7 +289,7 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
 
         directPath.ShouldContain("DispatchPathADirectWrite");
         directPath.ShouldNotContain("WaitForGpu");
-        directPath.ShouldNotContain("TryComputeSkinnedBoundsOnGpu");
+        directPath.ShouldContain("ApplySkinnedBoundsResult(previewBounds, markBvhDirty: false)");
     }
 
     [Test]

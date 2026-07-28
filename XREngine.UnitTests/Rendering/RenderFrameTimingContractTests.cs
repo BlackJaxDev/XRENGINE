@@ -79,12 +79,12 @@ public sealed class RenderFrameTimingContractTests
         int collectStart = source.IndexOf("private void OpenXrCollectVisible()", StringComparison.Ordinal);
         collectStart.ShouldBeGreaterThanOrEqualTo(0);
 
-        int collectEnd = source.IndexOf("private void CollectOpenXrEyeVisible", collectStart, StringComparison.Ordinal);
+        int collectEnd = source.IndexOf("private static void CollectOpenXrEyeVisible", collectStart, StringComparison.Ordinal);
         collectEnd.ShouldBeGreaterThan(collectStart);
 
         string collectBody = source.Substring(collectStart, collectEnd - collectStart);
         int publishMatrices = collectBody.IndexOf("resolvedWorld.GlobalPreCollectVisible();", StringComparison.Ordinal);
-        int collectSps = collectBody.IndexOf("CollectOpenXrTrueSinglePassStereoVisible(", StringComparison.Ordinal);
+        int collectSps = collectBody.IndexOf("CollectOpenXrStereoVisible(", StringComparison.Ordinal);
 
         publishMatrices.ShouldBeGreaterThanOrEqualTo(0);
         collectSps.ShouldBeGreaterThan(publishMatrices);
@@ -95,7 +95,7 @@ public sealed class RenderFrameTimingContractTests
         string repoRoot = ResolveRepoRoot();
         string path = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(path).ShouldBeTrue($"Expected workspace file '{path}' to exist.");
-        return File.ReadAllText(path);
+        return File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveRepoRoot()

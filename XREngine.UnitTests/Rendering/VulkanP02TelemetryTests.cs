@@ -23,7 +23,8 @@ public sealed class VulkanP02TelemetryTests
         string sceneBlock = Slice(source,
             "Vulkan.FrameLifecycle.RecordCommandBuffer",
             "attempt.ScenePrimaryRecordedThisFrame");
-        sceneBlock.ShouldContain("TimeSpan elapsed =\n                        Stopwatch.GetElapsedTime(stageStartTimestamp);");
+        sceneBlock.ShouldContain("TimeSpan elapsed =");
+        sceneBlock.ShouldContain("Stopwatch.GetElapsedTime(stageStartTimestamp);");
         sceneBlock.ShouldContain("attempt.Timing.RecordSceneCommandBuffer += elapsed;");
         sceneBlock.ShouldContain("attempt.Timing.RecordCommandBuffer += elapsed;");
     }
@@ -32,7 +33,7 @@ public sealed class VulkanP02TelemetryTests
     public void RecordingStages_ExposeTimingAllocationAndHighWaterTelemetry()
     {
         string stageSource = ReadWorkspaceFile("XREngine.Data/Rendering/VulkanTelemetryEnums.cs");
-        string recordingSource = ReadWorkspaceFile(
+        string recordingSource = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string submissionSource = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
@@ -136,7 +137,7 @@ public sealed class VulkanP02TelemetryTests
     {
         string path = Path.Combine(ResolveRepoRoot(), relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(path).ShouldBeTrue($"Expected workspace file '{relativePath}'.");
-        return File.ReadAllText(path).Replace("\r\n", "\n");
+        return File.ReadAllText(path).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveRepoRoot()

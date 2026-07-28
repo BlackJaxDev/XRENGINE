@@ -51,7 +51,7 @@ public sealed class LightProbeArrayReadinessTests
         iblSource.ShouldContain("if (!RunFullscreenProbePass(_irradianceFBO, width, height))");
         iblSource.ShouldContain("if (!RunFullscreenProbePass(_prefilterFBO, mipWidth, mipHeight))");
         quadSource.ShouldContain("public bool TryPrepareForRendering");
-        quadSource.ShouldContain("public bool Render(XRFrameBuffer? target = null, bool forceNoStereo = false)");
+        quadSource.ShouldContain("public bool Render(XRFrameBuffer? target = null, bool forceNoStereo = true)");
         meshSource.ShouldContain("apiObject is IRenderPreparationState preparationState");
     }
 
@@ -63,11 +63,11 @@ public sealed class LightProbeArrayReadinessTests
         string captureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Capture/SceneCaptureComponent.cs");
 
         componentSource.ShouldContain("private bool _iblRetryQueuedOnRenderThread;");
-        iblSource.ShouldContain("if (!Engine.IsRenderThread)");
-        iblSource.ShouldContain("Engine.EnqueueMainThreadTask(() =>");
+        iblSource.ShouldContain("if (!RuntimeEngine.IsRenderThread)");
+        iblSource.ShouldContain("RuntimeEngine.EnqueueMainThreadTask(() =>");
         iblSource.ShouldContain("\"LightProbe.RetryPendingIblGeneration\"");
         captureSource.ShouldContain("\"SceneCapture.SyncCaptureTextureWrites\"");
-        captureSource.ShouldContain("if (!Engine.IsRenderThread)");
+        captureSource.ShouldContain("if (!RuntimeEngine.IsRenderThread)");
     }
 
     [Test]
@@ -116,7 +116,7 @@ public sealed class LightProbeArrayReadinessTests
         string repoRoot = ResolveRepoRoot();
         string path = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(path).ShouldBeTrue($"Expected workspace file '{path}' to exist.");
-        return File.ReadAllText(path);
+        return File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveRepoRoot()

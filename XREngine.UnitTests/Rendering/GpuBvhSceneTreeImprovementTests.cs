@@ -60,13 +60,13 @@ public sealed class GpuBvhSceneTreeImprovementTests
         string shader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/RenderPipeline/bvh_frustum_cull.comp");
         string dispatch = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.CullingAndSoA.cs");
 
-        shader.ShouldContain("SelectPartitionRoot(safeNodeCount, partitionRoot)");
+        shader.ShouldContain("SelectPartitionRoot(safeNodeCount, partitionRoot, partitionViewMask)");
         shader.ShouldContain("uint partitionCount = gl_NumWorkGroups.x");
         shader.ShouldContain("(workgroup & suffixMask) == 0u");
-        shader.ShouldContain("TraversalQueue[0] = uvec2(partitionRoot");
+        shader.ShouldContain("TraversalQueue[0] = TraversalWork(partitionRoot");
         shader.ShouldContain("outputMask &= ~bit");
-        shader.ShouldContain("TryEnqueue(child, childPlaneMask)");
-        shader.ShouldContain("ProcessRange(nodes[child].primitiveRange, childPlaneMask, false)");
+        shader.ShouldContain("TryEnqueue(child, childPlaneMask, childViewMask)");
+        shader.ShouldContain("ProcessRange(overflowChild.primitiveRange, childPlaneMask, overflowViewMask, false)");
         shader.ShouldNotContain("node.parentIndex");
         shader.ShouldNotContain("PrimitiveRanges");
         dispatch.ShouldContain("GpuBvhCullingDispatch.CalculateWorkgroupCount(inputCount)");
@@ -267,7 +267,7 @@ public sealed class GpuBvhSceneTreeImprovementTests
     {
         string fullPath = Path.Combine(ResolveWorkspaceRoot(), relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(fullPath).ShouldBeTrue($"Expected workspace file to exist: {relativePath}");
-        return File.ReadAllText(fullPath).Replace("\r\n", "\n");
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveWorkspaceRoot()

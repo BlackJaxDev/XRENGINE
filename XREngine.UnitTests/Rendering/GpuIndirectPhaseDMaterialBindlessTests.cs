@@ -93,6 +93,7 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
         string glRendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Bootstrap/OpenGLRenderer.cs");
         string glBindlessSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Features/Bindless/OpenGLRenderer.Bindless.cs");
         string materialTableSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Materials/GPUMaterialTable.cs");
+        string materialEntrySource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Materials/GPUMaterialEntry.cs");
         string passSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");
         string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
         string materialScatterSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Indirect/GPURenderMaterialScatter.comp");
@@ -113,9 +114,9 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
         materialTableSource.ShouldContain("GPUMaterialTextureReferences");
         materialTableSource.ShouldContain("EGPUMaterialTextureReferenceKind.VulkanDescriptorIndex");
         materialTableSource.ShouldContain("MaterialBindingLayouts.OpaqueDeferred");
-        materialTableSource.ShouldContain("BaseColorOpacity");
-        materialTableSource.ShouldContain("RMSE");
-        passSource.ShouldContain("TryResolveOpenGLBindlessTextureHandle");
+        materialEntrySource.ShouldContain("BaseColorOpacity");
+        materialEntrySource.ShouldContain("RMSE");
+        passSource.ShouldContain("materialCapability?.TryResolveMaterialTextureReference(");
         passSource.ShouldContain("TextureArrayPolicy");
         passSource.ShouldContain("ResolveMaterialBaseColorOpacity");
         passSource.ShouldContain("ResolveMaterialRmse");
@@ -194,7 +195,7 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
     {
         string fullPath = ResolveWorkspacePath(relativePath);
         File.Exists(fullPath).ShouldBeTrue($"Expected file does not exist: {fullPath}");
-        return File.ReadAllText(fullPath);
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveWorkspacePath(string relativePath)

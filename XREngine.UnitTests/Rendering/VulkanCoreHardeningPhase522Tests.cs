@@ -14,7 +14,7 @@ public sealed class VulkanCoreHardeningPhase522Tests
 
         string state = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
-        state.ShouldContain("RuntimeRenderingHostServices.Current.EnableVulkanPrimaryCommandBufferReuse");
+        state.ShouldContain("RuntimeRenderingHostServices.Settings.EnableVulkanPrimaryCommandBufferReuse");
         state.ShouldContain("ReadOptionalBooleanEnvironmentOverride");
         state.ShouldContain("XREngineEnvironmentVariables.VulkanPrimaryCommandBufferReuse");
         state.ShouldNotContain("private static readonly bool VulkanPrimaryCommandBufferReuseEnabled");
@@ -139,7 +139,7 @@ public sealed class VulkanCoreHardeningPhase522Tests
             ResolveRepoRoot(),
             relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(path).ShouldBeTrue($"Expected workspace file '{relativePath}'.");
-        return File.ReadAllText(path).Replace("\r\n", "\n");
+        return File.ReadAllText(path).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveRepoRoot()

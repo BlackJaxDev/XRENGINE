@@ -29,7 +29,7 @@ public sealed class VulkanStreamlineProvisioningTests
         string nativeSource = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/DLSS/StreamlineNative.cs");
         nativeSource.ShouldContain("TryLoadExport(\"slIsFeatureSupported\", out _isFeatureSupported)");
-        nativeSource.ShouldContain("StreamlineResult supportResult = _isFeatureSupported!(FeatureDlssG, ref adapterInfo);");
+        nativeSource.ShouldContain("StreamlineResult supportResult = CallIsFeatureSupported(FeatureDlssG, ref adapterInfo);");
         nativeSource.ShouldContain("VkPhysicalDevice = (IntPtr)vulkanPhysicalDevice,");
 
         string requirementsSource = ReadWorkspaceFile(
@@ -64,7 +64,7 @@ public sealed class VulkanStreamlineProvisioningTests
         {
             string candidate = Path.Combine(directory.FullName, normalizedPath);
             if (File.Exists(candidate))
-                return File.ReadAllText(candidate).Replace("\r\n", "\n");
+                return File.ReadAllText(candidate).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
 
             directory = directory.Parent;
         }

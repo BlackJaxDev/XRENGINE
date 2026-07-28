@@ -251,6 +251,19 @@ internal static partial class UberShaderVariantBuilder
     {
         HashSet<string> enabledFeatureSet = new(enabledFeatures, StringComparer.Ordinal);
         HashSet<string> pipelineMacros = new(resolvedPipelineMacros, StringComparer.Ordinal);
+        switch (material.RenderPass)
+        {
+            case (int)EDefaultRenderPass.WeightedBlendedOitForward:
+                pipelineMacros.Add("XRENGINE_FORWARD_WEIGHTED_OIT");
+                break;
+            case (int)EDefaultRenderPass.PerPixelLinkedListForward:
+                pipelineMacros.Add("XRENGINE_FORWARD_PPLL");
+                break;
+            case (int)EDefaultRenderPass.DepthPeelingForward:
+                pipelineMacros.Add("XRENGINE_FORWARD_DEPTH_PEEL");
+                break;
+        }
+
         bool forwardLightingEnabled = RequiresForwardLighting(material, enabledFeatureSet);
         bool forwardShadowsEnabled = forwardLightingEnabled && RequiresForwardShadows(material);
         if (!forwardLightingEnabled)
@@ -421,6 +434,7 @@ internal static partial class UberShaderVariantBuilder
     {
         string resolvedSource;
         ShaderSourceFileDependency[] dependencies = [];
+        string[] directPipelineMacros = ResolvePipelineMacros(sourceText);
 
         if (!string.IsNullOrEmpty(sourceText))
         {
@@ -436,7 +450,7 @@ internal static partial class UberShaderVariantBuilder
                     });
                 resolvedSource = result.Source;
                 dependencies = result.FileDependencies;
-                return CreateResolvedShaderSource(resolvedSource, sourcePath, dependencies);
+                return CreateResolvedShaderSource(resolvedSource, sourcePath, dependencies, directPipelineMacros);
             }
             catch
             {
@@ -451,15 +465,20 @@ internal static partial class UberShaderVariantBuilder
             dependencies = [];
         }
 
-        return CreateResolvedShaderSource(resolvedSource, sourcePath, dependencies);
+        return CreateResolvedShaderSource(resolvedSource, sourcePath, dependencies, directPipelineMacros);
     }
 
     private static ResolvedUberShaderSource CreateResolvedShaderSource(
         string resolvedSource,
         string? sourcePath,
-        ShaderSourceFileDependency[] dependencies)
+        ShaderSourceFileDependency[] dependencies,
+        IReadOnlyCollection<string> directPipelineMacros)
     {
         string? normalizedPath = NormalizeSourcePathKey(sourcePath);
+        HashSet<string> pipelineMacros = new(directPipelineMacros, StringComparer.Ordinal);
+        pipelineMacros.UnionWith(ResolvePipelineMacros(resolvedSource));
+        string[] pipelineMacroArray = [.. pipelineMacros];
+        Array.Sort(pipelineMacroArray, StringComparer.Ordinal);
         return new ResolvedUberShaderSource
         {
             Source = resolvedSource,
@@ -467,7 +486,7 @@ internal static partial class UberShaderVariantBuilder
             SourcePathHash = ComputeStableHash(normalizedPath ?? string.Empty),
             SourceVersion = unchecked((long)ComputeStableHash(resolvedSource)),
             Dependencies = dependencies,
-            PipelineMacros = ResolvePipelineMacros(resolvedSource),
+            PipelineMacros = pipelineMacroArray,
         };
     }
 

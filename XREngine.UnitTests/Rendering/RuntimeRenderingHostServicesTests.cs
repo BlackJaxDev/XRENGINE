@@ -19,6 +19,7 @@ using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Shadows;
 using XREngine.Runtime.Bootstrap;
+using XREngine.Rendering.OpenGL;
 using XREngine.Scene;
 
 namespace XREngine.UnitTests.Rendering;
@@ -506,6 +507,7 @@ public sealed class RuntimeRenderingHostServicesTests
     }
 
     [Test]
+    [NonParallelizable]
     public void RegisterImportedTextureStreamingPlaceholder_TracksTextureWithoutPreview()
     {
         TestRuntimeRenderingHostServices services = new()
@@ -513,6 +515,9 @@ public sealed class RuntimeRenderingHostServicesTests
             DefaultPipeline = new TestRenderPipeline(),
         };
         RuntimeRenderingHostServices.Current = services;
+
+        using OpenGlRendererBackendModuleEntry module = new();
+        module.OnRegistered();
 
         string sourcePath = Path.Combine(Path.GetTempPath(), $"ImportedTexturePreview_{Guid.NewGuid():N}.png");
         string normalizedPath = Path.GetFullPath(sourcePath);

@@ -67,10 +67,10 @@ public sealed class AmbientOcclusionVisibilityBitmaskTests
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/AO/VPRC_GTAOPass.cs").Replace("\r\n", "\n");
 
-        source.ShouldContain("SetDynamicTexture(instance, createdTexture);");
-        source.ShouldContain("instance.SetTexture(texture, RenderResourceDescriptorFactory.FromTexture(texture));");
-        source.ShouldContain("FrameBufferResourceDescriptor descriptor = RenderResourceDescriptorFactory.FromFrameBuffer(frameBuffer);");
-        source.ShouldContain("instance.SetFBO(frameBuffer, descriptor);");
+        source.ShouldContain("RefreshDeclaredResources(state, normalTex, depthViewTex, albedoTex, rmseTex,");
+        source.ShouldContain("!ReferenceEquals(state.RawAoTexture, rawAoTex)");
+        source.ShouldContain("forceRebuild = !HasDeclaredFrameBuffers(instance);");
+        source.ShouldContain("public XRFrameBuffer CreateDeclaredFrameBuffer");
     }
 
     private static void AssertShaderContainsVisibilityBitmaskPath(string relativePath)
@@ -93,7 +93,7 @@ public sealed class AmbientOcclusionVisibilityBitmaskTests
     {
         string fullPath = ResolveWorkspacePath(relativePath);
         File.Exists(fullPath).ShouldBeTrue($"Expected file does not exist: {fullPath}");
-        return File.ReadAllText(fullPath);
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveWorkspacePath(string relativePath)

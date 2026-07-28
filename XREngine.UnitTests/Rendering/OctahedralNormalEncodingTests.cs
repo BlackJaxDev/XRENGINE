@@ -158,7 +158,7 @@ public sealed class OctahedralNormalEncodingTests
         if (!File.Exists(fullPath))
             throw new FileNotFoundException($"Shader file not found: {fullPath}");
 
-        return File.ReadAllText(fullPath);
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveShaderPath(string relativePath)

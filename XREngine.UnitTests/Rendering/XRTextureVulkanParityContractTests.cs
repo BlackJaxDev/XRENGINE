@@ -55,8 +55,8 @@ public sealed class XRTextureVulkanParityContractTests
         source.ShouldContain("MarkDescriptorClean();");
         source.ShouldContain("InvalidateTextureData();");
         source.ShouldContain("bool canReuseDedicatedStorage =");
-        source.ShouldContain("requestedLayout == _layout");
-        source.ShouldContain("requestedFormat == ResolvedFormat");
+        source.ShouldContain("requestedLayout == _imageStorageLayout");
+        source.ShouldContain("requestedFormat == _imageStorageFormat");
         baseSource.ShouldContain("if (IsInvalidated)");
         baseSource.ShouldContain("PushData();");
     }
@@ -178,9 +178,9 @@ public sealed class XRTextureVulkanParityContractTests
         imageSource.ShouldContain("Api!.GetPhysicalDeviceFormatProperties(PhysicalDevice, ResolvedFormat, out FormatProperties props);");
         imageSource.ShouldContain("FormatFeatureFlags.SampledImageFilterLinearBit");
         imageSource.ShouldContain("protected void GenerateMipmapsWithBlit()");
-        imageSource.ShouldContain("QueueFamilyIndices queueFamilies = Renderer.FamilyQueueIndices;");
-        imageSource.ShouldContain("SrcQueueFamilyIndex = graphicsFamily");
-        imageSource.ShouldContain("DstQueueFamilyIndex = transferFamily");
+        imageSource.ShouldContain("using var scope = Renderer.NewCommandScope();");
+        imageSource.ShouldContain("SrcQueueFamilyIndex = Vk.QueueFamilyIgnored");
+        imageSource.ShouldContain("DstQueueFamilyIndex = Vk.QueueFamilyIgnored");
         imageSource.ShouldContain("IVkImageDescriptorSource.GetDepthOnlyDescriptorView()");
         imageSource.ShouldContain("IVkImageDescriptorSource.GetStencilOnlyDescriptorView()");
 
@@ -203,7 +203,7 @@ public sealed class XRTextureVulkanParityContractTests
     {
         string path = Path.Combine(ResolveWorkspaceRoot(), relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(path).ShouldBeTrue($"Expected file does not exist: {path}");
-        return File.ReadAllText(path);
+        return File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveWorkspaceRoot()

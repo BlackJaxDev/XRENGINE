@@ -656,7 +656,7 @@ public sealed class NativeFbxImporterTests
         mesh.RebuildSkinningBuffersFromVertices();
         mesh.SkinningShaderConvention.ShouldBe(ESkinningShaderConvention.ExplicitRowMajorRowVector);
 
-        string source = new DefaultVertexShaderGenerator(mesh).Generate();
+        string source = GenerateDirectSkinningShader(mesh);
 
         source.ShouldContain("layout(std430, binding = 0) buffer SkinPaletteBuffer");
         source.ShouldContain("vec4 SkinPaletteRows[];");
@@ -709,7 +709,7 @@ public sealed class NativeFbxImporterTests
         mesh.RebuildSkinningBuffersFromVertices();
         mesh.SkinningShaderConvention = ESkinningShaderConvention.LegacyImplicitTranspose;
 
-        string source = new DefaultVertexShaderGenerator(mesh).Generate();
+        string source = GenerateDirectSkinningShader(mesh);
 
         source.ShouldContain("layout(std430, binding = 0) buffer SkinPaletteBuffer");
         source.ShouldContain("vec4 SkinPaletteRows[];");
@@ -970,6 +970,31 @@ public sealed class NativeFbxImporterTests
                 C: "OP",9300,7001,"DeformPercent"
             }
             """;
+
+    private static string GenerateDirectSkinningShader(XRMesh mesh)
+    {
+        object settings = RuntimeEngine.Rendering.Settings;
+        PropertyInfo allowSkinning = GetRenderingSetting(settings, "AllowSkinning");
+        PropertyInfo computeSkinning = GetRenderingSetting(settings, "CalculateSkinningInComputeShader");
+        bool previousAllowSkinning = (bool)allowSkinning.GetValue(settings)!;
+        bool previousComputeSkinning = (bool)computeSkinning.GetValue(settings)!;
+
+        try
+        {
+            allowSkinning.SetValue(settings, true);
+            computeSkinning.SetValue(settings, false);
+            return new DefaultVertexShaderGenerator(mesh).Generate();
+        }
+        finally
+        {
+            computeSkinning.SetValue(settings, previousComputeSkinning);
+            allowSkinning.SetValue(settings, previousAllowSkinning);
+        }
+    }
+
+    private static PropertyInfo GetRenderingSetting(object settings, string propertyName)
+        => settings.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException($"Runtime render setting '{propertyName}' was not found.");
 
     private static AnimationMember FindChild(AnimationMember parent, string memberName, EAnimationMemberType memberType, object? firstArgument = null)
     {

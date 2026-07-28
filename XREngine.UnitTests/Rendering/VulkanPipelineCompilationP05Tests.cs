@@ -365,7 +365,7 @@ public sealed class VulkanPipelineCompilationP05Tests
         while (!string.IsNullOrEmpty(directory))
         {
             if (File.Exists(Path.Combine(directory, "XRENGINE.slnx")))
-                return File.ReadAllText(Path.Combine(directory, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+                return File.ReadAllText(Path.Combine(directory, relativePath.Replace('/', Path.DirectorySeparatorChar))).Replace("\r\n", "\n", StringComparison.Ordinal);
 
             directory = Directory.GetParent(directory)?.FullName;
         }

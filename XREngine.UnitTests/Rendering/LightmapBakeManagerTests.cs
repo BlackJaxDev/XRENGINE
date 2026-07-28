@@ -7,6 +7,7 @@ using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Scene;
 using XREngine.Rendering.Lightmapping;
 using XREngine.Timers;
 
@@ -30,7 +31,7 @@ public sealed class LightmapBakeManagerTests
     {
         var world = new XRWorldInstance();
         var manager = world.Lights.LightmapBaking;
-        var light = CreateStationaryDynamicCachedLight(movementVersion: 1u);
+        var light = CreateStationaryDynamicCachedLight(world, movementVersion: 1u);
 
         manager.ProcessDynamicCachedAutoBake(light);
 
@@ -43,7 +44,7 @@ public sealed class LightmapBakeManagerTests
         var world = new XRWorldInstance();
         var manager = world.Lights.LightmapBaking;
         manager.AutoBakeDynamicCachedLights = true;
-        var light = CreateStationaryDynamicCachedLight(movementVersion: 7u);
+        var light = CreateStationaryDynamicCachedLight(world, movementVersion: 7u);
 
         manager.ProcessDynamicCachedAutoBake(light);
         GetPendingBakeCount(manager).ShouldBe(1);
@@ -52,12 +53,11 @@ public sealed class LightmapBakeManagerTests
         GetPendingBakeCount(manager).ShouldBe(1);
     }
 
-    private static DirectionalLightComponent CreateStationaryDynamicCachedLight(uint movementVersion)
+    private static DirectionalLightComponent CreateStationaryDynamicCachedLight(XRWorldInstance world, uint movementVersion)
     {
-        var light = new DirectionalLightComponent
-        {
-            Type = ELightType.DynamicCached
-        };
+        var node = new SceneNode(world) { IsActiveSelf = false };
+        var light = node.AddComponent<DirectionalLightComponent>()!;
+        light.Type = ELightType.DynamicCached;
 
         LastMovedTicksField.SetValue(light, Engine.ElapsedTicks - EngineTimer.SecondsToStopwatchTicks(1.0));
         MovementVersionField.SetValue(light, movementVersion);

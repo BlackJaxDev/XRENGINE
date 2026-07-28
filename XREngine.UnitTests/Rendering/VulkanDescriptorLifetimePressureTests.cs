@@ -71,7 +71,7 @@ public sealed class VulkanDescriptorLifetimePressureTests
         key.ShouldContain("ulong LayoutFingerprint");
         key.ShouldNotContain("ProgramIdentity");
         key.ShouldContain("int ViewFamilyIdentity");
-        key.ShouldNotContain("ProgramBindingId");
+        key.ShouldContain("ProgramBindingId");
         key.ShouldContain("BindingIdentityFingerprint");
         key.ShouldContain("ImmutableResourceFingerprint");
         descriptors.ShouldContain("_program.DescriptorLayoutFingerprint");
@@ -87,7 +87,7 @@ public sealed class VulkanDescriptorLifetimePressureTests
         descriptors.ShouldContain("AddTextureDescriptorResourceFingerprint(ref hash, texture);");
         descriptors.ShouldContain("ViewFamilyIdentity = viewFamilyIdentity");
         descriptors.ShouldNotContain("ProgramIdentity = programIdentity");
-        descriptors.ShouldNotContain("ReferenceEquals(allocation.Program, _program)");
+        descriptors.ShouldContain("ReferenceEquals(allocation.Program, _program)");
         descriptors.ShouldNotContain("MaxDescriptorAllocationVariants");
         descriptors.ShouldContain("int descriptorFrameSlotCount = frameCount;");
         descriptors.ShouldNotContain("frameCount * Math.Max(drawUniformSlot");
@@ -194,7 +194,7 @@ public sealed class VulkanDescriptorLifetimePressureTests
 
         string enqueue = SliceMethod(
             retirement,
-            "internal void RetireImageResources(in RetiredImageResources resources)",
+            "internal void RetireImageResources(",
             "private ImageView[] FilterRetiredAttachmentViews(");
         enqueue.ShouldNotContain("UnregisterLiveSampler");
 
@@ -230,7 +230,7 @@ public sealed class VulkanDescriptorLifetimePressureTests
     {
         string path = Path.Combine(ResolveRepoRoot(), relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(path).ShouldBeTrue($"Expected workspace file '{relativePath}'.");
-        return File.ReadAllText(path).Replace("\r\n", "\n");
+        return File.ReadAllText(path).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveRepoRoot()

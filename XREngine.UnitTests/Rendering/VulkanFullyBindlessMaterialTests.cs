@@ -33,14 +33,15 @@ public sealed class VulkanFullyBindlessMaterialTests
     {
         string tableSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.BindlessMaterialTextureTable.cs");
         string logicalDeviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
-        string profileSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/VulkanFeatureProfile.cs");
+        string profileSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Vulkan/VulkanFeatureProfile.cs");
         string hostInterfaceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderSettingsServices.cs");
         string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
-        string frameOpSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
+        string bindingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/Structs/VulkanRenderer.VulkanBindlessMaterialDescriptorBinding.cs");
+        string frameOpSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanRenderer.IndirectDrawOp.cs");
 
         profileSource.ShouldContain("enum EVulkanBindlessMaterialMode");
         profileSource.ShouldContain("enum EVulkanBindlessMaterialCapabilityTier");
-        profileSource.ShouldContain(XREngineEnvironmentVariables.VulkanBindlessMaterialMode);
+        profileSource.ShouldContain("XREngineEnvironmentVariables.VulkanBindlessMaterialMode");
         profileSource.ShouldContain("VulkanBindlessMaterialCapability");
 
         tableSource.ShouldContain("TryGetOrCreateMaterialTextureDescriptorIndex");
@@ -58,14 +59,14 @@ public sealed class VulkanFullyBindlessMaterialTests
         tableSource.ShouldContain("GlobalMaterialTextureDescriptorWritesTotal");
         tableSource.ShouldContain("GlobalMaterialTextureDescriptorFallbackReferencesTotal");
 
-        frameOpSource.ShouldContain("VulkanBindlessMaterialDescriptorBinding");
+        bindingSource.ShouldContain("VulkanBindlessMaterialDescriptorBinding");
         frameOpSource.ShouldContain("VulkanBindlessMaterialDescriptorBinding? BindlessMaterialTextures");
         commandBufferSource.ShouldContain("op.BindlessMaterialTextures is { } bindlessMaterialTextures");
         commandBufferSource.ShouldContain("TryBindGlobalMaterialTextureDescriptorSet(");
 
         logicalDeviceSource.ShouldContain("DestroyGlobalMaterialTextureDescriptorTable();");
         logicalDeviceSource.ShouldContain("ValidateRequiredVulkanBindlessMaterialCapability();");
-        logicalDeviceSource.ShouldContain("Capability.BindlessMaterialTextures");
+        logicalDeviceSource.ShouldContain("VulkanBindlessMaterialCapability bindlessMaterialCapability = RefreshBindlessMaterialCapability();");
 
         hostInterfaceSource.ShouldContain("EVulkanBindlessMaterialMode VulkanBindlessMaterialMode");
         hostInterfaceSource.ShouldContain("bool EnableVulkanBindlessMaterialTable");
@@ -76,6 +77,7 @@ public sealed class VulkanFullyBindlessMaterialTests
     {
         string materialLayoutSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Materials/MaterialBindingLayout.cs");
         string materialTableSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Materials/GPUMaterialTable.cs");
+        string materialReferenceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Materials/GPUMaterialTextureReference.cs");
         string passSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");
         string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
 
@@ -83,13 +85,13 @@ public sealed class VulkanFullyBindlessMaterialTests
         materialLayoutSource.ShouldContain("layout(set = 2, binding = 31) uniform sampler2D XR_BindlessMaterialTextures[];");
         materialLayoutSource.ShouldContain("XR_BindlessMaterialTextures[nonuniformEXT(descriptorIndex)]");
 
-        materialTableSource.ShouldContain("FromVulkanDescriptorIndex");
+        materialReferenceSource.ShouldContain("FromVulkanDescriptorIndex");
         materialTableSource.ShouldContain("ResolveShaderTextureIndex");
 
-        passSource.ShouldContain("EMaterialTextureReferenceBuildMode.VulkanDescriptorIndices");
-        passSource.ShouldContain("vulkanRenderer.TryEnsureGlobalMaterialTextureDescriptorTable");
-        passSource.ShouldContain("vulkanRenderer.TryGetOrCreateMaterialTextureDescriptorIndex");
-        passSource.ShouldContain("vulkanRenderer?.FlushGlobalMaterialTextureDescriptorUpdates();");
+        passSource.ShouldContain("EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable");
+        passSource.ShouldContain("materialCapability.TryEnsureMaterialTextureTable");
+        passSource.ShouldContain("materialCapability?.TryResolveMaterialTextureReference");
+        passSource.ShouldContain("materialCapability?.FlushMaterialTextureTableUpdates();");
 
         hybridSource.ShouldContain("ResolveMaterialTableTextureReferenceMode");
         hybridSource.ShouldContain("EMaterialTableTextureReferenceMode.OpenGLBindlessHandleTable");
@@ -103,7 +105,7 @@ public sealed class VulkanFullyBindlessMaterialTests
     {
         string fullPath = ResolveWorkspacePath(relativePath);
         File.Exists(fullPath).ShouldBeTrue($"Expected file does not exist: {fullPath}");
-        return File.ReadAllText(fullPath);
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveWorkspacePath(string relativePath)

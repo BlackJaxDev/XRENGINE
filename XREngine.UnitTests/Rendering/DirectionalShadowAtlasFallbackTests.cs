@@ -179,7 +179,7 @@ public sealed class DirectionalShadowAtlasFallbackTests
         commandCollectionSource.ShouldContain("AddShadowState(ref hash, meshCommand.WorldMatrix);");
         commandCollectionSource.ShouldContain("if (command.CullingVolume is AABB bounds)");
         directionalSource.ShouldContain("GetShadowCasterCommandSetSignature(");
-        directionalSource.ShouldContain("PrimaryShadowViewport.RenderPipelineInstance.MeshRenderCommands.ShadowCasterCommandSetSignature");
+        directionalSource.ShouldContain("primaryViewport.RenderPipelineInstance.MeshRenderCommands.ShadowCasterCommandSetSignature");
         lightsSource.ShouldContain("directionalLight.GetShadowCasterCommandSetSignature(");
     }
 
@@ -406,7 +406,7 @@ public sealed class DirectionalShadowAtlasFallbackTests
         {
             string candidate = Path.Combine(directory, "XREngine.slnx");
             if (File.Exists(candidate))
-                return File.ReadAllText(Path.Combine(directory, relativePath));
+                return File.ReadAllText(Path.Combine(directory, relativePath)).Replace("\r\n", "\n", StringComparison.Ordinal);
 
             directory = Directory.GetParent(directory)?.FullName;
         }

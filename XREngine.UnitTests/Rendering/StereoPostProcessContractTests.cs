@@ -199,7 +199,7 @@ public sealed class StereoPostProcessContractTests
     [Test]
     public void StereoBloomPass_UsesDestinationMipRegionsAndTwoLayerViews()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_BloomPass.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_BloomPass.cs").Replace("\r\n", "\n");
         string contract = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRCFullscreenPassContract.cs");
 
         source.ShouldContain("ResolveBloomMipRegion(width, height, 1)");

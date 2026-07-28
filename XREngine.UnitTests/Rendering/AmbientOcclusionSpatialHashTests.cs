@@ -142,10 +142,10 @@ public sealed class AmbientOcclusionSpatialHashTests
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/AO/VPRC_SpatialHashAOPass.cs").Replace("\r\n", "\n");
 
         source.ShouldContain("protected override bool ShouldExecuteThisFrame()");
-        source.ShouldContain("IsSpatialHashAmbientOcclusionSelected(RuntimeEngine.Rendering.State.CurrentRenderingPipeline)");
+        source.ShouldContain("IsSpatialHashAmbientOcclusionSelected(instance, ResolveSettingsPipeline(instance))");
         source.ShouldContain("AmbientOcclusionSettings.NormalizeType(settings.Type) == AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion");
 
-        int guardIndex = source.IndexOf("if (!IsSpatialHashAmbientOcclusionSelected(RuntimeEngine.Rendering.State.CurrentRenderingPipeline))", StringComparison.Ordinal);
+        int guardIndex = source.IndexOf("if (!IsSpatialHashAmbientOcclusionSelected(instance, ResolveSettingsPipeline(instance)))", StringComparison.Ordinal);
         int storageIndex = source.IndexOf("builder.ReadWriteTexture(MakeTextureResource(IntensityTextureName));", StringComparison.Ordinal);
 
         guardIndex.ShouldBeGreaterThanOrEqualTo(0);
@@ -168,7 +168,7 @@ public sealed class AmbientOcclusionSpatialHashTests
     {
         string fullPath = ResolveWorkspacePath(relativePath);
         File.Exists(fullPath).ShouldBeTrue($"Expected file does not exist: {fullPath}");
-        return File.ReadAllText(fullPath);
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveWorkspacePath(string relativePath)

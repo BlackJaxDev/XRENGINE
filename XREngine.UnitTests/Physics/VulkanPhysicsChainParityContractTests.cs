@@ -34,7 +34,7 @@ public sealed class VulkanPhysicsChainParityContractTests
         adapter.ShouldContain("InsertGpuFence");
         work.ShouldContain("ComputeDispatchIndirectOp");
         work.ShouldContain("BufferCopyOp");
-        work.ShouldContain("EnqueueFrameOp(new MemoryBarrierOp(passIndex, mask, context))");
+        work.ShouldContain("EnqueueFrameOp(MemoryBarrierOp.Rent(passIndex, mask, context))");
         recorder.ShouldContain("RecordComputeDispatchIndirectOp");
         recorder.ShouldContain("RecordBufferCopyOp");
         recorder.ShouldContain("RegisterSubmissionMarker");

@@ -175,7 +175,7 @@ namespace XREngine
         {
             ModelImportOptions? options = _currentImportOptions.Value;
             bool hasTransparentBlendHint = HasTransparentBlendHint(textures);
-            bool hasOpacityMask = HasOpacityMask(textures);
+            bool hasOpacityMask = !hasTransparentBlendHint && HasOpacityMask(textures);
             bool hasDiffuseAlpha = hasTransparentBlendHint || (GetDiffuseTexture(textureList, textures)?.HasAlphaChannel ?? false);
 
             if (hasOpacityMask)

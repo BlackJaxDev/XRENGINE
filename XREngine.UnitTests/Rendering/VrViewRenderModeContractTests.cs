@@ -872,6 +872,8 @@ public sealed class VrViewRenderModeContractTests
             ReadWorkspaceFile("XREngine.Runtime.Core/Settings/VRRenderingContracts/VrViewRenderModeResolver.cs"),
         });
         string openXr = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.Implementation.cs");
+        string vulkanOpenXrState = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.State.cs");
+        string openXrSceneViews = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.SceneViews.cs");
         string openXrFrameLifecycle = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs");
         string openXrResolution = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Resolution.cs");
         string openXrRuntimeState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.RuntimeStateMachine.cs");
@@ -945,7 +947,7 @@ public sealed class VrViewRenderModeContractTests
         openXr.ShouldContain("OpenXrStereoRenderTarget");
         openXr.ShouldContain("TryRenderVulkanTrueSinglePassStereoToSwapchains");
         openXr.ShouldContain("TryEnsureVulkanStereoRenderTarget");
-        openXr.ShouldContain("_openXrStereoViewport ??= new XRViewport(null)");
+        openXrSceneViews.ShouldContain("_openXrStereoViewport ??= new XRViewport(null)");
         openXr.ShouldContain("True SinglePassStereo did not render this frame. Sequential/per-eye fallback is forbidden");
         openXr.ShouldContain("FrameModeMismatch");
         openXr.ShouldNotContain("using OpenXR per-eye swapchain compatibility path");
@@ -955,10 +957,10 @@ public sealed class VrViewRenderModeContractTests
         openXr.ShouldContain("stereoViewport.MeshRenderCommandsOverride = null");
         openXr.ShouldNotContain("stereoViewport.MeshRenderCommandsOverride = sharedMeshCommands");
         openXr.ShouldContain("RendersExternalSwapchainTarget: false");
-        openXr.ShouldContain("RendersToExternalSwapchainTarget = true");
+        openXrSceneViews.ShouldContain("RendersToExternalSwapchainTarget = true");
         openXr.ShouldContain("SkippedResizeCatchUpThisFrame");
         openXrFrameLifecycle.ShouldContain("useTrueSinglePassStereo");
-        openXrFrameLifecycle.ShouldContain("EnsureOpenXrStereoViewport");
+        openXrSceneViews.ShouldContain("EnsureOpenXrStereoViewport");
         openXrFrameLifecycle.ShouldContain("ReleaseOpenXrExternalEyeViewportPipelinesForTrueStereo");
         openXrFrameLifecycle.ShouldContain("ReleaseOpenXrStereoViewportPipelineForExternalEyes");
         openXrFrameLifecycle.ShouldContain("ApplyOpenXrEyeCameraRenderSettings");
@@ -975,8 +977,8 @@ public sealed class VrViewRenderModeContractTests
         openXrState.ShouldContain("_openXrStereoViewport");
         openXrState.ShouldContain("_openXrStereoRenderPipeline");
         openXrState.ShouldContain("_pendingXrFrameUsesTrueSinglePassStereo");
-        openXrState.ShouldContain("_vulkanStereoColorArray");
-        openXrState.ShouldContain("_vulkanStereoDepthArray");
+        vulkanOpenXrState.ShouldContain("_vulkanStereoColorArray");
+        vulkanOpenXrState.ShouldContain("_vulkanStereoDepthArray");
         openXrState.ShouldContain("GetOrCreateOpenXrStereoPipeline");
         xrViewport.ShouldContain("meshRenderCommandsOverride: MeshRenderCommandsOverride");
         pushViewportRenderArea.ShouldContain("if (UseInternalResolution)");
@@ -1094,7 +1096,7 @@ public sealed class VrViewRenderModeContractTests
         {
             string fullPath = Path.Combine(dir.FullName, platformPath);
             if (File.Exists(fullPath))
-                return File.ReadAllText(fullPath).Replace("\r\n", "\n");
+                return File.ReadAllText(fullPath).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
 
             dir = dir.Parent;
         }

@@ -2432,14 +2432,14 @@ public sealed class RenderPipelineResourceLifecycleTests
         string source = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.cs");
         int helperStart = source.IndexOf(
-            "private static void WaitForGpuBeforePhysicalResourceDestruction",
+            "private static void PrepareForPhysicalResourceDestruction",
             StringComparison.Ordinal);
         int helperEnd = source.IndexOf("\n    }", helperStart, StringComparison.Ordinal);
         string helper = source[helperStart..helperEnd];
 
         helper.ShouldContain("renderer.WaitForGpu();");
-        helper.ShouldContain("renderer is not VulkanRenderer vulkanRenderer");
-        helper.ShouldNotContain("Current is not VulkanRenderer");
+        helper.ShouldContain("TryGetBackendCapability<IRenderResourceRetirementBackendCapability>");
+        helper.ShouldContain("retirement.PrepareForPhysicalResourceDestruction(reason);");
     }
 
     [Test]
@@ -2475,8 +2475,8 @@ public sealed class RenderPipelineResourceLifecycleTests
         int methodEnd = source.IndexOf("private void DestroyAllSwapChainObjects()", methodStart, StringComparison.Ordinal);
         string method = source[methodStart..methodEnd];
 
-        method.ShouldContain("WaitForAllInFlightWork();");
-        method.ShouldContain("WaitForQueueIdleTracked(presentQueue)");
+        method.ShouldContain("TryPrepareSwapchainRetirementMarkers(");
+        method.ShouldContain("QueueRetiredSwapchainGeneration(retiredGeneration);");
         method.ShouldNotContain("DeviceWaitIdle();");
     }
 
@@ -2912,7 +2912,7 @@ public sealed class RenderPipelineResourceLifecycleTests
             while (directory is not null)
             {
                 if (File.Exists(Path.Combine(directory.FullName, "XRENGINE.slnx")))
-                    return File.ReadAllText(Path.Combine(directory.FullName, relativePath)).Replace("\r\n", "\n");
+                    return File.ReadAllText(Path.Combine(directory.FullName, relativePath)).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
                 directory = directory.Parent;
             }
         }

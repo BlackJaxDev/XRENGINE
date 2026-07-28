@@ -442,7 +442,7 @@ public sealed class UberMaterialVariantTests
 
         rimMask.Mipmaps[0].Data!.GetBytes().ShouldBe([255, 255, 255, 255]);
         glitterMask.Mipmaps[0].Data!.GetBytes().ShouldBe([255, 255, 255, 255]);
-        toonRamp.Mipmaps[0].Data!.GetBytes().ShouldBe([255, 255, 255, 255]);
+        toonRamp.Mipmaps[0].Data!.GetBytes().ShouldBe([0, 0, 0, 255, 255, 255, 255, 255]);
     }
 
     [Test]
@@ -1155,7 +1155,8 @@ public sealed class UberMaterialVariantTests
     {
         string contract = BuildUberVariantBaselineContract();
         TestContext.Out.WriteLine(contract);
-        contract.ShouldBe(ExpectedUberVariantBaselineContract);
+        contract.ReplaceLineEndings("\n")
+            .ShouldBe(ExpectedUberVariantBaselineContract.ReplaceLineEndings("\n"));
     }
 
     [Test]

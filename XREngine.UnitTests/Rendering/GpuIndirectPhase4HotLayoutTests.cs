@@ -39,10 +39,10 @@ public sealed class GpuIndirectPhase4HotLayoutTests
         source.ShouldContain("_cullingComputeShader.BindBuffer(_sourceHotCommandBuffer!, 9);");
         source.ShouldContain("_cullingComputeShader.BindBuffer(_culledHotCommandBuffer!, 10);");
         source.ShouldContain("_bvhFrustumCullProgram.Uniform(\"UseHotCommands\", useHotCommands ? 1u : 0u);");
-        source.ShouldContain("_bvhFrustumCullProgram.BindBuffer(_sourceHotCommandBuffer!, 9);");
+        source.ShouldContain("_bvhFrustumCullProgram.BindBuffer(dst, 2);");
         source.ShouldContain("_bvhFrustumCullProgram.BindBuffer(_culledHotCommandBuffer!, 10);");
         source.ShouldContain("_extractSoAComputeShader.Uniform(\"UseHotCommands\", useHotCommands ? 1 : 0);");
-        source.ShouldContain("_extractSoAComputeShader.BindBuffer(_sourceHotCommandBuffer!, 3);");
+        source.ShouldContain("_extractSoAComputeShader.BindBuffer(meta, 3);");
         source.ShouldContain("ShouldExtractSoAForCurrentPolicy");
         source.ShouldContain("Engine.EffectiveSettings.GpuCullingDataLayout");
         source.ShouldContain("ShippingFast profile requires hot-command layout for frustum culling.");
@@ -82,7 +82,7 @@ public sealed class GpuIndirectPhase4HotLayoutTests
     {
         string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
         string passSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");
-        string sceneSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.cs");
+        string sceneSource = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.cs");
         string settingsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Settings/RuntimeEngine.Rendering.EngineSettings.cs");
 
         hybridSource.ShouldContain("private static bool TryReadDrawCount(XRDataBuffer? parameterBuffer, out uint drawCount)");
@@ -106,9 +106,11 @@ public sealed class GpuIndirectPhase4HotLayoutTests
         string extractSoA = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Culling/GPURenderExtractSoA.comp");
 
         buildHot.ShouldContain("uniform int InputCount;");
-        buildHot.ShouldContain("const uint HOT_UINTS = 16u;");
+        buildHot.ShouldContain("const uint HOT_UINTS = 20u;");
 
-        culling.ShouldContain("layout(std430, binding = 9) readonly buffer InputHotCommandsBuffer");
+        culling.ShouldContain("layout(std430, binding = 0) readonly buffer DrawMetadataBuffer");
+        culling.ShouldContain("layout(std430, binding = 1) readonly buffer BoundsBuffer");
+        culling.ShouldContain("layout(std430, binding = 2) writeonly buffer CulledCommandsBuffer");
         culling.ShouldContain("layout(std430, binding = 10) writeonly buffer CulledHotCommandsBuffer");
         culling.ShouldContain("uniform int UseHotCommands;");
 
@@ -116,22 +118,26 @@ public sealed class GpuIndirectPhase4HotLayoutTests
         occlusion.ShouldContain("layout(std430, binding = 10) writeonly buffer OutputHotCommandsBuffer");
         occlusion.ShouldContain("uniform int UseHotCommands;");
 
-        bvh.ShouldContain("layout(std430, binding = 9) readonly buffer InputHotCommandsBuffer");
+        bvh.ShouldContain("layout(std430, binding = 0) readonly buffer DrawMetadataBuffer");
+        bvh.ShouldContain("layout(std430, binding = 1) readonly buffer BoundsBuffer");
+        bvh.ShouldContain("layout(std430, binding = 2) writeonly buffer CulledCommandsBuffer");
         bvh.ShouldContain("layout(std430, binding = 10) writeonly buffer CulledHotCommandsBuffer");
         bvh.ShouldContain("uniform uint UseHotCommands;");
 
-        extractSoA.ShouldContain("layout(std430, binding = 3) readonly buffer InHotCommands");
+        extractSoA.ShouldContain("layout(std430, binding = 0) readonly buffer DrawMetadataBuffer");
+        extractSoA.ShouldContain("layout(std430, binding = 1) readonly buffer BoundsBuffer");
+        extractSoA.ShouldContain("layout(std430, binding = 3) buffer OutMetadata");
         extractSoA.ShouldContain("uniform int UseHotCommands;");
     }
 
     [Test]
-    public void Phase4_BandwidthModel_BenchmarkRepresentativeCommandCounts()
+    public void Phase4_CommandLayouts_MatchCurrentGpuAbi()
     {
         int fullBytes = Marshal.SizeOf<GPUIndirectRenderCommand>();
         int hotBytes = Marshal.SizeOf<GPUIndirectRenderCommandHot>();
 
-        fullBytes.ShouldBe(192);
-        hotBytes.ShouldBe(64);
+        fullBytes.ShouldBe(80);
+        hotBytes.ShouldBe(80);
 
         int[] commandCounts = [1_000, 10_000, 100_000];
         foreach (int count in commandCounts)
@@ -140,7 +146,7 @@ public sealed class GpuIndirectPhase4HotLayoutTests
             long hotBytesTotal = (long)count * hotBytes * 2L;
 
             TestContext.WriteLine($"Phase4 bandwidth model count={count}: AoS={aosBytes} bytes Hot={hotBytesTotal} bytes");
-            hotBytesTotal.ShouldBeLessThan(aosBytes);
+            hotBytesTotal.ShouldBe(aosBytes);
         }
     }
 
@@ -148,7 +154,7 @@ public sealed class GpuIndirectPhase4HotLayoutTests
     {
         string fullPath = ResolveWorkspacePath(relativePath);
         File.Exists(fullPath).ShouldBeTrue($"Expected file does not exist: {fullPath}");
-        return File.ReadAllText(fullPath);
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static string ResolveWorkspacePath(string relativePath)

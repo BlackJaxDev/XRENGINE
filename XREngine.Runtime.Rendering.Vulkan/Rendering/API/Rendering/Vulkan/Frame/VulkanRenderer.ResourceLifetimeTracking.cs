@@ -432,6 +432,12 @@ public unsafe partial class VulkanRenderer
                 throw new InvalidOperationException(
                     $"Command buffer 0x{handle:X} cannot be reset while pending retirement.");
             }
+            if (commandRecord.Pins.HasRecordedReferences)
+            {
+                throw new InvalidOperationException(
+                    $"Command buffer 0x{handle:X} cannot be reset while referenced by {commandRecord.Pins.RecordedReferenceCount} recorded command buffer(s).");
+            }
+
             if (!UpdateVulkanResourceCompletionState_NoLock(commandRecord))
             {
                 throw new InvalidOperationException(
@@ -508,6 +514,12 @@ public unsafe partial class VulkanRenderer
                 reason = "command buffer is pending retirement";
                 return false;
             }
+            if (commandRecord.Pins.HasRecordedReferences)
+            {
+                reason = $"command buffer is referenced by {commandRecord.Pins.RecordedReferenceCount} recorded command buffer(s)";
+                return false;
+            }
+
 
             if ((commandRecord.State & EVulkanResourceLifetimeState.Destroyed) != 0)
             {
@@ -898,10 +910,23 @@ public unsafe partial class VulkanRenderer
         for (int i = 0; i < allocateInfo.CommandBufferCount; i++)
         {
             CommandBuffer commandBuffer = commandBuffers[i];
+            ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
             RegisterVulkanResource(
                 ObjectType.CommandBuffer,
-                unchecked((ulong)commandBuffer.Handle),
+                commandBufferHandle,
                 owner);
+
+            lock (_vulkanResourceLifetimeLock)
+            {
+                if (!_vulkanCommandBufferLifetimes.TryGetValue(
+                        commandBufferHandle,
+                        out VulkanCommandBufferLifetimeRecord? lifetime))
+                {
+                    lifetime = new VulkanCommandBufferLifetimeRecord();
+                    _vulkanCommandBufferLifetimes[commandBufferHandle] = lifetime;
+                }
+                lifetime.Level = allocateInfo.Level;
+            }
         }
 
         return result;
@@ -1663,12 +1688,28 @@ public unsafe partial class VulkanRenderer
         return true;
     }
 
+    private bool IsSecondaryVulkanCommandBuffer(CommandBuffer commandBuffer)
+    {
+        if (commandBuffer.Handle == 0)
+            return false;
+
+        ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+        lock (_vulkanResourceLifetimeLock)
+        {
+            return _vulkanCommandBufferLifetimes.TryGetValue(
+                    commandBufferHandle,
+                    out VulkanCommandBufferLifetimeRecord? lifetime) &&
+                lifetime.Level == CommandBufferLevel.Secondary;
+        }
+    }
+
     private void TrackVulkanDescriptorSetBinding(CommandBuffer commandBuffer, DescriptorSet descriptorSet)
     {
         if (commandBuffer.Handle == 0 || descriptorSet.Handle == 0)
             return;
 
         ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+        bool isSecondaryCommandBuffer = IsSecondaryVulkanCommandBuffer(commandBuffer);
         VulkanPublishedDescriptorSetSnapshot? snapshotToValidate = null;
         bool expandedSnapshot = false;
         bool usedTrackingBatch = false;
@@ -1709,7 +1750,12 @@ public unsafe partial class VulkanRenderer
                 expandedSnapshot ? 0 : 1,
                 expandedSnapshot ? 1 : 0);
             if (snapshotToValidate is not null)
-                ValidateVulkanDescriptorImageLayouts(commandBuffer, descriptorSet, snapshotToValidate);
+            {
+                if (isSecondaryCommandBuffer)
+                    RecordSecondaryDescriptorImageLayoutRequirements(commandBuffer, descriptorSet, snapshotToValidate);
+                else
+                    ValidateVulkanDescriptorImageLayouts(commandBuffer, descriptorSet, snapshotToValidate);
+            }
             return;
         }
 
@@ -1721,8 +1767,264 @@ public unsafe partial class VulkanRenderer
                 "DescriptorSet.Bind");
 
             if (_vulkanDescriptorSetLifetimes.TryGetValue(descriptorSet.Handle, out VulkanDescriptorSetLifetimeRecord? setState))
-                ValidateVulkanDescriptorImageLayouts(commandBuffer, descriptorSet, setState);
+            {
+                if (isSecondaryCommandBuffer)
+                    RecordSecondaryDescriptorImageLayoutRequirements(commandBuffer, descriptorSet, setState);
+                else
+                    ValidateVulkanDescriptorImageLayouts(commandBuffer, descriptorSet, setState);
+            }
         }
+    }
+
+    private void RecordSecondaryDescriptorImageLayoutRequirements(
+        CommandBuffer commandBuffer,
+        DescriptorSet descriptorSet,
+        VulkanPublishedDescriptorSetSnapshot snapshot)
+    {
+        FlushPendingSecondaryImageAccesses(commandBuffer);
+        bool recordedAny = false;
+        for (int i = 0; i < snapshot.ImageReferences.Length; i++)
+        {
+            VulkanPublishedDescriptorImageReference published = snapshot.ImageReferences[i];
+            if (snapshot.HasReflection && Array.IndexOf(snapshot.ReflectedImageBindings, published.Binding) < 0)
+                continue;
+
+            recordedAny |= RecordSecondaryDescriptorImageLayoutRequirement(
+                commandBuffer,
+                descriptorSet,
+                published.Binding,
+                published.Element,
+                published.Reference);
+        }
+
+        if (recordedAny)
+            AdvanceCommandBufferImageLayoutVersion(
+                commandBuffer,
+                descriptorSet.Handle,
+                snapshot.Generation);
+    }
+
+    private void RecordSecondaryDescriptorImageLayoutRequirements(
+        CommandBuffer commandBuffer,
+        DescriptorSet descriptorSet,
+        VulkanDescriptorSetLifetimeRecord setState)
+    {
+        FlushPendingSecondaryImageAccesses(commandBuffer);
+        bool recordedAny = false;
+        foreach (((uint binding, uint element), VulkanDescriptorImageReference reference) in setState.ImageReferences)
+        {
+            if (setState.HasReflection && !setState.ReflectedImageBindings.Contains(binding))
+                continue;
+
+            recordedAny |= RecordSecondaryDescriptorImageLayoutRequirement(
+                commandBuffer,
+                descriptorSet,
+                binding,
+                element,
+                reference);
+        }
+
+        if (recordedAny)
+            AdvanceCommandBufferImageLayoutVersion(
+                commandBuffer,
+                descriptorSet.Handle,
+                setState.Generation);
+    }
+
+    private void FlushPendingSecondaryImageAccesses(CommandBuffer commandBuffer)
+    {
+        ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+        if (commandBufferHandle == 0 ||
+            !_commandBufferTrackingBatches.TryGetValue(
+                commandBufferHandle,
+                out VulkanCommandBufferTrackingBatch? batch))
+        {
+            return;
+        }
+
+        lock (batch)
+        {
+            if (_commandBufferTrackingBatches.TryGetValue(
+                    commandBufferHandle,
+                    out VulkanCommandBufferTrackingBatch? currentBatch) &&
+                ReferenceEquals(batch, currentBatch) &&
+                batch.PublishedImageDeltaCount < batch.ImageAccessDeltas.Count)
+            {
+                FlushCommandBufferImageAccessBatch(commandBuffer, batch);
+            }
+        }
+    }
+
+    private void AdvanceCommandBufferImageLayoutVersion(
+        CommandBuffer commandBuffer,
+        ulong descriptorSetHandle,
+        ulong descriptorGeneration)
+    {
+        ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+        if (commandBufferHandle == 0 ||
+            !_commandBufferTrackingBatches.TryGetValue(
+                commandBufferHandle,
+                out VulkanCommandBufferTrackingBatch? batch))
+        {
+            return;
+        }
+
+        lock (batch)
+        {
+            if (_commandBufferTrackingBatches.TryGetValue(
+                    commandBufferHandle,
+                    out VulkanCommandBufferTrackingBatch? currentBatch) &&
+                ReferenceEquals(batch, currentBatch))
+            {
+                batch.LayoutVersion++;
+                batch.ValidatedDescriptorGenerations[descriptorSetHandle] = (
+                    descriptorGeneration,
+                    batch.LayoutVersion);
+            }
+        }
+    }
+
+    private bool RecordSecondaryDescriptorImageLayoutRequirement(
+        CommandBuffer commandBuffer,
+        DescriptorSet descriptorSet,
+        uint binding,
+        uint element,
+        VulkanDescriptorImageReference reference)
+    {
+        if (reference.View.Handle == 0 ||
+            reference.Type is not (
+                DescriptorType.CombinedImageSampler or
+                DescriptorType.SampledImage or
+                DescriptorType.InputAttachment or
+                DescriptorType.StorageImage) ||
+            !TryGetDescriptorHeapImageViewCreateInfo(reference.View, out ImageViewCreateInfo viewInfo) ||
+            viewInfo.Image.Handle == 0)
+        {
+            return false;
+        }
+
+        ImageLayout requiredLayout = reference.Type == DescriptorType.StorageImage
+            ? ImageLayout.General
+            : reference.Layout;
+        if (requiredLayout == ImageLayout.Undefined)
+            return false;
+
+        ImageSubresourceRange range = viewInfo.SubresourceRange;
+        range.AspectMask = NormalizeBarrierAspectMask(viewInfo.Format, range.AspectMask);
+        range.LevelCount = Math.Max(range.LevelCount, 1u);
+        range.LayerCount = Math.Max(range.LayerCount, 1u);
+        ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+        ulong resourceGeneration = GetCurrentVulkanResourceGeneration(
+            ObjectType.Image,
+            viewInfo.Image.Handle);
+        bool compatible = true;
+        lock (_vulkanImageLayoutLock)
+        {
+            if (!_recordedImageLayoutsByCommandBuffer.TryGetValue(
+                    commandBufferHandle,
+                    out VulkanRecordedImageLayoutState? recorded))
+            {
+                recorded = new VulkanRecordedImageLayoutState
+                {
+                    RecordingGeneration = ResolveCommandBufferRecordingGeneration(commandBuffer),
+                };
+                _recordedImageLayoutsByCommandBuffer[commandBufferHandle] = recorded;
+            }
+
+            for (uint mipOffset = 0; mipOffset < range.LevelCount; mipOffset++)
+            {
+                uint mip = range.BaseMipLevel + mipOffset;
+                for (uint layerOffset = 0; layerOffset < range.LayerCount; layerOffset++)
+                {
+                    uint layer = range.BaseArrayLayer + layerOffset;
+                    compatible &= RecordSecondaryDescriptorImageAspectRequirement(
+                        recorded,
+                        viewInfo.Image.Handle,
+                        mip,
+                        layer,
+                        range.AspectMask,
+                        ImageAspectFlags.ColorBit,
+                        requiredLayout,
+                        resourceGeneration);
+                    compatible &= RecordSecondaryDescriptorImageAspectRequirement(
+                        recorded,
+                        viewInfo.Image.Handle,
+                        mip,
+                        layer,
+                        range.AspectMask,
+                        ImageAspectFlags.DepthBit,
+                        requiredLayout,
+                        resourceGeneration);
+                    compatible &= RecordSecondaryDescriptorImageAspectRequirement(
+                        recorded,
+                        viewInfo.Image.Handle,
+                        mip,
+                        layer,
+                        range.AspectMask,
+                        ImageAspectFlags.StencilBit,
+                        requiredLayout,
+                        resourceGeneration);
+                }
+            }
+
+            recorded.RefreshTouchedSubresources();
+        }
+
+        if (compatible)
+            return true;
+
+        _liveImageViewHandles.TryGetValue(reference.View.Handle, out string? imageViewOwner);
+        string message =
+            $"Vulkan secondary descriptor image layout requirement conflicts with an earlier command: " +
+            $"commandBuffer=0x{commandBuffer.Handle:X} set=0x{descriptorSet.Handle:X} " +
+            $"binding={binding}[{element}] view=0x{reference.View.Handle:X} image=0x{viewInfo.Image.Handle:X} " +
+            $"owner={imageViewOwner ?? "<unknown>"} required={requiredLayout} type={reference.Type}.";
+        Debug.VulkanWarning("[Vulkan.Layout] {0}", message);
+        if (RuntimeEngine.Rendering.State.VulkanValidationLayersEnabled)
+            throw new InvalidOperationException(message);
+        if (System.Diagnostics.Debugger.IsAttached)
+            System.Diagnostics.Debug.Fail(message);
+        return true;
+    }
+
+    private static bool RecordSecondaryDescriptorImageAspectRequirement(
+        VulkanRecordedImageLayoutState recorded,
+        ulong imageHandle,
+        uint mip,
+        uint layer,
+        ImageAspectFlags rangeAspect,
+        ImageAspectFlags trackedAspect,
+        ImageLayout requiredLayout,
+        ulong resourceGeneration)
+    {
+        if ((rangeAspect & trackedAspect) == 0)
+            return true;
+
+        VulkanTrackedImageSubresource key = new(imageHandle, mip, layer, trackedAspect);
+        VulkanImageAccessState? prior = null;
+        if (recorded.Subresources.TryGetValue(key, out VulkanImageAccessState recordedState))
+            prior = recordedState;
+        else if (recorded.EntrySubresources.TryGetValue(key, out VulkanImageAccessState entryState))
+            prior = entryState;
+
+        bool compatible = !prior.HasValue ||
+            (prior.Value.Layout == requiredLayout &&
+             (prior.Value.ResourceGeneration == 0 ||
+              resourceGeneration == 0 ||
+              prior.Value.ResourceGeneration == resourceGeneration));
+
+        uint queueFamilyIndex = prior?.QueueFamilyIndex ?? Vk.QueueFamilyIgnored;
+        VulkanImageAccessState requiredState = ResolveVulkanImageAccessState(
+            requiredLayout,
+            trackedAspect,
+            queueFamilyIndex,
+            resourceGeneration: resourceGeneration);
+        if (!recorded.SecondaryDescriptorRequirements.ContainsKey(key))
+            recorded.SecondaryDescriptorRequirements[key] = requiredState;
+        if (!recorded.EntrySubresources.ContainsKey(key))
+            recorded.EntrySubresources[key] = requiredState;
+        recorded.Subresources[key] = requiredState;
+        return compatible;
     }
 
     [Conditional("DEBUG")]
@@ -1947,7 +2249,7 @@ public unsafe partial class VulkanRenderer
                         return false;
                     }
 
-                    if ((resource.State & (EVulkanResourceLifetimeState.PendingRetirement | EVulkanResourceLifetimeState.Destroyed)) != 0)
+                    if ((resource.State & EVulkanResourceLifetimeState.Destroyed) != 0)
                     {
                         failureReason = DescribeVulkanLifetimeRejection(
                             key,
@@ -1958,7 +2260,7 @@ public unsafe partial class VulkanRenderer
                             commandBufferHandle,
                             resource.RetirementTicket,
                             resource.State,
-                            "recorded dependency is pending retirement or destroyed");
+                            "recorded dependency was destroyed before submission");
                         return false;
                     }
                 }
@@ -2185,9 +2487,9 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        if ((resource.State & (EVulkanResourceLifetimeState.PendingRetirement | EVulkanResourceLifetimeState.Destroyed)) != 0)
+        if ((resource.State & EVulkanResourceLifetimeState.Destroyed) != 0)
         {
-            failureReason = $"descriptor submission dependency {key} is pending retirement or destroyed";
+            failureReason = $"descriptor submission dependency {key} was destroyed before submission";
             return false;
         }
 
@@ -2198,9 +2500,20 @@ public unsafe partial class VulkanRenderer
                 failureReason = $"descriptor submission dependency {key} changed generation while the submission was prepared";
                 return false;
             }
+
+            // A retirement request invalidates future recordings, but the exact
+            // generation already pinned by this recorded command buffer remains alive
+            // until that recording is released. It is therefore valid to submit once
+            // against that retained generation while its replacement is published.
         }
         else
         {
+            if ((resource.State & EVulkanResourceLifetimeState.PendingRetirement) != 0)
+            {
+                failureReason = $"descriptor submission dependency {key} began retirement before this command buffer captured it";
+                return false;
+            }
+
             touched.Add(new KeyValuePair<VulkanResourceLifetimeKey, ulong>(key, resource.Generation));
             touchedGenerations.Add(key, resource.Generation);
         }

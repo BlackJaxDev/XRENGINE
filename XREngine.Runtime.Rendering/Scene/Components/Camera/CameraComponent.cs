@@ -615,13 +615,11 @@ namespace XREngine.Components
 
         private void CameraPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
-            switch (e.PropertyName)
-            {
-                //The user is not allowed to update the camera's transform provider
-                case nameof(Camera.Transform):
-                    Camera.Transform = Transform;
-                    break;
-            }
+            if (e.PropertyName != nameof(Camera.Transform) || SceneNode is null)
+                return;
+
+            // An attached component owns the camera transform provider.
+            Camera.Transform = Transform;
         }
 
         /// <summary>

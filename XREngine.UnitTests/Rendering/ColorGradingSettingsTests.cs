@@ -134,7 +134,7 @@ public class ColorGradingSettingsTests
         {
             string candidate = Path.Combine(current, relativePath);
             if (File.Exists(candidate))
-                return File.ReadAllText(candidate);
+                return File.ReadAllText(candidate).Replace("\r\n", "\n", StringComparison.Ordinal);
 
             DirectoryInfo? parent = Directory.GetParent(current);
             if (parent is null)

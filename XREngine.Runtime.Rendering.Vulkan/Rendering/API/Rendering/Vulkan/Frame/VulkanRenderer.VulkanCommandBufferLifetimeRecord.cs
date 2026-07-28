@@ -1,3 +1,5 @@
+using Silk.NET.Vulkan;
+
 namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
@@ -9,6 +11,7 @@ public unsafe partial class VulkanRenderer
         public ulong RecordingGeneration;
         public int QueuedSubmissionCount;
         public VulkanFrameDataGenerationLease FrameDataLease;
+        public CommandBufferLevel Level;
 
         public void RefreshTouchedDependencies()
         {

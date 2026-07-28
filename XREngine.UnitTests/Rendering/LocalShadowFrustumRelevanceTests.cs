@@ -102,7 +102,7 @@ public sealed class LocalShadowFrustumRelevanceTests
         {
             string candidate = Path.Combine(dir, relativePath);
             if (File.Exists(candidate))
-                return File.ReadAllText(candidate);
+                return File.ReadAllText(candidate).Replace("\r\n", "\n", StringComparison.Ordinal);
 
             dir = Path.GetDirectoryName(dir) ?? dir;
         }

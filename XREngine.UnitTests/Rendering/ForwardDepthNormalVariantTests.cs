@@ -189,7 +189,7 @@ public sealed class ForwardDepthNormalVariantTests : GpuTestBase
         variant.ShouldNotBeNull();
         string variantText = variant.Source.Text ?? throw new InvalidOperationException("Variant shader source text was null.");
         variantText.ShouldContain("#define XRENGINE_SHADOW_CASTER_PASS");
-        variantText.ShouldContain("layout (location = 0) out float Depth;");
+        variantText.ShouldContain("layout (location = 0) out vec4 Depth;");
     }
 
     [Test]
@@ -504,11 +504,7 @@ public sealed class ForwardDepthNormalVariantTests : GpuTestBase
     }
 
     private static string LoadRepoSource(string relativePath)
-    {
-        string path = Path.Combine(ResolveRepoRoot(), relativePath.Replace('/', Path.DirectorySeparatorChar));
-        File.Exists(path).ShouldBeTrue($"Expected repository file '{path}' to exist.");
-        return File.ReadAllText(path);
-    }
+        => global::XREngine.UnitTests.SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ResolveRepoRoot()
     {

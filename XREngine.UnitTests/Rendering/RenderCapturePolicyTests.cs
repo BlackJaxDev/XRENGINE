@@ -111,7 +111,7 @@ public sealed class RenderCapturePolicyTests
         {
             string candidate = Path.Combine(directory, relativePath);
             if (File.Exists(candidate))
-                return File.ReadAllText(candidate);
+                return File.ReadAllText(candidate).Replace("\r\n", "\n", StringComparison.Ordinal);
 
             directory = Directory.GetParent(directory)?.FullName;
         }

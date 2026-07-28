@@ -50,7 +50,7 @@ public class GpuIndirectRenderDispatchTests
         var fullPath = Path.Combine(ShaderBasePath, relativePath);
         if (!File.Exists(fullPath))
             throw new FileNotFoundException($"Shader file not found: {fullPath}");
-        return File.ReadAllText(fullPath);
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static bool IsTrue(string? v)

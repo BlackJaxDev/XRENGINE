@@ -141,7 +141,7 @@ public sealed class OpenXrStereoTemporalIsolationCompletionTests
         {
             string fullPath = Path.Combine(dir.FullName, platformPath);
             if (File.Exists(fullPath))
-                return File.ReadAllText(fullPath).Replace("\r\n", "\n");
+                return File.ReadAllText(fullPath).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
 
             dir = dir.Parent;
         }

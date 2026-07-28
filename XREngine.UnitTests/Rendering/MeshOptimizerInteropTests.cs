@@ -801,8 +801,8 @@ public sealed class MeshOptimizerInteropTests
     [Test]
     public void DefaultPipelines_WireMeshletDebugDisplayCommand()
     {
-        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
-        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.CommandChain.cs").Replace("\r\n", "\n");
+        string pipelineSource = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        string pipeline2Source = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.CommandChain.cs").Replace("\r\n", "\n");
 
         pipelineSource.ShouldContain("c.Add<VPRC_RenderMeshletDebugDisplay>();");
         pipeline2Source.ShouldContain("c.Add<VPRC_RenderMeshletDebugDisplay>();");
@@ -905,7 +905,7 @@ public sealed class MeshOptimizerInteropTests
     {
         string fullPath = ResolveWorkspacePath(relativePath);
         File.Exists(fullPath).ShouldBeTrue($"Expected file does not exist: {fullPath}");
-        return File.ReadAllText(fullPath);
+        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     private static MeshletGenerationSettings CreateEnabledDenseSettings()

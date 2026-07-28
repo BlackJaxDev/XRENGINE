@@ -89,6 +89,6 @@ public sealed class PoiyomiEffectsContractTests
             root = Directory.GetParent(root)?.FullName
                 ?? throw new DirectoryNotFoundException("Could not locate repository root.");
 
-        return File.ReadAllText(Path.Combine(root, "Build", "CommonAssets", "Shaders", "Uber", fileName));
+        return File.ReadAllText(Path.Combine(root, "Build", "CommonAssets", "Shaders", "Uber", fileName)).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 }
