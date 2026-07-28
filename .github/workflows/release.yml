@@ -175,13 +175,13 @@ jobs:
 
     steps:
       - name: Download DocFX site
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: xrengine-docs-${{ github.sha }}
           path: artifacts/docs
 
       - name: Download packaged applications
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-binaries-${{ github.ref_name }}
           path: artifacts/applications
