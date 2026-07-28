@@ -32,7 +32,7 @@ jobs:
 
     steps:
       - name: Checkout repository and submodules
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           lfs: true
           submodules: recursive
@@ -95,7 +95,7 @@ jobs:
 
     steps:
       - name: Checkout repository and submodules
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           lfs: true
           submodules: recursive
@@ -174,7 +174,7 @@ jobs:
 
     steps:
       - name: Checkout validated deploy commit
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
