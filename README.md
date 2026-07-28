@@ -20,14 +20,11 @@ Scroll down a bit to see technical details and how to bootstrap your own build. 
 
 ## THE WHO
 
-Hi, I'm BlackJax. I also use BlackJaxVR, BlackJaxDev, Jax, and BlackJax96
-online. I maintain XRENGINE and represent the company behind it. The project
-overview below is written from my first-person perspective. Maybe you'll find
-some ✨spelling, punctuation, or grammatical errors✨! I'll try not to rant. I
-lived through the 2020 COVID pandemic as a newly-single 20-something year-old
-with a studio apartment and a comfy job that let me work from home, and I've
-been a VR streamer ever since, so I think I have a solid understanding of what
-people are looking for in a more adult-oriented social VR experience.
+Hi, I'm BlackJax. I also go by BlackJaxVR, BlackJaxDev, Jax, and BlackJax96 across the internet. 
+I figure you'd prefer to read something actually written by a human, so most of this readme is written by me from first-person.
+Maybe you'll find some ✨spelling, punctuation, or grammatical errors✨!
+
+I lived through the 2020 COVID pandemic as a newly-single 20-something year-old with a studio apartment and a comfy job that paid well and let me work from home. This was the lightning in a bottle that enabled me to play social VR with friends constantly, and I've been a VR streamer ever since; so I think I have a solid understanding of what people are looking for in a more adult-oriented social VR experience.
 
 ## THE WHY
 

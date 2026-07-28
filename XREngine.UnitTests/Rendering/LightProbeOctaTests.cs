@@ -2,7 +2,6 @@ using NUnit.Framework;
 using Shouldly;
 using Silk.NET.Maths;
 using Silk.NET.OpenGL;
-using Silk.NET.Windowing;
 using System;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -27,21 +26,15 @@ public class LightProbeOctaTests : GpuTestBase
     [Test]
     public unsafe void CubemapToOctahedron_ProducesNonBlackOutput()
     {
-        var options = WindowOptions.Default;
-        options.Size = new Vector2D<int>(Width, Height);
-        options.IsVisible = ShowWindow;
-        options.API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ContextFlags.ForwardCompatible, new APIVersion(4, 6));
-
-        using var window = Window.Create(options);
+        var (gl, window) = CreateGLContext(visible: true, width: Width, height: Height);
+        if (gl is null || window is null)
+        {
+            Assert.Inconclusive("Could not create OpenGL context (headless CI or no compatible GPU).");
+            return;
+        }
 
         try
         {
-            window.Initialize();
-            window.MakeCurrent();
-            window.DoEvents();
-
-            var gl = GL.GetApi(window);
-
             // Create a simple cubemap with non-black color
             uint cubemap = CreateTestCubemap(gl);
 
@@ -100,8 +93,7 @@ public class LightProbeOctaTests : GpuTestBase
         }
         finally
         {
-            window.Close();
-            window.Dispose();
+            DisposeContext(window);
         }
     }
 
@@ -112,21 +104,15 @@ public class LightProbeOctaTests : GpuTestBase
     [Test]
     public unsafe void IrradianceConvolutionOcta_ProducesNonBlackOutput()
     {
-        var options = WindowOptions.Default;
-        options.Size = new Vector2D<int>(32, 32); // Irradiance is usually lower resolution
-        options.IsVisible = ShowWindow;
-        options.API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ContextFlags.ForwardCompatible, new APIVersion(4, 6));
-
-        using var window = Window.Create(options);
+        var (gl, window) = CreateGLContext(visible: true, width: 32, height: 32);
+        if (gl is null || window is null)
+        {
+            Assert.Inconclusive("Could not create OpenGL context (headless CI or no compatible GPU).");
+            return;
+        }
 
         try
         {
-            window.Initialize();
-            window.MakeCurrent();
-            window.DoEvents();
-
-            var gl = GL.GetApi(window);
-
             // Create a simple 2D octa texture with non-black color (simulate environment map)
             uint octaEnvTex = CreateFilledTexture2D(gl, 64, 64, new Vector4(0.5f, 0.3f, 0.7f, 1.0f));
 
@@ -175,8 +161,7 @@ public class LightProbeOctaTests : GpuTestBase
         }
         finally
         {
-            window.Close();
-            window.Dispose();
+            DisposeContext(window);
         }
     }
 
