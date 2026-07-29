@@ -1,12 +1,22 @@
 # DefaultRenderPipeline2 — Phased Implementation Todo
 
+> **Superseded direction (2026-07-28):** Do not execute the remaining
+> make-default or rename-back-to-`DefaultRenderPipeline` tasks in this
+> historical plan. `DefaultRenderPipeline2` was the migration substrate for
+> the ordered
+> [Advanced Render Pipeline Architectural Refactor](rendering/architectural-refactor/00-advanced-render-pipeline-refactor-todo.md)
+> and has been renamed to `AdvancedRenderPipeline`.
+
 > **Resource lifecycle completion (2026-07-10):** V2 is retained as the
 > cleaned-up, better-organized successor pipeline. It now implements the same
 > immutable resource-profile and generation model as V1. Its `Append*` command
 > decomposition and GPU annotations remain V2-owned; only resource allocation
 > moved out of executable commands.
 
-> **Audit note (2026-04-19):** This is now a historical phased plan. The current condensed backlog lives in [default-render-pipeline-follow-up-2026-04-20.md](./default-render-pipeline-follow-up-2026-04-20.md). The corrections below keep this file aligned with the current V1/V2 source layout so it can still be read safely.
+> **Audit note (2026-04-19, superseded 2026-07-28):** This is a historical
+> phased plan. The corrections below keep it aligned with the V1/V2 source
+> layout at the time, but the architectural-refactor series linked above is the
+> only active successor backlog.
 
 > **Audit refresh (2026-05-06):** V1 has continued evolving since this plan was written. Important deltas to keep in mind before continuing any phase below:
 >
@@ -345,12 +355,11 @@ Audit note: V1 now also has `DefaultRenderPipeline.ResourceLogging.cs`. V2 does 
 - [ ] **10.10** Complete V2 OpenGL/Vulkan/VR visual validation across all
   profile variants before promotion.
 
-## Swap-In Checklist (post-validation, separate task)
->
-> Once V2 is fully validated, promote it to the default.
+## Superseded Swap-In Checklist
 
-- [ ] Make `DefaultRenderPipeline2` the default pipeline in the registry
-- [ ] Rename `DefaultRenderPipeline` → `DefaultRenderPipelineLegacy` (or archive it)
-- [ ] Rename `DefaultRenderPipeline2` → `DefaultRenderPipeline`
-- [ ] Remove the `XRE_USE_PIPELINE_V2` swap mechanism
-- [ ] Delete legacy files
+The former V2 promotion and rename-back checklist is intentionally removed.
+Execute the
+[Advanced Render Pipeline Architectural Refactor](rendering/architectural-refactor/00-advanced-render-pipeline-refactor-todo.md)
+instead. It renames V2 to `AdvancedRenderPipeline`, validates the new
+architecture, promotes it only after the ordered gates pass, and retires the
+obsolete selectors and pipelines during final cutover.

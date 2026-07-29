@@ -1,0 +1,160 @@
+#ifndef XR_ADVANCED_TEXTURE_ACCESS_GLSLINC
+#define XR_ADVANCED_TEXTURE_ACCESS_GLSLINC
+
+#include "AdvancedDiagnostics.glslinc"
+
+#define XR_ADV_RESOURCE_FLAG_RESIDENT 1u
+#define XR_ADV_RESOURCE_FLAG_FALLBACK 2u
+#define XR_ADV_RESOURCE_FLAG_STALE_GENERATION 4u
+
+struct XRAdvancedTextureRecord
+{
+    uint stableTextureId;
+    uint generation;
+    uint dimension;
+    uint flags;
+    uint width;
+    uint height;
+    uint depthOrLayers;
+    uint mipCount;
+    uint formatClass;
+    uint encodedReferenceIndex;
+    XRAdvancedGpuHandle defaultSampler;
+    vec4 uvScaleBias;
+};
+
+struct XRAdvancedSamplerRecord
+{
+    uint stableSamplerId;
+    uint generation;
+    uint filter;
+    uint flags;
+    uint addressU;
+    uint addressV;
+    uint addressW;
+    uint compareOperation;
+    vec4 lodBiasMinMaxAnisotropy;
+    vec4 borderColor;
+};
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_TEXTURES) readonly buffer XRAdvancedTextureTable
+{
+    XRAdvancedTextureRecord records[];
+} XR_ADV_Textures;
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_SAMPLERS) readonly buffer XRAdvancedSamplerTable
+{
+    XRAdvancedSamplerRecord records[];
+} XR_ADV_Samplers;
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_ENCODED_TEXTURES) readonly buffer XRAdvancedEncodedTextureTable
+{
+    XRAdvancedEncodedTextureReference records[];
+} XR_ADV_EncodedTextures;
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_ENCODED_SAMPLERS) readonly buffer XRAdvancedEncodedSamplerTable
+{
+    XRAdvancedEncodedSamplerReference records[];
+} XR_ADV_EncodedSamplers;
+
+#if defined(XR_ADV_TEXTURE_MODE_VULKAN_INDEXING) || \
+    defined(XR_ADV_TEXTURE_MODE_VULKAN_HEAP)
+XR_ADV_RESOURCE_LAYOUT(XR_ADV_BINDING_TEXTURE_DESCRIPTORS)
+uniform texture2D XR_ADV_TextureDescriptors[];
+XR_ADV_RESOURCE_LAYOUT(XR_ADV_BINDING_SAMPLER_DESCRIPTORS)
+uniform sampler XR_ADV_SamplerDescriptors[];
+#elif defined(XR_ADV_TEXTURE_MODE_ARRAY)
+XR_ADV_RESOURCE_LAYOUT(XR_ADV_BINDING_TEXTURE_ARRAY)
+uniform sampler2DArray XR_ADV_TextureArray;
+#endif
+
+XRAdvancedTextureRecord XR_ADV_LoadTexture(uint denseIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (denseIndex >= uint(XR_ADV_Textures.records.length()))
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_TEXTURE);
+        denseIndex = 0u;
+    }
+#endif
+    return XR_ADV_Textures.records[denseIndex];
+}
+
+XRAdvancedSamplerRecord XR_ADV_LoadSampler(uint denseIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (denseIndex >= uint(XR_ADV_Samplers.records.length()))
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_TEXTURE);
+        denseIndex = 0u;
+    }
+#endif
+    return XR_ADV_Samplers.records[denseIndex];
+}
+
+XRAdvancedEncodedTextureReference XR_ADV_LoadEncodedTexture(uint encodedIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (encodedIndex >= uint(XR_ADV_EncodedTextures.records.length()))
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_TEXTURE);
+        encodedIndex = 0u;
+    }
+#endif
+    return XR_ADV_EncodedTextures.records[encodedIndex];
+}
+
+XRAdvancedEncodedSamplerReference XR_ADV_LoadEncodedSampler(uint encodedIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (encodedIndex >= uint(XR_ADV_EncodedSamplers.records.length()))
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_TEXTURE);
+        encodedIndex = 0u;
+    }
+#endif
+    return XR_ADV_EncodedSamplers.records[encodedIndex];
+}
+
+vec4 XR_ADV_TextureFallback(uint fallbackKind)
+{
+    if (fallbackKind == 1u || fallbackKind == 5u)
+        return vec4(1.0);
+    if (fallbackKind == 3u)
+        return vec4(0.5, 0.5, 1.0, 1.0);
+    if (fallbackKind == 4u)
+        return vec4(0.0, 0.0, 0.0, 1.0);
+    return vec4(0.0);
+}
+
+vec4 XR_ADV_SampleTexture2D(
+    XRAdvancedEncodedTextureReference textureReference,
+    vec2 uv)
+{
+    if ((textureReference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u)
+        return XR_ADV_TextureFallback(textureReference.payload2);
+
+#if defined(XR_ADV_TEXTURE_MODE_OPENGL_BINDLESS)
+    uint64_t handle =
+        uint64_t(textureReference.payload0) |
+        (uint64_t(textureReference.payload1) << 32);
+    return texture(sampler2D(handle), uv);
+#elif defined(XR_ADV_TEXTURE_MODE_VULKAN_INDEXING) || \
+      defined(XR_ADV_TEXTURE_MODE_VULKAN_HEAP)
+    uint textureIndex = nonuniformEXT(textureReference.payload0);
+    uint samplerIndex = nonuniformEXT(textureReference.payload1);
+    return texture(
+        sampler2D(
+            XR_ADV_TextureDescriptors[textureIndex],
+            XR_ADV_SamplerDescriptors[samplerIndex]),
+        uv);
+#elif defined(XR_ADV_TEXTURE_MODE_ARRAY)
+    return texture(
+        XR_ADV_TextureArray,
+        vec3(uv, float(textureReference.payload1)));
+#else
+    return XR_ADV_TextureFallback(textureReference.payload2);
+#endif
+}
+
+#endif

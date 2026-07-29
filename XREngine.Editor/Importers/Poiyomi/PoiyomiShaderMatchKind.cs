@@ -10,5 +10,6 @@ public enum PoiyomiShaderMatchKind
     ExactUnlockedSource,
     ExactLockedSource,
     LockedPropertySignature,
+    PoiyomiProDowngradeSource,
     UnsupportedVersion,
 }

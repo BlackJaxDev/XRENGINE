@@ -32,32 +32,17 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string ForwardFBOName { get; set; } = DefaultRenderPipeline.ForwardPassFBOName;
 
         protected override bool ShouldExecuteThisFrame()
-            => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline switch
-            {
-                DefaultRenderPipeline pipeline => pipeline.UsesLightVolumes,
-                DefaultRenderPipeline2 pipeline => pipeline.UsesLightVolumes,
-                _ => false,
-            };
+            => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is
+                IGlobalIlluminationPipelineProvider { UsesLightVolumes: true };
 
         protected override void Execute()
         {
-            bool usesLightVolumes;
-            bool stereo;
-            switch (ActivePipelineInstance.Pipeline)
-            {
-                case DefaultRenderPipeline pipeline:
-                    usesLightVolumes = pipeline.UsesLightVolumes;
-                    stereo = pipeline.Stereo;
-                    break;
-                case DefaultRenderPipeline2 pipeline:
-                    usesLightVolumes = pipeline.UsesLightVolumes;
-                    stereo = pipeline.Stereo;
-                    break;
-                default:
-                    usesLightVolumes = false;
-                    stereo = false;
-                    break;
-            }
+            bool usesLightVolumes =
+                ActivePipelineInstance.Pipeline is
+                    IGlobalIlluminationPipelineProvider { UsesLightVolumes: true };
+            bool stereo =
+                ActivePipelineInstance.Pipeline is
+                    ISceneRenderPipelineFeatureProvider { Stereo: true };
             if (!usesLightVolumes)
                 return;
 

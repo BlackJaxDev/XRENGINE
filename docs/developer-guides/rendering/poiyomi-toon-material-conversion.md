@@ -19,6 +19,38 @@ There is no best-effort mode for recognized 9.3.64 materials. The conversion
 report is the authority for the outcome of each enabled feature. Unsupported or
 unavailable integrations are visible and never sampled from fabricated data.
 
+## Lossy Poiyomi Pro Downgrade
+
+Poiyomi Pro-authored material ingestion is an explicitly lossy migration path,
+separate from the pinned Toon parity contract above. It does not make Poiyomi
+Pro a supported shader family and it does not claim visual or behavioral
+parity.
+
+The matcher recognizes unlocked Pro shader evidence, optimizer-locked Pro
+signatures, source version markers, and locked Grab Pass variants. A recognized
+Pro material is normalized to properties shared with the Toon converter and
+receives conversion outcome `Downgraded` plus diagnostic `POIPRO0001`.
+Common portable state is retained, including base color/texture, normal data,
+emission, alpha/render state, culling, texture transforms, and other fields
+already understood by the Toon descriptor.
+
+These Pro-only property groups are removed from runtime conversion:
+
+- Grab Pass;
+- refraction;
+- blur;
+- touch effects;
+- Pro-only integrations;
+- Pro-only vertex effects;
+- Pro authoring and locking metadata.
+
+Each active discarded group emits `POIPRO0002` with its group and source
+property. Dormant serialized values remain available through the preserved raw
+Unity material document and import diagnostics, but they do not enable shader
+features, samplers, or descriptors. The repository contains only synthetic
+locked-style tests; no Poiyomi Pro package asset or parity corpus is
+redistributed.
+
 ## Runtime Parity
 
 | Feature set | XRENGINE outcome | Important semantic difference |
@@ -92,6 +124,8 @@ over-limit material receives a deterministic failure reason before rendering.
 | `POI0013` | Requested UV channel is absent. | Import a mesh containing that UV channel or change the material selector. |
 | `POI0014` | Enum value is outside the pinned schema. | Correct the source value or add a reviewed version-specific mapping. |
 | `POI0015` | Pass prewarm failed. | Inspect shader diagnostics; the last-known-good variant remains active. |
+| `POIPRO0001` | A Pro-authored material was accepted through the lossy Toon downgrade. | Review the downgrade report; use an authored Toon material when exact conversion is required. |
+| `POIPRO0002` | An active Pro-only feature group was discarded. | Replace the feature with an engine-native equivalent or accept the documented visual difference. |
 
 ## Authoring And Security
 

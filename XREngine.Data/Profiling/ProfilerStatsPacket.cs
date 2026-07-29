@@ -587,6 +587,12 @@ public sealed partial class RenderProfilerRendererStateData
     public bool ValidationLayersEnabled { get; set; }
     public bool DebugOutputEnabled { get; set; }
     public bool GpuTimestampsDenseMode { get; set; }
+    public string AdvancedPipelineMode { get; set; } = string.Empty;
+    public string AdvancedPipelineEffectiveKind { get; set; } = string.Empty;
+    public string AdvancedPipelineCapabilities { get; set; } = string.Empty;
+    public string AdvancedPipelineRejectionReason { get; set; } = string.Empty;
+    public bool AdvancedPipelineSupported { get; set; }
+    public bool AdvancedPipelineCapabilityEvaluated { get; set; }
 }
 
 [MemoryPackable]

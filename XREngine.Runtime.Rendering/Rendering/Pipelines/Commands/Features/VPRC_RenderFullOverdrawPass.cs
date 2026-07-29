@@ -60,12 +60,9 @@ public sealed class VPRC_RenderFullOverdrawPass : ViewportRenderCommand
 
     protected override void Execute()
     {
-        XRMaterial? material = ParentPipeline switch
-        {
-            DefaultRenderPipeline pipeline => pipeline.GetFullOverdrawCountMaterial(),
-            DefaultRenderPipeline2 pipeline => pipeline.GetFullOverdrawCountMaterial(),
-            _ => null,
-        };
+        XRMaterial? material =
+            (ParentPipeline as IRenderPipelinePassMaterialProvider)?.
+                GetFullOverdrawCountMaterial();
 
         if (material is null || RenderPasses.Length == 0)
             return;

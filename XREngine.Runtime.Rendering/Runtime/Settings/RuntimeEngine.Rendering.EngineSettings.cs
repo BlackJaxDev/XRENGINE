@@ -547,6 +547,7 @@ public static partial class RuntimeEngine
                 private EVrFoveationMode _vrFoveationMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationMode;
                 private EVrFoveationQualityPreset _vrFoveationQualityPreset = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationQualityPreset;
                 private bool _vrFoveationRequireRequested = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationRequireRequested;
+                private EAdvancedRenderPipelineMode _advancedRenderPipelineMode = EAdvancedRenderPipelineMode.Disabled;
                 private ERvcPipelineMode _rvcPipelineMode = ERvcPipelineMode.Off;
                 private bool _rvcQuadViewEnabled = false;
                 private bool _rvcStereoReuseEnabled = false;
@@ -2443,6 +2444,19 @@ public static partial class RuntimeEngine
                 {
                     get => _vrFoveationFullResNearDistanceMeters;
                     set => SetField(ref _vrFoveationFullResNearDistanceMeters, Math.Clamp(value, 0.0f, 10.0f));
+                }
+
+                /// <summary>
+                /// Controls disabled, capability-gated, required, and diagnostic selection
+                /// of the advanced render pipeline.
+                /// </summary>
+                [Category("Rendering")]
+                [DisplayName("Advanced Render Pipeline")]
+                [Description("Controls advanced pipeline selection. Available falls back visibly, Required rejects unsupported configurations, and Diagnostic evaluates capabilities while retaining the legacy default pipeline.")]
+                public EAdvancedRenderPipelineMode AdvancedRenderPipelineMode
+                {
+                    get => _advancedRenderPipelineMode;
+                    set => SetField(ref _advancedRenderPipelineMode, value);
                 }
 
                 /// <summary>

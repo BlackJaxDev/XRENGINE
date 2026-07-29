@@ -77,6 +77,7 @@ public static class RenderFrameViewSetCapture
             historyKey,
             0,
             new Vector4(camera.Transform.RenderTranslation, camera.NearZ),
-            new Vector4(camera.Transform.RenderForward, camera.FarZ));
+            new Vector4(camera.Transform.RenderForward, camera.FarZ),
+            ReversedDepth: camera.IsReversedDepth);
     }
 }

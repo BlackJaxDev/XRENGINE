@@ -1,0 +1,17 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!21 &2100000
+Material:
+  serializedVersion: 8
+  m_Name: Synthetic FBX Remap
+  m_CustomRenderQueue: -1
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs: []
+    m_Ints: []
+    m_Floats:
+    - _Metallic: 0
+    - _Glossiness: 0.25
+    m_Colors:
+    - _Color: {r: 0.25, g: 0.5, b: 0.75, a: 1}
+

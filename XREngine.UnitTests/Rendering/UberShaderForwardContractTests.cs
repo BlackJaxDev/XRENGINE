@@ -397,6 +397,45 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     }
 
     [Test]
+    public void UberFragmentVariant_ZeroEncodedPoiyomiGlobalMasksCompileOnOpenGl()
+    {
+        XRShader fragment = ShaderHelper.UberFragForward();
+        XRMaterial material = new()
+        {
+            Parameters = ModelImporter.CreateDefaultForwardPlusUberShaderParameters(),
+            RenderOptions = ModelImporter.CreateForwardPlusUberShaderRenderOptions(),
+            RenderPass = (int)EDefaultRenderPass.OpaqueForward,
+        };
+        material.Shaders.Clear();
+        material.Shaders.Add(fragment);
+        material.EnsureUberStateInitialized();
+        material.SetUberFeatureEnabled("poiyomi-masks-themes", true);
+        material.SetUberFeatureEnabled("poiyomi-decals", true);
+
+        foreach (string parameterName in new[]
+        {
+            "_DecalSlotModifiers0",
+            "_DecalSlotModifiers1",
+            "_DecalSlotModifiers2",
+            "_DecalSlotModifiers3",
+        })
+        {
+            material.Parameter<ShaderVector4>(parameterName).ShouldNotBeNull().Value = Vector4.Zero;
+        }
+
+        material.PrepareUberVariantImmediately().ShouldBeTrue(material.UberVariantStatus.FailureReason);
+        string generatedSource = material.GetShader(EShaderType.Fragment)!.GetResolvedSource();
+        generatedSource.ShouldNotContain("return mask[zeroBased % 4];");
+        generatedSource.ShouldContain("int zeroBased = clamp(encodedIndex - 1, 0, 15);");
+
+        RunWithGLContext(gl =>
+        {
+            uint shader = CompileShader(gl, ShaderType.FragmentShader, generatedSource);
+            gl.DeleteShader(shader);
+        });
+    }
+
+    [Test]
     public void ForwardLighting_UsesStorageBuffersForForwardLightArrays()
     {
         string forwardLighting = LoadShaderSource(Path.Combine("Snippets", "ForwardLighting.glsl"));

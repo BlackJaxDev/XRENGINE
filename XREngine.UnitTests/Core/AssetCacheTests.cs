@@ -17,6 +17,41 @@ namespace XREngine.UnitTests.Core;
 public sealed class AssetCacheTests
 {
     [Test]
+    [NonParallelizable]
+    public void ResolveTextureStreamingAuthorityPath_WhenWarmupDisabled_DoesNotWriteCache()
+    {
+        using var sandbox = new AssetCacheSandbox();
+        var manager = new AssetManager
+        {
+            MonitorGameAssetsForChanges = false,
+            GameAssetsPath = sandbox.AssetsPath,
+            GameCachePath = sandbox.CachePath,
+        };
+        string variableName = XREngineEnvironmentVariables.TextureStreamingCacheWarmupEnabled;
+        string? previousValue = Environment.GetEnvironmentVariable(variableName);
+        try
+        {
+            Environment.SetEnvironmentVariable(variableName, "false");
+            string sourcePath = Path.Combine(sandbox.AssetsPath, "bounded-cache.png");
+            File.WriteAllBytes(sourcePath,
+            [
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+            ]);
+
+            string authorityPath = manager.ResolveTextureStreamingAuthorityPath(sourcePath);
+
+            authorityPath.ShouldBe(Path.GetFullPath(sourcePath));
+            Directory.EnumerateFiles(sandbox.CachePath, "*", SearchOption.AllDirectories)
+                .ShouldBeEmpty();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(variableName, previousValue);
+            manager.Dispose();
+        }
+    }
+
+    [Test]
     public void Load3rdPartyAsset_UsesCacheUntilSourceChanges()
     {
         using var sandbox = new AssetCacheSandbox();

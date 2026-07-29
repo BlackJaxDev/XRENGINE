@@ -1,0 +1,57 @@
+#ifndef XR_ADVANCED_MESH_ACCESS_GLSLINC
+#define XR_ADVANCED_MESH_ACCESS_GLSLINC
+
+#include "AdvancedDiagnostics.glslinc"
+
+struct XRAdvancedGeometryRecord
+{
+    XRAdvancedBufferReference currentVertexData;
+    XRAdvancedBufferReference previousVertexData;
+    XRAdvancedBufferReference indexData;
+    XRAdvancedBufferReference meshletData;
+    XRAdvancedGpuHandle fallbackGeometry;
+    uint vertexBase;
+    uint vertexCount;
+    uint indexBase;
+    uint indexCount;
+    uint meshletFirst;
+    uint meshletCount;
+    uvec2 vertexLayoutId;
+    uint reservedLayout0;
+    uint reservedLayout1;
+    vec4 boundsSphere;
+    vec4 boundsMin;
+    vec4 boundsMax;
+    uint materialSectionFirst;
+    uint materialSectionCount;
+    uint primitiveTopology;
+    uint source;
+    uint residency;
+    uint missingBehavior;
+    uint cookedLayoutVersion;
+    uint flags;
+};
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_MESHES) readonly buffer XRAdvancedGeometryTable
+{
+    XRAdvancedGeometryRecord records[];
+} XR_ADV_Geometries;
+
+XRAdvancedGeometryRecord XR_ADV_LoadGeometry(uint denseIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (denseIndex >= uint(XR_ADV_Geometries.records.length()))
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_MESH);
+        denseIndex = 0u;
+    }
+#endif
+    return XR_ADV_Geometries.records[denseIndex];
+}
+
+bool XR_ADV_GeometryIsResident(XRAdvancedGeometryRecord geometryRecord)
+{
+    return geometryRecord.residency == 2u;
+}
+
+#endif

@@ -98,6 +98,12 @@ namespace XREngine
                     private static string _activeVrTemporalHistoryPolicy = "unknown";
                     private static string _activeSubmissionStrategy = "unknown";
                     private static string _activeRenderBackend = "unknown";
+                    private static string _advancedPipelineMode = "Disabled";
+                    private static string _advancedPipelineEffectiveKind = "LegacyDefault";
+                    private static string _advancedPipelineCapabilities = "not-evaluated";
+                    private static string _advancedPipelineRejectionReason = "None";
+                    private static bool _advancedPipelineCapabilityEvaluated;
+                    private static bool _advancedPipelineSupported;
                     private static bool _validationLayersEnabled;
                     private static bool _debugOutputEnabled;
                     private static bool _gpuTimestampsDenseMode;
@@ -110,6 +116,12 @@ namespace XREngine
                     private static string _lastFrameActiveVrTemporalHistoryPolicy = "unknown";
                     private static string _lastFrameActiveSubmissionStrategy = "unknown";
                     private static string _lastFrameActiveRenderBackend = "unknown";
+                    private static string _lastFrameAdvancedPipelineMode = "Disabled";
+                    private static string _lastFrameAdvancedPipelineEffectiveKind = "LegacyDefault";
+                    private static string _lastFrameAdvancedPipelineCapabilities = "not-evaluated";
+                    private static string _lastFrameAdvancedPipelineRejectionReason = "None";
+                    private static bool _lastFrameAdvancedPipelineCapabilityEvaluated;
+                    private static bool _lastFrameAdvancedPipelineSupported;
                     private static bool _lastFrameValidationLayersEnabled;
                     private static bool _lastFrameDebugOutputEnabled;
                     private static bool _lastFrameGpuTimestampsDenseMode;
@@ -159,6 +171,12 @@ namespace XREngine
                     public static string ActiveVrTemporalHistoryPolicy => _lastFrameActiveVrTemporalHistoryPolicy;
                     public static string ActiveSubmissionStrategy => _lastFrameActiveSubmissionStrategy;
                     public static string ActiveRenderBackend => _lastFrameActiveRenderBackend;
+                    public static string AdvancedPipelineMode => _lastFrameAdvancedPipelineMode;
+                    public static string AdvancedPipelineEffectiveKind => _lastFrameAdvancedPipelineEffectiveKind;
+                    public static string AdvancedPipelineCapabilities => _lastFrameAdvancedPipelineCapabilities;
+                    public static string AdvancedPipelineRejectionReason => _lastFrameAdvancedPipelineRejectionReason;
+                    public static bool AdvancedPipelineCapabilityEvaluated => _lastFrameAdvancedPipelineCapabilityEvaluated;
+                    public static bool AdvancedPipelineSupported => _lastFrameAdvancedPipelineSupported;
                     public static bool ValidationLayersEnabled => _lastFrameValidationLayersEnabled;
                     public static bool DebugOutputEnabled => _lastFrameDebugOutputEnabled;
                     public static bool GpuTimestampsDenseMode => _lastFrameGpuTimestampsDenseMode;
@@ -213,6 +231,12 @@ namespace XREngine
                             _lastFrameActiveVrTemporalHistoryPolicy = _activeVrTemporalHistoryPolicy;
                             _lastFrameActiveSubmissionStrategy = _activeSubmissionStrategy;
                             _lastFrameActiveRenderBackend = _activeRenderBackend;
+                            _lastFrameAdvancedPipelineMode = _advancedPipelineMode;
+                            _lastFrameAdvancedPipelineEffectiveKind = _advancedPipelineEffectiveKind;
+                            _lastFrameAdvancedPipelineCapabilities = _advancedPipelineCapabilities;
+                            _lastFrameAdvancedPipelineRejectionReason = _advancedPipelineRejectionReason;
+                            _lastFrameAdvancedPipelineCapabilityEvaluated = _advancedPipelineCapabilityEvaluated;
+                            _lastFrameAdvancedPipelineSupported = _advancedPipelineSupported;
                             _lastFrameValidationLayersEnabled = _validationLayersEnabled;
                             _lastFrameDebugOutputEnabled = _debugOutputEnabled;
                             _lastFrameGpuTimestampsDenseMode = _gpuTimestampsDenseMode;
@@ -245,6 +269,31 @@ namespace XREngine
                             _validationLayersEnabled = validationLayersEnabled;
                             _debugOutputEnabled = debugOutputEnabled;
                             _gpuTimestampsDenseMode = gpuTimestampsDenseMode;
+                        }
+                    }
+
+                    /// <summary>
+                    /// Publishes the last standard-pipeline selection decision. This runs only
+                    /// when selection changes and avoids formatting strings in the per-frame path.
+                    /// </summary>
+                    public static void UpdateAdvancedPipelineContext(
+                        in AdvancedRenderPipelineSelectionResult selection)
+                    {
+                        lock (_contextLock)
+                        {
+                            _advancedPipelineMode = selection.RequestedMode.ToString();
+                            _advancedPipelineEffectiveKind = selection.EffectiveKind.ToString();
+                            _advancedPipelineCapabilityEvaluated =
+                                selection.CapabilityEvaluated;
+                            _advancedPipelineSupported =
+                                selection.CapabilityEvaluated &&
+                                selection.CapabilityResult.IsSupported;
+                            _advancedPipelineCapabilities = selection.CapabilityEvaluated
+                                ? selection.CapabilityResult.Capabilities.DescribeSelectedEncodings()
+                                : "not-evaluated";
+                            _advancedPipelineRejectionReason = selection.CapabilityEvaluated
+                                ? selection.CapabilityResult.RejectionReason.ToString()
+                                : "None";
                         }
                     }
 

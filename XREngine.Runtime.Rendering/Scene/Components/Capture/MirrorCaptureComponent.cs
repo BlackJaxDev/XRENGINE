@@ -220,8 +220,11 @@ namespace XREngine.Components.Lights
             _mirrorCamera = new(_mirrorTransform);
             Viewport = new XRViewport(null, width, height)
             {
+                PipelineRequest = RenderPipelineRequest.OffscreenCapture(),
                 WorldInstanceOverride = WorldAs<XREngine.Rendering.IRuntimeRenderWorld>(),
                 Camera = _mirrorCamera,
+                RenderPipeline =
+                    RuntimeEngine.Rendering.NewOffscreenCaptureRenderPipeline(),
                 SetRenderPipelineFromCamera = false,
                 AutomaticallyCollectVisible = false,
                 AutomaticallySwapBuffers = false,

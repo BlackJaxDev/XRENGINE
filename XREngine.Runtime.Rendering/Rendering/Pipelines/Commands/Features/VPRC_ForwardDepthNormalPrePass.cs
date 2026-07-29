@@ -27,12 +27,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (_renderPasses.Count == 0)
                 return;
 
-            XRMaterial? material = ParentPipeline switch
-            {
-                DefaultRenderPipeline p => p.GetDepthNormalPrePassMaterial(),
-                DefaultRenderPipeline2 p2 => p2.GetDepthNormalPrePassMaterial(),
-                _ => null,
-            };
+            XRMaterial? material =
+                (ParentPipeline as IRenderPipelinePassMaterialProvider)?.
+                    GetDepthNormalPrePassMaterial();
             if (material is null)
                 return;
 

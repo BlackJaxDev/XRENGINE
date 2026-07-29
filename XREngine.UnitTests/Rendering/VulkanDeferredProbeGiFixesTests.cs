@@ -52,8 +52,6 @@ public sealed class VulkanDeferredProbeGiFixesTests
     {
         string shaderSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/DeferredLightCombine.fs");
         string legacyPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
-        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.cs");
-        string commandSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.CommandChain.cs");
 
         shaderSource.ShouldContain("layout(binding = 0) uniform sampler2D AlbedoOpacity");
         shaderSource.ShouldContain("layout(binding = 1) uniform sampler2D Normal");
@@ -68,20 +66,6 @@ public sealed class VulkanDeferredProbeGiFixesTests
         legacyPipelineSource.ShouldContain("_probePositionBuffer!.BindTo(program, positionBinding);");
         legacyPipelineSource.ShouldContain("_probeGridIndexBuffer!.BindTo(program, gridIndexBinding);");
 
-        pipelineSource.ShouldContain("private const uint LightProbePositionBufferBinding = 20u");
-        pipelineSource.ShouldContain("private const uint LightProbeTetraBufferBinding = 21u");
-        pipelineSource.ShouldContain("private const uint LightProbeParamBufferBinding = 22u");
-        pipelineSource.ShouldContain("private const uint LightProbeGridCellBufferBinding = 23u");
-        pipelineSource.ShouldContain("private const uint LightProbeGridIndexBufferBinding = 24u");
-        pipelineSource.ShouldContain("BindPbrLightingResources(program, deferredProbeBufferBindings: true)");
-        pipelineSource.ShouldContain("_probePositionBuffer!.BindTo(program, LightProbePositionBufferBinding);");
-        pipelineSource.ShouldContain("_probeGridIndexBuffer!.BindTo(program, LightProbeGridIndexBufferBinding);");
-
-        commandSource.ShouldContain("x.BindingLocation = LightProbePositionBufferBinding;");
-        commandSource.ShouldContain("x.BindingLocation = LightProbeTetraBufferBinding;");
-        commandSource.ShouldContain("x.BindingLocation = LightProbeParamBufferBinding;");
-        commandSource.ShouldContain("x.BindingLocation = LightProbeGridCellBufferBinding;");
-        commandSource.ShouldContain("x.BindingLocation = LightProbeGridIndexBufferBinding;");
     }
 
     [Test]
@@ -101,7 +85,6 @@ public sealed class VulkanDeferredProbeGiFixesTests
         string commandSource = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderQuadToFBO.cs");
         string descriptorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipelineQuadDescriptors.cs");
         string defaultPipelineSource = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
-        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.CommandChain.cs");
 
         commandSource.ShouldContain("RenderGraphPassVariant");
         commandSource.ShouldContain("BuildQuadBlitPassName(SourceQuadFBOName, destination, RenderGraphPassVariant)");
@@ -120,9 +103,6 @@ public sealed class VulkanDeferredProbeGiFixesTests
         defaultPipelineSource.ShouldContain("SetRenderGraphPassVariant(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionResolveVariantHBAOPlus)");
         defaultPipelineSource.ShouldContain("[(int)AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion] = CreateSpatialHashAOResolveCommands()");
 
-        pipeline2Source.ShouldContain("SetRenderGraphPassVariant(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionResolveVariantGTAO)");
-        pipeline2Source.ShouldContain("SetRenderGraphPassVariant(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionResolveVariantHBAOPlus)");
-        pipeline2Source.ShouldContain("[(int)AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion] = CreateSpatialHashAOResolveCommands()");
     }
 
     [Test]
@@ -238,10 +218,8 @@ public sealed class VulkanDeferredProbeGiFixesTests
     public void PostProcessCompositeInputs_AreConcreteAndClearedBeforeOptionalFogPasses()
     {
         string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs");
-        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.CommandChain.cs");
 
         AssertPostProcessCompositeInputDefaults(pipelineSource);
-        AssertPostProcessCompositeInputDefaults(pipeline2Source);
     }
 
     private static void AssertPostProcessCompositeInputDefaults(string source)
@@ -302,12 +280,12 @@ public sealed class VulkanDeferredProbeGiFixesTests
     public void ProbeTetraBufferName_MatchesDeferredShaderBlock()
     {
         string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
-        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.cs");
+        string advancedPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.cs");
         string shaderSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/DeferredLightCombine.fs");
 
         pipelineSource.ShouldContain("private const string LightProbeTetraBufferName = \"LightProbeTetrahedra\"");
         pipelineSource.ShouldContain("new XRDataBuffer(LightProbeTetraBufferName");
-        pipeline2Source.ShouldContain("private const string LightProbeTetraBufferName = \"LightProbeTetrahedra\"");
+        advancedPipelineSource.ShouldContain("private const string LightProbeTetraBufferName = \"LightProbeTetrahedra\"");
         shaderSource.ShouldContain("buffer LightProbeTetrahedra");
     }
 

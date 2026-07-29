@@ -885,12 +885,14 @@ public sealed class OctahedralImposterGenerator
     {
         public XRViewport Viewport { get; } = new(null, 1u, 1u)
         {
+            PipelineRequest = RenderPipelineRequest.OffscreenCapture(),
             SetRenderPipelineFromCamera = false,
             AllowUIRender = false,
             AutomaticallyCollectVisible = false,
             AutomaticallySwapBuffers = false,
             CullWithFrustum = true,
-            RenderPipeline = RuntimeEngine.Rendering.NewRenderPipeline()
+            RenderPipeline =
+                RuntimeEngine.Rendering.NewOffscreenCaptureRenderPipeline()
         };
 
         public RenderCommandCollection Commands { get; } = new();
@@ -901,7 +903,8 @@ public sealed class OctahedralImposterGenerator
             if (Viewport.Width != safeResolution || Viewport.Height != safeResolution)
                 Viewport.Resize(safeResolution, safeResolution);
 
-            Viewport.RenderPipeline ??= RuntimeEngine.Rendering.NewRenderPipeline();
+            Viewport.RenderPipeline ??=
+                RuntimeEngine.Rendering.NewOffscreenCaptureRenderPipeline();
         }
     }
 }

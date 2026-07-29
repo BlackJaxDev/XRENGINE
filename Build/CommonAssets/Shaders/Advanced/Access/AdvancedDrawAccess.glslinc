@@ -1,0 +1,120 @@
+#ifndef XR_ADVANCED_DRAW_ACCESS_GLSLINC
+#define XR_ADVANCED_DRAW_ACCESS_GLSLINC
+
+#include "AdvancedDiagnostics.glslinc"
+
+struct XRAdvancedDrawRecord
+{
+    XRAdvancedGpuHandle instance;
+    XRAdvancedGpuHandle geometry;
+    XRAdvancedGpuHandle material;
+    XRAdvancedGpuHandle deformation;
+    XRAdvancedGpuHandle renderState;
+    XRAdvancedGpuHandle editorIdentity;
+    XRAdvancedGpuHandle currentTransform;
+    XRAdvancedGpuHandle previousTransform;
+    uint primitiveSection;
+    uint flags;
+    uint reserved0;
+    uint reserved1;
+};
+
+struct XRAdvancedTransformRecord
+{
+    mat4 world;
+    uint frameSlot;
+    uint flags;
+    uint reserved0;
+    uint reserved1;
+};
+
+struct XRAdvancedRenderStateRecord
+{
+    uint stateClass;
+    uint primitiveTopology;
+    uint coverageMode;
+    uint cullMode;
+    uint depthMode;
+    uint blendMode;
+    uint colorWriteMask;
+    uint flags;
+};
+
+struct XRAdvancedEditorIdentityRecord
+{
+    uvec2 stableInstanceId;
+    uvec2 identityLow;
+    uvec2 identityHigh;
+    uint selectionId;
+    uint flags;
+};
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_DRAWS) readonly buffer XRAdvancedDrawTable
+{
+    XRAdvancedDrawRecord records[];
+} XR_ADV_Draws;
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_TRANSFORMS) readonly buffer XRAdvancedTransformTable
+{
+    XRAdvancedTransformRecord records[];
+} XR_ADV_Transforms;
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_RENDER_STATES) readonly buffer XRAdvancedRenderStateTable
+{
+    XRAdvancedRenderStateRecord records[];
+} XR_ADV_RenderStates;
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_EDITOR_IDENTITIES) readonly buffer XRAdvancedEditorIdentityTable
+{
+    XRAdvancedEditorIdentityRecord records[];
+} XR_ADV_EditorIdentities;
+
+XRAdvancedDrawRecord XR_ADV_LoadDraw(uint denseIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (denseIndex >= uint(XR_ADV_Draws.records.length()))
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_DRAW);
+        denseIndex = 0u;
+    }
+#endif
+    return XR_ADV_Draws.records[denseIndex];
+}
+
+XRAdvancedTransformRecord XR_ADV_LoadTransform(uint denseIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (denseIndex >= uint(XR_ADV_Transforms.records.length()))
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_DRAW);
+        denseIndex = 0u;
+    }
+#endif
+    return XR_ADV_Transforms.records[denseIndex];
+}
+
+XRAdvancedRenderStateRecord XR_ADV_LoadRenderState(uint denseIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (denseIndex >= uint(XR_ADV_RenderStates.records.length()))
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_DRAW);
+        denseIndex = 0u;
+    }
+#endif
+    return XR_ADV_RenderStates.records[denseIndex];
+}
+
+XRAdvancedEditorIdentityRecord XR_ADV_LoadEditorIdentity(uint denseIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (denseIndex >= uint(XR_ADV_EditorIdentities.records.length()))
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_DRAW);
+        denseIndex = 0u;
+    }
+#endif
+    return XR_ADV_EditorIdentities.records[denseIndex];
+}
+
+#endif

@@ -21,8 +21,8 @@ public static class PoiyomiMaterialDescriptorFactory
         ArgumentNullException.ThrowIfNull(resolver);
         ArgumentNullException.ThrowIfNull(match);
 
-        if (!match.IsAccepted)
-            throw new ArgumentException("A Poiyomi descriptor requires an accepted shader match.", nameof(match));
+        if (!match.IsAccepted && !match.IsDowngradeSource)
+            throw new ArgumentException("A Poiyomi descriptor requires an accepted Toon match or an explicit Pro downgrade source.", nameof(match));
 
         string renameSuffix = ResolveRenameSuffix(document);
         Dictionary<string, PoiyomiPropertyBinding> bindings = new(StringComparer.Ordinal);
@@ -90,7 +90,9 @@ public static class PoiyomiMaterialDescriptorFactory
         return new PoiyomiMaterialDescriptor
         {
             Name = document.Name,
-            Version = match.Version ?? PoiyomiToon93Catalog.Version,
+            Version = match.IsDowngradeSource
+                ? PoiyomiToon93Catalog.Version
+                : match.Version ?? PoiyomiToon93Catalog.Version,
             IsLocked = match.IsLocked,
             SourceDocument = document,
             ShaderAsset = resolver.Resolve(document.Shader),

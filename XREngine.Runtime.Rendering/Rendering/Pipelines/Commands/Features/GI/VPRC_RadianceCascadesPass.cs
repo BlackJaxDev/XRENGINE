@@ -45,32 +45,23 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string ForwardFBOName { get; set; } = DefaultRenderPipeline.ForwardPassFBOName;
 
         protected override bool ShouldExecuteThisFrame()
-            => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline switch
-            {
-                DefaultRenderPipeline pipeline => pipeline.UsesRadianceCascades,
-                DefaultRenderPipeline2 pipeline => pipeline.UsesRadianceCascades,
-                _ => false,
-            };
+            => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is
+                IGlobalIlluminationPipelineProvider
+                {
+                    UsesRadianceCascades: true,
+                };
 
         protected override void Execute()
         {
-            bool usesRadianceCascades;
-            bool stereo;
-            switch (ActivePipelineInstance.Pipeline)
-            {
-                case DefaultRenderPipeline pipeline:
-                    usesRadianceCascades = pipeline.UsesRadianceCascades;
-                    stereo = pipeline.Stereo;
-                    break;
-                case DefaultRenderPipeline2 pipeline:
-                    usesRadianceCascades = pipeline.UsesRadianceCascades;
-                    stereo = pipeline.Stereo;
-                    break;
-                default:
-                    usesRadianceCascades = false;
-                    stereo = false;
-                    break;
-            }
+            bool usesRadianceCascades =
+                ActivePipelineInstance.Pipeline is
+                    IGlobalIlluminationPipelineProvider
+                    {
+                        UsesRadianceCascades: true,
+                    };
+            bool stereo =
+                ActivePipelineInstance.Pipeline is
+                    ISceneRenderPipelineFeatureProvider { Stereo: true };
             if (!usesRadianceCascades)
                 return;
 

@@ -1,0 +1,54 @@
+#ifndef XR_ADVANCED_HANDLE_ACCESS_GLSLINC
+#define XR_ADVANCED_HANDLE_ACCESS_GLSLINC
+
+#include "AdvancedDiagnostics.glslinc"
+
+#define XR_ADV_INVALID_DENSE_INDEX 0xFFFFFFFFu
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_HANDLE_LOOKUPS) readonly buffer XRAdvancedHandleLookupTable
+{
+    XRAdvancedGpuHandleLookup records[];
+} XR_ADV_HandleLookups;
+
+/// Resolves a stable logical handle through a table-specific segment in the
+/// packed lookup buffer. Production shaders rely on CPU publication invariants;
+/// diagnostic variants additionally reject invalid, out-of-range, and stale
+/// generations without adding branches to production variants.
+uint XR_ADV_ResolveHandle(
+    XRAdvancedGpuHandle handle,
+    uint segmentOffset,
+    uint segmentCount,
+    uint diagnosticCategory)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (!XR_ADV_IsValidHandle(handle) ||
+        handle.index >= segmentCount ||
+        segmentOffset + handle.index >= uint(XR_ADV_HandleLookups.records.length()))
+    {
+        XR_ADV_RecordOutOfBounds(diagnosticCategory);
+        return XR_ADV_INVALID_DENSE_INDEX;
+    }
+#endif
+
+    XRAdvancedGpuHandleLookup lookup =
+        XR_ADV_HandleLookups.records[segmentOffset + handle.index];
+    bool generationMatches =
+        lookup.generation == handle.generation &&
+        lookup.denseIndex != XR_ADV_INVALID_DENSE_INDEX;
+
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (!generationMatches)
+    {
+        XR_ADV_RecordOutOfBounds(diagnosticCategory);
+        return XR_ADV_INVALID_DENSE_INDEX;
+    }
+#endif
+
+    // The ternary lowers to a select on production backends, preserving
+    // generation safety without a production-only control-flow branch.
+    return generationMatches
+        ? lookup.denseIndex
+        : XR_ADV_INVALID_DENSE_INDEX;
+}
+
+#endif

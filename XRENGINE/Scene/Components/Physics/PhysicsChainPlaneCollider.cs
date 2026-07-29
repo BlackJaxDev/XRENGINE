@@ -31,19 +31,14 @@ public class PhysicsChainPlaneCollider : PhysicsChainColliderBase, IRenderable
             return;
         }
 
-        Vector3 normal = Globals.Up;
-        switch (_direction)
+        Vector3 localNormal = _direction switch
         {
-            case Direction.X:
-                normal = effectiveTransform.WorldRight;
-                break;
-            case Direction.Y:
-                normal = effectiveTransform.WorldUp;
-                break;
-            case Direction.Z:
-                normal = effectiveTransform.WorldForward;
-                break;
-        }
+            Direction.X => Vector3.UnitX,
+            Direction.Z => Vector3.UnitZ,
+            _ => Vector3.UnitY,
+        };
+        localNormal = Vector3.Transform(localNormal, LocalRotationOffset);
+        Vector3 normal = Vector3.Normalize(effectiveTransform.TransformDirection(localNormal));
 
         Vector3 p = effectiveTransform.TransformPoint(_center);
         _plane = XRMath.CreatePlaneFromPointAndNormal(p, normal);

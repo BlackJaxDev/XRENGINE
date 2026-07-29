@@ -543,7 +543,7 @@ if a future cold-start run shows worst-program `queueMs` regressing above
 
 ## Shader-Asset Warm Pre-Render Path
 
-`DefaultRenderPipeline` and `DefaultRenderPipeline2` constructors call
+`DefaultRenderPipeline` and `AdvancedRenderPipeline` constructors call
 `WarmFirstRenderShaders()` next to the existing `WarmDeferredLightingShaders()`
 to pre-deserialize shader assets that would otherwise be first-touched inside
 `XRViewport.Render` and produce 300-500 ms render-thread stalls on cold cache.

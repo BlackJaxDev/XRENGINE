@@ -799,13 +799,11 @@ public sealed class MeshOptimizerInteropTests
     }
 
     [Test]
-    public void DefaultPipelines_WireMeshletDebugDisplayCommand()
+    public void DefaultPipeline_WiresMeshletDebugDisplayCommand()
     {
         string pipelineSource = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
-        string pipeline2Source = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.CommandChain.cs").Replace("\r\n", "\n");
 
         pipelineSource.ShouldContain("c.Add<VPRC_RenderMeshletDebugDisplay>();");
-        pipeline2Source.ShouldContain("c.Add<VPRC_RenderMeshletDebugDisplay>();");
     }
 
     [Test]

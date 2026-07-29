@@ -27,7 +27,7 @@ public sealed class AmbientOcclusionVisibilityBitmaskTests
     }
 
     [TestCase("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.PostProcessing.cs")]
-    [TestCase("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.PostProcessing.cs")]
+    [TestCase("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.PostProcessing.cs")]
     public void GtaoVisibilityBitmask_IsExposedInPostProcessSchema(string relativePath)
     {
         string source = ReadWorkspaceFile(relativePath).Replace("\r\n", "\n");

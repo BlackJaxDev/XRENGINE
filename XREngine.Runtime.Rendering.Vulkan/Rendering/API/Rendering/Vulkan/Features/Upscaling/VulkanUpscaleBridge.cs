@@ -598,7 +598,7 @@ internal sealed class VulkanUpscaleBridge : IVulkanUpscaleBridge
         bool stereo = pipeline.Pipeline switch
         {
             DefaultRenderPipeline { Stereo: true } => true,
-            DefaultRenderPipeline2 { Stereo: true } => true,
+            AdvancedRenderPipeline { Stereo: true } => true,
             _ => false,
         };
 

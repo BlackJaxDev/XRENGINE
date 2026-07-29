@@ -454,6 +454,16 @@ namespace XREngine
                 return cachePath;
             }
 
+            if (!IsTextureStreamingCacheWarmupEnabled())
+            {
+                LogTextureCacheEvent(
+                    "Texture.CacheMiss",
+                    normalizedPath,
+                    cachePath,
+                    "streaming cache warmup disabled");
+                return normalizedPath;
+            }
+
             LogTextureCacheEvent(
                 File.Exists(cachePath) ? "Texture.CacheStale" : "Texture.CacheMiss",
                 normalizedPath,
@@ -462,6 +472,14 @@ namespace XREngine
 
             QueueTextureStreamingCacheImport(normalizedPath, cachePath, cacheVariantKey);
             return normalizedPath;
+        }
+
+        private static bool IsTextureStreamingCacheWarmupEnabled()
+        {
+            string? value = Environment.GetEnvironmentVariable(
+                XREngineEnvironmentVariables.TextureStreamingCacheWarmupEnabled);
+            return string.IsNullOrWhiteSpace(value) ||
+                value.Trim() is not ("0" or "false" or "False" or "FALSE" or "off" or "Off" or "OFF");
         }
 
         /// <summary>

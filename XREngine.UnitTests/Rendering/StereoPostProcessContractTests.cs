@@ -347,7 +347,7 @@ public sealed class StereoPostProcessContractTests
         foreach (string path in new[]
         {
             "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.FBOs.cs",
-            "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.FBOs.cs",
+            "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.FBOs.cs",
         })
         {
             string source = ReadWorkspaceFile(path);

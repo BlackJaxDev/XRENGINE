@@ -107,6 +107,7 @@ namespace XREngine.Scene.Prefabs
         }
 
         private SceneNode? _rootNode;
+        private UnityPrefabImportManifest? _unityImportManifest;
 
         internal static IDisposable EnterSynchronousMeshImportScope(ModelImportOptions options)
         {
@@ -128,6 +129,16 @@ namespace XREngine.Scene.Prefabs
                 if (SetField(ref _rootNode, value) && value is not null)
                     SceneNodePrefabUtility.EnsurePrefabMetadata(value, ID, overwriteExisting: true);
             }
+        }
+
+        /// <summary>
+        /// Dependency fingerprints, conversion outcomes, and diagnostics for a prefab converted
+        /// from a Unity project. This is <see langword="null"/> for native and ordinary model imports.
+        /// </summary>
+        public UnityPrefabImportManifest? UnityImportManifest
+        {
+            get => _unityImportManifest;
+            set => SetField(ref _unityImportManifest, value);
         }
 
         /// <summary>
@@ -174,7 +185,13 @@ namespace XREngine.Scene.Prefabs
 
             if (string.Equals(Path.GetExtension(filePath), ".prefab", StringComparison.OrdinalIgnoreCase))
             {
-                RootNode = UnityEditorImportBridge.ImportPrefab(filePath);
+                var unityOptions = importOptions as ModelImportOptions;
+                UnityPrefabConversionResult conversion = UnityEditorImportBridge.ImportPrefabConversion(
+                    filePath,
+                    FilePath,
+                    unityOptions?.UnityProjectRootOverride);
+                RootNode = conversion.RootNode;
+                UnityImportManifest = conversion.Manifest;
                 return RootNode is not null;
             }
 

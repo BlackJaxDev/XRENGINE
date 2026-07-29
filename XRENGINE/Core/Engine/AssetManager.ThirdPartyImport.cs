@@ -6,6 +6,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using XREngine.Animation;
@@ -274,10 +275,54 @@ namespace XREngine
         }
 
         public bool ReimportThirdPartyFile(string sourcePath, Action<ThirdPartyImportProgress>? progress = null)
-            => RunOnJobThreadBlocking(() => ImportThirdPartyToNativeAssetCore(sourcePath, forceOverwrite: true, progress), JobPriority.Normal, bypassJobThread: false);
+            => RunOnJobThreadBlocking(
+                () => ImportThirdPartyToNativeAssetTransactional(sourcePath, forceOverwrite: true, progress),
+                JobPriority.Normal,
+                bypassJobThread: false);
 
         public Task<bool> ReimportThirdPartyFileAsync(string sourcePath, Action<ThirdPartyImportProgress>? progress = null)
-            => RunOnJobThreadAsync(() => ImportThirdPartyToNativeAssetCore(sourcePath, forceOverwrite: true, progress), JobPriority.Normal, bypassJobThread: false);
+            => RunOnJobThreadAsync(
+                () => ImportThirdPartyToNativeAssetTransactional(sourcePath, forceOverwrite: true, progress),
+                JobPriority.Normal,
+                bypassJobThread: false);
+
+        /// <summary>
+        /// Converts an external source directly into a selected native Assets
+        /// destination without copying or modifying the source file.
+        /// </summary>
+        public bool ImportExternalThirdPartyFile(
+            string sourcePath,
+            string destinationAssetPath,
+            object? importOptions = null,
+            bool overwrite = false,
+            Action<ThirdPartyImportProgress>? progress = null,
+            bool bypassJobThread = false)
+            => RunOnJobThreadBlocking(
+                () => ImportThirdPartyToNativeAssetTransactional(
+                    sourcePath,
+                    overwrite,
+                    progress,
+                    destinationAssetPath,
+                    importOptions),
+                JobPriority.Normal,
+                bypassJobThread);
+
+        public Task<bool> ImportExternalThirdPartyFileAsync(
+            string sourcePath,
+            string destinationAssetPath,
+            object? importOptions = null,
+            bool overwrite = false,
+            Action<ThirdPartyImportProgress>? progress = null,
+            bool bypassJobThread = false)
+            => RunOnJobThreadAsync(
+                () => ImportThirdPartyToNativeAssetTransactional(
+                    sourcePath,
+                    overwrite,
+                    progress,
+                    destinationAssetPath,
+                    importOptions),
+                JobPriority.Normal,
+                bypassJobThread);
 
         private void TryQueueAutoImportForThirdPartyFile(string path, string reason)
         {
@@ -300,7 +345,7 @@ namespace XREngine
             {
                 try
                 {
-                    ImportThirdPartyToNativeAssetCore(path, forceOverwrite: false);
+                    ImportThirdPartyToNativeAssetTransactional(path, forceOverwrite: false);
                 }
                 catch (Exception ex)
                 {
@@ -310,10 +355,55 @@ namespace XREngine
             }, JobPriority.Low, bypassJobThread: false);
         }
 
+        private bool ImportThirdPartyToNativeAssetTransactional(
+            string sourcePath,
+            bool forceOverwrite,
+            Action<ThirdPartyImportProgress>? progress = null,
+            string? generatedAssetPathOverride = null,
+            object? suppliedImportOptions = null)
+        {
+            string? targetPath = generatedAssetPathOverride;
+            if (string.IsNullOrWhiteSpace(targetPath) &&
+                !TryResolveGeneratedAssetPathForThirdPartySource(sourcePath, out targetPath))
+            {
+                return ImportThirdPartyToNativeAssetCore(
+                    sourcePath,
+                    forceOverwrite,
+                    progress,
+                    generatedAssetPathOverride,
+                    suppliedImportOptions);
+            }
+
+            targetPath = Path.GetFullPath(targetPath);
+            ValidateExternalImportDestination(targetPath);
+            using var backup = new ThirdPartyImportBackup(targetPath);
+            try
+            {
+                bool imported = ImportThirdPartyToNativeAssetCore(
+                    sourcePath,
+                    forceOverwrite,
+                    progress,
+                    targetPath,
+                    suppliedImportOptions);
+                if (imported)
+                    backup.Commit();
+                else
+                    backup.Rollback();
+                return imported;
+            }
+            catch
+            {
+                backup.Rollback();
+                throw;
+            }
+        }
+
         private bool ImportThirdPartyToNativeAssetCore(
             string sourcePath,
             bool forceOverwrite,
-            Action<ThirdPartyImportProgress>? progress = null)
+            Action<ThirdPartyImportProgress>? progress = null,
+            string? generatedAssetPathOverride = null,
+            object? suppliedImportOptions = null)
         {
             ReportThirdPartyImportProgress(progress, 0.0f, "Validating source asset...", sourcePath);
 
@@ -353,7 +443,13 @@ namespace XREngine
                 return false;
             }
 
-            if (!TryResolveGeneratedAssetPathForThirdPartySource(sourcePath, out string generatedAssetPath))
+            string generatedAssetPath;
+            if (!string.IsNullOrWhiteSpace(generatedAssetPathOverride))
+            {
+                generatedAssetPath = Path.GetFullPath(generatedAssetPathOverride);
+                ValidateExternalImportDestination(generatedAssetPath);
+            }
+            else if (!TryResolveGeneratedAssetPathForThirdPartySource(sourcePath, out generatedAssetPath))
             {
                 Debug.LogWarning($"Failed to resolve generated asset path for source '{sourcePath}'.");
                 ReportThirdPartyImportProgress(progress, 1.0f, "Import failed: could not resolve native asset path.", sourcePath);
@@ -362,33 +458,51 @@ namespace XREngine
 
             ReportThirdPartyImportProgress(progress, 0.04f, "Resolved native asset path.", generatedAssetPath);
 
+            var previousOwnedOutputPaths = new List<string>();
+            XRAsset? existingGeneratedAsset = null;
             // If the target asset already exists, only overwrite when it's linked to this source.
             if (File.Exists(generatedAssetPath))
             {
-                // For a user-triggered forced reimport we will overwrite the generated asset
-                // unconditionally; avoid deserializing the old YAML since it's about to be replaced.
+                try
+                {
+                    // A generated prefab can reference hundreds of large mesh, material,
+                    // texture, and animation assets. Reimport only needs the root metadata
+                    // and Unity manifest here; hydrating the previous closure would keep a
+                    // complete old avatar resident while the replacement is imported.
+                    existingGeneratedAsset = typeof(XRPrefabSource).IsAssignableFrom(assetType)
+                        ? PreparePrefabPartialLoad(generatedAssetPath)?.PartialPrefab
+                        : DeserializeAssetFile(generatedAssetPath, assetType);
+                    if (existingGeneratedAsset is XRPrefabSource existingPrefab &&
+                        existingPrefab.UnityImportManifest is UnityPrefabImportManifest existingManifest)
+                    {
+                        previousOwnedOutputPaths.AddRange(existingManifest.OwnedOutputPaths);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"Failed to deserialize existing asset '{generatedAssetPath}'. {ex.Message}");
+                }
+
+                // A user-triggered forced reimport may replace this linked asset.
                 if (!forceOverwrite)
                 {
                     bool linked = false;
-                    try
+                    if (existingGeneratedAsset is not null &&
+                        string.Equals(existingGeneratedAsset.OriginalPath, sourcePath, StringComparison.OrdinalIgnoreCase))
                     {
-                        var existing = DeserializeAssetFile(generatedAssetPath, assetType);
-                        if (existing is not null && string.Equals(existing.OriginalPath, sourcePath, StringComparison.OrdinalIgnoreCase))
+                        if (existingGeneratedAsset is XRPrefabSource existingUnityPrefab &&
+                            existingUnityPrefab.UnityImportManifest is UnityPrefabImportManifest unityManifest)
                         {
-                            // Only re-import if source is newer.
-                            var sourceTime = SafeGetLastWriteTimeUtc(sourcePath);
-                            if (sourceTime is not null && (existing.OriginalLastWriteTimeUtc is null || existing.OriginalLastWriteTimeUtc.Value < sourceTime.Value))
-                                linked = true;
+                            linked = unityManifest.HasDependencyChanges();
                         }
                         else
                         {
-                            // Debug.LogWarning($"Existing asset '{generatedAssetPath}' is not linked to source '{sourcePath}'.");
+                            // Only re-import ordinary sources when their entry file is newer.
+                            DateTime? sourceTime = SafeGetLastWriteTimeUtc(sourcePath);
+                            linked = sourceTime is not null &&
+                                     (existingGeneratedAsset.OriginalLastWriteTimeUtc is null ||
+                                      existingGeneratedAsset.OriginalLastWriteTimeUtc.Value < sourceTime.Value);
                         }
-                    }
-                    catch
-                    {
-                        linked = false;
-                        Debug.LogWarning($"Failed to deserialize existing asset '{generatedAssetPath}'.");
                     }
 
                     if (!linked)
@@ -401,7 +515,7 @@ namespace XREngine
 
             long totalStart = Stopwatch.GetTimestamp();
             ReportThirdPartyImportProgress(progress, 0.06f, "Loading import settings...", sourcePath);
-            object? importOptions = GetOrCreateThirdPartyImportOptions(sourcePath, assetType);
+            object? importOptions = suppliedImportOptions ?? GetOrCreateThirdPartyImportOptions(sourcePath, assetType);
 
             // When generating a prefab asset we must serialize sub-assets (Models, SubMeshes, etc.)
             // immediately after import. Force synchronous mesh processing so Model.Meshes is fully
@@ -501,6 +615,15 @@ namespace XREngine
             ReportThirdPartyImportProgress(progress, 0.95f, "Serializing native root asset...", generatedAssetPath);
             SerializeAssetForThirdPartyImport(asset, generatedAssetPath);
             LogThirdPartyImportPhase("SerializeRootAsset", serializeStart, generatedAssetPath, assetType.Name);
+
+            if (asset is XRPrefabSource generatedPrefab &&
+                generatedPrefab.UnityImportManifest is UnityPrefabImportManifest generatedManifest)
+            {
+                RetireUnreachableOwnedOutputs(
+                    previousOwnedOutputPaths,
+                    generatedManifest.OwnedOutputPaths,
+                    generatedAssetPath);
+            }
 
             MarkRecentlySaved(generatedAssetPath);
             ReportThirdPartyImportProgress(progress, 1.0f, "Native asset ready.", generatedAssetPath);
@@ -678,6 +801,26 @@ namespace XREngine
                 }
 
                 Debug.Log(ELogCategory.Meshes, "[ExternalizeEmbedded] Externalization complete: {0} exported, {1} skipped, {2} failed", exportedCount, skippedCount, failedCount);
+                if (failedCount > 0)
+                {
+                    throw new InvalidDataException(
+                        $"Failed to externalize {failedCount} required sub-asset(s) for '{rootAssetPath}'.");
+                }
+
+                if (rootAsset is XRPrefabSource prefab &&
+                    prefab.UnityImportManifest is UnityPrefabImportManifest manifest)
+                {
+                    manifest.OwnedOutputPaths =
+                    [
+                        rootAssetPath,
+                        .. discovered
+                            .Select(static asset => asset.FilePath)
+                            .Where(static path => !string.IsNullOrWhiteSpace(path))
+                            .Cast<string>()
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase),
+                    ];
+                }
                 ReportThirdPartyImportProgress(progress, 0.90f, "Externalized sub-assets written.", rootAssetPath);
 
                 // Recompute to ensure the root no longer treats these as embedded.
@@ -746,15 +889,26 @@ namespace XREngine
             return string.IsNullOrWhiteSpace(name) ? "Asset" : name;
         }
 
-        private static string EnsureAssetHasName(XRAsset asset, string rootName)
+        private static string EnsureAssetHasName(
+            XRAsset asset,
+            string rootName,
+            Dictionary<string, int> generatedNameCounts)
         {
             if (!string.IsNullOrWhiteSpace(asset.Name))
                 return asset.Name!;
 
-            string shortId = asset.ID == Guid.Empty
-                ? Guid.NewGuid().ToString("N")[..8]
-                : asset.ID.ToString("N")[..8];
-            asset.Name = $"{rootName}_{asset.GetType().Name}_{shortId}";
+            // XRAsset IDs are instance-generated and therefore cannot
+            // participate in output paths. Use a deterministic type ordinal
+            // in the importer traversal instead so an unchanged source
+            // produces the same sibling paths on every reimport.
+            string typeName = asset.GetType().Name;
+            generatedNameCounts.TryGetValue(typeName, out int existingCount);
+            int ordinal = existingCount + 1;
+            generatedNameCounts[typeName] = ordinal;
+            string ordinalSuffix = ordinal == 1
+                ? string.Empty
+                : $"_{ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+            asset.Name = $"{rootName}_{typeName}{ordinalSuffix}";
             return asset.Name;
         }
 
@@ -803,6 +957,7 @@ namespace XREngine
 
             // Track claimed filenames per kind folder so collisions are deduped deterministically.
             var claimedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var generatedNameCounts = new Dictionary<string, int>(StringComparer.Ordinal);
 
             foreach (XRAsset subAsset in discovered)
             {
@@ -829,7 +984,10 @@ namespace XREngine
                 EnsureMetadataForAssetPath(prefabFolderPath, isDirectory: true);
                 EnsureMetadataForAssetPath(kindFolderPath, isDirectory: true);
 
-                string displayName = EnsureAssetHasName(subAsset, rootName);
+                string displayName = EnsureAssetHasName(
+                    subAsset,
+                    rootName,
+                    generatedNameCounts);
                 string safeName = SanitizeExternalizedFileName(displayName);
 
                 string candidatePath = Path.Combine(kindFolderPath, $"{safeName}.{AssetExtension}");
@@ -858,26 +1016,28 @@ namespace XREngine
 
         private static string ReserveUniqueAssetPath(string candidatePath, XRAsset subAsset, HashSet<string> claimedPaths)
         {
-            if (!File.Exists(candidatePath) && !claimedPaths.Contains(candidatePath))
+            // An existing path from a previous import is intentionally reusable.
+            // claimedPaths distinguishes collisions within the current closure.
+            if (!claimedPaths.Contains(candidatePath))
                 return candidatePath;
 
             string directory = Path.GetDirectoryName(candidatePath) ?? string.Empty;
             string fileName = Path.GetFileNameWithoutExtension(candidatePath);
             string extension = Path.GetExtension(candidatePath);
 
-            string shortId = subAsset.ID == Guid.Empty
-                ? Guid.NewGuid().ToString("N")[..8]
-                : subAsset.ID.ToString("N")[..8];
+            string identityText = $"{subAsset.GetType().FullName}|{fileName}";
+            string shortId = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identityText)))[..8]
+                .ToLowerInvariant();
 
             string idScopedPath = Path.Combine(directory, $"{fileName}_{shortId}{extension}");
-            if (!File.Exists(idScopedPath) && !claimedPaths.Contains(idScopedPath))
+            if (!claimedPaths.Contains(idScopedPath))
                 return idScopedPath;
 
             // Last-resort numeric dedup.
             for (int i = 2; i < 10000; i++)
             {
                 string numbered = Path.Combine(directory, $"{fileName}_{shortId}_{i}{extension}");
-                if (!File.Exists(numbered) && !claimedPaths.Contains(numbered))
+                if (!claimedPaths.Contains(numbered))
                     return numbered;
             }
 
@@ -986,6 +1146,183 @@ namespace XREngine
                 Math.Clamp(value, 0.0f, 1.0f),
                 message,
                 currentPath));
+        }
+
+        private void ValidateExternalImportDestination(string destinationAssetPath)
+        {
+            if (!HasNativeAssetExtension(destinationAssetPath))
+            {
+                throw new ArgumentException(
+                    $"Native import destination must use '.{AssetExtension}'.",
+                    nameof(destinationAssetPath));
+            }
+
+            if (!IsPathUnderGameAssets(destinationAssetPath))
+            {
+                throw new ArgumentException(
+                    $"Native import destination '{destinationAssetPath}' must stay inside the project Assets folder.",
+                    nameof(destinationAssetPath));
+            }
+        }
+
+        private static void RetireUnreachableOwnedOutputs(
+            IEnumerable<string> previousOwnedPaths,
+            IEnumerable<string> currentOwnedPaths,
+            string rootAssetPath)
+        {
+            string rootDirectory = Path.GetDirectoryName(rootAssetPath) ?? string.Empty;
+            string ownedDirectory = Path.GetFullPath(Path.Combine(
+                rootDirectory,
+                Path.GetFileNameWithoutExtension(rootAssetPath)));
+            string ownedPrefix = ownedDirectory.TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            var current = new HashSet<string>(
+                currentOwnedPaths
+                    .Where(static path => !string.IsNullOrWhiteSpace(path))
+                    .Select(Path.GetFullPath),
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (string previousPath in previousOwnedPaths
+                .Where(static path => !string.IsNullOrWhiteSpace(path))
+                .Select(Path.GetFullPath)
+                .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (current.Contains(previousPath) ||
+                    !previousPath.StartsWith(ownedPrefix, StringComparison.OrdinalIgnoreCase) ||
+                    !File.Exists(previousPath))
+                {
+                    continue;
+                }
+
+                File.Delete(previousPath);
+                string metadataPath = previousPath + ".meta";
+                if (File.Exists(metadataPath))
+                    File.Delete(metadataPath);
+            }
+
+            if (!Directory.Exists(ownedDirectory))
+                return;
+
+            foreach (string directory in Directory.EnumerateDirectories(
+                         ownedDirectory,
+                         "*",
+                         SearchOption.AllDirectories)
+                .OrderByDescending(static path => path.Length))
+            {
+                if (!Directory.EnumerateFileSystemEntries(directory).Any())
+                    Directory.Delete(directory);
+            }
+        }
+
+        /// <summary>
+        /// Backs up the generated root and its owned sibling closure so any import
+        /// failure can restore the last valid native prefab byte-for-byte.
+        /// </summary>
+        private sealed class ThirdPartyImportBackup : IDisposable
+        {
+            private readonly string _targetAssetPath;
+            private readonly string _targetAssetFolder;
+            private readonly string _backupRoot;
+            private readonly string _backupAssetPath;
+            private readonly string _backupAssetFolder;
+            private readonly bool _hadAsset;
+            private readonly bool _hadAssetFolder;
+            private bool _completed;
+
+            public ThirdPartyImportBackup(string targetAssetPath)
+            {
+                _targetAssetPath = Path.GetFullPath(targetAssetPath);
+                string targetDirectory = Path.GetDirectoryName(_targetAssetPath)
+                    ?? throw new InvalidOperationException($"Import target '{_targetAssetPath}' has no directory.");
+                _targetAssetFolder = Path.Combine(
+                    targetDirectory,
+                    Path.GetFileNameWithoutExtension(_targetAssetPath));
+                _backupRoot = Path.Combine(
+                    Path.GetTempPath(),
+                    "XREngine",
+                    "ThirdPartyImportTransactions",
+                    Guid.NewGuid().ToString("N"));
+                _backupAssetPath = Path.Combine(_backupRoot, "root.asset");
+                _backupAssetFolder = Path.Combine(_backupRoot, "closure");
+                _hadAsset = File.Exists(_targetAssetPath);
+                _hadAssetFolder = Directory.Exists(_targetAssetFolder);
+
+                Directory.CreateDirectory(_backupRoot);
+                if (_hadAsset)
+                    File.Copy(_targetAssetPath, _backupAssetPath, overwrite: false);
+                if (_hadAssetFolder)
+                    CopyDirectory(_targetAssetFolder, _backupAssetFolder);
+            }
+
+            public void Commit()
+            {
+                _completed = true;
+                DeleteBackup();
+            }
+
+            public void Rollback()
+            {
+                if (_completed)
+                    return;
+
+                if (File.Exists(_targetAssetPath))
+                    File.Delete(_targetAssetPath);
+                if (Directory.Exists(_targetAssetFolder))
+                    Directory.Delete(_targetAssetFolder, recursive: true);
+
+                if (_hadAsset)
+                {
+                    string? directory = Path.GetDirectoryName(_targetAssetPath);
+                    if (!string.IsNullOrWhiteSpace(directory))
+                        Directory.CreateDirectory(directory);
+                    File.Copy(_backupAssetPath, _targetAssetPath, overwrite: false);
+                }
+
+                if (_hadAssetFolder)
+                    CopyDirectory(_backupAssetFolder, _targetAssetFolder);
+
+                _completed = true;
+                DeleteBackup();
+            }
+
+            public void Dispose()
+            {
+                if (!_completed)
+                    Rollback();
+            }
+
+            private void DeleteBackup()
+            {
+                if (Directory.Exists(_backupRoot))
+                    Directory.Delete(_backupRoot, recursive: true);
+            }
+
+            private static void CopyDirectory(string sourceDirectory, string destinationDirectory)
+            {
+                Directory.CreateDirectory(destinationDirectory);
+                foreach (string directory in Directory.EnumerateDirectories(
+                             sourceDirectory,
+                             "*",
+                             SearchOption.AllDirectories))
+                {
+                    string relative = Path.GetRelativePath(sourceDirectory, directory);
+                    Directory.CreateDirectory(Path.Combine(destinationDirectory, relative));
+                }
+
+                foreach (string file in Directory.EnumerateFiles(
+                             sourceDirectory,
+                             "*",
+                             SearchOption.AllDirectories))
+                {
+                    string relative = Path.GetRelativePath(sourceDirectory, file);
+                    string destination = Path.Combine(destinationDirectory, relative);
+                    string? directory = Path.GetDirectoryName(destination);
+                    if (!string.IsNullOrWhiteSpace(directory))
+                        Directory.CreateDirectory(directory);
+                    File.Copy(file, destination, overwrite: false);
+                }
+            }
         }
 
         private static void LogThirdPartyImportPhase(string phase, long startTimestamp, string path, string assetTypeName)

@@ -48,6 +48,10 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         private Model? _model;
+        private Dictionary<int, float> _defaultBlendShapeWeights = [];
+        private bool _updateSkinningWhenOffscreen;
+        private bool _useSkinnedMotionVectors = true;
+        private int _sourceSkinQuality;
         /// <summary>
         /// The 3D model asset containing geometry and materials.
         /// </summary>
@@ -58,6 +62,47 @@ namespace XREngine.Components.Scene.Mesh
         {
             get => _model;
             set => SetField(ref _model, value);
+        }
+
+        /// <summary>
+        /// Authored default blendshape weights, indexed exactly as they are stored by the source mesh.
+        /// Values use the conventional percentage scale where 100 is full weight.
+        /// </summary>
+        public Dictionary<int, float> DefaultBlendShapeWeights
+        {
+            get => _defaultBlendShapeWeights;
+            set
+            {
+                if (SetField(ref _defaultBlendShapeWeights, value ?? []))
+                    ApplyDefaultBlendShapeWeights();
+            }
+        }
+
+        /// <summary>
+        /// Requests skinned deformation updates even when the renderer is outside the current view.
+        /// </summary>
+        public bool UpdateSkinningWhenOffscreen
+        {
+            get => _updateSkinningWhenOffscreen;
+            set => SetField(ref _updateSkinningWhenOffscreen, value);
+        }
+
+        /// <summary>
+        /// Preserves whether the source renderer authored skinned motion vectors.
+        /// </summary>
+        public bool UseSkinnedMotionVectors
+        {
+            get => _useSkinnedMotionVectors;
+            set => SetField(ref _useSkinnedMotionVectors, value);
+        }
+
+        /// <summary>
+        /// Source skin-quality selection retained for renderer diagnostics and backend policy.
+        /// </summary>
+        public int SourceSkinQuality
+        {
+            get => _sourceSkinQuality;
+            set => SetField(ref _sourceSkinQuality, value);
         }
 
         private bool _renderBounds = false;
@@ -181,6 +226,7 @@ namespace XREngine.Components.Scene.Mesh
 
             AddMeshesWithoutEvents(renderableMeshes);
             SubscribeModelMeshEvents(model);
+            ApplyDefaultBlendShapeWeights();
 
             ModelChanged?.Invoke();
             ModelRenderDiagnostics.LogComponentPublished(
@@ -407,6 +453,36 @@ namespace XREngine.Components.Scene.Mesh
             //    return;
             //}
             rends.ForEach(x => x.SetBlendshapeWeight(blendshapeName, percentage));
+        }
+
+        /// <summary>
+        /// Sets and persists an authored default blendshape weight by source index.
+        /// </summary>
+        public void SetDefaultBlendShapeWeight(int index, float percentage)
+        {
+            if (index < 0 || !float.IsFinite(percentage))
+                return;
+
+            _defaultBlendShapeWeights[index] = percentage;
+            foreach (RenderableMesh mesh in Meshes)
+                foreach (RenderableMesh.RenderableLOD lod in mesh.GetLodSnapshot())
+                    lod.Renderer.SetBlendshapeWeight((uint)index, percentage);
+        }
+
+        private void ApplyDefaultBlendShapeWeights()
+        {
+            if (_defaultBlendShapeWeights.Count == 0)
+                return;
+
+            foreach ((int index, float percentage) in _defaultBlendShapeWeights)
+            {
+                if (index < 0 || !float.IsFinite(percentage))
+                    continue;
+
+                foreach (RenderableMesh mesh in Meshes)
+                    foreach (RenderableMesh.RenderableLOD lod in mesh.GetLodSnapshot())
+                        lod.Renderer.SetBlendshapeWeight((uint)index, percentage);
+            }
         }
         public void SetBlendShapeWeightNormalized(string blendshapeName, float weight, StringComparison comp = StringComparison.InvariantCultureIgnoreCase)
         {

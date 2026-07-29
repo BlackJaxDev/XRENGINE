@@ -1,0 +1,40 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(binding = 0) uniform sampler2D SourceDepth;
+layout(r32f, binding = 1) writeonly uniform image2D DestinationMip;
+
+uniform ivec2 DestinationSize;
+uniform int SourceMip;
+uniform uint ReversedDepth;
+
+void main()
+{
+    ivec2 destination = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(destination, DestinationSize)))
+        return;
+
+    ivec2 source = destination * 2;
+    ivec2 sourceMaximum = textureSize(SourceDepth, SourceMip) - ivec2(1);
+    float d0 = texelFetch(
+        SourceDepth,
+        clamp(source + ivec2(0, 0), ivec2(0), sourceMaximum),
+        SourceMip).r;
+    float d1 = texelFetch(
+        SourceDepth,
+        clamp(source + ivec2(1, 0), ivec2(0), sourceMaximum),
+        SourceMip).r;
+    float d2 = texelFetch(
+        SourceDepth,
+        clamp(source + ivec2(0, 1), ivec2(0), sourceMaximum),
+        SourceMip).r;
+    float d3 = texelFetch(
+        SourceDepth,
+        clamp(source + ivec2(1, 1), ivec2(0), sourceMaximum),
+        SourceMip).r;
+    float reduced = ReversedDepth != 0u
+        ? min(min(d0, d1), min(d2, d3))
+        : max(max(d0, d1), max(d2, d3));
+    imageStore(DestinationMip, destination, vec4(reduced));
+}

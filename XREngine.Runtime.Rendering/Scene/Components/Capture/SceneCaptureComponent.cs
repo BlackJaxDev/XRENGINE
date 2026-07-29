@@ -283,7 +283,10 @@ namespace XREngine.Components.Lights
             XRCamera captureCamera = new(captureTransform, new XRPerspectiveCameraParameters(90.0f, 1.0f, 0.1f, 10000.0f));
             XRViewport viewport = new(null, 1u, 1u)
             {
+                PipelineRequest = RenderPipelineRequest.OffscreenCapture(),
                 Camera = captureCamera,
+                RenderPipeline =
+                    RuntimeEngine.Rendering.NewOffscreenCaptureRenderPipeline(),
                 SetRenderPipelineFromCamera = false,
                 AutomaticallyCollectVisible = false,
                 AutomaticallySwapBuffers = false,
@@ -301,6 +304,9 @@ namespace XREngine.Components.Lights
             viewport.SetRenderPipelineFromCamera = false;
             viewport.AutomaticallyCollectVisible = false;
             viewport.AutomaticallySwapBuffers = false;
+            viewport.PipelineRequest = RenderPipelineRequest.OffscreenCapture();
+            viewport.RenderPipeline ??=
+                RuntimeEngine.Rendering.NewOffscreenCaptureRenderPipeline();
             viewport.ApplyCapturePolicy(CaptureRenderPolicy);
             viewport.CullWithFrustum = true;
 

@@ -2,16 +2,20 @@
 
 Last Updated: 2026-07-28
 Owner: Rendering
-Status: Proposed
-Target Branch: `rendering-deferred-plus-render-path`
+Status: Superseded By Advanced Render Pipeline Architectural Refactor
+Historical Target Branch: `rendering-deferred-plus-render-path` (do not create)
 
 Consolidation note:
 
+- This monolithic tracker is historical. Its active requirements were
+  reorganized into the ordered
+  [Advanced Render Pipeline Architectural Refactor](../architectural-refactor/00-advanced-render-pipeline-refactor-todo.md).
+  Do not execute this file as an independent render-path plan.
 - The former standalone
   [Visibility Buffer Rendering TODO](visibility-buffer-rendering-todo.md) is
-  superseded by this tracker. Its unique traditional-mesh, cluster-producer,
+  also historical. Its unique traditional-mesh, cluster-producer,
   subgroup-fallback, editor-identity, MikkTSpace, and VR diagnostic
-  requirements are folded into the phases below.
+  requirements are preserved in the architectural-refactor series.
 - [06 - Forward+ Prepass And Render-Graph Cost](06-forward-prepass-and-render-graph-cost-todo.md)
   remains canonical for optimizing the current Default-pipeline graph.
   Deferred+ is a separate future opaque render path and does not replace

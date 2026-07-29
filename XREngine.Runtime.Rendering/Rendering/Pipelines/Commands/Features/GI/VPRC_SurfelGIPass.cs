@@ -162,32 +162,17 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         protected override bool ShouldExecuteThisFrame()
-            => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline switch
-            {
-                DefaultRenderPipeline pipeline => pipeline.UsesSurfelGI,
-                DefaultRenderPipeline2 pipeline => pipeline.UsesSurfelGI,
-                _ => false,
-            };
+            => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is
+                IGlobalIlluminationPipelineProvider { UsesSurfelGI: true };
 
         protected override void Execute()
         {
-            bool usesSurfelGI;
-            bool stereo;
-            switch (ActivePipelineInstance.Pipeline)
-            {
-                case DefaultRenderPipeline pipeline:
-                    usesSurfelGI = pipeline.UsesSurfelGI;
-                    stereo = pipeline.Stereo;
-                    break;
-                case DefaultRenderPipeline2 pipeline:
-                    usesSurfelGI = pipeline.UsesSurfelGI;
-                    stereo = pipeline.Stereo;
-                    break;
-                default:
-                    usesSurfelGI = false;
-                    stereo = false;
-                    break;
-            }
+            bool usesSurfelGI =
+                ActivePipelineInstance.Pipeline is
+                    IGlobalIlluminationPipelineProvider { UsesSurfelGI: true };
+            bool stereo =
+                ActivePipelineInstance.Pipeline is
+                    ISceneRenderPipelineFeatureProvider { Stereo: true };
             if (!usesSurfelGI)
                 return;
 

@@ -252,12 +252,12 @@ public sealed class SecondaryPassShaderContractTests
             "Pipelines",
             "Types",
             "DefaultRenderPipeline.FBOs.cs"));
-        string pipeline2 = ReadWorkspaceFile(Path.Combine(
+        string advancedPipeline = ReadWorkspaceFile(Path.Combine(
             "XREngine.Runtime.Rendering",
             "Rendering",
             "Pipelines",
             "Types",
-            "DefaultRenderPipeline2.FBOs.cs"));
+            "AdvancedRenderPipeline.FBOs.cs"));
         string atmosphereSky = ReadWorkspaceFile(Path.Combine(
             "XREngine.Runtime.Rendering",
             "Scene",
@@ -265,7 +265,7 @@ public sealed class SecondaryPassShaderContractTests
             "Environment",
             "AtmosphericScatteringComponent.cs"));
 
-        foreach (string source in new[] { pipeline, pipeline2 })
+        foreach (string source in new[] { pipeline, advancedPipeline })
         {
             source.ShouldContain("RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.RenderTime | EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy");
             source.ShouldContain("RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy");
@@ -598,14 +598,14 @@ public sealed class SecondaryPassShaderContractTests
     }
 
     [Test]
-    public void DefaultRenderPipeline2_PostProcessFbo_AttachesUniformCallback()
+    public void AdvancedRenderPipeline_PostProcessFbo_AttachesUniformCallback()
     {
         string source = ReadWorkspaceFile(Path.Combine(
             "XREngine.Runtime.Rendering",
             "Rendering",
             "Pipelines",
             "Types",
-            "DefaultRenderPipeline2.FBOs.cs"));
+            "AdvancedRenderPipeline.FBOs.cs"));
 
         source.ShouldContain("PostProcessFBO.SettingUniforms += ApplyPostProcessProgramBindings;");
     }

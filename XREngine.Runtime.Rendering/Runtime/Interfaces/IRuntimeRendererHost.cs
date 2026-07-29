@@ -44,6 +44,13 @@ public interface IRuntimeRendererHost
     bool SupportsIndirectCountDraw();
 
     /// <summary>
+    /// Captures the backend features and encodings available to the advanced render pipeline.
+    /// Renderer hosts that do not implement this contract are rejected explicitly.
+    /// </summary>
+    AdvancedRenderPipelineCapabilities GetAdvancedRenderPipelineCapabilities()
+        => AdvancedRenderPipelineCapabilities.UnsupportedBackend;
+
+    /// <summary>
     /// Returns the task/mesh shader dialect visible to this renderer.
     /// </summary>
     EMeshShaderDialect MeshShaderDialect { get; }

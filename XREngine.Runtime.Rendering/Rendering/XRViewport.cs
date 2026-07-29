@@ -69,6 +69,12 @@ namespace XREngine.Rendering
         private readonly XRRenderPipelineInstance _renderPipeline = new();
 
         /// <summary>
+        /// Stable output ownership used when a global setting replaces this viewport's pipeline.
+        /// </summary>
+        private RenderPipelineRequest _pipelineRequest =
+            RenderPipelineRequest.DesktopScene();
+
+        /// <summary>
         /// When true, the render pipeline is automatically updated to match the camera's RenderPipeline property.
         /// Set to false if you want to use a custom pipeline independent of the camera.
         /// </summary>
@@ -416,6 +422,18 @@ namespace XREngine.Rendering
         [YamlIgnore]
         public XRRenderPipelineInstance RenderPipelineInstance => _renderPipeline;
 
+        /// <summary>
+        /// Describes the output purpose and view topology this viewport owns. Pipeline selection
+        /// uses this request instead of inferring desktop, capture, or OpenXR ownership from a
+        /// concrete pipeline type.
+        /// </summary>
+        [YamlIgnore]
+        public RenderPipelineRequest PipelineRequest
+        {
+            get => _pipelineRequest;
+            set => SetField(ref _pipelineRequest, value);
+        }
+
         [YamlIgnore]
         public XRFrameBuffer? LastRenderedTargetFBO { get; private set; }
 
@@ -429,7 +447,19 @@ namespace XREngine.Rendering
         public RenderPipeline? RenderPipeline
         {
             get => _renderPipeline.Pipeline;
-            set => _renderPipeline.Pipeline = value;
+            set
+            {
+                _renderPipeline.Pipeline = value;
+
+                if (value is ISceneRenderPipelineFeatureProvider features &&
+                    features.Stereo != _pipelineRequest.Stereo)
+                {
+                    PipelineRequest = _pipelineRequest with
+                    {
+                        Stereo = features.Stereo,
+                    };
+                }
+            }
         }
 
         /// <summary>
@@ -454,7 +484,7 @@ namespace XREngine.Rendering
 
         private void SynchronizeRenderPipelineFromActiveCamera()
         {
-            _renderPipeline.Pipeline = ActiveCamera?.GetOrCreateRenderPipeline();
+            RenderPipeline = ActiveCamera?.GetOrCreateRenderPipeline();
 
             // When the camera's pipeline changes, push current sizing into the
             // existing runtime instance so the new command chain sees valid targets

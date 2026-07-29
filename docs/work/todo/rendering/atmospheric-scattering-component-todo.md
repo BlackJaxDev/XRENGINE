@@ -9,7 +9,7 @@ Design doc: [Atmospheric Scattering Component Design](../../design/rendering/atm
 
 - [x] Created dedicated branch `feature/atmospheric-scattering-component`.
 - [x] Chose SI-like physical defaults with the component transform origin treated as local ground level.
-- [x] Mirrored schema, resources, FBOs, command chain, and post-process bindings in both `DefaultRenderPipeline` and `DefaultRenderPipeline2`.
+- [x] Mirrored schema, resources, FBOs, command chain, and post-process bindings in both `DefaultRenderPipeline` and `AdvancedRenderPipeline`.
 - [x] Confirmed pass order: `AtmosphereColor` composites before `VolumetricFogColor`, bloom, and exposure/tonemapping.
 - [x] Added `AtmosphericScatteringComponent` with `SetField(...)` property mutation, clamping, revision tracking, sky render command, and per-world registry selection.
 - [x] Added `AtmosphericScatteringSettings` with quality/debug modes, camera stage defaults, active-atmosphere selection, and inert disabled/no-active uniform state.

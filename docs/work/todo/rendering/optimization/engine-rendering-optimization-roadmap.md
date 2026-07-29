@@ -220,16 +220,19 @@ This is future renderer architecture, not an alternate way to satisfy any
 numbered workstream. It begins only after the current Vulkan sequence or an
 explicit owner-approved reprioritization.
 
-- [ ] Complete geometry ID format, visibility pass, material tile
-  classification, and attribute reconstruction work in
-  [Deferred+ Render Path TODO](deferred-plus-render-path-todo.md). The former
-  standalone visibility-buffer tracker is superseded history.
-- [ ] Integrate visibility-buffer strategy selection into the existing mesh
-  submission strategy resolver.
+- [ ] Complete the ordered
+  [Advanced Render Pipeline Architectural Refactor](../architectural-refactor/00-advanced-render-pipeline-refactor-todo.md),
+  including geometry identity, visibility raster, reconstruction,
+  classification, native material/lighting shading, integration, validation,
+  and cutover. The former standalone and monolithic future-path trackers are
+  superseded history.
+- [ ] Integrate advanced visibility producers with the existing mesh submission
+  strategy resolver without creating a second shading architecture.
 - [ ] Validate material-diverse hero-avatar and dense opaque content against
   forward/deferred reference paths.
-- [ ] Keep transparent, special forward-only, and incompatible material classes
-  on explicit fallback paths.
+- [ ] Keep transparent and genuinely special late material classes on explicit
+  paths; required-mode incompatible opaque materials must fail visibly rather
+  than silently using the old opaque renderer.
 
 Acceptance criteria:
 

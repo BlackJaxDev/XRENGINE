@@ -286,11 +286,12 @@ namespace XREngine.Scene
                 // This is an observational query and can run concurrently with editor
                 // snapshot restoration. Do not invoke the lazy Pipeline getter here:
                 // it mutates an unbound viewport and races camera/pipeline rebinding.
-                switch (viewport.RenderPipelineInstance.AssignedPipeline)
+                RenderPipeline? pipeline =
+                    viewport.RenderPipelineInstance.AssignedPipeline;
+                if (pipeline is IGlobalIlluminationPipelineProvider { UsesSurfelGI: true } or
+                    SurfelDebugRenderPipeline)
                 {
-                    case DefaultRenderPipeline pipeline when pipeline.UsesSurfelGI:
-                    case SurfelDebugRenderPipeline:
-                        return true;
+                    return true;
                 }
             }
 

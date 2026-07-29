@@ -63,7 +63,7 @@ must classify each one before changing it:
   should be deleted rather than migrated again.
 - Some framebuffer commands exist because their attachments are selected by a
   runtime branch or replaced by another feature path.
-- `DefaultRenderPipeline2`, `UserInterfaceRenderPipeline`,
+- `AdvancedRenderPipeline`, `UserInterfaceRenderPipeline`,
   `SurfelDebugRenderPipeline`, and `TestRenderPipeline` still author resources
   through cache commands.
 - `DefaultRenderPipeline` retains `GenerateCommandChainLegacy()` and other
@@ -78,7 +78,7 @@ must classify each one before changing it:
 The Phase 0 execution-aware inventory and Phase 1–2 implementation record are
 in [the 2026-07-10 progress note](../../progress/rendering/render-pipeline-resource-lifecycle-finalization-2026-07-10.md).
 Phase 3–5 subsequently migrated the remaining 138 authoring expressions: 121
-in `Default2`, 11 in `SurfelDebugRenderPipeline`, 3 in
+in `Advanced`, 11 in `SurfelDebugRenderPipeline`, 3 in
 `UserInterfaceRenderPipeline`, and 3 in `TestRenderPipeline`. The final active
 site count is zero and the command types have been removed.
 
@@ -214,9 +214,9 @@ Acceptance criteria:
   generation before that feature's passes execute.
 - [x] Default-pipeline command execution cannot resize or recreate a resource.
 
-## Phase 3 - Resolve `DefaultRenderPipeline2`
+## Phase 3 - Resolve `AdvancedRenderPipeline`
 
-- [x] Retain `DefaultRenderPipeline2` as the cleaned-up, better-organized
+- [x] Retain `AdvancedRenderPipeline` as the cleaned-up, better-organized
   successor pipeline; it provides the intended production direction.
 - [x] Record deletion of V2 as not applicable because the retained direction is
   explicit.
@@ -230,7 +230,7 @@ Acceptance criteria:
 
 Acceptance criteria:
 
-- [x] `DefaultRenderPipeline2` is either removed or contains no executable cache
+- [x] `AdvancedRenderPipeline` is either removed or contains no executable cache
   commands.
 - [x] There is one clearly documented production default-pipeline direction.
 

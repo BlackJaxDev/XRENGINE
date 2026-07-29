@@ -1,0 +1,56 @@
+#ifndef XR_ADVANCED_INSTANCE_ACCESS_GLSLINC
+#define XR_ADVANCED_INSTANCE_ACCESS_GLSLINC
+
+#include "AdvancedDiagnostics.glslinc"
+
+struct XRAdvancedInstanceRecord
+{
+    mat4 currentWorld;
+    mat4 previousWorld;
+    vec4 boundsSphere;
+    vec4 boundsMin;
+    vec4 boundsMax;
+    XRAdvancedGpuHandle animation;
+    XRAdvancedGpuHandle deformation;
+    uint visibilityFlags;
+    uint lodLevel;
+    uint viewMaskLow;
+    uint viewMaskHigh;
+    uint currentFrameSlot;
+    uint previousFrameSlot;
+    uint reserved0;
+    uint reserved1;
+};
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_INSTANCES) readonly buffer XRAdvancedInstanceTable
+{
+    XRAdvancedInstanceRecord records[];
+} XR_ADV_Instances;
+
+XRAdvancedInstanceRecord XR_ADV_LoadInstance(uint denseIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (denseIndex >= uint(XR_ADV_Instances.records.length()))
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_INSTANCE);
+        denseIndex = 0u;
+    }
+#endif
+    return XR_ADV_Instances.records[denseIndex];
+}
+
+vec3 XR_ADV_InstanceCurrentPosition(
+    XRAdvancedInstanceRecord instanceRecord,
+    vec3 localPosition)
+{
+    return XR_ADV_TransformPositionRowVector(localPosition, instanceRecord.currentWorld);
+}
+
+vec3 XR_ADV_InstancePreviousPosition(
+    XRAdvancedInstanceRecord instanceRecord,
+    vec3 localPosition)
+{
+    return XR_ADV_TransformPositionRowVector(localPosition, instanceRecord.previousWorld);
+}
+
+#endif

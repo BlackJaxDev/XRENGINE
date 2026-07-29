@@ -1,0 +1,54 @@
+#ifndef XR_ADVANCED_SHADOW_ACCESS_GLSLINC
+#define XR_ADVANCED_SHADOW_ACCESS_GLSLINC
+
+#include "AdvancedDiagnostics.glslinc"
+
+struct XRAdvancedShadowRecord
+{
+    uint stableShadowId;
+    uint generation;
+    uint type;
+    uint flags;
+    XRAdvancedTextureReference textureReference;
+    mat4 worldToShadow;
+    mat4 previousWorldToShadow;
+    vec4 uvScaleBias;
+    vec4 depthBiasAndFilter;
+    uint textureLayer;
+    uint encoding;
+    uint cascadeOffset;
+    uint cascadeCount;
+    uint viewMaskLo;
+    uint viewMaskHi;
+    uint lastRenderedFrameLo;
+    uint lastRenderedFrameHi;
+};
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_SHADOWS) readonly buffer XRAdvancedShadowTable
+{
+    XRAdvancedShadowRecord records[];
+} XR_ADV_Shadows;
+
+XRAdvancedShadowRecord XR_ADV_LoadShadow(uint denseIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (denseIndex >= uint(XR_ADV_Shadows.records.length()))
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_SHADOW);
+        denseIndex = 0u;
+    }
+#endif
+    return XR_ADV_Shadows.records[denseIndex];
+}
+
+vec3 XR_ADV_ShadowCoordinate(
+    XRAdvancedShadowRecord shadowRecord,
+    vec3 worldPosition)
+{
+    vec4 homogeneous = XR_ADV_TransformRowVector(
+        vec4(worldPosition, 1.0),
+        shadowRecord.worldToShadow);
+    return homogeneous.xyz / homogeneous.w;
+}
+
+#endif

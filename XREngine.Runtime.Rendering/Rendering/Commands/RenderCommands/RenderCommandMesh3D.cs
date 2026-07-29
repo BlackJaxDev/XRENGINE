@@ -220,6 +220,22 @@ namespace XREngine.Rendering.Commands
             base.SwapBuffers();
         }
 
+        /// <summary>
+        /// Captures the immutable render-buffer state used by aggregate GPU
+        /// preparation. This avoids reading mutable update-side properties
+        /// after a <see cref="RenderWorldSnapshot"/> has been published.
+        /// </summary>
+        internal AdvancedMeshRenderSnapshot CaptureAdvancedPreparationSnapshot()
+            => new(
+                _renderMesh,
+                _renderWorldMatrix,
+                _renderHasPrevWorldMatrix
+                    ? _renderPrevWorldMatrix
+                    : _renderWorldMatrix,
+                _renderInstances,
+                _renderWorldMatrixIsModelMatrix,
+                _renderForceCpuRendering);
+
         internal void ApplyLateRenderThreadWorldMatrix(Matrix4x4 worldMatrix)
         {
             _renderWorldMatrix = worldMatrix;

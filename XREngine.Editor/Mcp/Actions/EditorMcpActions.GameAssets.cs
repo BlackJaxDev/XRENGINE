@@ -6,7 +6,9 @@ using System.Linq;
 using System.Threading.Tasks;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
+using XREngine.Rendering.Models;
 using XREngine.Scene;
+using XREngine.Scene.Prefabs;
 
 namespace XREngine.Editor.Mcp
 {
@@ -442,22 +444,28 @@ namespace XREngine.Editor.Mcp
 
         /// <summary>
         /// Imports a third-party file (GLTF, FBX, OBJ, PNG, WAV, etc.) into game assets using the engine's import pipeline.
+        /// External Unity prefabs are converted directly to native output so their
+        /// source-project GUID context is retained without copying the prefab.
         /// </summary>
-        [XRMcp(Name = "import_third_party_asset", Permission = McpPermissionLevel.Destructive, PermissionReason = "Copies and imports files into the game project.")]
-        [Description("Import a third-party file (GLTF, FBX, OBJ, PNG, WAV, etc.) into game assets using the engine's import pipeline.")]
-        public static Task<McpToolResponse> ImportThirdPartyAssetAsync(
+        [XRMcp(Name = "import_third_party_asset", Permission = McpPermissionLevel.Destructive, PermissionReason = "Writes generated or copied assets into the game project.")]
+        [Description("Import a third-party file into game assets. External Unity prefabs are converted directly to native .asset output without copying or modifying their source project.")]
+        public static McpToolResponse ImportThirdPartyAsset(
             McpToolContext context,
             [McpName("source_path"), Description("Absolute path to the source file to import.")]
             string sourcePath,
-            [McpName("dest_folder"), Description("Relative folder within game assets to copy the source file into. Empty for root.")]
-            string destFolder = "")
+            [McpName("dest_folder"), Description("Relative folder within game assets for copied or generated output. Empty for root.")]
+            string destFolder = "",
+            [McpName("unity_project_root"), Description("Optional Unity project or Assets folder override used when importing an external .prefab.")]
+            string? unityProjectRoot = null,
+            [McpName("overwrite"), Description("Allow an existing generated Unity prefab output to be replaced transactionally.")]
+            bool overwrite = false)
         {
             if (!TryGetGameAssetsPath(out string assetsPath, out McpToolResponse? error))
-                return Task.FromResult(error!);
+                return error!;
 
             // Validate source exists
             if (!File.Exists(sourcePath))
-                return Task.FromResult(new McpToolResponse($"Source file not found: '{sourcePath}'.", isError: true));
+                return new McpToolResponse($"Source file not found: '{sourcePath}'.", isError: true);
 
             // Resolve destination
             string targetDir = string.IsNullOrWhiteSpace(destFolder)
@@ -465,23 +473,90 @@ namespace XREngine.Editor.Mcp
                 : ResolveAndValidateGamePath(assetsPath, destFolder, out error, mustExist: false, expectDirectory: true);
 
             if (error is not null)
-                return Task.FromResult(error);
+                return error;
 
             if (!Directory.Exists(targetDir))
                 Directory.CreateDirectory(targetDir);
 
-            // Copy source file into game assets if not already there
-            string destFilePath = Path.Combine(targetDir, Path.GetFileName(sourcePath));
             string sourceFullPath = Path.GetFullPath(sourcePath);
             string normalizedRoot = Path.GetFullPath(assetsPath);
+            bool isExternalUnityPrefab =
+                string.Equals(Path.GetExtension(sourceFullPath), ".prefab", StringComparison.OrdinalIgnoreCase) &&
+                !sourceFullPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase);
 
+            if (isExternalUnityPrefab)
+            {
+                string outputPath = Path.Combine(
+                    targetDir,
+                    $"{Path.GetFileNameWithoutExtension(sourceFullPath)}.asset");
+                if (File.Exists(outputPath) && !overwrite)
+                    return new McpToolResponse(
+                        $"Native output '{Path.GetFileName(outputPath)}' already exists in destination. Enable overwrite or choose another destination.",
+                        isError: true);
+
+                var importOptions = new ModelImportOptions
+                {
+                    UnityProjectRootOverride = unityProjectRoot,
+                    ProcessMeshesAsynchronously = false,
+                    GenerateMeshRenderersAsync = false,
+                };
+
+                try
+                {
+                    bool imported = Engine.Assets.ImportExternalThirdPartyFile(
+                        sourceFullPath,
+                        outputPath,
+                        importOptions,
+                        overwrite,
+                        bypassJobThread: true);
+                    if (!imported)
+                        return new McpToolResponse(
+                            $"Unity prefab conversion failed for '{sourceFullPath}'.",
+                            isError: true);
+                }
+                catch (Exception ex)
+                {
+                    return new McpToolResponse($"Import failed: {ex.Message}", isError: true);
+                }
+
+                string relativeOutput = Path.GetRelativePath(assetsPath, outputPath).Replace('\\', '/');
+                FileInfo generatedFile = new(outputPath);
+                if (!generatedFile.Exists || generatedFile.Length == 0)
+                    return new McpToolResponse(
+                        $"Unity prefab conversion reported success, but native output '{outputPath}' is missing or empty.",
+                        isError: true);
+
+                // ImportExternalThirdPartyFile is transactional and does not
+                // return until every generated file has serialized and committed.
+                // Do not hydrate the root again merely to shape an MCP response:
+                // even a partial prefab parse can register hundreds of deferred
+                // texture sources and keep a large avatar request alive after the
+                // actual import has completed. Explicit open/instantiate operations
+                // own the comparatively expensive load validation.
+                return new McpToolResponse(
+                    $"Converted external Unity prefab '{Path.GetFileName(sourceFullPath)}' to native asset '{relativeOutput}' without copying the source.",
+                    new
+                    {
+                        path = relativeOutput,
+                        sourcePath = sourceFullPath,
+                        sourceCopied = false,
+                        assetType = typeof(XRPrefabSource).FullName,
+                        name = Path.GetFileNameWithoutExtension(outputPath),
+                        outputBytes = generatedFile.Length,
+                        validation = "transactional-serialization",
+                        imported = true
+                    });
+            }
+
+            // Non-prefab sources retain the existing copy-then-import workflow.
+            string destFilePath = Path.Combine(targetDir, Path.GetFileName(sourcePath));
             // Only copy if source is outside game assets
             if (!sourceFullPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase))
             {
                 if (File.Exists(destFilePath))
-                    return Task.FromResult(new McpToolResponse(
+                    return new McpToolResponse(
                         $"File '{Path.GetFileName(sourcePath)}' already exists in destination. Delete it first or rename.",
-                        isError: true));
+                        isError: true);
 
                 File.Copy(sourceFullPath, destFilePath);
             }
@@ -498,21 +573,21 @@ namespace XREngine.Editor.Mcp
             }
             catch (Exception ex)
             {
-                return Task.FromResult(new McpToolResponse(
+                return new McpToolResponse(
                     $"Import failed: {ex.Message}",
-                    isError: true));
+                    isError: true);
             }
 
             if (loaded is null)
             {
                 string relativeDest = Path.GetRelativePath(assetsPath, destFilePath).Replace('\\', '/');
-                return Task.FromResult(new McpToolResponse(
+                return new McpToolResponse(
                     $"File copied to '{relativeDest}' but engine could not import it. The file extension may not have a registered importer.",
-                    new { path = relativeDest, imported = false, copied = true }));
+                    new { path = relativeDest, imported = false, copied = true });
             }
 
             string relPath = Path.GetRelativePath(assetsPath, destFilePath).Replace('\\', '/');
-            return Task.FromResult(new McpToolResponse(
+            return new McpToolResponse(
                 $"Imported '{Path.GetFileName(sourcePath)}' as {loaded.GetType().Name} at '{relPath}'.",
                 new
                 {
@@ -521,7 +596,7 @@ namespace XREngine.Editor.Mcp
                     assetId = loaded.ID.ToString(),
                     name = loaded.Name,
                     imported = true
-                }));
+                });
         }
 
         /// <summary>

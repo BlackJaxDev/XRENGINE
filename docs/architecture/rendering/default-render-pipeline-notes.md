@@ -1,6 +1,6 @@
 # Default Render Pipeline — Known Issues and Lessons Learned
 
-This document records bugs that were found and fixed in `DefaultRenderPipeline` and `DefaultRenderPipeline2`. Its purpose is to prevent the same classes of mistake from being reintroduced. Read this before making non-trivial changes to the pipeline texture setup, FBO management, post-processing, or render pass ordering.
+This document records bugs that were found and fixed in `DefaultRenderPipeline` and `AdvancedRenderPipeline`. Its purpose is to prevent the same classes of mistake from being reintroduced. Read this before making non-trivial changes to the pipeline texture setup, FBO management, post-processing, or render pass ordering.
 
 ---
 
@@ -33,16 +33,101 @@ Full contract: [Render Pipeline Resource Lifecycle](render-pipeline-resource-lif
 
 ---
 
-## Selecting `DefaultRenderPipeline2`
+## Selecting `AdvancedRenderPipeline`
 
-`DefaultRenderPipeline` remains the default production path. To opt into the parallel V2 pipeline for local validation, launch the editor or client with:
+`DefaultRenderPipeline` remains the default production path. To opt into the advanced pipeline for local validation, launch the editor or client with:
 
 ```powershell
-$env:XRE_USE_PIPELINE_V2 = "1"
+$env:XRE_ADVANCED_RENDER_PIPELINE_MODE = "Available"
 dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj
 ```
 
-The `XRE_USE_PIPELINE_V2=1` environment variable is read by the render pipeline factory, including stereo and OpenXR-created pipelines. Leave it unset to use the default pipeline.
+The same mode is available through
+`RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode`. The environment
+variable takes precedence and accepts:
+
+- `Disabled`: retain the legacy default pipeline without evaluating advanced
+  capabilities. This is the default.
+- `Available`: select the advanced pipeline when the active renderer satisfies
+  the capability floor; otherwise log the structured rejection and visibly
+  retain the legacy default pipeline.
+- `Required`: select the advanced pipeline or throw
+  `AdvancedRenderPipelineNotSupportedException` before pipeline construction.
+- `Diagnostic`: evaluate and report capabilities while retaining the legacy
+  default pipeline.
+
+The application registers this policy with the central runtime pipeline
+factory. Every request carries an explicit output purpose:
+
+- desktop scene requests use the standard capability policy, with the
+  debug-opaque editor pipeline available only for desktop mono;
+- OpenXR eye requests always use an independently owned `RvcRenderPipeline`,
+  including `RvcPipelineMode.Off`, where the RVC additions are disabled;
+- offscreen-capture requests use the standard capability policy and are not
+  redirected by desktop debug or RVC settings.
+
+OpenXR does not clone the desktop pipeline type. It synchronizes compatible
+visual-feature configuration while keeping eye pipeline instances, temporal
+histories, and output topology independent. The standard and RVC pipelines
+implement shared GI, probe-resource, reusable pass-material, temporal,
+volumetric/froxel, and post-process feature contracts.
+
+The advanced pipeline now exposes only the ordered visibility-oriented frame
+stage skeleton. Its copied deferred/Forward+ command graph and resource layout
+are disconnected. OpenGL and Vulkan therefore report no advanced shader family,
+so `Available` keeps this default pipeline active and `Required` fails before
+frame execution until the complete visibility-buffer shader family exists.
+
+The inactive skeleton also defines its resource/state contract before declaring
+production visibility resources. Ownership is classified as pipeline
+persistent, frame-slot transient, temporal history, imported, or external. The
+immutable profile includes output shape, selected backend encodings, frame-slot
+count, shader family, and declared capacities. Current/previous slot reuse is
+fence/timeline gated; OpenGL and Vulkan lower the same four logical
+synchronization boundaries through their own encodings. Recorded command
+packets may be invalidated only by topology, capacity, binding, shader, or
+resource generations. Ordinary GPU-written counts, visibility, transforms, and
+material contents refresh behind stable bindings.
+
+### Shared GPU Scene And Material Contract
+
+`AdvancedSharedGpuSceneDatabase` is the pipeline-neutral authority for the
+advanced scene and material schema. Desktop `AdvancedRenderPipeline` and
+OpenXR-eye `RvcRenderPipeline` consumers resolve the same draw, instance,
+geometry, transform, deformation, render-state, editor-identity, material,
+kernel, and layout records. They do not share output-local resources, command
+recordings, frame-slot ownership, or temporal histories.
+
+Logical table identities are eight-byte index/generation handles with slot zero
+reserved as invalid. Physical rows may compact, but every affected table
+publishes dependent-state remaps and a shared logical-to-dense lookup image.
+Ordinary lookup publication copies only dirty ranges; capacity changes rebuild
+the image only at an explicit frame boundary. Production shaders reject stale
+generations without a control-flow branch, while diagnostic variants add
+bounds checks and delayed counters.
+
+Visibility-readable geometry lives in scene-owned immutable arenas. One
+geometry schema covers static, current/previous pre-skinned, and meshlet-local
+sources, with cooked-layout versioning and explicit skip/fallback residency
+behavior. Material rows separate instance constants and texture references from
+shared shading-kernel identity, so warmed shading does not select descriptor
+sets per material.
+
+View, light, shadow, probe, environment, decal, GI, texture, and sampler records
+use the same packed CPU/GPU layout contract on OpenGL and Vulkan. Backend
+texture encodings may use arrays, OpenGL bindless handles, Vulkan descriptor
+indexing, or a descriptor heap without changing logical references.
+
+`AdvancedFrameSlotUploadArena` supplies pinned current/previous host regions for
+instance, view, deformation-job, light, and material changes. It grows only at
+a frame boundary, uses completion-retired overflow generations instead of
+whole-device waits, and emits bounded copy ranges plus allocation telemetry.
+Live scene extraction and deformation/visibility preparation are introduced by
+the next refactor stage; this section defines the contract they must populate.
+
+Follow the ordered
+[Advanced Render Pipeline Architectural Refactor](../../work/todo/rendering/architectural-refactor/00-advanced-render-pipeline-refactor-todo.md)
+for the visibility-buffer architecture and promotion gates.
 
 ---
 
@@ -61,7 +146,7 @@ The non-stereo `HDRSceneTex` was created via `CreateFrameBufferTexture` which de
 
 ### Defensive fix applied
 
-- Both `DefaultRenderPipeline.Textures.cs` and `DefaultRenderPipeline2.Textures.cs`: added `t.Resizable = false` to the non-stereo HDR texture.
+- Both `DefaultRenderPipeline.Textures.cs` and `AdvancedRenderPipeline.Textures.cs`: added `t.Resizable = false` to the non-stereo HDR texture.
 - `GLTexture2D.ResolveMaxMipLevel` and `GLTexture2DArray.ResolveMaxMipLevel`: changed the mutable-texture fallback from `baseLevel` (0) to `naturalMaxLevel` (`SmallestMipmapLevel`) so `GL_TEXTURE_MAX_LEVEL` is correct even when immutable storage is not used.
 
 ### Checklist for new textures
@@ -123,7 +208,7 @@ Use the standard `SceneCopy.fs` / `SceneCopyStereo.fs` material for `ForwardPass
 
 ## 5. Auto-Exposure: Constructor vs Schema Defaults
 
-**Rule:** `ColorGradingSettings` constructor defaults **must** match the pipeline schema defaults in `DefaultRenderPipeline.PostProcessing.cs` / `DefaultRenderPipeline2.PostProcessing.cs`. Keep the regression test `Defaults_MatchPipelineSchemaDefaults` in sync.
+**Rule:** `ColorGradingSettings` constructor defaults **must** match the pipeline schema defaults in `DefaultRenderPipeline.PostProcessing.cs` / `AdvancedRenderPipeline.PostProcessing.cs`. Keep the regression test `Defaults_MatchPipelineSchemaDefaults` in sync.
 
 ### What went wrong
 
@@ -145,7 +230,7 @@ Standard deferred `LightCombine` quad FBOs used size-only caching. After pipelin
 
 ### Fix
 
-The retained `DefaultRenderPipeline` now declares light-combine dependencies and validates their generation identity before commit. `DefaultRenderPipeline2` still uses the compatibility predicate pending its removal.
+The retained `DefaultRenderPipeline` now declares light-combine dependencies and validates their generation identity before commit. `AdvancedRenderPipeline` still uses the compatibility predicate pending its removal.
 
 ---
 
@@ -209,7 +294,7 @@ Many albedo textures carry non-transparency data in alpha (smoothness, AO, paddi
 
 The strategy contract is documented in [Mesh Submission Strategies](mesh-submission-strategies.md). In short, `GpuIndirectInstrumented` is the only GPU path that may perform CPU readbacks or CPU mesh safety-net fallback. `GpuIndirectZeroReadback` is the production path and must not call count, batch, or indirect-buffer readback helpers during steady-state render submission.
 
-When adding a mesh pass to `DefaultRenderPipeline` or `DefaultRenderPipeline2`, use:
+When adding a mesh pass to `DefaultRenderPipeline` or `AdvancedRenderPipeline`, use:
 
 ```csharp
 c.Add<VPRC_RenderMeshesPass>().SetOptions(renderPass, MeshSubmissionStrategy);
@@ -275,7 +360,7 @@ The mono OpenGL path runs before local volumetric fog and before exposure:
 ### Invariants
 
 - `AtmosphericScatteringComponent` owns sky-background rendering in `EDefaultRenderPass.Background` and selects one active atmosphere per camera.
-- `AtmosphericScatteringSettings` is exposed through the `atmosphericScattering` post-process stage in both `DefaultRenderPipeline` and `DefaultRenderPipeline2`.
+- `AtmosphericScatteringSettings` is exposed through the `atmosphericScattering` post-process stage in both `DefaultRenderPipeline` and `AdvancedRenderPipeline`.
 - `AtmosphereAerialPerspective.fs` writes raw scatter/transmittance to `AtmosphereHalfScatter`.
 - `AtmosphereReproject.fs` samples `AtmosphereHalfScatter`, `AtmosphereHalfHistory`, and `AtmosphereHalfDepth`, then writes `AtmosphereHalfTemporal`.
 - `AtmosphereUpscale.fs` samples `AtmosphereHalfTemporal`, not raw scatter, so temporal filtering is included before the full-resolution composite.
@@ -397,7 +482,7 @@ Normalize `FragNorm` in the direct-geometry deferred shaders (`ColoredDeferred`,
 
 **Rule:** When diagnosing deferred composite issues, use the render pipeline's `Deferred Debug View` setting in the ImGui inspector instead of ad-hoc shader edits.
 
-`DeferredLightCombine.fs` exposes debug modes via the `DeferredDebugMode` uniform, wired from the `Deferred Debug View` property on `DefaultRenderPipeline` / `DefaultRenderPipeline2`.
+`DeferredLightCombine.fs` exposes debug modes via the `DeferredDebugMode` uniform, wired from the `Deferred Debug View` property on `DefaultRenderPipeline` / `AdvancedRenderPipeline`.
 
 Current modes:
 
@@ -653,7 +738,7 @@ and framebuffer-texture Y direction.
 
 Capture is a variant of the existing default pipelines rather than a separate
 `RenderPipeline` type. Both `DefaultRenderPipeline` and
-`DefaultRenderPipeline2` route minimal policies through the same caller-owned
+`AdvancedRenderPipeline` route minimal policies through the same caller-owned
 FBO command shape: optional pre-render hooks, background, policy-selected
 deferred/forward/masked/transparent geometry, optional on-top/debug/UI work,
 and post-render hooks. The branch does not execute temporal history, auto
@@ -663,7 +748,7 @@ exposure, bloom, TAA/TSR, vendor upscaling, or viewport final output.
 bit for this path. When set, `DescribeResources(...)` returns before declaring
 the viewport G-buffer, post-process, temporal, bloom, exposure, AA, or final
 output resources. The caller-owned color/depth attachments and mesh-command
-resources are sufficient for the direct branch. `DefaultRenderPipeline2`
+resources are sufficient for the direct branch. `AdvancedRenderPipeline`
 already allocates its legacy command resources lazily by selected branch, so
 selecting its direct branch provides the same capture behavior.
 

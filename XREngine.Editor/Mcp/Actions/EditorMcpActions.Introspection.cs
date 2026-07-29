@@ -891,6 +891,7 @@ namespace XREngine.Editor.Mcp
                     priority = priority.ToString(),
                     queuedAny = jobs.GetQueuedCount(priority, JobAffinity.Any),
                     queuedMainThread = jobs.GetQueuedCount(priority, JobAffinity.MainThread),
+                    queuedAppThread = jobs.GetQueuedCount(priority, JobAffinity.AppThread),
                     queuedCollectVisibleSwap = jobs.GetQueuedCount(priority, JobAffinity.CollectVisibleSwap),
                     queuedRemote = jobs.GetQueuedCount(priority, JobAffinity.Remote),
                     averageWaitMs = jobs.GetAverageWait(priority).TotalMilliseconds

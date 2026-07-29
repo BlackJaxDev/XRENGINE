@@ -427,8 +427,9 @@ public unsafe partial class OpenXRAPI
     #region Pipeline helpers
 
     /// <summary>
-    /// Returns an OpenXR-owned pipeline instance that matches the source pipeline type/config as closely as possible,
-    /// without sharing the source pipeline instance.
+    /// Returns an OpenXR-owned RVC pipeline without sharing the desktop pipeline instance.
+    /// Shared visual features are synchronized from the desktop/camera pipeline while output
+    /// topology remains owned by the OpenXR path.
     /// </summary>
     private RenderPipeline GetOrCreateOpenXrPipeline(RenderPipeline? sourcePipeline, int eyeIndex)
     {
@@ -440,7 +441,7 @@ public unsafe partial class OpenXRAPI
 
     private RenderPipeline GetOrCreateOpenXrStereoPipeline(RenderPipeline? sourcePipeline)
     {
-        sourcePipeline ??= RuntimeEngine.Rendering.NewRenderPipeline(stereo: true);
+        sourcePipeline ??= RuntimeEngine.Rendering.NewRenderPipeline(stereo: false);
         return GetOrCreateOpenXrPipelineInSlot(sourcePipeline, stereo: true, ref _openXrStereoRenderPipeline);
     }
 
@@ -449,66 +450,40 @@ public unsafe partial class OpenXRAPI
         bool stereo,
         ref RenderPipeline? openXrPipeline)
     {
-        // If the source pipeline type changed, recreate our dedicated instance.
-        if (openXrPipeline is null || openXrPipeline.GetType() != sourcePipeline.GetType())
+        ERvcPipelineMode mode =
+            RuntimeEngine.Rendering.Settings.RvcPipelineMode;
+        if (openXrPipeline is not RvcRenderPipeline rvcPipeline ||
+            rvcPipeline.Stereo != stereo ||
+            rvcPipeline.RvcPipelineMode != mode)
         {
             openXrPipeline = CreateOpenXrPipeline(sourcePipeline, stereo);
-        }
-        else
-        {
-            // Keep simple flags aligned if the source changes them at runtime.
-            openXrPipeline.IsShadowPass = sourcePipeline.IsShadowPass;
+            rvcPipeline = (RvcRenderPipeline)openXrPipeline;
         }
 
+        rvcPipeline.ApplyRuntimeSettings(RuntimeEngine.Rendering.Settings);
+        RenderPipelineFeatureSynchronizer.CopyPipelineFeatures(
+            sourcePipeline,
+            openXrPipeline);
         return openXrPipeline;
     }
 
-    private static RenderPipeline CreateOpenXrPipeline(RenderPipeline sourcePipeline, bool stereo)
+    internal static RenderPipeline CreateOpenXrPipeline(
+        RenderPipeline sourcePipeline,
+        bool stereo)
     {
-        RenderPipeline created;
-        try
+        RenderPipeline created =
+            RuntimeEngine.Rendering.NewOpenXrEyeRenderPipeline(stereo);
+        if (created is not RvcRenderPipeline)
         {
-            if (stereo)
-            {
-                created = CreateStereoOpenXrPipeline(sourcePipeline);
-            }
-            else if (!RenderPipeline.TryCreateOpenXrPipeline(sourcePipeline, out RenderPipeline? registered) || registered is null)
-            {
-                if (XRRuntimeEnvironment.IsAotRuntimeBuild)
-                    throw new InvalidOperationException($"No registered OpenXR render pipeline factory for type {sourcePipeline.GetType().FullName}.");
-
-                created = (RenderPipeline?)Activator.CreateInstance(sourcePipeline.GetType())
-                          ?? RuntimeEngine.Rendering.NewRenderPipeline(stereo: false);
-            }
-            else
-            {
-                created = registered;
-            }
-        }
-        catch when (!XRRuntimeEnvironment.IsAotRuntimeBuild)
-        {
-            created = RuntimeEngine.Rendering.NewRenderPipeline(stereo);
+            throw new InvalidOperationException(
+                $"OpenXR eye pipeline factory returned '{created.GetType().FullName}' " +
+                $"instead of {nameof(RvcRenderPipeline)}.");
         }
 
-        created.IsShadowPass = sourcePipeline.IsShadowPass;
+        RenderPipelineFeatureSynchronizer.CopyPipelineFeatures(
+            sourcePipeline,
+            created);
         return created;
-    }
-
-    private static RenderPipeline CreateStereoOpenXrPipeline(RenderPipeline sourcePipeline)
-    {
-        if (sourcePipeline is DefaultRenderPipeline)
-            return new DefaultRenderPipeline(stereo: true);
-        if (sourcePipeline is DefaultRenderPipeline2)
-            return new DefaultRenderPipeline2(stereo: true);
-
-        if (XRRuntimeEnvironment.IsAotRuntimeBuild)
-            throw new InvalidOperationException($"No registered stereo OpenXR render pipeline factory for type {sourcePipeline.GetType().FullName}.");
-
-        var constructor = sourcePipeline.GetType().GetConstructor([typeof(bool)]);
-        if (constructor is not null && constructor.Invoke([true]) is RenderPipeline reflected)
-            return reflected;
-
-        return RuntimeEngine.Rendering.NewRenderPipeline(stereo: true);
     }
 
     /// <summary>
@@ -516,29 +491,11 @@ public unsafe partial class OpenXRAPI
     /// Best-effort only: failures should not crash the render thread.
     /// </summary>
     private static void CopyPostProcessState(RenderPipeline sourcePipeline, RenderPipeline destinationPipeline, XRCamera sourceCamera, XRCamera destinationCamera)
-    {
-        try
-        {
-            var srcState = sourceCamera.PostProcessStates.GetOrCreateState(sourcePipeline);
-            var dstState = destinationCamera.PostProcessStates.GetOrCreateState(destinationPipeline);
-
-            foreach (var (stageKey, srcStage) in srcState.Stages)
-            {
-                if (dstState.GetStage(stageKey) is not { } dstStage)
-                    continue;
-
-                foreach (var (param, value) in srcStage.Values)
-                    dstStage.SetValue<object?>(param, value);
-            }
-
-            // Some cameras use an explicit post-process material override; keep it consistent.
-            destinationCamera.PostProcessMaterial = sourceCamera.PostProcessMaterial;
-        }
-        catch
-        {
-            // Best-effort only; falling back to defaults is preferable to crashing the render thread.
-        }
-    }
+        => RenderPipelineFeatureSynchronizer.TryCopyCameraPostProcessState(
+            sourcePipeline,
+            destinationPipeline,
+            sourceCamera,
+            destinationCamera);
 
     private void EnsureOpenXrEyeSettingsOwnership(XRCamera leftEyeCamera, XRCamera rightEyeCamera)
     {

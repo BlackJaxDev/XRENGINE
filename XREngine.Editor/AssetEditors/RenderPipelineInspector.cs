@@ -60,6 +60,10 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
 
         DrawHeader(pipeline);
 
+        bool drewAdvancedCapabilities = DrawAdvancedCapabilitiesSection(pipeline);
+        if (drewAdvancedCapabilities)
+            ImGui.Separator();
+
         bool drewInstances = DrawInstancesSection(pipeline);
         if (drewInstances)
             ImGui.Separator();
@@ -121,6 +125,44 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         ImGui.TextDisabled($"Commands: {pipeline.CommandChain.Count}");
         ImGui.SameLine();
         ImGui.TextDisabled($"Branch Resources: {pipeline.CommandChain.BranchResources}");
+    }
+
+    #endregion
+
+    #region Section Drawing - Advanced Capabilities
+
+    private static bool DrawAdvancedCapabilitiesSection(RenderPipeline pipeline)
+    {
+        if (pipeline is not IAdvancedRenderPipelineCapabilitySource source)
+            return false;
+
+        if (!ImGui.CollapsingHeader(
+                "Advanced Pipeline Capabilities",
+                ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            return true;
+        }
+
+        AdvancedRenderPipelineCapabilityResult result = source.CapabilityResult;
+        AdvancedRenderPipelineCapabilities capabilities = result.Capabilities;
+        Vector4 statusColor = result.IsSupported ? CleanBadgeColor : WarningColor;
+
+        ImGui.TextColored(statusColor, result.IsSupported ? "Supported" : "Rejected");
+        ImGui.SameLine();
+        ImGui.TextDisabled($"Backend: {capabilities.Backend}");
+        ImGui.TextWrapped(result.Diagnostic);
+        ImGui.TextDisabled($"Encodings: {capabilities.DescribeSelectedEncodings()}");
+        ImGui.TextDisabled($"Rejection: {result.RejectionReason}");
+        ImGui.TextDisabled(
+            $"Required: integer targets {capabilities.SupportsIntegerRenderTargets}, " +
+            $"compute {capabilities.SupportsComputeShaders}, storage buffers {capabilities.SupportsStorageBuffers}, " +
+            $"frame slots {capabilities.SupportsFrameSlotStorage}, stereo arrays {capabilities.SupportsStereoArrayResources}");
+        ImGui.TextDisabled(
+            $"Optional: buffer address {capabilities.SupportsBufferDeviceAddress}, " +
+            $"descriptor indexing {capabilities.SupportsDescriptorIndexing}, descriptor heap {capabilities.SupportsDescriptorHeap}, " +
+            $"subgroups {capabilities.SupportsSubgroupOperations}, mesh shaders {capabilities.SupportsMeshShaders}, " +
+            $"async compute {capabilities.SupportsAsyncCompute}, timeline semaphores {capabilities.SupportsTimelineSemaphores}");
+        return true;
     }
 
     #endregion
@@ -1026,7 +1068,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             ImGui.SameLine();
         }
 
-        if (instance.Pipeline is DefaultRenderPipeline or DefaultRenderPipeline2)
+        if (instance.Pipeline is ISceneRenderPipelineFeatureProvider)
         {
             DrawFboButton("Velocity FBO", DefaultRenderPipeline.VelocityFBOName);
             DrawTextureButton("Velocity", DefaultRenderPipeline.VelocityTextureName);
@@ -1045,7 +1087,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         static bool ContainsName(IReadOnlyList<KeyValuePair<string, RenderFrameBufferResource>> records, string name)
             => records.Any(pair => pair.Key.Equals(name, StringComparison.OrdinalIgnoreCase));
 
-        if (instance.Pipeline is DefaultRenderPipeline or DefaultRenderPipeline2)
+        if (instance.Pipeline is ISceneRenderPipelineFeatureProvider)
         {
             string[] preferredNames =
             [
@@ -1084,7 +1126,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         static bool ContainsName(IReadOnlyList<KeyValuePair<string, RenderTextureResource>> records, string name)
             => records.Any(pair => pair.Key.Equals(name, StringComparison.OrdinalIgnoreCase));
 
-        if (instance.Pipeline is DefaultRenderPipeline or DefaultRenderPipeline2)
+        if (instance.Pipeline is ISceneRenderPipelineFeatureProvider)
         {
             string[] preferredNames =
             [

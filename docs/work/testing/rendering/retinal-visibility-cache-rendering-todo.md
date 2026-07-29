@@ -132,12 +132,16 @@ Exit evidence:
 Goal: prove that selecting RVC does not break existing paths and that unsupported
 paths fall back visibly.
 
-- [ ] Validate desktop mono with RVC off.
-  - Confirm image, frame logs, and render stats match the current default path.
-- [ ] Validate desktop mono with `RvcPipelineMode=ForwardPlusOracle`.
-  - Confirm it uses Forward+ intentionally and reports no fallback error.
-- [ ] Validate desktop mono with cache modes requested on unsupported backends.
-  - Confirm visible fallback reason and no silent success.
+- [ ] Validate desktop mono while RVC is off.
+  - Confirm the desktop standard pipeline, image, frame logs, and render stats
+    are unaffected by the OpenXR-eye setting.
+- [ ] Validate OpenXR eyes with `RvcPipelineMode=ForwardPlusOracle` while the
+  desktop standard pipeline renders independently.
+  - Confirm the eyes use the Forward+ oracle intentionally, the desktop does
+    not switch to RVC, and no fallback error is reported.
+- [ ] Validate OpenXR eye cache modes requested on unsupported backends.
+  - Confirm a visible eye-pipeline fallback reason, no silent success, and no
+    desktop pipeline replacement.
 - [ ] Validate OpenVR stereo behavior.
   - Confirm left/right rendering, desktop mirror, frame timing, and settings
     remain stable.

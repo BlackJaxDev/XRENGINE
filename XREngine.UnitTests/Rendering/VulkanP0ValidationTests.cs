@@ -112,19 +112,15 @@ public sealed class VulkanP0ValidationTests
     public void DefaultPipelineFinalOutput_ValidatesEnvOverrideBeforeRecordingFinalBlit()
     {
         string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs");
-        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.CommandChain.cs");
 
-        foreach (string source in new[] { pipelineSource, pipeline2Source })
-        {
-            source.ShouldContain("ResolveOutputSourceFboOverride");
-            source.ShouldContain("IsValidFinalOutputSourceFboOverride");
-            source.ShouldContain("CreateOutputSourceOverrideCommands");
-            source.ShouldContain("CreateStandardViewportFinalOutputCommands");
-            source.ShouldContain(XREngineEnvironmentVariables.OutputSourceFbo);
-            source.ShouldContain("Falling back to standard final output");
-            source.ShouldContain("=> CreateFinalBlitCommands(sourceFboName, bypassVendorUpscale);");
-            source.ShouldContain("TryGetFBO(sourceFboName, out XRFrameBuffer? fbo)");
-        }
+        pipelineSource.ShouldContain("ResolveOutputSourceFboOverride");
+        pipelineSource.ShouldContain("IsValidFinalOutputSourceFboOverride");
+        pipelineSource.ShouldContain("CreateOutputSourceOverrideCommands");
+        pipelineSource.ShouldContain("CreateStandardViewportFinalOutputCommands");
+        pipelineSource.ShouldContain(XREngineEnvironmentVariables.OutputSourceFbo);
+        pipelineSource.ShouldContain("Falling back to standard final output");
+        pipelineSource.ShouldContain("=> CreateFinalBlitCommands(sourceFboName, bypassVendorUpscale);");
+        pipelineSource.ShouldContain("TryGetFBO(sourceFboName, out XRFrameBuffer? fbo)");
     }
 
     [Test]
@@ -149,7 +145,7 @@ public sealed class VulkanP0ValidationTests
     {
         string shader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/FullOverdrawDebug.fs");
         string pipelineFbos = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.FBOs.cs");
-        string pipeline2Fbos = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.FBOs.cs");
+        string advancedPipelineFbos = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.FBOs.cs");
 
         shader.ShouldContain("uniform int FramebufferTextureYDirection;");
         shader.ShouldContain("vec2 ResolveFramebufferTextureUv(vec2 uv)");
@@ -161,7 +157,7 @@ public sealed class VulkanP0ValidationTests
 
         SliceMethod(pipelineFbos, "private XRFrameBuffer CreateFullOverdrawDebugFBO()")
             .ShouldContain("RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy");
-        SliceMethod(pipeline2Fbos, "private XRFrameBuffer CreateFullOverdrawDebugFBO()")
+        SliceMethod(advancedPipelineFbos, "private XRFrameBuffer CreateFullOverdrawDebugFBO()")
             .ShouldContain("RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy");
     }
 
@@ -262,7 +258,7 @@ public sealed class VulkanP0ValidationTests
     public void DefaultRenderPipelineMetadata_CoversAllStandardPasses()
     {
         // Build metadata using the same helper both DefaultRenderPipeline and
-        // DefaultRenderPipeline2 use.
+        // AdvancedRenderPipeline use.
         var metadata = new RenderPassMetadataCollection();
         RegisterStandardPasses(metadata);
         var built = metadata.Build();
@@ -489,7 +485,6 @@ public sealed class VulkanP0ValidationTests
         string renderToWindow = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderToWindow.cs");
         string vendorUpscale = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_VendorUpscale.cs");
         string defaultPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
-        string defaultPipeline2 = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.CommandChain.cs");
 
         renderToWindow.ShouldContain("uniform bool FlipSourceYOnVulkan;");
         renderToWindow.ShouldContain("#ifdef XRENGINE_VULKAN");
@@ -498,8 +493,6 @@ public sealed class VulkanP0ValidationTests
         renderToWindow.ShouldContain("vec2 uv = ResolvePresentTextureUv(clipXY);");
         renderToWindow.ShouldContain("program.Uniform(\"FlipSourceYOnVulkan\", FlipSourceYOnVulkan);");
         defaultPipeline.ShouldContain("present.FlipSourceYOnVulkan = ShouldFlipVulkanPresentSourceY(sourceFboName);");
-        defaultPipeline2.ShouldContain("present.FlipSourceYOnVulkan = ShouldFlipVulkanPresentSourceY(sourceFboName);");
-
         vendorUpscale.Contains("#ifdef XRENGINE_VULKAN", StringComparison.Ordinal).ShouldBeTrue(
             "The default pipeline's vendor-upscale fallback still resolves source-FBO orientation for final output.");
         vendorUpscale.ShouldContain("if (FlipSourceYOnVulkanFallback)");

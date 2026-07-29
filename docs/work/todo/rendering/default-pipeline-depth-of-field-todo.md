@@ -55,7 +55,7 @@ Relevant files:
 - `XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.FBOs.cs`
 - `XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs`
 - `XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.Textures.cs`
-- `XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.*.cs`
+- `XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.*.cs`
 - `XREngine.Runtime.Rendering/Rendering/Camera/DepthOfFieldSettings.cs`
 - `Build/CommonAssets/Shaders/Scene3D/DepthOfField.fs`
 - `docs/architecture/rendering/default-render-pipeline-notes.md`
@@ -125,7 +125,7 @@ Acceptance criteria:
   normal and reversed depth.
 - [ ] Implement the stereo policy chosen in Phase 0 (real `sampler2DArray`
   variant or gated-off diagnostic).
-- [ ] Ensure `DefaultRenderPipeline` and `DefaultRenderPipeline2` use the same
+- [ ] Ensure `DefaultRenderPipeline` and `AdvancedRenderPipeline` use the same
   gating behavior.
 - [ ] Add tests for disabled/capture/light-probe/stereo DoF gates, plus a
   regression test that asserts the near-blur sign is correct in both depth

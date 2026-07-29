@@ -47,21 +47,14 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string ForwardFBOName { get; set; } = DefaultRenderPipeline.ForwardPassFBOName;
 
         protected override bool ShouldExecuteThisFrame()
-            => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline switch
-            {
-                DefaultRenderPipeline pipeline => pipeline.UsesRestirGI,
-                DefaultRenderPipeline2 pipeline => pipeline.UsesRestirGI,
-                _ => false,
-            };
+            => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is
+                IGlobalIlluminationPipelineProvider { UsesRestirGI: true };
 
         protected override void Execute()
         {
-            bool usesRestirGI = ActivePipelineInstance.Pipeline switch
-            {
-                DefaultRenderPipeline pipeline => pipeline.UsesRestirGI,
-                DefaultRenderPipeline2 pipeline => pipeline.UsesRestirGI,
-                _ => false,
-            };
+            bool usesRestirGI =
+                ActivePipelineInstance.Pipeline is
+                    IGlobalIlluminationPipelineProvider { UsesRestirGI: true };
             if (!usesRestirGI)
                 return;
 

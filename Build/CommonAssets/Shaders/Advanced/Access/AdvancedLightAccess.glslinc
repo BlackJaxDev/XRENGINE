@@ -1,0 +1,184 @@
+#ifndef XR_ADVANCED_LIGHT_ACCESS_GLSLINC
+#define XR_ADVANCED_LIGHT_ACCESS_GLSLINC
+
+#include "AdvancedDiagnostics.glslinc"
+
+struct XRAdvancedLightRecord
+{
+    uint stableLightId;
+    uint generation;
+    uint type;
+    uint flags;
+    vec4 positionAndRadius;
+    vec4 directionAndOuterCone;
+    vec4 colorAndIntensity;
+    vec4 shapeAndInnerCone;
+    XRAdvancedTextureReference cookieTexture;
+    XRAdvancedGpuHandle shadowRecord;
+    uint layerMask;
+    uint viewMaskLo;
+    uint viewMaskHi;
+    uint reserved0;
+    uint reserved1;
+    uint reserved2;
+};
+
+struct XRAdvancedProbeRecord
+{
+    uint stableProbeId;
+    uint generation;
+    uint type;
+    uint flags;
+    vec4 positionAndRadius;
+    vec4 influenceInner;
+    vec4 influenceOuter;
+    vec4 influenceOffsetAndShape;
+    vec4 proxyCenterAndEnable;
+    vec4 proxyHalfExtents;
+    vec4 proxyRotation;
+    XRAdvancedTextureReference irradiance;
+    XRAdvancedTextureReference prefilteredRadiance;
+    uint viewMaskLo;
+    uint viewMaskHi;
+    uint priority;
+    uint reserved;
+};
+
+struct XRAdvancedEnvironmentRecord
+{
+    uint stableEnvironmentId;
+    uint generation;
+    uint flags;
+    uint priority;
+    XRAdvancedTextureReference environment;
+    XRAdvancedTextureReference irradiance;
+    XRAdvancedTextureReference prefilteredRadiance;
+    XRAdvancedTextureReference brdfLut;
+    vec4 rotationAndExposure;
+    vec4 ambientColorAndIntensity;
+    uint viewMaskLo;
+    uint viewMaskHi;
+    uint reserved0;
+    uint reserved1;
+};
+
+struct XRAdvancedDecalRecord
+{
+    XRAdvancedGpuHandle identity;
+    XRAdvancedGpuHandle material;
+    uint flags;
+    uint viewMaskLo;
+    uint viewMaskHi;
+    uint layerMask;
+    mat4 worldToDecal;
+    mat4 previousWorldToDecal;
+    vec4 halfExtentsAndFade;
+    XRAdvancedTextureReference maskTexture;
+};
+
+struct XRAdvancedGiResourceRecord
+{
+    uint stableResourceId;
+    uint generation;
+    uint type;
+    uint flags;
+    XRAdvancedTextureReference primaryTexture;
+    XRAdvancedTextureReference secondaryTexture;
+    XRAdvancedTextureReference tertiaryTexture;
+    mat4 worldToGrid;
+    vec4 gridOriginAndSpacing;
+    vec4 gridDimensionsAndMipCount;
+    vec4 params0;
+    vec4 params1;
+    uint bufferResourceOffset;
+    uint bufferResourceCount;
+    uint viewMaskLo;
+    uint viewMaskHi;
+};
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_LIGHTS) readonly buffer XRAdvancedLightTable
+{
+    XRAdvancedLightRecord records[];
+} XR_ADV_Lights;
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_PROBES) readonly buffer XRAdvancedProbeTable
+{
+    XRAdvancedProbeRecord records[];
+} XR_ADV_Probes;
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_ENVIRONMENTS) readonly buffer XRAdvancedEnvironmentTable
+{
+    XRAdvancedEnvironmentRecord records[];
+} XR_ADV_Environments;
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_DECALS) readonly buffer XRAdvancedDecalTable
+{
+    XRAdvancedDecalRecord records[];
+} XR_ADV_Decals;
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_GI_RESOURCES) readonly buffer XRAdvancedGiResourceTable
+{
+    XRAdvancedGiResourceRecord records[];
+} XR_ADV_GiResources;
+
+XRAdvancedLightRecord XR_ADV_LoadLight(uint denseIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (denseIndex >= uint(XR_ADV_Lights.records.length()))
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_LIGHT);
+        denseIndex = 0u;
+    }
+#endif
+    return XR_ADV_Lights.records[denseIndex];
+}
+
+XRAdvancedProbeRecord XR_ADV_LoadProbe(uint denseIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (denseIndex >= uint(XR_ADV_Probes.records.length()))
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_GLOBAL_RESOURCE);
+        denseIndex = 0u;
+    }
+#endif
+    return XR_ADV_Probes.records[denseIndex];
+}
+
+XRAdvancedEnvironmentRecord XR_ADV_LoadEnvironment(uint denseIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (denseIndex >= uint(XR_ADV_Environments.records.length()))
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_GLOBAL_RESOURCE);
+        denseIndex = 0u;
+    }
+#endif
+    return XR_ADV_Environments.records[denseIndex];
+}
+
+XRAdvancedDecalRecord XR_ADV_LoadDecal(uint denseIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (denseIndex >= uint(XR_ADV_Decals.records.length()))
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_GLOBAL_RESOURCE);
+        denseIndex = 0u;
+    }
+#endif
+    return XR_ADV_Decals.records[denseIndex];
+}
+
+XRAdvancedGiResourceRecord XR_ADV_LoadGiResource(uint denseIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (denseIndex >= uint(XR_ADV_GiResources.records.length()))
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_GLOBAL_RESOURCE);
+        denseIndex = 0u;
+    }
+#endif
+    return XR_ADV_GiResources.records[denseIndex];
+}
+
+#endif

@@ -119,7 +119,6 @@ public sealed class OpenXrTimingPipelineContractTests
         string unitTestUi = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Default/UnitTestingWorld.UserInterface.cs");
         string defaultPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs");
         string defaultPipelineMain = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
-        string defaultPipeline2 = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.CommandChain.cs");
 
         frameLifecycle.ShouldContain("StartProfileScope(\"OpenXR.RenderFrame.TryRenderVulkanEyesBatch\")");
         frameLifecycle.ShouldContain("binding.TryRenderViewsBatch(");
@@ -299,11 +298,6 @@ public sealed class OpenXrTimingPipelineContractTests
         defaultPipeline.ShouldContain("if (viewport is null)");
         defaultPipeline.ShouldContain("if (RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null)");
         defaultPipeline.ShouldContain("return RuntimeEngine.Rendering.State.IsStereoPass");
-        defaultPipeline2.ShouldContain("private static bool ShouldUseViewportTargetCommands()");
-        defaultPipeline2.ShouldContain("if (viewport is null)");
-        defaultPipeline2.ShouldContain("if (RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null)");
-        defaultPipeline2.ShouldContain("return RuntimeEngine.Rendering.State.IsStereoPass");
-
         string defaultPipelineFinalOutput = SliceMethod(
             defaultPipeline,
             "private void AppendStandardViewportFinalOutputCommands",

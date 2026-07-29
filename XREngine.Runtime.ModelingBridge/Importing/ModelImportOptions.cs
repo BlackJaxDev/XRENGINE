@@ -48,6 +48,12 @@ public enum GltfImportBackend
 public sealed class ModelImportOptions : IXR3rdPartyImportOptions
 {
     /// <summary>
+    /// Optional Unity project or Assets folder selected for external .prefab conversion.
+    /// Model importers ignore this value.
+    /// </summary>
+    public string? UnityProjectRootOverride { get; set; }
+
+    /// <summary>
     /// Backwards-compatibility: older cached YAML stored the combined flags under "PostProcessSteps".
     /// This setter-only property allows deserialization without re-serializing it.
     /// </summary>

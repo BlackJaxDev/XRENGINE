@@ -54,6 +54,52 @@ public sealed class ImportedTextureStreamingPhaseTests
     }
 
     [Test]
+    public void DetermineDesiredResidentSize_UnrequestedPlaceholderRemainsNonResident()
+    {
+        uint desired = ImportedTextureStreamingManager.DetermineDesiredResidentSize(
+            new ImportedTextureStreamingPolicyInput(
+                SourceWidth: 0u,
+                SourceHeight: 0u,
+                ResidentMaxDimension: 0u,
+                PreviewReady: false,
+                LastVisibleFrameId: long.MinValue,
+                MinVisibleDistance: float.PositiveInfinity,
+                MaxProjectedPixelSpan: 0.0f,
+                MaxScreenCoverage: 0.0f,
+                UvDensityHint: 1.0f,
+                SamplerName: "diffuseTexture",
+                LastBoundFrameId: long.MinValue),
+            frameId: 12L,
+            allowPromotions: true,
+            previewMaxDimension: 64u);
+
+        desired.ShouldBe(0u);
+    }
+
+    [Test]
+    public void DetermineDesiredResidentSize_VisiblePlaceholderRequestsPreview()
+    {
+        uint desired = ImportedTextureStreamingManager.DetermineDesiredResidentSize(
+            new ImportedTextureStreamingPolicyInput(
+                SourceWidth: 0u,
+                SourceHeight: 0u,
+                ResidentMaxDimension: 0u,
+                PreviewReady: false,
+                LastVisibleFrameId: 12L,
+                MinVisibleDistance: 2.0f,
+                MaxProjectedPixelSpan: 512.0f,
+                MaxScreenCoverage: 0.25f,
+                UvDensityHint: 1.0f,
+                SamplerName: "diffuseTexture",
+                LastBoundFrameId: long.MinValue),
+            frameId: 12L,
+            allowPromotions: true,
+            previewMaxDimension: 64u);
+
+        desired.ShouldBe(64u);
+    }
+
+    [Test]
     public void DetermineDesiredResidentSize_WhenVisibleProjectedSpanIsTiny_ReturnsPreviewResidentSize()
     {
         uint desired = ImportedTextureStreamingManager.DetermineDesiredResidentSize(

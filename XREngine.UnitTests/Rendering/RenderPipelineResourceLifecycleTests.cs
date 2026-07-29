@@ -888,7 +888,6 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [TestCase(typeof(DefaultRenderPipeline))]
-    [TestCase(typeof(DefaultRenderPipeline2))]
     public void DefaultPipelines_BloomLayoutDeclaresEveryMipFrameBuffer(Type pipelineType)
     {
         const ulong bloomResources = 1UL << 14;
@@ -922,7 +921,6 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [TestCase(typeof(DefaultRenderPipeline))]
-    [TestCase(typeof(DefaultRenderPipeline2))]
     public void DefaultPipelines_ForwardPlusBuffersMatchProfileDimensions(Type pipelineType)
     {
         RenderPipeline pipeline = (RenderPipeline)Activator.CreateInstance(pipelineType)!;
@@ -944,7 +942,6 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [TestCase(typeof(DefaultRenderPipeline))]
-    [TestCase(typeof(DefaultRenderPipeline2))]
     public void DefaultPipelines_GiProfilesDeclareOnlySelectedWorkingResources(Type pipelineType)
     {
         const ulong restir = 1UL << 20;
@@ -1401,7 +1398,6 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [TestCase(typeof(DefaultRenderPipeline))]
-    [TestCase(typeof(DefaultRenderPipeline2))]
     [NonParallelizable]
     public void DefaultPipeline_CameraUnavailableResizeThenFramePrepareKeepsOneFeatureSnapshot(Type pipelineType)
     {
@@ -1795,7 +1791,6 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [TestCase(typeof(DefaultRenderPipeline))]
-    [TestCase(typeof(DefaultRenderPipeline2))]
     public void DefaultPipeline_CapturePolicyChangesFeatureMaskOnlyForMinimalResourceLayout(Type pipelineType)
     {
         RenderPipeline pipeline = (RenderPipeline)Activator.CreateInstance(pipelineType)!;
@@ -1824,7 +1819,6 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [TestCase(typeof(DefaultRenderPipeline))]
-    [TestCase(typeof(DefaultRenderPipeline2))]
     public void DefaultPipelines_AtmosphereFogExactTransparencyAndDebugLayoutsDeclareDependencies(Type pipelineType)
     {
         const ulong exactTransparency = 1UL << 9;
@@ -2303,7 +2297,7 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [Test]
-    public void RetainedNonV2Pipelines_DeclareTheirOwnedResources()
+    public void RetainedAuxiliaryPipelines_DeclareTheirOwnedResources()
     {
         RenderPipelineResourceProfile profile = CreateProfile(EAntiAliasingMode.None, 1u);
 
@@ -2331,28 +2325,7 @@ public sealed class RenderPipelineResourceLifecycleTests
         surfel.ResourcesByName[SurfelDebugRenderPipeline.SurfelDebugFBOName].ShouldBeOfType<QuadMaterialSpec>();
     }
 
-    [Test]
-    public void DefaultRenderPipeline2_DeclaresCompleteCoreAndSmaaLayouts()
-    {
-        DefaultRenderPipeline2 pipeline = new();
-        RenderPipelineResourceLayout core = pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, 1u));
-        RenderPipelineResourceLayout smaa = pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Smaa, 1u));
-
-        core.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline2.DepthStencilTextureName);
-        core.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline2.DeferredGBufferFBOName);
-        core.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline2.PostProcessOutputFBOName);
-        core.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline2.FxaaFBOName);
-
-        smaa.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline2.SmaaEdgeTextureName);
-        smaa.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline2.SmaaBlendTextureName);
-        smaa.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline2.SmaaOutputTextureName);
-        smaa.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline2.SmaaEdgeFBOName);
-        smaa.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline2.SmaaBlendFBOName);
-        smaa.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline2.SmaaFBOName);
-    }
-
     [TestCase(typeof(DefaultRenderPipeline))]
-    [TestCase(typeof(DefaultRenderPipeline2))]
     public void DefaultPipelines_DeclareSceneOwnedProbeImports(Type pipelineType)
     {
         RenderPipeline pipeline = (RenderPipeline)Activator.CreateInstance(pipelineType)!;
@@ -2379,11 +2352,11 @@ public sealed class RenderPipelineResourceLifecycleTests
         ExternalRenderResourceOwnership.Caller, ExternalRenderResourceSynchronization.CallerProvided)]
     [TestCase(typeof(DefaultRenderPipeline), RenderPipelineExternalTargetKind.ExternalSwapchain,
         ExternalRenderResourceOwnership.XrRuntime, ExternalRenderResourceSynchronization.AcquireRelease)]
-    [TestCase(typeof(DefaultRenderPipeline2), RenderPipelineExternalTargetKind.Window,
+    [TestCase(typeof(AdvancedRenderPipeline), RenderPipelineExternalTargetKind.Window,
         ExternalRenderResourceOwnership.Window, ExternalRenderResourceSynchronization.FrameBoundary)]
-    [TestCase(typeof(DefaultRenderPipeline2), RenderPipelineExternalTargetKind.CallerProvidedFrameBuffer,
+    [TestCase(typeof(AdvancedRenderPipeline), RenderPipelineExternalTargetKind.CallerProvidedFrameBuffer,
         ExternalRenderResourceOwnership.Caller, ExternalRenderResourceSynchronization.CallerProvided)]
-    [TestCase(typeof(DefaultRenderPipeline2), RenderPipelineExternalTargetKind.ExternalSwapchain,
+    [TestCase(typeof(AdvancedRenderPipeline), RenderPipelineExternalTargetKind.ExternalSwapchain,
         ExternalRenderResourceOwnership.XrRuntime, ExternalRenderResourceSynchronization.AcquireRelease)]
     public void DefaultPipelines_DeclareImportedOutputOwnershipBoundaries(
         Type pipelineType,
@@ -2411,7 +2384,7 @@ public sealed class RenderPipelineResourceLifecycleTests
         string[] sources =
         [
             "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs",
-            "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.cs",
+            "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.cs",
         ];
 
         foreach (string sourcePath in sources)
@@ -2495,7 +2468,7 @@ public sealed class RenderPipelineResourceLifecycleTests
         string[] commandSources =
         [
             "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs",
-            "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.CommandChain.cs",
+            "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.CommandChain.cs",
             "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/UserInterfaceRenderPipeline.cs",
             "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/SurfelDebugRenderPipeline.cs",
             "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/TestRenderPipeline.cs",
@@ -2572,12 +2545,12 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [Test]
-    public void NonV2PipelineSources_DoNotAuthorCacheOrCreateCommands()
+    public void PipelineSources_DoNotAuthorCacheOrCreateCommands()
     {
         string[] sources =
         [
             "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs",
-            "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.CommandChain.cs",
+            "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.CommandChain.cs",
             "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/UserInterfaceRenderPipeline.cs",
             "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/SurfelDebugRenderPipeline.cs",
             "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/TestRenderPipeline.cs",

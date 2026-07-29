@@ -770,18 +770,10 @@ namespace XREngine.Scene
             program.Sampler("ForwardContactDepthViewArray", forwardContactPrePassArrayAvailable ? forwardContactDepthTexture! : DummyShadowMapArray, forwardContactDepthArrayUnit);
             program.Sampler("ForwardContactNormalViewArray", forwardContactPrePassArrayAvailable ? forwardContactNormalTexture! : DummyShadowMapArray, forwardContactNormalArrayUnit);
 
-            switch (currentPipeline?.Pipeline)
-            {
-                case DefaultRenderPipeline defaultPipeline:
-                    defaultPipeline.BindPbrLightingResources(program);
-                    break;
-                case DefaultRenderPipeline2 defaultPipeline2:
-                    defaultPipeline2.BindPbrLightingResources(program);
-                    break;
-                default:
-                    DisablePbrResources(program);
-                    break;
-            }
+            if (currentPipeline?.Pipeline is IPbrLightingResourceProvider provider)
+                provider.BindPbrLightingResources(program);
+            else
+                DisablePbrResources(program);
 
             // Forward materials bind their own textures at units [0..N) where N is the texture index.
             // Using a low fixed unit (like 4) for the shadow map collides with multi-texture materials

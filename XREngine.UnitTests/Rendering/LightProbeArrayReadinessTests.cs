@@ -74,12 +74,12 @@ public sealed class LightProbeArrayReadinessTests
     public void DefaultPipelines_OnlyBuildProbeArraysFromUsableProbeTextures()
     {
         string pipeline1 = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
-        string pipeline2 = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.cs");
+        string advancedPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.cs");
 
         pipeline1.ShouldContain("probe.HasUsableIblTextures");
-        pipeline2.ShouldContain("probe.HasUsableIblTextures");
+        advancedPipeline.ShouldContain("probe.HasUsableIblTextures");
         pipeline1.ShouldNotContain("probe.IrradianceTexture != null && probe.PrefilterTexture != null");
-        pipeline2.ShouldNotContain("probe.IrradianceTexture != null && probe.PrefilterTexture != null");
+        advancedPipeline.ShouldNotContain("probe.IrradianceTexture != null && probe.PrefilterTexture != null");
     }
 
     [Test]
@@ -93,9 +93,9 @@ public sealed class LightProbeArrayReadinessTests
     }
 
     [Test]
-    public void DefaultPipeline2_DefersStructuralProbeArrayRebuildsDuringBatchCapture()
+    public void AdvancedPipeline_DefersStructuralProbeArrayRebuildsDuringBatchCapture()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.cs");
         string lightsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Lights3DCollection.cs");
 
         source.ShouldContain("_pendingProbeRefreshDeferredByBatchCapture");

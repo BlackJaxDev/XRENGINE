@@ -6,9 +6,58 @@ Unity is a trademark of Unity Technologies. XRENGINE uses the name only to ident
 
 ## Editor Workflow
 
-Use the ImGui editor's `Tools > Import External Files...` or `Tools > Import External Folder...` commands to copy sources into the project `Assets/` tree. When `Import after copy` is enabled, files with registered third-party extensions are immediately converted to native `.asset` files.
+Use the ImGui editor's `Tools > Import External Files...` command and select a
+Unity `.prefab`. The dialog separates two locations:
 
-Folder import is preferred for Unity project exports because it preserves the source layout, `.meta` files, shader files, material files, and texture dependencies needed for GUID resolution.
+- **Unity Project Root** is the original Unity project that supplies GUID and
+  dependency context. It is detected by climbing from the selected prefab to
+  the nearest directory named `Assets`; its parent is the project root. The
+  detected path can be corrected explicitly when the prefab is not below its
+  original `Assets` tree.
+- **Destination Folder** is inside the current XRENGINE project's `Assets`
+  directory and receives the generated native `.asset` plus its externalized
+  sibling assets.
+
+The source prefab is read directly from its original project. It is not copied,
+rewritten, touched, or placed in the XRENGINE project. The importer resolves
+only the selected prefab's reached dependency closure and writes native engine
+assets. The existing copy-then-import workflow remains in place for other
+external file types and folder imports.
+
+The editor job shows determinate phases for project discovery, dependency
+resolution, source conversion, externalized sub-asset writes, root
+serialization, and finalization. Completion reports distinguish copied files
+from generated native assets. The MCP `import_third_party_asset` tool uses the
+same direct conversion behavior for an external `.prefab`.
+
+After conversion, the result is an ordinary `XRPrefabSource`. Drag it from the
+Asset Explorer or instantiate it through the normal prefab workflow; there is
+no Unity-specific spawn path.
+
+## Project And Dependency Resolution
+
+One `UnityProjectImportContext` is shared by the entry prefab, nested prefabs,
+models, materials, textures, animation assets, and supported serialized
+`.asset` files. It provides a single GUID index, reached-file cache, parsed
+document cache, imported-object cache, diagnostics, and output ownership
+record. The index scans these roots once per project snapshot:
+
+1. `<project>/Assets`;
+2. embedded packages under `<project>/Packages`;
+3. installed packages under `<project>/Library/PackageCache`.
+
+Project assets take precedence over packages. Duplicate GUIDs, missing assets,
+and ambiguous package candidates remain visible as diagnostics instead of
+being selected silently. Normalized manifest paths use portable `Assets/...`
+and `Packages/...` forms where possible.
+
+The dependency graph recursively follows references reached through prefabs,
+scenes, materials, model importer metadata, animation controllers and clips,
+supported serialized assets, shaders, textures, and nested prefabs. Cycles are
+reported and terminated without dropping other valid edges. Optional
+behavior-only references may remain missing; required model, material, and
+texture references fail the visual import instead of being replaced by an
+invisible placeholder.
 
 ## Supported Source Assets
 
@@ -20,7 +69,35 @@ The Unity-oriented conversion paths currently include:
 - `.anim` animation clips to `AnimationClip` assets.
 - Serialized Unity `.asset` mesh files for common uncompressed mesh layouts used by imported scene and prefab renderers.
 
-Material, texture, prefab, and scene references are resolved through Unity `.meta` GUIDs when the source project layout is available. Importing a whole folder generally produces better results than selecting isolated files.
+Material, texture, prefab, and scene references are resolved through Unity
+`.meta` GUIDs from the detected source project. A single prefab selection is
+therefore sufficient when its dependencies remain in that project.
+
+## Model-Backed Prefab Composition
+
+A `PrefabInstance` is dispatched by the resolved source asset type. Unity YAML
+prefabs use hierarchy composition, while `.fbx`, `.obj`, `.dae`, `.gltf`, and
+`.glb` sources use the engine model importer and converge on
+`XRPrefabSource`. Binary FBX data is never parsed as YAML.
+
+Unity model object identity is reproduced from the source model GUID, local
+file ID, object kind, and hierarchy path. The importer implements Unity's
+generation-2 model file-ID hashing and consumes stripped GameObject,
+Transform, and renderer proxy records from the outer prefab. This preserves
+duplicate-name hierarchies, root parenting, nested insertion order, skinned
+renderer ownership, and transform/renderer overrides.
+
+FBX `.meta` data supplies material import mode, external-object remaps, and
+relevant `ModelImporter` settings. Renderer material resolution follows this
+precedence:
+
+1. model-importer external material remap;
+2. model-embedded material;
+3. prefab `m_Materials.Array.data[n]` override.
+
+Prefab modifications also cover local transform, active state, enabled state,
+material slots, root order, and blendshape defaults. Stale source-object
+modifications are diagnosed and ignored.
 
 ## Animation Clip Import
 
@@ -71,6 +148,58 @@ lilToon detection checks canonical `lilToon/Shader/` shader paths, shader text m
 
 Detection resolves shader GUID metadata before choosing a shader-specific converter. Keep shader package folders and their `.meta` files with imported content whenever possible; missing references remain visible in the import report.
 
+Poiyomi Pro-authored materials use a separate, explicitly lossy path. Unlocked
+and optimizer-locked Pro signatures are classified, normalized to the common
+Toon property surface, and reported as `Downgraded`. Active Pro-only Grab Pass,
+refraction, blur, touch-effect, Pro integration, Pro vertex, and Pro authoring
+groups are discarded with `POIPRO0002` warnings. This is a migration aid, not
+Poiyomi Pro support or a parity claim. See
+[Poiyomi Toon Material Conversion](../rendering/poiyomi-toon-material-conversion.md#lossy-poiyomi-pro-downgrade).
+
+## Avatar Component Conversion
+
+The avatar import path recognizes the following behavior metadata without
+loading or executing Unity, VRChat, or package assemblies:
+
+- VRChat PhysBone chains, including root selection, endpoint, pull, spring,
+  stiffness, gravity, immobile, radius, limits, curves, collider lists, and
+  referenced transforms;
+- PhysBone sphere, capsule, and plane colliders;
+- position, rotation, and scale constraints with source weights and affected
+  axes;
+- avatar descriptor view position, lip-sync mode, viseme blendshapes, eye-look
+  metadata, playable animation layers, and custom animation layers;
+- Animator controller references needed for inspectable imported state.
+
+Pipeline-manager components are intentionally ignored. Unknown
+`MonoBehaviour` documents are preserved as structured metadata containing
+their script GUID, local file ID, source path, enabled state, and raw
+properties. Unsupported behavior is therefore inspectable and non-executable
+rather than silently lost.
+
+## Manifest, Reimport, And Failure Policy
+
+Every imported Unity prefab embeds a `UnityPrefabImportManifest`. It records the
+entry source, Unity project root and editor version, completion tier,
+SHA-256-fingerprinted reached dependencies, GUID/local-file-ID identity,
+dependency kind, referring property, timestamps, source length, conversion
+outcome, native output path, diagnostics, unsupported behaviors, and owned
+output paths.
+
+The dependency monitor hashes only manifest entries. A change to the entry
+prefab or a reached dependency requests reimport; an unrelated Unity project
+change does not. Reimport reuses deterministic output paths and removes stale
+owned outputs only after a successful replacement is ready. The native root and
+its sibling assets are committed transactionally, so a failed conversion
+restores the last valid files byte-for-byte.
+
+Completion tiers distinguish hierarchy-only, visual, and visual-plus-avatar-
+behavior results. Diagnostics identify the dependency, source object, target
+node/component, override property, conversion phase, and severity when those
+fields are available. Missing optional expression/menu assets remain non-fatal;
+missing required models, materials, or textures are errors.
+
 ## Related Documentation
 
 - [Model Import](model-import.md)
+- [Poiyomi Toon Material Conversion](../rendering/poiyomi-toon-material-conversion.md)

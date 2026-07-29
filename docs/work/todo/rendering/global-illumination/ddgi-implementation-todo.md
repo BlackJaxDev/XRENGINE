@@ -223,9 +223,9 @@ Expected touched files during implementation:
 - `XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.SecondaryContext.cs`
 - `XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs`
 - `XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.Textures.cs`
-- `XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs`
-- `XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.Textures.cs`
-- `XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs`
+- `XRENGINE/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.cs`
+- `XRENGINE/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.Textures.cs`
+- `XRENGINE/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.CommandChain.cs`
 - `XRENGINE/Rendering/Compute/BvhRaycastDispatcher.cs`
 - `XRENGINE/Scene/Components/Capture/LightProbeGridSpawnerComponent.cs`
 - `Assets/UnitTestingWorldSettings.jsonc`

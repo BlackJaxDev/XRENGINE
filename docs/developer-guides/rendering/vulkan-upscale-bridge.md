@@ -67,7 +67,7 @@ The initial bridge surface set is explicit and shared across DLSS and XeSS:
 | Exposure | 1x1 | `R32f` | Shared GPU exposure when auto exposure is active, scalar fallback otherwise. |
 | Output color | Display | `RGBA8` or `RGBA16f` | SDR uses `RGBA8`; HDR uses `RGBA16f`. |
 
-`DefaultRenderPipeline` and `DefaultRenderPipeline2` both thread the bridge source names through the vendor upscale command so the bridge receives matching color, depth, motion, and exposure inputs.
+`DefaultRenderPipeline` and `AdvancedRenderPipeline` both thread the bridge source names through the vendor upscale command so the bridge receives matching color, depth, motion, and exposure inputs.
 
 Depth stays in the engine's `Depth24Stencil8` surface. Reversed-Z is communicated through the vendor dispatch contract instead of renormalizing the texture. Motion vectors are produced as `RG16f` NDC-delta motion and normalized with a `0.5` scale before DLSS or XeSS dispatch.
 

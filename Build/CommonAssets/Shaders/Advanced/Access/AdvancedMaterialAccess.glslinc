@@ -1,0 +1,159 @@
+#ifndef XR_ADVANCED_MATERIAL_ACCESS_GLSLINC
+#define XR_ADVANCED_MATERIAL_ACCESS_GLSLINC
+
+#include "AdvancedDiagnostics.glslinc"
+
+struct XRAdvancedMaterialRecord
+{
+    uint stableRowId;
+    uint generation;
+    uint shadingKernelId;
+    uint shadingKernelGeneration;
+    uvec2 materialLayoutHash;
+    uint renderStateClass;
+    uint coverageMode;
+    uint requiredAttributeMask;
+    uint textureReferenceOffset;
+    uint textureReferenceCount;
+    uint constantWordOffset;
+    uint constantWordCount;
+    uint featureFlags;
+    uint eligibilityFlags;
+    uint reserved;
+};
+
+struct XRAdvancedShadingKernelRecord
+{
+    uint stableKernelId;
+    uint generation;
+    uvec2 materialLayoutHash;
+    uint requiredAttributeMask;
+    uint supportedCoverageMask;
+    uint supportedEligibility;
+    uint supportedFeatures;
+    uvec2 shaderIdentityHash;
+    uint renderStateClassMask;
+    uint flags;
+    uint reserved0;
+    uint reserved1;
+    uint reserved2;
+    uint reserved3;
+};
+
+struct XRAdvancedMaterialLayoutRecord
+{
+    uint stableLayoutId;
+    uint generation;
+    uvec2 layoutHash;
+    uint memberOffset;
+    uint memberCount;
+    uint constantWordCount;
+    uint textureReferenceCount;
+    uint requiredAttributeMask;
+    uint flags;
+    uint reserved0;
+    uint reserved1;
+};
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_MATERIALS) readonly buffer XRAdvancedMaterialTable
+{
+    XRAdvancedMaterialRecord records[];
+} XR_ADV_Materials;
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_SHADING_KERNELS) readonly buffer XRAdvancedShadingKernelTable
+{
+    XRAdvancedShadingKernelRecord records[];
+} XR_ADV_ShadingKernels;
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_MATERIAL_LAYOUTS) readonly buffer XRAdvancedMaterialLayoutTable
+{
+    XRAdvancedMaterialLayoutRecord records[];
+} XR_ADV_MaterialLayouts;
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_MATERIAL_CONSTANTS) readonly buffer XRAdvancedMaterialConstantTable
+{
+    uint words[];
+} XR_ADV_MaterialConstants;
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_MATERIAL_TEXTURE_BINDINGS) readonly buffer XRAdvancedMaterialTextureBindingTable
+{
+    XRAdvancedMaterialTextureBinding records[];
+} XR_ADV_MaterialTextureBindings;
+
+XRAdvancedMaterialRecord XR_ADV_LoadMaterial(uint denseIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (denseIndex >= uint(XR_ADV_Materials.records.length()))
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_MATERIAL);
+        denseIndex = 0u;
+    }
+#endif
+    return XR_ADV_Materials.records[denseIndex];
+}
+
+XRAdvancedShadingKernelRecord XR_ADV_LoadShadingKernel(uint denseIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (denseIndex >= uint(XR_ADV_ShadingKernels.records.length()))
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_MATERIAL);
+        denseIndex = 0u;
+    }
+#endif
+    return XR_ADV_ShadingKernels.records[denseIndex];
+}
+
+XRAdvancedMaterialLayoutRecord XR_ADV_LoadMaterialLayout(uint denseIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (denseIndex >= uint(XR_ADV_MaterialLayouts.records.length()))
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_MATERIAL);
+        denseIndex = 0u;
+    }
+#endif
+    return XR_ADV_MaterialLayouts.records[denseIndex];
+}
+
+uint XR_ADV_LoadMaterialConstant(
+    XRAdvancedMaterialRecord materialRecord,
+    uint relativeWordIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (relativeWordIndex >= materialRecord.constantWordCount)
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_MATERIAL);
+        return 0u;
+    }
+#endif
+    return XR_ADV_MaterialConstants.words[
+        materialRecord.constantWordOffset + relativeWordIndex];
+}
+
+XRAdvancedMaterialTextureBinding XR_ADV_LoadMaterialTextureBinding(
+    XRAdvancedMaterialRecord materialRecord,
+    uint relativeBindingIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (relativeBindingIndex >= materialRecord.textureReferenceCount)
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_MATERIAL);
+        relativeBindingIndex = 0u;
+    }
+#endif
+    return XR_ADV_MaterialTextureBindings.records[
+        materialRecord.textureReferenceOffset + relativeBindingIndex];
+}
+
+bool XR_ADV_MaterialMatchesHandle(
+    XRAdvancedMaterialRecord materialRecord,
+    XRAdvancedGpuHandle handle)
+{
+    return XR_ADV_HandleMatches(
+        handle,
+        materialRecord.stableRowId,
+        materialRecord.generation);
+}
+
+#endif

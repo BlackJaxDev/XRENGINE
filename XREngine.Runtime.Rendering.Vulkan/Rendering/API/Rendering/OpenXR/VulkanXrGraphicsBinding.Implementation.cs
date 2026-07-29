@@ -1698,7 +1698,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         RenderPipeline sourcePipeline =
             leftViewport.RenderPipelineInstance.AssignedPipeline ??
             leftCamera.RenderPipeline ??
-            RuntimeEngine.Rendering.NewRenderPipeline(stereo: false);
+            RuntimeEngine.Rendering.NewOpenXrEyeRenderPipeline(stereo: false);
         RenderPipeline stereoPipeline = GetOrCreateOpenXrStereoPipeline(sourcePipeline);
         if (!ReferenceEquals(stereoViewport.RenderPipeline, stereoPipeline))
             stereoViewport.RenderPipeline = stereoPipeline;

@@ -8,6 +8,7 @@ using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
@@ -179,7 +180,10 @@ internal static partial class UnitySceneImporter
         }
     }
 
-    private static void ApplyComponentModifications(XRComponent component, IEnumerable<PropertyModification> modifications)
+    private static void ApplyComponentModifications(
+        XRComponent component,
+        IEnumerable<PropertyModification> modifications,
+        ImportState state)
     {
         switch (component)
         {
@@ -190,7 +194,10 @@ internal static partial class UnitySceneImporter
                 ApplyLightModifications(lightComponent, modifications);
                 break;
             case ModelComponent modelComponent:
-                ApplyModelComponentModifications(modelComponent, modifications);
+                ApplyModelComponentModifications(modelComponent, modifications, state);
+                break;
+            case UnityAnimatorImportMetadataComponent animatorMetadata:
+                ApplyAnimatorModifications(animatorMetadata, modifications, state);
                 break;
             default:
                 foreach (PropertyModification modification in modifications)
@@ -358,10 +365,36 @@ internal static partial class UnitySceneImporter
         }
     }
 
-    private static void ApplyModelComponentModifications(ModelComponent component, IEnumerable<PropertyModification> modifications)
+    private static void ApplyModelComponentModifications(
+        ModelComponent component,
+        IEnumerable<PropertyModification> modifications,
+        ImportState state)
     {
+        Vector3? authoredCenter = null;
+        Vector3? authoredExtent = null;
+        bool sawBounds = false;
+        bool reportedProbeAnchor = false;
         foreach (PropertyModification modification in modifications)
         {
+            if (TryParseArrayIndex(modification.PropertyPath, "m_Materials.Array.data[", out int materialIndex))
+            {
+                ApplyMaterialSlotOverride(component, materialIndex, modification.ObjectReference, state);
+                continue;
+            }
+
+            if (TryParseArrayIndex(modification.PropertyPath, "m_BlendShapeWeights.Array.data[", out int blendShapeIndex))
+            {
+                if (TryParseFloat(modification.Value, out float weight))
+                    component.SetDefaultBlendShapeWeight(blendShapeIndex, weight);
+                continue;
+            }
+
+            if (TryApplyBoundsCoordinate(modification, ref authoredCenter, ref authoredExtent))
+            {
+                sawBounds = true;
+                continue;
+            }
+
             switch (modification.PropertyPath)
             {
                 case "m_Enabled":
@@ -376,9 +409,146 @@ internal static partial class UnitySceneImporter
                     if (TryParseBool(modification.Value, out bool receiveShadows))
                         SetReceivesShadows(component, receiveShadows);
                     break;
+                case "m_UpdateWhenOffscreen":
+                    if (TryParseBool(modification.Value, out bool updateWhenOffscreen))
+                        component.UpdateSkinningWhenOffscreen = updateWhenOffscreen;
+                    break;
+                case "m_SkinnedMotionVectors":
+                    if (TryParseBool(modification.Value, out bool skinnedMotionVectors))
+                        component.UseSkinnedMotionVectors = skinnedMotionVectors;
+                    break;
+                case "m_Quality":
+                    if (TryParseInt(modification.Value, out int quality))
+                        component.SourceSkinQuality = quality;
+                    break;
+                case "m_ProbeAnchor":
+                case "m_LightProbeVolumeOverride":
+                    if (!reportedProbeAnchor)
+                    {
+                        state.Context.AddDiagnostic(
+                            "UNITYOVERRIDE0002",
+                            UnityImportDiagnosticSeverity.Info,
+                            UnityImportDiagnosticCategory.PrefabOverride,
+                            "Unity probe-anchor overrides have no direct XRENGINE renderer equivalent and were intentionally ignored.",
+                            state.EntryFilePath,
+                            modification.PropertyPath);
+                        reportedProbeAnchor = true;
+                    }
+                    break;
             }
         }
+
+        if (sawBounds)
+            ApplyAuthoredBounds(component, authoredCenter, authoredExtent, state);
     }
+
+    private static void ApplyMaterialSlotOverride(
+        ModelComponent component,
+        int materialIndex,
+        UnityReference materialReference,
+        ImportState state)
+    {
+        if (component.Model is null || materialIndex < 0 || materialIndex >= component.Model.Meshes.Count)
+        {
+            state.Context.AddDiagnostic(
+                "UNITYOVERRIDE0003",
+                UnityImportDiagnosticSeverity.Error,
+                UnityImportDiagnosticCategory.PrefabOverride,
+                $"Material override slot '{materialIndex}' is outside the imported renderer's " +
+                $"{component.Model?.Meshes.Count ?? 0} slots.",
+                state.EntryFilePath);
+            return;
+        }
+
+        XRMaterial? material = ResolveUnityMaterial(materialReference, state);
+        if (material is null)
+        {
+            throw new UnityVisualImportException(
+                $"Required prefab material override '{materialReference.Guid}:{materialReference.FileId}' could not be imported.");
+        }
+
+        foreach (SubMeshLOD lod in component.Model.Meshes[materialIndex].LODs)
+            lod.Material = material;
+    }
+
+    private static bool TryParseArrayIndex(string propertyPath, string prefix, out int index)
+    {
+        index = -1;
+        if (!propertyPath.StartsWith(prefix, StringComparison.Ordinal))
+            return false;
+
+        int closingBracket = propertyPath.IndexOf(']', prefix.Length);
+        return closingBracket > prefix.Length &&
+               int.TryParse(
+                   propertyPath.AsSpan(prefix.Length, closingBracket - prefix.Length),
+                   NumberStyles.Integer,
+                   CultureInfo.InvariantCulture,
+                   out index);
+    }
+
+    private static bool TryApplyBoundsCoordinate(
+        PropertyModification modification,
+        ref Vector3? center,
+        ref Vector3? extent)
+    {
+        bool isCenter = modification.PropertyPath.Contains(".m_Center.", StringComparison.Ordinal);
+        bool isExtent = modification.PropertyPath.Contains(".m_Extent.", StringComparison.Ordinal);
+        if ((!isCenter && !isExtent) || !TryParseFloat(modification.Value, out float value))
+            return false;
+
+        Vector3 vector = isCenter ? center ?? Vector3.Zero : extent ?? Vector3.Zero;
+        if (modification.PropertyPath.EndsWith(".x", StringComparison.Ordinal))
+            vector.X = value;
+        else if (modification.PropertyPath.EndsWith(".y", StringComparison.Ordinal))
+            vector.Y = value;
+        else if (modification.PropertyPath.EndsWith(".z", StringComparison.Ordinal))
+            vector.Z = value;
+        else
+            return false;
+
+        if (isCenter)
+            center = vector;
+        else
+            extent = vector;
+        return true;
+    }
+
+    private static void ApplyAuthoredBounds(
+        ModelComponent component,
+        Vector3? unityCenter,
+        Vector3? unityExtent,
+        ImportState state)
+    {
+        if (component.Model is null)
+            return;
+
+        if (unityCenter is Vector3 center &&
+            unityExtent is Vector3 extent &&
+            IsFinite(center) &&
+            IsFinite(extent) &&
+            extent.X > 0.0f &&
+            extent.Y > 0.0f &&
+            extent.Z > 0.0f)
+        {
+            center = ConvertPosition(center);
+            var bounds = new AABB(center - extent, center + extent);
+            foreach (SubMesh subMesh in component.Model.Meshes)
+                subMesh.CullingBounds = bounds;
+            return;
+        }
+
+        foreach (SubMesh subMesh in component.Model.Meshes)
+            subMesh.CullingBounds = null;
+        state.Context.AddDiagnostic(
+            "UNITYOVERRIDE0004",
+            UnityImportDiagnosticSeverity.Warning,
+            UnityImportDiagnosticCategory.PrefabOverride,
+            "Invalid or incomplete authored Unity renderer bounds were discarded; XRENGINE will recompute bounds from imported geometry.",
+            state.EntryFilePath);
+    }
+
+    private static bool IsFinite(Vector3 value)
+        => float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z);
 
     private static XRComponent? AttachSpecificComponent(
         SceneNode node,
@@ -874,7 +1044,10 @@ internal static partial class UnitySceneImporter
 
         string? assetPath = ResolveAssetPath(state, materialReference.Guid);
         if (string.IsNullOrWhiteSpace(assetPath) || !File.Exists(assetPath))
-            return null;
+        {
+            throw new UnityVisualImportException(
+                $"Required Unity material reference '{materialReference.Guid}:{materialReference.FileId}' could not be resolved.");
+        }
 
         if (string.Equals(Path.GetExtension(assetPath), ".mat", StringComparison.OrdinalIgnoreCase))
             return LoadUnityMaterial(assetPath, state);
@@ -899,17 +1072,83 @@ internal static partial class UnitySceneImporter
     {
         try
         {
-            UnityMaterialImportResult result = UnityMaterialImporter.ImportWithReport(materialPath, state.ProjectRoot);
-            foreach (string warning in result.Warnings)
-                Debug.LogWarning(warning);
-
-            return result.Material;
+            return state.Context.GetOrAddCached(
+                materialPath,
+                () =>
+                {
+                    UnityMaterialImportResult result = UnityMaterialImporter.ImportWithReport(materialPath, state.Context);
+                    foreach (string warning in result.Warnings)
+                        Debug.LogWarning(warning);
+                    return result.Material
+                        ?? throw new UnityVisualImportException($"Unity material importer returned no material for '{materialPath}'.");
+                });
         }
         catch (Exception ex)
         {
             string materialName = Path.GetFileNameWithoutExtension(materialPath);
-            Debug.LogWarning($"Unity material '{materialName}' could not be imported; using a placeholder material instead. {ex.Message}");
-            return CreateFallbackUnityMaterial(materialName, ColorF4.White);
+            state.Context.AddDiagnostic(
+                "UNITYMAT0001",
+                UnityImportDiagnosticSeverity.Error,
+                UnityImportDiagnosticCategory.MaterialDowngrade,
+                $"Required Unity material '{materialName}' could not be imported: {ex.Message}",
+                materialPath);
+            throw new UnityVisualImportException(
+                $"Required Unity material '{materialName}' could not be imported: {ex.Message}");
+        }
+    }
+
+    private static void ApplyAnimatorModifications(
+        UnityAnimatorImportMetadataComponent component,
+        IEnumerable<PropertyModification> modifications,
+        ImportState state)
+    {
+        foreach (PropertyModification modification in modifications)
+        {
+            switch (modification.PropertyPath)
+            {
+                case "m_Enabled":
+                    if (TryParseBool(modification.Value, out bool enabled))
+                        component.IsActive = enabled;
+                    break;
+                case "m_Controller":
+                    component.Controller = ToIdentity(modification.ObjectReference, UnityAssetObjectKind.Component);
+                    if (!string.IsNullOrWhiteSpace(modification.ObjectReference.Guid))
+                    {
+                        string? controllerPath = ResolveAssetPath(state, modification.ObjectReference.Guid);
+                        if (!string.IsNullOrWhiteSpace(controllerPath) && File.Exists(controllerPath))
+                        {
+                            state.Context.MarkOutcome(controllerPath, UnityImportConversionOutcome.Converted);
+                        }
+                        else
+                        {
+                            state.Context.AddDiagnostic(
+                                "UNITYAVATAR0001",
+                                UnityImportDiagnosticSeverity.Warning,
+                                UnityImportDiagnosticCategory.AvatarComponent,
+                                $"Animator controller '{modification.ObjectReference.Guid}' could not be resolved; its source identity was retained.",
+                                state.EntryFilePath,
+                                modification.PropertyPath,
+                                component.Controller);
+                        }
+                    }
+                    break;
+                case "m_ApplyRootMotion":
+                    if (TryParseBool(modification.Value, out bool applyRootMotion))
+                        component.ApplyRootMotion = applyRootMotion;
+                    break;
+                case "m_CullingMode":
+                    if (TryParseInt(modification.Value, out int cullingMode))
+                        component.CullingMode = cullingMode;
+                    break;
+                case "m_UpdateMode":
+                    if (TryParseInt(modification.Value, out int updateMode))
+                        component.UpdateMode = updateMode;
+                    break;
+                case "m_HasTransformHierarchy":
+                    if (TryParseBool(modification.Value, out bool hasHierarchy))
+                        component.HasTransformHierarchy = hasHierarchy;
+                    break;
+            }
         }
     }
 

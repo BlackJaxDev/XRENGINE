@@ -173,7 +173,11 @@ internal sealed class ImportedTextureStreamingManager
         if (string.IsNullOrWhiteSpace(texture.Name))
             texture.Name = Path.GetFileNameWithoutExtension(normalizedPath);
 
-        _ = GetOrCreateRecord(texture, normalizedPath);
+        // Placeholder registration is intentionally metadata-only. Resolving the
+        // texture authority can enqueue a cache cook, which is useful once the
+        // texture is requested but wasteful (and very memory intensive for large
+        // avatar texture sets) while an importer is only constructing materials.
+        _ = GetOrCreateRecord(texture, normalizedPath, deferAuthorityResolution: true);
     }
 
     public EnumeratorJob SchedulePreviewJob(
@@ -669,8 +673,15 @@ internal sealed class ImportedTextureStreamingManager
             && current.FenceSync == transitionResult.FenceSync;
     }
 
-    private ImportedTextureStreamingRecord GetOrCreateRecord(XRTexture2D texture, string? filePath = null)
-        => _registry.GetOrCreateRecord(texture, filePath, ResolvePreviewBackendCandidate);
+    private ImportedTextureStreamingRecord GetOrCreateRecord(
+        XRTexture2D texture,
+        string? filePath = null,
+        bool deferAuthorityResolution = false)
+        => _registry.GetOrCreateRecord(
+            texture,
+            filePath,
+            ResolvePreviewBackendCandidate,
+            deferAuthorityResolution);
 
     private void UpdatePromotionFades(long frameId)
     {

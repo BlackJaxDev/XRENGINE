@@ -72,7 +72,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
     }
 
     [Test]
-    public void DefaultRenderPipelines_MapVendorUpscaleSourcesToExplicitTextures()
+    public void DefaultRenderPipeline_MapsVendorUpscaleSourcesToExplicitTextures()
     {
         AssertSourceTextureMapping(typeof(DefaultRenderPipeline), DefaultRenderPipeline.PostProcessOutputFBOName, DefaultRenderPipeline.PostProcessOutputTextureName);
         AssertSourceTextureMapping(typeof(DefaultRenderPipeline), DefaultRenderPipeline.FxaaFBOName, DefaultRenderPipeline.FxaaOutputTextureName);
@@ -80,15 +80,10 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         AssertSourceTextureMapping(typeof(DefaultRenderPipeline), DefaultRenderPipeline.TsrUpscaleFBOName, DefaultRenderPipeline.TsrOutputTextureName);
         AssertSourceTextureMapping(typeof(DefaultRenderPipeline), "UnknownFbo", null);
 
-        AssertSourceTextureMapping(typeof(DefaultRenderPipeline2), DefaultRenderPipeline2.PostProcessOutputFBOName, DefaultRenderPipeline2.PostProcessOutputTextureName);
-        AssertSourceTextureMapping(typeof(DefaultRenderPipeline2), DefaultRenderPipeline2.FxaaFBOName, DefaultRenderPipeline2.FxaaOutputTextureName);
-        AssertSourceTextureMapping(typeof(DefaultRenderPipeline2), DefaultRenderPipeline2.SmaaFBOName, DefaultRenderPipeline2.SmaaOutputTextureName);
-        AssertSourceTextureMapping(typeof(DefaultRenderPipeline2), DefaultRenderPipeline2.TsrUpscaleFBOName, DefaultRenderPipeline2.TsrOutputTextureName);
-        AssertSourceTextureMapping(typeof(DefaultRenderPipeline2), "UnknownFbo", null);
     }
 
     [Test]
-    public void DefaultRenderPipelines_ThreadDepthAndMotionResourcesIntoVendorUpscale()
+    public void DefaultRenderPipeline_ThreadsDepthAndMotionResourcesIntoVendorUpscale()
     {
         string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
         pipelineSource.ShouldContain("vendorBlit.SourceTextureName = ResolveVendorUpscaleSourceTextureName(sourceFboName);");
@@ -96,13 +91,6 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         pipelineSource.ShouldContain("vendorBlit.DepthStencilTextureName = DepthStencilTextureName;");
         pipelineSource.ShouldContain("vendorBlit.MotionTextureName = VelocityTextureName;");
         pipelineSource.ShouldContain("vendorBlit.MotionFrameBufferName = VelocityFBOName;");
-
-        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.CommandChain.cs").Replace("\r\n", "\n");
-        pipeline2Source.ShouldContain("vendorBlit.SourceTextureName = ResolveVendorUpscaleSourceTextureName(sourceFboName);");
-        pipeline2Source.ShouldContain("vendorBlit.DepthTextureName = DepthViewTextureName;");
-        pipeline2Source.ShouldContain("vendorBlit.DepthStencilTextureName = DepthStencilTextureName;");
-        pipeline2Source.ShouldContain("vendorBlit.MotionTextureName = VelocityTextureName;");
-        pipeline2Source.ShouldContain("vendorBlit.MotionFrameBufferName = VelocityFBOName;");
     }
 
     [Test]
@@ -403,13 +391,13 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         pipelineSource.ShouldContain("VendorUpscaleRuntime.GetDlssRecommendedRenderScale(RuntimeEngine.Rendering.Settings)");
         pipelineSource.ShouldContain("VendorUpscaleRuntime.GetXessRecommendedRenderScale(RuntimeEngine.Rendering.Settings)");
 
-        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
-        pipeline2Source.ShouldContain("if (!IsRenderingExternalSwapchainTarget() && TryResolveVendorInternalResolutionScale(out float vendorScale))\n            return vendorScale;");
-        pipeline2Source.ShouldContain("if (mode == EAntiAliasingMode.Dlaa)\n            return 1.0f;");
-        pipeline2Source.ShouldContain("RequestedInternalResolution = 1.0f;");
-        pipeline2Source.ShouldContain("RequestedInternalResolution = vendorScale;");
-        pipeline2Source.ShouldContain("VendorUpscaleRuntime.GetDlssRecommendedRenderScale(RuntimeEngine.Rendering.Settings)");
-        pipeline2Source.ShouldContain("VendorUpscaleRuntime.GetXessRecommendedRenderScale(RuntimeEngine.Rendering.Settings)");
+        string advancedPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.cs").Replace("\r\n", "\n");
+        advancedPipelineSource.ShouldContain("if (!IsRenderingExternalSwapchainTarget() && TryResolveVendorInternalResolutionScale(out float vendorScale))\n            return vendorScale;");
+        advancedPipelineSource.ShouldContain("if (mode == EAntiAliasingMode.Dlaa)\n            return 1.0f;");
+        advancedPipelineSource.ShouldContain("RequestedInternalResolution = 1.0f;");
+        advancedPipelineSource.ShouldContain("RequestedInternalResolution = vendorScale;");
+        advancedPipelineSource.ShouldContain("VendorUpscaleRuntime.GetDlssRecommendedRenderScale(RuntimeEngine.Rendering.Settings)");
+        advancedPipelineSource.ShouldContain("VendorUpscaleRuntime.GetXessRecommendedRenderScale(RuntimeEngine.Rendering.Settings)");
 
         string dlssManagerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/DLSS/NvidiaDlssManager.cs").Replace("\r\n", "\n");
         dlssManagerSource.ShouldContain("internal static float GetRecommendedRenderScale(object? settings = null)");
@@ -430,12 +418,12 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         pipelineSource.ShouldContain("private static bool RuntimeEnableSmaa\n        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Smaa;");
         pipelineSource.ShouldContain("private static bool RuntimeNeedsTsrUpscale\n        => !RuntimeEnableVendorUpscale\n        && !DisableHistoryBasedVrEffects()\n        && ResolveAntiAliasingMode() == EAntiAliasingMode.Tsr;");
 
-        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
-        pipeline2Source.ShouldContain("private static bool RuntimeEnableVendorUpscale");
-        pipeline2Source.ShouldContain("|| ResolveAntiAliasingMode() == EAntiAliasingMode.Dlaa");
-        pipeline2Source.ShouldContain("private static bool RuntimeEnableFxaa\n        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Fxaa;");
-        pipeline2Source.ShouldContain("private static bool RuntimeEnableSmaa\n        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Smaa;");
-        pipeline2Source.ShouldContain("private static bool RuntimeNeedsTsrUpscale\n        => !RuntimeEnableVendorUpscale\n        && !DisableHistoryBasedVrEffects()\n        && ResolveAntiAliasingMode() == EAntiAliasingMode.Tsr;");
+        string advancedPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.cs").Replace("\r\n", "\n");
+        advancedPipelineSource.ShouldContain("private static bool RuntimeEnableVendorUpscale");
+        advancedPipelineSource.ShouldContain("|| ResolveAntiAliasingMode() == EAntiAliasingMode.Dlaa");
+        advancedPipelineSource.ShouldContain("private static bool RuntimeEnableFxaa\n        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Fxaa;");
+        advancedPipelineSource.ShouldContain("private static bool RuntimeEnableSmaa\n        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Smaa;");
+        advancedPipelineSource.ShouldContain("private static bool RuntimeNeedsTsrUpscale\n        => !RuntimeEnableVendorUpscale\n        && !DisableHistoryBasedVrEffects()\n        && ResolveAntiAliasingMode() == EAntiAliasingMode.Tsr;");
 
         string vendorUpscaleSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_VendorUpscale.cs").Replace("\r\n", "\n");
         vendorUpscaleSource.ShouldContain("private static bool IsNvidiaDlssFeatureRequested()");

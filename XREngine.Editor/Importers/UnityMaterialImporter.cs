@@ -1,12 +1,14 @@
 using System.Collections.Concurrent;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using ImageMagick;
 using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Scene.Importers.Poiyomi;
+using XREngine.Scene.Prefabs;
 
 namespace XREngine.Scene.Importers;
 
@@ -14,11 +16,13 @@ public sealed class UnityMaterialImportResult
 {
     public XRMaterial? Material { get; init; }
     public bool IsPoiyomiToon { get; init; }
+    public bool IsPoiyomiProDowngrade { get; init; }
     public bool IsLilToon { get; init; }
     public string? ShaderPath { get; init; }
     public UnityMaterialDocument? SourceDocument { get; init; }
     public UnityResolvedAsset? ShaderAsset { get; init; }
     public PoiyomiMaterialDescriptor? PoiyomiDescriptor { get; init; }
+    public PoiyomiShaderMatchResult? PoiyomiShaderMatch { get; init; }
     public string[] Warnings { get; init; } = [];
     public MaterialConversionDiagnostic[] Diagnostics { get; init; } = [];
     public MaterialConversionReport? ConversionReport { get; init; }
@@ -44,8 +48,29 @@ public static partial class UnityMaterialImporter
     public static UnityMaterialImportResult ImportWithReport(string materialPath, string? projectRoot = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(materialPath);
-
         string normalizedPath = Path.GetFullPath(materialPath);
+        string resolvedProjectRoot = projectRoot ??
+            UnityProjectLocator.Locate(normalizedPath).ProjectRoot;
+        return ImportWithReportCore(normalizedPath, new UnityAssetResolver(resolvedProjectRoot), context: null);
+    }
+
+    /// <summary>
+    /// Imports a Unity material through the resolver and caches owned by an active project import.
+    /// </summary>
+    public static UnityMaterialImportResult ImportWithReport(
+        string materialPath,
+        UnityProjectImportContext context)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(materialPath);
+        ArgumentNullException.ThrowIfNull(context);
+        return ImportWithReportCore(Path.GetFullPath(materialPath), context.Resolver, context);
+    }
+
+    private static UnityMaterialImportResult ImportWithReportCore(
+        string normalizedPath,
+        UnityAssetResolver resolver,
+        UnityProjectImportContext? context)
+    {
         List<string> warnings = [];
         List<MaterialConversionDiagnostic> diagnostics = [];
 
@@ -66,29 +91,36 @@ public static partial class UnityMaterialImporter
             };
         }
 
-        var resolver = new UnityAssetResolver(projectRoot ?? ResolveUnityProjectRoot(normalizedPath));
         UnityResolvedAsset shaderAsset = resolver.Resolve(document.Shader);
         PoiyomiShaderMatchResult poiyomiMatch = MatchPoiyomiToon93Material(document, resolver, out string? shaderPath);
         diagnostics.AddRange(poiyomiMatch.Diagnostics);
-        PoiyomiMaterialDescriptor? poiyomiDescriptor = poiyomiMatch.IsAccepted
-            ? PoiyomiMaterialDescriptorFactory.Create(document, resolver, poiyomiMatch, diagnostics)
+        UnityMaterialDocument conversionDocument = poiyomiMatch.IsDowngradeSource
+            ? PoiyomiProDowngradeNormalizer.Normalize(document, diagnostics)
+            : document;
+        PoiyomiMaterialDescriptor? poiyomiDescriptor = poiyomiMatch.IsAccepted || poiyomiMatch.IsDowngradeSource
+            ? PoiyomiMaterialDescriptorFactory.Create(conversionDocument, resolver, poiyomiMatch, diagnostics)
             : null;
+        bool isPoiyomiConversion = poiyomiMatch.IsAccepted || poiyomiMatch.IsDowngradeSource;
         foreach (MaterialConversionDiagnostic diagnostic in diagnostics)
             warnings.Add(diagnostic.ToString());
         bool isPoiyomiToon = poiyomiMatch.IsAccepted;
+        bool isPoiyomiProDowngrade = poiyomiMatch.IsDowngradeSource;
         bool isLilToon = false;
-        if (!isPoiyomiToon && !poiyomiMatch.IsPoiyomiFamily)
+        if (!isPoiyomiConversion && !poiyomiMatch.IsPoiyomiFamily)
             isLilToon = IsLilToonMaterial(document, resolver, out shaderPath);
 
         try
         {
-            XRMaterial material = isPoiyomiToon
-                ? ConvertPoiyomiToUberMaterial(document, resolver, warnings, diagnostics)
+            XRMaterial material = isPoiyomiConversion
+                ? ConvertPoiyomiToUberMaterial(conversionDocument, resolver, warnings, diagnostics)
                 : isLilToon
                     ? ConvertLilToonToUberMaterial(document, resolver, warnings, shaderPath)
-                : ConvertGenericUnityMaterial(document, resolver, warnings);
+                    : ConvertGenericUnityMaterial(document, resolver, warnings);
 
             material.OriginalPath = normalizedPath;
+            EMaterialConversionOutcome outcome = isPoiyomiProDowngrade
+                ? EMaterialConversionOutcome.DowngradedToPoiyomiToon
+                : EMaterialConversionOutcome.Converted;
             MaterialConversionReport conversionReport = MaterialConversionReportBuilder.Create(
                 normalizedPath,
                 shaderPath,
@@ -96,25 +128,36 @@ public static partial class UnityMaterialImporter
                 poiyomiDescriptor,
                 warnings,
                 diagnostics,
-                EMaterialConversionOutcome.Converted);
+                outcome,
+                poiyomiMatch);
             MaterialConversionReportRegistry.Instance.Set(material, conversionReport);
+            context?.MarkOutcome(
+                normalizedPath,
+                isPoiyomiProDowngrade
+                    ? UnityImportConversionOutcome.Downgraded
+                    : UnityImportConversionOutcome.Converted);
+            CopyDiagnosticsToContext(context, normalizedPath, diagnostics);
             return new UnityMaterialImportResult
             {
                 Material = material,
                 IsPoiyomiToon = isPoiyomiToon,
+                IsPoiyomiProDowngrade = isPoiyomiProDowngrade,
                 IsLilToon = isLilToon,
                 ShaderPath = shaderPath,
                 SourceDocument = document,
                 ShaderAsset = shaderAsset,
                 PoiyomiDescriptor = poiyomiDescriptor,
+                PoiyomiShaderMatch = poiyomiMatch,
                 Warnings = [.. warnings],
                 Diagnostics = [.. diagnostics],
                 ConversionReport = conversionReport,
             };
         }
-        catch (Exception ex) when (isPoiyomiToon || isLilToon)
+        catch (Exception ex) when (isPoiyomiConversion || isLilToon)
         {
-            string shaderFamily = isLilToon ? "lilToon" : "Poiyomi";
+            string shaderFamily = isLilToon
+                ? "lilToon"
+                : isPoiyomiProDowngrade ? "Poiyomi Pro downgrade" : "Poiyomi Toon";
             warnings.Add($"{shaderFamily} material conversion failed for '{document.Name}'. Falling back to generic Unity material import. {ex.Message}");
             try
             {
@@ -127,17 +170,22 @@ public static partial class UnityMaterialImporter
                     poiyomiDescriptor,
                     warnings,
                     diagnostics,
-                    EMaterialConversionOutcome.GenericFallback);
+                    EMaterialConversionOutcome.GenericFallback,
+                    poiyomiMatch);
                 MaterialConversionReportRegistry.Instance.Set(material, conversionReport);
+                context?.MarkOutcome(normalizedPath, UnityImportConversionOutcome.Failed);
+                CopyDiagnosticsToContext(context, normalizedPath, diagnostics);
                 return new UnityMaterialImportResult
                 {
                     Material = material,
                     IsPoiyomiToon = isPoiyomiToon,
+                    IsPoiyomiProDowngrade = isPoiyomiProDowngrade,
                     IsLilToon = isLilToon,
                     ShaderPath = shaderPath,
                     SourceDocument = document,
                     ShaderAsset = shaderAsset,
                     PoiyomiDescriptor = poiyomiDescriptor,
+                    PoiyomiShaderMatch = poiyomiMatch,
                     Warnings = [.. warnings],
                     Diagnostics = [.. diagnostics],
                     ConversionReport = conversionReport,
@@ -150,6 +198,33 @@ public static partial class UnityMaterialImporter
                     ex,
                     fallbackException);
             }
+        }
+    }
+
+    private static void CopyDiagnosticsToContext(
+        UnityProjectImportContext? context,
+        string materialPath,
+        IEnumerable<MaterialConversionDiagnostic> diagnostics)
+    {
+        if (context is null)
+            return;
+
+        foreach (MaterialConversionDiagnostic diagnostic in diagnostics)
+        {
+            context.AddDiagnostic(
+                diagnostic.Code,
+                diagnostic.Severity switch
+                {
+                    MaterialConversionDiagnosticSeverity.Info => UnityImportDiagnosticSeverity.Info,
+                    MaterialConversionDiagnosticSeverity.Warning => UnityImportDiagnosticSeverity.Warning,
+                    _ => UnityImportDiagnosticSeverity.Error,
+                },
+                diagnostic.Code.StartsWith("POIPRO", StringComparison.Ordinal)
+                    ? UnityImportDiagnosticCategory.MaterialDowngrade
+                    : UnityImportDiagnosticCategory.TextureImport,
+                diagnostic.Message,
+                materialPath,
+                diagnostic.SourceProperty);
         }
     }
 
@@ -1161,14 +1236,36 @@ public static partial class UnityMaterialImporter
         string? texturePath = resolver.Resolve(textureProperty.TextureReference.Guid);
         if (string.IsNullOrWhiteSpace(texturePath) || !File.Exists(texturePath))
         {
-            warnings.Add($"Could not resolve Unity texture '{sourceProperty}' ({textureProperty.TextureReference.Guid}) for material '{document.Name}'.");
+            string message = $"Could not resolve Unity texture '{sourceProperty}' ({textureProperty.TextureReference.Guid}) for material '{document.Name}'.";
+            if (resolver.ImportContext is not null)
+                throw new UnityVisualImportException(message);
+            warnings.Add(message);
             return null;
         }
 
-        XRTexture2D texture = ModelImporter.GetOrCreateUberSamplerTexture(texturePath, samplerName);
+        ValidateRequiredUnityTexture(texturePath, resolver.ImportContext);
+        XRTexture2D texture;
+        try
+        {
+            texture = resolver.ImportContext is null
+                ? ModelImporter.GetOrCreateUberSamplerTexture(texturePath, samplerName)
+                : ModelImporter.GetOrCreateDeferredUberSamplerTexture(texturePath, samplerName);
+            resolver.ImportContext?.Progress?.Invoke(
+                0.12f,
+                $"Registered streaming texture {Path.GetFileName(texturePath)}");
+        }
+        catch (Exception ex) when (resolver.ImportContext is not null)
+        {
+            throw new UnityVisualImportException(
+                $"Required Unity texture '{texturePath}' could not be imported: {ex.Message}");
+        }
         UnityTextureImportDocument? importSettings = UnityTextureImportDocumentParser.ParseFile(texturePath);
+        resolver.ImportContext?.Progress?.Invoke(
+            0.12f,
+            $"Parsed texture settings {Path.GetFileName(texturePath)}");
         if (importSettings is not null)
             ApplyUnityTextureImportSettings(texture, importSettings, samplerName);
+        resolver.ImportContext?.MarkOutcome(texturePath, UnityImportConversionOutcome.Converted);
         return texture;
     }
 
@@ -1190,15 +1287,34 @@ public static partial class UnityMaterialImporter
             string? texturePath = resolver.Resolve(textureProperty.TextureReference.Guid);
             if (string.IsNullOrWhiteSpace(texturePath) || !File.Exists(texturePath))
             {
-                warnings.Add($"Could not resolve Unity texture '{sourceProperty}' ({textureProperty.TextureReference.Guid}) for material '{document.Name}'.");
+                string message = $"Could not resolve Unity texture '{sourceProperty}' ({textureProperty.TextureReference.Guid}) for material '{document.Name}'.";
+                if (resolver.ImportContext is not null)
+                    throw new UnityVisualImportException(message);
+                warnings.Add(message);
                 continue;
+            }
+
+            ValidateRequiredUnityTexture(texturePath, resolver.ImportContext);
+            if (resolver.ImportContext is not null)
+            {
+                XRTexture2D deferred = ModelImporter.GetOrCreateDeferredUberSamplerTexture(
+                    texturePath,
+                    sourceProperty);
+                UnityTextureImportDocument? importSettings = UnityTextureImportDocumentParser.ParseFile(texturePath);
+                if (importSettings is not null)
+                    ApplyUnityTextureImportSettings(deferred, importSettings, sourceProperty);
+
+                resolver.ImportContext.MarkOutcome(texturePath, UnityImportConversionOutcome.Converted);
+                return deferred;
             }
 
             try
             {
                 XRTexture2D? loaded = Engine.Assets?.Load<XRTexture2D>(texturePath);
                 if (loaded is not null)
+                {
                     return loaded;
+                }
             }
             catch (Exception ex)
             {
@@ -1209,6 +1325,41 @@ public static partial class UnityMaterialImporter
         }
 
         return null;
+    }
+
+    private static void ValidateRequiredUnityTexture(
+        string texturePath,
+        UnityProjectImportContext? context)
+    {
+        if (context is null)
+            return;
+
+        try
+        {
+            context.Progress?.Invoke(
+                0.12f,
+                $"Validating required texture {Path.GetFileName(texturePath)}");
+            var imageInfo = new MagickImageInfo(texturePath);
+            if (imageInfo.Width == 0 || imageInfo.Height == 0)
+            {
+                throw new InvalidDataException(
+                    $"Texture decoder returned invalid dimensions {imageInfo.Width}x{imageInfo.Height}.");
+            }
+            context.Progress?.Invoke(
+                0.12f,
+                $"Validated required texture {Path.GetFileName(texturePath)} ({imageInfo.Width}x{imageInfo.Height})");
+        }
+        catch (Exception ex) when (ex is MagickException or IOException or InvalidDataException)
+        {
+            context.AddDiagnostic(
+                "UNITYTEX0001",
+                UnityImportDiagnosticSeverity.Error,
+                UnityImportDiagnosticCategory.TextureImport,
+                $"Required Unity texture '{texturePath}' could not be decoded: {ex.Message}",
+                texturePath);
+            throw new UnityVisualImportException(
+                $"Required Unity texture '{texturePath}' could not be decoded: {ex.Message}");
+        }
     }
 
     private static XRTexture2D GetDefaultUberSamplerTexture(string samplerName, ColorF4 color)

@@ -2,7 +2,7 @@
 
 [<- Rendering Architecture index](README.md)
 
-Mesh drawing is selected by an explicit `EMeshSubmissionStrategy` instead of by interpreting `GPURenderDispatch` directly. The strategy is resolved once from profile, settings, and renderer capability, then applied to mesh render commands in `DefaultRenderPipeline`, `DefaultRenderPipeline2`, capture helpers, and the debug opaque pipeline.
+Mesh drawing is selected by an explicit `EMeshSubmissionStrategy` instead of by interpreting `GPURenderDispatch` directly. The strategy is resolved once from profile, settings, and renderer capability, then applied to mesh render commands in `DefaultRenderPipeline`, `AdvancedRenderPipeline`, capture helpers, and the debug opaque pipeline.
 
 ## Strategies
 

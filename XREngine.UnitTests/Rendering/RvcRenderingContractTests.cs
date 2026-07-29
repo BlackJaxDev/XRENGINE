@@ -465,7 +465,8 @@ public sealed class RvcRenderingContractTests
         rvcPass.ShouldContain("ERvcGpuPassStage.OpenXrVisibilityMaskStencil");
         rvcPass.ShouldContain("RvcFrameGraphContract.SharedTemporalCache");
         rvcPass.ShouldContain("RenderGraphResourceNames.MakeTexture");
-        engineFactory.ShouldContain("Settings.RvcPipelineMode != ERvcPipelineMode.Off");
+        engineFactory.ShouldContain("ERenderPipelinePurpose.OpenXrEye");
+        engineFactory.ShouldContain("NewRvcRenderPipeline(request.Stereo, rvcMode)");
         engineFactory.ShouldContain("NewRvcRenderPipeline");
         settings.ShouldContain("public ERvcPipelineMode RvcPipelineMode");
         settings.ShouldContain("public bool RvcStereoReuseEnabled");

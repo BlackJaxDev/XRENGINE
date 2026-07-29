@@ -5,6 +5,7 @@ using System.IO;
 using System.Numerics;
 using System.Reflection;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using XREngine.Components;
 using XREngine.Components.Scene.Transforms;
@@ -33,7 +34,7 @@ namespace XREngine.Editor.Mcp
         /// </summary>
         [XRMcp(Name = "instantiate_prefab", Permission = McpPermissionLevel.Mutate, PermissionReason = "Creates new scene nodes from a prefab template.")]
         [Description("Instantiate a prefab into the active scene by asset ID or path.")]
-        public static Task<McpToolResponse> InstantiatePrefabAsync(
+        public static async Task<McpToolResponse> InstantiatePrefabAsync(
             McpToolContext context,
             [McpName("prefab_id"), Description("GUID of the XRPrefabSource asset. Provide this or prefab_path.")]
             string? prefabId = null,
@@ -53,14 +54,15 @@ namespace XREngine.Editor.Mcp
             [McpName("scale_y"), Description("Scale Y.")] float? scaleY = null,
             [McpName("scale_z"), Description("Scale Z.")] float? scaleZ = null,
             [McpName("scene_name"), Description("Optional target scene name; defaults to the first active scene.")]
-            string? sceneName = null)
+            string? sceneName = null,
+            CancellationToken token = default)
         {
             var assets = Engine.Assets;
             if (assets is null)
-                return Task.FromResult(new McpToolResponse("Asset manager is unavailable.", isError: true));
+                return new McpToolResponse("Asset manager is unavailable.", isError: true);
 
             if (string.IsNullOrWhiteSpace(prefabId) && string.IsNullOrWhiteSpace(prefabPath))
-                return Task.FromResult(new McpToolResponse("Provide either prefab_id or prefab_path.", isError: true));
+                return new McpToolResponse("Provide either prefab_id or prefab_path.", isError: true);
 
             // Resolve the prefab asset
             XRPrefabSource? prefab = null;
@@ -71,20 +73,29 @@ namespace XREngine.Editor.Mcp
             if (prefab is null && !string.IsNullOrWhiteSpace(prefabPath))
             {
                 if (!TryGetGameAssetsPath(out string assetsPath, out var assetsError))
-                    return Task.FromResult(assetsError!);
+                    return assetsError!;
 
                 string fullPath = ResolveAndValidateGamePath(assetsPath, prefabPath, out var pathError, mustExist: true, expectDirectory: false);
                 if (pathError is not null)
-                    return Task.FromResult(pathError);
+                    return pathError;
 
-                prefab = assets.Load<XRPrefabSource>(fullPath);
+                try
+                {
+                    prefab = await LoadPrefabForInstantiationAsync(assets, fullPath, token).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    return new McpToolResponse(
+                        $"Failed to load prefab '{prefabPath}': {ex.Message}",
+                        isError: true);
+                }
             }
 
             if (prefab is null)
-                return Task.FromResult(new McpToolResponse("Prefab asset not found.", isError: true));
+                return new McpToolResponse("Prefab asset not found.", isError: true);
 
             if (prefab.RootNode is null)
-                return Task.FromResult(new McpToolResponse("Prefab has no root node.", isError: true));
+                return new McpToolResponse("Prefab has no root node.", isError: true);
 
             // Resolve parent
             SceneNode? parent = null;
@@ -92,13 +103,13 @@ namespace XREngine.Editor.Mcp
             if (!string.IsNullOrWhiteSpace(parentId))
             {
                 if (!TryGetNodeById(context.WorldInstance, parentId!, out parent, out var parentError) || parent is null)
-                    return Task.FromResult(new McpToolResponse(parentError ?? "Parent node not found.", isError: true));
+                    return new McpToolResponse(parentError ?? "Parent node not found.", isError: true);
             }
             else
             {
                 scene = ResolveScene(context.WorldInstance, sceneName);
                 if (scene is null)
-                    return Task.FromResult(new McpToolResponse("No active scene found.", isError: true));
+                    return new McpToolResponse("No active scene found.", isError: true);
             }
 
             // Instantiate
@@ -109,7 +120,7 @@ namespace XREngine.Editor.Mcp
             }
             catch (Exception ex)
             {
-                return Task.FromResult(new McpToolResponse($"Failed to instantiate prefab: {ex.Message}", isError: true));
+                return new McpToolResponse($"Failed to instantiate prefab: {ex.Message}", isError: true);
             }
 
             // Name override
@@ -160,7 +171,7 @@ namespace XREngine.Editor.Mcp
                     Undo.TrackSceneNode(instance);
                 });
 
-            return Task.FromResult(new McpToolResponse(
+            return new McpToolResponse(
                 $"Instantiated prefab '{prefab.Name ?? prefab.ID.ToString()}'.",
                 new
                 {
@@ -169,7 +180,70 @@ namespace XREngine.Editor.Mcp
                     prefabAssetId = prefab.ID,
                     prefabName = prefab.Name,
                     path = BuildNodePath(instance)
-                }));
+                });
+        }
+
+        private static async Task<XRPrefabSource?> LoadPrefabForInstantiationAsync(
+            AssetManager assets,
+            string fullPath,
+            CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+
+            PrefabPartialLoadPlan? plan = await assets
+                .PreparePrefabPartialLoadAsync(fullPath, bypassJobThread: true)
+                .ConfigureAwait(false);
+            if (plan is null)
+                return null;
+
+            await PreloadPrefabReferencesAsync(assets, plan.ExternalReferences, token).ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
+
+            // The final parse now resolves references from the asset cache and avoids
+            // recursively serializing all dependency work through one MCP request thread.
+            return await assets
+                .LoadAsync<XRPrefabSource>(fullPath, bypassJobThread: true)
+                .ConfigureAwait(false);
+        }
+
+        private static async Task PreloadPrefabReferencesAsync(
+            AssetManager assets,
+            IReadOnlyList<DeferredAssetLoadReference> references,
+            CancellationToken token)
+        {
+            if (references.Count == 0)
+                return;
+
+            int nextReferenceIndex = -1;
+            int workerCount = Math.Min(4, references.Count);
+            Task[] workers = new Task[workerCount];
+
+            for (int workerIndex = 0; workerIndex < workerCount; workerIndex++)
+            {
+                workers[workerIndex] = Task.Run(async () =>
+                {
+                    while (true)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        int referenceIndex = Interlocked.Increment(ref nextReferenceIndex);
+                        if (referenceIndex >= references.Count)
+                            return;
+
+                        DeferredAssetLoadReference reference = references[referenceIndex];
+                        if (assets.TryGetAssetByPath(reference.AssetPath, out _))
+                            continue;
+
+                        XRAsset? loaded = await assets
+                            .LoadAsync(reference.AssetPath, reference.AssetType, bypassJobThread: true)
+                            .ConfigureAwait(false);
+                        if (loaded is null)
+                            throw new InvalidDataException(
+                                $"Referenced asset '{reference.AssetPath}' could not be loaded as '{reference.AssetType.FullName}'.");
+                    }
+                }, token);
+            }
+
+            await Task.WhenAll(workers).ConfigureAwait(false);
         }
 
         /// <summary>
