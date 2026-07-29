@@ -320,6 +320,7 @@ public unsafe partial class VulkanRenderer
             }
 
             PublishGpuRenderStatsReadback(slot, values);
+            RuntimeEngine.Rendering.Stats.GpuDriven.RecordDelayedDiagnosticReadback(slot.ByteCount);
         }
         finally
         {
@@ -350,6 +351,11 @@ public unsafe partial class VulkanRenderer
 
                 if (slot.PublishDraws && drawCount > 0ul)
                     RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls(SaturateGpuStatsToInt(drawCount));
+                RuntimeEngine.Rendering.Stats.GpuDriven.RecordCommandCompaction(
+                    culledCommands: 0,
+                    delayedDrawCountValue: drawCount > long.MaxValue
+                        ? long.MaxValue
+                        : (long)drawCount);
 
                 if (IndirectTraceEnabled)
                 {

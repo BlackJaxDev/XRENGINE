@@ -2,7 +2,7 @@
 
 Last Updated: 2026-07-28
 Owner: Rendering
-Status: Split Technical Child Of Workstreams 03 And 07
+Status: Workstream 03 Implementation Landed; Validation And Workstream 07 Open
 Execution: Current worktree only; do not create or switch branches for this effort.
 
 ## Canonical Ownership
@@ -239,3 +239,18 @@ Acceptance criteria:
 - [ ] Update the engine optimization roadmap with final results.
 - [ ] Close this supporting tracker only when the canonical Phase 5.2B gate
   records the same implementation, validation, and documentation evidence.
+
+## Workstream 03 Bounded Result
+
+The workstream-03 implementation now supplies the three-tier compact data
+model, portable workgroup prefix scan, one clamped reservation per
+workgroup/tier, bounded indirect output, coalesced compute-to-indirect barrier,
+Vulkan indirect-count consumption, explicit diagnostic-only scan/readback
+modes, delayed fence-polled counter path, and source/GLSL contracts. The
+selected lower-capability compaction rung is reported as
+`WorkgroupPrefixScan64`.
+
+This child remains open because the subgroup-optimized rung, exhaustive
+empty/exact/overflow/resize runtime matrix, successful GPU trace, matched
+scaling crossover, and Phase 4 Hi-Z work are not complete. Phase 4 remains
+owned by workstream 07.

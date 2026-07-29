@@ -213,8 +213,8 @@ namespace XREngine
                 private static string GetZeroReadbackMaterialDrawPathName(EZeroReadbackMaterialDrawPath path)
                     => path switch
                     {
-                        EZeroReadbackMaterialDrawPath.FullBucketScan => nameof(EZeroReadbackMaterialDrawPath.FullBucketScan),
-                        EZeroReadbackMaterialDrawPath.ActiveBucketList => nameof(EZeroReadbackMaterialDrawPath.ActiveBucketList),
+                        EZeroReadbackMaterialDrawPath.FullBucketScanDiagnostic => nameof(EZeroReadbackMaterialDrawPath.FullBucketScanDiagnostic),
+                        EZeroReadbackMaterialDrawPath.ActiveBucketListReadbackDiagnostic => nameof(EZeroReadbackMaterialDrawPath.ActiveBucketListReadbackDiagnostic),
                         EZeroReadbackMaterialDrawPath.MaterialTable => nameof(EZeroReadbackMaterialDrawPath.MaterialTable),
                         EZeroReadbackMaterialDrawPath.BindlessMaterialTable => nameof(EZeroReadbackMaterialDrawPath.BindlessMaterialTable),
                         _ => "unknown",

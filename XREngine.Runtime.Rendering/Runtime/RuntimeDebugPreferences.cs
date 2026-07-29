@@ -26,7 +26,7 @@ internal sealed class RuntimeDebugPreferences
     public bool VisualizeTransparencyModeOverlay { get; set; }
     public bool VisualizeTransparencyClassificationOverlay { get; set; }
     public bool EnableZeroReadbackMaterialScatter { get; set; }
-    public EZeroReadbackMaterialDrawPath ZeroReadbackMaterialDrawPath { get; set; } = EZeroReadbackMaterialDrawPath.FullBucketScan;
+    public EZeroReadbackMaterialDrawPath ZeroReadbackMaterialDrawPath { get; set; } = EZeroReadbackMaterialDrawPath.BindlessMaterialTable;
     public bool ForceGpuPassthroughCulling { get; set; }
     public EDebugVisualizerPopulationMode DebugVisualizerPopulationMode { get; set; }
         = EDebugVisualizerPopulationMode.Tasks;

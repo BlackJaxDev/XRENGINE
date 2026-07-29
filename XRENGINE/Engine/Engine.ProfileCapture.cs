@@ -747,12 +747,19 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "gpu_driven_empty_bucket_skips", RuntimeEngine.Rendering.Stats.GpuDriven.EmptyBucketSkips, ref first);
             AppendNumberField(s_lineBuilder, "gpu_driven_full_bucket_scans", RuntimeEngine.Rendering.Stats.GpuDriven.FullBucketScans, ref first);
             AppendNumberField(s_lineBuilder, "gpu_driven_material_scatter_dispatches", RuntimeEngine.Rendering.Stats.GpuDriven.MaterialScatterDispatches, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_configured_material_slots", RuntimeEngine.Rendering.Stats.GpuDriven.ConfiguredMaterialSlots, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_material_pass_groups", RuntimeEngine.Rendering.Stats.GpuDriven.MaterialPassGroups, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_unsupported_compact_passes", RuntimeEngine.Rendering.Stats.GpuDriven.UnsupportedCompactPasses, ref first);
             AppendNumberField(s_lineBuilder, "gpu_driven_indirect_command_generation_ms", RuntimeEngine.Rendering.Stats.GpuDriven.IndirectCommandGenerationMs, ref first);
             AppendNumberField(s_lineBuilder, "gpu_driven_gpu_cull_ms", RuntimeEngine.Rendering.Stats.GpuDriven.GpuCullMs, ref first);
             AppendNumberField(s_lineBuilder, "gpu_driven_gpu_sort_compact_ms", RuntimeEngine.Rendering.Stats.GpuDriven.GpuSortCompactMs, ref first);
             AppendNumberField(s_lineBuilder, "gpu_driven_delayed_draw_count_buffer_value", RuntimeEngine.Rendering.Stats.GpuDriven.DelayedDrawCountBufferValue, ref first);
             AppendNumberField(s_lineBuilder, "gpu_driven_delayed_diagnostic_readback_bytes", RuntimeEngine.Rendering.Stats.GpuDriven.DelayedDiagnosticReadbackBytes, ref first);
             AppendNumberField(s_lineBuilder, "gpu_driven_delayed_diagnostic_readback_count", RuntimeEngine.Rendering.Stats.GpuDriven.DelayedDiagnosticReadbackCount, ref first);
+            AppendStringField(s_lineBuilder, "gpu_material_binding_rung", RuntimeEngine.Rendering.Stats.GpuDriven.MaterialBindingRung, ref first);
+            AppendStringField(s_lineBuilder, "gpu_material_binding_rung_reason", RuntimeEngine.Rendering.Stats.GpuDriven.MaterialBindingRungReason, ref first);
+            AppendStringField(s_lineBuilder, "gpu_compaction_rung", RuntimeEngine.Rendering.Stats.GpuDriven.GpuCompactionRung, ref first);
+            AppendStringField(s_lineBuilder, "gpu_compaction_rung_reason", RuntimeEngine.Rendering.Stats.GpuDriven.GpuCompactionRungReason, ref first);
             AppendNumberField(s_lineBuilder, "gpu_compaction_overflow", RuntimeEngine.Rendering.Stats.GpuDriven.GpuCompactionOverflow, ref first);
             AppendNumberField(s_lineBuilder, "gpu_active_list_overflow", RuntimeEngine.Rendering.Stats.GpuDriven.ActiveListOverflow, ref first);
             AppendNumberField(s_lineBuilder, "gpu_bucket_overflow", RuntimeEngine.Rendering.Stats.GpuDriven.BucketOverflow, ref first);
@@ -1447,10 +1454,12 @@ public static partial class Engine
             ValidateEnvEnum(
                 errors,
                 XREngineEnvironmentVariables.ZeroReadbackMaterialDrawPath,
-                "FullBucketScan",
-                "ActiveBucketList",
+                "FullBucketScanDiagnostic",
+                "ActiveBucketListReadbackDiagnostic",
                 "MaterialTable",
-                "BindlessMaterialTable");
+                "BindlessMaterialTable",
+                "FullBucketScan",
+                "ActiveBucketList");
             ValidateEnvEnum(errors, XREngineEnvironmentVariables.ProfileCacheMode, "Cold", "Warm");
             ValidateEnvEnum(
                 errors,

@@ -164,13 +164,20 @@ Hi-Z effectiveness and promotion are owned by workstream 07.
 
 - [ ] Complete active-list compaction, overflow handling, and barrier batching
   in [Compact Zero-Readback Rendering TODO](compact-zero-readback-rendering-todo.md).
-- [ ] Verify `GpuIndirectZeroReadback` does not full-scan inactive material
+- [x] Verify `GpuIndirectZeroReadback` does not full-scan inactive material
   buckets in production mode.
 - [ ] Verify `GpuIndirectZeroReadback` emits `GpuCompactionOverflow` when active
   output capacity is exceeded and never silently truncates visible work.
 - [ ] Verify one-phase vs two-phase Hi-Z mode is visible in profiler output.
 - [ ] Compare CPU direct vs zero-readback on low-count, high-count, and heavily
   occluded scenes.
+
+Workstream-03 note (2026-07-28): the bounded Vulkan implementation now uses
+three fixed GPU-owned tier groups, workgroup prefix-scan compaction, reported
+bindless/compaction rungs, and indirect-count submission with zero
+capture-window readback or full scans. Promotion remains open because matched
+Uber CPU-direct is faster, allocations/resource churn remain, exact
+transparency is unsupported, and RVC/RenderDoc/image evidence was unavailable.
 
 Acceptance criteria:
 

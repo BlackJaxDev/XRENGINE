@@ -11,8 +11,8 @@ param(
     [string]$UnitTestingWorldSettingsPath = '',
     [ValidateSet('Cold', 'Warm')]
     [string]$CacheMode = 'Cold',
-    [ValidateSet('FullBucketScan', 'ActiveBucketList', 'MaterialTable', 'BindlessMaterialTable')]
-    [string]$ZeroReadbackMaterialDrawPath = 'FullBucketScan',
+    [ValidateSet('FullBucketScanDiagnostic', 'ActiveBucketListReadbackDiagnostic', 'MaterialTable', 'BindlessMaterialTable', 'FullBucketScan', 'ActiveBucketList')]
+    [string]$ZeroReadbackMaterialDrawPath = 'BindlessMaterialTable',
     [string]$ProfileScene = '',
     [string]$ProfileCamera = '',
     [string]$ProfileLights = '',
@@ -1009,7 +1009,7 @@ function Measure-Variant {
         Set-BenchmarkEnvValue 'XRE_PROFILE_MODE' $ProfileMode -AllowedValues @('Diagnostics', 'DevelopmentProfile', 'CleanProfile', 'ReleaseBenchmark')
         Set-EnvValue 'XRE_PROFILE_RUN_LABEL' $runName
         Set-BenchmarkEnvValue 'XRE_FORCE_MESH_SUBMISSION_STRATEGY' $Strategy -AllowedValues $validStrategies
-        Set-BenchmarkEnvValue 'XRE_ZERO_READBACK_MATERIAL_DRAW_PATH' $ZeroReadbackMaterialDrawPath -AllowedValues @('FullBucketScan', 'ActiveBucketList', 'MaterialTable', 'BindlessMaterialTable')
+        Set-BenchmarkEnvValue 'XRE_ZERO_READBACK_MATERIAL_DRAW_PATH' $ZeroReadbackMaterialDrawPath -AllowedValues @('FullBucketScanDiagnostic', 'ActiveBucketListReadbackDiagnostic', 'MaterialTable', 'BindlessMaterialTable', 'FullBucketScan', 'ActiveBucketList')
         Set-BenchmarkEnvValue 'XRE_PROFILE_CACHE_MODE' $CacheMode -AllowedValues @('Cold', 'Warm')
         Set-BenchmarkEnvValue 'XRE_SHADER_CACHE_MODE' $CacheMode -AllowedValues @('Cold', 'Warm')
         Set-BenchmarkEnvValue 'XRE_TEXTURE_CACHE_MODE' $CacheMode -AllowedValues @('Cold', 'Warm')
@@ -1247,6 +1247,10 @@ function Measure-Variant {
     $lastMappedBuffers = Get-SamplePropertyValue -Sample $lastSample -Property 'gpu_mapped_buffers'
     $lastFallbackEvents = Get-SamplePropertyValue -Sample $lastSample -Property 'gpu_cpu_fallback_events'
     $lastForbiddenFallbackEvents = Get-SamplePropertyValue -Sample $lastSample -Property 'forbidden_gpu_fallback_events'
+    $lastMaterialBindingRung = Get-SamplePropertyValue -Sample $lastSample -Property 'gpu_material_binding_rung'
+    $lastMaterialBindingRungReason = Get-SamplePropertyValue -Sample $lastSample -Property 'gpu_material_binding_rung_reason'
+    $lastGpuCompactionRung = Get-SamplePropertyValue -Sample $lastSample -Property 'gpu_compaction_rung'
+    $lastGpuCompactionRungReason = Get-SamplePropertyValue -Sample $lastSample -Property 'gpu_compaction_rung_reason'
     $captureReadbackTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_readback_bytes'
     $captureMappedTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_mapped_buffers'
     $allReadbackTotal = Sum-NumericProperty -Samples $allSamples -Property 'gpu_readback_bytes'
@@ -1644,7 +1648,14 @@ function Measure-Variant {
         GpuDrivenActiveBucketsP50 = (Get-NumericStats -Samples $samples -Property 'gpu_driven_active_bucket_count').P50
         GpuDrivenEmptyBucketSkipsTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_driven_empty_bucket_skips'
         GpuDrivenFullBucketScansTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_driven_full_bucket_scans'
+        GpuDrivenConfiguredMaterialSlotsP50 = (Get-NumericStats -Samples $samples -Property 'gpu_driven_configured_material_slots').P50
+        GpuDrivenMaterialPassGroupsP50 = (Get-NumericStats -Samples $samples -Property 'gpu_driven_material_pass_groups').P50
+        GpuDrivenUnsupportedCompactPassesTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_driven_unsupported_compact_passes'
         GpuDrivenDelayedDiagnosticReadbackBytesTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_driven_delayed_diagnostic_readback_bytes'
+        MaterialBindingRung = $lastMaterialBindingRung
+        MaterialBindingRungReason = $lastMaterialBindingRungReason
+        GpuCompactionRung = $lastGpuCompactionRung
+        GpuCompactionRungReason = $lastGpuCompactionRungReason
         GpuCompactionOverflowTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_compaction_overflow'
         GpuHiZPhaseOneDrawsTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_hiz_phase_one_draws'
         GpuHiZPhaseTwoDrawsTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_hiz_phase_two_draws'

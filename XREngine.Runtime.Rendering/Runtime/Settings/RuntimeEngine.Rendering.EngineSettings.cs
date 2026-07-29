@@ -157,7 +157,7 @@ public static partial class RuntimeEngine
                 private bool _enableGpuIndirectValidationLogging = false;
                 private bool _enableGpuMeshBvhPickLogging = false;
                 private bool _enableZeroReadbackMaterialScatter = false;
-                private EZeroReadbackMaterialDrawPath _zeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.FullBucketScan;
+                private EZeroReadbackMaterialDrawPath _zeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.BindlessMaterialTable;
                 private EMeshSubmissionStrategy? _forceMeshSubmissionStrategy = null;
                 private TextureRuntimeLogMode _textureLogMode = TextureRuntimeLogMode.Summary;
                 private double _textureSlowCpuDecodeResizeMilliseconds = 5.0;

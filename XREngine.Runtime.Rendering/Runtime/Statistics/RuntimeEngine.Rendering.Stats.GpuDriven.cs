@@ -1,5 +1,6 @@
 using System;
 using System.Threading;
+using XREngine.Data.Rendering;
 
 namespace XREngine
 {
@@ -16,6 +17,9 @@ namespace XREngine
                     private static int _emptyBucketSkips;
                     private static int _fullBucketScans;
                     private static int _materialScatterDispatches;
+                    private static int _configuredMaterialSlots;
+                    private static int _materialPassGroups;
+                    private static int _unsupportedCompactPasses;
                     private static long _indirectCommandGenerationTicks;
                     private static long _gpuCullTicks;
                     private static long _gpuSortCompactTicks;
@@ -42,6 +46,9 @@ namespace XREngine
                     private static int _lastFrameEmptyBucketSkips;
                     private static int _lastFrameFullBucketScans;
                     private static int _lastFrameMaterialScatterDispatches;
+                    private static int _lastFrameConfiguredMaterialSlots;
+                    private static int _lastFrameMaterialPassGroups;
+                    private static int _lastFrameUnsupportedCompactPasses;
                     private static long _lastFrameIndirectCommandGenerationTicks;
                     private static long _lastFrameGpuCullTicks;
                     private static long _lastFrameGpuSortCompactTicks;
@@ -66,12 +73,23 @@ namespace XREngine
                     private static readonly object _modeLock = new();
                     private static string _hiZMode = "unknown";
                     private static string _lastFrameHiZMode = "unknown";
+                    private static string _materialBindingRung = "Unsupported";
+                    private static string _materialBindingRungReason = "Not selected.";
+                    private static string _lastFrameMaterialBindingRung = "Unsupported";
+                    private static string _lastFrameMaterialBindingRungReason = "Not selected.";
+                    private static string _gpuCompactionRung = "Unsupported";
+                    private static string _gpuCompactionRungReason = "Not selected.";
+                    private static string _lastFrameGpuCompactionRung = "Unsupported";
+                    private static string _lastFrameGpuCompactionRungReason = "Not selected.";
 
                     public static long CulledCommandCount => _lastFrameCulledCommandCount;
                     public static int ActiveBucketCount => _lastFrameActiveBucketCount;
                     public static int EmptyBucketSkips => _lastFrameEmptyBucketSkips;
                     public static int FullBucketScans => _lastFrameFullBucketScans;
                     public static int MaterialScatterDispatches => _lastFrameMaterialScatterDispatches;
+                    public static int ConfiguredMaterialSlots => _lastFrameConfiguredMaterialSlots;
+                    public static int MaterialPassGroups => _lastFrameMaterialPassGroups;
+                    public static int UnsupportedCompactPasses => _lastFrameUnsupportedCompactPasses;
                     public static double IndirectCommandGenerationMs => TimeSpan.FromTicks(_lastFrameIndirectCommandGenerationTicks).TotalMilliseconds;
                     public static double GpuCullMs => TimeSpan.FromTicks(_lastFrameGpuCullTicks).TotalMilliseconds;
                     public static double GpuSortCompactMs => TimeSpan.FromTicks(_lastFrameGpuSortCompactTicks).TotalMilliseconds;
@@ -83,6 +101,10 @@ namespace XREngine
                     public static long BucketOverflow => _lastFrameBucketOverflow;
                     public static long MeshletOverflow => _lastFrameMeshletOverflow;
                     public static string HiZMode => _lastFrameHiZMode;
+                    public static string MaterialBindingRung => _lastFrameMaterialBindingRung;
+                    public static string MaterialBindingRungReason => _lastFrameMaterialBindingRungReason;
+                    public static string GpuCompactionRung => _lastFrameGpuCompactionRung;
+                    public static string GpuCompactionRungReason => _lastFrameGpuCompactionRungReason;
                     public static int HiZOnePhaseFrames => _lastFrameHiZOnePhaseFrames;
                     public static int HiZTwoPhaseFrames => _lastFrameHiZTwoPhaseFrames;
                     public static long HiZPhaseOneDraws => _lastFrameHiZPhaseOneDraws;
@@ -101,6 +123,9 @@ namespace XREngine
                         _lastFrameEmptyBucketSkips = Interlocked.Exchange(ref _emptyBucketSkips, 0);
                         _lastFrameFullBucketScans = Interlocked.Exchange(ref _fullBucketScans, 0);
                         _lastFrameMaterialScatterDispatches = Interlocked.Exchange(ref _materialScatterDispatches, 0);
+                        _lastFrameConfiguredMaterialSlots = Interlocked.Exchange(ref _configuredMaterialSlots, 0);
+                        _lastFrameMaterialPassGroups = Interlocked.Exchange(ref _materialPassGroups, 0);
+                        _lastFrameUnsupportedCompactPasses = Interlocked.Exchange(ref _unsupportedCompactPasses, 0);
                         _lastFrameIndirectCommandGenerationTicks = Interlocked.Exchange(ref _indirectCommandGenerationTicks, 0);
                         _lastFrameGpuCullTicks = Interlocked.Exchange(ref _gpuCullTicks, 0);
                         _lastFrameGpuSortCompactTicks = Interlocked.Exchange(ref _gpuSortCompactTicks, 0);
@@ -123,13 +148,45 @@ namespace XREngine
                         _lastFrameVisibilityMaterialShadingTicks = Interlocked.Exchange(ref _visibilityMaterialShadingTicks, 0);
 
                         lock (_modeLock)
+                        {
                             _lastFrameHiZMode = _hiZMode;
+                            _lastFrameMaterialBindingRung = _materialBindingRung;
+                            _lastFrameMaterialBindingRungReason = _materialBindingRungReason;
+                            _lastFrameGpuCompactionRung = _gpuCompactionRung;
+                            _lastFrameGpuCompactionRungReason = _gpuCompactionRungReason;
+                        }
                     }
 
                     public static void UpdateHiZMode(string? mode)
                     {
                         lock (_modeLock)
                             _hiZMode = string.IsNullOrWhiteSpace(mode) ? "unknown" : mode!;
+                    }
+
+                    public static void UpdateMaterialBindingRung(
+                        EMaterialTextureBindingRung rung,
+                        string reason)
+                    {
+                        lock (_modeLock)
+                        {
+                            _materialBindingRung = rung.ToString();
+                            _materialBindingRungReason = string.IsNullOrWhiteSpace(reason)
+                                ? "No selection reason was reported."
+                                : reason;
+                        }
+                    }
+
+                    public static void UpdateGpuCompactionRung(string rung, string reason)
+                    {
+                        lock (_modeLock)
+                        {
+                            _gpuCompactionRung = string.IsNullOrWhiteSpace(rung)
+                                ? "Unsupported"
+                                : rung;
+                            _gpuCompactionRungReason = string.IsNullOrWhiteSpace(reason)
+                                ? "No selection reason was reported."
+                                : reason;
+                        }
                     }
 
                     public static void RecordBucketWork(int activeBuckets = 0, int emptyBucketSkips = 0, int fullBucketScans = 0, int materialScatterDispatches = 0)
@@ -145,6 +202,27 @@ namespace XREngine
                             Interlocked.Add(ref _fullBucketScans, fullBucketScans);
                         if (materialScatterDispatches > 0)
                             Interlocked.Add(ref _materialScatterDispatches, materialScatterDispatches);
+                    }
+
+                    /// <summary>
+                    /// Records the CPU-visible topology without inspecting GPU-produced active work.
+                    /// Values are summed across render passes and views for the captured frame.
+                    /// </summary>
+                    public static void RecordMaterialTopology(int configuredMaterialSlots, int passGroups)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        if (configuredMaterialSlots > 0)
+                            Interlocked.Add(ref _configuredMaterialSlots, configuredMaterialSlots);
+                        if (passGroups > 0)
+                            Interlocked.Add(ref _materialPassGroups, passGroups);
+                    }
+
+                    public static void RecordUnsupportedCompactPass()
+                    {
+                        if (EnableTracking)
+                            Interlocked.Increment(ref _unsupportedCompactPasses);
                     }
 
                     public static void RecordCommandCompaction(long culledCommands, long delayedDrawCountValue = 0, long gpuCompactionOverflow = 0, long activeListOverflow = 0, long bucketOverflow = 0, long meshletOverflow = 0)

@@ -1024,7 +1024,9 @@ namespace XREngine.Rendering.Commands
         {
             uint lookupCount = Math.Max(materialSlotLookupCount, 1u);
             uint slotCount = Math.Max(materialSlotCount, 1u);
-            uint bucketCount = slotCount * GPUBatchingBindings.MaterialTierCount;
+            uint bucketCount = UsesCompactMaterialTableSubmission(ZeroReadbackMaterialDrawPath)
+                ? GPUBatchingBindings.MaterialTierCount
+                : slotCount * GPUBatchingBindings.MaterialTierCount;
 
             if (_materialSlotLookupBuffer is null ||
                 _materialSlotLookupBuffer.ComponentType != EComponentType.UInt ||
@@ -1081,6 +1083,9 @@ namespace XREngine.Rendering.Commands
                 _materialTierDrawCountBuffer.Resize(bucketCount);
             }
 
+            // One command for the selected LOD and, during a transition, one
+            // for the previous LOD. Production material-table submission owns
+            // only three fixed tier ranges rather than materialCapacity*tiers.
             uint maxDrawsPerBucket = Math.Max(capacity * 2u, 1u);
             ulong totalIndirectCommands = (ulong)maxDrawsPerBucket * bucketCount;
             uint boundedIndirectCommands = (uint)Math.Min(totalIndirectCommands, int.MaxValue);
@@ -1118,7 +1123,8 @@ namespace XREngine.Rendering.Commands
                 slotCount,
                 bucketCount,
                 maxDrawsPerBucket);
-            EnsureActiveMaterialBucketBuffers(bucketCount);
+            if (RequiresActiveMaterialBucketList(ZeroReadbackMaterialDrawPath))
+                EnsureActiveMaterialBucketBuffers(bucketCount);
         }
 
         private void EnsureActiveMaterialBucketBuffers(uint bucketCount)

@@ -26,7 +26,7 @@ $exe = (Resolve-Path -LiteralPath $exe).Path
 $validEnumValues = @{
     XRE_OCCLUSION_CULLING_MODE = @('Disabled', 'GpuHiZ', 'CpuQueryAsync', 'CpuSoftwareOcclusion')
     XRE_FORCE_MESH_SUBMISSION_STRATEGY = @('CpuDirect', 'GpuIndirectInstrumented', 'GpuIndirectZeroReadback', 'GpuMeshletInstrumented', 'GpuMeshletZeroReadback')
-    XRE_ZERO_READBACK_MATERIAL_DRAW_PATH = @('FullBucketScan', 'ActiveBucketList', 'MaterialTable', 'BindlessMaterialTable')
+    XRE_ZERO_READBACK_MATERIAL_DRAW_PATH = @('FullBucketScanDiagnostic', 'ActiveBucketListReadbackDiagnostic', 'MaterialTable', 'BindlessMaterialTable')
 }
 
 function Assert-ValidVariantEnvironment {
