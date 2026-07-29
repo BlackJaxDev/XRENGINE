@@ -5,7 +5,7 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
-        private EDesktopFrameFlow RunDesktopFramePreflight(ref DesktopFrameAttempt attempt)
+        private EDesktopFrameFlow RunDesktopFramePreflight(ref VulkanFrameAttempt attempt)
         {
             attempt.InteractiveResize = XRWindow.IsInteractiveResizeInProgress;
 
@@ -97,7 +97,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private EDesktopFrameFlow StopDesktopFrameForPreflightStatus(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             EVulkanDesktopPreflightStatus status,
             string detail)
         {
@@ -125,7 +125,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void SkipDesktopFrameBeforeAcquire(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             EDesktopFrameReason reason,
             string detail)
         {

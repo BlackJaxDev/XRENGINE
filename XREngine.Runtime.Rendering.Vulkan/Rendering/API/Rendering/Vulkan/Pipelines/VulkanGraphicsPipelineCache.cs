@@ -6,47 +6,20 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private readonly Dictionary<VkMeshRenderer.PipelineKey, Pipeline> _sharedGraphicsPipelines = new();
-    private readonly object _sharedGraphicsPipelineLock = new();
-    private ulong _sharedGraphicsPipelineGeneration;
+    private readonly VulkanPipelineManager _pipelineManager = new();
 
     internal ulong SharedGraphicsPipelineGeneration
-    {
-        get
-        {
-            lock (_sharedGraphicsPipelineLock)
-                return _sharedGraphicsPipelineGeneration;
-        }
-    }
+        => _pipelineManager.SharedGraphicsPipelineGeneration;
 
     internal bool TryGetSharedGraphicsPipeline(
         in VkMeshRenderer.PipelineKey key,
         out Pipeline pipeline)
-    {
-        lock (_sharedGraphicsPipelineLock)
-            return _sharedGraphicsPipelines.TryGetValue(key, out pipeline) && pipeline.Handle != 0;
-    }
+        => _pipelineManager.TryGetSharedGraphicsPipeline(key, out pipeline);
 
     internal Pipeline StoreSharedGraphicsPipeline(
         in VkMeshRenderer.PipelineKey key,
         Pipeline pipeline)
-    {
-        if (pipeline.Handle == 0)
-            return pipeline;
-
-        lock (_sharedGraphicsPipelineLock)
-        {
-            if (_sharedGraphicsPipelines.TryGetValue(key, out Pipeline existing) &&
-                existing.Handle != 0)
-            {
-                return existing;
-            }
-
-            _sharedGraphicsPipelines[key] = pipeline;
-            _sharedGraphicsPipelineGeneration++;
-            return pipeline;
-        }
-    }
+        => _pipelineManager.StoreSharedGraphicsPipeline(key, pipeline);
 
     internal Pipeline StoreOrRetireSharedGraphicsPipeline(
         in VkMeshRenderer.PipelineKey key,
@@ -61,15 +34,9 @@ public unsafe partial class VulkanRenderer
 
     private void DestroySharedGraphicsPipelines()
     {
-        Pipeline[] pipelines;
-        lock (_sharedGraphicsPipelineLock)
-        {
-            if (_sharedGraphicsPipelines.Count == 0)
-                return;
-
-            pipelines = [.. _sharedGraphicsPipelines.Values];
-            _sharedGraphicsPipelines.Clear();
-        }
+        Pipeline[] pipelines = _pipelineManager.DrainSharedGraphicsPipelines();
+        if (pipelines.Length == 0)
+            return;
 
         if (Api is null || device.Handle == 0)
             return;

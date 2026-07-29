@@ -7,7 +7,6 @@ using XREngine.Data.Colors;
 using XREngine.Editor.UI;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 
@@ -133,9 +132,6 @@ public static partial class InspectorPropertyEditors
     {
         if (propType.GetCustomAttribute<EditorComponentAttribute>() is EditorComponentAttribute attr)
             return attr.CreateEditor;
-
-        if (typeof(OpenGLRenderer.GLObjectBase).IsAssignableFrom(propType))
-            return CreateGlObjectEditor(propType);
 
         if (typeof(XRAsset).IsAssignableFrom(propType))
             return CreateXRAssetEditor(propType);

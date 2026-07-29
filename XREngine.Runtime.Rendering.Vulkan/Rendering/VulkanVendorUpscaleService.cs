@@ -13,9 +13,12 @@ internal sealed class VulkanVendorUpscaleService : IRuntimeVendorUpscaleService
 
     public bool IsDlssSupported => NvidiaDlssManager.IsSupported;
     public string? DlssLastError => NvidiaDlssManager.LastError;
+    public bool AreDlssRuntimeLibrariesAvailable => NvidiaDlssManager.RequiredRuntimeDllsAvailable;
     public bool IsXessSupported => IntelXessManager.IsSupported;
     public string? XessLastError => IntelXessManager.LastError;
     public bool IsDlssFrameGenerationRequested => NvidiaDlssManager.IsFrameGenerationRequested;
+    public bool IsDlssFrameGenerationSupported => NvidiaDlssManager.FrameGenerationAvailable;
+    public string? DlssFrameGenerationUnavailableReason => NvidiaDlssManager.FrameGenerationUnavailableReason;
 
     public bool IsDlssFrameGenerationAvailable(out string? failureReason)
         => NvidiaDlssManager.Native.IsFrameGenerationAvailable(out failureReason);
@@ -29,8 +32,17 @@ internal sealed class VulkanVendorUpscaleService : IRuntimeVendorUpscaleService
     public float GetXessRecommendedRenderScale(object? settings = null)
         => IntelXessManager.GetRecommendedRenderScale(settings);
 
+    public void ApplyDlssToViewport(XRViewport viewport, object? settings = null)
+        => NvidiaDlssManager.ApplyToViewport(viewport, settings);
+
+    public void ResetDlssViewport(XRViewport viewport)
+        => NvidiaDlssManager.ResetViewport(viewport);
+
     public void ApplyXessToViewport(XRViewport viewport, object? settings = null)
         => IntelXessManager.ApplyToViewport(viewport, settings);
+
+    public void ResetXessViewport(XRViewport viewport)
+        => IntelXessManager.ResetViewport(viewport);
 
     public bool TryDispatchDlssUpscale(
         XRViewport viewport,

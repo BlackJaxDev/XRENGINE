@@ -438,35 +438,28 @@ internal sealed class VulkanBarrierPlanner
 
     private static IEnumerable<ImageResourceBinding> ExpandImageLogicalResources(RenderPassResourceUsage usage, VulkanResourcePlanner planner)
     {
-        string resourceBinding = usage.ResourceName;
-        if (string.IsNullOrWhiteSpace(resourceBinding))
+        if (!VulkanResourceBindingKey.TryParse(usage.ResourceName, out VulkanResourceBindingKey binding))
             yield break;
 
-        if (resourceBinding.Equals(RenderGraphResourceNames.OutputRenderTarget, StringComparison.OrdinalIgnoreCase))
+        if (binding.Kind == EVulkanResourceBindingKind.Output)
         {
-            foreach (ImageResourceBinding binding in ExpandOutputFrameBufferResources(usage, planner))
-                yield return binding;
+            foreach (ImageResourceBinding outputBinding in ExpandOutputFrameBufferResources(usage, planner))
+                yield return outputBinding;
 
             yield break; // swapchain target handled separately when no offscreen output FBO exists
         }
 
-        if (resourceBinding.StartsWith("buf::", StringComparison.OrdinalIgnoreCase))
+        if (binding.Kind == EVulkanResourceBindingKind.Buffer)
             yield break;
 
-        if (resourceBinding.StartsWith("fbo::", StringComparison.OrdinalIgnoreCase))
+        if (binding.Kind == EVulkanResourceBindingKind.FrameBuffer)
         {
-            string[] segments = resourceBinding.Split("::", StringSplitOptions.RemoveEmptyEntries);
-            if (segments.Length < 2)
-                yield break;
-
-            string fboName = segments[1];
-            string slot = segments.Length >= 3 ? segments[2] : "color";
-            if (!planner.TryGetFrameBufferDescriptor(fboName, out FrameBufferResourceDescriptor? descriptor) || descriptor is null)
+            if (!planner.TryGetFrameBufferDescriptor(binding.Name, out FrameBufferResourceDescriptor? descriptor) || descriptor is null)
                 yield break;
 
             foreach (FrameBufferAttachmentDescriptor attachment in descriptor.Attachments)
             {
-                if (MatchesSlot(attachment.Attachment, slot) && !string.IsNullOrWhiteSpace(attachment.ResourceName))
+                if (MatchesSlot(attachment.Attachment, binding.Slot) && !string.IsNullOrWhiteSpace(attachment.ResourceName))
                     yield return new ImageResourceBinding(
                         planner.ResolveImageResourceName(attachment.ResourceName),
                         ResolveAttachmentRange(attachment, usage.SubresourceRange));
@@ -475,19 +468,17 @@ internal sealed class VulkanBarrierPlanner
             yield break;
         }
 
-        if (resourceBinding.StartsWith("tex::", StringComparison.OrdinalIgnoreCase))
+        if (binding.Kind == EVulkanResourceBindingKind.Texture)
         {
-            string textureName = resourceBinding["tex::".Length..];
-            if (!string.IsNullOrWhiteSpace(textureName))
-                yield return new ImageResourceBinding(planner.ResolveImageResourceName(textureName), usage.SubresourceRange);
+            yield return new ImageResourceBinding(planner.ResolveImageResourceName(binding.Name), usage.SubresourceRange);
             yield break;
         }
 
         // For transfer usages, avoid routing named data buffers through image barriers.
-        if (planner.TryGetBufferDescriptor(resourceBinding, out _))
+        if (planner.TryGetBufferDescriptor(binding.Name, out _))
             yield break;
 
-        yield return new ImageResourceBinding(planner.ResolveImageResourceName(resourceBinding), usage.SubresourceRange);
+        yield return new ImageResourceBinding(planner.ResolveImageResourceName(binding.Name), usage.SubresourceRange);
     }
 
     private static IEnumerable<ImageResourceBinding> ExpandOutputFrameBufferResources(RenderPassResourceUsage usage, VulkanResourcePlanner planner)
@@ -520,33 +511,31 @@ internal sealed class VulkanBarrierPlanner
 
     private static IEnumerable<string> ExpandBufferLogicalResources(string resourceBinding, VulkanResourcePlanner planner)
     {
-        if (string.IsNullOrWhiteSpace(resourceBinding))
+        if (!VulkanResourceBindingKey.TryParse(resourceBinding, out VulkanResourceBindingKey binding))
             yield break;
 
-        if (resourceBinding.StartsWith("buf::", StringComparison.OrdinalIgnoreCase))
+        if (binding.Kind == EVulkanResourceBindingKind.Buffer)
         {
-            string bufferName = resourceBinding["buf::".Length..];
-            if (!string.IsNullOrWhiteSpace(bufferName))
-                yield return bufferName;
+            yield return binding.Name;
             yield break;
         }
 
-        if (resourceBinding.StartsWith("tex::", StringComparison.OrdinalIgnoreCase) ||
-            resourceBinding.StartsWith("fbo::", StringComparison.OrdinalIgnoreCase) ||
-            resourceBinding.Equals(RenderGraphResourceNames.OutputRenderTarget, StringComparison.OrdinalIgnoreCase))
+        if (binding.Kind is EVulkanResourceBindingKind.Texture
+            or EVulkanResourceBindingKind.FrameBuffer
+            or EVulkanResourceBindingKind.Output)
         {
             yield break;
         }
 
         // If a descriptor exists, this is a tracked logical buffer.
-        if (planner.TryGetBufferDescriptor(resourceBinding, out _))
+        if (planner.TryGetBufferDescriptor(binding.Name, out _))
         {
-            yield return resourceBinding;
+            yield return binding.Name;
             yield break;
         }
 
         // Fallback for metadata that references raw names but uses no explicit registry descriptor.
-        yield return resourceBinding;
+        yield return binding.Name;
     }
 
     private static bool MatchesSlot(EFrameBufferAttachment attachment, string slot)

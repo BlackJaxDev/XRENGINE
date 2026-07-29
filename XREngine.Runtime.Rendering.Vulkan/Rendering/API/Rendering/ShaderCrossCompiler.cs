@@ -6,12 +6,6 @@ using Silk.NET.Shaderc;
 
 namespace XREngine.Rendering;
 
-public enum ShaderSourceLanguage
-{
-    Glsl,
-    Hlsl
-}
-
 public static class ShaderCrossCompiler
 {
     private static readonly Shaderc ShadercApi = Shaderc.GetApi();

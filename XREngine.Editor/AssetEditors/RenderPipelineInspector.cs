@@ -9,7 +9,6 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using ImGuiNET;
-using Silk.NET.OpenGL;
 using XREngine;
 using XREngine.Data.Rendering;
 using XREngine.Core.Files;

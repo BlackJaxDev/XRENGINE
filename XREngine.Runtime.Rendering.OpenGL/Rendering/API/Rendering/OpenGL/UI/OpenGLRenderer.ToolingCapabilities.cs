@@ -1,11 +1,13 @@
 using Silk.NET.OpenGL;
+using System.Text;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.OpenGL;
 
 public unsafe partial class OpenGLRenderer :
     IRenderTexturePreviewBackendCapability,
-    IRenderBackendDiagnosticsCapability
+    IRenderBackendDiagnosticsCapability,
+    IShaderProgramLinkDiagnosticsBackendCapability
 {
     /// <inheritdoc />
     public bool TryGetTexturePreviewHandle(
@@ -82,10 +84,136 @@ public unsafe partial class OpenGLRenderer :
         => ClearTrackedOpenGLErrors();
 
     /// <inheritdoc />
+    public void CaptureShaderProgramLinkDiagnostics(List<ShaderProgramLinkDiagnostic> destination)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+
+        foreach (KeyValuePair<GenericRenderObject, AbstractRenderAPIObject> pair in RenderObjectCache)
+        {
+            if (pair.Key is not XRRenderProgram logicalProgram ||
+                pair.Value is not GLRenderProgram backendProgram)
+            {
+                continue;
+            }
+
+            ShaderProgramLinkDiagnosticsSnapshot snapshot = backendProgram.GetLinkDiagnosticsSnapshot();
+            string logicalName = !string.IsNullOrWhiteSpace(logicalProgram.Name)
+                ? logicalProgram.Name!
+                : logicalProgram.GetType().Name;
+            string sourceSummary = BuildShaderProgramSourceSummary(logicalProgram);
+            string programName = ResolveShaderProgramDisplayName(
+                logicalProgram,
+                in snapshot,
+                logicalName,
+                sourceSummary);
+            destination.Add(new ShaderProgramLinkDiagnostic(
+                logicalName,
+                programName,
+                ResolveShaderProgramUse(logicalProgram, programName, in snapshot),
+                sourceSummary,
+                snapshot));
+        }
+    }
+
+    /// <inheritdoc />
+    public void LogShaderProgramLifecycleSummary()
+        => ShaderProgramLifecycleDiagnostics.LogSummary(GetProgramBinaryUploadSummary());
+
+    /// <inheritdoc />
     public bool RebuildFontAtlas()
     {
         ForceRebuildImGuiFontAtlas();
         return true;
+    }
+
+    private static string ResolveShaderProgramDisplayName(
+        XRRenderProgram program,
+        in ShaderProgramLinkDiagnosticsSnapshot snapshot,
+        string logicalName,
+        string sourceSummary)
+    {
+        if (!string.IsNullOrWhiteSpace(program.Name))
+            return program.Name!;
+
+        if (!string.IsNullOrWhiteSpace(snapshot.ProgramName) &&
+            !snapshot.ProgramName.StartsWith("<unnamed ", StringComparison.Ordinal))
+        {
+            return snapshot.ProgramName;
+        }
+
+        if (!string.IsNullOrWhiteSpace(sourceSummary) && sourceSummary != "-")
+        {
+            string topology = string.IsNullOrWhiteSpace(snapshot.ShaderStages)
+                ? "Unknown"
+                : snapshot.ShaderStages;
+            return string.Concat(topology, ":", sourceSummary);
+        }
+
+        return string.IsNullOrWhiteSpace(snapshot.ProgramName)
+            ? logicalName
+            : snapshot.ProgramName;
+    }
+
+    private static string ResolveShaderProgramUse(
+        XRRenderProgram program,
+        string programName,
+        in ShaderProgramLinkDiagnosticsSnapshot snapshot)
+    {
+        if (!string.IsNullOrWhiteSpace(program.UsageTag))
+            return program.UsageTag!;
+
+        if (programName.StartsWith("MaterialPipelineVariant:", StringComparison.Ordinal))
+            return "Material fragment variant";
+        if (programName.StartsWith("MaterialPipeline:", StringComparison.Ordinal))
+            return "Material fragment pipeline";
+        if (programName.StartsWith("SeparatedVertex:", StringComparison.Ordinal))
+            return "Mesh vertex pipeline";
+        if (programName.StartsWith("Combined:", StringComparison.Ordinal))
+            return "Mesh combined program";
+        if (snapshot.ShaderStages.Contains("Compute", StringComparison.OrdinalIgnoreCase))
+            return "Compute dispatch";
+        if (program.Separable &&
+            snapshot.ShaderStages.Contains("Fragment", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Fragment pipeline stage";
+        }
+        if (snapshot.ShaderStages.Contains("Vertex", StringComparison.OrdinalIgnoreCase))
+            return "Vertex/mesh draw stage";
+        if (snapshot.ShaderStages.Contains("Fragment", StringComparison.OrdinalIgnoreCase))
+            return "Fragment draw stage";
+
+        return "Shader program";
+    }
+
+    private static string BuildShaderProgramSourceSummary(XRRenderProgram program)
+    {
+        StringBuilder builder = new(96);
+        foreach (XRShader shader in program.Shaders)
+        {
+            if (shader is null)
+                continue;
+
+            if (builder.Length > 0)
+                builder.Append(", ");
+
+            builder
+                .Append(shader.Type)
+                .Append(':')
+                .Append(GetShaderProgramShaderName(shader));
+        }
+
+        return builder.Length == 0 ? "-" : builder.ToString();
+    }
+
+    private static string GetShaderProgramShaderName(XRShader shader)
+    {
+        if (!string.IsNullOrWhiteSpace(shader.Name))
+            return shader.Name!;
+        if (!string.IsNullOrWhiteSpace(shader.FilePath))
+            return Path.GetFileName(shader.FilePath);
+        if (!string.IsNullOrWhiteSpace(shader.Source?.FilePath))
+            return Path.GetFileName(shader.Source.FilePath);
+        return shader.GetType().Name;
     }
 
     private static bool IsSingleChannelPreviewFormat(XRTexture texture)

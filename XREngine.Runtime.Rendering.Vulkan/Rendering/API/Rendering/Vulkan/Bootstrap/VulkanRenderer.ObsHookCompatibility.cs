@@ -3,13 +3,6 @@ using System;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal enum EVulkanObsHookPolicy
-{
-    Auto,
-    Disable,
-    Require,
-}
-
 public unsafe partial class VulkanRenderer
 {
     private const string ObsHookLayerName = "VK_LAYER_OBS_HOOK";

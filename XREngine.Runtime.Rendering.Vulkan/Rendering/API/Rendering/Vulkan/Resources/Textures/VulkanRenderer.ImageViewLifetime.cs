@@ -245,7 +245,7 @@ public unsafe partial class VulkanRenderer
         if (IsExternalImageViewOwner(owner))
             return true;
 
-        return _imageAllocations.ContainsKey(image.Handle) && !_retiringImageHandles.ContainsKey(image.Handle);
+        return _imageAllocationTracker.Allocations.ContainsKey(image.Handle) && !_retiringImageHandles.ContainsKey(image.Handle);
     }
 
     /// <summary>
@@ -259,9 +259,9 @@ public unsafe partial class VulkanRenderer
             return false;
 
         VulkanResourceLifetimeKey viewKey = new(ObjectType.ImageView, imageView.Handle);
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            return !_vulkanResourceLifetimes.TryGetValue(viewKey, out VulkanResourceLifetimeRecord? lifetime) ||
+            return !_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(viewKey, out VulkanResourceLifetimeRecord? lifetime) ||
                 (lifetime.State & (EVulkanResourceLifetimeState.PendingRetirement | EVulkanResourceLifetimeState.Destroyed)) == 0;
         }
     }

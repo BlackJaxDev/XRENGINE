@@ -1939,11 +1939,11 @@ public unsafe partial class VulkanRenderer
         ulong completedGraphics;
         ulong completedTransfer;
         ulong completedOther;
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            completedGraphics = _vulkanCompletedGraphicsSequence;
-            completedTransfer = _vulkanCompletedTransferSequence;
-            completedOther = _vulkanCompletedOtherSequence;
+            completedGraphics = _resourceLifetimeTracker.CompletedGraphicsSequence;
+            completedTransfer = _resourceLifetimeTracker.CompletedTransferSequence;
+            completedOther = _resourceLifetimeTracker.CompletedOtherSequence;
         }
 
         lock (_vulkanImageLayoutLock)

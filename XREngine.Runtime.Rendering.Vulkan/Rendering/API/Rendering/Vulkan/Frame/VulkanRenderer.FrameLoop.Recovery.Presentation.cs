@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Vulkan
     public unsafe partial class VulkanRenderer
     {
         private bool PresentRejectedDesktopImageAndFinalize(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             in RejectedDesktopFramePolicyDecision policy,
             bool imageHasValidPresentedContent,
             int recordedSwapchainWriteCount,

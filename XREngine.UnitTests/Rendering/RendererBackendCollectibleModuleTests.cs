@@ -6,6 +6,7 @@ using NUnit.Framework;
 using Shouldly;
 using XREngine.Editor.HotReload;
 using XREngine.Rendering;
+using XREngine.Rendering.UI;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -195,6 +196,26 @@ public sealed class RendererBackendCollectibleModuleTests
     {
         LoadedRendererBackendGeneration generation = loader.Load(manifestPath);
         generation.Registration.Metadata.Generation.ShouldBeGreaterThan(0);
+        using (RendererBackendCatalog catalog = new())
+        {
+            using IDisposable registration = catalog.Register(generation.Registration);
+            TextureStreamingBackendRegistry.TryGet(
+                RuntimeGraphicsApiKind.OpenGL,
+                out ITextureStreamingBackendProvider? provider).ShouldBeTrue();
+            provider.ShouldNotBeNull();
+            WebRendererBackendRegistry.TryCreateAccelerated(
+                RendererBackendId.OpenGL,
+                out IWebRendererBackend? webBackend).ShouldBeTrue();
+            webBackend.ShouldNotBeNull();
+            webBackend.Dispose();
+        }
+
+        TextureStreamingBackendRegistry.TryGet(
+            RuntimeGraphicsApiKind.OpenGL,
+            out _).ShouldBeFalse();
+        WebRendererBackendRegistry.TryCreateAccelerated(
+            RendererBackendId.OpenGL,
+            out _).ShouldBeFalse();
         return generation.BeginUnload();
     }
 

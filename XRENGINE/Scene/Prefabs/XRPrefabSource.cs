@@ -7,11 +7,13 @@ using Assimp;
 using XREngine.Data;
 using XREngine.Core.Files;
 using XREngine.Fbx;
-using XREngine.Gltf;
+using XREngine.ModelCaching;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
+using XREngine.Rendering.Models.Caching;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Data.Rendering;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Scene.Prefabs
 {
@@ -108,6 +110,7 @@ namespace XREngine.Scene.Prefabs
 
         private SceneNode? _rootNode;
         private UnityPrefabImportManifest? _unityImportManifest;
+        private ModelImportProducerReport? _producerReport;
 
         internal static IDisposable EnterSynchronousMeshImportScope(ModelImportOptions options)
         {
@@ -139,6 +142,19 @@ namespace XREngine.Scene.Prefabs
         {
             get => _unityImportManifest;
             set => SetField(ref _unityImportManifest, value);
+        }
+
+        /// <summary>
+        /// Normalized metadata emitted by the producer that completed the most recent cold import.
+        /// The future model binary manifest persists this contract; project YAML keeps its own
+        /// authoritative remaps and does not serialize this runtime handoff object.
+        /// </summary>
+        [MemoryPackIgnore]
+        [YamlIgnore]
+        public ModelImportProducerReport? ProducerReport
+        {
+            get => _producerReport;
+            set => SetField(ref _producerReport, value);
         }
 
         /// <summary>
@@ -185,13 +201,16 @@ namespace XREngine.Scene.Prefabs
 
             if (string.Equals(Path.GetExtension(filePath), ".prefab", StringComparison.OrdinalIgnoreCase))
             {
-                var unityOptions = importOptions as ModelImportOptions;
+                var unityOptions = importOptions as ModelImportOptions ?? new ModelImportOptions();
                 UnityPrefabConversionResult conversion = UnityEditorImportBridge.ImportPrefabConversion(
                     filePath,
                     FilePath,
-                    unityOptions?.UnityProjectRootOverride);
+                    unityOptions.UnityProjectRootOverride);
                 RootNode = conversion.RootNode;
                 UnityImportManifest = conversion.Manifest;
+                ProducerReport = RootNode is null
+                    ? null
+                    : UnityModelImportProducerAdapter.CreateReport(filePath, unityOptions, conversion.Manifest);
                 return RootNode is not null;
             }
 
@@ -218,22 +237,6 @@ namespace XREngine.Scene.Prefabs
                 {
                     materialRemap.Add(name, null);
                     importOptionsChanged = true;
-                }
-            }
-
-            if (GltfImportKeyUtilities.IsGltfPath(filePath))
-            {
-                try
-                {
-                    GltfRoot gltfDocument = GltfJsonLoader.Load(filePath);
-                    foreach (string textureKey in GltfImportKeyUtilities.EnumerateReferencedTextureKeys(gltfDocument))
-                        TrackTextureKey(textureKey);
-                    foreach (string materialKey in GltfImportKeyUtilities.GetMaterialKeys(gltfDocument))
-                        TrackMaterialKey(materialKey);
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogWarning($"[XRPrefabSource] Failed to pre-seed glTF remap keys for '{filePath}'. {ex.Message}");
                 }
             }
 
@@ -301,10 +304,24 @@ namespace XREngine.Scene.Prefabs
             if (rootNode is null)
                 return false;
 
+            ModelImportProducerReport? producerReport = importer.LastProducerReport;
+            if (producerReport is not null)
+            {
+                foreach (ModelImportReferenceKey reference in producerReport.ReferenceKeys)
+                {
+                    if (reference.Kind == ModelImportReferenceKind.Texture)
+                        TrackTextureKey(reference.Key);
+                    else if (reference.Kind == ModelImportReferenceKind.Material)
+                        TrackMaterialKey(reference.Key);
+                }
+            }
+
             if (importOptionsChanged)
                 Engine.Assets.SaveThirdPartyImportOptions(filePath, GetType(), opts);
 
             RootNode = rootNode;
+            UnityImportManifest = null;
+            ProducerReport = producerReport;
             Name ??= Path.GetFileNameWithoutExtension(filePath);
             return RootNode is not null;
         }

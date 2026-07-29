@@ -8,8 +8,6 @@ public unsafe partial class VulkanRenderer
     /// <summary>
     /// Represents the collection of canonical immutable Vulkan samplers used in the renderer.
     /// </summary>
-    private readonly Sampler[] _canonicalImmutableSamplers = new Sampler[5];
-
     /// <summary>
     /// Tries to retrieve the canonical immutable Vulkan sampler corresponding to the specified sampler type.
     /// </summary>
@@ -19,8 +17,9 @@ public unsafe partial class VulkanRenderer
     internal bool TryGetCanonicalImmutableSampler(VulkanCanonicalSampler sampler, out Sampler handle)
     {
         int index = (int)sampler;
-        handle = index >= 0 && index < _canonicalImmutableSamplers.Length
-            ? _canonicalImmutableSamplers[index]
+        Sampler[] canonicalImmutableSamplers = _descriptorManager.CanonicalImmutableSamplers;
+        handle = index >= 0 && index < canonicalImmutableSamplers.Length
+            ? canonicalImmutableSamplers[index]
             : default;
         return handle.Handle != 0;
     }
@@ -56,7 +55,8 @@ public unsafe partial class VulkanRenderer
         bool comparison)
     {
         int index = (int)sampler;
-        if ((uint)index >= (uint)_canonicalImmutableSamplers.Length || _canonicalImmutableSamplers[index].Handle != 0)
+        Sampler[] canonicalImmutableSamplers = _descriptorManager.CanonicalImmutableSamplers;
+        if ((uint)index >= (uint)canonicalImmutableSamplers.Length || canonicalImmutableSamplers[index].Handle != 0)
             return;
 
         float maxAnisotropy = 1f;
@@ -88,7 +88,7 @@ public unsafe partial class VulkanRenderer
 
         if (Api!.CreateSampler(device, ref info, null, out Sampler handle) == Result.Success)
         {
-            _canonicalImmutableSamplers[index] = handle;
+            canonicalImmutableSamplers[index] = handle;
             RegisterLiveSampler(handle, in info);
         }
         else
@@ -101,17 +101,18 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     private void DestroyCanonicalImmutableSamplers()
     {
-        for (int i = 0; i < _canonicalImmutableSamplers.Length; i++)
+        Sampler[] canonicalImmutableSamplers = _descriptorManager.CanonicalImmutableSamplers;
+        for (int i = 0; i < canonicalImmutableSamplers.Length; i++)
         {
-            if (_canonicalImmutableSamplers[i].Handle == 0)
+            if (canonicalImmutableSamplers[i].Handle == 0)
                 continue;
 
-            UnregisterLiveSampler(_canonicalImmutableSamplers[i]);
-            Api!.DestroySampler(device, _canonicalImmutableSamplers[i], null);
+            UnregisterLiveSampler(canonicalImmutableSamplers[i]);
+            Api!.DestroySampler(device, canonicalImmutableSamplers[i], null);
             CompleteVulkanResourceDestruction(
                 ObjectType.Sampler,
-                _canonicalImmutableSamplers[i].Handle);
-            _canonicalImmutableSamplers[i] = default;
+                canonicalImmutableSamplers[i].Handle);
+            canonicalImmutableSamplers[i] = default;
         }
     }
 }

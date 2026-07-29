@@ -150,8 +150,8 @@ public sealed class AdvancedRenderPipelineFrameContractTests
     {
         string openGl = SourceContractWorkspace.ReadFile(
             "XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Features/AdvancedPipeline/OpenGLRenderer.AdvancedPipelineCapabilities.cs");
-        string vulkan = SourceContractWorkspace.ReadFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/AdvancedPipeline/VulkanRenderer.AdvancedPipelineCapabilities.cs");
+        string vulkan = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "ShaderFamily: EAdvancedShaderFamily.None");
 
         foreach (string source in new[] { openGl, vulkan })
         {

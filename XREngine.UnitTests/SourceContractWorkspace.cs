@@ -8,7 +8,12 @@ namespace XREngine.UnitTests;
 /// </summary>
 internal static class SourceContractWorkspace
 {
+    private const string VulkanProjectDirectory = "XREngine.Runtime.Rendering.Vulkan";
+    private static readonly Lazy<IReadOnlyList<SourceFile>> VulkanSourceFiles =
+        new(DiscoverVulkanSourceFiles);
     private static readonly string RepositoryRoot = FindRepositoryRoot();
+
+    internal readonly record struct SourceFile(string RelativePath, string Source);
 
     /// <summary>
     /// Reads one workspace file. If a refactor moved the file, a unique
@@ -62,6 +67,47 @@ internal static class SourceContractWorkspace
         return NormalizeLineEndings(source.ToString());
     }
 
+    /// <summary>
+    /// Returns every hand-authored C# source file in the Vulkan rendering
+    /// project, recursively and in stable repository-relative path order.
+    /// </summary>
+    public static IReadOnlyList<SourceFile> GetVulkanSourceFiles()
+        => VulkanSourceFiles.Value;
+
+    /// <summary>
+    /// Reads all files that currently contribute to <c>VulkanRenderer</c>.
+    /// Contract tests should prefer this over naming one physical partial file
+    /// when the member's owner is what matters.
+    /// </summary>
+    public static string ReadVulkanRendererSource()
+        => CombineSources(
+            GetVulkanSourceFiles().Where(static file =>
+                file.Source.Contains("partial class VulkanRenderer", StringComparison.Ordinal)));
+
+    /// <summary>
+    /// Reads the Vulkan source files containing any supplied contract marker.
+    /// This keeps source-text assertions independent of file moves and splits.
+    /// </summary>
+    public static string ReadVulkanSourcesContaining(params string[] markers)
+    {
+        ArgumentNullException.ThrowIfNull(markers);
+        if (markers.Length == 0)
+            throw new ArgumentException("At least one source marker is required.", nameof(markers));
+
+        SourceFile[] matches =
+        [
+            .. GetVulkanSourceFiles().Where(file =>
+                markers.Any(marker =>
+                    file.Source.Contains(marker, StringComparison.Ordinal))),
+        ];
+
+        if (matches.Length == 0)
+            throw new InvalidOperationException(
+                $"No Vulkan source file contains any requested marker: {string.Join(", ", markers)}.");
+
+        return CombineSources(matches);
+    }
+
     private static string ResolveFile(string relativePath)
     {
         string fullPath = Path.GetFullPath(Path.Combine(RepositoryRoot, relativePath));
@@ -80,6 +126,44 @@ internal static class SourceContractWorkspace
         throw new FileNotFoundException(
             $"Could not uniquely resolve workspace path for '{relativePath}' from repository root '{RepositoryRoot}'.",
             fullPath);
+    }
+
+    private static IReadOnlyList<SourceFile> DiscoverVulkanSourceFiles()
+    {
+        string projectRoot = Path.Combine(RepositoryRoot, VulkanProjectDirectory);
+        if (!Directory.Exists(projectRoot))
+            throw new DirectoryNotFoundException(
+                $"Could not locate the Vulkan rendering project at '{projectRoot}'.");
+
+        return
+        [
+            .. Directory
+                .EnumerateFiles(projectRoot, "*.cs", SearchOption.AllDirectories)
+                .Where(path => !IsGeneratedOrValidationPath(path))
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .Select(path => new SourceFile(
+                    Path.GetRelativePath(RepositoryRoot, path)
+                        .Replace(Path.DirectorySeparatorChar, '/'),
+                    NormalizeLineEndings(File.ReadAllText(path)))),
+        ];
+    }
+
+    private static string CombineSources(IEnumerable<SourceFile> files)
+    {
+        StringBuilder source = new();
+        int fileCount = 0;
+        foreach (SourceFile file in files)
+        {
+            fileCount++;
+            source.AppendLine();
+            source.AppendLine($"// Source contract file: {file.RelativePath}");
+            source.AppendLine(file.Source);
+        }
+
+        if (fileCount == 0)
+            throw new InvalidOperationException("No source files matched the requested Vulkan contract.");
+
+        return NormalizeLineEndings(source.ToString());
     }
 
     private static string ResolveProjectRoot(string relativePath)

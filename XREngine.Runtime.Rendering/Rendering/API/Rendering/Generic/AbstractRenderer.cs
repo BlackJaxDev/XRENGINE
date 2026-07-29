@@ -302,14 +302,6 @@ namespace XREngine.Rendering
         internal static bool ShouldSkipImGuiFrame(bool allowMultipleInFrame, long timestampTicks, long lastTimestampTicks)
             => !allowMultipleInFrame && timestampTicks == lastTimestampTicks;
 
-        protected interface IImGuiRendererBackend
-        {
-            void MakeCurrent();
-            void Update(float deltaSeconds);
-            void Render();
-            void RenderPlatformWindows();
-        }
-
         protected virtual bool SupportsImGui => false;
 
         protected virtual bool ShouldRenderImGui(XRViewport? viewport)

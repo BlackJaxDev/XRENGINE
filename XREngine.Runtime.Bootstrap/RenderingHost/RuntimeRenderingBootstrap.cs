@@ -10,6 +10,7 @@ namespace XREngine.Runtime.Bootstrap;
 public static class RuntimeRenderingBootstrap
 {
     private static readonly object Sync = new();
+    private static EngineRuntimeRenderingHostServices? _installedRenderingHost;
 
     /// <summary>
     /// Installs concrete render-object, shader, renderer, VR-rendering, and video services.
@@ -19,18 +20,30 @@ public static class RuntimeRenderingBootstrap
     {
         lock (Sync)
         {
+            EngineRuntimeRenderingHostServices renderingHost =
+                new(registerRendererBackends: true);
+            EngineRuntimeRenderingHostServices? previousRenderingHost =
+                _installedRenderingHost;
+            _installedRenderingHost = renderingHost;
+
             RuntimeRenderObjectServices.Current = new EngineRuntimeRenderObjectServices();
             RuntimeShaderServices.Current = new EngineRuntimeShaderServices();
-            RuntimeRenderingHostServices.Current = new EngineRuntimeRenderingHostServices();
+            RuntimeRenderingHostServices.Current = renderingHost;
             RuntimeRenderingHostServices.GameCachePath = ConvexHullDiskCache.ResolveCacheRoot();
             RuntimeVrRenderingServices.Current = new EngineRuntimeVrRenderingServices();
             RuntimeVideoStreamingServices.Current = new EngineRuntimeVideoStreamingServices();
+
+            previousRenderingHost?.Dispose();
         }
     }
 
     /// <summary>
-    /// Creates an isolated concrete rendering host for focused tests.
+    /// Creates an isolated concrete rendering host for focused tests. Renderer modules are
+    /// omitted by default so a test can install exactly the backend generation it exercises.
+    /// Pass <paramref name="registerRendererBackends"/> only for tests that need the static
+    /// production composition. The returned host is also <see cref="IDisposable"/>.
     /// </summary>
-    public static IRuntimeRenderingHostServices CreateEngineHostServices()
-        => new EngineRuntimeRenderingHostServices();
+    public static IRuntimeRenderingHostServices CreateEngineHostServices(
+        bool registerRendererBackends = false)
+        => new EngineRuntimeRenderingHostServices(registerRendererBackends);
 }

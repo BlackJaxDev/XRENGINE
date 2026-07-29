@@ -367,12 +367,12 @@ public unsafe partial class VulkanRenderer
 
             ClearTrackedImageLayouts(depthImage);
             VulkanMemoryAllocation allocation = AllocateImageMemoryWithFallback(depthImage, MemoryPropertyFlags.DeviceLocalBit);
-            _imageAllocations[depthImage.Handle] = allocation;
+            _imageAllocationTracker.Allocations[depthImage.Handle] = allocation;
             DeviceMemory depthMemory = allocation.Memory;
 
             if (Api!.BindImageMemory(device, depthImage, depthMemory, allocation.Offset) != Result.Success)
             {
-                _imageAllocations.TryRemove(depthImage.Handle, out _);
+                _imageAllocationTracker.Allocations.TryRemove(depthImage.Handle, out _);
                 DestroyVulkanImageImmediateTracked(depthImage, "Swapchain.Depth.BindFailure");
                 FreeMemoryAllocation(allocation);
                 throw new Exception("Failed to bind swapchain depth memory.");
@@ -396,7 +396,7 @@ public unsafe partial class VulkanRenderer
 
             if (Api!.CreateImageView(device, ref viewInfo, null, out ImageView depthView) != Result.Success)
             {
-                _imageAllocations.TryRemove(depthImage.Handle, out _);
+                _imageAllocationTracker.Allocations.TryRemove(depthImage.Handle, out _);
                 DestroyVulkanImageImmediateTracked(depthImage, "Swapchain.Depth.ViewFailure");
                 FreeMemoryAllocation(allocation);
                 throw new Exception("Failed to create swapchain depth view.");

@@ -1,5 +1,6 @@
 using System.Reflection;
 using XREngine.Rendering.API.Rendering.OpenXR;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering.OpenGL;
 
@@ -10,9 +11,20 @@ public sealed class OpenGlRendererBackendModuleEntry : IRendererBackendModule
 {
     private IDisposable? _registrations;
 
-    public RendererBackendMetadata Metadata { get; } = CreateMetadata();
+    public OpenGlRendererBackendModuleEntry()
+        : this(version: null)
+    {
+    }
 
-    public IRendererBackendFactory Factory { get; } = new OpenGLRendererBackendFactory();
+    internal OpenGlRendererBackendModuleEntry(Version? version)
+    {
+        Metadata = CreateMetadata(version);
+        Factory = new OpenGLRendererBackendFactory();
+    }
+
+    public RendererBackendMetadata Metadata { get; }
+
+    public IRendererBackendFactory Factory { get; }
 
     public void OnRegistered()
     {
@@ -22,15 +34,22 @@ public sealed class OpenGlRendererBackendModuleEntry : IRendererBackendModule
         IDisposable textureLease = TextureStreamingBackendRegistry.Register(
             RuntimeGraphicsApiKind.OpenGL,
             OpenGlTextureStreamingBackendProvider.Instance);
+        IDisposable? webRendererLease = null;
         try
         {
+            webRendererLease = WebRendererBackendRegistry.RegisterAccelerated(
+                RendererBackendId.OpenGL,
+                static () => new UltralightGpuWebRendererBackend());
             IDisposable openXrLease = OpenXrGraphicsBindingRegistry.Register(
                 RendererBackendId.OpenGL,
                 static () => new OpenGlXrGraphicsBinding());
-            _registrations = new CompositeModuleRegistrationLease(textureLease, openXrLease);
+            _registrations = new CompositeModuleRegistrationLease(
+                textureLease,
+                new CompositeModuleRegistrationLease(webRendererLease, openXrLease));
         }
         catch
         {
+            webRendererLease?.Dispose();
             textureLease.Dispose();
             throw;
         }

@@ -105,7 +105,7 @@ public unsafe partial class VulkanRenderer
             VulkanDescriptorUpdateInvalidation firstInvalidation;
             fixed (WriteDescriptorSet* writePtr = writes)
             {
-                lock (_vulkanResourceLifetimeLock)
+                lock (_resourceLifetimeTracker.SyncRoot)
                 {
                     if (!TryPrevalidateVulkanDescriptorWrites_NoLock(
                             unchecked((uint)writes.Length),

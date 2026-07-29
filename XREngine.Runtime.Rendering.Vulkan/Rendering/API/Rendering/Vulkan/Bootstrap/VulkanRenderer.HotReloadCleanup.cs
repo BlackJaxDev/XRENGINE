@@ -15,7 +15,6 @@ public unsafe partial class VulkanRenderer
         ReleaseCurrentThreadOpenXrCaches();
         ReleaseCurrentThreadFrameOpCaptureCaches();
         ReleaseCurrentThreadSynchronizationScratch();
-        VulkanRenderGraphCompiler.ReleaseCurrentThreadScratch();
         _renderGraphCompiler.ReleaseCaches();
         PassMetadataSignatureCache.Clear();
         PooledExternalResourcePlannerReadbackScope.ReleaseCurrentThreadPool();
@@ -27,7 +26,7 @@ public unsafe partial class VulkanRenderer
 
         _threadLocalScratchDisposed = true;
         _commandBufferRecordingScratch.Dispose();
-        _vulkanChangedDescriptorSetsScratch.Dispose();
-        _vulkanDescriptorReferencesScratch.Dispose();
+        _resourceLifetimeTracker.ChangedDescriptorSetsScratch.Dispose();
+        _resourceLifetimeTracker.DescriptorReferencesScratch.Dispose();
     }
 }

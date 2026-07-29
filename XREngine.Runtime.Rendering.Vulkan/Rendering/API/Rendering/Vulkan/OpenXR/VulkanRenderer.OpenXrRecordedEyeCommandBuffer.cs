@@ -6,6 +6,7 @@ public unsafe partial class VulkanRenderer
 {
     private readonly record struct OpenXrRecordedEyeCommandBuffer(
         CommandBuffer CommandBuffer,
+        VulkanOpenXrFrameContext FrameContext,
         uint OpenXrViewIndex,
         uint OpenXrImageIndex,
         uint FrameDataSlotIndex,

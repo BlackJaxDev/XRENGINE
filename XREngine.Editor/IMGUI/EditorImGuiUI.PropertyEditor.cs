@@ -16,7 +16,6 @@ using XREngine.Editor.ComponentEditors;
 using XREngine.Editor.UI;
 using XREngine.Rendering;
 using XREngine.Rendering.DLSS;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.UI;
 using XREngine.Components;
 using XREngine.Scene;
@@ -581,7 +580,11 @@ public static partial class EditorImGuiUI
                     if (TryDrawCollectionProperty(primary, row.Property.Property, row.DisplayName, row.Description, value, visited))
                         continue;
 
-                    if (TryDrawGLObjectProperty(row.Property.Property, row.DisplayName, row.Description, value))
+                    if (TryDrawBackendApiObjectProperty(
+                            row.Property.Property,
+                            row.DisplayName,
+                            row.Description,
+                            value))
                         continue;
 
                     DrawComplexPropertyObject(primary, row.Property.Property, value, row.DisplayName, row.Description, visited);
@@ -1110,16 +1113,21 @@ public static partial class EditorImGuiUI
         }
 
         /// <summary>
-        /// Attempts to draw a GL object property using the attribute-based editor registry.
+        /// Draws a value-only summary for a backend API wrapper without retaining its
+        /// concrete type or object beyond the current inspector call.
         /// </summary>
         /// <param name="property">The property info.</param>
         /// <param name="label">The display label.</param>
         /// <param name="description">Optional description for tooltip.</param>
-        /// <param name="value">The GL object instance.</param>
-        /// <returns>True if the property was handled as a GL object.</returns>
-        private static bool TryDrawGLObjectProperty(PropertyInfo property, string label, string? description, object value)
+        /// <param name="value">The backend wrapper instance.</param>
+        /// <returns>True if the property was handled as a backend API object.</returns>
+        private static bool TryDrawBackendApiObjectProperty(
+            PropertyInfo property,
+            string label,
+            string? description,
+            object value)
         {
-            if (value is not OpenGLRenderer.GLObjectBase glObject)
+            if (value is not AbstractRenderAPIObject apiObject)
                 return false;
 
             ImGui.PushID(property.Name);
@@ -1130,8 +1138,33 @@ public static partial class EditorImGuiUI
 
             if (open)
             {
-                // Use the attribute-based registry to draw the appropriate editor
-                GLObjectEditorRegistry.DrawInspector(glObject);
+                string objectName;
+                bool isGenerated;
+                nint handle;
+                try
+                {
+                    objectName = apiObject.GetDescribingName();
+                    isGenerated = apiObject.IsGenerated;
+                    handle = apiObject.GetHandle();
+                }
+                catch (Exception ex)
+                {
+                    objectName = apiObject.GetType().Name;
+                    isGenerated = false;
+                    handle = nint.Zero;
+                    ImGui.TextDisabled($"Backend object is unavailable: {ex.Message}");
+                }
+
+                ImGui.TextUnformatted($"Name: {objectName}");
+                ImGui.TextUnformatted($"Type: {apiObject.GetType().Name}");
+                ImGui.TextUnformatted($"Generated: {(isGenerated ? "Yes" : "No")}");
+                ImGui.TextUnformatted($"Generation: {apiObject.OwnerGeneration}");
+                if (apiObject.Owner is IRuntimeRendererHost renderer)
+                    ImGui.TextUnformatted($"Backend: {renderer.BackendId}");
+                ImGui.TextUnformatted(
+                    handle == nint.Zero
+                        ? "Handle: <none>"
+                        : $"Handle: 0x{unchecked((ulong)handle):X}");
                 ImGui.TreePop();
             }
 

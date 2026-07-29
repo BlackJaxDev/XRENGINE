@@ -9,16 +9,19 @@ Backend wrapper creation stays under `BackendObjects/`.
 
 ## Desktop frame-loop ownership
 
-`VulkanRenderer.FrameLoop.cs` is the durable, short coordinator. It enters one
-atomic desktop activity publication, creates a stack-only
-`DesktopFrameAttempt`, calls the phases in lifecycle order, and always runs
-telemetry/finalization before releasing activity.
+`VulkanDesktopFrameCoordinator` is the durable owner.
+`VulkanRenderer.FrameLoop.cs` delegates `WindowRenderCallback` to it. The
+coordinator enters one atomic desktop activity publication, creates a
+stack-only `VulkanFrameAttempt`, calls the phases in lifecycle order, and
+always runs telemetry/finalization before releasing activity.
 
 | File | Ownership |
 | --- | --- |
-| `VulkanRenderer.FrameLoop.cs` | `WindowRenderCallback` phase order and the single outer exception/finalization boundary. |
+| `Desktop/VulkanDesktopFrameCoordinator.cs` | Desktop phase order and the single outer exception/finalization boundary. |
+| `VulkanRenderer.FrameLoop.cs` | Short renderer-facade delegation from `WindowRenderCallback`. |
 | `VulkanRenderer.FrameLoop.State.cs` | Cross-phase desktop slot, accepted-attempt counter, observed-tick timestamp, and atomic activity accessors. |
-| `VulkanRenderer.FrameLoop.Attempt.cs` | Stack-only attempt identity, timing, phase, flow, disposition, command handles, and typed ownership transitions. |
+| `VulkanFrameAttempt.cs` and the focused frame outcome files | Stack-only attempt identity, timing, phase, flow, disposition, command handles, and typed ownership transitions. |
+| `VulkanRenderer.FrameLoop.FaultInjection.cs`, `VulkanDesktopFrameFaultInjectionState.cs`, `EVulkanDesktopFrameFaultPoint.cs` | Renderer-local, allocation-free deterministic phase fault injection without retained delegates. |
 | `DesktopFrameIdentity.cs`, `DesktopFrameActivityState.cs`, `DesktopFrameActivitySnapshot.cs` | Immutable attempt identity and coherent cross-thread activity publication. |
 | `VulkanDesktopFramePolicy.cs`, `VulkanDesktop*Outcome.cs`, `EVulkanDesktop*.cs` | Allocation-free preflight/acquire/present/recovery classification, ownership, reason, and transition contracts. |
 | `VulkanRenderer.FrameLoop.Preflight.cs` | Surface/resource/Streamline compatibility checks and pre-acquire dispositions. |
@@ -26,7 +29,7 @@ telemetry/finalization before releasing activity.
 | `VulkanRenderer.FrameLoop.SwapchainPolicy.cs` | Resize debounce, extent mismatch, recreate scheduling, and surface-loss policy. |
 | `VulkanRenderer.FrameLoop.FrameSlots.cs` | Captured-slot wait, image reuse preparation, timing samples, and dynamic-uniform reset. |
 | `VulkanRenderer.FrameLoop.FrameSlots.Retirement.cs` | Captured-slot retirement drain used by skipped preflight paths. |
-| `VulkanRenderer.FrameLoop.Acquire.cs` | Native/Streamline acquire dispatch, typed result policy, and immediate acquire ownership publication. |
+| `VulkanRenderer.FrameLoop.Acquire.cs`, `VulkanDesktopAcquireAvailabilityTracker.cs` | Native/Streamline acquire dispatch, typed result policy, bounded timeout/not-ready recovery, and immediate acquire ownership publication. |
 | `VulkanRenderer.FrameLoop.Recording.cs` | Scene, ImGui, and dynamic-text recording plus dirty-generation validation. |
 | `VulkanRenderer.FrameLoop.Recording.Failures.cs` | Recording failure classification. |
 | `VulkanRenderer.FrameLoop.Recovery.cs` | Common post-acquire settlement and auxiliary-failure recovery. |
@@ -62,6 +65,9 @@ telemetry/finalization before releasing activity.
 - Desktop attempt entry/exit and OpenXR's retirement check-and-drain interval
   share `_desktopFrameRetirementGate`, so a new desktop attempt cannot enter
   between slot classification and retired-resource destruction.
+- Diagnostic fault injection stores only a packed renderer-local request and
+  probes explicit phase boundaries without installing delegates or allocating
+  in the normal frame path.
 
 Low-level command-buffer recording remains under `Commands/`; swapchain,
 synchronization, resource-retirement, and device-loss partials remain

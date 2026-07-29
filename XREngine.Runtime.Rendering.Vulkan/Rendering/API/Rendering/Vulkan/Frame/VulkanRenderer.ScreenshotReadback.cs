@@ -640,7 +640,7 @@ public unsafe partial class VulkanRenderer
         {
             ClearTrackedImageLayouts(resolveImage);
             allocation = AllocateImageMemoryWithFallback(resolveImage, MemoryPropertyFlags.DeviceLocalBit);
-            _imageAllocations[resolveImage.Handle] = allocation;
+            _imageAllocationTracker.Allocations[resolveImage.Handle] = allocation;
             Result bindResult = Api!.BindImageMemory(device, resolveImage, allocation.Memory, allocation.Offset);
             if (bindResult != Result.Success)
                 throw new InvalidOperationException($"vkBindImageMemory returned {bindResult}.");
@@ -656,7 +656,7 @@ public unsafe partial class VulkanRenderer
         }
         catch (Exception ex)
         {
-            _imageAllocations.TryRemove(resolveImage.Handle, out _);
+            _imageAllocationTracker.Allocations.TryRemove(resolveImage.Handle, out _);
             UntrackImageAllocation(resolveImage);
             DestroyVulkanImageImmediateTracked(resolveImage, "ScreenshotReadback.ResolveCreateFailure");
             if (!allocation.IsNull)
@@ -1208,7 +1208,7 @@ public unsafe partial class VulkanRenderer
 
         VulkanMemoryAllocation allocation = slot.ResolveAllocation;
         ClearTrackedImageLayouts(image);
-        if (_imageAllocations.TryRemove(image.Handle, out VulkanMemoryAllocation trackedAllocation))
+        if (_imageAllocationTracker.Allocations.TryRemove(image.Handle, out VulkanMemoryAllocation trackedAllocation))
             allocation = trackedAllocation;
         UntrackImageAllocation(image);
         DestroyVulkanImageImmediateTracked(image, owner);

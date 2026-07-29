@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -488,9 +488,9 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            lock (_openXrPrimaryCommandBufferVariantsLock)
+            lock (_openXrBackend.PrimaryCommandBufferVariantsLock)
             {
-                foreach (List<CommandBufferCacheVariant> variants in _openXrPrimaryCommandBufferVariants.Values)
+                foreach (List<CommandBufferCacheVariant> variants in OpenXrPrimaryCommandBufferVariants.Values)
                 {
                     for (int variantIndex = 0; variantIndex < variants.Count; variantIndex++)
                     {
@@ -565,7 +565,7 @@ namespace XREngine.Rendering.Vulkan
                 ulong handle = pair.Key;
                 CommandBuffer commandBuffer = new() { Handle = unchecked((nint)handle) };
                 bool reset = false;
-                lock (_vulkanResourceLifetimeLock)
+                lock (_resourceLifetimeTracker.SyncRoot)
                 {
                     // Use the complete reset predicate here. The former partial copy omitted
                     // PendingRetirement, then called the throwing wrapper and turned a normal
@@ -573,7 +573,7 @@ namespace XREngine.Rendering.Vulkan
                     if (!CanResetVulkanCommandBuffer(commandBuffer, out _))
                         continue;
 
-                    _vulkanCommandBufferLifetimes.TryGetValue(
+                    _resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(
                         handle,
                         out VulkanCommandBufferLifetimeRecord? lifetime);
 

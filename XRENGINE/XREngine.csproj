@@ -127,8 +127,6 @@
     <ProjectReference Include="..\XREngine.Runtime.InputIntegration\XREngine.Runtime.InputIntegration.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.ModelingBridge\XREngine.Runtime.ModelingBridge.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
-    <ProjectReference Include="..\XREngine.Runtime.Rendering.OpenGL\XREngine.Runtime.Rendering.OpenGL.csproj" />
-    <ProjectReference Include="..\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulkan.csproj" />
   </ItemGroup>
 
   <ItemGroup>

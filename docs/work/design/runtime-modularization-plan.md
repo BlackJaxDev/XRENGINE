@@ -14,12 +14,19 @@ This is a design document for the refactor, not an implementation record.
 Implementation companions:
 
 - Phase 2 is complete and its implementation record has been retired from `docs/work`.
-- [Runtime Modularization Phase 3 TODO](../todo/runtime-modularization-phase3-todo.md) (remaining Runtime.Core carve-out and non-rendering prerequisites)
-- [Runtime Modularization Phase 4 TODO](../todo/runtime-modularization-phase4-todo.md) (remaining rendering move and rendering-boundary cleanup)
+- [Runtime Modularization Phase 3 TODO](../todo/COMPLETED/runtime-modularization-phase3-todo.md) (completed Runtime.Core carve-out and non-rendering prerequisites)
+- [Runtime Modularization Phase 4 TODO](../todo/runtime-modularization-phase4-todo.md) (code-complete rendering move with deferred final validation)
 - [Runtime Modularization Phase 5 TODO](../todo/runtime/runtime-modularization-phase5-todo.md) (subsystem adapter ownership, composition, and dependency cleanup)
-- [OpenGL And Vulkan Rendering Hot Reload TODO](../todo/rendering/rendering-backend-hot-reload-todo.md) (backend DLL extraction, collectible editor loading, and renderer replacement)
+- [OpenGL And Vulkan Rendering Hot Reload TODO](../todo/COMPLETED/rendering-backend-hot-reload-todo.md) (completed backend DLL extraction, collectible editor loading, and renderer replacement)
 
-> Status note (2026-07-22): Phases 0 through 3 are complete. The Runtime.Core carve-out and its non-rendering prerequisites are closed; the Phase 3 document is now a completion record. Use the Phase 4 todo for the active rendering move. Subsystem-adapter cleanup remains design Phase 5, and final `XRENGINE` deletion or reduction remains design Phase 6. Some historical baseline sections below intentionally no longer match the repository.
+> Status note (2026-07-29): Production code for Phases 0 through 4 is
+> complete. Phase 4 moved the stable rendering kernel and concrete OpenGL/Vulkan
+> leaves, split host capabilities, completed selectable static/AOT and
+> collectible module composition, and decomposed the Vulkan desktop frame loop.
+> Its final runtime/hardware validation and integration promotion remain
+> deferred. Subsystem-adapter cleanup is design Phase 5, and final `XRENGINE`
+> deletion or reduction remains design Phase 6. Some historical baseline
+> sections below intentionally no longer match the repository.
 
 ## Why This Refactor Exists
 
@@ -631,6 +638,15 @@ Important rule:
 
 - `Runtime.Core` may know about render contracts defined in `Data` or a narrow shared contract surface,
 - `Runtime.Core` must not depend on the full rendering implementation assembly.
+
+Completion note (2026-07-29): this production boundary is implemented.
+`Runtime.Rendering` contains the backend-neutral kernel and stable module
+contracts; OpenGL and Vulkan are one-way leaf assemblies; Bootstrap is the
+explicit static/AOT composition root; Editor collectible loading uses the same
+factory contract; and application/editor long-lived state no longer owns
+concrete backend wrappers, callbacks, workers, types, or native handles.
+Runtime/hardware validation remains tracked in the Phase 4 and Vulkan frame-loop
+documents rather than being inferred from structural completion.
 
 ### Phase 5 - Move Subsystem Adapters
 

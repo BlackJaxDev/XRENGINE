@@ -184,7 +184,7 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        if (_memoryAllocator is null)
+        if (_bufferResourceManager.MemoryAllocator is null)
         {
             reason = "Vulkan memory allocator is not initialized yet.";
             return false;

@@ -19,7 +19,6 @@ using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Shadows;
 using XREngine.Runtime.Bootstrap;
-using XREngine.Rendering.OpenGL;
 using XREngine.Scene;
 
 namespace XREngine.UnitTests.Rendering;
@@ -624,8 +623,8 @@ public sealed class RuntimeRenderingHostServicesTests
         };
         RuntimeRenderingHostServices.Current = services;
 
-        using OpenGlRendererBackendModuleEntry module = new();
-        module.OnRegistered();
+        using RendererBackendCatalog catalog = new();
+        using IDisposable registrations = BuiltInRendererBackendModules.RegisterAll(catalog);
 
         string sourcePath = Path.Combine(Path.GetTempPath(), $"ImportedTexturePreview_{Guid.NewGuid():N}.png");
         string normalizedPath = Path.GetFullPath(sourcePath);

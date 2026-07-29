@@ -8,9 +8,9 @@ namespace XREngine.Rendering.Vulkan
     public unsafe partial class VulkanRenderer
     {
         private EDesktopFrameFlow RecordDesktopFrame(
-            ref DesktopFrameAttempt attempt)
+            ref VulkanFrameAttempt attempt)
         {
-            ImGuiFrameSnapshot? imguiOverlaySnapshot = null;
+            VulkanImGuiFrameSnapshot? imguiOverlaySnapshot = null;
             bool hasPendingImGuiOverlay = false;
             long stageStartTimestamp = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
@@ -32,6 +32,8 @@ namespace XREngine.Rendering.Vulkan
 
             try
             {
+                ThrowIfDesktopFrameFaultInjected(
+                    EVulkanDesktopFrameFaultPoint.SceneRecording);
                 CommandBuffer dynamicTextSecondaryCommandBuffer;
                 int dynamicTextOverlayOpCount;
                 FrameOp[] dynamicTextOverlayOps;
@@ -159,9 +161,9 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private EDesktopFrameFlow HandleDesktopRecordingDeferred(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             string reason,
-            ImGuiFrameSnapshot? recoveryOverlaySnapshot)
+            VulkanImGuiFrameSnapshot? recoveryOverlaySnapshot)
         {
             Debug.VulkanWarningEvery(
                 $"Vulkan.Frame.{GetHashCode()}.RecordDeferredReason",
@@ -211,7 +213,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private EDesktopFrameFlow HandleDesktopRecordingResourceRetired(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             string reason)
         {
             ReleaseUnsubmittedDesktopUpload(
@@ -247,12 +249,14 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private EDesktopFrameFlow RecordDesktopImGuiOverlay(
-            ref DesktopFrameAttempt attempt,
-            ImGuiFrameSnapshot? snapshot)
+            ref VulkanFrameAttempt attempt,
+            VulkanImGuiFrameSnapshot? snapshot)
         {
             long stageStartTimestamp = Stopwatch.GetTimestamp();
             try
             {
+                ThrowIfDesktopFrameFaultInjected(
+                    EVulkanDesktopFrameFaultPoint.OverlayRecording);
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                            "Vulkan.FrameLifecycle.RecordImGuiOverlay"))
                 {
@@ -301,7 +305,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void RecordDesktopDynamicTextOverlay(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             CommandBuffer secondaryCommandBuffer,
             int overlayOpCount,
             FrameOp[] overlayOps,
@@ -311,6 +315,8 @@ namespace XREngine.Rendering.Vulkan
             long stageStartTimestamp = Stopwatch.GetTimestamp();
             try
             {
+                ThrowIfDesktopFrameFaultInjected(
+                    EVulkanDesktopFrameFaultPoint.OverlayRecording);
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                            "Vulkan.FrameLifecycle.RecordDynamicUiTextOverlay"))
                 {
@@ -355,7 +361,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private EDesktopFrameFlow ValidateDesktopRecording(
-            ref DesktopFrameAttempt attempt)
+            ref VulkanFrameAttempt attempt)
         {
             FrameOpContext? phase524bContext =
                 _lastWindowPresentFrameOpContext ??
@@ -439,7 +445,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void RecoverDesktopRecordingException(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             string operation,
             EDesktopFrameReason reason,
             Exception exception)

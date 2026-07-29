@@ -4,7 +4,7 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private sealed class VulkanDescriptorSetLifetimeRecord
+    internal sealed class VulkanDescriptorSetLifetimeRecord
     {
         public readonly Dictionary<(uint Binding, uint Element), VulkanDescriptorReferencePair> References = new();
         public readonly Dictionary<(uint Binding, uint Element), VulkanDescriptorImageReference> ImageReferences = new();

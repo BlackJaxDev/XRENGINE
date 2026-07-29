@@ -12,6 +12,7 @@ using XREngine.Data.Rendering;
 using XREngine.Fbx;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
+using XREngine.Rendering.Models.Caching;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using Matrix4x4 = System.Numerics.Matrix4x4;
@@ -23,7 +24,8 @@ internal static class NativeFbxSceneImporter
     internal readonly record struct ImportResult(
         SceneNode RootNode,
         IReadOnlyList<XRMaterial> Materials,
-        IReadOnlyList<XRMesh> Meshes);
+        IReadOnlyList<XRMesh> Meshes,
+        ModelImportProducerMetadata ProducerMetadata);
 
     private const long DefaultMaterialCacheKey = long.MinValue;
 
@@ -407,7 +409,10 @@ internal static class NativeFbxSceneImporter
                 XREngine.Fbx.FbxTrace.Info("NativeImporter", $"Attached {attachedAnimationClipCount:N0} animation clip(s) to imported root '{rootNode.Name}'.");
                 ReportProgress(onProgress, 1.0f);
 
-                return new ImportResult(rootNode, createdMaterials, createdMeshes);
+                ModelImportProducerMetadata producerMetadata = NativeFbxImportReportBuilder.Build(
+                    sourceFilePath,
+                    semantic);
+                return new ImportResult(rootNode, createdMaterials, createdMeshes, producerMetadata);
             });
     }
 
@@ -1310,7 +1315,7 @@ internal static class NativeFbxSceneImporter
         return textureSlots;
     }
 
-    private static string? ResolveTextureFilePath(FbxSemanticDocument semantic, FbxSceneObject textureObject)
+    internal static string? ResolveTextureFilePath(FbxSemanticDocument semantic, FbxSceneObject textureObject)
     {
         using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
         string? path = GetInlineAttribute(textureObject, "RelativeFilename")

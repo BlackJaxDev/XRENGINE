@@ -96,6 +96,10 @@ public sealed partial class RendererBackendBuildService : IDisposable
         startInfo.ArgumentList.Add(buildOutput);
         startInfo.ArgumentList.Add("-v:minimal");
         startInfo.ArgumentList.Add("-p:XREngineUseExistingNativeBridges=true");
+        // A collectible generation must not leave build-server processes holding its
+        // output or parent test host alive after the build has completed.
+        startInfo.ArgumentList.Add("-p:UseSharedCompilation=false");
+        startInfo.ArgumentList.Add("/nodeReuse:false");
 
         StringBuilder output = new();
         List<RendererBackendBuildDiagnostic> diagnostics = [];

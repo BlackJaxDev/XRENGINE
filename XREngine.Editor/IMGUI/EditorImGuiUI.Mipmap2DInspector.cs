@@ -2,10 +2,8 @@ using System;
 using System.Numerics;
 using ImGuiNET;
 using XREngine.Data.Rendering;
-using XREngine.Editor.Services;
 using XREngine.Editor.UI;
 using XREngine.Rendering;
-using XREngine.Rendering.OpenGL;
 
 namespace XREngine.Editor;
 
@@ -60,12 +58,6 @@ public static partial class EditorImGuiUI
             return;
         }
 
-        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
-        {
-            ImGui.TextDisabled("Preview requires active OpenGL renderer.");
-            return;
-        }
-
         var state = _mipmap2DPreviewState.GetOrCreateValue(mip);
         bool needsRefresh = state.PreviewTexture is null
             || state.LastWidth != mip.Width
@@ -100,30 +92,15 @@ public static partial class EditorImGuiUI
             return;
         }
 
-        GLTexture2D? apiTexture = EditorRenderThread.Invoke(
-            () => renderer.GetOrCreateAPIRenderObject(texture, generateNow: true),
-            "Mipmap2DInspector.ResolveOpenGLPreviewTexture",
-            RenderThreadJobKind.TextureUpload) as GLTexture2D;
-        if (apiTexture is null)
+        var options = new RenderTexturePreviewOptions(UploadIfNeeded: true);
+        if (!EditorTexturePreviewService.TryGetHandle(
+                texture,
+                in options,
+                out nint handle,
+                out bool requiresVerticalFlip,
+                out string? failureReason))
         {
-            ImGui.TextDisabled("Preview texture not available.");
-            return;
-        }
-
-        try
-        {
-            apiTexture.PushData();
-        }
-        catch
-        {
-            ImGui.TextDisabled("Preview upload failed.");
-            return;
-        }
-
-        uint binding = apiTexture.BindingId;
-        if (binding == 0 || binding == OpenGLRenderer.GLObjectBase.InvalidBindingId)
-        {
-            ImGui.TextDisabled("Preview texture not ready.");
+            ImGui.TextDisabled(failureReason ?? "Preview texture not available.");
             return;
         }
 
@@ -131,11 +108,9 @@ public static partial class EditorImGuiUI
         float maxEdge = MathF.Max(64f, MathF.Min(512f, ImGui.GetContentRegionAvail().X));
         Vector2 displaySize = GetPreviewSizeForEdge(pixelSize, maxEdge);
 
-        // Flip vertically to match existing texture previews.
-        Vector2 uv0 = new(0, 1);
-        Vector2 uv1 = new(1, 0);
+        Vector2 uv0 = requiresVerticalFlip ? new Vector2(0, 1) : Vector2.Zero;
+        Vector2 uv1 = requiresVerticalFlip ? new Vector2(1, 0) : Vector2.One;
 
-        nint handle = (nint)binding;
         ImGui.Image(handle, displaySize, uv0, uv1);
     }
 

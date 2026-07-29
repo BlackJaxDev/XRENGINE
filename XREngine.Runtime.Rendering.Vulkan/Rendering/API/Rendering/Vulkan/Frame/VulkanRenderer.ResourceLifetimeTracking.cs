@@ -214,96 +214,23 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private readonly object _vulkanResourceLifetimeLock = new();
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<VulkanResourceLifetimeKey, ulong> _vulkanPublishedResourceGenerations = new();
-    private readonly Dictionary<VulkanResourceLifetimeKey, VulkanResourceLifetimeRecord> _vulkanResourceLifetimes = new();
-    private readonly Dictionary<ulong, VulkanCommandBufferLifetimeRecord> _vulkanCommandBufferLifetimes = new();
-    private readonly Dictionary<VulkanResourceLifetimeKey, HashSet<ulong>> _vulkanResourceCommandBufferDependencies = new();
-    private readonly Dictionary<ulong, VulkanDescriptorSetLifetimeRecord> _vulkanDescriptorSetLifetimes = new();
-    private readonly Dictionary<ulong, List<VkRenderQuery>> _vulkanRenderQueriesByPool = new();
-    private readonly Dictionary<ulong, HashSet<ulong>> _vulkanDescriptorSetsByPool = new();
-    private readonly Dictionary<VulkanResourceLifetimeKey, HashSet<ulong>> _vulkanDescriptorSetsByReferencedResource = new();
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, VulkanPublishedDescriptorSetSnapshot> _vulkanPublishedDescriptorSets = new();
-    private readonly Dictionary<ulong, ulong> _vulkanImageViewBackingImages = new();
-    private readonly Dictionary<ulong, ulong> _vulkanBufferViewBackingBuffers = new();
-    private readonly Dictionary<ulong, VulkanResourceLifetimeKey[]> _vulkanFramebufferAttachments = new();
-    // Queue submission is serialized by _oneTimeSubmitLock and descriptor refresh
-    // runs under _vulkanResourceLifetimeLock, so one retained lookup serves every
-    // command buffer without per-record or per-frame dictionary allocation.
-    private readonly Dictionary<VulkanResourceLifetimeKey, ulong> _vulkanSubmissionDependencyGenerationsScratch = new(4096);
-    private readonly List<VulkanLifetimeSubmission> _vulkanLifetimeSubmissions = new(16);
-    private readonly ThreadLocal<HashSet<ulong>> _vulkanChangedDescriptorSetsScratch =
-        new(static () => []);
-    private readonly ThreadLocal<HashSet<VulkanResourceLifetimeKey>> _vulkanDescriptorReferencesScratch =
-        new(static () => []);
-    private long _vulkanResourceGeneration;
-    private long _vulkanRetirementSerial;
-    private ulong _vulkanLastGraphicsSequence;
-    private ulong _vulkanCompletedGraphicsSequence;
-    private ulong _vulkanLastTransferSequence;
-    private ulong _vulkanCompletedTransferSequence;
-    private ulong _vulkanLastOtherSequence;
-    private ulong _vulkanCompletedOtherSequence;
-    private long _vulkanForcedResourceDestructionCount;
-    private bool _vulkanLifetimeDeviceLost;
-    private int _vulkanForcedRetirementDrainDepth;
+    private readonly VulkanResourceLifetimeTracker _resourceLifetimeTracker = new();
 
     private static VulkanResourceLifetimeKey ResourceKey(ObjectType type, ulong handle)
         => new(type, handle);
 
     private ulong GetCurrentVulkanResourceGeneration(ObjectType type, ulong handle)
-    {
-        if (handle == 0)
-            return 0;
-
-        VulkanResourceLifetimeKey key = ResourceKey(type, handle);
-        return _vulkanPublishedResourceGenerations.TryGetValue(key, out ulong generation)
-            ? generation
-            : 0;
-    }
+        => _resourceLifetimeTracker.GetPublishedGeneration(ResourceKey(type, handle));
 
     private void RegisterVulkanResource(
         ObjectType type,
         ulong handle,
         string owner,
         bool externallyOwned = false)
-    {
-        if (handle == 0)
-            return;
-
-        VulkanResourceLifetimeKey key = ResourceKey(type, handle);
-        lock (_vulkanResourceLifetimeLock)
-        {
-            if (_vulkanResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? existing))
-            {
-                if ((existing.State & EVulkanResourceLifetimeState.PendingRetirement) != 0)
-                {
-                    throw new InvalidOperationException(
-                        $"Vulkan handle {key} was recycled by {owner} while generation {existing.Generation} is still pending retirement.");
-                }
-
-                if ((existing.State & EVulkanResourceLifetimeState.Destroyed) == 0)
-                {
-                    existing.Owner = owner;
-                    _vulkanPublishedResourceGenerations[key] = existing.Generation;
-                    if (externallyOwned)
-                        existing.State |= EVulkanResourceLifetimeState.External;
-                    return;
-                }
-            }
-
-            ulong generation = unchecked((ulong)Interlocked.Increment(ref _vulkanResourceGeneration));
-            _vulkanResourceLifetimes[key] = new VulkanResourceLifetimeRecord
-            {
-                Key = key,
-                Generation = generation,
-                Owner = string.IsNullOrWhiteSpace(owner) ? "<unknown>" : owner,
-                State = EVulkanResourceLifetimeState.CpuOwned |
-                    (externallyOwned ? EVulkanResourceLifetimeState.External : EVulkanResourceLifetimeState.None),
-            };
-            _vulkanPublishedResourceGenerations[key] = generation;
-        }
-    }
+        => _resourceLifetimeTracker.RegisterResource(
+            ResourceKey(type, handle),
+            owner,
+            externallyOwned);
 
     internal void RegisterVulkanPipeline(Pipeline pipeline, string owner)
         => RegisterVulkanResource(ObjectType.Pipeline, pipeline.Handle, owner);
@@ -313,6 +240,7 @@ public unsafe partial class VulkanRenderer
         Image* image,
         string owner)
     {
+        ThrowIfPersistentResourceAllocationDuringRecording(owner);
         Result result = Api!.CreateImage(device, ref createInfo, null, image);
         if (result == Result.Success && image is not null)
             RegisterVulkanResource(ObjectType.Image, image->Handle, owner);
@@ -361,8 +289,8 @@ public unsafe partial class VulkanRenderer
         for (int i = 0; i < attachments.Length; i++)
             attachmentKeys[i] = ResourceKey(ObjectType.ImageView, attachments[i].Handle);
 
-        lock (_vulkanResourceLifetimeLock)
-            _vulkanFramebufferAttachments[framebuffer.Handle] = attachmentKeys;
+        lock (_resourceLifetimeTracker.SyncRoot)
+            _resourceLifetimeTracker.FramebufferAttachments[framebuffer.Handle] = attachmentKeys;
     }
 
     private void RegisterVulkanImageViewResource(
@@ -376,8 +304,8 @@ public unsafe partial class VulkanRenderer
             return;
 
         RegisterVulkanResource(ObjectType.Image, backingImage.Handle, $"{owner}.BackingImage", backingImageExternallyOwned);
-        lock (_vulkanResourceLifetimeLock)
-            _vulkanImageViewBackingImages[imageView.Handle] = backingImage.Handle;
+        lock (_resourceLifetimeTracker.SyncRoot)
+            _resourceLifetimeTracker.ImageViewBackingImages[imageView.Handle] = backingImage.Handle;
     }
 
     private void RegisterVulkanBufferViewResource(
@@ -390,29 +318,14 @@ public unsafe partial class VulkanRenderer
             return;
 
         RegisterVulkanResource(ObjectType.Buffer, backingBuffer.Handle, $"{owner}.BackingBuffer");
-        lock (_vulkanResourceLifetimeLock)
-            _vulkanBufferViewBackingBuffers[bufferView.Handle] = backingBuffer.Handle;
+        lock (_resourceLifetimeTracker.SyncRoot)
+            _resourceLifetimeTracker.BufferViewBackingBuffers[bufferView.Handle] = backingBuffer.Handle;
     }
 
     private VulkanResourceLifetimeRecord GetOrRegisterVulkanResource_NoLock(
         VulkanResourceLifetimeKey key,
         string owner)
-    {
-        if (_vulkanResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? record))
-            return record;
-
-        ulong generation = unchecked((ulong)Interlocked.Increment(ref _vulkanResourceGeneration));
-        record = new VulkanResourceLifetimeRecord
-        {
-            Key = key,
-            Generation = generation,
-            Owner = owner,
-            State = EVulkanResourceLifetimeState.CpuOwned,
-        };
-        _vulkanResourceLifetimes[key] = record;
-        _vulkanPublishedResourceGenerations[key] = generation;
-        return record;
-    }
+        => _resourceLifetimeTracker.GetOrRegisterResourceNoLock(key, owner);
 
     private void ResetVulkanCommandBufferLifetime(CommandBuffer commandBuffer)
     {
@@ -422,7 +335,7 @@ public unsafe partial class VulkanRenderer
         ulong handle = unchecked((ulong)commandBuffer.Handle);
         _invalidatedCommandBuffersPendingReset.TryRemove(handle, out _);
         RegisterVulkanResource(ObjectType.CommandBuffer, handle, "CommandBuffer");
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
             VulkanResourceLifetimeRecord commandRecord = GetOrRegisterVulkanResource_NoLock(
                 ResourceKey(ObjectType.CommandBuffer, handle),
@@ -445,10 +358,10 @@ public unsafe partial class VulkanRenderer
             }
             commandRecord.State |= EVulkanResourceLifetimeState.CpuOwned;
 
-            if (!_vulkanCommandBufferLifetimes.TryGetValue(handle, out VulkanCommandBufferLifetimeRecord? lifetime))
+            if (!_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(handle, out VulkanCommandBufferLifetimeRecord? lifetime))
             {
                 lifetime = new VulkanCommandBufferLifetimeRecord();
-                _vulkanCommandBufferLifetimes[handle] = lifetime;
+                _resourceLifetimeTracker.CommandBufferLifetimes[handle] = lifetime;
             }
 
             if (lifetime.QueuedSubmissionCount != 0)
@@ -479,7 +392,7 @@ public unsafe partial class VulkanRenderer
         }
 
         ulong handle = unchecked((ulong)commandBuffer.Handle);
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
             if (_commandBufferTrackingBatches.TryGetValue(handle, out VulkanCommandBufferTrackingBatch? batch))
             {
@@ -499,7 +412,7 @@ public unsafe partial class VulkanRenderer
                 }
             }
 
-            if (_vulkanCommandBufferLifetimes.TryGetValue(handle, out VulkanCommandBufferLifetimeRecord? lifetime) &&
+            if (_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(handle, out VulkanCommandBufferLifetimeRecord? lifetime) &&
                 lifetime.QueuedSubmissionCount != 0)
             {
                 reason = "command buffer occupies the submission gateway";
@@ -530,9 +443,9 @@ public unsafe partial class VulkanRenderer
             if (!UpdateVulkanResourceCompletionState_NoLock(commandRecord))
             {
                 reason =
-                    $"submission is incomplete (graphics={commandRecord.Pins.LastGraphicsSequence}/{_vulkanCompletedGraphicsSequence}, " +
-                    $"transfer={commandRecord.Pins.LastTransferSequence}/{_vulkanCompletedTransferSequence}, " +
-                    $"other={commandRecord.Pins.LastOtherSequence}/{_vulkanCompletedOtherSequence})";
+                    $"submission is incomplete (graphics={commandRecord.Pins.LastGraphicsSequence}/{_resourceLifetimeTracker.CompletedGraphicsSequence}, " +
+                    $"transfer={commandRecord.Pins.LastTransferSequence}/{_resourceLifetimeTracker.CompletedTransferSequence}, " +
+                    $"other={commandRecord.Pins.LastOtherSequence}/{_resourceLifetimeTracker.CompletedOtherSequence})";
                 return false;
             }
         }
@@ -559,18 +472,18 @@ public unsafe partial class VulkanRenderer
 
         ulong handle = unchecked((ulong)commandBuffer.Handle);
         _invalidatedCommandBuffersPendingReset.TryRemove(handle, out _);
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            if (_vulkanCommandBufferLifetimes.TryGetValue(handle, out VulkanCommandBufferLifetimeRecord? lifetime) &&
+            if (_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(handle, out VulkanCommandBufferLifetimeRecord? lifetime) &&
                 lifetime.QueuedSubmissionCount != 0)
             {
                 throw new InvalidOperationException(
                     $"Command buffer 0x{handle:X} lifetime cannot be removed while queued for submission.");
             }
 
-            if (_vulkanCommandBufferLifetimes.Remove(handle, out lifetime))
+            if (_resourceLifetimeTracker.CommandBufferLifetimes.Remove(handle, out lifetime))
                 ReleaseVulkanCommandBufferDependencies_NoLock(handle, lifetime);
-            if (destroyed && _vulkanResourceLifetimes.TryGetValue(
+            if (destroyed && _resourceLifetimeTracker.ResourceLifetimes.TryGetValue(
                     ResourceKey(ObjectType.CommandBuffer, handle),
                     out VulkanResourceLifetimeRecord? record))
             {
@@ -593,7 +506,7 @@ public unsafe partial class VulkanRenderer
 
         ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
         VulkanResourceLifetimeKey key = ResourceKey(type, handle);
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
             TrackVulkanCommandBufferResource_NoLock(commandBufferHandle, key, owner);
     }
 
@@ -612,7 +525,7 @@ public unsafe partial class VulkanRenderer
             return;
 
         VulkanResourceLifetimeKey key = ResourceKey(ObjectType.ImageView, imageView.Handle);
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
             VulkanResourceLifetimeRecord resource = GetOrRegisterVulkanResource_NoLock(key, owner);
             bool generationChanged = expectedGeneration != 0 &&
@@ -628,7 +541,7 @@ public unsafe partial class VulkanRenderer
                     $"but current generation is {resource.Generation} with state {resource.State} owned by {resource.Owner}; requested by {owner}.");
             }
 
-            if (!_vulkanImageViewBackingImages.TryGetValue(
+            if (!_resourceLifetimeTracker.ImageViewBackingImages.TryGetValue(
                     imageView.Handle,
                     out ulong backingImageHandle) ||
                 backingImageHandle == 0)
@@ -680,10 +593,10 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        if (!_vulkanCommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? commandLifetime))
+        if (!_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? commandLifetime))
         {
             commandLifetime = new VulkanCommandBufferLifetimeRecord();
-            _vulkanCommandBufferLifetimes[commandBufferHandle] = commandLifetime;
+            _resourceLifetimeTracker.CommandBufferLifetimes[commandBufferHandle] = commandLifetime;
         }
 
         if (commandLifetime.QueuedSubmissionCount != 0 && !allowQueuedSubmission)
@@ -696,7 +609,7 @@ public unsafe partial class VulkanRenderer
         AddVulkanCommandBufferDependency_NoLock(commandBufferHandle, commandLifetime, resource);
 
         if (key.Type == ObjectType.ImageView &&
-            _vulkanImageViewBackingImages.TryGetValue(key.Handle, out ulong backingImageHandle) &&
+            _resourceLifetimeTracker.ImageViewBackingImages.TryGetValue(key.Handle, out ulong backingImageHandle) &&
             backingImageHandle != 0)
         {
             VulkanResourceLifetimeKey imageKey = ResourceKey(ObjectType.Image, backingImageHandle);
@@ -714,7 +627,7 @@ public unsafe partial class VulkanRenderer
         }
 
         if (key.Type == ObjectType.BufferView &&
-            _vulkanBufferViewBackingBuffers.TryGetValue(key.Handle, out ulong backingBufferHandle) &&
+            _resourceLifetimeTracker.BufferViewBackingBuffers.TryGetValue(key.Handle, out ulong backingBufferHandle) &&
             backingBufferHandle != 0)
         {
             VulkanResourceLifetimeKey bufferKey = ResourceKey(ObjectType.Buffer, backingBufferHandle);
@@ -732,7 +645,7 @@ public unsafe partial class VulkanRenderer
         }
 
         if (key.Type == ObjectType.Framebuffer &&
-            _vulkanFramebufferAttachments.TryGetValue(key.Handle, out VulkanResourceLifetimeKey[]? attachmentKeys))
+            _resourceLifetimeTracker.FramebufferAttachments.TryGetValue(key.Handle, out VulkanResourceLifetimeKey[]? attachmentKeys))
         {
             for (int i = 0; i < attachmentKeys.Length; i++)
             {
@@ -762,10 +675,10 @@ public unsafe partial class VulkanRenderer
         if (!AddVulkanRecordedGenerationPin(commandLifetime, resource))
             return;
 
-        if (!_vulkanResourceCommandBufferDependencies.TryGetValue(resource.Key, out HashSet<ulong>? commandBuffers))
+        if (!_resourceLifetimeTracker.ResourceCommandBufferDependencies.TryGetValue(resource.Key, out HashSet<ulong>? commandBuffers))
         {
             commandBuffers = [];
-            _vulkanResourceCommandBufferDependencies[resource.Key] = commandBuffers;
+            _resourceLifetimeTracker.ResourceCommandBufferDependencies[resource.Key] = commandBuffers;
         }
         commandBuffers.Add(commandBufferHandle);
     }
@@ -799,7 +712,7 @@ public unsafe partial class VulkanRenderer
     {
         foreach ((VulkanResourceLifetimeKey key, ulong generation) in commandLifetime.Dependencies)
         {
-            if (!_vulkanResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource) ||
+            if (!_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource) ||
                 resource.Generation != generation)
             {
                 continue;
@@ -807,7 +720,7 @@ public unsafe partial class VulkanRenderer
 
             ReleaseVulkanRecordedGenerationPin(resource);
 
-            if (_vulkanResourceCommandBufferDependencies.TryGetValue(key, out HashSet<ulong>? commandBuffers))
+            if (_resourceLifetimeTracker.ResourceCommandBufferDependencies.TryGetValue(key, out HashSet<ulong>? commandBuffers))
                 commandBuffers.Remove(commandBufferHandle);
         }
 
@@ -826,12 +739,12 @@ public unsafe partial class VulkanRenderer
         FlushCommandBufferTrackingBatch(primary);
         for (int i = 0; i < secondaries.Length; i++)
             FlushCommandBufferTrackingBatch(secondaries[i]);
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            if (!_vulkanCommandBufferLifetimes.TryGetValue(primaryHandle, out VulkanCommandBufferLifetimeRecord? primaryLifetime))
+            if (!_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(primaryHandle, out VulkanCommandBufferLifetimeRecord? primaryLifetime))
             {
                 primaryLifetime = new VulkanCommandBufferLifetimeRecord();
-                _vulkanCommandBufferLifetimes[primaryHandle] = primaryLifetime;
+                _resourceLifetimeTracker.CommandBufferLifetimes[primaryHandle] = primaryLifetime;
             }
 
             for (int i = 0; i < secondaries.Length; i++)
@@ -845,12 +758,12 @@ public unsafe partial class VulkanRenderer
                     ResourceKey(ObjectType.CommandBuffer, secondaryHandle),
                     "CommandBuffer.SecondaryExecution");
 
-                if (!_vulkanCommandBufferLifetimes.TryGetValue(secondaryHandle, out VulkanCommandBufferLifetimeRecord? secondaryLifetime))
+                if (!_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(secondaryHandle, out VulkanCommandBufferLifetimeRecord? secondaryLifetime))
                     continue;
 
                 foreach ((VulkanResourceLifetimeKey key, ulong generation) in secondaryLifetime.Dependencies)
                 {
-                    if (_vulkanResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource) &&
+                    if (_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource) &&
                         resource.Generation == generation)
                     {
                         AddVulkanCommandBufferDependency_NoLock(primaryHandle, primaryLifetime, resource);
@@ -916,14 +829,14 @@ public unsafe partial class VulkanRenderer
                 commandBufferHandle,
                 owner);
 
-            lock (_vulkanResourceLifetimeLock)
+            lock (_resourceLifetimeTracker.SyncRoot)
             {
-                if (!_vulkanCommandBufferLifetimes.TryGetValue(
+                if (!_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(
                         commandBufferHandle,
                         out VulkanCommandBufferLifetimeRecord? lifetime))
                 {
                     lifetime = new VulkanCommandBufferLifetimeRecord();
-                    _vulkanCommandBufferLifetimes[commandBufferHandle] = lifetime;
+                    _resourceLifetimeTracker.CommandBufferLifetimes[commandBufferHandle] = lifetime;
                 }
                 lifetime.Level = allocateInfo.Level;
             }
@@ -1185,12 +1098,12 @@ public unsafe partial class VulkanRenderer
 
         RegisterVulkanResource(ObjectType.DescriptorPool, pool.Handle, $"{owner}.Pool");
         RegisterVulkanResource(ObjectType.DescriptorSet, descriptorSet.Handle, owner);
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            if (!_vulkanDescriptorSetLifetimes.TryGetValue(descriptorSet.Handle, out VulkanDescriptorSetLifetimeRecord? state))
+            if (!_resourceLifetimeTracker.DescriptorSetLifetimes.TryGetValue(descriptorSet.Handle, out VulkanDescriptorSetLifetimeRecord? state))
             {
                 state = new VulkanDescriptorSetLifetimeRecord();
-                _vulkanDescriptorSetLifetimes[descriptorSet.Handle] = state;
+                _resourceLifetimeTracker.DescriptorSetLifetimes[descriptorSet.Handle] = state;
             }
 
             UpdateVulkanDescriptorSetPoolIndex_NoLock(descriptorSet.Handle, state.Pool.Handle, pool.Handle);
@@ -1217,7 +1130,7 @@ public unsafe partial class VulkanRenderer
         ulong descriptorSetHandle,
         VulkanDescriptorSetLifetimeRecord state)
     {
-        HashSet<VulkanResourceLifetimeKey> uniqueReferences = _vulkanDescriptorReferencesScratch.Value!;
+        HashSet<VulkanResourceLifetimeKey> uniqueReferences = _resourceLifetimeTracker.DescriptorReferencesScratch.Value!;
         uniqueReferences.Clear();
         try
         {
@@ -1247,7 +1160,7 @@ public unsafe partial class VulkanRenderer
                 : new uint[state.ReflectedImageBindings.Count];
             state.ReflectedImageBindings.CopyTo(reflectedImageBindings);
 
-            _vulkanPublishedDescriptorSets[descriptorSetHandle] = new VulkanPublishedDescriptorSetSnapshot(
+            _resourceLifetimeTracker.PublishedDescriptorSets[descriptorSetHandle] = new VulkanPublishedDescriptorSetSnapshot(
                 state.Generation,
                 publishedReferences,
                 imageReferences,
@@ -1269,20 +1182,20 @@ public unsafe partial class VulkanRenderer
             return;
 
         if (previousPoolHandle != 0 &&
-            _vulkanDescriptorSetsByPool.TryGetValue(previousPoolHandle, out HashSet<ulong>? previousSets))
+            _resourceLifetimeTracker.DescriptorSetsByPool.TryGetValue(previousPoolHandle, out HashSet<ulong>? previousSets))
         {
             previousSets.Remove(descriptorSetHandle);
             if (previousSets.Count == 0)
-                _vulkanDescriptorSetsByPool.Remove(previousPoolHandle);
+                _resourceLifetimeTracker.DescriptorSetsByPool.Remove(previousPoolHandle);
         }
 
         if (poolHandle == 0)
             return;
 
-        if (!_vulkanDescriptorSetsByPool.TryGetValue(poolHandle, out HashSet<ulong>? ownedSets))
+        if (!_resourceLifetimeTracker.DescriptorSetsByPool.TryGetValue(poolHandle, out HashSet<ulong>? ownedSets))
         {
             ownedSets = [];
-            _vulkanDescriptorSetsByPool[poolHandle] = ownedSets;
+            _resourceLifetimeTracker.DescriptorSetsByPool[poolHandle] = ownedSets;
         }
 
         ownedSets.Add(descriptorSetHandle);
@@ -1296,14 +1209,14 @@ public unsafe partial class VulkanRenderer
         foreach (VulkanResourceLifetimeKey previousReference in state.IndexedReferences)
         {
             if (currentReferences.Contains(previousReference) ||
-                !_vulkanDescriptorSetsByReferencedResource.TryGetValue(previousReference, out HashSet<ulong>? sets))
+                !_resourceLifetimeTracker.DescriptorSetsByReferencedResource.TryGetValue(previousReference, out HashSet<ulong>? sets))
             {
                 continue;
             }
 
             sets.Remove(descriptorSetHandle);
             if (sets.Count == 0)
-                _vulkanDescriptorSetsByReferencedResource.Remove(previousReference);
+                _resourceLifetimeTracker.DescriptorSetsByReferencedResource.Remove(previousReference);
         }
 
         foreach (VulkanResourceLifetimeKey currentReference in currentReferences)
@@ -1311,10 +1224,10 @@ public unsafe partial class VulkanRenderer
             if (state.IndexedReferences.Contains(currentReference))
                 continue;
 
-            if (!_vulkanDescriptorSetsByReferencedResource.TryGetValue(currentReference, out HashSet<ulong>? sets))
+            if (!_resourceLifetimeTracker.DescriptorSetsByReferencedResource.TryGetValue(currentReference, out HashSet<ulong>? sets))
             {
                 sets = [];
-                _vulkanDescriptorSetsByReferencedResource[currentReference] = sets;
+                _resourceLifetimeTracker.DescriptorSetsByReferencedResource[currentReference] = sets;
             }
 
             sets.Add(descriptorSetHandle);
@@ -1347,11 +1260,11 @@ public unsafe partial class VulkanRenderer
         if (writeCount == 0 || writes is null)
             return;
 
-        HashSet<ulong> changedSets = _vulkanChangedDescriptorSetsScratch.Value!;
+        HashSet<ulong> changedSets = _resourceLifetimeTracker.ChangedDescriptorSetsScratch.Value!;
         changedSets.Clear();
         try
         {
-            lock (_vulkanResourceLifetimeLock)
+            lock (_resourceLifetimeTracker.SyncRoot)
             {
                 for (int writeIndex = 0; writeIndex < writeCount; writeIndex++)
                 {
@@ -1364,10 +1277,10 @@ public unsafe partial class VulkanRenderer
                     if ((setResource.State & (EVulkanResourceLifetimeState.PendingRetirement | EVulkanResourceLifetimeState.Destroyed)) != 0)
                         throw new InvalidOperationException($"Cannot update retired Vulkan descriptor set {setKey}.");
 
-                    if (!_vulkanDescriptorSetLifetimes.TryGetValue(write.DstSet.Handle, out VulkanDescriptorSetLifetimeRecord? setState))
+                    if (!_resourceLifetimeTracker.DescriptorSetLifetimes.TryGetValue(write.DstSet.Handle, out VulkanDescriptorSetLifetimeRecord? setState))
                     {
                         setState = new VulkanDescriptorSetLifetimeRecord();
-                        _vulkanDescriptorSetLifetimes[write.DstSet.Handle] = setState;
+                        _resourceLifetimeTracker.DescriptorSetLifetimes[write.DstSet.Handle] = setState;
                     }
 
                     bool setUseCompleted = UpdateVulkanResourceCompletionState_NoLock(setResource);
@@ -1423,7 +1336,7 @@ public unsafe partial class VulkanRenderer
 
                 foreach (ulong descriptorSetHandle in changedSets)
                 {
-                    VulkanDescriptorSetLifetimeRecord state = _vulkanDescriptorSetLifetimes[descriptorSetHandle];
+                    VulkanDescriptorSetLifetimeRecord state = _resourceLifetimeTracker.DescriptorSetLifetimes[descriptorSetHandle];
                     state.Generation++;
                     PublishVulkanDescriptorSetSnapshot_NoLock(descriptorSetHandle, state);
                 }
@@ -1437,7 +1350,7 @@ public unsafe partial class VulkanRenderer
 
     /// <summary>
     /// Performs the non-mutating portion of descriptor lifetime validation while the caller owns
-    /// <see cref="_vulkanResourceLifetimeLock"/>. Recoverable generation-retirement races use this
+    /// <see cref="_resourceLifetimeTracker.SyncRoot"/>. Recoverable generation-retirement races use this
     /// path so they can rebuild descriptor snapshots without throwing first-chance exceptions.
     /// </summary>
     private bool TryPrevalidateVulkanDescriptorWrites_NoLock(
@@ -1465,7 +1378,7 @@ public unsafe partial class VulkanRenderer
 
             bool setUseCompleted = UpdateVulkanResourceCompletionState_NoLock(setResource);
             bool usesUpdateAfterBind =
-                _vulkanDescriptorSetLifetimes.TryGetValue(write.DstSet.Handle, out VulkanDescriptorSetLifetimeRecord? setState) &&
+                _resourceLifetimeTracker.DescriptorSetLifetimes.TryGetValue(write.DstSet.Handle, out VulkanDescriptorSetLifetimeRecord? setState) &&
                 setState.UsesUpdateAfterBind &&
                 CanUseUpdateAfterBind(write.DescriptorType);
             if (!setUseCompleted && !usesUpdateAfterBind)
@@ -1602,7 +1515,7 @@ public unsafe partial class VulkanRenderer
         in VulkanSubmissionDiagnosticContext diagnosticContext,
         out string failureReason)
     {
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
             for (int commandIndex = 0; commandIndex < submitInfo.CommandBufferCount; commandIndex++)
             {
@@ -1622,11 +1535,11 @@ public unsafe partial class VulkanRenderer
 
                 VulkanResourceLifetimeKey commandBufferKey =
                     ResourceKey(ObjectType.CommandBuffer, commandBufferHandle);
-                _vulkanResourceLifetimes.TryGetValue(
+                _resourceLifetimeTracker.ResourceLifetimes.TryGetValue(
                     commandBufferKey,
                     out VulkanResourceLifetimeRecord? commandResource);
                 bool lifetimeAlreadyQueued =
-                    _vulkanCommandBufferLifetimes.TryGetValue(
+                    _resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(
                         commandBufferHandle,
                         out VulkanCommandBufferLifetimeRecord? lifetime) &&
                     lifetime.QueuedSubmissionCount != 0;
@@ -1662,12 +1575,12 @@ public unsafe partial class VulkanRenderer
                 if (commandBufferHandle == 0)
                     continue;
 
-                if (!_vulkanCommandBufferLifetimes.TryGetValue(
+                if (!_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(
                         commandBufferHandle,
                         out VulkanCommandBufferLifetimeRecord? lifetime))
                 {
                     lifetime = new VulkanCommandBufferLifetimeRecord();
-                    _vulkanCommandBufferLifetimes[commandBufferHandle] = lifetime;
+                    _resourceLifetimeTracker.CommandBufferLifetimes[commandBufferHandle] = lifetime;
                 }
 
                 lifetime.QueuedSubmissionCount++;
@@ -1694,9 +1607,9 @@ public unsafe partial class VulkanRenderer
             return false;
 
         ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            return _vulkanCommandBufferLifetimes.TryGetValue(
+            return _resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(
                     commandBufferHandle,
                     out VulkanCommandBufferLifetimeRecord? lifetime) &&
                 lifetime.Level == CommandBufferLevel.Secondary;
@@ -1716,7 +1629,7 @@ public unsafe partial class VulkanRenderer
         if (_commandBufferTrackingBatches.TryGetValue(
                 commandBufferHandle,
                 out VulkanCommandBufferTrackingBatch? batch) &&
-            _vulkanPublishedDescriptorSets.TryGetValue(
+            _resourceLifetimeTracker.PublishedDescriptorSets.TryGetValue(
                 descriptorSet.Handle,
                 out VulkanPublishedDescriptorSetSnapshot? snapshot))
         {
@@ -1759,14 +1672,14 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
             TrackVulkanCommandBufferResource_NoLock(
                 commandBufferHandle,
                 ResourceKey(ObjectType.DescriptorSet, descriptorSet.Handle),
                 "DescriptorSet.Bind");
 
-            if (_vulkanDescriptorSetLifetimes.TryGetValue(descriptorSet.Handle, out VulkanDescriptorSetLifetimeRecord? setState))
+            if (_resourceLifetimeTracker.DescriptorSetLifetimes.TryGetValue(descriptorSet.Handle, out VulkanDescriptorSetLifetimeRecord? setState))
             {
                 if (isSecondaryCommandBuffer)
                     RecordSecondaryDescriptorImageLayoutRequirements(commandBuffer, descriptorSet, setState);
@@ -2141,9 +2054,9 @@ public unsafe partial class VulkanRenderer
 
                 ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
                 VulkanResourceLifetimeKey commandBufferKey = ResourceKey(ObjectType.CommandBuffer, commandBufferHandle);
-                lock (_vulkanResourceLifetimeLock)
+                lock (_resourceLifetimeTracker.SyncRoot)
                 {
-                    _vulkanResourceLifetimes.TryGetValue(
+                    _resourceLifetimeTracker.ResourceLifetimes.TryGetValue(
                         commandBufferKey,
                         out VulkanResourceLifetimeRecord? commandResource);
                     failureReason = DescribeVulkanLifetimeRejection(
@@ -2166,7 +2079,7 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
-            lock (_vulkanResourceLifetimeLock)
+            lock (_resourceLifetimeTracker.SyncRoot)
             {
                 for (int commandIndex = 0; commandIndex < submitInfo.CommandBufferCount; commandIndex++)
                 {
@@ -2175,7 +2088,7 @@ public unsafe partial class VulkanRenderer
                         continue;
 
                     VulkanResourceLifetimeKey commandBufferKey = ResourceKey(ObjectType.CommandBuffer, commandBufferHandle);
-                    if (_vulkanResourceLifetimes.TryGetValue(commandBufferKey, out VulkanResourceLifetimeRecord? commandResource) &&
+                    if (_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(commandBufferKey, out VulkanResourceLifetimeRecord? commandResource) &&
                         (commandResource.State & (EVulkanResourceLifetimeState.PendingRetirement | EVulkanResourceLifetimeState.Destroyed)) != 0)
                     {
                         failureReason = DescribeVulkanLifetimeRejection(
@@ -2191,7 +2104,7 @@ public unsafe partial class VulkanRenderer
                         return false;
                     }
 
-                    if (!_vulkanCommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? commandLifetime))
+                    if (!_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? commandLifetime))
                     {
                         continue;
                     }
@@ -2201,7 +2114,7 @@ public unsafe partial class VulkanRenderer
                         out VulkanResourceLifetimeKey descriptorFailureKey,
                         out string descriptorFailure))
                 {
-                    _vulkanResourceLifetimes.TryGetValue(
+                    _resourceLifetimeTracker.ResourceLifetimes.TryGetValue(
                         descriptorFailureKey,
                         out VulkanResourceLifetimeRecord? descriptorFailureResource);
                     failureReason = DescribeVulkanLifetimeRejection(
@@ -2219,7 +2132,7 @@ public unsafe partial class VulkanRenderer
 
                 foreach ((VulkanResourceLifetimeKey key, ulong recordedGeneration) in commandLifetime.TouchedDependencies)
                 {
-                    if (!_vulkanResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource))
+                    if (!_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource))
                     {
                         failureReason = DescribeVulkanLifetimeRejection(
                             key,
@@ -2282,11 +2195,11 @@ public unsafe partial class VulkanRenderer
                     AddVulkanQueuedGenerationPin_NoLock(commandResource);
 
                     VulkanCommandBufferLifetimeRecord commandLifetime =
-                        _vulkanCommandBufferLifetimes[commandBufferHandle];
+                        _resourceLifetimeTracker.CommandBufferLifetimes[commandBufferHandle];
 
                     foreach ((VulkanResourceLifetimeKey key, _) in commandLifetime.TouchedDependencies)
                     {
-                        AddVulkanQueuedGenerationPin_NoLock(_vulkanResourceLifetimes[key]);
+                        AddVulkanQueuedGenerationPin_NoLock(_resourceLifetimeTracker.ResourceLifetimes[key]);
                     }
                 }
             }
@@ -2341,7 +2254,7 @@ public unsafe partial class VulkanRenderer
 
     private void ReleaseVulkanSubmissionResourceLifetimePins(ref SubmitInfo submitInfo)
     {
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
             for (int commandIndex = 0; commandIndex < submitInfo.CommandBufferCount; commandIndex++)
             {
@@ -2349,14 +2262,14 @@ public unsafe partial class VulkanRenderer
                 if (commandBufferHandle == 0)
                     continue;
 
-                if (_vulkanResourceLifetimes.TryGetValue(
+                if (_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(
                         ResourceKey(ObjectType.CommandBuffer, commandBufferHandle),
                         out VulkanResourceLifetimeRecord? commandResource))
                 {
                     ReleaseVulkanQueuedGenerationPin_NoLock(commandResource);
                 }
 
-                if (!_vulkanCommandBufferLifetimes.TryGetValue(
+                if (!_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(
                         commandBufferHandle,
                         out VulkanCommandBufferLifetimeRecord? commandLifetime))
                 {
@@ -2365,7 +2278,7 @@ public unsafe partial class VulkanRenderer
 
                 foreach ((VulkanResourceLifetimeKey key, _) in commandLifetime.TouchedDependencies)
                 {
-                    if (_vulkanResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource))
+                    if (_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource))
                         ReleaseVulkanQueuedGenerationPin_NoLock(resource);
                 }
             }
@@ -2376,7 +2289,7 @@ public unsafe partial class VulkanRenderer
 
     private void ReleaseVulkanSubmissionGatewayPins(ref SubmitInfo submitInfo)
     {
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
             ReleaseVulkanSubmissionGatewayPins_NoLock(ref submitInfo);
     }
 
@@ -2388,7 +2301,7 @@ public unsafe partial class VulkanRenderer
             if (commandBufferHandle == 0)
                 continue;
 
-            if (!_vulkanCommandBufferLifetimes.TryGetValue(
+            if (!_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(
                     commandBufferHandle,
                     out VulkanCommandBufferLifetimeRecord? commandLifetime) ||
                 commandLifetime.QueuedSubmissionCount <= 0)
@@ -2435,7 +2348,7 @@ public unsafe partial class VulkanRenderer
         List<KeyValuePair<VulkanResourceLifetimeKey, ulong>> touched = commandLifetime.TouchedDependencies;
         int descriptorScanCount = touched.Count;
         Dictionary<VulkanResourceLifetimeKey, ulong> touchedGenerations =
-            _vulkanSubmissionDependencyGenerationsScratch;
+            _resourceLifetimeTracker.SubmissionDependencyGenerationsScratch;
         touchedGenerations.Clear();
         for (int i = 0; i < descriptorScanCount; i++)
             touchedGenerations[touched[i].Key] = touched[i].Value;
@@ -2443,7 +2356,7 @@ public unsafe partial class VulkanRenderer
         {
             VulkanResourceLifetimeKey key = touched[i].Key;
             if (key.Type != ObjectType.DescriptorSet ||
-                !_vulkanPublishedDescriptorSets.TryGetValue(key.Handle, out VulkanPublishedDescriptorSetSnapshot? snapshot))
+                !_resourceLifetimeTracker.PublishedDescriptorSets.TryGetValue(key.Handle, out VulkanPublishedDescriptorSetSnapshot? snapshot))
             {
                 continue;
             }
@@ -2458,7 +2371,7 @@ public unsafe partial class VulkanRenderer
                         out failureReason))
                 {
                     VulkanResourceLifetimeKey descriptorSetKey = ResourceKey(ObjectType.DescriptorSet, key.Handle);
-                    string descriptorSetOwner = _vulkanResourceLifetimes.TryGetValue(
+                    string descriptorSetOwner = _resourceLifetimeTracker.ResourceLifetimes.TryGetValue(
                         descriptorSetKey,
                         out VulkanResourceLifetimeRecord? descriptorSetResource)
                         ? descriptorSetResource.Owner
@@ -2481,7 +2394,7 @@ public unsafe partial class VulkanRenderer
         VulkanResourceLifetimeKey key,
         out string failureReason)
     {
-        if (!_vulkanResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource))
+        if (!_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource))
         {
             failureReason = $"descriptor submission dependency {key} is no longer tracked";
             return false;
@@ -2519,7 +2432,7 @@ public unsafe partial class VulkanRenderer
         }
 
         if (key.Type == ObjectType.ImageView &&
-            _vulkanImageViewBackingImages.TryGetValue(key.Handle, out ulong backingImageHandle) &&
+            _resourceLifetimeTracker.ImageViewBackingImages.TryGetValue(key.Handle, out ulong backingImageHandle) &&
             backingImageHandle != 0 &&
             !TryAppendSubmittedDescriptorDependency_NoLock(
                 touched,
@@ -2531,7 +2444,7 @@ public unsafe partial class VulkanRenderer
         }
 
         if (key.Type == ObjectType.BufferView &&
-            _vulkanBufferViewBackingBuffers.TryGetValue(key.Handle, out ulong backingBufferHandle) &&
+            _resourceLifetimeTracker.BufferViewBackingBuffers.TryGetValue(key.Handle, out ulong backingBufferHandle) &&
             backingBufferHandle != 0 &&
             !TryAppendSubmittedDescriptorDependency_NoLock(
                 touched,
@@ -2560,13 +2473,13 @@ public unsafe partial class VulkanRenderer
         ResolveSubmissionTimelineSignal(ref submitInfo, out ulong timelineSemaphoreHandle, out ulong timelineValue);
 
         VulkanLifetimeSubmission submission;
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
             ulong queueSequence = domain switch
             {
-                EVulkanLifetimeQueueDomain.Graphics => ++_vulkanLastGraphicsSequence,
-                EVulkanLifetimeQueueDomain.Transfer => ++_vulkanLastTransferSequence,
-                _ => ++_vulkanLastOtherSequence,
+                EVulkanLifetimeQueueDomain.Graphics => ++_resourceLifetimeTracker.LastGraphicsSequence,
+                EVulkanLifetimeQueueDomain.Transfer => ++_resourceLifetimeTracker.LastTransferSequence,
+                _ => ++_resourceLifetimeTracker.LastOtherSequence,
             };
 
             submission = new VulkanLifetimeSubmission(
@@ -2576,7 +2489,7 @@ public unsafe partial class VulkanRenderer
                 timelineSemaphoreHandle,
                 timelineValue,
                 unchecked((ulong)fence.Handle));
-            _vulkanLifetimeSubmissions.Add(submission);
+            _resourceLifetimeTracker.LifetimeSubmissions.Add(submission);
 
             for (int commandIndex = 0; commandIndex < submitInfo.CommandBufferCount; commandIndex++)
             {
@@ -2594,14 +2507,14 @@ public unsafe partial class VulkanRenderer
                     diagnosticContext.FrameOpContextId,
                     diagnosticContext.FrameOpKind);
 
-                if (!_vulkanCommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? commandLifetime))
+                if (!_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? commandLifetime))
                     continue;
 
                 commandLifetime.FrameDataLease.TryTransferToSubmission(domain, queueSequence);
 
                 foreach ((VulkanResourceLifetimeKey key, _) in commandLifetime.TouchedDependencies)
                 {
-                    if (_vulkanResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource))
+                    if (_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource))
                     {
                         MarkVulkanResourceSubmitted_NoLock(
                             resource,
@@ -2613,7 +2526,7 @@ public unsafe partial class VulkanRenderer
                     }
 
                     if (key.Type == ObjectType.QueryPool &&
-                        _vulkanRenderQueriesByPool.TryGetValue(key.Handle, out List<VkRenderQuery>? queries))
+                        _resourceLifetimeTracker.RenderQueriesByPool.TryGetValue(key.Handle, out List<VkRenderQuery>? queries))
                     {
                         for (int queryIndex = 0; queryIndex < queries.Count; queryIndex++)
                             queries[queryIndex].MarkResultEpochSubmitted(commandBufferHandle, in submission);
@@ -2631,12 +2544,12 @@ public unsafe partial class VulkanRenderer
         if (queryPool.Handle == 0)
             return;
 
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            if (!_vulkanRenderQueriesByPool.TryGetValue(queryPool.Handle, out List<VkRenderQuery>? queries))
+            if (!_resourceLifetimeTracker.RenderQueriesByPool.TryGetValue(queryPool.Handle, out List<VkRenderQuery>? queries))
             {
                 queries = new List<VkRenderQuery>(32);
-                _vulkanRenderQueriesByPool.Add(queryPool.Handle, queries);
+                _resourceLifetimeTracker.RenderQueriesByPool.Add(queryPool.Handle, queries);
             }
 
             if (!queries.Contains(query))
@@ -2649,13 +2562,13 @@ public unsafe partial class VulkanRenderer
         if (queryPool.Handle == 0)
             return;
 
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            if (_vulkanRenderQueriesByPool.TryGetValue(queryPool.Handle, out List<VkRenderQuery>? queries))
+            if (_resourceLifetimeTracker.RenderQueriesByPool.TryGetValue(queryPool.Handle, out List<VkRenderQuery>? queries))
             {
                 queries.Remove(query);
                 if (queries.Count == 0)
-                    _vulkanRenderQueriesByPool.Remove(queryPool.Handle);
+                    _resourceLifetimeTracker.RenderQueriesByPool.Remove(queryPool.Handle);
             }
         }
     }
@@ -2728,16 +2641,16 @@ public unsafe partial class VulkanRenderer
             return;
 
         ulong handle = unchecked((ulong)fence.Handle);
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            for (int i = _vulkanLifetimeSubmissions.Count - 1; i >= 0; i--)
+            for (int i = _resourceLifetimeTracker.LifetimeSubmissions.Count - 1; i >= 0; i--)
             {
-                VulkanLifetimeSubmission submission = _vulkanLifetimeSubmissions[i];
+                VulkanLifetimeSubmission submission = _resourceLifetimeTracker.LifetimeSubmissions[i];
                 if (submission.FenceHandle != handle)
                     continue;
 
                 MarkVulkanQueueSequenceCompleted_NoLock(submission.QueueDomain, submission.QueueSequence);
-                _vulkanLifetimeSubmissions.RemoveAt(i);
+                _resourceLifetimeTracker.LifetimeSubmissions.RemoveAt(i);
             }
         }
         AdvanceCompletedImageLayouts();
@@ -2825,13 +2738,13 @@ public unsafe partial class VulkanRenderer
         if (submission.QueueSequence == 0ul)
             return false;
 
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
             return submission.QueueDomain switch
             {
-                EVulkanLifetimeQueueDomain.Graphics => submission.QueueSequence <= _vulkanCompletedGraphicsSequence,
-                EVulkanLifetimeQueueDomain.Transfer => submission.QueueSequence <= _vulkanCompletedTransferSequence,
-                _ => submission.QueueSequence <= _vulkanCompletedOtherSequence,
+                EVulkanLifetimeQueueDomain.Graphics => submission.QueueSequence <= _resourceLifetimeTracker.CompletedGraphicsSequence,
+                EVulkanLifetimeQueueDomain.Transfer => submission.QueueSequence <= _resourceLifetimeTracker.CompletedTransferSequence,
+                _ => submission.QueueSequence <= _resourceLifetimeTracker.CompletedOtherSequence,
             };
         }
     }
@@ -2842,11 +2755,11 @@ public unsafe partial class VulkanRenderer
             return;
 
         ulong handle = semaphore.Handle;
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            for (int i = _vulkanLifetimeSubmissions.Count - 1; i >= 0; i--)
+            for (int i = _resourceLifetimeTracker.LifetimeSubmissions.Count - 1; i >= 0; i--)
             {
-                VulkanLifetimeSubmission submission = _vulkanLifetimeSubmissions[i];
+                VulkanLifetimeSubmission submission = _resourceLifetimeTracker.LifetimeSubmissions[i];
                 if (submission.TimelineSemaphoreHandle != handle ||
                     submission.TimelineValue == 0 ||
                     submission.TimelineValue > value)
@@ -2855,7 +2768,7 @@ public unsafe partial class VulkanRenderer
                 }
 
                 MarkVulkanQueueSequenceCompleted_NoLock(submission.QueueDomain, submission.QueueSequence);
-                _vulkanLifetimeSubmissions.RemoveAt(i);
+                _resourceLifetimeTracker.LifetimeSubmissions.RemoveAt(i);
             }
         }
         AdvanceCompletedImageLayouts();
@@ -2864,16 +2777,16 @@ public unsafe partial class VulkanRenderer
     private void NotifyVulkanQueueIdle(Queue queue)
     {
         ulong queueHandle = unchecked((ulong)queue.Handle);
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            for (int i = _vulkanLifetimeSubmissions.Count - 1; i >= 0; i--)
+            for (int i = _resourceLifetimeTracker.LifetimeSubmissions.Count - 1; i >= 0; i--)
             {
-                VulkanLifetimeSubmission submission = _vulkanLifetimeSubmissions[i];
+                VulkanLifetimeSubmission submission = _resourceLifetimeTracker.LifetimeSubmissions[i];
                 if (submission.QueueHandle != queueHandle)
                     continue;
 
                 MarkVulkanQueueSequenceCompleted_NoLock(submission.QueueDomain, submission.QueueSequence);
-                _vulkanLifetimeSubmissions.RemoveAt(i);
+                _resourceLifetimeTracker.LifetimeSubmissions.RemoveAt(i);
             }
         }
         AdvanceCompletedImageLayouts();
@@ -2881,39 +2794,26 @@ public unsafe partial class VulkanRenderer
 
     private void NotifyVulkanDeviceIdle()
     {
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            _vulkanCompletedGraphicsSequence = _vulkanLastGraphicsSequence;
-            _vulkanCompletedTransferSequence = _vulkanLastTransferSequence;
-            _vulkanCompletedOtherSequence = _vulkanLastOtherSequence;
-            _vulkanLifetimeSubmissions.Clear();
+            _resourceLifetimeTracker.CompletedGraphicsSequence = _resourceLifetimeTracker.LastGraphicsSequence;
+            _resourceLifetimeTracker.CompletedTransferSequence = _resourceLifetimeTracker.LastTransferSequence;
+            _resourceLifetimeTracker.CompletedOtherSequence = _resourceLifetimeTracker.LastOtherSequence;
+            _resourceLifetimeTracker.LifetimeSubmissions.Clear();
         }
         AdvanceCompletedImageLayouts();
     }
 
     private void NotifyVulkanResourceLifetimeDeviceLost()
     {
-        lock (_vulkanResourceLifetimeLock)
-            _vulkanLifetimeDeviceLost = true;
+        lock (_resourceLifetimeTracker.SyncRoot)
+            _resourceLifetimeTracker.DeviceLost = true;
     }
 
     private void MarkVulkanQueueSequenceCompleted_NoLock(
         EVulkanLifetimeQueueDomain domain,
         ulong queueSequence)
-    {
-        switch (domain)
-        {
-            case EVulkanLifetimeQueueDomain.Graphics:
-                _vulkanCompletedGraphicsSequence = Math.Max(_vulkanCompletedGraphicsSequence, queueSequence);
-                break;
-            case EVulkanLifetimeQueueDomain.Transfer:
-                _vulkanCompletedTransferSequence = Math.Max(_vulkanCompletedTransferSequence, queueSequence);
-                break;
-            default:
-                _vulkanCompletedOtherSequence = Math.Max(_vulkanCompletedOtherSequence, queueSequence);
-                break;
-        }
-    }
+        => _resourceLifetimeTracker.MarkQueueSequenceCompletedNoLock(domain, queueSequence);
 
     private VulkanRetirementTicket CaptureVulkanRetirementTicket(
         ObjectType type,
@@ -2934,7 +2834,7 @@ public unsafe partial class VulkanRenderer
         string resourceOwner;
         ulong[] dependentCommandBuffers = [];
         int invalidatedDescriptorSetCount = 0;
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
             VulkanResourceLifetimeRecord resource = GetOrRegisterVulkanResource_NoLock(key, owner);
             generation = resource.Generation;
@@ -2958,18 +2858,18 @@ public unsafe partial class VulkanRenderer
                     resource.Generation,
                     (resource.State & EVulkanResourceLifetimeState.External) != 0,
                     VulkanRetirementPinSet.Single(key, resource.Generation));
-                resource.RetirementSerial = unchecked((ulong)Interlocked.Increment(ref _vulkanRetirementSerial));
+                resource.RetirementSerial = unchecked((ulong)Interlocked.Increment(ref _resourceLifetimeTracker.RetirementSerial));
                 resource.State |= EVulkanResourceLifetimeState.PendingRetirement;
                 resource.RetirementTicket = ticket;
                 invalidatedDescriptorSetCount = InvalidateVulkanDescriptorSetsReferencingResource_NoLock(key);
-                if (_vulkanResourceCommandBufferDependencies.TryGetValue(key, out HashSet<ulong>? dependents) &&
+                if (_resourceLifetimeTracker.ResourceCommandBufferDependencies.TryGetValue(key, out HashSet<ulong>? dependents) &&
                     dependents.Count > 0)
                 {
                     dependentCommandBuffers = new ulong[dependents.Count];
                     int dependentIndex = 0;
                     foreach (ulong commandBufferHandle in dependents)
                     {
-                        if (_vulkanCommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? lifetime) &&
+                        if (_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? lifetime) &&
                             lifetime.Dependencies.TryGetValue(key, out ulong recordedGeneration) &&
                             recordedGeneration == generation)
                         {
@@ -3000,7 +2900,7 @@ public unsafe partial class VulkanRenderer
 
     private int InvalidateVulkanDescriptorSetsReferencingResource_NoLock(VulkanResourceLifetimeKey key)
     {
-        if (!_vulkanDescriptorSetsByReferencedResource.TryGetValue(key, out HashSet<ulong>? descriptorSets) ||
+        if (!_resourceLifetimeTracker.DescriptorSetsByReferencedResource.TryGetValue(key, out HashSet<ulong>? descriptorSets) ||
             descriptorSets.Count == 0)
         {
             return 0;
@@ -3009,7 +2909,7 @@ public unsafe partial class VulkanRenderer
         int invalidated = 0;
         foreach (ulong descriptorSetHandle in descriptorSets)
         {
-            if (!_vulkanDescriptorSetLifetimes.TryGetValue(
+            if (!_resourceLifetimeTracker.DescriptorSetLifetimes.TryGetValue(
                     descriptorSetHandle,
                     out VulkanDescriptorSetLifetimeRecord? state))
             {
@@ -3053,18 +2953,7 @@ public unsafe partial class VulkanRenderer
     }
 
     private VulkanRetirementTicket CaptureVulkanRetirementWatermark()
-    {
-        lock (_vulkanResourceLifetimeLock)
-        {
-            return new VulkanRetirementTicket(
-                _vulkanLastGraphicsSequence,
-                _vulkanLastTransferSequence,
-                _vulkanLastOtherSequence,
-                Stopwatch.GetTimestamp(),
-                0,
-                false);
-        }
-    }
+        => _resourceLifetimeTracker.CaptureRetirementWatermark();
 
     private VulkanRetirementTicket CaptureVulkanDescriptorPoolRetirementTicket(
         DescriptorPool pool,
@@ -3079,9 +2968,9 @@ public unsafe partial class VulkanRenderer
 
         ulong poolGeneration = ticket.ResourceGeneration;
         ulong[] ownedSetHandles;
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            ownedSetHandles = _vulkanDescriptorSetsByPool.TryGetValue(
+            ownedSetHandles = _resourceLifetimeTracker.DescriptorSetsByPool.TryGetValue(
                 pool.Handle,
                 out HashSet<ulong>? trackedSets)
                     ? [.. trackedSets]
@@ -3098,9 +2987,9 @@ public unsafe partial class VulkanRenderer
         }
 
         HashSet<ulong>? dependentCommandBuffers = null;
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            if (!_vulkanDescriptorSetsByPool.TryGetValue(pool.Handle, out HashSet<ulong>? ownedSets) ||
+            if (!_resourceLifetimeTracker.DescriptorSetsByPool.TryGetValue(pool.Handle, out HashSet<ulong>? ownedSets) ||
                 ownedSets.Count == 0)
             {
                 return ticket;
@@ -3129,15 +3018,15 @@ public unsafe partial class VulkanRenderer
                         setResource.Generation,
                         false,
                         VulkanRetirementPinSet.Single(setResource.Key, setResource.Generation));
-                    setResource.RetirementSerial = unchecked((ulong)Interlocked.Increment(ref _vulkanRetirementSerial));
+                    setResource.RetirementSerial = unchecked((ulong)Interlocked.Increment(ref _resourceLifetimeTracker.RetirementSerial));
                     setResource.State |= EVulkanResourceLifetimeState.PendingRetirement;
                     setResource.RetirementTicket = setTicket;
 
-                    if (_vulkanResourceCommandBufferDependencies.TryGetValue(setKey, out HashSet<ulong>? dependents))
+                    if (_resourceLifetimeTracker.ResourceCommandBufferDependencies.TryGetValue(setKey, out HashSet<ulong>? dependents))
                     {
                         foreach (ulong commandBufferHandle in dependents)
                         {
-                            if (_vulkanCommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? lifetime) &&
+                            if (_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? lifetime) &&
                                 lifetime.Dependencies.TryGetValue(setKey, out ulong recordedGeneration) &&
                                 recordedGeneration == setResource.Generation)
                             {
@@ -3167,10 +3056,7 @@ public unsafe partial class VulkanRenderer
     }
 
     private bool IsVulkanRetirementReady(in VulkanRetirementTicket ticket)
-    {
-        lock (_vulkanResourceLifetimeLock)
-            return IsVulkanRetirementReady_NoLock(ticket);
-    }
+        => _resourceLifetimeTracker.IsRetirementReady(ticket);
 
     private bool TryBeginDestroyVulkanResourceGeneration(
         ObjectType type,
@@ -3182,18 +3068,18 @@ public unsafe partial class VulkanRenderer
             return false;
 
         VulkanResourceLifetimeKey key = ResourceKey(type, handle);
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            bool forced = _vulkanForcedRetirementDrainDepth > 0;
-            if (!_vulkanResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource) ||
+            bool forced = _resourceLifetimeTracker.ForcedRetirementDrainDepth > 0;
+            if (!_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource) ||
                 resource.Generation != expectedGeneration ||
                 (resource.State & EVulkanResourceLifetimeState.Destroyed) != 0 ||
                 (!forced &&
                  (!IsVulkanRetirementReady_NoLock(resource.RetirementTicket) ||
                   !resource.Pins.IsRetirementReady(
-                      _vulkanCompletedGraphicsSequence,
-                      _vulkanCompletedTransferSequence,
-                      _vulkanCompletedOtherSequence))))
+                      _resourceLifetimeTracker.CompletedGraphicsSequence,
+                      _resourceLifetimeTracker.CompletedTransferSequence,
+                      _resourceLifetimeTracker.CompletedOtherSequence))))
             {
                 Debug.VulkanEvery(
                     $"Vulkan.ResourceLifetime.SkipStaleDestroy.{type}.{handle}.{expectedGeneration}.{owner}",
@@ -3216,14 +3102,14 @@ public unsafe partial class VulkanRenderer
         if (buffer.Handle == 0)
             return false;
 
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            foreach ((ulong viewHandle, ulong backingBufferHandle) in _vulkanBufferViewBackingBuffers)
+            foreach ((ulong viewHandle, ulong backingBufferHandle) in _resourceLifetimeTracker.BufferViewBackingBuffers)
             {
                 if (backingBufferHandle != buffer.Handle)
                     continue;
 
-                if (!_vulkanResourceLifetimes.TryGetValue(
+                if (!_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(
                         ResourceKey(ObjectType.BufferView, viewHandle),
                         out VulkanResourceLifetimeRecord? view) ||
                     (view.State & EVulkanResourceLifetimeState.Destroyed) == 0)
@@ -3245,11 +3131,11 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
             if (resources.Image.Handle != 0)
             {
-                foreach ((ulong viewHandle, ulong backingImageHandle) in _vulkanImageViewBackingImages)
+                foreach ((ulong viewHandle, ulong backingImageHandle) in _resourceLifetimeTracker.ImageViewBackingImages)
                 {
                     if (backingImageHandle != resources.Image.Handle ||
                         ContainsRetiredImageView(resources, viewHandle))
@@ -3257,7 +3143,7 @@ public unsafe partial class VulkanRenderer
                         continue;
                     }
 
-                    if (!_vulkanResourceLifetimes.TryGetValue(
+                    if (!_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(
                             ResourceKey(ObjectType.ImageView, viewHandle),
                             out VulkanResourceLifetimeRecord? view) ||
                         (view.State & EVulkanResourceLifetimeState.Destroyed) == 0)
@@ -3267,9 +3153,9 @@ public unsafe partial class VulkanRenderer
                 }
             }
 
-            foreach ((ulong framebufferHandle, VulkanResourceLifetimeKey[] attachments) in _vulkanFramebufferAttachments)
+            foreach ((ulong framebufferHandle, VulkanResourceLifetimeKey[] attachments) in _resourceLifetimeTracker.FramebufferAttachments)
             {
-                if (_vulkanResourceLifetimes.TryGetValue(
+                if (_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(
                         ResourceKey(ObjectType.Framebuffer, framebufferHandle),
                         out VulkanResourceLifetimeRecord? framebuffer) &&
                     (framebuffer.State & EVulkanResourceLifetimeState.Destroyed) != 0)
@@ -3282,7 +3168,7 @@ public unsafe partial class VulkanRenderer
                     VulkanResourceLifetimeKey attachment = attachments[i];
                     if (ContainsRetiredImageView(resources, attachment.Handle) ||
                         (resources.Image.Handle != 0 &&
-                         _vulkanImageViewBackingImages.TryGetValue(attachment.Handle, out ulong backingImageHandle) &&
+                         _resourceLifetimeTracker.ImageViewBackingImages.TryGetValue(attachment.Handle, out ulong backingImageHandle) &&
                          backingImageHandle == resources.Image.Handle))
                     {
                         return true;
@@ -3315,9 +3201,9 @@ public unsafe partial class VulkanRenderer
 
     private bool UpdateVulkanResourceCompletionState_NoLock(VulkanResourceLifetimeRecord resource)
     {
-        bool completed = resource.Pins.LastGraphicsSequence <= _vulkanCompletedGraphicsSequence &&
-            resource.Pins.LastTransferSequence <= _vulkanCompletedTransferSequence &&
-            resource.Pins.LastOtherSequence <= _vulkanCompletedOtherSequence;
+        bool completed = resource.Pins.LastGraphicsSequence <= _resourceLifetimeTracker.CompletedGraphicsSequence &&
+            resource.Pins.LastTransferSequence <= _resourceLifetimeTracker.CompletedTransferSequence &&
+            resource.Pins.LastOtherSequence <= _resourceLifetimeTracker.CompletedOtherSequence;
         if (!completed)
             return false;
 
@@ -3340,9 +3226,9 @@ public unsafe partial class VulkanRenderer
         if (handle == 0)
             return false;
 
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            if (!_vulkanResourceLifetimes.TryGetValue(
+            if (!_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(
                     ResourceKey(type, handle),
                     out VulkanResourceLifetimeRecord? resource))
             {
@@ -3363,7 +3249,7 @@ public unsafe partial class VulkanRenderer
             return;
 
         VulkanResourceLifetimeKey key = ResourceKey(type, handle);
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
             VulkanResourceLifetimeRecord resource = GetOrRegisterVulkanResource_NoLock(key, operation);
             if ((resource.State & (EVulkanResourceLifetimeState.PendingRetirement | EVulkanResourceLifetimeState.Destroyed)) != 0)
@@ -3372,7 +3258,7 @@ public unsafe partial class VulkanRenderer
             if (!allowWhileInFlight && !UpdateVulkanResourceCompletionState_NoLock(resource))
             {
                 throw new InvalidOperationException(
-                    $"Cannot perform {operation} on in-flight Vulkan resource {key}; graphics={resource.Pins.LastGraphicsSequence}/{_vulkanCompletedGraphicsSequence} transfer={resource.Pins.LastTransferSequence}/{_vulkanCompletedTransferSequence} other={resource.Pins.LastOtherSequence}/{_vulkanCompletedOtherSequence}.");
+                    $"Cannot perform {operation} on in-flight Vulkan resource {key}; graphics={resource.Pins.LastGraphicsSequence}/{_resourceLifetimeTracker.CompletedGraphicsSequence} transfer={resource.Pins.LastTransferSequence}/{_resourceLifetimeTracker.CompletedTransferSequence} other={resource.Pins.LastOtherSequence}/{_resourceLifetimeTracker.CompletedOtherSequence}.");
             }
         }
     }
@@ -3382,9 +3268,9 @@ public unsafe partial class VulkanRenderer
         if (handle == 0)
             return;
 
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            if (!_vulkanResourceLifetimes.TryGetValue(
+            if (!_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(
                     ResourceKey(type, handle),
                     out VulkanResourceLifetimeRecord? resource))
             {
@@ -3405,7 +3291,7 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
             VulkanResourceLifetimeRecord poolResource = GetOrRegisterVulkanResource_NoLock(
                 ResourceKey(ObjectType.DescriptorPool, pool.Handle),
@@ -3416,7 +3302,7 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
-            if (!_vulkanDescriptorSetsByPool.TryGetValue(pool.Handle, out HashSet<ulong>? ownedSets))
+            if (!_resourceLifetimeTracker.DescriptorSetsByPool.TryGetValue(pool.Handle, out HashSet<ulong>? ownedSets))
                 ownedSets = [];
 
             foreach (ulong setHandle in ownedSets)
@@ -3427,7 +3313,7 @@ public unsafe partial class VulkanRenderer
                 if (!UpdateVulkanResourceCompletionState_NoLock(setResource))
                 {
                     reason =
-                        $"descriptor set 0x{setHandle:X} is in flight at graphics={setResource.Pins.LastGraphicsSequence}/{_vulkanCompletedGraphicsSequence} transfer={setResource.Pins.LastTransferSequence}/{_vulkanCompletedTransferSequence} other={setResource.Pins.LastOtherSequence}/{_vulkanCompletedOtherSequence}";
+                        $"descriptor set 0x{setHandle:X} is in flight at graphics={setResource.Pins.LastGraphicsSequence}/{_resourceLifetimeTracker.CompletedGraphicsSequence} transfer={setResource.Pins.LastTransferSequence}/{_resourceLifetimeTracker.CompletedTransferSequence} other={setResource.Pins.LastOtherSequence}/{_resourceLifetimeTracker.CompletedOtherSequence}";
                     return false;
                 }
             }
@@ -3454,7 +3340,7 @@ public unsafe partial class VulkanRenderer
         if (result != Result.Success)
             return result;
 
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
             RemoveDescriptorSetsOwnedByPool_NoLock(pool.Handle, forced: false);
         return result;
     }
@@ -3468,111 +3354,70 @@ public unsafe partial class VulkanRenderer
             return;
 
         VulkanResourceLifetimeKey key = ResourceKey(type, handle);
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            forced |= _vulkanForcedRetirementDrainDepth > 0;
-            if (!_vulkanResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource))
+            forced |= _resourceLifetimeTracker.ForcedRetirementDrainDepth > 0;
+            if (!_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource))
                 return;
 
             if (!forced &&
                 (!IsVulkanRetirementReady_NoLock(resource.RetirementTicket) ||
                  !resource.Pins.IsRetirementReady(
-                     _vulkanCompletedGraphicsSequence,
-                     _vulkanCompletedTransferSequence,
-                     _vulkanCompletedOtherSequence)))
+                     _resourceLifetimeTracker.CompletedGraphicsSequence,
+                     _resourceLifetimeTracker.CompletedTransferSequence,
+                     _resourceLifetimeTracker.CompletedOtherSequence)))
             {
                 throw new InvalidOperationException(
                     $"Attempted to destroy {key} generation {resource.Generation} before its GPU completion point was reached.");
             }
 
             if (forced)
-                Interlocked.Increment(ref _vulkanForcedResourceDestructionCount);
+                Interlocked.Increment(ref _resourceLifetimeTracker.ForcedResourceDestructionCount);
 
             resource.State = EVulkanResourceLifetimeState.Destroyed;
-            _vulkanResourceCommandBufferDependencies.Remove(key);
+            _resourceLifetimeTracker.ResourceCommandBufferDependencies.Remove(key);
             if (type == ObjectType.ImageView)
-                _vulkanImageViewBackingImages.Remove(handle);
+                _resourceLifetimeTracker.ImageViewBackingImages.Remove(handle);
             if (type == ObjectType.BufferView)
-                _vulkanBufferViewBackingBuffers.Remove(handle);
+                _resourceLifetimeTracker.BufferViewBackingBuffers.Remove(handle);
             if (type == ObjectType.DescriptorSet)
             {
                 RemoveDescriptorSetLifetime_NoLock(handle, forced);
-                _vulkanPublishedDescriptorSets.TryRemove(handle, out _);
+                _resourceLifetimeTracker.PublishedDescriptorSets.TryRemove(handle, out _);
             }
             if (type == ObjectType.CommandBuffer)
             {
-                if (_vulkanCommandBufferLifetimes.Remove(handle, out VulkanCommandBufferLifetimeRecord? lifetime))
+                if (_resourceLifetimeTracker.CommandBufferLifetimes.Remove(handle, out VulkanCommandBufferLifetimeRecord? lifetime))
                     ReleaseVulkanCommandBufferDependencies_NoLock(handle, lifetime);
             }
             if (type == ObjectType.Framebuffer)
-                _vulkanFramebufferAttachments.Remove(handle);
+                _resourceLifetimeTracker.FramebufferAttachments.Remove(handle);
             if (type == ObjectType.DescriptorPool)
                 RemoveDescriptorSetsOwnedByPool_NoLock(handle, forced);
         }
     }
 
     private bool IsVulkanRetirementReady_NoLock(in VulkanRetirementTicket ticket)
-    {
-        if (_vulkanForcedRetirementDrainDepth > 0)
-            return true;
-        if (_vulkanLifetimeDeviceLost ||
-            ticket.GraphicsSequence > _vulkanCompletedGraphicsSequence ||
-            ticket.TransferSequence > _vulkanCompletedTransferSequence ||
-            ticket.OtherSequence > _vulkanCompletedOtherSequence)
-        {
-            return false;
-        }
-
-        VulkanRetirementPinSet? pinSet = ticket.PinSet;
-        if (pinSet is null)
-            return !ticket.ExternalOwnershipPending;
-
-        bool externalOwnershipStillPending = false;
-        ReadOnlySpan<VulkanPinnedResourceGeneration> pinnedResources = pinSet.Resources;
-        for (int i = 0; i < pinnedResources.Length; i++)
-        {
-            VulkanPinnedResourceGeneration pinned = pinnedResources[i];
-            if (!_vulkanResourceLifetimes.TryGetValue(
-                    pinned.Key,
-                    out VulkanResourceLifetimeRecord? resource) ||
-                resource.Generation != pinned.Generation ||
-                (resource.State & EVulkanResourceLifetimeState.Destroyed) != 0)
-            {
-                continue;
-            }
-
-            externalOwnershipStillPending |=
-                (resource.State & EVulkanResourceLifetimeState.External) != 0;
-            if (!resource.Pins.IsRetirementReady(
-                    _vulkanCompletedGraphicsSequence,
-                    _vulkanCompletedTransferSequence,
-                    _vulkanCompletedOtherSequence))
-            {
-                return false;
-            }
-        }
-
-        return !externalOwnershipStillPending;
-    }
+        => _resourceLifetimeTracker.IsRetirementReadyNoLock(ticket);
 
     private void BeginForcedVulkanRetirementDrain()
     {
-        lock (_vulkanResourceLifetimeLock)
-            _vulkanForcedRetirementDrainDepth++;
+        lock (_resourceLifetimeTracker.SyncRoot)
+            _resourceLifetimeTracker.ForcedRetirementDrainDepth++;
     }
 
     private void EndForcedVulkanRetirementDrain()
     {
-        lock (_vulkanResourceLifetimeLock)
-            _vulkanForcedRetirementDrainDepth = Math.Max(0, _vulkanForcedRetirementDrainDepth - 1);
+        lock (_resourceLifetimeTracker.SyncRoot)
+            _resourceLifetimeTracker.ForcedRetirementDrainDepth = Math.Max(0, _resourceLifetimeTracker.ForcedRetirementDrainDepth - 1);
     }
 
     private void RemoveDescriptorSetsOwnedByPool_NoLock(ulong poolHandle, bool forced)
     {
-        if (!_vulkanDescriptorSetsByPool.TryGetValue(poolHandle, out HashSet<ulong>? ownedSets) ||
+        if (!_resourceLifetimeTracker.DescriptorSetsByPool.TryGetValue(poolHandle, out HashSet<ulong>? ownedSets) ||
             ownedSets.Count == 0)
         {
-            _vulkanDescriptorSetsByPool.Remove(poolHandle);
+            _resourceLifetimeTracker.DescriptorSetsByPool.Remove(poolHandle);
             return;
         }
 
@@ -3580,27 +3425,27 @@ public unsafe partial class VulkanRenderer
         for (int i = 0; i < removedSets.Length; i++)
             RemoveDescriptorSetLifetime_NoLock(removedSets[i], forced);
 
-        _vulkanDescriptorSetsByPool.Remove(poolHandle);
+        _resourceLifetimeTracker.DescriptorSetsByPool.Remove(poolHandle);
     }
 
     private void RemoveDescriptorSetLifetime_NoLock(ulong setHandle, bool forced)
     {
-        if (_vulkanDescriptorSetLifetimes.Remove(setHandle, out VulkanDescriptorSetLifetimeRecord? state))
+        if (_resourceLifetimeTracker.DescriptorSetLifetimes.Remove(setHandle, out VulkanDescriptorSetLifetimeRecord? state))
         {
             UpdateVulkanDescriptorSetPoolIndex_NoLock(setHandle, state.Pool.Handle, 0);
             foreach (VulkanResourceLifetimeKey reference in state.IndexedReferences)
             {
-                if (!_vulkanDescriptorSetsByReferencedResource.TryGetValue(reference, out HashSet<ulong>? sets))
+                if (!_resourceLifetimeTracker.DescriptorSetsByReferencedResource.TryGetValue(reference, out HashSet<ulong>? sets))
                     continue;
 
                 sets.Remove(setHandle);
                 if (sets.Count == 0)
-                    _vulkanDescriptorSetsByReferencedResource.Remove(reference);
+                    _resourceLifetimeTracker.DescriptorSetsByReferencedResource.Remove(reference);
             }
         }
 
-        _vulkanPublishedDescriptorSets.TryRemove(setHandle, out _);
-        if (!_vulkanResourceLifetimes.TryGetValue(
+        _resourceLifetimeTracker.PublishedDescriptorSets.TryRemove(setHandle, out _);
+        if (!_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(
                 ResourceKey(ObjectType.DescriptorSet, setHandle),
                 out VulkanResourceLifetimeRecord? setResource))
         {
@@ -3609,7 +3454,7 @@ public unsafe partial class VulkanRenderer
 
         setResource.State = EVulkanResourceLifetimeState.Destroyed;
         if (forced)
-            Interlocked.Increment(ref _vulkanForcedResourceDestructionCount);
+            Interlocked.Increment(ref _resourceLifetimeTracker.ForcedResourceDestructionCount);
     }
 
     private void ReleaseExternalVulkanResourceOwnership(ObjectType type, ulong handle)
@@ -3617,9 +3462,9 @@ public unsafe partial class VulkanRenderer
         if (handle == 0)
             return;
 
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            if (!_vulkanResourceLifetimes.TryGetValue(
+            if (!_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(
                     ResourceKey(type, handle),
                     out VulkanResourceLifetimeRecord? resource))
             {
@@ -3652,9 +3497,9 @@ public unsafe partial class VulkanRenderer
         string resourceOwner;
         ulong[] dependentCommandBuffers = [];
         int invalidatedDescriptorSetCount;
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            if (!_vulkanResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource))
+            if (!_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource))
                 return 0;
             if ((resource.State & EVulkanResourceLifetimeState.External) == 0)
             {
@@ -3666,7 +3511,7 @@ public unsafe partial class VulkanRenderer
             resourceOwner = resource.Owner;
             invalidatedDescriptorSetCount =
                 InvalidateVulkanDescriptorSetsReferencingResource_NoLock(key);
-            if (_vulkanResourceCommandBufferDependencies.TryGetValue(
+            if (_resourceLifetimeTracker.ResourceCommandBufferDependencies.TryGetValue(
                     key,
                     out HashSet<ulong>? dependents) &&
                 dependents.Count > 0)
@@ -3675,7 +3520,7 @@ public unsafe partial class VulkanRenderer
                 int dependentIndex = 0;
                 foreach (ulong commandBufferHandle in dependents)
                 {
-                    if (_vulkanCommandBufferLifetimes.TryGetValue(
+                    if (_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(
                             commandBufferHandle,
                             out VulkanCommandBufferLifetimeRecord? lifetime) &&
                         lifetime.Dependencies.TryGetValue(key, out ulong recordedGeneration) &&
@@ -3690,9 +3535,9 @@ public unsafe partial class VulkanRenderer
             }
 
             resource.State = EVulkanResourceLifetimeState.Destroyed;
-            _vulkanResourceLifetimes.Remove(key);
-            _vulkanPublishedResourceGenerations.TryRemove(key, out _);
-            _vulkanResourceCommandBufferDependencies.Remove(key);
+            _resourceLifetimeTracker.ResourceLifetimes.Remove(key);
+            _resourceLifetimeTracker.PublishedResourceGenerations.TryRemove(key, out _);
+            _resourceLifetimeTracker.ResourceCommandBufferDependencies.Remove(key);
         }
 
         if (dependentCommandBuffers.Length > 0)
@@ -3743,18 +3588,18 @@ public unsafe partial class VulkanRenderer
             return;
 
         VulkanResourceLifetimeKey key = ResourceKey(type, handle);
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            if (!_vulkanResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource) ||
+            if (!_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource) ||
                 resource.Generation != expectedGeneration)
             {
                 return;
             }
 
             if (forced)
-                Interlocked.Increment(ref _vulkanForcedResourceDestructionCount);
+                Interlocked.Increment(ref _resourceLifetimeTracker.ForcedResourceDestructionCount);
             resource.State = EVulkanResourceLifetimeState.Destroyed;
-            _vulkanResourceCommandBufferDependencies.Remove(key);
+            _resourceLifetimeTracker.ResourceCommandBufferDependencies.Remove(key);
         }
     }
 
@@ -3766,7 +3611,7 @@ public unsafe partial class VulkanRenderer
         if (handle == 0)
             return;
 
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
             VulkanResourceLifetimeRecord resource = GetOrRegisterVulkanResource_NoLock(
                 ResourceKey(type, handle),
@@ -3787,7 +3632,7 @@ public unsafe partial class VulkanRenderer
 
     internal VulkanResourceLifetimeSnapshot GetVulkanResourceLifetimeSnapshot()
     {
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
             int live = 0;
             int recorded = 0;
@@ -3800,7 +3645,7 @@ public unsafe partial class VulkanRenderer
             ulong oldestRetirementSerial = 0;
             VulkanResourceLifetimeRecord? oldestPendingResource = null;
 
-            foreach (VulkanResourceLifetimeRecord resource in _vulkanResourceLifetimes.Values)
+            foreach (VulkanResourceLifetimeRecord resource in _resourceLifetimeTracker.ResourceLifetimes.Values)
             {
                 UpdateVulkanResourceCompletionState_NoLock(resource);
                 EVulkanResourceLifetimeState state = resource.State;
@@ -3836,7 +3681,7 @@ public unsafe partial class VulkanRenderer
             long oldestAgeMilliseconds = oldestTimestamp == 0
                 ? 0
                 : (long)Math.Max(0, Stopwatch.GetElapsedTime(oldestTimestamp).TotalMilliseconds);
-            ulong latestRetirementSerial = unchecked((ulong)Math.Max(0, Volatile.Read(ref _vulkanRetirementSerial)));
+            ulong latestRetirementSerial = unchecked((ulong)Math.Max(0, Volatile.Read(ref _resourceLifetimeTracker.RetirementSerial)));
             ulong oldestGenerationAge = oldestRetirementSerial == 0
                 ? 0
                 : latestRetirementSerial - oldestRetirementSerial + 1;
@@ -3853,11 +3698,11 @@ public unsafe partial class VulkanRenderer
                     oldestAgeMilliseconds,
                     oldestPendingResource.Generation,
                     ticket.GraphicsSequence,
-                    _vulkanCompletedGraphicsSequence,
+                    _resourceLifetimeTracker.CompletedGraphicsSequence,
                     ticket.TransferSequence,
-                    _vulkanCompletedTransferSequence,
+                    _resourceLifetimeTracker.CompletedTransferSequence,
                     ticket.OtherSequence,
-                    _vulkanCompletedOtherSequence,
+                    _resourceLifetimeTracker.CompletedOtherSequence,
                     ticket.ExternalOwnershipPending);
             }
             int frameDataRecordingLeases = 0;
@@ -3866,12 +3711,12 @@ public unsafe partial class VulkanRenderer
             int frameDataLeaseRetainedGenerationCount = 0;
             Span<ulong> leaseRetainedGenerations = stackalloc ulong[8];
             ulong activeFrameDataGeneration = MeshFrameDataReservationGeneration;
-            foreach (VulkanCommandBufferLifetimeRecord commandLifetime in _vulkanCommandBufferLifetimes.Values)
+            foreach (VulkanCommandBufferLifetimeRecord commandLifetime in _resourceLifetimeTracker.CommandBufferLifetimes.Values)
             {
                 commandLifetime.FrameDataLease.ObserveQueueCompletion(
-                    _vulkanCompletedGraphicsSequence,
-                    _vulkanCompletedTransferSequence,
-                    _vulkanCompletedOtherSequence);
+                    _resourceLifetimeTracker.CompletedGraphicsSequence,
+                    _resourceLifetimeTracker.CompletedTransferSequence,
+                    _resourceLifetimeTracker.CompletedOtherSequence);
                 if (commandLifetime.FrameDataLease.HasRecordingOwner)
                     frameDataRecordingLeases++;
                 if (commandLifetime.FrameDataLease.HasCachedVariantOwner)
@@ -3897,7 +3742,7 @@ public unsafe partial class VulkanRenderer
             }
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResourceLifetimeGauges(
                 live,
-                _vulkanDescriptorSetLifetimes.Count,
+                _resourceLifetimeTracker.DescriptorSetLifetimes.Count,
                 pending,
                 oldestAgeMilliseconds);
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanMeshFrameDataGauges(
@@ -3919,19 +3764,19 @@ public unsafe partial class VulkanRenderer
                 external,
                 pending,
                 destroyed,
-                _vulkanCommandBufferLifetimes.Count,
-                _vulkanDescriptorSetLifetimes.Count,
-                _vulkanLifetimeSubmissions.Count,
-                _vulkanLastGraphicsSequence,
-                _vulkanCompletedGraphicsSequence,
-                _vulkanLastTransferSequence,
-                _vulkanCompletedTransferSequence,
-                _vulkanLastOtherSequence,
-                _vulkanCompletedOtherSequence,
+                _resourceLifetimeTracker.CommandBufferLifetimes.Count,
+                _resourceLifetimeTracker.DescriptorSetLifetimes.Count,
+                _resourceLifetimeTracker.LifetimeSubmissions.Count,
+                _resourceLifetimeTracker.LastGraphicsSequence,
+                _resourceLifetimeTracker.CompletedGraphicsSequence,
+                _resourceLifetimeTracker.LastTransferSequence,
+                _resourceLifetimeTracker.CompletedTransferSequence,
+                _resourceLifetimeTracker.LastOtherSequence,
+                _resourceLifetimeTracker.CompletedOtherSequence,
                 oldestAgeMilliseconds,
                 oldestGenerationAge,
-                Volatile.Read(ref _vulkanForcedResourceDestructionCount),
-                _vulkanLifetimeDeviceLost);
+                Volatile.Read(ref _resourceLifetimeTracker.ForcedResourceDestructionCount),
+                _resourceLifetimeTracker.DeviceLost);
         }
     }
 

@@ -45,7 +45,7 @@ internal static class VulkanShaderArtifactCache
         string rewrittenSource,
         AutoUniformBlockInfo? autoUniformBlock,
         ShaderStageFlags stageFlags,
-        out VulkanRenderer.VulkanShaderArtifact artifact)
+        out VulkanShaderArtifact artifact)
         => TryRead(
             artifactIdentity,
             shader,
@@ -66,7 +66,7 @@ internal static class VulkanShaderArtifactCache
         AutoUniformBlockInfo? autoUniformBlock,
         ShaderStageFlags stageFlags,
         string transformFeedbackPlanIdentity,
-        out VulkanRenderer.VulkanShaderArtifact artifact)
+        out VulkanShaderArtifact artifact)
     {
         artifact = default!;
         if (string.IsNullOrWhiteSpace(artifactIdentity))
@@ -119,7 +119,7 @@ internal static class VulkanShaderArtifactCache
                 return false;
             }
 
-            artifact = new VulkanRenderer.VulkanShaderArtifact(
+            artifact = new VulkanShaderArtifact(
                 artifactIdentity,
                 shader.Type,
                 metadata.EntryPoint,
@@ -146,7 +146,7 @@ internal static class VulkanShaderArtifactCache
         }
     }
 
-    internal static void QueueWrite(VulkanRenderer.VulkanShaderArtifact artifact)
+    internal static void QueueWrite(VulkanShaderArtifact artifact)
     {
         if (artifact.LoadedFromDiskCache || string.IsNullOrWhiteSpace(artifact.Identity) || artifact.SpirV.Length == 0)
             return;
@@ -156,7 +156,7 @@ internal static class VulkanShaderArtifactCache
 
         ThreadPool.QueueUserWorkItem(static state =>
         {
-            var shaderArtifact = (VulkanRenderer.VulkanShaderArtifact)state!;
+            var shaderArtifact = (VulkanShaderArtifact)state!;
             try
             {
                 Write(shaderArtifact);
@@ -172,7 +172,7 @@ internal static class VulkanShaderArtifactCache
         }, artifact);
     }
 
-    internal static void WriteForTesting(VulkanRenderer.VulkanShaderArtifact artifact)
+    internal static void WriteForTesting(VulkanShaderArtifact artifact)
         => Write(artifact);
 
     internal static void Delete(string artifactIdentity)
@@ -184,7 +184,7 @@ internal static class VulkanShaderArtifactCache
         DeleteCacheFiles(binaryPath);
     }
 
-    private static void Write(VulkanRenderer.VulkanShaderArtifact artifact)
+    private static void Write(VulkanShaderArtifact artifact)
     {
         string directory = GetShaderCacheDirectoryPath();
         Directory.CreateDirectory(directory);
@@ -351,41 +351,3 @@ internal static class VulkanShaderArtifactCache
             RewriteIdentity: "VulkanShaderAutoUniforms+VulkanShaderTransformFeedback+InjectVulkanBackendDefine+ReflectionSourcePreprocessor:v2");
 }
 
-internal sealed record VulkanShaderArtifactCacheMetadata
-{
-    public int SchemaVersion { get; init; }
-    public string CacheKey { get; init; } = string.Empty;
-    public VulkanShaderArtifactRuntimeFingerprint RuntimeFingerprint { get; init; } = VulkanShaderArtifactRuntimeFingerprint.Unknown;
-    public EShaderType ShaderType { get; init; }
-    public string EntryPoint { get; init; } = "main";
-    public string? SourcePath { get; init; }
-    public int ShaderConfigVersion { get; init; }
-    public bool UsesVulkanClipDepthRemap { get; init; }
-    public string RewrittenSourceHash { get; init; } = string.Empty;
-    public int SpirVLength { get; init; }
-    public string SpirVPath { get; init; } = string.Empty;
-    public DescriptorBindingInfo[]? DescriptorBindings { get; init; }
-    public Dictionary<string, uint>? VertexInputLocations { get; init; }
-    public string? AutoUniformBlockName { get; init; }
-    public uint? AutoUniformBlockSet { get; init; }
-    public uint? AutoUniformBlockBinding { get; init; }
-    public uint? AutoUniformBlockSize { get; init; }
-    public DateTime CreatedUtc { get; init; }
-}
-
-internal readonly record struct VulkanShaderArtifactRuntimeFingerprint(
-    string ShadercAssemblyVersion,
-    string TargetEnvironment,
-    string SourceLanguage,
-    string OptimizationLevel,
-    string OptimizerIdentity,
-    string RewriteIdentity)
-{
-    public static VulkanShaderArtifactRuntimeFingerprint Unknown { get; } = new(
-        string.Empty,
-        string.Empty,
-        string.Empty,
-        string.Empty,
-        string.Empty,
-        string.Empty);
-}

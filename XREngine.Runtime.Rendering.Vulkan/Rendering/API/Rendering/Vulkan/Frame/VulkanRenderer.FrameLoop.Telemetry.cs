@@ -7,10 +7,11 @@ namespace XREngine.Rendering.Vulkan
     public unsafe partial class VulkanRenderer
     {
         private void RecordDesktopFrameGap(
-            ref DesktopFrameAttempt attempt)
+            ref VulkanFrameAttempt attempt)
         {
             long previousTimestamp =
-                Volatile.Read(ref _lastFrameCompletedTimestamp);
+                Volatile.Read(
+                    ref _lastDesktopFrameTickObservedTimestamp);
             if (previousTimestamp == 0)
                 return;
 
@@ -26,7 +27,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void PublishDesktopFrameTelemetry(
-            ref DesktopFrameAttempt attempt)
+            ref VulkanFrameAttempt attempt)
         {
             if (!VulkanDesktopFramePolicy.IsAcquireFinalizationLegal(
                     attempt.AcquireOwnership))

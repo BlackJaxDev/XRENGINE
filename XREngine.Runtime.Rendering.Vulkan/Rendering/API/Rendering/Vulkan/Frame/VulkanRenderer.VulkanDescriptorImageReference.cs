@@ -4,7 +4,7 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private readonly struct VulkanDescriptorImageReference(
+    internal readonly struct VulkanDescriptorImageReference(
         ImageView view,
         ImageLayout layout,
         DescriptorType type) : IEquatable<VulkanDescriptorImageReference>

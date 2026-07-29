@@ -9,92 +9,7 @@ namespace XREngine.Rendering.OpenGL
     {
         public partial class GLRenderProgram
         {
-            public enum ELinkedProgramHandleSource
-            {
-                None,
-                OwnedSource,
-                OwnedBinary,
-                SharedLinkedProgram,
-            }
-
-            public readonly record struct LinkDiagnosticsSnapshot(
-                string ProgramName,
-                ulong Hash,
-                ulong PreparedHash,
-                ulong EffectiveSourceHash,
-                uint ProgramId,
-                uint ReplacementProgramId,
-                uint SharedLinkedProgramId,
-                int SharedLinkedProgramReferenceCount,
-                bool OwnsCurrentProgramHandle,
-                ELinkedProgramHandleSource HandleSource,
-                string? ProgramDescriptorKey,
-                string? BinaryCacheKey,
-                bool IsGenerated,
-                bool IsLinked,
-                bool LinkReady,
-                bool IsAsyncBuildPending,
-                bool HasPendingAsyncWork,
-                bool HasQueuedOrRunningAsyncWork,
-                bool PendingAsyncProgramRegistered,
-                bool ReplacementProgramPending,
-                string AsyncLinkPhase,
-                double AsyncPendingSeconds,
-                bool LinkDataPrepared,
-                bool LinkPreparationPending,
-                bool PreparedBinaryCacheHit,
-                string? PreparedCacheKey,
-                bool HasCachedProgram,
-                bool HasSharedLinkedProgram,
-                bool IsKnownAsyncLinkHazard,
-                int ShaderCount,
-                string ShaderStages,
-                bool Separable,
-                EShaderProgramBackendStage BackendStage,
-                string? BackendName,
-                string? BackendDetail,
-                string? BackendFailureReason,
-                double BackendCompileMilliseconds,
-                double BackendLinkMilliseconds,
-                string? BackendFingerprint,
-                string? ActiveBuildBackend,
-                string? ActiveBuildFingerprint,
-                double ActiveBuildElapsedMilliseconds,
-                string? LastBuildBackend,
-                string? LastBuildFingerprint,
-                double LastBuildQueueLatencyMilliseconds,
-                double LastBuildCompileMilliseconds,
-                double LastBuildLinkMilliseconds,
-                double LastBuildBinaryLoadMilliseconds,
-                double LastBuildReflectionMilliseconds,
-                string? LastBuildFailureReason,
-                EOpenGLShaderLinkStrategy ConfiguredStrategy,
-                bool AsyncProgramCompilation,
-                bool AsyncProgramBinaryUpload,
-                bool AllowBinaryProgramCaching,
-                bool DriverParallelAvailable,
-                int OpenGLShaderCompilerThreadCount,
-                bool SharedContextQueueAvailable,
-                bool SharedContextQueueCanEnqueue,
-                bool SharedContextQueueUnhealthy,
-                int SharedContextInFlight,
-                int SharedContextMaxInFlight,
-                int SharedContextWorkerCount,
-                double SharedContextOldestPendingSeconds,
-                bool BinaryUploadQueueAvailable,
-                bool BinaryUploadQueueCanEnqueue,
-                bool BinaryUploadQueueUnhealthy,
-                int BinaryUploadInFlight,
-                int BinaryUploadMaxInFlight,
-                int BinaryUploadInFlightCacheKeys,
-                double BinaryUploadOldestPendingSeconds,
-                bool AsyncBinaryUploadQueueWaitPending,
-                bool AsyncBinaryUploadPending,
-                bool AsyncCompileLinkPending,
-                bool AsyncCompileLinkQueueWaitPending,
-                bool AsyncCompileDuplicateHashWaitPending);
-
-            public LinkDiagnosticsSnapshot GetLinkDiagnosticsSnapshot()
+            public ShaderProgramLinkDiagnosticsSnapshot GetLinkDiagnosticsSnapshot()
             {
                 TryGetBuildBindingId(out uint programId);
 
@@ -111,7 +26,7 @@ namespace XREngine.Rendering.OpenGL
                     ? 0.0
                     : StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - _activeBuildQueueTimestamp);
 
-                return new LinkDiagnosticsSnapshot(
+                return new ShaderProgramLinkDiagnosticsSnapshot(
                     ProgramName: GetProgramDebugName(),
                     Hash: Hash,
                     PreparedHash: _preparedHash,
@@ -166,7 +81,7 @@ namespace XREngine.Rendering.OpenGL
                     LastBuildBinaryLoadMilliseconds: lastBuild.BinaryLoadMilliseconds,
                     LastBuildReflectionMilliseconds: lastBuild.ReflectionMilliseconds,
                     LastBuildFailureReason: lastBuild.FailureReason,
-                    ConfiguredStrategy: settings.OpenGLShaderLinkStrategy,
+                    ConfiguredStrategy: settings.OpenGLShaderLinkStrategy.ToString(),
                     AsyncProgramCompilation: settings.AsyncProgramCompilation,
                     AsyncProgramBinaryUpload: settings.AsyncProgramBinaryUpload,
                     AllowBinaryProgramCaching: settings.AllowBinaryProgramCaching,
@@ -193,13 +108,13 @@ namespace XREngine.Rendering.OpenGL
                     AsyncCompileDuplicateHashWaitPending: _asyncCompileDuplicateHashWaitPending);
             }
 
-            private ELinkedProgramHandleSource ResolveLinkedProgramHandleSource(SharedLinkedProgram? sharedProgram)
+            private ShaderProgramLinkHandleSource ResolveLinkedProgramHandleSource(SharedLinkedProgram? sharedProgram)
             {
                 if (sharedProgram is not null)
-                    return ELinkedProgramHandleSource.SharedLinkedProgram;
+                    return ShaderProgramLinkHandleSource.SharedLinkedProgram;
                 if (_cachedProgram is not null || _preparedIsCached)
-                    return ELinkedProgramHandleSource.OwnedBinary;
-                return IsLinked ? ELinkedProgramHandleSource.OwnedSource : ELinkedProgramHandleSource.None;
+                    return ShaderProgramLinkHandleSource.OwnedBinary;
+                return IsLinked ? ShaderProgramLinkHandleSource.OwnedSource : ShaderProgramLinkHandleSource.None;
             }
         }
     }

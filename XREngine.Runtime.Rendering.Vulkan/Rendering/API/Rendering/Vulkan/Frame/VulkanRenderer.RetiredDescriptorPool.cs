@@ -10,7 +10,7 @@ namespace XREngine.Rendering.Vulkan
         /// Per-frame-slot retirement queue for descriptor pools whose descriptor
         /// sets may still be referenced by previously recorded command buffers.
         /// </summary>
-        private readonly record struct RetiredDescriptorPool(
+        internal readonly record struct RetiredDescriptorPool(
             DescriptorPool DescriptorPool,
             VulkanRetirementTicket Ticket);
     }

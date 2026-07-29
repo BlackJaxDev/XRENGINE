@@ -45,7 +45,13 @@ This document describes how the Vulkan renderer is initialized, how it manages t
 
 ## Overview
 
-`VulkanRenderer` is a partial class extending `AbstractRenderer<Vk>` (where `Vk` is Silk.NET's Vulkan binding). It is split across **40+ files** organized by responsibility. Unlike the OpenGL renderer where swap is automatic, the Vulkan renderer **explicitly manages** the entire frame lifecycle: swapchain image acquisition, command buffer recording, queue submission, and presentation.
+`VulkanRenderer` is the `AbstractRenderer<Vk>` facade and Vulkan composition
+root. Mutable subsystem state is owned by focused device, desktop-frame,
+command, render-graph, resource-lifetime, descriptor, pipeline, OpenXR, and
+ImGui components. Responsibility-specific renderer partials remain adapter
+surfaces while callers migrate; they must not introduce a new state owner.
+Unlike the OpenGL renderer where swap is automatic, Vulkan explicitly manages
+the complete acquire, record, submit, and present lifecycle.
 
 ```csharp
 // XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs
@@ -89,8 +95,21 @@ Project overrides live under `GameStartupSettings.Rendering.Vulkan` and
 The Vulkan renderer lives under
 `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/` and uses the
 same responsibility-based backend taxonomy described in
-[Rendering Code Map](code-map.md). Namespaces intentionally remain
-`XREngine.Rendering.Vulkan`; folder names are for ownership and navigation.
+[Rendering Code Map](code-map.md). The leaf assembly remains the hard module
+boundary. Most implementation contracts remain internal in
+`XREngine.Rendering.Vulkan`; the folder and explicit owner type identify the
+authority, and new code must depend on that owner rather than ambient facade
+state.
+
+| Authority | Mutable responsibility |
+| --- | --- |
+| `VulkanDeviceContext` | Physical/logical device identity, queues, enabled capabilities, extension commands, and the per-device backend-object context. |
+| `VulkanDesktopFrameCoordinator` | Exactly-once desktop attempt lifecycle and phase ordering. |
+| `VulkanCommandScheduler` / `VulkanCommandRecorder` | Schedule/cache decisions and native command emission from explicit recording contexts. |
+| `VulkanRenderGraphRuntime` | Versioned immutable render-graph and barrier plans. |
+| `VulkanResourceLifetimeTracker` / `VulkanResourceRetirementQueue` | Resource-use publication and deferred destruction. |
+| `VulkanDescriptorManager` / `VulkanPipelineManager` | Device-lifetime descriptor and graphics/compute pipeline caches. |
+| `VulkanOpenXrBackend` / `VulkanImGuiBackend` | Vulkan-specific XR presentation and ImGui GPU integration over shared authorities. |
 
 | Folder | Purpose |
 | --- | --- |
@@ -324,11 +343,11 @@ reinterpret zeroed arrays as completed submissions.
 
 ### WindowRenderCallback() — Frame-Level Flow
 
-`Frame/VulkanRenderer.FrameLoop.cs` is an 89-line coordinator. It captures an
-immutable frame number/desktop slot/start timestamp, publishes one coherent
-desktop activity state, carries all attempt-local state in a stack-only
-`DesktopFrameAttempt`, and delegates lifecycle responsibilities to focused
-partials documented in `Frame/README.md`.
+`WindowRenderCallback` delegates to `VulkanDesktopFrameCoordinator`. The
+coordinator captures immutable frame identity, publishes one coherent desktop
+activity state, carries attempt-local state in stack-only
+`VulkanFrameAttempt`, and invokes the focused phase operations documented in
+`Frame/README.md`.
 
 ```
 WindowRenderCallback(double delta)
@@ -353,6 +372,13 @@ recovery policy; device loss blocks additional submit/present/recreate work.
 Submit success publishes ownership and timeline bookkeeping before fallible PCL
 markers, staging trim, or telemetry. Collect-visible release precedes the
 potentially blocking present.
+
+Consecutive non-interactive `NotReady`/`Timeout` acquire results use
+`VulkanDesktopAcquireAvailabilityTracker` and request bounded swapchain recovery
+on the third result; successful acquisition resets the sequence. Internal
+diagnostics can also arm one renderer-local fault occurrence at each major
+phase boundary. The probe is packed atomic state rather than a delegate, so it
+does not allocate or retain external code on the normal render path.
 
 ### Command Buffer Recording
 

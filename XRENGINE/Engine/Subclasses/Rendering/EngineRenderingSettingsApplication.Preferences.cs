@@ -2,10 +2,8 @@ using System;
 using System.Collections.Generic;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
-using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Vulkan;
-using XREngine.Rendering.XeSS;
 
 namespace XREngine
 {
@@ -392,7 +390,7 @@ namespace XREngine
             {
                 static void Apply()
                 {
-                    bool supported = NvidiaDlssManager.IsSupported;
+                    bool supported = VendorUpscaleRuntime.IsDlssSupported;
                     bool enableDlss = Engine.EffectiveSettings.EnableNvidiaDlss;
                     bool enableFrameGeneration = Engine.EffectiveSettings.EnableNvidiaDlssFrameGeneration;
                     ENvidiaDlssFrameGenerationMode frameGenerationMode = Engine.EffectiveSettings.NvidiaDlssFrameGenerationMode;
@@ -401,22 +399,22 @@ namespace XREngine
                     string? frameGenerationUnavailableReason = null;
                     if (frameGenerationRequested)
                     {
-                        frameGenerationAvailable = NvidiaDlssManager.FrameGenerationAvailable;
+                        frameGenerationAvailable = VendorUpscaleRuntime.IsDlssFrameGenerationSupported;
                         if (!frameGenerationAvailable)
-                            frameGenerationUnavailableReason = NvidiaDlssManager.FrameGenerationUnavailableReason;
+                            frameGenerationUnavailableReason = VendorUpscaleRuntime.DlssFrameGenerationUnavailableReason;
                     }
 
                     foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
                     {
                         if (!supported || !enableDlss)
-                            NvidiaDlssManager.ResetViewport(viewport);
+                            VendorUpscaleRuntime.ResetDlssViewport(viewport);
                         else
-                            NvidiaDlssManager.ApplyToViewport(viewport, RuntimeEngine.Rendering.Settings);
+                            VendorUpscaleRuntime.ApplyDlssToViewport(viewport, RuntimeEngine.Rendering.Settings);
                     }
 
                     XREngine.Debug.Rendering(
                         "[NvidiaDLSS] Preference changed. RuntimeDlls={0} Supported={1} EnableDLSS={2} Quality={3} CustomScale={4:F2} Sharpness={5:F2} FrameGenerationEnabled={6} FrameGenerationMode={7} FrameGenerationRequested={8} FrameGenerationAvailable={9} FrameGenerationUnavailableReason={10} LastError={11}",
-                        NvidiaDlssManager.RequiredRuntimeDllsAvailable,
+                        VendorUpscaleRuntime.AreDlssRuntimeLibrariesAvailable,
                         supported,
                         enableDlss,
                         Engine.EffectiveSettings.DlssQuality,
@@ -427,7 +425,7 @@ namespace XREngine
                         frameGenerationRequested,
                         frameGenerationAvailable,
                         frameGenerationUnavailableReason ?? "<none>",
-                        NvidiaDlssManager.LastError ?? "<none>");
+                        VendorUpscaleRuntime.DlssLastError ?? "<none>");
 
                     if (enableFrameGeneration && frameGenerationMode == ENvidiaDlssFrameGenerationMode.Off)
                     {
@@ -442,7 +440,7 @@ namespace XREngine
                             "NvidiaDLSS.FrameGenerationUnavailable",
                             TimeSpan.FromSeconds(5),
                             "[NvidiaDLSS] Frame generation is requested, but unavailable: {0}",
-                            frameGenerationUnavailableReason ?? NvidiaDlssManager.LastError ?? "unknown reason");
+                            frameGenerationUnavailableReason ?? VendorUpscaleRuntime.DlssLastError ?? "unknown reason");
                     }
 
                     RuntimeEngine.Rendering.NotifyVulkanUpscaleBridgeVendorSelectionChanged("NVIDIA DLSS preference changed");
@@ -457,10 +455,10 @@ namespace XREngine
                 {
                     foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
                     {
-                        if (!IntelXessManager.IsSupported || !Engine.EffectiveSettings.EnableIntelXess)
-                            IntelXessManager.ResetViewport(viewport);
+                        if (!VendorUpscaleRuntime.IsXessSupported || !Engine.EffectiveSettings.EnableIntelXess)
+                            VendorUpscaleRuntime.ResetXessViewport(viewport);
                         else
-                            IntelXessManager.ApplyToViewport(viewport, RuntimeEngine.Rendering.Settings);
+                            VendorUpscaleRuntime.ApplyXessToViewport(viewport, RuntimeEngine.Rendering.Settings);
                     }
 
                     RuntimeEngine.Rendering.NotifyVulkanUpscaleBridgeVendorSelectionChanged("Intel XeSS preference changed");

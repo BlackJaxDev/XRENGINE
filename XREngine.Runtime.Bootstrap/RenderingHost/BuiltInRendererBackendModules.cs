@@ -1,5 +1,9 @@
+#if XRENGINE_STATIC_OPENGL
 using XREngine.Rendering.OpenGL;
+#endif
+#if XRENGINE_STATIC_VULKAN
 using XREngine.Rendering.Vulkan;
+#endif
 
 namespace XREngine.Rendering;
 
@@ -15,35 +19,22 @@ public static class BuiltInRendererBackendModules
     {
         ArgumentNullException.ThrowIfNull(catalog);
 
-        IDisposable? openGlLease = null;
+        List<IDisposable> leases = new(2);
         try
         {
-            openGlLease = OpenGlRendererBackendModule.Register(catalog);
-            IDisposable vulkanLease = VulkanRendererBackendModule.Register(catalog);
-            return new RegistrationLease(openGlLease, vulkanLease);
+#if XRENGINE_STATIC_OPENGL
+            leases.Add(OpenGlRendererBackendModule.Register(catalog));
+#endif
+#if XRENGINE_STATIC_VULKAN
+            leases.Add(VulkanRendererBackendModule.Register(catalog));
+#endif
+            return new CompositeModuleRegistrationLease([.. leases]);
         }
         catch
         {
-            openGlLease?.Dispose();
+            for (int i = leases.Count - 1; i >= 0; i--)
+                leases[i].Dispose();
             throw;
-        }
-    }
-
-    public static RendererBackendRegistration CreateOpenGlRegistration(Version? version = null)
-        => OpenGlRendererBackendModule.CreateRegistration(version);
-
-    public static RendererBackendRegistration CreateVulkanRegistration(Version? version = null)
-        => VulkanRendererBackendModule.CreateRegistration(version);
-
-    private sealed class RegistrationLease(IDisposable first, IDisposable second) : IDisposable
-    {
-        private IDisposable? _first = first;
-        private IDisposable? _second = second;
-
-        public void Dispose()
-        {
-            Interlocked.Exchange(ref _second, null)?.Dispose();
-            Interlocked.Exchange(ref _first, null)?.Dispose();
         }
     }
 }

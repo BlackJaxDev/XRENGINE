@@ -15,7 +15,7 @@ namespace XREngine.Rendering.Vulkan
             => Volatile.Read(ref _hasPresentedCompleteSceneFrame) != 0;
 
         private EDesktopFrameFlow PresentSubmittedDesktopFrame(
-            ref DesktopFrameAttempt attempt)
+            ref VulkanFrameAttempt attempt)
         {
             VulkanDesktopPresentDispatchOutcome dispatch =
                 QueueDesktopPresent(
@@ -83,6 +83,8 @@ namespace XREngine.Rendering.Vulkan
             if (presentOutcome.AdvanceFrameSlot)
                 CompleteDesktopFrameSlot(ref attempt);
             attempt.AdvanceTo(EDesktopFramePhase.Presented);
+            ThrowIfDesktopFrameFaultInjected(
+                EVulkanDesktopFrameFaultPoint.PostPresentAuxiliary);
 
             Exception? deferredFailure = attempt.DeferredFailure;
             if (deferredFailure is not null)
@@ -109,10 +111,12 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private VulkanDesktopPresentDispatchOutcome QueueDesktopPresent(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             string profileScope,
             string? disableFrameGenerationReason)
         {
+            ThrowIfDesktopFrameFaultInjected(
+                EVulkanDesktopFrameFaultPoint.Presentation);
             Exception? auxiliaryFailure = null;
             bool dispatched = false;
             Semaphore queuedPresentSemaphore = attempt.PresentSemaphore;
@@ -195,7 +199,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void RecordDesktopPresentBookkeeping(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             Result result,
             bool presentAccepted,
             bool hasValidFrameContent)
@@ -253,7 +257,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private Exception? ApplyDesktopPresentPolicy(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             Result result,
             string operation)
         {
@@ -291,7 +295,7 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private void CompleteDesktopFrameSlot(ref DesktopFrameAttempt attempt)
+        private void CompleteDesktopFrameSlot(ref VulkanFrameAttempt attempt)
         {
             if (attempt.SlotCompleted)
                 return;

@@ -521,6 +521,15 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string programPath = Path.Combine(launcherRoot, "Program.cs");
         string launcherAssemblyName = $"{projectName}.Launcher";
         string launcherProjectPath = Path.Combine(launcherRoot, $"{launcherAssemblyName}.csproj");
+        string rendererBackendSelection = settings.RendererBackendPackage.ToString();
+        string? bootstrapProjectPath = TryResolveBootstrapProjectPath();
+        if (settings.RendererBackendPackage != ERendererBackendPackageMode.All &&
+            bootstrapProjectPath is null)
+        {
+            throw new InvalidOperationException(
+                $"Packaging only the {rendererBackendSelection} renderer requires the " +
+                "XREngine.Runtime.Bootstrap source project so its NativeAOT registration can be compiled for that backend.");
+        }
         string defineConstants = XRRuntimeEnvironment.ComposeDefineConstants(
             settings.LauncherDefineConstants,
             includePublishedBuild: settings.PublishLauncherAsNativeAot,
@@ -541,6 +550,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             platform,
             GetEngineAssemblyPaths(),
             GetEngineRuntimePackageReferences(),
+            rendererBackendSelection,
+            bootstrapProjectPath,
             includeGameProject: gameProjectPath);
 
         if (settings.PublishLauncherAsNativeAot)
@@ -553,7 +564,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                 ["PublishDir"] = EnsureTrailingSlash(publishDirectory),
                 ["PublishAot"] = "true",
                 ["SelfContained"] = "true",
-                ["RuntimeIdentifier"] = "win-x64"
+                ["RuntimeIdentifier"] = "win-x64",
+                ["XREngineRendererBackends"] = rendererBackendSelection,
             };
 
             if (settings.ValidateLauncherAotCompatibility)
@@ -718,7 +730,9 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         // Get the directory where the editor is running from - this contains all engine assemblies
         string editorDir = AppContext.BaseDirectory;
         
-        // Core engine assemblies that game code typically needs
+        // Core engine assemblies that game code typically needs. Concrete renderer
+        // modules are runtime dependencies of Runtime.Bootstrap and intentionally are
+        // not compile references exposed to authored game code.
         string[] assemblyNames =
         [
             "OpenVR.NET.dll",
@@ -733,8 +747,6 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             "XREngine.Runtime.Bootstrap.dll",
             "XREngine.Runtime.AudioIntegration.dll",
             "XREngine.Runtime.Rendering.dll",
-            "XREngine.Runtime.Rendering.OpenGL.dll",
-            "XREngine.Runtime.Rendering.Vulkan.dll",
             "XREngine.Runtime.InputIntegration.dll",
             "XREngine.Runtime.AnimationIntegration.dll",
             "XREngine.Runtime.ModelingBridge.dll"
@@ -883,6 +895,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string platform,
         IReadOnlyCollection<string> engineAssemblyPaths,
         IReadOnlyCollection<(string name, string version)> packageReferences,
+        string rendererBackendSelection,
+        string? bootstrapProjectPath,
         string? includeGameProject)
     {
         string projectDirectory = Path.GetDirectoryName(projectFilePath) ?? AppContext.BaseDirectory;
@@ -891,11 +905,17 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string relativeProgramPath = Path.GetRelativePath(projectDirectory, programFilePath);
 
         var referenceElements = new List<XElement>();
-        foreach (string assemblyPath in engineAssemblyPaths)
+        // A source project reference is required for single-backend and NativeAOT composition:
+        // it lets the bootstrap compile its explicit registration calls with the selected leaf.
+        // The binary-reference fallback remains available for legacy "All" launcher builds.
+        if (bootstrapProjectPath is null)
         {
-            referenceElements.Add(new XElement("Reference",
-                new XAttribute("Include", Path.GetFileNameWithoutExtension(assemblyPath)),
-                new XElement("HintPath", assemblyPath)));
+            foreach (string assemblyPath in engineAssemblyPaths)
+            {
+                referenceElements.Add(new XElement("Reference",
+                    new XAttribute("Include", Path.GetFileNameWithoutExtension(assemblyPath)),
+                    new XElement("HintPath", assemblyPath)));
+            }
         }
 
         var project = new XDocument(
@@ -913,6 +933,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                     new XElement("SelfContained", "false"),
                     new XElement("Platforms", platform),
                     new XElement("RuntimeIdentifier", "win-x64"),
+                    new XElement("XREngineRendererBackends", rendererBackendSelection),
                     new XElement("AssemblyName", assemblyName),
                     new XElement("RootNamespace", assemblyName.Replace('.', '_')),
                     new XElement("BaseOutputPath", "Build"),
@@ -924,13 +945,26 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                     new XElement("Compile", new XAttribute("Include", relativeProgramPath)))
             ));
 
+        List<XElement> projectReferences = [];
+        if (bootstrapProjectPath is not null)
+        {
+            projectReferences.Add(new XElement(
+                "ProjectReference",
+                new XAttribute(
+                    "Include",
+                    Path.GetRelativePath(projectDirectory, bootstrapProjectPath))));
+        }
+
         if (!string.IsNullOrWhiteSpace(includeGameProject))
         {
             string relativeGameProjectPath = Path.GetRelativePath(projectDirectory, includeGameProject);
-            project.Root?.Add(
-                new XElement("ItemGroup",
-                    new XElement("ProjectReference", new XAttribute("Include", relativeGameProjectPath))));
+            projectReferences.Add(new XElement(
+                "ProjectReference",
+                new XAttribute("Include", relativeGameProjectPath)));
         }
+
+        if (projectReferences.Count > 0)
+            project.Root?.Add(new XElement("ItemGroup", projectReferences));
 
         if (packageReferences.Count > 0)
         {
@@ -945,6 +979,33 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             project.Root?.Add(new XElement("ItemGroup", referenceElements));
 
         project.Save(projectFilePath);
+    }
+
+    private static string? TryResolveBootstrapProjectPath()
+    {
+        string[] startPaths =
+        [
+            Environment.CurrentDirectory,
+            AppContext.BaseDirectory,
+        ];
+
+        foreach (string startPath in startPaths)
+        {
+            DirectoryInfo? directory = new(Path.GetFullPath(startPath));
+            while (directory is not null)
+            {
+                string candidate = Path.Combine(
+                    directory.FullName,
+                    "XREngine.Runtime.Bootstrap",
+                    "XREngine.Runtime.Bootstrap.csproj");
+                if (File.Exists(candidate))
+                    return candidate;
+
+                directory = directory.Parent;
+            }
+        }
+
+        return null;
     }
 
     #endregion

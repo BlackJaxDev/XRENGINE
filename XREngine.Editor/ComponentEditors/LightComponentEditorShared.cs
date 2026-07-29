@@ -1,5 +1,4 @@
 using ImGuiNET;
-using Silk.NET.OpenGL;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.CompilerServices;

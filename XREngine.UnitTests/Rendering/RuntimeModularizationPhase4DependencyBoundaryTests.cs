@@ -7,8 +7,6 @@ using XREngine.Input;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
-using XREngine.Rendering.OpenGL;
-using XREngine.Rendering.Vulkan;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -79,11 +77,16 @@ public sealed class RuntimeModularizationPhase4DependencyBoundaryTests
     }
 
     [Test]
-    public void P48a_BackendFactoriesAreOwnedByTheirLeafAssemblies()
+    public void P48c_BackendFactoriesAreOwnedByTheirLeafAssembliesWithoutConcreteTypeTests()
     {
-        typeof(OpenGLRendererBackendFactory).Assembly.GetName().Name
+        using RendererBackendCatalog catalog = new();
+        using IDisposable registrations = BuiltInRendererBackendModules.RegisterAll(catalog);
+
+        catalog.GetRequired(RendererBackendId.OpenGL)
+            .Factory.GetType().Assembly.GetName().Name
             .ShouldBe("XREngine.Runtime.Rendering.OpenGL");
-        typeof(VulkanRendererBackendFactory).Assembly.GetName().Name
+        catalog.GetRequired(RendererBackendId.Vulkan)
+            .Factory.GetType().Assembly.GetName().Name
             .ShouldBe("XREngine.Runtime.Rendering.Vulkan");
         typeof(IRendererBackendFactory).Assembly.GetName().Name
             .ShouldBe("XREngine.Runtime.Rendering");
@@ -175,6 +178,90 @@ public sealed class RuntimeModularizationPhase4DependencyBoundaryTests
         vulkanPackages.ShouldContain("Silk.NET.Vulkan");
         vulkanPackages.ShouldContain("Silk.NET.Shaderc");
         vulkanPackages.ShouldContain("Silk.NET.Vulkan.Loader.Native");
+    }
+
+    [Test]
+    public void P48c_ConsumerProjectsDoNotReferenceBackendLeavesDirectly()
+    {
+        string root = ResolveWorkspaceRoot();
+        string[] consumerProjects =
+        [
+            "XRENGINE/XREngine.csproj",
+            "XREngine.Editor/XREngine.Editor.csproj",
+            "XREngine.Server/XREngine.Server.csproj",
+            "XREngine.VRClient/XREngine.VRClient.csproj",
+        ];
+
+        foreach (string relativeProjectPath in consumerProjects)
+        {
+            XDocument project = XDocument.Load(Path.Combine(
+                root,
+                relativeProjectPath.Replace('/', Path.DirectorySeparatorChar)));
+            string[] references = project
+                .Descendants("ProjectReference")
+                .Select(element => Path.GetFileNameWithoutExtension(
+                    (string)element.Attribute("Include")!))
+                .ToArray();
+
+            references.ShouldNotContain("XREngine.Runtime.Rendering.OpenGL");
+            references.ShouldNotContain("XREngine.Runtime.Rendering.Vulkan");
+        }
+    }
+
+    [Test]
+    public void P48c_BootstrapOwnsConditionalStaticBackendComposition()
+    {
+        string root = ResolveWorkspaceRoot();
+        string projectPath = Path.Combine(
+            root,
+            "XREngine.Runtime.Bootstrap",
+            "XREngine.Runtime.Bootstrap.csproj");
+        XDocument project = XDocument.Load(projectPath);
+        XElement[] backendReferences = project
+            .Descendants("ProjectReference")
+            .Where(element => BackendLeafProjectNames.Contains(
+                Path.GetFileNameWithoutExtension((string)element.Attribute("Include")!),
+                StringComparer.Ordinal))
+            .ToArray();
+
+        backendReferences.Length.ShouldBe(2);
+        backendReferences.ShouldAllBe(element =>
+            !string.IsNullOrWhiteSpace((string?)element.Attribute("Condition")));
+
+        string source = File.ReadAllText(Path.Combine(
+            root,
+            "XREngine.Runtime.Bootstrap",
+            "RenderingHost",
+            "BuiltInRendererBackendModules.cs"));
+        source.ShouldContain("XRENGINE_STATIC_OPENGL");
+        source.ShouldContain("XRENGINE_STATIC_VULKAN");
+        source.ShouldContain("OpenGlRendererBackendModule.Register(catalog)");
+        source.ShouldContain("VulkanRendererBackendModule.Register(catalog)");
+        source.ShouldNotContain("AssemblyLoadContext");
+        source.ShouldNotContain("GetTypes(");
+    }
+
+    [Test]
+    public void P48c_ConsumerProjectsDoNotOwnBackendNativePackages()
+    {
+        string root = ResolveWorkspaceRoot();
+        string[] consumerProjects =
+        [
+            "XRENGINE/XREngine.csproj",
+            "XREngine.Editor/XREngine.Editor.csproj",
+            "XREngine.Runtime.Bootstrap/XREngine.Runtime.Bootstrap.csproj",
+            "XREngine.Server/XREngine.Server.csproj",
+            "XREngine.VRClient/XREngine.VRClient.csproj",
+        ];
+
+        foreach (string relativeProjectPath in consumerProjects)
+        {
+            string[] packages = ReadPackageReferences(Path.Combine(
+                root,
+                relativeProjectPath.Replace('/', Path.DirectorySeparatorChar)));
+            packages.Any(IsOpenGlPackage).ShouldBeFalse();
+            packages.Any(IsVulkanPackage).ShouldBeFalse();
+        }
     }
 
     [Test]
@@ -362,7 +449,9 @@ public sealed class RuntimeModularizationPhase4DependencyBoundaryTests
         => XDocument
             .Load(projectPath)
             .Descendants("PackageReference")
-            .Select(element => (string)element.Attribute("Include")!)
+            .Select(element => (string?)element.Attribute("Include"))
+            .Where(static packageName => packageName is not null)
+            .Select(static packageName => packageName!)
             .ToArray();
 
     private static bool IsOpenGlPackage(string packageName)

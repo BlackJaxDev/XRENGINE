@@ -11,6 +11,7 @@ using XREngine.Data.Rendering;
 using XREngine.Gltf;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
+using XREngine.Rendering.Models.Caching;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -23,7 +24,8 @@ internal static class NativeGltfSceneImporter
     internal readonly record struct ImportResult(
         SceneNode RootNode,
         IReadOnlyList<XRMaterial> Materials,
-        IReadOnlyList<XRMesh> Meshes);
+        IReadOnlyList<XRMesh> Meshes,
+        ModelImportProducerMetadata ProducerMetadata);
 
     private sealed record SkinInfo(TransformBase?[] JointTransforms, Matrix4x4[] InverseBindMatrices);
 
@@ -267,7 +269,10 @@ internal static class NativeGltfSceneImporter
 
         AttachAnimationClips(document, rootNode, nodesByIndex);
 
-        return new ImportResult(rootNode, createdMaterials, createdMeshes);
+        ModelImportProducerMetadata producerMetadata = NativeGltfImportReportBuilder.Build(
+            sourceFilePath,
+            document.Root);
+        return new ImportResult(rootNode, createdMaterials, createdMeshes, producerMetadata);
     }
 
     private static Dictionary<int, SceneNode> BuildSceneGraph(GltfRoot document, SceneNode importRootNode, int importLayer)

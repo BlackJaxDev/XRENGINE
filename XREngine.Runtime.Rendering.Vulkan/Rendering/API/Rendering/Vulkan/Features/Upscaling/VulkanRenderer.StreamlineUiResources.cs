@@ -63,11 +63,11 @@ public unsafe partial class VulkanRenderer
 
         ClearTrackedImageLayouts(image);
         VulkanMemoryAllocation allocation = AllocateImageMemoryWithFallback(image, MemoryPropertyFlags.DeviceLocalBit);
-        _imageAllocations[image.Handle] = allocation;
+        _imageAllocationTracker.Allocations[image.Handle] = allocation;
 
         if (Api!.BindImageMemory(device, image, allocation.Memory, allocation.Offset) != Result.Success)
         {
-            _imageAllocations.TryRemove(image.Handle, out _);
+            _imageAllocationTracker.Allocations.TryRemove(image.Handle, out _);
             DestroyVulkanImageImmediateTracked(image, "Streamline.UIColorAndAlpha.BindFailure");
             FreeMemoryAllocation(allocation);
             throw new InvalidOperationException($"Failed to bind Streamline UI color/alpha image memory {imageIndex}.");
@@ -91,7 +91,7 @@ public unsafe partial class VulkanRenderer
 
         if (Api.CreateImageView(device, ref viewInfo, null, out ImageView view) != Result.Success)
         {
-            _imageAllocations.TryRemove(image.Handle, out _);
+            _imageAllocationTracker.Allocations.TryRemove(image.Handle, out _);
             DestroyVulkanImageImmediateTracked(image, "Streamline.UIColorAndAlpha.ViewFailure");
             FreeMemoryAllocation(allocation);
             throw new InvalidOperationException($"Failed to create Streamline UI color/alpha image view {imageIndex}.");

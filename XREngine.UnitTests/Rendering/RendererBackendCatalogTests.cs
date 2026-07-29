@@ -2,6 +2,7 @@ using System.Reflection;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Rendering;
+using XREngine.Rendering.UI;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -185,8 +186,6 @@ public sealed class RendererBackendCatalogTests
         RendererBackendRegistration openGl = catalog.GetRequired(RendererBackendId.OpenGL);
         RendererBackendRegistration vulkan = catalog.GetRequired(RendererBackendId.Vulkan);
 
-        openGl.Factory.ShouldBeOfType<OpenGLRendererBackendFactory>();
-        vulkan.Factory.ShouldBeOfType<VulkanRendererBackendFactory>();
         openGl.Factory.GetType().Assembly.GetName().Name
             .ShouldBe("XREngine.Runtime.Rendering.OpenGL");
         vulkan.Factory.GetType().Assembly.GetName().Name
@@ -194,6 +193,42 @@ public sealed class RendererBackendCatalogTests
         openGl.Metadata.ReloadLimitations.ShouldNotBe(RendererBackendReloadLimitations.None);
         openGl.Metadata.ReloadLimitationDescription.ShouldNotBeNullOrWhiteSpace();
         catalog.Count.ShouldBe(2);
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void BuiltInRegistration_ReleasesLeafOwnedStaticServices()
+    {
+        using RendererBackendCatalog catalog = new();
+        IDisposable registrations = BuiltInRendererBackendModules.RegisterAll(catalog);
+
+        TextureStreamingBackendRegistry.TryGet(
+            RuntimeGraphicsApiKind.OpenGL,
+            out ITextureStreamingBackendProvider? openGlStreaming).ShouldBeTrue();
+        TextureStreamingBackendRegistry.TryGet(
+            RuntimeGraphicsApiKind.Vulkan,
+            out ITextureStreamingBackendProvider? vulkanStreaming).ShouldBeTrue();
+        openGlStreaming.ShouldNotBeNull();
+        vulkanStreaming.ShouldNotBeNull();
+        RuntimeVendorUpscaleService.Current.ShouldNotBeNull();
+        WebRendererBackendRegistry.TryCreateAccelerated(
+            RendererBackendId.OpenGL,
+            out IWebRendererBackend? webBackend).ShouldBeTrue();
+        webBackend.ShouldNotBeNull();
+        webBackend.Dispose();
+
+        registrations.Dispose();
+
+        TextureStreamingBackendRegistry.TryGet(
+            RuntimeGraphicsApiKind.OpenGL,
+            out _).ShouldBeFalse();
+        TextureStreamingBackendRegistry.TryGet(
+            RuntimeGraphicsApiKind.Vulkan,
+            out _).ShouldBeFalse();
+        RuntimeVendorUpscaleService.Current.ShouldBeNull();
+        WebRendererBackendRegistry.TryCreateAccelerated(
+            RendererBackendId.OpenGL,
+            out _).ShouldBeFalse();
     }
 
     private static RendererBackendRegistration CreateRegistration(

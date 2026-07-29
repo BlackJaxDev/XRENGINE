@@ -23,62 +23,91 @@ public unsafe partial class VulkanRenderer
     private const int MaxInteractiveResizePlannerExtentSnapshots = 32;
 
     private readonly VulkanStateTracker _state = new();
+    private readonly VulkanRenderGraphRuntime _renderGraphRuntime = new();
+    private readonly VulkanCommandScheduler _commandScheduler = new();
+    private readonly VulkanCommandRecorder _commandRecorder = new();
+
+    /// <summary>
+    /// Allocation-free state installed only for the duration of a worker recording scope.
+    /// Keeping the state in one value prevents independent thread-static fields from
+    /// retaining stale renderer or device identities after a scope exits.
+    /// </summary>
+    private struct VulkanCommandThreadContext
+    {
+        public VulkanRenderer? RenderStateOwner;
+        public VulkanStateTracker? RenderState;
+        public VulkanRenderer? ResourcePlannerRuntimeStateOwner;
+        public ResourcePlannerRuntimeState? ResourcePlannerRuntimeState;
+        public VulkanRenderer? FrameOpResourcePlannerSwitchingStateOwner;
+        public FrameOpResourcePlannerSwitchingState? FrameOpResourcePlannerSwitchingState;
+        public VulkanRenderer? FramebufferBindingOwner;
+        public XRFrameBuffer? BoundDrawFrameBuffer;
+        public XRFrameBuffer? BoundReadFrameBuffer;
+        public EReadBufferMode ReadBufferMode;
+    }
+
     [ThreadStatic]
-    private static VulkanRenderer? _threadRenderStateOwner;
-    [ThreadStatic]
-    private static VulkanStateTracker? _threadRenderState;
-    [ThreadStatic]
-    private static VulkanRenderer? _threadResourcePlannerRuntimeStateOwner;
-    [ThreadStatic]
-    private static ResourcePlannerRuntimeState? _threadResourcePlannerRuntimeState;
-    [ThreadStatic]
-    private static VulkanRenderer? _threadFrameOpResourcePlannerSwitchingStateOwner;
-    [ThreadStatic]
-    private static FrameOpResourcePlannerSwitchingState? _threadFrameOpResourcePlannerSwitchingState;
-    [ThreadStatic]
-    private static VulkanRenderer? _threadFramebufferBindingOwner;
-    [ThreadStatic]
-    private static XRFrameBuffer? _threadBoundDrawFrameBuffer;
-    [ThreadStatic]
-    private static XRFrameBuffer? _threadBoundReadFrameBuffer;
-    [ThreadStatic]
-    private static EReadBufferMode _threadReadBufferMode;
+    private static VulkanCommandThreadContext _threadCommandContext;
 
     private void ReleaseCurrentThreadStateTrackingCaches()
     {
-        if (ReferenceEquals(_threadRenderStateOwner, this))
+        if (ReferenceEquals(_threadCommandContext.RenderStateOwner, this))
         {
-            _threadRenderStateOwner = null;
-            _threadRenderState = null;
+            _threadCommandContext.RenderStateOwner = null;
+            _threadCommandContext.RenderState = null;
         }
 
-        if (ReferenceEquals(_threadResourcePlannerRuntimeStateOwner, this))
+        if (ReferenceEquals(_threadCommandContext.ResourcePlannerRuntimeStateOwner, this))
         {
-            _threadResourcePlannerRuntimeStateOwner = null;
-            _threadResourcePlannerRuntimeState = null;
+            _threadCommandContext.ResourcePlannerRuntimeStateOwner = null;
+            _threadCommandContext.ResourcePlannerRuntimeState = null;
         }
 
-        if (ReferenceEquals(_threadFrameOpResourcePlannerSwitchingStateOwner, this))
+        if (ReferenceEquals(_threadCommandContext.FrameOpResourcePlannerSwitchingStateOwner, this))
         {
-            _threadFrameOpResourcePlannerSwitchingStateOwner = null;
-            _threadFrameOpResourcePlannerSwitchingState = null;
+            _threadCommandContext.FrameOpResourcePlannerSwitchingStateOwner = null;
+            _threadCommandContext.FrameOpResourcePlannerSwitchingState = null;
         }
 
-        if (!ReferenceEquals(_threadFramebufferBindingOwner, this))
+        if (!ReferenceEquals(_threadCommandContext.FramebufferBindingOwner, this))
             return;
 
-        _threadFramebufferBindingOwner = null;
-        _threadBoundDrawFrameBuffer = null;
-        _threadBoundReadFrameBuffer = null;
-        _threadReadBufferMode = default;
+        _threadCommandContext.FramebufferBindingOwner = null;
+        _threadCommandContext.BoundDrawFrameBuffer = null;
+        _threadCommandContext.BoundReadFrameBuffer = null;
+        _threadCommandContext.ReadBufferMode = default;
     }
-    private VulkanResourcePlanner _resourcePlanner = new();
-    private VulkanResourceAllocator _resourceAllocator = new();
-    private VulkanBarrierPlanner _barrierPlanner = new();
-    private VulkanCompiledRenderGraph _compiledRenderGraph = VulkanCompiledRenderGraph.Empty;
+    private VulkanResourcePlanner _resourcePlanner
+    {
+        get => _renderGraphRuntime.ResourcePlanner;
+        set => _renderGraphRuntime.ResourcePlanner = value;
+    }
+    private VulkanResourceAllocator _resourceAllocator
+    {
+        get => _renderGraphRuntime.ResourceAllocator;
+        set => _renderGraphRuntime.ResourceAllocator = value;
+    }
+    private VulkanBarrierPlanner _barrierPlanner
+    {
+        get => _renderGraphRuntime.BarrierPlanner;
+        set => _renderGraphRuntime.BarrierPlanner = value;
+    }
+    private VulkanCompiledRenderGraph _compiledRenderGraph
+    {
+        get => _renderGraphRuntime.CompiledGraph;
+        set => _renderGraphRuntime.CompiledGraph = value;
+    }
     private FrameOpContext? _lastActiveFrameOpContext;
-    private ulong _resourcePlannerSignature = ulong.MaxValue;
-    private ulong _resourceAllocationSignature = ulong.MaxValue;
+    private ulong _resourcePlannerSignature
+    {
+        get => _renderGraphRuntime.PlannerSignature;
+        set => _renderGraphRuntime.PlannerSignature = value;
+    }
+    private ulong _resourceAllocationSignature
+    {
+        get => _renderGraphRuntime.AllocationSignature;
+        set => _renderGraphRuntime.AllocationSignature = value;
+    }
     private readonly VulkanInteractiveResizePlannerExtentCache _interactiveResizePlannerExtentCache =
         new(MaxInteractiveResizePlannerExtentSnapshots);
     private ulong _failedResourcePlannerSignature = ulong.MaxValue;
@@ -89,34 +118,51 @@ public unsafe partial class VulkanRenderer
     private BarrierPlanFastPathKey _barrierPlanFastPathKey;
     private bool _hasBarrierPlanFastPathKey;
     private ResourcePlannerSignatureBreakdown _resourcePlannerSignatureBreakdown;
-    private ulong _resourcePlannerRevision;
+    private ulong _resourcePlannerRevision
+    {
+        get => _renderGraphRuntime.Revision;
+        set => _renderGraphRuntime.Revision = value;
+    }
     private bool _isRecordingCommandBuffer;
     private int _commandChainFrozenPlanReaders;
     private ulong _commandChainFrozenResourcePlanRevision;
     private readonly Dictionary<string, XRDataBuffer> _trackedBuffersByName = new(StringComparer.OrdinalIgnoreCase);
     private readonly FrameOpResourcePlannerSwitchingState _frameOpResourcePlannerSwitchingState = new();
     private VulkanStateTracker ActiveState =>
-        ReferenceEquals(_threadRenderStateOwner, this) && _threadRenderState is not null
-            ? _threadRenderState
+        ReferenceEquals(_threadCommandContext.RenderStateOwner, this) &&
+        _threadCommandContext.RenderState is not null
+            ? _threadCommandContext.RenderState
             : _state;
     private bool HasThreadResourcePlannerRuntimeState =>
-        ReferenceEquals(_threadResourcePlannerRuntimeStateOwner, this) &&
-        _threadResourcePlannerRuntimeState.HasValue;
+        ReferenceEquals(_threadCommandContext.ResourcePlannerRuntimeStateOwner, this) &&
+        _threadCommandContext.ResourcePlannerRuntimeState.HasValue;
     private FrameOpResourcePlannerSwitchingState ActiveFrameOpResourcePlannerSwitchingState =>
-        ReferenceEquals(_threadFrameOpResourcePlannerSwitchingStateOwner, this) &&
-        _threadFrameOpResourcePlannerSwitchingState is not null
-            ? _threadFrameOpResourcePlannerSwitchingState
+        ReferenceEquals(_threadCommandContext.FrameOpResourcePlannerSwitchingStateOwner, this) &&
+        _threadCommandContext.FrameOpResourcePlannerSwitchingState is not null
+            ? _threadCommandContext.FrameOpResourcePlannerSwitchingState
             : _frameOpResourcePlannerSwitchingState;
+
+    private void ThrowIfPersistentResourceAllocationDuringRecording(string operation)
+    {
+        if (!ActiveFrameOpResourcePlannerSwitchingState.RecordingScopeActive)
+            return;
+
+        throw new InvalidOperationException(
+            $"Persistent Vulkan resource allocation '{operation}' is forbidden while command recording is active. " +
+            "Allocate persistent resources during planning or upload preparation.");
+    }
     private bool HasThreadFramebufferBindingState
-        => ReferenceEquals(_threadFramebufferBindingOwner, this);
+        => ReferenceEquals(_threadCommandContext.FramebufferBindingOwner, this);
     private XRFrameBuffer? ActiveBoundDrawFrameBuffer
     {
-        get => HasThreadFramebufferBindingState ? _threadBoundDrawFrameBuffer : _boundDrawFrameBuffer;
+        get => HasThreadFramebufferBindingState
+            ? _threadCommandContext.BoundDrawFrameBuffer
+            : _boundDrawFrameBuffer;
         set
         {
             if (HasThreadFramebufferBindingState)
             {
-                _threadBoundDrawFrameBuffer = value;
+                _threadCommandContext.BoundDrawFrameBuffer = value;
                 return;
             }
 
@@ -125,12 +171,14 @@ public unsafe partial class VulkanRenderer
     }
     private XRFrameBuffer? ActiveBoundReadFrameBuffer
     {
-        get => HasThreadFramebufferBindingState ? _threadBoundReadFrameBuffer : _boundReadFrameBuffer;
+        get => HasThreadFramebufferBindingState
+            ? _threadCommandContext.BoundReadFrameBuffer
+            : _boundReadFrameBuffer;
         set
         {
             if (HasThreadFramebufferBindingState)
             {
-                _threadBoundReadFrameBuffer = value;
+                _threadCommandContext.BoundReadFrameBuffer = value;
                 return;
             }
 
@@ -139,12 +187,14 @@ public unsafe partial class VulkanRenderer
     }
     private EReadBufferMode ActiveReadBufferMode
     {
-        get => HasThreadFramebufferBindingState ? _threadReadBufferMode : _readBufferMode;
+        get => HasThreadFramebufferBindingState
+            ? _threadCommandContext.ReadBufferMode
+            : _readBufferMode;
         set
         {
             if (HasThreadFramebufferBindingState)
             {
-                _threadReadBufferMode = value;
+                _threadCommandContext.ReadBufferMode = value;
                 return;
             }
 
@@ -153,25 +203,25 @@ public unsafe partial class VulkanRenderer
     }
     internal VulkanResourcePlanner ResourcePlanner =>
         HasThreadResourcePlannerRuntimeState
-            ? _threadResourcePlannerRuntimeState!.Value.ResourcePlanner
+            ? _threadCommandContext.ResourcePlannerRuntimeState!.Value.ResourcePlanner
             : _resourcePlanner;
     internal VulkanResourcePlan ResourcePlan => ResourcePlanner.CurrentPlan;
     internal VulkanResourceAllocator ResourceAllocator =>
         HasThreadResourcePlannerRuntimeState
-            ? _threadResourcePlannerRuntimeState!.Value.ResourceAllocator
+            ? _threadCommandContext.ResourcePlannerRuntimeState!.Value.ResourceAllocator
             : _resourceAllocator;
     internal int ResourceAllocatorIdentity => RuntimeHelpers.GetHashCode(ResourceAllocator);
     internal VulkanBarrierPlanner BarrierPlanner =>
         HasThreadResourcePlannerRuntimeState
-            ? _threadResourcePlannerRuntimeState!.Value.BarrierPlanner
+            ? _threadCommandContext.ResourcePlannerRuntimeState!.Value.BarrierPlanner
             : _barrierPlanner;
     internal VulkanCompiledRenderGraph CompiledRenderGraph =>
         HasThreadResourcePlannerRuntimeState
-            ? _threadResourcePlannerRuntimeState!.Value.CompiledRenderGraph
+            ? _threadCommandContext.ResourcePlannerRuntimeState!.Value.CompiledRenderGraph
             : _compiledRenderGraph;
     internal ulong ResourcePlannerRevision =>
         HasThreadResourcePlannerRuntimeState
-            ? _threadResourcePlannerRuntimeState!.Value.ResourcePlannerRevision
+            ? _threadCommandContext.ResourcePlannerRuntimeState!.Value.ResourcePlannerRevision
             : _resourcePlannerRevision;
     private VulkanResourcePlanner ActiveResourcePlanner
     {
@@ -237,7 +287,7 @@ public unsafe partial class VulkanRenderer
     private FrameOpContext? ActiveLastActiveFrameOpContext
     {
         get => HasThreadResourcePlannerRuntimeState
-            ? _threadResourcePlannerRuntimeState!.Value.LastActiveFrameOpContext
+            ? _threadCommandContext.ResourcePlannerRuntimeState!.Value.LastActiveFrameOpContext
             : _lastActiveFrameOpContext;
         set
         {
@@ -254,7 +304,7 @@ public unsafe partial class VulkanRenderer
     private ulong ActiveResourcePlannerSignature
     {
         get => HasThreadResourcePlannerRuntimeState
-            ? _threadResourcePlannerRuntimeState!.Value.ResourcePlannerSignature
+            ? _threadCommandContext.ResourcePlannerRuntimeState!.Value.ResourcePlannerSignature
             : _resourcePlannerSignature;
         set
         {
@@ -271,7 +321,7 @@ public unsafe partial class VulkanRenderer
     private ulong ActiveResourceAllocationSignature
     {
         get => HasThreadResourcePlannerRuntimeState
-            ? _threadResourcePlannerRuntimeState!.Value.ResourceAllocationSignature
+            ? _threadCommandContext.ResourcePlannerRuntimeState!.Value.ResourceAllocationSignature
             : _resourceAllocationSignature;
         set
         {
@@ -288,7 +338,7 @@ public unsafe partial class VulkanRenderer
     private ulong ActiveFailedResourcePlannerSignature
     {
         get => HasThreadResourcePlannerRuntimeState
-            ? _threadResourcePlannerRuntimeState!.Value.FailedResourcePlannerSignature
+            ? _threadCommandContext.ResourcePlannerRuntimeState!.Value.FailedResourcePlannerSignature
             : _failedResourcePlannerSignature;
         set
         {
@@ -305,7 +355,7 @@ public unsafe partial class VulkanRenderer
     private ulong ActiveFailedResourceAllocationSignature
     {
         get => HasThreadResourcePlannerRuntimeState
-            ? _threadResourcePlannerRuntimeState!.Value.FailedResourceAllocationSignature
+            ? _threadCommandContext.ResourcePlannerRuntimeState!.Value.FailedResourceAllocationSignature
             : _failedResourceAllocationSignature;
         set
         {
@@ -322,7 +372,7 @@ public unsafe partial class VulkanRenderer
     private long ActiveFailedResourceAllocationTimestamp
     {
         get => HasThreadResourcePlannerRuntimeState
-            ? _threadResourcePlannerRuntimeState!.Value.FailedResourceAllocationTimestamp
+            ? _threadCommandContext.ResourcePlannerRuntimeState!.Value.FailedResourceAllocationTimestamp
             : _failedResourceAllocationTimestamp;
         set
         {
@@ -339,7 +389,7 @@ public unsafe partial class VulkanRenderer
     private ResourcePlannerFastPathKey ActiveResourcePlannerFastPathKey
     {
         get => HasThreadResourcePlannerRuntimeState
-            ? _threadResourcePlannerRuntimeState!.Value.ResourcePlannerFastPathKey
+            ? _threadCommandContext.ResourcePlannerRuntimeState!.Value.ResourcePlannerFastPathKey
             : _resourcePlannerFastPathKey;
         set
         {
@@ -356,7 +406,7 @@ public unsafe partial class VulkanRenderer
     private bool ActiveHasResourcePlannerFastPathKey
     {
         get => HasThreadResourcePlannerRuntimeState
-            ? _threadResourcePlannerRuntimeState!.Value.HasResourcePlannerFastPathKey
+            ? _threadCommandContext.ResourcePlannerRuntimeState!.Value.HasResourcePlannerFastPathKey
             : _hasResourcePlannerFastPathKey;
         set
         {
@@ -373,7 +423,7 @@ public unsafe partial class VulkanRenderer
     private BarrierPlanFastPathKey ActiveBarrierPlanFastPathKey
     {
         get => HasThreadResourcePlannerRuntimeState
-            ? _threadResourcePlannerRuntimeState!.Value.BarrierPlanFastPathKey
+            ? _threadCommandContext.ResourcePlannerRuntimeState!.Value.BarrierPlanFastPathKey
             : _barrierPlanFastPathKey;
         set
         {
@@ -390,7 +440,7 @@ public unsafe partial class VulkanRenderer
     private bool ActiveHasBarrierPlanFastPathKey
     {
         get => HasThreadResourcePlannerRuntimeState
-            ? _threadResourcePlannerRuntimeState!.Value.HasBarrierPlanFastPathKey
+            ? _threadCommandContext.ResourcePlannerRuntimeState!.Value.HasBarrierPlanFastPathKey
             : _hasBarrierPlanFastPathKey;
         set
         {
@@ -407,7 +457,7 @@ public unsafe partial class VulkanRenderer
     private ResourcePlannerSignatureBreakdown ActiveResourcePlannerSignatureBreakdown
     {
         get => HasThreadResourcePlannerRuntimeState
-            ? _threadResourcePlannerRuntimeState!.Value.ResourcePlannerSignatureBreakdown
+            ? _threadCommandContext.ResourcePlannerRuntimeState!.Value.ResourcePlannerSignatureBreakdown
             : _resourcePlannerSignatureBreakdown;
         set
         {
@@ -627,30 +677,30 @@ public unsafe partial class VulkanRenderer
 
         public ThreadRenderStateScope(VulkanRenderer renderer, VulkanStateTracker state)
         {
-            _previousOwner = _threadRenderStateOwner;
-            _previousState = _threadRenderState;
-            _previousFramebufferBindingOwner = _threadFramebufferBindingOwner;
-            _previousThreadBoundDrawFrameBuffer = _threadBoundDrawFrameBuffer;
-            _previousThreadBoundReadFrameBuffer = _threadBoundReadFrameBuffer;
-            _previousThreadReadBufferMode = _threadReadBufferMode;
-            _threadRenderStateOwner = renderer;
-            _threadRenderState = state;
-            _threadFramebufferBindingOwner = renderer;
-            _threadBoundDrawFrameBuffer = null;
-            _threadBoundReadFrameBuffer = null;
-            _threadReadBufferMode = EReadBufferMode.ColorAttachment0;
+            _previousOwner = _threadCommandContext.RenderStateOwner;
+            _previousState = _threadCommandContext.RenderState;
+            _previousFramebufferBindingOwner = _threadCommandContext.FramebufferBindingOwner;
+            _previousThreadBoundDrawFrameBuffer = _threadCommandContext.BoundDrawFrameBuffer;
+            _previousThreadBoundReadFrameBuffer = _threadCommandContext.BoundReadFrameBuffer;
+            _previousThreadReadBufferMode = _threadCommandContext.ReadBufferMode;
+            _threadCommandContext.RenderStateOwner = renderer;
+            _threadCommandContext.RenderState = state;
+            _threadCommandContext.FramebufferBindingOwner = renderer;
+            _threadCommandContext.BoundDrawFrameBuffer = null;
+            _threadCommandContext.BoundReadFrameBuffer = null;
+            _threadCommandContext.ReadBufferMode = EReadBufferMode.ColorAttachment0;
             _currentRendererScope = AbstractRenderer.PushThreadCurrent(renderer);
         }
 
         public void Dispose()
         {
             _currentRendererScope.Dispose();
-            _threadRenderStateOwner = _previousOwner;
-            _threadRenderState = _previousState;
-            _threadFramebufferBindingOwner = _previousFramebufferBindingOwner;
-            _threadBoundDrawFrameBuffer = _previousThreadBoundDrawFrameBuffer;
-            _threadBoundReadFrameBuffer = _previousThreadBoundReadFrameBuffer;
-            _threadReadBufferMode = _previousThreadReadBufferMode;
+            _threadCommandContext.RenderStateOwner = _previousOwner;
+            _threadCommandContext.RenderState = _previousState;
+            _threadCommandContext.FramebufferBindingOwner = _previousFramebufferBindingOwner;
+            _threadCommandContext.BoundDrawFrameBuffer = _previousThreadBoundDrawFrameBuffer;
+            _threadCommandContext.BoundReadFrameBuffer = _previousThreadBoundReadFrameBuffer;
+            _threadCommandContext.ReadBufferMode = _previousThreadReadBufferMode;
         }
     }
 
@@ -661,7 +711,7 @@ public unsafe partial class VulkanRenderer
     {
         if (HasThreadResourcePlannerRuntimeState)
         {
-            state = _threadResourcePlannerRuntimeState!.Value;
+            state = _threadCommandContext.ResourcePlannerRuntimeState!.Value;
             return true;
         }
 
@@ -672,9 +722,10 @@ public unsafe partial class VulkanRenderer
     private static void StoreThreadResourcePlannerRuntimeState(in ResourcePlannerRuntimeState state)
     {
         ResourcePlannerRuntimeState next = state;
-        next.FrameOpResourcePlannerSwitchingState = _threadFrameOpResourcePlannerSwitchingState ??
+        next.FrameOpResourcePlannerSwitchingState =
+            _threadCommandContext.FrameOpResourcePlannerSwitchingState ??
             next.FrameOpResourcePlannerSwitchingState;
-        _threadResourcePlannerRuntimeState = next;
+        _threadCommandContext.ResourcePlannerRuntimeState = next;
     }
 
     private readonly struct ThreadResourcePlannerRuntimeStateScope : IDisposable
@@ -688,29 +739,29 @@ public unsafe partial class VulkanRenderer
         {
             ResourcePlannerRuntimeState scopedState = state;
             scopedState.FrameOpResourcePlannerSwitchingState ??= new FrameOpResourcePlannerSwitchingState();
-            _previousOwner = _threadResourcePlannerRuntimeStateOwner;
-            _previousState = _threadResourcePlannerRuntimeState;
-            _threadResourcePlannerRuntimeStateOwner = renderer;
-            _threadResourcePlannerRuntimeState = scopedState;
+            _previousOwner = _threadCommandContext.ResourcePlannerRuntimeStateOwner;
+            _previousState = _threadCommandContext.ResourcePlannerRuntimeState;
+            _threadCommandContext.ResourcePlannerRuntimeStateOwner = renderer;
+            _threadCommandContext.ResourcePlannerRuntimeState = scopedState;
         }
 
         public ResourcePlannerRuntimeState CaptureCurrent(VulkanRenderer renderer)
         {
-            if (!ReferenceEquals(_threadResourcePlannerRuntimeStateOwner, renderer) ||
-                !_threadResourcePlannerRuntimeState.HasValue)
+            if (!ReferenceEquals(_threadCommandContext.ResourcePlannerRuntimeStateOwner, renderer) ||
+                !_threadCommandContext.ResourcePlannerRuntimeState.HasValue)
             {
                 return renderer.CaptureResourcePlannerRuntimeState();
             }
 
-            ResourcePlannerRuntimeState state = _threadResourcePlannerRuntimeState.Value;
+            ResourcePlannerRuntimeState state = _threadCommandContext.ResourcePlannerRuntimeState.Value;
             state.FrameOpResourcePlannerSwitchingState = renderer.ActiveFrameOpResourcePlannerSwitchingState;
             return state;
         }
 
         public void Dispose()
         {
-            _threadResourcePlannerRuntimeStateOwner = _previousOwner;
-            _threadResourcePlannerRuntimeState = _previousState;
+            _threadCommandContext.ResourcePlannerRuntimeStateOwner = _previousOwner;
+            _threadCommandContext.ResourcePlannerRuntimeState = _previousState;
         }
     }
 
@@ -727,27 +778,29 @@ public unsafe partial class VulkanRenderer
             VulkanRenderer renderer,
             FrameOpResourcePlannerSwitchingState state)
         {
-            _previousOwner = _threadFrameOpResourcePlannerSwitchingStateOwner;
-            _previousState = _threadFrameOpResourcePlannerSwitchingState;
-            _threadFrameOpResourcePlannerSwitchingStateOwner = renderer;
-            _threadFrameOpResourcePlannerSwitchingState = state;
+            _previousOwner = _threadCommandContext.FrameOpResourcePlannerSwitchingStateOwner;
+            _previousState = _threadCommandContext.FrameOpResourcePlannerSwitchingState;
+            _threadCommandContext.FrameOpResourcePlannerSwitchingStateOwner = renderer;
+            _threadCommandContext.FrameOpResourcePlannerSwitchingState = state;
         }
 
         public FrameOpResourcePlannerSwitchingState CaptureCurrent(VulkanRenderer renderer)
         {
-            if (!ReferenceEquals(_threadFrameOpResourcePlannerSwitchingStateOwner, renderer) ||
-                _threadFrameOpResourcePlannerSwitchingState is null)
+            if (!ReferenceEquals(
+                    _threadCommandContext.FrameOpResourcePlannerSwitchingStateOwner,
+                    renderer) ||
+                _threadCommandContext.FrameOpResourcePlannerSwitchingState is null)
             {
                 return renderer.ActiveFrameOpResourcePlannerSwitchingState;
             }
 
-            return _threadFrameOpResourcePlannerSwitchingState;
+            return _threadCommandContext.FrameOpResourcePlannerSwitchingState;
         }
 
         public void Dispose()
         {
-            _threadFrameOpResourcePlannerSwitchingStateOwner = _previousOwner;
-            _threadFrameOpResourcePlannerSwitchingState = _previousState;
+            _threadCommandContext.FrameOpResourcePlannerSwitchingStateOwner = _previousOwner;
+            _threadCommandContext.FrameOpResourcePlannerSwitchingState = _previousState;
         }
     }
 
@@ -1072,7 +1125,8 @@ public unsafe partial class VulkanRenderer
     {
         if (HasThreadResourcePlannerRuntimeState)
         {
-            ResourcePlannerRuntimeState state = _threadResourcePlannerRuntimeState!.Value;
+            ResourcePlannerRuntimeState state =
+                _threadCommandContext.ResourcePlannerRuntimeState!.Value;
             state.FrameOpResourcePlannerSwitchingState = ActiveFrameOpResourcePlannerSwitchingState;
             return state;
         }
@@ -1107,7 +1161,7 @@ public unsafe partial class VulkanRenderer
         {
             ResourcePlannerRuntimeState next = state;
             next.FrameOpResourcePlannerSwitchingState = ActiveFrameOpResourcePlannerSwitchingState;
-            _threadResourcePlannerRuntimeState = next;
+            _threadCommandContext.ResourcePlannerRuntimeState = next;
             return;
         }
 

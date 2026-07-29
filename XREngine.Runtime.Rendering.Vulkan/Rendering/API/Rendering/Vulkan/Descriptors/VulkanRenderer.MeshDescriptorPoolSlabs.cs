@@ -7,11 +7,6 @@ public unsafe partial class VulkanRenderer
     private const int MeshDescriptorPoolSlabAllocationCapacity = 64;
     private const int MeshOwnershipDiagnosticLimit = 64;
 
-    private readonly object _meshDescriptorPoolSlabLock = new();
-    private readonly Dictionary<MeshDescriptorPoolSlabKey, List<MeshDescriptorPoolSlab>>
-        _meshDescriptorPoolSlabs = new();
-    private int _meshOwnershipDiagnosticCount;
-
     internal readonly record struct MeshDescriptorPoolSlabKey(
         ulong PoolSizeFingerprint,
         int SetsPerAllocation,
@@ -50,9 +45,9 @@ public unsafe partial class VulkanRenderer
             setsPerAllocation,
             updateAfterBind);
 
-        lock (_meshDescriptorPoolSlabLock)
+        lock (_descriptorManager.MeshDescriptorPoolSlabLock)
         {
-            if (_meshDescriptorPoolSlabs.TryGetValue(key, out List<MeshDescriptorPoolSlab>? slabs))
+            if (_descriptorManager.MeshDescriptorPoolSlabs.TryGetValue(key, out List<MeshDescriptorPoolSlab>? slabs))
             {
                 for (int i = 0; i < slabs.Count; i++)
                 {
@@ -68,7 +63,7 @@ public unsafe partial class VulkanRenderer
             else
             {
                 slabs = [];
-                _meshDescriptorPoolSlabs.Add(key, slabs);
+                _descriptorManager.MeshDescriptorPoolSlabs.Add(key, slabs);
             }
 
             DescriptorPoolSize[] slabPoolSizes = new DescriptorPoolSize[perAllocationPoolSizes.Length];
@@ -125,7 +120,7 @@ public unsafe partial class VulkanRenderer
 
         DescriptorPool pool = lease.Pool;
         bool retireWholePool = false;
-        lock (_meshDescriptorPoolSlabLock)
+        lock (_descriptorManager.MeshDescriptorPoolSlabLock)
         {
             if (lease.Released)
                 return;
@@ -137,11 +132,11 @@ public unsafe partial class VulkanRenderer
                 throw new InvalidOperationException("Mesh descriptor pool slab lease underflow.");
             if (slab.LiveAllocationCount == 0)
             {
-                if (_meshDescriptorPoolSlabs.TryGetValue(slab.Key, out List<MeshDescriptorPoolSlab>? slabs))
+                if (_descriptorManager.MeshDescriptorPoolSlabs.TryGetValue(slab.Key, out List<MeshDescriptorPoolSlab>? slabs))
                 {
                     slabs.Remove(slab);
                     if (slabs.Count == 0)
-                        _meshDescriptorPoolSlabs.Remove(slab.Key);
+                        _descriptorManager.MeshDescriptorPoolSlabs.Remove(slab.Key);
                 }
                 retireWholePool = true;
             }
@@ -178,7 +173,7 @@ public unsafe partial class VulkanRenderer
         int allocatedSetCount,
         bool sharedMaterialTier)
     {
-        int diagnosticIndex = Interlocked.Increment(ref _meshOwnershipDiagnosticCount);
+        int diagnosticIndex = _descriptorManager.RecordMeshOwnershipDiagnostic();
         if (diagnosticIndex > MeshOwnershipDiagnosticLimit)
             return;
 

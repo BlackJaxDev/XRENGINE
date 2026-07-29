@@ -9,7 +9,7 @@ namespace XREngine.Rendering.Vulkan
     public unsafe partial class VulkanRenderer
     {
         private void ResolveDesktopAcquireBySwapchainRecreation(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             string reason)
         {
             if (!TryRecreateSwapchainNow(reason))
@@ -32,7 +32,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void SettleDesktopAcquireAfterUnexpectedFailure(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             Exception primaryFailure)
         {
             EVulkanDesktopPostAcquireFailureStage failureStage =
@@ -110,7 +110,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void AbandonDesktopOwnershipAfterDeviceLoss(
-            ref DesktopFrameAttempt attempt)
+            ref VulkanFrameAttempt attempt)
         {
             if (!VulkanDesktopFramePolicy.IsAcquireFinalizationLegal(
                     attempt.AcquireOwnership))
@@ -130,7 +130,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void SettleUnsubmittedDesktopAcquire(
-            ref DesktopFrameAttempt attempt)
+            ref VulkanFrameAttempt attempt)
         {
             ReleaseUnsubmittedDesktopUpload(
                 ref attempt,
@@ -157,7 +157,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void ReleaseCollectForFailureSettlement(
-            ref DesktopFrameAttempt attempt)
+            ref VulkanFrameAttempt attempt)
         {
             if (attempt.CollectReleased)
                 return;
@@ -177,7 +177,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void PresentRecoveredDesktopFrameAfterUnexpectedFailure(
-            ref DesktopFrameAttempt attempt)
+            ref VulkanFrameAttempt attempt)
         {
             VulkanDesktopPresentDispatchOutcome dispatch =
                 QueueDesktopPresent(
@@ -232,7 +232,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void ReleaseUnsubmittedDesktopUpload(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             string reason)
         {
             CancelRecordedTextureUploadSubmitBatch(reason);
@@ -265,7 +265,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private bool ConsumeDesktopAcquireForRecovery(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             string reason)
         {
             if (attempt.AcquireOwnership !=
@@ -325,7 +325,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private int ResolveRecordedDesktopSwapchainWriteCount(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             CommandBuffer commandBuffer)
         {
             if (commandBuffer.Handle == 0 ||
@@ -350,13 +350,13 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private bool TryRecoverRejectedDesktopImage(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             bool commandBufferDirtyFlagSet,
             bool commandBuffersDirtiedAfterSceneRecord,
             int recordedSwapchainWriteCount,
             string rejectionStage,
             Result? rejectedSubmitResult,
-            ImGuiFrameSnapshot? recoveryOverlaySnapshot = null)
+            VulkanImGuiFrameSnapshot? recoveryOverlaySnapshot = null)
         {
             RejectedDesktopFramePolicyDecision policy =
                 ResolveRejectedDesktopRecoveryPolicy(

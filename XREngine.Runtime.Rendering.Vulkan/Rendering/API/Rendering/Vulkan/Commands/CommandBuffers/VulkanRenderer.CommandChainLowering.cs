@@ -30,8 +30,6 @@ public unsafe partial class VulkanRenderer
 
     private Dictionary<CommandChainKey, CommandChain>[]? _commandChainCaches;
     private Dictionary<uint, Dictionary<CommandChainKey, CommandChain>>? _externalCommandChainCaches;
-    private CommandChainSchedule?[]? _commandChainScheduleCache;
-    private ulong[]? _commandChainScheduleFastSignatures;
     private readonly List<RenderPacket> _commandChainPacketScratch = [];
     private readonly List<RenderPacket> _commandChainPacketPool = [];
     private readonly DrawPacket[] _commandChainDrawPacketScratch = new DrawPacket[MaxMeshDrawsPerRenderPacket];
@@ -43,7 +41,6 @@ public unsafe partial class VulkanRenderer
     private readonly Dictionary<uint, CommandChainStabilityGuardState> _commandChainStabilityGuardStates = [];
     private int _commandChainTraceDumped;
     private long _commandChainTraceLastDumpTimestamp;
-    private ulong _commandChainScheduleGeneration;
     private const int CommandChainZeroReuseBackoffThreshold = 1;
     private const int CommandChainZeroReuseProbeInterval = 120;
     // Correct program-scoped descriptor identity can split a large imported scene into
@@ -417,9 +414,7 @@ public unsafe partial class VulkanRenderer
 
         Dictionary<CommandChainKey, CommandChain> cache = GetCommandChainCache(imageIndex);
         CommandChainSchedule schedule = RentCommandChainSchedule(imageIndex);
-        ulong scheduleGeneration = unchecked(++_commandChainScheduleGeneration);
-        if (scheduleGeneration == 0)
-            scheduleGeneration = unchecked(++_commandChainScheduleGeneration);
+        ulong scheduleGeneration = _commandScheduler.NextScheduleGeneration();
         List<string>? commandChainTraceRows = traceCommandChains ? [] : null;
         List<RenderPassChainGroup> groups = _commandChainGroupScratch;
         groups.Clear();
@@ -677,8 +672,9 @@ public unsafe partial class VulkanRenderer
             !CommandChainTraceEnabled &&
             TryGetIndexedCommandChainCacheSlot(imageIndex, out int slot))
         {
-            EnsureCommandChainScheduleCache();
-            CommandChainSchedule? schedule = _commandChainScheduleCache![slot];
+            CommandChainSchedule? schedule = _commandScheduler.GetReusableSchedule(
+                slot,
+                _commandBuffers?.Length ?? 0);
             if (schedule is not null)
                 return schedule;
         }
@@ -816,24 +812,13 @@ public unsafe partial class VulkanRenderer
         if (!TryGetIndexedCommandChainCacheSlot(imageIndex, out int slot))
             return false;
 
-        if (_commandChainScheduleCache is null ||
-            _commandChainScheduleFastSignatures is null ||
-            slot >= _commandChainScheduleCache.Length ||
-            slot >= _commandChainScheduleFastSignatures.Length)
-        {
+        if (!_commandScheduler.TryGetCachedSchedule(slot, fastScheduleSignature, out schedule))
             return false;
-        }
 
-        schedule = _commandChainScheduleCache[slot];
-        if (schedule is null || _commandChainScheduleFastSignatures[slot] != fastScheduleSignature)
-        {
-            schedule = null;
-            return false;
-        }
-
-        int chainCount = CountCommandChains(schedule);
+        CommandChainSchedule cachedSchedule = schedule!;
+        int chainCount = CountCommandChains(cachedSchedule);
         stats = new CommandChainLoweringStats(
-            VisibilityPackets: schedule.Groups.Length,
+            VisibilityPackets: cachedSchedule.Groups.Length,
             RenderPackets: chainCount,
             ChainsScheduled: chainCount,
             ChainsRecorded: 0,
@@ -857,26 +842,11 @@ public unsafe partial class VulkanRenderer
         if (!TryGetIndexedCommandChainCacheSlot(imageIndex, out int slot))
             return;
 
-        EnsureCommandChainScheduleCache();
-        CommandChainSchedule?[] scheduleCache = _commandChainScheduleCache!;
-        ulong[] fastSignatures = _commandChainScheduleFastSignatures!;
-        scheduleCache[slot] = schedule;
-        fastSignatures[slot] = fastScheduleSignature;
-    }
-
-    private void EnsureCommandChainScheduleCache()
-    {
-        int count = Math.Max(_commandBuffers?.Length ?? 0, 1);
-        if (_commandChainScheduleCache is not null &&
-            _commandChainScheduleFastSignatures is not null &&
-            _commandChainScheduleCache.Length == count &&
-            _commandChainScheduleFastSignatures.Length == count)
-        {
-            return;
-        }
-
-        _commandChainScheduleCache = new CommandChainSchedule?[count];
-        _commandChainScheduleFastSignatures = new ulong[count];
+        _commandScheduler.CacheSchedule(
+            slot,
+            _commandBuffers?.Length ?? 0,
+            fastScheduleSignature,
+            schedule);
     }
 
     private static int CountCommandChains(CommandChainSchedule schedule)
@@ -1351,10 +1321,7 @@ public unsafe partial class VulkanRenderer
         // Descriptor generations are validated while rebuilding the command-chain
         // schedule. Clearing the fast schedule cache prevents stale primary reuse
         // while still letting unchanged chains survive texture streaming.
-        if (_commandChainScheduleFastSignatures is not null)
-            Array.Clear(_commandChainScheduleFastSignatures);
-        if (_commandChainScheduleCache is not null)
-            Array.Clear(_commandChainScheduleCache);
+        _commandScheduler.InvalidateScheduleCache();
     }
 
     private Dictionary<CommandChainKey, CommandChain> GetExternalCommandChainCache(uint imageIndex)
@@ -1416,10 +1383,7 @@ public unsafe partial class VulkanRenderer
             }
         }
 
-        if (_commandChainScheduleFastSignatures is not null)
-            Array.Clear(_commandChainScheduleFastSignatures);
-        if (_commandChainScheduleCache is not null)
-            Array.Clear(_commandChainScheduleCache);
+        _commandScheduler.InvalidateScheduleCache();
 
         if (invalidated > 0)
             MarkOpenXrPrimaryCommandBufferVariantsDirty();

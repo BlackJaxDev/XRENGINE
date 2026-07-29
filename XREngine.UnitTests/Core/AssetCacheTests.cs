@@ -7,8 +7,12 @@ using System.Threading;
 using XREngine;
 using XREngine.Animation;
 using XREngine.Core.Files;
+using XREngine.Core.Files.Caching;
 using XREngine.Data;
+using XREngine.ModelCaching;
 using XREngine.Rendering;
+using XREngine.Rendering.Models.Caching;
+using XREngine.Scene.Prefabs;
 using TestContext = NUnit.Framework.TestContext;
 
 namespace XREngine.UnitTests.Core;
@@ -88,6 +92,98 @@ public sealed class AssetCacheTests
             thirdLoad.ShouldNotBeNull();
             thirdLoad.Payload.ShouldBe("updated");
             StubThirdPartyAsset.LoadCount.ShouldBe(2, "modified sources must trigger re-imports");
+        }
+        finally
+        {
+            manager.Dispose();
+        }
+    }
+
+    [Test]
+    public void ModelBinaryCacheCodec_ClaimsPrefabSourcesAndRejectsLegacyYaml()
+    {
+        using var sandbox = new AssetCacheSandbox();
+        string cachePath = Path.Combine(sandbox.CachePath, "legacy-model.asset");
+        File.WriteAllText(cachePath, "_type: XREngine.Scene.Prefabs.XRPrefabSource");
+
+        var codec = new ModelBinaryCacheCodec();
+
+        codec.GetOwnership(typeof(StubPrefabSource)).ShouldBe(CacheCodecOwnership.Exclusive);
+        codec.GetOwnership(typeof(StubThirdPartyAsset)).ShouldBe(CacheCodecOwnership.NotHandled);
+        AssetManager.GetThirdPartyCacheCodecOwnership(typeof(StubPrefabSource))
+            .ShouldBe(CacheCodecOwnership.Exclusive);
+
+        CacheReadResult readResult = codec.Read(
+            cachePath,
+            Path.Combine(sandbox.AssetsPath, "source.modelstub"),
+            DateTime.UtcNow);
+
+        readResult.Status.ShouldBe(CacheReadStatus.Rejected);
+        readResult.Reason.ShouldBe(CacheRejectReason.LegacyFormat);
+    }
+
+    [Test]
+    public void LoadPrefabSource_ExclusiveCodecDoesNotFallThroughToLegacyYaml()
+    {
+        using var sandbox = new AssetCacheSandbox();
+        var manager = new AssetManager
+        {
+            MonitorGameAssetsForChanges = false,
+            GameAssetsPath = sandbox.AssetsPath,
+            GameCachePath = sandbox.CachePath,
+        };
+
+        try
+        {
+            string sourcePath = Path.Combine(sandbox.AssetsPath, "sample.modelstub");
+            File.WriteAllText(sourcePath, "source-first");
+            StubPrefabSource.LoadCount = 0;
+
+            StubPrefabSource? firstLoad = manager.Load<StubPrefabSource>(sourcePath);
+            firstLoad.ShouldNotBeNull();
+            firstLoad.Payload.ShouldBe("source-first");
+            StubPrefabSource.LoadCount.ShouldBe(1);
+
+            manager.TryResolveThirdPartyCachePath(
+                sourcePath,
+                typeof(StubPrefabSource),
+                cacheVariantKey: null,
+                out string cachePath).ShouldBeTrue();
+            cachePath.ShouldContain(
+                $"{Path.DirectorySeparatorChar}Models{Path.DirectorySeparatorChar}" +
+                $"v{ModelBinaryCacheVersions.Schema}{Path.DirectorySeparatorChar}");
+            File.Exists(cachePath).ShouldBeFalse(
+                "the exclusive model codec must not publish a generic YAML cache while its binary writer is unavailable");
+
+            DateTime futureTimestampUtc = DateTime.UtcNow.AddMinutes(5);
+            string legacyCachePath = ResolveLegacyProjectCachePath(
+                sandbox,
+                sourcePath,
+                typeof(StubPrefabSource));
+            Directory.CreateDirectory(Path.GetDirectoryName(legacyCachePath)!);
+            firstLoad.Payload = "legacy-yaml";
+            firstLoad.OriginalLastWriteTimeUtc = futureTimestampUtc;
+            firstLoad.SerializeTo(legacyCachePath, AssetManager.Serializer);
+            File.SetLastWriteTimeUtc(legacyCachePath, futureTimestampUtc);
+            legacyCachePath.ShouldNotBe(cachePath);
+
+            File.WriteAllText(sourcePath, "source-second");
+            File.SetLastWriteTimeUtc(sourcePath, futureTimestampUtc.AddMinutes(-1));
+            ClearAssetCaches(manager);
+
+            manager.ResolveThirdPartyCacheAuthorityPath<StubPrefabSource>(sourcePath)
+                .ShouldBe(Path.GetFullPath(sourcePath));
+
+            StubPrefabSource? secondLoad = manager.Load<StubPrefabSource>(sourcePath);
+            secondLoad.ShouldNotBeNull();
+            secondLoad.Payload.ShouldBe("source-second");
+            StubPrefabSource.LoadCount.ShouldBe(
+                2,
+                "an exclusive model-cache rejection must return to source import instead of generic YAML deserialization");
+            File.Exists(legacyCachePath).ShouldBeTrue(
+                "legacy entries remain available for later age-based garbage collection");
+            File.Exists(cachePath).ShouldBeFalse(
+                "source fallback must not republish the legacy YAML representation");
         }
         finally
         {
@@ -360,6 +456,22 @@ AnimationClip:
         return cacheFiles;
     }
 
+    private static string ResolveLegacyProjectCachePath(
+        AssetCacheSandbox sandbox,
+        string sourcePath,
+        Type assetType)
+    {
+        string relativePath = Path.GetRelativePath(sandbox.AssetsPath, sourcePath);
+        string? relativeDirectory = Path.GetDirectoryName(relativePath);
+        string cacheDirectory = string.IsNullOrWhiteSpace(relativeDirectory)
+            ? sandbox.CachePath
+            : Path.Combine(sandbox.CachePath, relativeDirectory);
+        string typeSuffix = assetType.FullName ?? assetType.Name;
+        return Path.Combine(
+            cacheDirectory,
+            $"{Path.GetFileName(sourcePath)}.{typeSuffix}.asset");
+    }
+
     private sealed class AssetCacheSandbox : IDisposable
     {
         public string RootPath { get; }
@@ -394,6 +506,20 @@ AnimationClip:
     {
         public static int LoadCount;
         public string? Payload { get; set; }
+        public override bool Load3rdParty(string filePath)
+        {
+            LoadCount++;
+            Payload = File.ReadAllText(filePath);
+            return true;
+        }
+    }
+
+    [XR3rdPartyExtensions("modelstub")]
+    private sealed class StubPrefabSource : XRPrefabSource
+    {
+        public static int LoadCount;
+        public string? Payload { get; set; }
+
         public override bool Load3rdParty(string filePath)
         {
             LoadCount++;

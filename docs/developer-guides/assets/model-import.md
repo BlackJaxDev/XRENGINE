@@ -38,6 +38,24 @@ Current limitations:
 
 For Unity-specific conversion behavior, including `.anim` caveats and Poiyomi/lilToon material mapping, see [Unity Conversion Integrations](unity-conversion-integrations.md).
 
+## Model cache identity and legacy transition
+
+Imported model prefabs now have exclusive model-cache routing, deterministic cache identity, and a defensive v1 binary container. The container includes the fixed preamble, normalized string pool, versioned chunk table, dependency/manifest records, bounded reads, and hierarchical checksums. Cooked semantic sections and live prefab hydration are still pending, so current imports continue to parse the source and intentionally skip model-cache publication.
+
+The exclusive codec distinguishes the binary magic from legacy YAML, validates a binary manifest, and checks the entry source's length, timestamp, and configured content hash. A valid container currently reports `CodecUnavailable` after that gate so the normal cold-import path runs until hydration is implemented; malformed containers return a specific rejection reason.
+
+The reserved layout is:
+
+```text
+<cache>/Models/v<schema>/policy_p<path-policy>_r<resolver-policy>_<requested-backend>_<candidate-hash>/opts_<32-hex-variant>/<Project|Engine|External>/...
+```
+
+The variant represents output-affecting import settings, versioned LOD/meshlet cook defaults, authored per-submesh cook overrides, requested backend policy, and the ordered eligible backend versions. Worker counts, async scheduling, progress callbacks, and material/texture remap values do not change it. Build identity is diagnostic only.
+
+Project, engine, and external sources use separate origin partitions. Source paths use invariant Windows case handling, Unicode normalization, and resolved link targets when available. External paths and long, unsafe, or reserved Windows names use bounded hash-sharded locations instead of placing free-form settings or absolute paths in directory names.
+
+Old YAML model-cache entries are not trusted as the new format. Entries at either the previous generic cache location or the deterministic model location are reported as `LegacyFormat` and rebuilt from the original source; they are never deserialized or migrated as model-cache data. They remain on disk after fallback and may be removed later by age-based cache garbage collection. This transition never deletes project `.asset` files or source models.
+
 ## Model debug overlays
 
 `ModelComponent.RenderUtilizedBoneDiamonds` draws a semi-transparent, camera-view-lit diamond mesh overlay for every transform referenced by the component's mesh bone bindings. The overlay is per model component and reuses one shared gray diamond mesh/material rather than changing global transform debug rendering.

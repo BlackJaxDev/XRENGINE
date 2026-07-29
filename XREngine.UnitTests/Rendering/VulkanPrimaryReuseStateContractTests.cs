@@ -99,8 +99,9 @@ public class VulkanPrimaryReuseStateContractTests
     [Test]
     public void SecondaryMergeAndReuse_KeepTypedUnknownAndConflictReasons()
     {
-        string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+        string source = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "secondaryState.EntryStateFailure",
+            "PublishRecordedImageLayouts(ref submitInfo, lifetimeSubmission)");
 
         source.ShouldContain("secondaryState.EntryStateFailure");
         source.ShouldContain("EVulkanPrimaryEntryStateMismatch.IncompleteSnapshot");
@@ -114,8 +115,8 @@ public class VulkanPrimaryReuseStateContractTests
     [Test]
     public void FramebufferFinalState_DerivesMasksFromThePublishedFinalLayout()
     {
-        string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string source = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "private void RecordFboAttachmentAccessState(");
         string method = SliceMethod(
             source,
             "private void RecordFboAttachmentAccessState(",
@@ -189,8 +190,8 @@ public class VulkanPrimaryReuseStateContractTests
     [Test]
     public void OpenXrPrimaryReuse_DefaultsToTheValidatedProductionPolicy()
     {
-        string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
+        string source = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "OpenXrVulkanPrimaryReuseOverride ?? true");
 
         source.ShouldContain("OpenXrVulkanPrimaryReuseOverride ?? true");
         source.ShouldContain("VulkanPrimaryCommandBufferReuseEnabled &&");
@@ -214,32 +215,6 @@ public class VulkanPrimaryReuseStateContractTests
             descriptorLayout,
             serial,
             resourceGeneration);
-
-    private static string ReadWorkspaceFile(string relativePath)
-    {
-        string path = Path.Combine(
-            ResolveRepoRoot(),
-            relativePath.Replace('/', Path.DirectorySeparatorChar));
-        File.Exists(path).ShouldBeTrue(
-            $"Expected workspace file '{relativePath}'.");
-        return File.ReadAllText(path)
-            .Replace("\r\n", "\n", StringComparison.Ordinal);
-    }
-
-    private static string ResolveRepoRoot()
-    {
-        DirectoryInfo? directory = new(
-            TestContext.CurrentContext.TestDirectory);
-        while (directory is not null)
-        {
-            if (File.Exists(Path.Combine(directory.FullName, "XRENGINE.slnx")))
-                return directory.FullName;
-            directory = directory.Parent;
-        }
-
-        throw new DirectoryNotFoundException(
-            "Could not locate XRENGINE repository root.");
-    }
 
     private static string SliceMethod(
         string source,

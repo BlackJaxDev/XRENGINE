@@ -47,7 +47,6 @@ using XREngine.Rendering.UI.Functions;
 [assembly: TypeForwardedTo(typeof(WebMouseButton))]
 [assembly: TypeForwardedTo(typeof(IWebRendererBackend))]
 [assembly: TypeForwardedTo(typeof(UltralightWebRendererBackend))]
-[assembly: TypeForwardedTo(typeof(UltralightGpuWebRendererBackend))]
 [assembly: TypeForwardedTo(typeof(UIWebViewComponent))]
 [assembly: TypeForwardedTo(typeof(UIComponent))]
 [assembly: TypeForwardedTo(typeof(EditorFunctionGrid))]
