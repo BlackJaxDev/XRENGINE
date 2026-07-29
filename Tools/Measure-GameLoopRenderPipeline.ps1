@@ -27,11 +27,13 @@ param(
     [int]$MaxSteadyStateVulkanLiveResources = 50000,
     [int]$MaxSteadyStateVulkanDescriptorSets = 25000,
     [switch]$FailOnSteadyStateCommandBufferChurn,
+    [switch]$UseEligiblePrimaryReuseRatio,
     [switch]$FailOnSteadyStateCommandBufferAllocations,
     [double]$MinSteadyStateCommandBufferCleanReuseRatio = 0,
     [long]$MaxSteadyStateRecordCommandBufferAllocatedBytes = 0,
     [int]$StabilityWindowSec = 5,
     [int]$StabilityTimeoutSec = 120,
+    [int]$MinSteadyStateGpuSceneCommandCount = 0,
     [switch]$NoStabilityGate,
     [int]$ShutdownGraceSec = 20,
     [int]$NoSampleHangSec = 15,
@@ -128,8 +130,8 @@ if ($invalidStrategies.Count -gt 0) {
     throw "Invalid render path(s): $($invalidStrategies -join ', '). Allowed: $($validStrategies -join ', ')"
 }
 
-if ($WarmupSec -lt 0 -or $CaptureSec -le 0 -or $Repetitions -le 0 -or $ShutdownGraceSec -lt 1 -or $NoSampleHangSec -lt 0 -or $RetainedRunCount -lt 1 -or $StabilityWindowSec -lt 1 -or $StabilityTimeoutSec -lt 1 -or $MinSteadyStateCommandBufferCleanReuseRatio -lt 0 -or $MinSteadyStateCommandBufferCleanReuseRatio -gt 1 -or $MaxSteadyStateVulkanLiveResources -lt 1 -or $MaxSteadyStateVulkanDescriptorSets -lt 1) {
-    throw 'WarmupSec must be >= 0, CaptureSec/Repetitions must be > 0, ShutdownGraceSec/StabilityWindowSec/StabilityTimeoutSec must be >= 1, NoSampleHangSec must be >= 0, RetainedRunCount must be >= 1, and MinSteadyStateCommandBufferCleanReuseRatio must be between 0 and 1.'
+if ($WarmupSec -lt 0 -or $CaptureSec -le 0 -or $Repetitions -le 0 -or $ShutdownGraceSec -lt 1 -or $NoSampleHangSec -lt 0 -or $RetainedRunCount -lt 1 -or $StabilityWindowSec -lt 1 -or $StabilityTimeoutSec -lt 1 -or $MinSteadyStateGpuSceneCommandCount -lt 0 -or $MinSteadyStateCommandBufferCleanReuseRatio -lt 0 -or $MinSteadyStateCommandBufferCleanReuseRatio -gt 1 -or $MaxSteadyStateVulkanLiveResources -lt 1 -or $MaxSteadyStateVulkanDescriptorSets -lt 1) {
+    throw 'WarmupSec must be >= 0, CaptureSec/Repetitions must be > 0, ShutdownGraceSec/StabilityWindowSec/StabilityTimeoutSec must be >= 1, NoSampleHangSec and MinSteadyStateGpuSceneCommandCount must be >= 0, RetainedRunCount must be >= 1, and MinSteadyStateCommandBufferCleanReuseRatio must be between 0 and 1.'
 }
 
 function Get-SpeedProfileRoot {
@@ -710,6 +712,7 @@ function Test-RenderStatsStability {
         [string]$LogDir,
         [int]$WindowSec,
         [string]$Strategy,
+        [int]$MinimumGpuSceneCommandCount,
         [object]$State
     )
 
@@ -744,6 +747,25 @@ function Test-RenderStatsStability {
     }).Count
     if ($emptyOutputSamples -gt 0) {
         return [pscustomobject]@{ Stable = $false; Reason = "output manifest incomplete ($emptyOutputSamples empty samples)"; WorkloadIdentityHash = $hashes[0]; Samples = $samples.Count }
+    }
+    if ($MinimumGpuSceneCommandCount -gt 0) {
+        $sceneCommandCounts = @($samples | ForEach-Object {
+            $value = Get-SamplePropertyValue -Sample $_ -Property 'gpu_scene_command_count'
+            if ($null -ne $value) { [long]$value }
+        })
+        if ($sceneCommandCounts.Count -ne $samples.Count) {
+            return [pscustomobject]@{ Stable = $false; Reason = "GPU-scene command topology telemetry incomplete"; WorkloadIdentityHash = $hashes[0]; Samples = $samples.Count }
+        }
+
+        $minimumObserved = ($sceneCommandCounts | Measure-Object -Minimum).Minimum
+        if ($minimumObserved -lt $MinimumGpuSceneCommandCount) {
+            return [pscustomobject]@{ Stable = $false; Reason = "GPU-scene command topology not ready ($minimumObserved/$MinimumGpuSceneCommandCount)"; WorkloadIdentityHash = $hashes[0]; Samples = $samples.Count }
+        }
+
+        $uniqueSceneCommandCounts = @($sceneCommandCounts | Select-Object -Unique)
+        if ($uniqueSceneCommandCounts.Count -ne 1) {
+            return [pscustomobject]@{ Stable = $false; Reason = "GPU-scene command topology changed ($($uniqueSceneCommandCounts -join ','))"; WorkloadIdentityHash = $hashes[0]; Samples = $samples.Count }
+        }
     }
 
     $quietProperties = @(
@@ -1117,7 +1139,7 @@ function Measure-Variant {
                     break
                 }
 
-                $stability = Test-RenderStatsStability -LogDir $logDir -WindowSec $StabilityWindowSec -Strategy $strategy -State $stabilityStatsState
+                $stability = Test-RenderStatsStability -LogDir $logDir -WindowSec $StabilityWindowSec -Strategy $strategy -MinimumGpuSceneCommandCount $MinSteadyStateGpuSceneCommandCount -State $stabilityStatsState
                 $stabilityReason = $stability.Reason
                 $stableWorkloadIdentityHash = $stability.WorkloadIdentityHash
                 if ($stability.Stable) {
@@ -1226,9 +1248,10 @@ function Measure-Variant {
         }
     }
 
-    $allSamples = Read-AllRenderStatsSamples -LogDir $logDir
-    $samples = Select-RenderStatsSamples -Samples $allSamples -CaptureStartUtc $captureStartUtc -CaptureEndUtc $captureEndUtc
+    $allSamples = @(Read-AllRenderStatsSamples -LogDir $logDir)
+    $samples = @(Select-RenderStatsSamples -Samples $allSamples -CaptureStartUtc $captureStartUtc -CaptureEndUtc $captureEndUtc)
     $render = Get-NumericStats -Samples $samples -Property 'render_dispatch_ms' -PositiveOnly
+    $renderOutsideVulkan = Get-NumericStats -Samples $samples -Property 'render_outside_vulkan_frame_ms'
     $update = Get-NumericStats -Samples $samples -Property 'update_ms' -PositiveOnly
     $collect = Get-NumericStats -Samples $samples -Property 'collect_visible_ms' -PositiveOnly
     $collectWaitForRender = Get-NumericStats -Samples $samples -Property 'collect_wait_for_render_ms' -PositiveOnly
@@ -1266,6 +1289,11 @@ function Measure-Variant {
     $vkWaitSwapchainImage = Get-NumericStats -Samples $samples -Property 'vulkan_frame_wait_swapchain_image_ms' -PositiveOnly
     $vkResetDynamicUniformRing = Get-NumericStats -Samples $samples -Property 'vulkan_frame_reset_dynamic_uniform_ring_ms' -PositiveOnly
     $vkRecordCommandBuffer = Get-NumericStats -Samples $samples -Property 'vulkan_frame_record_command_buffer_ms' -PositiveOnly
+    $vkFrameOpPreparation = Get-NumericStats -Samples $samples -Property 'vulkan_cpu_frame_op_preparation_ms'
+    $vkResourcePlanning = Get-NumericStats -Samples $samples -Property 'vulkan_cpu_resource_planning_ms'
+    $vkFrameDataRefresh = Get-NumericStats -Samples $samples -Property 'vulkan_cpu_frame_data_refresh_ms'
+    $vkPrimaryCommandEncoding = Get-NumericStats -Samples $samples -Property 'vulkan_cpu_primary_command_encoding_ms'
+    $vkSecondaryRecording = Get-NumericStats -Samples $samples -Property 'vulkan_cpu_secondary_recording_ms'
     $vkRecordCommandBufferAllocatedBytesTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_record_command_buffer_allocated_bytes'
     $vkFrameOpPreparationAllocatedBytesTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_cpu_frame_op_preparation_allocated_bytes'
     $vkResourcePlanningAllocatedBytesTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_cpu_resource_planning_allocated_bytes'
@@ -1326,6 +1354,52 @@ function Measure-Variant {
     } | Select-Object -Unique)
     $vkCommandBufferOutcomeTotal = $vkCommandBufferRecordsTotal + $vkCommandBufferCleanReuseTotal
     $vkCommandBufferCleanReuseRatio = if ($vkCommandBufferOutcomeTotal -gt 0) { [Math]::Round($vkCommandBufferCleanReuseTotal / $vkCommandBufferOutcomeTotal, 6) } else { 0.0 }
+    # A primary can only be reused while its recorded structural and binding
+    # dependencies remain valid. Records caused by attachment rotation, resource
+    # retirement, pipeline publication, swapchain lifecycle, or first-use
+    # initialization are therefore not eligible reuse decisions. Frame-data-only
+    # misses remain eligible and must still fail the reuse gate.
+    $vkPrimaryReuseIneligibleReasonMask =
+        4 +       # ForcedDirty
+        8 +       # FrameOpSignature
+        16 +      # ResourcePlan
+        32 +      # ProfilerMode
+        128 +     # DynamicOverlay
+        256 +     # SwapchainLifecycle
+        512 +     # CommandChainPrimary
+        1024 +    # PrimaryFrameState
+        2048 +    # DescriptorGeneration
+        4096 +    # ResourceAllocation
+        8192 +    # Evicted
+        131072 +  # PipelineGeneration
+        262144 +  # SecondaryInvalid
+        524288    # VolatileCommand
+    [double]$vkEligiblePrimaryRecordsTotal = 0
+    [double]$vkIneligiblePrimaryRecordsTotal = 0
+    foreach ($sample in $samples) {
+        [double]$recordCount = Get-SamplePropertyValue -Sample $sample -Property 'vulkan_command_buffer_record_count'
+        if ($recordCount -le 0) {
+            continue
+        }
+
+        [long]$reasonMask = Get-SamplePropertyValue -Sample $sample -Property 'vulkan_command_buffer_decision_reason_mask'
+        if (($reasonMask -band $vkPrimaryReuseIneligibleReasonMask) -eq 0) {
+            $vkEligiblePrimaryRecordsTotal += $recordCount
+        } else {
+            $vkIneligiblePrimaryRecordsTotal += $recordCount
+        }
+    }
+    $vkEligiblePrimaryReuseDecisionTotal = $vkCommandBufferCleanReuseTotal + $vkEligiblePrimaryRecordsTotal
+    $vkEligiblePrimaryReuseRatio = if ($vkEligiblePrimaryReuseDecisionTotal -gt 0) {
+        [Math]::Round($vkCommandBufferCleanReuseTotal / $vkEligiblePrimaryReuseDecisionTotal, 6)
+    } else {
+        0.0
+    }
+    $vkGatePrimaryReuseRatio = if ($UseEligiblePrimaryReuseRatio) {
+        $vkEligiblePrimaryReuseRatio
+    } else {
+        $vkCommandBufferCleanReuseRatio
+    }
     $plannerPruneTotal = Sum-NumericProperty -Samples $samples -Property 'frame_output_planner_prune_count'
     $globalInFlightWaitTotal = Sum-NumericProperty -Samples $samples -Property 'frame_output_global_in_flight_wait_count'
     $forceFlushTotal = Sum-NumericProperty -Samples $samples -Property 'frame_output_force_flush_count'
@@ -1393,8 +1467,11 @@ function Measure-Variant {
     if ($FailOnSteadyStateResourceChurn -and ($vkRetiredResourceCountTotal -gt 0 -or $plannerPruneTotal -gt 0 -or $globalInFlightWaitTotal -gt 0 -or $forceFlushTotal -gt 0 -or $vkDescriptorPoolCreatesTotal -gt 0 -or $vkLifetimeLiveResourcesMax -gt $MaxSteadyStateVulkanLiveResources -or $vkTrackedDescriptorSetsMax -gt $MaxSteadyStateVulkanDescriptorSets)) {
         $noteParts.Add("steady-state resource churn failure retired=$vkRetiredResourceCountTotal planReplacements=$vkResourcePlanReplacementsTotal plannerPrunes=$plannerPruneTotal globalWaits=$globalInFlightWaitTotal forceFlushes=$forceFlushTotal descriptorPoolCreates=$vkDescriptorPoolCreatesTotal liveResourcesMax=$vkLifetimeLiveResourcesMax/$MaxSteadyStateVulkanLiveResources descriptorSetsMax=$vkTrackedDescriptorSetsMax/$MaxSteadyStateVulkanDescriptorSets") | Out-Null
     }
-    if ($FailOnSteadyStateCommandBufferChurn -and ($vkCommandBufferForcedDirtyTotal -gt 0 -or $vkCommandBufferDirtySummaries.Count -gt 0 -or $vkCommandBufferCleanReuseRatio -lt $MinSteadyStateCommandBufferCleanReuseRatio -or $vkGlobalFallbackInvalidationsTotal -gt 0)) {
-        $noteParts.Add("steady-state command-buffer churn failure records=$vkCommandBufferRecordsTotal reuse=$vkCommandBufferCleanReuseTotal forcedDirty=$vkCommandBufferForcedDirtyTotal ratio=$vkCommandBufferCleanReuseRatio exactVariants=$vkExactVariantsDirtiedTotal exactChains=$vkExactCommandChainsDirtiedTotal unrelatedPreserved=$vkUnrelatedVariantsPreservedTotal globalFallbacks=$vkGlobalFallbackInvalidationsTotal dirty=$($vkCommandBufferDirtySummaries -join '|')") | Out-Null
+    $vkStrictCommandBufferChurn =
+        -not $UseEligiblePrimaryReuseRatio -and
+        ($vkCommandBufferForcedDirtyTotal -gt 0 -or $vkCommandBufferDirtySummaries.Count -gt 0)
+    if ($FailOnSteadyStateCommandBufferChurn -and ($vkStrictCommandBufferChurn -or $vkGatePrimaryReuseRatio -lt $MinSteadyStateCommandBufferCleanReuseRatio -or $vkGlobalFallbackInvalidationsTotal -gt 0)) {
+        $noteParts.Add("steady-state command-buffer churn failure records=$vkCommandBufferRecordsTotal reuse=$vkCommandBufferCleanReuseTotal forcedDirty=$vkCommandBufferForcedDirtyTotal rawRatio=$vkCommandBufferCleanReuseRatio eligibleRecords=$vkEligiblePrimaryRecordsTotal ineligibleRecords=$vkIneligiblePrimaryRecordsTotal eligibleRatio=$vkEligiblePrimaryReuseRatio exactVariants=$vkExactVariantsDirtiedTotal exactChains=$vkExactCommandChainsDirtiedTotal unrelatedPreserved=$vkUnrelatedVariantsPreservedTotal globalFallbacks=$vkGlobalFallbackInvalidationsTotal dirty=$($vkCommandBufferDirtySummaries -join '|')") | Out-Null
     }
     if ($FailOnSteadyStateCommandBufferAllocations -and $vkRecordCommandBufferAllocatedBytesTotal -gt $MaxSteadyStateRecordCommandBufferAllocatedBytes) {
         $noteParts.Add("steady-state command-buffer allocation failure bytes=$vkRecordCommandBufferAllocatedBytesTotal threshold=$MaxSteadyStateRecordCommandBufferAllocatedBytes") | Out-Null
@@ -1454,6 +1531,7 @@ function Measure-Variant {
         WarmupPhaseSec = $WarmupSec
         SteadyStatePhaseSec = $CaptureSec
         StabilityGateEnabled = -not [bool]$NoStabilityGate
+        MinimumGpuSceneCommandCount = $MinSteadyStateGpuSceneCommandCount
         StabilityReady = $stabilityReady
         StabilityWaitSec = $stabilityWaitSec
         StabilityReason = $stabilityReason
@@ -1470,6 +1548,9 @@ function Measure-Variant {
         RenderP95Ms = $render.P95
         RenderP99Ms = $render.P99
         RenderWorstMs = $render.Max
+        RenderOutsideVulkanP50Ms = $renderOutsideVulkan.P50
+        RenderOutsideVulkanP95Ms = $renderOutsideVulkan.P95
+        RenderOutsideVulkanP99Ms = $renderOutsideVulkan.P99
         UpdateP50Ms = $update.P50
         UpdateP95Ms = $update.P95
         UpdateP99Ms = $update.P99
@@ -1524,6 +1605,21 @@ function Measure-Variant {
         VulkanRecordCommandBufferP50Ms = $vkRecordCommandBuffer.P50
         VulkanRecordCommandBufferP95Ms = $vkRecordCommandBuffer.P95
         VulkanRecordCommandBufferMaxMs = $vkRecordCommandBuffer.Max
+        VulkanFrameOpPreparationP50Ms = $vkFrameOpPreparation.P50
+        VulkanFrameOpPreparationP95Ms = $vkFrameOpPreparation.P95
+        VulkanFrameOpPreparationP99Ms = $vkFrameOpPreparation.P99
+        VulkanResourcePlanningP50Ms = $vkResourcePlanning.P50
+        VulkanResourcePlanningP95Ms = $vkResourcePlanning.P95
+        VulkanResourcePlanningP99Ms = $vkResourcePlanning.P99
+        VulkanFrameDataRefreshP50Ms = $vkFrameDataRefresh.P50
+        VulkanFrameDataRefreshP95Ms = $vkFrameDataRefresh.P95
+        VulkanFrameDataRefreshP99Ms = $vkFrameDataRefresh.P99
+        VulkanPrimaryCommandEncodingP50Ms = $vkPrimaryCommandEncoding.P50
+        VulkanPrimaryCommandEncodingP95Ms = $vkPrimaryCommandEncoding.P95
+        VulkanPrimaryCommandEncodingP99Ms = $vkPrimaryCommandEncoding.P99
+        VulkanSecondaryRecordingP50Ms = $vkSecondaryRecording.P50
+        VulkanSecondaryRecordingP95Ms = $vkSecondaryRecording.P95
+        VulkanSecondaryRecordingP99Ms = $vkSecondaryRecording.P99
         VulkanRecordCommandBufferAllocatedBytesTotal = $vkRecordCommandBufferAllocatedBytesTotal
         VulkanFrameOpPreparationAllocatedBytesTotal = $vkFrameOpPreparationAllocatedBytesTotal
         VulkanResourcePlanningAllocatedBytesTotal = $vkResourcePlanningAllocatedBytesTotal
@@ -1548,6 +1644,11 @@ function Measure-Variant {
         VulkanCommandBufferCleanReuseTotal = $vkCommandBufferCleanReuseTotal
         VulkanCommandBufferForcedDirtyTotal = $vkCommandBufferForcedDirtyTotal
         VulkanCommandBufferCleanReuseRatio = $vkCommandBufferCleanReuseRatio
+        VulkanEligiblePrimaryCommandBufferRecordsTotal = $vkEligiblePrimaryRecordsTotal
+        VulkanIneligiblePrimaryCommandBufferRecordsTotal = $vkIneligiblePrimaryRecordsTotal
+        VulkanEligiblePrimaryCommandBuffersReusedTotal = $vkCommandBufferCleanReuseTotal
+        VulkanEligiblePrimaryCommandBufferReuseDecisionsTotal = $vkEligiblePrimaryReuseDecisionTotal
+        VulkanEligiblePrimaryCommandBufferReuseRatio = $vkEligiblePrimaryReuseRatio
         VulkanCommandBufferDirtySummaries = $vkCommandBufferDirtySummaries
         VulkanExactVariantsDirtiedTotal = $vkExactVariantsDirtiedTotal
         VulkanExactCommandChainsDirtiedTotal = $vkExactCommandChainsDirtiedTotal
@@ -1650,8 +1751,26 @@ function Measure-Variant {
         GpuDrivenFullBucketScansTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_driven_full_bucket_scans'
         GpuDrivenConfiguredMaterialSlotsP50 = (Get-NumericStats -Samples $samples -Property 'gpu_driven_configured_material_slots').P50
         GpuDrivenMaterialPassGroupsP50 = (Get-NumericStats -Samples $samples -Property 'gpu_driven_material_pass_groups').P50
+        GpuDrivenCommandCapacityP50 = (Get-NumericStats -Samples $samples -Property 'gpu_driven_command_capacity').P50
+        GpuDrivenCommandCapacityMax = Max-NumericProperty -Samples $samples -Property 'gpu_driven_command_capacity'
+        GpuDrivenActiveCommandCountP50 = (Get-NumericStats -Samples $samples -Property 'gpu_driven_active_command_count').P50
+        GpuDrivenActiveCommandCountMax = Max-NumericProperty -Samples $samples -Property 'gpu_driven_active_command_count'
+        GpuDrivenMaterialLookupCapacityP50 = (Get-NumericStats -Samples $samples -Property 'gpu_driven_material_lookup_capacity').P50
+        GpuDrivenMaterialLookupCapacityMax = Max-NumericProperty -Samples $samples -Property 'gpu_driven_material_lookup_capacity'
+        GpuDrivenActiveMaterialSlotsP50 = (Get-NumericStats -Samples $samples -Property 'gpu_driven_active_material_slots').P50
+        GpuDrivenActiveMaterialSlotsMax = Max-NumericProperty -Samples $samples -Property 'gpu_driven_active_material_slots'
+        GpuDrivenValidationCapacityMultiplier = (Get-NumericStats -Samples $samples -Property 'gpu_driven_validation_capacity_multiplier').P50
+        GpuDrivenValidationCapacityFloor = (Get-NumericStats -Samples $samples -Property 'gpu_driven_validation_capacity_floor').P50
+        GpuDrivenCulledCommandCountP50 = (Get-NumericStats -Samples $samples -Property 'gpu_driven_culled_command_count').P50
+        VulkanRequestedDrawsP50 = (Get-NumericStats -Samples $samples -Property 'vulkan_requested_draws').P50
+        VulkanConsumedDrawsP50 = (Get-NumericStats -Samples $samples -Property 'vulkan_consumed_draws').P50
         GpuDrivenUnsupportedCompactPassesTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_driven_unsupported_compact_passes'
+        GpuSceneCommandCountP50 = (Get-NumericStats -Samples $samples -Property 'gpu_scene_command_count').P50
+        GpuSceneCommandCountMax = Max-NumericProperty -Samples $samples -Property 'gpu_scene_command_count'
         GpuDrivenDelayedDiagnosticReadbackBytesTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_driven_delayed_diagnostic_readback_bytes'
+        GpuDrivenSubmissionManagedAllocatedBytesTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_driven_submission_managed_allocated_bytes'
+        GpuDrivenSubmissionBackendManagedAllocatedBytesTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_driven_submission_backend_managed_allocated_bytes'
+        GpuDrivenSubmissionOwnedManagedAllocatedBytesTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_driven_submission_owned_managed_allocated_bytes'
         MaterialBindingRung = $lastMaterialBindingRung
         MaterialBindingRungReason = $lastMaterialBindingRungReason
         GpuCompactionRung = $lastGpuCompactionRung
@@ -1773,15 +1892,24 @@ if ($FailOnSteadyStateResourceChurn) {
 
 if ($FailOnSteadyStateCommandBufferChurn) {
     $commandChurnFailures = @($results | Where-Object {
-        [double]$_.VulkanCommandBufferForcedDirtyTotal -gt 0.0 -or
-        @($_.VulkanCommandBufferDirtySummaries).Count -gt 0 -or
-        [double]$_.VulkanCommandBufferCleanReuseRatio -lt $MinSteadyStateCommandBufferCleanReuseRatio -or
+        (
+            -not $UseEligiblePrimaryReuseRatio -and
+            (
+                [double]$_.VulkanCommandBufferForcedDirtyTotal -gt 0.0 -or
+                @($_.VulkanCommandBufferDirtySummaries).Count -gt 0
+            )
+        ) -or
+        [double]$(if ($UseEligiblePrimaryReuseRatio) {
+            $_.VulkanEligiblePrimaryCommandBufferReuseRatio
+        } else {
+            $_.VulkanCommandBufferCleanReuseRatio
+        }) -lt $MinSteadyStateCommandBufferCleanReuseRatio -or
         [double]$_.VulkanGlobalFallbackInvalidationsTotal -gt 0.0
     })
 
     if ($commandChurnFailures.Count -gt 0) {
         $details = $commandChurnFailures | ForEach-Object {
-            "$($_.Strategy) r$($_.Repetition): records=$($_.VulkanCommandBufferRecordsTotal) reuse=$($_.VulkanCommandBufferCleanReuseTotal) forcedDirty=$($_.VulkanCommandBufferForcedDirtyTotal) reuseRatio=$($_.VulkanCommandBufferCleanReuseRatio) exactVariants=$($_.VulkanExactVariantsDirtiedTotal) exactChains=$($_.VulkanExactCommandChainsDirtiedTotal) unrelatedPreserved=$($_.VulkanUnrelatedVariantsPreservedTotal) globalFallbacks=$($_.VulkanGlobalFallbackInvalidationsTotal) dirty=$(@($_.VulkanCommandBufferDirtySummaries) -join '|')"
+            "$($_.Strategy) r$($_.Repetition): records=$($_.VulkanCommandBufferRecordsTotal) reuse=$($_.VulkanCommandBufferCleanReuseTotal) forcedDirty=$($_.VulkanCommandBufferForcedDirtyTotal) rawRatio=$($_.VulkanCommandBufferCleanReuseRatio) eligibleRecords=$($_.VulkanEligiblePrimaryCommandBufferRecordsTotal) ineligibleRecords=$($_.VulkanIneligiblePrimaryCommandBufferRecordsTotal) eligibleRatio=$($_.VulkanEligiblePrimaryCommandBufferReuseRatio) exactVariants=$($_.VulkanExactVariantsDirtiedTotal) exactChains=$($_.VulkanExactCommandChainsDirtiedTotal) unrelatedPreserved=$($_.VulkanUnrelatedVariantsPreservedTotal) globalFallbacks=$($_.VulkanGlobalFallbackInvalidationsTotal) dirty=$(@($_.VulkanCommandBufferDirtySummaries) -join '|')"
         }
         throw "Steady-state Vulkan command-buffer churn detected: $($details -join '; ')"
     }

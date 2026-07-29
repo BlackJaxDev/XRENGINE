@@ -22,7 +22,8 @@ public static class BootstrapModelBuilder
                 executeNowIfAlreadyAppThread: true);
         }
 
-        if (!RuntimeBootstrapState.Settings.HasAnyModelsToImport)
+        UnitTestingWorldSettings settings = RuntimeBootstrapState.Settings;
+        if (!settings.CreateUnitBox && !settings.HasAnyModelsToImport)
         {
             DispatchAllImportsComplete();
             return;

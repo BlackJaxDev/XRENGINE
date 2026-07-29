@@ -156,15 +156,19 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
     }
 
     [Test]
-    public void MeshletPass_DoesNotRunCpuRenderBeforeGpuMeshlets()
+    public void MeshletPass_RendersOnlyExcludedCpuFallbackBeforeGpuMeshlets()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Meshlet/VPRC_RenderMeshesPassMeshlet.cs");
 
+        int excludedFallbackIndex = source.IndexOf("commands.RenderCPUNonMeshAndExcluded(command.RenderPass);", StringComparison.Ordinal);
+        int gpuDispatchIndex = source.IndexOf("commands.RenderGPU(command.RenderPass, meshSubmissionStrategy);", StringComparison.Ordinal);
+
+        excludedFallbackIndex.ShouldBeGreaterThanOrEqualTo(0);
+        excludedFallbackIndex.ShouldBeLessThan(gpuDispatchIndex);
         source.ShouldContain("gpuPass.UseMeshletPipeline = true;");
-        source.ShouldContain("commands.RenderGPU(command.RenderPass, meshSubmissionStrategy);");
         source.ShouldContain("ShouldUseOpenGLMeshletProgramWarmupFallback");
         source.ShouldContain("RenderCPUMeshOnly(command.RenderPass);");
-        source.ShouldNotContain("RenderCPU(");
+        source.ShouldNotContain("commands.RenderCPU(");
     }
 
     [Test]

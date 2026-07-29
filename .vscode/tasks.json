@@ -901,9 +901,9 @@
 			"type": "shell",
 			"args": [
 				"msbuild",
-				"${workspaceFolder}/VR_MonkeyBall_Sample/VR_MonkeyBall_Sample.csproj",
+				"${workspaceFolder}/Samples/MonkeyBallVR/MonkeyBallVR.csproj",
 				"/t:GenerateGameProject",
-				"/p:Configuration=Debug"
+				"/p:Configuration=Development Debug"
 			],
 			"presentation": {
 				"reveal": "always"
@@ -916,9 +916,9 @@
 			"type": "shell",
 			"args": [
 				"msbuild",
-				"${workspaceFolder}/VR_MonkeyBall_Sample/VR_MonkeyBall_Sample.csproj",
+				"${workspaceFolder}/Samples/MonkeyBallVR/MonkeyBallVR.csproj",
 				"/t:CookGameExe",
-				"/p:Configuration=Release"
+				"/p:Configuration=Development Release"
 			],
 			"presentation": {
 				"reveal": "always"
@@ -926,7 +926,7 @@
 			"problemMatcher": "$msCompile"
 		},
 		{
-			"label": "Publish-AOT-FinalGame-Smoke",
+			"label": "Publish-VRMonkeyBall-NativeAOT-Package",
 			"type": "shell",
 			"command": "powershell",
 			"args": [
@@ -934,11 +934,9 @@
 				"-ExecutionPolicy",
 				"Bypass",
 				"-File",
-				"${workspaceFolder}\\Tools\\Publish-AotFinalGame.ps1",
-				"-ProjectPath",
-				"${workspaceFolder}\\Samples\\MonkeyBallVR\\MonkeyBallVR.xrproj"
+				"${workspaceFolder}\\Tools\\Publish-MonkeyBallVR.ps1"
 			],
-			"group": "test",
+			"group": "build",
 			"presentation": {
 				"reveal": "always"
 			},

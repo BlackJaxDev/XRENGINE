@@ -148,7 +148,7 @@ namespace XREngine.Rendering.Commands
                     Debug.Rendering($"[MotionVectors] Missing prev model; treating as static. WorldIsModel={_renderWorldMatrixIsModelMatrix}, Instances={_renderInstances}");
                 }
 
-                using var _ = RuntimeRenderingHostServices.DebugDrawing.PushTransformId(_renderGpuCommandIndex == uint.MaxValue ? 0u : _renderGpuCommandIndex);
+                using var _ = RuntimeRenderingHostServices.DebugDrawing.PushTransformId(StableQueryKey);
 
                 Matrix4x4 modelMatrix = GetModelMatrix();
                 Matrix4x4 previousModelMatrix = GetPreviousModelMatrix(modelMatrix);

@@ -37,11 +37,14 @@ namespace XREngine
                     "rendering bootstrap before Engine.Run.");
             }
 
-            if (Initialize(startupSettings, state))
+            bool initialized = Initialize(startupSettings, state);
+            if (initialized)
             {
                 RunGameLoop();
                 BlockForRendering();
             }
+            else
+                Environment.ExitCode = 1;
             Cleanup();
         }
 
@@ -133,7 +136,10 @@ namespace XREngine
             }
             catch (Exception e)
             {
-                Debug.LogWarning($"Error during engine initialization: {e.Message}\n{e.StackTrace}");
+                string diagnostic = $"Error during engine initialization: {e}";
+                Console.Error.WriteLine(diagnostic);
+                Debug.WriteAuxiliaryLog("startup-failure.log", diagnostic);
+                Debug.LogWarning(diagnostic);
                 success = false;
             }
             finally

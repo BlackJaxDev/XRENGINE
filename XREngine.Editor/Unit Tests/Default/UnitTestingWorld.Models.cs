@@ -21,6 +21,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Scene;
+using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 using System.Diagnostics;
 using Quaternion = System.Numerics.Quaternion;
@@ -243,23 +244,74 @@ public static partial class EditorUnitTests
             Debug.Meshes($"[StaticModel] Enabled one combined auto-generated CoACD collider body for {targetComponents.Count} imported model components under '{rootNode.Name}'.");
         }
 
+        private static void CreateUnitBoxes(SceneNode rootNode)
+        {
+            const int MaxUnitBoxCount = 16384;
+            int boxCount = Math.Clamp(Toggles.UnitBoxCount, 1, MaxUnitBoxCount);
+            int materialCount = Math.Clamp(Toggles.UnitBoxMaterialCount, 1, boxCount);
+            XRMesh mesh = XRMesh.Shapes.SolidBox(
+                new Vector3(-0.5f),
+                new Vector3(0.5f),
+                true,
+                XRMesh.Shapes.ECubemapTextureUVs.None);
+            AABB bounds = new(new Vector3(-0.5f), new Vector3(0.5f));
+            XRMaterial[] sharedMaterials = new XRMaterial[materialCount];
+            const float gridAspectRatio = 16.0f / 9.0f;
+            const float gridSpacing = 1.25f;
+            const float horizontalFieldOfViewRadians = 50.0f * MathF.PI / 180.0f;
+            int gridColumns = (int)MathF.Ceiling(MathF.Sqrt(boxCount * gridAspectRatio));
+            int gridRows = (boxCount + gridColumns - 1) / gridColumns;
+            float gridOriginX = -0.5f * (gridColumns - 1) * gridSpacing;
+            float gridOriginY = -0.5f * (gridRows - 1) * gridSpacing;
+            float verticalFieldOfViewRadians = 2.0f * MathF.Atan(
+                MathF.Tan(0.5f * horizontalFieldOfViewRadians) / gridAspectRatio);
+            float gridDistance = 1.1f * MathF.Max(
+                (MathF.Abs(gridOriginX) + 0.5f) / MathF.Tan(0.5f * horizontalFieldOfViewRadians),
+                (MathF.Abs(gridOriginY) + 0.5f) / MathF.Tan(0.5f * verticalFieldOfViewRadians));
+
+            for (int materialIndex = 0; materialIndex < materialCount; materialIndex++)
+            {
+                XRMaterial material = Toggles.UnitBoxDeferredMaterial
+                    ? XRMaterial.CreateColorMaterialDeferred(ColorF4.Red)
+                    : XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Red);
+                material.RenderOptions.CullMode = ECullMode.None;
+                material.RenderPass = Toggles.UnitBoxDeferredMaterial
+                    ? (int)EDefaultRenderPass.OpaqueDeferred
+                    : (int)EDefaultRenderPass.OpaqueForward;
+                sharedMaterials[materialIndex] = material;
+            }
+
+            for (int boxIndex = 0; boxIndex < boxCount; boxIndex++)
+            {
+                SceneNode boxNode = new(rootNode)
+                {
+                    Name = boxCount == 1 ? "UnitBox" : $"UnitBox {boxIndex + 1}",
+                };
+                if (boxCount > 1)
+                {
+                    int gridX = boxIndex % gridColumns;
+                    int gridY = boxIndex / gridColumns;
+                    boxNode.GetTransformAs<Transform>(false)!.Translation = new Vector3(
+                        gridOriginX + gridX * gridSpacing,
+                        gridOriginY + gridY * gridSpacing,
+                        -MathF.Max(gridDistance, 6.0f));
+                }
+
+                ModelComponent boxComponent = boxNode.AddComponent<ModelComponent>()!;
+                boxComponent.Model = new Model(
+                [
+                    new SubMesh(mesh, sharedMaterials[boxIndex % materialCount])
+                    {
+                        CullingBounds = bounds,
+                    },
+                ]);
+            }
+        }
+
         public static void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode, Action? onAllModelsImported = null)
         {
             if (Toggles.CreateUnitBox)
-            {
-                SceneNode boxNode = new(rootNode) { Name = "UnitBox" };
-                ModelComponent boxComp = boxNode.AddComponent<ModelComponent>()!;
-                var mesh = XRMesh.Shapes.SolidBox(new Vector3(-0.5f), new Vector3(0.5f), true, XRMesh.Shapes.ECubemapTextureUVs.None);
-                var material = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Red);
-                material.RenderOptions.CullMode = ECullMode.None;
-                material.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
-                boxComp.Model = new Model([new SubMesh(mesh, material)
-                {
-                    CullingBounds = 
-                        new AABB(new Vector3(-0.5f),
-                        new Vector3(0.5f)),
-                }]);
-            }
+                CreateUnitBoxes(rootNode);
 
             int allModelImportCompletionQueued = 0;
             void DispatchAllModelsImported()
@@ -401,14 +453,28 @@ public static partial class EditorUnitTests
                                         Debug.MeshesWarning($"[StaticModel] Import finished but RootNode is null: {resolvedPath}");
                                     else
                                     {
+                                        SceneNode importedRoot = result.RootNode;
                                         if (HasPostImportFlag(model, ModelPostImportFlags.GenerateCoacdCollidersPerSubmesh))
                                         {
                                             bool combineCoacdColliders = HasPostImportFlag(model, ModelPostImportFlags.PutAllCoacdCollidersIntoOneStaticRigidBodyComponent);
-                                            AttachAutoGeneratedStaticColliders(result.RootNode, combineCoacdColliders);
+                                            AttachAutoGeneratedStaticColliders(importedRoot, combineCoacdColliders);
                                         }
+
                                         lock (importedStaticRootsLock)
-                                            importedStaticRoots.Add(result.RootNode);
-                                        Debug.Meshes($"[StaticModel] Import completed: {resolvedPath} ({result.Meshes.Count} meshes, {result.Materials.Count} materials)");
+                                            importedStaticRoots.Add(importedRoot);
+
+                                        int instanceCount = Math.Clamp(model.InstanceCount, 1, 64);
+                                        for (int instanceIndex = 1; instanceIndex < instanceCount; instanceIndex++)
+                                        {
+                                            SceneNode instance = SceneNodePrefabUtility.CloneHierarchyAttached(
+                                                importedRoot,
+                                                importedStaticModelsRootNode);
+                                            instance.Name = $"{importedRoot.Name} Instance {instanceIndex + 1}";
+                                            lock (importedStaticRootsLock)
+                                                importedStaticRoots.Add(instance);
+                                        }
+
+                                        Debug.Meshes($"[StaticModel] Import completed: {resolvedPath} ({result.Meshes.Count} meshes, {result.Materials.Count} materials, {instanceCount} instance(s))");
                                     }
 
                                     CompleteStaticImportSlot();

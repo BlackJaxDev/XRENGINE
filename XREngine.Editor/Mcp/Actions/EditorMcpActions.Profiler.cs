@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using XREngine;
 using XREngine.Data.Core;
 using XREngine.Rendering.Occlusion;
+using GpuDrivenStats = XREngine.RuntimeEngine.Rendering.Stats.GpuDriven;
 using GpuPipelineStats = XREngine.RuntimeEngine.Rendering.Stats.GpuPipelineProfiler;
 using OcclusionTelemetry = XREngine.Rendering.Occlusion.OcclusionTelemetry;
 using VrStats = XREngine.RuntimeEngine.Rendering.Stats.Vr;
@@ -90,6 +91,45 @@ namespace XREngine.Editor.Mcp
                         backend = GpuPipelineStats.GpuRenderPipelineBackend,
                         status = GpuPipelineStats.GpuRenderPipelineStatusMessage,
                         frame_ms = GpuPipelineStats.GpuRenderPipelineFrameMs,
+                    },
+                    scene = new
+                    {
+                        tracked_renderables = context.WorldInstance.VisualScene.Renderables.Count,
+                        gpu_commands = new
+                        {
+                            total_count = context.WorldInstance.VisualScene.GPUCommands.TotalCommandCount,
+                            allocated_capacity = context.WorldInstance.VisualScene.GPUCommands.AllocatedMaxCommandCount,
+                            skinned_count = context.WorldInstance.VisualScene.GPUCommands.SkinnedCommandCount,
+                        },
+                    },
+                    gpu_driven = new
+                    {
+                        culled_command_count = GpuDrivenStats.CulledCommandCount,
+                        active_bucket_count = GpuDrivenStats.ActiveBucketCount,
+                        empty_bucket_skips = GpuDrivenStats.EmptyBucketSkips,
+                        full_bucket_scans = GpuDrivenStats.FullBucketScans,
+                        material_scatter_dispatches = GpuDrivenStats.MaterialScatterDispatches,
+                        configured_material_slots = GpuDrivenStats.ConfiguredMaterialSlots,
+                        material_pass_groups = GpuDrivenStats.MaterialPassGroups,
+                        unsupported_compact_passes = GpuDrivenStats.UnsupportedCompactPasses,
+                        command_capacity = GpuDrivenStats.CommandCapacity,
+                        active_command_count = GpuDrivenStats.ActiveCommandCount,
+                        material_lookup_capacity = GpuDrivenStats.MaterialLookupCapacity,
+                        active_material_slots = GpuDrivenStats.ActiveMaterialSlots,
+                        submission_managed_allocated_bytes = GpuDrivenStats.SubmissionManagedAllocatedBytes,
+                        submission_backend_managed_allocated_bytes = GpuDrivenStats.SubmissionBackendManagedAllocatedBytes,
+                        submission_owned_managed_allocated_bytes = GpuDrivenStats.SubmissionOwnedManagedAllocatedBytes,
+                        delayed_diagnostic_readback_bytes = GpuDrivenStats.DelayedDiagnosticReadbackBytes,
+                        delayed_diagnostic_readback_count = GpuDrivenStats.DelayedDiagnosticReadbackCount,
+                        gpu_compaction_overflow = GpuDrivenStats.GpuCompactionOverflow,
+                        active_list_overflow = GpuDrivenStats.ActiveListOverflow,
+                        bucket_overflow = GpuDrivenStats.BucketOverflow,
+                        meshlet_overflow = GpuDrivenStats.MeshletOverflow,
+                        hiz_mode = GpuDrivenStats.HiZMode,
+                        material_binding_rung = GpuDrivenStats.MaterialBindingRung,
+                        material_binding_rung_reason = GpuDrivenStats.MaterialBindingRungReason,
+                        gpu_compaction_rung = GpuDrivenStats.GpuCompactionRung,
+                        gpu_compaction_rung_reason = GpuDrivenStats.GpuCompactionRungReason,
                     },
                     frame_outputs = BuildFrameOutputManifest(RuntimeEngine.Rendering.Stats.FrameOutputs.LastManifest),
                     occlusion = new

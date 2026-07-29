@@ -767,12 +767,14 @@ namespace XREngine.Rendering
             if (strategy == EInteractiveWindowResizeStrategy.SdlBackend)
             {
                 Debug.Rendering("[InteractiveResize] Prioritizing Silk.NET SDL windowing backend.");
-                Silk.NET.Windowing.Window.PrioritizeSdl();
+                Silk.NET.Windowing.Sdl.SdlWindowing.Use();
+                Silk.NET.Input.Sdl.SdlInput.Use();
                 return;
             }
 
             Debug.Rendering("[InteractiveResize] Prioritizing Silk.NET GLFW windowing backend.");
-            Silk.NET.Windowing.Window.PrioritizeGlfw();
+            Silk.NET.Windowing.Glfw.GlfwWindowing.Use();
+            Silk.NET.Input.Glfw.GlfwInput.RegisterPlatform();
         }
 
         public void SetInteractiveResizeStrategy(EInteractiveWindowResizeStrategy strategy)

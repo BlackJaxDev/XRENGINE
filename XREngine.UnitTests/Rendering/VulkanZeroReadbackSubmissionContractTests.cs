@@ -153,6 +153,68 @@ public sealed class VulkanZeroReadbackSubmissionContractTests
         shaderFactory.ShouldContain("XRENGINE_EncodeNormal(worldNormal)");
     }
 
+    [Test]
+    public void ValidationCapacityMultiplier_IsBoundedAndSaturating()
+    {
+        GpuDrivenValidationCapacity.ResolveMultiplier(null).ShouldBe(1u);
+        GpuDrivenValidationCapacity.ResolveMultiplier("1").ShouldBe(1u);
+        GpuDrivenValidationCapacity.ResolveMultiplier("4").ShouldBe(4u);
+        GpuDrivenValidationCapacity.ResolveMultiplier("16").ShouldBe(16u);
+        GpuDrivenValidationCapacity.Scale(49u, 4u).ShouldBe(196u);
+        GpuDrivenValidationCapacity.Scale(uint.MaxValue, 16u)
+            .ShouldBe((uint)int.MaxValue);
+
+        Should.Throw<InvalidOperationException>(
+            () => GpuDrivenValidationCapacity.ResolveMultiplier("2"));
+    }
+
+    [Test]
+    public void CapacityValidation_InflatesAllocationWithoutInflatingActiveTopology()
+    {
+        string environment = Read(
+            "XREngine.Data/Environment/XREngineEnvironmentVariables.cs");
+        string scene = Read(
+            "XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.AddRemove.cs");
+        string scatter = Read(
+            "XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.ShadersAndInit.cs");
+        string manager = Read(
+            "XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
+        string profile = Read("XRENGINE/Engine/Engine.ProfileCapture.cs");
+
+        environment.ShouldContain(
+            "XRE_GPU_DRIVEN_VALIDATION_CAPACITY_MULTIPLIER");
+        scene.ShouldContain(
+            "GpuDrivenValidationCapacity.Apply(UpdatingCommandCount + (uint)subMeshes.Length)");
+        scene.ShouldContain("if (nextPowerOfTwo <= currentCapacity)");
+        scatter.ShouldContain(
+            "GpuDrivenValidationCapacity.Apply(Math.Max(materialSlotLookupCount, 1u))");
+        manager.ShouldContain(
+            "checked((int)scene.TotalCommandCount)");
+        manager.ShouldContain(
+            "renderPasses.MaterialSlotIds.Count");
+        profile.ShouldContain("\"gpu_driven_command_capacity\"");
+        profile.ShouldContain("\"gpu_driven_active_command_count\"");
+        profile.ShouldContain("\"gpu_driven_material_lookup_capacity\"");
+        profile.ShouldContain("\"gpu_driven_active_material_slots\"");
+        profile.ShouldContain(
+            "\"gpu_driven_validation_capacity_multiplier\"");
+    }
+
+    [Test]
+    public void VulkanIntegerAttachmentReadback_ProducesExactCaptureFingerprint()
+    {
+        string blit = Read(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Blit.cs");
+        string capture = Read(
+            "XREngine.Editor/Mcp/Actions/EditorMcpActions.RenderPipeline.cs");
+
+        blit.ShouldContain("case Format.R32Uint:");
+        blit.ShouldContain("float value = *(uint*)(src + srcIndex);");
+        blit.ShouldContain("Format.R32Uint => 4");
+        capture.ShouldContain("ComputeRgbaFloatSha256(rgbaFloats)");
+        capture.ShouldContain("rgba_float_sha256 = result.RgbaFloatSha256");
+    }
+
     private static string Read(string relativePath)
         => global::XREngine.UnitTests.SourceContractWorkspace
             .ReadFile(relativePath)

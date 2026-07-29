@@ -1,5 +1,39 @@
-﻿__assetType: XREngine.Engine+Rendering+EngineSettings
-EnableFrameLogging: true
+﻿__assetType: XREngine.RuntimeEngine+Rendering+EngineSettings
+OpenGL:
+  Context: {}
+  ShaderLinking:
+    AllowBinaryProgramCaching: true
+    AsyncProgramBinaryUpload: true
+    AsyncProgramCompilation: true
+    ProgramCompileLinkWorkerCount: 1
+    MaxAsyncShaderProgramsPerFrame: 16
+    DriverCompilerThreadCount: 1
+    DriverParallelProbeEnabled: true
+    DriverParallelProbeTimeoutMs: 25
+  TextureUpload:
+    UseDetailPreservingComputeMipmaps: true
+  Diagnostics: {}
+  AllowProgramPipelines: true
+Vulkan:
+  Startup: {}
+  TargetMode: {}
+  GpuDriven:
+    Profile: Diagnostics
+  Descriptors:
+    EnableDescriptorIndexing: true
+    EnableBindlessMaterialTable: true
+    ValidateContracts: true
+  CommandRecording:
+    PrimaryCommandBufferReuseEnabled: true
+  Synchronization: {}
+  Memory:
+    PreferDeviceLocalUploads: true
+  Robustness: &o0
+    AllocatorBackend: Vma
+    SyncBackend: Sync2
+    DescriptorUpdateBackend: Template
+    DynamicUniformBufferEnabled: true
+  Diagnostics: {}
 DebugOutputMinElapsedMs: 1
 TextureLogMode: Summary
 TextureSlowCpuDecodeResizeMilliseconds: 5
@@ -9,6 +43,7 @@ TextureSlowTransitionMilliseconds: 8
 TextureSlowQueueWaitMilliseconds: 100
 TextureUploadFrameBudgetMilliseconds: 2
 EnableZeroReadbackMaterialScatter: true
+ZeroReadbackMaterialDrawPath: BindlessMaterialTable
 OutputVerbosity: Verbose
 UseIntegerWeightingIds: true
 TransformReplicationKeyframeIntervalSec: 5
@@ -23,6 +58,7 @@ ShadowAtlasPageSize: 4096
 MaxShadowAtlasPages: 1
 MaxShadowTilesRenderedPerFrame: 16
 MaxShadowRenderMilliseconds: 2
+MaxDirectionalCascadeAtlasStaleFrames: 2
 MinShadowAtlasTileResolution: 128
 MaxShadowAtlasTileResolution: 4096
 DefaultLuminance: 0.299 0.587 0.114
@@ -60,16 +96,33 @@ UseGlobalBlendshapeWeightsBufferForComputeSkinning: true
 CalculateSkinnedBoundsInComputeShader: true
 SkinnedBoundsGpuDirectAabbWrite: true
 AllowInitialSkinnedBoundsBuildWhenNever: true
-UseGpuBvh: true
 CpuSceneCullingStructure: Bvh
 VulkanGpuDrivenProfile: Diagnostics
+EnableVulkanPrimaryCommandBufferReuse: true
 EnableVulkanDescriptorIndexing: true
 EnableVulkanBindlessMaterialTable: true
 ValidateVulkanDescriptorContracts: true
 GpuCullingDataLayout: AoSHot
 GpuSortDomainPolicy: OpaqueFrontToBackTransparentBackToFront
 GpuOcclusionCullingMode: CpuQueryAsync
+MeshLodStreamingDrainIntervalFrames: 4
+MeshLodStreamingMaxLoadsPerDrain: 8
 CpuQueryOcclusionRetestPeriodFrames: 6
+CpuQueryOcclusionMaxQueriesPerFrame: 64
+CpuQueryOcclusionVisibleDemotionBudgetFraction: 0.25
+CpuQueryOcclusionRecoveryMinCadenceFrames: 2
+CpuQueryOcclusionSmallMotionMeters: 0.02
+CpuQueryOcclusionMediumMotionMeters: 0.25
+CpuQueryOcclusionLargeMotionMeters: 2
+CpuQueryOcclusionCameraCutMeters: 12
+CpuQueryOcclusionSmallRotationDegrees: 1
+CpuQueryOcclusionMediumRotationDegrees: 5
+CpuQueryOcclusionLargeRotationDegrees: 15
+CpuQueryOcclusionCameraCutRotationDegrees: 55
+CpuQueryOcclusionVrHeadMotionMeters: 0.25
+CpuQueryOcclusionVrHeadRotationDegrees: 20
+CpuQueryOcclusionStereoMode: PerEyeSequential
+CpuQueryOcclusionMaxPendingFrames: 6
 CpuSocBufferWidth: 256
 CpuSocBufferHeight: 128
 CpuSocOccluderTriangleBudget: 5000
@@ -87,8 +140,14 @@ AllowSkinning: true
 AllowBlendshapes: true
 RemapBlendshapeDeltas: true
 PreferNVStereo: true
+VrViewRenderMode: ParallelCommandBufferRecording
+VrMirrorMode: BlitSubmittedEye
 RenderWindowsWhileInVR: true
 VrMirrorComposeFromEyeTextures: true
+VrCyclopeanDesktopTargetRateHz: 60
+VrDesktopAutoSkipWhenOverBudget: true
+VrFoveationQualityPreset: Balanced
+OpenXrEyeResolutionScale: 1
 OpenXrCullWithFrustum: true
 OpenXrPrepareFrameAfterDesktopRender: true
 OpenXrDeadlineSafetyMarginMs: 1
@@ -101,6 +160,15 @@ VrFoveationShadingRates: 1 0.7 0.5
 VrFoveationVisibilityMargin: 0.05
 VrFoveationForceFullResForUiAndNearField: true
 VrFoveationFullResNearDistanceMeters: 1.5
+RvcInsetWideReuseEnabled: true
+RvcFovealRadiusDegrees: 5
+RvcGuardBandDegrees: 8
+RvcMidFieldRadiusDegrees: 30
+RvcPeripheralMaxRate: Rate4x4
+RvcForceFullResNearDistanceMeters: 1.5
+RvcReuseMaxNormalAngleDegrees: 5
+RvcReuseMaxDepthDeltaMeters: 0.05
+RvcReuseMaxRoughnessBucketDelta: 1
 PhysicsGpuMemorySettings:
   __assetType: XREngine.PhysicsGpuMemorySettings
   MaxRigidContactCount: 1500000
@@ -119,11 +187,7 @@ PhysicsGpuMemorySettings:
 PhysicsVisualizeSettings:
   __assetType: XREngine.PhysicsVisualizeSettings
   ID: fc5c8707-1b67-4c0c-ae28-84fe5795ad3e
-VulkanRobustnessSettings:
-  AllocatorBackend: Vma
-  SyncBackend: Sync2
-  DescriptorUpdateBackend: Template
-  DynamicUniformBufferEnabled: true
+VulkanRobustnessSettings: *o0
 PopulateVertexDataInParallel: true
 ProcessMeshImportsAsynchronously: true
 TransformCullingIsAxisAligned: true

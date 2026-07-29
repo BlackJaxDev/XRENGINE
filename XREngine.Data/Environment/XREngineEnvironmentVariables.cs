@@ -149,6 +149,8 @@ public static class XREngineEnvironmentVariables
     public const string Win32InteractiveResizeTimerMs = "XRE_WIN32_INTERACTIVE_RESIZE_TIMER_MS";
 
     public const string CpuSceneCullingStructure = "XRE_CPU_SCENE_CULLING_STRUCTURE";
+    public const string GpuDrivenValidationCapacityMultiplier = "XRE_GPU_DRIVEN_VALIDATION_CAPACITY_MULTIPLIER";
+    public const string GpuDrivenValidationCapacityFloor = "XRE_GPU_DRIVEN_VALIDATION_CAPACITY_FLOOR";
     public const string ZeroReadbackMaterialDrawPath = "XRE_ZERO_READBACK_MATERIAL_DRAW_PATH";
     public const string ForceMeshSubmissionStrategy = "XRE_FORCE_MESH_SUBMISSION_STRATEGY";
     public const string ForceCpuIndirectBuild = "XRE_FORCE_CPU_INDIRECT_BUILD";

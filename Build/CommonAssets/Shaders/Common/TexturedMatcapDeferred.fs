@@ -10,7 +10,8 @@ layout (location = 3) out uint TransformId;
 layout (location = 0) in vec3 FragPos;
 layout (location = 1) in vec3 FragNorm;
 layout (location = 4) in vec2 FragUV0;
-layout (location = 21) in float FragTransformId;
+layout (location = 21) flat in uint FragTransformId;
+layout (location = 27) flat in uint FragRenderIdentityId;
 
 uniform sampler2D Texture0;
 
@@ -23,7 +24,7 @@ uniform float Emission = 0.0f;
 
 void main()
 {
-    TransformId = floatBitsToUint(FragTransformId);
+    TransformId = FragRenderIdentityId;
     vec3 viewDir = normalize(-FragPos);
     vec3 worldNormal = normalize(FragNorm);
     vec3 reflected = reflect(viewDir, worldNormal);

@@ -82,7 +82,7 @@ namespace XREngine.Rendering.Commands
                     }
 
                     // Ensure we have enough space for ALL submeshes of this command
-                    VerifyUpdatingBufferSize(UpdatingCommandCount + (uint)subMeshes.Length);
+                    VerifyUpdatingBufferSize(GpuDrivenValidationCapacity.Apply(UpdatingCommandCount + (uint)subMeshes.Length));
 
                     if (!_commandIndicesPerMeshCommand.TryGetValue(meshCmd, out var indices))
                     {
@@ -1113,12 +1113,12 @@ namespace XREngine.Rendering.Commands
             --UpdatingCommandCount;
         }
 
-        //TODO: Optimize to avoid frequent resizes (eg, remove and add right after each other at the boundary)
+        // Command buffers grow at powers of two and never shrink during a scene lifetime.
         private void VerifyUpdatingBufferSize(uint requiredSize)
         {
             uint currentCapacity = UpdatingCommandsBuffer.ElementCount;
             uint nextPowerOfTwo = XRMath.NextPowerOfTwo(requiredSize).ClampMin(MinCommandCount);
-            if (nextPowerOfTwo == currentCapacity)
+            if (nextPowerOfTwo <= currentCapacity)
                 return;
 
             SceneLog($"Resizing updating command buffer from {currentCapacity} to {nextPowerOfTwo}.");
@@ -1181,12 +1181,12 @@ namespace XREngine.Rendering.Commands
             MarkUpdatingCommandsDirty();
         }
 
-        //TODO: Optimize to avoid frequent resizes (eg, remove and add right after each other at the boundary)
+        // Command buffers grow at powers of two and never shrink during a scene lifetime.
         private void VerifyCommandBufferSize(uint requiredSize)
         {
             uint currentCapacity = AllLoadedCommandsBuffer.ElementCount;
             uint nextPowerOfTwo = XRMath.NextPowerOfTwo(requiredSize).ClampMin(MinCommandCount);
-            if (nextPowerOfTwo == currentCapacity)
+            if (nextPowerOfTwo <= currentCapacity)
                 return;
 
             SceneLog($"Resizing command buffer from {currentCapacity} to {nextPowerOfTwo}.");

@@ -113,7 +113,8 @@ layout(location = 7) in vec2 FragUV3;
 layout(location = 12) in vec4 FragColor0;     // per-vertex RGBA color
 layout(location = 20) in vec3 FragPosLocal;   // object-space position
 #if defined(XRENGINE_DEPTH_NORMAL_PREPASS)
-layout(location = 21) in float FragTransformId;
+layout(location = 21) flat in uint FragTransformId;
+layout(location = 27) flat in uint FragRenderIdentityId;
 #endif
 
 #if defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
@@ -1635,7 +1636,7 @@ void main() {
     return;
 #elif defined(XRENGINE_DEPTH_NORMAL_PREPASS)
     Normal = XRENGINE_EncodeNormal(mesh.worldNormal);
-    TransformId = floatBitsToUint(FragTransformId);
+    TransformId = FragRenderIdentityId;
     return;
 #endif
 

@@ -2099,6 +2099,7 @@ public unsafe partial class VulkanRenderer
             if (!ReferenceEquals(pendingUpload.Texture, this))
                 throw new InvalidOperationException("Imported texture upload publication target does not match the prepared texture wrapper.");
 
+            RetiredImageResources previousResources;
             ImageView[] retiredAttachmentViews;
             if (_attachmentViews.Count > 0)
             {
@@ -2112,16 +2113,13 @@ public unsafe partial class VulkanRenderer
                 retiredAttachmentViews = [];
             }
 
-            Renderer.RetireImageResources(new RetiredImageResources(
+            previousResources = new RetiredImageResources(
                 _ownsImageMemory ? _image : default,
                 _ownsImageMemory ? _memory : default,
                 _view,
                 retiredAttachmentViews,
                 _sampler,
-                _ownsImageMemory ? _allocatedVRAMBytes : 0));
-
-            if (_ownsImageMemory && _allocatedVRAMBytes > 0)
-                RuntimeEngine.Rendering.Stats.Vram.RemoveTextureAllocation(_allocatedVRAMBytes);
+                _ownsImageMemory ? _allocatedVRAMBytes : 0);
 
             _image = pendingUpload.Image;
             _memory = pendingUpload.Memory;
@@ -2154,6 +2152,11 @@ public unsafe partial class VulkanRenderer
                 _bindingId = CacheObject(this);
                 PostGenerated();
             }
+
+            Renderer.RefreshGlobalMaterialTextureDescriptorForPublishedTexture(Data);
+            Renderer.RetireImageResources(previousResources);
+            if (previousResources.AllocatedVRAMBytes > 0)
+                RuntimeEngine.Rendering.Stats.Vram.RemoveTextureAllocation(previousResources.AllocatedVRAMBytes);
 
             pendingUpload.DetachPublishedImageHandles();
             Renderer.NotifyTextureDescriptorPublished(

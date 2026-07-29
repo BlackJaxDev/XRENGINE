@@ -98,7 +98,7 @@ namespace XREngine.Components.Lights
         {
             get
             {
-                if (!RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas)
+                if (!UseShadowAtlas || !RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas)
                     return false;
 
                 EShadowMapEncoding encoding = ResolveDirectionalSamplingShadowMapFormat().Encoding;
@@ -637,6 +637,10 @@ namespace XREngine.Components.Lights
                         EnsureCascadeShadowResources();
                     else
                         ClearCascadeShadows();
+                    EnsureShadowMapForActiveDynamicLight();
+                    break;
+                case nameof(UseShadowAtlas):
+                    ClearDirectionalAtlasSlots();
                     EnsureShadowMapForActiveDynamicLight();
                     break;
                 case nameof(ShadowMapStorageFormat):

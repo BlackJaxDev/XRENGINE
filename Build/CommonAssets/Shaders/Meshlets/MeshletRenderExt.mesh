@@ -31,7 +31,7 @@ struct DrawMetadata
     uint StateClassID;
     uint InstanceCount;
     uint RenderPass;
-    uint ShaderProgramID;
+    uint RenderIdentityID;
     uint LogicalMeshID;
     uint BoundsID;
 };
@@ -97,7 +97,8 @@ layout(location = 3) out vec3 FragBinorm[];
 layout(location = 4) out vec2 FragUV0[];
 layout(location = 12) out vec4 FragColor0[];
 layout(location = 20) out vec3 FragPosLocal[];
-layout(location = 21) out float FragTransformId[];
+layout(location = 21) flat out uint FragTransformId[];
+layout(location = 27) flat out uint FragRenderIdentityId[];
 layout(location = 22) out float FragViewIndex[];
 layout(location = 23) flat out uint XreFragLodTransitionRole[];
 layout(location = 24) flat out uint XRE_FragMaterialId[];
@@ -185,7 +186,8 @@ void EmitVertex(uint tid, uint atlasVertexIndex, in DrawMetadata draw, mat4 worl
     FragUV0[tid] = uv0;
     FragColor0[tid] = meshletDebugColor;
     FragPosLocal[tid] = localPosition;
-    FragTransformId[tid] = uintBitsToFloat(draw.DrawID);
+    FragTransformId[tid] = draw.DrawID;
+    FragRenderIdentityId[tid] = draw.RenderIdentityID;
     FragViewIndex[tid] = float(ActiveViewIndex);
     XreFragLodTransitionRole[tid] = IN.IsPreviousLod;
     XRE_FragMaterialId[tid] = IN.Record.MaterialID != 0u ? IN.Record.MaterialID : draw.MaterialID;

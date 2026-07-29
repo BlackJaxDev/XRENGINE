@@ -972,11 +972,14 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void RecordRenderVrXrEndFrameSubmitTime(TimeSpan submitTime, ulong renderFrameId = 0UL)
     {
         RuntimeEngine.Rendering.Stats.Vr.RecordVrXrEndFrameSubmitTime(submitTime);
+        // A successful xrEndFrame is authoritative proof that the OpenXR session is active.
+        // Do not race the application-side IsInVR mirror when publishing render telemetry.
         RecordVrSubmitFrameOutput(
             EFrameOutputKind.OpenXREyeSubmit,
             submitTime,
             "OpenXR xrEndFrame submit",
-            renderFrameId);
+            renderFrameId,
+            requireActiveVr: false);
     }
 
     public void RecordRenderVrXrPredictedToLatePoseDelta(double millimeters, double degrees)
@@ -1007,9 +1010,10 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         EFrameOutputKind outputKind,
         TimeSpan submitTime,
         string name,
-        ulong renderFrameId = 0UL)
+        ulong renderFrameId = 0UL,
+        bool requireActiveVr = true)
     {
-        if (!RuntimeEngine.VRState.IsInVR)
+        if (requireActiveVr && !RuntimeEngine.VRState.IsInVR)
             return;
 
         double cpuMs = Math.Max(0.0, submitTime.TotalMilliseconds * 0.5);
@@ -1037,7 +1041,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
             string.Empty,
             true,
             true,
-            false,
+            true,
             false,
             false,
             true,

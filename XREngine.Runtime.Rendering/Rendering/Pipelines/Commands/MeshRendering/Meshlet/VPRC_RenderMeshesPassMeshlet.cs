@@ -16,6 +16,12 @@ internal static class VPRC_RenderMeshesPassMeshlet
             return;
 
         RenderCommandCollection commands = activeInstance.ActiveMeshRenderCommands;
+        // Meshlet dispatch owns only GPU-eligible meshes. Preserve the same mixed-submission
+        // contract as the traditional GPU path so explicitly excluded meshes and non-mesh
+        // callbacks are not silently dropped when mesh shaders are available.
+        commands.RenderCPUNonMeshAndExcluded(command.RenderPass);
+
+        // A pass containing only CPU-owned commands legitimately has no GPU pass.
         if (!commands.TryGetGpuPass(command.RenderPass, out var gpuPass))
             return;
 

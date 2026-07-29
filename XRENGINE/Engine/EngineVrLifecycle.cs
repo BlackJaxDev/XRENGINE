@@ -65,7 +65,9 @@ namespace XREngine
                 RuntimeEngine.VRState.ActiveRuntime = (RuntimeVrState.VRRuntime)_activeRuntime;
                 RuntimeEngine.VRState.LeftEyeViewport = LeftEyeViewport;
                 RuntimeEngine.VRState.RightEyeViewport = RightEyeViewport;
-                RuntimeEngine.VRState.OpenXRApi = IsOpenXRActive ? _openXRApi : null;
+                // Keep the API alive while the runtime monitor waits for a session.
+                // ActiveRuntime/IsInVR distinguish an active OpenXR session; clearing
+                // OpenXRApi here prevents UpdateOpenXRRuntime from ever observing one.
                 RuntimeEngine.VRState.ViewInformation = (_viewInformation.left, _viewInformation.right, _viewInformation.world, _viewInformation.HMDNode);
             }
 

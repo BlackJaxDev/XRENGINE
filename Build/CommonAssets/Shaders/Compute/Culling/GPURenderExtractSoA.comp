@@ -18,7 +18,7 @@ struct DrawMetadata
     uint StateClassID;
     uint InstanceCount;
     uint RenderPass;
-    uint ShaderProgramID;
+    uint RenderIdentityID;
     uint LogicalMeshID;
     uint BoundsID;
 };

@@ -3,6 +3,13 @@ VSync: Adaptive
 TextureQuality: Highest
 ModelQuality: Highest
 SoundQuality: Highest
+Rendering:
+  Common:
+    RenderBackendFallbackPolicyOverride:
+      HasOverride: false
+      Value: RequireRequested
+  Quality: {}
+  Performance: {}
 AudioDisableFadeSeconds: 0.5
 AudioSampleRate: 44100
 GlobalIlluminationMode: LightProbesAndIbl
@@ -41,7 +48,10 @@ EnableZeroReadbackMaterialScatterOverride:
   Value: false
 ZeroReadbackMaterialDrawPathOverride:
   HasOverride: false
-  Value: FullBucketScan
+  Value: FullBucketScanDiagnostic
+RenderBackendFallbackPolicyOverride:
+  HasOverride: false
+  Value: RequireRequested
 AntiAliasingModeOverride:
   HasOverride: false
   Value: None

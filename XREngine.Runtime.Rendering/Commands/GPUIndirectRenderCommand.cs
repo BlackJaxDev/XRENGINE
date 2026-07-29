@@ -30,7 +30,7 @@ namespace XREngine.Rendering.Commands
         public uint StateClassID;
         public uint InstanceCount;
         public uint RenderPass;
-        public uint ShaderProgramID;
+        public uint RenderIdentityID;
         public uint LogicalMeshID;
         public uint BoundsID;
     }
@@ -78,7 +78,7 @@ namespace XREngine.Rendering.Commands
         public uint MaterialID;
         public uint InstanceCount;
         public uint RenderPass;
-        public uint ShaderProgramID;
+        public uint RenderIdentityID;
         public float RenderDistance;
         public uint LayerMask;
         public uint LODLevel;
@@ -111,7 +111,7 @@ namespace XREngine.Rendering.Commands
                 LayerMask = LayerMask,
                 Flags = Flags,
                 LODLevel = LODLevel,
-                ShaderProgramID = ShaderProgramID,
+                RenderIdentityID = RenderIdentityID,
                 RenderDistance = RenderDistance,
                 SourceCommandIndex = sourceCommandIndex,
                 LogicalMeshID = LogicalMeshID,
@@ -124,7 +124,7 @@ namespace XREngine.Rendering.Commands
         public GPUIndirectRenderCommandCold ToCold()
             => new()
             {
-                ShaderProgramID = ShaderProgramID,
+                RenderIdentityID = RenderIdentityID,
                 RenderDistance = RenderDistance,
                 LogicalMeshID = LogicalMeshID,
                 TransformID = TransformID,
@@ -143,7 +143,7 @@ namespace XREngine.Rendering.Commands
                 MaterialID = hot.MaterialID,
                 InstanceCount = hot.InstanceCount,
                 RenderPass = hot.RenderPass,
-                ShaderProgramID = cold.ShaderProgramID,
+                RenderIdentityID = cold.RenderIdentityID,
                 RenderDistance = cold.RenderDistance,
                 LayerMask = hot.LayerMask,
                 LODLevel = hot.LODLevel,
@@ -172,7 +172,7 @@ namespace XREngine.Rendering.Commands
                 StateClassID = StateClassID,
                 InstanceCount = InstanceCount,
                 RenderPass = RenderPass,
-                ShaderProgramID = ShaderProgramID,
+                RenderIdentityID = RenderIdentityID,
                 LogicalMeshID = LogicalMeshID,
                 BoundsID = BoundsID
             };
@@ -190,7 +190,7 @@ namespace XREngine.Rendering.Commands
         public uint LayerMask;
         public uint Flags;
         public uint LODLevel;
-        public uint ShaderProgramID;
+        public uint RenderIdentityID;
         public float RenderDistance;
         public uint SourceCommandIndex;
         public uint LogicalMeshID;
@@ -209,7 +209,7 @@ namespace XREngine.Rendering.Commands
     [StructLayout(LayoutKind.Sequential)]
     public struct GPUIndirectRenderCommandCold
     {
-        public uint ShaderProgramID;
+        public uint RenderIdentityID;
         public float RenderDistance;
         public uint LogicalMeshID;
         public uint TransformID;

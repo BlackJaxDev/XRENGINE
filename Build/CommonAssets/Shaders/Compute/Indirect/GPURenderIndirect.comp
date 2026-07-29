@@ -19,7 +19,7 @@ const uint POLICY_TRADITIONAL_LAYER_SUPPRESSION = 1u;
 
 /* Command layout (float[20]):
  0-3 BoundingSphere, 4 MeshID, 5 SubmeshID, 6 MaterialID, 7 InstanceCount,
- 8 RenderPass, 9 ShaderProgramID, 10 RenderDistance, 11 LayerMask,
+ 8 RenderPass, 9 RenderIdentityID, 10 RenderDistance, 11 LayerMask,
  12 LODLevel, 13 Flags, 14 LogicalMeshID, 15 TransformID, 16 SkinID,
  17 StateClassID, 18 BoundsID, 19 DrawID */
 

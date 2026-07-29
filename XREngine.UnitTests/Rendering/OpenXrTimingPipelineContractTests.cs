@@ -100,6 +100,18 @@ public sealed class OpenXrTimingPipelineContractTests
     }
 
     [Test]
+    public void RuntimeMonitoring_RetainsOpenXrApiUntilSessionBecomesActive()
+    {
+        string vrState = ReadWorkspaceFile("XRENGINE/Engine/EngineVrLifecycle.cs");
+
+        vrState.ShouldContain("_openXRApi ??= new OpenXRAPI();");
+        vrState.ShouldContain("_openXRApi.EnableRuntimeMonitoring();");
+        vrState.ShouldContain("DeactivateOpenXRRuntime();");
+        vrState.ShouldContain("if (!_openXrRuntimeMonitoring || _openXRApi is null)");
+        vrState.ShouldNotContain("RuntimeEngine.VRState.OpenXRApi = IsOpenXRActive ? _openXRApi : null;");
+    }
+
+    [Test]
     public void VulkanOpenXr_EyeSubmitRecordsBothEyesBeforeOneFenceWait()
     {
         string frameLifecycle = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs");
@@ -944,7 +956,7 @@ public sealed class OpenXrTimingPipelineContractTests
         xrCalls.ShouldContain("ConvertWin32PerformanceCounterToTime");
         xrCalls.ShouldContain("RecordDeadlineStatus");
         xrCalls.ShouldContain("RecordVrXrWaitFrameBlockTime");
-        xrCalls.ShouldContain("RecordVrXrEndFrameSubmitTime");
+        xrCalls.ShouldContain("RuntimeRenderingHostServices.Statistics.RecordRenderVrXrEndFrameSubmitTime(");
 
         stats.ShouldContain("VrXrPredictedDisplayLeadTimeMs");
         stats.ShouldContain("VrXrPredictedToLatePoseDeltaMillimeters");
@@ -1234,6 +1246,26 @@ public sealed class OpenXrTimingPipelineContractTests
         documentation.ShouldContain("rdc close");
     }
 
+    [Test]
+    public void VulkanRvcBenchmark_OwnsMonadoAndRenderDocLauncherPassesExplicitEnvironment()
+    {
+        string benchmark = ReadWorkspaceFile("Tools/Benchmarks/Invoke-VulkanPerf.ps1");
+        string launcher = ReadWorkspaceFile("Tools/RenderDoc/capture_xrengine.py");
+        string documentation = ReadWorkspaceFile("Tools/RenderDoc/README.md");
+
+        benchmark.ShouldContain("[string]$_.vrMode -eq 'MonadoOpenXR'");
+        benchmark.ShouldContain("Tools\\OpenXR\\Start-MonadoService.ps1");
+        benchmark.ShouldContain("'XR_RUNTIME_JSON'");
+        benchmark.ShouldContain("if (-not [bool]$monadoStart.OwnedByRunner)");
+        benchmark.ShouldContain("-MarkerPath $monadoServiceMarker -Stop");
+
+        launcher.ShouldContain("subprocess.list2cmdline(editor_arguments)");
+        launcher.ShouldContain("rd.EnvironmentModification()");
+        launcher.ShouldContain("rd.ExecuteAndInject(");
+        launcher.ShouldContain("\"XRE_UNIT_TEST_WORLD_SETTINGS_PATH\"");
+        launcher.ShouldContain("\"XRE_FORCE_MESH_SUBMISSION_STRATEGY\"");
+        documentation.ShouldContain("python Tools/RenderDoc/capture_xrengine.py");
+    }
     [Test]
     public void OpenXrSmokeRun_UsesStableExitCodesAndSummaryContract()
     {

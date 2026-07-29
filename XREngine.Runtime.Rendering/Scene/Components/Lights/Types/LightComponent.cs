@@ -9,6 +9,7 @@ using XREngine.Rendering.Info;
 using XREngine.Rendering.Shadows;
 using XREngine.Scene.Transforms;
 using XREngine.Timers;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Components.Capture.Lights.Types
 {
@@ -47,6 +48,7 @@ namespace XREngine.Components.Capture.Lights.Types
         private XRMaterialFrameBuffer? _shadowMap = null;
         private ELightType _type = ELightType.Dynamic;
         private bool _castsShadows = true;
+        private bool _useShadowAtlas = true;
         private float _shadowMaxBias = 0.004f;
         private float _shadowMinBias = 0.00001f;
         private float _shadowExponent = 1.221f;
@@ -355,6 +357,8 @@ namespace XREngine.Components.Capture.Lights.Types
         /// Gets or sets the shadow map associated with this light.
         /// This is the render target used for shadow mapping.
         /// </summary>
+        [Browsable(false)]
+        [YamlIgnore]
         public XRMaterialFrameBuffer? ShadowMap
         {
             get => _shadowMap;
@@ -402,10 +406,24 @@ namespace XREngine.Components.Capture.Lights.Types
         /// Enables live shadow-map creation and rendering for this light.
         /// </summary>
         [Category("Shadows")]
+        [DefaultValue(true)]
         public bool CastsShadows
         {
             get => _castsShadows;
             set => SetField(ref _castsShadows, value);
+        }
+
+        /// <summary>
+        /// Gets or sets whether this light may place its shadow map in a shared shadow atlas.
+        /// </summary>
+        [Category("Shadows")]
+        [DefaultValue(true)]
+        [DisplayName("Use Shadow Atlas")]
+        [Description("Allows this light to use the renderer's shared shadow atlas. Disable it to retain a dedicated shadow map.")]
+        public bool UseShadowAtlas
+        {
+            get => _useShadowAtlas;
+            set => SetField(ref _useShadowAtlas, value);
         }
 
         /// <summary>
@@ -962,6 +980,7 @@ namespace XREngine.Components.Capture.Lights.Types
         /// Gets or sets a value indicating whether cascaded shadows are enabled for the light.
         /// </summary>
         [Category("Shadows")]
+        [DefaultValue(true)]
         public bool EnableCascadedShadows
         {
             get => _enableCascadedShadows;
@@ -972,6 +991,7 @@ namespace XREngine.Components.Capture.Lights.Types
         /// Gets or sets a value indicating whether contact shadows are enabled for the light.
         /// </summary>
         [Category("Shadows")]
+        [DefaultValue(true)]
         public bool EnableContactShadows
         {
             get => _enableContactShadows;

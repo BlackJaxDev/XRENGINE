@@ -241,7 +241,7 @@ public class GpuIndirectRenderDispatchTests
     /// <summary>
     /// Compact GPUIndirectRenderCommand compatibility layout:
     /// 00-03: BoundingSphere, 04: MeshID, 05: SubmeshID, 06: MaterialID,
-    /// 07: InstanceCount, 08: RenderPass, 09: ShaderProgramID, 10: RenderDistance,
+    /// 07: InstanceCount, 08: RenderPass, 09: RenderIdentityID, 10: RenderDistance,
     /// 11: LayerMask, 12: LODLevel, 13: Flags, 14: LogicalMeshID,
     /// 15: TransformID, 16: SkinID, 17: StateClassID, 18: BoundsID, 19: DrawID.
     /// </summary>

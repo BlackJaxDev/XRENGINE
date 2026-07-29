@@ -646,6 +646,55 @@ public unsafe partial class VulkanRenderer
     }
 
     /// <summary>
+    /// Republishes a streamed texture's descriptor before its previous image
+    /// resources enter retirement. This preserves the descriptor-set lifetime
+    /// invariant at the publication boundary: no live descriptor snapshot may
+    /// reference a resource that is already pending retirement.
+    /// </summary>
+    private void RefreshGlobalMaterialTextureDescriptorForPublishedTexture(XRTexture texture)
+    {
+        lock (_globalMaterialTextureTableLock)
+        {
+            if (_globalMaterialTextureDescriptorSet.Handle == 0 ||
+                !_globalMaterialTextureDescriptorSlotsByTexture.ContainsKey(texture))
+            {
+                return;
+            }
+        }
+
+        bool resolved = TryResolveMaterialTextureDescriptor(
+            texture,
+            "streamed texture publication",
+            out DescriptorImageInfo imageInfo,
+            out string reason);
+
+        lock (_globalMaterialTextureTableLock)
+        {
+            if (!_globalMaterialTextureDescriptorSlotsByTexture.TryGetValue(texture, out uint descriptorIndex))
+                return;
+
+            if (!resolved)
+            {
+                imageInfo = _globalMaterialTextureDescriptorSlots[0].ImageInfo;
+                RecordGlobalMaterialTextureFallback("streamed texture publication", reason);
+            }
+
+            ref MaterialTextureDescriptorSlot slot = ref _globalMaterialTextureDescriptorSlots[descriptorIndex];
+            if (slot.ImageInfo.ImageView.Handle == imageInfo.ImageView.Handle &&
+                slot.ImageInfo.Sampler.Handle == imageInfo.Sampler.Handle &&
+                slot.ImageInfo.ImageLayout == imageInfo.ImageLayout)
+            {
+                return;
+            }
+
+            slot.ImageInfo = imageInfo;
+            slot.Generation++;
+            MarkGlobalMaterialTextureDescriptorSlotDirty(descriptorIndex);
+            FlushGlobalMaterialTextureDescriptorUpdatesLocked();
+        }
+    }
+
+    /// <summary>
     /// Retires any global material texture descriptor slots that have not been used for a specified number of frames.
     /// </summary>
     /// <param name="frameId">The current frame ID used to determine which descriptor slots should be retired.</param>

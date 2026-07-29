@@ -20,7 +20,10 @@ public sealed class VulkanPerformanceCohort
     public bool RequireFoveation { get; init; }
     public string BudgetMetric { get; init; } = string.Empty;
     public double BudgetMilliseconds { get; init; }
+    public bool EnforceAbsoluteBudget { get; init; } = true;
     public double MinimumPrimaryReuseRatio { get; init; }
+    public uint GpuDrivenValidationCapacityMultiplier { get; init; } = 1u;
+    public uint GpuDrivenValidationCapacityFloor { get; init; }
     public List<VulkanPerformanceOutputRequirement> RequiredOutputs { get; init; } = [];
     public bool Gate { get; init; }
 }

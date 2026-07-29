@@ -144,8 +144,14 @@ internal partial class CodeManager : XRSingleton<CodeManager>
     public string GetSolutionPath()
         => Path.Combine(GetManagedProjectRootPath(), $"{GetProjectName()}.sln");
 
-    private string GetManagedProjectRootPath()
-        => Engine.CurrentProject?.ProjectDirectory ?? Engine.Assets.LibrariesPath;
+    /// <summary>
+    /// Keeps generated project/solution files and their build outputs out of
+    /// the authored project root so they are reproducible, disposable artifacts.
+    /// </summary>
+    private static string GetManagedProjectRootPath()
+        => !string.IsNullOrWhiteSpace(Engine.CurrentProject?.ProjectDirectory)
+            ? Path.Combine(Engine.CurrentProject.ProjectDirectory, "Intermediate", "Managed")
+            : Engine.Assets.LibrariesPath;
 
     private string GetManagedGameProjectPath()
         => Path.Combine(GetManagedProjectRootPath(), $"{GetProjectName()}.csproj");
@@ -503,7 +509,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string platform,
         string startupAssetName,
         string editorPreferencesAssetName,
-        string userSettingsAssetName)
+        string userSettingsAssetName,
+        string? gameLaunchBootstrapTypeName = null)
     {
         string projectName = GetProjectName();
         string launcherRoot = Path.Combine(Engine.Assets.LibrariesPath, projectName, "Launcher");
@@ -523,7 +530,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             settings,
             startupAssetName,
             editorPreferencesAssetName,
-            userSettingsAssetName);
+            userSettingsAssetName,
+            gameLaunchBootstrapTypeName);
         File.WriteAllText(programPath, programSource, Encoding.UTF8);
 
         CreateLauncherProject(
@@ -713,6 +721,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         // Core engine assemblies that game code typically needs
         string[] assemblyNames =
         [
+            "OpenVR.NET.dll",
             "XREngine.dll",
             "XREngine.Data.dll",
             "XREngine.Extensions.dll",
@@ -721,7 +730,11 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             "XREngine.Input.dll",
             "XREngine.Modeling.dll",
             "XREngine.Runtime.Core.dll",
+            "XREngine.Runtime.Bootstrap.dll",
+            "XREngine.Runtime.AudioIntegration.dll",
             "XREngine.Runtime.Rendering.dll",
+            "XREngine.Runtime.Rendering.OpenGL.dll",
+            "XREngine.Runtime.Rendering.Vulkan.dll",
             "XREngine.Runtime.InputIntegration.dll",
             "XREngine.Runtime.AnimationIntegration.dll",
             "XREngine.Runtime.ModelingBridge.dll"
@@ -1008,11 +1021,25 @@ internal partial class CodeManager : XRSingleton<CodeManager>
 
     #region Launcher Code Generation
 
+    internal static string BuildLauncherProgramSourceForTests(
+        BuildSettings settings,
+        string startupAssetName,
+        string editorPreferencesAssetName,
+        string userSettingsAssetName,
+        string? gameLaunchBootstrapTypeName = null)
+        => BuildLauncherProgramSource(
+            settings,
+            startupAssetName,
+            editorPreferencesAssetName,
+            userSettingsAssetName,
+            gameLaunchBootstrapTypeName);
+
     private static string BuildLauncherProgramSource(
         BuildSettings settings,
         string startupAssetName,
         string editorPreferencesAssetName,
-        string userSettingsAssetName)
+        string userSettingsAssetName,
+        string? gameLaunchBootstrapTypeName)
     {
         string configFolder = string.IsNullOrWhiteSpace(settings.ConfigOutputFolder)
             ? string.Empty
@@ -1046,6 +1073,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("using System.IO;");
         sb.AppendLine("using XREngine;");
         sb.AppendLine("using XREngine.Core.Files;");
+        sb.AppendLine("using XREngine.Runtime.Bootstrap;");
         sb.AppendLine();
         sb.AppendLine("namespace GeneratedLauncher;");
         sb.AppendLine();
@@ -1061,6 +1089,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("#else");
         sb.AppendLine("        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.Development);");
         sb.AppendLine("#endif");
+        sb.AppendLine("        RuntimeRenderingBootstrap.InstallEngineHostServices();");
+        sb.AppendLine();
         sb.AppendLine($"        string archivePath = ResolvePublishedArchivePath(\"{escapedConfigFolder}\", \"{escapedConfigArchive}\");");
         sb.AppendLine("        XRRuntimeEnvironment.ConfigurePublishedPaths(archivePath);");
         sb.AppendLine();
@@ -1072,13 +1102,26 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("        if (!File.Exists(archivePath))");
         sb.AppendLine("        {");
         sb.AppendLine("            Console.Error.WriteLine($\"Config archive '{archivePath}' not found.\");");
+        sb.AppendLine("            Environment.ExitCode = 1;");
+        sb.AppendLine("            return;");
+        sb.AppendLine("        }");
+        sb.AppendLine("        if (!File.Exists(contentArchivePath))");
+        sb.AppendLine("        {");
+        sb.AppendLine("            Console.Error.WriteLine($\"Content archive '{contentArchivePath}' not found.\");");
+        sb.AppendLine("            Environment.ExitCode = 1;");
+        sb.AppendLine("            return;");
+        sb.AppendLine("        }");
+        sb.AppendLine("        if (!File.Exists(commonAssetsArchivePath))");
+        sb.AppendLine("        {");
+        sb.AppendLine("            Console.Error.WriteLine($\"Common-assets archive '{commonAssetsArchivePath}' not found.\");");
+        sb.AppendLine("            Environment.ExitCode = 1;");
         sb.AppendLine("            return;");
         sb.AppendLine("        }");
         sb.AppendLine();
         sb.AppendLine("        AssetManager.ConfigurePublishedArchives(");
         sb.AppendLine("            archivePath,");
-        sb.AppendLine("            File.Exists(contentArchivePath) ? contentArchivePath : null,");
-        sb.AppendLine("            File.Exists(commonAssetsArchivePath) ? commonAssetsArchivePath : null);");
+        sb.AppendLine("            contentArchivePath,");
+        sb.AppendLine("            commonAssetsArchivePath);");
         sb.AppendLine("#else");
         sb.AppendLine("        AssetManager.ConfigurePublishedArchives(null, null, null);");
         sb.AppendLine("#endif");
@@ -1089,6 +1132,14 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("            Console.Error.WriteLine(\"Failed to load startup settings.\");");
         sb.AppendLine("            return;");
         sb.AppendLine("        }");
+        sb.AppendLine();
+        if (!string.IsNullOrWhiteSpace(gameLaunchBootstrapTypeName))
+        {
+            string bootstrapTypeName = gameLaunchBootstrapTypeName.Replace('+', '.');
+            sb.AppendLine($"        IGameLaunchBootstrap gameBootstrap = new global::{bootstrapTypeName}();");
+            sb.AppendLine("        startup = gameBootstrap.ConfigureStartup(startup)");
+            sb.AppendLine("            ?? throw new InvalidOperationException(\"The game launch bootstrap returned null startup settings.\");");
+        }
         sb.AppendLine();
         sb.AppendLine($"        var editorPreferences = Engine.Assets.Load<EditorPreferences>(\"{escapedEditorPreferences}\");");
         sb.AppendLine("        if (editorPreferences is not null)");
@@ -1108,7 +1159,10 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("        }");
         sb.AppendLine("#endif");
         sb.AppendLine();
-        sb.AppendLine("        Engine.Run(startup, Engine.LoadOrGenerateGameState());");
+        if (!string.IsNullOrWhiteSpace(gameLaunchBootstrapTypeName))
+            sb.AppendLine("        Engine.Run(startup, gameBootstrap.CreateInitialGameState());");
+        else
+            sb.AppendLine("        Engine.Run(startup, Engine.LoadOrGenerateGameState());");
         sb.AppendLine("    }");
         sb.AppendLine();
         sb.AppendLine("    private static string ResolvePublishedArchivePath(string folder, string fileName)");
@@ -1157,7 +1211,10 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("            throw new FileNotFoundException(\"Content archive was not produced for the published launcher.\", contentArchivePath);");
         sb.AppendLine();
         sb.AppendLine("        int contentAssetCount = AssetPacker.GetAssetPaths(contentArchivePath).Count;");
-        sb.AppendLine("        int commonAssetCount = File.Exists(commonAssetsArchivePath) ? AssetPacker.GetAssetPaths(commonAssetsArchivePath).Count : 0;");
+        sb.AppendLine("        if (!File.Exists(commonAssetsArchivePath))");
+        sb.AppendLine("            throw new FileNotFoundException(\"Common-assets archive was not produced for the published launcher.\", commonAssetsArchivePath);");
+        sb.AppendLine();
+        sb.AppendLine("        int commonAssetCount = AssetPacker.GetAssetPaths(commonAssetsArchivePath).Count;");
         sb.AppendLine("        Console.WriteLine($\"AOT smoke passed: {metadata.KnownTypeAssemblyQualifiedNames.Length} metadata types, {metadata.PublishedRuntimeAssetTypeNames.Length} registered runtime asset types, {contentAssetCount} content assets, {commonAssetCount} common assets.\");");
         sb.AppendLine("    }");
         sb.AppendLine();

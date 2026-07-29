@@ -9,7 +9,8 @@ layout (location = 3) out uint TransformId;
 
 layout (location = 1) in vec3 FragNorm;
 layout (location = 12) in vec4 FragColor0;
-layout (location = 21) in float FragTransformId;
+layout (location = 21) flat in uint FragTransformId;
+layout (location = 27) flat in uint FragRenderIdentityId;
 
 uniform float Opacity = 1.0f;
 uniform float Specular = 0.2f;
@@ -19,7 +20,7 @@ uniform float Emission = 0.0f;
 
 void main()
 {
-    TransformId = floatBitsToUint(FragTransformId);
+    TransformId = FragRenderIdentityId;
     Normal = XRENGINE_EncodeNormal(normalize(FragNorm));
     AlbedoOpacity = vec4(FragColor0.rgb, FragColor0.a * Opacity);
     RMSE = vec4(Roughness, Metallic, Specular, Emission);

@@ -181,6 +181,7 @@ public static partial class EditorUnitTests
 
         //Light
         public bool DirLight = true;
+        public bool DirLightCastsShadows { get; set; } = true; //Controls whether the primary directional light casts shadows.
         public bool SpotLight = false;
         public bool DirLight2 = false;
         public bool PointLight = false;
@@ -275,6 +276,12 @@ public static partial class EditorUnitTests
             public PostProcessSteps ImportFlags { get; set; } = PostProcessSteps.None;
             public float Scale { get; set; } = 1.0f;
             public bool ZUp { get; set; } = false;
+
+            /// <summary>
+            /// Number of independent scene instances to create from the
+            /// imported hierarchy. The source asset is imported once.
+            /// </summary>
+            public int InstanceCount { get; set; } = 1;
 
             /// <summary>
             /// Additional post-import actions to apply after the source model has been loaded.
@@ -443,9 +450,26 @@ public static partial class EditorUnitTests
         public bool AddCharacterIK = false;
 
         /// <summary>
-        /// If true, creates a 1x1x1 box at the origin.
+        /// If true, creates one or more 1x1x1 boxes at the origin.
         /// </summary>
         public bool CreateUnitBox { get; set; } = true;
+
+        /// <summary>
+        /// Number of unit-box renderables to create. Values greater than one are
+        /// intended for deterministic submission-scaling benchmarks.
+        /// </summary>
+        public int UnitBoxCount { get; set; } = 1;
+
+        /// <summary>
+        /// Number of distinct materials shared across the unit boxes.
+        /// </summary>
+        public int UnitBoxMaterialCount { get; set; } = 1;
+
+        /// <summary>
+        /// Uses the deferred lit-color material for unit boxes. The default keeps
+        /// the existing forward unlit unit-box behavior.
+        /// </summary>
+        public bool UnitBoxDeferredMaterial { get; set; } = false;
 
         public EVSyncMode? VSyncOverride = EVSyncMode.Off; //When set, overrides loaded user VSync for unit-test runs. Null preserves saved user settings.
         public float RenderFPS = 0.0f;

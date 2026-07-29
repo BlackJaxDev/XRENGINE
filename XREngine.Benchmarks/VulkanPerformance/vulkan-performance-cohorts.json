@@ -4,7 +4,7 @@
   "defaultRegressionThresholdPercent": 5.0,
   "primaryGateEnvironment": {
     "gpuName": "NVIDIA GeForce RTX 4070 Laptop GPU",
-    "gpuDriver": "581.57",
+    "gpuDriver": "592.82",
     "operatingSystem": "Microsoft Windows NT 10.0.26200.0",
     "displayMode": "Windowed 1920x1080, VSync off"
   },
@@ -96,6 +96,8 @@
       "requireFoveation": false,
       "budgetMetric": "render_dispatch_ms",
       "budgetMilliseconds": 5.0,
+      "enforceAbsoluteBudget": false,
+      "minimumPrimaryReuseRatio": 0.99,
       "requiredOutputs": [
         {
           "kind": "DesktopScene",
@@ -120,6 +122,8 @@
       "requireFoveation": false,
       "budgetMetric": "render_dispatch_ms",
       "budgetMilliseconds": 5.0,
+      "enforceAbsoluteBudget": false,
+      "minimumPrimaryReuseRatio": 0.99,
       "requiredOutputs": [
         {
           "kind": "DesktopScene",
@@ -144,6 +148,8 @@
       "requireFoveation": false,
       "budgetMetric": "render_dispatch_ms",
       "budgetMilliseconds": 5.0,
+      "enforceAbsoluteBudget": false,
+      "minimumPrimaryReuseRatio": 0.99,
       "requiredOutputs": [
         {
           "kind": "DesktopScene",
@@ -168,6 +174,8 @@
       "requireFoveation": false,
       "budgetMetric": "render_dispatch_ms",
       "budgetMilliseconds": 5.0,
+      "enforceAbsoluteBudget": false,
+      "minimumPrimaryReuseRatio": 0.99,
       "requiredOutputs": [
         {
           "kind": "DesktopScene",
@@ -192,6 +200,7 @@
       "requireFoveation": false,
       "budgetMetric": "render_dispatch_ms",
       "budgetMilliseconds": 5.0,
+      "enforceAbsoluteBudget": false,
       "minimumPrimaryReuseRatio": 0.99,
       "requiredOutputs": [
         {
@@ -217,6 +226,7 @@
       "requireFoveation": false,
       "budgetMetric": "render_dispatch_ms",
       "budgetMilliseconds": 5.0,
+      "enforceAbsoluteBudget": false,
       "minimumPrimaryReuseRatio": 0.99,
       "requiredOutputs": [
         {
@@ -242,6 +252,7 @@
       "requireFoveation": false,
       "budgetMetric": "render_dispatch_ms",
       "budgetMilliseconds": 5.0,
+      "enforceAbsoluteBudget": false,
       "minimumPrimaryReuseRatio": 0.99,
       "requiredOutputs": [
         {
@@ -267,6 +278,7 @@
       "requireFoveation": false,
       "budgetMetric": "render_dispatch_ms",
       "budgetMilliseconds": 5.0,
+      "enforceAbsoluteBudget": false,
       "minimumPrimaryReuseRatio": 0.99,
       "requiredOutputs": [
         {
@@ -292,6 +304,7 @@
       "requireFoveation": false,
       "budgetMetric": "frame_output_whole_frame_ms",
       "budgetMilliseconds": 8.33,
+      "enforceAbsoluteBudget": false,
       "requiredOutputs": [
         {
           "kind": "DesktopScene",
@@ -320,6 +333,7 @@
       "requireFoveation": true,
       "budgetMetric": "frame_output_whole_frame_ms",
       "budgetMilliseconds": 8.33,
+      "enforceAbsoluteBudget": false,
       "requiredOutputs": [
         {
           "kind": "DesktopScene",
@@ -348,6 +362,7 @@
       "requireFoveation": false,
       "budgetMetric": "frame_output_whole_frame_ms",
       "budgetMilliseconds": 8.33,
+      "enforceAbsoluteBudget": false,
       "requiredOutputs": [
         {
           "kind": "DesktopScene",
@@ -376,6 +391,7 @@
       "requireFoveation": true,
       "budgetMetric": "frame_output_whole_frame_ms",
       "budgetMilliseconds": 8.33,
+      "enforceAbsoluteBudget": false,
       "requiredOutputs": [
         {
           "kind": "DesktopScene",
@@ -387,6 +403,114 @@
         }
       ],
       "gate": true
+    },
+    {
+      "id": "phase3-capacity-1x-active-fixed",
+      "lane": "Phase3Scaling",
+      "settingsPath": "XREngine.Benchmarks/VulkanPerformance/Cohorts/phase3-active-1x.jsonc",
+      "scene": "Phase3Scaling-ActiveFixed-Capacity1x",
+      "camera": "Static", "lights": "CanonicalDirectional", "viewport": "1920x1080", "renderScale": "1.0",
+      "strategy": "GpuIndirectZeroReadback", "zeroReadbackMaterialDrawPath": "BindlessMaterialTable",
+      "vrMode": "Desktop", "foveationMode": "Off", "requireFoveation": false,
+      "budgetMetric": "render_dispatch_ms", "budgetMilliseconds": 5.0, "enforceAbsoluteBudget": false,
+      "minimumPrimaryReuseRatio": 0.99, "minimumGpuSceneCommandCount": 256, "gpuDrivenValidationCapacityMultiplier": 1,
+      "requiredOutputs": [{ "kind": "DesktopScene", "minimumRenderedViews": 1 }], "gate": false
+    },
+    {
+      "id": "phase3-capacity-4x-active-fixed",
+      "lane": "Phase3Scaling",
+      "settingsPath": "XREngine.Benchmarks/VulkanPerformance/Cohorts/phase3-active-1x.jsonc",
+      "scene": "Phase3Scaling-ActiveFixed-Capacity4x",
+      "camera": "Static", "lights": "CanonicalDirectional", "viewport": "1920x1080", "renderScale": "1.0",
+      "strategy": "GpuIndirectZeroReadback", "zeroReadbackMaterialDrawPath": "BindlessMaterialTable",
+      "vrMode": "Desktop", "foveationMode": "Off", "requireFoveation": false,
+      "budgetMetric": "render_dispatch_ms", "budgetMilliseconds": 5.0, "enforceAbsoluteBudget": false,
+      "minimumPrimaryReuseRatio": 0.99, "minimumGpuSceneCommandCount": 256, "gpuDrivenValidationCapacityMultiplier": 4,
+      "requiredOutputs": [{ "kind": "DesktopScene", "minimumRenderedViews": 1 }], "gate": false
+    },
+    {
+      "id": "phase3-capacity-16x-active-fixed",
+      "lane": "Phase3Scaling",
+      "settingsPath": "XREngine.Benchmarks/VulkanPerformance/Cohorts/phase3-active-1x.jsonc",
+      "scene": "Phase3Scaling-ActiveFixed-Capacity16x",
+      "camera": "Static", "lights": "CanonicalDirectional", "viewport": "1920x1080", "renderScale": "1.0",
+      "strategy": "GpuIndirectZeroReadback", "zeroReadbackMaterialDrawPath": "BindlessMaterialTable",
+      "vrMode": "Desktop", "foveationMode": "Off", "requireFoveation": false,
+      "budgetMetric": "render_dispatch_ms", "budgetMilliseconds": 5.0, "enforceAbsoluteBudget": false,
+      "minimumPrimaryReuseRatio": 0.99, "minimumGpuSceneCommandCount": 256, "gpuDrivenValidationCapacityMultiplier": 16,
+      "requiredOutputs": [{ "kind": "DesktopScene", "minimumRenderedViews": 1 }], "gate": false
+    },
+    {
+      "id": "phase3-active-1x-capacity-fixed",
+      "lane": "Phase3Scaling",
+      "settingsPath": "XREngine.Benchmarks/VulkanPerformance/Cohorts/phase3-active-1x.jsonc",
+      "scene": "Phase3Scaling-CapacityFixed-Active1x",
+      "camera": "Static", "lights": "CanonicalDirectional", "viewport": "1920x1080", "renderScale": "1.0",
+      "strategy": "GpuIndirectZeroReadback", "zeroReadbackMaterialDrawPath": "BindlessMaterialTable",
+      "vrMode": "Desktop", "foveationMode": "Off", "requireFoveation": false,
+      "budgetMetric": "render_dispatch_ms", "budgetMilliseconds": 5.0, "enforceAbsoluteBudget": false,
+      "minimumPrimaryReuseRatio": 0.99, "minimumGpuSceneCommandCount": 256, "gpuDrivenValidationCapacityFloor": 8192,
+      "requiredOutputs": [{ "kind": "DesktopScene", "minimumRenderedViews": 1 }], "gate": false
+    },
+    {
+      "id": "phase3-active-4x-capacity-fixed",
+      "lane": "Phase3Scaling",
+      "settingsPath": "XREngine.Benchmarks/VulkanPerformance/Cohorts/phase3-active-4x.jsonc",
+      "scene": "Phase3Scaling-CapacityFixed-Active4x",
+      "camera": "Static", "lights": "CanonicalDirectional", "viewport": "1920x1080", "renderScale": "1.0",
+      "strategy": "GpuIndirectZeroReadback", "zeroReadbackMaterialDrawPath": "BindlessMaterialTable",
+      "vrMode": "Desktop", "foveationMode": "Off", "requireFoveation": false,
+      "budgetMetric": "render_dispatch_ms", "budgetMilliseconds": 5.0, "enforceAbsoluteBudget": false,
+      "minimumPrimaryReuseRatio": 0.99, "minimumGpuSceneCommandCount": 1024, "gpuDrivenValidationCapacityFloor": 8192,
+      "requiredOutputs": [{ "kind": "DesktopScene", "minimumRenderedViews": 1 }], "gate": false
+    },
+    {
+      "id": "phase3-active-16x-capacity-fixed",
+      "lane": "Phase3Scaling",
+      "settingsPath": "XREngine.Benchmarks/VulkanPerformance/Cohorts/phase3-active-16x.jsonc",
+      "scene": "Phase3Scaling-CapacityFixed-Active16x",
+      "camera": "Static", "lights": "CanonicalDirectional", "viewport": "1920x1080", "renderScale": "1.0",
+      "strategy": "GpuIndirectZeroReadback", "zeroReadbackMaterialDrawPath": "BindlessMaterialTable",
+      "vrMode": "Desktop", "foveationMode": "Off", "requireFoveation": false,
+      "budgetMetric": "render_dispatch_ms", "budgetMilliseconds": 5.0, "enforceAbsoluteBudget": false,
+      "minimumPrimaryReuseRatio": 0.99, "minimumGpuSceneCommandCount": 4096, "gpuDrivenValidationCapacityFloor": 8192,
+      "requiredOutputs": [{ "kind": "DesktopScene", "minimumRenderedViews": 1 }], "gate": false
+    },
+    {
+      "id": "phase3-high-count-zero-readback",
+      "lane": "Phase3Crossover",
+      "settingsPath": "XREngine.Benchmarks/VulkanPerformance/Cohorts/phase3-active-16x.jsonc",
+      "scene": "Phase3HighCount-Deferred",
+      "camera": "Static", "lights": "CanonicalDirectional", "viewport": "1920x1080", "renderScale": "1.0",
+      "strategy": "GpuIndirectZeroReadback", "zeroReadbackMaterialDrawPath": "BindlessMaterialTable",
+      "vrMode": "Desktop", "foveationMode": "Off", "requireFoveation": false,
+      "budgetMetric": "render_dispatch_ms", "budgetMilliseconds": 5.0, "enforceAbsoluteBudget": false,
+      "minimumPrimaryReuseRatio": 0.99, "minimumGpuSceneCommandCount": 4096,
+      "requiredOutputs": [{ "kind": "DesktopScene", "minimumRenderedViews": 1 }], "gate": false
+    },
+    {
+      "id": "phase3-high-count-cpu-direct",
+      "lane": "Phase3Crossover",
+      "settingsPath": "XREngine.Benchmarks/VulkanPerformance/Cohorts/phase3-active-16x.jsonc",
+      "scene": "Phase3HighCount-Deferred",
+      "camera": "Static", "lights": "CanonicalDirectional", "viewport": "1920x1080", "renderScale": "1.0",
+      "strategy": "CpuDirect", "zeroReadbackMaterialDrawPath": "FullBucketScanDiagnostic",
+      "vrMode": "Desktop", "foveationMode": "Off", "requireFoveation": false,
+      "budgetMetric": "render_dispatch_ms", "budgetMilliseconds": 5.0, "enforceAbsoluteBudget": false,
+      "minimumGpuSceneCommandCount": 4096,
+      "requiredOutputs": [{ "kind": "DesktopScene", "minimumRenderedViews": 1 }], "gate": false
+    },
+    {
+      "id": "phase3-high-count-full-scan",
+      "lane": "Phase3Crossover",
+      "settingsPath": "XREngine.Benchmarks/VulkanPerformance/Cohorts/phase3-active-16x.jsonc",
+      "scene": "Phase3HighCount-Deferred",
+      "camera": "Static", "lights": "CanonicalDirectional", "viewport": "1920x1080", "renderScale": "1.0",
+      "strategy": "GpuIndirectZeroReadback", "zeroReadbackMaterialDrawPath": "FullBucketScanDiagnostic",
+      "vrMode": "Desktop", "foveationMode": "Off", "requireFoveation": false,
+      "budgetMetric": "render_dispatch_ms", "budgetMilliseconds": 5.0, "enforceAbsoluteBudget": false,
+      "minimumGpuSceneCommandCount": 4096,
+      "requiredOutputs": [{ "kind": "DesktopScene", "minimumRenderedViews": 1 }], "gate": false
     }
   ]
 }

@@ -464,6 +464,59 @@ runs because it is not part of the profile-mode contract.
   command counters, allocation stages, and GPU readback bytes/mappings are now
   evaluated as validity gates rather than informational values.
 
+### Monado, RVC, and RenderDoc infrastructure closeout
+
+Evidence root:
+`Build/_AgentValidation/20260728-workstream03-acceptance/`.
+
+- Monado source `326ba6302383fb213af32197633e0c74f59d88f0` was built
+  and staged under `Build/Deps/Monado`. `XR_RUNTIME_JSON` is set only for the
+  launched process, so the machine-wide SteamVR selection is irrelevant. The
+  installer now preserves the pinned repository submodule with `-NoFetch`, and
+  the benchmark starts/stops only its marker-owned Monado service.
+- `openxr-smoke-pass2/reports/openxr-smoke-summary.json` records runtime
+  `Monado`, Vulkan, instance/system/session/swapchain success, submitted eye
+  frames, zero retained per-frame allocations, clean teardown, and no warnings
+  or failures.
+- `rvc-quick-deferred-off-pass5` passed the canonical 5-second stability gate
+  after 29 seconds. Its 306 retained samples all contained a fresh independent
+  desktop render; 124 runtime-paced XR frames contained both fresh eyes and no
+  retained frame contained only one eye. Capture-window GPU readback bytes and
+  mappings, full scans, forbidden fallbacks, VUIDs, and submission rejections
+  were zero. `reports/evaluation-fixed.json` is
+  `NonPromotableQuickRun`; required outputs are evaluated over their declared
+  capture cadence instead of incorrectly requiring an XR submit in every
+  faster desktop frame.
+- That RVC evidence is not a performance pass: render p50/p95/p99 was
+  34.778/109.139/112.717 ms, the 8.33 ms target was missed in 285/306
+  samples, aggregate command-buffer recording allocated 3,263,104 bytes,
+  primary recording allocated 3,255,936 bytes, frame-data refresh allocated
+  40,384 bytes, and submission allocated 136 bytes. Stage counters can overlap
+  and are not summed. The absolute frame result is a workstream-08 handoff,
+  frame-data refresh is a workstream-04 handoff, generic command encoding is a
+  workstream-05 handoff, and submission-owned allocation remains in
+  workstream 03.
+- `renderdoc/ws03-zero-readback-explicit.rdc` is a 65,775,716-byte Vulkan
+  capture made by `Tools/RenderDoc/capture_xrengine.py`, which preserves the
+  explicit production-cohort environment that `rdc-cli 0.5.6` dropped on
+  Windows. Replay reports 566 events, 19 dispatches, 177 draws, and a
+  40-command `vkCmdDrawIndexedIndirectCount` compact material submission.
+  `ws03-explicit-final-pass.png` and `ws03-explicit-gbuffer.png` visibly contain
+  the production scene; replay closed cleanly with no high-severity message.
+
+Root causes fixed along this path:
+
+- `SyncRuntimeVrState` no longer clears a configured OpenXR API before its
+  monitor can activate it.
+- profile capture now authoritatively enables render-statistics tracking;
+  persisted preference side effects can no longer produce empty manifests.
+- successful `xrEndFrame` is authoritative for two-eye submit telemetry and
+  does not race the mirrored `IsInVR` flag.
+- workload identity hashes the configured XR eye family, so runtime-owned eye
+  cadence gaps do not look like workload mutations.
+- the evaluator validates required fresh outputs across the retained capture
+  and uses the most complete output frame for comparison identity.
+
 ### Validation
 
 - Standalone Vulkan-performance evaluator Release build: zero warnings and zero
@@ -636,20 +689,78 @@ variance and continued resource churn produced the less favorable final table.
 - A matched Uber-static CPU-direct capture was 9.159 ms render p50, materially
   faster than compact GPU-driven Uber at 21.384 ms. Workstream 03 therefore
   cannot claim the CPU-stage performance gate.
-- The captures still contained recording/frame-refresh allocations and
-  95.16-97.84% primary reuse in three of the four short windows; the canonical
-  stability gate timed out because texture upload and retirement activity did
-  not quiesce.
+- The captures still contained allocations. Workstream 03 owns any allocation
+  traced to compact submission and still has a 136-byte submission-stage
+  failure in the retained RVC Quick capture. Its 40,384 frame-data-refresh
+  bytes are handed to workstream 04, and its 3,255,936 primary-recording bytes
+  are handed to workstream 05. Primary reuse was 95.16-97.84% in three of the
+  four short windows; the canonical stability gate timed out because texture
+  upload and retirement activity did not quiesce.
 - Exact depth-peeling/per-pixel-list transparency and arbitrary forward shader
   semantics remain explicitly unsupported. Scheduled empty passes are counted
   and warned; scenes that require them are not promotable.
-- No OpenXR runtime was available for the required desktop-plus-two-eyes RVC
-  acceptance workload.
-- `rdc doctor` passed, including the Vulkan layer and replay API, but the
-  automated target disconnected before emitting an `.rdc`.
+- The Monado/OpenXR and RenderDoc infrastructure blockers are resolved; exact
+  evidence is recorded below. Workstream 03 still needs its relative
+  submission-performance, submission-owned allocation, full Gate/foveation,
+  and remaining correctness suite. Generic frame-data-refresh and
+  command-encoding allocations transfer to workstreams 04 and 05; final
+  whole-renderer RVC performance transfers to workstream 08.
 - No image comparison is claimed. The new source/GLSL contracts and runtime
-  counters passed, but visual equivalence still requires a working capture or
-  editor session.
+  counters passed and the production RenderDoc capture is usable, but the
+  deterministic CPU-direct/zero-readback comparator has not been run.
+
+### Monado, RVC, and RenderDoc infrastructure closeout
+
+Evidence root:
+`Build/_AgentValidation/20260728-workstream03-acceptance/`.
+
+- Monado source `326ba6302383fb213af32197633e0c74f59d88f0` was built
+  and staged under `Build/Deps/Monado`. `XR_RUNTIME_JSON` is set only for the
+  launched process, so the machine-wide SteamVR selection is irrelevant. The
+  installer now preserves the pinned repository submodule with `-NoFetch`, and
+  the benchmark starts/stops only its marker-owned Monado service.
+- `openxr-smoke-pass2/reports/openxr-smoke-summary.json` records runtime
+  `Monado`, Vulkan, instance/system/session/swapchain success, submitted eye
+  frames, zero retained per-frame allocations, clean teardown, and no warnings
+  or failures.
+- `rvc-quick-deferred-off-pass5` passed the canonical 5-second stability gate
+  after 29 seconds. Its 306 retained samples all contained a fresh independent
+  desktop render; 124 runtime-paced XR frames contained both fresh eyes and no
+  retained frame contained only one eye. Capture-window GPU readback bytes and
+  mappings, full scans, forbidden fallbacks, VUIDs, and submission rejections
+  were zero. `reports/evaluation-fixed.json` is
+  `NonPromotableQuickRun`; required outputs are evaluated over their declared
+  capture cadence instead of incorrectly requiring an XR submit in every
+  faster desktop frame.
+- That RVC evidence is not a performance pass: render p50/p95/p99 was
+  34.778/109.139/112.717 ms, the 8.33 ms target was missed in 285/306
+  samples, aggregate command-buffer recording allocated 3,263,104 bytes,
+  primary recording allocated 3,255,936 bytes, frame-data refresh allocated
+  40,384 bytes, and submission allocated 136 bytes. Stage counters can overlap
+  and are not summed. The absolute frame result is a workstream-08 handoff,
+  frame-data refresh is a workstream-04 handoff, generic command encoding is a
+  workstream-05 handoff, and submission-owned allocation remains in
+  workstream 03.
+- `renderdoc/ws03-zero-readback-explicit.rdc` is a 65,775,716-byte Vulkan
+  capture made by `Tools/RenderDoc/capture_xrengine.py`, which preserves the
+  explicit production-cohort environment that `rdc-cli 0.5.6` dropped on
+  Windows. Replay reports 566 events, 19 dispatches, 177 draws, and a
+  40-command `vkCmdDrawIndexedIndirectCount` compact material submission.
+  `ws03-explicit-final-pass.png` and `ws03-explicit-gbuffer.png` visibly contain
+  the production scene; replay closed cleanly with no high-severity message.
+
+Root causes fixed along this path:
+
+- `SyncRuntimeVrState` no longer clears a configured OpenXR API before its
+  monitor can activate it.
+- profile capture now authoritatively enables render-statistics tracking;
+  persisted preference side effects can no longer produce empty manifests.
+- successful `xrEndFrame` is authoritative for two-eye submit telemetry and
+  does not race the mirrored `IsInVR` flag.
+- workload identity hashes the configured XR eye family, so runtime-owned eye
+  cadence gaps do not look like workload mutations.
+- the evaluator validates required fresh outputs across the retained capture
+  and uses the most complete output frame for comparison identity.
 
 ### Validation
 
@@ -661,3 +772,25 @@ variance and continued resource churn produced the less favorable final table.
   existing native bridges; existing advisory/compiler warnings remain.
 - PowerShell and JSON benchmark defaults now select the production
   `BindlessMaterialTable` path, while diagnostic names are explicit.
+### Workstream 03 acceptance pause handoff
+
+Workstream 03 remains open and workstream 04 remains blocked. Deterministic
+Deferred and Uber CPU-direct/zero-readback parity is now exact (including
+finite-depth coverage and seeded negative controls), the Quick scaling and
+high-count crossover probes are directionally successful, and the benchmark
+harness now retains each frame stream with its capture manifest. The first
+formal scaling run is invalid because its earlier streams were pruned before
+that harness fix and must not be reused as acceptance evidence.
+
+The current blocker is
+`Build/_AgentValidation/20260728-workstream03-acceptance/frame-data-reuse-diagnostic/reports/evaluation.json`:
+1,061 of 1,129 eligible primaries were reused (93.98%, below the 99% floor),
+with 68 records. The local zero-readback invariants still passed: zero
+workstream-03-owned managed allocation, current-frame readback bytes, mappings,
+full scans, and forbidden fallbacks. The preceding persisted probe identifies
+the clustered misses as reason mask 66 (`Recorded | FrameData`) with constant
+descriptor generation and no pending pipeline. Two CPU-stage reconciliation
+issues also remain. The exact diagnosis, correctness evidence, formal scaling,
+crossover, canonical desktop/RVC Gate, matched CPU-reference runs, and final
+closeout order are recorded in
+`docs/work/todo/rendering/optimization/03-vulkan-true-zero-readback-submission-todo.md` under **Ordered next steps**.

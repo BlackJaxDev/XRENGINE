@@ -337,6 +337,7 @@ public sealed class ImportedTextureStreamingContractTests
         string serviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Uploads/VulkanTextureUploadService.cs");
         string hookSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/Streaming/VulkanRenderer.TextureStreamingHooks.cs");
         string imageTextureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+        string materialTableSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.BindlessMaterialTextureTable.cs");
         string backendSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/OpenGLTextureResidencyBackends.cs");
         string diagnosticsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/TextureRuntimeDiagnostics.cs");
         string validationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Validation.cs");
@@ -362,6 +363,13 @@ public sealed class ImportedTextureStreamingContractTests
         imageTextureSource.ShouldContain("Renderer.NotifyTextureDescriptorPublished(");
         imageTextureSource.ShouldContain("ImportedTextureUploadPublished texture=");
         imageTextureSource.ShouldContain("Renderer.SetDebugObjectName(ObjectType.Image");
+        imageTextureSource.ShouldContain("Renderer.RefreshGlobalMaterialTextureDescriptorForPublishedTexture(Data);");
+        materialTableSource.ShouldContain("FlushGlobalMaterialTextureDescriptorUpdatesLocked();");
+        imageTextureSource.IndexOf(
+            "Renderer.RefreshGlobalMaterialTextureDescriptorForPublishedTexture(Data);",
+            StringComparison.Ordinal).ShouldBeLessThan(imageTextureSource.IndexOf(
+                "Renderer.RetireImageResources(previousResources);",
+                StringComparison.Ordinal));
         imageTextureSource.ShouldContain("Renderer.SetDebugObjectName(ObjectType.Buffer");
         backendSource.ShouldContain("TryScheduleVulkanSynchronizedUpload(");
         backendSource.ShouldContain("RuntimeGraphicsApiKind.Vulkan");

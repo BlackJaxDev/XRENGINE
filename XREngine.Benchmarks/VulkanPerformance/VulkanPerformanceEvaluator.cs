@@ -98,7 +98,8 @@ public sealed class VulkanPerformanceEvaluator
                 acceptingBaseline));
         }
 
-        if (_run.Preset.Equals("Gate", StringComparison.OrdinalIgnoreCase))
+        if (_run.Preset.Equals("Gate", StringComparison.OrdinalIgnoreCase) &&
+            !_run.GateScope.Equals("Selected", StringComparison.OrdinalIgnoreCase))
         {
             foreach (VulkanPerformanceCohort required in _contract.Cohorts.Where(
                          static cohort => cohort.Gate))
@@ -252,7 +253,7 @@ public sealed class VulkanPerformanceEvaluator
                     runCohort,
                     preset,
                     summary,
-                    samples[^1].RootElement,
+                    SelectRepresentativeOutputSample(samples),
                     logDirectory);
                 if (comparisonIdentity is null)
                 {
@@ -292,6 +293,8 @@ public sealed class VulkanPerformanceEvaluator
                         missedBudgetFrames++;
                 }
 
+                ValidateRequiredOutputs(cohort, samples);
+
                 if (repetitionBudgetValues.Count != 0)
                 {
                     repetitionBudgetValues.Sort();
@@ -328,7 +331,9 @@ public sealed class VulkanPerformanceEvaluator
                 $"Run-to-run p95 variance {variancePercent:F2}% exceeds {_contract.DefaultVarianceThresholdPercent:F2}%.");
         }
 
-        if (preset.PromotionEligible && !withinBudget)
+        if (preset.PromotionEligible &&
+            cohort.EnforceAbsoluteBudget &&
+            !withinBudget)
         {
             AddIssue(
                 "AbsoluteBudgetExceeded",
@@ -457,13 +462,32 @@ public sealed class VulkanPerformanceEvaluator
 
         if (cohort.MinimumPrimaryReuseRatio > 0.0)
         {
-            double recorded = GetDouble(
-                summary,
-                "VulkanPrimaryCommandBuffersRecordedTotal");
-            double reused = GetDouble(
-                summary,
-                "VulkanPrimaryCommandBuffersReusedTotal");
-            double decisions = recorded + reused;
+            double recorded = 0.0;
+            double reused = 0.0;
+            double decisions = 0.0;
+            bool hasEligibleReuse = TryGetDouble(
+                    summary,
+                    "VulkanEligiblePrimaryCommandBufferRecordsTotal",
+                    out recorded) &&
+                TryGetDouble(
+                    summary,
+                    "VulkanEligiblePrimaryCommandBuffersReusedTotal",
+                    out reused) &&
+                TryGetDouble(
+                    summary,
+                    "VulkanEligiblePrimaryCommandBufferReuseDecisionsTotal",
+                    out decisions);
+            if (!hasEligibleReuse)
+            {
+                recorded = GetDouble(
+                    summary,
+                    "VulkanPrimaryCommandBuffersRecordedTotal");
+                reused = GetDouble(
+                    summary,
+                    "VulkanPrimaryCommandBuffersReusedTotal");
+                decisions = recorded + reused;
+            }
+
             double ratio = decisions > 0.0 ? reused / decisions : 0.0;
             if (decisions <= 0.0)
             {
@@ -477,7 +501,9 @@ public sealed class VulkanPerformanceEvaluator
                 AddIssue(
                     "PrimaryReuseRatioBelowMinimum",
                     cohort.Id,
-                    $"Repetition {repetition} reused {reused:F0} of {decisions:F0} primary decisions ({ratio:P2}); required at least {cohort.MinimumPrimaryReuseRatio:P2}.");
+                    $"Repetition {repetition} reused {reused:F0} of {decisions:F0} " +
+                    $"{(hasEligibleReuse ? "eligible " : string.Empty)}primary decisions ({ratio:P2}); " +
+                    $"required at least {cohort.MinimumPrimaryReuseRatio:P2}.");
             }
         }
     }
@@ -546,9 +572,15 @@ public sealed class VulkanPerformanceEvaluator
                 $"Requested foveation '{cohort.FoveationMode}' resolved to '{foveationMode}'.");
         }
 
-        if (cohort.Strategy.Contains(
-                "ZeroReadback",
-                StringComparison.OrdinalIgnoreCase))
+        bool zeroReadbackStrategy = cohort.Strategy.Contains(
+            "ZeroReadback",
+            StringComparison.OrdinalIgnoreCase);
+        bool compactZeroReadbackPath =
+            zeroReadbackStrategy &&
+            !cohort.ZeroReadbackMaterialDrawPath.Equals(
+                "FullBucketScanDiagnostic",
+                StringComparison.OrdinalIgnoreCase);
+        if (zeroReadbackStrategy)
         {
             double bytes = GetDouble(sample, "gpu_readback_bytes");
             double mappings = GetDouble(sample, "gpu_mapped_buffers");
@@ -558,6 +590,31 @@ public sealed class VulkanPerformanceEvaluator
                     "ZeroReadbackViolation",
                     cohort.Id,
                     $"Current-frame GPU readback observed (bytes={bytes}, mappings={mappings}).");
+            }
+
+            if (compactZeroReadbackPath)
+            {
+                double allocatedBytes = GetDouble(
+                    sample,
+                    "gpu_driven_submission_owned_managed_allocated_bytes");
+                if (allocatedBytes > 0.0)
+                {
+                    AddIssue(
+                        "ZeroReadbackSubmissionAllocation",
+                        cohort.Id,
+                        $"Compact zero-readback preparation/selection allocated {allocatedBytes:F0} managed byte(s) on the render thread.");
+                }
+
+                double unsupportedPasses = GetDouble(
+                    sample,
+                    "gpu_driven_unsupported_compact_passes");
+                if (unsupportedPasses > 0.0)
+                {
+                    AddIssue(
+                        "UnsupportedCompactVariant",
+                        cohort.Id,
+                        $"Compact zero-readback submission rejected {unsupportedPasses:F0} required variant(s).");
+                }
             }
         }
 
@@ -572,7 +629,6 @@ public sealed class VulkanPerformanceEvaluator
 
         ValidateCpuStageReconciliation(cohort, sample);
         ValidateCommandBufferTruth(cohort, sample);
-        ValidateRequiredOutputs(cohort, sample);
         ValidateCleanOverlayWork(cohort, preset, sample);
     }
 
@@ -691,48 +747,107 @@ public sealed class VulkanPerformanceEvaluator
 
     private void ValidateRequiredOutputs(
         VulkanPerformanceCohort cohort,
-        JsonElement sample)
+        IReadOnlyList<JsonDocument> samples)
     {
         if (cohort.RequiredOutputs.Count == 0)
             return;
-        if (!sample.TryGetProperty("frame_outputs", out JsonElement frameOutputs) ||
-            !frameOutputs.TryGetProperty("outputs", out JsonElement outputs) ||
-            outputs.ValueKind != JsonValueKind.Array)
+
+        bool manifestObserved = samples.Any(static document =>
+            document.RootElement.TryGetProperty("frame_outputs", out JsonElement frameOutputs) &&
+            frameOutputs.TryGetProperty("outputs", out JsonElement outputs) &&
+            outputs.ValueKind == JsonValueKind.Array);
+        if (!manifestObserved)
         {
             AddIssue(
                 "MissingOutputManifest",
                 cohort.Id,
-                "Frame sample has no structured output manifest.");
+                "Capture has no structured output manifest.");
             return;
         }
 
         foreach (VulkanPerformanceOutputRequirement requirement in cohort.RequiredOutputs)
         {
-            int renderedViews = 0;
-            foreach (JsonElement output in outputs.EnumerateArray())
+            int maximumRenderedViews = 0;
+            foreach (JsonDocument sampleDocument in samples)
             {
-                if (!GetString(output, "output_kind").Equals(
-                        requirement.Kind,
-                        StringComparison.OrdinalIgnoreCase) ||
-                    !GetBoolean(output, "rendered"))
+                JsonElement sample = sampleDocument.RootElement;
+                if (!sample.TryGetProperty("frame_outputs", out JsonElement frameOutputs) ||
+                    !frameOutputs.TryGetProperty("outputs", out JsonElement outputs) ||
+                    outputs.ValueKind != JsonValueKind.Array)
                 {
                     continue;
                 }
 
-                int viewMask = GetInt32(output, "view_mask");
-                renderedViews += viewMask == 0
-                    ? 1
-                    : BitOperations.PopCount((uint)viewMask);
+                int renderedViews = 0;
+                foreach (JsonElement output in outputs.EnumerateArray())
+                {
+                    if (!GetString(output, "output_kind").Equals(
+                            requirement.Kind,
+                            StringComparison.OrdinalIgnoreCase) ||
+                        !IsFreshlyRenderedOutput(output))
+                    {
+                        continue;
+                    }
+
+                    int viewMask = GetInt32(output, "view_mask");
+                    renderedViews += viewMask == 0
+                        ? 1
+                        : BitOperations.PopCount((uint)viewMask);
+                }
+
+                maximumRenderedViews = Math.Max(maximumRenderedViews, renderedViews);
             }
 
-            if (renderedViews < requirement.MinimumRenderedViews)
+            if (maximumRenderedViews < requirement.MinimumRenderedViews)
             {
                 AddIssue(
                     "RequiredOutputMissing",
                     cohort.Id,
-                    $"Frame rendered {renderedViews} '{requirement.Kind}' views; {requirement.MinimumRenderedViews} required.");
+                    $"Capture rendered at most {maximumRenderedViews} fresh {requirement.Kind} views in one output frame; {requirement.MinimumRenderedViews} required.");
             }
         }
+    }
+
+    private static bool IsFreshlyRenderedOutput(JsonElement output)
+    {
+        if (!GetBoolean(output, "rendered") || GetBoolean(output, "skipped"))
+            return false;
+        if (GetInt32(output, "content_age_frames") > 0)
+            return false;
+
+        string disposition = GetString(output, "work_disposition");
+        return string.IsNullOrWhiteSpace(disposition) ||
+            disposition.Equals("FreshRender", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static JsonElement SelectRepresentativeOutputSample(IReadOnlyList<JsonDocument> samples)
+    {
+        JsonElement representative = samples[^1].RootElement;
+        int maximumOutputCount = GetOutputCount(representative);
+        for (int index = samples.Count - 2; index >= 0; index--)
+        {
+            JsonElement candidate = samples[index].RootElement;
+            int outputCount = GetOutputCount(candidate);
+            if (outputCount <= maximumOutputCount)
+                continue;
+
+            representative = candidate;
+            maximumOutputCount = outputCount;
+        }
+
+        return representative;
+    }
+
+    private static int GetOutputCount(JsonElement sample)
+    {
+        if (!sample.TryGetProperty("frame_outputs", out JsonElement frameOutputs) ||
+            !frameOutputs.TryGetProperty("outputs", out JsonElement outputs) ||
+            outputs.ValueKind != JsonValueKind.Array)
+        {
+            return 0;
+        }
+
+        return outputs.GetArrayLength();
     }
 
     private Dictionary<string, string> BuildComparisonIdentity(

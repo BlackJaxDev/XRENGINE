@@ -7,7 +7,8 @@ layout (location = 3) out uint TransformId;
 
 layout (location = 1) in vec3 FragNorm;
 layout (location = 4) in vec2 FragUV0;
-layout (location = 21) in float FragTransformId;
+layout (location = 21) flat in uint FragTransformId;
+layout (location = 27) flat in uint FragRenderIdentityId;
 
 uniform sampler2D Texture0; // Albedo
 uniform sampler2D Texture1; // Specular map (intensity in R channel)
@@ -29,7 +30,7 @@ void main()
 
     XRENGINE_AlphaCutoffAndDither(AlphaCutoff, albedoSample.a, Opacity, gl_FragCoord.xy);
 
-    TransformId = floatBitsToUint(FragTransformId);
+    TransformId = FragRenderIdentityId;
     Normal = XRENGINE_EncodeNormal(normalize(FragNorm));
     AlbedoOpacity = vec4(albedoSample.rgb * BaseColor, Opacity);
 

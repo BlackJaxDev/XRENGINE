@@ -573,7 +573,7 @@ public sealed class MeshOptimizerInteropTests
         staticShader.ShouldContain("layout(location = 4) out vec2 FragUV0[];");
         staticShader.ShouldContain("layout(location = 12) out vec4 FragColor0[];");
         staticShader.ShouldContain("layout(location = 20) out vec3 FragPosLocal[];");
-        staticShader.ShouldContain("layout(location = 21) out float FragTransformId[];");
+        staticShader.ShouldContain("layout(location = 21) flat out uint FragTransformId[];");
         staticShader.ShouldContain("layout(location = 23) flat out uint XreFragLodTransitionRole[];");
         staticShader.ShouldContain("layout(location = 24) flat out uint XRE_FragMaterialId[];");
         staticShader.ShouldContain("layout(location = 25) out vec3 PrevFragPos[];");

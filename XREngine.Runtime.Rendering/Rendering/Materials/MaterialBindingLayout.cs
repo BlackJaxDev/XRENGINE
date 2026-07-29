@@ -795,7 +795,7 @@ namespace XREngine.Rendering.Materials
             };
     }
 
-    public sealed record MaterialBindingResolverResult(
+    public readonly record struct MaterialBindingResolverResult(
         EMaterialBindingResolverOutcome Outcome,
         string Reason,
         MaterialBindingLayout? Layout)
