@@ -20,6 +20,10 @@ namespace XREngine.Rendering.Vulkan
         ISparseTextureStreamingBackendCapability,
         IStreamlinePresentationBackendCapability
     {
+        private readonly VulkanBufferResourceManager _bufferResourceManager = new();
+        private readonly VulkanImageAllocationTracker _imageAllocationTracker = new();
+        private readonly VulkanStagingManager _stagingManager = new();
+
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> ComputeDispatchOperationNames =
             new(StringComparer.Ordinal);
 
@@ -79,7 +83,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             EVulkanAllocatorBackend backend = RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.AllocatorBackend;
-            _memoryAllocator = backend switch
+            _bufferResourceManager.MemoryAllocator = backend switch
             {
                 EVulkanAllocatorBackend.Legacy => new VulkanLegacyAllocator(this),
                 EVulkanAllocatorBackend.Managed => new VulkanBlockAllocator(this),
@@ -177,10 +181,10 @@ namespace XREngine.Rendering.Vulkan
             DestroyRemainingTrackedBufferAllocations();
             DestroyRemainingTrackedImageAllocations();
 
-            if (_memoryAllocator is VulkanBlockAllocator blockAllocator)
+            if (_bufferResourceManager.MemoryAllocator is VulkanBlockAllocator blockAllocator)
                 blockAllocator.DestroyAllBlocks(Api!, device);
-            _memoryAllocator?.Dispose();
-            _memoryAllocator = null;
+            _bufferResourceManager.MemoryAllocator?.Dispose();
+            _bufferResourceManager.MemoryAllocator = null;
             _activeSynchronizationBackend = EVulkanSynchronizationBackend.Legacy;
             DestroyFrameTimingResources();
 
@@ -213,7 +217,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyDanglingMaterialWrappers()
         {
-            var wrappers = VkObject<XRMaterial>.Cache.Values.ToArray();
+            var wrappers = _backendObjectRegistry.Snapshot<XRMaterial>();
             foreach (var wrapper in wrappers)
             {
                 try
@@ -228,7 +232,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyDanglingMeshRendererWrappers()
         {
-            var wrappers = VkObject<XRMeshRenderer.BaseVersion>.Cache.Values.ToArray();
+            var wrappers = _backendObjectRegistry.Snapshot<XRMeshRenderer.BaseVersion>();
             foreach (var wrapper in wrappers)
             {
                 try
@@ -243,7 +247,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyDanglingRenderProgramPipelineWrappers()
         {
-            var wrappers = VkObject<XRRenderProgramPipeline>.Cache.Values.ToArray();
+            var wrappers = _backendObjectRegistry.Snapshot<XRRenderProgramPipeline>();
             foreach (var wrapper in wrappers)
             {
                 try
@@ -258,7 +262,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyDanglingRenderProgramWrappers()
         {
-            var wrappers = VkObject<XRRenderProgram>.Cache.Values.ToArray();
+            var wrappers = _backendObjectRegistry.Snapshot<XRRenderProgram>();
             foreach (var wrapper in wrappers)
             {
                 try
@@ -273,7 +277,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyDanglingDataBufferWrappers()
         {
-            var wrappers = VkObject<XRDataBuffer>.Cache.Values.ToArray();
+            var wrappers = _backendObjectRegistry.Snapshot<XRDataBuffer>();
             foreach (var wrapper in wrappers)
             {
                 try
@@ -288,23 +292,23 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyDanglingFrameBufferWrappers()
         {
-            DestroyCachedWrappers(VkObject<XRFrameBuffer>.Cache.Values.ToArray(), "framebuffer");
-            DestroyCachedWrappers(VkObject<XRRenderBuffer>.Cache.Values.ToArray(), "renderbuffer");
+            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRFrameBuffer>(), "framebuffer");
+            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRRenderBuffer>(), "renderbuffer");
         }
 
         private void DestroyDanglingTextureWrappers()
         {
-            DestroyCachedWrappers(VkObject<XRTexture1D>.Cache.Values.ToArray(), "texture1D");
-            DestroyCachedWrappers(VkObject<XRTexture1DArray>.Cache.Values.ToArray(), "texture1DArray");
-            DestroyCachedWrappers(VkObject<XRTexture2D>.Cache.Values.ToArray(), "texture2D");
-            DestroyCachedWrappers(VkObject<XRTexture2DArray>.Cache.Values.ToArray(), "texture2DArray");
-            DestroyCachedWrappers(VkObject<XRTexture3D>.Cache.Values.ToArray(), "texture3D");
-            DestroyCachedWrappers(VkObject<XRTextureCube>.Cache.Values.ToArray(), "textureCube");
-            DestroyCachedWrappers(VkObject<XRTextureCubeArray>.Cache.Values.ToArray(), "textureCubeArray");
-            DestroyCachedWrappers(VkObject<XRTextureRectangle>.Cache.Values.ToArray(), "textureRectangle");
-            DestroyCachedWrappers(VkObject<XRTextureBuffer>.Cache.Values.ToArray(), "textureBuffer");
-            DestroyCachedWrappers(VkObject<XRTextureViewBase>.Cache.Values.ToArray(), "textureView");
-            DestroyCachedWrappers(VkObject<XRSampler>.Cache.Values.ToArray(), "sampler");
+            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRTexture1D>(), "texture1D");
+            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRTexture1DArray>(), "texture1DArray");
+            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRTexture2D>(), "texture2D");
+            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRTexture2DArray>(), "texture2DArray");
+            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRTexture3D>(), "texture3D");
+            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRTextureCube>(), "textureCube");
+            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRTextureCubeArray>(), "textureCubeArray");
+            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRTextureRectangle>(), "textureRectangle");
+            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRTextureBuffer>(), "textureBuffer");
+            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRTextureViewBase>(), "textureView");
+            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRSampler>(), "sampler");
         }
 
         private static void DestroyCachedWrappers<T>(VkObject<T>[] wrappers, string label)
@@ -329,9 +333,9 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyRemainingTrackedBufferAllocations()
         {
-            foreach (var pair in _bufferAllocations.ToArray())
+            foreach (var pair in _bufferResourceManager.Allocations.ToArray())
             {
-                if (!_bufferAllocations.TryRemove(pair.Key, out VulkanMemoryAllocation allocation))
+                if (!_bufferResourceManager.Allocations.TryRemove(pair.Key, out VulkanMemoryAllocation allocation))
                     continue;
 
                 Buffer buffer = new() { Handle = pair.Key };
@@ -341,9 +345,9 @@ namespace XREngine.Rendering.Vulkan
                 FreeMemoryAllocation(allocation);
             }
 
-            foreach (var pair in _legacyBufferAllocations.ToArray())
+            foreach (var pair in _bufferResourceManager.LegacyAllocations.ToArray())
             {
-                if (!_legacyBufferAllocations.TryRemove(pair.Key, out VulkanMemoryAllocation allocation))
+                if (!_bufferResourceManager.LegacyAllocations.TryRemove(pair.Key, out VulkanMemoryAllocation allocation))
                     continue;
 
                 Buffer buffer = new() { Handle = pair.Key };
@@ -357,9 +361,9 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyRemainingTrackedImageAllocations()
         {
-            foreach (var pair in _imageAllocations.ToArray())
+            foreach (var pair in _imageAllocationTracker.Allocations.ToArray())
             {
-                if (!_imageAllocations.TryRemove(pair.Key, out VulkanMemoryAllocation allocation))
+                if (!_imageAllocationTracker.Allocations.TryRemove(pair.Key, out VulkanMemoryAllocation allocation))
                     continue;
 
                 Image image = new() { Handle = pair.Key };

@@ -11,8 +11,10 @@ namespace XREngine.Rendering.Vulkan
         private const uint DesktopSubmitCommandBufferCapacity = 4;
 
         private EDesktopFrameFlow SubmitDesktopFrame(
-            ref DesktopFrameAttempt attempt)
+            ref VulkanFrameAttempt attempt)
         {
+            ThrowIfDesktopFrameFaultInjected(
+                EVulkanDesktopFrameFaultPoint.Submission);
             _graphicsTimelineValue = Math.Max(
                 _graphicsTimelineValue + 1,
                 attempt.AcquireTimelineValue + 1);
@@ -191,6 +193,8 @@ namespace XREngine.Rendering.Vulkan
                 ref attempt,
                 attempt.GraphicsSignalValue,
                 "graphics frame");
+            ThrowIfDesktopFrameFaultInjected(
+                EVulkanDesktopFrameFaultPoint.PostSubmitAuxiliary);
 
             try
             {
@@ -259,7 +263,7 @@ namespace XREngine.Rendering.Vulkan
         /// publication and deferred command-buffer reclamation.
         /// </summary>
         private void CommitSubmittedDesktopTextureUpload(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             ulong signalValue,
             string uploadSource)
         {
@@ -282,7 +286,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private EDesktopFrameFlow HandleDesktopSubmitFailure(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             Result submitResult)
         {
             if (submitResult == Result.ErrorDeviceLost)
@@ -320,7 +324,9 @@ namespace XREngine.Rendering.Vulkan
                     rejectedSubmitResult: submitResult))
             {
                 attempt.Reason = EDesktopFrameReason.SubmitFailed;
-                return EDesktopFrameFlow.Completed;
+                attempt.Flow = EDesktopFrameFlow.Completed;
+                throw new InvalidOperationException(
+                    $"Failed to submit draw command buffer ({submitResult}); acquired image ownership was recovered before propagating the failure.");
             }
 
             _ = ConsumeDesktopAcquireForRecovery(

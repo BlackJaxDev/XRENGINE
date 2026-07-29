@@ -18,6 +18,7 @@ using XREngine.Fbx;
 using XREngine.Gltf;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
+using XREngine.Rendering.Models.Caching;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -67,12 +68,30 @@ namespace XREngine
         public readonly record struct ModelImporterResult(
             SceneNode? RootNode,
             IReadOnlyCollection<XRMaterial> Materials,
-            IReadOnlyCollection<XRMesh> Meshes);
+            IReadOnlyCollection<XRMesh> Meshes,
+            ModelImportBackendSelection? BackendSelection,
+            ModelImportProducerReport? ProducerReport);
 
         public delegate XRMaterial DelMakeMaterialAction(XRTexture[] textureList, List<TextureSlot> textures, string name);
 
         public DelMakeMaterialAction MakeMaterialAction { get; set; } = MakeMaterialDefault;
         public ModelImportOptions? ImportOptions { get; set; }
+
+        /// <summary>
+        /// Gets the backend candidate snapshot resolved for the most recent import attempt.
+        /// </summary>
+        public ModelImportBackendResolution? LastBackendResolution { get; private set; }
+
+        /// <summary>
+        /// Gets the concrete producer that completed the most recent successful import.
+        /// </summary>
+        public ModelImportBackendSelection? LastBackendSelection { get; private set; }
+
+        /// <summary>
+        /// Gets the normalized dependency, source-entity, and imported-reference report
+        /// emitted by the producer that completed the most recent import.
+        /// </summary>
+        public ModelImportProducerReport? LastProducerReport { get; private set; }
 
         public ModelImporter(string path, Action? onCompleted, DelMaterialFactory? materialFactory)
         {
@@ -740,7 +759,12 @@ namespace XREngine
                 if (parent != null && node != null)
                     parent.Transform.AddChild(node.Transform, false, EParentAssignmentMode.Deferred);
 
-                ModelImporterResult importResult = new(node, importer._materials, importer._meshes);
+                ModelImporterResult importResult = new(
+                    node,
+                    importer._materials,
+                    importer._meshes,
+                    importer.LastBackendSelection,
+                    importer.LastProducerReport);
                 result = importResult;
                 lock (completionLock)
                     resultReady = true;
@@ -1694,6 +1718,10 @@ namespace XREngine
 
             try
             {
+                LastBackendResolution = null;
+                LastBackendSelection = null;
+                LastProducerReport = null;
+
                 ModelImportOptions effectiveImportOptions = ResolveEffectiveImportOptions(
                     options,
                     preservePivots,
@@ -1707,147 +1735,215 @@ namespace XREngine
                 using var _ = ImportOptionsScope.Push(effectiveImportOptions);
                 using var __ = ImportSourceScope.Push(SourceFilePath);
 
-                if (ShouldUseNativeGltfBackend(effectiveImportOptions))
-                {
-                    bool allowAssimpFallback = effectiveImportOptions.GltfBackend == GltfImportBackend.Auto;
+                IRuntimeModelImportServices runtimeServices = RuntimeModelImportServices.Current;
+                ModelImportBackendResolution backendResolution = ModelImportBackendResolver.Resolve(
+                    SourceFilePath,
+                    effectiveImportOptions,
+                    runtimeServices.PreferredFbxBackend,
+                    runtimeServices.PreferredGltfBackend);
+                LastBackendResolution = backendResolution;
 
-                    try
-                    {
-                        NativeGltfSceneImporter.ImportResult result = NativeGltfSceneImporter.Import(
-                            this,
-                            SourceFilePath,
-                            effectiveImportOptions,
-                            effectiveImportOptions.ScaleConversion,
-                            effectiveImportOptions.ZUp,
-                            _importLayer,
-                            cancellationToken,
-                            onProgress,
-                            rootTransformMatrix);
-
-                        foreach (XRMaterial material in result.Materials)
-                            _materials.Add(material);
-                        foreach (XRMesh mesh in result.Meshes)
-                            _meshes.Add(mesh);
-
-                        _onCompleted?.Invoke();
-                        return result.RootNode;
-                    }
-                    catch (Exception ex) when (allowAssimpFallback)
-                    {
-                        LogImportWarning(SourceFilePath, $"[ModelImporter.Import] Native glTF import failed for '{SourceFilePath}'. Falling back to Assimp. {ex.Message}");
-                    }
-                }
-
-                FbxImportBackend fbxBackend = ResolveFbxBackend(effectiveImportOptions);
-                if (ShouldUseNativeFbxBackend(fbxBackend))
-                {
-                    bool allowAssimpFallback = fbxBackend == FbxImportBackend.Auto;
-
-                    try
-                    {
-                        LogImportDiagnostic(
-                            SourceFilePath,
-                            "[ModelImporter.Import] Using native FBX backend for '{0}' (option={1}, preference={2}, resolved={3}).",
-                            SourceFilePath,
-                            effectiveImportOptions.FbxBackend,
-                            RuntimeModelImportServices.Current.PreferredFbxBackend.ToString(),
-                            fbxBackend);
-
-                        NativeFbxSceneImporter.ImportResult result = NativeFbxSceneImporter.Import(
-                            this,
-                            SourceFilePath,
-                            effectiveImportOptions,
-                            effectiveImportOptions.ScaleConversion,
-                            effectiveImportOptions.ZUp,
-                            _importLayer,
-                            cancellationToken,
-                            onProgress,
-                            rootTransformMatrix);
-
-                        foreach (XRMaterial material in result.Materials)
-                            _materials.Add(material);
-                        foreach (XRMesh mesh in result.Meshes)
-                            _meshes.Add(mesh);
-
-                        _onCompleted?.Invoke();
-                        return result.RootNode;
-                    }
-                    catch (Exception ex) when (allowAssimpFallback)
-                    {
-                        LogImportWarning(SourceFilePath, $"[ModelImporter.Import] Native FBX import failed for '{SourceFilePath}'. Falling back to Assimp. {ex.Message}");
-                    }
-                }
+                if (backendResolution.Candidates.Count == 0)
+                    throw new NotSupportedException(
+                        $"No model import backend is eligible for '{SourceFilePath}' under policy '{backendResolution.RequestedPolicy}'.");
 
                 LogImportDiagnostic(
                     SourceFilePath,
-                    "[ModelImporter.Import] Using Assimp backend for '{0}' (fbxOption={1}, fbxPreference={2}, resolved={3}).",
+                    "[ModelImporter.Import] Resolved backends for '{0}': requested={1}, hostPreference={2}, candidates=[{3}], candidateHash={4}, resolverVersion={5}.",
                     SourceFilePath,
-                    effectiveImportOptions.FbxBackend,
-                    RuntimeModelImportServices.Current.PreferredFbxBackend.ToString(),
-                    fbxBackend);
+                    backendResolution.RequestedPolicy,
+                    backendResolution.HostPreference,
+                    string.Join(", ", backendResolution.Candidates),
+                    backendResolution.CandidateListHash,
+                    backendResolution.ResolverPolicyVersion);
 
-                Action<float>? assimpProgress = onProgress is null
-                    ? null
-                    : value => onProgress(Math.Clamp(value, 0.0f, 1.0f));
-                Action<float>? assimpMeshProgress = onProgress is null
-                    ? null
-                    : value => onProgress(0.20f + (0.80f * Math.Clamp(value, 0.0f, 1.0f)));
-
-                SetAssimpConfig(effectiveImportOptions);
-
-                AScene scene;
-                using (RuntimeModelImportServices.Current.StartProfileScope($"Assimp ImportFile: {SourceFilePath} with options: {effectiveImportOptions.PostProcessSteps}"))
+                for (int candidateIndex = 0; candidateIndex < backendResolution.Candidates.Count; candidateIndex++)
                 {
-                    assimpProgress?.Invoke(0.02f);
-                    scene = _assimp.ImportFile(SourceFilePath, effectiveImportOptions.PostProcessSteps);
-                    assimpProgress?.Invoke(0.12f);
+                    ModelImportBackendDescriptor candidate = backendResolution.Candidates[candidateIndex];
+                    bool hasFallback = candidateIndex + 1 < backendResolution.Candidates.Count;
+                    string? fallbackId = hasFallback
+                        ? backendResolution.Candidates[candidateIndex + 1].StableId
+                        : null;
+
+                    if (candidate.StableId.Equals(ModelImportBackendIds.NativeGltf, StringComparison.Ordinal))
+                    {
+                        try
+                        {
+                            NativeGltfSceneImporter.ImportResult result = NativeGltfSceneImporter.Import(
+                                this,
+                                SourceFilePath,
+                                effectiveImportOptions,
+                                effectiveImportOptions.ScaleConversion,
+                                effectiveImportOptions.ZUp,
+                                _importLayer,
+                                cancellationToken,
+                                onProgress,
+                                rootTransformMatrix);
+
+                            foreach (XRMaterial material in result.Materials)
+                                _materials.Add(material);
+                            foreach (XRMesh mesh in result.Meshes)
+                                _meshes.Add(mesh);
+
+                            LastBackendSelection = new ModelImportBackendSelection(backendResolution, candidate);
+                            LastProducerReport = new ModelImportProducerReport(
+                                LastBackendSelection,
+                                result.ProducerMetadata);
+                            _onCompleted?.Invoke();
+                            return result.RootNode;
+                        }
+                        catch (Exception ex) when (hasFallback && ex is not OperationCanceledException)
+                        {
+                            LogImportWarning(
+                                SourceFilePath,
+                                $"[ModelImporter.Import] Backend '{candidate.StableId}' failed for '{SourceFilePath}'. Trying '{fallbackId}'. {ex.Message}");
+                            continue;
+                        }
+                    }
+
+                    if (candidate.StableId.Equals(ModelImportBackendIds.NativeFbx, StringComparison.Ordinal))
+                    {
+                        try
+                        {
+                            LogImportDiagnostic(
+                                SourceFilePath,
+                                "[ModelImporter.Import] Using native FBX backend '{0}' for '{1}'.",
+                                candidate,
+                                SourceFilePath);
+
+                            NativeFbxSceneImporter.ImportResult result = NativeFbxSceneImporter.Import(
+                                this,
+                                SourceFilePath,
+                                effectiveImportOptions,
+                                effectiveImportOptions.ScaleConversion,
+                                effectiveImportOptions.ZUp,
+                                _importLayer,
+                                cancellationToken,
+                                onProgress,
+                                rootTransformMatrix);
+
+                            foreach (XRMaterial material in result.Materials)
+                                _materials.Add(material);
+                            foreach (XRMesh mesh in result.Meshes)
+                                _meshes.Add(mesh);
+
+                            LastBackendSelection = new ModelImportBackendSelection(backendResolution, candidate);
+                            LastProducerReport = new ModelImportProducerReport(
+                                LastBackendSelection,
+                                result.ProducerMetadata);
+                            _onCompleted?.Invoke();
+                            return result.RootNode;
+                        }
+                        catch (Exception ex) when (hasFallback && ex is not OperationCanceledException)
+                        {
+                            LogImportWarning(
+                                SourceFilePath,
+                                $"[ModelImporter.Import] Backend '{candidate.StableId}' failed for '{SourceFilePath}'. Trying '{fallbackId}'. {ex.Message}");
+                            continue;
+                        }
+                    }
+
+                    if (!candidate.StableId.Equals(ModelImportBackendIds.Assimp, StringComparison.Ordinal))
+                    {
+                        NotSupportedException unsupportedBackend = new(
+                            $"ModelImporter has no execution adapter for registered backend '{candidate.StableId}'.");
+                        if (!hasFallback)
+                            throw unsupportedBackend;
+
+                        LogImportWarning(
+                            SourceFilePath,
+                            $"[ModelImporter.Import] {unsupportedBackend.Message} Trying '{fallbackId}'.");
+                        continue;
+                    }
+
+                    LogImportDiagnostic(
+                        SourceFilePath,
+                        "[ModelImporter.Import] Using Assimp backend '{0}' for '{1}'.",
+                        candidate,
+                        SourceFilePath);
+
+                    Action<float>? assimpProgress = onProgress is null
+                        ? null
+                        : value => onProgress(Math.Clamp(value, 0.0f, 1.0f));
+                    Action<float>? assimpMeshProgress = onProgress is null
+                        ? null
+                        : value => onProgress(0.20f + (0.80f * Math.Clamp(value, 0.0f, 1.0f)));
+
+                    SetAssimpConfig(effectiveImportOptions);
+
+                    AScene scene;
+                    using (runtimeServices.StartProfileScope($"Assimp ImportFile: {SourceFilePath} with options: {effectiveImportOptions.PostProcessSteps}"))
+                    {
+                        assimpProgress?.Invoke(0.02f);
+                        scene = _assimp.ImportFile(SourceFilePath, effectiveImportOptions.PostProcessSteps);
+                        assimpProgress?.Invoke(0.12f);
+                    }
+
+                    if (scene is null || scene.SceneFlags == SceneFlags.Incomplete || scene.RootNode is null)
+                    {
+                        LogImportWarning(SourceFilePath, $"[ModelImporter.Import] Assimp returned null/incomplete scene for '{SourceFilePath}'. scene={scene != null}, flags={scene?.SceneFlags}, rootNode={scene?.RootNode != null}");
+                        _onCompleted?.Invoke();
+                        return null;
+                    }
+
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    _meshProcessRoutines.Clear();
+                    _meshFinalizeActions.Clear();
+                    bool processMeshesAsync = effectiveImportOptions.ProcessMeshesAsynchronously ?? runtimeServices.ProcessMeshesAsynchronously;
+                    bool batchSubmeshAdds = effectiveImportOptions.BatchSubmeshAddsDuringAsyncImport;
+                    bool importedRenderersGenerateAsync = effectiveImportOptions.GenerateMeshRenderersAsync;
+                    bool generateSceneNodesPerSubmesh = effectiveImportOptions.GenerateSceneNodesPerSubmesh;
+                    bool splitSubmeshesIntoSeparateModelComponents = effectiveImportOptions.SplitSubmeshesIntoSeparateModelComponents
+                        || generateSceneNodesPerSubmesh;
+                    bool separateMeshIslands = effectiveImportOptions.SeparateMeshIslands;
+                    int spatialPartitionMaxTriangles = effectiveImportOptions.SpatialPartitionMaxTriangles;
+
+                    SceneNode rootNode;
+                    using (runtimeServices.StartProfileScope("Assemble model hierarchy"))
+                    {
+                        rootNode = new(Path.GetFileNameWithoutExtension(SourceFilePath)) { Layer = _importLayer };
+                        _nodeTransforms.Clear();
+                        ProcessNode(true, scene.RootNode, scene, rootNode, null, rootTransformMatrix ?? Matrix4x4.Identity, effectiveImportOptions.CollapseGeneratedFbxHelperNodes, null, cancellationToken);
+                        assimpProgress?.Invoke(0.18f);
+                        NormalizeNodeScales(
+                            scene,
+                            rootNode,
+                            cancellationToken,
+                            processMeshesAsync,
+                            batchSubmeshAdds,
+                            importedRenderersGenerateAsync,
+                            splitSubmeshesIntoSeparateModelComponents,
+                            generateSceneNodesPerSubmesh,
+                            separateMeshIslands,
+                            spatialPartitionMaxTriangles);
+                        assimpProgress?.Invoke(0.20f);
+                    }
+
+                    ModelImportProducerMetadata producerMetadata = AssimpImportReportBuilder.Build(
+                        SourceFilePath,
+                        scene);
+                    LastBackendSelection = new ModelImportBackendSelection(backendResolution, candidate);
+                    LastProducerReport = new ModelImportProducerReport(
+                        LastBackendSelection,
+                        producerMetadata);
+                    try
+                    {
+                        void meshProcessAction() => ProcessMeshesOnJobThread(assimpMeshProgress, cancellationToken);
+                        RunMeshProcessing(meshProcessAction, processMeshesAsync, cancellationToken, importedTextureStreamingScope);
+                        importedTextureStreamingScope = null;
+                        return rootNode;
+                    }
+                    catch
+                    {
+                        LastBackendSelection = null;
+                        LastProducerReport = null;
+                        throw;
+                    }
                 }
 
-                if (scene is null || scene.SceneFlags == SceneFlags.Incomplete || scene.RootNode is null)
-                {
-                    LogImportWarning(SourceFilePath, $"[ModelImporter.Import] Assimp returned null/incomplete scene for '{SourceFilePath}'. scene={scene != null}, flags={scene?.SceneFlags}, rootNode={scene?.RootNode != null}");
-                    _onCompleted?.Invoke();
-                    return null;
-                }
-
-                cancellationToken.ThrowIfCancellationRequested();
-
-                _meshProcessRoutines.Clear();
-                _meshFinalizeActions.Clear();
-                bool processMeshesAsync = effectiveImportOptions.ProcessMeshesAsynchronously ?? RuntimeModelImportServices.Current.ProcessMeshesAsynchronously;
-                bool batchSubmeshAdds = effectiveImportOptions.BatchSubmeshAddsDuringAsyncImport;
-                bool importedRenderersGenerateAsync = effectiveImportOptions.GenerateMeshRenderersAsync;
-                bool generateSceneNodesPerSubmesh = effectiveImportOptions.GenerateSceneNodesPerSubmesh;
-                bool splitSubmeshesIntoSeparateModelComponents = effectiveImportOptions.SplitSubmeshesIntoSeparateModelComponents
-                    || generateSceneNodesPerSubmesh;
-                bool separateMeshIslands = effectiveImportOptions.SeparateMeshIslands;
-                int spatialPartitionMaxTriangles = effectiveImportOptions.SpatialPartitionMaxTriangles;
-
-                SceneNode rootNode;
-                using (RuntimeModelImportServices.Current.StartProfileScope("Assemble model hierarchy"))
-                {
-                    rootNode = new(Path.GetFileNameWithoutExtension(SourceFilePath)) { Layer = _importLayer };
-                    _nodeTransforms.Clear();
-                    ProcessNode(true, scene.RootNode, scene, rootNode, null, rootTransformMatrix ?? Matrix4x4.Identity, effectiveImportOptions.CollapseGeneratedFbxHelperNodes, null, cancellationToken);
-                    assimpProgress?.Invoke(0.18f);
-                    NormalizeNodeScales(
-                        scene,
-                        rootNode,
-                        cancellationToken,
-                        processMeshesAsync,
-                        batchSubmeshAdds,
-                        importedRenderersGenerateAsync,
-                        splitSubmeshesIntoSeparateModelComponents,
-                        generateSceneNodesPerSubmesh,
-                        separateMeshIslands,
-                        spatialPartitionMaxTriangles);
-                    assimpProgress?.Invoke(0.20f);
-                }
-
-                void meshProcessAction() => ProcessMeshesOnJobThread(assimpMeshProgress, cancellationToken);
-                RunMeshProcessing(meshProcessAction, processMeshesAsync, cancellationToken, importedTextureStreamingScope);
-                importedTextureStreamingScope = null;
-                return rootNode;
+                throw new NotSupportedException(
+                    $"No registered model import backend could execute '{SourceFilePath}' under policy '{backendResolution.RequestedPolicy}'.");
             }
             finally
             {
@@ -1886,37 +1982,6 @@ namespace XREngine
 
             resolved.LegacyPostProcessSteps = options;
             return resolved;
-        }
-
-        private static FbxImportBackend ResolveFbxBackend(ModelImportOptions effectiveImportOptions)
-        {
-            FbxImportBackend selected = effectiveImportOptions.FbxBackend;
-            if (selected == FbxImportBackend.Auto)
-                selected = RuntimeModelImportServices.Current.PreferredFbxBackend;
-
-            return selected;
-        }
-
-        private bool ShouldUseNativeFbxBackend(FbxImportBackend selected)
-        {
-            if (!Path.GetExtension(SourceFilePath).Equals(".fbx", StringComparison.OrdinalIgnoreCase))
-                return false;
-
-            return selected is not FbxImportBackend.Assimp;
-        }
-
-        private bool ShouldUseNativeGltfBackend(ModelImportOptions effectiveImportOptions)
-        {
-            string extension = Path.GetExtension(SourceFilePath);
-            if (!extension.Equals(".gltf", StringComparison.OrdinalIgnoreCase)
-                && !extension.Equals(".glb", StringComparison.OrdinalIgnoreCase))
-                return false;
-
-            GltfImportBackend selected = effectiveImportOptions.GltfBackend;
-            if (selected == GltfImportBackend.Auto)
-                selected = RuntimeModelImportServices.Current.PreferredGltfBackend;
-
-            return selected is not GltfImportBackend.Assimp;
         }
 
         private void SetAssimpConfig(ModelImportOptions importOptions)

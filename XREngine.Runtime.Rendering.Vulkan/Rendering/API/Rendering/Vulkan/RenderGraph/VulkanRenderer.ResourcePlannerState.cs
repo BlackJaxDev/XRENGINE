@@ -605,9 +605,11 @@ public unsafe partial class VulkanRenderer
     {
         if (IsThreadOpenXrExternalSwapchainTarget)
         {
-            return _threadOpenXrExternalSwapchainContextKind == EVulkanFrameOpContextKind.Unknown
+            EVulkanFrameOpContextKind contextKind =
+                _openXrBackend.CurrentThreadExecutionState.FrameContext.ContextKind;
+            return contextKind == EVulkanFrameOpContextKind.Unknown
                 ? EVulkanFrameOpContextKind.OpenXrEye
-                : _threadOpenXrExternalSwapchainContextKind;
+                : contextKind;
         }
 
         if (RuntimeEngine.Rendering.State.IsLightProbePass)
@@ -3071,6 +3073,8 @@ public unsafe partial class VulkanRenderer
         ActiveResourceAllocationSignature = allocationPlan.Signature;
         ActiveResourcePlannerSignatureBreakdown = signatureBreakdown;
         ActiveResourcePlannerRevision++;
+        if (!HasThreadResourcePlannerRuntimeState)
+            _renderGraphRuntime.PublishPlan();
         RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
             new FrameOutputWorkTelemetry(
                 PhysicalPlanGenerations: 1,
@@ -3913,21 +3917,20 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        if (TryExtractRenderGraphResourceName(resourceName, "fbo::", out string frameBufferName))
+        if (!VulkanResourceBindingKey.TryParse(resourceName, out VulkanResourceBindingKey binding))
+            return false;
+
+        if (binding.Kind == EVulkanResourceBindingKind.FrameBuffer)
         {
-            return !IsVulkanExternalOutputName(frameBufferName) &&
-                !resourceRegistry.FrameBufferRecords.ContainsKey(frameBufferName);
+            return !IsVulkanExternalOutputName(binding.Name) &&
+                !resourceRegistry.FrameBufferRecords.ContainsKey(binding.Name);
         }
 
-        if (TryExtractRenderGraphResourceName(resourceName, "tex::", out string textureName))
-        {
-            return !resourceRegistry.TextureRecords.ContainsKey(textureName);
-        }
+        if (binding.Kind == EVulkanResourceBindingKind.Texture)
+            return !resourceRegistry.TextureRecords.ContainsKey(binding.Name);
 
-        if (TryExtractRenderGraphResourceName(resourceName, "buf::", out string bufferName))
-        {
-            return !resourceRegistry.BufferRecords.ContainsKey(bufferName);
-        }
+        if (binding.Kind == EVulkanResourceBindingKind.Buffer)
+            return !resourceRegistry.BufferRecords.ContainsKey(binding.Name);
 
         return false;
     }
@@ -3936,37 +3939,12 @@ public unsafe partial class VulkanRenderer
         RenderPassResourceUsage usage,
         HashSet<string> activeFrameBufferNames)
     {
-        if (!TryExtractRenderGraphResourceName(usage.ResourceName, "fbo::", out string frameBufferName))
+        if (!VulkanResourceBindingKey.TryParse(usage.ResourceName, out VulkanResourceBindingKey binding)
+            || binding.Kind != EVulkanResourceBindingKind.FrameBuffer)
             return false;
 
-        return !IsVulkanExternalOutputName(frameBufferName) &&
-            !activeFrameBufferNames.Contains(frameBufferName);
-    }
-
-    private static bool TryExtractRenderGraphResourceName(
-        string resourceName,
-        string prefix,
-        out string name)
-    {
-        if (!resourceName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-        {
-            name = string.Empty;
-            return false;
-        }
-
-        int start = prefix.Length;
-        int end = resourceName.IndexOf("::", start, StringComparison.Ordinal);
-        if (end < 0)
-            end = resourceName.Length;
-
-        if (end <= start)
-        {
-            name = string.Empty;
-            return false;
-        }
-
-        name = resourceName[start..end];
-        return true;
+        return !IsVulkanExternalOutputName(binding.Name) &&
+            !activeFrameBufferNames.Contains(binding.Name);
     }
 
     private static int ComputeActivePassSetSignature(HashSet<int>? activePassIndices)
@@ -4049,42 +4027,41 @@ public unsafe partial class VulkanRenderer
                     continue;
                 }
 
-                if (resourceName.StartsWith("fbo::", StringComparison.OrdinalIgnoreCase))
+                if (!VulkanResourceBindingKey.TryParse(resourceName, out VulkanResourceBindingKey binding))
+                    continue;
+
+                if (binding.Kind == EVulkanResourceBindingKind.FrameBuffer)
                 {
-                    ValidateVulkanFrameBufferBinding(pass, usage, resourceName, planner);
+                    ValidateVulkanFrameBufferBinding(pass, usage, binding, planner);
                     continue;
                 }
 
-                if (resourceName.StartsWith("tex::", StringComparison.OrdinalIgnoreCase))
+                if (binding.Kind == EVulkanResourceBindingKind.Texture)
                 {
-                    string textureName = resourceName["tex::".Length..];
-                    if (!string.IsNullOrWhiteSpace(textureName)
-                        && !IsVulkanPlannerOptionalResource(textureName)
-                        && !planner.TryGetTextureDescriptor(textureName, out _))
+                    if (!IsVulkanPlannerOptionalResource(binding.Name)
+                        && !planner.TryGetTextureDescriptor(binding.Name, out _))
                     {
                         Debug.VulkanWarningEvery(
-                            $"VulkanResourcePlanner.MissingTexture.{pass.PassIndex}.{textureName}",
+                            $"VulkanResourcePlanner.MissingTexture.{pass.PassIndex}.{binding.Name}",
                             TimeSpan.FromSeconds(2),
                             "[VulkanResourcePlanner] Pass '{0}' references missing declared texture '{1}'.",
                             pass.Name,
-                            textureName);
+                            binding.Name);
                     }
                     continue;
                 }
 
-                if (resourceName.StartsWith("buf::", StringComparison.OrdinalIgnoreCase))
+                if (binding.Kind == EVulkanResourceBindingKind.Buffer)
                 {
-                    string bufferName = resourceName["buf::".Length..];
-                    if (!string.IsNullOrWhiteSpace(bufferName)
-                        && !IsVulkanPlannerOptionalResource(bufferName)
-                        && !planner.TryGetBufferDescriptor(bufferName, out _))
+                    if (!IsVulkanPlannerOptionalResource(binding.Name)
+                        && !planner.TryGetBufferDescriptor(binding.Name, out _))
                     {
                         Debug.VulkanWarningEvery(
-                            $"VulkanResourcePlanner.MissingBuffer.{pass.PassIndex}.{bufferName}",
+                            $"VulkanResourcePlanner.MissingBuffer.{pass.PassIndex}.{binding.Name}",
                             TimeSpan.FromSeconds(2),
                             "[VulkanResourcePlanner] Pass '{0}' references missing declared buffer '{1}'.",
                             pass.Name,
-                            bufferName);
+                            binding.Name);
                     }
                 }
             }
@@ -4094,33 +4071,27 @@ public unsafe partial class VulkanRenderer
     private static void ValidateVulkanFrameBufferBinding(
         RenderPassMetadata pass,
         RenderPassResourceUsage usage,
-        string resourceName,
+        VulkanResourceBindingKey binding,
         VulkanResourcePlanner planner)
     {
-        string[] segments = resourceName.Split("::", StringSplitOptions.RemoveEmptyEntries);
-        if (segments.Length < 2)
+        if (IsVulkanExternalOutputName(binding.Name) || IsVulkanPlannerOptionalResource(binding.Name))
             return;
 
-        string frameBufferName = segments[1];
-        if (IsVulkanExternalOutputName(frameBufferName) || IsVulkanPlannerOptionalResource(frameBufferName))
-            return;
-
-        string slot = segments.Length >= 3 ? segments[2] : "color";
-        if (!planner.TryGetFrameBufferDescriptor(frameBufferName, out FrameBufferResourceDescriptor? descriptor)
+        if (!planner.TryGetFrameBufferDescriptor(binding.Name, out FrameBufferResourceDescriptor? descriptor)
             || descriptor is null)
         {
             Debug.VulkanWarningEvery(
-                $"VulkanResourcePlanner.MissingFBO.{pass.PassIndex}.{frameBufferName}",
+                $"VulkanResourcePlanner.MissingFBO.{pass.PassIndex}.{binding.Name}",
                 TimeSpan.FromSeconds(2),
                 "[VulkanResourcePlanner] Pass '{0}' references missing declared framebuffer '{1}'.",
                 pass.Name,
-                frameBufferName);
+                binding.Name);
             return;
         }
 
         foreach (FrameBufferAttachmentDescriptor attachment in descriptor.Attachments)
         {
-            if (!MatchesVulkanFrameBufferSlot(attachment.Attachment, slot))
+            if (!MatchesVulkanFrameBufferSlot(attachment.Attachment, binding.Slot))
                 continue;
 
             if (!planner.TryGetTextureDescriptor(attachment.ResourceName, out _))
@@ -4129,44 +4100,43 @@ public unsafe partial class VulkanRenderer
                     return;
 
                 Debug.VulkanWarningEvery(
-                    $"VulkanResourcePlanner.MissingFBOAttachment.{pass.PassIndex}.{frameBufferName}.{attachment.ResourceName}",
+                    $"VulkanResourcePlanner.MissingFBOAttachment.{pass.PassIndex}.{binding.Name}.{attachment.ResourceName}",
                     TimeSpan.FromSeconds(2),
                     "[VulkanResourcePlanner] Pass '{0}' framebuffer '{1}' references attachment '{2}' that is missing from declared textures.",
                     pass.Name,
-                    frameBufferName,
+                    binding.Name,
                     attachment.ResourceName);
             }
             return;
         }
 
         Debug.VulkanWarningEvery(
-            $"VulkanResourcePlanner.MissingFBOSlot.{pass.PassIndex}.{frameBufferName}.{slot}",
+            $"VulkanResourcePlanner.MissingFBOSlot.{pass.PassIndex}.{binding.Name}.{binding.Slot}",
             TimeSpan.FromSeconds(2),
             "[VulkanResourcePlanner] Pass '{0}' framebuffer '{1}' has no attachment matching slot '{2}' for usage {3}.",
             pass.Name,
-            frameBufferName,
-            slot,
+            binding.Name,
+            binding.Slot,
             usage.ResourceType);
     }
 
     private static bool IsVulkanExternalOutputResourceBinding(string resourceName, VulkanResourcePlanner planner)
     {
-        if (resourceName.Equals(RenderGraphResourceNames.OutputRenderTarget, StringComparison.OrdinalIgnoreCase))
+        if (!VulkanResourceBindingKey.TryParse(resourceName, out VulkanResourceBindingKey binding))
+            return false;
+
+        if (binding.Kind == EVulkanResourceBindingKind.Output)
             return !planner.TryGetOutputFrameBufferDescriptor(out _);
 
         if (planner.TryGetOutputFrameBufferDescriptor(out _) &&
-            resourceName.StartsWith("fbo::", StringComparison.OrdinalIgnoreCase))
+            binding.Kind == EVulkanResourceBindingKind.FrameBuffer)
         {
-            string[] outputSegments = resourceName.Split("::", StringSplitOptions.RemoveEmptyEntries);
-            if (outputSegments.Length >= 2 && IsVulkanExternalOutputName(outputSegments[1]))
+            if (IsVulkanExternalOutputName(binding.Name))
                 return false;
         }
 
-        if (!resourceName.StartsWith("fbo::", StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        string[] segments = resourceName.Split("::", StringSplitOptions.RemoveEmptyEntries);
-        return segments.Length >= 2 && IsVulkanExternalOutputName(segments[1]);
+        return binding.Kind == EVulkanResourceBindingKind.FrameBuffer
+            && IsVulkanExternalOutputName(binding.Name);
     }
 
     private static bool IsVulkanExternalOutputName(string resourceName)

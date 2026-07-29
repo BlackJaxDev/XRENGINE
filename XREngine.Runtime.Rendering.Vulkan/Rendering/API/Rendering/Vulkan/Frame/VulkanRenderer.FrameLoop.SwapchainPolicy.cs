@@ -92,7 +92,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void TrackPendingDesktopSurfaceSize(
-            ref DesktopFrameAttempt attempt)
+            ref VulkanFrameAttempt attempt)
         {
             if (attempt.LiveSurfaceValid)
             {
@@ -114,7 +114,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void ApplyDesktopSwapchainExtentPolicy(
-            ref DesktopFrameAttempt attempt)
+            ref VulkanFrameAttempt attempt)
         {
             if (attempt.LiveSurfaceValid &&
                 !attempt.SurfaceMatchesSwapchain)
@@ -166,7 +166,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void ServiceDesktopSwapchainRecreatePolicy(
-            ref DesktopFrameAttempt attempt)
+            ref VulkanFrameAttempt attempt)
         {
             if (!ShouldRunSwapchainRecreate(
                     attempt.InteractiveResize))
@@ -236,7 +236,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void UpdateAttemptSwapchainExtentMatch(
-            ref DesktopFrameAttempt attempt)
+            ref VulkanFrameAttempt attempt)
         {
             attempt.SurfaceMatchesSwapchain =
                 attempt.LiveSurfaceValid &&

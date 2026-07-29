@@ -18,7 +18,6 @@ using XREngine.Editor.ComponentEditors;
 using XREngine.Editor.TransformEditors;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.UI;
 using XREngine.Runtime.InputIntegration;
 using XREngine.Scene;
@@ -1139,31 +1138,9 @@ public static partial class EditorImGuiUI
             var visited = _standaloneVisitedScratch;
             visited.Clear();
 
-            // If we have an associated GL API object selected, show its custom editor first
-            if (_selectedOpenGlApiObject is OpenGLRenderer.GLObjectBase glObject)
-            {
-                if (ImGui.CollapsingHeader("OpenGL API Object", ImGuiTreeNodeFlags.DefaultOpen))
-                {
-                    ImGui.PushID("GLObjectInspector");
-                    GLObjectEditorRegistry.DrawInspector(glObject);
-                    ImGui.PopID();
-                }
-
-                ImGui.Separator();
-
-                if (ImGui.CollapsingHeader("XR Data Properties", ImGuiTreeNodeFlags.DefaultOpen))
-                {
-                    ImGui.PushID("StandaloneInspector");
-                    DrawStandaloneInspectorContent(target, visited);
-                    ImGui.PopID();
-                }
-            }
-            else
-            {
-                ImGui.PushID("StandaloneInspector");
-                DrawStandaloneInspectorContent(target, visited);
-                ImGui.PopID();
-            }
+            ImGui.PushID("StandaloneInspector");
+            DrawStandaloneInspectorContent(target, visited);
+            ImGui.PopID();
         }
 
         private static void DrawAssetExplorerInspectorLoadState(AssetExplorerInspectorLoadState loadState, HashSet<object> visited)

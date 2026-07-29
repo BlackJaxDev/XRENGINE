@@ -17,7 +17,6 @@ using XREngine.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Compute;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Shadows;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
@@ -28,11 +27,14 @@ using XREngine.Scene.Physics.Physx;
 
 namespace XREngine;
 
-internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHostServices
+internal sealed class EngineRuntimeRenderingHostServices :
+    IRuntimeRenderingHostServices,
+    IDisposable
 {
     private const int MaxConsecutiveVrDesktopBudgetSkips = 2;
 
     private readonly RendererBackendCatalog _rendererBackends = new();
+    private IDisposable? _rendererBackendRegistrations;
     private readonly object _vrDesktopPressureLock = new();
     private readonly object _renderOutputGraphLock = new();
     private readonly RenderOutputGraphPlanner _renderOutputGraphPlanner = new();
@@ -41,10 +43,19 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     private ulong _vrDesktopPressureFrameId;
     private bool _vrDesktopPressureHoldCurrentFrame;
 
-    public EngineRuntimeRenderingHostServices()
-        => _ = BuiltInRendererBackendModules.RegisterAll(_rendererBackends);
+    public EngineRuntimeRenderingHostServices(bool registerRendererBackends)
+    {
+        if (registerRendererBackends)
+            _rendererBackendRegistrations = BuiltInRendererBackendModules.RegisterAll(_rendererBackends);
+    }
 
     public IRendererBackendCatalog RendererBackends => _rendererBackends;
+
+    public void Dispose()
+    {
+        Interlocked.Exchange(ref _rendererBackendRegistrations, null)?.Dispose();
+        _rendererBackends.Dispose();
+    }
 
     public IDisposable? StartProfileScope(string? scopeName)
     {

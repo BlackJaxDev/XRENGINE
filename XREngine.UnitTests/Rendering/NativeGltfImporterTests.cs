@@ -7,6 +7,7 @@ using XREngine.Core.Files;
 using XREngine.Gltf;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
+using XREngine.Rendering.Models.Caching;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
 
@@ -78,9 +79,37 @@ public sealed class NativeGltfImporterTests
 
         try
         {
-            GltfImportTestUtilities.ImportedSceneSummary summary = GltfImportTestUtilities.ImportAndSummarize(assetPath, GltfImportBackend.Auto);
+            using ModelImporter importer = GltfImportTestUtilities.CreateImporter(assetPath, GltfImportBackend.Auto);
+            SceneNode rootNode = importer
+                .Import(PostProcessSteps.None, cancellationToken: default, onProgress: null)
+                .ShouldNotBeNull();
+            GltfImportTestUtilities.ImportedSceneSummary summary = GltfImportTestUtilities.SummarizeImportedScene(rootNode);
             summary.MeshCount.ShouldBeGreaterThan(0);
             summary.MaterialCount.ShouldBeGreaterThan(0);
+
+            ModelImportBackendResolution resolution = importer.LastBackendResolution.ShouldNotBeNull();
+            ModelImportBackendSelection selection = importer.LastBackendSelection.ShouldNotBeNull();
+            resolution.Candidates
+                .Select(static candidate => candidate.StableId)
+                .ShouldBe(new[] { ModelImportBackendIds.NativeGltf, ModelImportBackendIds.Assimp });
+            selection.Resolution.ShouldBeSameAs(resolution);
+            selection.RequestedPolicy.ShouldBe(ModelImportBackendPolicy.Auto);
+            selection.CandidateListHash.ShouldBe(resolution.CandidateListHash);
+            selection.ProducerId.ShouldBe(ModelImportBackendIds.Assimp);
+            selection.ProducerVersion.ShouldBe(ModelImportBackendDescriptors.Assimp.ImplementationVersion);
+
+            ModelImportProducerReport report = importer.LastProducerReport.ShouldNotBeNull();
+            report.BackendSelection.ShouldBeSameAs(selection);
+            report.Dependencies.ShouldContain(static dependency =>
+                dependency.Kind == ModelImportDependencyKind.EntrySource
+                && dependency.IsRequired);
+            report.Dependencies.ShouldContain(static dependency =>
+                dependency.Kind == ModelImportDependencyKind.Structural
+                && dependency.NormalizedPath.EndsWith(
+                    "external-static-scene.bin",
+                    StringComparison.OrdinalIgnoreCase));
+            report.SourceEntities.ShouldContain(static entity =>
+                entity.Kind == ModelImportEntityKind.Mesh);
         }
         finally
         {
@@ -133,6 +162,7 @@ public sealed class NativeGltfImporterTests
         XRMaterial material = modelComponent.Model.ShouldNotBeNull().Meshes[0].LODs.Min.ShouldNotBeNull().Material.ShouldNotBeNull();
         material.ShouldBeSameAs(replacementMaterial);
         material.Textures.Count.ShouldBe(0);
+        importer.LastBackendSelection.ShouldNotBeNull().ProducerId.ShouldBe(ModelImportBackendIds.NativeGltf);
     }
 
     [Test]
@@ -154,6 +184,67 @@ public sealed class NativeGltfImporterTests
         options.MaterialRemap.ShouldNotBeNull();
         options.TextureRemap!.ContainsKey("Checker Base Color").ShouldBeTrue();
         options.MaterialRemap!.ContainsKey("Checker Material").ShouldBeTrue();
+
+        ModelImportProducerReport report = prefabSource.ProducerReport.ShouldNotBeNull();
+        report.BackendSelection.ProducerId.ShouldBe(ModelImportBackendIds.NativeGltf);
+        report.Dependencies.ShouldContain(static dependency =>
+            dependency.Kind == ModelImportDependencyKind.EntrySource
+            && dependency.IsRequired);
+        report.Dependencies.ShouldContain(static dependency =>
+            dependency.Kind == ModelImportDependencyKind.Structural
+            && dependency.NormalizedPath.EndsWith(
+                "external-static-scene.bin",
+                StringComparison.OrdinalIgnoreCase));
+        report.Dependencies.ShouldContain(static dependency =>
+            dependency.Kind == ModelImportDependencyKind.ReferencedTexture
+            && dependency.NormalizedPath.EndsWith(
+                "checker.png",
+                StringComparison.OrdinalIgnoreCase));
+        report.ReferenceKeys.ShouldContain(static reference =>
+            reference.Kind == ModelImportReferenceKind.Texture
+            && reference.Key == "Checker Base Color");
+        report.ReferenceKeys.ShouldContain(static reference =>
+            reference.Kind == ModelImportReferenceKind.Material
+            && reference.Key == "Checker Material");
+    }
+
+    [Test]
+    public void Import_NativeProducerReports_IncludeSkinAnimationAndMorphEntities()
+    {
+        GltfCorpusManifest manifest = GltfImportTestUtilities.LoadManifest();
+        GltfCorpusEntry skinnedEntry = manifest.Entries.Single(
+            static entry => entry.Id == "skinned-morph-animated");
+        string skinnedPath = GltfImportTestUtilities.ResolveCorpusAssetPath(skinnedEntry);
+
+        using ModelImporter skinnedImporter = GltfImportTestUtilities.CreateImporter(
+            skinnedPath,
+            GltfImportBackend.Native);
+        skinnedImporter.Import(PostProcessSteps.None, cancellationToken: default, onProgress: null)
+            .ShouldNotBeNull();
+
+        ModelImportProducerReport skinnedReport =
+            skinnedImporter.LastProducerReport.ShouldNotBeNull();
+        skinnedReport.BackendSelection.ProducerId.ShouldBe(ModelImportBackendIds.NativeGltf);
+        skinnedReport.SourceEntities.ShouldContain(static entity =>
+            entity.Kind == ModelImportEntityKind.Skeleton);
+        skinnedReport.SourceEntities.ShouldContain(static entity =>
+            entity.Kind == ModelImportEntityKind.Animation);
+        skinnedReport.ReferenceKeys.ShouldContain(static reference =>
+            reference.Kind == ModelImportReferenceKind.Animation);
+
+        GltfCorpusEntry morphEntry = manifest.Entries.Single(
+            static entry => entry.Id == "morph-sparse-extras");
+        string morphPath = GltfImportTestUtilities.ResolveCorpusAssetPath(morphEntry);
+        using ModelImporter morphImporter = GltfImportTestUtilities.CreateImporter(
+            morphPath,
+            GltfImportBackend.Native);
+        morphImporter.Import(PostProcessSteps.None, cancellationToken: default, onProgress: null)
+            .ShouldNotBeNull();
+
+        ModelImportProducerReport morphReport =
+            morphImporter.LastProducerReport.ShouldNotBeNull();
+        morphReport.SourceEntities.ShouldContain(static entity =>
+            entity.Kind == ModelImportEntityKind.MorphTarget);
     }
 
     private static void AssertSummaryMatches(GltfGoldenSummary expected, GltfGoldenSummary actual, string entryId)

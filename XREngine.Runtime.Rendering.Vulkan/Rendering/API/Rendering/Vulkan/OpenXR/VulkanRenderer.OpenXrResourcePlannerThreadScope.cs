@@ -5,29 +5,27 @@ public unsafe partial class VulkanRenderer
     private readonly struct OpenXrResourcePlannerThreadScope : IDisposable
     {
         private readonly VulkanRenderer _renderer;
-        private readonly OpenXrViewResourcePlannerContextKey _contextKey;
+        private readonly VulkanOpenXrViewResourcePlannerContextKey _contextKey;
         private readonly ThreadResourcePlannerRuntimeStateScope _threadScope;
         private readonly ThreadFrameOpResourcePlannerSwitchingStateScope _frameOpThreadScope;
-        private readonly VulkanRenderer? _previousScopeRenderer;
-        private readonly OpenXrViewResourcePlannerContextKey _previousScopeKey;
+        private readonly VulkanOpenXrThreadExecutionState _executionState;
+        private readonly VulkanOpenXrViewResourcePlannerContextKey _previousScopeKey;
         private readonly int _previousScopeDepth;
         private readonly bool _ownsThreadScopes;
 
         public OpenXrResourcePlannerThreadScope(
             VulkanRenderer renderer,
-            in OpenXrViewResourcePlannerContextKey contextKey)
+            in VulkanOpenXrViewResourcePlannerContextKey contextKey)
         {
             _renderer = renderer;
             _contextKey = contextKey;
-            _previousScopeRenderer = _threadOpenXrResourcePlannerScopeRenderer;
-            _previousScopeKey = _threadOpenXrResourcePlannerScopeKey;
-            _previousScopeDepth = _threadOpenXrResourcePlannerScopeDepth;
-            bool reentrant = ReferenceEquals(_previousScopeRenderer, renderer) &&
-                _previousScopeDepth > 0 &&
+            _executionState = renderer._openXrBackend.CurrentThreadExecutionState;
+            _previousScopeKey = _executionState.ResourcePlannerKey;
+            _previousScopeDepth = _executionState.ResourcePlannerDepth;
+            bool reentrant = _previousScopeDepth > 0 &&
                 _previousScopeKey.Equals(contextKey);
-            _threadOpenXrResourcePlannerScopeRenderer = renderer;
-            _threadOpenXrResourcePlannerScopeKey = contextKey;
-            _threadOpenXrResourcePlannerScopeDepth = reentrant ? _previousScopeDepth + 1 : 1;
+            _executionState.ResourcePlannerKey = contextKey;
+            _executionState.ResourcePlannerDepth = reentrant ? _previousScopeDepth + 1 : 1;
             _ownsThreadScopes = !reentrant;
             if (reentrant)
             {
@@ -37,9 +35,9 @@ public unsafe partial class VulkanRenderer
             }
 
             ResourcePlannerRuntimeState openXrState;
-            lock (renderer._openXrResourcePlannerStatesLock)
+            lock (renderer._openXrBackend.ResourcePlannerStatesLock)
             {
-                openXrState = renderer._openXrResourcePlannerStates.TryGetValue(_contextKey, out ResourcePlannerRuntimeState existingState)
+                openXrState = renderer.OpenXrResourcePlannerStates.TryGetValue(_contextKey, out ResourcePlannerRuntimeState existingState)
                     ? existingState
                     : ResourcePlannerRuntimeState.CreateEmpty();
             }
@@ -67,8 +65,8 @@ public unsafe partial class VulkanRenderer
             state.FrameOpResourcePlannerSwitchingState = _frameOpThreadScope.CaptureCurrent(_renderer);
             if (_renderer.IsDeviceOperational)
             {
-                lock (_renderer._openXrResourcePlannerStatesLock)
-                    _renderer._openXrResourcePlannerStates[_contextKey] = state;
+                lock (_renderer._openXrBackend.ResourcePlannerStatesLock)
+                    _renderer.OpenXrResourcePlannerStates[_contextKey] = state;
             }
             if (OpenXrVulkanTraceEnabled)
             {
@@ -83,9 +81,8 @@ public unsafe partial class VulkanRenderer
 
         private void RestorePreviousScopeIdentity()
         {
-            _threadOpenXrResourcePlannerScopeRenderer = _previousScopeRenderer;
-            _threadOpenXrResourcePlannerScopeKey = _previousScopeKey;
-            _threadOpenXrResourcePlannerScopeDepth = _previousScopeDepth;
+            _executionState.ResourcePlannerKey = _previousScopeKey;
+            _executionState.ResourcePlannerDepth = _previousScopeDepth;
         }
     }
 }

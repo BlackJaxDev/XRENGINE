@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Vulkan
     public unsafe partial class VulkanRenderer
     {
         private RejectedDesktopFramePolicyDecision ResolveRejectedDesktopRecoveryPolicy(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             string rejectionStage,
             out bool imageWasEverPresented,
             out bool imageHasValidPresentedContent,
@@ -50,7 +50,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void RecordRejectedDesktopSkip(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             in RejectedDesktopFramePolicyDecision policy,
             string rejectionStage,
             Result? rejectedSubmitResult,
@@ -80,7 +80,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void RecordCompletedRejectedDesktopRecovery(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             in RejectedDesktopFramePolicyDecision policy,
             bool imageHasValidPresentedContent,
             int recordedSwapchainWriteCount,
@@ -116,7 +116,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void RecordInjectedRejectedDesktopRecovery(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             in RejectedDesktopFramePolicyDecision policy,
             string rejectionStage,
             bool presentAccepted)

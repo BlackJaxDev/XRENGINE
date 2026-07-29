@@ -16,6 +16,7 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
+using XREngine.Rendering.Models.Caching;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Shaders.Generator;
 using XREngine.Scene;
@@ -100,6 +101,24 @@ public sealed class NativeFbxImporterTests
             lod.Material.Textures.Count.ShouldBe(1);
             ((XRTexture2D)lod.Material.Textures[0]!).FilePath.ShouldEndWith("albedo.png");
             lod.Material.FragmentShaders.ShouldNotBeEmpty();
+
+            ModelImportProducerReport report = importer.LastProducerReport.ShouldNotBeNull();
+            report.BackendSelection.ProducerId.ShouldBe(ModelImportBackendIds.NativeFbx);
+            report.Dependencies.ShouldContain(static dependency =>
+                dependency.Kind == ModelImportDependencyKind.EntrySource
+                && dependency.IsRequired);
+            report.Dependencies.ShouldContain(static dependency =>
+                dependency.Kind == ModelImportDependencyKind.ReferencedTexture
+                && dependency.NormalizedPath.EndsWith(
+                    "albedo.png",
+                    StringComparison.OrdinalIgnoreCase));
+            report.SourceEntities.ShouldContain(static entity =>
+                entity.Kind == ModelImportEntityKind.Mesh
+                && entity.IsStable
+                && entity.Key.StartsWith("fbx:geometry:", StringComparison.Ordinal));
+            report.ReferenceKeys.ShouldContain(static reference =>
+                reference.Kind == ModelImportReferenceKind.Material
+                && reference.Key == "Stone");
         }
         finally
         {

@@ -261,6 +261,12 @@ acquire that Vulkan has already granted. Telemetry finalization runs from the
 outer `finally`, and a telemetry failure does not replace the primary frame
 failure.
 
+Internal diagnostics can arm a renderer-local one-shot fault at acquire, image
+preparation, scene or overlay recording, submission, post-submit auxiliary
+work, presentation, or post-present auxiliary work. The normal path probes a
+packed atomic state rather than invoking a delegate, so the seam neither
+allocates per frame nor retains an external callback.
+
 Desktop activity is published as one coherent atomic snapshot containing
 `IsActive`, `FrameNumber`, and `FrameSlot`. Reentrant desktop callbacks are
 rejected without incrementing the accepted-attempt counter, and a publication

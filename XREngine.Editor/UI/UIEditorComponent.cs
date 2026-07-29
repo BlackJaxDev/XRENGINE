@@ -99,7 +99,10 @@ public partial class UIEditorComponent : UIComponent
             SceneNode webRoot = splitChild.NewChildWithTransform<UIBoundableTransform>(out _, "WebViewRoot");
             var webComp = webRoot.AddComponent<UIWebViewComponent>()!;
             webRoot.AddComponent<UIWebViewInputComponent>();
-            webComp.Backend = new UltralightGpuWebRendererBackend();
+            RendererBackendId backendId = AbstractRenderer.Current?.BackendId
+                ?? throw new InvalidOperationException(
+                    "An active renderer is required before creating the accelerated web view.");
+            webComp.Backend = WebRendererBackendRegistry.CreateRequiredAccelerated(backendId);
             webComp.TransparentBackground = false;
             webComp.Url = string.IsNullOrWhiteSpace(EditorUnitTests.Toggles.UltralightWebViewUrl)
                 ? "https://blackjaxvr.com"

@@ -21,31 +21,38 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>
         /// The KHR_draw_indirect_count extension handle, loaded at device creation if available.
         /// </summary>
-        private KhrDrawIndirectCount? _khrDrawIndirectCount;
+        private KhrDrawIndirectCount? _khrDrawIndirectCount =>
+            _deviceContext.ExtensionFunctions.KhrDrawIndirectCount;
         /// <summary>
         /// Indicates whether the VK_KHR_dynamic_rendering extension is supported and loaded.
         /// </summary>
-        private KhrDynamicRendering? _khrDynamicRendering;
+        private KhrDynamicRendering? _khrDynamicRendering =>
+            _deviceContext.ExtensionFunctions.KhrDynamicRendering;
         /// <summary>
         /// Indicates whether the VK_KHR_synchronization2 extension is supported and loaded.
         /// </summary>
-        private KhrSynchronization2? _khrSynchronization2;
+        private KhrSynchronization2? _khrSynchronization2 =>
+            _deviceContext.ExtensionFunctions.KhrSynchronization2;
         /// <summary>
         /// Indicates whether the VK_EXT_mesh_shader extension is supported and loaded.
         /// </summary>
-        private ExtMeshShader? _extMeshShader;
+        private ExtMeshShader? _extMeshShader =>
+            _deviceContext.ExtensionFunctions.ExtMeshShader;
         /// <summary>
         /// Indicates whether the VK_EXT_transform_feedback extension is supported and loaded.
         /// </summary>
-        private ExtTransformFeedback? _extTransformFeedback;
+        internal ExtTransformFeedback? _extTransformFeedback =>
+            _deviceContext.ExtensionFunctions.ExtTransformFeedback;
         /// <summary>
         /// Indicates whether the VK_KHR_external_memory_win32 extension is supported and loaded.
         /// </summary>
-        private KhrExternalMemoryWin32? _khrExternalMemoryWin32;
+        private KhrExternalMemoryWin32? _khrExternalMemoryWin32 =>
+            _deviceContext.ExtensionFunctions.KhrExternalMemoryWin32;
         /// <summary>
         /// Indicates whether the VK_KHR_external_semaphore_win32 extension is supported and loaded.
         /// </summary>
-        private KhrExternalSemaphoreWin32? _khrExternalSemaphoreWin32;
+        private KhrExternalSemaphoreWin32? _khrExternalSemaphoreWin32 =>
+            _deviceContext.ExtensionFunctions.KhrExternalSemaphoreWin32;
 
         /// <summary>
         /// Indicates whether VK_KHR_draw_indirect_count extension is supported and loaded.
@@ -106,11 +113,13 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>
         /// Indicates whether the NV memory decompression feature is supported.
         /// </summary>
-        private NVMemoryDecompression? _nvMemoryDecompression;
+        private NVMemoryDecompression? _nvMemoryDecompression =>
+            _deviceContext.ExtensionFunctions.NvMemoryDecompression;
         /// <summary>
         /// Indicates whether the NV copy memory indirect feature is supported.
         /// </summary>
-        private NVCopyMemoryIndirect? _nvCopyMemoryIndirect;
+        private NVCopyMemoryIndirect? _nvCopyMemoryIndirect =>
+            _deviceContext.ExtensionFunctions.NvCopyMemoryIndirect;
         /// <summary>
         /// Indicates whether the buffer device address feature is supported.
         /// </summary>

@@ -47,6 +47,17 @@ public enum GltfImportBackend
 
 public sealed class ModelImportOptions : IXR3rdPartyImportOptions
 {
+    private ModelCookSettings _cookSettings = new();
+
+    /// <summary>
+    /// Versioned import-time geometry cook policy included in model-cache identity.
+    /// </summary>
+    public ModelCookSettings CookSettings
+    {
+        get => _cookSettings;
+        set => _cookSettings = value ?? new ModelCookSettings();
+    }
+
     /// <summary>
     /// Optional Unity project or Assets folder selected for external .prefab conversion.
     /// Model importers ignore this value.

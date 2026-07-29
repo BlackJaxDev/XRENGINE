@@ -6,8 +6,8 @@ namespace XREngine.Rendering;
 internal static class TextureStreamingBackendRegistry
 {
     private static readonly object Sync = new();
-    private static ITextureStreamingBackendProvider? s_openGl;
-    private static ITextureStreamingBackendProvider? s_vulkan;
+    private static RegistrationEntry? s_openGl;
+    private static RegistrationEntry? s_vulkan;
 
     public static IDisposable Register(RuntimeGraphicsApiKind api, ITextureStreamingBackendProvider provider)
     {
@@ -15,11 +15,20 @@ internal static class TextureStreamingBackendRegistry
 
         lock (Sync)
         {
-            ref ITextureStreamingBackendProvider? slot = ref GetSlot(api);
-            if (slot is not null && !ReferenceEquals(slot, provider))
-                throw new InvalidOperationException($"A texture-streaming provider is already registered for {api}.");
+            ref RegistrationEntry? slot = ref GetSlot(api);
+            if (slot is not null)
+            {
+                if (!ReferenceEquals(slot.Provider, provider))
+                {
+                    throw new InvalidOperationException(
+                        $"A texture-streaming provider is already registered for {api}.");
+                }
 
-            slot = provider;
+                slot.LeaseCount++;
+                return new Registration(api, provider);
+            }
+
+            slot = new RegistrationEntry(provider);
         }
 
         return new Registration(api, provider);
@@ -27,12 +36,13 @@ internal static class TextureStreamingBackendRegistry
 
     public static bool TryGet(RuntimeGraphicsApiKind api, out ITextureStreamingBackendProvider? provider)
     {
-        provider = api switch
+        RegistrationEntry? registration = api switch
         {
             RuntimeGraphicsApiKind.OpenGL => Volatile.Read(ref s_openGl),
             RuntimeGraphicsApiKind.Vulkan => Volatile.Read(ref s_vulkan),
             _ => null,
         };
+        provider = registration?.Provider;
         return provider is not null;
     }
 
@@ -42,7 +52,7 @@ internal static class TextureStreamingBackendRegistry
             : throw new InvalidOperationException(
                 $"The {api} texture-streaming provider has not been registered. Register the renderer leaf module at the composition root.");
 
-    private static ref ITextureStreamingBackendProvider? GetSlot(RuntimeGraphicsApiKind api)
+    private static ref RegistrationEntry? GetSlot(RuntimeGraphicsApiKind api)
     {
         if (api == RuntimeGraphicsApiKind.OpenGL)
             return ref s_openGl;
@@ -70,10 +80,20 @@ internal static class TextureStreamingBackendRegistry
 
             lock (Sync)
             {
-                ref ITextureStreamingBackendProvider? slot = ref GetSlot(api);
-                if (ReferenceEquals(slot, currentProvider))
+                ref RegistrationEntry? slot = ref GetSlot(api);
+                if (slot is null || !ReferenceEquals(slot.Provider, currentProvider))
+                    return;
+
+                slot.LeaseCount--;
+                if (slot.LeaseCount == 0)
                     slot = null;
             }
         }
+    }
+
+    private sealed class RegistrationEntry(ITextureStreamingBackendProvider provider)
+    {
+        public ITextureStreamingBackendProvider Provider { get; } = provider;
+        public int LeaseCount { get; set; } = 1;
     }
 }

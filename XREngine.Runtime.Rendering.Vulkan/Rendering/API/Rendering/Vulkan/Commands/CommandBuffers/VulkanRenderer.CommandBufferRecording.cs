@@ -43,6 +43,62 @@ namespace XREngine.Rendering.Vulkan
             out ImageLayout swapchainLayoutAfterCommandBuffer,
             out long commandBufferDirtyGenerationAfterRecord)
         {
+            VulkanCommandSchedulingContext<CommandBufferCacheVariant> schedulingContext =
+                _commandScheduler.Capture<CommandBufferCacheVariant>(
+                    imageIndex,
+                    preserveSwapchainForOverlay,
+                    _renderGraphRuntime.CurrentPlan);
+
+            CommandBuffer commandBuffer =
+                ScheduleCommandBufferLifecycle(ref schedulingContext);
+            recordingDeferredReason = schedulingContext.RecordingDeferredReason;
+            dynamicUiBatchTextSecondaryCommandBuffer =
+                schedulingContext.DynamicUiSecondaryCommandBuffer;
+            dynamicUiBatchTextOverlayOpCount =
+                schedulingContext.DynamicUiOverlayOperationCount;
+            dynamicUiBatchTextOverlayOps =
+                schedulingContext.DynamicUiOverlayOperations;
+            dynamicUiBatchTextOverlaySignature =
+                schedulingContext.DynamicUiOverlaySignature;
+            dynamicUiBatchTextOverlayVariant =
+                schedulingContext.DynamicUiOverlayVariant;
+            textureUploadCommandBuffer =
+                schedulingContext.TextureUploadCommandBuffer;
+            textureUploadCommandPool = schedulingContext.TextureUploadCommandPool;
+            swapchainLayoutAfterCommandBuffer =
+                schedulingContext.SwapchainLayoutAfterCommandBuffer;
+            commandBufferDirtyGenerationAfterRecord =
+                schedulingContext.CommandBufferDirtyGenerationAfterRecord;
+            return commandBuffer;
+        }
+
+        private CommandBuffer ScheduleCommandBufferLifecycle(
+            ref VulkanCommandSchedulingContext<CommandBufferCacheVariant> context)
+        {
+            uint imageIndex = context.ImageIndex;
+            bool preserveSwapchainForOverlay =
+                context.PreserveSwapchainForOverlay;
+            ref string recordingDeferredReason =
+                ref context.RecordingDeferredReason;
+            ref CommandBuffer dynamicUiBatchTextSecondaryCommandBuffer =
+                ref context.DynamicUiSecondaryCommandBuffer;
+            ref int dynamicUiBatchTextOverlayOpCount =
+                ref context.DynamicUiOverlayOperationCount;
+            ref FrameOp[] dynamicUiBatchTextOverlayOps =
+                ref context.DynamicUiOverlayOperations;
+            ref ulong dynamicUiBatchTextOverlaySignature =
+                ref context.DynamicUiOverlaySignature;
+            ref CommandBufferCacheVariant? dynamicUiBatchTextOverlayVariant =
+                ref context.DynamicUiOverlayVariant;
+            ref CommandBuffer textureUploadCommandBuffer =
+                ref context.TextureUploadCommandBuffer;
+            ref CommandPool textureUploadCommandPool =
+                ref context.TextureUploadCommandPool;
+            ref ImageLayout swapchainLayoutAfterCommandBuffer =
+                ref context.SwapchainLayoutAfterCommandBuffer;
+            ref long commandBufferDirtyGenerationAfterRecord =
+                ref context.CommandBufferDirtyGenerationAfterRecord;
+
             _lastEnsureCommandBufferRecordedPrimary = false;
             recordingDeferredReason = string.Empty;
             dynamicUiBatchTextSecondaryCommandBuffer = default;
@@ -500,8 +556,9 @@ namespace XREngine.Rendering.Vulkan
             // pipelines, descriptors, targets, and frame slot. Keep mutable
             // GPU-driven ops inline (rather than persistent secondaries), but
             // allow the complete primary to replay when those identities match.
-            bool frameOpsRequireFreshPrimary =
-                hasStaticFrameOps && !VulkanPrimaryCommandBufferReuseEnabled;
+            bool frameOpsRequireFreshPrimary = _commandScheduler.RequiresFreshPrimary(
+                hasStaticFrameOps,
+                VulkanPrimaryCommandBufferReuseEnabled);
             CommandRecordingDependencyMismatch dependencyMismatch =
                 usingCommandChains
                     ? variant.RecordedDependencySignature.CompareCommandChainPrimary(
@@ -530,21 +587,35 @@ namespace XREngine.Rendering.Vulkan
                         plannerDirty = true;
                 }
 
-                if (!dirty && !usingCommandChains && hasFrameOps && variant.FrameOpsSignature != frameOpsSignature)
+                if (!dirty &&
+                    !usingCommandChains &&
+                    _commandScheduler.HasOperationSignatureChanged(
+                        hasFrameOps,
+                        variant.FrameOpsSignature,
+                        frameOpsSignature))
                 {
                     LogFrameOpSignatureDiff(imageIndex, variant, frameOpsSignature, ops);
                     dirty = true;
                     frameOpSignatureDirty = true;
                 }
 
-                if (!dirty && usingCommandChains && variant.FrameOpsSignature != frameOpsSignature)
+                if (!dirty &&
+                    usingCommandChains &&
+                    _commandScheduler.HasOperationSignatureChanged(
+                        hasFrameOps,
+                        variant.FrameOpsSignature,
+                        frameOpsSignature))
                 {
                     LogFrameOpSignatureDiff(imageIndex, variant, frameOpsSignature, ops);
                     dirty = true;
                     frameOpSignatureDirty = true;
                 }
 
-                if (!dirty && !usingCommandChains && variant.PlannerRevision != plannerRevision)
+                if (!dirty &&
+                    _commandScheduler.HasPlannerGenerationChanged(
+                        usingCommandChains,
+                        variant.PlannerRevision,
+                        plannerRevision))
                 {
                     dirty = true;
                     plannerDirty = true;
@@ -555,8 +626,10 @@ namespace XREngine.Rendering.Vulkan
                 // contain their thin scheduling/volatile ranges; their per-draw camera data is
                 // refreshed through the reusable secondary ranges instead.
                 if (!dirty &&
-                    !usingCommandChains &&
-                    variant.RecordedGenerations.CameraPose != currentGenerations.CameraPose)
+                    _commandScheduler.HasCameraGenerationChanged(
+                        usingCommandChains,
+                        variant.RecordedGenerations.CameraPose,
+                        currentGenerations.CameraPose))
                 {
                     dirty = true;
                     frameDataDirty = true;
@@ -578,15 +651,12 @@ namespace XREngine.Rendering.Vulkan
                         primaryImageEntryStateMismatch);
                 }
 
-                if (!dirty && variant.RecordedSwapchainImageEverPresented != swapchainImageEverPresentedAtRecord)
-                {
-                    dirty = true;
-                    swapchainLifecycleDirty = true;
-                }
-
                 if (!dirty &&
-                    requiresTrackedPresentSourceRefresh &&
-                    !variant.RecordedSwapchainRefreshFromLastPresentSource)
+                    _commandScheduler.HasSwapchainLifecycleChanged(
+                        variant.RecordedSwapchainImageEverPresented,
+                        swapchainImageEverPresentedAtRecord,
+                        requiresTrackedPresentSourceRefresh,
+                        variant.RecordedSwapchainRefreshFromLastPresentSource))
                 {
                     dirty = true;
                     swapchainLifecycleDirty = true;
@@ -833,7 +903,9 @@ namespace XREngine.Rendering.Vulkan
                 {
                     using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.PrimaryRecording);
                     bool primaryRecorded = false;
-                    for (int recordingAttempt = 0; recordingAttempt < 2; recordingAttempt++)
+                    for (int recordingAttempt = 0;
+                         recordingAttempt < _commandScheduler.RecordingAttemptLimit;
+                         recordingAttempt++)
                     {
                         primaryRecorded = TryRecordCommandBuffer(
                             imageIndex,
@@ -850,9 +922,10 @@ namespace XREngine.Rendering.Vulkan
                         if (primaryRecorded)
                             break;
 
-                        if (recordingAttempt != 0 ||
-                            !IsTransientResourceRetirementRecordingFailure(recordingDeferredReason) ||
-                            IsSwapchainResourceRetirementRecordingFailure(recordingDeferredReason))
+                        if (!_commandScheduler.ShouldRetryRecording(
+                                recordingAttempt,
+                                IsTransientResourceRetirementRecordingFailure(recordingDeferredReason),
+                                IsSwapchainResourceRetirementRecordingFailure(recordingDeferredReason)))
                         {
                             break;
                         }
@@ -2988,6 +3061,63 @@ namespace XREngine.Rendering.Vulkan
             OpenXrEyeRenderTargetContext? openXrTargetContext = null,
             bool excludeDesktopSwapchainBarriers = false)
         {
+            VulkanCommandRecordingContext context = new(
+                imageIndex,
+                commandBuffer,
+                dynamicUiBatchTextSecondaryCommandBuffer,
+                ops,
+                dynamicUiBatchTextOpCount,
+                commandChainSchedule,
+                preserveSwapchainForOverlay,
+                transitionSwapchainToPresent,
+                frameDataImageIndexOverride,
+                openXrTargetContext,
+                excludeDesktopSwapchainBarriers,
+                _renderGraphRuntime.CurrentPlan);
+
+            if (!_commandRecorder.Prepare(ref context))
+            {
+                recordedSwapchainWriteCount = context.RecordedSwapchainWriteCount;
+                recordedSwapchainFinalLayout = context.RecordedSwapchainFinalLayout;
+                recordingDeferredReason = context.RecordingDeferredReason;
+                queryFrameOpsRequireRerecord = context.QueryFrameOpsRequireRerecord;
+                return false;
+            }
+
+            bool recorded = RecordCommandBufferLifecycle(ref context);
+            recordedSwapchainWriteCount = context.RecordedSwapchainWriteCount;
+            recordedSwapchainFinalLayout = context.RecordedSwapchainFinalLayout;
+            recordingDeferredReason = context.RecordingDeferredReason;
+            queryFrameOpsRequireRerecord = context.QueryFrameOpsRequireRerecord;
+            return recorded;
+        }
+
+        private bool RecordCommandBufferLifecycle(
+            ref VulkanCommandRecordingContext context)
+        {
+            uint imageIndex = context.ImageIndex;
+            CommandBuffer commandBuffer = context.CommandBuffer;
+            CommandBuffer dynamicUiBatchTextSecondaryCommandBuffer =
+                context.DynamicUiSecondaryCommandBuffer;
+            FrameOp[] ops = context.Operations;
+            int dynamicUiBatchTextOpCount = context.DynamicUiOperationCount;
+            CommandChainSchedule? commandChainSchedule = context.CommandChainSchedule;
+            bool preserveSwapchainForOverlay = context.PreserveSwapchainForOverlay;
+            bool transitionSwapchainToPresent = context.TransitionSwapchainToPresent;
+            uint? frameDataImageIndexOverride = context.FrameDataImageIndexOverride;
+            OpenXrEyeRenderTargetContext? openXrTargetContext =
+                context.OpenXrTargetContext;
+            bool excludeDesktopSwapchainBarriers =
+                context.ExcludeDesktopSwapchainBarriers;
+            ref int recordedSwapchainWriteCount =
+                ref context.RecordedSwapchainWriteCount;
+            ref ImageLayout recordedSwapchainFinalLayout =
+                ref context.RecordedSwapchainFinalLayout;
+            ref string recordingDeferredReason =
+                ref context.RecordingDeferredReason;
+            ref bool queryFrameOpsRequireRerecord =
+                ref context.QueryFrameOpsRequireRerecord;
+
             using DesktopSwapchainBarrierExclusionScope desktopSwapchainBarrierExclusion =
                 new(excludeDesktopSwapchainBarriers);
             recordedSwapchainWriteCount = 0;
@@ -3306,13 +3436,7 @@ namespace XREngine.Rendering.Vulkan
                 ResetSubmissionMarkersForCommandBuffer(commandBuffer);
                 CleanupComputeTransientResources(frameDataImageIndex);
 
-                CommandBufferBeginInfo beginInfo = new()
-                {
-                    SType = StructureType.CommandBufferBeginInfo,
-                };
-
-                if (Api!.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
-                    throw new Exception("Failed to begin recording command buffer.");
+                _commandRecorder.Begin(Api!, commandBuffer);
 
                 BeginFrameTimingQueries(commandBuffer, commandBufferImageSlot);
                 BeginVulkanGpuProfilerQueries(commandBuffer, commandBufferImageSlot);
@@ -6132,7 +6256,7 @@ namespace XREngine.Rendering.Vulkan
                                 EVulkanMeshFrameDataStreamKind.Primary,
                                 out VulkanMeshFrameDataRendererFamilyKey rendererFamily);
                         int recordingWorkerIndex = useWorkers && hasHomogeneousRendererFamily
-                            ? ResolveCommandChainRecordingWorkerIndex(rendererFamily, workerCount)
+                            ? _commandScheduler.ResolveParallelRecordingBucket(rendererFamily, workerCount)
                             : -1;
                         recordJobWorkerIndices[jobIndex] = recordingWorkerIndex;
                         if (recordingWorkerIndex >= 0)
@@ -7813,9 +7937,9 @@ namespace XREngine.Rendering.Vulkan
 
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.EndCommandBuffer"))
                 {
-                    Result endResult = EndCommandBufferTracked(
+                    Result endResult = _commandRecorder.End(
+                        this,
                         commandBuffer,
-                        cacheVariant: true,
                         out string trackingFailure);
                     if (endResult != Result.Success)
                         throw new Exception("Failed to record command buffer.");
@@ -10339,7 +10463,7 @@ namespace XREngine.Rendering.Vulkan
             XRFrameBuffer? target)
         {
             if (descriptorSet.Handle == 0 ||
-                !_vulkanPublishedDescriptorSets.TryGetValue(
+                !_resourceLifetimeTracker.PublishedDescriptorSets.TryGetValue(
                     descriptorSet.Handle,
                     out VulkanPublishedDescriptorSetSnapshot? snapshot))
             {

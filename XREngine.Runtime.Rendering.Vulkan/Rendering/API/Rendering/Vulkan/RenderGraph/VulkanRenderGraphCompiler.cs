@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
@@ -10,7 +11,7 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private readonly VulkanRenderGraphCompiler _renderGraphCompiler = new();
+    private VulkanRenderGraphCompiler _renderGraphCompiler => _renderGraphRuntime.Compiler;
 
     /// <summary>
     /// Compiles frame-level render graph metadata into a compact Vulkan-friendly plan and
@@ -21,8 +22,6 @@ public unsafe partial class VulkanRenderer
         private const string ScreenSpaceUiPassName = "VPRC_RenderScreenSpaceUI";
         private const string RenderUiBatchedPassNamePrefix = "RenderUIBatched_";
         private const int MaxMetadataCacheEntries = 64;
-        [ThreadStatic]
-        private static FrameOpSortKey[]? _threadFrameOpSortKeyScratch;
         private readonly List<SecondaryRecordingBucket> _secondaryRecordingBucketScratch = new(32);
 
         /// <summary>
@@ -149,9 +148,6 @@ public unsafe partial class VulkanRenderer
         private readonly ConcurrentDictionary<IReadOnlyCollection<RenderPassMetadata>, CompiledGraphCacheEntry>
             _compiledGraphCache = new(ReferenceEqualityComparer.Instance);
 
-        internal static void ReleaseCurrentThreadScratch()
-            => _threadFrameOpSortKeyScratch = null;
-
         internal void ReleaseCaches()
         {
             _passOrderCache.Clear();
@@ -273,9 +269,8 @@ public unsafe partial class VulkanRenderer
                 return ops;
 
             int opCount = ops.Length;
-            FrameOpSortKey[] sortKeys = _threadFrameOpSortKeyScratch is { } existing && existing.Length >= opCount
-                ? existing
-                : _threadFrameOpSortKeyScratch = new FrameOpSortKey[opCount];
+            FrameOpSortKey[] sortKeys =
+                ArrayPool<FrameOpSortKey>.Shared.Rent(opCount);
 
             try
             {
@@ -323,9 +318,8 @@ public unsafe partial class VulkanRenderer
             }
             finally
             {
-                // The thread-local scratch persists across frames. Clear live operation references
-                // so the cache cannot extend the lifetime of frame-owned render resources.
                 Array.Clear(sortKeys, 0, opCount);
+                ArrayPool<FrameOpSortKey>.Shared.Return(sortKeys);
             }
         }
 
@@ -652,93 +646,5 @@ public unsafe partial class VulkanRenderer
                 ? "none"
                 : string.Join("|", attachmentEntries);
         }
-    }
-
-    /// <summary>
-    /// Immutable result of render graph compilation used during command recording.
-    /// </summary>
-    internal sealed class VulkanCompiledRenderGraph
-    {
-        /// <summary>
-        /// Canonical empty graph instance for frames/pipelines with no pass metadata.
-        /// </summary>
-        public static VulkanCompiledRenderGraph Empty { get; } = new(
-            Array.Empty<RenderPassMetadata>(),
-            new Dictionary<int, int>(),
-            Array.Empty<VulkanCompiledPassBatch>(),
-            RenderGraphSynchronizationInfo.Empty,
-            int.MaxValue);
-
-        /// <summary>
-        /// Initializes a compiled graph snapshot.
-        /// </summary>
-        internal VulkanCompiledRenderGraph(
-            IReadOnlyList<RenderPassMetadata> orderedPasses,
-            IReadOnlyDictionary<int, int> passOrder,
-            IReadOnlyList<VulkanCompiledPassBatch> batches,
-            RenderGraphSynchronizationInfo synchronization,
-            int screenSpaceUiPassOrder = int.MaxValue)
-        {
-            OrderedPasses = orderedPasses;
-            PassOrder = passOrder;
-            Batches = batches;
-            Synchronization = synchronization;
-            ScreenSpaceUiPassOrder = screenSpaceUiPassOrder;
-            Plan = new VulkanRenderGraphPlan(orderedPasses, batches, synchronization);
-        }
-
-        /// <summary>Topologically sorted passes from the source graph.</summary>
-        public IReadOnlyList<RenderPassMetadata> OrderedPasses { get; }
-
-        /// <summary>Lookup from pass index to its topological order rank.</summary>
-        public IReadOnlyDictionary<int, int> PassOrder { get; }
-
-        /// <summary>Precomputed topological order for nested screen-space UI, or int.MaxValue when absent.</summary>
-        public int ScreenSpaceUiPassOrder { get; }
-
-        /// <summary>Adjacent compatible graphics pass batches.</summary>
-        public IReadOnlyList<VulkanCompiledPassBatch> Batches { get; }
-
-        /// <summary>Derived synchronization plan for barriers/dependencies.</summary>
-        public RenderGraphSynchronizationInfo Synchronization { get; }
-
-        /// <summary>Immutable structural plan generation used for cache and recording identity.</summary>
-        public VulkanRenderGraphPlan Plan { get; }
-    }
-
-    /// <summary>
-    /// Represents one compiled batch of graphics passes sharing a compatible attachment signature.
-    /// </summary>
-    internal sealed class VulkanCompiledPassBatch
-    {
-        private readonly List<int> _passIndices = [];
-
-        /// <summary>
-        /// Initializes a compiled pass batch descriptor.
-        /// </summary>
-        internal VulkanCompiledPassBatch(int batchIndex, ERenderGraphPassStage stage, string attachmentSignature)
-        {
-            BatchIndex = batchIndex;
-            Stage = stage;
-            AttachmentSignature = attachmentSignature;
-        }
-
-        /// <summary>Monotonic index of this batch in compilation order.</summary>
-        public int BatchIndex { get; }
-
-        /// <summary>Render-graph stage shared by this batch.</summary>
-        public ERenderGraphPassStage Stage { get; }
-
-        /// <summary>Compatibility signature derived from attachment usages.</summary>
-        public string AttachmentSignature { get; }
-
-        /// <summary>Read-only ordered pass indices contained in this batch.</summary>
-        public ReadOnlyCollection<int> PassIndices => _passIndices.AsReadOnly();
-
-        /// <summary>
-        /// Appends a pass index to this batch.
-        /// </summary>
-        internal void AddPass(int passIndex)
-            => _passIndices.Add(passIndex);
     }
 }

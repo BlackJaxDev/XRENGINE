@@ -1,402 +1,630 @@
-# Model Import Cooked Asset Cache Design
+# Model Import Binary Cache Design
 
-Last Updated: 2026-05-18
-Status: design proposal
-Scope: engine-native cooked `.asset` cache files for third-party model imports, including generated meshlet and LOD data.
+Last reconciled: 2026-07-29
+
+Status: Implementation in progress — producer contracts, deterministic identity/path resolution, and the defensive binary container are complete; cooked payloads, hydration, and publication are pending
+
+Scope: Engine-native cooked `.asset` caches for third-party model imports, including imported hierarchy, cooked mesh sections, LODs, and meshlets.
 
 Related docs:
 
+- [Implementation tracker](../../todo/assets/model-import-binary-cache-todo.md)
 - [Model import feature guide](../../../developer-guides/assets/model-import.md)
 - [Texture management runtime design](../texturing/texture-management-runtime-design.md)
-- [Texture streaming cooked cache TODO](../../todo/texturing/texture-streaming-cooked-cache-todo.md)
+- [Texture streaming cooked cache TODO](../../todo/COMPLETED/texture-streaming-cooked-cache-todo.md)
 - [GPU meshlet zero-readback rendering design](../rendering/gpu-meshlet-zero-readback-rendering-design.md)
 - [Production rendering pipeline roadmap](../../todo/rendering/gpu/production-rendering-pipeline-roadmap.md)
 
 ## 1. Summary
 
-Third-party model imports should follow the texture-cache pattern: the original source file is parsed on the first import, but a fresh cooked engine-native `.asset` cache becomes the preferred runtime/import authority afterward.
+The first load of a third-party model parses the source, normalizes it into engine-owned data, performs requested geometry cooking, and publishes a deterministic binary cache. A compatible warm load hydrates the model from that cache without invoking the source-format parser or rebuilding valid LOD and meshlet data.
 
-For models, the cache should be more than a YAML prefab snapshot. It should be a cooked engine-native asset binary that includes:
+The cache contains:
 
-- imported scene hierarchy data needed to reconstruct the `XRPrefabSource`
-- model, submesh, material, texture-reference, skeleton, and collider metadata
-- `XRMesh` vertex/index streams in the engine layout
-- morph target deltas
-- generated `SubMeshLOD` data
-- generated meshlet descriptors and meshlet index streams
-- meshoptimizer statistics and generation settings
-- source and import-option freshness metadata
+- imported prefab hierarchy and component relationships;
+- deterministic imported-entity identities;
+- engine-native mesh core, skinning, skeleton, and morph sections;
+- imported or generated LOD tables and their mesh payloads;
+- CPU meshlet descriptors, index streams, bounds, and cone data;
+- imported material defaults and references to project-owned assets;
+- references to animation and texture outputs owned by their respective subsystems;
+- source, dependency, backend, import-policy, and cook-policy metadata.
 
-Animation clips embedded in third-party model files are intentionally **not** cached by the model cache asset. They are handled by a separate animation cache covered in its own design. The broader pattern is that every third-party asset type gets a cooked engine-native `.asset` cache; this document covers only the model payload.
-
-The user keeps the original `.fbx`, `.gltf`, `.glb`, `.obj`, or other source file. Manual reimport remains available and intentionally replaces the cache. Normal loads should read the cache in place of the original source whenever the cache is fresh and compatible.
+The cache does not replace the source file or project-authored `.asset` files. It is generated, disposable runtime/import acceleration data under `Cache/`.
 
 ## 2. Goals
 
-- Avoid reparsing large third-party model files on warm loads.
-- Avoid regenerating LODs and meshlets on warm loads.
-- Store model import results in a compact cooked `.asset` binary format that can be parsed faster than YAML and third-party formats.
-- Preserve source-file authority for manual reimport, diffing, and artist workflows.
-- Treat fresh cache data as the default load authority for runtime and editor startup.
-- Keep cache freshness deterministic and debuggable.
-- Make cache keys include source identity, source timestamp, importer backend, import options, mesh optimizer settings, cache schema version, and runtime payload version.
-- Allow manual reimport to force source parse and atomically replace cache output.
-- Keep externalized authoring assets and cache assets distinct by location and authority: project `.asset` files under `Assets/` are user/project content; cooked `.asset` files under `Cache/` are generated and disposable.
-- Produce **deterministic** cache output: identical source + settings + backend version must yield byte-identical cache contents modulo a small set of well-known timestamp/UUID fields recorded in a single header region. Determinism is a tested property, not a hope.
+- Avoid source-parser work on valid warm loads.
+- Avoid LOD and meshlet regeneration when compatible cooked sections exist.
+- Hydrate `XRPrefabSource` and `XRMesh` through engine-native binary sections.
+- Preserve project-authored materials, remaps, GUIDs, and other editable bindings.
+- Make every cache decision deterministic and explainable with one rejection reason.
+- Include the actual producer, resolver policy, structural dependencies, and all output-affecting settings in compatibility checks.
+- Permit bounded partial hydration and optional-section repair without opening the model source.
+- Publish atomically under same-process and cross-process races.
+- Treat malformed cache files as untrusted input and reject them before unsafe allocation.
+- Produce byte-identical semantic output for identical inputs and versions.
 
 ## 3. Non-Goals
 
-- This design does not remove the existing YAML asset format for project-authored assets.
-- This design does not remove externalized sub-assets beside generated prefab assets.
-- This design does not require every third-party format to use the cooked `.asset` cache on day one.
-- This design does not invent a new mesh simplification or meshlet generation library.
-- This design does not make stale or unreadable caches fatal. They fall back to source import unless the caller explicitly requested cache-only validation.
-- This design does **not** cache animation clips. Animations extracted from model files are owned by a separate animation cooked `.asset` cache. The model importer must extract animation data through the existing source-import path (or delegate to the animation importer) but must not persist clip data inside a model cache file.
-- This design does not specify caches for textures, audio, or other third-party asset types. Those follow the same authority pattern but are covered by their own designs.
+- Replacing YAML for project-authored assets.
+- Making the cache the sole copy of user-authored state.
+- Storing animation clip payloads or texture image payloads in the model cache.
+- Inventing new simplification or meshlet algorithms.
+- Silently treating a corrupt required section as valid.
+- Requiring every Assimp-supported extension to have a dedicated v1 acceptance fixture.
+- Performing cache writes on render or per-frame hot paths.
+- Preserving legacy model-cache YAML as a readable model-cache format.
 
 ## 4. Current Baseline
 
-`AssetManager` already has a third-party cache mechanism:
+The repository now has the model-specific deterministic container, defensive reader, and manifest/source compatibility gate. It does not yet have cooked semantic section payloads, live `XRPrefabSource` hydration, or cache publication.
 
-- `GameCachePath` defaults to `<ProjectRoot>/Cache`.
-- `TryResolveCacheDirectory` mirrors game/engine asset-relative source paths under the cache root and hashes external paths under `Cache/External`.
-- `TryResolveCachePath` maps a source path and asset type to a cached `.asset`.
-- `IsCacheAssetFresh` compares cache timestamp against source timestamp and import-option timestamp.
-- `ResolveDefaultCacheVariantKey` already uses a texture streaming payload key for `XRTexture2D`.
-- `ReimportThirdPartyFile` and `ReimportThirdPartyFileAsync` force source import with overwrite.
+| Existing capability | Location | Reuse or required change |
+|---|---|---|
+| Third-party cache path and load routing | `XRENGINE/Core/Engine/Loading/AssetManager.Loading.SerializationAndCache.cs` | Typed decisions and exclusive ownership are implemented; binary model hydration and publication remain. |
+| Generated asset reimport transaction | `XRENGINE/Core/Engine/AssetManager.ThirdPartyImport.cs` | Extend to stage and publish the binary cache while preserving imported identity. |
+| Model backend routing | `XREngine.Runtime.ModelingBridge/Importing/ModelImporter.cs` and `Importing/Caching/` | Stable descriptors, deterministic resolver snapshots, candidate hashing, actual-producer reporting, dependencies, entity keys, and imported reference keys are implemented. |
+| Import options | `XREngine.Runtime.ModelingBridge/Importing/ModelImportOptions.cs` | Versioned model cook policy and canonical semantic projection are implemented; Phase 4 still resolves and executes effective per-submesh cooking. |
+| Model cache identity/path | `XREngine.Runtime.ModelingBridge/Importing/Caching/` and `XRENGINE/Core/Engine/ModelCaching/` | Versioned canonical settings, authored override snapshots, SHA-256 variants, source-origin identity, bounded paths, and legacy-location probing are implemented. |
+| Model binary container | `XREngine.Runtime.ModelingBridge/Importing/Caching/` | Deterministic v1 writer and defensive manifest/selective reader are implemented; semantic cooked chunks, hydration, and publication remain. |
+| Standalone cooked `XRMesh` payload | `XREngine.Runtime.Rendering/Objects/Meshes/XRMesh.CookedBinary.cs` and `XRMesh.CookedMeshlets.cs` | Extract reusable section codecs; do not duplicate its monolithic payload inside the model container. |
+| YAML `XRMesh` bridge | `XREngine.Runtime.Rendering/Serialization/XRMeshYamlTypeConverter.cs` | Continue composing the standalone mesh format from the shared sections. |
+| Per-submesh LOD/meshlet overrides | `XREngine.Runtime.Rendering/Rendering/Meshlets/MeshOptimizerSettings.cs` | Use as authored overrides when resolving import-time cook settings. |
+| LOD generation and `SubMeshLOD` runtime representation | `XREngine.Runtime.Rendering/Rendering/Meshlets/MeshOptimizerIntegration.cs` and `XREngine.Runtime.Rendering/Rendering/Models/Meshes/SubMeshLOD.cs` | Run deterministically during cold cooking and persist model-owned LOD tables/meshes. |
+| Runtime meshlet disk cache | `XREngine.Runtime.Rendering/Objects/Meshes/MeshletPayloadDiskCache.cs` | Retain as a non-model or repair cache; it is not primary for a model-cache hit. |
+| GPU meshlet registration | `XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/` | Feed it cached CPU descriptors through the existing upload path. |
 
-Textures already use this policy as a runtime streaming authority once a fresh cooked cache exists. Models should use the same authority model, but with a model-specific binary payload and variant key.
+The generic codec contract now uses typed read/write results. Animation and texture codecs retain cooperative fallback for legacy representations, while the registered model codec is exclusive: a model cache miss or rejection triggers source import and cannot deserialize or serialize a complete prefab graph through generic YAML.
 
-## 5. Terminology
+## 5. Architecture and Module Boundaries
 
-| Term | Meaning |
-| --- | --- |
-| Source model | The user-owned third-party file, such as `.fbx`, `.gltf`, or `.glb`. |
-| Generated asset | The project `.asset` created beside the source model, usually an `XRPrefabSource` plus externalized sub-assets. |
-| Cooked cache asset | Disposable engine-native `.asset` cache stored under `<ProjectRoot>/Cache`, preferred for warm loads of the third-party source. |
-| Cache authority | A fresh cache is loaded instead of reparsing the source model; project `.asset` files always win over the cache (see section 13). |
-| Manual reimport | User action that forces source parse and replaces generated asset and cache. |
-| Schema version | Version of the header and chunk-table layout. Bumped when fixed-size header or directory format changes. Old caches are rejected. |
-| Payload version | Version of chunk binary layouts (vertex stream encoding, meshlet descriptor, etc.). Bumped on any chunk format change. Old caches are rejected. |
-| Engine version | Informational only. Never used for invalidation; everything that should invalidate the cache must be reflected in `schemaVersion`, `payloadVersion`, importer/backend version, or settings hashes. |
-| Variant key | Stable cache subdirectory segment for import options that change cache output. |
-| Backend version | Stable monotonic integer exposed by each third-party importer (Assimp, glTF, FBX, Unity prefab, etc.). Bumped when the importer's output changes. |
-
-## 6. Cache Authority Rules
-
-The cooked cache asset short-circuits **only** the third-party importer step. Loading a project-authored `.asset` (including externalized sub-assets such as `Materials/*.asset`, `SubMeshes/*.asset`, `Meshes/*.asset`) always goes through the normal asset loader and never consults the model cache. Project assets are the authority for anything a user can edit; the cache is the authority only for what the importer would otherwise have to recompute from the source model.
-
-When loading a third-party model source path:
-
-1. Resolve asset type and import options as today.
-2. Compute the model cache variant key.
-3. Resolve the cache path.
-4. If cache exists, is fresh, schema-compatible, payload-compatible, and complete, load it.
-5. If cache is missing, stale, incompatible, or unreadable, import from source.
-6. After successful source import, write a new cooked cache asset.
-7. If the user explicitly chooses manual reimport, skip cache read, parse source, overwrite generated project assets, and atomically replace cache.
-
-### 6.1 Versioning
-
-Three independent version numbers govern cache compatibility:
-
-| Version | Scope | Mismatch behavior |
-| --- | --- | --- |
-| `schemaVersion` | Layout of the header, string pool, and chunk table. | Full reject; file is unreadable in a structured way. |
-| `payloadVersion` | Layout of chunk *contents* across the whole file (e.g. struct shapes). | Full reject. |
-| per-chunk `version` | Layout of a single chunk's contents. | Per-chunk reject; loader may treat the chunk as missing and apply the §6.3 repair policy. |
-
-Engine version is recorded for diagnostics only and is **not** a freshness input. Bumping the engine version must not invalidate caches; only bumping `schemaVersion`, `payloadVersion`, or a per-chunk `version` does.
-
-### 6.2 Freshness Inputs
-
-Freshness is decided from data accessible without parsing chunk payloads:
-
-- source file length
-- source last-write UTC timestamp
-- optional source content hash (see §6.4) for external or unreliable timestamp cases
-- import options timestamp
-- importer backend and backend version
-- `schemaVersion` and `payloadVersion`
-- meshoptimizer native version when available
-- meshlet generation settings hash
-- LOD generation settings hash
-- coordinate conversion settings hash
-- material/texture remap input hash
-- shader/material import policy version
-
-The normalized source path is recorded in the header for diagnostics, but it is **not** a freshness input. Cache identity is keyed off the cache file's *location* (resolved from the source path at lookup time). This lets projects move or be renamed without invalidating every cache.
-
-Cache freshness must be explainable in logs. Every cache miss carries a single `reason` enum value (see §18) identifying which check failed.
-
-### 6.3 Per-Chunk Repair Policy
-
-A cache may be header-fresh but have an individual chunk that is missing, stale (older per-chunk `version`), checksum-failed, or generated from now-invalidated settings. The loader applies the following policy per chunk:
-
-| Chunk | Policy on failure |
-| --- | --- |
-| `Manifest`, `PrefabGraph`, `Models`, `SubMeshes` | Required. Failure escalates to full cache miss → reimport from source. |
-| `Meshes`, `MeshVertexStreams`, `MeshIndexStreams` | Required. Failure escalates to full miss. |
-| `MorphTargets` | Required if any SubMesh declares morph targets; otherwise absent is valid. |
-| `Skeletons` | Required if any mesh is skinned. |
-| `LodTables` | Regenerable from cached `Meshes`. Failure triggers in-process LOD regeneration via meshoptimizer; cache is rewritten on success. No source-model parse. |
-| `Meshlets` | Regenerable from cached `Meshes` + LODs. Same recovery as `LodTables`. |
-| `Materials`, `TextureReferences` | Failure escalates to full miss (material identity is too entangled with the prefab graph to repair in isolation in v1). |
-| `ColliderHints` | Optional. Absent or stale → loader proceeds without collider hints and logs a warning. |
-| `Diagnostics` | Never required; never read by the loader. Forensic only. |
-
-Partial repair must write the repaired chunks atomically via the §15 swap rules. If repair fails, the loader falls back to source import.
-
-### 6.4 Source Hashing Policy
-
-By default, freshness uses `(length, last-write-utc)`. A content hash is computed only when:
-
-- the source lives on a network share or path classified as "timestamp-unreliable";
-- the user explicitly opts in via import options; or
-- the timestamp moved *backwards* relative to the recorded value (suggesting source-control checkout).
-
-When hashing is required, the hash is computed once at import time, stored in the header (`sourceHash`, `sourceHashMode`), and only recomputed on subsequent loads if the cheap `(length, mtime)` check disagrees. The hash algorithm is xxHash3-64 streamed over the file; this is non-cryptographic and chosen for throughput.
-
-## 7. Cache Path And Variant Key
-
-Use the existing cache root with the variant key forming the directory bucket. There is one tree (not a `Models_v1/` bucket *plus* a variant key — they are the same thing):
+The implementation is split by dependency direction:
 
 ```text
-<ProjectRoot>/Cache/
+XREngine.Data
+    generic cache decision/result contracts
+            |
+            v
+XREngine.Runtime.Rendering
+    shared mesh section codecs and cook payloads
+            |
+            v
+XREngine.Runtime.ModelingBridge
+    backend descriptors, dependency reports,
+    CookedModelDocument, binary reader/writer
+            |
+            v
+XRENGINE
+    AssetManager adapter, XRPrefabSource hydration,
+    cache publication and reimport transaction
+            |
+            v
+XREngine.Editor
+    status, inspection, rebuild, and reconcile UI
+```
+
+Ownership:
+
+- `XREngine.Data/Core/Assets/Caching/`
+  - cache disposition/result types;
+  - `CacheRejectReason`;
+  - the generic exclusive-codec contract.
+- `XREngine.Runtime.Rendering/Serialization/Meshes/`
+  - shared mesh core, skinning/bind, morph, and meshlet section codecs;
+  - no AssetManager or model-container policy.
+- `XREngine.Runtime.ModelingBridge/Importing/Caching/`
+  - backend descriptors and resolver snapshots;
+  - structural dependency records;
+  - `CookedModelDocument`;
+  - format constants, chunk codecs, reader, and writer.
+- `XRENGINE/Core/Engine/ModelCaching/`
+  - AssetManager registration;
+  - source/cached hydration orchestration;
+  - imported component codec registry and Unity adapter;
+  - project-binding resolution;
+  - publication, repair, and manual reimport integration.
+
+The binary reader/writer must not depend on `AssetManager`, editor types, or live GPU resources. Its input and output are immutable engine-facing documents and bounded byte sections.
+
+### 5.1 Exclusive Cache Codec Contract
+
+A codec first declares how it participates in a requested asset type. Ownership and cache outcome are separate:
+
+```text
+ownership: NotHandled | Cooperative | Exclusive
+read:      Hit(document) | Miss | Rejected(reason)
+write:     Written | Skipped(reason) | Failed(reason, exception)
+```
+
+Required behavior:
+
+- `NotHandled` permits the generic asset pipeline to continue.
+- `Cooperative` permits generic cache fallback only after `Miss`; `Rejected` still returns to source import.
+- `Exclusive` prevents generic YAML cache read or write fallback.
+- Exclusive codec lookup runs before the generic cache-file timestamp/YAML path; the model codec owns header/dependency freshness and does not delegate validity to `IsCacheAssetFresh`.
+- `Miss` and `Rejected` return control to source import.
+- An ordinary cold source load can still succeed when cache publication fails; the failure is visible in diagnostics. Explicit manual reimport uses the stronger transaction in section 15.
+- A legacy YAML cache at a model-cache path returns `Rejected(LegacyFormat)`.
+
+This contract is shared because animation, texture, and future binary cache codecs need the same unambiguous routing semantics.
+
+### 5.2 Producer Contract
+
+Each model producer exposes an immutable descriptor:
+
+- stable backend ID;
+- monotonic implementation version;
+- supported extensions and capabilities;
+- deterministic priority;
+- whether it can supply stable source entity IDs;
+- dependency-discovery behavior.
+
+Each completed cold import returns:
+
+- the actual descriptor used;
+- a normalized `CookedModelDocument`;
+- all structural dependencies consulted;
+- stable source entity IDs where the format provides them;
+- imported material, texture, animation, and other remap/reference keys;
+- importer diagnostics.
+
+The requested policy and actual producer are different values. For example, `Auto` is the requested policy; `NativeGltf` or `Assimp` is the actual producer.
+
+The implemented ModelingBridge registry uses stable built-in identities `xrengine.native-gltf@1`, `xrengine.native-fbx@1`, and `assimp@1`; the upper adapter registers `xrengine.unity-prefab@1`. Resolver policy v1 snapshots eligible descriptors in descending priority and then ordinal stable-ID order, computes a SHA-256 hash over the ordered IDs and versions, and preserves requested policy separately. `ModelImporter` follows that snapshot in order and returns the successful descriptor plus normalized dependencies, source-entity keys, and imported reference keys through `ModelImporterResult`.
+
+Native glTF, native FBX, and Assimp implementations live behind the ModelingBridge contract. Unity prefab conversion remains an `XRENGINE` adapter because it depends on the editor/Unity bridge; the composition root registers that adapter and maps its import manifest into the same normalized dependency and entity-key records. Unity-specific runtime types must not be pushed into ModelingBridge.
+
+Key discovery comes from the successful producer report. `XRPrefabSource` must not independently pre-parse glTF merely to seed remap dictionaries; that duplicates cold-parser work and would undermine the cache boundary. The upper adapter seeds missing keys from either the cold producer report or the warm cache manifest.
+
+## 6. Authority and Payload Ownership
+
+Authority is resolved in this order:
+
+1. Project-authored assets and explicit remaps.
+2. Compatible imported defaults/references from the model cache.
+3. Defaults reconstructed by a forced cold import.
+
+The cache accelerates only the source-import computation. Loading a normal project `.asset` never consults the model cache.
+
+| Data | Durable owner |
+|---|---|
+| Original FBX/glTF/GLB/OBJ/prefab | User/source control |
+| Editable materials, meshes, remaps, generated GUIDs | Project `Assets/` |
+| Imported hierarchy and cooked model geometry | Model cache |
+| Animation clip payload | Animation asset/cache subsystem |
+| Texture image payload and streaming data | Texture asset/cache subsystem |
+| GPU buffers | Runtime GPUScene/resource ownership |
+
+The model cache may store animation and texture references, source keys, sampler/material interpretation, and imported defaults. It must not store animation clip bytes or image payload bytes.
+
+### 6.1 Normal Warm Load
+
+1. Resolve source type, import options, cook settings, and requested backend policy.
+2. Resolve the deterministic candidate list and variant fingerprint.
+3. Locate the cache.
+4. Validate the fixed entry-source gate.
+5. Read and validate the dependency manifest and chunk directory.
+6. Hydrate requested sections.
+7. Apply project-authored bindings/remaps over cached imported defaults.
+8. Register cached meshlet data with GPUScene when needed.
+
+A successful warm load writes neither the model source nor project `Assets/`.
+
+### 6.2 Cold Import
+
+1. Resolve backend candidates.
+2. Invoke candidates in deterministic order until one succeeds.
+3. Record the actual producer and every structural dependency used.
+4. Normalize the result into `CookedModelDocument`.
+5. Resolve effective cook settings per submesh.
+6. Generate requested LOD and meshlet payloads.
+7. Durably publish referenced animation/texture outputs through their owning subsystems.
+8. Publish project generated assets when the workflow calls for externalization.
+9. Build, validate, and atomically publish the model-cache candidate.
+
+Failure to publish the cache must not turn a successful in-memory source import into a failed asset load. It is a visible cache-write failure.
+
+## 7. Cache Identity and Freshness
+
+### 7.1 Resolver and Producer Identity
+
+The lookup identity includes:
+
+- requested backend policy;
+- ordered candidate backend IDs and versions;
+- resolver-policy version;
+- source extension/category;
+- canonical import options;
+- canonical effective cook policy;
+- schema and payload versions;
+- other output-affecting policy versions.
+
+The header additionally records the actual producer ID and version. A warm load rejects the cache when:
+
+- the candidate-list/resolver hash changed;
+- the recorded producer is no longer an eligible candidate;
+- the producer version changed;
+- an output-affecting settings hash changed.
+
+This handles `Auto` correctly. The path does not guess which fallback producer would win before a cold import; it is keyed by the requested policy and deterministic candidate snapshot, while the file records the producer that actually succeeded.
+
+Candidate eligibility includes deterministic environment/capability inputs that can change which producer is usable. The fixed preamble compares the producer-key hash; after the string pool is validated, the reader also compares the complete stable producer ID.
+
+### 7.2 Variant Fingerprint
+
+Canonical settings are serialized with:
+
+- explicit field order and field IDs;
+- little-endian numeric values;
+- invariant UTF-8 strings;
+- normalized enum values;
+- deterministic map/set ordering;
+- no runtime hash codes or culture-sensitive formatting.
+
+SHA-256 is computed over the canonical bytes. The cache path uses the first 128 bits, encoded as 32 lowercase hexadecimal characters. The complete 128-bit canonical hashes required for compatibility remain in the header/manifest.
+
+The canonical import projection includes only values that change imported semantic output. Execution-only values such as progress callbacks, worker parallelism, and asynchronous scheduling are excluded and must not affect output. Project-authoritative material/texture remap values are also excluded because they are applied after hydration; their durable asset IDs/paths remain in the project binding layer. Unity project-root selection and any other option that changes source/dependency resolution are included.
+
+The model cache does not use the import-options file timestamp as semantic freshness. It hashes the canonical projection. Re-saving identical options or replaying already-seeded remap keys therefore cannot invalidate the model cache.
+
+Phase 2 implements this projection with explicit field IDs, little-endian primitive encoding, NFC UTF-8, finite-float validation, and deterministic collection order. The fingerprint includes schema, payload, container, chunk, hashing, source-identity, cache-path, import-projection, cook-policy, deterministic-ordering, and backend/resolver versions. It retains the full SHA-256 digest for diagnostics and uses the first 128 bits for the path. Engine assembly build identity is recorded separately and deliberately excluded from the semantic bytes.
+
+Before lookup, the upper `AssetManager` adapter reads the existing generated project prefab, when one exists, and builds a sorted `ModelCookOverrideSnapshot` from authored per-submesh settings that differ from model defaults. This read does not open the third-party source. If the authoritative project prefab cannot be read, cache lookup is disabled for that import rather than selecting a potentially incorrect variant.
+
+### 7.3 Source and Dependency Freshness
+
+Freshness has two stages.
+
+Stage 1 is a fixed preamble gate for the entry source:
+
+- source length;
+- source last-write UTC;
+- optional source content hash and hash mode;
+- schema/payload compatibility;
+- variant and resolver hashes;
+- actual producer compatibility.
+
+Stage 2 validates the mandatory `Dependencies` chunk before reading heavy model sections.
+
+Each dependency record contains:
+
+- normalized identity;
+- relationship kind;
+- required/optional flag;
+- length and last-write UTC at import;
+- optional content hash and hash mode;
+- producer-specific stable dependency key, when available.
+
+Dependency relationship kinds distinguish structural source inputs from referenced outputs owned by another subsystem. Structural inputs participate in model-cache freshness. Referenced-output records identify the owner, imported key, durable binding hint, required hydration group, and owner payload/version contract.
+
+Structural dependencies include at least:
+
+- external glTF buffers;
+- OBJ material libraries and structural sidecars;
+- Unity prefab dependencies that affect the imported graph or geometry;
+- backend-reported files that affect model, material interpretation, or hierarchy.
+
+Referenced texture files can be recorded for handoff and diagnostics, but their pixel-payload freshness remains owned by the texture subsystem. A texture-only payload change should not force model geometry parsing when the texture subsystem can update independently.
+
+A missing or changed required structural dependency rejects the model cache. A missing optional dependency follows the producer-defined compatibility rule recorded in the manifest.
+
+Before hydrating a group that needs an animation or texture output, the upper-layer adapter asks that owning subsystem to resolve and validate the referenced output. If it cannot satisfy a required output from durable project/cache state, the model cache is rejected for that requested group and source import may republish it. Geometry-only partial hydration does not require unrelated texture or animation outputs.
+
+### 7.4 Hashing Policy
+
+The cheap freshness tuple is `(length, last-write-utc)`. A streamed content hash is recorded and checked when:
+
+- the source/dependency is on a timestamp-unreliable path;
+- import options require content hashing;
+- timestamps move backwards;
+- the filesystem’s timestamp granularity cannot reliably distinguish the observed edit;
+- a producer marks the dependency content-critical.
+
+The hash algorithm and version are explicit fields. Changing the hashing policy version invalidates the relevant identity rather than silently reinterpreting old metadata.
+
+Every rejected lookup reports exactly one primary `CacheRejectReason`; diagnostics may include additional contributing details.
+
+## 8. Cache Paths
+
+Model caches use the existing generated cache root and `.asset` convention:
+
+```text
+<cache-root>/
     Models/
-        v<schemaVersion>/
-            importer_<backend-key>/
-                opts_<hash>/
-                    <relative-source-path>/
+        v<schema-version>/
+            policy_<resolver-key>/
+                opts_<32-hex-variant>/
+                    <source-relative-or-hashed-path>/
                         <source-name>.asset
-                        <source-name>.asset.tmp     (only during writes)
+                        <source-name>.asset.tmp.<pid>.<nonce>
 ```
 
-Model caches use the same `.asset` extension as other engine-native cached third-party assets. The cache is distinguished from editable project assets by location (`Cache/` versus `Assets/`), variant key, asset type metadata, and the internal payload magic/version fields. Do not introduce a model-specific public file extension for v1.
+Path rules:
 
-`opts_<hash>` is a single short stable hash over the union of: meshlet generation settings, LOD generation settings, material/texture policy version, coordinate conversion settings, and any other settings that change cache output. Full metadata for these settings is stored in the cache header so a cache file remains self-describing without consulting the variant directory name.
+- Project sources, engine-owned sources, and external absolute sources remain in distinct origin partitions.
+- Project and engine sources use stable root-relative identities.
+- External sources use a canonical absolute identity hashed into the cache tree.
+- Canonicalization uses `Path.GetFullPath`, normalized `/` separators, Unicode normalization form C, and the platform resolver's versioned case policy; it never depends on the process current directory or current culture.
+- Existing symlink/junction sources are classified by their resolved final target. If final-target resolution is unavailable, the resolver records that fallback in its versioned policy hash.
+- Source-derived names are sanitized only for display; identity comes from canonical bytes.
+- A deterministic hashed fallback collapses long source-relative paths.
+- Long-path handling uses the repository’s Windows-first filesystem conventions.
+- Individual import settings never become free-form path segments.
 
-Do not place individual settings directly in the path.
+Temporary paths are unique and adjacent to the final file. A fixed `<cache>.tmp` name is forbidden because independent processes would collide before atomic replacement.
 
-Windows path length. The fully resolved cache path is bounded by:
+Legacy YAML entries in a matching model-cache location are rejected as `LegacyFormat` and rebuilt on demand. They are not migrated by deserializing the old cached prefab.
 
-- `<ProjectRoot>` length (user-controlled).
-- A fixed `Cache/Models/v<schemaVersion>/importer_<backend-key>/opts_<8hex>/` prefix (~60 chars worst case).
-- The source-relative path mirrored under the variant directory.
-- The cache file name `<source-name>.asset`.
+The transition probes both the current deterministic model-cache location and the previous generic third-party-cache location. An entry found in either layout is classified by the exclusive model codec, never passed to the generic YAML deserializer, and source import proceeds. The obsolete file is retained so fallback cannot turn a successful load into a destructive cache operation; a later age-based garbage collector may remove old-layout entries after the compatibility retention window.
 
-The implementation enables Windows long-path support (`\\?\` prefix and the `LongPathsEnabled` registry/manifest opt-in) for all cache file IO. If long paths are unavailable on a target machine, the cache path resolver falls back to collapsing `<relative-source-path>` into a single hashed segment to stay under MAX_PATH. The fallback strategy is logged once at AssetManager startup and the choice is documented in `docs/developer-guides/assets/model-import.md`.
+## 9. Binary Container
 
-## 8. Cooked Asset Binary Shape
+The model codec owns the file bytes directly. The `.asset` suffix is the repository's generated-cache convention; the file is not wrapped in generic YAML or a second serialized `XRAsset` envelope. The fixed magic distinguishes it from legacy entries.
 
-Use a three-region binary payload inside the cooked cache `.asset`:
+Phase 3 implements this container in `XREngine.Runtime.ModelingBridge/Importing/Caching/`, including deterministic writes, manifest-only and selective reads, full required-chunk publication validation, and bounded malformed-input rejection. The engine-facing codec validates the manifest and entry-source freshness but intentionally returns `CodecUnavailable` after that gate until later phases can hydrate a live prefab; publication is likewise deferred until cooked semantic chunks exist.
 
-1. **Fixed preamble** of fixed-size scalars (magic, versions, sizes, offsets, and the source freshness tuple). All scalars are little-endian, naturally aligned, packed to a 16-byte boundary.
-2. **String pool** of length-prefixed UTF-8 strings referenced by offset from preamble and chunks (source path, importer backend name, etc.).
-3. **Chunked payloads** indexed by a chunk table.
+The file is little-endian and contains:
 
-The format is little-endian and assumes natural alignment of scalar fields. A future big-endian port must bump `schemaVersion` rather than attempting in-place byte-swap.
+1. a fixed-size preamble;
+2. a length-prefixed UTF-8 string pool;
+3. a fixed-size chunk table;
+4. aligned chunk bodies.
 
-### 8.1 Preamble
+All offsets are absolute from the beginning of the file. Every multiplication and addition used for ranges is checked before allocation or seeking.
 
-Fixed-size, no variable-length fields. All offsets are byte offsets from the start of the file.
+Region and chunk offsets are absolute `u64` values. String references are `u32` byte offsets relative to `stringPoolOffset`; zero means null. The pool begins with a reserved zero entry, stores `u32` byte length plus strict UTF-8 bytes, rejects invalid UTF-8/NUL data, deduplicates by ordinal value, and is emitted in deterministic ordinal order.
+
+### 9.1 Fixed Preamble
+
+The v1 preamble contains only fixed-size fields:
 
 ```text
-magic                    : u8[16]   = "XRE_MODEL_CACHE\0"
-schemaVersion            : u32
-payloadVersion           : u32
-engineVersion            : u32      (diagnostic only; not a freshness input)
-preambleSize             : u32      (== sizeof(preamble), aligned)
-stringPoolOffset         : u64
-stringPoolSize           : u64
-chunkTableOffset         : u64
-chunkCount               : u32
-fileSize                 : u64      (expected total file size at write time)
-fileChecksum             : u64      (xxHash3-64 over the whole file with this field zeroed)
-sourceLength             : u64
-sourceLastWriteUtc       : i64      (.NET ticks)
-sourceHashMode           : u8       (0=none, 1=xxHash3-64)
-sourceHash               : u64
-assetType                : u32      (enum)
-importerBackend          : u32      (string pool offset)
-importerBackendVersion   : u32
-sourcePathNormalized     : u32      (string pool offset; diagnostic only)
-importOptionsHash        : u64
-meshOptimizerSettingsHash: u64
-materialPolicyVersion    : u32
-flags                    : u32
-reserved                 : u8[32]
+magic                       : u8[16] = "XRE_MODEL_CACHE\0"
+schemaVersion               : u32
+payloadVersion              : u32
+preambleSize                : u32
+flags                       : u32
+fileSize                    : u64
+headerChecksum              : u64
+stringPoolOffset            : u64
+stringPoolLength            : u64
+chunkTableOffset            : u64
+chunkTableLength            : u64
+chunkTableChecksum          : u64
+stringPoolChecksum          : u64
+chunkCount                  : u32
+chunkEntrySize              : u32
+entrySourceLength           : u64
+entrySourceLastWriteUtc     : i64   // UTC .NET ticks
+entrySourceHash             : u64
+entrySourceHashMode         : u32
+assetType                   : u32
+requestedPolicyHash         : u8[16]
+backendResolutionHash       : u8[16]
+actualBackendKeyHash        : u8[16] // stable descriptor key
+actualBackendVersion        : u32
+actualBackendName           : u32   // diagnostic string-pool offset
+variantFingerprint          : u8[16]
+importOptionsHash           : u8[16]
+modelCookSettingsHash       : u8[16]
+dependencyManifestHash      : u8[16]
+dependencyCount             : u32
+materialPolicyVersion       : u32
+sourceIdentity              : u32   // string-pool offset
+engineBuildIdentity         : u64   // deterministic diagnostic build key
+reserved                    : u8[32]
 ```
 
-The loader must be able to reject the cache from the preamble alone when versions or source freshness do not match, without reading the string pool or chunk table.
+`engineBuildIdentity` is diagnostic and does not invalidate a cache. Every engine behavior change that affects output must instead bump a format, codec, producer, resolver, or policy version.
 
-### 8.2 Chunks
+The implemented v1 preamble is exactly 308 packed bytes and each chunk entry is exactly 64 bytes. The header checksum field starts at byte 40 and is zeroed while hashing the preamble. These offsets and the checksum-zeroing rule are constants verified by layout tests. Readers require `preambleSize` and `chunkEntrySize` to match the supported schema. Header, table, string-pool, dependency-manifest, and chunk checksums use an explicitly versioned xxHash3-64 contract; identity fingerprints use truncated SHA-256.
 
-Initial chunks:
+All serialized IDs, enums, flags, and type keys are explicit format constants. They are never implicit CLR enum ordinals, assembly-qualified names, or runtime type hashes.
 
-- `Manifest`
-- `PrefabGraph`
-- `Models`
-- `SubMeshes`
-- `Meshes`
-- `MeshVertexStreams`
-- `MeshIndexStreams`
-- `MorphTargets`
-- `LodTables`
-- `Meshlets`
-- `Materials`
-- `TextureReferences`
-- `Skeletons`
-- `ColliderHints`
-- `Diagnostics`
+### 9.2 Chunk Entry
 
-There is **no** `Animations` chunk. Animation clips extracted from the source model are persisted by the separate animation cache.
-
-Each chunk table entry has:
-
-- type (u32 enum)
-- version (u32, per-chunk)
-- offset (u64)
-- compressed size (u64)
-- uncompressed size (u64)
-- checksum (u64, xxHash3-64 over **uncompressed** bytes)
-- compression kind (u8: 0=none, 1=lz4, 2=zstd)
-- flags (u32)
-
-Checksum scope is documented as uncompressed bytes so a checksum mismatch unambiguously indicates payload corruption rather than codec mismatch. A whole-file checksum lives in the preamble (§8.1, `fileChecksum`) and is the first integrity gate; chunk checksums are validated on demand during hydration.
-
-**Compression decision for v1**: no compression. nvCOMP is already a repo-managed dependency for GPU paths, but pulling it into the asset-import CPU path adds complexity without measured benefit. If profiling later shows a win, LZ4 via an MIT/BSD-licensed package is the preferred candidate; any addition must go through the dependency-generation process in `AGENTS.md`.
-
-**Diagnostics chunk**: an opaque, optional, free-form key/value blob used for forensic logging (importer warnings, meshoptimizer stats verbatim, etc.). The loader never reads it during normal hydration.
-
-## 9. Mesh Payload
-
-The cache stores engine-native mesh data, not source-format accessors. The `Meshes`/`MeshVertexStreams`/`MeshIndexStreams` chunks contain:
-
-- positions
-- normals
-- tangents
-- UV sets
-- color sets
-- bone influence data (per-vertex; references a skeleton ID resolved from the `Skeletons` chunk)
-- index buffer
-- primitive topology after import conversion
-- mesh bounds
-- source node/submesh identity (for diagnostic round-tripping)
-- skeleton ID (when skinned)
-
-Morph target deltas live in the dedicated `MorphTargets` chunk and are referenced by mesh ID. They are stored separately because morphs are large, optional, and may be hydrated lazily.
-
-The `Skeletons` chunk owns the bind pose, joint hierarchy, and inverse bind matrices. Meshes reference skeletons by ID; multiple meshes may share a skeleton.
-
-The runtime must be able to create `XRMesh` and atlas-ready mesh data without reopening source buffers.
-
-## 10. LOD Payload
-
-The cache stores the generated or imported LOD chain per logical submesh:
+Each entry contains:
 
 ```text
-LogicalMesh
-    lodCount
-    lod[0].meshPayloadId   // LOD 0 references the source mesh's payload id; no duplication
-    lod[0].maxVisibleDistance
-    lod[0].generationSource
-    lod[1].meshPayloadId   // distinct payload id; simplified mesh stored in Meshes chunk
-    ...
+type              : u32
+version           : u32
+flags             : u32
+codec             : u32
+instanceId         : u64
+offset            : u64
+storedLength      : u64
+decodedLength     : u64
+decodedChecksum   : u64
+elementCount      : u64
 ```
 
-LOD 0 is always the source mesh and shares its `meshPayloadId` with the corresponding `Meshes` entry; it is never duplicated. LODs 1+ are distinct payloads written into the same `Meshes`/`MeshVertexStreams`/`MeshIndexStreams` chunks.
+Rules:
 
-LOD payload freshness includes:
+- v1 writes `codec = None`; compression is reserved for a future measured change.
+- The checksum covers decoded canonical bytes.
+- Unknown required chunks reject the cache.
+- Unknown optional chunks are skipped after their ranges are validated.
+- The chunk key is `(type, instanceId)`. Singleton chunks use instance ID zero; mesh/submesh-scoped chunks use their deterministic cache-local ID.
+- Duplicate chunk keys reject the cache.
+- Entries are emitted in type-then-instance order.
+- Chunk ranges may not overlap the preamble, string pool, table, or another chunk.
+- Zero-length chunks are permitted only where the chunk contract explicitly allows them.
 
-- `MeshLodGenerationSettings` hash
-- source mesh hash
-- simplification backend/version
-- imported authored LOD identity when present
-- distance policy
+### 9.3 V1 Chunks
 
-Generated LODs must be deterministic for a given source mesh and settings — this is tested in §20. If a generated LOD fails validation, the cache writer must omit that LOD and record diagnostics rather than writing corrupt partial data. Per §6.3, a `LodTables` chunk that is stale but whose mesh inputs are still valid is regenerated in-process without falling back to source import.
+| Chunk | Requirement |
+|---|---|
+| `Dependencies` | Always required and validated before heavy chunks. |
+| `Manifest` | Required; feature flags, counts, stable IDs, and section presence. |
+| `PrefabGraph` | Required. |
+| `ComponentDirectory` | Required when components exist; stable codec keys, versions, flags, owners, and payload instance IDs. |
+| `ComponentPayloads` | One bounded instance per declared imported component payload. |
+| `Models` | Required when the manifest declares model nodes. |
+| `SubMeshes` | Required when renderable submeshes exist. |
+| `MeshDirectory` | Required when meshes exist; maps cache-local IDs to mesh sections. |
+| `MeshCoreStreams` | One instance per declared mesh payload. |
+| `Skinning` | One instance per declared skinned mesh. |
+| `Skeletons` | One instance per declared skeleton. |
+| `MorphTargets` | One instance per declared morph-bearing mesh. |
+| `LodTables` | One instance per applicable submesh; otherwise manifest records disabled/absent. |
+| `Meshlets` | One instance per applicable mesh/LOD payload; otherwise manifest records disabled/absent. |
+| `Materials` | Required for declared imported material defaults. |
+| `TextureReferences` | Required for declared texture references; contains no image bytes. |
+| `AnimationReferences` | Required for declared animation outputs; contains no clip bytes. |
+| `ImportedEntityTable` | Required; stable reimport keys and project-binding hints. |
+| `ColliderHints` | Optional. |
+| `Diagnostics` | Optional and never required for hydration. |
 
-## 11. Meshlet Payload
+There is no animation-payload or texture-payload chunk.
 
-The cache stores meshlets for every cached LOD mesh that participates in meshlet rendering:
+### 9.4 Defensive Read Limits
+
+All limits live in one immutable `ModelCacheReadLimits` policy with conservative defaults and hard ceilings. Before allocating, the reader validates:
+
+- maximum cache file size;
+- string-pool size and individual string length;
+- chunk count and table length;
+- per-chunk stored/decoded sizes;
+- aggregate decoded-byte budget;
+- node, model, submesh, mesh, vertex, index, bone, morph, LOD, and meshlet counts;
+- conversion to CLR collection/index types.
+
+Limit violations return `ResourceLimitExceeded`. Invalid or overlapping ranges return their specific rejection reasons. The implementation must never use attacker-controlled counts in unchecked arithmetic.
+
+Checksums are hierarchical to preserve partial hydration:
+
+- `headerChecksum` validates the fixed preamble;
+- `chunkTableChecksum` validates the directory;
+- `stringPoolChecksum` validates all referenced strings before they are decoded;
+- each selected chunk validates its decoded bytes.
+
+A publication validation pass opens and validates every required chunk. A normal partial read need not stream unrelated chunk bodies merely to compute a whole-file checksum.
+
+## 10. Cooked Model and Shared Mesh Sections
+
+`CookedModelDocument` is the normalized bridge between source producers and persistence. It uses cache-local integer IDs and immutable ordered collections. It contains no `AssetManager`, editor, `FileStream`, or GPU handles.
+
+### 10.1 Shared Mesh Codecs
+
+The current standalone `XRMesh` cooked payload already serializes core streams, indices, skinning/bones, bind data, morph targets, and meshlets across `XRMesh.CookedBinary.cs` and `XRMesh.CookedMeshlets.cs`. The implementation must extract those responsibilities into focused section codecs.
 
 ```text
-MeshletSet
-    meshPayloadId
-    settingsHash
-    maxVertices
-    maxTriangles
-    descriptorOffset
-    descriptorCount
-    vertexIndexOffset
-    vertexIndexCount
-    triangleByteOffset
-    triangleByteCount
-    stats
+XRMesh standalone binary
+    standalone header
+    shared mesh core section
+    shared mesh skinning/bind section
+    shared morph section
+    shared meshlet section
+
+Model binary container
+    model header/table
+    same shared mesh sections
+    model-owned skeleton hierarchy section
+    submesh-owned LOD table section
 ```
 
-Each descriptor stores:
+The model container must not serialize a complete standalone `XRMesh` blob and then add separate morph/skeleton/meshlet chunks around it. That would duplicate bytes and create two version authorities for the same data.
 
-- bounding sphere
-- vertex-reference range
-- triangle-local-index range
-- vertex count
-- triangle count
-- cone axis/cutoff
-- cone apex or compressed equivalent
+Each shared mesh section has its own explicit codec version. The standalone mesh payload version and model chunk versions declare which shared codec versions they compose. Skeleton hierarchy and LOD-table codecs remain model/submesh concerns because they are not owned by a standalone `XRMesh`.
 
-This document **owns** the cooked meshlet descriptor schema. The [GPU meshlet zero-readback rendering design](../rendering/gpu-meshlet-zero-readback-rendering-design.md) consumes that schema and must not redefine descriptor field shapes independently. Layout changes here require a bump to the `Meshlets` chunk `version` and a coordinated update in the meshlet renderer doc.
+### 10.2 Model Cook Settings
 
-The cache distinguishes two descriptor forms:
+`ModelImportOptions` gains a versioned `ModelCookSettings` block covering every import-time geometry transformation whose output enters the cache:
 
-- **Serialized CPU descriptor** (`MeshletDescriptor`, new type): everything needed to rebuild the GPU descriptor on load — bounding sphere, vertex-reference range, triangle-local-index range, vertex/triangle counts, cone axis, cone cutoff, and cone apex (or compressed equivalent). This is what lives in the `Meshlets` chunk and is versioned by the chunk `version`.
-- **GPU descriptor** (`Meshlet` struct in [`Meshlets/Meshlet.cs`](XREngine.Runtime.Rendering/Rendering/Meshlets/Meshlet.cs)): the packed form uploaded to the GPU and consumed by task/mesh shaders. The runtime builds this from the serialized CPU descriptor at load time using a per-thread scratch buffer.
+- whether LOD generation is enabled;
+- LOD count/reduction/error/distance policy;
+- whether meshlet generation is enabled;
+- meshlet limits and generation policy;
+- optimizer/simplifier implementation versions;
+- validation and optional-repair policy;
+- deterministic ordering/version policy.
 
-Keeping the two representations separate means a future GPU layout change (e.g. bit-packing, splitting cone data into a side buffer) does not require bumping the cache chunk `version` unless the CPU descriptor changes.
+The effective policy for a submesh is:
 
-The current runtime `Meshlet` struct stores sphere and ranges but not cone payload. Extending it with cone axis + cutoff and cone apex is part of this design and must be coordinated with every shader, indirect-buffer writer, pool, and allocator that consumes `Meshlet` (see Phase 4). This is a breaking GPU buffer layout change; `payloadVersion` bumps so existing caches are invalidated and rebuilt. The change is reflected in the renderer doc's §5.2.
+1. explicit authored per-submesh override from `MeshOptimizerSubMeshSettings`;
+2. model-level `ModelCookSettings`;
+3. versioned engine default.
 
-Meshlet payload freshness includes:
+The canonical effective policy, not only the model-level object, contributes to output identity. Equivalent resolved settings must hash identically.
 
-- `MeshletGenerationSettings` hash
-- mesh payload hash
-- meshoptimizer native version/export availability
-- vertex/index format assumptions
-- descriptor layout version (== `Meshlets` chunk `version`)
+Before cache lookup, the upper-layer adapter builds a `ModelCookOverrideSnapshot` from authoritative generated project assets keyed by `ImportedEntityKey`. Its canonical hash contributes to the variant fingerprint, so changing an authored per-submesh cook override selects/rebuilds the right variant without parsing the source. On first import the snapshot is empty; on reimport matched entities inherit their existing overrides and unmatched entities use model defaults.
 
-Per §6.3, a stale `Meshlets` chunk can be regenerated in-process from cached meshes.
+### 10.3 LOD Payload
 
-## 12. Materials And Texture References
+- LOD 0 references the imported source mesh payload and is not duplicated.
+- LOD 1+ references distinct simplified mesh payload IDs.
+- Imported authored LODs record their producer/source identity.
+- Generated LODs record effective settings, source mesh semantic hash, and simplifier version.
+- Invalid generated LODs are omitted with diagnostics; the manifest cannot claim an omitted payload.
 
-The cooked cache asset stores enough imported material data to rebuild material assets or map to existing project assets:
+### 10.4 Meshlet Payload
 
-- source material name
-- resolved engine material type
-- scalar/vector properties
-- texture slots by source texture key
-- alpha/opacity interpretation
-- shader/material policy version
-- remap keys seeded from the source model
+The serialized representation is CPU-owned and based on the existing CPU meshlet descriptor/remap data. It includes:
 
-Texture payload bytes do not belong in the model cache asset. Texture references store:
+- mesh and LOD payload ID;
+- descriptor ranges;
+- source-vertex remap indices;
+- triangle-local indices;
+- bounds;
+- cone axis, cutoff, and apex data;
+- effective generation settings and payload freshness metadata.
 
-- user remap target asset, when configured
-- generated/imported texture asset path
-- original source texture key for future remap repair
+`GPUScene.GpuMeshletDescriptor` already provides the GPU-facing cone representation. The cache loader expands or uploads cached CPU descriptors through the existing GPUScene path. The older/alternate `Meshlet` type is not the cache schema authority and does not need to be expanded solely for this feature.
 
-Texture streaming cache remains owned by the texture system.
+For a model originating from a valid model container:
 
-Remap-seeding rule on warm cache reads (interaction with [`XRPrefabSource.Import3rdParty`](XRENGINE/Scene/Prefabs/XRPrefabSource.cs#L154-L200)): the source importer today writes back into `ModelImportOptions.TextureRemap` / `MaterialRemap` and sets `importOptionsChanged` when a new key is seeded. Warm cache reads must replay that seeding **only if** the seeded keys differ from what is already in `ModelImportOptions`; otherwise `importOptionsChanged` must stay `false` so import-options timestamps do not flap and cause the next load to think the cache is stale. Keys that the cache knows about but the live options do not are added with `null` values, matching the source-import behavior. The model importer is **forbidden** from writing into the texture cache root (`Cache/Textures/...` or whatever the texture system uses); any embedded texture data extracted from source models must be handed off to the texture importer through its public API.
+1. use the model container’s meshlet section;
+2. if the optional section is repairable, consult `MeshletPayloadDiskCache` or rebuild from cached core geometry according to policy;
+3. use `MeshletPayloadDiskCache` as primary only for meshes outside model-container ownership.
 
-## 13. Generated Asset Relationship
+A valid meshlet section must not trigger `MeshletGenerator.Build`.
 
-There are two outputs after source import:
+### 10.5 Prefab Graph and Component Codecs
 
-1. Generated project asset tree under `Assets`, visible and user-editable.
-2. Binary cache under `Cache`, generated and disposable.
+`PrefabGraph` stores deterministic node IDs, parent IDs, sibling order, names, enabled/layer state, transform kind, and canonical local-transform data. Model/submesh/mesh relationships use cache-local IDs rather than object references.
 
-The generated asset tree keeps the current externalization layout:
+Imported component state uses a registry rather than generic reflection or YAML:
+
+- `IImportedComponentCacheCodec` is registered at the `XRENGINE` composition boundary.
+- Each codec has a stable type key, monotonic payload version, required/optional policy, and bounded canonical reader/writer.
+- Standard model-component records reference the model/submesh/material tables instead of embedding those objects.
+- Unity-specific adapters may contribute component records without introducing Unity/XRENGINE type dependencies into ModelingBridge.
+- The lower container treats registered extension payloads as bounded canonical bytes; the upper adapter owns live component construction and mutation.
+- A missing or incompatible required component codec rejects the requested prefab hydration. Unknown optional component records are skipped with diagnostics.
+- Components intentionally ignored by a source converter are recorded in import diagnostics, not invented as empty cache records.
+
+The v1 fixture corpus defines the minimum required component-codec set. Cold and warm imports must report the same supported/ignored component inventory.
+
+## 11. Determinism and Stable Identity
+
+Determinism rules:
+
+- Traverse hierarchy in source-defined order when stable; otherwise use an explicit normalized sort key.
+- Sort dictionaries and sets before serialization.
+- Canonicalize floats according to the section codec contract, including signed zero and non-finite-value rejection/normalization.
+- Do not serialize CLR hash codes, object addresses, random GUIDs, local time, or collection iteration accidents.
+- Allocate cache-local IDs deterministically from canonical traversal order.
+- Keep diagnostics that may vary out of semantic section bytes.
+
+Equivalent cold imports must produce byte-identical semantic sections. If the file includes diagnostic build identity, deterministic tests compare after zeroing only the documented diagnostic field; no broad “ignore header” exception is allowed.
+
+### 11.1 Imported Entity Keys
+
+Manual reimport identity uses:
+
+1. a stable producer/source entity ID when available;
+2. otherwise normalized node path + entity kind + deterministic slot/ordinal.
+
+Names alone are insufficient. Each cache entry records its `ImportedEntityKey`, cache-local ID, source diagnostic name, and project-binding hint.
+
+Project-binding hints are deterministic imported keys and normalized project-relative paths, not project GUID ownership. Live GUIDs and user remap values remain in project assets/import options and are resolved by the upper-layer adapter. This keeps the cache deterministic while still allowing manual reimport to preserve existing project identity.
+
+Renames, removals, splits, merges, or ambiguous matches are identity breaks. They must be shown before a manual reimport commits if they would replace project GUIDs or bindings.
+
+## 12. Project Assets, Materials, Textures, and Animations
+
+The generated project tree remains editable and authoritative:
 
 ```text
 <import-folder>/
@@ -407,341 +635,263 @@ The generated asset tree keeps the current externalization layout:
         SubMeshes/*.asset
         Meshes/*.asset
         Models/*.asset
-        Animations/*.asset      // produced by source import; cached by the animation cache, not this cache
+        Animations/*.asset
 ```
 
-Animation `.asset` files under the generated tree are owned by the animation import/cache subsystem. The model cache does not produce, read, or invalidate them.
+Cache hydration restores imported defaults and binding hints, then resolves existing project assets/remaps over them.
 
-The cooked cache asset accelerates future loads/imports. It should not be the only copy of user-authored overrides. User edits belong in project assets or import options, not inside cache-only state.
+Animation, texture, material, and mesh references stored in semantic cache sections use deterministic imported keys and normalized binding hints. Randomly generated project GUIDs are not copied into semantic cache bytes.
 
-## 14. Manual Reimport
+Warm reads may seed missing remap keys only when the cached key is absent from live import options. Replaying an already-present key must not mark import options changed or touch their timestamp.
 
-Manual reimport is the explicit way to replace cache output:
+Animation rules:
 
-- User invokes reimport on source model.
-- AssetManager sets a force-source-import flag.
-- Cache read is skipped.
-- Source importer runs.
-- Generated project asset tree is updated through the existing externalization flow.
-- Binary cache is written to a temporary path.
-- Cache manifest and payload are atomically swapped into place (see §15).
-- Old cache is deleted only after the new cache validates.
+- store durable output references and imported animation identity only;
+- never store clip/keyframe payload bytes;
+- do not mark the model cache complete until required referenced animation outputs are durably available.
+- validate required animation outputs through the animation subsystem before hydrating a group that needs them.
 
-Manual reimport **guarantees** asset GUID stability for the following identity classes when the underlying source entity can be matched:
+Texture rules:
 
-- generated `Model`/`SubMesh`/`XRMesh`/`Material` assets keyed by source-node path + source-name tuple
-- texture remap entries keyed by source texture key
-- material remap entries keyed by source material name
-- user-authored import options
+- store texture source keys, material interpretation, sampler metadata, and durable asset/cache references;
+- never store image payload bytes;
+- hand embedded or external texture data to the texture subsystem through its public import API;
+- do not mark the model cache complete until required embedded-texture outputs are durably available;
+- validate required texture outputs through the texture subsystem before hydrating a group that needs them;
+- never write directly into the texture cache’s internal paths.
 
-If an entity in the new source has no match (renamed, removed, or split), the importer:
+## 13. Read and Repair Behavior
 
-1. Logs a `Model.ReimportIdentityBreak` event with the affected GUIDs and source entity paths.
-2. Surfaces the break in the editor reimport UI before committing.
-3. Allows the user to confirm or cancel the reimport.
+Required read order:
 
-Reference-breaking reimport is never silent.
+1. Open final file read-only.
+2. Validate preamble size, magic, versions, fixed freshness fields, and header checksum.
+3. Validate string-pool and chunk-table ranges before reading them.
+4. Validate chunk table checksum and every range/count.
+5. Read and validate `Dependencies`.
+6. Read `Manifest`.
+7. Hydrate only the requested content groups.
 
-If reimport fails, existing generated assets and existing cache remain usable.
+Required-section failure rejects the cache and falls back to source import. Optional-section behavior is explicit:
 
-## 15. Cache Writes
+| Section | Failure behavior |
+|---|---|
+| `LodTables` | Repair from valid cached core mesh data when policy allows; otherwise source fallback if required by the requested load. |
+| `Meshlets` | Repair from valid cached mesh/LOD data when policy allows; otherwise continue without meshlets only when the requested rendering policy permits it. |
+| `ColliderHints` | Continue without hints and warn. |
+| `Diagnostics` | Ignore. |
 
-Cache writes must be atomic on Windows with the following boundary conditions:
+Repair never invokes the source parser. A successful repair first updates the in-memory document. Republishing is best-effort:
 
-1. The temp file is `<cache>.tmp` in the **same directory** as the final cache file. Cross-volume renames are not atomic on NTFS; placing the temp adjacent to the destination guarantees `File.Replace`/`MoveFileEx` is atomic.
-2. Write payload to `<cache>.tmp`.
-3. Flush to disk (`FileStream.Flush(flushToDisk: true)`).
-4. Close the temp file.
-5. Reopen the temp file and validate: preamble, whole-file checksum, chunk table, and one round-trip chunk checksum sample.
-6. Atomically replace the existing cache via `File.Replace` (or `File.Move` with overwrite when no prior file exists).
-7. Emit cache-write diagnostics.
+- writable cache: publish a replacement containing the repaired section;
+- read-only cache: keep the repaired data in memory and warn;
+- publication race lost: accept the winner if it validates, otherwise continue with the in-memory repair.
 
-Writer serialization:
+Failure to write repaired optional data must not discard already valid required cached data or force a source parse.
 
-- Only **one** writer per (resolved) cache path may be active at a time. Concurrent imports of the same source acquire a per-cache-path mutex; the second writer waits for the first to finish and then re-checks freshness (it may now be a hit).
-- Cross-process collisions are tolerated via `File.Replace` last-writer-wins semantics; both outputs are valid if both passed validation in step 5.
+Readers use independent file handles and permit deletion/replacement sharing appropriate for atomic publication. Existing readers may finish against the old immutable file; new readers see the new file.
 
-Orphan recovery:
+## 14. Atomic Publication and Concurrency
 
-- On AssetManager startup, sweep `Cache/Models/**/*.asset.tmp` and delete any orphan temp files older than a small grace period (e.g. 10 minutes). This handles crashes mid-write.
-- An orphan `.tmp` is never preferred over an existing `.asset`; it is treated as a write that did not complete.
+Publication sequence:
 
-Thread placement:
+1. Acquire an in-process keyed semaphore for the normalized final cache path.
+2. Acquire a cross-process named mutex derived from a cryptographic hash of that path.
+3. Recheck whether another producer already published a compatible entry.
+4. Snapshot the immutable `CookedModelDocument`.
+5. Write a unique adjacent candidate: `<cache>.tmp.<pid>.<nonce>`.
+6. Flush the stream to disk where supported and close it.
+7. Reopen the candidate with the production reader and validate all required chunks and checksums.
+8. Atomically replace the existing file, or atomically move into place when no destination exists.
+9. Release cross-process and in-process ownership.
 
-- Cache writes never run on the render thread.
-- Cache writes run on the same import worker that performed the source parse, after the generated project asset tree has been flushed.
-- Any GPU-generated payload needed for future model caches must use explicit async readback and cannot be part of the zero-readback render path.
+The cache file is never mutated in place. Last-writer-wins is acceptable only after writers are isolated by unique candidates and each published candidate is valid for the same cache identity.
 
-For meshlet and LOD generation, prefer CPU meshoptimizer generation during import/cache write.
+Failure behavior:
 
-## 16. Cache Reads
+- Preserve the old valid cache until replacement succeeds.
+- Delete the current process’s failed candidate on a best-effort basis.
+- Never delete another live writer’s temp file.
+- Quarantine/remove a corrupt final entry only on a best-effort basis; source import must still proceed.
 
-Warm cache reads support partial hydration:
+Orphan cleanup matches the exact model-cache temp pattern and removes only files older than a grace period after confirming no owning lock is active. It does not prefer temp files over a final entry.
 
-- read preamble first; reject early on version/freshness mismatch
-- validate whole-file checksum on first access (lazy: skip in release fast-path when the file has not been modified since last successful validation)
-- read string pool and chunk table
-- hydrate `Manifest`, `PrefabGraph`, `Models`, `SubMeshes` for editor display
-- hydrate `Meshes`/`MeshVertexStreams`/`MeshIndexStreams` on demand or by prefetch group
-- hydrate `MorphTargets`, `Skeletons`, `LodTables`, and `Meshlets` before `GPUScene` registration for renderable meshes
-- the cache contains no animation data; animation hydration is owned by the animation cache and is independent of model cache reads
+Cache writing and model cooking run on import workers, never the render thread.
 
-Thread placement:
+## 15. Manual Reimport Transaction
 
-- Cache reads run on the asset loading worker(s), never on the render thread.
-- Read-only access from multiple threads is supported via independent `FileStream` handles; the file is opened with `FileShare.Read` only.
-- Cache reads must succeed on a read-only filesystem; failures to write back repaired chunks (§6.3) log a warning and fall through to source import without aborting the load.
+Manual reimport always bypasses cache reads and parses the source.
 
-The loader avoids allocating a full duplicate source-model graph and constructs engine-native objects directly from cache chunks.
+Transaction:
 
-Hot-path allocation rules (per AGENTS.md). Any code added by this feature that runs during render submission, visible collection, fixed update, per-frame update, or `GPUScene` registration must not heap-allocate:
+1. Build a complete new `CookedModelDocument` and dependency report.
+2. Resolve imported entity keys against the existing generated asset tree.
+3. Stage generated project assets while preserving matched GUIDs/bindings.
+4. Stage and fully validate a model-cache candidate.
+5. Present identity breaks and destructive diffs for confirmation.
+6. Commit the generated asset tree and cache publication through the extended reimport transaction.
+7. Roll back to the prior generated tree and prior valid cache if commit fails.
 
-- Read chunk bodies into pooled byte buffers (`ArrayPool<byte>.Shared` or a dedicated pool) and release on hydrate completion.
-- Use `Span<T>` / `ReadOnlySpan<T>` over those buffers; do not materialize intermediate arrays.
-- No LINQ, no captured closures, no `foreach` over non-struct enumerators.
-- Reuse per-thread scratch buffers when expanding CPU `MeshletDescriptor` entries into GPU `Meshlet` structs.
+The cache candidate is not published before referenced animation/texture outputs and staged generated assets meet their durability barriers.
 
-Cold import-time code (the writer, manual reimport, reconcile sweep) may allocate freely.
+An unmatched or ambiguous entity emits `Model.ReimportIdentityBreak` with the old and new keys, affected asset identity, and reason. Reference-breaking reimport is never silent.
 
-`XRBase` mutation rule (per AGENTS.md). All reconstructed types that derive from `XRBase` — including [`SubMeshLOD`](XREngine.Runtime.Rendering/Rendering/Models/Meshes/SubMeshLOD.cs#L5-L77), `XRMaterial`, [`XRPrefabSource`](XRENGINE/Scene/Prefabs/XRPrefabSource.cs#L89), `XRMesh`, and `MeshletGenerationSettings` — must be populated via `SetField(...)`, not direct backing-field assignment, so change notification and invalidation behave correctly. Add this to the code review checklist for the loader.
+## 16. Hydration and Runtime Constraints
 
-No new compiler warnings. Per AGENTS.md, the cache reader/writer must compile clean. Low-risk warnings in touched files should be fixed in the same change.
+The loader constructs engine-native objects directly from `CookedModelDocument`; it does not rebuild a duplicate third-party scene graph.
 
-## 17. Editor UX
+- `XRBase`-derived state is populated through normal property/`SetField(...)` mutation paths.
+- Large byte buffers come from pools and are returned promptly.
+- Section readers operate on `ReadOnlySpan<byte>` or equivalent bounded views.
+- No LINQ, captured closures, boxing, or avoidable allocations are introduced in GPUScene registration or other per-frame paths.
+- Cache I/O and decoding occur on asset-loading workers.
+- GPU resources are created only by their owning runtime systems.
+- No new compiler warnings are permitted.
 
-The editor exposes:
+Partial hydration groups include:
 
-- cache status: hit, miss, stale, incompatible, unreadable
-- source timestamp and cache timestamp (informational)
-- source content hash (truncated)
-- cache schema and payload versions
-- importer backend + backend version used to write cache
-- meshlet and LOD generation summaries
-- "Reimport From Source"
-- "Delete Cache And Reimport"
-- "Open Generated Asset"
-- "Reveal Cache File" for diagnostics
-- "Reconcile Cache" — sweeps `Cache/` and removes orphan entries whose source file is gone or whose variant key no longer matches any current importer settings (see section 17a).
+- metadata/dependency inspection;
+- prefab structure and imported bindings;
+- selected mesh core;
+- skinning/morph data;
+- LOD/meshlet render data.
 
-Do not hide the source path. Artists need to know whether they are looking at source-owned content or generated cache output.
+Grouping is an I/O optimization, not permission to skip dependency or range validation.
 
-## 17a. Orphan Garbage Collection
+## 17. Diagnostics and UX
 
-Deleting or renaming a source file leaves stale cache entries under `Cache/`. v1 ships a manual reconcile action; automatic GC is out of scope.
-
-The manual reconcile pass:
-
-1. Enumerates model-cache `*.asset` files under `Cache/` and `Cache/Engine/` (skips `Cache/External/` unless explicitly requested — those entries reference paths outside the workspace and may be valid on another machine). Reconcile identifies model caches by cache-tree location and header magic/type, not by a bespoke extension.
-2. For each entry, reads the header (no chunk decode required).
-3. Marks for deletion if: source file from `sourcePathNormalized` does not exist, or `sourceHash` cannot be matched to a current importable file, or `schemaVersion` / `payloadVersion` is below the current minimum.
-4. Prompts before deleting and writes a summary log.
-
-## 18. Logging And Telemetry
-
-Use the assets log category for model cache events:
+Primary events:
 
 - `Model.CacheHit`
 - `Model.CacheMiss`
-- `Model.CacheStale`
-- `Model.CacheIncompatible`
+- `Model.CacheRejected`
 - `Model.CacheFallbackToSource`
-- `Model.CacheWrite`
 - `Model.CacheRead`
-- `Model.CacheReadSlow`
-- `Model.CacheWriteSlow`
-- `Model.CacheManualReimport`
-- `Model.CacheMeshletPayloadMissing`
-- `Model.CacheLodPayloadMissing`
-- `Model.CacheChunkRepaired`
+- `Model.CacheWrite`
+- `Model.CacheRepair`
+- `Model.CachePublishRace`
 - `Model.CacheOrphanTempSwept`
+- `Model.CacheManualReimport`
 - `Model.ReimportIdentityBreak`
 
-Every miss/stale/incompatible event carries a `reason` enum value identifying the single check that failed:
+`CacheRejectReason` includes:
 
 ```text
-CacheRejectReason {
-    None,
-    FileMissing,
-    SchemaVersionMismatch,
-    PayloadVersionMismatch,
-    WholeFileChecksumMismatch,
-    SourceLengthMismatch,
-    SourceTimestampMismatch,
-    SourceHashMismatch,
-    ImporterBackendMismatch,
-    ImporterBackendVersionMismatch,
-    ImportOptionsHashMismatch,
-    MeshOptimizerSettingsHashMismatch,
-    MaterialPolicyVersionMismatch,
-    RequiredChunkMissing,
-    ChunkChecksumMismatch,
-    ChunkVersionMismatch,
-    Unreadable,
-}
+None
+FileMissing
+LegacyFormat
+SchemaVersionMismatch
+PayloadVersionMismatch
+HeaderChecksumMismatch
+ChunkTableChecksumMismatch
+StringPoolChecksumMismatch
+DependencyManifestChecksumMismatch
+ReferencedOutputMissing
+ReferencedOutputIncompatible
+EntrySourceMissing
+SourceLengthMismatch
+SourceTimestampMismatch
+SourceHashMismatch
+DependencyMissing
+DependencyLengthMismatch
+DependencyTimestampMismatch
+DependencyHashMismatch
+RequestedBackendPolicyMismatch
+BackendResolutionPolicyMismatch
+ImporterBackendMismatch
+ImporterBackendVersionMismatch
+ImportOptionsHashMismatch
+ModelCookSettingsHashMismatch
+MaterialPolicyVersionMismatch
+RequiredChunkMissing
+UnknownRequiredChunk
+RequiredComponentCodecMissing
+ComponentCodecVersionMismatch
+ChunkChecksumMismatch
+ChunkVersionMismatch
+InvalidChunkRange
+OverlappingChunkRange
+ResourceLimitExceeded
+AssetTypeMismatch
+CodecUnavailable
+SerializationFailed
+Unreadable
 ```
 
-Include in events:
+One reason is primary; structured details identify the dependency, chunk, expected value, and actual value where relevant.
 
-- source path
-- cache path
-- `reason`
-- source timestamp
-- import options timestamp
-- payload version
-- importer backend
-- mesh count
-- LOD count
-- meshlet count
-- read/write milliseconds
-- bytes read/written
+The editor exposes:
 
-## 19. Implementation Plan
+- hit/miss/rejected/repaired state;
+- primary rejection reason and dependency detail;
+- requested policy, candidate snapshot, and actual producer/version;
+- schema, payload, section-codec, and cook-policy versions;
+- source and dependency freshness details;
+- mesh/LOD/meshlet summaries;
+- cache path and size;
+- reimport-from-source;
+- rebuild/remove cache;
+- inspect manifest;
+- reconcile orphan/stale caches;
+- open generated asset and reveal cache file.
 
-### Phase 0: Importer Backend Versioning (prerequisite)
+Reconcile is manual in v1. It identifies model entries by path partition plus header magic/type, asks before deletion, and treats external-source entries conservatively.
 
-- Add a stable `BackendVersion` constant to each third-party importer (Assimp, glTF, FBX, Unity prefab). Treat it as a monotonic integer that the importer owner bumps when output changes.
-- Expose the active importer's name + version through a registry the cache layer can query by source extension.
-- Add a `meshoptimizer` native-lib version probe; fold its value into the FBX/glTF/Assimp backend versions rather than checking it independently.
+## 18. Implementation Sequence
 
-### Phase 1: Cache Contract And Variant Key
+The [implementation tracker](../../todo/assets/model-import-binary-cache-todo.md) is authoritative for phase status and validation evidence. The dependency order is:
 
-- Add `schemaVersion`, `payloadVersion`, and `engineVersion` constants. Document the bump rules from section 5.
-- Keep `TryResolveCachePath` on the existing cooked `.asset` cache convention; model caches use the same extension as texture caches.
-- Add `ResolveDefaultCacheVariantKey` branch for model asset types returning `Models/v<schemaVersion>/importer_<backend-key>/opts_<8-hex-hash>` or the equivalent existing cache-variant directory shape.
-- Add source-contract tests for cache path selection (game/engine/External cases) and freshness.
-- Add model cache log events as constants.
+1. exclusive cache decision contract and backend registry;
+2. identity, paths, resolver snapshot, and dependency reporting;
+3. defensive container and manifest;
+4. shared mesh section codecs and import-time cooking;
+5. prefab/material/reference hydration;
+6. optional repair and partial hydration;
+7. atomic concurrency, manual reimport identity, and editor UX;
+8. integration, corruption, determinism, and performance evidence.
 
-### Phase 2: Binary Manifest
+Stages 1–3 are implemented. Work proceeds from shared mesh sections and import-time cooking; completing the container does not imply that warm hydration or publication is active.
 
-- Define the header and chunk table.
-- Write manifest-only cache files from successful imports.
-- Validate stale/incompatible cache rejection.
-- Add manual reimport path that skips cache read.
+Do not implement hydration on top of the current boolean codec/YAML fallback. Do not add model-specific copies of the existing cooked mesh encoders.
 
-### Phase 3: Mesh And LOD Payloads
+## 19. Validation Requirements
 
-- Serialize engine-native `XRMesh` streams.
-- Serialize `SubMeshLOD` chains and LOD generation settings.
-- Load cached meshes/LODs without opening source model files.
-- Add tests for warm-cache LOD reconstruction.
+The test suite must cover:
 
-### Phase 4: Meshlet Payloads
+- exclusive codec ownership and absence of YAML fallback;
+- legacy YAML rejection;
+- path/fingerprint stability across process, locale, case, and long-path variants;
+- requested `Auto` policy, ordered candidate changes, fallback producer identity, and producer-version changes;
+- entry source and structural dependency invalidation;
+- deterministic container and section bytes;
+- fixed-layout, bounds, overlap, integer-overflow, resource-limit, truncation, checksum, and unknown-chunk handling;
+- standalone `XRMesh` compatibility after shared-section extraction;
+- cold/warm equality for hierarchy, transforms, mesh streams, materials, skinning, morphs, LODs, and references;
+- zero model-parser calls on a valid warm hit;
+- zero LOD/meshlet builder calls when valid sections exist;
+- CPU-to-GPU meshlet upload equivalence;
+- project remap/binding authority and no warm-load writes under `Assets/`;
+- absence of animation and texture payload bytes;
+- read-only warm loads and in-memory repair;
+- same-process and cross-process writers, interrupted writes, and readers during replacement;
+- manual reimport GUID preservation, identity-break preview, cancellation, and rollback;
+- cold import, warm full hydration, and partial hydration performance/allocation baselines.
 
-- Add a serialized CPU `MeshletDescriptor` distinct from the GPU `Meshlet` struct.
-- Extend the GPU `Meshlet` struct ([`Meshlets/Meshlet.cs`](XREngine.Runtime.Rendering/Rendering/Meshlets/Meshlet.cs)) with cone axis + cutoff and cone apex (or compressed equivalent). Coordinate the GPU buffer layout change with every shader, indirect-buffer writer, pool, and allocator that consumes `Meshlet`. Bump `payloadVersion`.
-- Serialize CPU meshlet descriptors, vertex-reference indices, triangle-local indices, bounds, cones, and stats.
-- Handle the `MeshletGenerationSettings.Enabled == false` case (empty chunks + manifest flag, see section 11).
-- Load meshlet payloads into `GPUScene` registration data via the CPU→GPU descriptor expansion.
-- Add tests asserting `MeshletGenerator.Build` is **not** called during warm-cache render startup (counter-based assertion).
+Required v1 integration formats are FBX, external-buffer glTF, embedded GLB, skinned/morph/animated glTF, OBJ/MTL, and Unity prefab.
 
-### Phase 5: Prefab And Sub-Asset Reconstruction
+## 20. Acceptance Criteria
 
-- Reconstruct `XRPrefabSource`, `Model`, `SubMesh`, `XRMesh`, materials, and skeleton references from binary chunks.
-- Animation references point to the animation cache outputs; this phase does not reconstruct clip data.
-- Preserve externalized project asset paths and references.
-- Keep remap dictionaries seeded and stable.
-- Validate prefab structural equality against a fresh source import (see §20).
-
-### Phase 6: Partial Hydration And Performance
-
-- Read mesh/meshlet blobs on demand.
-- Add cache read timing telemetry.
-- Validate warm model load avoids third-party parser DLLs for cached formats.
-- Benchmark cold import, warm cache load, manual reimport, and stale cache repair.
-
-### Phase 7: Hardening
-
-- Atomic write/replace with same-directory tmp.
-- Orphan `.tmp` sweep on startup.
-- Per-cache-path writer mutex.
-- Corruption tests (truncated file, flipped bits in preamble, chunk, and string pool).
-- Interrupted-write tests.
-- Source timestamp edge cases (backwards-moving timestamps, FAT 2-second granularity, network share skew).
-- Symlinked source paths.
-- Windows case-difference source paths.
-- Import option change invalidation.
-- Cross-version rejection.
-- Per-chunk repair flows (`LodTables`, `Meshlets`).
-- Read-only filesystem read path.
-- Large model memory-pressure validation.
-- Deterministic-output validation (bit-identical cache from identical inputs across two clean imports).
-
-## 20. Test Plan
-
-Unit/source-contract tests:
-
-- `ModelCache_VariantKey_IncludesImporterMeshletAndLodSettings`
-- `ModelCache_FreshCache_LoadsInsteadOfSourceImport`
-- `ModelCache_EngineVersionChange_DoesNotInvalidateCache`
-- `ModelCache_SchemaVersionChange_InvalidatesCache`
-- `ModelCache_PayloadVersionChange_InvalidatesCache`
-- `ModelCache_SourceNewer_FallsBackToSource`
-- `ModelCache_SourceTimestampBackwards_TriggersContentHash`
-- `ModelCache_ImportOptionsNewer_FallsBackToSource`
-- `ModelCache_ManualReimport_SkipsCacheReadAndReplacesCache`
-- `ModelCache_ManualReimport_PreservesGuidsForMatchingEntities`
-- `ModelCache_ManualReimport_LogsIdentityBreakForRenamedEntities`
-- `ModelCache_UnreadableCache_DeletesOrQuarantinesAndImportsSource`
-- `ModelCache_PreambleRejectsWrongSchemaVersion`
-- `ModelCache_PreambleRejectsWrongPayloadVersion`
-- `ModelCache_WholeFileChecksumMismatch_RejectsCache`
-- `ModelCache_ChunkChecksumMismatch_TriggersPerChunkRepairOrFallback`
-- `ModelCache_MeshPayload_ReconstructsXRMeshStreams`
-- `ModelCache_LodPayload_ReconstructsSubMeshLods`
-- `ModelCache_MeshletPayload_ReconstructsDescriptorsAndConeData`
-- `ModelCache_MorphTargets_RoundTripDeltas`
-- `ModelCache_Skeletons_RoundTripBindPose`
-- `ModelCache_TextureRemaps_PreserveUserAssignments`
-- `ModelCache_MaterialRemaps_PreserveUserAssignments`
-- `ModelCache_DoesNotWriteAnimationData`
-- `ModelCache_DoesNotWriteIntoTextureCacheRoot`
-- `ModelCache_DeterministicOutput_TwoCleanImportsByteIdentical`
-- `ModelCache_StringPoolOffsets_StableAcrossRebuilds`
-
-Resilience tests:
-
-- `ModelCache_TruncatedFile_RejectsAndFallsBack`
-- `ModelCache_OrphanTempFile_SweptOnStartup`
-- `ModelCache_OrphanTempFile_NotPreferredOverValidCache`
-- `ModelCache_ConcurrentWriters_SerializeViaMutex`
-- `ModelCache_ReadOnlyFilesystem_WarmReadSucceeds`
-- `ModelCache_ReadOnlyFilesystem_WriteFailureDoesNotAbortLoad`
-- `ModelCache_SymlinkedSource_ResolvesAndCachesCorrectly`
-- `ModelCache_WindowsCaseDifferentSourcePath_MapsToSameCache`
-- `ModelCache_FATTimestampGranularity_NotFalsePositiveStale`
-- `ModelCache_CrossVolumeTempRejected_TempStaysAdjacentToDestination`
-
-Integration tests:
-
-- cold FBX import writes cooked `.asset` cache
-- warm FBX load reads cooked `.asset` cache and does not parse source
-- cold glTF/GLB import writes cooked `.asset` cache
-- warm glTF/GLB load reads cooked `.asset` cache and does not parse source
-- cache with stale meshlet chunk regenerates meshlets in-process without source parse
-- cache with stale LOD chunk regenerates LODs in-process without source parse
-- forced reimport preserves generated asset graph on failure
-- prefab reconstructed from cache is structurally equal to prefab from a fresh source import (modulo recorded timestamp/UUID fields)
-
-Performance validation:
-
-- large static model warm-cache load time
-- B1 startup with fresh cache versus no cache
-- cache read allocations
-- cache write time
-- meshlet generation time moved out of render startup
-
-## 21. Acceptance Criteria
-
-- Fresh model caches are preferred over original third-party source paths during normal loads.
-- Manual reimport forces source parse and atomically replaces cache.
-- Manual reimport preserves GUIDs for matched entities and logs/surfaces identity breaks for unmatched ones.
-- Cache freshness accounts for source, import options, importer backend, LOD settings, meshlet settings, and `schemaVersion`/`payloadVersion`. Engine version is recorded but does not invalidate caches.
-- Warm-cache loads reconstruct model hierarchy, meshes, LODs, meshlets, morph targets, and skeletons without opening the original model file.
-- Meshlet cone data is available to `GPUScene` for task-shader cone culling.
-- Stale, incompatible, partial, or unreadable caches fall back to source import with clear diagnostics carrying a single `CacheRejectReason`.
-- Stale `LodTables`/`Meshlets` chunks are repaired in-process from valid mesh chunks without falling back to source import.
-- Cache writes are atomic on Windows: temp files live adjacent to their destination, are validated before swap, and orphans are swept on startup.
-- Cache reads succeed on read-only filesystems; failed repair writes do not abort the load.
-- Identical source + settings + backend version produce byte-identical cache files (modulo a defined small set of recorded fields). This is verified by test.
-- Animation clip data is never written by the model cache; texture payload bytes are never written into the texture cache by the model importer.
-- Existing texture cache behavior remains separate and unchanged.
+- A valid warm hit never invokes a model source parser.
+- A valid warm hit never rebuilds compatible LOD or meshlet sections.
+- Cache identity covers requested resolver policy, ordered candidates, actual producer/version, canonical import/cook settings, format/codec versions, and structural dependencies.
+- The defensive reader rejects malformed offsets, counts, overlaps, checksums, versions, and resource-limit violations before unsafe allocation.
+- Cold and warm hydration are structurally equivalent for every required v1 fixture.
+- Project-authored assets and remaps remain authoritative, and warm loads do not write project assets.
+- The model cache contains no animation clip or texture image payloads.
+- Shared mesh section codecs are the single binary authority used by standalone `XRMesh` and model-container persistence.
+- Cached CPU meshlet data reaches the existing GPUScene path with equivalent descriptors and no rebuild.
+- Optional repair works without source parsing; a failed repair write on read-only media does not abort the load.
+- Publication preserves the previous valid entry through crashes and same-process/cross-process races.
+- Manual reimport preserves matched project identity, previews breaks, and rolls back on failure.
+- Rejections and fallbacks report one actionable primary reason.
+- Targeted correctness, resilience, determinism, integration, and performance evidence is complete before the tracker is closed.

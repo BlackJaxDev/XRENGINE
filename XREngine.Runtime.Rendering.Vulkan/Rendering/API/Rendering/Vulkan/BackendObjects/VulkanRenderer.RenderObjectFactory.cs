@@ -6,6 +6,15 @@ namespace XREngine.Rendering.Vulkan
 {
     public partial class VulkanRenderer
     {
+        private readonly VulkanBackendObjectRegistry _backendObjectRegistry = new();
+        private VulkanBackendObjectContext? _backendObjectContext;
+        internal VulkanBackendObjectRegistry BackendObjectRegistry =>
+            _backendObjectRegistry;
+        internal VulkanBackendObjectContext BackendObjectContext =>
+            _backendObjectContext ??= new VulkanBackendObjectContext(
+                _deviceContext,
+                _backendObjectRegistry);
+
         protected override AbstractRenderAPIObject CreateAPIRenderObject(GenericRenderObject renderObject)
             => renderObject switch
             {

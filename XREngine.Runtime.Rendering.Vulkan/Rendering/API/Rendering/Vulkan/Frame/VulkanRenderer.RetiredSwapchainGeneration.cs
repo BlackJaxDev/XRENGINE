@@ -250,14 +250,14 @@ public unsafe partial class VulkanRenderer
                 return true;
         }
 
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
             for (int i = 0; i < generation.Framebuffers.Length; i++)
             {
                 ulong handle = generation.Framebuffers[i].Handle;
                 if (handle == 0)
                     continue;
-                if (_vulkanResourceLifetimes.TryGetValue(
+                if (_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(
                         ResourceKey(ObjectType.Framebuffer, handle),
                         out VulkanResourceLifetimeRecord? lifetime) &&
                     (lifetime.State & EVulkanResourceLifetimeState.Destroyed) == 0)

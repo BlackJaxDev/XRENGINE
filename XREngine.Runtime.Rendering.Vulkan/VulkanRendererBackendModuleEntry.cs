@@ -12,9 +12,20 @@ public sealed class VulkanRendererBackendModuleEntry : IRendererBackendModule
 {
     private IDisposable? _registrations;
 
-    public RendererBackendMetadata Metadata { get; } = CreateMetadata();
+    public VulkanRendererBackendModuleEntry()
+        : this(version: null)
+    {
+    }
 
-    public IRendererBackendFactory Factory { get; } = new VulkanRendererBackendFactory();
+    internal VulkanRendererBackendModuleEntry(Version? version)
+    {
+        Metadata = CreateMetadata(version);
+        Factory = new VulkanRendererBackendFactory();
+    }
+
+    public RendererBackendMetadata Metadata { get; }
+
+    public IRendererBackendFactory Factory { get; }
 
     public void OnRegistered()
     {

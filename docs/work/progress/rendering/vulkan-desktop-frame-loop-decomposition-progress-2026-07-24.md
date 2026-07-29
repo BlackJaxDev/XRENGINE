@@ -1,6 +1,7 @@
 # Vulkan Desktop Frame Loop Decomposition Progress
 
 Date: 2026-07-24
+Code completion update: 2026-07-29
 Branch: `codex/runtime-modularization-phase4`
 Integration HEAD at implementation start: `e5e04190`
 Final commit: not created; validation describes the current dirty working tree
@@ -68,6 +69,20 @@ Generic frame-op/render-state APIs and render-object creation moved to
   `Features/Upscaling/VulkanRenderer.StreamlineFrameLifecycle.cs`.
 - Queue-operation provenance uses explicit stable labels where extraction would
   otherwise change `[CallerMemberName]` history.
+- Consecutive non-interactive `NotReady`/`Timeout` results are owned by
+  `VulkanDesktopAcquireAvailabilityTracker`. Successful acquisition resets the
+  sequence, interactive resize does not grow it, and the third consecutive
+  unavailable result requests swapchain recovery.
+- Renderer-local deterministic fault injection covers acquire, image
+  preparation, scene/overlay recording, submit, post-submit auxiliary work,
+  present, and post-present auxiliary work. It uses one packed atomic request,
+  not delegates, closures, or external callbacks.
+- A healthy queue-submit rejection settles upload and acquired-image ownership
+  before propagating a result-specific failure; successful recovery no longer
+  hides the rejected submit.
+- The former ambiguous completion timestamp is named
+  `_lastDesktopFrameTickObservedTimestamp`; it means callback completion/skip
+  observation, not GPU completion or presentation.
 
 ## Automated Evidence
 
@@ -169,9 +184,24 @@ infrastructure failure, not as a successful or failed Vulkan runtime result.
 
 ## Remaining Gates
 
+- No production-code item remains open for P4.8b.
 - Complete the full unit-test project beyond the bounded run recorded above.
 - Complete the runtime/visual/resize/validation/OpenXR matrix above.
 - Record a same-scene frame-loop performance and managed-allocation comparison.
 - Validate Streamline/DLSS-G on supported hardware or retain it as explicitly
   unvalidated.
 - Record final commit identity and post-integration evidence before promotion.
+
+The allocation/performance comparison and remaining runtime matrix were not
+executed during the 2026-07-29 code-completion pass. No performance, hardware,
+or new validation claim is inferred from code review.
+
+## Residual Risks
+
+- The deterministic failure seams have not yet been exercised across the full
+  runtime fault matrix.
+- OpenXR dirty-quiet and pending-timeline startup bypass behavior still requires
+  its dedicated concurrency/policy validation.
+- Streamline/DLSS-G behavior remains dependent on supported NVIDIA hardware.
+- Integration or later Vulkan lifecycle changes require the deferred focused,
+  validation-layer, XR, and performance gates before final promotion.

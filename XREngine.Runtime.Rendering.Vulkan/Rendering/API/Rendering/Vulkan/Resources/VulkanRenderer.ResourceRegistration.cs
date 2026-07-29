@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -156,7 +156,7 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
-            _imageAllocations[image.Handle] = allocation;
+            _imageAllocationTracker.Allocations[image.Handle] = allocation;
             TrackImageAllocation(
                 image,
                 allocation,
@@ -175,7 +175,7 @@ public unsafe partial class VulkanRenderer
             Result bindResult = Api!.BindImageMemory(device, image, memory, allocation.Offset);
             if (bindResult != Result.Success)
             {
-                _imageAllocations.TryRemove(image.Handle, out _);
+                _imageAllocationTracker.Allocations.TryRemove(image.Handle, out _);
                 UntrackImageAllocation(image);
                 if (image.Handle != 0)
                 {
@@ -193,7 +193,7 @@ public unsafe partial class VulkanRenderer
         {
             VulkanMemoryAllocation trackedAllocation = default;
             bool hasTrackedAllocation = image.Handle != 0 &&
-                _imageAllocations.TryRemove(image.Handle, out trackedAllocation);
+                _imageAllocationTracker.Allocations.TryRemove(image.Handle, out trackedAllocation);
             if (image.Handle != 0)
             {
                 UntrackImageAllocation(image);
@@ -245,7 +245,7 @@ public unsafe partial class VulkanRenderer
 
         VulkanMemoryAllocation trackedAllocation = default;
         bool hasTrackedAllocation = imageToDestroy.Handle != 0 &&
-            _imageAllocations.TryRemove(imageToDestroy.Handle, out trackedAllocation);
+            _imageAllocationTracker.Allocations.TryRemove(imageToDestroy.Handle, out trackedAllocation);
         if (imageToDestroy.Handle != 0)
             UntrackImageAllocation(imageToDestroy);
 
@@ -302,13 +302,13 @@ public unsafe partial class VulkanRenderer
         try
         {
             VulkanMemoryAllocation allocation = AllocateBufferMemoryWithFallback(buffer, MemoryPropertyFlags.DeviceLocalBit);
-            _bufferAllocations[buffer.Handle] = allocation;
+            _bufferResourceManager.Allocations[buffer.Handle] = allocation;
             memory = allocation.Memory;
 
             Result bindResult = Api!.BindBufferMemory(device, buffer, memory, allocation.Offset);
             if (bindResult != Result.Success)
             {
-                _bufferAllocations.TryRemove(buffer.Handle, out _);
+                _bufferResourceManager.Allocations.TryRemove(buffer.Handle, out _);
                 FreeMemoryAllocation(allocation);
                 memory = default;
                 throw new Exception($"Failed to bind device memory for Vulkan buffer group '{group.Key}'. Result={bindResult}.");

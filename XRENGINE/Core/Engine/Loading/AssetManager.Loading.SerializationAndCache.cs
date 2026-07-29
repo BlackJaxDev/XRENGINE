@@ -9,11 +9,14 @@ using XREngine.Animation;
 using XREngine.Core;
 using XREngine.Core.Engine;
 using XREngine.Core.Files;
+using XREngine.Core.Files.Caching;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Diagnostics;
+using XREngine.ModelCaching;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
+using XREngine.Rendering.Models.Caching;
 using XREngine.Scene.Prefabs;
 using AssetImportContext = XREngine.Core.Files.AssetImportContext;
 using XRAsset = XREngine.Core.Files.XRAsset;
@@ -293,6 +296,9 @@ namespace XREngine
                 return cachedAsset;
             }
 
+            if (hasTimestamp && hasCachePath)
+                ProbeLegacyModelCache(filePath, typeof(T), cacheVariantKey, cachePath, timestampUtc);
+
             if (traceAnimClipLoad)
                 Debug.Out($"[AssetManager] Importing animation clip source '{filePath}'.");
 
@@ -348,6 +354,9 @@ namespace XREngine
                 return cachedAsset;
             }
 
+            if (hasTimestamp && hasCachePath)
+                ProbeLegacyModelCache(filePath, type, cacheVariantKey, cachePath, timestampUtc);
+
             var asset = Load3rdPartyAsset(filePath, ext, type);
             if (asset is null)
                 return null;
@@ -392,6 +401,8 @@ namespace XREngine
                     cached.OriginalLastWriteTimeUtc = timestampUtc;
                     return cached;
                 }
+
+                ProbeLegacyModelCache(filePath, typeof(T), cacheVariantKey, cachePath, timestampUtc);
             }
 
             var asset = await Load3rdPartyAssetAsync<T>(filePath, ext).ConfigureAwait(false);
@@ -542,6 +553,9 @@ namespace XREngine
             if (!File.Exists(normalizedPath))
                 return normalizedPath;
 
+            if (GetThirdPartyCacheCodecOwnership(typeof(T)) == CacheCodecOwnership.Exclusive)
+                return normalizedPath;
+
             cacheVariantKey = ResolveDefaultCacheVariantKey(typeof(T), cacheVariantKey);
             if (!TryResolveCachePath(normalizedPath, typeof(T), cacheVariantKey, out string cachePath))
                 return normalizedPath;
@@ -591,7 +605,12 @@ namespace XREngine
             bool useCache = ShouldUseThirdPartyCache(typeof(T));
             string cachePath = string.Empty;
             cacheVariantKey = ResolveDefaultCacheVariantKey(typeof(T), cacheVariantKey) ?? string.Empty;
-            if (useCache && !TryResolveCachePath(filePath, typeof(T), cacheVariantKey, out cachePath))
+            if (useCache && !TryResolveCachePath(
+                filePath,
+                typeof(T),
+                cacheVariantKey,
+                importOptions,
+                out cachePath))
                 return null;
 
             if (useCache && TryLoadCachedAsset(cachePath, filePath, timestampUtc, out T? cachedAsset))
@@ -604,6 +623,9 @@ namespace XREngine
                 cachedAsset.OriginalLastWriteTimeUtc = timestampUtc;
                 return cachedAsset;
             }
+
+            if (useCache)
+                ProbeLegacyModelCache(filePath, typeof(T), cacheVariantKey, cachePath, timestampUtc);
 
             var asset = new T
             {
@@ -688,6 +710,38 @@ namespace XREngine
         /// <param name="cachePath">The resolved cache file path.</param>
         /// <returns><c>true</c> if the cache path was successfully resolved; otherwise, <c>false</c>.</returns>
         private bool TryResolveCachePath(string filePath, Type assetType, string? cacheVariantKey, out string cachePath)
+            => TryResolveCachePath(
+                filePath,
+                assetType,
+                cacheVariantKey,
+                importOptions: null,
+                out cachePath);
+
+        private bool TryResolveCachePath(
+            string filePath,
+            Type assetType,
+            string? cacheVariantKey,
+            object? importOptions,
+            out string cachePath)
+        {
+            if (typeof(XRPrefabSource).IsAssignableFrom(assetType))
+            {
+                return TryResolveModelCachePath(
+                    filePath,
+                    assetType,
+                    cacheVariantKey,
+                    importOptions,
+                    out cachePath);
+            }
+
+            return TryResolveGenericCachePath(filePath, assetType, cacheVariantKey, out cachePath);
+        }
+
+        private bool TryResolveGenericCachePath(
+            string filePath,
+            Type assetType,
+            string? cacheVariantKey,
+            out string cachePath)
         {
             cachePath = string.Empty;
             if (!TryResolveCacheDirectory(filePath, cacheVariantKey, out string cacheDirectory))
@@ -794,6 +848,9 @@ namespace XREngine
         /// <returns><c>true</c> if the cached asset is fresh; otherwise, <c>false</c>.</returns>
         private bool IsCacheAssetFresh(string cachePath, string sourcePath, Type assetType)
         {
+            if (GetThirdPartyCacheCodecOwnership(assetType) == CacheCodecOwnership.Exclusive)
+                return false;
+
             if (!File.Exists(cachePath))
                 return false;
 
@@ -866,11 +923,22 @@ namespace XREngine
             if (!File.Exists(cachePath))
                 return false;
 
-            if (TryReadRegisteredCachePayload(cachePath, originalPath, sourceTimestampUtc, typeof(T), out XRAsset? registeredAsset)
-                && registeredAsset is T typedRegisteredAsset)
+            CacheReadResult registeredResult = ReadRegisteredCachePayload(
+                cachePath,
+                originalPath,
+                sourceTimestampUtc,
+                typeof(T),
+                out bool allowGenericFallback);
+            if (registeredResult.Status == CacheReadStatus.Hit)
             {
-                asset = typedRegisteredAsset;
+                asset = (T)registeredResult.Asset!;
                 return true;
+            }
+
+            if (!allowGenericFallback || registeredResult.Status == CacheReadStatus.Rejected)
+            {
+                LogRegisteredCacheReadDecision(cachePath, typeof(T), registeredResult);
+                return false;
             }
 
             try
@@ -916,10 +984,22 @@ namespace XREngine
             if (!File.Exists(cachePath))
                 return false;
 
-            if (TryReadRegisteredCachePayload(cachePath, originalPath, sourceTimestampUtc, type, out XRAsset? registeredAsset))
+            CacheReadResult registeredResult = ReadRegisteredCachePayload(
+                cachePath,
+                originalPath,
+                sourceTimestampUtc,
+                type,
+                out bool allowGenericFallback);
+            if (registeredResult.Status == CacheReadStatus.Hit)
             {
-                asset = registeredAsset;
+                asset = registeredResult.Asset;
                 return true;
+            }
+
+            if (!allowGenericFallback || registeredResult.Status == CacheReadStatus.Rejected)
+            {
+                LogRegisteredCacheReadDecision(cachePath, type, registeredResult);
+                return false;
             }
 
             try
@@ -957,12 +1037,26 @@ namespace XREngine
             if (!File.Exists(cachePath))
                 return null;
 
-            XRAsset? registeredAsset = await Task
-                .Run(() => TryReadRegisteredCachePayload(cachePath, originalPath, sourceTimestampUtc, typeof(T), out XRAsset? asset) ? asset : null)
+            (CacheReadResult Result, bool AllowGenericFallback) registeredDecision = await Task
+                .Run(() =>
+                {
+                    CacheReadResult result = ReadRegisteredCachePayload(
+                        cachePath,
+                        originalPath,
+                        sourceTimestampUtc,
+                        typeof(T),
+                        out bool allowGenericFallback);
+                    return (result, allowGenericFallback);
+                })
                 .ConfigureAwait(false);
-            if (registeredAsset is not null)
+            if (registeredDecision.Result.Status == CacheReadStatus.Hit)
+                return (T)registeredDecision.Result.Asset!;
+
+            if (!registeredDecision.AllowGenericFallback
+                || registeredDecision.Result.Status == CacheReadStatus.Rejected)
             {
-                return (T)registeredAsset;
+                LogRegisteredCacheReadDecision(cachePath, typeof(T), registeredDecision.Result);
+                return null;
             }
 
             try
@@ -1005,9 +1099,9 @@ namespace XREngine
                     Directory.CreateDirectory(directory);
 
                 XRAsset cacheAsset = PrepareCacheAssetForWrite(cachePath, asset);
-                if (TryWriteRegisteredCachePayload(cachePath, cacheAsset, asset))
+                if (ShouldSuppressGenericCacheWrite(cachePath, cacheAsset, asset))
                 {
-                    // registered binary cache written; legacy YAML path skipped.
+                    // A registered codec handled or exclusively owns this cache write.
                 }
                 else
                 {
@@ -1043,9 +1137,9 @@ namespace XREngine
                     Directory.CreateDirectory(directory);
 
                 XRAsset cacheAsset = PrepareCacheAssetForWrite(cachePath, asset);
-                if (TryWriteRegisteredCachePayload(cachePath, cacheAsset, asset))
+                if (ShouldSuppressGenericCacheWrite(cachePath, cacheAsset, asset))
                 {
-                    // registered binary cache written; legacy YAML path skipped.
+                    // A registered codec handled or exclusively owns this cache write.
                 }
                 else
                 {
@@ -1065,30 +1159,24 @@ namespace XREngine
 
         private static readonly IThirdPartyCacheCodec[] ThirdPartyCacheCodecs =
         [
+            new ModelBinaryCacheCodec(),
             new AnimationClipBinaryCacheCodec(),
             new TextureStreamingCacheCodec(),
         ];
-
-        private interface IThirdPartyCacheCodec
-        {
-            bool CanHandle(Type assetType);
-            bool WriteBlocksAssetLoad { get; }
-            string? ResolveDefaultVariantKey(string? explicitVariantKey);
-            XRAsset PrepareForWrite(string cachePath, XRAsset asset);
-            bool TryRead(string cachePath, string originalPath, DateTime sourceTimestampUtc, out XRAsset? asset);
-            bool TryWrite(string cachePath, XRAsset cacheAsset, XRAsset originalAsset);
-        }
 
         private static IThirdPartyCacheCodec? FindThirdPartyCacheCodec(Type assetType)
         {
             foreach (IThirdPartyCacheCodec codec in ThirdPartyCacheCodecs)
             {
-                if (codec.CanHandle(assetType))
+                if (codec.GetOwnership(assetType) != CacheCodecOwnership.NotHandled)
                     return codec;
             }
 
             return null;
         }
+
+        internal static CacheCodecOwnership GetThirdPartyCacheCodecOwnership(Type assetType)
+            => FindThirdPartyCacheCodec(assetType)?.GetOwnership(assetType) ?? CacheCodecOwnership.NotHandled;
 
         private static XRAsset PrepareCacheAssetForWrite(string cachePath, XRAsset asset)
         {
@@ -1096,29 +1184,81 @@ namespace XREngine
             return codec?.PrepareForWrite(cachePath, asset) ?? asset;
         }
 
-        private static bool TryReadRegisteredCachePayload(
+        private static CacheReadResult ReadRegisteredCachePayload(
             string cachePath,
             string originalPath,
             DateTime sourceTimestampUtc,
             Type assetType,
-            out XRAsset? asset)
+            out bool allowGenericFallback)
         {
-            asset = null;
             IThirdPartyCacheCodec? codec = FindThirdPartyCacheCodec(assetType);
-            return codec is not null && codec.TryRead(cachePath, originalPath, sourceTimestampUtc, out asset);
+            if (codec is null)
+            {
+                allowGenericFallback = true;
+                return CacheReadResult.Miss();
+            }
+
+            CacheCodecOwnership ownership = codec.GetOwnership(assetType);
+            allowGenericFallback = ownership == CacheCodecOwnership.Cooperative;
+
+            CacheReadResult result;
+            try
+            {
+                result = codec.Read(cachePath, originalPath, sourceTimestampUtc);
+            }
+            catch (Exception ex)
+            {
+                result = CacheReadResult.Rejected(CacheRejectReason.Unreadable, ex.Message);
+            }
+
+            if (result.Status != CacheReadStatus.Hit)
+                return result;
+
+            if (result.Asset is not null && assetType.IsInstanceOfType(result.Asset))
+                return result;
+
+            return CacheReadResult.Rejected(
+                CacheRejectReason.AssetTypeMismatch,
+                $"Codec returned '{result.Asset?.GetType().FullName ?? "null"}' for requested type '{assetType.FullName}'.");
         }
 
-        private static bool TryWriteRegisteredCachePayload(string cachePath, XRAsset cacheAsset, XRAsset originalAsset)
+        private static bool ShouldSuppressGenericCacheWrite(
+            string cachePath,
+            XRAsset cacheAsset,
+            XRAsset originalAsset)
         {
-            IThirdPartyCacheCodec? codec = FindThirdPartyCacheCodec(cacheAsset.GetType());
+            Type assetType = originalAsset.GetType();
+            IThirdPartyCacheCodec? codec = FindThirdPartyCacheCodec(assetType);
             if (codec is null)
                 return false;
 
-            if (codec.WriteBlocksAssetLoad)
-                return codec.TryWrite(cachePath, cacheAsset, originalAsset);
+            CacheCodecOwnership ownership = codec.GetOwnership(assetType);
+            if (codec.WriteMode == CacheWriteMode.Background)
+            {
+                QueueRegisteredCachePayloadWrite(codec, cachePath, cacheAsset, originalAsset);
+                return true;
+            }
 
-            QueueRegisteredCachePayloadWrite(codec, cachePath, cacheAsset, originalAsset);
-            return true;
+            CacheWriteResult result = ExecuteRegisteredCachePayloadWrite(codec, cachePath, cacheAsset, originalAsset);
+            LogRegisteredCacheWriteDecision(cachePath, assetType, result);
+            return ownership == CacheCodecOwnership.Exclusive
+                || result.Status == CacheWriteStatus.Written;
+        }
+
+        private static CacheWriteResult ExecuteRegisteredCachePayloadWrite(
+            IThirdPartyCacheCodec codec,
+            string cachePath,
+            XRAsset cacheAsset,
+            XRAsset originalAsset)
+        {
+            try
+            {
+                return codec.Write(cachePath, cacheAsset, originalAsset);
+            }
+            catch (Exception ex)
+            {
+                return CacheWriteResult.Failed(CacheRejectReason.SerializationFailed, ex.Message, ex);
+            }
         }
 
         private static void QueueRegisteredCachePayloadWrite(
@@ -1129,35 +1269,66 @@ namespace XREngine
         {
             _ = Task.Run(() =>
             {
-                try
+                long start = Stopwatch.GetTimestamp();
+                CacheWriteResult result = ExecuteRegisteredCachePayloadWrite(codec, cachePath, cacheAsset, originalAsset);
+                double elapsedMs = (Stopwatch.GetTimestamp() - start) * 1000.0 / Stopwatch.Frequency;
+                LogRegisteredCacheWriteDecision(cachePath, originalAsset.GetType(), result);
+                if (elapsedMs >= 100.0)
                 {
-                    long start = Stopwatch.GetTimestamp();
-                    bool wrote = codec.TryWrite(cachePath, cacheAsset, originalAsset);
-                    double elapsedMs = (Stopwatch.GetTimestamp() - start) * 1000.0 / Stopwatch.Frequency;
-                    if (elapsedMs >= 100.0)
-                    {
-                        Debug.Log(
-                            ELogCategory.Assets,
-                            "[ThirdPartyCache] Async cache write {0} for {1} '{2}' took {3:F2} ms.",
-                            wrote ? "completed" : "skipped",
-                            cacheAsset.GetType().Name,
-                            cachePath,
-                            elapsedMs);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogWarning($"Failed to write cached asset '{cachePath}'. {ex.Message}");
+                    Debug.Log(
+                        ELogCategory.Assets,
+                        "[ThirdPartyCache] Async cache write {0} for {1} '{2}' took {3:F2} ms.",
+                        result.Status,
+                        cacheAsset.GetType().Name,
+                        cachePath,
+                        elapsedMs);
                 }
             });
         }
 
+        private static void LogRegisteredCacheReadDecision(
+            string cachePath,
+            Type assetType,
+            CacheReadResult result)
+        {
+            if (result.Status == CacheReadStatus.Hit)
+                return;
+
+            Debug.Log(
+                ELogCategory.Assets,
+                "[ThirdPartyCache] Cache read {0} for {1} '{2}'. reason={3}; detail={4}",
+                result.Status,
+                assetType.Name,
+                cachePath,
+                result.Reason,
+                result.Detail ?? "none");
+        }
+
+        private static void LogRegisteredCacheWriteDecision(
+            string cachePath,
+            Type assetType,
+            CacheWriteResult result)
+        {
+            if (result.Status == CacheWriteStatus.Written)
+                return;
+
+            string message =
+                $"[ThirdPartyCache] Cache write {result.Status} for {assetType.Name} '{cachePath}'. " +
+                $"reason={result.Reason}; detail={result.Detail ?? "none"}";
+            if (result.Status == CacheWriteStatus.Failed)
+                Debug.LogWarning(message);
+            else
+                Debug.Log(ELogCategory.Assets, message);
+        }
+
         private sealed class AnimationClipBinaryCacheCodec : IThirdPartyCacheCodec
         {
-            public bool CanHandle(Type assetType)
-                => assetType == typeof(AnimationClip);
+            public CacheCodecOwnership GetOwnership(Type assetType)
+                => assetType == typeof(AnimationClip)
+                    ? CacheCodecOwnership.Cooperative
+                    : CacheCodecOwnership.NotHandled;
 
-            public bool WriteBlocksAssetLoad => false;
+            public CacheWriteMode WriteMode => CacheWriteMode.Background;
 
             public string? ResolveDefaultVariantKey(string? explicitVariantKey)
                 => explicitVariantKey;
@@ -1165,22 +1336,30 @@ namespace XREngine
             public XRAsset PrepareForWrite(string cachePath, XRAsset asset)
                 => asset;
 
-            public bool TryRead(string cachePath, string originalPath, DateTime sourceTimestampUtc, out XRAsset? asset)
+            public CacheReadResult Read(string cachePath, string originalPath, DateTime sourceTimestampUtc)
             {
-                asset = TryReadAnimationClipBinaryCacheFile(cachePath, originalPath, sourceTimestampUtc);
-                return asset is not null;
+                AnimationClip? asset = TryReadAnimationClipBinaryCacheFile(cachePath, originalPath, sourceTimestampUtc);
+                return asset is not null
+                    ? CacheReadResult.Hit(asset)
+                    : CacheReadResult.Miss();
             }
 
-            public bool TryWrite(string cachePath, XRAsset cacheAsset, XRAsset originalAsset)
-                => TryWriteAnimationClipBinaryCache(cachePath, cacheAsset);
+            public CacheWriteResult Write(string cachePath, XRAsset cacheAsset, XRAsset originalAsset)
+                => TryWriteAnimationClipBinaryCache(cachePath, cacheAsset)
+                    ? CacheWriteResult.Written()
+                    : CacheWriteResult.Failed(
+                        CacheRejectReason.SerializationFailed,
+                        "The animation clip could not be serialized as a cooked binary payload.");
         }
 
         private sealed class TextureStreamingCacheCodec : IThirdPartyCacheCodec
         {
-            public bool CanHandle(Type assetType)
-                => assetType == typeof(XRTexture2D);
+            public CacheCodecOwnership GetOwnership(Type assetType)
+                => assetType == typeof(XRTexture2D)
+                    ? CacheCodecOwnership.Cooperative
+                    : CacheCodecOwnership.NotHandled;
 
-            public bool WriteBlocksAssetLoad => true;
+            public CacheWriteMode WriteMode => CacheWriteMode.Blocking;
 
             public string? ResolveDefaultVariantKey(string? explicitVariantKey)
             {
@@ -1198,14 +1377,25 @@ namespace XREngine
                     ? cacheAsset
                     : asset;
 
-            public bool TryRead(string cachePath, string originalPath, DateTime sourceTimestampUtc, out XRAsset? asset)
+            public CacheReadResult Read(string cachePath, string originalPath, DateTime sourceTimestampUtc)
             {
-                asset = TryReadTextureBinaryCacheFile(cachePath, originalPath, sourceTimestampUtc);
-                return asset is not null;
+                if (!LooksLikeBinaryTextureCache(cachePath))
+                    return CacheReadResult.Miss();
+
+                XRTexture2D? asset = TryReadTextureBinaryCacheFile(cachePath, originalPath, sourceTimestampUtc);
+                return asset is not null
+                    ? CacheReadResult.Hit(asset)
+                    : CacheReadResult.Rejected(
+                        CacheRejectReason.Unreadable,
+                        "The binary texture payload was stale or could not be deserialized.");
             }
 
-            public bool TryWrite(string cachePath, XRAsset cacheAsset, XRAsset originalAsset)
-                => TryWriteTextureBinaryStreamingCache(cachePath, cacheAsset, originalAsset);
+            public CacheWriteResult Write(string cachePath, XRAsset cacheAsset, XRAsset originalAsset)
+                => TryWriteTextureBinaryStreamingCache(cachePath, cacheAsset, originalAsset)
+                    ? CacheWriteResult.Written()
+                    : CacheWriteResult.Failed(
+                        CacheRejectReason.SerializationFailed,
+                        "The texture could not be serialized as a binary streaming payload.");
         }
 
         private static bool TryWriteAnimationClipBinaryCache(string cachePath, XRAsset cacheAsset)

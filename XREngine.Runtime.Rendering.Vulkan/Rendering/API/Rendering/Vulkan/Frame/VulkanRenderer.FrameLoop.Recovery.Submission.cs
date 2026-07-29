@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Vulkan
     public unsafe partial class VulkanRenderer
     {
         private bool TrySubmitRejectedDesktopAbort(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             CommandPool commandPool,
             CommandBuffer commandBuffer,
             CommandBuffer overlayCommandBuffer,

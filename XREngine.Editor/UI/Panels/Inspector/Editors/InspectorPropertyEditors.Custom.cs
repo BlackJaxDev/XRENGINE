@@ -5,7 +5,6 @@ using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Editor.UI;
 using XREngine.Rendering;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 
@@ -39,34 +38,6 @@ public static partial class InspectorPropertyEditors
                     continue;
 
                 BuildAssetInspector(node, asset);
-            }
-        };
-    }
-
-    private static Action<SceneNode, PropertyInfo, object?[]?> CreateGlObjectEditor(Type propType)
-    {
-        var selector = CreateObjectSelector(propType);
-        return (node, prop, objects) =>
-        {
-            EnsureVerticalLayout(node);
-
-            var selectorHost = node.NewChild();
-            selector?.Invoke(selectorHost, prop, objects);
-
-            var glObjects = ResolvePropertyValues<OpenGLRenderer.GLObjectBase>(prop, objects);
-            if (glObjects.Count == 0)
-            {
-                AddInfoLabel(CreateInspectorCard(node), "No OpenGL object assigned.");
-                return;
-            }
-
-            var visited = new HashSet<OpenGLRenderer.GLObjectBase>(ReferenceEqualityComparer.Instance);
-            foreach (var glObject in glObjects)
-            {
-                if (glObject is null || !visited.Add(glObject))
-                    continue;
-
-                BuildGlObjectInspector(node, glObject);
             }
         };
     }
@@ -114,36 +85,6 @@ public static partial class InspectorPropertyEditors
 
         foreach (var embeddedAsset in embedded)
             AddInfoLabel(embeddedListNode, $"• {GetAssetDescriptor(embeddedAsset)}", new Vector4(2.0f, 0.0f, 2.0f, 0.0f));
-    }
-
-    private static void BuildGlObjectInspector(SceneNode parent, OpenGLRenderer.GLObjectBase glObject)
-    {
-        var card = CreateInspectorCard(parent);
-        AddSectionHeader(card, glObject.GetDescribingName());
-
-        string bindingIdText = glObject.TryGetBindingId(out uint bindingId) ? bindingId.ToString() : "<Ungenerated>";
-        AddInfoLabel(card, $"Type: {glObject.Type}");
-        AddInfoLabel(card, $"Binding ID: {bindingIdText}");
-        AddInfoLabel(card, $"Generated: {FormatBool(glObject.IsGenerated)}");
-
-        var rendererTitle = glObject.Renderer.XRWindow.WindowTitle;
-        if (string.IsNullOrWhiteSpace(rendererTitle))
-            rendererTitle = "Unknown Window";
-        AddInfoLabel(card, $"Renderer: {rendererTitle}");
-
-        var data = (glObject as IRenderAPIObject)?.Data;
-        if (data is not null)
-        {
-            AddInfoLabel(card, $"Data: {GetAssetDescriptor(data)}");
-            AddInfoLabel(card, $"Data In Use: {FormatBool(data.InUse)}");
-
-            if (data is XRFrameBuffer fbo)
-                BuildFrameBufferDetails(card, fbo);
-        }
-        else
-        {
-            AddInfoLabel(card, "Data: <null>");
-        }
     }
 
     private static void BuildFrameBufferDetails(SceneNode cardNode, XRFrameBuffer fbo)

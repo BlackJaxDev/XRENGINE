@@ -373,12 +373,12 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            if (!_vulkanCommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? lifetime))
+            if (!_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? lifetime))
             {
                 lifetime = new VulkanCommandBufferLifetimeRecord();
-                _vulkanCommandBufferLifetimes[commandBufferHandle] = lifetime;
+                _resourceLifetimeTracker.CommandBufferLifetimes[commandBufferHandle] = lifetime;
             }
 
             if (lifetime.QueuedSubmissionCount != 0)

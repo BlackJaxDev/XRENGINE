@@ -816,8 +816,7 @@ namespace XREngine.Rendering.Vulkan
             _commandBufferFrameOpSignatures = null;
             _commandBufferFrameOpSignatureDebugParts = null;
             _commandBufferPlannerRevisions = null;
-            _commandChainScheduleCache = null;
-            _commandChainScheduleFastSignatures = null;
+            _commandScheduler.ReleaseScheduleCache();
         }
 
         private void DestroyCommandBufferVariants()
@@ -890,8 +889,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             _commandChainCaches = null;
-            _commandChainScheduleCache = null;
-            _commandChainScheduleFastSignatures = null;
+            _commandScheduler.ReleaseScheduleCache();
         }
 
         private void DestroyExternalCommandChainCaches()

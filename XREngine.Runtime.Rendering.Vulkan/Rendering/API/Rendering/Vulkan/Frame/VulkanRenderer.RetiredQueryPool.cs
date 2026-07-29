@@ -4,7 +4,7 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
-        private readonly record struct RetiredQueryPool(
+        internal readonly record struct RetiredQueryPool(
             QueryPool QueryPool,
             VulkanRetirementTicket Ticket);
     }

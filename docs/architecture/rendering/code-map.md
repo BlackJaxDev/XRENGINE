@@ -27,11 +27,13 @@ This document is the execution companion to Phase 11 in the Vulkan GPU-driven un
 
 ## Backend renderer folder taxonomy
 
-OpenGL and Vulkan backend files now use a shared responsibility vocabulary under
-`XREngine.Runtime.Rendering.<Backend>/Rendering/API/Rendering/<Backend>/`. Namespaces
-intentionally remain stable as `XREngine.Rendering.OpenGL` and
-`XREngine.Rendering.Vulkan`; this reorganization is a path move and split, not a
-namespace migration.
+OpenGL and Vulkan backend files use a shared responsibility vocabulary under
+`XREngine.Runtime.Rendering.<Backend>/Rendering/API/Rendering/<Backend>/`.
+Namespaces currently remain stable as `XREngine.Rendering.OpenGL` and
+`XREngine.Rendering.Vulkan`. Durable subsystem owners, rather than folders
+alone, enforce the new Vulkan boundaries. Subsystem namespace changes are
+deferred until the remaining nested wrapper/test contracts have migrated, so
+namespace churn does not obscure ownership changes.
 
 Common backend folders:
 
@@ -117,15 +119,17 @@ All paths below are under
 
 | Final path | Responsibility |
 |---|---|
-| `Frame/VulkanRenderer.FrameLoop.cs` | Short desktop phase coordinator and outer finalization boundary |
+| `Frame/Desktop/VulkanDesktopFrameCoordinator.cs` | Desktop attempt phase coordinator and outer finalization boundary |
+| `Frame/VulkanRenderer.FrameLoop.cs` | Short renderer-facade delegation to the desktop coordinator |
 | `Frame/VulkanRenderer.FrameLoop.State.cs` | Desktop slot/counter/readiness state and atomic activity accessors |
-| `Frame/VulkanRenderer.FrameLoop.Attempt.cs` | Stack-only attempt, timing, phase/disposition, and ownership state |
+| `Frame/VulkanFrameAttempt.cs` and the focused frame outcome contracts | Stack-only attempt, timing, phase/disposition, and ownership state |
+| `Frame/VulkanRenderer.FrameLoop.FaultInjection.cs`, `VulkanDesktopFrameFaultInjectionState.cs`, `EVulkanDesktopFrameFaultPoint.cs` | Renderer-local deterministic phase fault injection without hot-path delegates |
 | `Frame/DesktopFrameIdentity.cs`, `DesktopFrameActivityState.cs`, `DesktopFrameActivitySnapshot.cs` | Immutable attempt identity and coherent desktop activity snapshots |
 | `Frame/VulkanDesktopFramePolicy.cs`, `VulkanDesktop*Outcome.cs`, `EVulkanDesktop*.cs` | Pure result/recovery policies and typed ownership/transition outcomes |
 | `Frame/VulkanRenderer.FrameLoop.Preflight.cs` / `.Preflight.Policy.cs` | Pre-acquire validation and skip cleanup |
 | `Frame/VulkanRenderer.FrameLoop.SwapchainPolicy.cs` | Resize, extent, recreate, and surface-loss policy |
 | `Frame/VulkanRenderer.FrameLoop.FrameSlots.cs` / `.FrameSlots.Retirement.cs` | Captured-slot wait, image preparation, and retirement |
-| `Frame/VulkanRenderer.FrameLoop.Acquire.cs` | Native/Streamline acquire and typed result policy |
+| `Frame/VulkanRenderer.FrameLoop.Acquire.cs`, `VulkanDesktopAcquireAvailabilityTracker.cs` | Native/Streamline acquire, typed result policy, and bounded unavailable-result recovery |
 | `Frame/VulkanRenderer.FrameLoop.Recording.cs` / `.Recording.Failures.cs` | Scene/overlay recording, dirty validation, and failure classification |
 | `Frame/VulkanRenderer.FrameLoop.Recovery.cs` / `.Recovery.Policy.cs` | Common post-acquire settlement and rejected-frame decisions |
 | `Frame/VulkanRenderer.FrameLoop.Recovery.Recording.cs` | Recording/upload cleanup |

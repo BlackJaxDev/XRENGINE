@@ -11,33 +11,9 @@ using XREngine;
 using XREngine.Diagnostics;
 
 namespace XREngine.Rendering.Vulkan;
-public unsafe partial class VulkanRenderer
+
+internal sealed unsafe class VkShader(VulkanRenderer api, XRShader data) : VkObject<XRShader>(api, data)
 {
-    public sealed record VulkanShaderArtifact(
-        string Identity,
-        EShaderType ShaderType,
-        string EntryPoint,
-        string? SourcePath,
-        string? RewrittenSource,
-        byte[] SpirV,
-        IReadOnlyList<DescriptorBindingInfo> DescriptorBindings,
-        AutoUniformBlockInfo? AutoUniformBlock,
-        IReadOnlyDictionary<string, uint> VertexInputLocations,
-        ShaderStageFlags StageFlags,
-        int ShaderConfigVersion,
-        bool UsesVulkanClipDepthRemap,
-        bool LoadedFromDiskCache = false,
-        string TransformFeedbackPlanIdentity = "");
-
-    public sealed record VulkanShaderCompileFailure(
-        string? ArtifactIdentity,
-        EShaderCompileFailureKind FailureKind,
-        string FailureReason,
-        string? DiagnosticPath,
-        string? RewrittenSource);
-
-    public class VkShader(VulkanRenderer api, XRShader data) : VkObject<XRShader>(api, data)
-    {
         private ShaderModule _shaderModule;
         private readonly List<DescriptorBindingInfo> _descriptorBindings = new();
         private string _entryPoint = "main";
@@ -723,5 +699,4 @@ public unsafe partial class VulkanRenderer
             ResetGenerationFailure();
             ShaderInvalidated?.Invoke(this);
         }
-    }
 }

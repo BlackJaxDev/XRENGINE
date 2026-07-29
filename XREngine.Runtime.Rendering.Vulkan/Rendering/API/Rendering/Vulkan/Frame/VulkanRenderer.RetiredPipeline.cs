@@ -11,7 +11,7 @@ namespace XREngine.Rendering.Vulkan
         /// be referenced by command buffers recorded earlier in the same frame or
         /// by previously submitted frame slots.
         /// </summary>
-        private readonly record struct RetiredPipeline(
+        internal readonly record struct RetiredPipeline(
             Pipeline Pipeline,
             VulkanRetirementTicket Ticket);
     }

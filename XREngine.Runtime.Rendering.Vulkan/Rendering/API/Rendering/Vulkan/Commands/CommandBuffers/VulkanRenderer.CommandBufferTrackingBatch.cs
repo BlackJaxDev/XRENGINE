@@ -263,9 +263,9 @@ public unsafe partial class VulkanRenderer
             return;
 
         ulong recordingGeneration = ResolveCommandBufferRecordingGeneration(commandBuffer);
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
-            if (_vulkanCommandBufferLifetimes.TryGetValue(
+            if (_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(
                     handle,
                     out VulkanCommandBufferLifetimeRecord? lifetime) &&
                 lifetime.QueuedSubmissionCount != 0)
@@ -301,7 +301,7 @@ public unsafe partial class VulkanRenderer
         if (handle == 0)
             return;
 
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
             if (!_commandBufferTrackingBatches.TryGetValue(
                     handle,
@@ -463,7 +463,7 @@ public unsafe partial class VulkanRenderer
     /// exception. Primary recording uses this path so it can immediately rebuild against the
     /// committed resource generation; callers for which the race is unexpected use the wrapper.
     /// </summary>
-    private Result EndCommandBufferTracked(
+    internal Result EndCommandBufferTracked(
         CommandBuffer commandBuffer,
         bool cacheVariant,
         out string trackingFailure)
@@ -477,7 +477,7 @@ public unsafe partial class VulkanRenderer
         if (handle == 0)
             return result;
 
-        lock (_vulkanResourceLifetimeLock)
+        lock (_resourceLifetimeTracker.SyncRoot)
         {
             if (_commandBufferTrackingBatches.TryGetValue(handle, out VulkanCommandBufferTrackingBatch? batch))
             {
@@ -485,7 +485,7 @@ public unsafe partial class VulkanRenderer
                     batch.IsRecording = false;
             }
 
-            if (_vulkanCommandBufferLifetimes.TryGetValue(handle, out VulkanCommandBufferLifetimeRecord? lifetime))
+            if (_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(handle, out VulkanCommandBufferLifetimeRecord? lifetime))
             {
                 if (result == Result.Success && trackingPublished)
                     lifetime.FrameDataLease.CompleteRecording(cacheVariant);
@@ -513,15 +513,15 @@ public unsafe partial class VulkanRenderer
         int newUniqueDependencies = batch.Dependencies.Count;
         int newCompactImageRanges = batch.ImageAccessDeltas.Count - batch.PublishedImageDeltaCount;
 
-        bool lifetimeLockContended = !Monitor.TryEnter(_vulkanResourceLifetimeLock);
+        bool lifetimeLockContended = !Monitor.TryEnter(_resourceLifetimeTracker.SyncRoot);
         if (lifetimeLockContended)
-            Monitor.Enter(_vulkanResourceLifetimeLock);
+            Monitor.Enter(_resourceLifetimeTracker.SyncRoot);
         try
         {
-            if (!_vulkanCommandBufferLifetimes.TryGetValue(handle, out VulkanCommandBufferLifetimeRecord? lifetime))
+            if (!_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(handle, out VulkanCommandBufferLifetimeRecord? lifetime))
             {
                 lifetime = new VulkanCommandBufferLifetimeRecord();
-                _vulkanCommandBufferLifetimes[handle] = lifetime;
+                _resourceLifetimeTracker.CommandBufferLifetimes[handle] = lifetime;
             }
 
             foreach (VulkanResourceLifetimeKey key in batch.Dependencies)
@@ -542,7 +542,7 @@ public unsafe partial class VulkanRenderer
         }
         finally
         {
-            Monitor.Exit(_vulkanResourceLifetimeLock);
+            Monitor.Exit(_resourceLifetimeTracker.SyncRoot);
         }
 
         bool layoutLockContended = FlushCommandBufferImageAccessBatch(commandBuffer, batch);
@@ -605,7 +605,7 @@ public unsafe partial class VulkanRenderer
                 // retirement before the deferred publication completed. Discarding only
                 // this invalid batch closes the retirement race and lets the next frame
                 // record against the replacement resource generation.
-                lock (_vulkanResourceLifetimeLock)
+                lock (_resourceLifetimeTracker.SyncRoot)
                 {
                     if (_commandBufferTrackingBatches.TryGetValue(commandBufferHandle, out VulkanCommandBufferTrackingBatch? batch))
                     {

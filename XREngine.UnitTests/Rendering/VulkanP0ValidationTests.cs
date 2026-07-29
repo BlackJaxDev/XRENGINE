@@ -1184,7 +1184,7 @@ public sealed class VulkanP0ValidationTests
         XRShader shader = new(EShaderType.Vertex, new TextFile { Text = rewrittenSource });
         int shaderConfigVersion = 77;
 
-        var artifact = new VulkanRenderer.VulkanShaderArtifact(
+        var artifact = new VulkanShaderArtifact(
             identity,
             shader.Type,
             "main",
@@ -1213,7 +1213,7 @@ public sealed class VulkanP0ValidationTests
                 rewrittenSource,
                 autoUniformBlock: null,
                 ShaderStageFlags.VertexBit,
-                out VulkanRenderer.VulkanShaderArtifact loaded).ShouldBeTrue();
+                out VulkanShaderArtifact loaded).ShouldBeTrue();
 
             loaded.LoadedFromDiskCache.ShouldBeTrue();
             loaded.SpirV.SequenceEqual(artifact.SpirV).ShouldBeTrue();

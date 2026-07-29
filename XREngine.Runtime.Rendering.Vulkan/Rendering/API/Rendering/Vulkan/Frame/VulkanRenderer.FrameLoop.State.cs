@@ -5,13 +5,18 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
+    private VulkanDesktopFrameCoordinator? _desktopFrameCoordinator;
+
+    private VulkanDesktopFrameCoordinator DesktopFrameCoordinator
+        => _desktopFrameCoordinator ??= new VulkanDesktopFrameCoordinator(this);
+
     private const int MAX_FRAMES_IN_FLIGHT = 2;
 
     private readonly DesktopFrameActivityState _desktopFrameActivity = new();
     private readonly object _desktopFrameRetirementGate = new();
     private int _desktopFrameSlot;
     private ulong _vkDebugFrameCounter;
-    private long _lastFrameCompletedTimestamp;
+    private long _lastDesktopFrameTickObservedTimestamp;
 
     internal ulong VulkanFrameCounter
         => AcceptedDesktopFrameAttemptCount;
@@ -34,7 +39,8 @@ public unsafe partial class VulkanRenderer
     /// observed completion/skip publication point.
     /// </summary>
     internal bool HasObservedDesktopFrameTick
-        => Volatile.Read(ref _lastFrameCompletedTimestamp) != 0;
+        => Volatile.Read(
+            ref _lastDesktopFrameTickObservedTimestamp) != 0;
 
     /// <summary>
     /// Captures one coherent observation of the active desktop attempt.
@@ -104,5 +110,7 @@ public unsafe partial class VulkanRenderer
     /// completion/skip observation point.
     /// </summary>
     private void RecordDesktopFrameTickObserved(long timestamp)
-        => Volatile.Write(ref _lastFrameCompletedTimestamp, timestamp);
+        => Volatile.Write(
+            ref _lastDesktopFrameTickObservedTimestamp,
+            timestamp);
 }

@@ -217,12 +217,12 @@ public unsafe partial class VulkanRenderer
 
             Renderer.ClearTrackedImageLayouts(_image);
             VulkanMemoryAllocation allocation = Renderer.AllocateImageMemoryWithFallback(_image, MemoryPropertyFlags.DeviceLocalBit);
-            Renderer._imageAllocations[_image.Handle] = allocation;
+            Renderer._imageAllocationTracker.Allocations[_image.Handle] = allocation;
             _memory = allocation.Memory;
 
             if (Api!.BindImageMemory(Device, _image, _memory, allocation.Offset) != Result.Success)
             {
-                Renderer._imageAllocations.TryRemove(_image.Handle, out _);
+                Renderer._imageAllocationTracker.Allocations.TryRemove(_image.Handle, out _);
                 Renderer.DestroyVulkanImageImmediateTracked(_image, "VkRenderBuffer.BindFailure");
                 Renderer.FreeMemoryAllocation(allocation);
                 _image = default;

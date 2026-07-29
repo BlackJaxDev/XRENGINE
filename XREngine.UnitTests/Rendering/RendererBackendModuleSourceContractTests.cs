@@ -83,6 +83,10 @@ public sealed class RendererBackendModuleSourceContractTests
     {
         string builtIns = ReadWorkspaceFile(
             "XREngine.Runtime.Bootstrap/RenderingHost/BuiltInRendererBackendModules.cs");
+        string openGlModule = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.OpenGL/Runtime/OpenGlRendererBackendModule.cs");
+        string vulkanModule = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/VulkanRendererBackendModule.cs");
         string registration = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Runtime/RendererModules/RendererBackendRegistration.cs");
 
@@ -90,6 +94,10 @@ public sealed class RendererBackendModuleSourceContractTests
         builtIns.ShouldNotContain("GetTypes(");
         builtIns.ShouldContain("OpenGlRendererBackendModule.Register(catalog)");
         builtIns.ShouldContain("VulkanRendererBackendModule.Register(catalog)");
+        openGlModule.ShouldContain(
+            "new(new OpenGlRendererBackendModuleEntry(version))");
+        vulkanModule.ShouldContain(
+            "new(new VulkanRendererBackendModuleEntry(version))");
         registration.ShouldContain("IRendererBackendFactory");
         registration.ShouldContain("IRendererBackendLifecycle");
     }
@@ -138,21 +146,8 @@ public sealed class RendererBackendModuleSourceContractTests
     }
 
     [Test]
-    public void EditorConcreteRendererReferences_AreRestrictedToExactWrapperInspectorAllowlist()
+    public void EditorHasNoConcreteRendererOrBackendWrapperInspectorReferences()
     {
-        string[] expected =
-        [
-            "ComponentEditors/GLObjectEditorAttribute.cs",
-            "ComponentEditors/GLObjectEditorRegistry.cs",
-            "ComponentEditors/GLObjectEditors.cs",
-            "IMGUI/EditorImGuiUI.InspectorPanel.cs",
-            "IMGUI/EditorImGuiUI.Mipmap2DInspector.cs",
-            "IMGUI/EditorImGuiUI.PropertyEditor.cs",
-            "IMGUI/EditorImGuiUI.ShaderProgramLinksPanel.cs",
-            "UI/Panels/Inspector/Editors/InspectorPropertyEditors.Custom.cs",
-            "UI/Panels/Inspector/Editors/InspectorPropertyEditors.cs",
-        ];
-
         string editorRoot = Path.Combine(FindWorkspaceRoot(), "XREngine.Editor");
         string[] actual = Directory
             .EnumerateFiles(editorRoot, "*.cs", SearchOption.AllDirectories)
@@ -161,13 +156,58 @@ public sealed class RendererBackendModuleSourceContractTests
                 string source = File.ReadAllText(path);
                 return System.Text.RegularExpressions.Regex.IsMatch(
                     source,
-                    @"\b(?:OpenGLRenderer|VulkanRenderer)\b");
+                    @"\b(?:OpenGLRenderer|VulkanRenderer|UltralightGpuWebRendererBackend|GLObjectEditor)\b");
             })
             .Select(path => Path.GetRelativePath(editorRoot, path).Replace('\\', '/'))
             .OrderBy(static path => path, StringComparer.Ordinal)
             .ToArray();
 
-        actual.ShouldBe(expected, ignoreOrder: false);
+        actual.ShouldBeEmpty();
+
+        Directory.Exists(Path.Combine(editorRoot, "ComponentEditors")).ShouldBeTrue();
+        File.Exists(Path.Combine(
+            editorRoot,
+            "ComponentEditors",
+            "GLObjectEditorRegistry.cs")).ShouldBeFalse();
+
+        string project = File.ReadAllText(
+            Path.Combine(editorRoot, "XREngine.Editor.csproj"));
+        project.ShouldNotContain("XREngine.Runtime.Rendering.OpenGL");
+        project.ShouldNotContain("XREngine.Runtime.Rendering.Vulkan");
+    }
+
+    [Test]
+    public void EditorDiagnosticsRetainOnlyStableValueSnapshots()
+    {
+        string shaderLinks = ReadWorkspaceFile(
+            "XREngine.Editor/IMGUI/EditorImGuiUI.ShaderProgramLinksPanel.cs");
+        string openGlPanel = ReadWorkspaceFile(
+            "XREngine.Editor/IMGUI/EditorImGuiUI.OpenGLPanel.cs");
+
+        shaderLinks.ShouldContain("IShaderProgramLinkDiagnosticsBackendCapability");
+        shaderLinks.ShouldContain("ShaderProgramLinkDiagnosticsSnapshot");
+        shaderLinks.ShouldNotContain("GLRenderProgram");
+        shaderLinks.ShouldNotContain("OpenGLRenderer");
+        openGlPanel.ShouldNotContain("AbstractRenderAPIObject ApiObject");
+        openGlPanel.ShouldNotContain("static AbstractRenderAPIObject");
+    }
+
+    [Test]
+    public void RuntimeCompilationReferencesDoNotExposeBackendLeavesToGameCode()
+    {
+        string codeManager = ReadWorkspaceFile("XREngine.Editor/CodeManager.cs");
+        string buildSettings = ReadWorkspaceFile(
+            "XREngine.Data/Core/BuildSettings.cs");
+
+        codeManager.ShouldNotContain(
+            "GetAssemblyLocation(\"XREngine.Runtime.Rendering.OpenGL\")");
+        codeManager.ShouldNotContain(
+            "GetAssemblyLocation(\"XREngine.Runtime.Rendering.Vulkan\")");
+        codeManager.ShouldContain("\"XREngineRendererBackends\"");
+        codeManager.ShouldContain("TryResolveBootstrapProjectPath()");
+        codeManager.ShouldContain("new XAttribute(\"Include\",");
+        buildSettings.ShouldContain(
+            "ERendererBackendPackageMode RendererBackendPackage");
     }
 
     [Test]
@@ -235,6 +275,17 @@ public sealed class RendererBackendModuleSourceContractTests
         bridge.ShouldContain("[UnmanagedCallersOnly(");
         bridge.ShouldContain("Register(");
         adapter.ShouldContain("IRendererImGuiViewportCallbacks");
+    }
+
+    [Test]
+    public void CollectibleBackendBuilds_DoNotRetainPersistentBuildServers()
+    {
+        string source = ReadWorkspaceFile(
+            "XREngine.Editor/Rendering/HotReload/RendererBackendBuildService.cs");
+
+        source.ShouldContain("\"--no-restore\"");
+        source.ShouldContain("\"-p:UseSharedCompilation=false\"");
+        source.ShouldContain("\"/nodeReuse:false\"");
     }
 
     [Test]

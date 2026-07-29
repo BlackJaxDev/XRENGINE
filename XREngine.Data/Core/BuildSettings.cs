@@ -35,6 +35,7 @@ namespace XREngine
         private string _binariesOutputFolder = "Binaries";
         private string _launcherExecutableName = "Game.exe";
         private string _launcherDefineConstants = string.Empty;
+        private ERendererBackendPackageMode _rendererBackendPackage = ERendererBackendPackageMode.All;
         private int _archiveCopyBufferBytes = DefaultArchiveCopyBufferBytes;
 
         [Category("Build Target")]
@@ -193,6 +194,14 @@ namespace XREngine
         {
             get => _launcherDefineConstants;
             set => SetField(ref _launcherDefineConstants, value ?? string.Empty);
+        }
+
+        [Category("Build Target")]
+        [Description("Selects the renderer leaf assemblies compiled into and packaged with the generated launcher. NativeAOT launchers use the same explicit static module registration as desktop applications.")]
+        public ERendererBackendPackageMode RendererBackendPackage
+        {
+            get => _rendererBackendPackage;
+            set => SetField(ref _rendererBackendPackage, value);
         }
 
         [Category("Build Target")]

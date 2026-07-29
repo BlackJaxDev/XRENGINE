@@ -1,5 +1,4 @@
 using Silk.NET.Vulkan;
-using System.Runtime.InteropServices;
 using XREngine;
 using XREngine.Rendering.API.Rendering.OpenXR;
 
@@ -7,6 +6,7 @@ namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     private PhysicalDevice _physicalDevice;
+    private VulkanPhysicalDeviceCapabilitySnapshot? _physicalDeviceCapabilitySnapshot;
     public PhysicalDevice PhysicalDevice => _physicalDevice;
     private ulong _nonCoherentAtomSize = 1;
     private ulong _uniformBufferOffsetAlignment = 1;
@@ -50,9 +50,13 @@ public unsafe partial class VulkanRenderer
             if (hasOpenXrRequestedDevice && (nint)device.Handle != openXrRequestedDeviceHandle)
                 continue;
 
-            if (IsDeviceSuitable(device, out var indices))
+            VulkanPhysicalDeviceCapabilitySnapshot snapshot =
+                VulkanDeviceCapabilityQuery.Query(Api!, device);
+            if (IsDeviceSuitable(device, snapshot, out var indices))
             {
                 _physicalDevice = device;
+                _deviceContext.AttachPhysicalDevice(device);
+                _physicalDeviceCapabilitySnapshot = snapshot;
                 _familyQueueIndicesCache = indices;
                 break;
             }
@@ -98,89 +102,47 @@ public unsafe partial class VulkanRenderer
         RuntimeEngine.Rendering.State.VulkanDeviceId = properties.DeviceID;
 
         // Cache Vulkan ray tracing extension availability once at startup.
-        RuntimeEngine.Rendering.State.HasVulkanRayTracing = ProbeVulkanRayTracingSupport(_physicalDevice);
+        RuntimeEngine.Rendering.State.HasVulkanRayTracing =
+            ProbeVulkanRayTracingSupport(_physicalDeviceCapabilitySnapshot!);
     }
 
-    private bool ProbeVulkanRayTracingSupport(PhysicalDevice device)
+    private static bool ProbeVulkanRayTracingSupport(
+        VulkanPhysicalDeviceCapabilitySnapshot snapshot)
     {
-        if (device.Handle == 0)
-            return false;
-
-        try
-        {
-            uint extensionsCount = 0;
-            Api!.EnumerateDeviceExtensionProperties(device, (byte*)null, ref extensionsCount, null);
-
-            var availableExtensions = new ExtensionProperties[extensionsCount];
-            fixed (ExtensionProperties* availableExtensionsPtr = availableExtensions)
-            {
-                Api!.EnumerateDeviceExtensionProperties(device, (byte*)null, ref extensionsCount, availableExtensionsPtr);
-            }
-
-            var availableExtensionNames = availableExtensions
-                .Select(static extension => Marshal.PtrToStringAnsi((IntPtr)extension.ExtensionName))
-                .Where(static n => !string.IsNullOrWhiteSpace(n))
-                .ToHashSet(StringComparer.Ordinal);
-
-            // Prefer KHR ray tracing pipeline; fall back to legacy NV extension if present.
-            bool hasKhrRt =
-                availableExtensionNames.Contains("VK_KHR_ray_tracing_pipeline") &&
-                availableExtensionNames.Contains("VK_KHR_acceleration_structure") &&
-                availableExtensionNames.Contains("VK_KHR_deferred_host_operations");
-            bool hasNvRt = availableExtensionNames.Contains("VK_NV_ray_tracing");
-
-            bool supported = hasKhrRt || hasNvRt;
-
-            Debug.Vulkan(supported
-                ? "Vulkan ray tracing extensions: available"
-                : "Vulkan ray tracing extensions: not reported; RT features will remain disabled.");
-
-            return supported;
-        }
-        catch (Exception ex)
-        {
-            Debug.VulkanWarning($"Failed to query Vulkan ray tracing extensions: {ex.Message}");
-            return false;
-        }
+        bool supported =
+            VulkanPhysicalDevicePolicy.SupportsRayTracing(snapshot.AvailableExtensions);
+        Debug.Vulkan(supported
+            ? "Vulkan ray tracing extensions: available"
+            : "Vulkan ray tracing extensions: not reported; RT features will remain disabled.");
+        return supported;
     }
 
-    private bool IsDeviceSuitable(PhysicalDevice device, out QueueFamilyIndices indices)
+    private bool IsDeviceSuitable(
+        PhysicalDevice device,
+        VulkanPhysicalDeviceCapabilitySnapshot snapshot,
+        out QueueFamilyIndices indices)
     {
-        indices = FindQueueFamilies(device);
-
-        bool extensionsSupported = CheckDeviceExtensionsSupport(device);
+        indices = VulkanQueueFamilySelector.Select(
+            khrSurface!,
+            device,
+            surface,
+            snapshot.QueueFamilyArray);
+        bool extensionsSupported =
+            VulkanPhysicalDevicePolicy.SupportsRequiredExtensions(
+                snapshot.AvailableExtensions,
+                _requiredDeviceExtensions,
+                _streamlineRequiredDeviceExtensions);
 
         bool swapChainAdequate = false;
         if (extensionsSupported)
         {
             var swapChainSupport = QuerySwapChainSupport(device);
-            swapChainAdequate = 
-                swapChainSupport.Formats.Length != 0 &&
-                swapChainSupport.PresentModes.Length != 0;
+            swapChainAdequate = VulkanPhysicalDevicePolicy.IsSwapchainAdequate(
+                swapChainSupport.Formats.Length,
+                swapChainSupport.PresentModes.Length);
         }
 
         return indices.IsComplete() && extensionsSupported && swapChainAdequate;
-    }
-
-    private bool CheckDeviceExtensionsSupport(PhysicalDevice device)
-    {
-        if (device.Handle == 0)
-            return false;
-
-        uint extentionsCount = 0;
-        Api!.EnumerateDeviceExtensionProperties(device, (byte*)null, ref extentionsCount, null);
-
-        var availableExtensions = new ExtensionProperties[extentionsCount];
-        fixed (ExtensionProperties* availableExtensionsPtr = availableExtensions)
-        {
-            Api!.EnumerateDeviceExtensionProperties(device, (byte*)null, ref extentionsCount, availableExtensionsPtr);
-        }
-
-        var availableExtensionNames = availableExtensions.Select(extension => Marshal.PtrToStringAnsi((IntPtr)extension.ExtensionName)).ToHashSet();
-
-        return _requiredDeviceExtensions.All(availableExtensionNames.Contains)
-            && _streamlineRequiredDeviceExtensions.All(availableExtensionNames.Contains);
-
     }
 
     public uint FindMemoryType(uint typeFilter, MemoryPropertyFlags memProps)

@@ -6,7 +6,7 @@ Integration base: `3a4e695e` (`rendering-vulkan-core-hardening`)
 
 ## Scope
 
-This ledger tracks implementation of P4.0 through P4.7 from
+This ledger tracks implementation of P4.0 through P4.8c from
 [runtime-modularization-phase4-todo.md](../../todo/runtime-modularization-phase4-todo.md).
 The working tree already contained line-ending-only modifications to the Phase 4
 and Vulkan frame-loop TODOs, a modified `OscCore-NET9` submodule worktree, and
@@ -279,3 +279,94 @@ runtime, visual, resize, validation-layer, OpenXR/OpenVR, supported-hardware
 Streamline, and performance gates remain explicitly unvalidated. P4.8c remains
 the owner of final consumer migration, collectible registration/retention
 rules, packaging orchestration, and static-load validation.
+
+## P4.8c Consumer Migration, Registration, Packaging, And Validation
+
+P4.8c completed on 2026-07-29.
+
+### Stable Consumer And Lifetime Boundary
+
+- Editor diagnostics, previews, and backend panels now consume stable copied
+  values and capability DTOs instead of retaining OpenGL wrappers. The obsolete
+  GL-object editor registry and renderer type-forward were removed.
+- Vendor upscaling is routed through `IRuntimeVendorUpscaleService` and
+  `VendorUpscaleRuntime`; application settings no longer reference Vulkan
+  DLSS/XeSS implementation types.
+- Texture-streaming and web-renderer backend registration are lease-counted.
+  `RuntimeRenderingHostServices` owns and disposes the installed module
+  registrations, so replacement or teardown removes non-backend static roots.
+- The OpenGL and Vulkan entry points use the same
+  `IRendererBackendModuleEntry`/factory lifecycle for static and collectible
+  registration. Backend-specific factories, exceptions, delegates, workers,
+  `Type` objects, and handles remain inside their leaf generation.
+
+### Static, Collectible, And AOT Composition
+
+- `XRENGINE` and Editor no longer reference either renderer leaf. Editor also
+  no longer owns the 22 Silk.NET OpenGL, WGL, Shaderc, Vulkan, extension, and
+  Vulkan-loader packages that moved to the leaves.
+- Bootstrap is the static composition root. The
+  `XREngineRendererBackends=All|OpenGL|Vulkan` build property conditionally
+  compiles module registration and project references without reflection.
+- Generated/AOT launch projects resolve the Bootstrap project source and pass
+  the selected backend property, so the linker sees explicit static factory
+  registration. A single-backend request fails visibly if source composition
+  is unavailable rather than silently packaging both leaves.
+- Evaluated restore graphs for Editor, Server, and VRClient showed only the
+  selected renderer leaf in OpenGL-only and Vulkan-only modes. Clean Bootstrap
+  outputs independently confirmed that each single-backend mode contains the
+  kernel plus only its selected leaf.
+- Backend implementation tests and benchmarks intentionally retain direct leaf
+  references where they validate leaf internals. Consumer-facing catalog,
+  host, application, and published-launcher tests select by stable backend ID
+  and module metadata.
+
+### Validation Evidence
+
+- XRENGINE, both renderer leaves, Editor, and UnitTests built successfully with
+  zero errors.
+- The P4.8c catalog, host, dependency-boundary, concrete-type-boundary,
+  source-contract, and published-launcher selection group passed 69 tests with
+  zero failures or skips.
+- The collectible module fixture passed 9 tests, including 100 complete module
+  registration/unregistration/unload cycles. Collectible backend builds disable
+  shared compilation and MSBuild node reuse so compiler/build-server processes
+  cannot retain staged assemblies.
+- Static validation preceded collectible validation. The same named isolated
+  editor build rendered Vulkan and OpenGL through the stable factory contract;
+  two camera positions per backend produced changing screenshots. Vulkan logs
+  contained no validation, device-loss, fatal, exception, or leak diagnostics,
+  and OpenGL reported `NoError`.
+- Complete wrapper, callback, worker, resource, and native-handle teardown is
+  also covered by the completed
+  [renderer hot-reload validation](../../todo/COMPLETED/rendering-backend-hot-reload-todo.md).
+- `Tools/Reports/Generate-Dependencies.ps1 -NoPromptForUnknownLicenses` was run
+  after the package moves. Network-restricted metadata lookups produced
+  repository-wide offline license downgrades, so that unsafe generated license
+  rewrite was reviewed and discarded. The known-license snapshots were
+  preserved and `docs/DEPENDENCIES.md` was reconciled to the verified project
+  ownership changes.
+
+P4.8c is complete. Phase 4 remains open for the explicitly outstanding P4.8b
+runtime/visual/hardware acceptance gates and P4.9 final validation.
+
+## Phase 4 Production-Code Closeout
+
+The remaining P4.8b production seams completed on 2026-07-29:
+
+- renderer-local deterministic phase fault injection now covers acquire, image
+  preparation, scene/overlay recording, submit, post-submit auxiliary work,
+  present, and post-present auxiliary work without per-frame delegates or
+  retained external callbacks;
+- consecutive non-interactive acquire unavailability is owned by the
+  allocation-free `VulkanDesktopAcquireAvailabilityTracker`, with successful
+  acquire reset and bounded swapchain recovery;
+- healthy queue-submit rejection settles all acquired/upload ownership before
+  propagating a visible result-specific failure; and
+- callback-tick observation uses an explicitly named timestamp distinct from
+  GPU submission and presentation readiness.
+
+All Phase 4 production code and required architecture/handoff documentation are
+complete. Per the code-completion scope, no new test, runtime, hardware, or
+performance execution is claimed for this final pass. P4.9 now contains only
+deferred validation, integration review, and branch-promotion work.

@@ -5,7 +5,7 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
-        private EDesktopFrameFlow PrepareDesktopFrameSlot(ref DesktopFrameAttempt attempt)
+        private EDesktopFrameFlow PrepareDesktopFrameSlot(ref VulkanFrameAttempt attempt)
         {
             long stageStartTimestamp = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
@@ -84,8 +84,10 @@ namespace XREngine.Rendering.Vulkan
             return EDesktopFrameFlow.Continue;
         }
 
-        private void PrepareAcquiredDesktopImage(ref DesktopFrameAttempt attempt)
+        private void PrepareAcquiredDesktopImage(ref VulkanFrameAttempt attempt)
         {
+            ThrowIfDesktopFrameFaultInjected(
+                EVulkanDesktopFrameFaultPoint.ImagePreparation);
             long stageStartTimestamp = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.FrameLifecycle.WaitSwapchainImage"))

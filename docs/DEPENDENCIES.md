@@ -99,16 +99,16 @@ Notes:
 | Silk.NET.OpenAL.Extensions.EXT | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenAL.Extensions.EXT-2.23.0-MIT.txt) | XREngine.Audio.csproj, XREngine.Editor.csproj |
 | Silk.NET.OpenAL.Extensions.Soft | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenAL.Extensions.Soft-2.23.0-MIT.txt) | XREngine.Audio.csproj, XREngine.Editor.csproj |
 | Silk.NET.OpenAL.Soft.Native | 1.23.1 | kcat | [LGPL-2.0-or-later](licenses/nuget/Silk.NET.OpenAL.Soft.Native-1.23.1-LGPL-2.0-or-later.txt) | XREngine.Audio.csproj, XREngine.Editor.csproj |
-| Silk.NET.OpenGL | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGL-2.23.0-MIT.txt) | XREngine.Benchmarks.csproj, XREngine.Editor.csproj, XREngine.Profiler.csproj, XREngine.Runtime.Rendering.OpenGL.csproj, XREngine.UnitTests.csproj |
+| Silk.NET.OpenGL | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGL-2.23.0-MIT.txt) | XREngine.Benchmarks.csproj, XREngine.Profiler.csproj, XREngine.Runtime.Rendering.OpenGL.csproj, XREngine.UnitTests.csproj |
 | Silk.NET.OpenGL.Extensions.AMD | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGL.Extensions.AMD-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.OpenGL.csproj |
-| Silk.NET.OpenGL.Extensions.ARB | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGL.Extensions.ARB-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.OpenGL.csproj |
-| Silk.NET.OpenGL.Extensions.EXT | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGL.Extensions.EXT-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.OpenGL.csproj |
-| Silk.NET.OpenGL.Extensions.ImGui | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGL.Extensions.ImGui-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Profiler.csproj, XREngine.Profiler.UI.csproj, XREngine.Runtime.Rendering.OpenGL.csproj |
-| Silk.NET.OpenGL.Extensions.INTEL | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGL.Extensions.INTEL-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.OpenGL.csproj |
-| Silk.NET.OpenGL.Extensions.KHR | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGL.Extensions.KHR-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.OpenGL.csproj |
+| Silk.NET.OpenGL.Extensions.ARB | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGL.Extensions.ARB-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.OpenGL.csproj |
+| Silk.NET.OpenGL.Extensions.EXT | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGL.Extensions.EXT-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.OpenGL.csproj |
+| Silk.NET.OpenGL.Extensions.ImGui | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGL.Extensions.ImGui-2.23.0-MIT.txt) | XREngine.Profiler.csproj, XREngine.Profiler.UI.csproj, XREngine.Runtime.Rendering.OpenGL.csproj |
+| Silk.NET.OpenGL.Extensions.INTEL | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGL.Extensions.INTEL-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.OpenGL.csproj |
+| Silk.NET.OpenGL.Extensions.KHR | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGL.Extensions.KHR-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.OpenGL.csproj |
 | Silk.NET.OpenGL.Extensions.NV | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGL.Extensions.NV-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.OpenGL.csproj |
 | Silk.NET.OpenGL.Extensions.OVR | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGL.Extensions.OVR-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.OpenGL.csproj |
-| Silk.NET.OpenGLES.Extensions.EXT | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGLES.Extensions.EXT-2.23.0-MIT.txt) | XREngine.Data.csproj, XREngine.Editor.csproj, XREngine.Runtime.Rendering.OpenGL.csproj |
+| Silk.NET.OpenGLES.Extensions.EXT | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGLES.Extensions.EXT-2.23.0-MIT.txt) | XREngine.Data.csproj, XREngine.Runtime.Rendering.OpenGL.csproj |
 | Silk.NET.OpenGLES.Extensions.NV | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenGLES.Extensions.NV-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.OpenGL.csproj |
 | Silk.NET.OpenXR | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenXR-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.csproj, XREngine.Runtime.Rendering.Vulkan.csproj |
 | Silk.NET.OpenXR.Extensions.EXT | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenXR.Extensions.EXT-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.csproj |
@@ -118,21 +118,21 @@ Notes:
 | Silk.NET.OpenXR.Extensions.MSFT | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenXR.Extensions.MSFT-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.csproj |
 | Silk.NET.OpenXR.Extensions.VALVE | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenXR.Extensions.VALVE-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.csproj |
 | Silk.NET.SDL | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.SDL-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.csproj |
-| Silk.NET.Shaderc | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Shaderc-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.Vulkan.csproj |
-| Silk.NET.Vulkan | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.Vulkan.csproj |
-| Silk.NET.Vulkan.Extensions.AMD | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.AMD-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.Vulkan.csproj |
-| Silk.NET.Vulkan.Extensions.ARM | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.ARM-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.Vulkan.csproj |
-| Silk.NET.Vulkan.Extensions.EXT | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.EXT-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.Vulkan.csproj |
-| Silk.NET.Vulkan.Extensions.FB | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.FB-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.Vulkan.csproj |
-| Silk.NET.Vulkan.Extensions.HUAWEI | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.HUAWEI-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.Vulkan.csproj |
-| Silk.NET.Vulkan.Extensions.INTEL | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.INTEL-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.Vulkan.csproj |
-| Silk.NET.Vulkan.Extensions.KHR | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.KHR-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.Vulkan.csproj |
-| Silk.NET.Vulkan.Extensions.NV | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.NV-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.Vulkan.csproj |
-| Silk.NET.Vulkan.Extensions.NVX | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.NVX-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.Vulkan.csproj |
-| Silk.NET.Vulkan.Extensions.QNX | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.QNX-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.Vulkan.csproj |
-| Silk.NET.Vulkan.Extensions.VALVE | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.VALVE-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.Vulkan.csproj |
-| Silk.NET.Vulkan.Loader.Native | 2025.9.12 | KhronosGroup | [Apache-2.0](licenses/nuget/Silk.NET.Vulkan.Loader.Native-2025.9.12-Apache-2.0.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.Vulkan.csproj |
-| Silk.NET.WGL.Extensions.ARB | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.WGL.Extensions.ARB-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.OpenGL.csproj |
+| Silk.NET.Shaderc | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Shaderc-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.Vulkan.csproj |
+| Silk.NET.Vulkan | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.Vulkan.csproj |
+| Silk.NET.Vulkan.Extensions.AMD | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.AMD-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.Vulkan.csproj |
+| Silk.NET.Vulkan.Extensions.ARM | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.ARM-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.Vulkan.csproj |
+| Silk.NET.Vulkan.Extensions.EXT | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.EXT-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.Vulkan.csproj |
+| Silk.NET.Vulkan.Extensions.FB | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.FB-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.Vulkan.csproj |
+| Silk.NET.Vulkan.Extensions.HUAWEI | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.HUAWEI-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.Vulkan.csproj |
+| Silk.NET.Vulkan.Extensions.INTEL | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.INTEL-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.Vulkan.csproj |
+| Silk.NET.Vulkan.Extensions.KHR | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.KHR-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.Vulkan.csproj |
+| Silk.NET.Vulkan.Extensions.NV | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.NV-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.Vulkan.csproj |
+| Silk.NET.Vulkan.Extensions.NVX | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.NVX-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.Vulkan.csproj |
+| Silk.NET.Vulkan.Extensions.QNX | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.QNX-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.Vulkan.csproj |
+| Silk.NET.Vulkan.Extensions.VALVE | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Vulkan.Extensions.VALVE-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.Vulkan.csproj |
+| Silk.NET.Vulkan.Loader.Native | 2025.9.12 | KhronosGroup | [Apache-2.0](licenses/nuget/Silk.NET.Vulkan.Loader.Native-2025.9.12-Apache-2.0.txt) | XREngine.Runtime.Rendering.Vulkan.csproj |
+| Silk.NET.WGL.Extensions.ARB | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.WGL.Extensions.ARB-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.OpenGL.csproj |
 | Silk.NET.Windowing | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Windowing-2.23.0-MIT.txt) | XREngine.Benchmarks.csproj, XREngine.csproj, XREngine.Editor.csproj, XREngine.Profiler.csproj, XREngine.Runtime.Rendering.csproj, XREngine.Runtime.Rendering.OpenGL.csproj, XREngine.UnitTests.csproj |
 | Silk.NET.Windowing.Common | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Windowing.Common-2.23.0-MIT.txt) | XREngine.csproj, XREngine.Editor.csproj, XREngine.Runtime.Rendering.csproj |
 | Silk.NET.Windowing.Extensions | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Windowing.Extensions-2.23.0-MIT.txt) | XREngine.csproj, XREngine.Editor.csproj, XREngine.Runtime.Rendering.csproj |
@@ -147,7 +147,7 @@ Notes:
 | Svg.Skia | 3.4.1 | wieslawsoltes | [MIT](licenses/nuget/Svg.Skia-3.4.1-MIT.txt) | XREngine.Runtime.Rendering.csproj |
 | System.Drawing.Common | 10.0.3 | dotnet | [MIT](licenses/nuget/System.Drawing.Common-10.0.3-MIT.txt) | XREngine.Data.csproj |
 | System.IdentityModel.Tokens.Jwt | 8.16.0 | AzureAD | [MIT](licenses/nuget/System.IdentityModel.Tokens.Jwt-8.16.0-MIT.txt) | XREngine.Server.csproj |
-| System.IO.Hashing | 10.0.3 | dotnet | [MIT](licenses/nuget/System.IO.Hashing-10.0.3-MIT.txt) | XREngine.csproj, XREngine.Runtime.Rendering.csproj |
+| System.IO.Hashing | 10.0.3 | dotnet | [MIT](licenses/nuget/System.IO.Hashing-10.0.3-MIT.txt) | XREngine.csproj, XREngine.Runtime.ModelingBridge.csproj, XREngine.Runtime.Rendering.csproj |
 | System.Management | 10.0.3 | dotnet | [MIT](licenses/nuget/System.Management-10.0.3-MIT.txt) | XREngine.Runtime.Rendering.csproj |
 | System.Security.Cryptography.ProtectedData | 9.0.0 | dotnet | [MIT](licenses/nuget/System.Security.Cryptography.ProtectedData-9.0.0-MIT.txt) | XREngine.csproj |
 | UltralightNet | 1.3.0 | SupinePandora43 | [MIT](licenses/nuget/UltralightNet-1.3.0-MIT.txt) | XREngine.Runtime.Rendering.csproj |

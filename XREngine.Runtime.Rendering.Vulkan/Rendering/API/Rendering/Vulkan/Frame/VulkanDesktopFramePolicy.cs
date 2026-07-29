@@ -256,35 +256,35 @@ internal static class VulkanDesktopFramePolicy
             or EVulkanDesktopUploadOwnership.AbandonedAfterDeviceLoss;
 
     internal static bool IsLegalPhaseTransition(
-        VulkanRenderer.EDesktopFramePhase current,
-        VulkanRenderer.EDesktopFramePhase next)
+        EDesktopFramePhase current,
+        EDesktopFramePhase next)
     {
-        if (next == VulkanRenderer.EDesktopFramePhase.Finalized)
-            return current != VulkanRenderer.EDesktopFramePhase.Finalized;
+        if (next == EDesktopFramePhase.Finalized)
+            return current != EDesktopFramePhase.Finalized;
 
         return current switch
         {
-            VulkanRenderer.EDesktopFramePhase.Entered =>
-                next == VulkanRenderer.EDesktopFramePhase.PreflightComplete,
-            VulkanRenderer.EDesktopFramePhase.PreflightComplete =>
-                next == VulkanRenderer.EDesktopFramePhase.SlotReady,
-            VulkanRenderer.EDesktopFramePhase.SlotReady =>
-                next == VulkanRenderer.EDesktopFramePhase.ImageAcquired,
-            VulkanRenderer.EDesktopFramePhase.ImageAcquired =>
-                next is VulkanRenderer.EDesktopFramePhase.ImageReady or
-                    VulkanRenderer.EDesktopFramePhase.Recovered,
-            VulkanRenderer.EDesktopFramePhase.ImageReady =>
-                next is VulkanRenderer.EDesktopFramePhase.Recorded or
-                    VulkanRenderer.EDesktopFramePhase.Recovered,
-            VulkanRenderer.EDesktopFramePhase.Recorded =>
-                next is VulkanRenderer.EDesktopFramePhase.Validated or
-                    VulkanRenderer.EDesktopFramePhase.Recovered,
-            VulkanRenderer.EDesktopFramePhase.Validated =>
-                next is VulkanRenderer.EDesktopFramePhase.Submitted or
-                    VulkanRenderer.EDesktopFramePhase.Recovered,
-            VulkanRenderer.EDesktopFramePhase.Submitted =>
-                next is VulkanRenderer.EDesktopFramePhase.Presented or
-                    VulkanRenderer.EDesktopFramePhase.Recovered,
+            EDesktopFramePhase.Entered =>
+                next == EDesktopFramePhase.PreflightComplete,
+            EDesktopFramePhase.PreflightComplete =>
+                next == EDesktopFramePhase.SlotReady,
+            EDesktopFramePhase.SlotReady =>
+                next == EDesktopFramePhase.ImageAcquired,
+            EDesktopFramePhase.ImageAcquired =>
+                next is EDesktopFramePhase.ImageReady or
+                    EDesktopFramePhase.Recovered,
+            EDesktopFramePhase.ImageReady =>
+                next is EDesktopFramePhase.Recorded or
+                    EDesktopFramePhase.Recovered,
+            EDesktopFramePhase.Recorded =>
+                next is EDesktopFramePhase.Validated or
+                    EDesktopFramePhase.Recovered,
+            EDesktopFramePhase.Validated =>
+                next is EDesktopFramePhase.Submitted or
+                    EDesktopFramePhase.Recovered,
+            EDesktopFramePhase.Submitted =>
+                next is EDesktopFramePhase.Presented or
+                    EDesktopFramePhase.Recovered,
             _ => false,
         };
     }

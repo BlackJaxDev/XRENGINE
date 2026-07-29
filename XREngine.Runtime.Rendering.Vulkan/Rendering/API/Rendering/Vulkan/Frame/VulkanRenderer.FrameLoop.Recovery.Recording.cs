@@ -6,7 +6,7 @@ namespace XREngine.Rendering.Vulkan
     public unsafe partial class VulkanRenderer
     {
         private void PrepareRejectedDesktopAbortCommand(
-            ref DesktopFrameAttempt attempt,
+        ref VulkanFrameAttempt attempt,
             in RejectedDesktopFramePolicyDecision policy,
             bool imageWasEverPresented,
             out CommandPool commandPool,
@@ -28,7 +28,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void BeginRejectedDesktopTransition(
-            ref DesktopFrameAttempt attempt,
+        ref VulkanFrameAttempt attempt,
             CommandBuffer commandBuffer,
             in RejectedDesktopFramePolicyDecision policy,
             bool imageWasEverPresented)
@@ -142,8 +142,8 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private bool TryRecordRejectedDesktopRecoveryOverlay(
-            ref DesktopFrameAttempt attempt,
-            ImGuiFrameSnapshot? snapshot,
+        ref VulkanFrameAttempt attempt,
+            VulkanImGuiFrameSnapshot? snapshot,
             CommandBuffer predecessorCommandBuffer,
             out CommandBuffer overlayCommandBuffer)
         {

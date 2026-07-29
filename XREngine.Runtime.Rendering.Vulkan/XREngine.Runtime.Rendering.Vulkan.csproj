@@ -31,7 +31,6 @@
 
   <ItemGroup>
     <VmaBridgeBuildInput Include="$(VmaBridgeProject);$(MSBuildProjectDirectory)\..\Build\Native\VulkanMemoryAllocatorBridge\**\*.cpp;$(MSBuildProjectDirectory)\..\Build\Native\VulkanMemoryAllocatorBridge\**\*.h;$(MSBuildProjectDirectory)\..\Build\Native\VulkanMemoryAllocatorBridge\**\*.hpp" />
-    <Compile Remove="Rendering\API\Rendering\Vulkan\Features\Raytracing\VulkanRenderer.Raytracing.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -72,7 +71,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="Rendering\API\Rendering\Vulkan\Features\Raytracing\VulkanRenderer.Raytracing.cs" />
     <None Include="runtimes\win-x64\native\VulkanMemoryAllocatorBridge.Native.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <TargetPath>VulkanMemoryAllocatorBridge.Native.dll</TargetPath>

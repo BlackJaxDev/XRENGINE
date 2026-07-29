@@ -9,15 +9,21 @@ internal interface IRuntimeVendorUpscaleService
 {
     bool IsDlssSupported { get; }
     string? DlssLastError { get; }
+    bool AreDlssRuntimeLibrariesAvailable { get; }
     bool IsXessSupported { get; }
     string? XessLastError { get; }
     bool IsDlssFrameGenerationRequested { get; }
+    bool IsDlssFrameGenerationSupported { get; }
+    string? DlssFrameGenerationUnavailableReason { get; }
     bool IsDlssFrameGenerationAvailable(out string? failureReason);
     bool IsTerminalBridgeFailureMessage(string? failureReason);
 
     float GetDlssRecommendedRenderScale(object? settings = null);
     float GetXessRecommendedRenderScale(object? settings = null);
+    void ApplyDlssToViewport(XRViewport viewport, object? settings = null);
+    void ResetDlssViewport(XRViewport viewport);
     void ApplyXessToViewport(XRViewport viewport, object? settings = null);
+    void ResetXessViewport(XRViewport viewport);
 
     bool TryDispatchDlssUpscale(
         XRViewport viewport,

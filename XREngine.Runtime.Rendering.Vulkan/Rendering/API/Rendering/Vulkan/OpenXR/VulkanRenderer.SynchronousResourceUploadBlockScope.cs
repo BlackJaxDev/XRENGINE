@@ -7,22 +7,18 @@ public unsafe partial class VulkanRenderer
     private sealed class SynchronousResourceUploadBlockScope : IDisposable
     {
         private readonly VulkanRenderer _renderer;
-        private readonly VulkanRenderer? _previousThreadRenderer;
+        private readonly VulkanOpenXrThreadExecutionState _threadState;
         private readonly int _previousThreadDepth;
         private bool _disposed;
 
         public SynchronousResourceUploadBlockScope(VulkanRenderer renderer, string reason)
         {
             _renderer = renderer;
-            _previousThreadRenderer = _threadSynchronousResourceUploadBlockRenderer;
-            _previousThreadDepth = _threadSynchronousResourceUploadBlockDepth;
-            _threadSynchronousResourceUploadBlockRenderer = renderer;
-            _threadSynchronousResourceUploadBlockDepth =
-                ReferenceEquals(_previousThreadRenderer, renderer)
-                    ? _previousThreadDepth + 1
-                    : 1;
+            _threadState = renderer._openXrBackend.CurrentThreadExecutionState;
+            _previousThreadDepth = _threadState.SynchronousUploadBlockDepth;
+            _threadState.SynchronousUploadBlockDepth = _previousThreadDepth + 1;
 
-            Interlocked.Increment(ref renderer._synchronousResourceUploadBlockDepth);
+            Interlocked.Increment(ref renderer._openXrBackend.SynchronousResourceUploadBlockDepth);
             renderer.LogSynchronousResourceUploadBlock(reason);
         }
 
@@ -32,11 +28,10 @@ public unsafe partial class VulkanRenderer
                 return;
 
             _disposed = true;
-            _threadSynchronousResourceUploadBlockRenderer = _previousThreadRenderer;
-            _threadSynchronousResourceUploadBlockDepth = _previousThreadDepth;
+            _threadState.SynchronousUploadBlockDepth = _previousThreadDepth;
 
-            if (Interlocked.Decrement(ref _renderer._synchronousResourceUploadBlockDepth) < 0)
-                Volatile.Write(ref _renderer._synchronousResourceUploadBlockDepth, 0);
+            if (Interlocked.Decrement(ref _renderer._openXrBackend.SynchronousResourceUploadBlockDepth) < 0)
+                Volatile.Write(ref _renderer._openXrBackend.SynchronousResourceUploadBlockDepth, 0);
         }
     }
 }

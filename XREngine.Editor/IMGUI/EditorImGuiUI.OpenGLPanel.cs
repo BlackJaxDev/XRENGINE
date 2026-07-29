@@ -6,8 +6,6 @@ using System.Numerics;
 using System.Globalization;
 using XREngine;
 using XREngine.Rendering;
-using XREngine.Rendering.OpenGL;
-using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 
 namespace XREngine.Editor;
@@ -16,7 +14,6 @@ public static partial class EditorImGuiUI
 {
         private static readonly List<OpenGLApiObjectRow> _openGlApiObjectScratch = new();
         private static GenericRenderObject? _selectedOpenGlRenderObject;
-        private static AbstractRenderAPIObject? _selectedOpenGlApiObject;
         private static string _openGlApiSearch = string.Empty;
         private static string? _openGlWindowFilter;
         private static string? _openGlApiBackendFilter;
@@ -38,7 +35,6 @@ public static partial class EditorImGuiUI
                 string xrName,
                 nint handle,
                 GenericRenderObject renderObject,
-                AbstractRenderAPIObject apiObject,
                 string? pipelineName)
             {
                 ApiBackend = apiBackend;
@@ -49,7 +45,6 @@ public static partial class EditorImGuiUI
                 XrName = xrName;
                 Handle = handle;
                 RenderObject = renderObject;
-                ApiObject = apiObject;
                 PipelineName = pipelineName;
             }
 
@@ -61,7 +56,6 @@ public static partial class EditorImGuiUI
             public string XrName { get; }
             public nint Handle { get; }
             public GenericRenderObject RenderObject { get; }
-            public AbstractRenderAPIObject ApiObject { get; }
             public string? PipelineName { get; }
         }
 
@@ -261,7 +255,6 @@ public static partial class EditorImGuiUI
                         xrName,
                         apiObject.GetHandle(),
                         renderObject,
-                        apiObject,
                         pipelineName));
                 }
             }
@@ -459,13 +452,9 @@ public static partial class EditorImGuiUI
                                 SetInspectorStandaloneTarget(capturedRow.RenderObject, $"{capturedRow.XrName} ({capturedRow.XrType})", () =>
                                 {
                                     if (ReferenceEquals(_selectedOpenGlRenderObject, capturedRow.RenderObject))
-                                    {
                                         _selectedOpenGlRenderObject = null;
-                                        _selectedOpenGlApiObject = null;
-                                    }
                                 });
                                 _selectedOpenGlRenderObject = capturedRow.RenderObject;
-                                _selectedOpenGlApiObject = capturedRow.ApiObject;
                                 selectionVisible = true;
                                 isSelected = true;
                             }
@@ -503,7 +492,6 @@ public static partial class EditorImGuiUI
                 if (ReferenceEquals(_inspectorStandaloneTarget, _selectedOpenGlRenderObject))
                     ClearInspectorStandaloneTarget();
                 _selectedOpenGlRenderObject = null;
-                _selectedOpenGlApiObject = null;
             }
 
             rows.Clear();

@@ -3,15 +3,13 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
-using System.IO;
 using System.Numerics;
 using System.Text;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
-using XREngine.Rendering.OpenGL;
 using static XREngine.Rendering.XRRenderProgram;
-using LinkSnapshot = XREngine.Rendering.OpenGL.OpenGLRenderer.GLRenderProgram.LinkDiagnosticsSnapshot;
+using LinkSnapshot = XREngine.Rendering.ShaderProgramLinkDiagnosticsSnapshot;
 
 namespace XREngine.Editor;
 
@@ -26,7 +24,7 @@ public static partial class EditorImGuiUI
     private static bool _shaderProgramLinksSortDescending = true;
     private static string _shaderProgramLinksSearch = string.Empty;
     private static ShaderProgramLinksSortMode _shaderProgramLinksSortMode = ShaderProgramLinksSortMode.State;
-    private static OpenGLRenderer.GLRenderProgram? _selectedShaderProgramLinkProgram;
+    private static string? _selectedShaderProgramLinkKey;
     private const int ShaderProgramLinksDefaultSampleIntervalIndex = 4;
     private const int ShaderProgramLinksMaxRowsPerPassiveCapture = 2048;
     private static readonly double[] _shaderProgramLinksSampleIntervalsSeconds = [0.10, 0.25, 0.50, 1.00, 2.00];
@@ -46,6 +44,7 @@ public static partial class EditorImGuiUI
     private static readonly List<ShaderProgramLinkRow> _frozenShaderProgramLinkRows = [];
     private static readonly List<ShaderProgramLinkRow> _shaderProgramLinkVisibleRows = [];
     private static readonly List<ShaderProgramLinkGroup> _shaderProgramLinkVisibleGroups = [];
+    private static readonly List<ShaderProgramLinkDiagnostic> _shaderProgramLinkDiagnosticScratch = [];
 
     private enum ShaderProgramLinksSortMode
     {
@@ -63,8 +62,7 @@ public static partial class EditorImGuiUI
         string WindowTitle,
         string RendererName,
         string XrName,
-        OpenGLRenderer Renderer,
-        OpenGLRenderer.GLRenderProgram Program,
+        string SelectionKey,
         LinkSnapshot Snapshot,
         bool IsPending,
         bool IsPreparedOnly,
@@ -272,19 +270,21 @@ public static partial class EditorImGuiUI
 
         foreach (XRWindow? window in RuntimeEngine.Windows)
         {
-            if (window?.Renderer is not OpenGLRenderer renderer)
+            if (window?.Renderer is not IRuntimeRendererHost renderer ||
+                !renderer.TryGetBackendCapability<IShaderProgramLinkDiagnosticsBackendCapability>(
+                    out var diagnostics) ||
+                diagnostics is null)
+            {
                 continue;
+            }
 
             string windowTitle = GetShaderProgramLinkWindowTitle(window);
-            foreach (var pair in renderer.RenderObjectCache)
+            List<ShaderProgramLinkDiagnostic> capturedDiagnostics = _shaderProgramLinkDiagnosticScratch;
+            capturedDiagnostics.Clear();
+            diagnostics.CaptureShaderProgramLinkDiagnostics(capturedDiagnostics);
+            foreach (ShaderProgramLinkDiagnostic diagnostic in capturedDiagnostics)
             {
-                if (pair.Key is not XRRenderProgram xrProgram ||
-                    pair.Value is not OpenGLRenderer.GLRenderProgram glProgram)
-                {
-                    continue;
-                }
-
-                LinkSnapshot snapshot = glProgram.GetLinkDiagnosticsSnapshot();
+                LinkSnapshot snapshot = diagnostic.Snapshot;
                 programCount++;
                 if (IsShaderProgramPending(snapshot))
                     pending++;
@@ -319,17 +319,16 @@ public static partial class EditorImGuiUI
                 {
                     rows.Add(CreateShaderProgramLinkRow(
                         windowTitle,
-                        "OpenGL",
-                        xrProgram,
-                        renderer,
-                        glProgram,
-                        snapshot));
+                        renderer.BackendId.Value,
+                        in diagnostic));
                 }
                 else
                 {
                     skippedRows++;
                 }
             }
+
+            capturedDiagnostics.Clear();
         }
 
         SortShaderProgramLinkRows(rows);
@@ -385,11 +384,9 @@ public static partial class EditorImGuiUI
     private static ShaderProgramLinkRow CreateShaderProgramLinkRow(
         string windowTitle,
         string rendererName,
-        XRRenderProgram xrProgram,
-        OpenGLRenderer renderer,
-        OpenGLRenderer.GLRenderProgram program,
-        LinkSnapshot snapshot)
+        in ShaderProgramLinkDiagnostic diagnostic)
     {
+        LinkSnapshot snapshot = diagnostic.Snapshot;
         bool isPending = IsShaderProgramPending(snapshot);
         bool isQueued = IsShaderProgramQueued(snapshot);
         bool isFailed = IsShaderProgramFailed(snapshot);
@@ -398,20 +395,20 @@ public static partial class EditorImGuiUI
         bool usesSharedContext = UsesSharedContext(snapshot);
         bool usesBinaryCache = UsesBinaryCache(snapshot);
         bool usesSynchronousRenderThread = UsesSynchronousRenderThread(snapshot);
-        string xrName = GetShaderProgramDisplayName(xrProgram);
-        string programName = ResolveShaderProgramDisplayName(xrProgram, snapshot, xrName);
-        string programUse = ResolveShaderProgramUse(programName, xrProgram, snapshot);
-        string shaderSource = BuildShaderProgramSourceSummary(xrProgram);
+        string xrName = diagnostic.LogicalProgramName;
+        string programName = diagnostic.ProgramName;
+        string programUse = diagnostic.ProgramUse;
+        string shaderSource = diagnostic.ShaderSourceSummary;
         string backendText = snapshot.ActiveBuildBackend ?? snapshot.BackendName ?? snapshot.LastBuildBackend ?? "-";
         string detailText = snapshot.BackendDetail ?? snapshot.LastBuildFailureReason ?? snapshot.BackendFailureReason ?? "-";
         ulong displayHash = snapshot.Hash != 0 ? snapshot.Hash : snapshot.PreparedHash;
+        string selectionKey = BuildShaderProgramSelectionKey(windowTitle, in snapshot);
 
         return new ShaderProgramLinkRow(
             windowTitle,
             rendererName,
             xrName,
-            renderer,
-            program,
+            selectionKey,
             snapshot,
             isPending,
             isPreparedOnly,
@@ -460,55 +457,19 @@ public static partial class EditorImGuiUI
         return $"Window 0x{window.GetHashCode():X}";
     }
 
-    private static string GetShaderProgramDisplayName(XRRenderProgram program)
-        => !string.IsNullOrWhiteSpace(program.Name)
-            ? program.Name!
-            : program.GetType().Name;
-
-    private static string ResolveShaderProgramDisplayName(XRRenderProgram program, LinkSnapshot snapshot, string xrName)
-    {
-        if (!string.IsNullOrWhiteSpace(program.Name))
-            return program.Name!;
-
-        string? telemetryName = snapshot.ProgramName;
-        if (!string.IsNullOrWhiteSpace(telemetryName) && !telemetryName.StartsWith("<unnamed ", StringComparison.Ordinal))
-            return telemetryName;
-
-        string sourceSummary = BuildShaderProgramSourceSummary(program);
-        if (!string.IsNullOrWhiteSpace(sourceSummary) && sourceSummary != "-")
-            return string.Concat(GetShaderStageTopology(program, snapshot), ":", sourceSummary);
-
-        return string.IsNullOrWhiteSpace(telemetryName) ? xrName : telemetryName;
-    }
-
-    private static string ResolveShaderProgramUse(string programName, XRRenderProgram program, LinkSnapshot snapshot)
-    {
-        // Prefer the rich UsageTag set by the program's creator (mesh renderer / material) when available.
-        // It encodes which mesh variant + pass the program is for, which is what engineers want to see
-        // when scanning hundreds of thousands of programs in the panel.
-        if (!string.IsNullOrWhiteSpace(program.UsageTag))
-            return program.UsageTag!;
-
-        if (programName.StartsWith("MaterialPipelineVariant:", StringComparison.Ordinal))
-            return "Material fragment variant";
-        if (programName.StartsWith("MaterialPipeline:", StringComparison.Ordinal))
-            return "Material fragment pipeline";
-        if (programName.StartsWith("SeparatedVertex:", StringComparison.Ordinal))
-            return "Mesh vertex pipeline";
-        if (programName.StartsWith("Combined:", StringComparison.Ordinal))
-            return "Mesh combined program";
-
-        if (snapshot.ShaderStages.Contains("Compute", StringComparison.OrdinalIgnoreCase))
-            return "Compute dispatch";
-        if (program.Separable && snapshot.ShaderStages.Contains("Fragment", StringComparison.OrdinalIgnoreCase))
-            return "Fragment pipeline stage";
-        if (snapshot.ShaderStages.Contains("Vertex", StringComparison.OrdinalIgnoreCase))
-            return "Vertex/mesh draw stage";
-        if (snapshot.ShaderStages.Contains("Fragment", StringComparison.OrdinalIgnoreCase))
-            return "Fragment draw stage";
-
-        return "Shader program";
-    }
+    private static string BuildShaderProgramSelectionKey(
+        string windowTitle,
+        in LinkSnapshot snapshot)
+        => string.Concat(
+            windowTitle,
+            "\u001F",
+            BuildShaderProgramGroupKey(snapshot),
+            "\u001F",
+            snapshot.ProgramId.ToString(CultureInfo.InvariantCulture),
+            "\u001F",
+            snapshot.ReplacementProgramId.ToString(CultureInfo.InvariantCulture),
+            "\u001F",
+            snapshot.ProgramName);
 
     private static string BuildShaderProgramGroupKey(LinkSnapshot snapshot)
     {
@@ -536,44 +497,6 @@ public static partial class EditorImGuiUI
             snapshot.ShaderStages,
             ":",
             snapshot.Separable ? "sep" : "mono");
-    }
-
-    private static string BuildShaderProgramSourceSummary(XRRenderProgram program)
-    {
-        var builder = new StringBuilder(96);
-        foreach (XRShader shader in program.Shaders)
-        {
-            if (shader is null)
-                continue;
-
-            if (builder.Length > 0)
-                builder.Append(", ");
-
-            builder.Append(shader.Type).Append(':').Append(GetShaderProgramShaderName(shader));
-        }
-
-        return builder.Length == 0 ? "-" : builder.ToString();
-    }
-
-    private static string GetShaderProgramShaderName(XRShader shader)
-    {
-        if (!string.IsNullOrWhiteSpace(shader.Name))
-            return shader.Name!;
-        if (!string.IsNullOrWhiteSpace(shader.FilePath))
-            return Path.GetFileName(shader.FilePath);
-        string? sourcePath = shader.Source?.FilePath;
-        if (!string.IsNullOrWhiteSpace(sourcePath))
-            return Path.GetFileName(sourcePath);
-        return shader.GetType().Name;
-    }
-
-    private static string GetShaderStageTopology(XRRenderProgram program, LinkSnapshot snapshot)
-    {
-        if (!string.IsNullOrWhiteSpace(snapshot.ShaderStages) && snapshot.ShaderStages != "-")
-            return snapshot.ShaderStages;
-
-        EProgramStageMask mask = program.GetShaderTypeMask();
-        return mask == EProgramStageMask.None ? "Unknown" : mask.ToString();
     }
 
     private static double GetShaderProgramLinksSampleIntervalSeconds()
@@ -828,7 +751,7 @@ public static partial class EditorImGuiUI
                 {
                     _selectedShaderProgramLinkGroupKey = group.Key;
                     _shaderProgramLinksSelectedGroup = group;
-                    _selectedShaderProgramLinkProgram = row.Program;
+                    _selectedShaderProgramLinkKey = row.SelectionKey;
                     _shaderProgramLinksSelectedRow = row;
                 }
                 ImGui.PopID();
@@ -880,9 +803,9 @@ public static partial class EditorImGuiUI
     {
         string source = snapshot.HandleSource switch
         {
-            OpenGLRenderer.GLRenderProgram.ELinkedProgramHandleSource.SharedLinkedProgram => "shared",
-            OpenGLRenderer.GLRenderProgram.ELinkedProgramHandleSource.OwnedBinary => "binary",
-            OpenGLRenderer.GLRenderProgram.ELinkedProgramHandleSource.OwnedSource => "source",
+            ShaderProgramLinkHandleSource.SharedLinkedProgram => "shared",
+            ShaderProgramLinkHandleSource.OwnedBinary => "binary",
+            ShaderProgramLinkHandleSource.OwnedSource => "source",
             _ => "none",
         };
 
@@ -946,14 +869,17 @@ public static partial class EditorImGuiUI
             for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++)
             {
                 ShaderProgramLinkRow row = visibleRows[i];
-                bool selected = ReferenceEquals(_selectedShaderProgramLinkProgram, row.Program);
+                bool selected = string.Equals(
+                    _selectedShaderProgramLinkKey,
+                    row.SelectionKey,
+                    StringComparison.Ordinal);
                 ImGui.TableNextRow();
 
                 ImGui.TableSetColumnIndex(0);
                 ImGui.PushID(i);
                 if (ImGui.Selectable(row.ProgramNameCell, selected, ImGuiSelectableFlags.SpanAllColumns))
                 {
-                    _selectedShaderProgramLinkProgram = row.Program;
+                    _selectedShaderProgramLinkKey = row.SelectionKey;
                     _shaderProgramLinksSelectedRow = row;
                 }
                 ImGui.PopID();
@@ -1018,7 +944,7 @@ public static partial class EditorImGuiUI
         if (!_shaderProgramLinksViewDirty && ReferenceEquals(_shaderProgramLinksViewSource, rows))
             return;
 
-        OpenGLRenderer.GLRenderProgram? selectedProgram = _selectedShaderProgramLinkProgram;
+        string? selectedProgramKey = _selectedShaderProgramLinkKey;
         ShaderProgramLinkRow? selectedRow = null;
         ShaderProgramLinkGroup? selectedGroup = null;
         List<ShaderProgramLinkRow> visibleRows = _shaderProgramLinkVisibleRows;
@@ -1031,8 +957,11 @@ public static partial class EditorImGuiUI
         for (int i = 0; i < rows.Count; i++)
         {
             ShaderProgramLinkRow row = rows[i];
-            if (selectedProgram is not null && ReferenceEquals(row.Program, selectedProgram))
+            if (selectedProgramKey is not null &&
+                string.Equals(row.SelectionKey, selectedProgramKey, StringComparison.Ordinal))
+            {
                 selectedRow = row;
+            }
 
             if (PassesShaderProgramLinksFilters(row))
             {
@@ -1203,7 +1132,7 @@ public static partial class EditorImGuiUI
         {
             _selectedShaderProgramLinkGroupKey = null;
             _shaderProgramLinksSelectedGroup = null;
-            _selectedShaderProgramLinkProgram = null;
+            _selectedShaderProgramLinkKey = null;
             _shaderProgramLinksSelectedRow = null;
         }
 
@@ -1261,7 +1190,7 @@ public static partial class EditorImGuiUI
         ImGui.SameLine();
         if (ImGui.SmallButton("Clear Selection"))
         {
-            _selectedShaderProgramLinkProgram = null;
+            _selectedShaderProgramLinkKey = null;
             _shaderProgramLinksSelectedRow = null;
         }
 
@@ -1570,8 +1499,13 @@ public static partial class EditorImGuiUI
     {
         foreach (XRWindow? window in RuntimeEngine.Windows)
         {
-            if (window?.Renderer is OpenGLRenderer renderer)
-                ShaderProgramLifecycleDiagnostics.LogSummary(renderer.GetProgramBinaryUploadSummary());
+            if (window?.Renderer is IRuntimeRendererHost renderer &&
+                renderer.TryGetBackendCapability<IShaderProgramLinkDiagnosticsBackendCapability>(
+                    out var diagnostics) &&
+                diagnostics is not null)
+            {
+                diagnostics.LogShaderProgramLifecycleSummary();
+            }
         }
     }
 }

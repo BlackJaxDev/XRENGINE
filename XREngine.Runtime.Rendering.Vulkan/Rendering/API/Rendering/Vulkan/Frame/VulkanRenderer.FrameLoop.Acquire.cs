@@ -9,12 +9,12 @@ namespace XREngine.Rendering.Vulkan
     {
         private const ulong BlockingAcquireTimeoutNanoseconds = ulong.MaxValue;
         private const ulong InteractiveResizeAcquireTimeoutNanoseconds = 0UL;
-        private const int MaxConsecutiveNotReadyBeforeRecreate = 3;
 
-        private int _consecutiveNotReadyCount;
+        private VulkanDesktopAcquireAvailabilityTracker
+            _desktopAcquireAvailability;
 
         private EDesktopFrameFlow AcquireDesktopSwapchainImage(
-            ref DesktopFrameAttempt attempt)
+            ref VulkanFrameAttempt attempt)
         {
             attempt.ImageIndex = 0;
             attempt.AcquireSemaphore =
@@ -27,6 +27,8 @@ namespace XREngine.Rendering.Vulkan
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.FrameLifecycle.AcquireNextImage"))
             {
+                ThrowIfDesktopFrameFaultInjected(
+                    EVulkanDesktopFrameFaultPoint.Acquire);
                 if (_streamlineFrameGenerationSwapchainActive)
                 {
                     if (!NvidiaDlssManager.Native.TryAcquireProxyNextImage(
@@ -141,7 +143,7 @@ namespace XREngine.Rendering.Vulkan
                         $"Failed to acquire swapchain image ({attempt.AcquireResult}).");
             }
 
-            _consecutiveNotReadyCount = 0;
+            _desktopAcquireAvailability.Reset();
             attempt.AcquireTimelineValue = _graphicsTimelineValue;
             _acquireTimelineValue = attempt.AcquireTimelineValue;
             attempt.PresentSemaphore =
@@ -152,7 +154,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private EDesktopFrameFlow HandleDesktopAcquireUnavailable(
-            ref DesktopFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             in VulkanDesktopAcquireOutcome outcome)
         {
             EDesktopFrameReason reason = outcome.Reason switch
@@ -164,6 +166,10 @@ namespace XREngine.Rendering.Vulkan
                 _ => throw new InvalidOperationException(
                     $"Unexpected acquire-unavailable policy {outcome.Reason}."),
             };
+            bool shouldRecreate =
+                _desktopAcquireAvailability.ObserveUnavailable(
+                    attempt.InteractiveResize,
+                    out int observedCount);
 
             if (attempt.InteractiveResize)
             {
@@ -179,16 +185,14 @@ namespace XREngine.Rendering.Vulkan
                 return EDesktopFrameFlow.Stop;
             }
 
-            _consecutiveNotReadyCount++;
-            if (_consecutiveNotReadyCount >= MaxConsecutiveNotReadyBeforeRecreate)
+            if (shouldRecreate)
             {
                 Debug.VulkanWarningEvery(
                     $"Vulkan.Frame.{GetHashCode()}.AcquireNotReady.Recreate",
                     TimeSpan.FromSeconds(1),
                     "[Vulkan] AcquireNextImage returned {0} {1} consecutive times. Recreating swapchain to recover.",
                     attempt.AcquireResult,
-                    _consecutiveNotReadyCount);
-                _consecutiveNotReadyCount = 0;
+                    observedCount);
                 TryRecreateSwapchainNow(
                     "Persistent acquire unavailability after failed frame");
                 attempt.Stop(
@@ -202,8 +206,9 @@ namespace XREngine.Rendering.Vulkan
                 TimeSpan.FromSeconds(1),
                 "[Vulkan] AcquireNextImage returned {0} ({1}/{2}). Skipping this frame.",
                 attempt.AcquireResult,
-                _consecutiveNotReadyCount,
-                MaxConsecutiveNotReadyBeforeRecreate);
+                observedCount,
+                VulkanDesktopAcquireAvailabilityTracker
+                    .DefaultRecreateThreshold);
             attempt.Stop(reason);
             return EDesktopFrameFlow.Stop;
         }

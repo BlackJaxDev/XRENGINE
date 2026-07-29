@@ -7,16 +7,12 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private readonly record struct RetiredPipelineLayout(
+    internal readonly record struct RetiredPipelineLayout(
         PipelineLayout PipelineLayout,
         VulkanRetirementTicket Ticket,
         string Owner);
 
     private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, string> _livePipelineLayoutHandles = new();
-    private readonly List<RetiredPipelineLayout>[] _retiredPipelineLayouts = [new(), new()];
-    private readonly HashSet<ulong>[] _retiredPipelineLayoutHandles = [new(), new()];
-    private readonly HashSet<ulong> _retiredPipelineLayoutHandlesAll = new();
-
     internal void TrackLivePipelineLayout(PipelineLayout pipelineLayout, string owner = "unknown")
     {
         if (pipelineLayout.Handle != 0)
@@ -37,9 +33,9 @@ public unsafe partial class VulkanRenderer
                 ObjectType.PipelineLayout,
                 pipelineLayout.Handle,
                 owner);
-            lock (_retiredResourceLock)
+            lock (_resourceRetirementQueue.SyncRoot)
             {
-                if (_retiredPipelineLayoutHandlesAll.Contains(pipelineLayout.Handle))
+                if (_resourceRetirementQueue.AllPipelineLayoutHandles.Contains(pipelineLayout.Handle))
                 {
                     _livePipelineLayoutHandles[pipelineLayout.Handle] = trackedOwner ?? owner;
                     return false;
@@ -50,12 +46,12 @@ public unsafe partial class VulkanRenderer
             {
                 _livePipelineLayoutHandles[pipelineLayout.Handle] = trackedOwner ?? owner;
                 int frameSlot = CurrentDesktopFrameSlot;
-                lock (_retiredResourceLock)
+                lock (_resourceRetirementQueue.SyncRoot)
                 {
-                    if (_retiredPipelineLayoutHandlesAll.Add(pipelineLayout.Handle))
+                    if (_resourceRetirementQueue.AllPipelineLayoutHandles.Add(pipelineLayout.Handle))
                     {
-                        _retiredPipelineLayoutHandles[frameSlot].Add(pipelineLayout.Handle);
-                        _retiredPipelineLayouts[frameSlot].Add(new RetiredPipelineLayout(
+                        _resourceRetirementQueue.PipelineLayoutHandles[frameSlot].Add(pipelineLayout.Handle);
+                        _resourceRetirementQueue.PipelineLayouts[frameSlot].Add(new RetiredPipelineLayout(
                             pipelineLayout,
                             ticket,
                             trackedOwner ?? owner));
@@ -96,9 +92,9 @@ public unsafe partial class VulkanRenderer
 
         RetiredPipelineLayout[] retired;
         int remaining;
-        lock (_retiredResourceLock)
+        lock (_resourceRetirementQueue.SyncRoot)
         {
-            List<RetiredPipelineLayout> list = _retiredPipelineLayouts[frameSlot];
+            List<RetiredPipelineLayout> list = _resourceRetirementQueue.PipelineLayouts[frameSlot];
             int capacity = GetRetiredResourceDrainCount(list.Count, maxItems);
             if (capacity == 0)
                 return;
@@ -115,8 +111,8 @@ public unsafe partial class VulkanRenderer
 
                 ready.Add(candidate);
                 list.RemoveAt(i);
-                _retiredPipelineLayoutHandles[frameSlot].Remove(candidate.PipelineLayout.Handle);
-                _retiredPipelineLayoutHandlesAll.Remove(candidate.PipelineLayout.Handle);
+                _resourceRetirementQueue.PipelineLayoutHandles[frameSlot].Remove(candidate.PipelineLayout.Handle);
+                _resourceRetirementQueue.AllPipelineLayoutHandles.Remove(candidate.PipelineLayout.Handle);
                 _livePipelineLayoutHandles.TryRemove(candidate.PipelineLayout.Handle, out _);
             }
 

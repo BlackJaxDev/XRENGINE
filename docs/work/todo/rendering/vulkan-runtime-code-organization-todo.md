@@ -1,10 +1,15 @@
 # Vulkan Runtime Code Organization TODO
 
-Last updated: 2026-07-16
+Last updated: 2026-07-29
 
 Owner: Rendering / Vulkan
 
-Status: Proposed
+Status: In progress
+
+Checklist reconciled against the integrated source and validation evidence on
+2026-07-29. Checked items have concrete implementation or recorded validation;
+acceptance and runtime gates remain unchecked when extraction is partial or
+hardware/performance validation has not run.
 
 Related documentation and work:
 
@@ -16,9 +21,10 @@ Related documentation and work:
 - [Vulkan Primary Command Recording Fast Path TODO](optimization/vulkan-primary-command-recording-fast-path-todo.md)
 - [Vulkan Dynamic Rendering Migration TODO](vulkan-dynamic-rendering-migration-todo.md)
 - [Render Pipeline Resource Lifecycle TODO](render-pipeline-resource-lifecycle-todo.md)
-- [OpenGL And Vulkan Rendering Hot Reload TODO](rendering-backend-hot-reload-todo.md)
+- [OpenGL And Vulkan Rendering Hot Reload TODO](../COMPLETED/rendering-backend-hot-reload-todo.md)
 - [OpenXR Runtime Code Organization TODO](vr/openxr-runtime-code-organization-todo.md)
 - [Backend Renderer Folder Organization TODO](../COMPLETED/backend-renderer-folder-organization-todo.md)
+- [Vulkan Runtime Code Organization Progress](../../progress/rendering/vulkan-runtime-code-organization-progress-2026-07-29.md)
 
 ## Goal
 
@@ -41,7 +47,7 @@ workspaces rather than per-frame dependency-injection objects, delegate
 pipelines, LINQ, or interface dispatch inside per-operation loops.
 
 This work must also preserve the module boundary required by the
-[OpenGL And Vulkan Rendering Hot Reload TODO](rendering-backend-hot-reload-todo.md):
+[OpenGL And Vulkan Rendering Hot Reload TODO](../COMPLETED/rendering-backend-hot-reload-todo.md):
 the complete Vulkan implementation will ultimately compile from
 `XREngine.Runtime.Rendering.Vulkan.dll`, below the stable backend-neutral
 `XREngine.Runtime.Rendering.dll`. Extracted Vulkan subsystem owners must not
@@ -74,6 +80,35 @@ The two plans should be implemented as coordinated work:
   coordinator rather than duplicated inside it.
 - Progress and validation evidence for the desktop-frame work should update
   both plans when a change satisfies acceptance criteria in each document.
+
+## Phase 4 Leaf-Assembly Coordination
+
+The Phase 4 assembly boundary is now settled:
+
+- The complete implementation remains under
+  `XREngine.Runtime.Rendering.Vulkan`, below the backend-neutral
+  `XREngine.Runtime.Rendering` kernel. Future owner extraction and file moves
+  in this plan must remain within that leaf assembly.
+- `WindowRenderCallback` is currently an 89-line coordinator over focused,
+  typed frame-loop partials. Those partials are the accepted intermediate
+  source layout until this plan extracts `VulkanDesktopFrameCoordinator` and
+  the surrounding subsystem owners.
+- Acquire-unavailability policy and deterministic phase-fault state are already
+  separate internal owners (`VulkanDesktopAcquireAvailabilityTracker` and
+  `VulkanDesktopFrameFaultInjectionState`). Future subsystem extraction should
+  preserve those allocation-free owners instead of folding them into a new
+  coordinator monolith or replacing them with per-frame delegates.
+- The leaf registers through `IRendererBackendModuleEntry` and stable module
+  factory/capability contracts shared by static production/AOT composition and
+  editor collectible loading. Reorganization must preserve that entry contract
+  and must not add reflection-only production discovery.
+- Concrete Vulkan types, exceptions, callbacks, workers, `Type` objects, and
+  native handles must not escape into stable-kernel, Editor, or application
+  long-lived state. New subsystem APIs should expose backend-neutral copied
+  data or stable capabilities where a consumer boundary is required.
+- This plan must not reintroduce project references from Runtime.Rendering,
+  Editor, `XRENGINE`, Server, or VRClient to the Vulkan leaf. Bootstrap remains
+  the explicit static composition root.
 
 ## Audit Snapshot
 
@@ -331,98 +366,98 @@ contract it expresses.
 
 ## Phase 0 - Make Structural Refactoring Safe
 
-- [ ] Record the base commit and dirty-worktree state before implementation.
-- [ ] Inventory tests, scripts, and docs that reference exact Vulkan source
+- [x] Record the base commit and dirty-worktree state before implementation.
+- [x] Inventory tests, scripts, and docs that reference exact Vulkan source
   paths or nested `VulkanRenderer` type names.
-- [ ] Add a shared test helper that discovers Vulkan source recursively for
+- [x] Add a shared test helper that discovers Vulkan source recursively for
   structural assertions that cannot yet be replaced.
 - [ ] Replace exact-path and source-text assertions with behavioral, policy,
   or internal API tests where practical.
-- [ ] Capture a baseline runtime-rendering build and the narrowest relevant
+- [x] Capture a baseline runtime-rendering build and the narrowest relevant
   Vulkan tests.
-- [ ] Update stale source counts and frame-loop descriptions in
+- [x] Update stale source counts and frame-loop descriptions in
   `vulkan-renderer.md`, or remove counts that cannot remain accurate.
-- [ ] Record public and internal Vulkan types consumed outside
+- [x] Record public and internal Vulkan types consumed outside
   `XREngine.Runtime.Rendering` before de-nesting or renaming them.
-- [ ] Identify active work that overlaps command recording, resource planning,
+- [x] Identify active work that overlaps command recording, resource planning,
   frame lifetime, OpenXR, or mesh rendering and establish merge order.
 
 Acceptance criteria:
 
 - [ ] Moving a Vulkan method between files does not fail a test solely because
   the path changed.
-- [ ] External consumers of nested Vulkan types are known.
-- [ ] Baseline build/test results and pre-existing failures are recorded.
+- [x] External consumers of nested Vulkan types are known.
+- [x] Baseline build/test results and pre-existing failures are recorded.
 
 ## Phase 1 - Correct Mechanical Organization Debt
 
 Keep behavior and namespaces unchanged in this phase.
 
-- [ ] Remove the empty `Pipelines/VulkanRenderer.GraphicsPipeline.cs` partial.
-- [ ] Remove or revive the comment-only
+- [x] Remove the empty `Pipelines/VulkanRenderer.GraphicsPipeline.cs` partial.
+- [x] Remove or revive the comment-only
   `Resources/Buffers/VulkanRenderer.UniformBuffers.cs` file.
-- [ ] Move the excluded/commented ray-tracing prototype out of compiled-source
+- [x] Move the excluded/commented ray-tracing prototype out of compiled-source
   organization or replace it with a durable design note.
-- [ ] Rename `VKSampler.cs` to `VkSampler.cs` for normal C# acronym casing.
-- [ ] Replace vague phase/scratch file names such as
+- [x] Rename `VKSampler.cs` to `VkSampler.cs` for normal C# acronym casing.
+- [x] Replace vague phase/scratch file names such as
   `DeviceLossDiagnostics.Phase1.cs` with responsibility names.
 - [ ] Move renderer-global frame-operation queue/signature behavior out of
   `VkMeshRenderer.cs` and into `Commands/FrameOps/`.
-- [ ] Move renderer-global allocation and image tracking out of
+- [x] Move renderer-global allocation and image tracking out of
   `VkDataBuffer.cs` into `Resources/`.
-- [ ] Move planner/allocator/barrier state out of
+- [x] Move planner/allocator/barrier state out of
   `Commands/VulkanRenderer.StateTracking.cs` into `RenderGraph/` and
   `Resources/` owners.
-- [ ] Move the backend-object factory out of `FrameLoop.cs`.
+- [x] Move the backend-object factory out of `FrameLoop.cs`.
 - [ ] Move readback and pixel decoding out of `VulkanRenderer.Blit.cs`.
-- [ ] Move `VkTransformFeedback` to its runtime owner.
-- [ ] Split multi-type files so every top-level type has a matching file name.
+- [x] Move `VkTransformFeedback` to its runtime owner.
+- [x] Split multi-type files so every top-level type has a matching file name.
 - [ ] Replace `Records/Classes`, `Records/Structs`, and `Enums` groupings with
   domain folders.
-- [ ] Update local folder README contracts after the corrected moves.
+- [x] Update local folder README contracts after the corrected moves.
 
 Acceptance criteria:
 
 - [ ] Files comply with their folder contracts.
 - [ ] No production file contains unrelated renderer-global behavior before or
   after its named backend wrapper.
-- [ ] Every touched top-level type follows the one-type-per-file rule.
-- [ ] The runtime-rendering project builds without new warnings.
+- [x] Every touched top-level type follows the one-type-per-file rule.
+- [x] The runtime-rendering project builds without new warnings.
 
 ## Phase 2 - De-Nest Backend Contracts And Establish A Renderer Registry
 
-- [ ] Inventory nested Vulkan wrapper, key, context, and diagnostic types.
+- [x] Inventory nested Vulkan wrapper, key, context, and diagnostic types.
 - [ ] Move independently meaningful types to namespace-level `internal` types
   in domain folders.
 - [ ] Update external consumers to use intentional contracts rather than
   `VulkanRenderer.SomeType` names.
-- [ ] Introduce a per-renderer backend-object registry owned by the Vulkan
+- [x] Introduce a per-renderer backend-object registry owned by the Vulkan
   device/resource context.
-- [ ] Remove or constrain generic static caches that can cross renderer or
+- [x] Remove or constrain generic static caches that can cross renderer or
   device ownership boundaries.
-- [ ] Introduce a per-renderer binding allocator where descriptor or binding
+- [x] Introduce a per-renderer binding allocator where descriptor or binding
   identity currently depends on renderer-wide state.
-- [ ] Preserve explicit ownership for imported/external handles.
-- [ ] Add tests covering two renderer/device contexts so caches cannot leak
+- [x] Preserve explicit ownership for imported/external handles.
+- [x] Add tests covering two renderer/device contexts so caches cannot leak
   wrappers, bindings, or lifetime state between them.
 
 Acceptance criteria:
 
 - [ ] Backend wrappers no longer require nesting for access to renderer state.
-- [ ] Object identity and cache lifetime are scoped to one renderer/device.
+- [x] Object identity and cache lifetime are scoped to one renderer/device.
 - [ ] No backend object retains the full renderer solely as a service locator.
 
 ## Phase 3 - Extract Device And Capability Ownership
 
-- [ ] Split logical-device capability query from enablement policy.
-- [ ] Introduce an immutable `VulkanDeviceCapabilities` snapshot.
-- [ ] Extract feature/extension-chain construction into a device builder.
-- [ ] Extract device extension-function loading from device creation.
-- [ ] Extract queue-family and queue-handle ownership into the device context.
-- [ ] Extract capability reporting and diagnostics from creation policy.
-- [ ] Make enabled capabilities, required capabilities, and optional fallbacks
+- [x] Split logical-device capability query from enablement policy.
+- [x] Introduce an immutable `VulkanDeviceCapabilities` snapshot.
+- [x] Extract feature/extension-chain construction into a device builder.
+- [x] Extract device extension-function loading from device creation.
+- [x] Extract queue-family and queue-handle ownership into the device context.
+- [x] Extract capability reporting and diagnostics from creation policy.
+- [x] Make enabled capabilities, required capabilities, and optional fallbacks
   distinguishable in logs and APIs.
-- [ ] Preserve existing device-loss state-machine and first-error behavior.
+- [x] Preserve existing device-loss state-machine and first-error behavior.
 
 Acceptance criteria:
 
@@ -433,48 +468,48 @@ Acceptance criteria:
 
 ## Phase 4 - Extract Resource, Upload, And Lifetime Services
 
-- [ ] Introduce `VulkanResourceLifetimeTracker` as the sole authority for
+- [x] Introduce `VulkanResourceLifetimeTracker` as the sole authority for
   resource-use publication and deferred destruction.
-- [ ] Introduce a focused retirement queue driven by completed timeline/fence
+- [x] Introduce a focused retirement queue driven by completed timeline/fence
   observations.
-- [ ] Separate image allocation from image-view and sampler caches.
-- [ ] Separate imported/external image ownership from engine-owned allocation.
-- [ ] Separate upload scheduling, staging allocation, transfer recording, and
+- [x] Separate image allocation from image-view and sampler caches.
+- [x] Separate imported/external image ownership from engine-owned allocation.
+- [x] Separate upload scheduling, staging allocation, transfer recording, and
   upload publication.
-- [ ] Split `VkImageBackedTexture` into lifecycle, imported upload, view cache,
+- [x] Split `VkImageBackedTexture` into lifecycle, imported upload, view cache,
   sampler, layout, transfer, event, and mipmap responsibilities.
-- [ ] Split `VkDataBuffer` wrapper state from renderer-level buffer operations.
-- [ ] Ensure command recording never performs unplanned persistent-resource
+- [x] Split `VkDataBuffer` wrapper state from renderer-level buffer operations.
+- [x] Ensure command recording never performs unplanned persistent-resource
   allocation.
-- [ ] Document exactly-once retirement and destruction invariants.
+- [x] Document exactly-once retirement and destruction invariants.
 
 Acceptance criteria:
 
-- [ ] Resource destruction has one traceable path.
+- [x] Resource destruction has one traceable path.
 - [ ] Wrapper disposal does not require broad renderer-state mutation.
 - [ ] Steady-state recording and frame submission introduce no new allocations.
 - [ ] Existing resource-lifecycle tests and targeted Vulkan tests pass.
 
 ## Phase 5 - Consolidate The Render Graph
 
-- [ ] Introduce a typed `VulkanResourceBindingKey` that parses and owns the
+- [x] Introduce a typed `VulkanResourceBindingKey` that parses and owns the
   current texture/framebuffer/buffer binding grammar.
 - [ ] Remove duplicated binding-name parsing and prefix checks.
 - [ ] Split compiler/cache, frame-operation sorting, swapchain-context
   resolution, secondary-recording buckets, and attachment compatibility into
   focused compilation/scheduling types.
-- [ ] Make metadata revision or immutable metadata identity part of compiler
+- [x] Make metadata revision or immutable metadata identity part of compiler
   cache validity.
 - [ ] Replace scratch-list-returning APIs with an explicit borrowed-workspace
   contract or caller-provided destination.
 - [ ] Separate barrier usage collection and Vulkan mapping from plan building.
-- [ ] Make the barrier builder return an immutable `VulkanBarrierPlan`.
+- [x] Make the barrier builder return an immutable `VulkanBarrierPlan`.
 - [ ] Extract planner context capture, generation transaction, registry merge,
   physical allocation, temporal history, graph rebuild, and validation from
   `VulkanRenderer.ResourcePlannerState.cs`.
-- [ ] Introduce `VulkanRenderGraphRuntime` or
+- [x] Introduce `VulkanRenderGraphRuntime` or
   `VulkanResourcePlanCoordinator` as the state owner.
-- [ ] Make graph build produce one immutable, versioned
+- [x] Make graph build produce one immutable, versioned
   `VulkanRenderGraphPlan` consumed by recording and execution.
 - [ ] Confirm whether currently isolated helpers such as swapchain-context
   coalescing are required, then connect or remove them.
@@ -483,18 +518,18 @@ Acceptance criteria:
 
 - [ ] Compilation, planning, synchronization, and execution have distinct
   owners and one-way dependencies.
-- [ ] Cached plans cannot survive an unrepresented metadata revision.
+- [x] Cached plans cannot survive an unrepresented metadata revision.
 - [ ] Resource binding syntax is defined and parsed in one place.
 - [ ] Recording consumes immutable plan data without renderer-global planner
   reads.
 
 ## Phase 6 - Extract Command Scheduling And Recording
 
-- [ ] Separate primary command-buffer cache/allocation from recording policy.
-- [ ] Introduce `VulkanCommandScheduler` for command-chain ordering,
+- [x] Separate primary command-buffer cache/allocation from recording policy.
+- [x] Introduce `VulkanCommandScheduler` for command-chain ordering,
   parallel-recording buckets, and cache reuse decisions.
-- [ ] Introduce `VulkanCommandRecorder` for Vulkan command emission.
-- [ ] Add `VulkanCommandRecordingContext` and capture all frame/view/settings
+- [x] Introduce `VulkanCommandRecorder` for Vulkan command emission.
+- [x] Add `VulkanCommandRecordingContext` and capture all frame/view/settings
   inputs before dispatch.
 - [ ] Replace thread-static recording state with context fields or explicitly
   scoped reusable workspaces.
@@ -503,12 +538,12 @@ Acceptance criteria:
 - [ ] Split frame-operation dispatch into cohesive per-domain recorder methods
   or types.
 - [ ] Extract barrier emission and transfer/upload recording.
-- [ ] Separate recording diagnostics from recording policy.
+- [x] Separate recording diagnostics from recording policy.
 - [ ] Decompose `TryRecordCommandBuffer` by named lifecycle phase while keeping
   tightly coupled Vulkan stack structures local.
 - [ ] Decompose `EnsureCommandBufferRecorded` into cache validation, scheduling,
   recording, and publication operations.
-- [ ] Preserve stable queue-operation labels when moving tracked calls.
+- [x] Preserve stable queue-operation labels when moving tracked calls.
 - [ ] Benchmark or instrument allocations before and after extraction.
 
 Acceptance criteria:
@@ -522,20 +557,20 @@ Acceptance criteria:
 
 ## Phase 7 - Decompose Large Backend Wrappers And Shared Services
 
-- [ ] Split `VkMeshRenderer.Descriptors.cs` into allocation/reuse,
+- [x] Split `VkMeshRenderer.Descriptors.cs` into allocation/reuse,
   fingerprints, writes/validation, buffer resolution, image/sampler
   resolution, and uniform resolution.
-- [ ] Extract renderer-global program link queue behavior from
+- [x] Extract renderer-global program link queue behavior from
   `VkRenderProgram`.
-- [ ] Split `VkRenderProgram` into lifecycle, bindings, linking, layouts,
+- [x] Split `VkRenderProgram` into lifecycle, bindings, linking, layouts,
   graphics pipelines, compute descriptors, and compute uniforms.
-- [ ] Consolidate descriptor ownership behind `VulkanDescriptorManager`.
-- [ ] Consolidate graphics/compute pipeline creation and caches behind
+- [x] Consolidate descriptor ownership behind `VulkanDescriptorManager`.
+- [x] Consolidate graphics/compute pipeline creation and caches behind
   `VulkanPipelineManager` without forcing incompatible pipelines into one
   cache model.
-- [ ] Split ImGui input/clipboard integration, GPU resources and rendering,
+- [x] Split ImGui input/clipboard integration, GPU resources and rendering,
   texture registry, and immutable draw snapshots.
-- [ ] Split shader auto-uniform logic into declaration parsing, constant
+- [x] Split shader auto-uniform logic into declaration parsing, constant
   evaluation, std140 layout, and binding rewrite responsibilities.
 - [ ] Keep wrapper APIs small and device/resource-context based.
 
@@ -543,7 +578,7 @@ Acceptance criteria:
 
 - [ ] Each wrapper file has one obvious lifecycle and data owner.
 - [ ] Renderer-global queues and caches do not live inside individual wrappers.
-- [ ] Descriptor and pipeline caches have explicit device lifetime.
+- [x] Descriptor and pipeline caches have explicit device lifetime.
 - [ ] ImGui and shader utilities do not use the renderer as a service locator.
 
 ## Phase 8 - Extract The Desktop Frame Coordinator
@@ -554,20 +589,20 @@ which is the authoritative checklist for this phase, with this document's
 ownership model as the endpoint. Do not mark Phase 8 complete here until the
 focused decomposition TODO's completion criteria are also satisfied.
 
-- [ ] Introduce `VulkanDesktopFrameCoordinator` rather than stopping at more
+- [x] Introduce `VulkanDesktopFrameCoordinator` rather than stopping at more
   stateful `VulkanRenderer` partial files.
-- [ ] Use `VulkanFrameAttempt` and typed phase outcomes.
-- [ ] Centralize post-acquire abort and recovery policy.
-- [ ] Keep acquire, submit, present, completion, and slot-advance ownership
+- [x] Use `VulkanFrameAttempt` and typed phase outcomes.
+- [x] Centralize post-acquire abort and recovery policy.
+- [x] Keep acquire, submit, present, completion, and slot-advance ownership
   explicit.
-- [ ] Expose a narrow thread-safe desktop-frame activity snapshot to OpenXR and
+- [x] Expose a narrow thread-safe desktop-frame activity snapshot to OpenXR and
   diagnostics.
-- [ ] Move unrelated generic renderer APIs out of the frame subsystem.
+- [x] Move unrelated generic renderer APIs out of the frame subsystem.
 
 Acceptance criteria:
 
-- [ ] `WindowRenderCallback` is a short facade delegation or coordinator entry.
-- [ ] Every acquired image and synchronization primitive has an exactly-once
+- [x] `WindowRenderCallback` is a short facade delegation or coordinator entry.
+- [x] Every acquired image and synchronization primitive has an exactly-once
   terminal path.
 - [ ] OpenXR no longer reads mutable desktop frame-loop fields directly.
 - [ ] Desktop rendering remains allocation-free in steady state.
@@ -577,29 +612,29 @@ Acceptance criteria:
 Coordinate the OpenXR boundary with the
 [OpenXR Runtime Code Organization TODO](vr/openxr-runtime-code-organization-todo.md).
 
-- [ ] Introduce `VulkanOpenXrBackend` as the Vulkan graphics-binding authority,
+- [x] Introduce `VulkanOpenXrBackend` as the Vulkan graphics-binding authority,
   not as a second owner of general OpenXR runtime policy.
-- [ ] Split external frame scopes, eye recording/cache, mirror, preview/copy,
+- [x] Split external frame scopes, eye recording/cache, mirror, preview/copy,
   resource ownership, validation/prewarm, runtime-pressure policy, and
   submission gating.
-- [ ] Pass `VulkanOpenXrFrameContext` explicitly through eye recording and
+- [x] Pass `VulkanOpenXrFrameContext` explicitly through eye recording and
   submission.
-- [ ] Keep generic OpenXR session, input, pose, and pacing state out of the
+- [x] Keep generic OpenXR session, input, pose, and pacing state out of the
   Vulkan folder.
-- [ ] Publish immutable diagnostics snapshots rather than exposing private
+- [x] Publish immutable diagnostics snapshots rather than exposing private
   Vulkan state to smoke validators.
-- [ ] Introduce `VulkanImGuiBackend` after descriptor, resource, and command
+- [x] Introduce `VulkanImGuiBackend` after descriptor, resource, and command
   seams are stable.
-- [ ] Ensure OpenXR and ImGui use the same submission, resource lifetime, and
+- [x] Ensure OpenXR and ImGui use the same submission, resource lifetime, and
   device-loss authorities as desktop rendering.
 
 Acceptance criteria:
 
-- [ ] Vulkan OpenXR code owns only graphics-binding and Vulkan presentation
+- [x] Vulkan OpenXR code owns only graphics-binding and Vulkan presentation
   responsibilities.
-- [ ] Eye, mirror, and preview paths do not directly mutate desktop coordinator
+- [x] Eye, mirror, and preview paths do not directly mutate desktop coordinator
   internals.
-- [ ] ImGui does not own parallel descriptor, upload, or retirement systems.
+- [x] ImGui does not own parallel descriptor, upload, or retirement systems.
 
 ## Phase 10 - Normalize Namespaces And Assembly Boundaries
 
@@ -608,10 +643,10 @@ with initial file extraction.
 
 - [ ] Introduce subsystem namespaces that match durable ownership where they
   materially improve API clarity.
-- [ ] Keep facade and intentionally public contracts in stable rendering
+- [x] Keep facade and intentionally public contracts in stable rendering
   namespaces.
 - [ ] Mark implementation types `internal` by default.
-- [ ] Update architecture docs, folder README files, and active TODO links.
+- [x] Update architecture docs, folder README files, and active TODO links.
 - [ ] Consider a separate Vulkan implementation project only after dependency
   direction is clean and a project split would enforce an already-proven
   boundary.
@@ -628,22 +663,22 @@ Acceptance criteria:
 
 ## Phase 11 - Add Architecture Guardrails
 
-- [ ] Add a focused architecture test or analyzer rule preventing new stateful
+- [x] Add a focused architecture test or analyzer rule preventing new stateful
   `VulkanRenderer` partial files without an explicit exception.
-- [ ] Add tests preventing top-level multi-type dumping-ground files in the
+- [x] Add tests preventing top-level multi-type dumping-ground files in the
   Vulkan subsystem.
-- [ ] Add tests for per-renderer cache isolation and device lifetime.
+- [x] Add tests for per-renderer cache isolation and device lifetime.
 - [ ] Add allocation regression coverage for primary command recording and the
   desktop frame loop where existing harnesses support it.
-- [ ] Add invariant tests for resource retirement and post-acquire recovery.
-- [ ] Document the approved dependency direction in the Vulkan architecture
+- [x] Add invariant tests for resource retirement and post-acquire recovery.
+- [x] Document the approved dependency direction in the Vulkan architecture
   guide and relevant folder README files.
 
 Acceptance criteria:
 
 - [ ] The old monolith cannot regrow silently.
-- [ ] Ownership violations produce a focused test or analyzer failure.
-- [ ] Contributors can find the state owner for a command, resource, or frame
+- [x] Ownership violations produce a focused test or analyzer failure.
+- [x] Contributors can find the state owner for a command, resource, or frame
   transition from the architecture documentation.
 
 ## Validation Strategy
@@ -651,13 +686,13 @@ Acceptance criteria:
 Run validation proportionally after each phase rather than waiting for the full
 reorganization to land.
 
-- [ ] Build runtime rendering after every mechanical move or owner extraction:
+- [x] Build runtime rendering after every mechanical move or owner extraction:
 
   ```powershell
   dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj
   ```
 
-- [ ] Run the narrowest tests for the changed responsibility.
+- [x] Run the narrowest tests for the changed responsibility.
 - [ ] Run `Test-VulkanPhase3-Regression` after command, graph, lifetime, or
   frame-loop changes.
 - [ ] Build the editor after facade, namespace, or project-boundary changes:
@@ -705,7 +740,7 @@ reorganization to land.
 - [ ] The largest orchestration methods read as named, testable lifecycles.
 - [ ] Backend wrappers are namespace-level types with per-renderer/device
   identity and lifetime.
-- [ ] Render-graph plans are immutable, versioned, and free of hidden borrowed
+- [x] Render-graph plans are immutable, versioned, and free of hidden borrowed
   scratch lifetimes.
 - [ ] Resource destruction, queue submission/presentation, and post-acquire
   recovery each have one authority.
