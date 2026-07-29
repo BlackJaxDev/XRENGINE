@@ -23,7 +23,7 @@ public sealed class SelfIterationMeasurementConfiguration
     public int DiagnosticRepetitions { get; set; } = 1;
     public bool DiagnosticGpuTimestampDense { get; set; } = true;
     public bool DiagnosticVulkanCommandBufferLabels { get; set; }
-    public string ZeroReadbackMaterialDrawPath { get; set; } = "FullBucketScan";
+    public string ZeroReadbackMaterialDrawPath { get; set; } = "BindlessMaterialTable";
     public string UnitTestVrMode { get; set; } = "Desktop";
     public string VulkanRenderTargetMode { get; set; } = "Configured";
     public string VulkanPrimaryReuse { get; set; } = "Configured";
@@ -81,10 +81,12 @@ public sealed class SelfIterationMeasurementConfiguration
         ValidateValue(
             nameof(ZeroReadbackMaterialDrawPath),
             ZeroReadbackMaterialDrawPath,
-            "FullBucketScan",
-            "ActiveBucketList",
+            "FullBucketScanDiagnostic",
+            "ActiveBucketListReadbackDiagnostic",
             "MaterialTable",
-            "BindlessMaterialTable");
+            "BindlessMaterialTable",
+            "FullBucketScan",
+            "ActiveBucketList");
         ValidateValue(
             nameof(UnitTestVrMode),
             UnitTestVrMode,

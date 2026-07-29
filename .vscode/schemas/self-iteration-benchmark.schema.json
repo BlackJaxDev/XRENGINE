@@ -441,10 +441,12 @@
     },
     "zeroReadbackMaterialDrawPath": {
       "enum": [
-        "FullBucketScan",
-        "ActiveBucketList",
+        "FullBucketScanDiagnostic",
+        "ActiveBucketListReadbackDiagnostic",
         "MaterialTable",
-        "BindlessMaterialTable"
+        "BindlessMaterialTable",
+        "FullBucketScan",
+        "ActiveBucketList"
       ]
     },
     "unitTestVrMode": {

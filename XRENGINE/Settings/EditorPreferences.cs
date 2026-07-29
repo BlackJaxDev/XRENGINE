@@ -1499,7 +1499,7 @@ namespace XREngine
         private bool _forceGpuPassthroughCulling = false;
         private bool _allowGpuCpuFallback = false;
         private bool _enableZeroReadbackMaterialScatter = false;
-        private EZeroReadbackMaterialDrawPath _zeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.FullBucketScan;
+        private EZeroReadbackMaterialDrawPath _zeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.BindlessMaterialTable;
         private bool _enableProfilerFrameLogging = true;
         private bool _enableProfilerComponentTiming = false;
         private bool _enableRenderStatisticsTracking = true;

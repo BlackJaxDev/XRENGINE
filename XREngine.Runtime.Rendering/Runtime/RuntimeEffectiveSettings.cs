@@ -452,7 +452,7 @@ internal sealed class RuntimeEffectiveSettings
 
     private EMeshSubmissionStrategy? _forceMeshSubmissionStrategy;
     private bool _legacyGpuMeshletForceStrategyWarningLogged;
-    private EZeroReadbackMaterialDrawPath _zeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.FullBucketScan;
+    private EZeroReadbackMaterialDrawPath _zeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.BindlessMaterialTable;
 
     private static float ClampNonNegative(float value, float max)
         => Math.Clamp(float.IsFinite(value) ? value : 0.0f, 0.0f, max);

@@ -120,7 +120,7 @@ namespace XREngine.Rendering
         private readonly Dictionary<XRRenderProgramDescriptor, MaterialProgramCache> _materialPrograms = [];
         private readonly Dictionary<XRRenderProgramDescriptor, MaterialProgramCache> _pendingMaterialPrograms = [];
         private readonly Dictionary<(uint materialId, int rendererKey), XRRenderProgramDescriptor> _materialProgramUseDescriptors = [];
-        private readonly Dictionary<(EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash), MaterialTableProgramCache> _materialTablePrograms = [];
+        private readonly Dictionary<(EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash, bool depthNormalPrePass, bool maskedDepthNormalPrePass), MaterialTableProgramCache> _materialTablePrograms = [];
         private readonly Dictionary<(EMaterialTableTextureReferenceMode textureReferenceMode, EMeshShaderDialect dialect, bool skinned, string layoutHash), MeshletMaterialTableProgramCache> _meshletMaterialTablePrograms = [];
         private XRDataBuffer? _indirectTextTransformsBuffer;
         private XRDataBuffer? _indirectTextTexCoordsBuffer;
@@ -484,7 +484,10 @@ namespace XREngine.Rendering
                 GPURenderPassCollection.Crumb($"ZeroPath.BEGIN pass={currentRenderPass} path={renderPasses.ZeroReadbackMaterialDrawPath}");
                 switch (renderPasses.ZeroReadbackMaterialDrawPath)
                 {
-                    case EZeroReadbackMaterialDrawPath.ActiveBucketList:
+                    case EZeroReadbackMaterialDrawPath.ActiveBucketListReadbackDiagnostic:
+                        RuntimeEngine.Rendering.Stats.GpuDriven.UpdateMaterialBindingRung(
+                            EMaterialTextureBindingRung.CoarseBucket,
+                            "Explicit active-bucket CPU-readback diagnostic override.");
                         RenderZeroReadbackActiveMaterialBuckets(
                             renderPasses,
                             camera,
@@ -511,7 +514,10 @@ namespace XREngine.Rendering
                             currentRenderPass,
                             bindless: true);
                         break;
-                    default:
+                    case EZeroReadbackMaterialDrawPath.FullBucketScanDiagnostic:
+                        RuntimeEngine.Rendering.Stats.GpuDriven.UpdateMaterialBindingRung(
+                            EMaterialTextureBindingRung.CoarseBucket,
+                            "Explicit full-capacity bucket-scan diagnostic override.");
                         RenderZeroReadbackMaterialTiers(
                             renderPasses,
                             camera,
@@ -519,6 +525,11 @@ namespace XREngine.Rendering
                             vaoRenderer,
                             currentRenderPass,
                             materialMap);
+                        break;
+                    default:
+                        RejectCompactMaterialTableSubmission(
+                            currentRenderPass,
+                            $"Unknown zero-readback material draw path {renderPasses.ZeroReadbackMaterialDrawPath}.");
                         break;
                 }
                 GPURenderPassCollection.Crumb($"ZeroPath.END pass={currentRenderPass} path={renderPasses.ZeroReadbackMaterialDrawPath}");
@@ -2957,12 +2968,14 @@ namespace XREngine.Rendering
         private XRRenderProgram? EnsureMaterialTableDrawProgram(
             XRMeshRenderer? vaoRenderer,
             EMaterialTableTextureReferenceMode textureReferenceMode,
-            MaterialBindingLayout layout)
+            MaterialBindingLayout layout,
+            bool depthNormalPrePass,
+            bool maskedDepthNormalPrePass)
         {
             int rendererKey = vaoRenderer is null ? 0 : RuntimeHelpers.GetHashCode(vaoRenderer);
             bool sceneDatabaseBda = ShouldUseVulkanSceneDatabaseDeviceAddresses();
-            (EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash) cacheKey =
-                (textureReferenceMode, sceneDatabaseBda, rendererKey, layout.LayoutHash);
+            (EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash, bool depthNormalPrePass, bool maskedDepthNormalPrePass) cacheKey =
+                (textureReferenceMode, sceneDatabaseBda, rendererKey, layout.LayoutHash, depthNormalPrePass, maskedDepthNormalPrePass);
 
             if (_materialTablePrograms.TryGetValue(cacheKey, out var existing))
             {
@@ -2987,7 +3000,11 @@ namespace XREngine.Rendering
             if (generatedVertexShader is null)
                 return null;
 
-            XRShader fragmentShader = CreateMaterialTableFragmentShader(textureReferenceMode, layout);
+            XRShader fragmentShader = CreateMaterialTableFragmentShader(
+                textureReferenceMode,
+                layout,
+                depthNormalPrePass,
+                maskedDepthNormalPrePass);
             var shaderList = new List<XRShader> { fragmentShader, generatedVertexShader };
             var program = new XRRenderProgram(false, false, shaderList);
             program.AllowLink();
@@ -3129,7 +3146,9 @@ namespace XREngine.Rendering
 
         private static XRShader CreateMaterialTableFragmentShader(
             EMaterialTableTextureReferenceMode textureReferenceMode,
-            MaterialBindingLayout layout)
+            MaterialBindingLayout layout,
+            bool depthNormalPrePass,
+            bool maskedDepthNormalPrePass)
         {
             var sb = new StringBuilder();
             sb.AppendLine("#version 460 core");
@@ -3145,13 +3164,22 @@ namespace XREngine.Rendering
             }
             sb.AppendLine();
             sb.AppendLine("layout(location=1) in vec3 FragNorm;");
+            sb.AppendLine("layout(location=2) in vec3 FragTan;");
+            sb.AppendLine("layout(location=3) in vec3 FragBinorm;");
             sb.AppendLine("layout(location=4) in vec2 FragUV0;");
             sb.AppendLine($"layout(location=21) in float {DefaultVertexShaderGenerator.FragTransformIdName};");
             sb.AppendLine($"layout(location={FragMaterialIdLocation}) flat in uint {FragMaterialIdName};");
-            sb.AppendLine("layout(location=0) out vec4 AlbedoOpacity;");
-            sb.AppendLine("layout(location=1) out vec2 Normal;");
-            sb.AppendLine("layout(location=2) out vec4 RMSE;");
-            sb.AppendLine("layout(location=3) out uint TransformId;");
+            if (depthNormalPrePass)
+            {
+                sb.AppendLine("layout(location=0) out vec2 Normal;");
+            }
+            else
+            {
+                sb.AppendLine("layout(location=0) out vec4 AlbedoOpacity;");
+                sb.AppendLine("layout(location=1) out vec2 Normal;");
+                sb.AppendLine("layout(location=2) out vec4 RMSE;");
+                sb.AppendLine("layout(location=3) out uint TransformId;");
+            }
             sb.AppendLine();
             MaterialBindingGlslGenerator.AppendMaterialTableDefinitions(
                 sb,
@@ -3181,6 +3209,38 @@ namespace XREngine.Rendering
             sb.AppendLine("    MaterialEntry material;");
             sb.AppendLine("    XR_LoadMaterial(materialId, material);");
             sb.AppendLine("    uint flags = material.Flags;");
+            if (depthNormalPrePass)
+            {
+                sb.AppendLine("    vec3 worldNormal = normalize(FragNorm);");
+                if (samplesMaterialTextures)
+                {
+                    if (maskedDepthNormalPrePass)
+                    {
+                        sb.AppendLine("    if ((flags & 1u) != 0u)");
+                        sb.AppendLine("    {");
+                        sb.AppendLine("        vec4 albedo = SampleBindlessTexture(material.AlbedoHandleIndex, FragUV0, vec4(1.0));");
+                        sb.AppendLine("        if (material.BaseColorOpacity.a * albedo.a < 0.5)");
+                        sb.AppendLine("            discard;");
+                        sb.AppendLine("    }");
+                    }
+                    sb.AppendLine("    if ((flags & 2u) != 0u)");
+                    sb.AppendLine("    {");
+                    sb.AppendLine("        vec3 tangentNormal = SampleBindlessTexture(material.NormalHandleIndex, FragUV0, vec4(0.5, 0.5, 1.0, 1.0)).xyz * 2.0 - 1.0;");
+                    sb.AppendLine("        mat3 tangentToWorld = mat3(normalize(FragTan), normalize(FragBinorm), worldNormal);");
+                    sb.AppendLine("        worldNormal = normalize(tangentToWorld * tangentNormal);");
+                    sb.AppendLine("    }");
+                }
+                sb.AppendLine("    Normal = XRENGINE_EncodeNormal(worldNormal);");
+                sb.AppendLine("    return;");
+                sb.AppendLine("}");
+
+                return new XRShader(EShaderType.Fragment, sb.ToString())
+                {
+                    Name = textureReferenceMode == EMaterialTableTextureReferenceMode.None
+                        ? "GPUIndirect_MaterialTableDepthNormalFS"
+                        : $"GPUIndirect_{textureReferenceMode}MaterialTableDepthNormalFS"
+                };
+            }
             sb.AppendLine("    vec4 baseColorOpacity = material.BaseColorOpacity;");
             sb.AppendLine("    vec4 rmse = material.RMSE;");
             sb.AppendLine("    vec3 baseColor = baseColorOpacity.rgb;");
@@ -5086,29 +5146,29 @@ namespace XREngine.Rendering
         {
             using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.ZeroReadback.RenderMaterialTableBuckets");
 
-            IReadOnlyDictionary<uint, XRMaterial> materialMap = renderPasses.GetMaterialMap(scene);
-
-            // The packed material-table fragment program selects materials by DrawID and bypasses
-            // the per-XRMaterial program path. That means it cannot honor a pushed override material
-            // or per-material DepthNormalPrePassVariant. Forward depth/normal pre-passes and similar
-            // override-driven passes need the per-material tier path to ensure the override or
-            // depth-normal variant program is actually used.
             var renderState = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState;
-            bool overrideActive = RuntimeEngine.Rendering.State.OverrideMaterial is not null
-                || (renderState is not null && renderState.UseDepthNormalMaterialVariants);
-            if (overrideActive)
-            {
-                RenderZeroReadbackMaterialTiers(renderPasses, camera, scene, vaoRenderer, currentRenderPass, materialMap);
-                return;
-            }
-
-            if (!renderPasses.TryGetGeneratedMaterialTableDispatchLayout(currentRenderPass, out MaterialBindingLayout layout))
+            bool depthNormalPrePass = renderState?.UseDepthNormalMaterialVariants == true;
+            bool depthNormalPassSupported = depthNormalPrePass &&
+                currentRenderPass is
+                    (int)EDefaultRenderPass.OpaqueForward or
+                    (int)EDefaultRenderPass.MaskedForward;
+            bool maskedDepthNormalPrePass =
+                currentRenderPass == (int)EDefaultRenderPass.MaskedForward;
+            bool hasGeneratedLayout = depthNormalPassSupported
+                ? MaterialBindingLayouts.TryGetGeneratedMaterialTableDispatchLayout(
+                    (int)EDefaultRenderPass.OpaqueDeferred,
+                    out MaterialBindingLayout layout)
+                : renderPasses.TryGetGeneratedMaterialTableDispatchLayout(
+                    currentRenderPass,
+                    out layout);
+            if (!hasGeneratedLayout)
             {
                 MaterialBindingResolverResult result = MaterialBindingResolverResult.PerMaterial(
                     $"Pass {currentRenderPass} does not expose a generated material-table layout.");
                 renderPasses.RecordMaterialBindingResolverResult(result);
-                GpuDebug(LogCategory.Validation, "Material binding resolver fallback for pass {0}: {1}", currentRenderPass, result.Reason);
-                RenderZeroReadbackMaterialTiers(renderPasses, camera, scene, vaoRenderer, currentRenderPass, materialMap);
+                ReportDeclaredUnsupportedCompactPass(
+                    currentRenderPass,
+                    result.Reason);
                 return;
             }
 
@@ -5123,38 +5183,33 @@ namespace XREngine.Rendering
                 layout.RowByteCount,
                 bindless);
 
-            if (!renderPasses.ZeroReadbackActiveBucketListPreparedThisFrame)
-            {
-                renderPasses.RecordMaterialBindingResolverResult(MaterialBindingResolverResult.PerMaterial(
-                    "Material-table draw path needs active bucket compaction for this pass.",
-                    layout));
-                XREngine.Debug.RenderingWarningEvery(
-                    $"RenderDispatch.MaterialTableActiveBucketsMissing.{currentRenderPass}",
-                    TimeSpan.FromSeconds(2),
-                    "[RenderDispatch] Material-table draw path needs active bucket compaction for pass {0}; falling back to per-material bucket draw.",
-                    currentRenderPass);
-                RenderZeroReadbackMaterialTiers(renderPasses, camera, scene, vaoRenderer, currentRenderPass, materialMap);
-                return;
-            }
-
             XRDataBuffer? materialTableBuffer = renderPasses.MaterialTableBuffer;
             if (materialTableBuffer is null)
             {
                 renderPasses.RecordMaterialBindingResolverResult(MaterialBindingResolverResult.PerMaterial(
                     "Material-table draw path selected but no material table was prepared.",
                     layout));
-                XREngine.Debug.RenderingWarningEvery(
-                    $"RenderDispatch.MaterialTableMissing.{currentRenderPass}",
-                    TimeSpan.FromSeconds(2),
-                    "[RenderDispatch] Material-table draw path was selected for pass {0}, but no material table was prepared; falling back to per-material bucket draw.",
-                    currentRenderPass);
-                RenderZeroReadbackMaterialTiers(renderPasses, camera, scene, vaoRenderer, currentRenderPass, materialMap);
+                RejectCompactMaterialTableSubmission(
+                    currentRenderPass,
+                    "No material table was prepared.");
                 return;
             }
 
             EMaterialTableTextureReferenceMode textureReferenceMode = ResolveMaterialTableTextureReferenceMode(
                 bindless,
                 out string bindlessUnavailableReason);
+            EMaterialTextureBindingRung bindingRung =
+                textureReferenceMode is
+                    EMaterialTableTextureReferenceMode.OpenGLBindlessHandleTable or
+                    EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable
+                    ? EMaterialTextureBindingRung.Bindless
+                    : EMaterialTextureBindingRung.CoarseBucket;
+            string bindingRungReason = bindingRung == EMaterialTextureBindingRung.Bindless
+                ? "Highest supported runtime material-table capability."
+                : "Explicit non-bindless material-table selection.";
+            RuntimeEngine.Rendering.Stats.GpuDriven.UpdateMaterialBindingRung(
+                bindingRung,
+                bindingRungReason);
             XRDataBuffer? materialTextureHandleBuffer =
                 textureReferenceMode == EMaterialTableTextureReferenceMode.OpenGLBindlessHandleTable
                     ? renderPasses.MaterialTextureHandleBuffer
@@ -5168,16 +5223,25 @@ namespace XREngine.Rendering
 
             if (bindless &&
                 textureReferenceMode == EMaterialTableTextureReferenceMode.None &&
-                _bindlessMaterialTableUnsupportedLogBudget > 0)
+                !string.IsNullOrWhiteSpace(bindlessUnavailableReason))
             {
-                _bindlessMaterialTableUnsupportedLogBudget--;
-                Debug.MeshesWarning($"[RenderDispatch] Bindless material-table draw path requested, but the active backend cannot use it. {bindlessUnavailableReason} Falling back to material-table shader.");
+                RejectCompactMaterialTableSubmission(
+                    currentRenderPass,
+                    $"Bindless material-table capability is unavailable: {bindlessUnavailableReason}");
+                return;
             }
 
-            XRRenderProgram? program = EnsureMaterialTableDrawProgram(vaoRenderer, textureReferenceMode, layout);
+            XRRenderProgram? program = EnsureMaterialTableDrawProgram(
+                vaoRenderer,
+                textureReferenceMode,
+                layout,
+                depthNormalPassSupported,
+                maskedDepthNormalPrePass);
             if (program is null)
             {
-                RenderZeroReadbackMaterialTiers(renderPasses, camera, scene, vaoRenderer, currentRenderPass, materialMap);
+                RejectCompactMaterialTableSubmission(
+                    currentRenderPass,
+                    "The compact material-table graphics program could not be created.");
                 return;
             }
 
@@ -5196,13 +5260,23 @@ namespace XREngine.Rendering
             XRDataBuffer? culledCommandsBuffer = renderPasses.CulledSceneToRenderBuffer;
             if (indirectDrawBuffer is null || parameterBuffer is null || culledCommandsBuffer is null)
             {
-                Debug.MeshesWarning("Material-table indirect path missing material-tier buffers.");
+                RejectCompactMaterialTableSubmission(
+                    currentRenderPass,
+                    "The compact material-table indirect or count buffer is missing.");
                 return;
             }
 
-            List<uint>? activeBuckets = renderPasses.ReadActiveMaterialTierBuckets();
-            if (activeBuckets is null || activeBuckets.Count == 0)
+            if (renderPasses.MaterialTierBucketCount != GPUBatchingBindings.MaterialTierCount)
+            {
+                RejectCompactMaterialTableSubmission(
+                    currentRenderPass,
+                    $"Compact material-table topology expected {GPUBatchingBindings.MaterialTierCount} tier groups but found {renderPasses.MaterialTierBucketCount}.");
                 return;
+            }
+
+            RuntimeEngine.Rendering.Stats.GpuDriven.RecordMaterialTopology(
+                renderPasses.MaterialSlotIds.Count,
+                (int)GPUBatchingBindings.MaterialTierCount);
 
             XRDataBuffer? instanceTransformBuffer = scene.TransformBuffer;
             XRDataBuffer? instanceSourceIndexBuffer = renderPasses.InstanceSourceIndexBuffer;
@@ -5214,8 +5288,11 @@ namespace XREngine.Rendering
 
             var renderer = AbstractRenderer.Current;
             XRMaterial? invalidMaterial = XRMaterial.InvalidMaterial;
-            if (renderer is not null && invalidMaterial is not null)
-                renderer.ApplyRenderParameters(invalidMaterial.RenderOptions);
+            XRMaterial? renderParametersMaterial = depthNormalPassSupported
+                ? renderState?.OverrideMaterial
+                : invalidMaterial;
+            if (renderer is not null && renderParametersMaterial is not null)
+                renderer.ApplyRenderParameters(renderParametersMaterial.RenderOptions);
 
             if (!TryUseIndirectGraphicsProgram(program, textureReferenceMode == EMaterialTableTextureReferenceMode.None ? "ZeroReadbackMaterialTable" : $"ZeroReadback{textureReferenceMode}MaterialTable"))
                 return;
@@ -5223,18 +5300,19 @@ namespace XREngine.Rendering
             // O-7: one coalesced barrier ahead of the material-table bucket loop.
             renderer?.MemoryBarrier(
                 EMemoryBarrierMask.ShaderStorage |
-                EMemoryBarrierMask.ClientMappedBuffer |
                 EMemoryBarrierMask.Command);
 
-            foreach (uint bucketIndex in activeBuckets)
+            // Fixed pass-group topology: the GPU compacts all active material
+            // work into one indirect range per atlas tier. A zero count is a
+            // harmless no-op in the backend indirect-count command.
+            for (uint tier = 0u; tier < GPUBatchingBindings.MaterialTierCount; ++tier)
             {
-                uint tier = bucketIndex % GPUBatchingBindings.MaterialTierCount;
                 XRMeshRenderer? tierRenderer = ConfigureIndirectRendererForTier(scene, (EAtlasTier)tier);
                 if (tierRenderer is null)
                     continue;
 
-                nuint indirectByteOffset = (nuint)(bucketIndex * maxDrawsPerBucket * stride);
-                nuint countByteOffset = (nuint)(bucketIndex * sizeof(uint));
+                nuint indirectByteOffset = (nuint)(tier * maxDrawsPerBucket * stride);
+                nuint countByteOffset = (nuint)(tier * sizeof(uint));
 
                 DispatchRenderIndirectCountBucket(
                     indirectDrawBuffer,
@@ -5256,9 +5334,38 @@ namespace XREngine.Rendering
                     materialTableBuffer: materialTableBuffer,
                     materialTextureHandleBuffer: materialTextureHandleBuffer,
                     bindVulkanMaterialTextureDescriptorTable: textureReferenceMode == EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable,
-                    allowMaxDrawFallback: true,
+                    allowMaxDrawFallback: false,
                     emitBarrier: false);
             }
+        }
+
+        private static void RejectCompactMaterialTableSubmission(
+            int renderPass,
+            string reason)
+        {
+            RuntimeEngine.Rendering.Stats.GpuDriven.UpdateMaterialBindingRung(
+                EMaterialTextureBindingRung.Unsupported,
+                reason);
+            RuntimeEngine.Rendering.Stats.GpuFallback.RecordForbiddenGpuFallback(1);
+            XREngine.Debug.RenderingWarningEvery(
+                $"RenderDispatch.CompactMaterialTableUnsupported.{renderPass}.{reason.GetHashCode(StringComparison.Ordinal)}",
+                TimeSpan.FromSeconds(2),
+                "[RenderDispatch] Strict zero-readback material-table submission is unsupported for pass {0}: {1}. The pass was skipped; no CPU bucket fallback was used.",
+                renderPass,
+                reason);
+        }
+
+        private static void ReportDeclaredUnsupportedCompactPass(
+            int renderPass,
+            string reason)
+        {
+            RuntimeEngine.Rendering.Stats.GpuDriven.RecordUnsupportedCompactPass();
+            XREngine.Debug.RenderingWarningEvery(
+                $"RenderDispatch.CompactMaterialTableVariantUnsupported.{renderPass}",
+                TimeSpan.FromSeconds(2),
+                "[RenderDispatch] Compact material-table variant for pass {0} is explicitly unsupported: {1}. The pass was skipped without a CPU or full-bucket fallback.",
+                renderPass,
+                reason);
         }
 
         private XRMeshRenderer? ConfigureIndirectRendererForTier(GPUScene scene, EAtlasTier tier)

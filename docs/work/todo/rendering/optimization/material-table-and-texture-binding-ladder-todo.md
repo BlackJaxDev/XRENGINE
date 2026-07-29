@@ -2,7 +2,7 @@
 
 Last Updated: 2026-07-28
 Owner: Rendering
-Status: Technical Child Of Workstream 03
+Status: Bounded Vulkan Rung Implemented; Future Ladder Work Open
 Execution: The bounded Vulkan production rung uses the active workstream 03
 branch/worktree; later cross-backend or sparse/virtual feature work may be
 scheduled separately.
@@ -197,3 +197,18 @@ Acceptance criteria:
 - [ ] Update linked material binding docs if runtime ladder behavior changes.
 - [ ] Merge branch `rendering-material-table-texture-ladder` back into `main`
   after implementation, validation, and documentation updates are complete.
+
+## Workstream 03 Bounded Result
+
+The bounded Vulkan production rung is implemented: descriptor-indexing
+capability is probed, `EMaterialTextureBindingRung` is reported with a selection
+reason, material and texture tables have independent dirty ranges, handles are
+retired through the backend's GPU-safe lifetime, generated programs include
+layout/texture-reference mode in their cache identity, and unsupported
+capability skips visibly without a CPU/full-capacity fallback.
+
+The broader OpenGL texture-array policy, sparse/virtual texture integration,
+portable coarse-bucket implementation, preference overrides, editor diagnostics
+surface, and exhaustive material-diverse visual validation remain future ladder
+work. They are not prerequisites for the bounded Vulkan implementation, but
+this child cannot be marked complete until they are done.

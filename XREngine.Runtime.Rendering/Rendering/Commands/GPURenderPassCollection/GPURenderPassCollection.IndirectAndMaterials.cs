@@ -1041,10 +1041,20 @@ namespace XREngine.Rendering.Commands
             if (!ResetMaterialScatterBuffersOnGpu())
                 return false;
 
+            if (UsesCompactMaterialTableSubmission(ZeroReadbackMaterialDrawPath))
+            {
+                RuntimeEngine.Rendering.Stats.GpuDriven.UpdateGpuCompactionRung(
+                    "WorkgroupPrefixScan64",
+                    "Portable lower-capability rung; one clamped reservation per workgroup and atlas tier.");
+            }
+
             _materialScatterComputeShader.Uniform("CurrentRenderPass", RenderPass);
             _materialScatterComputeShader.Uniform("MaxMaterialSlotLookup", (int)_materialSlotLookupBuffer.ElementCount);
             _materialScatterComputeShader.Uniform("MaxBucketCount", (int)_materialTierBucketCount);
             _materialScatterComputeShader.Uniform("MaxIndirectDrawsPerBucket", (int)_maxDrawsPerMaterialTier);
+            _materialScatterComputeShader.Uniform(
+                "CompactMaterialTableOutput",
+                UsesCompactMaterialTableSubmission(ZeroReadbackMaterialDrawPath) ? 1u : 0u);
             _materialScatterComputeShader.Uniform("AtlasIndexCounts", new UVector3(
                 (uint)Math.Max(scene.GetAtlasIndexCount(EAtlasTier.Static), 0),
                 (uint)Math.Max(scene.GetAtlasIndexCount(EAtlasTier.Dynamic), 0),
@@ -1053,7 +1063,11 @@ namespace XREngine.Rendering.Commands
                 (uint)Math.Max(scene.GetAtlasVertexCount(EAtlasTier.Static), 0),
                 (uint)Math.Max(scene.GetAtlasVertexCount(EAtlasTier.Dynamic), 0),
                 (uint)Math.Max(scene.GetAtlasVertexCount(EAtlasTier.Streaming), 0)));
-            _materialScatterComputeShader.Uniform("StatsEnabled", _statsBuffer is null ? 0u : 1u);
+            _materialScatterComputeShader.Uniform(
+                "StatsEnabled",
+                _statsBuffer is null || IsCpuReadbackCountDisabledForPass()
+                    ? 0u
+                    : 1u);
             _materialScatterComputeShader.Uniform(
                 "RejectExactTransparentMultiview",
                 RequiresExactTransparentCandidateRejection ? 1u : 0u);
@@ -1085,8 +1099,10 @@ namespace XREngine.Rendering.Commands
         }
 
         private static bool RequiresActiveMaterialBucketList(EZeroReadbackMaterialDrawPath path)
-            => path is EZeroReadbackMaterialDrawPath.ActiveBucketList
-                or EZeroReadbackMaterialDrawPath.MaterialTable
+            => path == EZeroReadbackMaterialDrawPath.ActiveBucketListReadbackDiagnostic;
+
+        private static bool UsesCompactMaterialTableSubmission(EZeroReadbackMaterialDrawPath path)
+            => path is EZeroReadbackMaterialDrawPath.MaterialTable
                 or EZeroReadbackMaterialDrawPath.BindlessMaterialTable;
 
         private static ulong MixMaterialMapEntry(ulong materialId, ulong value)
@@ -1608,7 +1624,7 @@ namespace XREngine.Rendering.Commands
                 XREngine.Debug.RenderingWarningEvery(
                     $"RenderDispatch.ZeroReadbackActiveBucketReadback.{RenderPass}",
                     TimeSpan.FromSeconds(2),
-                    "[RenderDispatch] Zero-readback draw path {0} is reading back {1} active material buckets for pass {2}. Use FullBucketScan for strict no-readback diagnostics, or treat ActiveBucketList/MaterialTable as readback-assisted modes.",
+                    "[RenderDispatch] Diagnostic draw path {0} is reading back {1} active material buckets for pass {2}. Use BindlessMaterialTable for production zero-readback submission.",
                     ZeroReadbackMaterialDrawPath,
                     activeCount,
                     RenderPass);

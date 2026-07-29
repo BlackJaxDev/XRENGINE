@@ -31,10 +31,12 @@ public sealed class SelfIterationScenarioMeasurementOverrides
             scenarioName,
             nameof(ZeroReadbackMaterialDrawPath),
             ZeroReadbackMaterialDrawPath,
-            "FullBucketScan",
-            "ActiveBucketList",
+            "FullBucketScanDiagnostic",
+            "ActiveBucketListReadbackDiagnostic",
             "MaterialTable",
-            "BindlessMaterialTable");
+            "BindlessMaterialTable",
+            "FullBucketScan",
+            "ActiveBucketList");
         ValidateOptional(
             scenarioName,
             nameof(UnitTestVrMode),

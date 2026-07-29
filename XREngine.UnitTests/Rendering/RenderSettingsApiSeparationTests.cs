@@ -157,7 +157,7 @@ public sealed class RenderSettingsApiSeparationTests
                 true);
         overrides.Selection.HoverOutlineEnabledOverride = new OverrideableSetting<bool>(false, true);
         overrides.Diagnostics.Culling.ZeroReadbackMaterialDrawPathOverride =
-            new OverrideableSetting<EZeroReadbackMaterialDrawPath>(EZeroReadbackMaterialDrawPath.ActiveBucketList, true);
+            new OverrideableSetting<EZeroReadbackMaterialDrawPath>(EZeroReadbackMaterialDrawPath.ActiveBucketListReadbackDiagnostic, true);
         overrides.Diagnostics.Profiler.CpuTimingDisplayModeOverride =
             new OverrideableSetting<ProfilerTimingDisplayMode>(ProfilerTimingDisplayMode.Average, true);
 
@@ -165,7 +165,7 @@ public sealed class RenderSettingsApiSeparationTests
 
         preferences.ViewportPresentationMode.ShouldBe(EditorPreferences.EViewportPresentationMode.UseViewportPanel);
         preferences.HoverOutlineEnabled.ShouldBeFalse();
-        preferences.Debug.ZeroReadbackMaterialDrawPath.ShouldBe(EZeroReadbackMaterialDrawPath.ActiveBucketList);
+        preferences.Debug.ZeroReadbackMaterialDrawPath.ShouldBe(EZeroReadbackMaterialDrawPath.ActiveBucketListReadbackDiagnostic);
         preferences.Debug.ProfilerPanelCpuTimingDisplayMode.ShouldBe(ProfilerTimingDisplayMode.Average);
     }
 

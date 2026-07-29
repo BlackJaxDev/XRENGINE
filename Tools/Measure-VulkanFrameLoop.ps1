@@ -8,8 +8,8 @@ param(
     [string]$Configuration = 'Release',
     [ValidateSet('Cold', 'Warm')]
     [string]$CacheMode = 'Warm',
-    [ValidateSet('FullBucketScan', 'ActiveBucketList', 'MaterialTable', 'BindlessMaterialTable')]
-    [string]$ZeroReadbackMaterialDrawPath = 'FullBucketScan',
+    [ValidateSet('FullBucketScanDiagnostic', 'ActiveBucketListReadbackDiagnostic', 'MaterialTable', 'BindlessMaterialTable', 'FullBucketScan', 'ActiveBucketList')]
+    [string]$ZeroReadbackMaterialDrawPath = 'BindlessMaterialTable',
     [string]$ProfileScene = '',
     [string]$ProfileCamera = '',
     [string]$ProfileLights = '',

@@ -136,7 +136,8 @@ public sealed class MaterialScatterPhase07Tests
         shaderSource.ShouldContain("INVALID_MATERIAL_SLOT = 0xFFFFFFFFu");
         shaderSource.ShouldContain("DRAW_UINTS = 5u");
         shaderSource.ShouldContain("uint availableKeyCount = uint(sortKeys.length()) / KEY_UINTS;");
-        shaderSource.ShouldContain("sortedIndex >= CulledCount || sortedIndex >= availableKeyCount");
+        shaderSource.ShouldContain("sortedIndex < CulledCount &&");
+        shaderSource.ShouldContain("sortedIndex < availableKeyCount");
         shaderSource.ShouldContain("uniform uvec3 AtlasIndexCounts;");
         shaderSource.ShouldContain("uniform uvec3 AtlasVertexCounts;");
         shaderSource.ShouldContain("atomicCompSwap(drawCounts[bucketIndex], current, current + 1u)");

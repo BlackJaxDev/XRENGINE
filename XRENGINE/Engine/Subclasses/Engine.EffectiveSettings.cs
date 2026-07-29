@@ -473,7 +473,7 @@ namespace XREngine
                 EditorDebugOptions? editorDebug = EditorPreferences?.Debug;
                 if (editorDebug is not null &&
                     (editorDebug.EnableZeroReadbackMaterialScatter ||
-                     editorDebug.ZeroReadbackMaterialDrawPath != EZeroReadbackMaterialDrawPath.FullBucketScan))
+                     editorDebug.ZeroReadbackMaterialDrawPath != EZeroReadbackMaterialDrawPath.BindlessMaterialTable))
                 {
                     return editorDebug.ZeroReadbackMaterialDrawPath;
                 }

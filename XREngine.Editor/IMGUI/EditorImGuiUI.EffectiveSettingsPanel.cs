@@ -396,7 +396,7 @@ public static partial class EditorImGuiUI
         EditorDebugOptions? editorDebug = Engine.EditorPreferences?.Debug;
         return editorDebug is not null &&
             (editorDebug.EnableZeroReadbackMaterialScatter ||
-             editorDebug.ZeroReadbackMaterialDrawPath != EZeroReadbackMaterialDrawPath.FullBucketScan);
+             editorDebug.ZeroReadbackMaterialDrawPath != EZeroReadbackMaterialDrawPath.BindlessMaterialTable);
     }
 
     private static bool IsUserPrimaryEffectiveSetting(string settingName)

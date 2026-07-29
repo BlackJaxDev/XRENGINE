@@ -576,3 +576,88 @@ validation rather than an implementation gap.
 ## User validation
 
 The user has not yet evaluated the completed workstream-02 repair.
+
+## Workstream 03 - Compact zero-readback submission
+
+Status: production implementation complete; promotion gates remain open.
+
+### Root cause and repair
+
+The old `GpuIndirectZeroReadback` default still made the render thread submit
+one bucket per configured material slot and atlas tier. The alternatives mapped
+a GPU-produced active list, so none of the modes was both compact and genuinely
+zero-readback.
+
+The production path now:
+
+- defaults to `BindlessMaterialTable`;
+- compacts material-table commands into three fixed static/dynamic/streaming
+  tier ranges;
+- uses a 64-lane workgroup prefix scan with one clamped global reservation per
+  workgroup/tier instead of a per-survivor global atomic;
+- consumes GPU counts through Vulkan indirect-count draws without current-frame
+  mapping, enumeration, or max-draw fallback;
+- uses one coalesced shader-storage/command barrier before the tier draws;
+- prepares override and depth/normal material rows and provides a generated
+  forward depth-normal fragment variant with alpha cutoff and normal mapping;
+- reports material binding, compaction rung, configured slots, pass groups, and
+  unsupported scheduled variants;
+- keeps exact transparency and arbitrary forward shader semantics explicitly
+  unsupported and visible, with no CPU or full-bucket fallback;
+- exposes `IGpuCompactVisibilityInput` for the later optional Hi-Z producer.
+
+The architectural contract is
+`docs/architecture/rendering/vulkan-compact-zero-readback-submission.md`.
+
+### Runtime evidence
+
+Evidence is under
+`Build/_AgentValidation/20260728-vulkan-framerate-root-cause/workstream-03-*`.
+All four short Release desktop captures used Vulkan, warm cache,
+`GpuIndirectZeroReadback`, `BindlessMaterialTable`, clean profiling, dynamic
+rendering, and command-chain/primary reuse. Every capture-window sample
+reported zero readback bytes, zero mapped buffers, zero full scans, zero
+fallbacks, zero forbidden fallbacks, and no VUID or submission rejection.
+
+| Cohort | Samples | Render p50 / p95 / p99 | Vulkan frame p50 / p95 | Configured slots / pass groups |
+| --- | ---: | ---: | ---: | ---: |
+| Deferred static | 740 | 7.444 / 24.226 / 37.839 ms | 4.048 / 12.581 ms | 14 / 3 |
+| Deferred moving | 253 | 14.840 / 21.047 / 53.308 ms | 7.458 / 11.528 ms | 14 / 3 |
+| Uber static | 186 | 21.384 / 29.349 / 92.268 ms | 9.296 / 15.425 ms | 14 / 3 |
+| Uber moving | 175 | 23.688 / 33.131 / 70.111 ms | 10.456 / 15.525 ms | 14 / 3 |
+
+The first clean Deferred-static proof after fixing the depth-normal gap reached
+5.343 ms render p50, 3.020 ms Vulkan-frame p50, and 99.93% primary reuse,
+versus the 24.97 ms starting full-capacity zero-readback result. Short-window
+variance and continued resource churn produced the less favorable final table.
+
+### Remaining promotion blockers
+
+- A matched Uber-static CPU-direct capture was 9.159 ms render p50, materially
+  faster than compact GPU-driven Uber at 21.384 ms. Workstream 03 therefore
+  cannot claim the CPU-stage performance gate.
+- The captures still contained recording/frame-refresh allocations and
+  95.16-97.84% primary reuse in three of the four short windows; the canonical
+  stability gate timed out because texture upload and retirement activity did
+  not quiesce.
+- Exact depth-peeling/per-pixel-list transparency and arbitrary forward shader
+  semantics remain explicitly unsupported. Scheduled empty passes are counted
+  and warned; scenes that require them are not promotable.
+- No OpenXR runtime was available for the required desktop-plus-two-eyes RVC
+  acceptance workload.
+- `rdc doctor` passed, including the Vulkan layer and replay API, but the
+  automated target disconnected before emitting an `.rdc`.
+- No image comparison is claimed. The new source/GLSL contracts and runtime
+  counters passed, but visual equivalence still requires a working capture or
+  editor session.
+
+### Validation
+
+- Focused zero-readback, material-scatter, settings, phase-7, buffer-parity,
+  and primary-reuse suite: 58 passed.
+- `glslangValidator -S comp` accepted
+  `GPURenderMaterialScatter.comp`.
+- Release editor build completed with zero errors using the repository's
+  existing native bridges; existing advisory/compiler warnings remain.
+- PowerShell and JSON benchmark defaults now select the production
+  `BindlessMaterialTable` path, while diagnostic names are explicit.
