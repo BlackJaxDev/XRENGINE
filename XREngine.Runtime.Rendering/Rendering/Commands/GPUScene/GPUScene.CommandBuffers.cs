@@ -1,4 +1,4 @@
-﻿// =====================================================================================
+// =====================================================================================
 // GPUScene.CommandBuffers.cs - Double-buffered command buffer management, constants and SSBO state.
 // Part of the GPUScene partial class. See GPUScene.cs for the canonical class summary.
 // =====================================================================================
@@ -205,7 +205,7 @@ namespace XREngine.Rendering.Commands
             var buffer = new XRDataBuffer(
                 $"RenderCommandsBuffer",
                 EBufferTarget.ShaderStorageBuffer,
-                MinCommandCount,
+                InitialCommandCapacity,
                 EComponentType.Float,
                 CommandFloatCount,
                 false,
@@ -223,7 +223,7 @@ namespace XREngine.Rendering.Commands
             var buffer = new XRDataBuffer(
                 name,
                 EBufferTarget.ShaderStorageBuffer,
-                MinCommandCount,
+                InitialCommandCapacity,
                 EComponentType.UInt,
                 DrawMetadataUIntCount,
                 false,
@@ -241,7 +241,7 @@ namespace XREngine.Rendering.Commands
             var buffer = new XRDataBuffer(
                 name,
                 EBufferTarget.ShaderStorageBuffer,
-                MinCommandCount,
+                InitialCommandCapacity,
                 EComponentType.Float,
                 TransformFloatCount,
                 false,
@@ -259,7 +259,7 @@ namespace XREngine.Rendering.Commands
             var buffer = new XRDataBuffer(
                 name,
                 EBufferTarget.ShaderStorageBuffer,
-                MinCommandCount,
+                InitialCommandCapacity,
                 EComponentType.Float,
                 BoundsFloatCount,
                 false,
@@ -295,7 +295,7 @@ namespace XREngine.Rendering.Commands
             var buffer = new XRDataBuffer(
                 "SkinningPaletteBuffer",
                 EBufferTarget.ShaderStorageBuffer,
-                MinCommandCount,
+                InitialCommandCapacity,
                 EComponentType.Float,
                 TransformFloatCount,
                 false,
@@ -313,7 +313,7 @@ namespace XREngine.Rendering.Commands
             var buffer = new XRDataBuffer(
                 "RenderTransparencyMetadataBuffer",
                 EBufferTarget.ShaderStorageBuffer,
-                MinCommandCount,
+                InitialCommandCapacity,
                 EComponentType.UInt,
                 TransparencyMetadataUIntCount,
                 false,
@@ -331,7 +331,7 @@ namespace XREngine.Rendering.Commands
             var buffer = new XRDataBuffer(
                 "RenderLodTransitionBuffer",
                 EBufferTarget.ShaderStorageBuffer,
-                MinCommandCount,
+                InitialCommandCapacity,
                 EComponentType.UInt,
                 LodTransitionUIntCount,
                 false,
@@ -516,6 +516,8 @@ namespace XREngine.Rendering.Commands
 
         /// <summary>The initial size of the command buffer. It will grow or shrink as needed at powers of two.</summary>
         public const uint MinCommandCount = 8;
+
+        private static uint InitialCommandCapacity => GpuDrivenValidationCapacity.Apply(MinCommandCount);
 
         /// <summary>Number of 32-bit lanes per compact GPU command (80 bytes).</summary>
         public const int CommandFloatCount = 20;

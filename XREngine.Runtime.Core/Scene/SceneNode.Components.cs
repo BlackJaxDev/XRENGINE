@@ -31,6 +31,28 @@ namespace XREngine.Scene
         }
 
         /// <summary>
+        /// Creates and adds a component through a statically rooted factory.
+        /// Use this overload for startup graphs that must survive NativeAOT trimming.
+        /// </summary>
+        public T? AddComponent<T>(Func<T> factory, string? name = null) where T : XRComponent
+        {
+            using var scope = RuntimeSceneNodeServices.Current.StartProfileScope("SceneNode.AddComponentFactory");
+
+            T comp = XRComponent.New(this, factory);
+            comp.Name = name;
+
+            if (!VerifyComponentAttributesOnAdd(comp, out XRComponent? existingComponent))
+            {
+                comp.World = null;
+                comp.Destroy();
+                return existingComponent as T;
+            }
+
+            AddComponent(comp);
+            return comp;
+        }
+
+        /// <summary>
         /// Creates and adds a component of type to the scene node.
         /// </summary>
         public XRComponent? AddComponent(Type type, string? name = null)

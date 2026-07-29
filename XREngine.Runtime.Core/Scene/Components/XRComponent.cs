@@ -59,6 +59,23 @@ namespace XREngine.Components
         internal static T New<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] T>(SceneNode node) where T : XRComponent 
             => (T)New(node, typeof(T))!;
 
+        /// <summary>
+        /// Creates a component through a statically rooted factory for NativeAOT
+        /// startup graphs, then completes normal scene-node initialization.
+        /// </summary>
+        internal static T New<T>(SceneNode node, Func<T> factory) where T : XRComponent
+        {
+            ArgumentNullException.ThrowIfNull(factory);
+            T component = factory();
+            ArgumentNullException.ThrowIfNull(component);
+
+            component.ConstructionSetSceneNode(node);
+            component.OnTransformChanged();
+            component.World = node.World;
+            ComponentCreated?.Invoke(component);
+            return component;
+        }
+
         internal static XRComponent? New(SceneNode node, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] Type t)
         {
             if (t is null || !t.IsSubclassOf(typeof(XRComponent)))

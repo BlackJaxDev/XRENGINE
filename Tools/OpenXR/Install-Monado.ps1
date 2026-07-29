@@ -453,6 +453,11 @@ function Get-GitRemoteUrl {
         [Parameter(Mandatory)][string]$RemoteName
     )
 
+    $remoteNames = @(& git -C $RepositoryRoot remote 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $remoteNames -notcontains $RemoteName) {
+        return $null
+    }
+
     $remoteUrl = & git -C $RepositoryRoot remote get-url $RemoteName 2>$null
     if ($LASTEXITCODE -ne 0) {
         return $null
@@ -579,6 +584,11 @@ function Sync-MonadoSource {
 
     if (-not (Test-GitRepository -Path $SourceRoot)) {
         throw "Monado source path exists but is not a git repository: $SourceRoot"
+    }
+
+    if ($useRepoSubmodule -and $NoFetch) {
+        Write-Host "Using the current repository-pinned Monado submodule checkout." -ForegroundColor Cyan
+        return
     }
 
     $remoteName = if ($useRepoSubmodule) { "blackjaxdev" } else { "origin" }

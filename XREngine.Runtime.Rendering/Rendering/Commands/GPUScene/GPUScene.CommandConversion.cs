@@ -1,4 +1,4 @@
-﻿// =====================================================================================
+// =====================================================================================
 // GPUScene.CommandConversion.cs - CPU command -> GPU command conversion, Phase 1 updates, and mesh label/validation helpers.
 // Part of the GPUScene partial class. See GPUScene.cs for the canonical class summary.
 // =====================================================================================
@@ -71,7 +71,7 @@ namespace XREngine.Rendering.Commands
                 RenderDistance = 0f,
                 Flags = 0,
                 LODLevel = 0,
-                ShaderProgramID = 0,
+                RenderIdentityID = command.StableQueryKey,
                 LogicalMeshID = logicalMeshID,
                 TransformID = transformId,
                 SkinID = skinId,

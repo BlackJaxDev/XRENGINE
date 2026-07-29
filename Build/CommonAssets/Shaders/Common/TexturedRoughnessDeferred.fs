@@ -11,7 +11,8 @@ layout (location = 1) in vec3 FragNorm;
 layout (location = 3) in vec3 FragBinorm;
 layout (location = 2) in vec3 FragTan;
 layout (location = 4) in vec2 FragUV0;
-layout (location = 21) in float FragTransformId;
+layout (location = 21) flat in uint FragTransformId;
+layout (location = 27) flat in uint FragRenderIdentityId;
 
 uniform sampler2D Texture0; // Albedo
 uniform sampler2D Texture2; // Roughness
@@ -27,7 +28,7 @@ void main()
 {
     vec4 albedoSample = texture(Texture0, FragUV0);
 
-    TransformId = floatBitsToUint(FragTransformId);
+    TransformId = FragRenderIdentityId;
     Normal = XRENGINE_EncodeNormal(normalize(FragNorm));
     AlbedoOpacity = vec4(albedoSample.rgb * BaseColor, Opacity);
     float roughnessTex = texture(Texture2, FragUV0).r;

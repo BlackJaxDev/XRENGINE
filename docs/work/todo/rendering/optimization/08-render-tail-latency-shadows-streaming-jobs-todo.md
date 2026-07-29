@@ -45,6 +45,10 @@ Child-tracker disposition:
 - Do not start this workstream until workstream 07 is marked `Complete`.
 - This is the final integration and tail-latency workstream. It may not waive a
   failed earlier exit gate.
+- A predecessor's recorded miss against the final 5.00 ms or 8.33 ms
+  whole-frame budget is a required input, not an earlier exit-gate failure,
+  provided that predecessor passed its subsystem-local correctness,
+  relative-cost, scaling, and allocation contract.
 - Completion requires both final promotion matrices, not only isolated
   subsystem improvements.
 
@@ -71,6 +75,11 @@ jobs. Finish with stable desktop-only 200+ Hz and Vulkan RVC zero-readback
 - Generic main-thread jobs have a nominal 4 ms frame budget but an individual
   job cannot be preempted. BVH raycast and GPU physics work are additional
   interaction risks.
+- Workstream 03's retained Monado RVC Quick capture recorded
+  34.778/109.139/112.717 ms render p50/p95/p99 against the 8.33 ms target. That
+  absolute miss is carried here for final whole-renderer promotion after
+  workstreams 04-07 complete their owned preparation, recording, render-graph,
+  and occlusion work.
 
 ## Scope
 
@@ -183,8 +192,10 @@ Acceptance criteria:
 - [ ] Run at least three repetitions of deterministic Deferred and Uber
   desktop-only moving-camera cohorts.
 - [ ] Run at least three repetitions of the Vulkan
-  `GpuIndirectZeroReadback` RVC workload with, at minimum, one freshly rendered
-  desktop output and two freshly rendered eye outputs in every measured frame.
+  `GpuIndirectZeroReadback` RVC workload. Every retained sample must contain a
+  freshly rendered desktop output; every submitted XR projection frame must
+  contain both freshly rendered eyes, and each repetition must observe both
+  eyes at the runtime-owned cadence.
 - [ ] Run the RVC workload with foveation disabled and enabled wherever the
   runtime supports both modes. Foveation state does not change the whole-frame
   budget.
@@ -202,7 +213,8 @@ Acceptance criteria:
   moving-camera Deferred and Uber cohorts.
 - [ ] On the same target hardware, the complete Vulkan
   `GpuIndirectZeroReadback` RVC frame has render p95 at most 8.33 ms while
-  executing at least the desktop render and both eye renders.
+  rendering the desktop every sample and both eyes together on every submitted
+  XR projection frame.
 - [ ] The RVC gate passes in every supported foveation state without
   synchronous readback, skipped/reused eye output masquerading as a render, or
   silent fallback. Additional quad/foveated views or renders do not relax the
@@ -223,7 +235,8 @@ Acceptance criteria:
 - [ ] All four warm desktop-only canonical cohorts pass the 5.00 ms p95
   promotion gate.
 - [ ] All required Vulkan RVC zero-readback cohorts pass the 8.33 ms
-  whole-frame p95 promotion gate with at least three executed renders.
+  whole-frame p95 promotion gate with at least three submitted XR projection
+  frames per repetition.
 - [ ] Combined stress, Release build, focused tests, validation layers, and
   long-duration performance runs pass.
 - [ ] Final evidence, hardware manifest, risks, and remaining non-blocking

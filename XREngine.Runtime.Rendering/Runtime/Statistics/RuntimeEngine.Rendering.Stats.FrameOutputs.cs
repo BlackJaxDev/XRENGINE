@@ -812,31 +812,68 @@ namespace XREngine
 
                     private static ulong ComputeWorkloadIdentityHash(ReadOnlySpan<FrameOutputEntrySnapshot> outputs)
                     {
+                        bool vrActive = RuntimeEngine.VRState.IsInVR;
+                        EFrameOutputKind xrOutputKind = RuntimeEngine.VRState.IsOpenXRActive
+                            ? EFrameOutputKind.OpenXREyeSubmit
+                            : EFrameOutputKind.OpenVRSubmit;
+                        int outputCount = outputs.Length;
+                        if (vrActive)
+                        {
+                            outputCount = 2;
+                            for (int i = 0; i < outputs.Length; i++)
+                            {
+                                if (outputs[i].OutputKind is not (EFrameOutputKind.OpenXREyeSubmit or EFrameOutputKind.OpenVRSubmit))
+                                    outputCount++;
+                            }
+                        }
+
                         ulong hash = 1469598103934665603UL;
-                        AddHash(ref hash, (ulong)outputs.Length);
+                        AddHash(ref hash, (ulong)outputCount);
                         for (int i = 0; i < outputs.Length; i++)
                         {
                             FrameOutputEntrySnapshot output = outputs[i];
-                            AddHash(ref hash, output.Request.OutputId);
-                            AddHash(ref hash, output.Request.ViewFamilyId);
-                            AddHash(ref hash, (ulong)output.Request.OutputKind);
-                            AddHash(ref hash, (ulong)output.Request.ViewKind);
-                            AddHash(ref hash, (ulong)output.Request.OutputClass);
-                            RenderOutputTargetDescriptor target = output.Request.Target;
-                            AddHash(ref hash, (ulong)target.TargetClass);
-                            AddHash(ref hash, target.StableTargetId);
-                            AddHash(ref hash, target.TargetGeneration);
-                            AddHash(ref hash, target.DisplayWidth);
-                            AddHash(ref hash, target.DisplayHeight);
-                            AddHash(ref hash, target.InternalWidth);
-                            AddHash(ref hash, target.InternalHeight);
-                            AddHash(ref hash, target.FormatCompatibilityKey);
-                            AddHash(ref hash, target.SampleCount);
-                            AddHash(ref hash, target.ViewMask);
-                            AddHash(ref hash, (ulong)output.Request.QualityRequirements);
-                            AddHash(ref hash, (ulong)output.Request.FallbackPolicy);
+                            if (vrActive && output.OutputKind is EFrameOutputKind.OpenXREyeSubmit or EFrameOutputKind.OpenVRSubmit)
+                                continue;
+
+                            AddOutputRequestHash(ref hash, output.Request);
                         }
+
+                        // XR runtimes can submit eyes at a lower cadence than the desktop window. The configured
+                        // eye family is still part of the workload on intervening desktop-only frames. Hash the
+                        // expected family once so cadence does not masquerade as a workload identity change.
+                        if (vrActive)
+                        {
+                            AddOutputRequestHash(
+                                ref hash,
+                                RenderOutputRequest.CreateDefault(EVrOutputViewKind.LeftEye, xrOutputKind));
+                            AddOutputRequestHash(
+                                ref hash,
+                                RenderOutputRequest.CreateDefault(EVrOutputViewKind.RightEye, xrOutputKind));
+                        }
+
                         return hash;
+                    }
+
+                    private static void AddOutputRequestHash(ref ulong hash, in RenderOutputRequest request)
+                    {
+                        AddHash(ref hash, request.OutputId);
+                        AddHash(ref hash, request.ViewFamilyId);
+                        AddHash(ref hash, (ulong)request.OutputKind);
+                        AddHash(ref hash, (ulong)request.ViewKind);
+                        AddHash(ref hash, (ulong)request.OutputClass);
+                        RenderOutputTargetDescriptor target = request.Target;
+                        AddHash(ref hash, (ulong)target.TargetClass);
+                        AddHash(ref hash, target.StableTargetId);
+                        AddHash(ref hash, target.TargetGeneration);
+                        AddHash(ref hash, target.DisplayWidth);
+                        AddHash(ref hash, target.DisplayHeight);
+                        AddHash(ref hash, target.InternalWidth);
+                        AddHash(ref hash, target.InternalHeight);
+                        AddHash(ref hash, target.FormatCompatibilityKey);
+                        AddHash(ref hash, target.SampleCount);
+                        AddHash(ref hash, target.ViewMask);
+                        AddHash(ref hash, (ulong)request.QualityRequirements);
+                        AddHash(ref hash, (ulong)request.FallbackPolicy);
                     }
 
                     private static void AddHash(ref ulong hash, ulong value)

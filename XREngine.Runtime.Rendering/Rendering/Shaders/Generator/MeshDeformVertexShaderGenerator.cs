@@ -171,8 +171,6 @@ namespace XREngine.Rendering.Shaders.Generator
 
             OutputVars.Add(FragPosLocalName, (20, EShaderVarType._vec3));
 
-            if (EmitTransformId)
-                OutputVars.Add(FragTransformIdName, (21, EShaderVarType._float));
 
             OutputVars.Add(FragViewIndexName, (22, EShaderVarType._float));
         }
@@ -210,6 +208,7 @@ namespace XREngine.Rendering.Shaders.Generator
         // Output variable names
         public const string FragPosLocalName = "FragPosLocal";
         public const string FragTransformIdName = "FragTransformId";
+        public const string FragRenderIdentityIdName = "FragRenderIdentityId";
         public const string FragViewIndexName = "FragViewIndex";
         public const string FragPosName = "FragPos";
         public const string FragNormName = "FragNorm";
@@ -284,6 +283,11 @@ namespace XREngine.Rendering.Shaders.Generator
         {
             if (UseNVStereo)
                 Line("layout(secondary_view_offset = 1) out highp int gl_Layer;");
+
+            // Preserve exact identity values; float bit transport can flush small IDs to zero.
+            if (EmitTransformId)
+                Line($"layout (location = 21) flat out uint {FragTransformIdName};");
+                Line($"layout (location = 27) flat out uint {FragRenderIdentityIdName};");
 
             base.WriteOutputs();
         }
@@ -371,7 +375,8 @@ namespace XREngine.Rendering.Shaders.Generator
             {
                 Line("uint _xreTransformId = uint(gl_BaseInstance);");
                 Line("if (_xreTransformId == 0u) _xreTransformId = TransformId;");
-                Line($"{FragTransformIdName} = uintBitsToFloat(_xreTransformId);");
+                Line($"{FragTransformIdName} = _xreTransformId;");
+                Line($"{FragRenderIdentityIdName} = TransformId;");
             }
         }
 

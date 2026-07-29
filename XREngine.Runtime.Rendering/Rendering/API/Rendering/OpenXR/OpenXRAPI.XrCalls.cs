@@ -294,7 +294,7 @@ public unsafe partial class OpenXRAPI
         }
         long end = Stopwatch.GetTimestamp();
         long ticks = end - start;
-        RuntimeEngine.Rendering.Stats.Vr.RecordVrXrEndFrameSubmitTime(
+        RuntimeRenderingHostServices.Statistics.RecordRenderVrXrEndFrameSubmitTime(
             TimeSpan.FromSeconds(ticks / (double)Stopwatch.Frequency),
             Volatile.Read(ref _openXrLastRenderedFrameId));
         RecordDeadlineStatus(frameEndInfo.DisplayTime, end, frameEndInfo.LayerCount);

@@ -1,0 +1,63 @@
+{
+  "$schema": "../../../.vscode/schemas/unit-testing-world-settings.schema.json",
+  "WorldKind": "Default",
+  "EditorType": "None",
+  "Rendering": {
+    "RenderBackend": "Vulkan",
+    "BackendFallbackPolicy": "RequireRequested",
+    "Vulkan": {
+      "RenderTargetMode": "DynamicRendering"
+    }
+  },
+  "GPURenderDispatch": true,
+  "StartInPlayModeWithoutTransitions": true,
+  "Locomotion": false,
+  "VR": {
+    "Mode": "Desktop",
+    "ViewRenderMode": "ParallelCommandBufferRecording",
+    "PreviewStereoViews": false,
+    "AllowDesktopEditing": true,
+    "Foveation": {
+      "Mode": "Off",
+      "QualityPreset": "Balanced",
+      "RequireRequested": false
+    }
+  },
+  "Skybox": false,
+  "ProceduralSky": false,
+  "Mirror": false,
+  "DirLight": true,
+  "DirLightCastsShadows": false,
+  "SpotLight": false,
+  "DirLight2": false,
+  "PointLight": false,
+  "DynamicPointLightCount": 0,
+  "DynamicSpotLightCount": 0,
+  "LightProbe": "Off",
+  "ModelsToImport": [],
+  "SoundNode": false,
+  "Microphone": false,
+  "LipSync": false,
+  "AnimationClipVMD": false,
+  "AnimationClipAnim": false,
+  "IKTest": false,
+  "TestAnimation": false,
+  "AllowSkinning": false,
+  "RenderMeshBounds": false,
+  "CameraAntiAliasingModeOverride": "Tsr",
+  "RenderPhysicsDebug": false,
+  "RenderWindowsWhileInVR": true,
+  "EditorCameraRenderOnDemand": false,
+  "RenderTransformDebugInfo": false,
+  "RenderTransformPoints": false,
+  "RenderTransformCapsules": false,
+  "RenderTransformLines": false,
+  "CreateUnitBox": true,
+  "UnitBoxCount": 256,
+  "UnitBoxMaterialCount": 64,
+  "UnitBoxDeferredMaterial": true,
+  "VSyncOverride": "Off",
+  "RenderFPS": 0.0,
+  "UpdateFPS": 60.0,
+  "FixedFPS": 30.0
+}

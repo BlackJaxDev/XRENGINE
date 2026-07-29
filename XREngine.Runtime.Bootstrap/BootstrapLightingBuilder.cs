@@ -242,8 +242,8 @@ public static class BootstrapLightingBuilder
         dirLightComp.Color = new Vector3(1, 1, 1);
         dirLightComp.DiffuseIntensity = 1.0f;
         dirLightComp.Scale = new Vector3(100.0f, 100.0f, 900.0f);
-        dirLightComp.CastsShadows = true;
         UnitTestingWorldSettings settings = RuntimeBootstrapState.Settings;
+        dirLightComp.CastsShadows = settings.DirLightCastsShadows;
         ERenderLibrary renderBackend = settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering))
             ? settings.Rendering.RenderBackend
             : settings.RenderAPI;

@@ -1,8 +1,10 @@
 using System;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Rendering.Commands;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -134,8 +136,65 @@ public sealed class GpuIndirectProgramContractTests
 
         augmentedSource.ShouldContain("#if !");
         augmentedSource.ShouldContain("defined(XRENGINE_DEPTH_NORMAL_PREPASS)");
-        augmentedSource.ShouldContain("layout(location = 21) in float FragTransformId;");
+        augmentedSource.ShouldContain("layout(location = 21) flat in uint FragTransformId;");
         augmentedSource.ShouldContain("XRE_ApplyLodTransitionDither();");
+    }
+
+    [Test]
+    public void DrawIndexAndRenderIdentityVaryings_UseFlatUintWithoutSubnormalFloatTransport()
+    {
+        string managerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
+        string defaultGeneratorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Shaders/Generator/DefaultVertexShaderGenerator.cs");
+        string deformGeneratorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Shaders/Generator/MeshDeformVertexShaderGenerator.cs");
+        string deferredSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Common/TexturedDeferred.fs");
+        string uberSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Uber/UberShader.frag");
+        string meshletSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Meshlets/MeshletRender.mesh");
+
+        defaultGeneratorSource.ShouldContain("layout (location = 21) flat out uint {FragTransformIdName};");
+        defaultGeneratorSource.ShouldContain("Line($\"{FragTransformIdName} = _xreTransformId;\");");
+        defaultGeneratorSource.ShouldContain("layout (location = 27) flat out uint {FragRenderIdentityIdName};");
+        defaultGeneratorSource.ShouldContain("Line($\"{FragRenderIdentityIdName} = TransformId;\");");
+        deformGeneratorSource.ShouldContain("layout (location = 21) flat out uint {FragTransformIdName};");
+        deformGeneratorSource.ShouldContain("Line($\"{FragTransformIdName} = _xreTransformId;\");");
+        deformGeneratorSource.ShouldContain("layout (location = 27) flat out uint {FragRenderIdentityIdName};");
+        deformGeneratorSource.ShouldContain("Line($\"{FragRenderIdentityIdName} = TransformId;\");");
+        managerSource.ShouldContain("layout(location=21) flat out uint {DefaultVertexShaderGenerator.FragTransformIdName};");
+        managerSource.ShouldContain("layout(location=21) flat in uint {DefaultVertexShaderGenerator.FragTransformIdName};");
+        managerSource.ShouldContain("layout(location=27) flat out uint {DefaultVertexShaderGenerator.FragRenderIdentityIdName};");
+        managerSource.ShouldContain("layout(location=27) flat in uint {DefaultVertexShaderGenerator.FragRenderIdentityIdName};");
+        managerSource.ShouldContain("uint renderIdentityID = {DefaultVertexShaderGenerator.FragRenderIdentityIdName};");
+        managerSource.ShouldContain("FragRenderIdentityIdName} = XRE_LoadDrawMetadata(commandIndex).RenderIdentityID;");
+        deferredSource.ShouldContain("layout (location = 21) flat in uint FragTransformId;");
+        deferredSource.ShouldContain("layout (location = 27) flat in uint FragRenderIdentityId;");
+        deferredSource.ShouldContain("TransformId = FragRenderIdentityId;");
+        uberSource.ShouldContain("layout(location = 21) flat in uint FragTransformId;");
+        uberSource.ShouldContain("layout(location = 27) flat in uint FragRenderIdentityId;");
+        meshletSource.ShouldContain("layout(location = 21) flat out uint FragTransformId[];");
+        meshletSource.ShouldContain("layout(location = 27) flat out uint FragRenderIdentityId[];");
+        meshletSource.ShouldContain("FragRenderIdentityId[tid] = draw.RenderIdentityID;");
+
+        string combined = string.Join(
+            '\n',
+            managerSource,
+            defaultGeneratorSource,
+            deformGeneratorSource,
+            deferredSource,
+            uberSource,
+            meshletSource);
+        combined.ShouldNotContain("floatBitsToUint(FragTransformId)");
+        combined.ShouldNotContain("uintBitsToFloat(_xreTransformId)");
+        combined.ShouldNotContain("uintBitsToFloat(draw.DrawID)");
+    }
+
+    [Test]
+    public void RenderIdentity_MetadataAbiRemains64BytesAndHasExplicitOverflowGuard()
+    {
+        Marshal.SizeOf<DrawMetadata>().ShouldBe(64);
+        Marshal.OffsetOf<DrawMetadata>(nameof(DrawMetadata.RenderIdentityID)).ToInt32().ShouldBe(52);
+
+        string renderCommandSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommand.cs");
+        renderCommandSource.ShouldContain("value <= 0L || value > uint.MaxValue");
+        renderCommandSource.ShouldContain("exhausted the 32-bit stable render-command identity space");
     }
 
     private static string ReadWorkspaceFile(string relativePath)

@@ -1180,6 +1180,23 @@ public unsafe partial class VulkanRenderer
         Api!.GetPhysicalDeviceProperties(_physicalDevice, out PhysicalDeviceProperties physicalDeviceProperties);
         bool vulkan13PromotedToCore = IsVulkanApiVersionAtLeast(physicalDeviceProperties.ApiVersion, 1u, 3u);
         bool vulkan14PromotedToCore = IsVulkanApiVersionAtLeast(physicalDeviceProperties.ApiVersion, 1u, 4u);
+        PhysicalDevicePrivateDataFeatures supportedPrivateDataFeatures = new()
+        {
+            SType = StructureType.PhysicalDevicePrivateDataFeatures,
+            PNext = null,
+        };
+        if (vulkan13PromotedToCore)
+        {
+            PhysicalDeviceFeatures2 privateDataFeatures2 = new()
+            {
+                SType = StructureType.PhysicalDeviceFeatures2,
+                PNext = &supportedPrivateDataFeatures,
+            };
+            Api.GetPhysicalDeviceFeatures2(_physicalDevice, &privateDataFeatures2);
+        }
+        bool enablePrivateDataFeature =
+            vulkan13PromotedToCore &&
+            supportedPrivateDataFeatures.PrivateData;
 
         _availableDeviceExtensions = EnumerateAvailableDeviceExtensions();
         var availableExtensionSet = new HashSet<string>(_availableDeviceExtensions, StringComparer.Ordinal);
@@ -1683,6 +1700,13 @@ public unsafe partial class VulkanRenderer
         _nvMaxMemoryDecompressionIndirectCount = enableNvMemoryDecompression ? nvMaxDecompressionIndirectCount : 0;
         _nvCopyMemoryIndirectSupportedQueues = enableNvCopyMemoryIndirect ? nvCopyMemoryIndirectSupportedQueues : 0;
 
+        PhysicalDevicePrivateDataFeatures privateDataFeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDevicePrivateDataFeatures,
+            PNext = null,
+            PrivateData = enablePrivateDataFeature,
+        };
+
         PhysicalDeviceDescriptorIndexingFeatures descriptorIndexingFeatureEnable = new()
         {
             SType = StructureType.PhysicalDeviceDescriptorIndexingFeatures,
@@ -1779,6 +1803,7 @@ public unsafe partial class VulkanRenderer
             Synchronization2 = enableSynchronization2Feature,
             Maintenance4 = enableMaintenance4Feature,
             PipelineCreationCacheControl = enablePipelineCreationCacheControlFeature,
+            PrivateData = enablePrivateDataFeature,
         };
 
         PhysicalDeviceIndexTypeUint8FeaturesEXT indexTypeUint8FeatureEnable = new()
@@ -2020,6 +2045,12 @@ public unsafe partial class VulkanRenderer
         }
 
         void* enabledFeaturesPNext = null;
+        if (enablePrivateDataFeature && !useVulkan13FeatureEnable)
+        {
+            privateDataFeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &privateDataFeatureEnable;
+        }
+
         if (enableDescriptorIndexing && !useVulkan12FeatureEnable)
         {
             descriptorIndexingFeatureEnable.PNext = enabledFeaturesPNext;

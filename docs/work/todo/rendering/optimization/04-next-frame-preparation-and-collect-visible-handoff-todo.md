@@ -47,6 +47,10 @@ not consume its critical path.
   dependency snapshots, and frame-data refresh are still render-thread work.
 - Viewport collection is serial across listeners despite a parallel invocation
   implementation existing.
+- Workstream 03's retained Monado RVC Quick capture reported
+  `VulkanFrameDataRefreshAllocatedBytesTotal=40,384`. This is an explicit
+  workstream-04 handoff: eliminate generic frame-data-refresh allocation while
+  preserving the predecessor's validated zero-readback submission contract.
 
 ## Target Package Contract
 
@@ -133,6 +137,8 @@ Acceptance criteria:
 - [ ] Render-thread scene/material traversal is eliminated from steady-state
   submission.
 - [ ] Preparation overlaps rendering rather than waiting idle behind it.
+- [ ] Canonical stable captures report zero steady-state managed allocation in
+  frame-data refresh and in the package producer/consumer hot paths.
 
 ## Phase 3 - Consume And Validate
 
@@ -160,6 +166,8 @@ Acceptance criteria:
   utilization.
 - [ ] Evidence shows improvement from overlapped useful preparation, not merely
   a farther-ahead producer while the render thread remains the bottleneck.
+- [ ] The workstream-03 frame-data-refresh allocation handoff is closed without
+  moving allocation, stale state, or mutable ownership into another stage.
 - [ ] Static, moving, mutation, resize, and shutdown stress tests pass.
 - [ ] Release build, focused tests, and canonical performance cohorts pass.
 - [ ] Evidence and remaining thread-affine work are recorded.

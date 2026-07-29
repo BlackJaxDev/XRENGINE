@@ -578,6 +578,10 @@ public sealed class VulkanStablePacketAndDescriptorTests
         recording.ShouldContain("hasStaticFrameOps && !VulkanPrimaryCommandBufferReuseEnabled");
         recording.ShouldNotContain("\"mutable-gpu-driven-frame-ops\"");
         recording.ShouldContain("PrepareSubmissionMarkersForCommandBufferReuse(");
+        (recording.Split("primaryCommandBuffersReused: 1", StringSplitOptions.None).Length - 1)
+            .ShouldBeGreaterThanOrEqualTo(3);
+        (recording.Split("primaryCommandBuffersRecorded: 1", StringSplitOptions.None).Length - 1)
+            .ShouldBeGreaterThanOrEqualTo(1);
         diagnostics.ShouldContain("IndirectDrawOp or MeshTaskDispatchIndirectCountOp");
         diagnostics.ShouldNotContain("ComputeDispatchOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp");
         markers.ShouldContain("RegisterSubmissionMarkersForCommandBuffer");

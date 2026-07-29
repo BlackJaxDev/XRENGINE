@@ -1,7 +1,7 @@
 # Finalized Game Builds And Asset Cooking
 
-Last Updated: 2026-06-19
-Status: Engine usage guide. NativeAOT final-game publishing exists and the representative MonkeyBallVR smoke path runs, but a production AOT release must still treat non-empty IL2xxx/IL3xxx analyzer warnings as release blockers.
+Last Updated: 2026-07-28
+Status: Engine usage guide. NativeAOT publishing now enforces strict cooked assets, a statically rooted game bootstrap, complete archives, zero IL2xxx/IL3xxx warnings, and a positive smoke completion marker.
 
 ## Purpose
 
@@ -31,18 +31,17 @@ The project builder runs these steps for finalized builds:
 
 1. Saves project build settings when `SaveSettingsBeforeBuild` is enabled.
 2. Prepares `Build/<OutputSubfolder>/`.
-3. Cooks every file under the project `Assets` directory into `Content/GameContent.pak`.
-4. Builds managed game assemblies.
-5. Generates `Config/GameConfig.pak`.
-6. Copies game assemblies when requested.
-7. Copies engine runtime binaries and packs common engine assets as `Content/CommonAssets.pak`.
+3. Builds the managed game assembly so custom types are available to the cooker and launcher generator.
+4. Resolves the single public `IGameLaunchBootstrap` required by NativeAOT builds.
+5. Cooks eligible project assets into `Content/GameContent.pak`.
+6. Generates `Config/GameConfig.pak`.
+7. Copies requested runtime binaries and packs either the full engine assets or
+   the complete runtime shader tree as `Content/CommonAssets.pak`.
 8. Builds or publishes the generated launcher executable into `Binaries/`.
 
-`.asset` YAML files with a `__assetType` hint are converted into `CookedAssetBlob` payloads. Asset types registered with `PublishedCookedAssetRegistry` cook as `RuntimeBinaryV1`; other supported assets use the generic `BinaryV1` cooked format.
+`.asset` YAML files with either a `__assetType` or legacy `__type` hint are converted into `CookedAssetBlob` payloads. NativeAOT publishing requires every shipped asset to use `RuntimeBinaryV1`; an unknown, uncookable, or unregistered asset fails the cook instead of falling back to authoring YAML.
 
-NativeAOT published runtime builds only accept `RuntimeBinaryV1` for runtime-loaded assets. If an AOT executable tries to load a legacy `BinaryV1` runtime asset, the fix is to add an explicit published cooked serializer/registry entry for that asset type and republish content.
-
-Non-asset files are copied into the content archive as-is.
+Eligible non-asset files are copied as-is. C# source, project/solution files, user files, PDBs, `.editorconfig`, and root `startup.asset` / `state.asset` launcher inputs are excluded from `GameContent.pak`.
 
 ## Output Layout
 
@@ -54,7 +53,7 @@ For a project rooted at `<ProjectRoot>` and `OutputSubfolder=Publish`, the final
     Game.exe
     Game.dll                  # non-AOT/framework-dependent launcher only
     Game.runtimeconfig.json    # non-AOT/framework-dependent launcher only
-    *.dll, *.json, runtimes\   # copied runtime dependencies as needed
+    *.dll, lib\                # NativeAOT publish-produced native dependencies
   Config\
     GameConfig.pak
   Content\
@@ -75,7 +74,7 @@ The generated launcher resolves archives relative to `AppContext.BaseDirectory` 
 Use the validation script for the canonical AOT path:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Publish-AotFinalGame.ps1 -ProjectPath .\Samples\MonkeyBallVR\MonkeyBallVR.xrproj
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Publish-MonkeyBallVR.ps1
 ```
 
 Useful script options:
@@ -92,7 +91,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Publish-AotFinalGame
 
 `-NoClean` keeps existing generated build artifacts for faster local iteration. Do not use it for release validation unless you intentionally want to validate an incremental archive update.
 
+`-NoEditorBuild` uses the already-built editor configuration. Use it only for
+local iteration after that editor binary has passed its own build/tests; clean
+release automation does not use this option.
+
 `-NoSmoke` skips the generated launcher smoke test. Use it only when you are debugging publish failures before runtime validation.
+
+`-AllowAotWarnings` permits a local diagnostic package, but it is never valid for a release. The default publisher fails on every IL2xxx/IL3xxx warning.
 
 The script does all of the following:
 
@@ -114,7 +119,7 @@ Build/Reports/aot-final-game-publish-warnings.md
 Build/Reports/aot-final-game-smoke.log
 ```
 
-Treat `Build/Reports/aot-final-game-publish-warnings.md` as a release gate. A production AOT release must have no IL2xxx/IL3xxx warnings, or each remaining warning must be explicitly classified, justified, and accepted by the release owner.
+`Build/Reports/aot-final-game-publish-warnings.md` is a hard release gate. The default script fails when it contains any IL2xxx/IL3xxx warning.
 
 ## Direct AOT CLI
 
@@ -178,8 +183,9 @@ OutputSubfolder: Publish
 CleanOutputDirectory: true
 CookContent: true
 BuildManagedAssemblies: true
-CopyGameAssemblies: true
-CopyEngineBinaries: true
+CopyGameAssemblies: false
+CopyEngineBinaries: false
+CommonAssetsPackageMode: Full
 BuildLauncherExecutable: true
 PublishLauncherAsNativeAot: true
 ValidateLauncherAotCompatibility: true
@@ -203,6 +209,17 @@ LauncherDefineConstants: XRE_PUBLISHED
 
 When `PublishLauncherAsNativeAot` is true, the builder forces content cooking and config archive generation even if those settings were disabled. AOT launchers also automatically receive `XRE_PUBLISHED` and `XRE_AOT_RUNTIME`.
 
+The headless NativeAOT build path also disables `CopyGameAssemblies` and
+`CopyEngineBinaries`; `dotnet publish` provides the self-contained executable
+and required native dependencies. `CommonAssetsPackageMode: Full` packages the
+complete engine asset library. Use `CommonAssetsPackageMode: RuntimeShaders`
+for a procedural game that creates every other runtime asset itself; the
+complete shader tree is retained so the render pipeline and shader includes
+remain functional. Both modes create a non-empty `CommonAssets.pak`, and a
+missing archive remains a hard startup error.
+
+The compiled game assembly must contain exactly one public, concrete `IGameLaunchBootstrap` with a public parameterless constructor. The generated launcher constructs it directly, uses it to configure startup, and obtains the initial `GameState`; this is the supported way to root custom worlds and components under NativeAOT.
+
 ## Sample Project MSBuild Targets
 
 `Samples/MonkeyBallVR/MonkeyBallVR.csproj` exposes a `CookGameExe` target for sample automation.
@@ -223,7 +240,7 @@ dotnet msbuild .\Samples\MonkeyBallVR\MonkeyBallVR.csproj /t:CookGameExe `
   /p:GameDefineConstants=XRE_PUBLISHED
 ```
 
-The script-based AOT path is still preferred for release validation because it captures publish logs, warning classification, and smoke-test output in `Build/Reports/`.
+For MonkeyBall VR, prefer `Tools/Publish-MonkeyBallVR.ps1`; it runs the strict script path and creates the distributable ZIP. The direct MSBuild target remains useful for development diagnostics.
 
 ## Release Validation Checklist
 
@@ -242,7 +259,7 @@ Additional NativeAOT checks:
 
 - `GameConfig.pak` contains `AotRuntimeMetadata.bin`.
 - `--aot-smoke` succeeds.
-- `Build/Reports/aot-final-game-publish-warnings.md` has no unaccepted IL2xxx/IL3xxx warnings.
+- `Build/Reports/aot-final-game-publish-warnings.md` has no IL2xxx/IL3xxx warnings.
 - Runtime-loaded asset types are registered with `PublishedCookedAssetRegistry`.
 - Runtime-created types use explicit factories/registries or metadata-backed lookup.
 - Runtime C# plugin loading, hot reload, and authoring-time YAML asset loading are not part of the shipped path.
@@ -288,9 +305,9 @@ The non-AOT build starts but does not load cooked archives.
 
 Confirm the generated launcher was built with `XRE_PUBLISHED`. For the CLI, pass `--define-constants XRE_PUBLISHED`. For build settings, set `LauncherDefineConstants: XRE_PUBLISHED`.
 
-AOT publish succeeds but warning report is non-empty.
+AOT publish stops because the warning report is non-empty.
 
-Open `Build/Reports/aot-final-game-publish-warnings.md`. First-party runtime warnings should be fixed or removed from the shipped closure. Editor/dev authoring warnings should be excluded by narrowing the launcher closure. Third-party warnings require explicit owner acceptance before release.
+Open `Build/Reports/aot-final-game-publish-warnings.md`. Fix first-party runtime warnings, remove editor/dev authoring surfaces from the launcher closure, or replace the warning-producing dependency. Use `-AllowAotWarnings` only to create a local diagnostic artifact while doing that work.
 
 ## Useful Files
 

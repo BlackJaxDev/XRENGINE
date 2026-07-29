@@ -102,6 +102,32 @@ public sealed class PrefabModelSerializationTests
     }
 
     [Test]
+    public void CloneHierarchy_RegeneratesRuntimeObjectIdentities()
+    {
+        SceneNode template = CreateSceneNodeWithModel(CreateTriangleModel(modelName: "IdentityModel", subMeshName: "IdentitySubMesh"));
+        ModelComponent templateComponent = template.GetComponent<ModelComponent>().ShouldNotBeNull();
+
+        SceneNode clone = SceneNodePrefabUtility.CloneHierarchy(template);
+        ModelComponent cloneComponent = clone.GetComponent<ModelComponent>().ShouldNotBeNull();
+
+        clone.ID.ShouldNotBe(template.ID);
+        clone.Transform.ID.ShouldNotBe(template.Transform.ID);
+        cloneComponent.ID.ShouldNotBe(templateComponent.ID);
+        XRObjectBase.ObjectsCache[clone.ID].ShouldBeSameAs(clone);
+        XRObjectBase.ObjectsCache[clone.Transform.ID].ShouldBeSameAs(clone.Transform);
+        XRObjectBase.ObjectsCache[cloneComponent.ID].ShouldBeSameAs(cloneComponent);
+
+        cloneComponent.Meshes.Count.ShouldBe(templateComponent.Meshes.Count);
+        cloneComponent.RenderedObjects.Length.ShouldBe(templateComponent.RenderedObjects.Length);
+        cloneComponent.Meshes[0].ShouldNotBeSameAs(templateComponent.Meshes[0]);
+        cloneComponent.RenderedObjects[0].ShouldNotBeSameAs(templateComponent.RenderedObjects[0]);
+        cloneComponent.RenderedObjects[0].RenderCommands[0]
+            .ShouldNotBeSameAs(templateComponent.RenderedObjects[0].RenderCommands[0]);
+        cloneComponent.RenderedObjects[0].RenderCommands[0].StableQueryKey
+            .ShouldNotBe(templateComponent.RenderedObjects[0].RenderCommands[0].StableQueryKey);
+    }
+
+    [Test]
     public void CloneHierarchy_PreservesExternalModelSubmeshes()
     {
         string assetsRoot = Engine.Assets.GameAssetsPath;

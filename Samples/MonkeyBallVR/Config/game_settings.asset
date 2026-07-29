@@ -6,6 +6,13 @@ DefaultUserSettings:
   TextureQuality: Highest
   ModelQuality: Highest
   SoundQuality: Highest
+  Rendering:
+    Common:
+      RenderBackendFallbackPolicyOverride:
+        HasOverride: false
+        Value: RequireRequested
+    Quality: {}
+    Performance: {}
   AudioDisableFadeSeconds: 0.5
   AudioSampleRate: 44100
   GlobalIlluminationMode: LightProbesAndIbl
@@ -44,7 +51,10 @@ DefaultUserSettings:
     Value: false
   ZeroReadbackMaterialDrawPathOverride:
     HasOverride: false
-    Value: FullBucketScan
+    Value: FullBucketScanDiagnostic
+  RenderBackendFallbackPolicyOverride:
+    HasOverride: false
+    Value: RequireRequested
   AntiAliasingModeOverride:
     HasOverride: false
     Value: None
@@ -91,6 +101,48 @@ DefaultUserSettings:
     HasOverride: false
     Value: 0
   ID: 6fe82a52-aff2-4f4b-a4ce-f0583801fdad
+Rendering:
+  Common:
+    RenderBackendFallbackPolicyOverride:
+      HasOverride: false
+      Value: RequireRequested
+  OpenGL:
+    AllowProgramPipelinesOverride:
+      HasOverride: false
+      Value: false
+    UseDetailPreservingComputeMipmapsOverride:
+      HasOverride: false
+      Value: false
+  Vulkan:
+    GpuDrivenProfileOverride:
+      HasOverride: false
+      Value: Auto
+    RenderTargetModeOverride:
+      HasOverride: false
+      Value: Auto
+  Quality: {}
+  Technical:
+    AllowSkinningOverride:
+      HasOverride: false
+      Value: false
+    UseIntegerWeightingIdsOverride:
+      HasOverride: false
+      Value: false
+    RecalcChildMatricesLoopTypeOverride:
+      HasOverride: false
+      Value: Sequential
+    SkinnedBoundsRecomputePolicyOverride:
+      HasOverride: false
+      Value: Never
+    AllowInitialSkinnedBoundsBuildWhenNeverOverride:
+      HasOverride: false
+      Value: false
+    CalculateSkinningInComputeShaderOverride:
+      HasOverride: false
+      Value: false
+    CalculateBlendshapesInComputeShaderOverride:
+      HasOverride: false
+      Value: false
 NetworkingType: Local
 UdpMulticastGroupIP: 239.0.0.222
 UdpMulticastPort: 5000
@@ -114,19 +166,18 @@ BuildSettings:
   CleanOutputDirectory: true
   CookContent: true
   BuildManagedAssemblies: true
-  CopyGameAssemblies: true
-  CopyEngineBinaries: true
   BuildLauncherExecutable: true
   PublishLauncherAsNativeAot: true
   ValidateLauncherAotCompatibility: true
   GenerateConfigArchive: true
   SaveSettingsBeforeBuild: true
+  CommonAssetsPackageMode: RuntimeShaders
   ContentArchiveName: GameContent.pak
   ConfigArchiveName: GameConfig.pak
   ContentOutputFolder: Content
   ConfigOutputFolder: Config
   BinariesOutputFolder: Binaries
-  LauncherExecutableName: Game.exe
+  LauncherExecutableName: MonkeyBallVR.exe
   LauncherDefineConstants: XRE_PUBLISHED;XRE_AOT_RUNTIME
   ArchiveCopyBufferBytes: 1048576
   ID: 75c177ae-8266-4de6-a262-415812f289f3
@@ -160,16 +211,13 @@ EnableZeroReadbackMaterialScatterOverride:
   Value: false
 ZeroReadbackMaterialDrawPathOverride:
   HasOverride: false
-  Value: FullBucketScan
+  Value: FullBucketScanDiagnostic
 TransformReplicationKeyframeIntervalSecOverride:
   HasOverride: false
   Value: 0
 TimeBetweenReplicationsOverride:
   HasOverride: false
   Value: 0
-UseGpuBvhOverride:
-  HasOverride: false
-  Value: false
 CpuSceneCullingStructureOverride:
   HasOverride: false
   Value: Octree
@@ -189,6 +237,12 @@ EnableGpuBvhTimingQueriesOverride:
   HasOverride: false
   Value: false
 VulkanGpuDrivenProfileOverride:
+  HasOverride: false
+  Value: Auto
+RenderBackendFallbackPolicyOverride:
+  HasOverride: false
+  Value: RequireRequested
+VulkanRenderTargetModeOverride:
   HasOverride: false
   Value: Auto
 AntiAliasingModeOverride:

@@ -331,7 +331,9 @@ internal partial class Program
         XRWorld targetWorld;
         if (mode == EWorldMode.UnitTesting)
         {
-            targetWorld = BootstrapWorldFactory.CreateSelectedWorld(true, false);
+            UnitTestingWorldSettings settings = RuntimeBootstrapState.Settings;
+            bool setUI = settings.EditorType != UnitTestEditorType.None || settings.RiveUI;
+            targetWorld = BootstrapWorldFactory.CreateSelectedWorld(setUI, false);
             EngineDebug.Out("Loading Unit Testing World...");
         }
         else
@@ -681,6 +683,8 @@ internal partial class Program
             Engine.EditorPreferences.Debug.EnableRenderStatisticsTracking = true;
             WriteBootstrapTrace("Enabled render statistics tracking for profile capture.");
         }
+
+        RuntimeEngine.Rendering.Stats.EnableTracking = true;
 
         if (!Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling)
         {
@@ -1681,7 +1685,6 @@ internal partial class Program
 
         BuildSettings settings = Engine.BuildSettings ?? new BuildSettings();
         settings.CookContent = true;
-        settings.CopyEngineBinaries = true;
         settings.GenerateConfigArchive = true;
         settings.BuildLauncherExecutable = true;
 
@@ -1712,6 +1715,15 @@ internal partial class Program
 
         if (validateAotCompatibility.HasValue)
             settings.ValidateLauncherAotCompatibility = validateAotCompatibility.Value;
+
+        // NativeAOT publish produces a self-contained output. Copying the managed
+        // game and engine build directories first only bloats the final package;
+        // launcher artifact copying below preserves publish-produced native DLLs.
+        if (settings.PublishLauncherAsNativeAot)
+        {
+            settings.CopyGameAssemblies = false;
+            settings.CopyEngineBinaries = false;
+        }
 
         settings.LauncherDefineConstants = XRRuntimeEnvironment.ComposeDefineConstants(
             defineConstantsArg,

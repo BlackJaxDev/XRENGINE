@@ -100,6 +100,7 @@ BuildSettings:
   BuildManagedAssemblies: true
   CopyGameAssemblies: true
   CopyEngineBinaries: true
+  CommonAssetsPackageMode: RuntimeShaders
   BuildLauncherExecutable: true
   GenerateConfigArchive: true
   SaveSettingsBeforeBuild: true

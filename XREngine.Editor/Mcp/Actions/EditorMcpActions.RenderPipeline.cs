@@ -3,6 +3,8 @@ using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -436,6 +438,7 @@ namespace XREngine.Editor.Mcp
                         gamma,
                         mobius_transition = mobiusTransition,
                         encode_srgb = encodeSrgb,
+                        rgba_float_sha256 = result.RgbaFloatSha256,
                         stats = result.Stats,
                     });
             }
@@ -610,6 +613,7 @@ namespace XREngine.Editor.Mcp
                         gamma,
                         mobius_transition = mobiusTransition,
                         encode_srgb = encodeSrgb,
+                        rgba_float_sha256 = result.RgbaFloatSha256,
                         stats = result.Stats,
                     });
             }
@@ -761,6 +765,7 @@ namespace XREngine.Editor.Mcp
                         gamma,
                         mobius_transition = mobiusTransition,
                         encode_srgb = encodeSrgb,
+                        rgba_float_sha256 = result.RgbaFloatSha256,
                         stats = result.Stats,
                     });
             }
@@ -958,7 +963,13 @@ namespace XREngine.Editor.Mcp
                     break;
             }
 
-            return new PipelineTextureCaptureResult(path, width, height, stats, orientation);
+            return new PipelineTextureCaptureResult(
+                path,
+                width,
+                height,
+                ComputeRgbaFloatSha256(rgbaFloats),
+                stats,
+                orientation);
         }
 
         private static PipelineCaptureOrientation ResolvePipelineCaptureOrientation(
@@ -984,6 +995,9 @@ namespace XREngine.Editor.Mcp
                 autoFlip,
                 flipVerticallyOverride.HasValue);
         }
+
+        private static string ComputeRgbaFloatSha256(float[] rgbaFloats)
+            => Convert.ToHexString(SHA256.HashData(MemoryMarshal.AsBytes(rgbaFloats.AsSpan())));
 
         private static RgbaFloatStats ComputeRgbaStats(float[] rgbaFloats)
         {
@@ -1413,6 +1427,7 @@ namespace XREngine.Editor.Mcp
             string Path,
             int Width,
             int Height,
+            string RgbaFloatSha256,
             RgbaFloatStats Stats,
             PipelineCaptureOrientation Orientation);
 

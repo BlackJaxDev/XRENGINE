@@ -1,0 +1,792 @@
+﻿__assetType: MonkeyBallVR.MonkeyBallWorldAsset
+Scenes:
+- __assetType: XREngine.Scene.XRScene
+  IsVisible: true
+  RootNodes:
+  - Components:
+    - __type: MonkeyBallVR.MonkeyBallGameComponent
+      CourseNodeName: Tilting Course
+      BallNodeName: Player Ball
+      DesktopCameraNodeName: Desktop Camera
+      HudNodeName: Procedural Scoreboard
+      BallRadius: 0.5
+      StartPosition: 0 5
+      GoalPosition: 0 -14
+      GoalRadius: 1.15
+      RoundDurationSeconds: 60
+      MaxTiltDegrees: 12
+      InitialLives: 3
+      MaxBallSpeed: 12
+      FallThresholdY: -3.5
+      FallResetDelaySeconds: 0.75
+      DesktopCameraOffset: 0 2.5 5.5
+      DesktopCameraPitchDegrees: -14
+      DesktopCameraYawResponse: 4.5
+      CameraHeadingVelocityThreshold: 0.15
+      Name: Game Rules
+      ID: e8784f38-fca4-4c20-a570-52da5cd04882
+    Transform:
+      ID: 858b917c-2e55-45b0-a36d-4c5ce504f19b
+    ID: 2ec94cca-180b-4d8b-a059-cf2a4ed6947a
+    Name: MonkeyBall VR
+    ChildNodes:
+    - Components:
+      - __type: MonkeyBallVR.MonkeyBallPawnComponent
+        Name: Player Input
+        ID: 244f94a5-0adb-43dd-9065-3d9066a650fd
+      Transform:
+        ID: 40e446de-e6c5-4ddb-bd49-ffb4cf8e1d77
+        Translation: 0 2.2 10
+      ID: 1dc80bb8-a63b-4030-a5e1-1350b4c115b9
+      Name: Player Rig
+      ChildNodes:
+      - Components:
+        - __type: XREngine.Data.Components.Scene.VRHeadsetComponent
+          Near: 0.1
+          Far: 100000
+          Name: Tracked Headset
+          ID: 92e16611-4ceb-4805-b648-188654063205
+        Transform:
+          $type: XREngine.Scene.Transforms.VRHeadsetTransform, XREngine.Runtime.InputIntegration, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null
+          $value:
+            ID: 9d0a8c1d-9fb9-4020-b8de-fcc1b221693b
+        ID: f25e44bd-c39e-4d93-9ece-8a6701afbd69
+        Name: VR Headset
+        ChildNodes:
+        - Transform:
+            $type: XREngine.Scene.Transforms.VREyeTransform, XREngine.Runtime.InputIntegration, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null
+            $value:
+              IsLeftEye: true
+              ID: 83e66d83-ef0c-449b-b174-5a56bc7b3157
+          ID: a046f6f2-ef6c-49bf-abd2-5d9a168a7f5c
+          Name: Left Eye
+        - Transform:
+            $type: XREngine.Scene.Transforms.VREyeTransform, XREngine.Runtime.InputIntegration, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null
+            $value:
+              IsLeftEye: true
+              ID: bac7173a-3530-4abc-af54-38201f7195a8
+          ID: c3450bf8-6643-445d-82c3-8882011f586f
+          Name: Right Eye
+      - Components:
+        - __type: XREngine.Components.VR.VRControllerModelComponent
+          LeftHand: true
+          Name: Runtime Controller Model
+          ID: 109ee9db-2d7b-48a9-852e-f9fc5b1d53dd
+        Transform:
+          $type: XREngine.Data.Components.Scene.VRControllerTransform, XREngine.Runtime.InputIntegration, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null
+          $value:
+            LeftHand: true
+            ID: a5a5b4d4-557c-493e-a071-2d4cd72d9615
+        ID: e9352338-a496-4ed3-b5fc-de39bdb8274c
+        Name: Left Controller
+      - Components:
+        - __type: XREngine.Components.VR.VRControllerModelComponent
+          Name: Runtime Controller Model
+          ID: 389a9ab8-32ca-4fb9-ae77-2e36acb2df5b
+        Transform:
+          $type: XREngine.Data.Components.Scene.VRControllerTransform, XREngine.Runtime.InputIntegration, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null
+          $value:
+            ID: f63ee948-075e-4e9a-aa70-b9026dc03558
+        ID: 67211691-ea9d-451e-99f2-f3190c582e3c
+        Name: Right Controller
+      - Components:
+        - __type: XREngine.Data.Components.Scene.VRTrackerCollectionComponent
+          Name: Tracked Devices
+          ID: 2f151d95-9d44-4a8b-b594-fe6fec26a531
+        Transform:
+          ID: a2e4fc23-ac83-4c10-9c58-106927fb08fe
+        ID: c16697ef-93de-452a-80ad-ec28ce058122
+        Name: VR Trackers
+    - Components:
+      - __type: XREngine.Components.DebugDrawComponent
+        Name: Scoreboard
+        ID: 065fc87f-bb71-4af3-8ca8-8a29668ffab6
+      Transform:
+        ID: b8ad9092-9eef-47d5-ab0f-272d1c99945f
+        Translation: -4.5 2 6.7
+      ID: cdaa8d58-9650-47d0-8381-95330a2bc72e
+      Name: Procedural Scoreboard
+    - Components:
+      - __type: XREngine.Components.Lights.DirectionalLightComponent
+        UseShadowAtlas: false
+        Color: 1 0.959999979 0.860000014
+        DiffuseIntensity: 2.4
+        EnableCascadedShadows: false
+        EnableContactShadows: false
+        ID: 1c76b980-5e71-4616-8b5e-4cc1669a905e
+      Transform:
+        ID: 23e8a9cf-c57e-4b74-9a0e-5bae36238cd4
+        Rotation: -0.4030582 -0.272532 -0.12708376 0.86436105
+      ID: d2e16850-03c4-4805-8b78-8a1ca9c19ebc
+      Name: Directional Light
+    - Components:
+      - __type: XREngine.Components.Physics.DynamicRigidBodyComponent
+        AutoCreateRigidBody: true
+        MaterialDefinition:
+          StaticFriction: 0.9
+          DynamicFriction: 0.72
+          Restitution: 0.08
+        ColliderShapes:
+        - Enabled: true
+          Name: Start Platform
+          Geometry:
+            __type: XREngine.Scene.Physics.IPhysicsGeometry+Box
+            HalfExtents: 7.5 0.15 7
+          LocalPosition: 0 -0.15 0
+          LocalRotation: 0 0 0 1
+        - Enabled: true
+          Name: Bridge
+          Geometry:
+            __type: XREngine.Scene.Physics.IPhysicsGeometry+Box
+            HalfExtents: 1.55 0.15 2.75
+          LocalPosition: 0 -0.15 -9.75
+          LocalRotation: 0 0 0 1
+        - Enabled: true
+          Name: Goal Platform
+          Geometry:
+            __type: XREngine.Scene.Physics.IPhysicsGeometry+Box
+            HalfExtents: 3 0.15 1.75
+          LocalPosition: 0 -0.15 -14.25
+          LocalRotation: 0 0 0 1
+        - Enabled: true
+          Name: Left Bumper
+          Geometry: &o2
+            __type: XREngine.Scene.Physics.IPhysicsGeometry+Sphere
+            Radius: 0.85
+          LocalPosition: -2.2 0.72 -2.5
+          LocalRotation: 0 0 0 1
+        - Enabled: true
+          Name: Right Bumper
+          Geometry: *o2
+          LocalPosition: 2 0.72 -5.5
+          LocalRotation: 0 0 0 1
+        ShapeOffsetRotation: 0 0 0 1
+        Density: 1
+        SimulationEnabled: true
+        CollisionGroup: 1
+        GroupsMask: &o3
+          Word0: 4294967295
+          Word1: 4294967295
+          Word2: 4294967295
+          Word3: 4294967295
+        ActorName: MonkeyBall Tilting Course
+        BodyFlags: Kinematic, UseKinematicTargetForQueries
+        MaxLinearVelocity: 100
+        MaxAngularVelocity: 100
+        Mass: 1
+        MassSpaceInertiaTensor: 1 1 1
+        CenterOfMassLocalPose: &o4
+          Rotation: 0 0 0 1
+        MinCcdAdvanceCoefficient: 0.15
+        MaxDepenetrationVelocity: 10
+        MaxContactImpulse: 3.4028235E+38
+        SleepThreshold: 0.005
+        WakeCounter: 0.1
+        SolverIterations: &o5
+          MinPositionIterations: 8
+          MinVelocityIterations: 2
+        OwnerServerPlayerIndex: -1
+        Name: Kinematic Course Physics
+        ID: 80fee24e-c98f-4e24-a71e-22a3576f3fee
+      Transform:
+        $type: XREngine.Scene.Transforms.RigidBodyTransform, XREngine.Runtime.Core, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null
+        $value:
+          Rotation: 0 0 0 1
+          PreRotationOffset: 0 0 0 1
+          PostRotationOffset: 0 0 0 1
+          ID: 257106d2-7b3b-461b-8f58-d68a6dfb163e
+      ID: e4059cce-c4aa-45ad-96d1-1185fd91dd56
+      Name: Tilting Course
+      ChildNodes:
+      - Components:
+        - __type: XREngine.Components.Mesh.Shapes.BoxMeshComponent
+          Box:
+            Min: -7.5 -0.15 -7
+            Max: 7.5 0.15 7
+          Material:
+            __assetType: XREngine.Rendering.XRMaterial
+            Shaders:
+            - __assetType: XREngine.Rendering.XRShader
+              Source: Shaders/Common/ColoredDeferred.fs
+              ID: dcc53172-0253-442c-893f-68fc78757421
+              Name: ColoredDeferred
+            UberAuthoredState: {}
+            PassSet:
+              SourceRenderQueue: -1
+              ForwardAddPolicy: FoldedIntoForwardPlusBase
+            AlphaCutoff: 0.5
+            RenderPass: 1
+            RenderOptions:
+              __assetType: XREngine.Rendering.Models.Materials.RenderingParameters
+              WriteRed: true
+              WriteGreen: true
+              WriteBlue: true
+              WriteAlpha: true
+              AlphaToCoverage: Disabled
+              Winding: CounterClockwise
+              CullMode: Back
+              DepthTest:
+                Enabled: Enabled
+                UpdateDepth: true
+                Function: Lequal
+              StencilTest:
+                FrontFace:
+                  BothFailOp: Keep
+                  StencilPassDepthFailOp: Keep
+                  BothPassOp: Keep
+                BackFace:
+                  BothFailOp: Keep
+                  StencilPassDepthFailOp: Keep
+                  BothPassOp: Keep
+              ID: 585731e5-444f-4d87-a90c-67a343e80f0c
+            Parameters:
+            - __type: XREngine.Rendering.Models.Materials.ShaderVector3
+              Color: {}
+              Value: 0.1 0.3 0.72
+              Name: BaseColor
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 1
+              Name: Opacity
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 0.45
+              Name: Specular
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 0.58
+              Name: Roughness
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 0.08
+              Name: Metallic
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Name: Emission
+            ID: dd33b9c9-017d-440b-9dcf-c767d79a24a4
+            Name: Start Platform Material
+          MeshLayer: -1
+          Name: Start Platform Lit Mesh
+          ID: e5b457e7-c450-48eb-b803-9c848810e576
+        Transform:
+          ID: ec055160-9d28-41dd-a619-d74bb4b5d5b2
+          Translation: 0 -0.15 0
+        ID: 0982f080-1c4f-41f8-af81-6e3b770479a8
+        Name: Start Platform
+      - Components:
+        - __type: XREngine.Components.Mesh.Shapes.BoxMeshComponent
+          Box:
+            Min: -1.55 -0.15 -2.75
+            Max: 1.55 0.15 2.75
+          Material:
+            __assetType: XREngine.Rendering.XRMaterial
+            Shaders:
+            - __assetType: XREngine.Rendering.XRShader
+              Source: Shaders/Common/ColoredDeferred.fs
+              ID: dcc53172-0253-442c-893f-68fc78757421
+              Name: ColoredDeferred
+            UberAuthoredState: {}
+            PassSet:
+              SourceRenderQueue: -1
+              ForwardAddPolicy: FoldedIntoForwardPlusBase
+            AlphaCutoff: 0.5
+            RenderPass: 1
+            RenderOptions:
+              __assetType: XREngine.Rendering.Models.Materials.RenderingParameters
+              WriteRed: true
+              WriteGreen: true
+              WriteBlue: true
+              WriteAlpha: true
+              AlphaToCoverage: Disabled
+              Winding: CounterClockwise
+              CullMode: Back
+              DepthTest:
+                Enabled: Enabled
+                UpdateDepth: true
+                Function: Lequal
+              StencilTest:
+                FrontFace:
+                  BothFailOp: Keep
+                  StencilPassDepthFailOp: Keep
+                  BothPassOp: Keep
+                BackFace:
+                  BothFailOp: Keep
+                  StencilPassDepthFailOp: Keep
+                  BothPassOp: Keep
+              ID: a13c493c-ec18-46eb-bcfb-775f159b93e7
+            Parameters:
+            - __type: XREngine.Rendering.Models.Materials.ShaderVector3
+              Color: {}
+              Value: 0.16 0.48 0.88
+              Name: BaseColor
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 1
+              Name: Opacity
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 0.45
+              Name: Specular
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 0.52
+              Name: Roughness
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 0.1
+              Name: Metallic
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Name: Emission
+            ID: a1297be3-59db-4e68-84fb-2778d0e633c1
+            Name: Bridge Material
+          MeshLayer: -1
+          Name: Bridge Lit Mesh
+          ID: 2e275def-6ab1-4873-8e63-429bfa2da10d
+        Transform:
+          ID: 8db9f05e-adf2-46ba-b2f5-c2ee7628a5f0
+          Translation: 0 -0.15 -9.75
+        ID: 3697937d-f69e-4fba-99d9-57ae1a0e6d30
+        Name: Bridge
+      - Components:
+        - __type: XREngine.Components.Mesh.Shapes.BoxMeshComponent
+          Box:
+            Min: -3 -0.15 -1.75
+            Max: 3 0.15 1.75
+          Material:
+            __assetType: XREngine.Rendering.XRMaterial
+            Shaders:
+            - __assetType: XREngine.Rendering.XRShader
+              Source: Shaders/Common/ColoredDeferred.fs
+              ID: dcc53172-0253-442c-893f-68fc78757421
+              Name: ColoredDeferred
+            UberAuthoredState: {}
+            PassSet:
+              SourceRenderQueue: -1
+              ForwardAddPolicy: FoldedIntoForwardPlusBase
+            AlphaCutoff: 0.5
+            RenderPass: 1
+            RenderOptions:
+              __assetType: XREngine.Rendering.Models.Materials.RenderingParameters
+              WriteRed: true
+              WriteGreen: true
+              WriteBlue: true
+              WriteAlpha: true
+              AlphaToCoverage: Disabled
+              Winding: CounterClockwise
+              CullMode: Back
+              DepthTest:
+                Enabled: Enabled
+                UpdateDepth: true
+                Function: Lequal
+              StencilTest:
+                FrontFace:
+                  BothFailOp: Keep
+                  StencilPassDepthFailOp: Keep
+                  BothPassOp: Keep
+                BackFace:
+                  BothFailOp: Keep
+                  StencilPassDepthFailOp: Keep
+                  BothPassOp: Keep
+              ID: 99a6ee56-95df-4c01-bb92-bc6b672892ef
+            Parameters:
+            - __type: XREngine.Rendering.Models.Materials.ShaderVector3
+              Color: {}
+              Value: 0.1 0.58 0.3
+              Name: BaseColor
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 1
+              Name: Opacity
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 0.45
+              Name: Specular
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 0.55
+              Name: Roughness
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 0.05
+              Name: Metallic
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Name: Emission
+            ID: 17f46767-ccd7-4ec6-9239-2bdfd79d20dc
+            Name: Goal Platform Material
+          MeshLayer: -1
+          Name: Goal Platform Lit Mesh
+          ID: 4a400cb3-9099-43c6-b95a-a4f0600e9bb7
+        Transform:
+          ID: 61f195f9-6cee-4a08-9b35-75b0dae859f3
+          Translation: 0 -0.15 -14.25
+        ID: 1c79b82d-0497-4648-bffd-bca6df45129c
+        Name: Goal Platform
+      - Components:
+        - __type: XREngine.Components.Mesh.Shapes.SphereMeshComponent
+          Radius: 0.85
+          MeshPrecision: 32
+          Material:
+            __assetType: XREngine.Rendering.XRMaterial
+            Shaders:
+            - __assetType: XREngine.Rendering.XRShader
+              Source: Shaders/Common/ColoredDeferred.fs
+              ID: dcc53172-0253-442c-893f-68fc78757421
+              Name: ColoredDeferred
+            UberAuthoredState: {}
+            PassSet:
+              SourceRenderQueue: -1
+              ForwardAddPolicy: FoldedIntoForwardPlusBase
+            AlphaCutoff: 0.5
+            RenderPass: 1
+            RenderOptions:
+              __assetType: XREngine.Rendering.Models.Materials.RenderingParameters
+              WriteRed: true
+              WriteGreen: true
+              WriteBlue: true
+              WriteAlpha: true
+              AlphaToCoverage: Disabled
+              Winding: CounterClockwise
+              CullMode: Back
+              DepthTest:
+                Enabled: Enabled
+                UpdateDepth: true
+                Function: Lequal
+              StencilTest:
+                FrontFace:
+                  BothFailOp: Keep
+                  StencilPassDepthFailOp: Keep
+                  BothPassOp: Keep
+                BackFace:
+                  BothFailOp: Keep
+                  StencilPassDepthFailOp: Keep
+                  BothPassOp: Keep
+              ExcludeFromGpuIndirect: true
+              ID: da8bbe13-f60f-4e9e-b027-11a1f805dc9e
+            Parameters:
+            - __type: XREngine.Rendering.Models.Materials.ShaderVector3
+              Color: {}
+              Value: 0.88 0.12 0.1
+              Name: BaseColor
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 1
+              Name: Opacity
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 0.45
+              Name: Specular
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 0.34
+              Name: Roughness
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 0.12
+              Name: Metallic
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Name: Emission
+            ID: 18c5f87f-31f6-4290-bd7a-e49ab0a6638b
+            Name: Left Bumper Material
+          MeshLayer: -1
+          Name: Left Bumper Lit Mesh
+          ID: ce75c11f-958d-453b-a05e-c2b8f78169a2
+        Transform:
+          ID: 9d7963a3-9d6e-46f8-ae66-1ac995fc76d6
+          Scale: 1 1.15 1
+          Translation: -2.2 0.72 -2.5
+        ID: 03ac14ea-11c0-46ac-a129-2dc13d784b38
+        Name: Left Bumper
+      - Components:
+        - __type: XREngine.Components.Mesh.Shapes.SphereMeshComponent
+          Radius: 0.85
+          MeshPrecision: 32
+          Material:
+            __assetType: XREngine.Rendering.XRMaterial
+            Shaders:
+            - __assetType: XREngine.Rendering.XRShader
+              Source: Shaders/Common/ColoredDeferred.fs
+              ID: dcc53172-0253-442c-893f-68fc78757421
+              Name: ColoredDeferred
+            UberAuthoredState: {}
+            PassSet:
+              SourceRenderQueue: -1
+              ForwardAddPolicy: FoldedIntoForwardPlusBase
+            AlphaCutoff: 0.5
+            RenderPass: 1
+            RenderOptions:
+              __assetType: XREngine.Rendering.Models.Materials.RenderingParameters
+              WriteRed: true
+              WriteGreen: true
+              WriteBlue: true
+              WriteAlpha: true
+              AlphaToCoverage: Disabled
+              Winding: CounterClockwise
+              CullMode: Back
+              DepthTest:
+                Enabled: Enabled
+                UpdateDepth: true
+                Function: Lequal
+              StencilTest:
+                FrontFace:
+                  BothFailOp: Keep
+                  StencilPassDepthFailOp: Keep
+                  BothPassOp: Keep
+                BackFace:
+                  BothFailOp: Keep
+                  StencilPassDepthFailOp: Keep
+                  BothPassOp: Keep
+              ExcludeFromGpuIndirect: true
+              ID: 94e24f76-853b-4d2f-bc6a-57df9dc71e16
+            Parameters:
+            - __type: XREngine.Rendering.Models.Materials.ShaderVector3
+              Color: {}
+              Value: 0.88 0.12 0.1
+              Name: BaseColor
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 1
+              Name: Opacity
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 0.45
+              Name: Specular
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 0.34
+              Name: Roughness
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 0.12
+              Name: Metallic
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Name: Emission
+            ID: 50b43e20-d0da-4fe2-8ccd-3e67e68a307b
+            Name: Right Bumper Material
+          MeshLayer: -1
+          Name: Right Bumper Lit Mesh
+          ID: 9fac7e7c-2319-47a2-ba60-3d78db4bdc3e
+        Transform:
+          ID: e89cf4a4-b259-4f61-987b-9463f316916b
+          Scale: 1 1.15 1
+          Translation: 2 0.72 -5.5
+        ID: 2009522f-5b51-4ea0-8cc4-6566736965d0
+        Name: Right Bumper
+      - Components:
+        - __type: XREngine.Components.Mesh.Shapes.SphereMeshComponent
+          Radius: 1.05
+          MeshPrecision: 32
+          Material:
+            __assetType: XREngine.Rendering.XRMaterial
+            Shaders:
+            - __assetType: XREngine.Rendering.XRShader
+              Source: Shaders/Common/ColoredDeferred.fs
+              ID: dcc53172-0253-442c-893f-68fc78757421
+              Name: ColoredDeferred
+            UberAuthoredState: {}
+            PassSet:
+              SourceRenderQueue: -1
+              ForwardAddPolicy: FoldedIntoForwardPlusBase
+            AlphaCutoff: 0.5
+            RenderPass: 1
+            RenderOptions:
+              __assetType: XREngine.Rendering.Models.Materials.RenderingParameters
+              WriteRed: true
+              WriteGreen: true
+              WriteBlue: true
+              WriteAlpha: true
+              AlphaToCoverage: Disabled
+              Winding: CounterClockwise
+              CullMode: Back
+              DepthTest:
+                Enabled: Enabled
+                UpdateDepth: true
+                Function: Lequal
+              StencilTest:
+                FrontFace:
+                  BothFailOp: Keep
+                  StencilPassDepthFailOp: Keep
+                  BothPassOp: Keep
+                BackFace:
+                  BothFailOp: Keep
+                  StencilPassDepthFailOp: Keep
+                  BothPassOp: Keep
+              ExcludeFromGpuIndirect: true
+              ID: e514a88a-b63f-46d7-aad9-b3635e0913b5
+            Parameters:
+            - __type: XREngine.Rendering.Models.Materials.ShaderVector3
+              Color: {}
+              Value: 0.08 0.95 0.44
+              Name: BaseColor
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 1
+              Name: Opacity
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 0.45
+              Name: Specular
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 0.3
+              Name: Roughness
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Value: 0.16
+              Name: Metallic
+            - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+              Name: Emission
+            ID: 913021d6-2ba2-4462-8667-933772e3fbed
+            Name: Goal Marker Material
+          MeshLayer: -1
+          Name: Goal Marker Lit Mesh
+          ID: da42b7f5-ca1f-49b6-8fdc-9190bf1867c8
+        Transform:
+          ID: 476900b1-bdba-468c-95d8-4c67b9ecf54a
+          Scale: 1 0.055 1
+          Translation: 0 0.04 -14
+        ID: d0b5e9d2-625c-47f1-9c04-a9df404cf09a
+        Name: Goal Marker
+    - Components:
+      - __type: XREngine.Components.Physics.DynamicRigidBodyComponent
+        AutoCreateRigidBody: true
+        MaterialDefinition:
+          StaticFriction: 0.82
+          DynamicFriction: 0.68
+          Restitution: 0.12
+        Geometry:
+          __type: XREngine.Scene.Physics.IPhysicsGeometry+Sphere
+          Radius: 0.5
+        ShapeOffsetRotation: 0 0 0 1
+        Density: 1
+        GravityEnabled: true
+        SimulationEnabled: true
+        CollisionGroup: 1
+        GroupsMask: *o3
+        ActorName: MonkeyBall
+        BodyFlags: EnableCcd, EnableSpeculativeCcd, EnableCcdFriction
+        LinearDamping: 0.04
+        AngularDamping: 0.035
+        MaxLinearVelocity: 20
+        MaxAngularVelocity: 60
+        Mass: 1
+        MassSpaceInertiaTensor: 1 1 1
+        CenterOfMassLocalPose: *o4
+        MinCcdAdvanceCoefficient: 0.15
+        MaxDepenetrationVelocity: 10
+        MaxContactImpulse: 3.4028235E+38
+        SleepThreshold: 0.005
+        WakeCounter: 0.1
+        SolverIterations: *o5
+        OwnerServerPlayerIndex: -1
+        Name: Ball Physics
+        ID: 4fd00661-7289-4c0b-a28b-e8f7f592771f
+      - __type: XREngine.Components.Mesh.Shapes.SphereMeshComponent
+        Radius: 0.5
+        MeshPrecision: 48
+        Material:
+          __assetType: XREngine.Rendering.XRMaterial
+          Shaders:
+          - __assetType: XREngine.Rendering.XRShader
+            Source: Shaders/Common/ColoredDeferred.fs
+            ID: dcc53172-0253-442c-893f-68fc78757421
+            Name: ColoredDeferred
+          UberAuthoredState: {}
+          PassSet:
+            SourceRenderQueue: -1
+            ForwardAddPolicy: FoldedIntoForwardPlusBase
+          AlphaCutoff: 0.5
+          RenderPass: 1
+          RenderOptions:
+            __assetType: XREngine.Rendering.Models.Materials.RenderingParameters
+            WriteRed: true
+            WriteGreen: true
+            WriteBlue: true
+            WriteAlpha: true
+            AlphaToCoverage: Disabled
+            Winding: CounterClockwise
+            CullMode: Back
+            DepthTest:
+              Enabled: Enabled
+              UpdateDepth: true
+              Function: Lequal
+            StencilTest:
+              FrontFace:
+                BothFailOp: Keep
+                StencilPassDepthFailOp: Keep
+                BothPassOp: Keep
+              BackFace:
+                BothFailOp: Keep
+                StencilPassDepthFailOp: Keep
+                BothPassOp: Keep
+            ExcludeFromGpuIndirect: true
+            ID: d470f2af-59e2-4f0b-b354-956945f4b3f5
+          Parameters:
+          - __type: XREngine.Rendering.Models.Materials.ShaderVector3
+            Color: {}
+            Value: 1 0.34 0.055
+            Name: BaseColor
+          - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+            Value: 1
+            Name: Opacity
+          - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+            Value: 0.45
+            Name: Specular
+          - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+            Value: 0.26
+            Name: Roughness
+          - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+            Value: 0.12
+            Name: Metallic
+          - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+            Name: Emission
+          ID: 2a2b0938-f8a8-434b-93f9-fe1b75f55a45
+          Name: MonkeyBall Amber
+        MeshLayer: -1
+        Name: Lit Ball Mesh
+        ID: 53558bf6-a6ee-4b91-b286-a06a4599c558
+      Transform:
+        $type: XREngine.Scene.Transforms.RigidBodyTransform, XREngine.Runtime.Core, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null
+        $value:
+          InterpolationMode: Interpolate
+          Position: 0 0.58 5
+          Rotation: 0 0 0 1
+          PreRotationOffset: 0 0 0 1
+          PostRotationOffset: 0 0 0 1
+          ID: 6ff5e60f-6f1d-4150-a9d6-c825f3f4bf23
+      ID: e0f2f32a-8567-4417-a0c1-15b39e945773
+      Name: Player Ball
+      ChildNodes:
+      - Components:
+        - __type: XREngine.Components.CameraComponent
+          CameraParameters:
+            __type: XREngine.Rendering.XRPerspectiveCameraParameters
+            VerticalFieldOfView: 60
+            HorizontalFieldOfView: 60
+            AspectRatio: 1
+            InheritAspectRatio: true
+            NearZ: 0.05
+            FarZ: 500
+          InternalResolutionScale: 1
+          ManualInternalWidth: 1920
+          ManualInternalHeight: 1080
+          CullWithFrustum: true
+          DirectionalShadowRenderingMode: NonCascaded
+          Name: Desktop Follow Camera
+          ID: e69b1850-64ce-43fe-b2a9-db2667aba0bc
+        Transform:
+          ID: 4cca6a33-717a-4ae1-92d9-8e5a61eb1a1e
+          Translation: 0 2.5 5.5
+        ID: aab4d710-ab49-43fb-9e71-2035da6119cb
+        Name: Desktop Camera
+  ID: ed77f332-c7e6-433f-b57f-95f4120f0516
+  Name: MonkeyBall Course
+Settings:
+  __assetType: XREngine.Scene.WorldSettings
+  Gravity: 0 -9.81 0
+  PhysicsTimestep: 0.011111111
+  PhysicsSubsteps: 2
+  DefaultAngularDamping: 0.05
+  DefaultFriction: 0.65
+  DefaultRestitution: 0.1
+  EnableContinuousCollision: true
+  TimeDilation: 1
+  Bounds:
+    Min: -2500 -2500 -2500
+    Max: 2500 2500 2500
+  SkyboxIntensity: 1
+  RenderSkybox: false
+  ClearColor: 0.0250000004 0.0549999997 0.109999999 1
+  AmbientLightColor: 0.0700000003 0.0900000036 0.140000001
+  AmbientLightIntensity: 0.7
+  EnvironmentLightingIntensity: 0.25
+  ReflectionIntensity: 0.7
+  LightProbeResolution: 256
+  AutoCaptureLightProbes: false
+  FogColor: 0.5 0.5 0.5
+  FogDensity: 0.01
+  FogStartDistance: 10
+  FogEndDistance: 1000
+  FogHeightFalloff: 0.2
+  SpeedOfSound: 343
+  DopplerFactor: 1
+  DefaultAudioAttenuation: 1
+  MasterVolume: 1
+  PreviewWorldBounds: false
+  ID: 2155c5a7-462c-4b3f-8b8a-f188f5be5c65
+ID: 4025361a-c46c-40f2-99e4-3ffd03890cd8
+Name: MonkeyBall VR World

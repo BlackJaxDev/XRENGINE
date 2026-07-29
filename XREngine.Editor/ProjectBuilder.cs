@@ -39,6 +39,13 @@ internal static class ProjectBuilder
     private const string CommonAssetsArchiveName = "CommonAssets.pak";
     private const string AotRuntimeMetadataFileName = AotRuntimeMetadataStore.MetadataFileName;
 
+    private static readonly string[] NativeHostDependencyFileNames =
+    [
+        "openvr_api.dll",
+        "OVRLipSync.dll",
+        "RestirGI.Native.dll",
+    ];
+
     private sealed record AssetTimestampEntry(string Path, long LastWriteUtcTicks, long Length);
 
     private sealed record BuildContext(
@@ -233,14 +240,16 @@ internal static class ProjectBuilder
 
         steps.Add(new BuildStep("Preparing output directories", () => PrepareOutputDirectories(context, settings.CleanOutputDirectory)));
 
-        if (cookContent)
-        {
-            steps.Add(new BuildStep("Cooking content", () => CookContent(context)));
-        }
-
+        // Compile first so the cooker and generated launcher can inspect the current
+        // game assembly rather than stale output from a previous editor session.
         if (settings.BuildManagedAssemblies)
         {
             steps.Add(new BuildStep("Compiling managed assemblies", () => BuildManagedAssemblies(configuration, platform)));
+        }
+
+        if (cookContent)
+        {
+            steps.Add(new BuildStep("Cooking content", () => CookContent(context)));
         }
 
         bool needConfigArchive = generateConfigArchive || settings.BuildLauncherExecutable;
@@ -257,6 +266,11 @@ internal static class ProjectBuilder
         if (settings.CopyEngineBinaries)
         {
             steps.Add(new BuildStep("Copying engine binaries", () => CopyEngineBinaries(context, settings.IncludePdbFiles)));
+        }
+
+        if (settings.CopyEngineBinaries || settings.BuildLauncherExecutable)
+        {
+            steps.Add(new BuildStep("Packaging common assets", () => PackageCommonAssets(context, settings.CommonAssetsPackageMode)));
         }
 
         if (settings.BuildLauncherExecutable)
@@ -598,34 +612,143 @@ internal static class ProjectBuilder
             File.Copy(file, Path.Combine(destination, fileName), true);
         }
 
-        string runtimeSource = Path.Combine(sourceDir, "runtimes");
-        if (Directory.Exists(runtimeSource))
-            CopyDirectory(runtimeSource, Path.Combine(destination, "runtimes"), includePdb);
+        CopyRuntimeDependencies(sourceDir, destination, includePdb);
+    }
+
+    private static void CopyRuntimeDependencies(string sourceDirectory, string destinationDirectory, bool includePdb, string? runtimeIdentifier = null)
+    {
+        string runtimesSource = Path.Combine(sourceDirectory, "runtimes");
+        if (!Directory.Exists(runtimesSource))
+            return;
+
+        if (string.IsNullOrWhiteSpace(runtimeIdentifier))
+        {
+            CopyDirectory(
+                runtimesSource,
+                Path.Combine(destinationDirectory, "runtimes"),
+                includePdb);
+            return;
+        }
+
+        string runtimeSource = Path.Combine(runtimesSource, runtimeIdentifier);
+        if (!Directory.Exists(runtimeSource))
+            throw new DirectoryNotFoundException(
+                $"Runtime dependency directory '{runtimeSource}' was not produced.");
+
+        CopyDirectory(
+            runtimeSource,
+            Path.Combine(destinationDirectory, "runtimes", runtimeIdentifier),
+            includePdb);
+    }
+
+    private static void CopyNativeHostDependencies(string sourceDirectory, string destinationDirectory)
+    {
+        foreach (string fileName in NativeHostDependencyFileNames)
+            CopyIfExists(
+                Path.Combine(sourceDirectory, fileName),
+                Path.Combine(destinationDirectory, fileName));
+    }
+
+    private static void PackageCommonAssets(BuildContext context, ECommonAssetsPackageMode packageMode)
+    {
+        string commonAssetsArchivePath = Path.Combine(context.ContentOutputDirectory, CommonAssetsArchiveName);
+        Directory.CreateDirectory(Path.GetDirectoryName(commonAssetsArchivePath)!);
 
         string? engineAssetsPath = Engine.Assets?.EngineAssetsPath;
-        if (!string.IsNullOrWhiteSpace(engineAssetsPath) && Directory.Exists(engineAssetsPath))
+        if (string.IsNullOrWhiteSpace(engineAssetsPath) || !Directory.Exists(engineAssetsPath))
+            throw new DirectoryNotFoundException("The engine common-assets directory is unavailable.");
+
+        if (packageMode == ECommonAssetsPackageMode.RuntimeShaders)
         {
-            string commonAssetsArchivePath = Path.Combine(context.ContentOutputDirectory, CommonAssetsArchiveName);
-            Directory.CreateDirectory(Path.GetDirectoryName(commonAssetsArchivePath)!);
-
-            if (!ShouldUseIncrementalArchives(context))
-            {
-                if (File.Exists(commonAssetsArchivePath))
-                    File.Delete(commonAssetsArchivePath);
-
-                AssetPacker.Pack(engineAssetsPath, commonAssetsArchivePath);
-            }
-            else
-            {
-                RepackArchiveFromSourceIncremental(
-                    sourceDirectory: engineAssetsPath,
-                    archivePath: commonAssetsArchivePath,
-                    intermediateDirectory: context.IntermediateDirectory,
-                    deltaFolderName: "CommonAssetsDelta",
-                    transformFile: static (source, destination) => File.Copy(source, destination, true),
-                    packFullSourceDirectly: true);
-            }
+            PackageRuntimeShaderAssets(engineAssetsPath, context.IntermediateDirectory, commonAssetsArchivePath);
+            return;
         }
+
+        if (!ShouldUseIncrementalArchives(context))
+        {
+            if (File.Exists(commonAssetsArchivePath))
+                File.Delete(commonAssetsArchivePath);
+
+            AssetPacker.Pack(engineAssetsPath, commonAssetsArchivePath);
+            return;
+        }
+
+        RepackArchiveFromSourceIncremental(
+            sourceDirectory: engineAssetsPath,
+            archivePath: commonAssetsArchivePath,
+            intermediateDirectory: context.IntermediateDirectory,
+            deltaFolderName: "CommonAssetsDelta",
+            transformFile: static (source, destination) => File.Copy(source, destination, true),
+            packFullSourceDirectly: true);
+    }
+
+    private static void PackageRuntimeShaderAssets(
+        string engineAssetsDirectory,
+        string intermediateDirectory,
+        string commonAssetsArchivePath)
+    {
+        string sourceShadersDirectory = Path.Combine(engineAssetsDirectory, "Shaders");
+        if (!Directory.Exists(sourceShadersDirectory))
+            throw new DirectoryNotFoundException($"The engine runtime shader directory was not found at '{sourceShadersDirectory}'.");
+
+        string stagingDirectory = Path.Combine(intermediateDirectory, "Build", "RuntimeCommonAssets");
+        if (Directory.Exists(stagingDirectory))
+            Directory.Delete(stagingDirectory, true);
+
+        Directory.CreateDirectory(stagingDirectory);
+        CopyDirectory(sourceShadersDirectory, Path.Combine(stagingDirectory, "Shaders"), includePdb: false);
+        File.WriteAllText(
+            Path.Combine(stagingDirectory, "manifest.json"),
+            """{"format":"XREngine.CommonAssets","version":1,"scope":"runtime-shaders"}""",
+            Encoding.UTF8);
+
+        if (File.Exists(commonAssetsArchivePath))
+            File.Delete(commonAssetsArchivePath);
+
+        AssetPacker.Pack(stagingDirectory, commonAssetsArchivePath);
+    }
+
+    internal static string PackageRuntimeShaderAssetsForTests(
+        string engineAssetsDirectory,
+        string intermediateDirectory,
+        string contentOutputDirectory)
+    {
+        string archivePath = Path.Combine(contentOutputDirectory, CommonAssetsArchiveName);
+        Directory.CreateDirectory(contentOutputDirectory);
+        PackageRuntimeShaderAssets(engineAssetsDirectory, intermediateDirectory, archivePath);
+        return archivePath;
+    }
+
+    private static string? ResolveGameLaunchBootstrapTypeName(string configuration, string platform)
+    {
+        using DynamicGameAssemblyScope? gameAssemblyScope = TryLoadBuiltGameAssembly(configuration, platform);
+        if (gameAssemblyScope?.Assembly is null)
+            return null;
+
+        Type[] bootstrapTypes = [.. EnumerateLoadableTypes([gameAssemblyScope.Assembly])
+            .Where(static type =>
+                type is { IsAbstract: false, IsInterface: false } &&
+                typeof(IGameLaunchBootstrap).IsAssignableFrom(type))];
+
+        if (bootstrapTypes.Length == 0)
+            return null;
+
+        if (bootstrapTypes.Length > 1)
+        {
+            string names = string.Join(", ", bootstrapTypes.Select(static type => type.FullName ?? type.Name));
+            throw new InvalidOperationException($"The game assembly contains multiple IGameLaunchBootstrap implementations: {names}.");
+        }
+
+        Type bootstrapType = bootstrapTypes[0];
+        if (!(bootstrapType.IsPublic || bootstrapType.IsNestedPublic) ||
+            bootstrapType.GetConstructor(Type.EmptyTypes) is null)
+        {
+            throw new InvalidOperationException(
+                $"Game launch bootstrap '{bootstrapType.FullName}' must be public and expose a public parameterless constructor.");
+        }
+
+        return bootstrapType.FullName
+            ?? throw new InvalidOperationException("The game launch bootstrap type has no stable full name.");
     }
 
     private static void BuildLauncherExecutable(BuildContext context, BuildSettings settings, string configuration, string platform)
@@ -633,18 +756,37 @@ internal static class ProjectBuilder
         if (!File.Exists(context.ConfigArchivePath))
             throw new FileNotFoundException("Config archive not found. Enable config generation before building the launcher.", context.ConfigArchivePath);
 
+        string? gameLaunchBootstrapTypeName = ResolveGameLaunchBootstrapTypeName(configuration, platform);
+        if (settings.PublishLauncherAsNativeAot && string.IsNullOrWhiteSpace(gameLaunchBootstrapTypeName))
+        {
+            throw new InvalidOperationException(
+                "NativeAOT game launchers require exactly one public IGameLaunchBootstrap implementation " +
+                "in the compiled game assembly so custom game types are statically rooted.");
+        }
+
         string launcherPath = global::CodeManager.Instance.BuildLauncherExecutable(
             settings,
             configuration,
             platform,
             StartupAssetName,
             XRProject.EditorPreferencesFileName,
-            XRProject.UserSettingsFileName);
+            XRProject.UserSettingsFileName,
+            gameLaunchBootstrapTypeName);
 
-        CopyLauncherArtifacts(launcherPath, context.BinariesOutputDirectory, settings.LauncherExecutableName, settings.IncludePdbFiles);
+        CopyLauncherArtifacts(launcherPath, context.BinariesOutputDirectory, settings.LauncherExecutableName, settings.IncludePdbFiles, settings.PublishLauncherAsNativeAot);
+
+        if (settings.PublishLauncherAsNativeAot)
+        {
+            CopyRuntimeDependencies(
+                AppContext.BaseDirectory,
+                context.BinariesOutputDirectory,
+                settings.IncludePdbFiles,
+                "win-x64");
+            CopyNativeHostDependencies(AppContext.BaseDirectory, context.BinariesOutputDirectory);
+        }
     }
 
-    private static void CopyLauncherArtifacts(string sourceExePath, string destinationDirectory, string? requestedName, bool includePdb)
+    private static void CopyLauncherArtifacts(string sourceExePath, string destinationDirectory, string? requestedName, bool includePdb, bool isNativeAot)
     {
         string executableName = NormalizeExecutableName(requestedName);
         Directory.CreateDirectory(destinationDirectory);
@@ -654,6 +796,34 @@ internal static class ProjectBuilder
         string targetBaseName = Path.GetFileNameWithoutExtension(executableName);
 
         File.Copy(sourceExePath, Path.Combine(destinationDirectory, executableName), true);
+
+        if (isNativeAot)
+        {
+            foreach (string file in Directory.EnumerateFiles(sourceDirectory, "*", SearchOption.AllDirectories))
+            {
+                if (string.Equals(file, sourceExePath, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                string fileName = Path.GetFileName(file);
+                if (string.Equals(fileName, "aot-publish.log", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(fileName, "aot-publish-warnings.md", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                string extension = Path.GetExtension(file);
+                if (string.Equals(extension, ".pdb", StringComparison.OrdinalIgnoreCase) && !includePdb)
+                    continue;
+
+                string relativePath = Path.GetRelativePath(sourceDirectory, file);
+                if (string.Equals(relativePath, $"{sourceBaseName}.pdb", StringComparison.OrdinalIgnoreCase))
+                    relativePath = $"{targetBaseName}.pdb";
+
+                string destinationPath = Path.Combine(destinationDirectory, relativePath);
+                Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+                File.Copy(file, destinationPath, true);
+            }
+
+            return;
+        }
 
         // Framework-dependent launchers need the managed entry assembly beside the renamed host exe.
         CopyIfExists(Path.Combine(sourceDirectory, $"{sourceBaseName}.dll"), Path.Combine(destinationDirectory, $"{targetBaseName}.dll"));
@@ -665,6 +835,26 @@ internal static class ProjectBuilder
             CopyIfExists(Path.Combine(sourceDirectory, $"{sourceBaseName}.pdb"), Path.Combine(destinationDirectory, $"{targetBaseName}.pdb"));
         }
     }
+
+    internal static void CopyLauncherArtifactsForTests(
+        string sourceExePath,
+        string destinationDirectory,
+        string requestedName,
+        bool includePdb,
+        bool isNativeAot)
+        => CopyLauncherArtifacts(sourceExePath, destinationDirectory, requestedName, includePdb, isNativeAot);
+
+    internal static void CopyRuntimeDependenciesForTests(
+        string sourceDirectory,
+        string destinationDirectory,
+        bool includePdb,
+        string? runtimeIdentifier = null)
+        => CopyRuntimeDependencies(sourceDirectory, destinationDirectory, includePdb, runtimeIdentifier);
+
+    internal static void CopyNativeHostDependenciesForTests(
+        string sourceDirectory,
+        string destinationDirectory)
+        => CopyNativeHostDependencies(sourceDirectory, destinationDirectory);
 
     #endregion
 
@@ -681,7 +871,8 @@ internal static class ProjectBuilder
             archivePath: context.ContentArchivePath,
             intermediateDirectory: context.IntermediateDirectory,
             deltaFolderName: "CookedContentDelta",
-            transformFile: (source, destination) => WriteCookedAssetFile(source, destination));
+            transformFile: static (source, destination) => WritePublishedCookedFile(source, destination),
+            includeRelativePath: ShouldIncludeInCookedContent);
     }
 
     private static void RepackConfigArchiveIncremental(BuildContext context, string stagingDirectory)
@@ -755,11 +946,12 @@ internal static class ProjectBuilder
         string intermediateDirectory,
         string deltaFolderName,
         Action<string, string> transformFile,
-        bool packFullSourceDirectly = false)
+        bool packFullSourceDirectly = false,
+        Func<string, bool>? includeRelativePath = null)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(archivePath)!);
 
-        Dictionary<string, AssetTimestampEntry> currentSnapshot = CaptureDirectorySnapshot(sourceDirectory);
+        Dictionary<string, AssetTimestampEntry> currentSnapshot = CaptureDirectorySnapshot(sourceDirectory, includeRelativePath);
 
         if (!File.Exists(archivePath))
         {
@@ -860,12 +1052,17 @@ internal static class ProjectBuilder
         }
     }
 
-    private static Dictionary<string, AssetTimestampEntry> CaptureDirectorySnapshot(string rootDirectory)
+    private static Dictionary<string, AssetTimestampEntry> CaptureDirectorySnapshot(
+        string rootDirectory,
+        Func<string, bool>? includeRelativePath = null)
     {
         Dictionary<string, AssetTimestampEntry> snapshot = new(StringComparer.Ordinal);
         foreach (string filePath in Directory.GetFiles(rootDirectory, "*", SearchOption.AllDirectories))
         {
             string relativePath = NormalizePath(Path.GetRelativePath(rootDirectory, filePath));
+            if (includeRelativePath is not null && !includeRelativePath(relativePath))
+                continue;
+
             var fileInfo = new FileInfo(filePath);
             snapshot[relativePath] = new AssetTimestampEntry(relativePath, fileInfo.LastWriteTimeUtc.Ticks, fileInfo.Length);
         }
@@ -876,6 +1073,59 @@ internal static class ProjectBuilder
     #endregion
 
     #region Content Cooking
+
+    private static readonly HashSet<string> ExcludedCookedContentExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".cs", ".csproj", ".sln", ".slnx", ".user", ".pdb", ".editorconfig"
+    };
+
+    private static bool ShouldIncludeInCookedContent(string relativePath)
+    {
+        string normalized = NormalizePath(relativePath);
+        if (ExcludedCookedContentExtensions.Contains(Path.GetExtension(normalized)))
+            return false;
+
+        // These files are launcher configuration, not game content. Startup settings
+        // are emitted to GameConfig.pak and state is created by IGameLaunchBootstrap.
+        if (!normalized.Contains('/') &&
+            (string.Equals(normalized, StartupAssetName, StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(normalized, "state.asset", StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
+    private static void WritePublishedCookedFile(string sourceFile, string destination)
+    {
+        if (!string.Equals(Path.GetExtension(sourceFile), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
+        {
+            File.Copy(sourceFile, destination, true);
+            return;
+        }
+
+        string yaml = File.ReadAllText(sourceFile, Encoding.UTF8);
+        CookedAssetBlob blob;
+        try
+        {
+            blob = CreateCookedBlobFromYaml(yaml, sourceFile);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or YamlDotNet.Core.YamlException)
+        {
+            throw new InvalidOperationException($"Published asset '{sourceFile}' could not be cooked.", ex);
+        }
+
+        if (blob.Format != CookedAssetFormat.RuntimeBinaryV1)
+        {
+            throw new InvalidOperationException(
+                $"Published NativeAOT asset '{sourceFile}' cooked as {blob.Format}; " +
+                $"register an AOT-safe {nameof(PublishedCookedAssetRegistry)} serializer for its runtime type.");
+        }
+
+        WriteCookedBlob(destination, blob);
+    }
 
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
     private static void WriteCookedAssetFile(string sourceFile, string destination)
@@ -926,7 +1176,9 @@ internal static class ProjectBuilder
             Directory.Delete(cookedRoot, true);
         Directory.CreateDirectory(cookedRoot);
 
-        string[] sourceFiles = Directory.GetFiles(context.AssetsDirectory, "*", SearchOption.AllDirectories);
+        string[] sourceFiles = [.. Directory.GetFiles(context.AssetsDirectory, "*", SearchOption.AllDirectories)
+            .Where(sourceFile => ShouldIncludeInCookedContent(
+                NormalizePath(Path.GetRelativePath(context.AssetsDirectory, sourceFile))))];
         int totalFiles = sourceFiles.Length;
 
         for (int i = 0; i < sourceFiles.Length; i++)
@@ -939,9 +1191,17 @@ internal static class ProjectBuilder
 
             if (string.Equals(Path.GetExtension(sourceFile), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
             {
-                cookedAsBinaryAsset = TryWriteCookedAssetFile(sourceFile, destination);
-                if (!cookedAsBinaryAsset)
-                    File.Copy(sourceFile, destination, true);
+                if (context.Settings.PublishLauncherAsNativeAot)
+                {
+                    WritePublishedCookedFile(sourceFile, destination);
+                    cookedAsBinaryAsset = true;
+                }
+                else
+                {
+                    cookedAsBinaryAsset = TryWriteCookedAssetFile(sourceFile, destination);
+                    if (!cookedAsBinaryAsset)
+                        File.Copy(sourceFile, destination, true);
+                }
 
                 progress?.Invoke(new CookProgress(i + 1, totalFiles, relative, cookedAsBinaryAsset));
                 continue;
@@ -954,7 +1214,11 @@ internal static class ProjectBuilder
         return cookedRoot;
     }
 
-    internal static string PrepareCookedContentDirectoryForTests(string assetsDirectory, string intermediateDirectory, Action<CookProgress>? progress = null)
+    internal static string PrepareCookedContentDirectoryForTests(
+        string assetsDirectory,
+        string intermediateDirectory,
+        Action<CookProgress>? progress = null,
+        bool publishLauncherAsNativeAot = false)
     {
         if (string.IsNullOrWhiteSpace(assetsDirectory))
             throw new ArgumentException("Assets directory must be provided.", nameof(assetsDirectory));
@@ -976,7 +1240,10 @@ internal static class ProjectBuilder
         string buildRoot = Path.Combine(intermediateDirectory, "TestBuild");
         var context = new BuildContext(
             project,
-            new BuildSettings(),
+            new BuildSettings
+            {
+                PublishLauncherAsNativeAot = publishLauncherAsNativeAot
+            },
             assetsDirectory,
             intermediateDirectory,
             buildRoot,
@@ -995,7 +1262,7 @@ internal static class ProjectBuilder
     {
         string? typeHint = ExtractAssetTypeHint(yaml);
         if (string.IsNullOrWhiteSpace(typeHint))
-            throw new InvalidOperationException($"Asset '{sourcePath}' is missing an __assetType hint and cannot be cooked.");
+            throw new InvalidOperationException($"Asset '{sourcePath}' is missing an __assetType or __type hint and cannot be cooked.");
 
         Type assetType = ResolveAssetType(typeHint)
             ?? throw new InvalidOperationException($"Unable to resolve asset type '{typeHint}' referenced by '{sourcePath}'.");
@@ -1060,10 +1327,15 @@ internal static class ProjectBuilder
         while ((line = reader.ReadLine()) is not null)
         {
             string trimmed = line.Trim();
-            if (!trimmed.StartsWith("__assetType:", StringComparison.Ordinal))
+            string prefix;
+            if (trimmed.StartsWith("__assetType:", StringComparison.Ordinal))
+                prefix = "__assetType:";
+            else if (trimmed.StartsWith("__type:", StringComparison.Ordinal))
+                prefix = "__type:";
+            else
                 continue;
 
-            string value = trimmed["__assetType:".Length..].Trim();
+            string value = trimmed[prefix.Length..].Trim();
             if (value.Length == 0)
                 continue;
 

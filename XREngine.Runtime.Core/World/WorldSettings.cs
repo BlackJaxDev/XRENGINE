@@ -4,6 +4,7 @@ using System.Numerics;
 using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Scene
 {
@@ -134,6 +135,8 @@ namespace XREngine.Scene
         /// </summary>
         [Category("Physics")]
         [Description("Whether to use continuous collision detection for fast-moving objects.")]
+        [DefaultValue(true)]
+        [YamlMember(DefaultValuesHandling = DefaultValuesHandling.Preserve)]
         public bool EnableContinuousCollision
         {
             get => _enableContinuousCollision;
@@ -248,6 +251,8 @@ namespace XREngine.Scene
         /// </summary>
    [Category("Environment")]
         [Description("Whether to render the skybox.")]
+        [DefaultValue(true)]
+        [YamlMember(DefaultValuesHandling = DefaultValuesHandling.Preserve)]
       public bool RenderSkybox
         {
             get => _renderSkybox;
@@ -337,6 +342,8 @@ namespace XREngine.Scene
         /// </summary>
         [Category("Lighting")]
         [Description("Whether to automatically capture light probes when the scene starts.")]
+        [DefaultValue(true)]
+        [YamlMember(DefaultValuesHandling = DefaultValuesHandling.Preserve)]
         public bool AutoCaptureLightProbes
         {
             get => _autoCaptureLightProbes;
@@ -508,6 +515,8 @@ namespace XREngine.Scene
         /// </summary>
   [Category("Debug")]
         [Description("Whether to show the world bounds in the editor.")]
+        [DefaultValue(true)]
+        [YamlMember(DefaultValuesHandling = DefaultValuesHandling.Preserve)]
         public bool PreviewWorldBounds
         {
             get => _previewWorldBounds;

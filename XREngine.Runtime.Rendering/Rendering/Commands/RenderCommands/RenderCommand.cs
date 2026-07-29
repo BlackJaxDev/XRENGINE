@@ -9,15 +9,24 @@ namespace XREngine.Rendering.Commands
     {
         public RenderCommand()
         {
-            StableQueryKey = (uint)System.Threading.Interlocked.Increment(ref s_nextStableQueryKey);
+            StableQueryKey = AllocateStableQueryKey();
         }
         public RenderCommand(int renderPass)
         {
-            StableQueryKey = (uint)System.Threading.Interlocked.Increment(ref s_nextStableQueryKey);
+            StableQueryKey = AllocateStableQueryKey();
             RenderPass = renderPass;
         }
 
-        private static int s_nextStableQueryKey;
+        private static long s_nextStableQueryKey;
+
+        private static uint AllocateStableQueryKey()
+        {
+            long value = System.Threading.Interlocked.Increment(ref s_nextStableQueryKey);
+            if (value <= 0L || value > uint.MaxValue)
+                throw new InvalidOperationException("The process exhausted the 32-bit stable render-command identity space.");
+
+            return (uint)value;
+        }
 
         /// <summary>
         /// Stable per-command identity assigned at construction time. Used as the key for
@@ -25,8 +34,8 @@ namespace XREngine.Rendering.Commands
         /// commands), notably the CPU occlusion coordinator's per-mesh query state. The
         /// foreach position in the render-command list (cpuCmdIndex) is *not* stable across
         /// mutations and must not be used for this purpose. Monotonically increasing within
-        /// the process; wraps every 4G commands which is fine for the coordinator's
-        /// dictionary keying and stale-eviction TTL.
+        /// the process. Zero is reserved for the background/no-object sentinel, and exhausting
+        /// the 32-bit identity space fails explicitly instead of silently aliasing live objects.
         /// </summary>
         [YamlIgnore]
         public uint StableQueryKey { get; }

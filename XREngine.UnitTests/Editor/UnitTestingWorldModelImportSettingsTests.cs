@@ -37,6 +37,34 @@ public sealed class UnitTestingWorldModelImportSettingsTests
     }
 
     [Test]
+    public void Settings_RoundTripsUnitBoxBenchmarkTopology()
+    {
+        UnitTestingWorldSettings runtimeSettings = UnitTestingWorldSettingsStore.ParseJsonc(
+            """
+            {
+              "CreateUnitBox": true,
+              "UnitBoxCount": 4096,
+              "UnitBoxMaterialCount": 512,
+              "UnitBoxDeferredMaterial": true
+            }
+            """);
+
+        runtimeSettings.UnitBoxCount.ShouldBe(4096);
+        runtimeSettings.UnitBoxMaterialCount.ShouldBe(512);
+        runtimeSettings.UnitBoxDeferredMaterial.ShouldBeTrue();
+
+        EditorUnitTests.Settings editorSettings = EditorUnitTests.Settings.FromRuntime(runtimeSettings);
+        editorSettings.UnitBoxCount.ShouldBe(4096);
+        editorSettings.UnitBoxMaterialCount.ShouldBe(512);
+        editorSettings.UnitBoxDeferredMaterial.ShouldBeTrue();
+
+        UnitTestingWorldSettings roundTrip = editorSettings.ToRuntimeSettings();
+        roundTrip.UnitBoxCount.ShouldBe(4096);
+        roundTrip.UnitBoxMaterialCount.ShouldBe(512);
+        roundTrip.UnitBoxDeferredMaterial.ShouldBeTrue();
+    }
+
+    [Test]
     public void ParseJsonc_TracksOnlyTopLevelPropertiesPresentInJsonc()
     {
         const string json = """
@@ -352,6 +380,31 @@ public sealed class UnitTestingWorldModelImportSettingsTests
 
         roundTrip.ModelsToImport.Count.ShouldBe(1);
         roundTrip.ModelsToImport[0].ImporterBackend.ShouldBe(EditorUnitTests.ModelImportBackendPreference.PreferNativeThenAssimp);
+    }
+
+    [Test]
+    public void ModelImportSettings_RoundTripsInstanceCount_BetweenEditorAndRuntimeSettings()
+    {
+        var editorSettings = new EditorUnitTests.Settings
+        {
+            ModelsToImport =
+            [
+                new EditorUnitTests.Settings.ModelImportSettings
+                {
+                    Path = "Assets\\Models\\scene.fbx",
+                    InstanceCount = 16,
+                },
+            ],
+        };
+
+        UnitTestingWorldSettings runtimeSettings = editorSettings.ToRuntimeSettings();
+
+        runtimeSettings.ModelsToImport.Single().InstanceCount.ShouldBe(16);
+
+        runtimeSettings.ModelsToImport[0].InstanceCount = 4;
+        EditorUnitTests.Settings roundTrip = EditorUnitTests.Settings.FromRuntime(runtimeSettings);
+
+        roundTrip.ModelsToImport.Single().InstanceCount.ShouldBe(4);
     }
 
     [Test]

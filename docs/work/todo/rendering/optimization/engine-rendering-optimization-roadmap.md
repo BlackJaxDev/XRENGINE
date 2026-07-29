@@ -175,14 +175,20 @@ Hi-Z effectiveness and promotion are owned by workstream 07.
 Workstream-03 note (2026-07-28): the bounded Vulkan implementation now uses
 three fixed GPU-owned tier groups, workgroup prefix-scan compaction, reported
 bindless/compaction rungs, and indirect-count submission with zero
-capture-window readback or full scans. Promotion remains open because matched
-Uber CPU-direct is faster, allocations/resource churn remain, exact
-transparency is unsupported, and RVC/RenderDoc/image evidence was unavailable.
+capture-window readback or full scans. Monado RVC and a usable production
+RenderDoc capture are now available and verified. Promotion remains open
+because matched Uber CPU-direct is faster, the full
+Gate/foveation/scaling/parity matrix has not passed, submission still reports
+136 allocated bytes, and exact transparency remains explicitly unsupported.
+The same RVC capture's 40,384 frame-data-refresh bytes are owned by workstream
+04, its 3,255,936 primary-recording bytes by workstream 05, and its
+109.139 ms RVC render p95 against 8.33 ms by final promotion in workstream 08.
 
 Acceptance criteria:
 
 - [ ] Zero-readback meets the explicit low-count overhead and crossover budgets
-  established by workstream 01 and recorded by workstream 03.
+  defined by workstream 03 using workstream 01's canonical variance,
+  regression, and evidence rules.
 - [ ] Zero-readback beats CPU direct in the retained high-count or occluded
   scenes selected for production promotion.
 

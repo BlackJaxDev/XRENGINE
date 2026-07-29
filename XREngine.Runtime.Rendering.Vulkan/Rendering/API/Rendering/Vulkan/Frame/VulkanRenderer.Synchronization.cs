@@ -442,6 +442,9 @@ public unsafe partial class VulkanRenderer
                 "[Vulkan.Layout] Rejected queue submission before vkQueueSubmit: caller={0} reason={1}",
                 caller ?? "<unknown>",
                 imageStateFailure);
+            Debug.WriteAuxiliaryLog(
+                "profiler-vulkan-submission-rejections.log",
+                $"kind=image-state caller={caller ?? "<unknown>"} reason={imageStateFailure}");
             RecordVulkanQueueOperation(
                 "submit-rejected-image-state",
                 queue,
@@ -485,6 +488,9 @@ public unsafe partial class VulkanRenderer
                 "[Vulkan.ResourceLifetime] Rejected queue submission before vkQueueSubmit: caller={0} reason={1}",
                 caller ?? "<unknown>",
                 lifetimeFailure);
+            Debug.WriteAuxiliaryLog(
+                "profiler-vulkan-submission-rejections.log",
+                $"kind=resource-lifetime caller={caller ?? "<unknown>"} reason={lifetimeFailure}");
             RecordVulkanQueueOperation(
                 "submit-rejected-resource-lifetime",
                 queue,

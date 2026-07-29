@@ -1,6 +1,8 @@
 ﻿using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Geometry;
 using XREngine.Rendering;
+using XREngine.Scene;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Components.Mesh.Shapes
 {
@@ -8,7 +10,9 @@ namespace XREngine.Components.Mesh.Shapes
     {
         private IShape? _shape;
         private XRMaterial? _material;
+        private bool _meshRebuildPending;
 
+        [YamlIgnore]
         public IShape? Shape
         {
             get => _shape;
@@ -27,14 +31,8 @@ namespace XREngine.Components.Mesh.Shapes
             switch (propName)
             {
                 case nameof(Shape):
-
-                    Meshes.Clear();
-
-                    if (Shape is not null)
-                        Meshes.Add(new RenderableMesh(new(XRMesh.Shapes.FromVolume(Shape, false), Material), this));
-
+                    RebuildMeshWhenAttached();
                     break;
-
                 case nameof(Material):
                     // Propagate the new material to every existing LOD renderer
                     // so the mesh updates immediately without requiring a shape rebuild.
@@ -43,6 +41,34 @@ namespace XREngine.Components.Mesh.Shapes
                             lod.Renderer.Material = Material;
                     break;
             }
+        }
+
+        protected override void AddedToSceneNode(SceneNode sceneNode)
+        {
+            base.AddedToSceneNode(sceneNode);
+
+            if (_meshRebuildPending || (Shape is not null && Meshes.Count == 0))
+                RebuildMeshWhenAttached();
+        }
+
+        private void RebuildMeshWhenAttached()
+        {
+            if (SceneNode is null)
+            {
+                _meshRebuildPending = Shape is not null;
+                return;
+            }
+
+            Meshes.Clear();
+            _meshRebuildPending = false;
+
+            IShape? shape = Shape;
+            if (shape is null)
+                return;
+
+            Meshes.Add(new RenderableMesh(
+                new(XRMesh.Shapes.FromVolume(shape, false), Material),
+                this));
         }
     }
 }

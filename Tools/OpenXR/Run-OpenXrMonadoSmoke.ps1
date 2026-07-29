@@ -660,8 +660,17 @@ function Invoke-EditorSmoke {
         throw "Failed to start editor smoke process."
     }
 
-    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
-    $stderrTask = $process.StandardError.ReadToEndAsync()
+    $outputCancellation = [System.Threading.CancellationTokenSource]::new()
+    $stdoutStream = [System.IO.File]::Create($StdoutPath)
+    $stderrStream = [System.IO.File]::Create($StderrPath)
+    $stdoutTask = $process.StandardOutput.BaseStream.CopyToAsync(
+        $stdoutStream,
+        81920,
+        $outputCancellation.Token)
+    $stderrTask = $process.StandardError.BaseStream.CopyToAsync(
+        $stderrStream,
+        81920,
+        $outputCancellation.Token)
     $deadlineUtc = [DateTime]::UtcNow.AddSeconds([Math]::Max(1, $TimeoutSeconds + 30))
     $summarySeenUtc = $null
     $terminatedAfterSummary = $false
@@ -769,17 +778,23 @@ function Invoke-EditorSmoke {
         throw "Editor smoke process timed out after $($TimeoutSeconds + 30)s."
     }
 
-    if ($stdoutTask.Wait(5000)) {
-        $stdoutTask.Result | Set-Content -LiteralPath $StdoutPath -Encoding UTF8
+    Start-Sleep -Milliseconds 100
+    $outputCancellation.Cancel()
+    $process.StandardOutput.Close()
+    $process.StandardError.Close()
+    try {
+        [System.Threading.Tasks.Task]::WaitAll(
+            [System.Threading.Tasks.Task[]]@($stdoutTask, $stderrTask),
+            5000) | Out-Null
     }
-    else {
-        "stdout capture did not complete after process shutdown." | Set-Content -LiteralPath $StdoutPath -Encoding UTF8
+    catch [System.AggregateException] {
+        # Cancellation or closing the pipe can fault a pending copy after the
+        # editor exits. Bytes already copied to the files remain valid.
     }
-    if ($stderrTask.Wait(5000)) {
-        $stderrTask.Result | Set-Content -LiteralPath $StderrPath -Encoding UTF8
-    }
-    else {
-        "stderr capture did not complete after process shutdown." | Set-Content -LiteralPath $StderrPath -Encoding UTF8
+    finally {
+        $stdoutStream.Dispose()
+        $stderrStream.Dispose()
+        $outputCancellation.Dispose()
     }
     if (-not [string]::IsNullOrWhiteSpace($DesktopResizeReportPath)) {
         [pscustomobject]@{

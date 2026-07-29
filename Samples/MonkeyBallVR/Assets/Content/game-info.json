@@ -1,0 +1,12 @@
+{
+  "id": "com.blackjax.monkeyballvr",
+  "name": "MonkeyBall VR",
+  "version": "1.0.0",
+  "simulationHz": 90,
+  "objective": "Guide the ball across the tilting course and reach the goal before time or lives run out.",
+  "controls": {
+    "tilt": ["SteamVR left stick", "gamepad left stick", "WASD"],
+    "reset": ["SteamVR reset action", "gamepad face-down", "R"],
+    "pause": ["SteamVR menu action", "gamepad menu", "Escape"]
+  }
+}

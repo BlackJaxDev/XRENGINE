@@ -9,6 +9,7 @@ public sealed class VulkanPerformanceRunManifest
 {
     public int SchemaVersion { get; init; }
     public string Preset { get; init; } = string.Empty;
+    public string GateScope { get; init; } = "Full";
     public bool PromotionEligible { get; init; }
     public string ProfileMode { get; init; } = string.Empty;
     public string ContractPath { get; init; } = string.Empty;

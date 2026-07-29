@@ -146,6 +146,10 @@
       "type": "boolean",
       "description": "Enables or disables DirLight."
     },
+    "DirLightCastsShadows": {
+      "type": "boolean",
+      "description": "Controls whether the primary directional light casts shadows."
+    },
     "SpotLight": {
       "type": "boolean",
       "description": "Enables or disables SpotLight."
@@ -550,7 +554,23 @@
     },
     "CreateUnitBox": {
       "type": "boolean",
-      "description": "If true, creates a 1x1x1 box at the origin."
+      "description": "If true, creates one or more 1x1x1 boxes at the origin."
+    },
+    "UnitBoxCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 16384,
+      "description": "Number of unit-box renderables to create."
+    },
+    "UnitBoxMaterialCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 16384,
+      "description": "Number of distinct materials shared across the unit boxes."
+    },
+    "UnitBoxDeferredMaterial": {
+      "type": "boolean",
+      "description": "Uses the deferred lit-color material for unit boxes."
     },
     "VSyncOverride": {
       "oneOf": [
@@ -1019,6 +1039,10 @@
         "ZUp": {
           "type": "boolean",
           "description": "Enables or disables ZUp."
+        },
+        "InstanceCount": {
+          "type": "integer",
+          "description": "Number of independent scene instances to create from the imported hierarchy. The source asset is imported once."
         },
         "PostImportFlags": {
           "type": "string",

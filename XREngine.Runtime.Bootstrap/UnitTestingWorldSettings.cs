@@ -226,6 +226,7 @@ public class UnitTestingWorldSettings
     public bool ForceDebugOpaquePipeline = false;
 
     public bool DirLight = true;
+    public bool DirLightCastsShadows { get; set; } = true;
     public bool SpotLight = false;
     public bool DirLight2 = false;
     public bool PointLight = false;
@@ -312,6 +313,14 @@ public class UnitTestingWorldSettings
         public PostProcessSteps ImportFlags { get; set; } = PostProcessSteps.None;
         public float Scale { get; set; } = 1.0f;
         public bool ZUp { get; set; } = false;
+
+        /// <summary>
+        /// Number of independent scene instances to create from the imported
+        /// hierarchy. The source asset is imported once and additional
+        /// instances are cloned after import.
+        /// </summary>
+        public int InstanceCount { get; set; } = 1;
+
         /// <summary>
         /// Additional post-import actions to apply after the source model has been loaded.
         /// </summary>
@@ -462,6 +471,23 @@ public class UnitTestingWorldSettings
     public bool BackgroundShader = false;
     public bool AddCharacterIK = false;
     public bool CreateUnitBox { get; set; } = true;
+
+    /// <summary>
+    /// Number of unit-box renderables to create. Values greater than one are
+    /// intended for deterministic submission-scaling benchmarks.
+    /// </summary>
+    public int UnitBoxCount { get; set; } = 1;
+
+    /// <summary>
+    /// Number of distinct materials shared across the unit boxes.
+    /// </summary>
+    public int UnitBoxMaterialCount { get; set; } = 1;
+
+    /// <summary>
+    /// Uses the deferred lit-color material for unit boxes. The default keeps
+    /// the existing forward unlit unit-box behavior.
+    /// </summary>
+    public bool UnitBoxDeferredMaterial { get; set; } = false;
 
     public class VolumetricFogVolumeInitSettings
     {

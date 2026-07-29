@@ -476,65 +476,77 @@ namespace XREngine.Rendering
                 return;
             }
 
-            // Material map from scene (ID -> XRMaterial)
-            var materialMap = renderPasses.GetMaterialMap(scene);
-
             if (renderPasses.ZeroReadbackMaterialScatterPreparedThisFrame)
             {
-                GPURenderPassCollection.Crumb($"ZeroPath.BEGIN pass={currentRenderPass} path={renderPasses.ZeroReadbackMaterialDrawPath}");
-                switch (renderPasses.ZeroReadbackMaterialDrawPath)
+                long allocationStart = GC.GetAllocatedBytesForCurrentThread();
+                try
                 {
-                    case EZeroReadbackMaterialDrawPath.ActiveBucketListReadbackDiagnostic:
-                        RuntimeEngine.Rendering.Stats.GpuDriven.UpdateMaterialBindingRung(
-                            EMaterialTextureBindingRung.CoarseBucket,
-                            "Explicit active-bucket CPU-readback diagnostic override.");
-                        RenderZeroReadbackActiveMaterialBuckets(
-                            renderPasses,
-                            camera,
-                            scene,
-                            vaoRenderer,
-                            currentRenderPass,
-                            materialMap);
-                        break;
-                    case EZeroReadbackMaterialDrawPath.MaterialTable:
-                        RenderZeroReadbackMaterialTableBuckets(
-                            renderPasses,
-                            camera,
-                            scene,
-                            vaoRenderer,
-                            currentRenderPass,
-                            bindless: false);
-                        break;
-                    case EZeroReadbackMaterialDrawPath.BindlessMaterialTable:
-                        RenderZeroReadbackMaterialTableBuckets(
-                            renderPasses,
-                            camera,
-                            scene,
-                            vaoRenderer,
-                            currentRenderPass,
-                            bindless: true);
-                        break;
-                    case EZeroReadbackMaterialDrawPath.FullBucketScanDiagnostic:
-                        RuntimeEngine.Rendering.Stats.GpuDriven.UpdateMaterialBindingRung(
-                            EMaterialTextureBindingRung.CoarseBucket,
-                            "Explicit full-capacity bucket-scan diagnostic override.");
-                        RenderZeroReadbackMaterialTiers(
-                            renderPasses,
-                            camera,
-                            scene,
-                            vaoRenderer,
-                            currentRenderPass,
-                            materialMap);
-                        break;
-                    default:
-                        RejectCompactMaterialTableSubmission(
-                            currentRenderPass,
-                            $"Unknown zero-readback material draw path {renderPasses.ZeroReadbackMaterialDrawPath}.");
-                        break;
+                    // Material map from scene (ID -> XRMaterial).
+                    var zeroReadbackMaterialMap = renderPasses.GetMaterialMap(scene);
+                    GPURenderPassCollection.Crumb($"ZeroPath.BEGIN pass={currentRenderPass} path={renderPasses.ZeroReadbackMaterialDrawPath}");
+                    switch (renderPasses.ZeroReadbackMaterialDrawPath)
+                    {
+                        case EZeroReadbackMaterialDrawPath.ActiveBucketListReadbackDiagnostic:
+                            RuntimeEngine.Rendering.Stats.GpuDriven.UpdateMaterialBindingRung(
+                                EMaterialTextureBindingRung.CoarseBucket,
+                                "Explicit active-bucket CPU-readback diagnostic override.");
+                            RenderZeroReadbackActiveMaterialBuckets(
+                                renderPasses,
+                                camera,
+                                scene,
+                                vaoRenderer,
+                                currentRenderPass,
+                                zeroReadbackMaterialMap);
+                            break;
+                        case EZeroReadbackMaterialDrawPath.MaterialTable:
+                            RenderZeroReadbackMaterialTableBuckets(
+                                renderPasses,
+                                camera,
+                                scene,
+                                vaoRenderer,
+                                currentRenderPass,
+                                bindless: false);
+                            break;
+                        case EZeroReadbackMaterialDrawPath.BindlessMaterialTable:
+                            RenderZeroReadbackMaterialTableBuckets(
+                                renderPasses,
+                                camera,
+                                scene,
+                                vaoRenderer,
+                                currentRenderPass,
+                                bindless: true);
+                            break;
+                        case EZeroReadbackMaterialDrawPath.FullBucketScanDiagnostic:
+                            RuntimeEngine.Rendering.Stats.GpuDriven.UpdateMaterialBindingRung(
+                                EMaterialTextureBindingRung.CoarseBucket,
+                                "Explicit full-capacity bucket-scan diagnostic override.");
+                            RenderZeroReadbackMaterialTiers(
+                                renderPasses,
+                                camera,
+                                scene,
+                                vaoRenderer,
+                                currentRenderPass,
+                                zeroReadbackMaterialMap);
+                            break;
+                        default:
+                            RejectCompactMaterialTableSubmission(
+                                currentRenderPass,
+                                $"Unknown zero-readback material draw path {renderPasses.ZeroReadbackMaterialDrawPath}.");
+                            break;
+                    }
+                    GPURenderPassCollection.Crumb($"ZeroPath.END pass={currentRenderPass} path={renderPasses.ZeroReadbackMaterialDrawPath}");
                 }
-                GPURenderPassCollection.Crumb($"ZeroPath.END pass={currentRenderPass} path={renderPasses.ZeroReadbackMaterialDrawPath}");
+                finally
+                {
+                    RuntimeEngine.Rendering.Stats.GpuDriven.RecordSubmissionManagedAllocation(
+                        GC.GetAllocatedBytesForCurrentThread() - allocationStart);
+                }
+
                 return;
             }
+
+            // Material map from scene (ID -> XRMaterial).
+            var materialMap = renderPasses.GetMaterialMap(scene);
 
             if (batches is null || batches.Count == 0)
                 RenderTraditional(
@@ -2979,15 +2991,19 @@ namespace XREngine.Rendering
 
             if (_materialTablePrograms.TryGetValue(cacheKey, out var existing))
             {
-                GpuDebug(
-                    LogCategory.Validation,
-                    "Material-table program cache hit textureReferenceMode={0} sceneDatabaseBda={1} rendererKey={2} layout={3} hash={4}",
-                    textureReferenceMode,
-                    sceneDatabaseBda,
-                    rendererKey,
-                    layout.Name,
-                    layout.LayoutHash);
-                existing.Program.Link();
+                if (IsEnabled(LogCategory.Validation, LogLevel.Debug))
+                {
+                    GpuDebug(
+                        LogCategory.Validation,
+                        "Material-table program cache hit textureReferenceMode={0} sceneDatabaseBda={1} rendererKey={2} layout={3} hash={4}",
+                        textureReferenceMode,
+                        sceneDatabaseBda,
+                        rendererKey,
+                        layout.Name,
+                        layout.LayoutHash);
+                }
+                if (!existing.Program.IsLinked)
+                    existing.Program.Link();
                 return existing.Program;
             }
 
@@ -3012,15 +3028,18 @@ namespace XREngine.Rendering
 
             var cacheEntry = new MaterialTableProgramCache(program, generatedVertexShader, fragmentShader);
             _materialTablePrograms[cacheKey] = cacheEntry;
-            GpuDebug(
-                LogCategory.Validation,
-                "Material-table program cache miss textureReferenceMode={0} sceneDatabaseBda={1} rendererKey={2} layout={3} hash={4} rowBytes={5}",
-                textureReferenceMode,
-                sceneDatabaseBda,
-                rendererKey,
-                layout.Name,
-                layout.LayoutHash,
-                layout.RowByteCount);
+            if (IsEnabled(LogCategory.Validation, LogLevel.Debug))
+            {
+                GpuDebug(
+                    LogCategory.Validation,
+                    "Material-table program cache miss textureReferenceMode={0} sceneDatabaseBda={1} rendererKey={2} layout={3} hash={4} rowBytes={5}",
+                    textureReferenceMode,
+                    sceneDatabaseBda,
+                    rendererKey,
+                    layout.Name,
+                    layout.LayoutHash,
+                    layout.RowByteCount);
+            }
             return program;
         }
 
@@ -3090,7 +3109,7 @@ namespace XREngine.Rendering
             sb.AppendLine("    uint StateClassID;");
             sb.AppendLine("    uint InstanceCount;");
             sb.AppendLine("    uint RenderPass;");
-            sb.AppendLine("    uint ShaderProgramID;");
+            sb.AppendLine("    uint RenderIdentityID;");
             sb.AppendLine("    uint LogicalMeshID;");
             sb.AppendLine("    uint BoundsID;");
             sb.AppendLine("};");
@@ -3167,7 +3186,8 @@ namespace XREngine.Rendering
             sb.AppendLine("layout(location=2) in vec3 FragTan;");
             sb.AppendLine("layout(location=3) in vec3 FragBinorm;");
             sb.AppendLine("layout(location=4) in vec2 FragUV0;");
-            sb.AppendLine($"layout(location=21) in float {DefaultVertexShaderGenerator.FragTransformIdName};");
+            sb.AppendLine($"layout(location=21) flat in uint {DefaultVertexShaderGenerator.FragTransformIdName};");
+            sb.AppendLine($"layout(location=27) flat in uint {DefaultVertexShaderGenerator.FragRenderIdentityIdName};");
             sb.AppendLine($"layout(location={FragMaterialIdLocation}) flat in uint {FragMaterialIdName};");
             if (depthNormalPrePass)
             {
@@ -3204,7 +3224,7 @@ namespace XREngine.Rendering
             sb.AppendLine();
             sb.AppendLine("void main()");
             sb.AppendLine("{");
-            sb.AppendLine($"    uint drawID = floatBitsToUint({DefaultVertexShaderGenerator.FragTransformIdName});");
+            sb.AppendLine($"    uint renderIdentityID = {DefaultVertexShaderGenerator.FragRenderIdentityIdName};");
             sb.AppendLine($"    uint materialId = {FragMaterialIdName};");
             sb.AppendLine("    MaterialEntry material;");
             sb.AppendLine("    XR_LoadMaterial(materialId, material);");
@@ -3256,7 +3276,7 @@ namespace XREngine.Rendering
             }
             sb.AppendLine("    if ((flags & (1u << 31u)) == 0u)");
             sb.AppendLine("        baseColor = mix(baseColor, vec3(1.0, 0.0, 1.0), 0.65);");
-            sb.AppendLine("    TransformId = drawID;");
+            sb.AppendLine("    TransformId = renderIdentityID;");
             sb.AppendLine("    Normal = XRENGINE_EncodeNormal(FragNorm);");
             sb.AppendLine("    AlbedoOpacity = vec4(baseColor, opacity);");
             sb.AppendLine("    RMSE = rmse;");
@@ -3306,7 +3326,8 @@ namespace XREngine.Rendering
             sb.AppendLine("layout(location=1) in vec3 FragNorm;");
             sb.AppendLine("layout(location=4) in vec2 FragUV0;");
             sb.AppendLine($"layout(location={FragMeshletDebugColorLocation}) in vec4 {FragMeshletDebugColorName};");
-            sb.AppendLine($"layout(location=21) in float {DefaultVertexShaderGenerator.FragTransformIdName};");
+            sb.AppendLine($"layout(location=21) flat in uint {DefaultVertexShaderGenerator.FragTransformIdName};");
+            sb.AppendLine($"layout(location=27) flat in uint {DefaultVertexShaderGenerator.FragRenderIdentityIdName};");
             sb.AppendLine($"layout(location={FragMaterialIdLocation}) flat in uint {FragMaterialIdName};");
             sb.AppendLine($"layout(location={FragStateClassIdLocation}) flat in uint {FragStateClassIdName};");
             sb.AppendLine("layout(location=0) out vec4 AlbedoOpacity;");
@@ -3347,10 +3368,10 @@ namespace XREngine.Rendering
             sb.AppendLine();
             sb.AppendLine("void main()");
             sb.AppendLine("{");
-            sb.AppendLine($"    uint drawID = floatBitsToUint({DefaultVertexShaderGenerator.FragTransformIdName});");
+            sb.AppendLine($"    uint renderIdentityID = {DefaultVertexShaderGenerator.FragRenderIdentityIdName};");
             sb.AppendLine($"    if ({MeshletDebugDisplayUniformName} != 0u)");
             sb.AppendLine("    {");
-            sb.AppendLine("        TransformId = drawID;");
+            sb.AppendLine("        TransformId = renderIdentityID;");
             sb.AppendLine("        Normal = XRENGINE_EncodeNormal(FragNorm);");
             sb.AppendLine($"        AlbedoOpacity = vec4({FragMeshletDebugColorName}.rgb, 1.0);");
             sb.AppendLine("        RMSE = vec4(1.0, 0.0, 0.0, 1.0);");
@@ -3378,7 +3399,7 @@ namespace XREngine.Rendering
             sb.AppendLine("        discard;");
             sb.AppendLine("    if ((flags & (1u << 31u)) == 0u)");
             sb.AppendLine("        baseColor = mix(baseColor, vec3(1.0, 0.0, 1.0), 0.65);");
-            sb.AppendLine("    TransformId = drawID;");
+            sb.AppendLine("    TransformId = renderIdentityID;");
             sb.AppendLine("    Normal = XRENGINE_EncodeNormal(FragNorm);");
             sb.AppendLine("    AlbedoOpacity = vec4(baseColor, opacity);");
             sb.AppendLine("    RMSE = rmse;");
@@ -3470,7 +3491,10 @@ namespace XREngine.Rendering
 
             sb.AppendLine($"layout(location=20) out vec3 {DefaultVertexShaderGenerator.FragPosLocalName};");
             if (emitTransformId)
-                sb.AppendLine($"layout(location=21) out float {DefaultVertexShaderGenerator.FragTransformIdName};");
+            {
+                sb.AppendLine($"layout(location=21) flat out uint {DefaultVertexShaderGenerator.FragTransformIdName};");
+                sb.AppendLine($"layout(location=27) flat out uint {DefaultVertexShaderGenerator.FragRenderIdentityIdName};");
+            }
             sb.AppendLine($"layout(location=22) out float {DefaultVertexShaderGenerator.FragViewIndexName};");
             if (emitLodTransitionRole)
                 sb.AppendLine($"layout(location={FragLodTransitionRoleLocation}) flat out uint {FragLodTransitionRoleName};");
@@ -3549,7 +3573,10 @@ namespace XREngine.Rendering
             sb.AppendLine("    mat4 ModelMatrix = ResolveModelMatrix(rawBaseInstance, instanceLinearIndex);");
             sb.AppendLine("    uint commandIndex = ResolveCommandIndex(rawBaseInstance, instanceLinearIndex);");
             if (emitTransformId)
-                sb.AppendLine($"    {DefaultVertexShaderGenerator.FragTransformIdName} = uintBitsToFloat(commandIndex);");
+            {
+                sb.AppendLine($"    {DefaultVertexShaderGenerator.FragTransformIdName} = commandIndex;");
+                sb.AppendLine($"    {DefaultVertexShaderGenerator.FragRenderIdentityIdName} = XRE_LoadDrawMetadata(commandIndex).RenderIdentityID;");
+            }
             sb.AppendLine($"    {DefaultVertexShaderGenerator.FragViewIndexName} = 0.0;");
             if (emitLodTransitionRole)
                 sb.AppendLine($"    {FragLodTransitionRoleName} = (rawBaseInstance & XRE_PREVIOUS_LOD_BASEINSTANCE_FLAG) != 0u ? 1u : 0u;");
@@ -3647,7 +3674,10 @@ namespace XREngine.Rendering
             sb.AppendLine("layout(location = 5) flat out vec4 GlyphUVBounds;");
             sb.AppendLine($"layout(location = 20) out vec3 {DefaultVertexShaderGenerator.FragPosLocalName};");
             if (emitTransformId)
-                sb.AppendLine($"layout(location = 21) out float {DefaultVertexShaderGenerator.FragTransformIdName};");
+            {
+                sb.AppendLine($"layout(location = 21) flat out uint {DefaultVertexShaderGenerator.FragTransformIdName};");
+                sb.AppendLine($"layout(location = 27) flat out uint {DefaultVertexShaderGenerator.FragRenderIdentityIdName};");
+            }
             sb.AppendLine($"layout(location = 22) out float {DefaultVertexShaderGenerator.FragViewIndexName};");
             sb.AppendLine();
 
@@ -3710,7 +3740,10 @@ namespace XREngine.Rendering
             sb.AppendLine("    uint drawID = ResolveDrawID(uint(gl_BaseInstance));");
             sb.AppendLine("    mat4 ModelMatrix = LoadWorldMatrix(LoadTransformId(drawID));");
             if (emitTransformId)
-                sb.AppendLine($"    {DefaultVertexShaderGenerator.FragTransformIdName} = uintBitsToFloat(drawID);");
+            {
+                sb.AppendLine($"    {DefaultVertexShaderGenerator.FragTransformIdName} = drawID;");
+                sb.AppendLine($"    {DefaultVertexShaderGenerator.FragRenderIdentityIdName} = XRE_LoadDrawMetadata(drawID).RenderIdentityID;");
+            }
             sb.AppendLine($"    {DefaultVertexShaderGenerator.FragViewIndexName} = 0.0;");
             sb.AppendLine("    uint glyphBase = drawID < uint(GlyphOffsets.length()) ? GlyphOffsets[drawID] : 0u;");
             sb.AppendLine("    uint glyphIndex = glyphBase + uint(gl_InstanceID);");
@@ -3829,7 +3862,7 @@ namespace XREngine.Rendering
                 helper,
                 source,
                 DefaultVertexShaderGenerator.FragTransformIdName,
-                $"layout(location = 21) in float {DefaultVertexShaderGenerator.FragTransformIdName};");
+                $"layout(location = 21) flat in uint {DefaultVertexShaderGenerator.FragTransformIdName};");
             AppendGlslVariableDeclarationIfNeeded(
                 helper,
                 source,
@@ -3852,7 +3885,7 @@ namespace XREngine.Rendering
             helper.AppendLine();
             helper.AppendLine("void XRE_ApplyLodTransitionDither()");
             helper.AppendLine("{");
-            helper.AppendLine($"    uint commandIndex = floatBitsToUint({DefaultVertexShaderGenerator.FragTransformIdName});");
+            helper.AppendLine($"    uint commandIndex = {DefaultVertexShaderGenerator.FragTransformIdName};");
             helper.AppendLine("    uint base = commandIndex * XRE_LOD_TRANSITION_UINTS;");
             helper.AppendLine("    if (base + 3u >= uint(xreLodTransitions.length()))");
             helper.AppendLine("        return;");
@@ -5173,15 +5206,18 @@ namespace XREngine.Rendering
             }
 
             renderPasses.RecordMaterialBindingResolverResult(MaterialBindingResolverResult.Compatible(layout));
-            GpuDebug(
-                LogCategory.Validation,
-                "Material binding resolver outcome={0} pass={1} layout={2} hash={3} rowBytes={4} bindlessRequested={5}",
-                EMaterialBindingResolverOutcome.MaterialTableCompatible,
-                currentRenderPass,
-                layout.Name,
-                layout.LayoutHash,
-                layout.RowByteCount,
-                bindless);
+            if (IsEnabled(LogCategory.Validation, LogLevel.Debug))
+            {
+                GpuDebug(
+                    LogCategory.Validation,
+                    "Material binding resolver outcome={0} pass={1} layout={2} hash={3} rowBytes={4} bindlessRequested={5}",
+                    EMaterialBindingResolverOutcome.MaterialTableCompatible,
+                    currentRenderPass,
+                    layout.Name,
+                    layout.LayoutHash,
+                    layout.RowByteCount,
+                    bindless);
+            }
 
             XRDataBuffer? materialTableBuffer = renderPasses.MaterialTableBuffer;
             if (materialTableBuffer is null)
@@ -5274,6 +5310,11 @@ namespace XREngine.Rendering
                 return;
             }
 
+            RuntimeEngine.Rendering.Stats.GpuDriven.RecordCapacityTopology(
+                checked((int)renderPasses.CommandCapacity),
+                checked((int)scene.TotalCommandCount),
+                checked((int)(renderPasses.MaterialSlotLookupBuffer?.ElementCount ?? 0u)),
+                renderPasses.MaterialSlotIds.Count);
             RuntimeEngine.Rendering.Stats.GpuDriven.RecordMaterialTopology(
                 renderPasses.MaterialSlotIds.Count,
                 (int)GPUBatchingBindings.MaterialTierCount);
@@ -5286,6 +5327,8 @@ namespace XREngine.Rendering
             uint stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
             uint maxDrawsPerBucket = Math.Max(renderPasses.MaxDrawsPerMaterialTier, 1u);
 
+            using var backendAllocationScope = RuntimeEngine.Rendering.Stats.GpuDriven
+                .MeasureSubmissionBackendAllocation();
             var renderer = AbstractRenderer.Current;
             XRMaterial? invalidMaterial = XRMaterial.InvalidMaterial;
             XRMaterial? renderParametersMaterial = depthNormalPassSupported
@@ -5359,7 +5402,7 @@ namespace XREngine.Rendering
             int renderPass,
             string reason)
         {
-            RuntimeEngine.Rendering.Stats.GpuDriven.RecordUnsupportedCompactPass();
+            RuntimeEngine.Rendering.Stats.GpuDriven.RecordUnsupportedCompactPass(renderPass);
             XREngine.Debug.RenderingWarningEvery(
                 $"RenderDispatch.CompactMaterialTableVariantUnsupported.{renderPass}",
                 TimeSpan.FromSeconds(2),

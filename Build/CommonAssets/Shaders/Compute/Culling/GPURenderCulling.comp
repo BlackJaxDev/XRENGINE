@@ -22,7 +22,7 @@ struct DrawMetadata
     uint StateClassID;
     uint InstanceCount;
     uint RenderPass;
-    uint ShaderProgramID;
+    uint RenderIdentityID;
     uint LogicalMeshID;
     uint BoundsID;
 };
@@ -219,7 +219,7 @@ void StoreCommand(uint outIndex, DrawMetadata meta, vec4 sphere, float renderDis
     outCommands[base + 6] = uintBitsToFloat(meta.MaterialID);
     outCommands[base + 7] = uintBitsToFloat(meta.InstanceCount);
     outCommands[base + 8] = uintBitsToFloat(meta.RenderPass);
-    outCommands[base + 9] = uintBitsToFloat(meta.ShaderProgramID);
+    outCommands[base + 9] = uintBitsToFloat(meta.RenderIdentityID);
     outCommands[base + 10] = renderDistance;
     outCommands[base + 11] = uintBitsToFloat(meta.LayerMask);
     outCommands[base + 12] = uintBitsToFloat(meta.LodPolicy);
@@ -247,7 +247,7 @@ void StoreHotCommand(uint outIndex, DrawMetadata meta, vec4 sphere, float render
     outHotCommands[base + 9u] = meta.LayerMask;
     outHotCommands[base + 10u] = meta.Flags;
     outHotCommands[base + 11u] = meta.LodPolicy;
-    outHotCommands[base + 12u] = meta.ShaderProgramID;
+    outHotCommands[base + 12u] = meta.RenderIdentityID;
     outHotCommands[base + 13u] = floatBitsToUint(renderDistance);
     outHotCommands[base + 14u] = meta.DrawID;
     outHotCommands[base + 15u] = meta.LogicalMeshID;

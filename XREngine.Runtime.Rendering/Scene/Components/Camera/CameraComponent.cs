@@ -5,6 +5,7 @@ using XREngine.Data.Geometry;
 using XREngine.Input;
 using XREngine.Rendering;
 using XREngine.Rendering.UI;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Components
 {
@@ -293,6 +294,7 @@ namespace XREngine.Components
 
         private EDirectionalShadowRenderingMode _directionalShadowRenderingMode = EDirectionalShadowRenderingMode.Cascaded;
         [Category("Shadows")]
+        [DefaultValue(EDirectionalShadowRenderingMode.Cascaded)]
         [DisplayName("Directional Shadow Rendering")]
         [Description("Selects whether this camera uses a single directional shadow map or cascaded directional shadows.")]
         public EDirectionalShadowRenderingMode DirectionalShadowRenderingMode
@@ -308,6 +310,7 @@ namespace XREngine.Components
         [Category("Rendering")]
         [DisplayName("Anti-Aliasing Override")]
         [Description("Optional per-camera anti-aliasing override. Null uses the global settings cascade.")]
+        [YamlIgnore]
         public EAntiAliasingMode? AntiAliasingModeOverride
         {
             get => Camera.AntiAliasingModeOverride;
@@ -326,6 +329,7 @@ namespace XREngine.Components
         [Category("Debug (Forward+)")]
         [DisplayName("Light Culling Debug Mode")]
         [Description("Visualizes the Forward+ tiled-light-culling buckets. None disables the overlay.")]
+        [YamlIgnore]
         public XRCamera.EForwardPlusDebugMode ForwardPlusDebugMode
         {
             get => Camera.ForwardPlusDebugMode;
@@ -341,6 +345,7 @@ namespace XREngine.Components
         [Category("Debug (Forward+)")]
         [DisplayName("Light Culling Debug Opacity")]
         [Description("Alpha used when blending the Forward+ debug overlay onto the scene (0..1).")]
+        [YamlIgnore]
         public float ForwardPlusDebugOpacity
         {
             get => Camera.ForwardPlusDebugOpacity;
@@ -357,6 +362,7 @@ namespace XREngine.Components
         [Category("Debug (Forward+)")]
         [DisplayName("Light Culling Debug Max Count")]
         [Description("Per-tile light count that maps to the top of the heatmap ramp. Tiles with this many or more lights saturate to 'hot'.")]
+        [YamlIgnore]
         public int ForwardPlusDebugMaxCount
         {
             get => Camera.ForwardPlusDebugMaxCount;
@@ -373,6 +379,7 @@ namespace XREngine.Components
         [Category("Debug (Forward+)")]
         [DisplayName("Show Empty Tiles")]
         [Description("If on, paints zero-count tiles with a faint dark fill so the entire culling grid extent is visible. If off, empty tiles are transparent.")]
+        [YamlIgnore]
         public bool ForwardPlusDebugShowEmptyTiles
         {
             get => Camera.ForwardPlusDebugShowEmptyTiles;
@@ -388,6 +395,7 @@ namespace XREngine.Components
         [Category("Debug (Forward+)")]
         [DisplayName("Show Per-Tile Count Bar")]
         [Description("If on, populated tiles render a small horizontal bar (length = count / MaxCount) so the per-tile light count is quantitatively readable.")]
+        [YamlIgnore]
         public bool ForwardPlusDebugShowCountBar
         {
             get => Camera.ForwardPlusDebugShowCountBar;

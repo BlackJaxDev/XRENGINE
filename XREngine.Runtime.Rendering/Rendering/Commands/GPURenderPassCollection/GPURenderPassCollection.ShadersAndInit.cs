@@ -1022,7 +1022,7 @@ namespace XREngine.Rendering.Commands
 
         private void EnsureMaterialScatterBuffers(uint materialSlotLookupCount, uint materialSlotCount, uint capacity)
         {
-            uint lookupCount = Math.Max(materialSlotLookupCount, 1u);
+            uint lookupCount = GpuDrivenValidationCapacity.Apply(Math.Max(materialSlotLookupCount, 1u));
             uint slotCount = Math.Max(materialSlotCount, 1u);
             uint bucketCount = UsesCompactMaterialTableSubmission(ZeroReadbackMaterialDrawPath)
                 ? GPUBatchingBindings.MaterialTierCount

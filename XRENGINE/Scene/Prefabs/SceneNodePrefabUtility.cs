@@ -7,6 +7,7 @@ using System.IO;
 using System.Numerics;
 using XREngine.Components;
 using XREngine;
+using XREngine.Data.Core;
 using XREngine.Diagnostics;
 using XREngine.Rendering;
 using XREngine.Scene.Transforms;
@@ -136,11 +137,42 @@ namespace XREngine.Scene.Prefabs
                 return CloneHierarchyBounded(template);
 
             string serialized = AssetManager.Serializer.Serialize(template);
-            var clone = AssetManager.Deserializer.Deserialize<SceneNode>(serialized)
-                ?? throw new InvalidOperationException("Failed to deserialize prefab hierarchy");
+            SceneNode clone;
+            using (XRObjectBase.SuppressObjectCacheRegistration())
+            {
+                clone = AssetManager.Deserializer.Deserialize<SceneNode>(serialized)
+                    ?? throw new InvalidOperationException("Failed to deserialize prefab hierarchy");
+            }
 
             DetachWorldRecursive(clone);
+            RegenerateRuntimeHierarchyIdentities(clone);
             NotifyYamlHierarchyDeserialized(clone);
+            return clone;
+        }
+
+        /// <summary>
+        /// Creates a deep clone, attaches it below <paramref name="parent"/>, and propagates the
+        /// parent's runtime world through the complete cloned hierarchy.
+        /// </summary>
+        /// <remarks>
+        /// This provides an explicit attach-and-world synchronization boundary for clones introduced
+        /// after a world has already been assembled.
+        /// </remarks>
+        public static SceneNode CloneHierarchyAttached(SceneNode template,
+                                                       SceneNode parent,
+                                                       bool maintainWorldTransform = false)
+        {
+            ArgumentNullException.ThrowIfNull(parent);
+
+            SceneNode clone = CloneHierarchy(template);
+            if (maintainWorldTransform)
+                clone.Transform.SetParent(parent.Transform, true, EParentAssignmentMode.Immediate);
+            else
+                clone.Parent = parent;
+
+            if (parent.World is { } world)
+                ApplyWorldRecursive(clone, world);
+
             return clone;
         }
 
@@ -274,7 +306,7 @@ namespace XREngine.Scene.Prefabs
                 DetachWorldRecursive(child);
         }
 
-        private static void ApplyWorldRecursive(SceneNode node, XRWorldInstance world)
+        private static void ApplyWorldRecursive(SceneNode node, IRuntimeWorldContext world)
         {
             node.World = world;
             foreach (var component in node.Components)
@@ -282,6 +314,17 @@ namespace XREngine.Scene.Prefabs
 
             foreach (SceneNode child in EnumerateChildren(node))
                 ApplyWorldRecursive(child, world);
+        }
+
+        private static void RegenerateRuntimeHierarchyIdentities(SceneNode root)
+        {
+            foreach (SceneNode node in EnumerateHierarchy(root))
+            {
+                node.Generate();
+                node.Transform.Generate();
+                foreach (XRComponent component in node.Components)
+                    component.Generate();
+            }
         }
 
         private static SceneNode CloneHierarchyBounded(SceneNode template)

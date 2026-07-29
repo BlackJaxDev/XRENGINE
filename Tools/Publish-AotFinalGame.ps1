@@ -1,5 +1,7 @@
 param(
     [string]$ProjectPath = ".\Samples\MonkeyBallVR\MonkeyBallVR.xrproj",
+    [ValidateSet("Debug", "Release")]
+    [string]$EditorConfiguration = "Release",
     [ValidateSet("Development", "Release")]
     [string]$BuildConfiguration = "Release",
     [ValidateSet("AnyCPU", "Windows64")]
@@ -8,6 +10,8 @@ param(
     [string]$LauncherName = "Game.exe",
     [switch]$NoClean,
     [switch]$NoSmoke,
+    [switch]$NoEditorBuild,
+    [switch]$AllowAotWarnings,
     [int]$SmokeTimeoutSeconds = 30
 )
 
@@ -192,10 +196,14 @@ if (-not $NoClean) {
     }
 }
 
-$buildArgs = @(
-    "run",
+$buildArgs = @("run")
+if ($NoEditorBuild) {
+    $buildArgs += "--no-build"
+}
+
+$buildArgs += @(
     "--project", $editorProject,
-    "-c", "Debug",
+    "-c", $EditorConfiguration,
     "-p:Platform=AnyCPU",
     "--",
     "--build-project", $projectFullPath,
@@ -251,6 +259,10 @@ if ($buildExit -ne 0) {
     throw "NativeAOT publish failed. See $publishLog"
 }
 
+if ($aotWarnings.Count -gt 0 -and -not $AllowAotWarnings) {
+    throw "NativeAOT publish emitted $($aotWarnings.Count) IL2xxx/IL3xxx warning(s). See $warningReport. Use -AllowAotWarnings only for local diagnosis; warning-bearing packages are not release-ready."
+}
+
 $launcherExe = $LauncherName
 if ([System.IO.Path]::GetExtension($launcherExe) -eq "") {
     $launcherExe = "$launcherExe.exe"
@@ -263,6 +275,7 @@ if (-not (Test-Path $exePath)) {
 
 $configArchive = Join-Path $projectDir "Build\$OutputSubfolder\Config\GameConfig.pak"
 $contentArchive = Join-Path $projectDir "Build\$OutputSubfolder\Content\GameContent.pak"
+$commonAssetsArchive = Join-Path $projectDir "Build\$OutputSubfolder\Content\CommonAssets.pak"
 if (-not (Test-Path $configArchive)) {
     throw "Published config archive was not found at '$configArchive'."
 }
@@ -270,6 +283,9 @@ if (-not (Test-Path $contentArchive)) {
     throw "Published content archive was not found at '$contentArchive'."
 }
 
+if (-not (Test-Path $commonAssetsArchive)) {
+    throw "Published common-assets archive was not found at '$commonAssetsArchive'."
+}
 if (-not $NoSmoke) {
     Write-Host "Running published launcher AOT smoke..."
     Remove-Item -Force -ErrorAction SilentlyContinue $smokeLog
@@ -288,6 +304,10 @@ if (-not $NoSmoke) {
 
     if ($smokeResult.ExitCode -ne 0) {
         throw "AOT smoke failed with exit code $($smokeResult.ExitCode). See $smokeLog"
+    }
+
+    if ($smokeResult.Output -notmatch 'AOT smoke passed:') {
+        throw "AOT smoke returned success without its completion marker. See $smokeLog"
     }
 }
 

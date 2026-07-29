@@ -218,6 +218,114 @@ public sealed class RuntimeRenderingHostServicesTests
 
     [Test]
     [NonParallelizable]
+    public void EngineHostOpenXrEndFrame_RecordsBothEyeOutputs()
+    {
+        bool previousTracking = RuntimeEngine.Rendering.Stats.EnableTracking;
+        bool previousIsInVr = RuntimeEngine.VRState.IsInVR;
+        RuntimeVrState.VRRuntime previousRuntime = RuntimeEngine.VRState.ActiveRuntime;
+
+        try
+        {
+            RuntimeRenderingHostServices.Current = RuntimeRenderingBootstrap.CreateEngineHostServices();
+            RuntimeEngine.Rendering.Stats.EnableTracking = true;
+            RuntimeEngine.VRState.ActiveRuntime = RuntimeVrState.VRRuntime.OpenXR;
+            RuntimeEngine.VRState.IsInVR = false;
+
+            ulong frameId = RuntimeEngine.Rendering.BeginRenderFrame();
+            RuntimeRenderingHostServices.Statistics.RecordRenderVrXrEndFrameSubmitTime(
+                TimeSpan.FromMilliseconds(0.25),
+                frameId);
+            RuntimeEngine.Rendering.CompleteRenderFrame(
+                frameId,
+                System.Diagnostics.Stopwatch.Frequency / 250);
+
+            RuntimeEngine.Rendering.Stats.FrameOutputManifestSnapshot manifest =
+                RuntimeEngine.Rendering.Stats.FrameOutputs.LastManifest;
+            manifest.Outputs.Length.ShouldBe(2);
+            manifest.Work.OutputRequestCount.ShouldBe(1);
+            manifest.Work.SubmitEventCount.ShouldBe(2);
+            manifest.Outputs.ShouldAllBe(output =>
+                output.OutputKind == EFrameOutputKind.OpenXREyeSubmit &&
+                output.SubmitObserved);
+        }
+        finally
+        {
+            RuntimeEngine.VRState.ActiveRuntime = previousRuntime;
+            RuntimeEngine.VRState.IsInVR = previousIsInVr;
+            RuntimeEngine.Rendering.Stats.EnableTracking = previousTracking;
+        }
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void FrameOutputWorkloadIdentity_IgnoresExpectedOpenXrCadenceGaps()
+    {
+        bool previousTracking = RuntimeEngine.Rendering.Stats.EnableTracking;
+        bool previousIsInVr = RuntimeEngine.VRState.IsInVR;
+        RuntimeVrState.VRRuntime previousRuntime = RuntimeEngine.VRState.ActiveRuntime;
+
+        try
+        {
+            RuntimeEngine.Rendering.Stats.EnableTracking = true;
+            RuntimeEngine.VRState.ActiveRuntime = RuntimeVrState.VRRuntime.OpenXR;
+            RuntimeEngine.VRState.IsInVR = true;
+
+            ulong eyeFrame = RuntimeEngine.Rendering.BeginRenderFrame();
+            RecordCompletedOutput(EFrameOutputKind.DesktopScene, EVrOutputViewKind.DesktopEditor, eyeFrame);
+            RecordCompletedOutput(EFrameOutputKind.OpenXREyeSubmit, EVrOutputViewKind.LeftEye, eyeFrame);
+            RecordCompletedOutput(EFrameOutputKind.OpenXREyeSubmit, EVrOutputViewKind.RightEye, eyeFrame);
+            RuntimeEngine.Rendering.CompleteRenderFrame(
+                eyeFrame,
+                System.Diagnostics.Stopwatch.Frequency / 250);
+            ulong identityWithEyes = RuntimeEngine.Rendering.Stats.FrameOutputs.LastManifest.WorkloadIdentityHash;
+
+            ulong cadenceGapFrame = RuntimeEngine.Rendering.BeginRenderFrame();
+            RecordCompletedOutput(EFrameOutputKind.DesktopScene, EVrOutputViewKind.DesktopEditor, cadenceGapFrame);
+            RuntimeEngine.Rendering.CompleteRenderFrame(
+                cadenceGapFrame,
+                System.Diagnostics.Stopwatch.Frequency / 250);
+
+            RuntimeEngine.Rendering.Stats.FrameOutputs.LastManifest.WorkloadIdentityHash
+                .ShouldBe(identityWithEyes);
+        }
+        finally
+        {
+            RuntimeEngine.VRState.ActiveRuntime = previousRuntime;
+            RuntimeEngine.VRState.IsInVR = previousIsInVr;
+            RuntimeEngine.Rendering.Stats.EnableTracking = previousTracking;
+        }
+
+        static void RecordCompletedOutput(
+            EFrameOutputKind outputKind,
+            EVrOutputViewKind viewKind,
+            ulong frameId)
+        {
+            var pacing = FrameOutputPacingDecision.Due(viewKind, outputKind, frameId);
+            RuntimeEngine.Rendering.Stats.FrameOutputs.RecordOutput(
+                new FrameOutputTelemetry(
+                    outputKind,
+                    viewKind,
+                    EFrameOutputPhase.Render,
+                    pacing,
+                    outputKind.ToString(),
+                    string.Empty,
+                    true,
+                    true,
+                    true,
+                    false,
+                    false,
+                    viewKind is EVrOutputViewKind.LeftEye or EVrOutputViewKind.RightEye,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0.1,
+                    0.0));
+        }
+    }
+
+    [Test]
+    [NonParallelizable]
     public void FocusedCapabilities_ResolveInstalledCompositeWithoutAdapters()
     {
         TestRuntimeRenderingHostServices services = new();

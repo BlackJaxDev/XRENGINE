@@ -58,6 +58,7 @@ public sealed partial class GPURenderPassCollection
     private void ReportExactTransparentMultiviewRejection()
     {
         ExactTransparentMultiviewRejectedThisFrame = true;
+        RuntimeEngine.Rendering.Stats.GpuDriven.RecordUnsupportedCompactPass(RenderPass);
 
         ETransparentMultiviewPolicy policy = _viewBatchContentPolicy.TransparentPolicy;
         if (_reportedExactTransparentMultiviewRejection &&

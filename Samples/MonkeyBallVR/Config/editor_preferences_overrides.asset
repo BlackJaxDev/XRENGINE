@@ -153,7 +153,7 @@ Debug:
     Value: false
   ZeroReadbackMaterialDrawPathOverride:
     HasOverride: false
-    Value: FullBucketScan
+    Value: FullBucketScanDiagnostic
   EnableProfilerFrameLoggingOverride:
     HasOverride: false
     Value: false
@@ -304,6 +304,9 @@ SceneDepthModeOverride:
 ScenePanelResizeDebounceMsOverride:
   HasOverride: false
   Value: 0
+InteractiveResizeStrategyOverride:
+  HasOverride: false
+  Value: Default
 HoverOutlineEnabledOverride:
   HasOverride: false
   Value: false

@@ -374,6 +374,42 @@ namespace XREngine.Rendering.Commands
         // flushes; appending straight to a file with FlushAsync survives a hard crash.
         private static readonly object _crumbFileLock = new();
         private static string? _crumbFilePath;
+
+        /// <summary>
+        /// Avoids constructing interpolated breadcrumb strings while crash breadcrumbs are disabled.
+        /// </summary>
+        [InterpolatedStringHandler]
+        internal ref struct CrumbInterpolatedStringHandler
+        {
+            private DefaultInterpolatedStringHandler _builder;
+
+            public CrumbInterpolatedStringHandler(
+                int literalLength,
+                int formattedCount,
+                out bool shouldAppend)
+            {
+                shouldAppend = AreCrashBreadcrumbsEnabled();
+                _builder = shouldAppend
+                    ? new DefaultInterpolatedStringHandler(literalLength, formattedCount)
+                    : default;
+            }
+
+            public void AppendLiteral(string value)
+                => _builder.AppendLiteral(value);
+
+            public void AppendFormatted<T>(T value)
+                => _builder.AppendFormatted(value);
+
+            public void AppendFormatted<T>(T value, string? format)
+                => _builder.AppendFormatted(value, format);
+
+            public void AppendFormatted(string? value)
+                => _builder.AppendFormatted(value);
+
+            public string GetFormattedText()
+                => _builder.ToStringAndClear();
+        }
+
         private static string GetCrumbFilePath()
         {
             if (_crumbFilePath is not null)
@@ -395,6 +431,15 @@ namespace XREngine.Rendering.Commands
             {
                 try { System.IO.File.AppendAllText(GetCrumbFilePath(), line); } catch { }
             }
+        }
+
+        internal static void Crumb(
+            ref CrumbInterpolatedStringHandler label)
+        {
+            if (!AreCrashBreadcrumbsEnabled())
+                return;
+
+            Crumb(label.GetFormattedText());
         }
 
         private EOcclusionCullingMode ResolveActiveOcclusionMode()

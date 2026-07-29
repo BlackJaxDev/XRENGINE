@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using NUnit.Framework;
 using Shouldly;
 using XREngine;
+using XREngine.Components;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
 using XREngine.Core.Files;
@@ -46,6 +47,60 @@ public sealed class LightComponentYamlDeserializationTests : GpuTestBase
         clone.ShouldNotBeNull();
         clone!.SceneNode.ShouldBeSameAs(cloneNode);
         clone.Scale.ShouldBe(light.Scale);
+    }
+
+    [Test]
+    public void YamlSerializer_RoundTrips_StandaloneDirectionalShadowSettings_WithoutRuntimeFramebuffer()
+    {
+        SceneNode original = new("StandaloneDirectionalLight", new Transform());
+        DirectionalLightComponent light = original.AddComponent<DirectionalLightComponent>()!;
+        light.CastsShadows = true;
+        light.UseShadowAtlas = false;
+        light.EnableCascadedShadows = false;
+        light.EnableContactShadows = false;
+
+        string yaml = AssetManager.Serializer.Serialize(original);
+
+        yaml.ShouldContain("UseShadowAtlas: false");
+        yaml.ShouldContain("EnableCascadedShadows: false");
+        yaml.ShouldContain("EnableContactShadows: false");
+        yaml.ShouldNotContain("ShadowMap:");
+
+        SceneNode cloneNode = AssetManager.Deserializer
+            .Deserialize<SceneNode>(yaml)
+            .ShouldNotBeNull();
+        DirectionalLightComponent clone = cloneNode
+            .GetComponent<DirectionalLightComponent>()
+            .ShouldNotBeNull();
+
+        clone.CastsShadows.ShouldBeTrue();
+        clone.UseShadowAtlas.ShouldBeFalse();
+        clone.EnableCascadedShadows.ShouldBeFalse();
+        clone.EnableContactShadows.ShouldBeFalse();
+        clone.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeFalse();
+    }
+
+    [Test]
+    public void YamlSerializer_RoundTrips_NonCascadedCameraShadowMode()
+    {
+        SceneNode original = new("DesktopCamera", new Transform());
+        CameraComponent camera = original.AddComponent<CameraComponent>()!;
+        camera.DirectionalShadowRenderingMode = EDirectionalShadowRenderingMode.NonCascaded;
+
+        string yaml = AssetManager.Serializer.Serialize(original);
+
+        yaml.ShouldContain("DirectionalShadowRenderingMode: NonCascaded");
+        yaml.ShouldNotContain("AntiAliasingModeOverride:");
+        yaml.ShouldNotContain("ForwardPlusDebug");
+
+        SceneNode cloneNode = AssetManager.Deserializer
+            .Deserialize<SceneNode>(yaml)
+            .ShouldNotBeNull();
+        CameraComponent clone = cloneNode
+            .GetComponent<CameraComponent>()
+            .ShouldNotBeNull();
+
+        clone.DirectionalShadowRenderingMode.ShouldBe(EDirectionalShadowRenderingMode.NonCascaded);
     }
 
     [Test]

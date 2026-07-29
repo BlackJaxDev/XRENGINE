@@ -1818,7 +1818,7 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
         commands[baseIdx + 6] = BitConverter.UInt32BitsToSingle(0u); // MaterialID
         commands[baseIdx + 7] = BitConverter.UInt32BitsToSingle(1u); // InstanceCount
         commands[baseIdx + 8] = BitConverter.UInt32BitsToSingle(0u); // RenderPass
-        commands[baseIdx + 9] = BitConverter.UInt32BitsToSingle(0u); // ShaderProgramID
+        commands[baseIdx + 9] = BitConverter.UInt32BitsToSingle(0u); // RenderIdentityID
         commands[baseIdx + 10] = position.LengthSquared(); // RenderDistance
         commands[baseIdx + 11] = BitConverter.UInt32BitsToSingle(0xFFFFFFFFu); // LayerMask
         commands[baseIdx + 12] = BitConverter.UInt32BitsToSingle(0u); // LODLevel/LodPolicy
@@ -1913,7 +1913,7 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
         metadata[metaBase + 10] = 0u; // StateClassID
         metadata[metaBase + 11] = instanceCount;
         metadata[metaBase + 12] = renderPass;
-        metadata[metaBase + 13] = 0u; // ShaderProgramID
+        metadata[metaBase + 13] = 0u; // RenderIdentityID
         metadata[metaBase + 14] = (uint)index; // LogicalMeshID
         metadata[metaBase + 15] = (uint)index; // BoundsID
 

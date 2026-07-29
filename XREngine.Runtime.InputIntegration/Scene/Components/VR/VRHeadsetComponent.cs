@@ -14,23 +14,14 @@ namespace XREngine.Data.Components.Scene
 
         public static VRHeadsetComponent? Instance { get; private set; }
 
-        protected VRHeadsetComponent() : base()
+        public VRHeadsetComponent() : base()
         {
-            _leftEyeNode = EnsureEyeNode(LeftEyeNodeName, true);
-            _rightEyeNode = EnsureEyeNode(RightEyeNodeName, false);
-            _leftEyeTransform = (VREyeTransform)_leftEyeNode.Transform;
-            _rightEyeTransform = (VREyeTransform)_rightEyeNode.Transform;
-
-            _leftEyeCamera = new(() => RuntimeVrRenderingServices.CreateEyeCamera(_leftEyeTransform, true, _near, _far), true);
-            _rightEyeCamera = new(() => RuntimeVrRenderingServices.CreateEyeCamera(_rightEyeTransform, false, _near, _far), true);
-
-            if (Instance is null)
-                Instance = this;
         }
 
         protected override void OnTransformChanged()
         {
             base.OnTransformChanged();
+            EnsureHeadsetResourcesInitialized();
 
             if (_leftEyeTransform is null || _rightEyeTransform is null)
                 return;
@@ -40,6 +31,22 @@ namespace XREngine.Data.Components.Scene
 
             if (_leftEyeCamera is not null && _rightEyeCamera is not null && IsActiveInHierarchy)
                 PublishHeadsetViewInformation();
+        }
+
+        private void EnsureHeadsetResourcesInitialized()
+        {
+            if (_leftEyeNode is not null)
+                return;
+
+            _leftEyeNode = EnsureEyeNode(LeftEyeNodeName, true);
+            _rightEyeNode = EnsureEyeNode(RightEyeNodeName, false);
+            _leftEyeTransform = (VREyeTransform)_leftEyeNode.Transform;
+            _rightEyeTransform = (VREyeTransform)_rightEyeNode.Transform;
+
+            _leftEyeCamera = new(() => RuntimeVrRenderingServices.CreateEyeCamera(_leftEyeTransform, true, _near, _far), true);
+            _rightEyeCamera = new(() => RuntimeVrRenderingServices.CreateEyeCamera(_rightEyeTransform, false, _near, _far), true);
+
+            Instance ??= this;
         }
 
         private Lazy<IRuntimeVrEyeCamera> _leftEyeCamera = null!;

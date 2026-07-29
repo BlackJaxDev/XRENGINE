@@ -54,6 +54,28 @@ python Tools/RenderDoc/trigger_capture.py --ident 38920 --output Build/_AgentVal
 bootstrapped module, so the explicit assignment is normally unnecessary. The
 output directory is created automatically.
 
+## Capture XRENGINE With Explicit Cohort Settings
+
+`rdc-cli` 0.5.6 builds application arguments with POSIX quoting on Windows and
+does not expose RenderDoc's environment-modification list. Use
+`capture_xrengine.py` so the editor receives the requested cohort settings
+directly from RenderDoc:
+
+```powershell
+python Tools/RenderDoc/capture_xrengine.py `
+  --settings XREngine.Benchmarks/VulkanPerformance/Cohorts/deferred-large-scene.jsonc `
+  --run-root Build/_AgentValidation/<run> `
+  --output Build/_AgentValidation/<run>/renderdoc/frame.rdc `
+  --frame 900 `
+  --profile-scene LargeProductionScene-Deferred `
+  --profile-camera Static `
+  --profile-lights CanonicalDirectional `
+  --profile-viewport 1920x1080
+```
+
+The launcher uses Windows command-line quoting, passes the environment through
+RenderDoc's API, copies the numbered capture to `--output`, and terminates only
+the editor process it launched. Run `rdc doctor` first.
 ## Replay Scripts
 
 Scripts under `Tools/RenderDoc/replay/` are intended to run inside RenderDoc's

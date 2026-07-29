@@ -20,6 +20,14 @@ namespace XREngine
                     private static int _configuredMaterialSlots;
                     private static int _materialPassGroups;
                     private static int _unsupportedCompactPasses;
+                    private static int _unsupportedCompactRenderPass = int.MinValue;
+                    private static long _sceneCommandCount;
+                    private static int _commandCapacity;
+                    private static int _activeCommandCount;
+                    private static int _materialLookupCapacity;
+                    private static int _activeMaterialSlots;
+                    private static long _submissionManagedAllocatedBytes;
+                    private static long _submissionBackendManagedAllocatedBytes;
                     private static long _indirectCommandGenerationTicks;
                     private static long _gpuCullTicks;
                     private static long _gpuSortCompactTicks;
@@ -49,6 +57,14 @@ namespace XREngine
                     private static int _lastFrameConfiguredMaterialSlots;
                     private static int _lastFrameMaterialPassGroups;
                     private static int _lastFrameUnsupportedCompactPasses;
+                    private static int _lastFrameUnsupportedCompactRenderPass = int.MinValue;
+                    private static long _lastFrameSceneCommandCount;
+                    private static int _lastFrameCommandCapacity;
+                    private static int _lastFrameActiveCommandCount;
+                    private static int _lastFrameMaterialLookupCapacity;
+                    private static int _lastFrameActiveMaterialSlots;
+                    private static long _lastFrameSubmissionManagedAllocatedBytes;
+                    private static long _lastFrameSubmissionBackendManagedAllocatedBytes;
                     private static long _lastFrameIndirectCommandGenerationTicks;
                     private static long _lastFrameGpuCullTicks;
                     private static long _lastFrameGpuSortCompactTicks;
@@ -90,6 +106,17 @@ namespace XREngine
                     public static int ConfiguredMaterialSlots => _lastFrameConfiguredMaterialSlots;
                     public static int MaterialPassGroups => _lastFrameMaterialPassGroups;
                     public static int UnsupportedCompactPasses => _lastFrameUnsupportedCompactPasses;
+                    public static int UnsupportedCompactRenderPass => _lastFrameUnsupportedCompactRenderPass;
+                    public static long SceneCommandCount => _lastFrameSceneCommandCount;
+                    public static int CommandCapacity => _lastFrameCommandCapacity;
+                    public static int ActiveCommandCount => _lastFrameActiveCommandCount;
+                    public static int MaterialLookupCapacity => _lastFrameMaterialLookupCapacity;
+                    public static int ActiveMaterialSlots => _lastFrameActiveMaterialSlots;
+                    public static long SubmissionManagedAllocatedBytes => _lastFrameSubmissionManagedAllocatedBytes;
+                    public static long SubmissionBackendManagedAllocatedBytes => _lastFrameSubmissionBackendManagedAllocatedBytes;
+                    public static long SubmissionOwnedManagedAllocatedBytes =>
+                        Math.Max(0L, _lastFrameSubmissionManagedAllocatedBytes -
+                            _lastFrameSubmissionBackendManagedAllocatedBytes);
                     public static double IndirectCommandGenerationMs => TimeSpan.FromTicks(_lastFrameIndirectCommandGenerationTicks).TotalMilliseconds;
                     public static double GpuCullMs => TimeSpan.FromTicks(_lastFrameGpuCullTicks).TotalMilliseconds;
                     public static double GpuSortCompactMs => TimeSpan.FromTicks(_lastFrameGpuSortCompactTicks).TotalMilliseconds;
@@ -126,6 +153,16 @@ namespace XREngine
                         _lastFrameConfiguredMaterialSlots = Interlocked.Exchange(ref _configuredMaterialSlots, 0);
                         _lastFrameMaterialPassGroups = Interlocked.Exchange(ref _materialPassGroups, 0);
                         _lastFrameUnsupportedCompactPasses = Interlocked.Exchange(ref _unsupportedCompactPasses, 0);
+                        _lastFrameUnsupportedCompactRenderPass = Interlocked.Exchange(
+                            ref _unsupportedCompactRenderPass,
+                            int.MinValue);
+                        _lastFrameSceneCommandCount = Interlocked.Exchange(ref _sceneCommandCount, 0);
+                        _lastFrameCommandCapacity = Interlocked.Exchange(ref _commandCapacity, 0);
+                        _lastFrameActiveCommandCount = Interlocked.Exchange(ref _activeCommandCount, 0);
+                        _lastFrameMaterialLookupCapacity = Interlocked.Exchange(ref _materialLookupCapacity, 0);
+                        _lastFrameActiveMaterialSlots = Interlocked.Exchange(ref _activeMaterialSlots, 0);
+                        _lastFrameSubmissionManagedAllocatedBytes = Interlocked.Exchange(ref _submissionManagedAllocatedBytes, 0);
+                        _lastFrameSubmissionBackendManagedAllocatedBytes = Interlocked.Exchange(ref _submissionBackendManagedAllocatedBytes, 0);
                         _lastFrameIndirectCommandGenerationTicks = Interlocked.Exchange(ref _indirectCommandGenerationTicks, 0);
                         _lastFrameGpuCullTicks = Interlocked.Exchange(ref _gpuCullTicks, 0);
                         _lastFrameGpuSortCompactTicks = Interlocked.Exchange(ref _gpuSortCompactTicks, 0);
@@ -169,7 +206,15 @@ namespace XREngine
                     {
                         lock (_modeLock)
                         {
-                            _materialBindingRung = rung.ToString();
+                            _materialBindingRung = rung switch
+                            {
+                                EMaterialTextureBindingRung.Unsupported => "Unsupported",
+                                EMaterialTextureBindingRung.TextureArray => "TextureArray",
+                                EMaterialTextureBindingRung.Bindless => "Bindless",
+                                EMaterialTextureBindingRung.Sparse => "Sparse",
+                                EMaterialTextureBindingRung.CoarseBucket => "CoarseBucket",
+                                _ => "Unsupported",
+                            };
                             _materialBindingRungReason = string.IsNullOrWhiteSpace(reason)
                                 ? "No selection reason was reported."
                                 : reason;
@@ -205,6 +250,101 @@ namespace XREngine
                     }
 
                     /// <summary>
+                    /// Records the strategy-independent GPU-scene command topology.
+                    /// </summary>
+                    public static void RecordSceneCommandCount(long commandCount)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        RecordMaximum(ref _sceneCommandCount, commandCount);
+                    }
+
+                    /// <summary>
+                    /// Records maximum allocated capacities and active counts observed across views/passes.
+                    /// </summary>
+                    public static void RecordCapacityTopology(
+                        int commandCapacity,
+                        int activeCommands,
+                        int materialLookupCapacity,
+                        int activeMaterialSlots)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        RecordMaximum(ref _commandCapacity, commandCapacity);
+                        RecordMaximum(ref _activeCommandCount, activeCommands);
+                        RecordMaximum(ref _materialLookupCapacity, materialLookupCapacity);
+                        RecordMaximum(ref _activeMaterialSlots, activeMaterialSlots);
+                    }
+
+                    /// <summary>
+                    /// Records thread-local managed allocations made while preparing and issuing
+                    /// a compact zero-readback material submission.
+                    /// </summary>
+                    public static void RecordSubmissionManagedAllocation(long allocatedBytes)
+                    {
+                        if (!EnableTracking || allocatedBytes <= 0)
+                            return;
+
+                        Interlocked.Add(ref _submissionManagedAllocatedBytes, allocatedBytes);
+                    }
+
+                    /// <summary>
+                    /// Attributes allocations made by generic backend state capture and
+                    /// command/frame-op encoding inside a compact submission. These bytes
+                    /// remain visible as the workstream-05 handoff but are excluded from
+                    /// the workstream-03-owned preparation/selection gate.
+                    /// </summary>
+                    public static void RecordSubmissionBackendManagedAllocation(long allocatedBytes)
+                    {
+                        if (!EnableTracking || allocatedBytes <= 0)
+                            return;
+
+                        Interlocked.Add(ref _submissionBackendManagedAllocatedBytes, allocatedBytes);
+                    }
+
+                    public static SubmissionBackendAllocationScope MeasureSubmissionBackendAllocation()
+                        => new(GC.GetAllocatedBytesForCurrentThread());
+
+                    public readonly struct SubmissionBackendAllocationScope : IDisposable
+                    {
+                        private readonly long _allocationStart;
+
+                        internal SubmissionBackendAllocationScope(long allocationStart)
+                            => _allocationStart = allocationStart;
+
+                        public void Dispose()
+                            => RecordSubmissionBackendManagedAllocation(
+                                GC.GetAllocatedBytesForCurrentThread() - _allocationStart);
+                    }
+
+                    private static void RecordMaximum(ref int target, int value)
+                    {
+                        int observed = Volatile.Read(ref target);
+                        while (value > observed)
+                        {
+                            int prior = Interlocked.CompareExchange(ref target, value, observed);
+                            if (prior == observed)
+                                return;
+
+                            observed = prior;
+                        }
+                    }
+                    private static void RecordMaximum(ref long target, long value)
+                    {
+                        long observed = Volatile.Read(ref target);
+                        while (value > observed)
+                        {
+                            long prior = Interlocked.CompareExchange(ref target, value, observed);
+                            if (prior == observed)
+                                return;
+
+                            observed = prior;
+                        }
+                    }
+
+                    /// <summary>
                     /// Records the CPU-visible topology without inspecting GPU-produced active work.
                     /// Values are summed across render passes and views for the captured frame.
                     /// </summary>
@@ -219,10 +359,13 @@ namespace XREngine
                             Interlocked.Add(ref _materialPassGroups, passGroups);
                     }
 
-                    public static void RecordUnsupportedCompactPass()
+                    public static void RecordUnsupportedCompactPass(int renderPass)
                     {
-                        if (EnableTracking)
-                            Interlocked.Increment(ref _unsupportedCompactPasses);
+                        if (!EnableTracking)
+                            return;
+
+                        Interlocked.Increment(ref _unsupportedCompactPasses);
+                        Interlocked.Exchange(ref _unsupportedCompactRenderPass, renderPass);
                     }
 
                     public static void RecordCommandCompaction(long culledCommands, long delayedDrawCountValue = 0, long gpuCompactionOverflow = 0, long activeListOverflow = 0, long bucketOverflow = 0, long meshletOverflow = 0)

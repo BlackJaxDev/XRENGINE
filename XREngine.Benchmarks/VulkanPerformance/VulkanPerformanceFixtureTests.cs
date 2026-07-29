@@ -29,10 +29,15 @@ public static class VulkanPerformanceFixtureTests
             TestPercentileAndVariance();
             TestQuickStatusAndCommandExitCodes(fixtureRoot);
             TestPromotionBaselineAndSeededRegression(fixtureRoot);
+            TestAdvisoryAbsoluteBudgetIsRecordedWithoutBlocking(fixtureRoot);
+            TestFullScanDiagnosticDoesNotUseCompactOnlyGates(fixtureRoot);
             TestManifestMismatchReportsExactField(fixtureRoot);
             TestInvalidCaptureRejection(fixtureRoot);
+            TestMultiRateRequiredOutput(fixtureRoot);
             TestPrimaryReuseRatioGate(fixtureRoot);
-            Console.WriteLine("Vulkan performance fixture tests: 6 passed.");
+            TestStructurallyIneligiblePrimaryRecordsAreExcluded(fixtureRoot);
+            TestSelectedGateScope(fixtureRoot);
+            Console.WriteLine("Vulkan performance fixture tests: 11 passed.");
             return 0;
         }
         catch (Exception exception)
@@ -146,6 +151,71 @@ public static class VulkanPerformanceFixtureTests
         AssertIssue(overBudget, "AbsoluteBudgetExceeded");
     }
 
+    private static void TestAdvisoryAbsoluteBudgetIsRecordedWithoutBlocking(
+        string fixtureRoot)
+    {
+        Fixture fixture = CreateFixture(
+            Path.Combine(fixtureRoot, "advisory-budget"),
+            "Gate",
+            promotionEligible: true,
+            repetitions: 3,
+            budgetValues: [5.5, 5.5, 5.5],
+            enforceAbsoluteBudget: false);
+        VulkanPerformanceEvaluationReport report = Evaluate(
+            fixture,
+            baseline: null,
+            acceptingBaseline: true);
+
+        Assert(
+            !report.Cohorts.Single().WithinAbsoluteBudget,
+            "Advisory budget result must still be recorded.");
+        Assert(
+            report.Issues.All(static issue =>
+                issue.Code != "AbsoluteBudgetExceeded"),
+            "Advisory absolute budget must not block the owning workstream.");
+        Assert(
+            report.Status == "PromotionPass",
+            "A valid run with only an advisory absolute miss must pass.");
+    }
+
+    private static void TestFullScanDiagnosticDoesNotUseCompactOnlyGates(
+        string fixtureRoot)
+    {
+        Fixture diagnostic = CreateFixture(
+            Path.Combine(fixtureRoot, "full-scan-diagnostic"),
+            "Gate",
+            promotionEligible: true,
+            repetitions: 3,
+            budgetValues: [4.0, 4.0, 4.0],
+            submissionOwnedAllocatedBytes: 4096,
+            unsupportedCompactPasses: 1);
+        VulkanPerformanceEvaluationReport diagnosticReport = Evaluate(
+            diagnostic,
+            baseline: null,
+            acceptingBaseline: true);
+        Assert(
+            diagnosticReport.Issues.All(static issue =>
+                issue.Code is not (
+                    "ZeroReadbackSubmissionAllocation" or
+                    "UnsupportedCompactVariant")),
+            "Full-scan diagnostics must not be classified as compact-path failures.");
+
+        Fixture compact = CreateFixture(
+            Path.Combine(fixtureRoot, "compact-owned-allocation"),
+            "Gate",
+            promotionEligible: true,
+            repetitions: 3,
+            budgetValues: [4.0, 4.0, 4.0],
+            zeroReadbackMaterialDrawPath: "BindlessMaterialTable",
+            submissionOwnedAllocatedBytes: 4096,
+            unsupportedCompactPasses: 1);
+        VulkanPerformanceEvaluationReport compactReport = Evaluate(
+            compact,
+            baseline: null,
+            acceptingBaseline: true);
+        AssertIssue(compactReport, "ZeroReadbackSubmissionAllocation");
+        AssertIssue(compactReport, "UnsupportedCompactVariant");
+    }
     private static void TestManifestMismatchReportsExactField(
         string fixtureRoot)
     {
@@ -221,6 +291,25 @@ public static class VulkanPerformanceFixtureTests
             "A failing candidate must not create or replace a baseline.");
     }
 
+    private static void TestMultiRateRequiredOutput(string fixtureRoot)
+    {
+        Fixture fixture = CreateFixture(
+            Path.Combine(fixtureRoot, "multi-rate-output"),
+            "Quick",
+            promotionEligible: false,
+            repetitions: 1,
+            budgetValues: [4.0],
+            includeRequiredOutputEveryFrame: false);
+        VulkanPerformanceEvaluationReport report = Evaluate(
+            fixture,
+            baseline: null,
+            acceptingBaseline: false);
+
+        Assert(
+            report.Issues.All(static issue => issue.Code != "RequiredOutputMissing"),
+            "A fresh required output observed at its own cadence must satisfy the capture-level requirement.");
+    }
+
     private static void TestPrimaryReuseRatioGate(string fixtureRoot)
     {
         Fixture fixture = CreateFixture(
@@ -239,6 +328,67 @@ public static class VulkanPerformanceFixtureTests
             acceptingBaseline: false);
 
         AssertIssue(report, "PrimaryReuseRatioBelowMinimum");
+    }
+
+    private static void TestStructurallyIneligiblePrimaryRecordsAreExcluded(
+        string fixtureRoot)
+    {
+        Fixture fixture = CreateFixture(
+            Path.Combine(fixtureRoot, "eligible-primary-reuse"),
+            "Quick",
+            promotionEligible: false,
+            repetitions: 1,
+            budgetValues: [4.0],
+            minimumPrimaryReuseRatio: 0.99,
+            primaryRecorded: 2,
+            primaryReused: 98,
+            eligiblePrimaryRecorded: 0);
+
+        VulkanPerformanceEvaluationReport report = Evaluate(
+            fixture,
+            baseline: null,
+            acceptingBaseline: false);
+
+        Assert(
+            report.Issues.All(static issue =>
+                issue.Code != "PrimaryReuseRatioBelowMinimum"),
+            "Structurally ineligible primary records must not lower the eligible-frame reuse ratio.");
+    }
+
+    private static void TestSelectedGateScope(string fixtureRoot)
+    {
+        Fixture selectedFixture = CreateFixture(
+            Path.Combine(fixtureRoot, "selected-gate"),
+            "Gate",
+            promotionEligible: true,
+            repetitions: 3,
+            budgetValues: [4.0, 4.0, 4.0],
+            gateScope: "Selected",
+            includeUnselectedGateCohort: true);
+        VulkanPerformanceEvaluationReport selectedReport = Evaluate(
+            selectedFixture,
+            baseline: null,
+            acceptingBaseline: true);
+        Assert(
+            selectedReport.Issues.All(static issue => issue.Code != "MissingGateCohort"),
+            "An explicit selected-Gate run must evaluate only the requested cohorts.");
+        Assert(
+            selectedReport.Status == "PromotionPass",
+            "A valid selected-Gate capture must remain promotion-eligible.");
+
+        Fixture fullFixture = CreateFixture(
+            Path.Combine(fixtureRoot, "full-gate"),
+            "Gate",
+            promotionEligible: true,
+            repetitions: 3,
+            budgetValues: [4.0, 4.0, 4.0],
+            gateScope: "Full",
+            includeUnselectedGateCohort: true);
+        VulkanPerformanceEvaluationReport fullReport = Evaluate(
+            fullFixture,
+            baseline: null,
+            acceptingBaseline: true);
+        AssertIssue(fullReport, "MissingGateCohort");
     }
 
     private static VulkanPerformanceEvaluationReport Evaluate(
@@ -261,7 +411,15 @@ public static class VulkanPerformanceFixtureTests
         bool includeRequiredOutput = true,
         double minimumPrimaryReuseRatio = 0.0,
         int primaryRecorded = 0,
-        int primaryReused = 0)
+        int primaryReused = 0,
+        int? eligiblePrimaryRecorded = null,
+        bool includeRequiredOutputEveryFrame = true,
+        bool enforceAbsoluteBudget = true,
+        string zeroReadbackMaterialDrawPath = "FullBucketScanDiagnostic",
+        int submissionOwnedAllocatedBytes = 0,
+        int unsupportedCompactPasses = 0,
+        string gateScope = "Full",
+        bool includeUnselectedGateCohort = false)
     {
         Directory.CreateDirectory(root);
         string settingsPath = Path.Combine(root, "settings.jsonc");
@@ -309,11 +467,12 @@ public static class VulkanPerformanceFixtureTests
                     Viewport = "1280x720",
                     RenderScale = "1.0",
                     Strategy = "GpuIndirectZeroReadback",
-                    ZeroReadbackMaterialDrawPath = "FullBucketScanDiagnostic",
+                    ZeroReadbackMaterialDrawPath = zeroReadbackMaterialDrawPath,
                     VrMode = "Desktop",
                     FoveationMode = "Off",
                     BudgetMetric = "render_dispatch_ms",
                     BudgetMilliseconds = 5.0,
+                    EnforceAbsoluteBudget = enforceAbsoluteBudget,
                     MinimumPrimaryReuseRatio = minimumPrimaryReuseRatio,
                     RequiredOutputs =
                     [
@@ -327,6 +486,15 @@ public static class VulkanPerformanceFixtureTests
                 },
             ],
         };
+        if (includeUnselectedGateCohort)
+        {
+            contract.Cohorts.Add(new VulkanPerformanceCohort
+            {
+                Id = "fixture-unselected-gate",
+                Gate = true,
+            });
+        }
+
         string contractPath = Path.Combine(root, "contract.json");
         WriteJson(contractPath, contract);
 
@@ -353,6 +521,10 @@ public static class VulkanPerformanceFixtureTests
                 readbackBytes,
                 fallbackEvents,
                 includeRequiredOutput,
+                includeRequiredOutputEveryFrame,
+                zeroReadbackMaterialDrawPath,
+                submissionOwnedAllocatedBytes,
+                unsupportedCompactPasses,
                 promotionEligible
                     ? "ReleaseBenchmark"
                     : "CleanProfile");
@@ -382,6 +554,11 @@ public static class VulkanPerformanceFixtureTests
                 VulkanSubmissionRejectionsTotal = 0,
                 VulkanPrimaryCommandBuffersRecordedTotal = primaryRecorded,
                 VulkanPrimaryCommandBuffersReusedTotal = primaryReused,
+                VulkanEligiblePrimaryCommandBufferRecordsTotal =
+                    eligiblePrimaryRecorded ?? primaryRecorded,
+                VulkanEligiblePrimaryCommandBuffersReusedTotal = primaryReused,
+                VulkanEligiblePrimaryCommandBufferReuseDecisionsTotal =
+                    (eligiblePrimaryRecorded ?? primaryRecorded) + primaryReused,
                 LogDir = logDirectory,
                 CaptureStartUtc = start,
                 CaptureEndUtc = end,
@@ -394,6 +571,7 @@ public static class VulkanPerformanceFixtureTests
         {
             SchemaVersion = 1,
             Preset = preset,
+            GateScope = gateScope,
             PromotionEligible = promotionEligible,
             ProfileMode = promotionEligible
                 ? "ReleaseBenchmark"
@@ -431,6 +609,10 @@ public static class VulkanPerformanceFixtureTests
         int readbackBytes,
         int fallbackEvents,
         bool includeRequiredOutput,
+        bool includeRequiredOutputEveryFrame,
+        string zeroReadbackMaterialDrawPath,
+        int submissionOwnedAllocatedBytes,
+        int unsupportedCompactPasses,
         string profileMode)
     {
         string path = Path.Combine(
@@ -444,13 +626,18 @@ public static class VulkanPerformanceFixtureTests
                 ["ts_utc"] = start.AddMilliseconds(25 + index * 40),
                 ["active_render_backend"] = "Vulkan",
                 ["effective_strategy"] = "GpuIndirectZeroReadback",
-                ["zero_readback_material_draw_path"] = "FullBucketScanDiagnostic",
+                ["zero_readback_material_draw_path"] =
+                    zeroReadbackMaterialDrawPath,
                 ["vr_foveation_mode"] = "Off",
                 ["profile_mode"] = profileMode,
                 ["gpu_timestamps_dense_mode"] = false,
                 ["gpu_readback_bytes"] = readbackBytes,
                 ["gpu_mapped_buffers"] = readbackBytes == 0 ? 0 : 1,
                 ["forbidden_gpu_fallback_events"] = fallbackEvents,
+                ["gpu_driven_submission_owned_managed_allocated_bytes"] =
+                    submissionOwnedAllocatedBytes,
+                ["gpu_driven_unsupported_compact_passes"] =
+                    unsupportedCompactPasses,
                 ["frame_output_unapproved_policy_event_count"] = 0,
                 ["render_dispatch_ms"] = budgetValue,
                 ["vulkan_frame_total_ms"] = budgetValue * 0.75,
@@ -458,7 +645,8 @@ public static class VulkanPerformanceFixtureTests
                     budgetValue * 0.75,
                 ["frame_outputs"] = new
                 {
-                    outputs = includeRequiredOutput
+                    outputs = includeRequiredOutput &&
+                        (includeRequiredOutputEveryFrame || index % 2 == 0)
                         ? new[]
                         {
                             new

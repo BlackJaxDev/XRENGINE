@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using XREngine.Data.Profiling;
+using XREngine.Rendering.Commands;
 using XREngine.Timers;
 using OcclusionTelemetry = XREngine.Rendering.Occlusion.OcclusionTelemetry;
 
@@ -211,6 +212,10 @@ public static partial class Engine
         {
             if ((!s_envCaptureEnabled && !s_runtimeCaptureEnabled) || s_shutdown)
                 return;
+
+            // Capture is itself an explicit request for render telemetry. Reassert tracking here
+            // because persisted preference side effects can run after startup capture setup.
+            RuntimeEngine.Rendering.Stats.EnableTracking = true;
 
             CaptureCompletion? completedRuntimeCapture = null;
 
@@ -750,6 +755,17 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "gpu_driven_configured_material_slots", RuntimeEngine.Rendering.Stats.GpuDriven.ConfiguredMaterialSlots, ref first);
             AppendNumberField(s_lineBuilder, "gpu_driven_material_pass_groups", RuntimeEngine.Rendering.Stats.GpuDriven.MaterialPassGroups, ref first);
             AppendNumberField(s_lineBuilder, "gpu_driven_unsupported_compact_passes", RuntimeEngine.Rendering.Stats.GpuDriven.UnsupportedCompactPasses, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_unsupported_compact_render_pass", RuntimeEngine.Rendering.Stats.GpuDriven.UnsupportedCompactRenderPass, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_scene_command_count", RuntimeEngine.Rendering.Stats.GpuDriven.SceneCommandCount, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_command_capacity", RuntimeEngine.Rendering.Stats.GpuDriven.CommandCapacity, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_active_command_count", RuntimeEngine.Rendering.Stats.GpuDriven.ActiveCommandCount, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_material_lookup_capacity", RuntimeEngine.Rendering.Stats.GpuDriven.MaterialLookupCapacity, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_active_material_slots", RuntimeEngine.Rendering.Stats.GpuDriven.ActiveMaterialSlots, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_submission_managed_allocated_bytes", RuntimeEngine.Rendering.Stats.GpuDriven.SubmissionManagedAllocatedBytes, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_submission_backend_managed_allocated_bytes", RuntimeEngine.Rendering.Stats.GpuDriven.SubmissionBackendManagedAllocatedBytes, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_submission_owned_managed_allocated_bytes", RuntimeEngine.Rendering.Stats.GpuDriven.SubmissionOwnedManagedAllocatedBytes, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_validation_capacity_multiplier", GpuDrivenValidationCapacity.Multiplier, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_validation_capacity_floor", GpuDrivenValidationCapacity.Floor, ref first);
             AppendNumberField(s_lineBuilder, "gpu_driven_indirect_command_generation_ms", RuntimeEngine.Rendering.Stats.GpuDriven.IndirectCommandGenerationMs, ref first);
             AppendNumberField(s_lineBuilder, "gpu_driven_gpu_cull_ms", RuntimeEngine.Rendering.Stats.GpuDriven.GpuCullMs, ref first);
             AppendNumberField(s_lineBuilder, "gpu_driven_gpu_sort_compact_ms", RuntimeEngine.Rendering.Stats.GpuDriven.GpuSortCompactMs, ref first);

@@ -115,6 +115,10 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
 
     protected override void Execute()
     {
+        XRRenderPipelineInstance? activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+        long sceneCommandCount = activeInstance?.ActiveMeshRenderCommands.GetRenderingMeshCommandCount() ?? 0;
+        RuntimeEngine.Rendering.Stats.GpuDriven.RecordSceneCommandCount(sceneCommandCount);
+
         EMeshSubmissionStrategy meshSubmissionStrategy = ResolveEffectiveMeshSubmissionStrategy();
         bool forceMeshletDebugDisplay = ShouldForceMeshletDebugDisplay(meshSubmissionStrategy);
         if (forceMeshletDebugDisplay)
@@ -156,12 +160,14 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
 
     private EMeshSubmissionStrategy ResolveEffectiveMeshSubmissionStrategy()
     {
-        XRViewport? viewport = RuntimeEngine.Rendering.State.RenderingPipelineState?.WindowViewport
-            ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.WindowViewport
-            ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.LastWindowViewport;
-
+        XRViewport? viewport = ResolveActiveViewport();
         return viewport?.MeshSubmissionStrategyOverride ?? MeshSubmissionStrategy;
     }
+
+    private static XRViewport? ResolveActiveViewport()
+        => RuntimeEngine.Rendering.State.RenderingPipelineState?.WindowViewport
+            ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.WindowViewport
+            ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.LastWindowViewport;
 
     private bool IsMeshletRequested(EMeshSubmissionStrategy meshSubmissionStrategy)
         => meshSubmissionStrategy.IsAnyMeshletStrategy() ||

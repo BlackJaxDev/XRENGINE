@@ -727,11 +727,8 @@ namespace XREngine.Rendering.Vulkan
                             structuralSignature: currentGenerations.Structural,
                             descriptorGeneration: currentGenerations.Descriptor,
                             swapchainSlot: commandBufferImageSlot);
-                        if (commandChainSchedule is not null)
-                        {
-                            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(
-                                primaryCommandBuffersReused: 1);
-                        }
+                        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(
+                            primaryCommandBuffersReused: 1);
                         swapchainLayoutAfterCommandBuffer = variant.RecordedSwapchainFinalLayout;
                         if (dynamicUiSecondaryReady)
                         {
@@ -807,11 +804,8 @@ namespace XREngine.Rendering.Vulkan
                 structuralSignature: currentGenerations.Structural,
                 descriptorGeneration: currentGenerations.Descriptor,
                 swapchainSlot: commandBufferImageSlot);
-            if (commandChainSchedule is not null)
-            {
-                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(
-                    primaryCommandBuffersRecorded: 1);
-            }
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(
+                primaryCommandBuffersRecorded: 1);
 
             _lastEnsureCommandBufferRecordedPrimary = true;
             _isRecordingCommandBuffer = true;
@@ -1039,6 +1033,8 @@ namespace XREngine.Rendering.Vulkan
                 plannerDirty: false,
                 profilerDirty: false,
                 dirtyReason: null);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(
+                primaryCommandBuffersReused: 1);
 
             EnsureCommandBufferVariantContextBeforeSubmit(
                 imageIndex,

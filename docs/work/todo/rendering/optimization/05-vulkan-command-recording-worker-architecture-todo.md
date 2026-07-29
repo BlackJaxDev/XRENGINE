@@ -47,6 +47,12 @@ serialization, per-frame task creation, and unbounded render-thread waits.
   path.
 - Prior telemetry could show scheduling intent without proving concurrent
   command encoding.
+- Workstream 03's retained Monado RVC Quick capture reported
+  `VulkanRecordCommandBufferAllocatedBytesTotal=3,263,104` and
+  `VulkanPrimaryRecordingAllocatedBytesTotal=3,255,936`, while secondary
+  recording reported zero. These generic command-encoding allocations are an
+  explicit workstream-05 handoff; any allocation attributed to the predecessor's
+  compact submission code remains owned by workstream 03.
 
 ## Scope
 
@@ -58,6 +64,8 @@ serialization, per-frame task creation, and unbounded render-thread waits.
 - Dynamic-rendering inheritance, pass ordering, transparent ordering, and
   volatile-overlay isolation inherited from the packet/chain migration.
 - Dirty-chain partitioning and serial/parallel threshold policy.
+- Allocation attribution and removal across serial primary encoding and worker
+  secondary encoding, coordinated with the primary-recording fast-path child.
 - Worker activation, queueing, active interval, wait, and encoded-chain
   telemetry.
 - Exceptional, cancelled, resized, and device-lost paths.
@@ -82,6 +90,9 @@ serialization, per-frame task creation, and unbounded render-thread waits.
   secondaries, dynamic-rendering inheritance, and volatile overlays.
 - [ ] Capture serial and current worker-path baselines with identical prepared
   inputs.
+- [ ] Attribute primary/secondary command-encoding allocations to exact
+  operations and distinguish generic encoder work from predecessor-owned
+  submission preparation.
 
 Acceptance criteria:
 
@@ -123,6 +134,8 @@ Acceptance criteria:
 Acceptance criteria:
 
 - [ ] Worker recording introduces zero steady-state managed allocations.
+- [ ] Serial primary recording and worker secondary recording both report zero
+  steady-state managed allocation on their applicable canonical cohorts.
 - [ ] The render thread does not block on a generic task scheduler.
 - [ ] Worker failure produces a visible frame failure or explicit safe serial
   recovery, never partial submission.
@@ -153,6 +166,8 @@ Acceptance criteria:
 - [ ] Dirty-chain stress captures show actual worker activation and bounded
   render-thread wait.
 - [ ] Stable primary/secondary reuse and zero-readback contracts remain intact.
+- [ ] The workstream-03 generic command-encoding allocation handoff is closed
+  without moving allocation into preparation, merge, or submission.
 - [ ] Release build, focused tests, stress runs, validation layers, and
   canonical performance cohorts pass.
 - [ ] Evidence and the serial threshold policy are recorded.

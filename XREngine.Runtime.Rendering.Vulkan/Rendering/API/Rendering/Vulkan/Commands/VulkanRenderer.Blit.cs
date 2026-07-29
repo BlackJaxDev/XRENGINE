@@ -1705,6 +1705,19 @@ namespace XREngine.Rendering.Vulkan
                     }
                     return true;
 
+                case Format.R32Uint:
+                    for (int i = 0; i < pixelCount; i++)
+                    {
+                        int srcIndex = i * 4;
+                        int dstIndex = i * 4;
+                        float value = *(uint*)(src + srcIndex);
+                        dstRgba[dstIndex + 0] = value;
+                        dstRgba[dstIndex + 1] = value;
+                        dstRgba[dstIndex + 2] = value;
+                        dstRgba[dstIndex + 3] = 1.0f;
+                    }
+                    return true;
+
                 case Format.B10G11R11UfloatPack32:
                     for (int i = 0; i < pixelCount; i++)
                     {
@@ -1761,6 +1774,7 @@ namespace XREngine.Rendering.Vulkan
                 Format.R16G16B16A16Unorm => 8,
                 Format.R16G16B16A16Sfloat => 8,
                 Format.R32Sfloat => 4,
+                Format.R32Uint => 4,
                 Format.R32G32B32A32Sfloat => 16,
                 Format.B10G11R11UfloatPack32 => 4,
                 _ => 0,

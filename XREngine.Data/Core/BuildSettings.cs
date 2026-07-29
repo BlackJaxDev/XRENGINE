@@ -27,6 +27,7 @@ namespace XREngine
         private bool _validateLauncherAotCompatibility = false;
         private bool _generateConfigArchive = true;
         private bool _saveSettingsBeforeBuild = true;
+        private ECommonAssetsPackageMode _commonAssetsPackageMode = ECommonAssetsPackageMode.Full;
         private string _contentArchiveName = "GameContent.pak";
         private string _configArchiveName = "GameConfig.pak";
         private string _contentOutputFolder = "Content";
@@ -134,6 +135,14 @@ namespace XREngine
         {
             get => _saveSettingsBeforeBuild;
             set => SetField(ref _saveSettingsBeforeBuild, value);
+        }
+
+        [Category("Build Steps")]
+        [Description("Selects whether CommonAssets.pak contains the complete engine library or only the runtime shader tree required by a procedural/self-contained game.")]
+        public ECommonAssetsPackageMode CommonAssetsPackageMode
+        {
+            get => _commonAssetsPackageMode;
+            set => SetField(ref _commonAssetsPackageMode, value);
         }
 
         [Category("Output")]

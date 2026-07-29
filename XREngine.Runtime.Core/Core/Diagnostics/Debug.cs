@@ -85,8 +85,10 @@ namespace XREngine
     {
         private static readonly ConcurrentDictionary<string, DateTime> RecentMessageCache = new();
         private static readonly ConcurrentDictionary<string, long> RateLimitedMessageCache = new();
+#if DEBUG || EDITOR
         private static int _exceptionTracingInitialized;
         [ThreadStatic] private static bool _handlingFirstChanceException;
+#endif
         public static Queue<(string, DateTime)> Output { get; } = new Queue<(string, DateTime)>();
         public static bool AllowOutput { get; set; } = true;
 

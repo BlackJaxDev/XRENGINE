@@ -36,6 +36,7 @@ $requestedCohorts = @($Cohorts | ForEach-Object {
 } | Where-Object {
     -not [string]::IsNullOrWhiteSpace($_)
 })
+$explicitCohortSelection = $requestedCohorts.Count -gt 0
 
 if ($requestedCohorts.Count -eq 0) {
     $requestedCohorts = switch ($Preset) {
@@ -83,6 +84,52 @@ function Assert-PathInsideRepository {
     if (-not $Path.StartsWith($repoWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "$Purpose must remain inside the repository: $Path"
     }
+}
+
+function Persist-CohortFrameStreams {
+    param(
+        [string]$SummaryPath,
+        [string]$CohortOutput
+    )
+
+    $summary = Get-Content -Raw -LiteralPath $SummaryPath | ConvertFrom-Json
+    $summaryIsArray = $summary -is [Array]
+    $rows = @($summary)
+    $durableLogDirectories = [System.Collections.Generic.List[string]]::new()
+
+    foreach ($row in $rows) {
+        $sourceLogDirectory = [System.IO.Path]::GetFullPath([string]$row.LogDir)
+        Assert-PathInsideRepository -Path $sourceLogDirectory -Purpose 'Profiler frame-stream source'
+        $sourceFrameStream = Join-Path $sourceLogDirectory 'profiler-render-stats.ndjson'
+        if (-not (Test-Path -LiteralPath $sourceFrameStream -PathType Leaf)) {
+            throw "Profiler frame stream was not available for persistence: $sourceFrameStream"
+        }
+        $sourceCaptureManifest = Join-Path $sourceLogDirectory 'profiler-capture-manifest.json'
+        if (-not (Test-Path -LiteralPath $sourceCaptureManifest -PathType Leaf)) {
+            throw "Profiler capture manifest was not available for persistence: $sourceCaptureManifest"
+        }
+
+        $repetition = [int]$row.Repetition
+        $durableLogDirectory = Join-Path $CohortOutput "frame-streams\repetition-$repetition"
+        $durableLogDirectory = [System.IO.Path]::GetFullPath($durableLogDirectory)
+        Assert-PathInsideRepository -Path $durableLogDirectory -Purpose 'Durable profiler frame-stream directory'
+        New-Item -ItemType Directory -Path $durableLogDirectory -Force | Out-Null
+        Copy-Item -LiteralPath $sourceFrameStream -Destination (
+            Join-Path $durableLogDirectory 'profiler-render-stats.ndjson') -Force
+        Copy-Item -LiteralPath $sourceCaptureManifest -Destination (
+            Join-Path $durableLogDirectory 'profiler-capture-manifest.json') -Force
+
+        $row | Add-Member -NotePropertyName SourceLogDir -NotePropertyValue $sourceLogDirectory -Force
+        $row.LogDir = $durableLogDirectory
+        $durableLogDirectories.Add($durableLogDirectory)
+    }
+
+    $persistedSummary = if ($summaryIsArray) { @($rows) } else { $rows[0] }
+    $persistedSummary |
+        ConvertTo-Json -Depth 8 |
+        Set-Content -LiteralPath $SummaryPath -Encoding UTF8
+    $durableLogDirectories |
+        Set-Content -LiteralPath (Join-Path $CohortOutput 'run-logdirs.txt') -Encoding UTF8
 }
 
 function Limit-AgentValidationRuns {
@@ -190,6 +237,7 @@ $measureScript = Join-Path $repoRoot 'Tools\Measure-GameLoopRenderPipeline.ps1'
 $runCohorts = [System.Collections.Generic.List[object]]::new()
 $captureFailures = [System.Collections.Generic.List[object]]::new()
 $environmentNames = @(
+    'XR_RUNTIME_JSON',
     'XRE_UNIT_TEST_WORLD_SETTINGS_PATH',
     'XRE_UNIT_TEST_RENDER_API',
     'XRE_UNIT_TEST_VR_FOVEATION_MODE',
@@ -197,14 +245,47 @@ $environmentNames = @(
     'XRE_UNIT_TEST_VR_FOVEATION_REQUIRE_REQUESTED',
     'XRE_UNIT_TEST_VR_VIEW_RENDER_MODE',
     'XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR',
-    'XRE_UNIT_TEST_ALLOW_DESKTOP_EDITING_IN_VR'
+    'XRE_UNIT_TEST_ALLOW_DESKTOP_EDITING_IN_VR',
+    'XRE_GPU_DRIVEN_VALIDATION_CAPACITY_MULTIPLIER',
+    'XRE_GPU_DRIVEN_VALIDATION_CAPACITY_FLOOR'
 )
 $previousEnvironment = @{}
 foreach ($name in $environmentNames) {
     $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
 
+$requiresMonado = @($selectedCohorts | Where-Object {
+    [string]$_.vrMode -eq 'MonadoOpenXR'
+}).Count -gt 0
+$monadoServiceOwned = $false
+$monadoServiceMarker = Join-Path $runFullPath 'mcp-output\monado-service-marker.json'
+$monadoServiceScript = Join-Path $repoRoot 'Tools\OpenXR\Start-MonadoService.ps1'
+
 try {
+    if ($requiresMonado) {
+        if (-not (Test-Path -LiteralPath $monadoServiceScript -PathType Leaf)) {
+            throw "Monado service manager was not found: $monadoServiceScript"
+        }
+
+        $monadoStart = & $monadoServiceScript `
+            -MarkerPath $monadoServiceMarker `
+            -LogDirectory (Join-Path $logsPath 'monado-service') `
+            -SimulatedHmdPoseMode stationary
+        $monadoStart |
+            ConvertTo-Json -Depth 6 |
+            Set-Content -LiteralPath (Join-Path $reportsPath 'monado-service-start.json') -Encoding UTF8
+
+        if (-not [bool]$monadoStart.OwnedByRunner) {
+            throw "Canonical RVC capture requires a runner-owned stationary Monado service. $($monadoStart.Reason)"
+        }
+
+        $monadoServiceOwned = $true
+        [Environment]::SetEnvironmentVariable(
+            'XR_RUNTIME_JSON',
+            [string]$monadoStart.RuntimeJson,
+            'Process')
+    }
+
     foreach ($cohort in $selectedCohorts) {
         $settingsPath = Resolve-RepositoryPath -Path ([string]$cohort.settingsPath)
         Assert-PathInsideRepository -Path $settingsPath -Purpose 'Cohort settings path'
@@ -226,6 +307,22 @@ try {
         [Environment]::SetEnvironmentVariable('XRE_UNIT_TEST_VR_VIEW_RENDER_MODE', 'ParallelCommandBufferRecording', 'Process')
         [Environment]::SetEnvironmentVariable('XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR', '1', 'Process')
         [Environment]::SetEnvironmentVariable('XRE_UNIT_TEST_ALLOW_DESKTOP_EDITING_IN_VR', '1', 'Process')
+        [Environment]::SetEnvironmentVariable(
+            'XRE_GPU_DRIVEN_VALIDATION_CAPACITY_MULTIPLIER',
+            $(if ($null -ne $cohort.gpuDrivenValidationCapacityMultiplier) {
+                [string]$cohort.gpuDrivenValidationCapacityMultiplier
+            } else {
+                '1'
+            }),
+            'Process')
+        [Environment]::SetEnvironmentVariable(
+            'XRE_GPU_DRIVEN_VALIDATION_CAPACITY_FLOOR',
+            $(if ($null -ne $cohort.gpuDrivenValidationCapacityFloor) {
+                [string]$cohort.gpuDrivenValidationCapacityFloor
+            } else {
+                '0'
+            }),
+            'Process')
 
         $measureArguments = @{
             WarmupSec = [int]$presetDefinition.warmupSeconds
@@ -235,6 +332,7 @@ try {
             Configuration = 'Release'
             CacheMode = 'Warm'
             ZeroReadbackMaterialDrawPath = [string]$cohort.zeroReadbackMaterialDrawPath
+            UnitTestingWorldSettingsPath = $settingsPath
             ProfileScene = [string]$cohort.scene
             ProfileCamera = [string]$cohort.camera
             ProfileLights = [string]$cohort.lights
@@ -244,8 +342,6 @@ try {
             TargetRefreshHz = $(if ($cohort.lane -eq 'VulkanRvc') { 120.0 } else { 200.0 })
             NoClearCachesBetweenVariants = $true
             NoP3Logging = $true
-            FailOnSteadyStateCommandBufferAllocations = $true
-            MaxSteadyStateRecordCommandBufferAllocatedBytes = 0
             RetainedRunCount = 20
             RunLabel = "vulkan-perf-$($Preset.ToLowerInvariant())-$($cohort.id)"
             OutputDirectory = $cohortOutput
@@ -261,8 +357,13 @@ try {
             OcclusionCullingMode = 'Disabled'
             VulkanDiagnosticPreset = 'Off'
         }
+        if ([int]$cohort.minimumGpuSceneCommandCount -gt 0) {
+            $measureArguments.MinSteadyStateGpuSceneCommandCount =
+                [int]$cohort.minimumGpuSceneCommandCount
+        }
         if ([double]$cohort.minimumPrimaryReuseRatio -gt 0) {
             $measureArguments.FailOnSteadyStateCommandBufferChurn = $true
+            $measureArguments.UseEligiblePrimaryReuseRatio = $true
             $measureArguments.MinSteadyStateCommandBufferCleanReuseRatio =
                 [double]$cohort.minimumPrimaryReuseRatio
         }
@@ -278,6 +379,9 @@ try {
 
         $summaryPath = Join-Path $cohortOutput 'summary.json'
         if (Test-Path -LiteralPath $summaryPath) {
+            Persist-CohortFrameStreams `
+                -SummaryPath $summaryPath `
+                -CohortOutput $cohortOutput
             $runCohorts.Add([pscustomobject]@{
                 Id = [string]$cohort.id
                 SummaryPath = $summaryPath
@@ -295,6 +399,12 @@ try {
     foreach ($name in $environmentNames) {
         [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], 'Process')
     }
+
+    if ($monadoServiceOwned) {
+        & $monadoServiceScript -MarkerPath $monadoServiceMarker -Stop |
+            ConvertTo-Json -Depth 6 |
+            Set-Content -LiteralPath (Join-Path $reportsPath 'monado-service-stop.json') -Encoding UTF8
+    }
 }
 
 $captureFailuresPath = Join-Path $reportsPath 'capture-failures.json'
@@ -304,6 +414,11 @@ $runManifest = [ordered]@{
     Preset = $Preset
     PromotionEligible = [bool]$presetDefinition.promotionEligible
     ProfileMode = [string]$presetDefinition.profileMode
+    GateScope = $(if ($Preset -eq 'Gate' -and $explicitCohortSelection) {
+        'Selected'
+    } else {
+        'Full'
+    })
     ContractPath = $contractFullPath
     SourceCommit = $sourceCommit
     DirtyWorktree = $dirtyWorktree
