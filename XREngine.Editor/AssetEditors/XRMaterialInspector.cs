@@ -1487,18 +1487,14 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
                 return RenderPipeline.TryGetTexture(DefaultRenderPipeline.AmbientOcclusionIntensityTextureName, out XRTexture? aoTexture) ? aoTexture : null;
 
             case EngineShaderBindingNames.Samplers.IrradianceArray:
-                if (pipelineInstance.Pipeline is DefaultRenderPipeline defaultPipeline)
-                    return defaultPipeline.ProbeIrradianceArray;
-                if (pipelineInstance.Pipeline is DefaultRenderPipeline2 defaultPipeline2)
-                    return defaultPipeline2.ProbeIrradianceArray;
-                return null;
+                return pipelineInstance.Pipeline is IPbrLightingResourceProvider irradianceProvider
+                    ? irradianceProvider.ProbeIrradianceArray
+                    : null;
 
             case EngineShaderBindingNames.Samplers.PrefilterArray:
-                if (pipelineInstance.Pipeline is DefaultRenderPipeline defaultPipeline3)
-                    return defaultPipeline3.ProbePrefilterArray;
-                if (pipelineInstance.Pipeline is DefaultRenderPipeline2 defaultPipeline4)
-                    return defaultPipeline4.ProbePrefilterArray;
-                return null;
+                return pipelineInstance.Pipeline is IPbrLightingResourceProvider prefilterProvider
+                    ? prefilterProvider.ProbePrefilterArray
+                    : null;
 
             default:
                 return null;

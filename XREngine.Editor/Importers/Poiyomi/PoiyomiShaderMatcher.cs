@@ -18,6 +18,15 @@ public static partial class PoiyomiShaderMatcher
         "_ShadingEnabled",
     ];
 
+    private static readonly string[] ProPropertyEvidence =
+    [
+        "_GrabPass",
+        "_Refraction",
+        "_Blur",
+        "_Touch",
+        "_Pro",
+    ];
+
     public static PoiyomiShaderMatchResult Match(PoiyomiShaderMatchInput input)
     {
         ArgumentNullException.ThrowIfNull(input);
@@ -43,6 +52,42 @@ public static partial class PoiyomiShaderMatcher
 
         PoiyomiShaderVersion? sourceVersion = ExtractVersion(source);
         bool exactVersion = sourceVersion == PoiyomiToon93Catalog.Version;
+        bool hasProName =
+            source.Contains("Poiyomi Pro", StringComparison.OrdinalIgnoreCase) ||
+            normalizedPath.Contains("Poiyomi Pro", StringComparison.OrdinalIgnoreCase) ||
+            normalizedPath.Contains("/Pro/", StringComparison.OrdinalIgnoreCase);
+        bool hasProProperties = input.PropertyNames.Any(name =>
+            ProPropertyEvidence.Any(prefix => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)));
+        bool hasNonToonOriginalGuid =
+            input.OverrideTags.TryGetValue(OriginalShaderGuidTag, out string? originalShaderGuid) &&
+            !string.IsNullOrWhiteSpace(originalShaderGuid) &&
+            !string.Equals(originalShaderGuid, PoiyomiToon93Catalog.ShaderGuid, StringComparison.OrdinalIgnoreCase);
+        bool isProDowngradeSource =
+            hasProName ||
+            (hasProProperties && (hasPoiyomiPath || hasSignature || isLockedName)) ||
+            (hasNonToonOriginalGuid && hasProProperties && hasOptimizerMarker);
+
+        if (isProDowngradeSource)
+        {
+            string version = sourceVersion?.ToString() ?? "unknown";
+            return new PoiyomiShaderMatchResult
+            {
+                Kind = PoiyomiShaderMatchKind.PoiyomiProDowngradeSource,
+                Version = sourceVersion,
+                SourceFamily = PoiyomiShaderFamily.Pro,
+                IsPoiyomiFamily = true,
+                IsAccepted = false,
+                IsDowngradeSource = true,
+                IsLocked = isLockedName,
+                Diagnostics =
+                [
+                    new MaterialConversionDiagnostic(
+                        MaterialConversionDiagnosticCodes.ProLossyDowngrade,
+                        MaterialConversionDiagnosticSeverity.Warning,
+                        $"Poiyomi Pro {version} input was recognized only for lossy downgrade to the supported Poiyomi Toon 9.3.64 conversion target."),
+                ],
+            };
+        }
 
         if (exactGuid)
             return Accepted(PoiyomiShaderMatchKind.ExactGuid, PoiyomiToon93Catalog.Version, isLocked: false);
@@ -81,6 +126,7 @@ public static partial class PoiyomiShaderMatcher
             {
                 Kind = PoiyomiShaderMatchKind.UnsupportedVersion,
                 Version = sourceVersion,
+                SourceFamily = PoiyomiShaderFamily.Toon,
                 IsPoiyomiFamily = true,
                 IsAccepted = false,
                 IsLocked = isLockedName,
@@ -91,6 +137,7 @@ public static partial class PoiyomiShaderMatcher
         return new PoiyomiShaderMatchResult
         {
             Kind = PoiyomiShaderMatchKind.NotPoiyomi,
+            SourceFamily = PoiyomiShaderFamily.None,
             IsPoiyomiFamily = false,
             IsAccepted = false,
             IsLocked = false,
@@ -106,6 +153,7 @@ public static partial class PoiyomiShaderMatcher
         {
             Kind = kind,
             Version = version,
+            SourceFamily = PoiyomiShaderFamily.Toon,
             IsPoiyomiFamily = true,
             IsAccepted = true,
             IsLocked = isLocked,

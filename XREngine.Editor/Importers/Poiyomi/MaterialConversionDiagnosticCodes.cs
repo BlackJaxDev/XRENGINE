@@ -20,4 +20,6 @@ public static class MaterialConversionDiagnosticCodes
     public const string EnumValueOutOfRange = "POI0014";
     public const string UnsupportedTextureAsset = "POI0012";
     public const string PassPrewarmFailed = "POI0015";
+    public const string ProLossyDowngrade = "POIPRO0001";
+    public const string ProFeatureDiscarded = "POIPRO0002";
 }

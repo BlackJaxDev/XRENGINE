@@ -1,4 +1,5 @@
 using XREngine.Rendering.Models.Materials;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering;
 
@@ -9,8 +10,13 @@ namespace XREngine.Rendering;
 /// </summary>
 public sealed record MaterialPassDefinition
 {
+    [YamlMember(DefaultValuesHandling = DefaultValuesHandling.Preserve)]
     public required EMaterialPassIdentity Identity { get; init; }
+
+    [YamlMember(DefaultValuesHandling = DefaultValuesHandling.Preserve)]
     public required int Order { get; init; }
+
+    [YamlMember(DefaultValuesHandling = DefaultValuesHandling.Preserve)]
     public required int RenderPass { get; init; }
     public bool Enabled { get; init; } = true;
     public string? SourcePassName { get; init; }

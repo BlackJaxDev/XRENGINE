@@ -39,6 +39,7 @@ public unsafe partial class OpenXRAPI
     {
         _openXrStereoViewport ??= new XRViewport(null)
         {
+            PipelineRequest = RenderPipelineRequest.OpenXrEye(stereo: true),
             AutomaticallyCollectVisible = false,
             AutomaticallySwapBuffers = false,
             AllowUIRender = false,
@@ -65,6 +66,7 @@ public unsafe partial class OpenXRAPI
     private static XRViewport CreateOpenXrViewport()
         => new(null)
         {
+            PipelineRequest = RenderPipelineRequest.OpenXrEye(stereo: false),
             AutomaticallyCollectVisible = false,
             AutomaticallySwapBuffers = false,
             AllowUIRender = false,

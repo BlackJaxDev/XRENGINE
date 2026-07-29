@@ -1,0 +1,17 @@
+#ifndef XR_ADVANCED_ACCESS_GLSLINC
+#define XR_ADVANCED_ACCESS_GLSLINC
+
+#include "AdvancedLayout.glslinc"
+#include "AdvancedDiagnostics.glslinc"
+#include "AdvancedHandleAccess.glslinc"
+#include "AdvancedDrawAccess.glslinc"
+#include "AdvancedInstanceAccess.glslinc"
+#include "AdvancedMeshAccess.glslinc"
+#include "AdvancedMaterialAccess.glslinc"
+#include "AdvancedViewAccess.glslinc"
+#include "AdvancedLightAccess.glslinc"
+#include "AdvancedShadowAccess.glslinc"
+#include "AdvancedTextureAccess.glslinc"
+#include "AdvancedDeformationAccess.glslinc"
+
+#endif

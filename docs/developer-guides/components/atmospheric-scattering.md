@@ -76,7 +76,7 @@ Debug modes:
 
 ## Pipeline Order
 
-The aerial-perspective chain is implemented in both `DefaultRenderPipeline` and `DefaultRenderPipeline2`:
+The aerial-perspective chain is implemented in both `DefaultRenderPipeline` and `AdvancedRenderPipeline`:
 
 1. Half-resolution depth downsample.
 2. Half-resolution scatter/transmittance.

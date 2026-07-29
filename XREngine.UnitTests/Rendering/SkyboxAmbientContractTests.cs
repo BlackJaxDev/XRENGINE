@@ -33,18 +33,18 @@ public sealed class SkyboxAmbientContractTests
     public void DeferredPipelines_BindGlobalAmbientFromRenderingWorld()
     {
         string pipeline1 = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
-        string pipeline2 = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.cs");
+        string advancedPipeline = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.cs");
 
         pipeline1.ShouldContain("RenderingWorld?.GetEffectiveAmbientColor()");
         pipeline1.ShouldContain("program.Uniform(\"GlobalAmbient\", ResolveGlobalAmbient());");
-        pipeline2.ShouldContain("RenderingWorld?.GetEffectiveAmbientColor()");
-        pipeline2.ShouldContain("program.Uniform(\"GlobalAmbient\", ResolveGlobalAmbient());");
+        advancedPipeline.ShouldContain("RenderingWorld?.GetEffectiveAmbientColor()");
+        advancedPipeline.ShouldContain("program.Uniform(\"GlobalAmbient\", ResolveGlobalAmbient());");
     }
 
     [Test]
-    public void DeferredPipeline2_LightCombineFbosApplyAmbientAndProbeBindings()
+    public void DeferredAdvancedPipeline_LightCombineFbosApplyAmbientAndProbeBindings()
     {
-        string fboSource = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.FBOs.cs");
+        string fboSource = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.FBOs.cs");
 
         fboSource.ShouldContain("lightCombineMat.SettingUniforms += (_, program) => ApplyLightCombineProgramBindings(program);");
         fboSource.ShouldContain("mat.SettingUniforms += (_, program) => ApplyLightCombineProgramBindings(program);");

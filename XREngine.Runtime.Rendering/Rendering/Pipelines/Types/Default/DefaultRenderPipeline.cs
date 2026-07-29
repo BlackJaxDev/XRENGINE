@@ -22,7 +22,7 @@ using static XREngine.RuntimeEngine.Rendering.State;
 
 namespace XREngine.Rendering;
 
-public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormalPrePassSettings
+public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelineFeatureProvider
 {
     public enum DeferredDebugViewMode
     {
@@ -1934,16 +1934,16 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         return false;
     }
 
-    internal XRMaterial GetVoxelConeTracingVoxelizationMaterial()
+    public XRMaterial GetVoxelConeTracingVoxelizationMaterial()
         => _voxelConeTracingVoxelizationMaterial.Value;
 
-    internal XRMaterial GetMotionVectorsMaterial()
+    public XRMaterial GetMotionVectorsMaterial()
         => _motionVectorsMaterial.Value;
 
-    internal XRMaterial GetDepthNormalPrePassMaterial()
+    public XRMaterial GetDepthNormalPrePassMaterial()
         => _depthNormalPrePassMaterial.Value;
 
-    internal XRMaterial GetFullOverdrawCountMaterial()
+    public XRMaterial GetFullOverdrawCountMaterial()
         => _fullOverdrawCountMaterial.Value;
 
     private static GpuBvhDebugSettings? ResolveDebugVisualizationSettings()
@@ -2796,7 +2796,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         return true;
     }
 
-    internal void SyncPbrLightingResourcesForFrame()
+    public void SyncPbrLightingResourcesForFrame()
         => SyncPbrLightingResourcesForFrame(GetTexture<XRTexture>(BRDFTextureName));
 
     private void SyncPbrLightingResourcesForFrame(XRTexture? brdfTexture)

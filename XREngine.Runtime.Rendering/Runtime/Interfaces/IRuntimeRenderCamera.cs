@@ -29,6 +29,11 @@ public interface IRuntimeRenderCamera
     float FarZ { get; }
 
     /// <summary>
+    /// Gets whether near depth is numerically greater than far depth.
+    /// </summary>
+    bool IsReversedDepth { get; }
+
+    /// <summary>
     /// Gets whether this camera represents the left stereo eye, right stereo eye, or a non-stereo camera.
     /// </summary>
     bool? StereoEyeLeft { get; }

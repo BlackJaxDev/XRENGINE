@@ -43,8 +43,15 @@ The child process receives these isolation variables:
 | `XRE_EDITOR_SESSION_ROOT` | Root for isolated editor user data and engine logs |
 | `XRE_GAME_CACHE_PATH` | Per-session imported-asset cache |
 | `XRE_GAME_METADATA_PATH` | Per-session asset metadata, initially seeded from the repository metadata |
+| `XRE_TEXTURE_STREAMING_CACHE_WARMUP_ENABLED` | Defaults to `false` for isolated sessions so short automation runs do not cook multi-gigabyte texture caches; override explicitly when cache behavior is under test |
 
 The manifest at `Build/_AgentValidation/mcp-sessions/<name>/session.json` records the endpoint, artifact path, PID, and process start time. Port selection and same-name startup are serialized through a file lock. Stop operations validate the recorded executable, PID, and start time to prevent PID reuse or cross-session termination.
+
+Before starting a session, the manager removes imported-asset caches from inactive
+sessions, retains isolated build artifacts for only the two most recently active
+stopped sessions, and requires at least 10 GiB of free space on the session drive.
+Referenced logs, captures, metadata, and manifests are preserved. This bounds the
+rebuildable portion of agent validation without discarding investigation evidence.
 
 MCP status distinguishes the editor process session from protocol client sessions:
 
@@ -541,7 +548,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `get_viewport_sequence_capture` | Get viewport sequence capture progress, terminal state, artifact paths, and optionally per-frame metadata. |
 | `get_vulkan_frame_op_trace` | Return the latest Vulkan frame-op trace snapshot. Requires launching with XRE_VULKAN_FRAMEOP_TRACE=1. |
 | `import_scene` | Import a scene asset from disk and add it to the active world. |
-| `import_third_party_asset` | Import a third-party file (GLTF, FBX, OBJ, PNG, WAV, etc.) into game assets using the engine's import pipeline. |
+| `import_third_party_asset` | Import a third-party file into game assets. External Unity prefabs are converted directly to native .asset output without copying or modifying their source project. |
 | `instantiate_prefab` | Instantiate a prefab into the active scene by asset ID or path. |
 | `invoke_method` | Invoke a method on an XRBase instance (by GUID) or a static method on any type. |
 | `list_active_jobs` | List jobs currently executing. |

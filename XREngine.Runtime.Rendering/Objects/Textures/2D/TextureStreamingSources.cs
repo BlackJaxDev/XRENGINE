@@ -16,6 +16,32 @@ internal static class TextureStreamingSourceFactory
 
         return new ThirdPartyTextureStreamingSource(authorityPath);
     }
+
+    /// <summary>
+    /// Creates a source whose cache authority is resolved on first residency
+    /// request rather than during placeholder registration.
+    /// </summary>
+    internal static ITextureStreamingSource CreateDeferred(string filePath)
+        => new DeferredAuthorityTextureStreamingSource(Path.GetFullPath(filePath));
+}
+
+/// <summary>
+/// Delays cache lookup and potential cache cooking until a texture is actually
+/// asked to become resident.
+/// </summary>
+internal sealed class DeferredAuthorityTextureStreamingSource(string sourcePath) : ITextureStreamingSource
+{
+    private readonly Lazy<ITextureStreamingSource> _source = new(
+        () => TextureStreamingSourceFactory.Create(sourcePath),
+        LazyThreadSafetyMode.ExecutionAndPublication);
+
+    public string SourcePath => sourcePath;
+
+    public TextureStreamingResidentData LoadResidentData(
+        uint maxResidentDimension,
+        bool includeMipChain,
+        CancellationToken cancellationToken)
+        => _source.Value.LoadResidentData(maxResidentDimension, includeMipChain, cancellationToken);
 }
 
 internal sealed class AssetTextureStreamingSource(string assetPath, string? fallbackSourcePath = null) : ITextureStreamingSource

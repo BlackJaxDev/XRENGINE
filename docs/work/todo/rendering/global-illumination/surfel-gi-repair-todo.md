@@ -43,7 +43,7 @@ There are also stability issues after the input contracts are corrected:
 - [ ] Fold or complete the relevant work from `docs/work/todo/forward-depth-normal-transform-id-todo.md`.
 - [ ] Decide the compact forward prepass attachment layout for identity output.
 - [ ] Attach the main `TransformId` texture to `CreateForwardDepthPrePassMergeFBO()` in `DefaultRenderPipeline`.
-- [ ] Mirror the attachment change in `DefaultRenderPipeline2` while it remains present.
+- [ ] Mirror the attachment change in `AdvancedRenderPipeline` while it remains present.
 - [ ] Keep shared prepass color, depth, and stencil clears disabled so deferred IDs survive untouched pixels.
 - [ ] Update `DepthNormalPrePass.fs` to declare `FragTransformId` and write `TransformId = floatBitsToUint(FragTransformId);` to match the deferred convention and the `R32UI` `TransformId` texture format.
 - [ ] Update `ForwardDepthNormalVariantFactory` so generated prepass variants write both normal and transform ID using the same `floatBitsToUint` encoding.

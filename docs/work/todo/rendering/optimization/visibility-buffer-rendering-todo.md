@@ -2,17 +2,21 @@
 
 Last Updated: 2026-07-28
 Owner: Rendering
-Status: Superseded By Deferred+ Render Path TODO
+Status: Superseded By Advanced Render Pipeline Architectural Refactor
 Historical Target Branch: `rendering-visibility-buffer` (do not create;
-implementation moved to Deferred+)
+implementation moved to the architectural refactor series)
 
 > **Consolidated 2026-07-28:** This tracker is retained as historical design
 > and checklist provenance. Its active implementation requirements now live in
-> [Deferred+ Render Path TODO](deferred-plus-render-path-todo.md). Do not execute
-> this file as an independent branch plan or mark its historical checkboxes
-> complete.
+> the ordered
+> [Advanced Render Pipeline Architectural Refactor](../architectural-refactor/00-advanced-render-pipeline-refactor-todo.md).
+> Do not execute this file as an independent branch plan or mark its historical
+> checkboxes complete.
 
-## Supersession Map
+## Historical Supersession Map
+
+The table below records the intermediate consolidation into the now-superseded
+monolithic tracker. The architectural-refactor index is canonical.
 
 | Historical visibility-buffer scope | Canonical Deferred+ phase |
 | --- | --- |

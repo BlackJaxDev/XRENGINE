@@ -187,9 +187,22 @@ float poiGlobalMask(int encodedIndex, ToonMesh mesh)
 {
     if (encodedIndex <= 0)
         return 1.0;
-    int zeroBased = encodedIndex - 1;
+
+    // Poiyomi encodes four RGBA channels across four mask textures as 1..16.
+    // Clamp malformed authored values and avoid a dynamic vector subscript here:
+    // NVIDIA's OpenGL compiler can conservatively treat the modulo expression as
+    // potentially negative even after the guard above and reject the variant as
+    // an out-of-bounds access.
+    int zeroBased = clamp(encodedIndex - 1, 0, 15);
+    int channel = zeroBased % 4;
     vec4 mask = poiSampleGlobalMaskTexture(zeroBased / 4, mesh);
-    return mask[zeroBased % 4];
+    if (channel == 0)
+        return mask.r;
+    if (channel == 1)
+        return mask.g;
+    if (channel == 2)
+        return mask.b;
+    return mask.a;
 }
 
 vec3 poiApplyColorMask(vec3 baseColor, ToonMesh mesh, inout vec3 emission, inout PBRData pbr)

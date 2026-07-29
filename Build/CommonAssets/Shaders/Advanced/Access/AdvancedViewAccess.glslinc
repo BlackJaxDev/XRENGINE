@@ -1,0 +1,71 @@
+#ifndef XR_ADVANCED_VIEW_ACCESS_GLSLINC
+#define XR_ADVANCED_VIEW_ACCESS_GLSLINC
+
+#include "AdvancedDiagnostics.glslinc"
+
+struct XRAdvancedViewRecord
+{
+    mat4 view;
+    mat4 projectionJittered;
+    mat4 projectionUnjittered;
+    mat4 viewProjectionJittered;
+    mat4 viewProjectionUnjittered;
+    mat4 previousView;
+    mat4 previousProjectionJittered;
+    mat4 previousProjectionUnjittered;
+    mat4 previousViewProjectionJittered;
+    mat4 previousViewProjectionUnjittered;
+    mat4 inverseViewProjectionJittered;
+    mat4 inverseViewProjectionUnjittered;
+    vec4 cameraPositionAndNear;
+    vec4 cameraForwardAndFar;
+    vec4 renderSizeAndInverse;
+    vec4 outputSizeAndInverse;
+    vec4 currentAndPreviousJitter;
+    vec4 depthParams;
+    uint viewId;
+    uint outputLayer;
+    uint flags;
+    uint historyKeyLo;
+    uint historyKeyHi;
+    uint viewGeneration;
+    uint viewMaskLo;
+    uint viewMaskHi;
+};
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_VIEWS) readonly buffer XRAdvancedViewTable
+{
+    XRAdvancedViewRecord records[];
+} XR_ADV_Views;
+
+XRAdvancedViewRecord XR_ADV_LoadView(uint denseIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (denseIndex >= uint(XR_ADV_Views.records.length()))
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_VIEW);
+        denseIndex = 0u;
+    }
+#endif
+    return XR_ADV_Views.records[denseIndex];
+}
+
+vec4 XR_ADV_CurrentJitteredClip(
+    XRAdvancedViewRecord viewRecord,
+    vec3 worldPosition)
+{
+    return XR_ADV_TransformRowVector(
+        vec4(worldPosition, 1.0),
+        viewRecord.viewProjectionJittered);
+}
+
+vec4 XR_ADV_PreviousJitteredClip(
+    XRAdvancedViewRecord viewRecord,
+    vec3 previousWorldPosition)
+{
+    return XR_ADV_TransformRowVector(
+        vec4(previousWorldPosition, 1.0),
+        viewRecord.previousViewProjectionJittered);
+}
+
+#endif

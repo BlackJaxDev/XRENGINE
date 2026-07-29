@@ -58,7 +58,18 @@ internal static class TextureResidencyPolicy
             return sourceMaxDimension;
 
         if (!input.PreviewReady || sourceMaxDimension == 0)
-            return previewResidentSize;
+        {
+            bool initialPreviewRequested = input.LastVisibleFrameId == frameId
+                || IsRecentlyBound(input.LastBoundFrameId, frameId);
+
+            // Registration during import is metadata-only. Do not turn every
+            // uninstantiated texture placeholder into an immediate decode merely
+            // because the import scope ended; visibility or a real material bind
+            // is the demand signal that requests its first preview.
+            return initialPreviewRequested
+                ? previewResidentSize
+                : input.ResidentMaxDimension;
+        }
 
         if (!allowPromotions)
             return previewResidentSize;

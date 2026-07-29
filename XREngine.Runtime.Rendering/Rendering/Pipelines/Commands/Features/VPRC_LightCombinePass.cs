@@ -1041,7 +1041,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         private static bool IsStereoDeferredLighting()
-            => ActivePipelineInstance.Pipeline is DefaultRenderPipeline { Stereo: true } or DefaultRenderPipeline2 { Stereo: true };
+            => ActivePipelineInstance.Pipeline is
+                ISceneRenderPipelineFeatureProvider { Stereo: true };
 
         private static XRShader CreateDeferredLightingShader(string shaderName, bool stereoDeferred)
         {

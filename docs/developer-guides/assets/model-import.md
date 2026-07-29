@@ -2,26 +2,33 @@
 
 Model imports can route through a native format-specific importer or the older Assimp compatibility path.
 
+Texture streaming cache warmup is enabled by default. Set
+`XRE_TEXTURE_STREAMING_CACHE_WARMUP_ENABLED=false` (or `0`/`off`) for short-lived
+automation that should read source textures without cooking persistent streaming
+payloads. Fresh cache assets remain readable; the switch only prevents missing or
+stale entries from being regenerated. Isolated MCP editor sessions set this override
+by default to keep validation output bounded.
+
 ## Unity scene import
 
 - `.unity` files now import into `XRScene` assets through the standard third-party asset pipeline.
 - `.prefab` files now import into `XRPrefabSource` assets through the same Unity YAML importer.
 - `GameObject` documents map to `SceneNode`, and `Transform` / `RectTransform` documents map to the engine's default `Transform` type.
 - Root ordering is preserved through Unity `SceneRoots`, authored child order, and prefab-instance `m_RootOrder` overrides.
-- Prefab instances are expanded by resolving prefab GUIDs through the source Unity project's `.meta` files, then applying scene-level name, active-state, layer, and local transform overrides.
+- Prefab instances are expanded by resolving prefab GUIDs through one shared source-project index. Model-backed instances dispatch FBX/OBJ/DAE/glTF/GLB sources to the model importer, use Unity generation-2 model file IDs to bind stripped proxies, and apply name, active-state, layer, local transform, renderer, material-slot, blendshape, and root-order overrides.
 - Supported Unity component documents now map into engine components for `Camera`, `Light`, `MeshFilter` + `MeshRenderer`, and `SkinnedMeshRenderer`.
-- Renderer meshes resolve from Unity built-in primitives, serialized Unity `.asset` mesh files, or third-party model assets by matching imported node paths.
+- Renderer meshes resolve from Unity built-in primitives, serialized Unity `.asset` mesh files, or third-party model assets by source identity and hierarchy path. Duplicate node names are supported.
 - Scene and prefab transforms use a direct Unity left-handed to engine right-handed conversion by flipping the local `Z` axis. This path does not apply the extra Assimp-facing compensation used by the `.anim` importer.
 
 Current limitations:
 
 - Non-hierarchy scene settings such as `RenderSettings`, `LightmapSettings`, `NavMeshSettings`, and `OcclusionCullingSettings` are currently skipped.
-- Material import covers common Unity `_BaseColor` / `_Color` tint and `_BaseMap` / `_MainTex` texture paths. Unity 2022 materials using Poiyomi Toon 9.3 or lilToon are additionally converted to the engine Uber shader path. See [Unity Conversion Integrations](unity-conversion-integrations.md) for the shader mapping scope.
+- Material import covers common Unity `_BaseColor` / `_Color` tint and `_BaseMap` / `_MainTex` texture paths. Unity 2022 materials using Poiyomi Toon 9.3 or lilToon are additionally converted to the engine Uber shader path. Poiyomi Pro-authored inputs are visibly downgraded to their common Toon surface and do not imply Pro parity. See [Unity Conversion Integrations](unity-conversion-integrations.md) for the shader mapping scope.
 - Serialized Unity mesh assets currently import the common uncompressed vertex layouts used for positions, normals, tangents, colors, and UV0. More exotic compressed or multi-stream layouts may still need fallback handling.
 
 ## Default routing
 
-- The ImGui editor exposes `Tools > Import External Files...` and `Tools > Import External Folder...` to copy external sources into the project `Assets/` tree and optionally run the registered third-party import pipeline immediately. Folder import is the preferred path for Unity exports because it preserves `.meta` files and referenced material, shader, and texture dependencies.
+- The ImGui editor exposes `Tools > Import External Files...` and `Tools > Import External Folder...`. Selecting an external Unity `.prefab` converts it directly from its original Unity project to a chosen native `.asset` destination. The detected Unity project root is editable, dependencies are GUID-resolved in place, and the source prefab is neither copied nor modified. Other file and folder imports retain the copy-then-import workflow.
 - Selecting an importable standalone texture file such as `.png`, `.jpg`, `.tga`, `.exr`, or `.hdr` in the ImGui Asset Explorer automatically prepares its generated `XRTexture2D` `.asset` beside the source and shows that asset's texture preview in the same inspector panel.
 - `.fbx` files route through the native `XREngine.Fbx` importer by default. `FbxBackend = Auto` attempts native import first and falls back to Assimp if the native path rejects the asset or throws. See [Native FBX Import And Export](native-fbx-import-export.md) for the supported subset, parser/exporter rules, and remaining hardening work.
 - `.gltf` and `.glb` files route through the native fastgltf-backed path by default.
@@ -145,6 +152,13 @@ When a third-party model (e.g. `Mitsuki.fbx`) is imported to a native prefab `Mi
 ```
 
 If any sub-asset serialization fails mid-import, placeholder files that were never overwritten are deleted during cleanup so the on-disk folder does not accumulate empty `.asset` stubs.
+
+Generated sibling names are deterministic by asset type and discovery order,
+including assets that have no authored name. Unity-prefab reimport therefore
+reuses unchanged material, texture, mesh, model, animation, and metadata paths
+instead of introducing random GUID-suffixed filenames. The root and owned
+sibling files are backed up and committed as one transaction; failure restores
+the prior native import and removes incomplete placeholders.
 
 During third-party import externalization, generated `XRMesh` assets serialize their runtime mesh buffers as raw streams inside the cooked mesh payload. The outer YAML `DataSource` payload is already Zstd-compressed, so this avoids expensive per-buffer LZMA work while keeping the written `.asset` files compressed. Existing mesh assets that were written with LZMA buffer streams remain readable.
 

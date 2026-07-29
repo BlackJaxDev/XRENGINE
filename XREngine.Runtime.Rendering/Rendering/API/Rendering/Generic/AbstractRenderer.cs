@@ -1297,6 +1297,10 @@ namespace XREngine.Rendering
         /// </summary>
         public abstract bool SupportsIndirectCountDraw();
 
+        /// <inheritdoc />
+        public virtual AdvancedRenderPipelineCapabilities GetAdvancedRenderPipelineCapabilities()
+            => AdvancedRenderPipelineCapabilities.UnsupportedBackend;
+
         /// <summary>
         /// Returns whether the current API supports task/mesh shader dispatch for meshlet rendering.
         /// </summary>

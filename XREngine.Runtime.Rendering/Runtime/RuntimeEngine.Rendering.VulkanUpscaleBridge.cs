@@ -384,12 +384,7 @@ namespace XREngine
                     snapshot.VulkanDeviceId);
 
             private static bool IsStereoPipeline(RenderPipeline? pipeline)
-                => pipeline switch
-                {
-                    DefaultRenderPipeline { Stereo: true } => true,
-                    DefaultRenderPipeline2 { Stereo: true } => true,
-                    _ => false,
-                };
+                => pipeline is ISceneRenderPipelineFeatureProvider { Stereo: true };
 
             private static int CountWindowViewports(XRWindow? window)
             {

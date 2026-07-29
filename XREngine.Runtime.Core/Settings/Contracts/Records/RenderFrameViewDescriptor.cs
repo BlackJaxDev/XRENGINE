@@ -21,7 +21,8 @@ public readonly record struct RenderFrameViewDescriptor(
     Vector4 CameraForwardAndFar = default,
     bool ParentContainsView = false,
     bool DepthZeroToOne = true,
-    RenderFrameViewTargetDescriptor Target = default)
+    RenderFrameViewTargetDescriptor Target = default,
+    bool ReversedDepth = false)
 {
     public const uint InvalidViewId = uint.MaxValue;
 

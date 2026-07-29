@@ -12,117 +12,262 @@ namespace XREngine
     public static partial class EngineRenderingSettingsApplication
     {
             private static string? _lastVulkanFeatureFingerprint;
+            private static readonly object AdvancedPipelineSelectionLock = new();
+            private static AdvancedRenderPipelineSelectionResult _lastAdvancedPipelineSelection =
+                AdvancedRenderPipelineSelectionResolver.Resolve(
+                    EAdvancedRenderPipelineMode.Disabled,
+                    AdvancedRenderPipelineCapabilities.NoRenderer,
+                    stereo: false);
 
-            public static bool UsePipelineV2
-                => Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UsePipelineV2) == "1";
+            public static EAdvancedRenderPipelineMode AdvancedRenderPipelineMode
+                => ResolveAdvancedRenderPipelineMode();
+
+            public static AdvancedRenderPipelineSelectionResult LastAdvancedRenderPipelineSelection
+            {
+                get
+                {
+                    lock (AdvancedPipelineSelectionLock)
+                        return _lastAdvancedPipelineSelection;
+                }
+            }
 
             public static RenderPipeline NewRenderPipeline()
-                => NewRenderPipeline(stereo: false);
+                => NewRenderPipeline(RenderPipelineRequest.DesktopScene());
 
             public static RenderPipeline NewRenderPipeline(bool stereo)
-                => RuntimeEngine.Rendering.Settings.RvcPipelineMode != ERvcPipelineMode.Off
-                    ? NewRvcRenderPipeline(stereo)
-                    : (Engine.EditorPreferences?.Debug?.UseDebugOpaquePipeline ?? false) && !stereo
-                    ? new DebugOpaqueRenderPipeline()
-                    : UsePipelineV2
-                        ? new DefaultRenderPipeline2(stereo)
-                        : new DefaultRenderPipeline(stereo);
+                => NewRenderPipeline(RenderPipelineRequest.DesktopScene(stereo));
+
+            public static RenderPipeline NewRenderPipeline(RenderPipelineRequest request)
+            {
+                AdvancedRenderPipelineCapabilities capabilities =
+                    RuntimeRenderingHostServices.FrameTiming.CurrentRenderer?
+                        .GetAdvancedRenderPipelineCapabilities()
+                    ?? AdvancedRenderPipelineCapabilities.NoRenderer;
+
+                return NewRenderPipeline(
+                    request,
+                    AdvancedRenderPipelineMode,
+                    capabilities,
+                    RuntimeEngine.Rendering.Settings.RvcPipelineMode,
+                    Engine.EditorPreferences?.Debug?.UseDebugOpaquePipeline ?? false);
+            }
+
+            internal static RenderPipeline NewRenderPipeline(
+                RenderPipelineRequest request,
+                EAdvancedRenderPipelineMode advancedMode,
+                in AdvancedRenderPipelineCapabilities capabilities,
+                ERvcPipelineMode rvcMode,
+                bool useDebugOpaquePipeline)
+            {
+                return request.Purpose switch
+                {
+                    ERenderPipelinePurpose.OpenXrEye =>
+                        NewRvcRenderPipeline(request.Stereo, rvcMode),
+                    ERenderPipelinePurpose.DesktopScene
+                        when useDebugOpaquePipeline && !request.Stereo =>
+                        new DebugOpaqueRenderPipeline(),
+                    ERenderPipelinePurpose.DesktopScene or
+                    ERenderPipelinePurpose.OffscreenCapture =>
+                        NewStandardRenderPipeline(
+                            request.Stereo,
+                            advancedMode,
+                            capabilities),
+                    _ => throw new ArgumentOutOfRangeException(
+                        nameof(request),
+                        request,
+                        "Unknown render pipeline purpose."),
+                };
+            }
+
+            internal static RenderPipeline NewStandardRenderPipeline(
+                bool stereo,
+                EAdvancedRenderPipelineMode mode,
+                in AdvancedRenderPipelineCapabilities capabilities)
+            {
+                AdvancedRenderPipelineSelectionResult selection =
+                    ResolveAdvancedRenderPipelineSelection(stereo, mode, capabilities);
+
+                return selection.EffectiveKind switch
+                {
+                    ERenderPipelineKind.Advanced =>
+                        new AdvancedRenderPipeline(stereo, selection.CapabilityResult),
+                    ERenderPipelineKind.LegacyDefault =>
+                        new DefaultRenderPipeline(stereo),
+                    _ => throw new AdvancedRenderPipelineNotSupportedException(selection),
+                };
+            }
 
             public static void ApplyRenderPipelinePreference()
             {
                 bool preferDebug = Engine.EditorPreferences?.Debug?.UseDebugOpaquePipeline ?? false;
-                bool preferRvc = RuntimeEngine.Rendering.Settings.RvcPipelineMode != ERvcPipelineMode.Off;
-                foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
+                foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports(
+                             RuntimeEngine.EViewportEnumerationMode.IncludeVrEyeViewports))
                 {
+                    RenderPipelineRequest request = viewport.PipelineRequest;
                     RenderPipeline? pipeline = viewport.RenderPipeline;
 
                     if (pipeline is null)
                     {
-                        viewport.RenderPipeline = NewRenderPipeline();
+                        viewport.RenderPipeline = NewRenderPipeline(request);
                         continue;
                     }
 
                     if (pipeline.OverrideProtected)
                         continue;
 
-                    if (preferRvc)
+                    if (request.Purpose == ERenderPipelinePurpose.OpenXrEye)
                     {
-                        if (pipeline is RvcRenderPipeline rvcPipeline)
+                        if (pipeline is RvcRenderPipeline rvcPipeline &&
+                            rvcPipeline.Stereo == request.Stereo)
                         {
                             ApplyRvcSettings(rvcPipeline);
                             continue;
                         }
 
-                        viewport.RenderPipeline = NewRvcRenderPipeline(IsStereoPipeline(pipeline));
+                        viewport.RenderPipeline = NewRenderPipeline(request);
                         continue;
                     }
 
-                    if (pipeline is RvcRenderPipeline previousRvcPipeline)
+                    if (pipeline is RvcRenderPipeline)
                     {
-                        viewport.RenderPipeline = NewRenderPipeline(previousRvcPipeline.Stereo);
+                        viewport.RenderPipeline = NewRenderPipeline(request);
                         continue;
                     }
 
-                    if (preferDebug)
+                    bool debugAllowed =
+                        request.Purpose == ERenderPipelinePurpose.DesktopScene &&
+                        !request.Stereo;
+                    if (preferDebug && debugAllowed)
                     {
-                        if (pipeline is DefaultRenderPipeline { Stereo: false })
+                        if (pipeline is DefaultRenderPipeline or AdvancedRenderPipeline)
+                        {
                             viewport.RenderPipeline = new DebugOpaqueRenderPipeline();
-                        else if (pipeline is DefaultRenderPipeline2 { Stereo: false })
-                            viewport.RenderPipeline = new DebugOpaqueRenderPipeline();
+                            continue;
+                        }
                     }
                     else if (pipeline is DebugOpaqueRenderPipeline)
                     {
-                        viewport.RenderPipeline = NewRenderPipeline(stereo: false);
+                        viewport.RenderPipeline = NewRenderPipeline(request);
+                        continue;
+                    }
+
+                    if (pipeline is not DefaultRenderPipeline and not AdvancedRenderPipeline)
+                        continue;
+
+                    AdvancedRenderPipelineCapabilities capabilities =
+                        RuntimeRenderingHostServices.FrameTiming.CurrentRenderer?
+                            .GetAdvancedRenderPipelineCapabilities()
+                        ?? AdvancedRenderPipelineCapabilities.NoRenderer;
+                    AdvancedRenderPipelineSelectionResult selection =
+                        ResolveAdvancedRenderPipelineSelection(
+                            request.Stereo,
+                            AdvancedRenderPipelineMode,
+                            capabilities);
+
+                    if (selection.SelectsAdvanced)
+                    {
+                        if (pipeline is AdvancedRenderPipeline advancedPipeline)
+                            advancedPipeline.ApplyCapabilityResult(selection.CapabilityResult);
+                        else
+                            viewport.RenderPipeline =
+                                new AdvancedRenderPipeline(
+                                    request.Stereo,
+                                    selection.CapabilityResult);
+                    }
+                    else if (pipeline is AdvancedRenderPipeline)
+                    {
+                        viewport.RenderPipeline =
+                            new DefaultRenderPipeline(request.Stereo);
                     }
                 }
             }
 
-            private static RvcRenderPipeline NewRvcRenderPipeline(bool stereo)
+            private static EAdvancedRenderPipelineMode ResolveAdvancedRenderPipelineMode()
             {
-                RvcRenderPipeline pipeline = new(stereo, RuntimeEngine.Rendering.Settings.RvcPipelineMode);
-                ApplyRvcSettings(pipeline);
+                string? raw = EffectiveSettingsEnvOverrides.AdvancedRenderPipelineMode;
+                if (string.IsNullOrWhiteSpace(raw))
+                    return RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode;
+
+                if (Enum.TryParse(
+                        raw,
+                        ignoreCase: true,
+                        out EAdvancedRenderPipelineMode parsed) &&
+                    Enum.IsDefined(typeof(EAdvancedRenderPipelineMode), parsed))
+                {
+                    return parsed;
+                }
+
+                Debug.RenderingWarningEvery(
+                    "AdvancedPipeline.InvalidSelectionMode",
+                    TimeSpan.FromSeconds(30),
+                    "[AdvancedPipeline] Ignoring invalid {0} value '{1}'. Expected Disabled, Available, Required, or Diagnostic.",
+                    XREngineEnvironmentVariables.AdvancedRenderPipelineMode,
+                    raw);
+                return RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode;
+            }
+
+            private static AdvancedRenderPipelineSelectionResult ResolveAdvancedRenderPipelineSelection(
+                bool stereo,
+                EAdvancedRenderPipelineMode mode,
+                in AdvancedRenderPipelineCapabilities capabilities)
+            {
+                AdvancedRenderPipelineSelectionResult selection =
+                    AdvancedRenderPipelineSelectionResolver.Resolve(mode, capabilities, stereo);
+
+                lock (AdvancedPipelineSelectionLock)
+                    _lastAdvancedPipelineSelection = selection;
+
+                RuntimeEngine.Rendering.Stats.RendererState.UpdateAdvancedPipelineContext(selection);
+
+                if (selection.RequiresFailure)
+                    throw new AdvancedRenderPipelineNotSupportedException(selection);
+
+                if (mode == EAdvancedRenderPipelineMode.Diagnostic)
+                {
+                    Debug.Rendering("[AdvancedPipeline] {0}", selection.Diagnostic);
+                }
+                else if (mode == EAdvancedRenderPipelineMode.Available &&
+                         !selection.SelectsAdvanced)
+                {
+                    Debug.RenderingWarningEvery(
+                        $"AdvancedPipeline.AvailableFallback.{selection.CapabilityResult.RejectionReason}",
+                        TimeSpan.FromSeconds(10),
+                        "[AdvancedPipeline] {0}",
+                        selection.Diagnostic);
+                }
+
+                return selection;
+            }
+
+            private static RvcRenderPipeline NewRvcRenderPipeline(
+                bool stereo,
+                ERvcPipelineMode mode)
+            {
+                RvcRenderPipeline pipeline = new(stereo, mode);
+                ApplyRvcSettings(pipeline, mode);
                 return pipeline;
             }
 
             private static void ApplyRvcSettings(RvcRenderPipeline pipeline)
-            {
-                pipeline.ApplyRvcSettings(new RvcRenderingSettings(
-                    RuntimeEngine.Rendering.Settings.RvcPipelineMode,
-                    RuntimeEngine.Rendering.Settings.RvcQuadViewEnabled,
-                    RuntimeEngine.Rendering.Settings.RvcStereoReuseEnabled,
-                    RuntimeEngine.Rendering.Settings.RvcInsetWideReuseEnabled,
-                    RuntimeEngine.Rendering.Settings.RvcTemporalReuseEnabled,
-                    RuntimeEngine.Rendering.Settings.RvcPeripheralLightAggregationEnabled,
-                    RuntimeEngine.Rendering.Settings.RvcDiagnosticOverlayEnabled,
-                    RuntimeEngine.Rendering.Settings.RvcDebugViewMode,
-                    RuntimeEngine.Rendering.Settings.RvcLightGridSpace));
+                => ApplyRvcSettings(
+                    pipeline,
+                    RuntimeEngine.Rendering.Settings.RvcPipelineMode);
 
-                pipeline.RvcQualitySettings = new RvcQualitySettings(
-                    RuntimeEngine.Rendering.Settings.RvcFovealRadiusDegrees,
-                    RuntimeEngine.Rendering.Settings.RvcGuardBandDegrees,
-                    RuntimeEngine.Rendering.Settings.RvcMidFieldRadiusDegrees,
-                    RuntimeEngine.Rendering.Settings.RvcPeripheralMaxRate,
-                    RuntimeEngine.Rendering.Settings.RvcForceFullResNearDistanceMeters,
-                    RuntimeEngine.Rendering.Settings.RvcDerivativeStrategy,
-                    RuntimeEngine.Rendering.Settings.RvcFovealAntiAliasingPath,
-                    RuntimeEngine.Rendering.Settings.RvcReuseMaxNormalAngleDegrees,
-                    RuntimeEngine.Rendering.Settings.RvcReuseMaxDepthDeltaMeters,
-                    RuntimeEngine.Rendering.Settings.RvcReuseMaxRoughnessBucketDelta);
-            }
-
-            private static bool IsStereoPipeline(RenderPipeline pipeline)
-                => pipeline is DefaultRenderPipeline { Stereo: true }
-                    or DefaultRenderPipeline2 { Stereo: true };
+            private static void ApplyRvcSettings(
+                RvcRenderPipeline pipeline,
+                ERvcPipelineMode mode)
+                => pipeline.ApplyRuntimeSettings(
+                    RuntimeEngine.Rendering.Settings,
+                    mode);
 
             public static void ApplyGlobalIlluminationModePreference()
             {
                 var mode = Engine.EffectiveSettings.GlobalIlluminationMode;
-                foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
+                foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports(
+                             RuntimeEngine.EViewportEnumerationMode.IncludeVrEyeViewports))
                 {
-                    if (viewport.RenderPipeline is DefaultRenderPipeline defaultPipeline)
-                        defaultPipeline.GlobalIlluminationMode = mode;
-                    else if (viewport.RenderPipeline is DefaultRenderPipeline2 v2Pipeline)
-                        v2Pipeline.GlobalIlluminationMode = mode;
+                    if (viewport.RenderPipeline is IGlobalIlluminationPipelineProvider pipeline)
+                        pipeline.GlobalIlluminationMode = mode;
                 }
             }
 

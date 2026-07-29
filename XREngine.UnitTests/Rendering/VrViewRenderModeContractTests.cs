@@ -1070,21 +1070,16 @@ public sealed class VrViewRenderModeContractTests
     }
 
     [Test]
-    public void DefaultRenderPipelines_RouteStereoFboRendersThroughFullViewportCommandChain()
+    public void DefaultRenderPipeline_RoutesStereoFboRendersThroughFullViewportCommandChain()
     {
         string pipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs");
-        string pipeline2 = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.CommandChain.cs");
-        foreach (string source in new[] { pipeline, pipeline2 })
-        {
-            source.ShouldContain("ifElse.ConditionEvaluator = ShouldUseViewportTargetCommands;");
-            source.ShouldContain("private static bool ShouldUseViewportTargetCommands()");
-            source.ShouldContain("RuntimeEngine.Rendering.State.IsStereoPass");
-            source.ShouldContain("CreateViewportTargetCommands()");
-            source.ShouldContain("CreateFBOTargetCommands()");
-        }
+        pipeline.ShouldContain("ifElse.ConditionEvaluator = ShouldUseViewportTargetCommands;");
+        pipeline.ShouldContain("private static bool ShouldUseViewportTargetCommands()");
+        pipeline.ShouldContain("RuntimeEngine.Rendering.State.IsStereoPass");
+        pipeline.ShouldContain("CreateViewportTargetCommands()");
+        pipeline.ShouldContain("CreateFBOTargetCommands()");
 
         pipeline.ShouldNotContain("&& RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null;");
-        pipeline2.ShouldNotContain("&& RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null;");
     }
 
     private static string ReadWorkspaceFile(string relativePath)

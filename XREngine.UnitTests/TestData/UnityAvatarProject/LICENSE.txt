@@ -1,0 +1,8 @@
+Copyright (c) 2026 XRENGINE contributors.
+
+This synthetic test fixture was authored specifically for XRENGINE. It
+contains no third-party engine, SDK, shader, model, material, or texture
+content. Permission is granted to use, copy, modify, redistribute, and include
+this fixture in source-available and commercial distributions of XRENGINE and
+applications built with XRENGINE.
+

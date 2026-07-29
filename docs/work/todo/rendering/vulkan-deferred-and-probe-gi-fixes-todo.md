@@ -26,7 +26,7 @@ Make Vulkan deferred rendering visibly produce shaded geometry and make light-pr
 - The deferred light-combine quad now declares the GBuffer, AO/diffuse/BRDF, depth-view, probe array textures, and probe SSBO inputs it samples.
 - Vulkan descriptor resolution now consults buffers bound through `XRRenderProgram.BindBuffer(...)`, tracks those buffers in descriptor fingerprints, and tracks program-bound textures in the active resource registry.
 - Probe resource names and registry entries now match shader bindings, including the corrected `LightProbeTetrahedra` SSBO name.
-- `DefaultRenderPipeline` now registers/removes probe array textures and probe SSBOs in the render resource registry like `DefaultRenderPipeline2`.
+- `DefaultRenderPipeline` now registers/removes probe array textures and probe SSBOs in the render resource registry like `AdvancedRenderPipeline`.
 - Vulkan dynamic-rendering FBO paths now transition FBO attachments on begin/end and fall back from partial attachment layout misses to the known whole-image layout, avoiding the first-frame `Undefined` GBuffer layout.
 - The first runtime validation attempt exposed invalid dynamic-rendering barrier stage/access pairs. The FBO transition helpers now choose stage/access masks from the actual old/new layouts, so shader-read layouts use shader stages and attachment layouts use attachment stages.
 - Retired Vulkan image resources are now deduplicated before destruction, preventing recreated textures from destroying the same sampler/image view/image/memory handle more than once.

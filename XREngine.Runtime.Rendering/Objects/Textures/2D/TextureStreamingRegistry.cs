@@ -24,7 +24,8 @@ internal sealed class TextureStreamingRegistry
     public ImportedTextureStreamingRecord GetOrCreateRecord(
         XRTexture2D texture,
         string? filePath,
-        Func<ESizedInternalFormat, ITextureResidencyBackend> resolvePreviewBackend)
+        Func<ESizedInternalFormat, ITextureResidencyBackend> resolvePreviewBackend,
+        bool deferAuthorityResolution = false)
     {
         ImportedTextureStreamingRecord record = _recordsByTexture.GetValue(texture, target =>
         {
@@ -42,7 +43,9 @@ internal sealed class TextureStreamingRegistry
                 if (!string.Equals(record.FilePath, filePath, StringComparison.OrdinalIgnoreCase) || record.Source is null)
                 {
                     record.FilePath = filePath;
-                    record.Source = TextureStreamingSourceFactory.Create(filePath);
+                    record.Source = deferAuthorityResolution
+                        ? TextureStreamingSourceFactory.CreateDeferred(filePath)
+                        : TextureStreamingSourceFactory.Create(filePath);
                 }
 
                 record.Backend ??= resolvePreviewBackend(record.Format);

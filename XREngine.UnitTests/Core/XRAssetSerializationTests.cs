@@ -4,9 +4,13 @@ using Shouldly;
 using XREngine.Core.Files;
 using System.Collections.Generic;
 using System.IO;
+using XREngine.Animation;
+using XREngine.Components.Animation;
+using XREngine.Data.Animation;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using XREngine.Rendering;
 using XREngine.Runtime.Bootstrap;
 using YamlDotNet.Core;
 
@@ -117,6 +121,87 @@ Child:
         clone.Child.ShouldNotBeNull();
         clone.Child.Reference.ShouldBeSameAs(clone.Shared);
         clone.Child.Reference!.Name.ShouldBe("shared-ref");
+    }
+
+    [Test]
+    public void YamlSerializer_RoundTrips_InlineAnimationCurve()
+    {
+        var curve = new AnimationCurve
+        {
+            Name = "Radius",
+            LengthInSeconds = 1.0f,
+            Speed = 0.5f,
+            Looped = true
+        };
+        curve.Keyframes.Add(
+            new FloatKeyframe(0.0f, 1.0f, 0.0f, EVectorInterpType.Hermite),
+            new FloatKeyframe(1.0f, 0.125f, 0.0f, EVectorInterpType.Hermite));
+        var original = new AnimationCurveYamlContainer { Curve = curve };
+
+        string yaml = AssetManager.Serializer.Serialize(original);
+        AnimationCurveYamlContainer clone =
+            AssetManager.Deserializer.Deserialize<AnimationCurveYamlContainer>(yaml).ShouldNotBeNull();
+
+        yaml.ShouldContain("__assetType: XREngine.Components.Animation.AnimationCurve");
+        yaml.ShouldContain("Second: 1");
+        clone.Curve.ShouldNotBeNull();
+        clone.Curve!.Name.ShouldBe("Radius");
+        clone.Curve.LengthInSeconds.ShouldBe(1.0f);
+        clone.Curve.Speed.ShouldBe(0.5f);
+        clone.Curve.Looped.ShouldBeTrue();
+        clone.Curve.Keyframes.Count.ShouldBe(2);
+        clone.Curve.Keyframes[0].Second.ShouldBe(0.0f);
+        clone.Curve.Keyframes[1].Second.ShouldBe(1.0f);
+        clone.Curve.Keyframes[1].InValue.ShouldBe(0.125f);
+    }
+
+    [Test]
+    public void YamlDeserializer_Reads_LegacyAnimationCurveSequence()
+    {
+        const string yaml = """
+Curve:
+- InValue: 1
+  OutValue: 1
+  InterpolationTypeIn: Hermite
+  InterpolationTypeOut: Hermite
+- Second: 1
+  InValue: 0.125
+  OutValue: 0.125
+  InterpolationTypeIn: Hermite
+  InterpolationTypeOut: Hermite
+""";
+
+        AnimationCurveYamlContainer clone =
+            AssetManager.Deserializer.Deserialize<AnimationCurveYamlContainer>(yaml).ShouldNotBeNull();
+
+        clone.Curve.ShouldNotBeNull();
+        clone.Curve!.LengthInSeconds.ShouldBe(1.0f);
+        clone.Curve.Keyframes.Count.ShouldBe(2);
+        clone.Curve.Keyframes[0].Second.ShouldBe(0.0f);
+        clone.Curve.Keyframes[1].Second.ShouldBe(1.0f);
+        clone.Curve.Keyframes[1].OutValue.ShouldBe(0.125f);
+    }
+
+    [Test]
+    public void YamlSerializer_PreservesRequiredDefaultValuedMaterialPassFields()
+    {
+        var original = new MaterialPassDefinition
+        {
+            Identity = EMaterialPassIdentity.Base,
+            Order = 0,
+            RenderPass = 0,
+        };
+
+        string yaml = AssetManager.Serializer.Serialize(original);
+        MaterialPassDefinition clone =
+            AssetManager.Deserializer.Deserialize<MaterialPassDefinition>(yaml).ShouldNotBeNull();
+
+        yaml.ShouldContain("Identity: Base");
+        yaml.ShouldContain("Order: 0");
+        yaml.ShouldContain("RenderPass: 0");
+        clone.Identity.ShouldBe(EMaterialPassIdentity.Base);
+        clone.Order.ShouldBe(0);
+        clone.RenderPass.ShouldBe(0);
     }
 
     [Test]
@@ -236,6 +321,11 @@ Strategy: GpuMeshlet
         public ColorF4 Color4 { get; set; }
         public ColorF4 Color4Alias { get; set; }
         public ColorF3 Color3 { get; set; }
+    }
+
+    private sealed class AnimationCurveYamlContainer
+    {
+        public AnimationCurve? Curve { get; set; }
     }
 
     private sealed class MeshSubmissionStrategyYamlContainer

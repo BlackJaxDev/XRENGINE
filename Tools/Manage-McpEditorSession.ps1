@@ -84,6 +84,8 @@ $registryLockPath = Join-Path $sessionsRoot '.registry.lock'
 $manifestFileName = 'session.json'
 $defaultMcpPort = 5467
 $maximumPortProbeCount = 200
+$retainedStoppedSessionBuildCount = 2
+$minimumFreeSpaceBytes = 10GB
 
 function Assert-SessionNameRequired {
     if ([string]::IsNullOrWhiteSpace($Name)) {
@@ -518,6 +520,91 @@ function Write-Result($Value) {
     }
 }
 
+function Remove-RebuildableSessionDirectory([string]$Path) {
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $requiredPrefix = [System.IO.Path]::GetFullPath($sessionsRoot).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $fullPath.StartsWith($requiredPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove session data outside '$sessionsRoot'."
+    }
+
+    if (Test-Path -LiteralPath $fullPath -PathType Container) {
+        Remove-Item -LiteralPath $fullPath -Recurse -Force
+    }
+}
+
+function Invoke-SessionRetentionCleanup([string]$ProtectedSessionName) {
+    if (-not (Test-Path -LiteralPath $sessionsRoot -PathType Container)) {
+        return
+    }
+
+    Invoke-WithRegistryLock {
+        $stoppedSessions = @()
+        foreach ($directory in Get-ChildItem -LiteralPath $sessionsRoot -Directory) {
+            if ($directory.Name -eq $ProtectedSessionName) {
+                continue
+            }
+
+            $manifest = Read-SessionManifest $directory.Name
+            if ($null -eq $manifest -or $null -ne (Get-OwnedEditorProcess $manifest)) {
+                continue
+            }
+
+            $activityUtc = $directory.LastWriteTimeUtc
+            foreach ($propertyName in @('stoppedUtc', 'startedUtc', 'createdUtc')) {
+                $rawValue = [string]$manifest.$propertyName
+                $parsedValue = [DateTime]::MinValue
+                if (-not [string]::IsNullOrWhiteSpace($rawValue) -and
+                    [DateTime]::TryParse(
+                        $rawValue,
+                        [Globalization.CultureInfo]::InvariantCulture,
+                        [Globalization.DateTimeStyles]::RoundtripKind,
+                        [ref]$parsedValue)) {
+                    $activityUtc = $parsedValue.ToUniversalTime()
+                    break
+                }
+            }
+
+            $stoppedSessions += [pscustomobject]@{
+                Name = $directory.Name
+                Root = $directory.FullName
+                ActivityUtc = $activityUtc
+            }
+        }
+
+        $orderedSessions = @($stoppedSessions | Sort-Object ActivityUtc -Descending)
+        for ($index = 0; $index -lt $orderedSessions.Count; $index++) {
+            $session = $orderedSessions[$index]
+
+            # Imported-asset caches can be much larger than the build and are
+            # always reproducible, so never retain them for inactive sessions.
+            Remove-RebuildableSessionDirectory (Join-Path $session.Root 'cache')
+
+            # Keep a small number of recent builds for the documented -NoBuild
+            # restart workflow. Older builds are reproducible and needlessly
+            # duplicate several gigabytes of runtime dependencies.
+            if ($index -ge $retainedStoppedSessionBuildCount) {
+                Remove-RebuildableSessionDirectory (Join-Path $session.Root 'artifacts')
+            }
+        }
+    }
+}
+
+function Assert-SessionFreeSpace {
+    $sessionRoot = [System.IO.Path]::GetFullPath((Get-SessionRoot $Name))
+    $driveRoot = [System.IO.Path]::GetPathRoot($sessionRoot)
+    if ([string]::IsNullOrWhiteSpace($driveRoot)) {
+        return
+    }
+
+    $drive = [System.IO.DriveInfo]::new($driveRoot)
+    if ($drive.AvailableFreeSpace -ge $minimumFreeSpaceBytes) {
+        return
+    }
+
+    $availableGiB = [Math]::Round($drive.AvailableFreeSpace / 1GB, 2)
+    throw "MCP editor session '$Name' requires at least 10 GiB of free space on '$driveRoot'; only $availableGiB GiB is available after retention cleanup."
+}
+
 function Start-Session {
     Assert-SessionNameRequired
     foreach ($argument in $EditorArguments) {
@@ -525,6 +612,9 @@ function Start-Session {
             throw 'Do not pass --mcp-port through -EditorArguments; use the session -Port parameter.'
         }
     }
+
+    Invoke-SessionRetentionCleanup $Name
+    Assert-SessionFreeSpace
 
     $sessionRoot = Get-SessionRoot $Name
     $artifactsPath = Join-Path $sessionRoot 'artifacts'
@@ -637,6 +727,7 @@ function Start-Session {
             'XRE_GAME_ASSETS_PATH' = (Join-Path $repoRoot 'Assets')
             'XRE_GAME_CACHE_PATH' = (Join-Path $sessionRoot 'cache')
             'XRE_GAME_METADATA_PATH' = (Join-Path $sessionRoot 'metadata')
+            'XRE_TEXTURE_STREAMING_CACHE_WARMUP_ENABLED' = 'false'
             'XRE_NET_MODE' = 'Local'
             'XRE_WINDOW_TITLE' = "XRE Editor [MCP: $Name @ $($manifest.port)]"
         }

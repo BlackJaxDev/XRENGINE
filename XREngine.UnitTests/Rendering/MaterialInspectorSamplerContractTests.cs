@@ -51,8 +51,8 @@ public sealed class MaterialInspectorSamplerContractTests
     {
         DefaultRenderPipeline.AmbientOcclusionIntensityTextureName.ShouldBe(EngineShaderBindingNames.Samplers.AmbientOcclusionTexture);
         DefaultRenderPipeline.BRDFTextureName.ShouldBe(EngineShaderBindingNames.Samplers.BRDF);
-        DefaultRenderPipeline2.AmbientOcclusionIntensityTextureName.ShouldBe(EngineShaderBindingNames.Samplers.AmbientOcclusionTexture);
-        DefaultRenderPipeline2.BRDFTextureName.ShouldBe(EngineShaderBindingNames.Samplers.BRDF);
+        AdvancedRenderPipeline.AmbientOcclusionIntensityTextureName.ShouldBe(EngineShaderBindingNames.Samplers.AmbientOcclusionTexture);
+        AdvancedRenderPipeline.BRDFTextureName.ShouldBe(EngineShaderBindingNames.Samplers.BRDF);
     }
 
     private static string ReadWorkspaceFile(string relativePath)

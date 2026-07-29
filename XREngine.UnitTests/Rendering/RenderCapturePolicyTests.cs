@@ -64,16 +64,14 @@ public sealed class RenderCapturePolicyTests
     }
 
     [Test]
-    public void DefaultPipelines_GateTheSameDirectCapturePasses()
+    public void DefaultPipeline_GatesEveryDirectCapturePass()
     {
         string pipeline1 = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs");
-        string pipeline2 = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.CommandChain.cs");
 
         foreach (ERenderCapturePass pass in Enum.GetValues<ERenderCapturePass>())
         {
             string policyGate = $"ERenderCapturePass.{pass}";
             pipeline1.ShouldContain(policyGate);
-            pipeline2.ShouldContain(policyGate);
         }
     }
 

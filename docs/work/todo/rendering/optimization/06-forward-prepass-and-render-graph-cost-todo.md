@@ -27,7 +27,7 @@ Cross-cutting contracts and future render paths:
 ## Ownership Contract
 
 This is the canonical tracker for the topology and measured cost of the current
-`DefaultRenderPipeline` / `DefaultRenderPipeline2` hybrid graph. It owns:
+`DefaultRenderPipeline` / `AdvancedRenderPipeline` hybrid graph. It owns:
 
 - whether the Forward+ depth/normal prepass runs and which geometry it replays;
 - current-pipeline depth, normal, velocity, and preserved-color production;

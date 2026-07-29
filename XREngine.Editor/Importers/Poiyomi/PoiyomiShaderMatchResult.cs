@@ -7,8 +7,10 @@ public sealed record PoiyomiShaderMatchResult
 {
     public required PoiyomiShaderMatchKind Kind { get; init; }
     public PoiyomiShaderVersion? Version { get; init; }
+    public PoiyomiShaderFamily SourceFamily { get; init; }
     public bool IsPoiyomiFamily { get; init; }
     public bool IsAccepted { get; init; }
+    public bool IsDowngradeSource { get; init; }
     public bool IsLocked { get; init; }
     public IReadOnlyList<MaterialConversionDiagnostic> Diagnostics { get; init; } = [];
 }

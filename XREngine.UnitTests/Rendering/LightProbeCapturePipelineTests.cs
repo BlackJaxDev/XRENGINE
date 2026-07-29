@@ -42,7 +42,8 @@ public sealed class LightProbeCapturePipelineTests
 
         source.ShouldContain("viewport.ApplyCapturePolicy(CaptureRenderPolicy);");
         source.ShouldContain("=> RenderCapturePolicy.LightProbe;");
-        source.ShouldContain("viewport.RenderPipeline ??= RuntimeEngine.Rendering.NewRenderPipeline();");
+        source.ShouldContain("viewport.PipelineRequest = RenderPipelineRequest.OffscreenCapture();");
+        source.ShouldContain("RuntimeEngine.Rendering.NewOffscreenCaptureRenderPipeline();");
         source.ShouldContain("viewport.SetRenderPipelineFromCamera = false;");
     }
 

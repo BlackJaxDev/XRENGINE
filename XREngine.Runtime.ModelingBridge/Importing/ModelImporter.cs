@@ -765,6 +765,7 @@ namespace XREngine
         }
 
         private static readonly ConcurrentDictionary<(string path, string samplerName), XRTexture2D> _uberSamplerTextureCache = new();
+        private static readonly ConcurrentDictionary<(string path, string samplerName), XRTexture2D> _deferredUberSamplerTextureCache = new();
         private static readonly ConcurrentDictionary<string, XRTexture2D> _uberDefaultSamplerTextureCache = new();
 
         private static bool IsNormalLikeSampler(string samplerName)
@@ -775,8 +776,31 @@ namespace XREngine
             => new(IsNormalLikeSampler(samplerName) ? XRTexture2D.NormalMapFillerImage : XRTexture2D.FillerImage);
 
         public static XRTexture2D GetOrCreateUberSamplerTexture(string filePath, string samplerName)
+            => GetOrCreateUberSamplerTexture(
+                _uberSamplerTextureCache,
+                filePath,
+                samplerName,
+                schedulePreviewLoad: true);
+
+        /// <summary>
+        /// Creates a file-backed imported texture without eagerly decoding a preview.
+        /// The texture is registered with the streaming manager and promotes when it is
+        /// actually used by a visible material.
+        /// </summary>
+        public static XRTexture2D GetOrCreateDeferredUberSamplerTexture(string filePath, string samplerName)
+            => GetOrCreateUberSamplerTexture(
+                _deferredUberSamplerTextureCache,
+                filePath,
+                samplerName,
+                schedulePreviewLoad: false);
+
+        private static XRTexture2D GetOrCreateUberSamplerTexture(
+            ConcurrentDictionary<(string path, string samplerName), XRTexture2D> cache,
+            string filePath,
+            string samplerName,
+            bool schedulePreviewLoad)
         {
-            return _uberSamplerTextureCache.GetOrAdd((filePath, samplerName), static key =>
+            return cache.GetOrAdd((filePath, samplerName), key =>
             {
                 var tex = new XRTexture2D
                 {
@@ -801,24 +825,31 @@ namespace XREngine
                     LogImportWarning($"Failed to assign filler texture for '{key.path}'. {ex.Message}");
                 }
 
-                _ = XRTexture2D.ScheduleImportedTexturePreviewJob(
-                    key.path,
-                    tex,
-                    onFinished: loaded =>
-                    {
-                        loaded.SamplerName = key.samplerName;
-                        loaded.MagFilter = ETexMagFilter.Linear;
-                        loaded.MinFilter = ETexMinFilter.Linear;
-                        loaded.UWrap = ETexWrapMode.Repeat;
-                        loaded.VWrap = ETexWrapMode.Repeat;
-                        loaded.AlphaAsTransparency = true;
-                        loaded.AutoGenerateMipmaps = false;
-                        loaded.Resizable = false;
-                    },
-                    onError: ex => LogImportException(
-                        ex,
-                        $"[UberTexture] Preview load failed for '{key.path}' ({key.samplerName})."),
-                    priority: JobPriority.Low);
+                if (schedulePreviewLoad)
+                {
+                    _ = XRTexture2D.ScheduleImportedTexturePreviewJob(
+                        key.path,
+                        tex,
+                        onFinished: loaded =>
+                        {
+                            loaded.SamplerName = key.samplerName;
+                            loaded.MagFilter = ETexMagFilter.Linear;
+                            loaded.MinFilter = ETexMinFilter.Linear;
+                            loaded.UWrap = ETexWrapMode.Repeat;
+                            loaded.VWrap = ETexWrapMode.Repeat;
+                            loaded.AlphaAsTransparency = true;
+                            loaded.AutoGenerateMipmaps = false;
+                            loaded.Resizable = false;
+                        },
+                        onError: ex => LogImportException(
+                            ex,
+                            $"[UberTexture] Preview load failed for '{key.path}' ({key.samplerName})."),
+                        priority: JobPriority.Low);
+                }
+                else
+                {
+                    XRTexture2D.RegisterImportedTextureStreamingPlaceholder(key.path, tex);
+                }
 
                 return tex;
             });

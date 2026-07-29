@@ -76,23 +76,9 @@ public class PhysicsChainCollider : PhysicsChainColliderBase, IRenderable
             }
             else
             {
-                Vector3 c0 = _center;
-                Vector3 c1 = _center;
-                switch (_direction)
-                {
-                    case Direction.X:
-                        c0.X += h;
-                        c1.X -= h;
-                        break;
-                    case Direction.Y:
-                        c0.Y += h;
-                        c1.Y -= h;
-                        break;
-                    case Direction.Z:
-                        c0.Z += h;
-                        c1.Z -= h;
-                        break;
-                }
+                Vector3 axis = Vector3.Transform(GetLocalAxis(), LocalRotationOffset);
+                Vector3 c0 = _center + (axis * h);
+                Vector3 c1 = _center - (axis * h);
 
                 _center0 = effectiveTransform.TransformPoint(c0);
                 _center1 = effectiveTransform.TransformPoint(c1);
@@ -116,24 +102,9 @@ public class PhysicsChainCollider : PhysicsChainColliderBase, IRenderable
 
                 float h0 = halfHeight - _radius;
                 float h1 = halfHeight - _radius2;
-                Vector3 c0 = _center;
-                Vector3 c1 = _center;
-
-                switch (_direction)
-                {
-                    case Direction.X:
-                        c0.X += h0;
-                        c1.X -= h1;
-                        break;
-                    case Direction.Y:
-                        c0.Y += h0;
-                        c1.Y -= h1;
-                        break;
-                    case Direction.Z:
-                        c0.Z += h0;
-                        c1.Z -= h1;
-                        break;
-                }
+                Vector3 axis = Vector3.Transform(GetLocalAxis(), LocalRotationOffset);
+                Vector3 c0 = _center + (axis * h0);
+                Vector3 c1 = _center - (axis * h1);
 
                 _center0 = effectiveTransform.TransformPoint(c0);
                 _center1 = effectiveTransform.TransformPoint(c1);
@@ -142,6 +113,14 @@ public class PhysicsChainCollider : PhysicsChainColliderBase, IRenderable
             }
         }
     }
+
+    private Vector3 GetLocalAxis()
+        => _direction switch
+        {
+            Direction.X => Vector3.UnitX,
+            Direction.Z => Vector3.UnitZ,
+            _ => Vector3.UnitY,
+        };
 
     public override bool Collide(ref Vector3 particlePosition, float particleRadius)
         => _collideType switch

@@ -48,12 +48,12 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            bool usesVoxelConeTracing = ActivePipelineInstance.Pipeline switch
-            {
-                DefaultRenderPipeline defaultPipeline => defaultPipeline.UsesVoxelConeTracing,
-                DefaultRenderPipeline2 defaultPipeline => defaultPipeline.UsesVoxelConeTracing,
-                _ => false,
-            };
+            bool usesVoxelConeTracing =
+                ActivePipelineInstance.Pipeline is
+                    IGlobalIlluminationPipelineProvider
+                    {
+                        UsesVoxelConeTracing: true,
+                    };
             if (!usesVoxelConeTracing)
                 return;
 
@@ -69,12 +69,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (ClearVolumeEachFrame)
                 voxelTexture.Clear(ColorF4.Transparent);
 
-            XRMaterial? voxelizationMaterial = ActivePipelineInstance.Pipeline switch
-            {
-                DefaultRenderPipeline pipeline => pipeline.GetVoxelConeTracingVoxelizationMaterial(),
-                DefaultRenderPipeline2 pipeline => pipeline.GetVoxelConeTracingVoxelizationMaterial(),
-                _ => null,
-            };
+            XRMaterial? voxelizationMaterial =
+                (ActivePipelineInstance.Pipeline as
+                    IGlobalIlluminationPipelineProvider)?.
+                    GetVoxelConeTracingVoxelizationMaterial();
             if (voxelizationMaterial is null)
                 return;
 

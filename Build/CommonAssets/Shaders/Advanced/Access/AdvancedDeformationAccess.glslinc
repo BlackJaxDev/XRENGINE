@@ -1,0 +1,35 @@
+#ifndef XR_ADVANCED_DEFORMATION_ACCESS_GLSLINC
+#define XR_ADVANCED_DEFORMATION_ACCESS_GLSLINC
+
+#include "AdvancedDiagnostics.glslinc"
+
+struct XRAdvancedDeformationRecord
+{
+    XRAdvancedGpuHandle sourceGeometry;
+    XRAdvancedGpuHandle currentGeometry;
+    XRAdvancedGpuHandle previousGeometry;
+    XRAdvancedGpuHandle animation;
+    uint currentFrameSlot;
+    uint previousFrameSlot;
+    uint vertexCount;
+    uint flags;
+};
+
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_DEFORMATIONS) readonly buffer XRAdvancedDeformationTable
+{
+    XRAdvancedDeformationRecord records[];
+} XR_ADV_Deformations;
+
+XRAdvancedDeformationRecord XR_ADV_LoadDeformation(uint denseIndex)
+{
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+    if (denseIndex >= uint(XR_ADV_Deformations.records.length()))
+    {
+        XR_ADV_RecordOutOfBounds(XR_ADV_DIAGNOSTIC_DEFORMATION);
+        denseIndex = 0u;
+    }
+#endif
+    return XR_ADV_Deformations.records[denseIndex];
+}
+
+#endif

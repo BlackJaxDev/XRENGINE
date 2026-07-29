@@ -31,6 +31,7 @@ public static class EffectiveSettingsEnvOverrides
             OcclusionCullingMode = Read(XREngineEnvironmentVariables.OcclusionCullingMode);
             CpuQueryOcclusionRetestPeriodFrames = Read(XREngineEnvironmentVariables.CpuQueryOcclusionRetestPeriodFrames);
             CpuSocOcclusion = Read(XREngineEnvironmentVariables.CpuSoftwareOcclusion);
+            AdvancedRenderPipelineMode = Read(XREngineEnvironmentVariables.AdvancedRenderPipelineMode);
         }
         catch
         {
@@ -60,6 +61,9 @@ public static class EffectiveSettingsEnvOverrides
 
     /// <summary>Raw value of <c>XRE_CPU_SOC_OCCLUSION</c> (trimmed) or null if unset.</summary>
     public static string? CpuSocOcclusion { get; private set; }
+
+    /// <summary>Raw value of <c>XRE_ADVANCED_RENDER_PIPELINE_MODE</c> (trimmed) or null if unset.</summary>
+    public static string? AdvancedRenderPipelineMode { get; private set; }
 
     private static string? Read(string name)
     {

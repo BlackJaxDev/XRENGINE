@@ -63,12 +63,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (RuntimeEngine.Rendering.State.IsSceneCapturePass)
                 return;
 
-            XRMaterial? material = ParentPipeline switch
-            {
-                DefaultRenderPipeline pipeline => pipeline.GetMotionVectorsMaterial(),
-                DefaultRenderPipeline2 pipeline => pipeline.GetMotionVectorsMaterial(),
-                _ => null,
-            };
+            XRMaterial? material =
+                (ParentPipeline as IRenderPipelinePassMaterialProvider)?.
+                    GetMotionVectorsMaterial();
 
             if (material is null)
             {

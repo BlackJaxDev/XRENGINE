@@ -3,6 +3,7 @@ using System.Numerics;
 using System.Text;
 using System.Text.RegularExpressions;
 using XREngine.Components;
+using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 using YamlDotNet.RepresentationModel;
 
@@ -11,7 +12,7 @@ namespace XREngine.Scene.Importers;
 internal static partial class UnitySceneImporter
 {
     private static readonly Regex DocumentHeaderRegex = new(
-        @"^---\s*!u!(?<classId>-?\d+)\s*&(?<fileId>-?\d+)(?:\s+stripped)?\s*$",
+        @"^---\s*!u!(?<classId>-?\d+)\s*&(?<fileId>-?\d+)(?<stripped>\s+stripped)?\s*$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     public static SceneNode[] Import(string filePath)
@@ -19,29 +20,80 @@ internal static partial class UnitySceneImporter
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
 
         string normalizedPath = Path.GetFullPath(filePath);
-        var state = new ImportState(normalizedPath);
+        var context = new UnityProjectImportContext(normalizedPath);
+        context.DiscoverDependencies();
+        var state = new ImportState(context);
         ImportedHierarchy hierarchy = ImportHierarchy(normalizedPath, state);
+        context.MarkOutcome(normalizedPath, UnityImportConversionOutcome.Converted);
         return [.. hierarchy.RootEntries.Select(static entry => entry.Node)];
     }
 
     public static SceneNode ImportPrefab(string filePath)
+        => ImportPrefabWithManifest(filePath).RootNode
+            ?? throw new InvalidDataException($"Unity prefab import produced no hierarchy for '{filePath}'.");
+
+    public static UnityPrefabConversionResult ImportPrefabWithManifest(string filePath)
+        => ImportPrefabWithManifest(filePath, outputDestination: null, explicitProjectOrAssetsRoot: null);
+
+    public static UnityPrefabConversionResult ImportPrefabWithManifest(
+        string filePath,
+        string? outputDestination,
+        string? explicitProjectOrAssetsRoot)
+        => ImportPrefabWithManifest(
+            filePath,
+            outputDestination,
+            explicitProjectOrAssetsRoot,
+            cancellationToken: default,
+            progress: null);
+
+    public static UnityPrefabConversionResult ImportPrefabWithManifest(
+        string filePath,
+        string? outputDestination,
+        string? explicitProjectOrAssetsRoot,
+        CancellationToken cancellationToken,
+        Action<float, string>? progress)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
 
         string normalizedPath = Path.GetFullPath(filePath);
-        var state = new ImportState(normalizedPath);
+        var context = new UnityProjectImportContext(
+            normalizedPath,
+            outputDestination,
+            explicitProjectOrAssetsRoot,
+            cancellationToken,
+            progress);
+        context.DiscoverDependencies();
+        var state = new ImportState(context);
         ImportedHierarchy hierarchy = ImportHierarchy(normalizedPath, state);
         hierarchy.SortRoots();
 
+        SceneNode rootNode;
         if (hierarchy.RootEntries.Count == 1)
-            return hierarchy.RootEntries[0].Node;
+        {
+            rootNode = hierarchy.RootEntries[0].Node;
+        }
+        else
+        {
+            string rootName = Path.GetFileNameWithoutExtension(normalizedPath);
+            rootNode = new SceneNode(rootName, new Transform());
+            foreach (ImportedRootEntry rootEntry in hierarchy.RootEntries)
+                rootEntry.Node.Parent = rootNode;
+        }
 
-        string rootName = Path.GetFileNameWithoutExtension(normalizedPath);
-        var rootNode = new SceneNode(rootName, new Transform());
-        foreach (ImportedRootEntry rootEntry in hierarchy.RootEntries)
-            rootEntry.Node.Parent = rootNode;
-
-        return rootNode;
+        context.MarkOutcome(normalizedPath, UnityImportConversionOutcome.Converted);
+        bool behaviorErrors = context.Diagnostics.Any(static diagnostic =>
+            diagnostic.Category == UnityImportDiagnosticCategory.AvatarComponent &&
+            diagnostic.Severity == UnityImportDiagnosticSeverity.Error);
+        UnityPrefabImportManifest manifest = context.CreateManifest(
+            behaviorErrors
+                ? UnityImportCompletionTier.VisualPrefab
+                : UnityImportCompletionTier.VisualAndAvatarBehavior);
+        UnityPrefabDependencyMonitor.Register(manifest);
+        return new UnityPrefabConversionResult
+        {
+            RootNode = rootNode,
+            Manifest = manifest,
+        };
     }
 
     private static ImportedHierarchy ImportHierarchy(string filePath, ImportState state)
@@ -56,12 +108,24 @@ internal static partial class UnitySceneImporter
         {
             ParsedUnityFile parsed = ParseUnityFile(filePath);
             var hierarchy = new ImportedHierarchy(filePath);
+            if (state.Context.GuidIndex.TryGetGuid(filePath, out string? sourceGuid))
+                hierarchy.SourceGuid = sourceGuid;
 
-            foreach (ParsedTransform parsedTransform in parsed.Transforms.Values.OrderBy(static transform => transform.DocumentOrder))
+            foreach (ParsedTransform parsedTransform in parsed.Transforms.Values
+                .Where(static transform => !transform.IsStripped)
+                .OrderBy(static transform => transform.DocumentOrder))
             {
-                ParsedGameObject gameObject = parsed.GameObjects.TryGetValue(parsedTransform.GameObjectFileId, out ParsedGameObject? parsedGameObject)
-                    ? parsedGameObject
-                    : new ParsedGameObject(parsedTransform.GameObjectFileId, $"GameObject {parsedTransform.GameObjectFileId}", true, 0, parsedTransform.DocumentOrder);
+                if (!parsed.GameObjects.TryGetValue(parsedTransform.GameObjectFileId, out ParsedGameObject? gameObject) ||
+                    gameObject.IsStripped)
+                {
+                    state.Context.AddDiagnostic(
+                        "UNITYPREFAB0001",
+                        UnityImportDiagnosticSeverity.Warning,
+                        UnityImportDiagnosticCategory.PrefabOverride,
+                        $"Transform '{parsedTransform.FileId}' has no non-stripped GameObject and was skipped instead of creating a phantom node.",
+                        filePath);
+                    continue;
+                }
 
                 var transform = new Transform
                 {
@@ -81,7 +145,9 @@ internal static partial class UnitySceneImporter
                 hierarchy.TransformSortOrders[parsedTransform.FileId] = parsedTransform.RootOrder ?? parsedTransform.DocumentOrder;
             }
 
-            foreach (ParsedTransform parsedTransform in parsed.Transforms.Values.OrderBy(static transform => transform.DocumentOrder))
+            foreach (ParsedTransform parsedTransform in parsed.Transforms.Values
+                .Where(static transform => !transform.IsStripped)
+                .OrderBy(static transform => transform.DocumentOrder))
             {
                 if (!hierarchy.NodesByTransformId.TryGetValue(parsedTransform.FileId, out SceneNode? parentNode))
                     continue;
@@ -93,7 +159,9 @@ internal static partial class UnitySceneImporter
                 }
             }
 
-            foreach (ParsedTransform parsedTransform in parsed.Transforms.Values.OrderBy(static transform => transform.DocumentOrder))
+            foreach (ParsedTransform parsedTransform in parsed.Transforms.Values
+                .Where(static transform => !transform.IsStripped)
+                .OrderBy(static transform => transform.DocumentOrder))
             {
                 if (parsedTransform.ParentTransformFileId == 0 ||
                     !hierarchy.NodesByTransformId.TryGetValue(parsedTransform.FileId, out SceneNode? childNode) ||
@@ -107,12 +175,14 @@ internal static partial class UnitySceneImporter
             }
 
             AttachSupportedComponents(parsed, hierarchy, state);
+            RegisterIdentityMappings(hierarchy);
 
             var prefabRootsByInstanceId = new Dictionary<long, List<ImportedRootEntry>>();
             foreach (ParsedPrefabInstance prefabInstance in parsed.PrefabInstances.OrderBy(static instance => instance.DocumentOrder))
             {
                 ImportedHierarchy importedPrefab = ImportPrefabInstance(prefabInstance, parsed, hierarchy, state);
                 importedPrefab.SortRoots();
+                BindStrippedProxies(prefabInstance, parsed, hierarchy, importedPrefab, state);
 
                 if (prefabInstance.TransformParentFileId != 0 &&
                     hierarchy.NodesByTransformId.TryGetValue(prefabInstance.TransformParentFileId, out SceneNode? parentNode))
@@ -124,6 +194,7 @@ internal static partial class UnitySceneImporter
                 prefabRootsByInstanceId[prefabInstance.FileId] = [.. importedPrefab.RootEntries];
             }
 
+            AttachAvatarComponents(parsed, hierarchy, state);
             ReorderChildren(parsed, hierarchy, prefabRootsByInstanceId);
             PopulateRootEntries(parsed, hierarchy, prefabRootsByInstanceId);
             hierarchy.SortRoots();
@@ -146,7 +217,21 @@ internal static partial class UnitySceneImporter
 
         if (!string.IsNullOrWhiteSpace(prefabPath) && File.Exists(prefabPath))
         {
-            hierarchy = ImportHierarchy(prefabPath, state);
+            string extension = Path.GetExtension(prefabPath);
+            if (string.Equals(extension, ".prefab", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(extension, ".unity", StringComparison.OrdinalIgnoreCase))
+            {
+                hierarchy = ImportHierarchy(prefabPath, state);
+            }
+            else if (SupportedExternalModelExtensions.Contains(extension))
+            {
+                hierarchy = ImportModelHierarchy(prefabPath, prefabInstance.SourcePrefab.Guid, state);
+            }
+            else
+            {
+                throw new UnityVisualImportException(
+                    $"Unity PrefabInstance source '{prefabPath}' has unsupported asset type '{extension}'.");
+            }
         }
         else
         {
@@ -155,11 +240,11 @@ internal static partial class UnitySceneImporter
                     ? Path.GetFileNameWithoutExtension(prefabPath)
                     : $"Missing Prefab {prefabInstance.SourcePrefab.Guid ?? prefabInstance.FileId.ToString(CultureInfo.InvariantCulture)}");
 
-            Debug.LogWarning($"Unity prefab source '{prefabInstance.SourcePrefab.Guid ?? "<missing-guid>"}' could not be resolved while importing '{state.EntryFilePath}'. A placeholder node will be created instead.");
-            hierarchy = CreatePlaceholderHierarchy(placeholderName, prefabInstance.DocumentOrder);
+            throw new UnityVisualImportException(
+                $"Required Unity prefab source '{prefabInstance.SourcePrefab.Guid ?? "<missing-guid>"}' could not be resolved while importing '{state.EntryFilePath}' (suggested name '{placeholderName}').");
         }
 
-        ApplyPrefabModifications(prefabInstance, hierarchy);
+        ApplyPrefabModifications(prefabInstance, hierarchy, ownerHierarchy.SourcePath, state);
         ApplyPrefabRemovals(prefabInstance, hierarchy);
         ApplyPrefabAdditions(prefabInstance, ownerFile, ownerHierarchy, hierarchy, state);
         hierarchy.SortRoots();
@@ -174,25 +259,170 @@ internal static partial class UnitySceneImporter
         return hierarchy;
     }
 
-    private static void ApplyPrefabModifications(ParsedPrefabInstance prefabInstance, ImportedHierarchy hierarchy)
+    private static void BindStrippedProxies(
+        ParsedPrefabInstance prefabInstance,
+        ParsedUnityFile ownerFile,
+        ImportedHierarchy ownerHierarchy,
+        ImportedHierarchy importedHierarchy,
+        ImportState state)
+    {
+        foreach (ParsedStrippedProxy proxy in ownerFile.StrippedProxies.Values
+            .Where(proxy => proxy.PrefabInstanceFileId == prefabInstance.FileId)
+            .OrderBy(static proxy => proxy.DocumentOrder))
+        {
+            long sourceFileId = proxy.CorrespondingSourceObject.FileId;
+            switch (proxy.ObjectKind)
+            {
+                case UnityAssetObjectKind.GameObject:
+                    if (importedHierarchy.NodesByGameObjectId.TryGetValue(sourceFileId, out SceneNode? gameObjectNode))
+                    {
+                        ownerHierarchy.NodesByGameObjectId[proxy.LocalFileId] = gameObjectNode;
+                        break;
+                    }
+
+                    ReportUnresolvedProxy(proxy, state);
+                    break;
+
+                case UnityAssetObjectKind.Transform:
+                    if (importedHierarchy.NodesByTransformId.TryGetValue(sourceFileId, out SceneNode? transformNode))
+                    {
+                        ownerHierarchy.NodesByTransformId[proxy.LocalFileId] = transformNode;
+                        break;
+                    }
+
+                    ReportUnresolvedProxy(proxy, state);
+                    break;
+
+                case UnityAssetObjectKind.Renderer:
+                case UnityAssetObjectKind.Component:
+                    if (importedHierarchy.ComponentsByFileId.TryGetValue(sourceFileId, out XRComponent? component))
+                    {
+                        ownerHierarchy.ComponentsByFileId[proxy.LocalFileId] = component;
+                        break;
+                    }
+
+                    ReportUnresolvedProxy(proxy, state);
+                    break;
+            }
+        }
+    }
+
+    private static void ReportUnresolvedProxy(ParsedStrippedProxy proxy, ImportState state)
+    {
+        state.Context.AddDiagnostic(
+            "UNITYMODEL0001",
+            UnityImportDiagnosticSeverity.Error,
+            UnityImportDiagnosticCategory.ModelIdentity,
+            $"Stripped {proxy.ObjectKind} proxy '{proxy.LocalFileId}' could not resolve source fileID " +
+            $"'{proxy.CorrespondingSourceObject.FileId}' from GUID '{proxy.CorrespondingSourceObject.Guid}'.",
+            state.EntryFilePath,
+            identity: new UnityAssetIdentity
+            {
+                AssetGuid = proxy.CorrespondingSourceObject.Guid ?? string.Empty,
+                LocalFileId = proxy.CorrespondingSourceObject.FileId,
+                ObjectKind = proxy.ObjectKind,
+            });
+    }
+
+    private static void RegisterIdentityMappings(ImportedHierarchy hierarchy)
+    {
+        if (string.IsNullOrWhiteSpace(hierarchy.SourceGuid))
+            return;
+
+        foreach ((long fileId, SceneNode node) in hierarchy.NodesByGameObjectId)
+        {
+            hierarchy.NodesByIdentity[new UnityAssetIdentity
+            {
+                AssetGuid = hierarchy.SourceGuid,
+                LocalFileId = fileId,
+                ObjectKind = UnityAssetObjectKind.GameObject,
+            }] = node;
+        }
+
+        foreach ((long fileId, SceneNode node) in hierarchy.NodesByTransformId)
+        {
+            hierarchy.NodesByIdentity[new UnityAssetIdentity
+            {
+                AssetGuid = hierarchy.SourceGuid,
+                LocalFileId = fileId,
+                ObjectKind = UnityAssetObjectKind.Transform,
+            }] = node;
+        }
+
+        foreach ((long fileId, XRComponent component) in hierarchy.ComponentsByFileId)
+        {
+            hierarchy.ComponentsByIdentity[new UnityAssetIdentity
+            {
+                AssetGuid = hierarchy.SourceGuid,
+                LocalFileId = fileId,
+                ObjectKind = component is XREngine.Components.Scene.Mesh.ModelComponent
+                    ? UnityAssetObjectKind.Renderer
+                    : UnityAssetObjectKind.Component,
+            }] = component;
+        }
+    }
+
+    private static void ApplyPrefabModifications(
+        ParsedPrefabInstance prefabInstance,
+        ImportedHierarchy hierarchy,
+        string modificationSourcePath,
+        ImportState state)
     {
         foreach (IGrouping<long, PropertyModification> group in prefabInstance.Modifications
             .Where(static modification => !string.IsNullOrWhiteSpace(modification.PropertyPath))
             .GroupBy(static modification => modification.TargetFileId))
         {
+            bool targetResolved = false;
             if (hierarchy.NodesByGameObjectId.TryGetValue(group.Key, out SceneNode? node))
+            {
                 ApplyGameObjectModifications(node, group);
+                targetResolved = true;
+            }
 
             if (hierarchy.NodesByTransformId.TryGetValue(group.Key, out SceneNode? transformNode) &&
                 transformNode.Transform is Transform transform)
             {
                 ApplyTransformModifications(group.Key, transform, group, hierarchy);
+                targetResolved = true;
             }
 
             if (hierarchy.ComponentsByFileId.TryGetValue(group.Key, out XRComponent? component))
-                ApplyComponentModifications(component, group);
+            {
+                ApplyComponentModifications(component, group, state);
+                targetResolved = true;
+            }
+
+            if (targetResolved)
+                continue;
+
+            bool hadVisualOverrides = group.Any(static modification =>
+                IsRequiredVisualOverride(modification.PropertyPath));
+            state.Context.IgnoreStalePrefabModification(modificationSourcePath, group.Key);
+            state.Context.AddDiagnostic(
+                "UNITYOVERRIDE0003",
+                hadVisualOverrides
+                    ? UnityImportDiagnosticSeverity.Warning
+                    : UnityImportDiagnosticSeverity.Info,
+                UnityImportDiagnosticCategory.PrefabOverride,
+                $"Ignored stale prefab modification target fileID '{group.Key}' because the current source asset " +
+                $"does not generate that object. Properties: " +
+                $"{string.Join(", ", group.Select(static modification => modification.PropertyPath).Distinct(StringComparer.Ordinal))}",
+                hierarchy.SourcePath,
+                identity: new UnityAssetIdentity
+                {
+                    AssetGuid = hierarchy.SourceGuid ?? string.Empty,
+                    LocalFileId = group.Key,
+                    ObjectKind = UnityAssetObjectKind.Component,
+                });
         }
     }
+
+    private static bool IsRequiredVisualOverride(string propertyPath)
+        => propertyPath.StartsWith("m_Materials.Array.data[", StringComparison.Ordinal) ||
+           propertyPath.StartsWith("m_BlendShapeWeights.Array.data[", StringComparison.Ordinal) ||
+           propertyPath.StartsWith("m_AABB.", StringComparison.Ordinal) ||
+           propertyPath.StartsWith("m_LocalAABB.", StringComparison.Ordinal) ||
+           propertyPath is "m_Enabled" or "m_CastShadows" or "m_ReceiveShadows";
 
     private static void ApplyGameObjectModifications(SceneNode node, IEnumerable<PropertyModification> modifications)
     {
@@ -306,7 +536,9 @@ internal static partial class UnitySceneImporter
                 entries.Add((importedRoots[index], prefabInstance.DocumentOrder, index));
         }
 
-        foreach (ParsedTransform parsedTransform in parsed.Transforms.Values.OrderBy(static transform => transform.DocumentOrder))
+        foreach (ParsedTransform parsedTransform in parsed.Transforms.Values
+            .Where(static transform => !transform.IsStripped)
+            .OrderBy(static transform => transform.DocumentOrder))
         {
             if (!hierarchy.NodesByTransformId.TryGetValue(parsedTransform.FileId, out SceneNode? parentNode))
                 continue;
@@ -383,7 +615,9 @@ internal static partial class UnitySceneImporter
         }
 
         int fallbackOrder = 0;
-        foreach (ParsedTransform parsedTransform in parsed.Transforms.Values.OrderBy(static transform => transform.DocumentOrder))
+        foreach (ParsedTransform parsedTransform in parsed.Transforms.Values
+            .Where(static transform => !transform.IsStripped)
+            .OrderBy(static transform => transform.DocumentOrder))
         {
             if (parsedTransform.ParentTransformFileId != 0 ||
                 hierarchy.ExcludedRootTransformIds.Contains(parsedTransform.FileId) ||
@@ -415,7 +649,6 @@ internal static partial class UnitySceneImporter
 
     private static ParsedUnityFile ParseUnityFile(string filePath)
     {
-        string[] lines = File.ReadAllLines(filePath);
         var gameObjects = new Dictionary<long, ParsedGameObject>();
         var transforms = new Dictionary<long, ParsedTransform>();
         var camerasByGameObjectId = new Dictionary<long, ParsedCamera>();
@@ -424,11 +657,14 @@ internal static partial class UnitySceneImporter
         var meshRenderersByGameObjectId = new Dictionary<long, ParsedMeshRenderer>();
         var skinnedMeshRenderersByGameObjectId = new Dictionary<long, ParsedSkinnedMeshRenderer>();
         var componentsByFileId = new Dictionary<long, ParsedUnityComponent>();
+        var monoBehaviours = new List<ParsedMonoBehaviour>();
         var prefabInstances = new List<ParsedPrefabInstance>();
         var sceneRootReferences = new List<long>();
+        var strippedProxies = new Dictionary<long, ParsedStrippedProxy>();
 
         int? classId = null;
         long fileId = 0;
+        bool isStripped = false;
         int documentOrder = 0;
         var bodyBuilder = new StringBuilder();
 
@@ -440,6 +676,7 @@ internal static partial class UnitySceneImporter
             ProcessDocument(
                 classId.Value,
                 fileId,
+                isStripped,
                 bodyBuilder.ToString(),
                 documentOrder++,
                 gameObjects,
@@ -450,13 +687,15 @@ internal static partial class UnitySceneImporter
                 meshRenderersByGameObjectId,
                 skinnedMeshRenderersByGameObjectId,
                 componentsByFileId,
+                monoBehaviours,
                 prefabInstances,
-                sceneRootReferences);
+                sceneRootReferences,
+                strippedProxies);
 
             bodyBuilder.Clear();
         }
 
-        foreach (string line in lines)
+        foreach (string line in File.ReadLines(filePath))
         {
             Match match = DocumentHeaderRegex.Match(line);
             if (match.Success)
@@ -464,6 +703,7 @@ internal static partial class UnitySceneImporter
                 FlushDocument();
                 classId = int.Parse(match.Groups["classId"].Value, CultureInfo.InvariantCulture);
                 fileId = long.Parse(match.Groups["fileId"].Value, CultureInfo.InvariantCulture);
+                isStripped = match.Groups["stripped"].Success;
                 continue;
             }
 
@@ -473,6 +713,7 @@ internal static partial class UnitySceneImporter
 
         FlushDocument();
         var transformIdsByGameObjectId = transforms.Values
+            .Where(static transform => !transform.IsStripped)
             .GroupBy(static transform => transform.GameObjectFileId)
             .ToDictionary(static group => group.Key, static group => group.First().FileId);
 
@@ -486,13 +727,16 @@ internal static partial class UnitySceneImporter
             meshRenderersByGameObjectId,
             skinnedMeshRenderersByGameObjectId,
             componentsByFileId,
+            monoBehaviours,
             prefabInstances,
-            sceneRootReferences);
+            sceneRootReferences,
+            strippedProxies);
     }
 
     private static void ProcessDocument(
         int classId,
         long fileId,
+        bool isStripped,
         string body,
         int documentOrder,
         Dictionary<long, ParsedGameObject> gameObjects,
@@ -503,8 +747,10 @@ internal static partial class UnitySceneImporter
         Dictionary<long, ParsedMeshRenderer> meshRenderersByGameObjectId,
         Dictionary<long, ParsedSkinnedMeshRenderer> skinnedMeshRenderersByGameObjectId,
         Dictionary<long, ParsedUnityComponent> componentsByFileId,
+        List<ParsedMonoBehaviour> monoBehaviours,
         List<ParsedPrefabInstance> prefabInstances,
-        List<long> sceneRootReferences)
+        List<long> sceneRootReferences,
+        Dictionary<long, ParsedStrippedProxy> strippedProxies)
     {
         var yaml = new YamlStream();
         yaml.Load(new StringReader(body));
@@ -517,14 +763,33 @@ internal static partial class UnitySceneImporter
         if (documentEntry.Value is not YamlMappingNode documentMapping)
             return;
 
+        if (isStripped)
+        {
+            UnityReference correspondingSourceObject = ParseReference(GetNode(documentMapping, "m_CorrespondingSourceObject"));
+            long prefabInstanceFileId = GetReferenceFileId(documentMapping, "m_PrefabInstance");
+            UnityAssetObjectKind objectKind = documentType switch
+            {
+                "GameObject" => UnityAssetObjectKind.GameObject,
+                "Transform" or "RectTransform" => UnityAssetObjectKind.Transform,
+                "MeshRenderer" or "SkinnedMeshRenderer" => UnityAssetObjectKind.Renderer,
+                _ => UnityAssetObjectKind.Component,
+            };
+            strippedProxies[fileId] = new ParsedStrippedProxy(
+                fileId,
+                correspondingSourceObject,
+                prefabInstanceFileId,
+                objectKind,
+                documentOrder);
+        }
+
         switch (documentType)
         {
             case "GameObject":
-                gameObjects[fileId] = ParseGameObject(fileId, documentMapping, documentOrder);
+                gameObjects[fileId] = ParseGameObject(fileId, documentMapping, documentOrder, isStripped);
                 break;
             case "Transform":
             case "RectTransform":
-                transforms[fileId] = ParseTransform(fileId, documentMapping, documentOrder);
+                transforms[fileId] = ParseTransform(fileId, documentMapping, documentOrder, isStripped);
                 break;
             case "Camera":
                 RegisterParsedComponent(ParseCamera(fileId, documentMapping, documentOrder), camerasByGameObjectId, componentsByFileId);
@@ -541,6 +806,11 @@ internal static partial class UnitySceneImporter
             case "SkinnedMeshRenderer":
                 RegisterParsedComponent(ParseSkinnedMeshRenderer(fileId, documentMapping, documentOrder), skinnedMeshRenderersByGameObjectId, componentsByFileId);
                 break;
+            case "MonoBehaviour":
+                ParsedMonoBehaviour monoBehaviour = ParseMonoBehaviour(fileId, documentMapping, body, documentOrder, isStripped);
+                monoBehaviours.Add(monoBehaviour);
+                componentsByFileId[fileId] = monoBehaviour;
+                break;
             case "PrefabInstance":
                 prefabInstances.Add(ParsePrefabInstance(fileId, documentMapping, documentOrder));
                 break;
@@ -550,15 +820,23 @@ internal static partial class UnitySceneImporter
         }
     }
 
-    private static ParsedGameObject ParseGameObject(long fileId, YamlMappingNode mapping, int documentOrder)
+    private static ParsedGameObject ParseGameObject(
+        long fileId,
+        YamlMappingNode mapping,
+        int documentOrder,
+        bool isStripped)
     {
         string name = GetScalarString(mapping, "m_Name") ?? $"GameObject {fileId}";
         bool isActive = (GetScalarInt(mapping, "m_IsActive") ?? 1) != 0;
         int layer = GetScalarInt(mapping, "m_Layer") ?? 0;
-        return new ParsedGameObject(fileId, name, isActive, layer, documentOrder);
+        return new ParsedGameObject(fileId, name, isActive, layer, isStripped, documentOrder);
     }
 
-    private static ParsedTransform ParseTransform(long fileId, YamlMappingNode mapping, int documentOrder)
+    private static ParsedTransform ParseTransform(
+        long fileId,
+        YamlMappingNode mapping,
+        int documentOrder,
+        bool isStripped)
     {
         long gameObjectFileId = GetReferenceFileId(mapping, "m_GameObject");
         long parentFileId = GetReferenceFileId(mapping, "m_Father");
@@ -578,7 +856,17 @@ internal static partial class UnitySceneImporter
             }
         }
 
-        return new ParsedTransform(fileId, gameObjectFileId, parentFileId, childTransformFileIds, position, rotation, scale, rootOrder, documentOrder);
+        return new ParsedTransform(
+            fileId,
+            gameObjectFileId,
+            parentFileId,
+            childTransformFileIds,
+            position,
+            rotation,
+            scale,
+            rootOrder,
+            isStripped,
+            documentOrder);
     }
 
     private static ParsedCamera ParseCamera(long fileId, YamlMappingNode mapping, int documentOrder)
@@ -639,6 +927,22 @@ internal static partial class UnitySceneImporter
         long rootBoneTransformFileId = ParseReference(GetNode(mapping, "m_RootBone")).FileId;
         return new ParsedSkinnedMeshRenderer(fileId, gameObjectFileId, enabled, castShadows, receiveShadows, materials, meshReference, boneTransformFileIds, rootBoneTransformFileId, documentOrder);
     }
+
+    private static ParsedMonoBehaviour ParseMonoBehaviour(
+        long fileId,
+        YamlMappingNode mapping,
+        string serializedYaml,
+        int documentOrder,
+        bool isStripped)
+        => new(
+            fileId,
+            GetReferenceFileId(mapping, "m_GameObject"),
+            (GetScalarInt(mapping, "m_Enabled") ?? 1) != 0,
+            ParseReference(GetNode(mapping, "m_Script")),
+            mapping,
+            serializedYaml,
+            isStripped,
+            documentOrder);
 
     private static ParsedPrefabInstance ParsePrefabInstance(long fileId, YamlMappingNode mapping, int documentOrder)
     {
@@ -703,79 +1007,7 @@ internal static partial class UnitySceneImporter
     }
 
     private static string? ResolveAssetPath(ImportState state, string? guid)
-    {
-        if (string.IsNullOrWhiteSpace(guid))
-            return null;
-
-        if (state.AssetPathsByGuid.TryGetValue(guid, out string? cachedPath))
-            return cachedPath;
-
-        EnsureGuidIndex(state);
-        return state.AssetPathsByGuid.TryGetValue(guid, out cachedPath) ? cachedPath : null;
-    }
-
-    private static void EnsureGuidIndex(ImportState state)
-    {
-        if (state.AssetIndexInitialized)
-            return;
-
-        foreach (string root in EnumerateUnitySearchRoots(state.ProjectRoot))
-        {
-            foreach (string metaPath in Directory.EnumerateFiles(root, "*.meta", SearchOption.AllDirectories))
-            {
-                string? guid = TryReadGuid(metaPath);
-                if (string.IsNullOrWhiteSpace(guid))
-                    continue;
-
-                string assetPath = metaPath[..^5];
-                if (File.Exists(assetPath))
-                    state.AssetPathsByGuid.TryAdd(guid, assetPath);
-            }
-        }
-
-        state.AssetIndexInitialized = true;
-    }
-
-    private static IEnumerable<string> EnumerateUnitySearchRoots(string projectRoot)
-    {
-        string assetsRoot = Path.Combine(projectRoot, "Assets");
-        if (Directory.Exists(assetsRoot))
-            yield return assetsRoot;
-
-        string packagesRoot = Path.Combine(projectRoot, "Packages");
-        if (Directory.Exists(packagesRoot))
-            yield return packagesRoot;
-
-        if (!Directory.Exists(assetsRoot) && !Directory.Exists(packagesRoot) && Directory.Exists(projectRoot))
-            yield return projectRoot;
-    }
-
-    private static string? TryReadGuid(string metaPath)
-    {
-        foreach (string line in File.ReadLines(metaPath))
-        {
-            const string prefix = "guid: ";
-            if (line.StartsWith(prefix, StringComparison.Ordinal))
-                return line[prefix.Length..].Trim();
-        }
-
-        return null;
-    }
-
-    private static string ResolveUnityProjectRoot(string sourcePath)
-    {
-        string normalizedPath = Path.GetFullPath(sourcePath);
-        var current = new DirectoryInfo(Path.GetDirectoryName(normalizedPath) ?? normalizedPath);
-        while (current is not null)
-        {
-            if (string.Equals(current.Name, "Assets", StringComparison.OrdinalIgnoreCase))
-                return current.Parent?.FullName ?? current.FullName;
-
-            current = current.Parent;
-        }
-
-        return Path.GetDirectoryName(normalizedPath) ?? normalizedPath;
-    }
+        => string.IsNullOrWhiteSpace(guid) ? null : state.Context.Resolver.Resolve(guid);
 
     private static string? ExtractStringOverride(IEnumerable<PropertyModification> modifications, string propertyPath)
         => modifications.LastOrDefault(modification => string.Equals(modification.PropertyPath, propertyPath, StringComparison.Ordinal)).Value;
@@ -986,21 +1218,23 @@ internal static partial class UnitySceneImporter
     private static Quaternion NormalizeQuaternion(Quaternion quaternion)
         => quaternion.LengthSquared() > 0.000001f ? Quaternion.Normalize(quaternion) : Quaternion.Identity;
 
-    private sealed class ImportState(string entryFilePath)
+    private sealed class ImportState(UnityProjectImportContext context)
     {
-        public string EntryFilePath { get; } = entryFilePath;
-        public string ProjectRoot { get; } = ResolveUnityProjectRoot(entryFilePath);
-        public HashSet<string> ActiveImports { get; } = new(StringComparer.OrdinalIgnoreCase);
-        public Dictionary<string, string?> AssetPathsByGuid { get; } = new(StringComparer.OrdinalIgnoreCase);
-        public bool AssetIndexInitialized { get; set; }
+        public UnityProjectImportContext Context { get; } = context;
+        public string EntryFilePath => Context.EntrySourcePath;
+        public string ProjectRoot => Context.ProjectRoot;
+        public HashSet<string> ActiveImports => Context.ActiveImports;
     }
 
     private sealed class ImportedHierarchy(string sourcePath)
     {
         public string SourcePath { get; } = sourcePath;
+        public string? SourceGuid { get; set; }
         public Dictionary<long, SceneNode> NodesByTransformId { get; } = [];
         public Dictionary<long, SceneNode> NodesByGameObjectId { get; } = [];
         public Dictionary<long, XRComponent> ComponentsByFileId { get; } = [];
+        public Dictionary<UnityAssetIdentity, SceneNode> NodesByIdentity { get; } = [];
+        public Dictionary<UnityAssetIdentity, XRComponent> ComponentsByIdentity { get; } = [];
         public Dictionary<long, int> TransformSortOrders { get; } = [];
         public HashSet<long> ExcludedRootTransformIds { get; } = [];
         public List<ImportedRootEntry> RootEntries { get; } = [];
@@ -1045,10 +1279,18 @@ internal static partial class UnitySceneImporter
         Dictionary<long, ParsedMeshRenderer> MeshRenderersByGameObjectId,
         Dictionary<long, ParsedSkinnedMeshRenderer> SkinnedMeshRenderersByGameObjectId,
         Dictionary<long, ParsedUnityComponent> ComponentsByFileId,
+        List<ParsedMonoBehaviour> MonoBehaviours,
         List<ParsedPrefabInstance> PrefabInstances,
-        List<long> SceneRootReferences);
+        List<long> SceneRootReferences,
+        Dictionary<long, ParsedStrippedProxy> StrippedProxies);
 
-    private sealed record ParsedGameObject(long FileId, string Name, bool IsActive, int Layer, int DocumentOrder);
+    private sealed record ParsedGameObject(
+        long FileId,
+        string Name,
+        bool IsActive,
+        int Layer,
+        bool IsStripped,
+        int DocumentOrder);
 
     private sealed record ParsedTransform(
         long FileId,
@@ -1059,6 +1301,7 @@ internal static partial class UnitySceneImporter
         Quaternion LocalRotation,
         Vector3 LocalScale,
         int? RootOrder,
+        bool IsStripped,
         int DocumentOrder);
 
     private abstract record ParsedUnityComponent(long FileId, long GameObjectFileId, bool Enabled, int DocumentOrder);
@@ -1129,6 +1372,17 @@ internal static partial class UnitySceneImporter
         int DocumentOrder)
         : ParsedRendererComponent(FileId, GameObjectFileId, Enabled, CastShadows, ReceiveShadows, Materials, DocumentOrder);
 
+    private sealed record ParsedMonoBehaviour(
+        long FileId,
+        long GameObjectFileId,
+        bool Enabled,
+        UnityReference Script,
+        YamlMappingNode SerializedFields,
+        string SerializedYaml,
+        bool IsStripped,
+        int DocumentOrder)
+        : ParsedUnityComponent(FileId, GameObjectFileId, Enabled, DocumentOrder);
+
     private sealed record ParsedPrefabInstance(
         long FileId,
         UnityReference SourcePrefab,
@@ -1138,6 +1392,13 @@ internal static partial class UnitySceneImporter
         List<UnityReference> RemovedGameObjects,
         List<AddedGameObjectDelta> AddedGameObjects,
         List<AddedComponentDelta> AddedComponents,
+        int DocumentOrder);
+
+    private sealed record ParsedStrippedProxy(
+        long LocalFileId,
+        UnityReference CorrespondingSourceObject,
+        long PrefabInstanceFileId,
+        UnityAssetObjectKind ObjectKind,
         int DocumentOrder);
 
     private readonly record struct UnityReference(long FileId, string? Guid, int? Type);

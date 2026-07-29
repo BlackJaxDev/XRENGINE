@@ -1,0 +1,223 @@
+#ifndef XR_ADVANCED_LAYOUT_GLSLINC
+#define XR_ADVANCED_LAYOUT_GLSLINC
+
+// CPU definitions are emitted by AdvancedShaderAccessLibrary. These checks fail
+// shader compilation immediately when either side changes a shared record.
+#if !defined(XR_ADV_CPU_SIZE_HANDLE) || \
+    !defined(XR_ADV_CPU_SIZE_HANDLE_LOOKUP) || \
+    !defined(XR_ADV_CPU_SIZE_BUFFER_REFERENCE) || \
+    !defined(XR_ADV_CPU_SIZE_DRAW) || \
+    !defined(XR_ADV_CPU_SIZE_INSTANCE) || \
+    !defined(XR_ADV_CPU_SIZE_GEOMETRY) || \
+    !defined(XR_ADV_CPU_SIZE_TRANSFORM) || \
+    !defined(XR_ADV_CPU_SIZE_DEFORMATION) || \
+    !defined(XR_ADV_CPU_SIZE_RENDER_STATE) || \
+    !defined(XR_ADV_CPU_SIZE_EDITOR_IDENTITY) || \
+    !defined(XR_ADV_CPU_SIZE_MATERIAL) || \
+    !defined(XR_ADV_CPU_SIZE_SHADING_KERNEL) || \
+    !defined(XR_ADV_CPU_SIZE_MATERIAL_LAYOUT) || \
+    !defined(XR_ADV_CPU_SIZE_MATERIAL_LAYOUT_MEMBER) || \
+    !defined(XR_ADV_CPU_SIZE_MATERIAL_TEXTURE_BINDING) || \
+    !defined(XR_ADV_CPU_SIZE_VIEW) || \
+    !defined(XR_ADV_CPU_SIZE_LIGHT) || \
+    !defined(XR_ADV_CPU_SIZE_SHADOW) || \
+    !defined(XR_ADV_CPU_SIZE_PROBE) || \
+    !defined(XR_ADV_CPU_SIZE_ENVIRONMENT) || \
+    !defined(XR_ADV_CPU_SIZE_DECAL) || \
+    !defined(XR_ADV_CPU_SIZE_GI_RESOURCE) || \
+    !defined(XR_ADV_CPU_SIZE_TEXTURE) || \
+    !defined(XR_ADV_CPU_SIZE_SAMPLER) || \
+    !defined(XR_ADV_CPU_SIZE_ENCODED_TEXTURE) || \
+    !defined(XR_ADV_CPU_SIZE_ENCODED_SAMPLER)
+#error "Advanced shader record CPU layout definitions are missing."
+#endif
+
+#define XR_ADV_GPU_SIZE_HANDLE 8
+#define XR_ADV_GPU_SIZE_HANDLE_LOOKUP 8
+#define XR_ADV_GPU_SIZE_BUFFER_REFERENCE 32
+#define XR_ADV_GPU_SIZE_DRAW 80
+#define XR_ADV_GPU_SIZE_INSTANCE 224
+#define XR_ADV_GPU_SIZE_GEOMETRY 256
+#define XR_ADV_GPU_SIZE_TRANSFORM 80
+#define XR_ADV_GPU_SIZE_DEFORMATION 48
+#define XR_ADV_GPU_SIZE_RENDER_STATE 32
+#define XR_ADV_GPU_SIZE_EDITOR_IDENTITY 32
+#define XR_ADV_GPU_SIZE_MATERIAL 64
+#define XR_ADV_GPU_SIZE_SHADING_KERNEL 64
+#define XR_ADV_GPU_SIZE_MATERIAL_LAYOUT 48
+#define XR_ADV_GPU_SIZE_MATERIAL_LAYOUT_MEMBER 32
+#define XR_ADV_GPU_SIZE_MATERIAL_TEXTURE_BINDING 32
+#define XR_ADV_GPU_SIZE_VIEW 896
+#define XR_ADV_GPU_SIZE_LIGHT 128
+#define XR_ADV_GPU_SIZE_SHADOW 224
+#define XR_ADV_GPU_SIZE_PROBE 176
+#define XR_ADV_GPU_SIZE_ENVIRONMENT 128
+#define XR_ADV_GPU_SIZE_DECAL 192
+#define XR_ADV_GPU_SIZE_GI_RESOURCE 208
+#define XR_ADV_GPU_SIZE_TEXTURE 64
+#define XR_ADV_GPU_SIZE_SAMPLER 64
+#define XR_ADV_GPU_SIZE_ENCODED_TEXTURE 16
+#define XR_ADV_GPU_SIZE_ENCODED_SAMPLER 16
+
+#if XR_ADV_CPU_SIZE_HANDLE != XR_ADV_GPU_SIZE_HANDLE || \
+    XR_ADV_CPU_SIZE_HANDLE_LOOKUP != XR_ADV_GPU_SIZE_HANDLE_LOOKUP || \
+    XR_ADV_CPU_SIZE_BUFFER_REFERENCE != XR_ADV_GPU_SIZE_BUFFER_REFERENCE || \
+    XR_ADV_CPU_SIZE_DRAW != XR_ADV_GPU_SIZE_DRAW || \
+    XR_ADV_CPU_SIZE_INSTANCE != XR_ADV_GPU_SIZE_INSTANCE || \
+    XR_ADV_CPU_SIZE_GEOMETRY != XR_ADV_GPU_SIZE_GEOMETRY || \
+    XR_ADV_CPU_SIZE_TRANSFORM != XR_ADV_GPU_SIZE_TRANSFORM || \
+    XR_ADV_CPU_SIZE_DEFORMATION != XR_ADV_GPU_SIZE_DEFORMATION || \
+    XR_ADV_CPU_SIZE_RENDER_STATE != XR_ADV_GPU_SIZE_RENDER_STATE || \
+    XR_ADV_CPU_SIZE_EDITOR_IDENTITY != XR_ADV_GPU_SIZE_EDITOR_IDENTITY || \
+    XR_ADV_CPU_SIZE_MATERIAL != XR_ADV_GPU_SIZE_MATERIAL || \
+    XR_ADV_CPU_SIZE_SHADING_KERNEL != XR_ADV_GPU_SIZE_SHADING_KERNEL || \
+    XR_ADV_CPU_SIZE_MATERIAL_LAYOUT != XR_ADV_GPU_SIZE_MATERIAL_LAYOUT || \
+    XR_ADV_CPU_SIZE_MATERIAL_LAYOUT_MEMBER != XR_ADV_GPU_SIZE_MATERIAL_LAYOUT_MEMBER || \
+    XR_ADV_CPU_SIZE_MATERIAL_TEXTURE_BINDING != XR_ADV_GPU_SIZE_MATERIAL_TEXTURE_BINDING || \
+    XR_ADV_CPU_SIZE_VIEW != XR_ADV_GPU_SIZE_VIEW || \
+    XR_ADV_CPU_SIZE_LIGHT != XR_ADV_GPU_SIZE_LIGHT || \
+    XR_ADV_CPU_SIZE_SHADOW != XR_ADV_GPU_SIZE_SHADOW || \
+    XR_ADV_CPU_SIZE_PROBE != XR_ADV_GPU_SIZE_PROBE || \
+    XR_ADV_CPU_SIZE_ENVIRONMENT != XR_ADV_GPU_SIZE_ENVIRONMENT || \
+    XR_ADV_CPU_SIZE_DECAL != XR_ADV_GPU_SIZE_DECAL || \
+    XR_ADV_CPU_SIZE_GI_RESOURCE != XR_ADV_GPU_SIZE_GI_RESOURCE || \
+    XR_ADV_CPU_SIZE_TEXTURE != XR_ADV_GPU_SIZE_TEXTURE || \
+    XR_ADV_CPU_SIZE_SAMPLER != XR_ADV_GPU_SIZE_SAMPLER || \
+    XR_ADV_CPU_SIZE_ENCODED_TEXTURE != XR_ADV_GPU_SIZE_ENCODED_TEXTURE || \
+    XR_ADV_CPU_SIZE_ENCODED_SAMPLER != XR_ADV_GPU_SIZE_ENCODED_SAMPLER
+#error "Advanced CPU/GPU record size mismatch."
+#endif
+
+#if XR_ADV_CPU_OFFSET_BUFFER_REFERENCE_BYTE_OFFSET != 8 || \
+    XR_ADV_CPU_OFFSET_DRAW_MATERIAL != 16 || \
+    XR_ADV_CPU_OFFSET_DRAW_CURRENT_TRANSFORM != 48 || \
+    XR_ADV_CPU_OFFSET_INSTANCE_PREVIOUS_WORLD != 64 || \
+    XR_ADV_CPU_OFFSET_INSTANCE_BOUNDS_SPHERE != 128 || \
+    XR_ADV_CPU_OFFSET_INSTANCE_ANIMATION != 176 || \
+    XR_ADV_CPU_OFFSET_GEOMETRY_VERTEX_LAYOUT != 160 || \
+    XR_ADV_CPU_OFFSET_GEOMETRY_BOUNDS_SPHERE != 176 || \
+    XR_ADV_CPU_OFFSET_GEOMETRY_MATERIAL_SECTION != 224 || \
+    XR_ADV_CPU_OFFSET_TRANSFORM_FRAME_SLOT != 64 || \
+    XR_ADV_CPU_OFFSET_DEFORMATION_CURRENT_GEOMETRY != 8 || \
+    XR_ADV_CPU_OFFSET_MATERIAL_LAYOUT_HASH != 16 || \
+    XR_ADV_CPU_OFFSET_MATERIAL_TEXTURE_OFFSET != 36 || \
+    XR_ADV_CPU_OFFSET_KERNEL_SHADER_HASH != 32 || \
+    XR_ADV_CPU_OFFSET_LAYOUT_MEMBER_OFFSET != 16 || \
+    XR_ADV_CPU_OFFSET_VIEW_PREVIOUS_VIEW != 320 || \
+    XR_ADV_CPU_OFFSET_VIEW_INVERSE_VIEW_PROJECTION != 640 || \
+    XR_ADV_CPU_OFFSET_VIEW_CAMERA_POSITION != 768 || \
+    XR_ADV_CPU_OFFSET_VIEW_ID != 864 || \
+    XR_ADV_CPU_OFFSET_LIGHT_COOKIE != 80 || \
+    XR_ADV_CPU_OFFSET_LIGHT_SHADOW != 96 || \
+    XR_ADV_CPU_OFFSET_SHADOW_WORLD_TO_SHADOW != 32 || \
+    XR_ADV_CPU_OFFSET_PROBE_IRRADIANCE != 128 || \
+    XR_ADV_CPU_OFFSET_ENVIRONMENT_ROTATION != 80 || \
+    XR_ADV_CPU_OFFSET_DECAL_WORLD_TO_DECAL != 32 || \
+    XR_ADV_CPU_OFFSET_DECAL_MASK_TEXTURE != 176 || \
+    XR_ADV_CPU_OFFSET_GI_WORLD_TO_GRID != 64 || \
+    XR_ADV_CPU_OFFSET_GI_BUFFER_OFFSET != 192 || \
+    XR_ADV_CPU_OFFSET_TEXTURE_UV_SCALE_BIAS != 48 || \
+    XR_ADV_CPU_OFFSET_SAMPLER_LOD_PARAMS != 32
+#error "Advanced CPU/GPU record byte-offset mismatch."
+#endif
+
+#if defined(XR_ADV_BACKEND_VULKAN)
+#define XR_ADV_TABLE_LAYOUT(bindingIndex) layout(set = XR_ADV_GLOBAL_SET, binding = bindingIndex, std430, row_major)
+#define XR_ADV_RESOURCE_LAYOUT(bindingIndex) layout(set = XR_ADV_GLOBAL_SET, binding = bindingIndex)
+#elif defined(XR_ADV_BACKEND_OPENGL)
+#define XR_ADV_TABLE_LAYOUT(bindingIndex) layout(binding = bindingIndex, std430, row_major)
+#define XR_ADV_RESOURCE_LAYOUT(bindingIndex) layout(binding = bindingIndex)
+#else
+#error "An advanced shader backend must be selected."
+#endif
+
+#define XR_ADV_MATRIX_STORAGE_ROW_MAJOR 1
+#define XR_ADV_VECTOR_CONVENTION_ROW_VECTOR 1
+
+struct XRAdvancedGpuHandle
+{
+    uint index;
+    uint generation;
+};
+
+struct XRAdvancedGpuHandleLookup
+{
+    uint generation;
+    uint denseIndex;
+};
+
+struct XRAdvancedBufferReference
+{
+    XRAdvancedGpuHandle buffer;
+    uvec2 byteOffset;
+    uint elementOffset;
+    uint elementCount;
+    uint elementStride;
+    uint flags;
+};
+
+struct XRAdvancedTextureReference
+{
+    XRAdvancedGpuHandle handle;
+    uint fallback;
+    uint reserved;
+};
+
+struct XRAdvancedSamplerReference
+{
+    XRAdvancedGpuHandle handle;
+    uint fallback;
+    uint reserved;
+};
+
+struct XRAdvancedEncodedTextureReference
+{
+    uint payload0;
+    uint payload1;
+    uint payload2;
+    uint flags;
+};
+
+struct XRAdvancedEncodedSamplerReference
+{
+    uint payload0;
+    uint payload1;
+    uint payload2;
+    uint flags;
+};
+
+struct XRAdvancedMaterialTextureBinding
+{
+    XRAdvancedTextureReference textureReference;
+    XRAdvancedSamplerReference samplerReference;
+};
+
+bool XR_ADV_IsValidHandle(XRAdvancedGpuHandle handle)
+{
+    return handle.index != 0u && handle.generation != 0u;
+}
+
+bool XR_ADV_HandleMatches(
+    XRAdvancedGpuHandle handle,
+    uint stableId,
+    uint generation)
+{
+    return handle.index == stableId && handle.generation == generation;
+}
+
+vec4 XR_ADV_TransformRowVector(vec4 value, mat4 matrixValue)
+{
+    return value * matrixValue;
+}
+
+vec3 XR_ADV_TransformPositionRowVector(vec3 value, mat4 matrixValue)
+{
+    return (vec4(value, 1.0) * matrixValue).xyz;
+}
+
+vec3 XR_ADV_TransformDirectionRowVector(vec3 value, mat4 matrixValue)
+{
+    return (vec4(value, 0.0) * matrixValue).xyz;
+}
+
+#endif

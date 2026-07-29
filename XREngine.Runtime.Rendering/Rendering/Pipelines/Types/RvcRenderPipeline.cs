@@ -249,9 +249,43 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline
             RefreshRvcResolution();
     }
 
+    /// <summary>
+    /// Applies the engine-owned RVC mode and quality settings to this output-local pipeline.
+    /// </summary>
+    public void ApplyRuntimeSettings(
+        RuntimeEngine.Rendering.EngineSettings settings,
+        ERvcPipelineMode? pipelineModeOverride = null)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+
+        ApplyRvcSettings(new RvcRenderingSettings(
+            pipelineModeOverride ?? settings.RvcPipelineMode,
+            settings.RvcQuadViewEnabled,
+            settings.RvcStereoReuseEnabled,
+            settings.RvcInsetWideReuseEnabled,
+            settings.RvcTemporalReuseEnabled,
+            settings.RvcPeripheralLightAggregationEnabled,
+            settings.RvcDiagnosticOverlayEnabled,
+            settings.RvcDebugViewMode,
+            settings.RvcLightGridSpace));
+
+        RvcQualitySettings = new RvcQualitySettings(
+            settings.RvcFovealRadiusDegrees,
+            settings.RvcGuardBandDegrees,
+            settings.RvcMidFieldRadiusDegrees,
+            settings.RvcPeripheralMaxRate,
+            settings.RvcForceFullResNearDistanceMeters,
+            settings.RvcDerivativeStrategy,
+            settings.RvcFovealAntiAliasingPath,
+            settings.RvcReuseMaxNormalAngleDegrees,
+            settings.RvcReuseMaxDepthDeltaMeters,
+            settings.RvcReuseMaxRoughnessBucketDelta);
+    }
+
     protected override ViewportRenderCommandContainer GenerateCommandChain()
     {
         ViewportRenderCommandContainer commands = base.GenerateCommandChain();
+        commands.Insert(0, new VPRC_AcquireAdvancedPreparation());
         AppendRvcPassCommands(commands);
         return commands;
     }

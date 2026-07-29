@@ -426,13 +426,30 @@ namespace XREngine.Editor.Mcp
                 }
             }
 
-            object? result = method.Invoke(target, invokeArgs);
-            if (result is Task<McpToolResponse> task)
-                return await task;
-            if (result is McpToolResponse response)
-                return response;
+            try
+            {
+                object? result = method.Invoke(target, invokeArgs);
+                if (result is Task<McpToolResponse> task)
+                    return await task;
+                if (result is McpToolResponse response)
+                    return response;
 
-            return new McpToolResponse($"Tool '{method.Name}' did not return a response.", isError: true);
+                return new McpToolResponse($"Tool '{method.Name}' did not return a response.", isError: true);
+            }
+            catch (Exception ex)
+            {
+                Exception cause = ex;
+                if (ex is TargetInvocationException invocation &&
+                    invocation.InnerException is Exception innerException)
+                {
+                    cause = innerException;
+                }
+
+                Debug.LogException(cause, $"MCP tool '{method.Name}' failed.");
+                return new McpToolResponse(
+                    $"Tool '{method.Name}' failed: {cause.GetBaseException().Message}",
+                    isError: true);
+            }
         }
 
         private static bool TryGetArgument(JsonElement arguments, ParameterInfo parameter, out JsonElement value)

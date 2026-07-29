@@ -669,6 +669,18 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.Text($"Multi-Draw Calls: {stats.MultiDrawCalls:N0}");
         ImGui.Text($"Triangles Rendered: {stats.TrianglesRendered:N0}");
 
+        RenderProfilerRendererStateData rendererState = stats.RenderProfilerV2.RendererState;
+        string capabilityStatus = !rendererState.AdvancedPipelineCapabilityEvaluated
+            ? "Not evaluated"
+            : rendererState.AdvancedPipelineSupported
+                ? "Supported"
+                : "Unavailable";
+        ImGui.Separator();
+        ImGui.Text("Advanced Pipeline:");
+        ImGui.Text($"  Requested: {rendererState.AdvancedPipelineMode} | Effective: {rendererState.AdvancedPipelineEffectiveKind}");
+        ImGui.Text($"  Capability: {capabilityStatus} | Rejection: {rendererState.AdvancedPipelineRejectionReason}");
+        ImGui.TextWrapped($"  Encodings: {rendererState.AdvancedPipelineCapabilities}");
+
         FrameLifecycleTelemetryData lifecycle = stats.FrameLifecycle;
         ImGui.Separator();
         ImGui.Text("Frame Lifecycle:");

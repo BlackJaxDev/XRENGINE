@@ -25,7 +25,7 @@ public sealed class AmbientOcclusionModeSelectionTests
     }
 
     [TestCase(typeof(DefaultRenderPipeline))]
-    [TestCase(typeof(DefaultRenderPipeline2))]
+    [TestCase(typeof(AdvancedRenderPipeline))]
     public void AmbientOcclusionSelector_UsesCanonicalLabels(Type pipelineType)
     {
         string[] labels = InvokeBuildAmbientOcclusionTypeOptions(pipelineType)

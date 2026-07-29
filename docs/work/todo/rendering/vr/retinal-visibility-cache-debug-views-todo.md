@@ -293,7 +293,8 @@ Acceptance criteria:
 
 ## Phase 8 - Validation Matrix
 
-- [ ] Validate `DesktopMono` sequential RVC debug output.
+- [ ] Validate independent desktop output alongside sequential per-eye RVC
+  debug output.
 - [ ] Validate OpenXR/OpenVR stereo `SequentialViews`.
 - [ ] Validate OpenXR Vulkan `SinglePassStereo`, including true stereo/layered
   and compatibility-path reporting where applicable.

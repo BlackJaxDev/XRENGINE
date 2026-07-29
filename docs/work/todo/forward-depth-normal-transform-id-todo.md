@@ -2,7 +2,7 @@
 
 Last Updated: 2026-04-27
 Current Status: captured from investigation; implementation not started.
-Scope: `DefaultRenderPipeline`, `DefaultRenderPipeline2`, forward depth-normal prepass FBOs, prepass shaders, generated vertex shader interface trimming, and depth-normal material variants.
+Scope: `DefaultRenderPipeline`, `AdvancedRenderPipeline`, forward depth-normal prepass FBOs, prepass shaders, generated vertex shader interface trimming, and depth-normal material variants.
 
 ## Current Problem
 
@@ -68,7 +68,7 @@ Outcome: the shared forward prepass can write the main transform ID texture with
 - [ ] Attach it at the selected prepass color attachment location.
 - [ ] Keep the merge bind path clearing disabled: `clearColor = false`, `clearDepth = false`, `clearStencil = false`.
 - [ ] Verify the deferred GBuffer clear still initializes the main `TransformId` texture before deferred and forward prepass work.
-- [ ] Mirror the change in `DefaultRenderPipeline2` if V2 remains present.
+- [ ] Mirror the change in `AdvancedRenderPipeline` if V2 remains present.
 
 Acceptance criteria:
 

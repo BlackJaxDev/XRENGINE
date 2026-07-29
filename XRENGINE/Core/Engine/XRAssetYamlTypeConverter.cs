@@ -162,8 +162,13 @@ namespace XREngine
 
     public class XRAssetDeserializer : INodeDeserializer
     {
+        private const int MaximumNestedAssetReplayDepth = 128;
+
         [ThreadStatic]
         private static int _deserializeDepth;
+
+        [ThreadStatic]
+        private static int _pendingInitialInterceptSuppressions;
 
         public bool Deserialize(IParser reader, Type expectedType, Func<IParser, Type, object?> nestedObjectDeserializer, out object? value, ObjectDeserializer rootDeserializer)
         {
@@ -171,6 +176,19 @@ namespace XREngine
 
             if (!typeof(XRAsset).IsAssignableFrom(expectedType))
             {
+                value = null;
+                return false;
+            }
+
+            // YamlDotNet may wrap the replay parser before invoking the node
+            // deserializer chain, so parser-type detection alone cannot reliably
+            // suppress our first re-entry. Consume a thread-local one-shot first
+            // and clear the parser-local flag too when it is still visible.
+            if (_pendingInitialInterceptSuppressions > 0)
+            {
+                _pendingInitialInterceptSuppressions--;
+                if (reader is PrefixReplayParser pendingReplayParser)
+                    pendingReplayParser.TryConsumeInitialInterceptSuppression();
                 value = null;
                 return false;
             }
@@ -198,10 +216,36 @@ namespace XREngine
             _deserializeDepth++;
             try
             {
-                // XRAssets should always be represented as mappings. If not, fall back immediately.
+                if (_deserializeDepth > MaximumNestedAssetReplayDepth)
+                {
+                    ParsingEvent? current = reader.Current;
+                    Mark start = current?.Start ?? Mark.Empty;
+                    Mark end = current?.End ?? start;
+                    throw new YamlException(
+                        start,
+                        end,
+                        $"XRAsset YAML deserialization exceeded the nested replay limit of " +
+                        $"{MaximumNestedAssetReplayDepth} while resolving '{expectedType.FullName}' " +
+                        $"at {start.Line}:{start.Column}. The asset likely contains a recursive " +
+                        "inline asset mapping or the replay parser failed to advance.");
+                }
+
+                // A few XRAsset types intentionally use converters that encode them as
+                // sequences (AnimationCurve is the common case). Suppress this interceptor
+                // for the delegated read just as we do for mapping replay; otherwise the
+                // nested deserializer re-enters this branch without advancing the parser.
                 if (!reader.Accept<MappingStart>(out _))
                 {
-                    value = nestedObjectDeserializer(reader, expectedType);
+                    int previousSequenceSuppressions = _pendingInitialInterceptSuppressions;
+                    _pendingInitialInterceptSuppressions++;
+                    try
+                    {
+                        value = nestedObjectDeserializer(reader, expectedType);
+                    }
+                    finally
+                    {
+                        _pendingInitialInterceptSuppressions = previousSequenceSuppressions;
+                    }
                     return true;
                 }
 
@@ -213,7 +257,16 @@ namespace XREngine
                     return true;
                 }
 
-                value = nestedObjectDeserializer(deferredParser!, replayType ?? expectedType);
+                int previousSuppressions = _pendingInitialInterceptSuppressions;
+                _pendingInitialInterceptSuppressions++;
+                try
+                {
+                    value = nestedObjectDeserializer(deferredParser!, replayType ?? expectedType);
+                }
+                finally
+                {
+                    _pendingInitialInterceptSuppressions = previousSuppressions;
+                }
                 return true;
             }
             finally

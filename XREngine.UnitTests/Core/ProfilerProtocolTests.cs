@@ -215,6 +215,12 @@ public sealed class ProfilerProtocolTests
                     ActiveStereoMode = "multiview",
                     ActiveSubmissionStrategy = "GpuIndirectZeroReadback",
                     ActiveRenderBackend = "OpenGL",
+                    AdvancedPipelineMode = "Available",
+                    AdvancedPipelineEffectiveKind = "Advanced",
+                    AdvancedPipelineCapabilities = "OpenGL/R32G32UInt/MultiDrawIndirectCount/OpenGlBindlessHandles/OpenGlMemoryBarrier/None",
+                    AdvancedPipelineRejectionReason = "None",
+                    AdvancedPipelineCapabilityEvaluated = true,
+                    AdvancedPipelineSupported = true,
                     ValidationLayersEnabled = false,
                     DebugOutputEnabled = true,
                     GpuTimestampsDenseMode = true,
@@ -654,6 +660,12 @@ public sealed class ProfilerProtocolTests
         rendererState.ActiveStereoMode.ShouldBe("multiview");
         rendererState.ActiveSubmissionStrategy.ShouldBe("GpuIndirectZeroReadback");
         rendererState.ActiveRenderBackend.ShouldBe("OpenGL");
+        rendererState.AdvancedPipelineMode.ShouldBe("Available");
+        rendererState.AdvancedPipelineEffectiveKind.ShouldBe("Advanced");
+        rendererState.AdvancedPipelineCapabilities.ShouldBe("OpenGL/R32G32UInt/MultiDrawIndirectCount/OpenGlBindlessHandles/OpenGlMemoryBarrier/None");
+        rendererState.AdvancedPipelineRejectionReason.ShouldBe("None");
+        rendererState.AdvancedPipelineCapabilityEvaluated.ShouldBeTrue();
+        rendererState.AdvancedPipelineSupported.ShouldBeTrue();
         rendererState.ValidationLayersEnabled.ShouldBeFalse();
         rendererState.DebugOutputEnabled.ShouldBeTrue();
         rendererState.GpuTimestampsDenseMode.ShouldBeTrue();

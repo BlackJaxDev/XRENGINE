@@ -9,7 +9,7 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class AtmosphericScatteringPipelineResourceTests
 {
     [TestCase("DefaultRenderPipeline")]
-    [TestCase("DefaultRenderPipeline2")]
+    [TestCase("AdvancedRenderPipeline")]
     public void Pipeline_DefinesAerialPerspectiveResourcesAndIdentityPredicates(string pipelineName)
     {
         string constants = LoadPipelineFile($"{pipelineName}.cs");
@@ -43,7 +43,6 @@ public sealed class AtmosphericScatteringPipelineResourceTests
     }
 
     [TestCase("DefaultRenderPipeline")]
-    [TestCase("DefaultRenderPipeline2")]
     public void Pipeline_CommandChainRunsAtmosphereBeforeVolumetricFog(string pipelineName)
     {
         string commandChain = LoadPipelineFile($"{pipelineName}.CommandChain.cs");
@@ -61,7 +60,7 @@ public sealed class AtmosphericScatteringPipelineResourceTests
     }
 
     [TestCase("DefaultRenderPipeline")]
-    [TestCase("DefaultRenderPipeline2")]
+    [TestCase("AdvancedRenderPipeline")]
     public void Pipeline_RecreatePredicatesCheckAttachmentIdentity(string pipelineName)
     {
         string source = LoadPipelineFile($"{pipelineName}.cs");
@@ -77,8 +76,8 @@ public sealed class AtmosphericScatteringPipelineResourceTests
 
     private static string LoadPipelineFile(string fileName)
     {
-        string pipelineDirectory = fileName.StartsWith("DefaultRenderPipeline2", StringComparison.Ordinal)
-            ? "Default2"
+        string pipelineDirectory = fileName.StartsWith("AdvancedRenderPipeline", StringComparison.Ordinal)
+            ? "Advanced"
             : "Default";
         return global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType(
             $"XREngine.Runtime.Rendering/Rendering/Pipelines/Types/{pipelineDirectory}/{fileName}");

@@ -9,7 +9,6 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class ForwardDepthPrePassGBufferRestoreTests
 {
     [TestCase("DefaultRenderPipeline")]
-    [TestCase("DefaultRenderPipeline2")]
     public void ForwardDepthPrePass_RestoresDeferredGBufferBeforeLighting(string pipelineName)
     {
         string constants = LoadPipelineFile($"{pipelineName}.cs").Replace("\r\n", "\n");
@@ -55,7 +54,6 @@ public sealed class ForwardDepthPrePassGBufferRestoreTests
     }
 
     [TestCase("DefaultRenderPipeline")]
-    [TestCase("DefaultRenderPipeline2")]
     public void ForwardDepthPrePass_SettingsArePipelineOwnedAndSizeDedicatedTargets(string pipelineName)
     {
         string constants = LoadPipelineFile($"{pipelineName}.cs").Replace("\r\n", "\n");

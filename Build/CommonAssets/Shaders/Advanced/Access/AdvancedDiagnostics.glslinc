@@ -1,0 +1,31 @@
+#ifndef XR_ADVANCED_DIAGNOSTICS_GLSLINC
+#define XR_ADVANCED_DIAGNOSTICS_GLSLINC
+
+#include "AdvancedLayout.glslinc"
+
+#define XR_ADV_DIAGNOSTIC_DRAW 0u
+#define XR_ADV_DIAGNOSTIC_INSTANCE 1u
+#define XR_ADV_DIAGNOSTIC_MESH 2u
+#define XR_ADV_DIAGNOSTIC_MATERIAL 3u
+#define XR_ADV_DIAGNOSTIC_VIEW 4u
+#define XR_ADV_DIAGNOSTIC_LIGHT 5u
+#define XR_ADV_DIAGNOSTIC_SHADOW 6u
+#define XR_ADV_DIAGNOSTIC_TEXTURE 7u
+#define XR_ADV_DIAGNOSTIC_DEFORMATION 8u
+#define XR_ADV_DIAGNOSTIC_GLOBAL_RESOURCE 9u
+#define XR_ADV_DIAGNOSTIC_COUNT 10u
+
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_DIAGNOSTICS) buffer XRAdvancedDiagnosticTable
+{
+    uint counters[];
+} XR_ADV_Diagnostics;
+
+void XR_ADV_RecordOutOfBounds(uint category)
+{
+    if (category < XR_ADV_DIAGNOSTIC_COUNT)
+        atomicAdd(XR_ADV_Diagnostics.counters[category], 1u);
+}
+#endif
+
+#endif

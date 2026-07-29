@@ -9,6 +9,7 @@ namespace XREngine.Scene.Importers.Poiyomi;
 public enum EMaterialConversionOutcome
 {
     Converted,
+    DowngradedToPoiyomiToon,
     GenericFallback,
     Failed,
 }
@@ -189,7 +190,8 @@ public static class MaterialConversionReportBuilder
         PoiyomiMaterialDescriptor? descriptor,
         IReadOnlyList<string> warnings,
         IReadOnlyList<MaterialConversionDiagnostic> diagnostics,
-        EMaterialConversionOutcome outcome)
+        EMaterialConversionOutcome outcome,
+        PoiyomiShaderMatchResult? sourceMatch = null)
     {
         ShaderUiManifest manifest = material.TryGetUberMaterialState(out _, out ShaderUiManifest resolved)
             ? resolved
@@ -287,11 +289,17 @@ public static class MaterialConversionReportBuilder
             MaterialName = material.Name ?? descriptor?.Name ?? Path.GetFileNameWithoutExtension(sourcePath),
             SourceAssetPath = Path.GetFullPath(sourcePath),
             SourceContentSha256 = ComputeSha256(sourcePath),
-            SourceShaderFamily = descriptor is null ? "Unity Shader" : "Poiyomi Toon",
-            SourceShaderVersion = descriptor?.Version.ToString() ?? "unknown",
+            SourceShaderFamily = sourceMatch?.SourceFamily switch
+            {
+                PoiyomiShaderFamily.Pro => "Poiyomi Pro (lossy downgrade input)",
+                PoiyomiShaderFamily.Toon => "Poiyomi Toon",
+                _ => descriptor is null ? "Unity Shader" : "Poiyomi Toon",
+            },
+            SourceShaderVersion = sourceMatch?.Version?.ToString() ?? descriptor?.Version.ToString() ?? "unknown",
             SourceShaderPath = shaderPath,
-            SourceWasLocked = descriptor?.IsLocked ?? false,
-            Outcome = failures.Length > 0 && outcome == EMaterialConversionOutcome.Converted
+            SourceWasLocked = sourceMatch?.IsLocked ?? descriptor?.IsLocked ?? false,
+            Outcome = failures.Length > 0 &&
+                      outcome is EMaterialConversionOutcome.Converted or EMaterialConversionOutcome.DowngradedToPoiyomiToon
                 ? EMaterialConversionOutcome.Failed
                 : outcome,
             GeneratedFeatures = generatedFeatures,

@@ -125,6 +125,7 @@ public static class XREngineEnvironmentVariables
     public const string ProfileRenderScale = "XRE_PROFILE_RENDER_SCALE";
     public const string ShaderCacheMode = "XRE_SHADER_CACHE_MODE";
     public const string TextureCacheMode = "XRE_TEXTURE_CACHE_MODE";
+    public const string TextureStreamingCacheWarmupEnabled = "XRE_TEXTURE_STREAMING_CACHE_WARMUP_ENABLED";
     public const string ProfileCacheMode = "XRE_PROFILE_CACHE_MODE";
     public const string GpuClockPolicy = "XRE_GPU_CLOCK_POLICY";
     public const string ProfilePhase = "XRE_PROFILE_PHASE";
@@ -155,7 +156,7 @@ public static class XREngineEnvironmentVariables
     public const string CpuQueryOcclusionRetestPeriodFrames = "XRE_CPU_QUERY_OCCLUSION_RETEST_PERIOD_FRAMES";
     public const string CpuSoftwareOcclusion = "XRE_CPU_SOC_OCCLUSION";
 
-    public const string UsePipelineV2 = "XRE_USE_PIPELINE_V2";
+    public const string AdvancedRenderPipelineMode = "XRE_ADVANCED_RENDER_PIPELINE_MODE";
     public const string HizCullTrace = "XRE_HIZ_CULL_TRACE";
     public const string DiagVendorUpscale = "XRE_DIAG_VENDOR_UPSCALE";
     public const string DiagQuadBlit = "XRE_DIAG_QUAD_BLIT";

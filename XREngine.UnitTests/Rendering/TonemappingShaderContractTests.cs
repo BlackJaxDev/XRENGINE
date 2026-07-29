@@ -91,10 +91,10 @@ public sealed class TonemappingShaderContractTests
         pipelineSource.ShouldContain("visibilityCondition: IsMobius");
         pipelineSource.ShouldContain("(tonemapping ?? new TonemappingSettings()).SetUniforms(program);");
 
-        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.PostProcessing.cs").Replace("\r\n", "\n");
-        pipeline2Source.ShouldContain("DescribeTonemappingStage(builder.Stage(TonemappingStageKey, \"Tonemapping\").BackedBy<TonemappingSettings>());");
-        pipeline2Source.ShouldContain("visibilityCondition: IsMobius");
-        pipeline2Source.ShouldContain("(tonemapping ?? new TonemappingSettings()).SetUniforms(program);");
+        string advancedPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
+        advancedPipelineSource.ShouldContain("DescribeTonemappingStage(builder.Stage(TonemappingStageKey, \"Tonemapping\").BackedBy<TonemappingSettings>());");
+        advancedPipelineSource.ShouldContain("visibilityCondition: IsMobius");
+        advancedPipelineSource.ShouldContain("(tonemapping ?? new TonemappingSettings()).SetUniforms(program);");
     }
 
     [Test]
@@ -128,9 +128,9 @@ public sealed class TonemappingShaderContractTests
         pipelineSource.ShouldContain("DescribeVignetteStage(builder.Stage(VignetteStageKey, \"Vignette\").BackedBy<VignetteSettings>());");
         pipelineSource.ShouldContain(".IncludeStages(TonemappingStageKey, ColorGradingStageKey, VignetteStageKey);");
 
-        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.PostProcessing.cs").Replace("\r\n", "\n");
-        pipeline2Source.ShouldContain("DescribeVignetteStage(builder.Stage(VignetteStageKey, \"Vignette\").BackedBy<VignetteSettings>());");
-        pipeline2Source.ShouldContain(".IncludeStages(TonemappingStageKey, ColorGradingStageKey, VignetteStageKey);");
+        string advancedPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
+        advancedPipelineSource.ShouldContain("DescribeVignetteStage(builder.Stage(VignetteStageKey, \"Vignette\").BackedBy<VignetteSettings>());");
+        advancedPipelineSource.ShouldContain(".IncludeStages(TonemappingStageKey, ColorGradingStageKey, VignetteStageKey);");
     }
 
     [Test]

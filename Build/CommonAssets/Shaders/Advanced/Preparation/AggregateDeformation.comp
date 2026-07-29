@@ -1,0 +1,480 @@
+#version 450
+
+// One shader invocation covers one vertex in a complete aggregate dispatch
+// family. Job and prefix indirection keep dispatch count independent of the
+// number of compatible renderers.
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+const uint FEATURE_SKINNING = 1u << 0u;
+const uint FEATURE_BLENDSHAPES = 1u << 1u;
+const uint FEATURE_NORMALS = 1u << 2u;
+const uint FEATURE_TANGENTS = 1u << 3u;
+const uint FEATURE_SPILL_INFLUENCES = 1u << 4u;
+const uint FEATURE_MAXIMUM_BLENDSHAPE = 1u << 7u;
+const uint FEATURE_PRECOMPOSED_PALETTE = 1u << 9u;
+
+struct DeformationJob
+{
+    uvec2 Mesh;
+    uvec2 SharedPose;
+    uint SourceVertexOffset;
+    uint CurrentVertexOffset;
+    uint PreviousVertexOffset;
+    uint BoneInfluenceOffset;
+    uint BonePaletteOffset;
+    uint InverseBindOffset;
+    uint BlendshapeWeightOffset;
+    uint BlendshapeShapeOffset;
+    uint VertexFirst;
+    uint VertexCount;
+    uint MeshletFirst;
+    uint MeshletCount;
+    uint BoneCount;
+    uint BlendshapeCount;
+    uint MeshGeneration;
+    uint PoseGeneration;
+    uint PaletteGeneration;
+    uint TopologyGeneration;
+    uvec2 VertexLayoutId;
+    uint Features;
+    uint Precision;
+    uint Order;
+    uint OutputStride;
+};
+
+struct PackedVertex
+{
+    vec3 Position;
+    uint NormalOct;
+    uint TangentOctAndSign;
+    uint TexCoord0Half;
+    uint TexCoord1Half;
+    uint Color0Rgba8;
+    uint Color1Rgba8;
+    uint Custom0;
+    uint SourceVertex;
+    uint Flags;
+    uint Reserved0;
+    uint Reserved1;
+    uint Reserved2;
+    uint Reserved3;
+};
+
+struct SkinInfluence
+{
+    uvec4 Bones;
+    vec4 Weights;
+    uint SpillOffset;
+    uint SpillCount;
+    uvec2 Reserved;
+};
+
+struct SpillInfluence
+{
+    uint Bone;
+    float Weight;
+};
+
+struct ActiveBlendshape
+{
+    uint ShapeIndex;
+    float Weight;
+};
+
+struct BlendshapeRange
+{
+    uint RecordOffset;
+    uint RecordCount;
+    uint AttributeFlags;
+    uint Reserved;
+};
+
+struct BlendshapeRecord
+{
+    uint VertexIndex;
+    uint PositionDelta;
+    uint NormalDelta;
+    uint TangentDelta;
+};
+
+layout(std430, binding = 0) readonly buffer DeformationJobs
+{
+    DeformationJob Jobs[];
+};
+
+layout(std430, binding = 1) readonly buffer GroupedJobIndices
+{
+    uint JobIndices[];
+};
+
+layout(std430, binding = 2) readonly buffer GroupedJobVertexOffsets
+{
+    uint JobVertexOffsets[];
+};
+
+layout(std430, binding = 3) readonly buffer SourceVertices
+{
+    PackedVertex Source[];
+};
+
+layout(std430, binding = 4) readonly buffer SkinInfluences
+{
+    SkinInfluence Influences[];
+};
+
+// Three row-major vec4 rows per palette matrix.
+layout(std430, binding = 5) readonly buffer SkinPaletteRows
+{
+    vec4 PaletteRows[];
+};
+
+// Three row-major vec4 rows per inverse-bind matrix.
+layout(std430, binding = 6) readonly buffer InverseBindRows
+{
+    vec4 BindRows[];
+};
+
+layout(std430, binding = 7) readonly buffer ActiveBlendshapes
+{
+    ActiveBlendshape ActiveShapes[];
+};
+
+layout(std430, binding = 8) readonly buffer BlendshapeDeltas
+{
+    vec4 ShapeDeltas[];
+};
+
+layout(std430, binding = 9) writeonly buffer CurrentDeformedVertices
+{
+    PackedVertex CurrentOutput[];
+};
+
+layout(std430, binding = 10) readonly buffer SpillInfluences
+{
+    SpillInfluence Spill[];
+};
+
+layout(std430, binding = 11) readonly buffer BlendshapeRanges
+{
+    BlendshapeRange ShapeRanges[];
+};
+
+layout(std430, binding = 12) readonly buffer BlendshapeRecords
+{
+    BlendshapeRecord ShapeRecords[];
+};
+
+uniform uint firstGroupedJob;
+uniform uint groupedJobCount;
+uniform uint batchVertexCount;
+
+vec2 signNotZero(vec2 value)
+{
+    return vec2(value.x >= 0.0 ? 1.0 : -1.0,
+                value.y >= 0.0 ? 1.0 : -1.0);
+}
+
+vec3 decodeOct(uint packed)
+{
+    vec2 encoded = unpackSnorm2x16(packed);
+    vec3 value = vec3(encoded, 1.0 - abs(encoded.x) - abs(encoded.y));
+    if (value.z < 0.0)
+        value.xy = (1.0 - abs(value.yx)) * signNotZero(value.xy);
+    return normalize(value);
+}
+
+uint encodeOct(vec3 value)
+{
+    value /= abs(value.x) + abs(value.y) + abs(value.z);
+    vec2 encoded = value.z >= 0.0
+        ? value.xy
+        : (1.0 - abs(value.yx)) * signNotZero(value.xy);
+    return packSnorm2x16(encoded);
+}
+
+vec3 decodeTangentOct(uint packed)
+{
+    int xBits = int(packed & 0xFFFFu);
+    if ((xBits & 0x8000) != 0)
+        xBits |= int(0xFFFF0000u);
+    int yBits = int((packed >> 16u) & 0x7FFFu);
+    if ((yBits & 0x4000) != 0)
+        yBits |= int(0xFFFF8000u);
+
+    vec2 encoded = vec2(
+        float(xBits) * (1.0 / 32767.0),
+        float(yBits) * (1.0 / 16383.0));
+    vec3 value = vec3(
+        encoded,
+        1.0 - abs(encoded.x) - abs(encoded.y));
+    if (value.z < 0.0)
+        value.xy = (1.0 - abs(value.yx)) * signNotZero(value.xy);
+    return normalize(value);
+}
+
+uint encodeTangentOct(vec3 value, uint signBit)
+{
+    value /= abs(value.x) + abs(value.y) + abs(value.z);
+    vec2 encoded = value.z >= 0.0
+        ? value.xy
+        : (1.0 - abs(value.yx)) * signNotZero(value.xy);
+    int xBits = int(round(clamp(encoded.x, -1.0, 1.0) * 32767.0));
+    int yBits = int(round(clamp(encoded.y, -1.0, 1.0) * 16383.0));
+    return (uint(xBits) & 0xFFFFu) |
+           ((uint(yBits) & 0x7FFFu) << 16u) |
+           signBit;
+}
+
+uint resolveGroupedJob(uint flattenedVertex)
+{
+    uint low = firstGroupedJob;
+    uint high = firstGroupedJob + groupedJobCount;
+    while (low < high)
+    {
+        uint middle = low + ((high - low) >> 1u);
+        uint start = JobVertexOffsets[middle];
+        uint jobIndex = JobIndices[middle];
+        uint end = start + Jobs[jobIndex].VertexCount;
+        if (flattenedVertex < start)
+            high = middle;
+        else if (flattenedVertex >= end)
+            low = middle + 1u;
+        else
+            return middle;
+    }
+    return firstGroupedJob + groupedJobCount;
+}
+
+vec3 transformPointRows(uint rowOffset, vec3 value)
+{
+    vec4 point = vec4(value, 1.0);
+    return vec3(
+        dot(PaletteRows[rowOffset + 0u], point),
+        dot(PaletteRows[rowOffset + 1u], point),
+        dot(PaletteRows[rowOffset + 2u], point));
+}
+
+vec3 transformDirectionRows(uint rowOffset, vec3 value)
+{
+    return vec3(
+        dot(PaletteRows[rowOffset + 0u].xyz, value),
+        dot(PaletteRows[rowOffset + 1u].xyz, value),
+        dot(PaletteRows[rowOffset + 2u].xyz, value));
+}
+
+vec3 inverseBindPoint(uint rowOffset, vec3 value)
+{
+    vec4 point = vec4(value, 1.0);
+    return vec3(
+        dot(BindRows[rowOffset + 0u], point),
+        dot(BindRows[rowOffset + 1u], point),
+        dot(BindRows[rowOffset + 2u], point));
+}
+
+vec3 inverseBindDirection(uint rowOffset, vec3 value)
+{
+    return vec3(
+        dot(BindRows[rowOffset + 0u].xyz, value),
+        dot(BindRows[rowOffset + 1u].xyz, value),
+        dot(BindRows[rowOffset + 2u].xyz, value));
+}
+
+void accumulateBone(
+    DeformationJob job,
+    uint bone,
+    float weight,
+    vec3 position,
+    vec3 normal,
+    vec3 tangent,
+    inout vec3 outputPosition,
+    inout vec3 outputNormal,
+    inout vec3 outputTangent,
+    inout float totalWeight)
+{
+    if (weight <= 0.0 || bone >= job.BoneCount)
+        return;
+
+    uint paletteRows = (job.BonePaletteOffset + bone) * 3u;
+    bool precomposed =
+        (job.Features & FEATURE_PRECOMPOSED_PALETTE) != 0u;
+    uint bindRows = (job.InverseBindOffset + bone) * 3u;
+    vec3 boundPosition = precomposed
+        ? position
+        : inverseBindPoint(bindRows, position);
+    vec3 boundNormal = precomposed
+        ? normal
+        : inverseBindDirection(bindRows, normal);
+    vec3 boundTangent = precomposed
+        ? tangent
+        : inverseBindDirection(bindRows, tangent);
+    outputPosition += transformPointRows(paletteRows, boundPosition) * weight;
+    outputNormal += transformDirectionRows(paletteRows, boundNormal) * weight;
+    outputTangent += transformDirectionRows(paletteRows, boundTangent) * weight;
+    totalWeight += weight;
+}
+
+void applySparseBlendshapes(
+    DeformationJob job,
+    uint localVertex,
+    inout vec3 position,
+    inout vec3 normal,
+    inout vec3 tangent)
+{
+    if ((job.Features & FEATURE_BLENDSHAPES) == 0u)
+        return;
+
+    vec3 accumulatedPosition = vec3(0.0);
+    vec3 accumulatedNormal = vec3(0.0);
+    vec3 accumulatedTangent = vec3(0.0);
+    for (uint activeIndex = 0u;
+         activeIndex < job.BlendshapeCount;
+         ++activeIndex)
+    {
+        ActiveBlendshape activeShape =
+            ActiveShapes[job.BlendshapeWeightOffset + activeIndex];
+        float weight = activeShape.Weight;
+        if (abs(weight) <= 0.000001)
+            continue;
+
+        BlendshapeRange range =
+            ShapeRanges[
+                job.BlendshapeShapeOffset +
+                activeShape.ShapeIndex];
+        uint low = range.RecordOffset;
+        uint high = low + range.RecordCount;
+        uint recordIndex = high;
+        while (low < high)
+        {
+            uint middle = low + ((high - low) >> 1u);
+            uint candidateVertex =
+                ShapeRecords[middle].VertexIndex;
+            if (candidateVertex < localVertex)
+                low = middle + 1u;
+            else if (candidateVertex > localVertex)
+                high = middle;
+            else
+            {
+                recordIndex = middle;
+                break;
+            }
+        }
+        if (recordIndex >=
+            range.RecordOffset + range.RecordCount)
+        {
+            continue;
+        }
+
+        BlendshapeRecord record = ShapeRecords[recordIndex];
+        vec3 positionDelta =
+            ShapeDeltas[record.PositionDelta].xyz * weight;
+        vec3 normalDelta =
+            ShapeDeltas[record.NormalDelta].xyz * weight;
+        vec3 tangentDelta =
+            ShapeDeltas[record.TangentDelta].xyz * weight;
+        if ((job.Features & FEATURE_MAXIMUM_BLENDSHAPE) != 0u)
+        {
+            accumulatedPosition = max(accumulatedPosition, positionDelta);
+            accumulatedNormal = max(accumulatedNormal, normalDelta);
+            accumulatedTangent = max(accumulatedTangent, tangentDelta);
+        }
+        else
+        {
+            accumulatedPosition += positionDelta;
+            accumulatedNormal += normalDelta;
+            accumulatedTangent += tangentDelta;
+        }
+    }
+
+    position += accumulatedPosition;
+    normal += accumulatedNormal;
+    tangent += accumulatedTangent;
+}
+
+void main()
+{
+    uint flattenedVertex = gl_GlobalInvocationID.x;
+    if (flattenedVertex >= batchVertexCount)
+        return;
+
+    uint groupedJob = resolveGroupedJob(flattenedVertex);
+    if (groupedJob >= firstGroupedJob + groupedJobCount)
+        return;
+
+    uint jobIndex = JobIndices[groupedJob];
+    DeformationJob job = Jobs[jobIndex];
+    uint localVertex = flattenedVertex - JobVertexOffsets[groupedJob];
+    uint sourceIndex =
+        job.SourceVertexOffset + job.VertexFirst + localVertex;
+    PackedVertex outputVertex = Source[sourceIndex];
+    vec3 position = outputVertex.Position;
+    vec3 normal = decodeOct(outputVertex.NormalOct);
+    vec3 tangent = decodeTangentOct(
+        outputVertex.TangentOctAndSign);
+
+    // Canonical cross-backend order: authored blendshapes modify bind-space
+    // attributes before the resulting vertex is skinned.
+    applySparseBlendshapes(job, localVertex, position, normal, tangent);
+
+    if ((job.Features & FEATURE_SKINNING) != 0u)
+    {
+        SkinInfluence influence =
+            Influences[job.BoneInfluenceOffset + localVertex];
+        vec3 skinnedPosition = vec3(0.0);
+        vec3 skinnedNormal = vec3(0.0);
+        vec3 skinnedTangent = vec3(0.0);
+        float totalWeight = 0.0;
+        for (uint core = 0u; core < 4u; ++core)
+        {
+            accumulateBone(
+                job,
+                influence.Bones[core],
+                influence.Weights[core],
+                position,
+                normal,
+                tangent,
+                skinnedPosition,
+                skinnedNormal,
+                skinnedTangent,
+                totalWeight);
+        }
+
+        if ((job.Features & FEATURE_SPILL_INFLUENCES) != 0u)
+        {
+            for (uint spill = 0u; spill < influence.SpillCount; ++spill)
+            {
+                SpillInfluence extra =
+                    Spill[influence.SpillOffset + spill];
+                accumulateBone(
+                    job,
+                    extra.Bone,
+                    extra.Weight,
+                    position,
+                    normal,
+                    tangent,
+                    skinnedPosition,
+                    skinnedNormal,
+                    skinnedTangent,
+                    totalWeight);
+            }
+        }
+
+        if (totalWeight > 0.0)
+        {
+            position = skinnedPosition / totalWeight;
+            normal = normalize(skinnedNormal);
+            tangent = normalize(skinnedTangent);
+        }
+    }
+
+    outputVertex.Position = position;
+    if ((job.Features & FEATURE_NORMALS) != 0u)
+        outputVertex.NormalOct = encodeOct(normal);
+    if ((job.Features & FEATURE_TANGENTS) != 0u)
+    {
+        uint signBit = outputVertex.TangentOctAndSign & 0x80000000u;
+        outputVertex.TangentOctAndSign =
+            encodeTangentOct(tangent, signBit);
+    }
+    outputVertex.SourceVertex = sourceIndex;
+    CurrentOutput[job.CurrentVertexOffset + localVertex] = outputVertex;
+}

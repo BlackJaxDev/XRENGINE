@@ -20,7 +20,7 @@ public enum EDepthNormalPrePassResolution
 
 public interface IForwardDepthNormalPrePassSettings
 {
-    bool ForwardDepthPrePassEnabled { get; }
-    bool ForwardPrePassSharesGBufferTargets { get; }
-    EDepthNormalPrePassResolution ForwardDepthNormalPrePassResolution { get; }
+    bool ForwardDepthPrePassEnabled { get; set; }
+    bool ForwardPrePassSharesGBufferTargets { get; set; }
+    EDepthNormalPrePassResolution ForwardDepthNormalPrePassResolution { get; set; }
 }

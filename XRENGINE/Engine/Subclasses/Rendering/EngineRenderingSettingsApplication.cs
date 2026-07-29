@@ -24,6 +24,10 @@ namespace XREngine
 {
     public static partial class EngineRenderingSettingsApplication
     {
+            private static readonly Func<RenderPipelineRequest, RenderPipeline>
+                RenderPipelineFactory =
+                    static request => NewRenderPipeline(request);
+
             static EngineRenderingSettingsApplication()
                 => RuntimeEngine.Rendering.SettingChanged += ApplyRuntimeRenderSettingChange;
 
@@ -34,6 +38,7 @@ namespace XREngine
             /// </summary>
             internal static void InitializeSettingsApplicationBoundary()
             {
+                RuntimeEngine.Rendering.SetRenderPipelineFactory(RenderPipelineFactory);
             }
 
             private static void ApplyRuntimeRenderSettingChange(string? propertyName)
@@ -114,7 +119,9 @@ namespace XREngine
                     ApplyIntelXessPreference();
                 }
 
-                if (applyAll || IsRvcPipelineSetting(propertyName))
+                if (applyAll ||
+                    propertyName == nameof(EngineSettings.AdvancedRenderPipelineMode) ||
+                    IsRvcPipelineSetting(propertyName))
                     ApplyRenderPipelinePreference();
             }
 

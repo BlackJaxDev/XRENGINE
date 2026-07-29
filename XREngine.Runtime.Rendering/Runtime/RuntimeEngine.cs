@@ -5,6 +5,7 @@ using XREngine.Rendering.Shadows;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 using XREngine.Data.Core;
+using XREngine.Data.Rendering;
 using XREngine.Scene.Physics;
 
 namespace XREngine;
@@ -228,6 +229,7 @@ public static partial class RuntimeEngine
         private static EngineSettings _settings = new();
         private static EngineSettings _globalDefaultSettings = _settings;
         private static EngineSettings? _projectDefaultSettings;
+        private static Func<RenderPipelineRequest, RenderPipeline>? _renderPipelineFactory;
         private static RuntimeRenderingState StateData { get; } = new();
         public static RuntimeBvhStats BvhStats { get; } = new();
         public static event Action? SettingsChanged;
@@ -401,8 +403,43 @@ public static partial class RuntimeEngine
             public const string ContactShadowJitterStrength = "ContactShadowJitterStrength";
         }
 
+        /// <summary>
+        /// Registers the application-owned purpose-aware render-pipeline factory.
+        /// Without one, runtime-only hosts use the legacy standard pipeline for desktop/capture
+        /// and the RVC shell for OpenXR eyes.
+        /// </summary>
+        public static void SetRenderPipelineFactory(
+            Func<RenderPipelineRequest, RenderPipeline> factory)
+            => Volatile.Write(
+                ref _renderPipelineFactory,
+                factory ?? throw new ArgumentNullException(nameof(factory)));
+
         public static RenderPipeline NewRenderPipeline(bool stereo = false)
-            => new DefaultRenderPipeline(stereo);
+            => NewRenderPipeline(RenderPipelineRequest.DesktopScene(stereo));
+
+        /// <summary>
+        /// Creates a render pipeline for an explicitly owned output.
+        /// </summary>
+        public static RenderPipeline NewRenderPipeline(RenderPipelineRequest request)
+            => Volatile.Read(ref _renderPipelineFactory)?.Invoke(request)
+                ?? request.Purpose switch
+                {
+                    ERenderPipelinePurpose.OpenXrEye =>
+                        new RvcRenderPipeline(request.Stereo, Settings.RvcPipelineMode),
+                    ERenderPipelinePurpose.DesktopScene or
+                    ERenderPipelinePurpose.OffscreenCapture =>
+                        new DefaultRenderPipeline(request.Stereo),
+                    _ => throw new ArgumentOutOfRangeException(
+                        nameof(request),
+                        request,
+                        "Unknown render pipeline purpose."),
+                };
+
+        public static RenderPipeline NewOpenXrEyeRenderPipeline(bool stereo)
+            => NewRenderPipeline(RenderPipelineRequest.OpenXrEye(stereo));
+
+        public static RenderPipeline NewOffscreenCaptureRenderPipeline(bool stereo = false)
+            => NewRenderPipeline(RenderPipelineRequest.OffscreenCapture(stereo));
 
         public static VisualScene3D NewVisualScene()
             => RuntimeRenderingHostServices.Factories.CreateVisualScene();

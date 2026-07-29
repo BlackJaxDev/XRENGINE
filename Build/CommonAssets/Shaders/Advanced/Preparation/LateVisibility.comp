@@ -1,0 +1,145 @@
+#version 450
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+const uint FLAG_LATE_VISIBLE = 1u << 7u;
+const uint FLAG_OCCLUDED = 1u << 8u;
+
+struct VisibilityCandidate
+{
+    uvec2 Draw;
+    vec4 BoundsSphere;
+    vec4 BoundsMin;
+    vec4 BoundsMax;
+    uvec2 ViewMask;
+    uint BvhLeaf;
+    uint Flags;
+};
+
+struct VisibilityState
+{
+    uvec2 Draw;
+    uvec2 LastVisibleFrame;
+    uvec2 LastTestedFrame;
+    uint DepthPyramidGeneration;
+    uint Flags;
+};
+
+struct DrawIndexedIndirect
+{
+    uint IndexCount;
+    uint InstanceCount;
+    uint FirstIndex;
+    int VertexOffset;
+    uint FirstInstance;
+};
+
+layout(std430, binding = 0) readonly buffer Candidates
+{
+    VisibilityCandidate CandidateRows[];
+};
+
+layout(std430, binding = 1) buffer PersistentVisibility
+{
+    VisibilityState PersistentRows[];
+};
+
+layout(std430, binding = 2) readonly buffer DeferredCandidates
+{
+    uint DeferredDrawIndices[];
+};
+
+layout(std430, binding = 3) writeonly buffer LateArguments
+{
+    DrawIndexedIndirect LateDraws[];
+};
+
+layout(std430, binding = 4) buffer GpuCounters
+{
+    uint EarlyCount;
+    uint DeferredCount;
+    uint LateCount;
+    uint ReservedCount;
+};
+
+layout(std430, binding = 5) readonly buffer SourceArguments
+{
+    DrawIndexedIndirect SourceDraws[];
+};
+
+layout(std430, binding = 6) writeonly buffer LateVisiblePayloadIndices
+{
+    uint LateVisibleIndices[];
+};
+
+layout(binding = 0) uniform sampler2D CurrentDepthPyramid;
+
+uniform mat4 ViewProjection;
+uniform uvec2 FrameId;
+uniform uint PersistentStateBase;
+uniform uint CurrentDepthPyramidGeneration;
+uniform uint DepthZeroToOne;
+uniform uint ReversedDepth;
+
+bool currentDepthOccludes(vec4 sphere)
+{
+    vec4 clip = ViewProjection * vec4(sphere.xyz, 1.0);
+    if (clip.w <= 0.0)
+        return false;
+    vec3 ndc = clip.xyz / clip.w;
+    vec2 uv = ndc.xy * 0.5 + 0.5;
+    if (any(lessThan(uv, vec2(0.0))) ||
+        any(greaterThan(uv, vec2(1.0))))
+        return false;
+
+    float projectedRadius =
+        sphere.w / max(abs(clip.w), 0.00001);
+    float diameterPixels =
+        projectedRadius *
+        float(max(textureSize(CurrentDepthPyramid, 0).x,
+                  textureSize(CurrentDepthPyramid, 0).y));
+    float mip = clamp(
+        floor(log2(max(diameterPixels, 1.0))),
+        0.0,
+        float(textureQueryLevels(CurrentDepthPyramid) - 1));
+    float currentDepth =
+        textureLod(CurrentDepthPyramid, uv, mip).r;
+    float centerDepth = DepthZeroToOne != 0u
+        ? ndc.z
+        : ndc.z * 0.5 + 0.5;
+    float nearestDepth = ReversedDepth != 0u
+        ? centerDepth + projectedRadius
+        : centerDepth - projectedRadius;
+    return ReversedDepth != 0u
+        ? nearestDepth < currentDepth
+        : nearestDepth > currentDepth;
+}
+
+void main()
+{
+    uint deferredIndex = gl_GlobalInvocationID.x;
+    // DeferredCount is a GPU-written value. Dispatch may cover the configured
+    // capacity; excess invocations return without exposing the count to CPU.
+    if (deferredIndex >= DeferredCount)
+        return;
+
+    uint candidateIndex = DeferredDrawIndices[deferredIndex];
+    VisibilityCandidate candidate = CandidateRows[candidateIndex];
+    uint persistentIndex =
+        PersistentStateBase + candidate.Draw.x - 1u;
+    VisibilityState state = PersistentRows[persistentIndex];
+    state.DepthPyramidGeneration = CurrentDepthPyramidGeneration;
+    if (!currentDepthOccludes(candidate.BoundsSphere))
+    {
+        uint outputIndex = atomicAdd(LateCount, 1u);
+        LateDraws[outputIndex] = SourceDraws[candidateIndex];
+        LateVisibleIndices[outputIndex] = candidateIndex;
+        state.LastVisibleFrame = FrameId;
+        state.Flags = FLAG_LATE_VISIBLE;
+    }
+    else
+    {
+        state.Flags = FLAG_OCCLUDED;
+    }
+    PersistentRows[persistentIndex] = state;
+}

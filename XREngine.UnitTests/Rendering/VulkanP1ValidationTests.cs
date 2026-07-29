@@ -214,7 +214,7 @@ public sealed class VulkanP1ValidationTests
         string renderToWindowSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderToWindow.cs").Replace("\r\n", "\n");
         string temporalSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_TemporalAccumulationPass.cs").Replace("\r\n", "\n");
         string defaultPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
-        string defaultPipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
+        string advancedPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.cs").Replace("\r\n", "\n");
         string pushMainAttributes = SliceBetween(
             renderStateSource,
             "public StateObject PushMainAttributes",
@@ -298,7 +298,7 @@ public sealed class VulkanP1ValidationTests
         renderToWindowSource.ShouldContain("renderer.TryGetExternalSwapchainTargetRegion(out BoundingRectangle externalRegion)\n            ? externalRegion\n            : useBoundOutputFbo");
         temporalSource.ShouldContain("RuntimeRenderingHostServices.FrameTiming.CurrentRenderer as AbstractRenderer\n            ?? AbstractRenderer.Current");
         defaultPipelineSource.ShouldContain("RuntimeRenderingHostServices.FrameTiming.CurrentRenderer as AbstractRenderer\n            ?? AbstractRenderer.Current");
-        defaultPipeline2Source.ShouldContain("RuntimeRenderingHostServices.FrameTiming.CurrentRenderer as AbstractRenderer\n            ?? AbstractRenderer.Current");
+        advancedPipelineSource.ShouldContain("RuntimeRenderingHostServices.FrameTiming.CurrentRenderer as AbstractRenderer\n            ?? AbstractRenderer.Current");
     }
 
     [Test]

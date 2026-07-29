@@ -74,8 +74,10 @@ namespace XREngine.Components.Capture.Lights
                 if (viewport is null)
                     continue;
 
+                viewport.PipelineRequest = RenderPipelineRequest.OffscreenCapture();
                 viewport.ApplyCapturePolicy(CaptureRenderPolicy);
-                viewport.RenderPipeline ??= RuntimeEngine.Rendering.NewRenderPipeline();
+                viewport.RenderPipeline ??=
+                    RuntimeEngine.Rendering.NewOffscreenCaptureRenderPipeline();
                 viewport.SetRenderPipelineFromCamera = false;
             }
         }

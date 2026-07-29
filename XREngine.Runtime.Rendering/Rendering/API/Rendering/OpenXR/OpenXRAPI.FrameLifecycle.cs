@@ -779,9 +779,13 @@ public unsafe partial class OpenXRAPI
                 GetOpenXrSwapchainWidth(1),
                 GetOpenXrSwapchainHeight(1));
 
-            // OpenXR must not share render pipeline *instances* with the desktop viewport.
-            // But it still needs a matching pipeline type/config to avoid missing lighting/post steps.
+            // OpenXR owns dedicated RVC pipeline instances. The desktop pipeline remains the
+            // source of shared visual-feature configuration, not the eye output architecture.
             var sourcePipeline = sourceViewport?.RenderPipeline ?? baseCamera.GetOrCreateRenderPipeline();
+            RenderPipeline leftEyePostProcessSource =
+                _openXrLeftEyeCamera?.RenderPipeline ?? sourcePipeline;
+            RenderPipeline rightEyePostProcessSource =
+                _openXrRightEyeCamera?.RenderPipeline ?? sourcePipeline;
 
             XRViewport collectViewport = _openXrLeftViewport!;
             RenderPipeline leftEyePipeline;
@@ -857,6 +861,23 @@ public unsafe partial class OpenXRAPI
                 rightPipelineInstance);
 
             Volatile.Write(ref _pendingXrFrameUsesTrueSinglePassStereo, useTrueSinglePassStereo ? 1 : 0);
+
+            if (!ReferenceEquals(leftEyePostProcessSource, leftEyePipeline))
+            {
+                CopyPostProcessState(
+                    leftEyePostProcessSource,
+                    leftEyePipeline,
+                    _openXrLeftEyeCamera!,
+                    _openXrLeftEyeCamera!);
+            }
+            if (!ReferenceEquals(rightEyePostProcessSource, rightEyePipeline))
+            {
+                CopyPostProcessState(
+                    rightEyePostProcessSource,
+                    rightEyePipeline,
+                    _openXrRightEyeCamera!,
+                    _openXrRightEyeCamera!);
+            }
 
             _openXrLeftEyeCamera!.RenderPipeline = leftEyePipeline;
             _openXrRightEyeCamera!.RenderPipeline = rightEyePipeline;

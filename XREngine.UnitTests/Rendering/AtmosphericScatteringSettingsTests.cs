@@ -51,7 +51,7 @@ public sealed class AtmosphericScatteringSettingsTests
     }
 
     [TestCase(typeof(DefaultRenderPipeline))]
-    [TestCase(typeof(DefaultRenderPipeline2))]
+    [TestCase(typeof(AdvancedRenderPipeline))]
     public void PipelineSchema_ContainsAtmosphericScatteringStage(Type pipelineType)
     {
         var pipeline = (RenderPipeline)Activator.CreateInstance(pipelineType)!;
