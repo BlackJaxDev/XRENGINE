@@ -848,12 +848,30 @@ namespace XREngine
 
         // ── Classification helpers ───────────────────────────────────────
 
-        private static bool IsExternalizableTexture(XRAsset a) => a is XRTexture;
+        private static bool IsExternalizableTexture(XRAsset a)
+            => a is XRTexture && HasThirdPartySourcePath(a);
         private static bool IsExternalizableMaterial(XRAsset a) => a is XRMaterialBase;
         private static bool IsExternalizableSubMesh(XRAsset a) => a is SubMesh;
         private static bool IsExternalizableMesh(XRAsset a) => a is XRMesh;
         private static bool IsExternalizableModel(XRAsset a) => a is Model;
         private static bool IsExternalizableAnimationClip(XRAsset a) => a is AnimationClip;
+
+        /// <summary>
+        /// Imported textures are externalized as native assets while procedural and
+        /// renderer-owned fallback textures remain embedded in their owning material.
+        /// The latter have no third-party source path and must never become part of an
+        /// imported prefab's owned asset closure.
+        /// </summary>
+        private static bool HasThirdPartySourcePath(XRAsset asset)
+            => IsThirdPartySourcePath(asset.OriginalPath)
+            || IsThirdPartySourcePath(asset.FilePath);
+
+        private static bool IsThirdPartySourcePath(string? path)
+            => !string.IsNullOrWhiteSpace(path)
+            && !string.Equals(
+                Path.GetExtension(path),
+                $".{AssetExtension}",
+                StringComparison.OrdinalIgnoreCase);
 
         private static bool IsExternalizable(XRAsset a)
             => IsExternalizableTexture(a)
@@ -973,6 +991,8 @@ namespace XREngine
 
             foreach (XRAsset subAsset in discovered)
             {
+                PreserveThirdPartySourceMetadata(subAsset);
+
                 // Embedded assets typically have SourceAsset == rootAsset. Self-root first so FilePath
                 // reflects this sub-asset's own path, enabling correct reference emission later.
                 if (!ReferenceEquals(subAsset.SourceAsset, subAsset))
@@ -1033,6 +1053,25 @@ namespace XREngine
             // This makes exact serialized-byte comparison meaningful on subsequent imports.
             foreach (XRAsset generatedAsset in generatedAssets)
                 AssignDeterministicEmbeddedAssetIDs(generatedAsset);
+        }
+
+        /// <summary>
+        /// Retains the source authority before replacing <see cref="XRAsset.FilePath"/>
+        /// with the generated native asset path. Deferred texture imports deliberately
+        /// carry only a small placeholder payload, so losing this path would make their
+        /// full-resolution pixels impossible to restore after a native reload.
+        /// </summary>
+        private static void PreserveThirdPartySourceMetadata(XRAsset asset)
+        {
+            if (!string.IsNullOrWhiteSpace(asset.OriginalPath)
+                || !IsThirdPartySourcePath(asset.FilePath))
+            {
+                return;
+            }
+
+            string sourcePath = Path.GetFullPath(asset.FilePath!);
+            asset.OriginalPath = sourcePath;
+            asset.OriginalLastWriteTimeUtc = SafeGetLastWriteTimeUtc(sourcePath);
         }
 
         private static string ReserveUniqueAssetPath(string candidatePath, XRAsset subAsset, HashSet<string> claimedPaths)

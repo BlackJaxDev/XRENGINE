@@ -113,7 +113,11 @@ namespace XREngine.Rendering
         public ShaderVar[] Parameters
         {
             get => _parameters ??= [];
-            set => SetField(ref _parameters, value ?? []);
+            set
+            {
+                if (SetField(ref _parameters, value ?? []))
+                    ResetNameIndexCache();
+            }
         }
 
         protected EventList<XRTexture?> _textures = [];
@@ -140,10 +144,24 @@ namespace XREngine.Rendering
         public T2? Parameter<T2>(string name) where T2 : ShaderVar
         {
             if (_nameIndexCache.TryGetValue(name, out var index))
-                return Parameter<T2>(index);
+            {
+                if (Parameters.IndexInRangeArrayT(index) &&
+                    string.Equals(Parameters[index]?.Name, name, StringComparison.Ordinal))
+                {
+                    return Parameter<T2>(index);
+                }
+
+                // Parameter arrays are exposed for serialization and editor mutation,
+                // so callers can reorder or replace entries without invoking the
+                // property setter. Never let a stale cached index resolve a different
+                // uniform, because Uber resource reconstruction uses this lookup to
+                // decide whether a typed parameter needs to be restored.
+                _nameIndexCache.Remove(name);
+            }
+
             for (var i = 0; i < Parameters.Length; i++)
             {
-                if (Parameters[i].Name == name)
+                if (string.Equals(Parameters[i]?.Name, name, StringComparison.Ordinal))
                 {
                     _nameIndexCache[name] = i;
                     return Parameter<T2>(i);

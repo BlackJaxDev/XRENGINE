@@ -829,6 +829,10 @@ namespace XREngine
                 var tex = new XRTexture2D
                 {
                     FilePath = key.path,
+                    OriginalPath = Path.GetFullPath(key.path),
+                    OriginalLastWriteTimeUtc = File.Exists(key.path)
+                        ? File.GetLastWriteTimeUtc(key.path)
+                        : null,
                     Name = Path.GetFileNameWithoutExtension(key.path),
                     SamplerName = key.samplerName,
                     MagFilter = ETexMagFilter.Linear,

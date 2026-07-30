@@ -10,6 +10,7 @@ using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
+using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Vulkan;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Scene;
@@ -28,6 +29,8 @@ public sealed class UnityPrefabAvatarPrivateIntegrationTests
 
     private IRuntimeShaderServices? _previousShaderServices;
     private IRuntimeRenderingHostServices? _previousRenderingServices;
+    private RendererBackendCatalog? _rendererBackendCatalog;
+    private IDisposable? _rendererBackendRegistrations;
 
     [SetUp]
     public void SetUp()
@@ -36,11 +39,18 @@ public sealed class UnityPrefabAvatarPrivateIntegrationTests
         _previousRenderingServices = RuntimeRenderingHostServices.Current;
         RuntimeShaderServices.Current = new FileBackedRuntimeShaderServices();
         RuntimeRenderingHostServices.Current = RuntimeRenderingBootstrap.CreateEngineHostServices();
+        _rendererBackendCatalog = new RendererBackendCatalog();
+        _rendererBackendRegistrations =
+            BuiltInRendererBackendModules.RegisterAll(_rendererBackendCatalog);
     }
 
     [TearDown]
     public void TearDown()
     {
+        _rendererBackendRegistrations?.Dispose();
+        _rendererBackendCatalog?.Dispose();
+        _rendererBackendRegistrations = null;
+        _rendererBackendCatalog = null;
         RuntimeShaderServices.Current = _previousShaderServices;
         RuntimeRenderingHostServices.Current = _previousRenderingServices!;
     }
@@ -163,7 +173,7 @@ public sealed class UnityPrefabAvatarPrivateIntegrationTests
 
     [Test]
     [Category("PrivateIntegration")]
-    public void Jax2026_ExternalizedNativePrefabReloads()
+    public async Task Jax2026_ExternalizedNativePrefabReloads()
     {
         string? nativeAssetPath =
             Environment.GetEnvironmentVariable("XRE_UNITY_AVATAR_NATIVE_ASSET");
@@ -173,27 +183,233 @@ public sealed class UnityPrefabAvatarPrivateIntegrationTests
                 "Externalized private Unity avatar output is unavailable. Set XRE_UNITY_AVATAR_NATIVE_ASSET to the generated jax2026.asset to run this opt-in integration test.");
         }
 
+        string? nativeMetadataPath =
+            Environment.GetEnvironmentVariable("XRE_UNITY_AVATAR_NATIVE_METADATA");
+        if (string.IsNullOrWhiteSpace(nativeMetadataPath) ||
+            !Directory.Exists(nativeMetadataPath))
+        {
+            Assert.Ignore(
+                "Externalized private Unity avatar metadata is unavailable. Set XRE_UNITY_AVATAR_NATIVE_METADATA to the metadata root paired with XRE_UNITY_AVATAR_NATIVE_ASSET.");
+        }
+
         string gameAssetsPath = Directory.GetParent(
             Path.GetDirectoryName(Path.GetFullPath(nativeAssetPath))!)!.FullName;
-        var manager = new AssetManager
-        {
-            MonitorGameAssetsForChanges = false,
-            GameAssetsPath = gameAssetsPath,
-            GameCachePath = Path.Combine(gameAssetsPath, ".test-cache"),
-        };
+        string gameCachePath = Path.Combine(
+            Path.GetDirectoryName(gameAssetsPath)!,
+            ".test-cache");
+        bool previousMonitorSetting = Engine.Assets.MonitorGameAssetsForChanges;
+        string previousAssetsPath = Engine.Assets.GameAssetsPath;
+        string? previousMetadataPath = Engine.Assets.GameMetadataPath;
+        string? previousCachePath = Engine.Assets.GameCachePath;
         try
         {
-            XRPrefabSource prefab =
-                manager.LoadImmediate<XRPrefabSource>(nativeAssetPath).ShouldNotBeNull();
-            prefab.RootNode.ShouldNotBeNull();
+            Engine.Assets.MonitorGameAssetsForChanges = false;
+            Engine.Assets.GameAssetsPath = gameAssetsPath;
+            Engine.Assets.GameMetadataPath = nativeMetadataPath;
+            Engine.Assets.GameCachePath = gameCachePath;
+            ClearAssetCaches();
+
+            XRPrefabSource prefab = (await Engine.Assets
+                .LoadPrefabWithReferencesAsync(
+                    nativeAssetPath,
+                    bypassJobThread: true))
+                .ShouldNotBeNull();
+            SceneNode templateRoot = prefab.RootNode.ShouldNotBeNull();
             prefab.UnityImportManifest.ShouldNotBeNull();
-            EnumerateNodes(prefab.RootNode).Count().ShouldBe(883);
+            SceneNode[] templateNodes = EnumerateNodes(templateRoot).ToArray();
+            templateNodes.Length.ShouldBe(883);
+            templateNodes.SelectMany(static node => node.Components)
+                .OfType<ModelComponent>()
+                .Count()
+                .ShouldBe(52);
+
+            Model[] nativeModels =
+            [
+                .. templateNodes
+                    .SelectMany(static node => node.GetComponents<ModelComponent>())
+                    .Select(static component => component.Model)
+                    .Where(static model => model is not null)
+                    .Cast<Model>()
+                    .DistinctBy(static model => model.ID),
+            ];
+            SubMesh[] nativeSubMeshes =
+            [
+                .. nativeModels
+                    .SelectMany(static model => model.Meshes)
+                    .DistinctBy(static mesh => mesh.ID),
+            ];
+            XRMaterial[] nativeMaterials =
+            [
+                .. nativeSubMeshes
+                    .SelectMany(static mesh => mesh.LODs)
+                    .Select(static lod => lod.Material)
+                    .Where(static material => material is not null)
+                    .Cast<XRMaterial>()
+                    .DistinctBy(static material => material.ID),
+            ];
+            XRTexture2D[] nativeTextures =
+            [
+                .. nativeMaterials
+                    .SelectMany(static material => material.Textures)
+                    .OfType<XRTexture2D>()
+                    .DistinctBy(static texture => texture.ID),
+            ];
+            XRTexture2D[] importedSourceTextures =
+            [
+                .. nativeTextures.Where(static texture =>
+                    !string.IsNullOrWhiteSpace(texture.OriginalPath) &&
+                    !string.Equals(
+                        Path.GetExtension(texture.OriginalPath),
+                        ".asset",
+                        StringComparison.OrdinalIgnoreCase)),
+            ];
+            TestContext.Progress.WriteLine(
+                $"Native jax2026 references {nativeModels.Length} models, {nativeSubMeshes.Length} submeshes, {nativeMaterials.Length} materials, {nativeTextures.Length} total texture resources, and {importedSourceTextures.Length} imported source textures.");
+            importedSourceTextures.Length.ShouldBe(
+                112,
+                $"Native closure loaded {nativeModels.Length} models, {nativeSubMeshes.Length} submeshes, and {nativeMaterials.Length} materials.");
+            importedSourceTextures.ShouldAllBe(static texture =>
+                !string.IsNullOrWhiteSpace(texture.OriginalPath) &&
+                File.Exists(texture.OriginalPath));
+            importedSourceTextures.ShouldAllBe(static texture =>
+                string.Equals(
+                    Path.GetExtension(texture.FilePath),
+                    ".asset",
+                    StringComparison.OrdinalIgnoreCase));
+
+            List<string> nativeVariantFailures = [];
+            int nativeUberVariantCount = 0;
+            foreach (XRMaterial material in nativeMaterials)
+            {
+                if (!material.TryGetUberMaterialState(out _, out _))
+                    continue;
+
+                nativeUberVariantCount++;
+                try
+                {
+                    material.EnsureUberStateInitialized();
+                    if (!material.PrepareUberVariantImmediately())
+                    {
+                        nativeVariantFailures.Add(
+                            $"{material.Name ?? "<unnamed>"}: {material.UberVariantStatus.FailureReason ?? "variant preparation returned false"}");
+                        continue;
+                    }
+
+                    XRShader fragment = material.GetShader(EShaderType.Fragment).ShouldNotBeNull();
+                    byte[] spirv = VulkanShaderCompiler.Compile(
+                        fragment,
+                        out string entryPoint,
+                        out _,
+                        out string? rewritten);
+                    spirv.Length.ShouldBeGreaterThan(20);
+                    entryPoint.ShouldBe("main");
+                    rewritten.ShouldNotBeNullOrWhiteSpace();
+                }
+                catch (Exception exception)
+                {
+                    nativeVariantFailures.Add(
+                        $"{material.Name ?? "<unnamed>"}: {exception.GetBaseException().Message}");
+                }
+            }
+
+            nativeUberVariantCount.ShouldBeGreaterThan(0);
+            nativeVariantFailures.ShouldBeEmpty(string.Join(Environment.NewLine, nativeVariantFailures));
+
+            SceneNode instance = prefab.Instantiate();
+            SceneNode[] instanceNodes = EnumerateNodes(instance).ToArray();
+            instanceNodes.Length.ShouldBe(883);
+            ModelComponent[] activeModelComponents =
+            [
+                .. instanceNodes
+                    .Where(IsEffectivelyActive)
+                    .SelectMany(static node => node.GetComponents<ModelComponent>()),
+            ];
+            TestContext.Progress.WriteLine(
+                $"Native jax2026 instance contains {activeModelComponents.Length} effectively active model components.");
+            activeModelComponents.Length.ShouldBe(22);
+            instanceNodes.Single(static node => node.Name == "Meshes")
+                .IsActiveSelf.ShouldBeTrue();
+            instanceNodes.Single(static node => node.Name == "Body")
+                .IsActiveSelf.ShouldBeTrue();
+            instanceNodes.Single(static node => node.Name == "Face")
+                .IsActiveSelf.ShouldBeTrue();
         }
         finally
         {
-            manager.Dispose();
+            ClearAssetCaches();
+            Engine.Assets.GameAssetsPath = previousAssetsPath;
+            Engine.Assets.GameMetadataPath = previousMetadataPath;
+            Engine.Assets.GameCachePath = previousCachePath;
+            Engine.Assets.MonitorGameAssetsForChanges = previousMonitorSetting;
         }
     }
+
+    [Test]
+    [Category("PrivateIntegration")]
+    public void Jax2026_ExternalizedUberMaterialReloadsAndCompiles()
+    {
+        string? nativeAssetPath =
+            Environment.GetEnvironmentVariable("XRE_UNITY_AVATAR_NATIVE_ASSET");
+        if (string.IsNullOrWhiteSpace(nativeAssetPath) || !File.Exists(nativeAssetPath))
+        {
+            Assert.Ignore(
+                "Externalized private Unity avatar output is unavailable. Set XRE_UNITY_AVATAR_NATIVE_ASSET to the generated jax2026.asset to run this opt-in integration test.");
+        }
+
+        string materialPath = Path.Combine(
+            Path.GetDirectoryName(nativeAssetPath)!,
+            "jax2026",
+            "Materials",
+            "1 Hair 3.asset");
+        if (!File.Exists(materialPath))
+            Assert.Fail($"Representative native avatar material is missing: {materialPath}");
+
+        XRMaterial material = Engine.Assets
+            .Load<XRMaterial>(materialPath, bypassJobThread: true)
+            .ShouldNotBeNull();
+        string beforeSummary = DescribeParameters(material.Parameters);
+        material.EnsureUberStateInitialized();
+        string afterSummary = DescribeParameters(material.Parameters);
+        material.Parameter<ShaderInt>("_MainTexStochasticMode").ShouldNotBeNull(
+            $"Material '{material.Name}' loaded {material.Parameters.Length} parameters.{Environment.NewLine}" +
+            $"Before EnsureUberStateInitialized:{Environment.NewLine}{beforeSummary}{Environment.NewLine}" +
+            $"After EnsureUberStateInitialized:{Environment.NewLine}{afterSummary}");
+        material.Parameter<ShaderInt>("_MainTexDistortionMapUV").ShouldNotBeNull();
+        material.Parameter<ShaderVector2>("_MainTexDistortionSpeed").ShouldNotBeNull();
+        material.Parameter<ShaderVector4>("_MainTexDistortionMap_ST").ShouldNotBeNull();
+        material.Parameter<ShaderVector4>("_GlobalMaskMin").ShouldNotBeNull();
+        material.Parameter<ShaderVector2>("_PoiUvDiscardGrid").ShouldNotBeNull();
+        material.Parameter<ShaderVector4>("_PoiPathingParams").ShouldNotBeNull();
+        material.Parameter<ShaderVector4>("_LightDataAOStrengths").ShouldNotBeNull();
+        material.PrepareUberVariantImmediately()
+            .ShouldBeTrue(material.UberVariantStatus.FailureReason);
+
+        XRShader fragment = material.GetShader(EShaderType.Fragment).ShouldNotBeNull();
+        string source = fragment.Source.ShouldNotBeNull().Text.ShouldNotBeNull();
+        source.ShouldContain("getUV(0, mesh)");
+        source.ShouldNotContain("getUV(0.0, mesh)");
+        source.ShouldContain("vec2(0.0, 0.0)");
+        source.ShouldNotContain("vec2 grid = max(0.0, vec2(1.0));");
+        byte[] spirv = VulkanShaderCompiler.Compile(
+            fragment,
+            out string entryPoint,
+            out _,
+            out string? rewritten);
+        spirv.Length.ShouldBeGreaterThan(20);
+        entryPoint.ShouldBe("main");
+        rewritten.ShouldNotBeNullOrWhiteSpace();
+    }
+
+    private static string DescribeParameters(IEnumerable<ShaderVar> parameters)
+        => string.Join(
+            Environment.NewLine,
+            parameters
+                .Where(static parameter =>
+                    parameter.Name?.Contains("MainTex", StringComparison.Ordinal) == true ||
+                    parameter.Name?.Contains("GlobalMask", StringComparison.Ordinal) == true ||
+                    parameter.Name?.Contains("Poi", StringComparison.Ordinal) == true ||
+                    parameter.Name?.Contains("LightDataAO", StringComparison.Ordinal) == true)
+                .Select(static parameter => $"{parameter.Name}: {parameter.GetType().Name}"));
 
     [Test]
     [Category("PrivateIntegration")]
@@ -263,6 +479,27 @@ public sealed class UnityPrefabAvatarPrivateIntegrationTests
     private static bool IsTextureDependency(string path)
         => Path.GetExtension(path).ToLowerInvariant() is
             ".png" or ".jpg" or ".jpeg" or ".bmp" or ".exr" or ".gif" or ".psd" or ".hdr";
+
+    private static bool IsEffectivelyActive(SceneNode node)
+    {
+        SceneNode? current = node;
+        while (current is not null)
+        {
+            if (!current.IsActiveSelf)
+                return false;
+
+            current = current.Parent;
+        }
+
+        return true;
+    }
+
+    private static void ClearAssetCaches()
+    {
+        Engine.Assets.LoadedAssetsByPathInternal.Clear();
+        Engine.Assets.LoadedAssetsByOriginalPathInternal.Clear();
+        Engine.Assets.LoadedAssetsByIDInternal.Clear();
+    }
 
     private static void AssertAuthoredPrefabFidelity(
         string fixturePath,

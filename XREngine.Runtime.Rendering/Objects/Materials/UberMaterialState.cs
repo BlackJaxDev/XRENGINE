@@ -146,6 +146,61 @@ public sealed class UberMaterialAuthoredState : IEquatable<UberMaterialAuthoredS
         return new(Features, appended);
     }
 
+    /// <summary>
+    /// Applies one property mode to a set of material properties in a single
+    /// immutable-state update.
+    /// </summary>
+    public UberMaterialAuthoredState SetPropertyModes(
+        IEnumerable<string> propertyNames,
+        EShaderUiPropertyMode mode)
+    {
+        ArgumentNullException.ThrowIfNull(propertyNames);
+
+        List<string> orderedNames = [];
+        HashSet<string> requestedNames = new(StringComparer.Ordinal);
+        foreach (string propertyName in propertyNames)
+        {
+            if (!string.IsNullOrWhiteSpace(propertyName) &&
+                requestedNames.Add(propertyName))
+            {
+                orderedNames.Add(propertyName);
+            }
+        }
+
+        if (orderedNames.Count == 0)
+            return this;
+
+        List<UberMaterialPropertyState> next = new(Properties.Length + orderedNames.Count);
+        HashSet<string> existingNames = new(StringComparer.Ordinal);
+        bool changed = false;
+        foreach (UberMaterialPropertyState property in Properties)
+        {
+            existingNames.Add(property.Name);
+            if (!requestedNames.Contains(property.Name))
+            {
+                next.Add(property);
+                continue;
+            }
+
+            UberMaterialPropertyState updated = property with { Mode = mode };
+            next.Add(updated);
+            changed |= property != updated;
+        }
+
+        foreach (string propertyName in orderedNames)
+        {
+            if (!existingNames.Add(propertyName))
+                continue;
+
+            next.Add(new UberMaterialPropertyState(propertyName, mode, null));
+            changed = true;
+        }
+
+        return changed
+            ? new UberMaterialAuthoredState(Features, [.. next])
+            : this;
+    }
+
     public UberMaterialAuthoredState EnsurePropertyMode(string propertyName, EShaderUiPropertyMode mode)
     {
         if (string.IsNullOrWhiteSpace(propertyName))

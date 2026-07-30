@@ -40,6 +40,7 @@ internal static partial class UberShaderVariantBuilder
         "XRENGINE_FORWARD_WEIGHTED_OIT",
         "XRENGINE_FORWARD_PPLL",
         "XRENGINE_FORWARD_DEPTH_PEEL",
+        "XRENGINE_OUTLINE_PASS",
         DisableForwardLightingMacro,
         DisableForwardAmbientOcclusionMacro,
         DisableForwardShadowsMacro,
@@ -123,16 +124,26 @@ internal static partial class UberShaderVariantBuilder
             Interlocked.Read(ref _resolvedSourceCacheHits),
             Interlocked.Read(ref _resolvedSourceCacheMisses));
 
-    internal static PreparedUberVariant PrepareVariant(XRMaterial material, XRShader canonicalShader, ShaderUiManifest manifest, CancellationToken cancellationToken = default)
+    internal static PreparedUberVariant PrepareVariant(
+        XRMaterial material,
+        XRShader canonicalShader,
+        ShaderUiManifest manifest,
+        CancellationToken cancellationToken = default,
+        IReadOnlyCollection<string>? additionalPipelineMacros = null,
+        IReadOnlyCollection<string>? additionalEnabledFeatures = null)
     {
         Stopwatch stopwatch = Stopwatch.StartNew();
-        PreResolvedMaterialVariantAxes preResolvedAxes = BuildPreResolvedMaterialAxes(material, canonicalShader, manifest);
+        PreResolvedMaterialVariantAxes preResolvedAxes = BuildPreResolvedMaterialAxes(
+            material,
+            canonicalShader,
+            manifest,
+            additionalEnabledFeatures);
         cancellationToken.ThrowIfCancellationRequested();
 
         ResolvedUberShaderSource resolvedSource = ResolveCanonicalVariantSource(canonicalShader);
         cancellationToken.ThrowIfCancellationRequested();
 
-        UberMaterialVariantRequest request = BuildRequest(material, preResolvedAxes, resolvedSource);
+        UberMaterialVariantRequest request = BuildRequest(material, preResolvedAxes, resolvedSource, additionalPipelineMacros);
         UberVariantCacheKey cacheKey = new(request.VariantHash, request.SourceVersion, resolvedSource.SourcePathHash, request.SourcePath);
         PruneStaleSourceEntries(request.SourcePath, resolvedSource.SourcePathHash, request.SourceVersion);
 
@@ -169,9 +180,17 @@ internal static partial class UberShaderVariantBuilder
         };
     }
 
-    private static UberMaterialVariantRequest BuildRequest(XRMaterial material, PreResolvedMaterialVariantAxes axes, ResolvedUberShaderSource resolvedSource)
+    private static UberMaterialVariantRequest BuildRequest(
+        XRMaterial material,
+        PreResolvedMaterialVariantAxes axes,
+        ResolvedUberShaderSource resolvedSource,
+        IReadOnlyCollection<string>? additionalPipelineMacros)
     {
-        string[] pipelineMacros = BuildPostResolvedPipelineMacros(material, axes.EnabledFeatures, resolvedSource.PipelineMacros);
+        string[] pipelineMacros = BuildPostResolvedPipelineMacros(
+            material,
+            axes.EnabledFeatures,
+            resolvedSource.PipelineMacros,
+            additionalPipelineMacros);
 
         ulong variantHash = ComputeVariantHash(
             axes.EnabledFeatures,
@@ -195,15 +214,25 @@ internal static partial class UberShaderVariantBuilder
         };
     }
 
-    private static PreResolvedMaterialVariantAxes BuildPreResolvedMaterialAxes(XRMaterial material, XRShader canonicalShader, ShaderUiManifest manifest)
+    private static PreResolvedMaterialVariantAxes BuildPreResolvedMaterialAxes(
+        XRMaterial material,
+        XRShader canonicalShader,
+        ShaderUiManifest manifest,
+        IReadOnlyCollection<string>? additionalEnabledFeatures)
     {
         ManifestDerivedData manifestData = GetManifestDerivedData(manifest);
+        HashSet<string>? forcedFeatures = additionalEnabledFeatures is null
+            ? null
+            : new HashSet<string>(additionalEnabledFeatures, StringComparer.Ordinal);
 
         List<string> enabledFeatures = new(manifest.Features.Count);
         foreach (ShaderUiFeature feature in manifest.Features)
         {
-            if (ResolveFeatureEnabled(material, canonicalShader, feature))
+            if (forcedFeatures?.Contains(feature.Id) == true ||
+                ResolveFeatureEnabled(material, canonicalShader, feature))
+            {
                 enabledFeatures.Add(feature.Id);
+            }
         }
 
         enabledFeatures = UberFeatureDependencyResolver.Resolve(manifest, enabledFeatures);
@@ -247,10 +276,14 @@ internal static partial class UberShaderVariantBuilder
     private static string[] BuildPostResolvedPipelineMacros(
         XRMaterial material,
         IReadOnlyList<string> enabledFeatures,
-        IReadOnlyCollection<string> resolvedPipelineMacros)
+        IReadOnlyCollection<string> resolvedPipelineMacros,
+        IReadOnlyCollection<string>? additionalPipelineMacros)
     {
         HashSet<string> enabledFeatureSet = new(enabledFeatures, StringComparer.Ordinal);
         HashSet<string> pipelineMacros = new(resolvedPipelineMacros, StringComparer.Ordinal);
+        if (additionalPipelineMacros is not null)
+            pipelineMacros.UnionWith(additionalPipelineMacros);
+
         switch (material.RenderPass)
         {
             case (int)EDefaultRenderPass.WeightedBlendedOitForward:

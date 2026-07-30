@@ -149,6 +149,17 @@ public sealed class PoiyomiMaterialArchitectureTests
         outline.RenderOptions.DepthTest.Function.ShouldBe(EComparison.Greater);
         outline.VertexShaderPath.ShouldEndWith("UberShader.vert");
         outline.FragmentShaderPath.ShouldEndWith("UberShader.frag");
+
+        const EUniformRequirements expectedRequirements =
+            EUniformRequirements.Camera |
+            EUniformRequirements.Lights |
+            EUniformRequirements.AmbientOcclusion |
+            EUniformRequirements.ViewportDimensions |
+            EUniformRequirements.ClipSpacePolicy |
+            EUniformRequirements.RenderTime;
+        GetPass(conversion, EMaterialPassIdentity.Base).RenderOptions.RequiredEngineUniforms
+            .ShouldBe(expectedRequirements);
+        outline.RenderOptions.RequiredEngineUniforms.ShouldBe(expectedRequirements);
     }
 
     [Test]

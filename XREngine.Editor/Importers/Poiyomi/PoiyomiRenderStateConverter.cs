@@ -15,6 +15,13 @@ public static class PoiyomiRenderStateConverter
     private const int CutoutQueue = 2450;
     private const int TransClippingQueue = 2460;
     private const int TransparentQueue = 3000;
+    private const EUniformRequirements UberEngineUniformRequirements =
+        EUniformRequirements.Camera |
+        EUniformRequirements.Lights |
+        EUniformRequirements.AmbientOcclusion |
+        EUniformRequirements.ViewportDimensions |
+        EUniformRequirements.ClipSpacePolicy |
+        EUniformRequirements.RenderTime;
 
     public static PoiyomiRenderStateConversion Convert(
         UnityMaterialDocument document,
@@ -198,6 +205,7 @@ public static class PoiyomiRenderStateConverter
             WriteGreen = (GetInt(document, "_ColorMask", 15) & 2) != 0,
             WriteBlue = (GetInt(document, "_ColorMask", 15) & 4) != 0,
             WriteAlpha = (GetInt(document, "_ColorMask", 15) & 8) != 0,
+            RequiredEngineUniforms = UberEngineUniformRequirements,
         };
     }
 
@@ -246,6 +254,7 @@ public static class PoiyomiRenderStateConverter
                 AlphaEquation = MapBlendOperation(document, "_OutlineBlendOpAlpha", 4, diagnostics),
             },
             AlphaToCoverage = alphaToCoverage ? ERenderParamUsage.Enabled : ERenderParamUsage.Disabled,
+            RequiredEngineUniforms = UberEngineUniformRequirements,
         };
 
     private static RenderingParameters CloneCoverageOptions(RenderingParameters source)

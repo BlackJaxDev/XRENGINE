@@ -17,6 +17,8 @@ public sealed class UnityPoiyomiMaterialImporterTests
 {
     private IRuntimeShaderServices? _previousServices;
     private IRuntimeRenderingHostServices? _previousRenderingServices;
+    private RendererBackendCatalog? _rendererBackendCatalog;
+    private IDisposable? _rendererBackendRegistrations;
 
     [SetUp]
     public void SetUp()
@@ -25,11 +27,18 @@ public sealed class UnityPoiyomiMaterialImporterTests
         _previousRenderingServices = RuntimeRenderingHostServices.Current;
         RuntimeShaderServices.Current = new FileBackedRuntimeShaderServices();
         RuntimeRenderingHostServices.Current = RuntimeRenderingBootstrap.CreateEngineHostServices();
+        _rendererBackendCatalog = new RendererBackendCatalog();
+        _rendererBackendRegistrations =
+            BuiltInRendererBackendModules.RegisterAll(_rendererBackendCatalog);
     }
 
     [TearDown]
     public void TearDown()
     {
+        _rendererBackendRegistrations?.Dispose();
+        _rendererBackendCatalog?.Dispose();
+        _rendererBackendRegistrations = null;
+        _rendererBackendCatalog = null;
         RuntimeShaderServices.Current = _previousServices;
         RuntimeRenderingHostServices.Current = _previousRenderingServices!;
     }
@@ -86,9 +95,30 @@ Material:
         m_Texture: {fileID: 2800000, guid: 55555555555555555555555555555555, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
+    - _ColorMask:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _GlobalMaskTexture:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _CubeMap:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _MochieMetallicMaps:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _OutlineMask:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
     m_Ints:
     - _MainTexUV: 1
     - _LightingMode: 2
+    - _ColorThemeIndex: 0
     m_Floats:
     - _BumpScale: 0.75
     - _MainAlphaMaskMode: 2
@@ -106,6 +136,13 @@ Material:
     - _SubsurfaceScattering: 1
     - _EnableDissolve: 1
     - _ParallaxInternalMaxDepth: 0.04
+    - _GlobalMaskTexturesEnable: 0
+    - _EnableOutlines: 0
+    - _PathingEnabled: 0
+    - _ProximityColorEnabled: 0
+    - _DepthFXEnabled: 0
+    - _InternalParallaxEnabled: 0
+    - _VideoEffectMode: 0
     m_Colors:
     - _Color: {r: 0.1, g: 0.2, b: 0.3, a: 0.4}
     - _EmissionColor: {r: 1, g: 0.5, b: 0.25, a: 1}
@@ -113,7 +150,10 @@ Material:
 
         UnityMaterialImportResult result = UnityMaterialImporter.ImportWithReport(materialPath, projectRoot);
 
-        result.IsPoiyomiToon.ShouldBeTrue();
+        result.IsPoiyomiToon.ShouldBeTrue(
+            $"ShaderPath={result.ShaderPath ?? "<null>"}; " +
+            $"Warnings={string.Join(" | ", result.Warnings)}; " +
+            $"Diagnostics={string.Join(" | ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString()))}");
         result.ShaderPath.ShouldBe(shaderPath);
         result.Warnings.ShouldBeEmpty();
 
@@ -121,6 +161,8 @@ Material:
         material.Name.ShouldBe("AvatarBody");
         Path.GetFileName(material.FragmentShaders.Single().Source?.FilePath ?? material.FragmentShaders.Single().FilePath)
             .ShouldBe("UberShader.frag");
+        material.RequestedUberVariant.IsEmpty.ShouldBeTrue(
+            "Unity material conversion must not synchronously generate shader variants.");
 
         GetTexture(material, "_MainTex").FilePath.ShouldBe(mainTexPath);
         GetTexture(material, "_BumpMap").FilePath.ShouldBe(normalPath);
@@ -152,6 +194,14 @@ Material:
         AssertUberFeature(material, "subsurface");
         AssertUberFeature(material, "dissolve");
         AssertUberFeature(material, "parallax");
+        AssertUberFeatureDisabled(material, "poiyomi-masks-themes");
+        AssertUberFeatureDisabled(material, "poiyomi-pbr-parity");
+        AssertUberFeatureDisabled(material, "poiyomi-special-effects");
+        AssertUberFeatureDisabled(material, "outline");
+        material.UberAuthoredState.GetProperty("_Color").ShouldNotBeNull().Mode
+            .ShouldBe(EShaderUiPropertyMode.Animated);
+        material.UberAuthoredState.GetProperty("_LightingMode").ShouldNotBeNull().Mode
+            .ShouldBe(EShaderUiPropertyMode.Animated);
     }
 
     [Test]
@@ -327,6 +377,13 @@ Material:
     {
         UberMaterialFeatureState feature = material.UberAuthoredState.GetFeature(featureId).ShouldNotBeNull();
         feature.Enabled.ShouldBeTrue(featureId);
+        feature.ExplicitlyAuthored.ShouldBeTrue(featureId);
+    }
+
+    private static void AssertUberFeatureDisabled(XRMaterial material, string featureId)
+    {
+        UberMaterialFeatureState feature = material.UberAuthoredState.GetFeature(featureId).ShouldNotBeNull();
+        feature.Enabled.ShouldBeFalse(featureId);
         feature.ExplicitlyAuthored.ShouldBeTrue(featureId);
     }
 

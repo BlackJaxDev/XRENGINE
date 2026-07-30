@@ -57,7 +57,15 @@ namespace XREngine.Rendering.OpenGL
             private bool _combinedProgramUseFailureLogged;
             private bool _pendingUberFallbackLogged;
             private static readonly object s_pendingUberFallbackMaterialLock = new();
-            private static XRMaterial? s_pendingUberFallbackMaterial;
+            private static XRMaterial? s_pendingUberOpaqueFallbackMaterial;
+            private static XRMaterial? s_pendingUberMaskedFallbackMaterial;
+            private static XRMaterial? s_pendingUberTransparentFallbackMaterial;
+            private static XRMaterial? s_pendingUberWeightedOitFallbackMaterial;
+            private static XRMaterial? s_pendingUberPpllFallbackMaterial;
+            private static XRMaterial? s_pendingUberDepthPeelingFallbackMaterial;
+            private XRMaterial? _pendingUberFallbackTextureSource;
+            private ulong _pendingUberFallbackTextureLayoutVersion = ulong.MaxValue;
+            private int _pendingUberFallbackTextureIndex = -1;
             private int _shaderConfigVersion = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
             private XRMaterial? _programMaterialStateKey;
             private long _programMaterialShaderStateRevision;

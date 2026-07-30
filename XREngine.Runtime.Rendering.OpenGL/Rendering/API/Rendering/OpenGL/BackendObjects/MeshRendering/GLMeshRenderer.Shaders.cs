@@ -62,6 +62,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     DestroySeparablePrograms();
                     material.Data.DestroyShaderPipelineProgram();
+                    PrimePendingUberFallbackPrograms(material);
                     EnsureCombinedProgramForMaterial(material);
 
                     Dbg("GenProgramsAndBuffers: combined program initiated", "Programs");
@@ -570,13 +571,13 @@ namespace XREngine.Rendering.OpenGL
 
             private bool ShouldUsePipelineForPendingUberFallbackMaterial(GLMaterial material)
                 => UseShaderPipelinesForThisRenderer() &&
-                   s_pendingUberFallbackMaterial is not null &&
-                   ReferenceEquals(material.Data, s_pendingUberFallbackMaterial);
+                   IsPendingUberFallbackMaterial(material.Data);
 
             private bool ShouldUsePipelineFallbackForPendingCombinedProgram(GLMaterial material)
             {
                 if (RuntimeEngine.Rendering.State.IsShadowPass ||
-                    !Data.AllowShaderPipelines)
+                    !Data.AllowShaderPipelines ||
+                    IsPendingUberFallbackMaterial(material.Data))
                 {
                     return false;
                 }
@@ -910,7 +911,7 @@ namespace XREngine.Rendering.OpenGL
                     {
                         Name = $"Combined:{material.Name ?? "unknown"}",
                         UsageTag = $"CombinedMeshProgram | variant={Data.VersionKindLabel} | material={material.Name ?? "<unnamed>"} | mesh={MeshRenderer.Name ?? "<unnamed>"}",
-                        Priority = Data.ProgramPriority,
+                        Priority = ResolveCombinedProgramPriority(Data.ProgramPriority, material.ShaderProgramPriority),
                         ProgramDescriptor = descriptor,
                     };
                     material.ApplyShaderProgramMetadata(combinedData);
@@ -931,6 +932,13 @@ namespace XREngine.Rendering.OpenGL
                 if (poolLease.IsNew)
                     InitiateLink(program);
             }
+
+            internal static EProgramPriority ResolveCombinedProgramPriority(
+                EProgramPriority meshPriority,
+                EProgramPriority materialPriority)
+                => materialPriority == EProgramPriority.Interactive
+                    ? EProgramPriority.Interactive
+                    : meshPriority;
 
             private string BuildCombinedProgramVertexLayoutIdentity(string generatedVertexIdentity)
                 => string.Concat(

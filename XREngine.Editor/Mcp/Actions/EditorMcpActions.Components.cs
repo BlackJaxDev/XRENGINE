@@ -497,7 +497,11 @@ namespace XREngine.Editor.Mcp
                     if (typeFilter is not null)
                         byPath = assets.Load(normalizedPath, typeFilter);
                     else
-                        byPath = assets.Load<XRMaterial>(normalizedPath);
+                        // Native asset files carry their concrete type in the
+                        // __assetType header. Loading every untyped lookup as a
+                        // material can cache a prefab/model under the wrong
+                        // runtime type and make a later editor drop fail.
+                        byPath = assets.Load(normalizedPath, typeof(XRAsset));
                 }
 
                 if (byPath is not null && (typeFilter is null || typeFilter.IsInstanceOfType(byPath)))

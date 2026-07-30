@@ -21,6 +21,27 @@ public partial class XRTexture2D
     public static void RegisterImportedTextureStreamingPlaceholder(string filePath, XRTexture2D texture)
         => ImportedTextureStreamingManager.Instance.RegisterTexture(filePath, texture);
 
+    /// <summary>
+    /// Restores deferred streaming for a native texture asset that retains a
+    /// third-party source path in <see cref="XRAsset.OriginalPath"/>.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when the texture was registered; otherwise
+    /// <see langword="false"/> when no rendering host or usable source path exists.
+    /// </returns>
+    public bool TryRestoreImportedTextureStreamingSource()
+    {
+        if (!RuntimeRenderingHostServices.HasConcreteHost
+            || string.IsNullOrWhiteSpace(OriginalPath)
+            || HasAssetExtension(OriginalPath))
+        {
+            return false;
+        }
+
+        RegisterImportedTextureStreamingPlaceholder(Path.GetFullPath(OriginalPath), this);
+        return true;
+    }
+
     public static EnumeratorJob ScheduleImportedTexturePreviewJob(
         string filePath,
         XRTexture2D? texture = null,

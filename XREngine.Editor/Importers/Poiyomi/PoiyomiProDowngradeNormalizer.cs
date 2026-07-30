@@ -14,7 +14,7 @@ public static class PoiyomiProDowngradeNormalizer
             ["Touch Effects"] = ["_Touch"],
             ["Pro Integrations"] = ["_ProIntegration", "_ProLTCGI", "_ProAudio"],
             ["Pro Vertex Effects"] = ["_ProVertex"],
-            ["Pro Authoring Metadata"] = ["_Pro", "pro_", "POI_PRO"],
+            ["Pro Authoring Metadata"] = ["pro_", "POI_PRO"],
         };
 
     public static UnityMaterialDocument Normalize(

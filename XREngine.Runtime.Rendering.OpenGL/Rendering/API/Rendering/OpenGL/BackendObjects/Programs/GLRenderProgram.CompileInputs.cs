@@ -468,6 +468,19 @@ namespace XREngine.Rendering.OpenGL
                 PendingAsyncPrograms[this] = 0;
             }
 
+            private bool ShouldKeepWaitingForSharedCompileQueueCapacity()
+            {
+                if (!_asyncCompileLinkQueueWaitPending)
+                    return false;
+
+                GLProgramCompileLinkQueue? compileQueue = Renderer.ProgramCompileLinkQueue;
+                if (compileQueue is not { IsAvailable: true })
+                    return false;
+
+                EProgramPriority priority = Data?.Priority ?? EProgramPriority.Main;
+                return !compileQueue.CanEnqueuePriority(priority, PreparedCompileSourceBytes);
+            }
+
             private void UnregisterPendingAsyncProgram()
             {
                 PendingAsyncPrograms.TryRemove(this, out _);

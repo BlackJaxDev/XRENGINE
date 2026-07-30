@@ -33,12 +33,39 @@ public static partial class UnityMaterialImporter
     }
 
     private static bool HasMaskOrTheme(UnityMaterialDocument document)
-        => document.Textures.ContainsKey("_ColorMask") ||
-           document.Textures.ContainsKey("_GlobalMaskTexture") ||
-           document.Textures.ContainsKey("_GlobalMaskTexture1") ||
-           document.Textures.ContainsKey("_GlobalMaskTexture2") ||
-           document.Textures.ContainsKey("_GlobalMaskTexture3") ||
-           document.GetPropertyNames().Any(static name => name.Contains("ThemeIndex", StringComparison.Ordinal));
+    {
+        if (HasExternalTexture(
+            document,
+            "_ColorMask",
+            "_GlobalMaskTexture",
+            "_GlobalMaskTexture1",
+            "_GlobalMaskTexture2",
+            "_GlobalMaskTexture3") ||
+            document.TryGetPositive("_GlobalMaskTexturesEnable"))
+        {
+            return true;
+        }
+
+        foreach ((string name, float value) in document.Floats)
+        {
+            if (value > 0.0001f &&
+                name.EndsWith("ThemeIndex", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        foreach ((string name, int value) in document.Ints)
+        {
+            if (value != 0 &&
+                name.EndsWith("ThemeIndex", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private static bool HasPbrFeatures(UnityMaterialDocument document)
         => HasAnyPositive(
@@ -49,8 +76,7 @@ public static partial class UnityMaterialImporter
             "_Specular2Enabled",
             "_EnableRimEnviro",
             "_BacklightEnabled") ||
-           document.Textures.ContainsKey("_CubeMap") ||
-           document.Textures.ContainsKey("_MochieMetallicMaps");
+           HasExternalTexture(document, "_CubeMap", "_MochieMetallicMaps");
 
     private static bool HasMatcapOrRim(UnityMaterialDocument document)
         => HasAnyPositive(
@@ -69,6 +95,21 @@ public static partial class UnityMaterialImporter
         {
             if (document.TryGetPositive(property))
                 return true;
+        }
+
+        return false;
+    }
+
+    private static bool HasExternalTexture(UnityMaterialDocument document, params string[] properties)
+    {
+        foreach (string property in properties)
+        {
+            if (document.Textures.TryGetValue(property, out UnityTexturePropertyDocument? texture) &&
+                texture is not null &&
+                texture.TextureReference.HasExternalGuid)
+            {
+                return true;
+            }
         }
 
         return false;

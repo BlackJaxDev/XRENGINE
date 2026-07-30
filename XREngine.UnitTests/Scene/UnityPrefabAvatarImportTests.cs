@@ -226,7 +226,30 @@ public sealed class UnityPrefabAvatarImportTests
     {
         using var sourceSandbox = new UnityProjectTestSandbox();
         using var outputSandbox = new UnityProjectTestSandbox();
+        using RendererBackendCatalog rendererBackends = new();
+        using IDisposable rendererRegistrations =
+            BuiltInRendererBackendModules.RegisterAll(rendererBackends);
         CopyDirectory(ResolveFixturePath(), sourceSandbox.RootPath);
+        const string textureGuid = "88888888888888888888888888888888";
+        string sourceTexturePath = sourceSandbox.WriteAssetWithMeta(
+            "Assets/Textures/SyntheticAlbedo.png",
+            textureGuid,
+            "deferred texture fixture");
+        File.WriteAllBytes(
+            sourceTexturePath,
+            Convert.FromBase64String(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="));
+        string lockedMaterialPath = Path.Combine(
+            sourceSandbox.AssetsPath,
+            "Materials",
+            "LockedProSynthetic.mat");
+        File.WriteAllText(
+            lockedMaterialPath,
+            File.ReadAllText(lockedMaterialPath).Replace(
+                "m_Texture: {fileID: 0}",
+                $"m_Texture: {{fileID: 2800000, guid: {textureGuid}, type: 3}}",
+                StringComparison.Ordinal));
+
         string sourcePrefab = Path.Combine(
             sourceSandbox.AssetsPath,
             "SyntheticAvatar.prefab");
@@ -263,6 +286,26 @@ public sealed class UnityPrefabAvatarImportTests
             manifest.OwnedOutputPaths.Count.ShouldBeGreaterThan(1);
             manifest.OwnedOutputPaths.ShouldAllBe(static path => File.Exists(path));
             manifest.HasDependencyChanges().ShouldBeFalse();
+
+            string nativeTexturePath = manifest.OwnedOutputPaths.Single(path =>
+                string.Equals(
+                    Path.GetFileName(Path.GetDirectoryName(path)),
+                    "Textures",
+                    StringComparison.OrdinalIgnoreCase)
+                && string.Equals(
+                    Path.GetFileNameWithoutExtension(path),
+                    "SyntheticAlbedo",
+                    StringComparison.Ordinal));
+            XRTexture2D externalizedTexture = AssetManager
+                .DeserializeAssetFile(nativeTexturePath, typeof(XRTexture2D))
+                .ShouldBeOfType<XRTexture2D>();
+            Path.GetFullPath(externalizedTexture.OriginalPath.ShouldNotBeNull()).ShouldBe(
+                Path.GetFullPath(sourceTexturePath),
+                StringCompareShould.IgnoreCase);
+            Path.GetFullPath(externalizedTexture.FilePath.ShouldNotBeNull()).ShouldBe(
+                Path.GetFullPath(nativeTexturePath),
+                StringCompareShould.IgnoreCase);
+
             string[] firstClosurePaths =
             [
                 .. manifest.OwnedOutputPaths
