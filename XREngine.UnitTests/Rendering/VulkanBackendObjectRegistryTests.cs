@@ -88,14 +88,14 @@ public sealed class VulkanBackendObjectRegistryTests
         secondDevice.AttachDevice(new Silk.NET.Vulkan.Device(202), createdThroughOpenXr: true);
 
         VulkanBackendObjectContext firstContext =
-            new(firstDevice, new VulkanBackendObjectRegistry());
+            new(firstDevice, new VulkanBackendObjectRegistry(), new(), new(), new());
         VulkanBackendObjectContext secondContext =
-            new(secondDevice, new VulkanBackendObjectRegistry());
+            new(secondDevice, new VulkanBackendObjectRegistry(), new(), new(), new());
 
-        firstContext.Device.Handle.ShouldBe(101ul);
-        secondContext.Device.Handle.ShouldBe(202ul);
-        firstContext.PhysicalDevice.Handle.ShouldBe(11ul);
-        secondContext.PhysicalDevice.Handle.ShouldBe(22ul);
+        firstContext.Device.Handle.ShouldBe((nint)101);
+        secondContext.Device.Handle.ShouldBe((nint)202);
+        firstContext.PhysicalDevice.Handle.ShouldBe((nint)11);
+        secondContext.PhysicalDevice.Handle.ShouldBe((nint)22);
         firstContext.Registry.ShouldNotBeSameAs(secondContext.Registry);
         firstContext.BindingAllocator.ShouldNotBeSameAs(secondContext.BindingAllocator);
     }

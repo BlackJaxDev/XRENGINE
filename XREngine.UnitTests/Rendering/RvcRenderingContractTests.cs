@@ -610,21 +610,7 @@ public sealed class RvcRenderingContractTests
             Matrix4x4.Identity);
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        DirectoryInfo? dir = new(AppContext.BaseDirectory);
-        string platformPath = relativePath.Replace('/', Path.DirectorySeparatorChar);
-
-        while (dir is not null)
-        {
-            string fullPath = Path.Combine(dir.FullName, platformPath);
-            if (File.Exists(fullPath))
-                return File.ReadAllText(fullPath).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
-
-            dir = dir.Parent;
-        }
-
-        throw new FileNotFoundException($"Could not resolve workspace path for '{relativePath}' from test base directory '{AppContext.BaseDirectory}'.");
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ReadWorkspaceDirectory(string relativePath)
     {

@@ -1,4 +1,4 @@
-namespace XREngine.Rendering.Vulkan;
+namespace XREngine.Rendering.Vulkan.DeviceBootstrap;
 
 /// <summary>
 /// Immutable authority for the capabilities that survived device enablement and

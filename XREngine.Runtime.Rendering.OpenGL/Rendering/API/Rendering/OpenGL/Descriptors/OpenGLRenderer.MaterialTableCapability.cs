@@ -14,19 +14,16 @@ public partial class OpenGLRenderer : IMaterialTableBackendCapability
             : "OpenGL bindless texture handles are unavailable.";
         return SupportsBindlessTextureHandles;
     }
-    bool IMaterialTableBackendCapability.TryResolveMaterialTextureReference(
+    Materials.MaterialTextureReferenceResolution IMaterialTableBackendCapability.ResolveMaterialTextureReference(
         XRTexture texture,
-        string semantic,
-        out Materials.GPUMaterialTextureReference reference)
+        string semantic)
     {
         if (TryGetResidentBindlessTextureHandle(texture, out ulong handle))
-        {
-            reference = Materials.GPUMaterialTextureReference.FromOpenGLBindlessHandle(handle);
-            return true;
-        }
+            return Materials.MaterialTextureReferenceResolution.Ready(
+                Materials.GPUMaterialTextureReference.FromOpenGLBindlessHandle(handle));
 
-        reference = Materials.GPUMaterialTextureReference.None;
-        return false;
+        return Materials.MaterialTextureReferenceResolution.Pending(
+            "OpenGL bindless texture handle is not resident.");
     }
     void IMaterialTableBackendCapability.FlushMaterialTextureTableUpdates()
     {

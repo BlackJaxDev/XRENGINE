@@ -1049,13 +1049,77 @@ namespace XREngine.Rendering
             int gamepadCount = input?.Gamepads.Count ?? 0;
             bool isFocused = IsFocused;
             bool isMouseCaptured = ResolveMouseCaptured(input);
+            WindowGamepadSnapshot primaryGamepad = CapturePrimaryGamepad(input);
 
             _ = _inputSnapshotAccumulator.Publish(
                 keyboardCount,
                 mouseCount,
                 gamepadCount,
                 isFocused,
-                isMouseCaptured);
+                isMouseCaptured,
+                primaryGamepad);
+        }
+
+        private static WindowGamepadSnapshot CapturePrimaryGamepad(IInputContext? input)
+        {
+            if (input is null || input.Gamepads.Count == 0)
+                return default;
+
+            IGamepad gamepad = input.Gamepads[0];
+            if (!gamepad.IsConnected)
+                return default;
+
+            ushort pressedButtonMask = 0;
+            for (int i = 0; i < gamepad.Buttons.Count; i++)
+            {
+                Button button = gamepad.Buttons[i];
+                if (!button.Pressed ||
+                    !TryMapGamepadButton(button.Name, out EGamePadButton mapped))
+                {
+                    continue;
+                }
+
+                pressedButtonMask |= (ushort)(1u << (int)mapped);
+            }
+
+            float leftTrigger = gamepad.Triggers.Count > 0 ? gamepad.Triggers[0].Position : 0.0f;
+            float rightTrigger = gamepad.Triggers.Count > 1 ? gamepad.Triggers[1].Position : 0.0f;
+            float leftX = gamepad.Thumbsticks.Count > 0 ? gamepad.Thumbsticks[0].X : 0.0f;
+            float leftY = gamepad.Thumbsticks.Count > 0 ? -gamepad.Thumbsticks[0].Y : 0.0f;
+            float rightX = gamepad.Thumbsticks.Count > 1 ? gamepad.Thumbsticks[1].X : 0.0f;
+            float rightY = gamepad.Thumbsticks.Count > 1 ? -gamepad.Thumbsticks[1].Y : 0.0f;
+            return new WindowGamepadSnapshot(
+                true,
+                pressedButtonMask,
+                leftTrigger,
+                rightTrigger,
+                leftX,
+                leftY,
+                rightX,
+                rightY);
+        }
+
+        private static bool TryMapGamepadButton(ButtonName name, out EGamePadButton button)
+        {
+            button = name switch
+            {
+                ButtonName.DPadUp => EGamePadButton.DPadUp,
+                ButtonName.DPadDown => EGamePadButton.DPadDown,
+                ButtonName.DPadLeft => EGamePadButton.DPadLeft,
+                ButtonName.DPadRight => EGamePadButton.DPadRight,
+                ButtonName.Y => EGamePadButton.FaceUp,
+                ButtonName.A => EGamePadButton.FaceDown,
+                ButtonName.X => EGamePadButton.FaceLeft,
+                ButtonName.B => EGamePadButton.FaceRight,
+                ButtonName.LeftStick => EGamePadButton.LeftStick,
+                ButtonName.RightStick => EGamePadButton.RightStick,
+                ButtonName.Home => EGamePadButton.SpecialLeft,
+                ButtonName.Start => EGamePadButton.SpecialRight,
+                ButtonName.LeftBumper => EGamePadButton.LeftBumper,
+                ButtonName.RightBumper => EGamePadButton.RightBumper,
+                _ => (EGamePadButton)(-1),
+            };
+            return (int)button >= 0;
         }
 
         private static bool ResolveMouseCaptured(IInputContext? input)

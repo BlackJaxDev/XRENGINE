@@ -317,11 +317,16 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>
         /// Indicates whether the device supports NV memory decompression through the VK_NV_memory_decompression extension.
         /// </summary>
-        public bool SupportsNvMemoryDecompression => _supportsNvMemoryDecompression && _nvMemoryDecompression is not null;
+        private bool IsCapabilityEnabled(EVulkanDeviceCapability capability, bool bootstrapValue)
+            => _deviceCapabilities.IsInitialized
+                ? _deviceCapabilities.Supports(capability)
+                : bootstrapValue;
+
+        public bool SupportsNvMemoryDecompression => IsCapabilityEnabled(EVulkanDeviceCapability.NvMemoryDecompression, _supportsNvMemoryDecompression) && _nvMemoryDecompression is not null;
         /// <summary>
         /// Indicates whether the device supports NV copy memory indirect operations through the VK_NV_copy_memory_indirect extension.
         /// </summary>
-        public bool SupportsNvCopyMemoryIndirect => _supportsNvCopyMemoryIndirect && _nvCopyMemoryIndirect is not null;
+        public bool SupportsNvCopyMemoryIndirect => IsCapabilityEnabled(EVulkanDeviceCapability.NvCopyMemoryIndirect, _supportsNvCopyMemoryIndirect) && _nvCopyMemoryIndirect is not null;
         /// <summary>
         /// Indicates whether the device supports external memory on Win32 through the VK_KHR_external_memory_win32 extension.
         /// </summary>
@@ -333,35 +338,35 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>
         /// Indicates whether the device supports buffer device addresses.
         /// </summary>
-        public bool SupportsBufferDeviceAddress => _supportsBufferDeviceAddress;
+        public bool SupportsBufferDeviceAddress => IsCapabilityEnabled(EVulkanDeviceCapability.BufferDeviceAddress, _supportsBufferDeviceAddress);
         /// <summary>
         /// Indicates whether the device supports Vulkan mesh task indirect count.
         /// </summary>
-        public bool SupportsVulkanMeshTaskIndirectCount => _supportsVulkanMeshTaskIndirectCount && _extMeshShader is not null;
+        public bool SupportsVulkanMeshTaskIndirectCount => IsCapabilityEnabled(EVulkanDeviceCapability.MeshShader, _supportsVulkanMeshShaderFeature) && _supportsVulkanMeshTaskIndirectCount && _extMeshShader is not null;
         /// <summary>
         /// Indicates whether the device supports dynamic rendering.
         /// </summary>
-        public bool SupportsDynamicRendering => _supportsDynamicRendering;
+        public bool SupportsDynamicRendering => IsCapabilityEnabled(EVulkanDeviceCapability.DynamicRendering, _supportsDynamicRendering);
         /// <summary>
         /// Indicates whether the device supports the index type uint8.
         /// </summary>
-        public bool SupportsIndexTypeUint8 => _supportsIndexTypeUint8;
+        public bool SupportsIndexTypeUint8 => IsCapabilityEnabled(EVulkanDeviceCapability.IndexTypeUint8, _supportsIndexTypeUint8);
         /// <summary>
         /// Indicates whether the device supports the synchronization2 feature.
         /// </summary>
-        public bool SupportsSynchronization2 => _supportsSynchronization2;
+        public bool SupportsSynchronization2 => IsCapabilityEnabled(EVulkanDeviceCapability.Synchronization2, _supportsSynchronization2);
         /// <summary>
         /// Indicates whether the device supports depth clip control.
         /// </summary>
-        public bool SupportsDepthClipControl => _supportsDepthClipControl;
+        public bool SupportsDepthClipControl => IsCapabilityEnabled(EVulkanDeviceCapability.DepthClipControl, _supportsDepthClipControl);
         /// <summary>
         /// Indicates whether the device supports graphics pipeline library.
         /// </summary>
-        public bool SupportsGraphicsPipelineLibrary => _supportsGraphicsPipelineLibrary;
+        public bool SupportsGraphicsPipelineLibrary => IsCapabilityEnabled(EVulkanDeviceCapability.GraphicsPipelineLibrary, _supportsGraphicsPipelineLibrary);
         /// <summary>
         /// Indicates whether the device supports transform feedback.
         /// </summary>
-        public bool SupportsTransformFeedback => _supportsTransformFeedback && _extTransformFeedback is not null;
+        public bool SupportsTransformFeedback => IsCapabilityEnabled(EVulkanDeviceCapability.TransformFeedback, _supportsTransformFeedback) && _extTransformFeedback is not null;
         /// <summary>
         /// Indicates whether the device supports transform feedback geometry streams.
         /// </summary>
@@ -377,11 +382,11 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>
         /// Core-1.2 hostQueryReset feature: query pools may be reset from the CPU via vkResetQueryPool.
         /// </summary>
-        public bool SupportsHostQueryReset => _supportsHostQueryReset;
+        public bool SupportsHostQueryReset => IsCapabilityEnabled(EVulkanDeviceCapability.HostQueryReset, _supportsHostQueryReset);
         /// <summary>
         /// Indicates whether the device supports Vulkan fragment shading rate.
         /// </summary>
-        public bool SupportsVulkanFragmentShadingRate => _supportsVulkanFragmentShadingRate;
+        public bool SupportsVulkanFragmentShadingRate => IsCapabilityEnabled(EVulkanDeviceCapability.FragmentShadingRate, _supportsVulkanFragmentShadingRate);
         /// <summary>
         /// Indicates whether the device supports Vulkan fragment shading rate attachment.
         /// </summary>
@@ -393,7 +398,7 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>
         /// Indicates whether the device supports Vulkan fragment density map.
         /// </summary>
-        public bool SupportsVulkanFragmentDensityMap => _supportsVulkanFragmentDensityMap;
+        public bool SupportsVulkanFragmentDensityMap => IsCapabilityEnabled(EVulkanDeviceCapability.FragmentDensityMap, _supportsVulkanFragmentDensityMap);
         /// <summary>
         /// Indicates whether the device supports dynamic Vulkan fragment density map.
         /// </summary>
@@ -405,47 +410,47 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>
         /// Indicates whether the device supports fragment stores and atomics.
         /// </summary>
-        public bool SupportsFragmentStoresAndAtomics => _supportsFragmentStoresAndAtomics;
+        public bool SupportsFragmentStoresAndAtomics => IsCapabilityEnabled(EVulkanDeviceCapability.FragmentStoresAndAtomics, _supportsFragmentStoresAndAtomics);
         /// <summary>
         /// Indicates whether the device supports vertex pipeline stores and atomics.
         /// </summary>
-        public bool SupportsVertexPipelineStoresAndAtomics => _supportsVertexPipelineStoresAndAtomics;
+        public bool SupportsVertexPipelineStoresAndAtomics => IsCapabilityEnabled(EVulkanDeviceCapability.VertexPipelineStoresAndAtomics, _supportsVertexPipelineStoresAndAtomics);
         /// <summary>
         /// Indicates whether the device supports geometry shader.
         /// </summary>
-        public bool SupportsGeometryShader => _supportsGeometryShader;
+        public bool SupportsGeometryShader => IsCapabilityEnabled(EVulkanDeviceCapability.GeometryShader, _supportsGeometryShader);
         /// <summary>
         /// Indicates whether the device supports Vulkan 1.4.
         /// </summary>
-        public bool SupportsVulkan14 => _supportsVulkan14;
+        public bool SupportsVulkan14 => IsCapabilityEnabled(EVulkanDeviceCapability.Vulkan14, _supportsVulkan14);
         /// <summary>
         /// Indicates whether the device supports dynamic rendering local read.
         /// </summary>
-        public bool SupportsDynamicRenderingLocalRead => _supportsDynamicRenderingLocalRead;
+        public bool SupportsDynamicRenderingLocalRead => IsCapabilityEnabled(EVulkanDeviceCapability.DynamicRenderingLocalRead, _supportsDynamicRenderingLocalRead);
         /// <summary>
         /// Indicates whether the device supports dynamic rendering local read storage resources.
         /// </summary>
-        public bool SupportsDynamicRenderingLocalReadStorageResources => _supportsDynamicRenderingLocalReadStorageResources;
+        public bool SupportsDynamicRenderingLocalReadStorageResources => SupportsDynamicRenderingLocalRead && _supportsDynamicRenderingLocalReadStorageResources;
         /// <summary>
         /// Indicates whether the device supports dynamic rendering local read color attachments.
         /// </summary>
-        public bool SupportsDynamicRenderingLocalReadColorAttachments => _supportsDynamicRenderingLocalReadColorAttachments;
+        public bool SupportsDynamicRenderingLocalReadColorAttachments => SupportsDynamicRenderingLocalRead && _supportsDynamicRenderingLocalReadColorAttachments;
         /// <summary>
         /// Indicates whether the device supports dynamic rendering local read depth stencil attachments.
         /// </summary>
-        public bool SupportsDynamicRenderingLocalReadDepthStencilAttachments => _supportsDynamicRenderingLocalReadDepthStencilAttachments;
+        public bool SupportsDynamicRenderingLocalReadDepthStencilAttachments => SupportsDynamicRenderingLocalRead && _supportsDynamicRenderingLocalReadDepthStencilAttachments;
         /// <summary>
         /// Indicates whether the device supports dynamic rendering local read multisampled attachments.
         /// </summary>
-        public bool SupportsDynamicRenderingLocalReadMultisampledAttachments => _supportsDynamicRenderingLocalReadMultisampledAttachments;
+        public bool SupportsDynamicRenderingLocalReadMultisampledAttachments => SupportsDynamicRenderingLocalRead && _supportsDynamicRenderingLocalReadMultisampledAttachments;
         /// <summary>
         /// Indicates whether the device supports maintenance 4.
         /// </summary>
-        public bool SupportsMaintenance4 => _supportsMaintenance4;
+        public bool SupportsMaintenance4 => IsCapabilityEnabled(EVulkanDeviceCapability.Maintenance4, _supportsMaintenance4);
         /// <summary>
         /// Indicates whether the device supports maintenance 5.
         /// </summary>
-        public bool SupportsMaintenance5 => _supportsMaintenance5;
+        public bool SupportsMaintenance5 => IsCapabilityEnabled(EVulkanDeviceCapability.Maintenance5, _supportsMaintenance5);
         /// <summary>
         /// Indicates whether the device supports extended flags.
         /// </summary>
@@ -453,35 +458,35 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>
         /// Indicates whether the device supports descriptor heap.
         /// </summary>
-        public bool SupportsDescriptorHeap => _supportsDescriptorHeap;
+        public bool SupportsDescriptorHeap => IsCapabilityEnabled(EVulkanDeviceCapability.DescriptorHeap, _supportsDescriptorHeap);
         /// <summary>
         /// Indicates whether the device supports shader object.
         /// </summary>
-        public bool SupportsShaderObject => _supportsShaderObject;
+        public bool SupportsShaderObject => IsCapabilityEnabled(EVulkanDeviceCapability.ShaderObject, _supportsShaderObject);
         /// <summary>
         /// Indicates whether the device supports memory budget.
         /// </summary>
-        public bool SupportsMemoryBudget => _supportsMemoryBudget;
+        public bool SupportsMemoryBudget => IsCapabilityEnabled(EVulkanDeviceCapability.MemoryBudget, _supportsMemoryBudget);
         /// <summary>
         /// Indicates whether the device supports memory priority.
         /// </summary>
-        public bool SupportsMemoryPriority => _supportsMemoryPriority;
+        public bool SupportsMemoryPriority => IsCapabilityEnabled(EVulkanDeviceCapability.MemoryPriority, _supportsMemoryPriority);
         /// <summary>
         /// Indicates whether the device supports acceleration structure.
         /// </summary>
-        public bool SupportsAccelerationStructure => _supportsAccelerationStructure;
+        public bool SupportsAccelerationStructure => IsCapabilityEnabled(EVulkanDeviceCapability.AccelerationStructure, _supportsAccelerationStructure);
         /// <summary>
         /// Indicates whether the device supports ray tracing pipeline.
         /// </summary>
-        public bool SupportsRayTracingPipeline => _supportsRayTracingPipeline;
+        public bool SupportsRayTracingPipeline => IsCapabilityEnabled(EVulkanDeviceCapability.RayTracingPipeline, _supportsRayTracingPipeline);
         /// <summary>
         /// Indicates whether the device supports ray query.
         /// </summary>
-        public bool SupportsRayQuery => _supportsRayQuery;
+        public bool SupportsRayQuery => IsCapabilityEnabled(EVulkanDeviceCapability.RayQuery, _supportsRayQuery);
         /// <summary>
         /// Indicates whether the device supports device generated commands.
         /// </summary>
-        public bool SupportsDeviceGeneratedCommands => _supportsDeviceGeneratedCommands;
+        public bool SupportsDeviceGeneratedCommands => IsCapabilityEnabled(EVulkanDeviceCapability.DeviceGeneratedCommands, _supportsDeviceGeneratedCommands);
         /// <summary>
         /// Indicates the memory decompression methods supported by the device.
         /// </summary>
@@ -673,7 +678,7 @@ namespace XREngine.Rendering.Vulkan
         /// Writes a synchronization2 timestamp through the core 1.3 command or
         /// its KHR extension alias, matching the path selected at device setup.
         /// </summary>
-        private void CmdWriteTimestamp2Compat(
+        internal void CmdWriteTimestamp2Compat(
             CommandBuffer commandBuffer,
             PipelineStageFlags2 stage,
             QueryPool queryPool,

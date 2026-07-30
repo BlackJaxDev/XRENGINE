@@ -1,7 +1,7 @@
 using System.Collections.ObjectModel;
 using XREngine.Rendering.RenderGraph;
 
-namespace XREngine.Rendering.Vulkan;
+namespace XREngine.Rendering.Vulkan.RenderGraph;
 
 /// <summary>One immutable queue submission and its structural synchronization contract.</summary>
 internal sealed record RenderGraphPlanSubmission(

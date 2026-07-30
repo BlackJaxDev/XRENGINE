@@ -16,7 +16,7 @@ public unsafe partial class VulkanRenderer
     private bool _queryPrimitivesGeneratedEnabled;
     private bool _queryPrimitivesGeneratedNonZeroStreamsEnabled;
 
-    public VulkanQueryCapabilities QueryCapabilities { get; private set; }
+    internal VulkanQueryCapabilities QueryCapabilities { get; private set; }
 
     private void RefreshVulkanQueryCapabilities()
     {

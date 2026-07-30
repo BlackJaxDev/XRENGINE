@@ -1,11 +1,14 @@
 using System.Numerics;
 using XREngine;
 using XREngine.Components;
+using XREngine.Components.Lights;
 using XREngine.Components.Physics;
+using XREngine.Data.Core;
 using XREngine.Data.Colors;
 using XREngine.Rendering;
 using XREngine.Scene;
 using XREngine.Scene.Physics;
+using XREngine.Scene.Physics.Physx;
 using XREngine.Scene.Transforms;
 
 namespace MonkeyBallVR;
@@ -14,9 +17,12 @@ namespace MonkeyBallVR;
 /// Coordinates the authored MonkeyBall rigid bodies, stage controls, camera,
 /// round state, and HUD.
 /// </summary>
-public sealed class MonkeyBallGameComponent : XRComponent
+public sealed class MonkeyBallGameComponent : XRComponent, IMonkeyBallGameInputTarget
 {
     private const float DegreesToRadians = MathF.PI / 180.0f;
+    private const float RequiredPhysicsFixedRateHz = 120.0f;
+    private const float RequiredPhysicsFixedDelta = 1.0f / RequiredPhysicsFixedRateHz;
+    private const float PhysicsFixedDeltaTolerance = 1.0e-6f;
 
     private string _courseNodeName = "Tilting Course";
     private string _ballNodeName = "Player Ball";
@@ -28,30 +34,39 @@ public sealed class MonkeyBallGameComponent : XRComponent
     private float _goalRadius = 1.15f;
     private float _roundDurationSeconds = 60.0f;
     private float _maxTiltDegrees = 12.0f;
+    private float _stageTiltInterpolationSpeed = 2.0f;
     private int _initialLives = 3;
     private float _maxBallSpeed = 12.0f;
     private float _fallThresholdY = -3.5f;
     private float _fallResetDelaySeconds = 0.75f;
     private Vector3 _desktopCameraOffset = new(0.0f, 2.5f, 5.5f);
     private float _desktopCameraPitchDegrees = -14.0f;
-    private float _desktopCameraYawResponse = 4.5f;
-    private float _cameraHeadingVelocityThreshold = 0.15f;
+    private float _desktopCameraYawResponse = 0.67f;
+    private float _cameraHeadingVelocityThreshold = 0.2f;
 
     private DynamicRigidBodyComponent? _courseBody;
     private DynamicRigidBodyComponent? _ballBody;
     private RigidBodyTransform? _courseTransform;
     private RigidBodyTransform? _ballTransform;
     private Transform? _desktopCameraTransform;
+    private CameraComponent? _desktopCamera;
     private DebugDrawComponent? _hud;
     private MonkeyBallPawnComponent? _pawn;
+    private DirectionalLightComponent? _directionalLight;
     private Vector2 _tilt;
     private float _cameraYaw;
+    private Quaternion _cameraHeadingRotation = Quaternion.Identity;
+    private Quaternion _stageRotation = Quaternion.Identity;
     private float _stateTimer;
     private float _timeRemaining;
+    private AbstractPhysicsScene? _diagnosticPhysicsScene;
     private float _hudRefreshTimer;
     private int _lives;
     private int _score;
     private bool _pendingBallReset;
+    private bool? _pendingBallSimulationEnabled;
+    private bool _possessionReadyRecorded;
+    private bool _physicsRuntimeReadyRecorded;
     private MonkeyBallRoundState _state = MonkeyBallRoundState.Playing;
     private MonkeyBallRoundState _stateBeforePause = MonkeyBallRoundState.Playing;
 
@@ -115,6 +130,12 @@ public sealed class MonkeyBallGameComponent : XRComponent
         set => SetField(ref _maxTiltDegrees, Math.Clamp(value, 0.0f, 45.0f));
     }
 
+    public float StageTiltInterpolationSpeed
+    {
+        get => _stageTiltInterpolationSpeed;
+        set => SetField(ref _stageTiltInterpolationSpeed, MathF.Max(0.01f, value));
+    }
+
     public int InitialLives
     {
         get => _initialLives;
@@ -164,7 +185,11 @@ public sealed class MonkeyBallGameComponent : XRComponent
     }
 
     public void SetTilt(Vector2 tilt)
-        => _tilt = Vector2.Clamp(tilt, new Vector2(-1.0f), new Vector2(1.0f));
+    {
+        _tilt = Vector2.Clamp(tilt, new Vector2(-1.0f), new Vector2(1.0f));
+        if (MonkeyBallRuntimeDiagnostics.Enabled)
+            MonkeyBallRuntimeDiagnostics.RecordTilt(_tilt);
+    }
 
     public void ResetRound()
     {
@@ -193,28 +218,49 @@ public sealed class MonkeyBallGameComponent : XRComponent
 
     protected override void OnBeginPlay()
     {
+        MonkeyBallRuntimeValidation.RecordBeginPlay();
+        MonkeyBallRuntimeDiagnostics.RecordBeginPlay();
+        MonkeyBallRuntimeDiagnostics.RecordEvent("game-begin-play-enter");
         base.OnBeginPlay();
         ResolveSceneReferences();
+        SubscribeToDiagnosticPhysicsSteps();
+        _physicsRuntimeReadyRecorded = RecordPhysicsRuntimeState();
+        RecordDirectionalShadowRuntimeState("resolved");
+        MonkeyBallRuntimeDiagnostics.RecordEvent(
+            "game-scene-references-resolved",
+            $"courseActor={_courseBody!.RigidBody is not null} ballActor={_ballBody!.RigidBody is not null}");
         _pawn!.PossessByLocalPlayer(ELocalPlayerIndex.One);
+        MonkeyBallRuntimeDiagnostics.RecordEvent("game-pawn-possession-requested");
+        RecordPossessionState();
         _lives = InitialLives;
         _score = 0;
         ResetBall(resetTimer: true);
         UpdateDesktopCamera(GetBallRenderPosition(), Vector3.Zero, 0.0f);
         UpdateHud(force: true);
+        MonkeyBallRuntimeDiagnostics.RecordEvent("game-begin-play-complete");
     }
 
     protected override void OnComponentActivated()
     {
+        MonkeyBallRuntimeValidation.RecordComponentActivated();
+        MonkeyBallRuntimeDiagnostics.RecordComponentActivated();
+        MonkeyBallRuntimeDiagnostics.RecordEvent("game-component-activated-enter");
         base.OnComponentActivated();
         RegisterTick(ETickGroup.PrePhysics, ETickOrder.Logic, PrePhysicsTick);
         RegisterTick(ETickGroup.Normal, ETickOrder.Logic, Tick);
+        RegisterTick(ETickGroup.Late, ETickOrder.Scene, CameraTick);
+        MonkeyBallRuntimeDiagnostics.RecordEvent("game-component-activated-complete");
     }
 
     protected override void OnComponentDeactivated()
     {
+        UnsubscribeFromDiagnosticPhysicsSteps();
         UnregisterTick(ETickGroup.PrePhysics, ETickOrder.Logic, PrePhysicsTick);
         UnregisterTick(ETickGroup.Normal, ETickOrder.Logic, Tick);
+        UnregisterTick(ETickGroup.Late, ETickOrder.Scene, CameraTick);
         _tilt = Vector2.Zero;
+        _pendingBallSimulationEnabled = null;
+        _physicsRuntimeReadyRecorded = false;
         base.OnComponentDeactivated();
     }
 
@@ -231,6 +277,10 @@ public sealed class MonkeyBallGameComponent : XRComponent
         _ballTransform = ballNode.GetTransformAs<RigidBodyTransform>(false)
             ?? throw new InvalidOperationException(
                 $"MonkeyBall ball node '{BallNodeName}' requires a {nameof(RigidBodyTransform)}.");
+        if (_ballTransform.InterpolationMode != RigidBodyTransform.EInterpolationMode.Interpolate)
+            throw new InvalidOperationException(
+                $"MonkeyBall ball node '{BallNodeName}' must author " +
+                $"{nameof(RigidBodyTransform.InterpolationMode)} as Interpolate.");
         _courseBody = courseNode.GetComponent<DynamicRigidBodyComponent>()
             ?? throw new InvalidOperationException(
                 $"MonkeyBall course node '{CourseNodeName}' has no kinematic {nameof(DynamicRigidBodyComponent)}.");
@@ -246,12 +296,24 @@ public sealed class MonkeyBallGameComponent : XRComponent
         _pawn = root.FindFirstDescendantComponent<MonkeyBallPawnComponent>()
             ?? throw new InvalidOperationException(
                 $"MonkeyBall world has no {nameof(MonkeyBallPawnComponent)}.");
+        _directionalLight = root.FindFirstDescendantComponent<DirectionalLightComponent>()
+            ?? throw new InvalidOperationException(
+                $"MonkeyBall world has no authored {nameof(DirectionalLightComponent)}.");
+        if (_courseBody.RigidBody is null)
+            throw new InvalidOperationException(
+                "MonkeyBall's cooked course body did not create a native rigid body. " +
+                "Verify cooked component activation and the active physics backend.");
+        if (_ballBody.RigidBody is null)
+            throw new InvalidOperationException(
+                "MonkeyBall's cooked ball body did not create a native rigid body. " +
+                "Verify cooked component activation and the active physics backend.");
+        _stageRotation = Quaternion.Normalize(_courseBody.RigidBody.Transform.rotation);
 
-        CameraComponent camera = cameraNode.GetComponent<CameraComponent>()
+        _desktopCamera = cameraNode.GetComponent<CameraComponent>()
             ?? throw new InvalidOperationException(
                 $"MonkeyBall camera node '{DesktopCameraNodeName}' has no {nameof(CameraComponent)}.");
-        ConfigureDesktopCamera(camera);
-        _pawn.CameraComponent = camera;
+        ConfigureDesktopCamera(_desktopCamera);
+        _pawn.CameraComponent = _desktopCamera;
         _pawn.Bind(this);
     }
 
@@ -280,50 +342,380 @@ public sealed class MonkeyBallGameComponent : XRComponent
             ?? throw new InvalidOperationException(
                 $"MonkeyBall world is missing scene node '{name}'.");
 
+    private void SubscribeToDiagnosticPhysicsSteps()
+    {
+        if (!MonkeyBallRuntimeDiagnostics.Enabled &&
+            !MonkeyBallRuntimeValidation.Enabled)
+            return;
+
+        AbstractPhysicsScene? scene = WorldAs<XRWorldInstance>()?.PhysicsScene;
+        if (ReferenceEquals(_diagnosticPhysicsScene, scene))
+            return;
+
+        UnsubscribeFromDiagnosticPhysicsSteps();
+        _diagnosticPhysicsScene = scene;
+        if (_diagnosticPhysicsScene is not null)
+            _diagnosticPhysicsScene.OnSimulationStep += OnDiagnosticPhysicsStep;
+    }
+
+    private void UnsubscribeFromDiagnosticPhysicsSteps()
+    {
+        if (_diagnosticPhysicsScene is not null)
+            _diagnosticPhysicsScene.OnSimulationStep -= OnDiagnosticPhysicsStep;
+        _diagnosticPhysicsScene = null;
+    }
+
+    private static void OnDiagnosticPhysicsStep()
+    {
+        MonkeyBallRuntimeValidation.RecordPhysicsStep();
+        MonkeyBallRuntimeDiagnostics.RecordPhysicsStep();
+    }
+
+    private bool RecordPhysicsRuntimeState()
+    {
+        if (WorldAs<XRWorldInstance>() is not XRWorldInstance world ||
+            _courseBody is null ||
+            _ballBody is null ||
+            _ballTransform is null)
+        {
+            return false;
+        }
+
+        string sceneType = world.PhysicsScene.GetType().Name;
+        string courseActorType = _courseBody.RigidBody?.GetType().Name ?? "null";
+        string ballActorType = _ballBody.RigidBody?.GetType().Name ?? "null";
+        bool courseInScene = IsActorInScene(_courseBody.RigidBody, world.PhysicsScene);
+        bool ballInScene = IsActorInScene(_ballBody.RigidBody, world.PhysicsScene);
+        int courseColliderCount = CountEffectiveColliderShapes(_courseBody);
+        int ballColliderCount = CountEffectiveColliderShapes(_ballBody);
+        float authoredTimestep =
+            world.TargetWorld?.Settings.PhysicsTimestep ?? 0.0f;
+        float engineFixedDelta = Engine.FixedDelta;
+        bool authoredTimestepReady =
+            MathF.Abs(authoredTimestep - RequiredPhysicsFixedDelta) <= PhysicsFixedDeltaTolerance;
+        bool engineFixedDeltaReady =
+            MathF.Abs(engineFixedDelta - RequiredPhysicsFixedDelta) <= PhysicsFixedDeltaTolerance;
+        bool runtimeReady =
+            _courseBody.IsActiveInHierarchy &&
+            _ballBody.IsActiveInHierarchy &&
+            !string.Equals(courseActorType, "null", StringComparison.Ordinal) &&
+            !string.Equals(ballActorType, "null", StringComparison.Ordinal) &&
+            courseInScene &&
+            ballInScene &&
+            _courseBody.BodyFlags.HasFlag(PhysicsRigidBodyFlags.Kinematic) &&
+            courseColliderCount > 0 &&
+            ballColliderCount > 0 &&
+            _ballBody.GravityEnabled &&
+            _ballBody.SimulationEnabled &&
+            _ballTransform.InterpolationMode == RigidBodyTransform.EInterpolationMode.Interpolate &&
+            authoredTimestepReady &&
+            engineFixedDeltaReady;
+        MonkeyBallRuntimeValidation.RecordPhysicsRuntime(
+            sceneType,
+            authoredTimestep,
+            engineFixedDelta,
+            _ballTransform.InterpolationMode,
+            _courseBody.IsActiveInHierarchy,
+            _ballBody.IsActiveInHierarchy,
+            courseActorType,
+            ballActorType,
+            courseInScene,
+            ballInScene,
+            _courseBody.BodyFlags,
+            courseColliderCount,
+            ballColliderCount,
+            _ballBody.GravityEnabled,
+            _ballBody.SimulationEnabled);
+        if (!MonkeyBallRuntimeDiagnostics.Enabled)
+            return runtimeReady;
+
+        MonkeyBallRuntimeDiagnostics.RecordPhysicsRuntime(
+            sceneType,
+            world.TargetWorld?.Settings.Gravity ?? Vector3.Zero,
+            authoredTimestep,
+            world.TargetWorld?.Settings.PhysicsSubsteps ?? 0,
+            engineFixedDelta,
+            _ballTransform.InterpolationMode.ToString(),
+            _courseBody.IsActiveInHierarchy,
+            _ballBody.IsActiveInHierarchy,
+            courseActorType,
+            ballActorType,
+            courseInScene,
+            ballInScene,
+            _courseBody.BodyFlags,
+            courseColliderCount,
+            ballColliderCount,
+            _ballBody.GravityEnabled,
+            _ballBody.SimulationEnabled);
+        return runtimeReady;
+    }
+
+    /// <summary>
+    /// Counts enabled compound shapes, or the legacy single geometry when no
+    /// compound shape list is authored.
+    /// </summary>
+    internal static int CountEffectiveColliderShapes(DynamicRigidBodyComponent body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+
+        List<PhysicsColliderShape> shapes = body.ColliderShapes;
+        if (shapes.Count == 0)
+            return body.Geometry is null ? 0 : 1;
+
+        int count = 0;
+        for (int i = 0; i < shapes.Count; i++)
+        {
+            PhysicsColliderShape shape = shapes[i];
+            if (shape.Enabled && shape.Geometry is not null)
+                count++;
+        }
+
+        return count;
+    }
+
+    private void RecordDirectionalShadowRuntimeState(string phase)
+    {
+        if (_directionalLight is not DirectionalLightComponent light)
+            return;
+
+        XRCamera? shadowCamera = light.ShadowCamera;
+        string desktopCameraMode =
+            _desktopCamera?.DirectionalShadowRenderingMode.ToString() ?? "null";
+        MonkeyBallRuntimeValidation.RecordDirectionalShadow(
+            light.IsActiveInHierarchy,
+            light.Type.ToString(),
+            light.CastsShadows,
+            light.UseShadowAtlas,
+            light.EnableCascadedShadows,
+            light.ShadowMapResolutionWidth,
+            light.ShadowMapResolutionHeight,
+            light.ShadowMap is not null,
+            light.HasPrimaryShadowReceiverTexture,
+            shadowCamera is not null,
+            desktopCameraMode,
+            light.PrimaryShadowCasterCount,
+            light.StandaloneShadowRenderRequestCount,
+            light.StandaloneShadowRenderPassCount);
+        if (!MonkeyBallRuntimeDiagnostics.Enabled)
+            return;
+
+        MonkeyBallRuntimeDiagnostics.RecordDirectionalShadow(
+            phase,
+            light.ActivationCount,
+            light.IsActiveInHierarchy,
+            light.Type.ToString(),
+            light.CastsShadows,
+            light.UseShadowAtlas,
+            light.EnableCascadedShadows,
+            light.ShadowMapResolutionWidth,
+            light.ShadowMapResolutionHeight,
+            light.Scale,
+            light.ShadowMapStorageFormat.ToString(),
+            light.ShadowMapEncoding.ToString(),
+            light.ShadowMap is not null,
+            light.HasPrimaryShadowReceiverTexture,
+            shadowCamera is not null,
+            shadowCamera?.NearZ ?? 0.0f,
+            shadowCamera?.FarZ ?? 0.0f,
+            desktopCameraMode,
+            light.PrimaryShadowCasterCount,
+            light.StandaloneShadowRenderRequestCount,
+            light.StandaloneShadowRenderPassCount);
+    }
+
+    private void RecordPossessionState()
+    {
+        if (_pawn is null)
+            return;
+
+        var controller = _pawn.Controller;
+        bool isLocal = controller?.IsLocal ?? false;
+        bool authoredPawn = ReferenceEquals(controller?.ControlledPawnComponent, _pawn);
+        string inputType = controller?.InputDevice?.GetType().Name ?? "null";
+        string viewportType = controller?.Viewport?.GetType().Name ?? "null";
+        string cameraType = _pawn.CameraComponent?.GetType().Name ?? "null";
+        MonkeyBallRuntimeValidation.RecordPossession(
+            isLocal,
+            authoredPawn,
+            inputType,
+            viewportType,
+            cameraType);
+        if (!MonkeyBallRuntimeDiagnostics.Enabled)
+            return;
+
+        MonkeyBallRuntimeDiagnostics.RecordPossession(
+            controller?.GetType().Name ?? "null",
+            isLocal,
+            controller?.LocalPlayerIndex?.ToString() ?? "null",
+            authoredPawn,
+            inputType,
+            viewportType,
+            cameraType);
+    }
+
+    private void TryRecordPossessionReady()
+    {
+        if (_possessionReadyRecorded ||
+            _pawn?.Controller?.Viewport is null ||
+            _pawn.Controller.InputDevice is null)
+        {
+            return;
+        }
+
+        _possessionReadyRecorded = true;
+        MonkeyBallRuntimeDiagnostics.RecordEvent("possession-ready");
+        RecordPossessionState();
+    }
+
     private void PrePhysicsTick()
     {
+        TryApplyPendingBallSimulationState();
+        TryApplyPendingBallReset();
+
         if (_courseBody is null || _courseTransform is null)
             return;
 
+        if (!_physicsRuntimeReadyRecorded)
+            _physicsRuntimeReadyRecorded = RecordPhysicsRuntimeState();
+
+        if (_state == MonkeyBallRoundState.Playing)
+            ClampBallSpeedOnPhysicsThread();
+
         Vector2 input = _state == MonkeyBallRoundState.Playing ? _tilt : Vector2.Zero;
+        if (MonkeyBallRuntimeValidation.TryGetScriptedTilt(out Vector2 validationTilt))
+            input = validationTilt;
+
         Vector2 worldTilt = CameraRelativeInputToWorld(input, _cameraYaw);
-        float pitch = -worldTilt.Y * MaxTiltDegrees * DegreesToRadians;
-        float roll = -worldTilt.X * MaxTiltDegrees * DegreesToRadians;
-        Quaternion rotation = Quaternion.CreateFromYawPitchRoll(0.0f, pitch, roll);
+        Quaternion targetRotation = CalculateStageTargetRotation(
+            input,
+            _cameraHeadingRotation,
+            MaxTiltDegrees);
+        _stageRotation = InterpolateRotation(
+            _stageRotation,
+            targetRotation,
+            StageTiltInterpolationSpeed,
+            Engine.FixedDelta);
         Vector3 ballPosition = GetBallPhysicsPosition();
-        Vector3 pivot = new(ballPosition.X, 0.0f, ballPosition.Z);
-        Vector3 translation = ResolveStagePivotTranslation(pivot, rotation);
-        var target = (translation, rotation);
+        Vector3 translation = ResolveStagePivotTranslation(ballPosition, _stageRotation);
+        var target = (translation, _stageRotation);
+        IAbstractDynamicRigidBody courseActor = _courseBody.RigidBody
+            ?? throw new InvalidOperationException(
+                "MonkeyBall cannot tilt the course because its native kinematic actor is missing.");
+        bool ballActorExists = _ballBody?.RigidBody is not null;
 
         _courseBody.KinematicTarget = target;
-        if (_courseBody.RigidBody is not null)
-            _courseBody.RigidBody.KinematicTarget = target;
-        else
-            _courseTransform.SetPositionAndRotation(translation, rotation);
+        courseActor.KinematicTarget = target;
+
+        MonkeyBallRuntimeValidation.RecordPrePhysics(
+            input,
+            worldTilt,
+            _cameraYaw,
+            ballPosition,
+            translation,
+            _stageRotation,
+            true,
+            ballActorExists);
+        if (MonkeyBallRuntimeDiagnostics.Enabled)
+            MonkeyBallRuntimeDiagnostics.RecordPrePhysics(
+                input,
+                worldTilt,
+                _cameraYaw,
+                ballPosition,
+                translation,
+                targetRotation,
+                _stageRotation,
+                true,
+                ballActorExists);
     }
 
     private void Tick()
     {
-        TryApplyPendingBallReset();
-
+        TryRecordPossessionReady();
         float delta = Math.Clamp(Engine.Delta, 0.0f, 0.1f);
-        Vector3 position = GetBallPhysicsPosition();
-        Vector3 velocity = GetBallVelocity();
+        Vector3 position = GetBallRenderPosition();
+        Vector3 velocity = GetBallCachedVelocity();
+        IAbstractDynamicRigidBody? ballActor = _ballBody?.RigidBody;
+        IAbstractDynamicRigidBody? courseActor = _courseBody?.RigidBody;
+        XRWorldInstance? world = WorldAs<XRWorldInstance>();
+        bool courseInScene =
+            world is not null && IsActorInScene(courseActor, world.PhysicsScene);
+        bool ballInScene =
+            world is not null && IsActorInScene(ballActor, world.PhysicsScene);
+
+        MonkeyBallRuntimeValidation.RecordNormalTick(
+            position,
+            velocity,
+            world?.PhysicsEnabled ?? false,
+            world?.PhysicsScene.GetType().Name ?? "null",
+            courseInScene,
+            ballInScene);
+        if (MonkeyBallRuntimeDiagnostics.Enabled)
+        {
+            MonkeyBallRuntimeDiagnostics.RecordNormalTick(
+                position,
+                velocity,
+                GetBallCachedAngularVelocity(),
+                ballActor?.IsSleeping ?? true,
+                world?.PhysicsEnabled ?? false,
+                world?.PhysicsScene.GetType().Name ?? "null",
+                courseInScene,
+                ballInScene);
+        }
+        RecordDirectionalShadowRuntimeState("tick");
 
         if (_state != MonkeyBallRoundState.Paused)
-            UpdateRoundState(position, velocity, delta);
+            UpdateRoundState(position, delta);
 
-        UpdateDesktopCamera(GetBallRenderPosition(), velocity, delta);
         UpdateHud(force: false);
     }
 
-    private void UpdateRoundState(Vector3 position, Vector3 velocity, float delta)
+    /// <summary>
+    /// Updates the desktop camera after the rigid-body presentation pose and
+    /// normal gameplay logic have completed for this frame.
+    /// </summary>
+    private void CameraTick()
+    {
+        RecordDesktopCameraPresentation();
+        UpdateDesktopCamera(
+            GetBallRenderPosition(),
+            GetBallCachedVelocity(),
+            Math.Clamp(Engine.Delta, 0.0f, 0.1f));
+    }
+
+    private void RecordDesktopCameraPresentation()
+    {
+        if (_ballTransform is null || _desktopCameraTransform is null)
+            return;
+
+        // The render thread publishes matrices independently. Read the ball on
+        // both sides of the camera sample and discard a torn cross-frame pair.
+        Vector3 ballPositionBefore = _ballTransform.RenderTranslation;
+        Vector3 cameraPosition = _desktopCameraTransform.RenderTranslation;
+        Quaternion cameraRotation = _desktopCameraTransform.RenderRotation;
+        Vector3 ballPositionAfter = _ballTransform.RenderTranslation;
+        if (Vector3.DistanceSquared(ballPositionBefore, ballPositionAfter) > 1.0e-8f)
+            return;
+
+        float expectedOffsetLength = DesktopCameraOffset.Length();
+        MonkeyBallRuntimeValidation.RecordDesktopCameraPresentation(
+            ballPositionAfter,
+            cameraPosition,
+            cameraRotation,
+            expectedOffsetLength);
+        if (MonkeyBallRuntimeDiagnostics.Enabled)
+            MonkeyBallRuntimeDiagnostics.RecordDesktopCameraPresentation(
+                ballPositionAfter,
+                cameraPosition,
+                cameraRotation,
+                expectedOffsetLength);
+    }
+
+    private void UpdateRoundState(Vector3 position, float delta)
     {
         switch (_state)
         {
             case MonkeyBallRoundState.Playing:
                 _timeRemaining = MathF.Max(0.0f, _timeRemaining - delta);
-                ClampBallSpeed(velocity);
                 if (_timeRemaining <= 0.0f)
                 {
                     _state = MonkeyBallRoundState.Lost;
@@ -373,29 +765,30 @@ public sealed class MonkeyBallGameComponent : XRComponent
         }
     }
 
-    private void ClampBallSpeed(Vector3 velocity)
+    private void ClampBallSpeedOnPhysicsThread()
     {
-        if (_ballBody is null)
-            return;
+        IAbstractDynamicRigidBody actor = RequireBallActor();
+        Vector3 velocity = actor.LinearVelocity;
 
         float maxSpeedSquared = MaxBallSpeed * MaxBallSpeed;
         float speedSquared = velocity.LengthSquared();
         if (speedSquared <= maxSpeedSquared)
             return;
 
-        _ballBody.LinearVelocity = velocity * (MaxBallSpeed / MathF.Sqrt(speedSquared));
+        actor.SetLinearVelocity(
+            velocity * (MaxBallSpeed / MathF.Sqrt(speedSquared)));
     }
 
     private void ResetBall(bool resetTimer)
     {
         _state = MonkeyBallRoundState.Playing;
         _stateTimer = 0.0f;
-        _cameraYaw = 0.0f;
+        _tilt = Vector2.Zero;
+        ResetCameraHeading();
         if (resetTimer)
             _timeRemaining = RoundDurationSeconds;
 
         _pendingBallReset = true;
-        TryApplyPendingBallReset();
     }
 
     private void TryApplyPendingBallReset()
@@ -403,69 +796,165 @@ public sealed class MonkeyBallGameComponent : XRComponent
         if (!_pendingBallReset || _ballBody is null || _ballTransform is null)
             return;
 
+        ResetStage();
         Vector3 position = new(StartPosition.X, BallRadius + 0.08f, StartPosition.Y);
         _ballTransform.SetPositionAndRotation(position, Quaternion.Identity);
         _ballBody.SimulationEnabled = true;
+        _pendingBallSimulationEnabled = null;
         _ballBody.LinearVelocity = Vector3.Zero;
         _ballBody.AngularVelocity = Vector3.Zero;
 
-        IAbstractDynamicRigidBody? rigidBody = _ballBody.RigidBody;
-        if (rigidBody is null)
-            return;
+        IAbstractDynamicRigidBody rigidBody = _ballBody.RigidBody
+            ?? throw new InvalidOperationException(
+                "MonkeyBall cannot reset the ball because its native dynamic actor is missing.");
 
         rigidBody.SetTransform(position, Quaternion.Identity);
         rigidBody.SetLinearVelocity(Vector3.Zero);
         rigidBody.SetAngularVelocity(Vector3.Zero);
         rigidBody.WakeUp();
+        _ballTransform.OnPhysicsStepped();
+        MonkeyBallRuntimeDiagnostics.RecordBallReset(
+            position,
+            rigidBody.Transform.position,
+            rigidBody.Transform.rotation,
+            rigidBody.LinearVelocity,
+            rigidBody.AngularVelocity,
+            rigidBody.IsSleeping,
+            _ballTransform.LastPhysicsTransform.position,
+            _ballTransform.LastPhysicsLinearVelocity,
+            _ballTransform.LastPhysicsAngularVelocity);
         _pendingBallReset = false;
     }
 
-    private void SetBallSimulationEnabled(bool enabled)
+    private void ResetStage()
     {
-        if (_ballBody is not null)
-            _ballBody.SimulationEnabled = enabled;
+        _stageRotation = Quaternion.Identity;
+        if (_courseBody?.RigidBody is not IAbstractDynamicRigidBody courseActor)
+            return;
+
+        var target = (Vector3.Zero, Quaternion.Identity);
+        _courseBody.KinematicTarget = target;
+        courseActor.KinematicTarget = target;
+        _courseTransform?.SetPositionAndRotation(target.Item1, target.Item2);
+        _courseTransform?.OnPhysicsStepped();
     }
 
+    private void SetBallSimulationEnabled(bool enabled)
+        => _pendingBallSimulationEnabled = enabled;
+
+    private void TryApplyPendingBallSimulationState()
+    {
+        bool? enabled = _pendingBallSimulationEnabled;
+        if (!enabled.HasValue || _ballBody is null)
+            return;
+
+        _ballBody.SimulationEnabled = enabled.Value;
+        _pendingBallSimulationEnabled = null;
+    }
+
+    private static bool IsActorInScene(
+        IAbstractDynamicRigidBody? actor,
+        AbstractPhysicsScene scene)
+        => actor is PhysxActor physxActor && ReferenceEquals(physxActor.Scene, scene);
+
     private Vector3 GetBallPhysicsPosition()
-        => _ballBody?.RigidBody?.Transform.position
-            ?? _ballTransform?.Position
-            ?? new Vector3(StartPosition.X, BallRadius, StartPosition.Y);
+        => RequireBallActor().Transform.position;
 
     private Vector3 GetBallRenderPosition()
-        => _ballTransform?.WorldTranslation ?? GetBallPhysicsPosition();
+        => RequireBallTransform().WorldTranslation;
 
-    private Vector3 GetBallVelocity()
-        => _ballBody?.RigidBody?.LinearVelocity
-            ?? _ballBody?.LinearVelocity
-            ?? Vector3.Zero;
+    private Vector3 GetBallCachedVelocity()
+        => RequireBallTransform().LastPhysicsLinearVelocity;
+
+    private Vector3 GetBallCachedAngularVelocity()
+        => RequireBallTransform().LastPhysicsAngularVelocity;
+
+    private RigidBodyTransform RequireBallTransform()
+        => _ballTransform
+            ?? throw new InvalidOperationException(
+                "MonkeyBall requires a live rigid-body transform for post-fetch physics state.");
+
+    private IAbstractDynamicRigidBody RequireBallActor()
+        => _ballBody?.RigidBody
+            ?? throw new InvalidOperationException(
+                "MonkeyBall requires a live native ball actor; transform-only physics is unsupported.");
 
     private void UpdateDesktopCamera(Vector3 ballWorldPosition, Vector3 ballVelocity, float delta)
     {
         if (_desktopCameraTransform is null)
             return;
 
-        Vector2 horizontalVelocity = new(ballVelocity.X, ballVelocity.Z);
+        Vector3 horizontalVelocity = new(ballVelocity.X, 0.0f, ballVelocity.Z);
         float thresholdSquared = CameraHeadingVelocityThreshold * CameraHeadingVelocityThreshold;
         if (horizontalVelocity.LengthSquared() > thresholdSquared)
         {
-            float targetYaw = MathF.Atan2(-horizontalVelocity.X, -horizontalVelocity.Y);
-            _cameraYaw = InterpolateAngle(
-                _cameraYaw,
-                targetYaw,
+            Quaternion targetHeading = CreateYawFacing(horizontalVelocity);
+            _cameraHeadingRotation = InterpolateRotation(
+                _cameraHeadingRotation,
+                targetHeading,
                 DesktopCameraYawResponse,
                 delta);
         }
 
-        Quaternion yawRotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, _cameraYaw);
-        Vector3 cameraWorldPosition =
-            ballWorldPosition + Vector3.Transform(DesktopCameraOffset, yawRotation);
-        Quaternion cameraWorldRotation = Quaternion.CreateFromYawPitchRoll(
-            _cameraYaw,
-            DesktopCameraPitchDegrees * DegreesToRadians,
-            0.0f);
+        _cameraYaw = ExtractYaw(_cameraHeadingRotation);
+        (Vector3 cameraWorldPosition, Quaternion cameraWorldRotation) =
+            CalculateDesktopCameraPose(
+                ballWorldPosition,
+                _cameraHeadingRotation,
+                DesktopCameraOffset,
+                DesktopCameraPitchDegrees);
         _desktopCameraTransform.SetWorldTranslationRotation(
             cameraWorldPosition,
             cameraWorldRotation);
+        Vector3 appliedCameraPosition = _desktopCameraTransform.WorldTranslation;
+        Quaternion appliedCameraRotation = _desktopCameraTransform.WorldRotation;
+        MonkeyBallRuntimeValidation.RecordDesktopCamera(
+            ballWorldPosition,
+            ballVelocity,
+            appliedCameraPosition,
+            appliedCameraRotation,
+            _cameraYaw,
+            DesktopCameraOffset.Length());
+        if (MonkeyBallRuntimeDiagnostics.Enabled)
+        {
+            MonkeyBallRuntimeDiagnostics.RecordDesktopCamera(
+                ballWorldPosition,
+                ballVelocity,
+                appliedCameraPosition,
+                appliedCameraRotation,
+                _cameraYaw);
+        }
+    }
+
+    private void ResetCameraHeading()
+    {
+        _cameraHeadingRotation = CreateYawFacing(-DesktopCameraOffset);
+        _cameraYaw = ExtractYaw(_cameraHeadingRotation);
+    }
+
+    internal static Quaternion CalculateStageTargetRotation(
+        Vector2 input,
+        Quaternion cameraHeading,
+        float maxTiltDegrees)
+    {
+        Vector3 cameraForward = HorizontalDirection(
+            Vector3.Transform(Globals.Forward, cameraHeading),
+            Globals.Forward);
+        Vector3 cameraRight = HorizontalDirection(
+            Vector3.Transform(Globals.Right, cameraHeading),
+            Globals.Right);
+        // Unity's camera basis is +Z forward; XRENGINE is -Z forward. Reverse both
+        // axis angles so positive input still slopes the course toward the view.
+        float pitch = -input.Y * maxTiltDegrees * DegreesToRadians;
+        float roll = input.X * maxTiltDegrees * DegreesToRadians;
+        Vector3 pitchedForward = Vector3.Transform(
+            cameraForward,
+            Quaternion.CreateFromAxisAngle(cameraRight, pitch));
+        Vector3 rolledRight = Vector3.Transform(
+            cameraRight,
+            Quaternion.CreateFromAxisAngle(cameraForward, roll));
+        Vector3 rotatedUp = Vector3.Normalize(Vector3.Cross(rolledRight, pitchedForward));
+        return Quaternion.Normalize(XRMath.RotationBetweenVectors(Globals.Up, rotatedUp));
     }
 
     internal static Vector2 CameraRelativeInputToWorld(Vector2 input, float cameraYaw)
@@ -480,15 +969,52 @@ public sealed class MonkeyBallGameComponent : XRComponent
     internal static Vector3 ResolveStagePivotTranslation(Vector3 pivot, Quaternion rotation)
         => pivot - Vector3.Transform(pivot, rotation);
 
-    internal static float InterpolateAngle(float current, float target, float response, float delta)
+    internal static (Vector3 Position, Quaternion Rotation) CalculateDesktopCameraPose(
+        Vector3 ballWorldPosition,
+        Quaternion heading,
+        Vector3 cameraOffset,
+        float pitchDegrees)
     {
-        float difference = MathF.Atan2(
-            MathF.Sin(target - current),
-            MathF.Cos(target - current));
+        float yaw = ExtractYaw(heading);
+        return (
+            ballWorldPosition + Vector3.Transform(cameraOffset, heading),
+            Quaternion.CreateFromYawPitchRoll(
+                yaw,
+                pitchDegrees * DegreesToRadians,
+                0.0f));
+    }
+
+    internal static Quaternion InterpolateRotation(
+        Quaternion current,
+        Quaternion target,
+        float response,
+        float delta)
+    {
         float blend = response <= 0.0f
             ? 1.0f
-            : 1.0f - MathF.Exp(-response * MathF.Max(0.0f, delta));
-        return current + difference * blend;
+            : Math.Clamp(response * MathF.Max(0.0f, delta), 0.0f, 1.0f);
+        return Quaternion.Normalize(Quaternion.Slerp(current, target, blend));
+    }
+
+    internal static Quaternion CreateYawFacing(Vector3 direction)
+    {
+        Vector3 horizontal = HorizontalDirection(direction, Globals.Forward);
+        float yaw = MathF.Atan2(-horizontal.X, -horizontal.Z);
+        return Quaternion.CreateFromAxisAngle(Globals.Up, yaw);
+    }
+
+    internal static float ExtractYaw(Quaternion heading)
+    {
+        Vector3 forward = Vector3.Transform(Globals.Forward, heading);
+        return MathF.Atan2(-forward.X, -forward.Z);
+    }
+
+    private static Vector3 HorizontalDirection(Vector3 direction, Vector3 fallback)
+    {
+        direction.Y = 0.0f;
+        return direction.LengthSquared() > 1.0e-8f
+            ? Vector3.Normalize(direction)
+            : fallback;
     }
 
     private void UpdateHud(bool force)
@@ -528,6 +1054,9 @@ public sealed class MonkeyBallGameComponent : XRComponent
             new Vector3(2.8f, -0.2f, 0.0f),
             stateColor,
             true);
+
+        if (MonkeyBallRuntimeDiagnostics.Enabled)
+            AddDiagnosticHudLine(_hud);
     }
 
     private static readonly byte[] DigitSegments =
@@ -543,6 +1072,39 @@ public sealed class MonkeyBallGameComponent : XRComponent
         0b0111_1111,
         0b0110_1111,
     ];
+
+    private static void AddDiagnosticHudLine(DebugDrawComponent hud)
+    {
+        bool lifecycleReady =
+            MonkeyBallRuntimeDiagnostics.ComponentActivations > 0 &&
+            MonkeyBallRuntimeDiagnostics.BeginPlayCalls > 0;
+        AddDiagnosticHudCounter(
+            hud, 0, lifecycleReady ? 1 : 0, lifecycleReady);
+        AddDiagnosticHudCounter(
+            hud, 1, MonkeyBallRuntimeDiagnostics.InputRegistrations, MonkeyBallRuntimeDiagnostics.InputRegistrations > 0);
+        AddDiagnosticHudCounter(
+            hud, 2, MonkeyBallRuntimeDiagnostics.PrePhysicsTicks, MonkeyBallRuntimeDiagnostics.PrePhysicsTicks > 0);
+        AddDiagnosticHudCounter(
+            hud, 3, MonkeyBallRuntimeDiagnostics.PhysicsSteps, MonkeyBallRuntimeDiagnostics.PhysicsSteps > 0);
+        AddDiagnosticHudCounter(
+            hud, 4, MonkeyBallRuntimeDiagnostics.ShadowPasses, MonkeyBallRuntimeDiagnostics.ShadowPasses > 0);
+    }
+
+    private static void AddDiagnosticHudCounter(
+        DebugDrawComponent hud,
+        int index,
+        long value,
+        bool ready)
+    {
+        Vector3 origin = new(index * 1.6f, -1.45f, 0.0f);
+        ColorF4 color = ready ? ColorF4.Green : ColorF4.Red;
+        hud.AddBox(
+            new Vector3(0.68f, 0.04f, 0.04f),
+            origin + new Vector3(0.32f, -0.12f, 0.0f),
+            color,
+            true);
+        AddHudNumber(hud, (int)(value % 100), 2, origin, color);
+    }
 
     private static void AddHudNumber(
         DebugDrawComponent hud,

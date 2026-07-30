@@ -131,7 +131,7 @@ public unsafe partial class VulkanRenderer
     /// Records a Vulkan descriptor table generation event for diagnostic purposes.
     /// </summary>
     /// <param name="reason">The reason for recording the descriptor table generation event.</param>
-    private void RecordVulkanDescriptorTableGeneration(string reason)
+    internal void RecordVulkanDescriptorTableGeneration(string reason)
     {
         if (!_diagnosticOptions.EnableCrashBreadcrumbs)
             return;
@@ -205,7 +205,7 @@ public unsafe partial class VulkanRenderer
     /// <param name="marker">The diagnostic marker containing information about the command.</param>
     private void TrySetNvDiagnosticCheckpoint(CommandBuffer commandBuffer, VulkanCommandDiagnosticMarker marker)
     {
-        if (_nvDeviceDiagnosticCheckpoints is null || !_supportsNvDiagnosticCheckpoints || commandBuffer.Handle == 0)
+        if (_nvDeviceDiagnosticCheckpoints is null || !SupportsNvDiagnosticCheckpoints || commandBuffer.Handle == 0)
             return;
 
         int index = unchecked((int)((marker.Serial - 1UL) % VulkanNvCheckpointMarkerCapacity));
@@ -317,7 +317,7 @@ public unsafe partial class VulkanRenderer
     private void RecordVulkanDeviceAddressBindingCallback(DebugUtilsMessengerCallbackDataEXT* callbackData)
     {
         if (!_diagnosticOptions.RequestDeviceAddressBindingReport ||
-            !_supportsDeviceAddressBindingReport ||
+            !SupportsDeviceAddressBindingReport ||
             callbackData is null)
             return;
 
@@ -398,7 +398,7 @@ public unsafe partial class VulkanRenderer
         if (!_diagnosticOptions.RequestDeviceAddressBindingReport)
             return;
 
-        if (!_supportsDeviceAddressBindingReport)
+        if (!SupportsDeviceAddressBindingReport)
         {
             AppendFaultSection(builder, "AddressBindingReport unavailable");
             return;
@@ -520,7 +520,7 @@ public unsafe partial class VulkanRenderer
             ulong vendorBinarySize = writableVendorBinarySize;
             byte[]? vendorBinary = null;
             string vendorBinaryStatus;
-            if (!_supportsExtDeviceFaultVendorBinary)
+            if (!DeviceCapabilities.Supports(EVulkanDeviceCapability.DeviceFaultVendorBinary))
             {
                 vendorBinaryStatus = "feature-disabled";
             }
@@ -717,7 +717,7 @@ public unsafe partial class VulkanRenderer
         if (!_diagnosticOptions.RequestNvDiagnosticCheckpoints)
             return;
 
-        if (_nvDeviceDiagnosticCheckpoints is null || !_supportsNvDiagnosticCheckpoints)
+        if (_nvDeviceDiagnosticCheckpoints is null || !SupportsNvDiagnosticCheckpoints)
         {
             AppendFaultSection(builder, "NvCheckpoints unavailable");
             return;

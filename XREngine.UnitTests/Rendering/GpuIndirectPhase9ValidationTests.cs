@@ -158,12 +158,7 @@ public sealed class GpuIndirectPhase9ValidationTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string root = ResolveWorkspaceRoot();
-        string fullPath = Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
-        File.Exists(fullPath).ShouldBeTrue($"Expected workspace file to exist: {relativePath}");
-        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ResolveWorkspaceRoot()
     {

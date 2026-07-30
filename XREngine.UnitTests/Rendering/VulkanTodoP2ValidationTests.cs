@@ -408,24 +408,7 @@ public sealed class VulkanTodoP2ValidationTests : GpuTestBase
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string repoRoot = ResolveRepoRoot();
-        string path = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
-        if (File.Exists(path))
-            return File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
-
-        const string legacyPrefix = "XRENGINE/Rendering/";
-        if (relativePath.StartsWith(legacyPrefix, StringComparison.Ordinal))
-        {
-            string migratedRelativePath = "XREngine.Runtime.Rendering/Rendering/" + relativePath[legacyPrefix.Length..];
-            path = Path.Combine(repoRoot, migratedRelativePath.Replace('/', Path.DirectorySeparatorChar));
-            if (File.Exists(path))
-                return File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
-        }
-
-        File.Exists(path).ShouldBeTrue($"Expected workspace file '{path}' to exist.");
-        return File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ResolveRepoRoot()
     {

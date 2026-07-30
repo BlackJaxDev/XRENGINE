@@ -1,6 +1,6 @@
 using System.Collections.ObjectModel;
 
-namespace XREngine.Rendering.Vulkan;
+namespace XREngine.Rendering.Vulkan.RenderGraph;
 
 /// <summary>
 /// Immutable barrier generation published after a planner rebuild. Recording can

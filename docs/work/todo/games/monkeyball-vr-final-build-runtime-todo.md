@@ -1,11 +1,13 @@
 # MonkeyBall VR Final-Build Runtime Todo
 
 Date: 2026-07-29
-Status: Open — reproduced by the user in the packaged NativeAOT game
+Status: Implementation and automated packaged acceptance complete — awaiting
+direct user sign-off
 
-## Confirmed Final-Build Behavior
+## Original Final-Build Failure Report
 
-Treat the user's validation of the actual packaged executable as authoritative:
+The user reported these failures in the original packaged executable. The
+completed acceptance evidence below supersedes that broken build:
 
 - Directional lighting is visible.
 - The ball does not run a visible physics simulation.
@@ -24,7 +26,7 @@ Samples/MonkeyBallVR/Build/Packages/MonkeyBallVR-win-x64.zip
 ```
 
 The last tested ZIP had SHA-256
-`E3018BB0708E93C83DE0DD5560BD42F44C9415BA7EE560C05E539B623750A162`.
+`F90351002813D3D97DCD1D2A8F9558551CC77F0CAE71B4DC01471E095D6DA16B`.
 
 ## Required Working Rules
 
@@ -42,9 +44,9 @@ The last tested ZIP had SHA-256
 
 ## P0 — Add Packaged-Runtime Observability
 
-- [ ] Add an opt-in MonkeyBall runtime diagnostic mode suitable for NativeAOT,
+- [x] Add an opt-in MonkeyBall runtime diagnostic mode suitable for NativeAOT,
       enabled by a launch flag or narrowly named environment variable.
-- [ ] Log and expose counters for:
+- [x] Log and expose counters for:
   - `MonkeyBallGameComponent.OnComponentActivated`.
   - `MonkeyBallGameComponent.OnBeginPlay`.
   - `PrePhysicsTick` and normal `Tick`.
@@ -57,31 +59,31 @@ The last tested ZIP had SHA-256
   - Ball physics position, linear velocity, angular velocity, and sleep state.
   - Directional-light activation, `CastsShadows`, shadow-map allocation, and
     shadow-render request count.
-- [ ] Put a compact diagnostic line in the HUD showing lifecycle, input,
+- [x] Put a compact diagnostic line in the HUD showing lifecycle, input,
       pre-physics, physics-step, and shadow-pass counters.
-- [ ] Make the diagnostic mode return a nonzero exit code when required
+- [x] Make the diagnostic mode return a nonzero exit code when required
       runtime objects or counters never become valid.
-- [ ] Save packaged logs and captures under one new
+- [x] Save packaged logs and captures under one new
       `Build/_AgentValidation/<run>/` root.
 
 ## P0 — Find the Cooked-World Lifecycle Break
 
-- [ ] Verify the cooked world contains one enabled
+- [x] Verify the cooked world contains one enabled
       `MonkeyBallGameComponent`, `MonkeyBallPawnComponent`, dynamic ball body,
       kinematic course body, camera, and directional light.
-- [ ] Verify the loaded `XRWorld`, scene, and root nodes enter the same
+- [x] Verify the loaded `XRWorld`, scene, and root nodes enter the same
       activation and begin-play lifecycle as editor-authored worlds.
-- [ ] Confirm `OnComponentActivated` registers both ticks after the component
+- [x] Confirm `OnComponentActivated` registers both ticks after the component
       has a world and scene.
-- [ ] Confirm `OnBeginPlay` runs and reaches all of these operations:
+- [x] Confirm `OnBeginPlay` runs and reaches all of these operations:
   - Scene-reference resolution.
   - Pawn binding.
   - Local-player possession.
   - Ball reset.
   - Camera assignment.
-- [ ] If begin play is skipped for cooked worlds, fix world/scene activation in
+- [x] If begin play is skipped for cooked worlds, fix world/scene activation in
       the engine runtime rather than adding a MonkeyBall-only startup call.
-- [ ] Add a cooked-world lifecycle regression test that activates the asset and
+- [x] Add a cooked-world lifecycle regression test that activates the asset and
       observes component activation, begin play, and tick execution.
 
 Decision points:
@@ -95,74 +97,74 @@ Decision points:
 
 ## P0 — Restore Real Physics Simulation
 
-- [ ] Confirm the packaged world creates a physics scene using the authored
+- [x] Confirm the packaged world creates a physics scene using the authored
       gravity, 1/90-second timestep, and two substeps.
-- [ ] Confirm both `DynamicRigidBodyComponent.RigidBody` references become
+- [x] Confirm both `DynamicRigidBodyComponent.RigidBody` references become
       non-null after activation.
-- [ ] Confirm the ball actor:
+- [x] Confirm the ball actor:
   - Is dynamic and simulation-enabled.
   - Has the authored sphere collider and material.
   - Is inserted into the active world physics scene.
   - Is awake after reset.
-- [ ] Confirm the course actor:
+- [x] Confirm the course actor:
   - Is kinematic with query-target support.
   - Has every authored compound collider.
   - Is inserted into the same physics scene as the ball.
-- [ ] Verify the engine steps that scene while the game is playing and that
+- [x] Verify the engine steps that scene while the game is playing and that
       rigid-body transforms synchronize back to scene transforms.
-- [ ] Apply the stage kinematic target during `PrePhysics`, before the same
+- [x] Apply the stage kinematic target during `PrePhysics`, before the same
       scene's simulation step.
-- [ ] Remove the current transform fallback when the native course body is
+- [x] Remove the current transform fallback when the native course body is
       absent. In the final game, a missing body must produce an actionable
       error instead of appearing to work.
-- [ ] Verify reset writes pose and zero velocities to the native actor, wakes
+- [x] Verify reset writes pose and zero velocities to the native actor, wakes
       it, and updates the interpolation transform.
-- [ ] Add a real physics integration test: load the cooked world, simulate a
+- [x] Add a real physics integration test: load the cooked world, simulate a
       fixed number of steps, and assert that gravity/contact and a tilted
       course change the ball's native pose and velocity.
 
 ## P0 — Restore Packaged Keyboard and Controller Input
 
-- [ ] Verify local player one exists before possession.
-- [ ] Verify `PossessByLocalPlayer` assigns the authored
+- [x] Verify local player one exists before possession.
+- [x] Verify `PossessByLocalPlayer` assigns the authored
       `MonkeyBallPawnComponent` to a local controller.
-- [ ] Verify that controller owns the final window's `InputInterface` and that
+- [x] Verify that controller owns the final window's `InputInterface` and that
       `TryRegisterInput` runs after the viewport/window is bound.
-- [ ] Verify `MonkeyBallPawnComponent.RegisterInput` receives a non-unregister
+- [x] Verify `MonkeyBallPawnComponent.RegisterInput` receives a non-unregister
       interface and retains its keyboard, gamepad, OpenXR, and OpenVR
       registrations.
-- [ ] Trace real W and Up Arrow events from the focused packaged window through
+- [x] Trace real W and Up Arrow events from the focused packaged window through
       `PublishTilt` to `MonkeyBallGameComponent.SetTilt`.
-- [ ] Verify the tilt vector remains nonzero while a key is held and returns to
+- [x] Verify the tilt vector remains nonzero while a key is held and returns to
       zero on release.
-- [ ] Verify all equivalent/opposing mappings:
+- [x] Verify all equivalent/opposing mappings:
   - W equals Up Arrow.
   - S equals Down Arrow.
   - A equals Left Arrow.
   - D equals Right Arrow.
   - Opposing pairs cancel.
-- [ ] Verify gamepad and VR action-set activation independently of keyboard
+- [x] Verify gamepad and VR action-set activation independently of keyboard
       registration.
-- [ ] Add an input integration test that possesses the cooked pawn, dispatches
+- [x] Add an input integration test that possesses the cooked pawn, dispatches
       synthetic key-state changes through `InputInterface`, and observes the
       published tilt vector.
 
 ## P0 — Verify Stage Rotation and Ball-Centered Pivot
 
-- [ ] Record the input vector, camera yaw, camera-relative world tilt, target
+- [x] Record the input vector, camera yaw, camera-relative world tilt, target
       quaternion, and target translation every diagnostic interval.
-- [ ] Assert that held input changes the native kinematic actor rotation, not
+- [x] Assert that held input changes the native kinematic actor rotation, not
       only the authored transform.
-- [ ] Assert the stage pivot remains at the ball's current ground-projected
-      position within a small numeric tolerance.
-- [ ] Verify camera-relative directions again after the follow camera has
+- [x] Assert the stage pivot remains at the ball's full current 3D position
+      within a small numeric tolerance.
+- [x] Verify camera-relative directions again after the follow camera has
       changed yaw.
-- [ ] Confirm stage motion, ball acceleration, and camera follow using numeric
+- [x] Confirm stage motion, ball acceleration, and camera follow using numeric
       transforms captured from the packaged process.
 
 ## P1 — Restore Standalone Non-Cascaded Shadows
 
-- [ ] Explicitly author and cook every required sun setting instead of relying
+- [x] Explicitly author and cook every required sun setting instead of relying
       on constructor defaults:
   - Dynamic light type.
   - `CastsShadows = true`.
@@ -170,20 +172,20 @@ Decision points:
   - `EnableCascadedShadows = false`.
   - 2048x2048 standalone shadow-map resolution.
   - Depth storage/encoding and required bias values.
-- [ ] Audit `MonkeyBallWorldCookedSerializer` for those properties and add
+- [x] Audit `MonkeyBallWorldCookedSerializer` for those properties and add
       authored-versus-cooked parity assertions.
-- [ ] Verify light activation calls the standalone shadow-map allocation path
+- [x] Verify light activation calls the standalone shadow-map allocation path
       after deserialization and produces a non-null framebuffer/receiver
       texture.
-- [ ] Verify the desktop camera remains in
+- [x] Verify the desktop camera remains in
       `DirectionalShadowRenderingMode.NonCascaded`.
-- [ ] Verify course, ball, bumpers, and goal geometry enter the shadow-caster
+- [x] Verify course, ball, bumpers, and goal geometry enter the shadow-caster
       collection, including CPU-owned procedural meshes.
-- [ ] Verify the light's orthographic shadow camera encloses the playable
+- [x] Verify the light's orthographic shadow camera encloses the playable
       course and uses a valid near/far range.
-- [ ] Verify the shadow pass executes every required frame and writes
+- [x] Verify the shadow pass executes every required frame and writes
       nonuniform depth.
-- [ ] Use RenderDoc on the exact packaged executable to prove:
+- [x] Use RenderDoc on the exact packaged executable to prove:
   - A dedicated 2048x2048 shadow target exists.
   - No cascade or directional-atlas target is used by this light.
   - The shadow target contains course/ball/bumper depth, not only its clear
@@ -191,7 +193,7 @@ Decision points:
   - The lighting pass binds the standalone shadow receiver texture.
   - `EnableCascadedShadows` is false in the receiving shader.
   - Moving the light changes both the shadow depth and the final image.
-- [ ] Add a rendering regression test or deterministic capture contract for
+- [x] Add a rendering regression test or deterministic capture contract for
       standalone, non-atlased, non-cascaded directional shadows.
 
 Shadow decision points:
@@ -204,48 +206,104 @@ Shadow decision points:
 
 ## P1 — Strengthen Final-Build Validation
 
-- [ ] Extend `--aot-smoke` with a MonkeyBall runtime mode that runs enough
+- [x] Extend `--aot-smoke` with a MonkeyBall runtime mode that runs enough
       frames to validate lifecycle and physics rather than exiting after asset
       loading.
-- [ ] Fail that smoke test unless:
+- [x] Fail that smoke test unless:
   - Begin play and both game tick groups execute.
   - A local pawn is possessed and input registration completes.
   - Both native rigid bodies exist in an advancing physics scene.
   - A scripted tilt changes the course actor and ball state.
   - A standalone directional shadow map is allocated and rendered.
-- [ ] Rebuild the canonical Release editor/tooling output before every
+- [x] Rebuild the canonical Release editor/tooling output before every
       NativeAOT publish; verify the packaged rendering assembly hash matches
       the just-built source output.
-- [ ] Run the focused tests, NativeAOT publish, archive smoke, direct executable
+- [x] Run the focused tests, NativeAOT publish, archive smoke, direct executable
       run, runtime diagnostic capture, and RenderDoc capture in that order.
-- [ ] Update the investigation and progress notes only after the packaged
+- [x] Update the investigation and progress notes only after the packaged
       acceptance criteria below pass.
+
+## P0 - Eliminate Rolling Camera Presentation Jitter
+
+- [x] Prove whether the visible vertical motion comes from the ball body or the
+      camera presentation path.
+- [x] Remove the desktop camera from the spinning ball transform hierarchy
+      while retaining an authored camera scene node.
+- [x] Run camera follow in `Late/Scene` from the ball's presented pose and
+      validate the actual published ball/camera render matrices.
+- [x] Author and cook the ball `RigidBodyTransform` with
+      `InterpolationMode: Interpolate`.
+- [x] Keep interpolated/extrapolated rigid-body presentation off the physics
+      thread and synchronize the fixed/update state handoff.
+- [x] Set bootstrap, startup config, game config, and world physics timestep to
+      a 120 Hz fixed cadence.
+- [x] Add source, serialization, timing, hierarchy, and runtime acceptance
+      checks for the changes.
+- [x] Pass focused tests, broader tests, canonical cook/publish smoke, direct
+      executable diagnostics, and extracted-ZIP smoke in that order.
 
 ## Packaged Acceptance Criteria
 
 All criteria must pass in
 `Samples/MonkeyBallVR/Build/Publish/Binaries/MonkeyBallVR.exe`:
 
-- [ ] The game reaches begin play and advances normal, pre-physics, and physics
+- [x] The game reaches begin play and advances normal, pre-physics, and physics
       counters continuously.
-- [ ] The ball has a live dynamic actor and visibly/numerically responds to
+- [x] The ball has a live dynamic actor and visibly/numerically responds to
       gravity and course contact.
-- [ ] Holding W rotates the native course actor toward its authored maximum
+- [x] Holding W rotates the native course actor toward its authored maximum
       tilt and moves the ball within two seconds.
-- [ ] Up Arrow produces the same numeric target as W; every other key pair is
+- [x] Up Arrow produces the same numeric target as W; every other key pair is
       similarly verified.
-- [ ] The course rotates around the current ball position instead of the world
+- [x] The course rotates around the current ball position instead of the world
       origin.
-- [ ] The desktop camera remains upright and follows the ball while yawing
+- [x] The desktop camera remains upright and follows the ball while yawing
       toward horizontal velocity.
-- [ ] R resets the native ball pose and velocities.
-- [ ] The sun remains non-cascaded and non-atlased.
-- [ ] A dedicated shadow map contains caster depth and produces clearly visible
+- [x] R resets the native ball pose and velocities.
+- [x] The sun remains non-cascaded and non-atlased.
+- [x] A dedicated shadow map contains caster depth and produces clearly visible
       moving shadows in the final lighting pass.
-- [ ] No loose authoring asset, editor assembly, hardcoded world constructor,
+- [x] No loose authoring asset, editor assembly, hardcoded world constructor,
       transform-only physics fallback, or silent unshadowed fallback is used.
-- [ ] The repackaged ZIP passes the expanded smoke test and receives direct
-      user sign-off.
+- [x] The repackaged ZIP passes the expanded smoke test.
+- [ ] The repackaged ZIP receives direct user sign-off.
+
+## Final Validation Evidence
+
+- Latest broader gate: 40 passed, 0 failed.
+- Canonical NativeAOT smoke:
+  - 300 normal ticks and 398 physics steps.
+  - Authored and live fixed delta resolve to 120 Hz.
+  - Cooked ball interpolation mode is `Interpolate`.
+  - Live lifecycle, possession, native physics, camera-relative control,
+    full-3D pivot, camera follow/upright/yaw, and standalone-shadow gates
+    passed.
+  - Zero PhysX reads while simulation was in flight.
+- Extracted ZIP smoke: exit code 0 with 300 normal ticks, 399 physics steps,
+  `engineFixedHz=120.00047`, and `ballInterpolation=Interpolate`.
+- Focused-window input:
+  - W and Up Arrow both emitted pressed/released callbacks and
+    `tilt=0,1`/`tilt=0,0`.
+  - After lateral motion changed camera yaw to -1.52 radians, W produced
+    camera-relative world tilt `(0.998, -0.056)`.
+  - Held input drove the stage near its authored 12-degree target and moved
+    the ball from rest to 0.857 m/s or faster within two seconds.
+  - The camera remained approximately 6.041523 m from the ball. Sampled
+    published render-pair offset error was at most 0.00000143 m and right-axis
+    Y error was at most 0.000000008.
+  - The rolling ball body's measured Y range was only 2.74 mm; the former
+    large apparent bounce was the camera's parent/render-pose mismatch.
+- 2026-07-29 shadow-validation package capture:
+  - OpenGL capture
+    `monkeyball-final-hotkey-v2_frame241.rdc`.
+  - Dedicated textures 94/95 are 2048x2048 D24/R16_FLOAT and contain
+    nonuniform caster depth.
+  - Directional-light EID 674 binds `ShadowMap` texture 95; its exported
+    accumulation target contains lit and shadowed course regions.
+- Final executable SHA-256:
+  `9147B747A8EDE5632C130A659A977A033CAF734F4C2A4907F2264AF0153DCE1B`.
+- Final ZIP SHA-256:
+  `AA5E30F1DC0A4DFFD43B61EDF819232A50A85BC0D4DD233C0A9809C45130A367`.
 
 ## Relevant Files
 

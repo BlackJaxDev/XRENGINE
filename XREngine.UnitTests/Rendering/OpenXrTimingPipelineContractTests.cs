@@ -543,7 +543,7 @@ public sealed class OpenXrTimingPipelineContractTests
 
         string appendSignature = SliceMethod(
             allocator,
-            "internal void AppendLayoutSignature(ref VulkanRenderer.FrameOpSignatureHasher hash)",
+            "internal void AppendLayoutSignature(ref FrameOpSignatureHasher hash)",
             "internal void RestoreLayoutSnapshot");
 
         appendSignature.ShouldContain("for (uint mipLevel = 0; mipLevel < MipLevels; mipLevel++)");
@@ -845,7 +845,7 @@ public sealed class OpenXrTimingPipelineContractTests
         drawing.ShouldContain("bool frameSourceDescriptorsReady = TryRefreshFrameSourceDescriptorSetsForDraw(");
         drawing.ShouldContain("draw.ProgramBindingSnapshot,\n\t\t\t\tout string frameSourceDescriptorReason);");
 
-        string frameOpSignatures = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.FrameOpSignatures.cs");
+        string frameOpSignatures = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/FrameOpSignatures.cs");
         frameOpSignatures.ShouldContain("AddProgramBindingSignatureParts(parts, opIndex, opType, \"program\", draw.ProgramBindingSnapshot, meshDraw.Context.PipelineInstance);");
         frameOpSignatures.ShouldContain("HashSamplerUnitBindings(snapshot.Samplers, snapshot.SamplerNamesByUnit, pipeline)");
         frameOpSignatures.ShouldContain("IsMutableFrameSourceSamplerNameForSignatureDebug");
@@ -2381,27 +2381,5 @@ public sealed class OpenXrTimingPipelineContractTests
             ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Telemetry.cs"));
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        DirectoryInfo? dir = new(AppContext.BaseDirectory);
-        string platformPath = relativePath.Replace('/', Path.DirectorySeparatorChar);
-
-        while (dir is not null)
-        {
-            string fullPath = Path.Combine(dir.FullName, platformPath);
-            if (File.Exists(fullPath))
-                return File.ReadAllText(fullPath).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
-
-            string marker = $"{Path.DirectorySeparatorChar}Commands{Path.DirectorySeparatorChar}VulkanRenderer.";
-            string relocatedPath = fullPath.Replace(
-                marker,
-                $"{Path.DirectorySeparatorChar}Commands{Path.DirectorySeparatorChar}CommandBuffers{Path.DirectorySeparatorChar}VulkanRenderer.",
-                StringComparison.Ordinal);
-            if (File.Exists(relocatedPath))
-                return File.ReadAllText(relocatedPath).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
-
-            dir = dir.Parent;
-        }
-
-        throw new FileNotFoundException($"Could not resolve workspace path for '{relativePath}' from test base directory '{AppContext.BaseDirectory}'.");
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 }

@@ -530,10 +530,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                 $"Packaging only the {rendererBackendSelection} renderer requires the " +
                 "XREngine.Runtime.Bootstrap source project so its NativeAOT registration can be compiled for that backend.");
         }
-        string defineConstants = XRRuntimeEnvironment.ComposeDefineConstants(
-            settings.LauncherDefineConstants,
-            includePublishedBuild: settings.PublishLauncherAsNativeAot,
-            includeAotRuntime: settings.PublishLauncherAsNativeAot);
+        string defineConstants = ComposeLauncherDefineConstants(settings);
 
         string programSource = BuildLauncherProgramSource(
             settings,
@@ -1032,6 +1029,15 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             WorkingDirectory = Path.GetDirectoryName(projectFilePath) ?? Environment.CurrentDirectory
         };
 
+        // The editor configures these variables so its in-process MSBuild host can
+        // load SDK projects. A child dotnet process configures its own MSBuild host;
+        // forwarding the editor's values also makes nested Visual Studio C++ builds
+        // look for VC targets inside the .NET SDK.
+        startInfo.Environment.Remove(XREngineEnvironmentVariables.MsBuildExePath);
+        startInfo.Environment.Remove(XREngineEnvironmentVariables.MsBuildExtensionsPath);
+        startInfo.Environment.Remove(XREngineEnvironmentVariables.MsBuildExtensionsPath32);
+        startInfo.Environment.Remove(XREngineEnvironmentVariables.MsBuildToolsPath);
+
         startInfo.ArgumentList.Add("msbuild");
         startInfo.ArgumentList.Add(projectFilePath);
         startInfo.ArgumentList.Add("/restore");
@@ -1081,6 +1087,42 @@ internal partial class CodeManager : XRSingleton<CodeManager>
     #endregion
 
     #region Launcher Code Generation
+
+    internal static string ComposeLauncherDefineConstantsForTests(BuildSettings settings)
+        => ComposeLauncherDefineConstants(settings);
+
+    private static string ComposeLauncherDefineConstants(BuildSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+
+        string rendererBackendConstants = settings.RendererBackendPackage switch
+        {
+            ERendererBackendPackageMode.All =>
+                "XRENGINE_STATIC_OPENGL;XRENGINE_STATIC_VULKAN",
+            ERendererBackendPackageMode.OpenGL =>
+                "XRENGINE_STATIC_OPENGL",
+            ERendererBackendPackageMode.Vulkan =>
+                "XRENGINE_STATIC_VULKAN",
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(settings),
+                settings.RendererBackendPackage,
+                "Unsupported renderer backend package mode."),
+        };
+
+        string requestedConstants = string.IsNullOrWhiteSpace(settings.LauncherDefineConstants)
+            ? rendererBackendConstants
+            : $"{settings.LauncherDefineConstants};{rendererBackendConstants}";
+
+        // BuildProjectFile passes DefineConstants as a global MSBuild property so
+        // referenced engine projects receive the published-build symbols. Global
+        // properties are immutable during child-project evaluation, so include the
+        // bootstrap's static renderer symbols here instead of relying on its project
+        // file to append them later.
+        return XRRuntimeEnvironment.ComposeDefineConstants(
+            requestedConstants,
+            includePublishedBuild: settings.PublishLauncherAsNativeAot,
+            includeAotRuntime: settings.PublishLauncherAsNativeAot);
+    }
 
     internal static string BuildLauncherProgramSourceForTests(
         BuildSettings settings,
@@ -1151,6 +1193,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.Development);");
         sb.AppendLine("#endif");
         sb.AppendLine("        RuntimeRenderingBootstrap.InstallEngineHostServices();");
+        sb.AppendLine("        EnginePublishedCookedAssetRegistryRegistration.Register();");
         sb.AppendLine();
         sb.AppendLine($"        string archivePath = ResolvePublishedArchivePath(\"{escapedConfigFolder}\", \"{escapedConfigArchive}\");");
         sb.AppendLine("        XRRuntimeEnvironment.ConfigurePublishedPaths(archivePath);");
@@ -1190,14 +1233,27 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine($"        var startup = Engine.Assets.Load<GameStartupSettings>(\"{escapedStartup}\") ?? Engine.Assets.LoadGameAsset<GameStartupSettings>(\"{escapedStartup}\");");
         sb.AppendLine("        if (startup is null)");
         sb.AppendLine("        {");
+        sb.AppendLine("#if XRE_PUBLISHED");
+        sb.AppendLine($"            startup = LoadRequiredPublishedAsset<GameStartupSettings>(archivePath, \"{escapedStartup}\");");
+        sb.AppendLine("#else");
         sb.AppendLine("            Console.Error.WriteLine(\"Failed to load startup settings.\");");
         sb.AppendLine("            return;");
+        sb.AppendLine("#endif");
         sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("#if XRE_PUBLISHED");
+        sb.AppendLine("        bool runAotSmoke = HasArg(args, \"--aot-smoke\");");
+        sb.AppendLine("#else");
+        sb.AppendLine("        const bool runAotSmoke = false;");
+        sb.AppendLine("#endif");
         sb.AppendLine();
         if (!string.IsNullOrWhiteSpace(gameLaunchBootstrapTypeName))
         {
             string bootstrapTypeName = gameLaunchBootstrapTypeName.Replace('+', '.');
             sb.AppendLine($"        IGameLaunchBootstrap gameBootstrap = new global::{bootstrapTypeName}();");
+            sb.AppendLine("        IGameLaunchRuntimeSmokeBootstrap? runtimeSmokeBootstrap =");
+            sb.AppendLine("            runAotSmoke ? gameBootstrap as IGameLaunchRuntimeSmokeBootstrap : null;");
+            sb.AppendLine("        runtimeSmokeBootstrap?.ConfigureRuntimeSmoke();");
             sb.AppendLine("        startup = gameBootstrap.ConfigureStartup(startup)");
             sb.AppendLine("            ?? throw new InvalidOperationException(\"The game launch bootstrap returned null startup settings.\");");
         }
@@ -1213,10 +1269,13 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("        Engine.ConfigureMemoryPolicy(startup is IVRGameStartupSettings ? EngineMemoryProfile.VRLowLatency : EngineMemoryProfile.PublishedDefault);");
         sb.AppendLine();
         sb.AppendLine("#if XRE_PUBLISHED");
-        sb.AppendLine("        if (HasArg(args, \"--aot-smoke\"))");
+        sb.AppendLine("        if (runAotSmoke)");
         sb.AppendLine("        {");
         sb.AppendLine("            RunAotSmoke(archivePath, contentArchivePath, commonAssetsArchivePath);");
-        sb.AppendLine("            return;");
+        if (!string.IsNullOrWhiteSpace(gameLaunchBootstrapTypeName))
+            sb.AppendLine("            if (runtimeSmokeBootstrap is null) return;");
+        else
+            sb.AppendLine("            return;");
         sb.AppendLine("        }");
         sb.AppendLine("#endif");
         sb.AppendLine();
@@ -1224,6 +1283,12 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             sb.AppendLine("        Engine.Run(startup, gameBootstrap.CreateInitialGameState());");
         else
             sb.AppendLine("        Engine.Run(startup, Engine.LoadOrGenerateGameState());");
+        if (!string.IsNullOrWhiteSpace(gameLaunchBootstrapTypeName))
+        {
+            sb.AppendLine("        runtimeSmokeBootstrap?.CompleteRuntimeSmoke();");
+            sb.AppendLine("        if (runtimeSmokeBootstrap is not null)");
+            sb.AppendLine("            Console.WriteLine(\"AOT runtime smoke passed.\");");
+        }
         sb.AppendLine("    }");
         sb.AppendLine();
         sb.AppendLine("    private static string ResolvePublishedArchivePath(string folder, string fileName)");
@@ -1258,6 +1323,14 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("    }");
         sb.AppendLine();
         sb.AppendLine("#if XRE_PUBLISHED");
+        sb.AppendLine("    private static T LoadRequiredPublishedAsset<T>(string archivePath, string assetPath) where T : XRAsset");
+        sb.AppendLine("    {");
+        sb.AppendLine("        byte[] bytes = VerifyArchiveAsset(archivePath, assetPath);");
+        sb.AppendLine("        return CookedAssetReader.LoadAsset(bytes, typeof(T)) as T");
+        sb.AppendLine("            ?? throw new InvalidOperationException(");
+        sb.AppendLine("                $\"Published asset '{assetPath}' did not deserialize as required type '{typeof(T)}'.\");");
+        sb.AppendLine("    }");
+        sb.AppendLine();
         sb.AppendLine("    private static void RunAotSmoke(string configArchivePath, string contentArchivePath, string commonAssetsArchivePath)");
         sb.AppendLine("    {");
         sb.AppendLine("        AotRuntimeMetadata metadata = AotRuntimeMetadataStore.RequireMetadata();");

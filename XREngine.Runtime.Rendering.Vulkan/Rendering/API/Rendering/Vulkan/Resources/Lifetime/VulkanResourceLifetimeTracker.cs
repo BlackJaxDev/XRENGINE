@@ -25,7 +25,7 @@ internal sealed class VulkanResourceLifetimeTracker
     internal Dictionary<ulong, VulkanRenderer.VulkanCommandBufferLifetimeRecord> CommandBufferLifetimes { get; } = new();
     internal Dictionary<VulkanRenderer.VulkanResourceLifetimeKey, HashSet<ulong>> ResourceCommandBufferDependencies { get; } = new();
     internal Dictionary<ulong, VulkanRenderer.VulkanDescriptorSetLifetimeRecord> DescriptorSetLifetimes { get; } = new();
-    internal Dictionary<ulong, List<VulkanRenderer.VkRenderQuery>> RenderQueriesByPool { get; } = new();
+    internal Dictionary<ulong, List<VkRenderQuery>> RenderQueriesByPool { get; } = new();
     internal Dictionary<ulong, HashSet<ulong>> DescriptorSetsByPool { get; } = new();
     internal Dictionary<VulkanRenderer.VulkanResourceLifetimeKey, HashSet<ulong>> DescriptorSetsByReferencedResource { get; } = new();
     internal ConcurrentDictionary<ulong, VulkanRenderer.VulkanPublishedDescriptorSetSnapshot> PublishedDescriptorSets { get; } = new();
@@ -38,7 +38,7 @@ internal sealed class VulkanResourceLifetimeTracker
     /// </summary>
     internal Dictionary<VulkanRenderer.VulkanResourceLifetimeKey, ulong> SubmissionDependencyGenerationsScratch { get; } = new(4096);
 
-    internal List<VulkanRenderer.VulkanLifetimeSubmission> LifetimeSubmissions { get; } = new(16);
+    internal List<VulkanLifetimeSubmission> LifetimeSubmissions { get; } = new(16);
     internal ThreadLocal<HashSet<ulong>> ChangedDescriptorSetsScratch { get; } = new(static () => []);
     internal ThreadLocal<HashSet<VulkanRenderer.VulkanResourceLifetimeKey>> DescriptorReferencesScratch { get; } = new(static () => []);
 

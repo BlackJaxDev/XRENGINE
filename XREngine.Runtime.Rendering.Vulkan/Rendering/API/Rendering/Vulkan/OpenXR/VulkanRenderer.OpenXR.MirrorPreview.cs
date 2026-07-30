@@ -454,7 +454,7 @@ public unsafe partial class VulkanRenderer
                 }
 
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordMirror.PlanAndSchedule.Sort"))
-                    ops = _renderGraphCompiler.SortFrameOpsCore(ops, CompiledRenderGraph);
+                    ops = _frameOperationScheduler.SortFrameOpsCore(ops, CompiledRenderGraph);
                 if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                 {
                     Debug.VulkanWarningEvery(
@@ -818,7 +818,7 @@ public unsafe partial class VulkanRenderer
             out commandChainPrimaryGroupCount);
 
         long recordStart = Stopwatch.GetTimestamp();
-        _isRecordingCommandBuffer = true;
+        _commandRecorder.EnterRecordingScope();
         bool queryFrameOpsRequireRerecord = false;
         try
         {
@@ -925,7 +925,7 @@ public unsafe partial class VulkanRenderer
         }
         finally
         {
-            _isRecordingCommandBuffer = false;
+            _commandRecorder.ExitRecordingScope();
         }
 
         MoveRecordedTextureUploadsForSubmitTo(_openXrBackend.RecordedTextureUploadsForSubmit);

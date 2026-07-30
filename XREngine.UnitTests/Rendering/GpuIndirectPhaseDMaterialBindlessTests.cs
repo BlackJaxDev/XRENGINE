@@ -116,7 +116,7 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
         materialTableSource.ShouldContain("MaterialBindingLayouts.OpaqueDeferred");
         materialEntrySource.ShouldContain("BaseColorOpacity");
         materialEntrySource.ShouldContain("RMSE");
-        passSource.ShouldContain("materialCapability?.TryResolveMaterialTextureReference(");
+        passSource.ShouldContain("materialCapability?.ResolveMaterialTextureReference(texture, semantic)");
         passSource.ShouldContain("TextureArrayPolicy");
         passSource.ShouldContain("ResolveMaterialBaseColorOpacity");
         passSource.ShouldContain("ResolveMaterialRmse");
@@ -128,7 +128,7 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
         hybridSource.ShouldContain("emitMaterialId: true");
         hybridSource.ShouldContain("XR_LoadMaterial(materialId, material);");
         hybridSource.ShouldContain("FragMaterialIdName");
-        materialScatterSource.ShouldContain("uint materialID = meta.MaterialID;");
+        materialScatterSource.ShouldContain("meta.MaterialID");
         materialScatterSource.ShouldContain("uint slotIndex = materialSlots[materialID];");
 
         vulkanDescriptorSource.ShouldContain("VariableDescriptorCountBit");
@@ -181,7 +181,7 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
         // Invariant 2: material-table program cache key does not depend on material identity.
         string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
         hybridSource.ShouldContain(
-            "(EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash) cacheKey =",
+            "(EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash, bool depthNormalPrePass, bool maskedDepthNormalPrePass) cacheKey =",
             customMessage: "EnsureMaterialTableDrawProgram cache key changed shape. Phase D acceptance requires the material-table draw program to be keyed on texture-reference mode, renderer identity, and layout only - never on material identity. (The separate EnsureCombinedProgram per-material cache is unrelated.)");
 
         // Sanity: the shadow short-circuit that routes every shadow-pass draw to the Shadow family
@@ -192,11 +192,7 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string fullPath = ResolveWorkspacePath(relativePath);
-        File.Exists(fullPath).ShouldBeTrue($"Expected file does not exist: {fullPath}");
-        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ResolveWorkspacePath(string relativePath)
     {

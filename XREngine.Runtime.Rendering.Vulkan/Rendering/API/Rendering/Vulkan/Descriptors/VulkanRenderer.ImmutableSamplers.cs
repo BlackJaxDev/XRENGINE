@@ -33,7 +33,7 @@ public unsafe partial class VulkanRenderer
         CreateCanonicalSampler(VulkanCanonicalSampler.LinearClamp, Filter.Linear, SamplerMipmapMode.Linear, SamplerAddressMode.ClampToEdge, false, false);
         CreateCanonicalSampler(VulkanCanonicalSampler.NearestClamp, Filter.Nearest, SamplerMipmapMode.Nearest, SamplerAddressMode.ClampToEdge, false, false);
         CreateCanonicalSampler(VulkanCanonicalSampler.LinearRepeat, Filter.Linear, SamplerMipmapMode.Linear, SamplerAddressMode.Repeat, false, false);
-        CreateCanonicalSampler(VulkanCanonicalSampler.Anisotropic, Filter.Linear, SamplerMipmapMode.Linear, SamplerAddressMode.Repeat, _supportsAnisotropy, false);
+        CreateCanonicalSampler(VulkanCanonicalSampler.Anisotropic, Filter.Linear, SamplerMipmapMode.Linear, SamplerAddressMode.Repeat, DeviceCapabilities.Supports(EVulkanDeviceCapability.Anisotropy), false);
         CreateCanonicalSampler(VulkanCanonicalSampler.ShadowComparison, Filter.Linear, SamplerMipmapMode.Linear, SamplerAddressMode.ClampToEdge, false, true);
     }
 

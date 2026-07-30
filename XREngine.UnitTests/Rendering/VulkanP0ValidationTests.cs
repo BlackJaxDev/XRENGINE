@@ -1107,7 +1107,7 @@ public sealed class VulkanP0ValidationTests
     public void VulkanComputeUniforms_AreCachedPerImageAndDispatch()
     {
         string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
-        string keySource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VulkanRenderer.VkRenderProgram.ComputeUniformBufferKey.cs");
+        string keySource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.ComputeUniformBufferKey.cs");
 
         programSource.ShouldContain("_computeUniformBuffers");
         programSource.ShouldContain("TryGetOrUpdateComputeFallbackUniformBuffer");
@@ -1336,12 +1336,7 @@ public sealed class VulkanP0ValidationTests
     #endregion
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string repoRoot = ResolveRepoRoot();
-        string path = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
-        File.Exists(path).ShouldBeTrue($"Expected workspace file '{path}' to exist.");
-        return File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string SliceMethod(string source, string signature)
     {

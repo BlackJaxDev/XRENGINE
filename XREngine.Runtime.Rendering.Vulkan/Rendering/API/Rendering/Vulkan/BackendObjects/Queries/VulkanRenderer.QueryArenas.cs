@@ -4,10 +4,10 @@ public unsafe partial class VulkanRenderer
 {
     private VulkanQueryPoolArenaManager? _queryPoolArenas;
 
-    private VulkanQueryPoolArenaManager QueryPoolArenas
+    internal VulkanQueryPoolArenaManager QueryPoolArenas
         => _queryPoolArenas ??= new VulkanQueryPoolArenaManager(this);
 
-    public QueryArenaTelemetry VulkanQueryArenaStats
+    internal QueryArenaTelemetry VulkanQueryArenaStats
         => _queryPoolArenas?.CaptureTelemetry() ?? default;
 
     private void DestroyVulkanQueryArenas()

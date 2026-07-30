@@ -14,7 +14,7 @@ public unsafe partial class VulkanRenderer
            SupportsNvCopyMemoryIndirect &&
            SupportsBufferDeviceAddress;
 
-    private ulong GetBufferDeviceAddress(Buffer buffer)
+    internal ulong GetBufferDeviceAddress(Buffer buffer)
     {
         if (!SupportsBufferDeviceAddress)
             return 0;

@@ -13,6 +13,9 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed partial class VulkanSourceArchitectureGuardrailTests
 {
+    private const int StatefulRendererPartialCountBaseline = 72;
+    private const int RendererStateFieldCountBaseline = 548;
+
     private static readonly HashSet<string> StatefulRendererPartialBaseline =
         new(StringComparer.OrdinalIgnoreCase)
         {
@@ -42,14 +45,13 @@ public sealed partial class VulkanSourceArchitectureGuardrailTests
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs",
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainWorkers.cs",
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandPool.cs",
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.FrameOpDiagnostics.cs",
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/FrameOpDiagnostics.cs",
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.IndirectDraw.cs",
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Readback.cs",
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.RenderState.cs",
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.StateTracking.cs",
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.RenderGraphState.cs",
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorLayoutCache.cs",
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorUpdateTemplates.cs",
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.BindlessMaterialTextureTable.cs",
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.ComputeDescriptors.cs",
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.DescriptorHeap.cs",
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.DescriptorPool.cs",
@@ -87,7 +89,7 @@ public sealed partial class VulkanSourceArchitectureGuardrailTests
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineVariantManifest.cs",
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanRenderer.RenderPasses.cs",
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanRenderTargetMode.cs",
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs",
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Transfers/VulkanRenderer.TextureUploadRecording.cs",
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanDynamicUniformRingBuffer.cs",
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanSceneDatabaseAddresses.cs",
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Framebuffers/VulkanRenderer.FrameBufferRenderPasses.cs",
@@ -123,6 +125,23 @@ public sealed partial class VulkanSourceArchitectureGuardrailTests
     }
 
     [Test]
+    public void VulkanRendererPartials_DoNotIncreaseLegacyStateBudget()
+    {
+        SourceContractWorkspace.SourceFile[] sources = [.. SourceContractWorkspace.GetVulkanSourceFiles()];
+        int statefulPartialCount = sources.Count(static file =>
+            DeclaresStatefulVulkanRendererPartial(file.Source));
+        int stateFieldCount = sources.Sum(static file =>
+            CountVulkanRendererStateFields(file.Source));
+
+        statefulPartialCount.ShouldBeLessThanOrEqualTo(
+            StatefulRendererPartialCountBaseline,
+            "Legacy stateful VulkanRenderer partials form a one-way debt budget.");
+        stateFieldCount.ShouldBeLessThanOrEqualTo(
+            RendererStateFieldCountBaseline,
+            "Legacy VulkanRenderer fields form a one-way debt budget.");
+    }
+
+    [Test]
     public void VulkanSourceFiles_DoNotIntroduceNewTopLevelTypeDumpingGrounds()
     {
         string[] violations =
@@ -139,6 +158,233 @@ public sealed partial class VulkanSourceArchitectureGuardrailTests
             string.Join(Environment.NewLine, violations));
     }
 
+    [Test]
+    public void VulkanHotPaths_DoNotUseThreadStaticState()
+    {
+        string[] violations =
+        [
+            .. SourceContractWorkspace.GetVulkanSourceFiles()
+                .Where(static file =>
+                    file.Source.Contains("[ThreadStatic]", StringComparison.Ordinal) ||
+                    file.Source.Contains("ThreadStaticAttribute", StringComparison.Ordinal))
+                .Select(static file => file.RelativePath),
+        ];
+
+        violations.ShouldBeEmpty(
+            "Vulkan hot-path context must use explicit recording contexts or renderer-owned reusable workspaces.");
+    }
+
+    [Test]
+    public void VulkanBackendWrappers_AreNamespaceLevelInternalTypes()
+    {
+        string rendererSource = SourceContractWorkspace.ReadVulkanRendererSource();
+        rendererSource.ShouldNotMatch(@"\b(?:class|record|struct)\s+Vk(?:DataBuffer|Texture|TextureView|TransformFeedback|Material|RenderProgram|RenderBuffer|FrameBuffer|Sampler|RenderQuery|MeshRenderer)\b");
+        rendererSource.ShouldNotContain("VulkanRenderer.Vk");
+
+        string wrapperBase = SourceContractWorkspace.ReadFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/VkObjectBase.cs");
+        wrapperBase.ShouldContain("internal abstract class VkObjectBase");
+        wrapperBase.ShouldNotContain("public abstract class VkObjectBase");
+    }
+
+    [Test]
+    public void VulkanResourceBindingGrammar_HasOneParserAuthority()
+    {
+        string[] violations =
+        [
+            .. SourceContractWorkspace.GetVulkanSourceFiles()
+                .Where(static file =>
+                    file.Source.Contains("\"tex::\"", StringComparison.Ordinal) ||
+                    file.Source.Contains("\"buf::\"", StringComparison.Ordinal) ||
+                    file.Source.Contains("\"fbo::\"", StringComparison.Ordinal))
+                .Select(static file => file.RelativePath)
+                .Where(static path => !path.EndsWith(
+                    "/RenderGraph/VulkanResourceBindingView.cs",
+                    StringComparison.OrdinalIgnoreCase)),
+        ];
+
+        violations.ShouldBeEmpty("Render-graph resource binding syntax must be parsed only by VulkanResourceBindingView.");
+    }
+
+    [Test]
+    public void VulkanRuntimeFeatureChecks_DoNotReadBootstrapCapabilityFields()
+    {
+        string[] bootstrapFields =
+        [
+            "_supportsAnisotropy",
+            "_supportsTimelineSemaphores",
+            "_supportsDescriptorIndexing",
+            "_supportsDrawIndirectCount",
+            "_supportsDynamicRendering",
+            "_supportsSynchronization2",
+        ];
+
+        string[] violations =
+        [
+            .. SourceContractWorkspace.GetVulkanSourceFiles()
+                .Where(static file => !file.RelativePath.Contains("/Bootstrap/", StringComparison.OrdinalIgnoreCase))
+                .Where(file => bootstrapFields.Any(field => file.Source.Contains(field, StringComparison.Ordinal)))
+                .Select(static file => file.RelativePath),
+        ];
+
+        violations.ShouldBeEmpty("Post-bootstrap feature decisions must read VulkanDeviceCapabilities or a snapshot-backed accessor.");
+    }
+
+    [Test]
+    public void VulkanImplementationTypes_AreInternalByDefault()
+    {
+        string[] violations =
+        [
+            .. SourceContractWorkspace.GetVulkanSourceFiles()
+                .Where(static file => file.RelativePath.Contains(
+                    "/Rendering/API/Rendering/Vulkan/",
+                    StringComparison.OrdinalIgnoreCase))
+                .Where(static file => DeclaresUnexpectedPublicTopLevelType(file.Source))
+                .Select(static file => file.RelativePath),
+        ];
+
+        violations.ShouldBeEmpty(
+            "Only VulkanRenderer and VulkanRendererBackendFactory form the public leaf surface. " +
+            "Implementation owners and contracts must remain internal.");
+    }
+
+    [Test]
+    public void BackendWrappers_UseFocusedDescriptorAndPipelineOwners()
+    {
+        string[] forbiddenFacadeLookups =
+        [
+            "Renderer.DescriptorFrameSlotFrameCount",
+            "Renderer.TryGetSharedGraphicsPipeline",
+            "Renderer.StoreSharedGraphicsPipeline",
+            "Renderer.TryGetOrReserveSharedGraphicsPipelineLibrary",
+            "Renderer.QueueProgramLinkUntilDeviceReady",
+        ];
+
+        string[] violations =
+        [
+            .. SourceContractWorkspace.GetVulkanSourceFiles()
+                .Where(static file => file.RelativePath.Contains("/BackendObjects/", StringComparison.OrdinalIgnoreCase))
+                .Where(file => forbiddenFacadeLookups.Any(lookup => file.Source.Contains(lookup, StringComparison.Ordinal)))
+                .Select(static file => file.RelativePath),
+        ];
+
+        violations.ShouldBeEmpty(
+            "Backend wrappers must use VulkanBackendObjectContext descriptor and pipeline owners.");
+    }
+
+    [Test]
+    public void ComputeResources_ArePreparedBeforeTheRecordingGuard()
+    {
+        string scheduling = SourceContractWorkspace.ReadFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        int preparation = scheduling.IndexOf(
+            "TryPrepareComputeFrameOpsForRecording(imageIndex, ops",
+            StringComparison.Ordinal);
+        int recordingGuard = scheduling.IndexOf(
+            "_commandRecorder.EnterRecordingScope();",
+            StringComparison.Ordinal);
+
+        preparation.ShouldBeGreaterThanOrEqualTo(0);
+        recordingGuard.ShouldBeGreaterThan(preparation);
+
+        string preparationOwner = SourceContractWorkspace.ReadFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Recording/VulkanRenderer.ComputePreparation.cs");
+        preparationOwner.ShouldContain("program.GetOrCreateComputePipeline(passIndex, passMetadata)");
+        preparationOwner.ShouldContain("program.TryPrepareComputeDispatchResources(");
+
+        string program = SourceContractWorkspace.ReadFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.Compute.cs");
+        program.ShouldContain("internal bool TryPrepareComputeDispatchResources(");
+        program.ShouldContain("return TryRefreshReusableComputeDescriptorSets(");
+    }
+    [Test]
+    public void PrimaryRecording_UsesOneReusableRenderScopeController()
+    {
+        string source = SourceContractWorkspace.ReadVulkanRendererSource();
+        source.ShouldContain("recordingScratch.RenderScope");
+        source.ShouldContain("renderScope.Activate(");
+        source.ShouldContain("renderScope.Deactivate()");
+        source.ShouldContain("renderScope.ShouldPreserveForContextChange(");
+    }
+    [Test]
+    public void PrimaryRecordingEntryPoints_RemainShortContextCoordinators()
+    {
+        string source = SourceContractWorkspace.ReadVulkanRendererSource();
+        CountMethodBodyLines(source, "EnsureCommandBufferRecorded(").ShouldBeLessThanOrEqualTo(45);
+        CountMethodBodyLines(source, "TryRecordCommandBuffer(").ShouldBeLessThanOrEqualTo(55);
+    }
+
+    private static int CountMethodBodyLines(string source, string methodMarker)
+    {
+        int method = source.IndexOf(methodMarker, StringComparison.Ordinal);
+        if (method < 0)
+            throw new InvalidOperationException($"Could not locate Vulkan method marker '{methodMarker}'.");
+
+        int bodyStart = source.IndexOf('{', method);
+        int bodyEnd = FindClosingBrace(source, bodyStart);
+        if (bodyStart < 0 || bodyEnd < 0)
+            throw new InvalidOperationException($"Could not parse Vulkan method marker '{methodMarker}'.");
+
+        int lineCount = 1;
+        for (int index = bodyStart; index <= bodyEnd; index++)
+        {
+            if (source[index] == (char)10)
+                lineCount++;
+        }
+
+        return lineCount;
+    }
+    private static bool DeclaresUnexpectedPublicTopLevelType(string source)
+    {
+        string maskedSource = MaskTriviaAndLiterals(source);
+        int[] braceDepths = BuildBraceDepthMap(maskedSource);
+        int declarationDepth = FileScopedNamespaceRegex().IsMatch(maskedSource) ? 0 : 1;
+
+        foreach (Match declaration in PublicTypeDeclarationRegex().Matches(maskedSource))
+        {
+            if (braceDepths[declaration.Index] != declarationDepth)
+                continue;
+
+            string typeName = declaration.Groups["name"].Value;
+            if (typeName is not "VulkanRenderer" and not "VulkanRendererBackendFactory")
+                return true;
+        }
+
+        return false;
+    }
+    private static int CountVulkanRendererStateFields(string source)
+    {
+        string maskedSource = MaskTriviaAndLiterals(source);
+        int[] braceDepths = BuildBraceDepthMap(maskedSource);
+        int count = 0;
+
+        foreach (Match declaration in VulkanRendererDeclarationRegex().Matches(maskedSource))
+        {
+            int bodyStart = maskedSource.IndexOf('{', declaration.Index + declaration.Length);
+            if (bodyStart < 0)
+                continue;
+
+            int memberDepth = braceDepths[bodyStart] + 1;
+            int bodyEnd = FindClosingBrace(maskedSource, bodyStart);
+            if (bodyEnd < 0)
+                continue;
+
+            foreach (Match field in FieldDeclarationRegex().Matches(maskedSource, bodyStart + 1))
+            {
+                if (field.Index >= bodyEnd)
+                    break;
+                if (braceDepths[field.Index] != memberDepth)
+                    continue;
+                if (field.Value.Contains(" const ", StringComparison.Ordinal) ||
+                    field.Value.TrimStart().StartsWith("const ", StringComparison.Ordinal))
+                    continue;
+
+                count++;
+            }
+        }
+
+        return count;
+    }
     private static bool DeclaresStatefulVulkanRendererPartial(string source)
     {
         string maskedSource = MaskTriviaAndLiterals(source);
@@ -337,15 +583,19 @@ public sealed partial class VulkanSourceArchitectureGuardrailTests
     private static partial Regex VulkanRendererDeclarationRegex();
 
     [GeneratedRegex(
-        @"(?m)^[ \t]*(?:\[[^\]\r\n]+\][ \t]*)*(?:(?:public|private|protected|internal|static|readonly|volatile|unsafe|new|required|const)[ \t]+)+[A-Za-z_][\w<>,.?\[\](): \t]*[ \t]+[A-Za-z_]\w*[ \t]*(?:=(?!>)|;)")]
+        @"(?m)^[ \t]*(?:\[[^\]\r\n]+\][ \t]*)*(?:(?:public|private|protected|internal|static|readonly|volatile|unsafe|new|required|const)[ \t]+)+[A-Za-z_][\w<>,.?\[\]: \t]*[ \t]+[A-Za-z_]\w*[ \t]*(?:=(?!>)|;)")]
     private static partial Regex FieldDeclarationRegex();
 
     [GeneratedRegex(
-        @"(?m)^[ \t]*(?:\[[^\]\r\n]+\][ \t]*)*(?:(?:public|private|protected|internal|static|readonly|unsafe|new|required)[ \t]+)+[A-Za-z_][\w<>,.?\[\](): \t]*[ \t]+[A-Za-z_]\w*[ \t]*\{")]
+        @"(?m)^[ \t]*(?:\[[^\]\r\n]+\][ \t]*)*(?:(?:public|private|protected|internal|static|readonly|unsafe|new|required)[ \t]+)+[A-Za-z_][\w<>,.?\[\]: \t]*[ \t]+[A-Za-z_]\w*[ \t]*\{")]
     private static partial Regex PropertyDeclarationRegex();
 
     [GeneratedRegex(@"\b(?:get|set|init)\s*;")]
     private static partial Regex AutoPropertyAccessorRegex();
+
+    [GeneratedRegex(
+        @"\bpublic\s+(?:(?:sealed|abstract|static|readonly|partial|unsafe)\s+)*(?:class|struct|interface|enum|record(?:\s+(?:class|struct))?)\s+(?<name>[A-Za-z_]\w*)")]
+    private static partial Regex PublicTypeDeclarationRegex();
 
     [GeneratedRegex(
         @"\b(?:class|struct|interface|enum|record(?:\s+(?:class|struct))?)\s+[A-Za-z_]\w*")]

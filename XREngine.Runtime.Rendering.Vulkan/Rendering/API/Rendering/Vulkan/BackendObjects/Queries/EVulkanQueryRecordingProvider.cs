@@ -3,7 +3,7 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>
 /// Selects the Vulkan command family used to record a query descriptor.
 /// </summary>
-public enum EVulkanQueryRecordingProvider
+internal enum EVulkanQueryRecordingProvider
 {
     Unsupported,
     BeginEnd,

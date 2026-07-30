@@ -14,7 +14,7 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
-        private static bool IsBloomDiagnosticName(string? name)
+        internal static bool IsBloomDiagnosticName(string? name)
             => !string.IsNullOrWhiteSpace(name) &&
                name.Contains("Bloom", StringComparison.OrdinalIgnoreCase);
 
@@ -68,38 +68,17 @@ namespace XREngine.Rendering.Vulkan
                 exception.Message);
         }
 
-        private readonly object _lastFrameOpTraceLock = new();
-        private FrameOpTraceEntry[] _lastFrameOpTraceEntries = [];
-        private ulong _lastFrameOpTraceFrameId;
-        private int _lastFrameOpTraceTotalCount;
-
-        private sealed record FrameOpTraceEntry(
-            int Index,
-            string OpType,
-            int PassIndex,
-            string PassName,
-            string TargetName,
-            int TargetIdentity,
-            int PipelineIdentity,
-            string PipelineName,
-            int ViewportIdentity,
-            uint DisplayWidth,
-            uint DisplayHeight,
-            uint InternalWidth,
-            uint InternalHeight,
-            string Detail);
-
         private void CaptureLastFrameOpTrace(FrameOp[] ops)
         {
             const int MaxCapturedEntries = 512;
             int count = Math.Min(ops.Length, MaxCapturedEntries);
-            FrameOpTraceEntry[] entries = new FrameOpTraceEntry[count];
+            VulkanFrameOpTraceEntry[] entries = new VulkanFrameOpTraceEntry[count];
 
             for (int i = 0; i < count; i++)
             {
                 FrameOp op = ops[i];
                 FrameOpContext context = op.Context;
-                entries[i] = new FrameOpTraceEntry(
+                entries[i] = new VulkanFrameOpTraceEntry(
                     i,
                     op.GetType().Name,
                     op.PassIndex,
@@ -116,12 +95,10 @@ namespace XREngine.Rendering.Vulkan
                     BuildFrameOpTraceDetail(op));
             }
 
-            lock (_lastFrameOpTraceLock)
-            {
-                _lastFrameOpTraceFrameId = VulkanFrameCounter;
-                _lastFrameOpTraceTotalCount = ops.Length;
-                _lastFrameOpTraceEntries = entries;
-            }
+            _frameOperationQueue.Diagnostics.StoreTrace(
+                entries,
+                VulkanFrameCounter,
+                ops.Length);
         }
 
         private static string BuildFrameOpTraceDetail(FrameOp op)
@@ -176,22 +153,20 @@ namespace XREngine.Rendering.Vulkan
 
         public object GetLastFrameOpTraceDiagnostics(int limit = 128, string? targetContains = null)
         {
-            FrameOpTraceEntry[] entries;
+            VulkanFrameOpTraceEntry[] entries;
             ulong frameId;
             int totalCount;
-            lock (_lastFrameOpTraceLock)
-            {
-                entries = _lastFrameOpTraceEntries;
-                frameId = _lastFrameOpTraceFrameId;
-                totalCount = _lastFrameOpTraceTotalCount;
-            }
+            _frameOperationQueue.Diagnostics.CaptureTraceSnapshot(
+                out entries,
+                out frameId,
+                out totalCount);
 
             int clampedLimit = Math.Clamp(limit, 1, 512);
             bool hasFilter = !string.IsNullOrWhiteSpace(targetContains);
-            List<FrameOpTraceEntry> filtered = new(Math.Min(entries.Length, clampedLimit));
+            List<VulkanFrameOpTraceEntry> filtered = new(Math.Min(entries.Length, clampedLimit));
             for (int i = 0; i < entries.Length && filtered.Count < clampedLimit; i++)
             {
-                FrameOpTraceEntry entry = entries[i];
+                VulkanFrameOpTraceEntry entry = entries[i];
                 if (hasFilter &&
                     !entry.TargetName.Contains(targetContains!, StringComparison.OrdinalIgnoreCase) &&
                     !entry.Detail.Contains(targetContains!, StringComparison.OrdinalIgnoreCase) &&
@@ -477,10 +452,6 @@ namespace XREngine.Rendering.Vulkan
                 ops.Length - filtered.Length);
             return filtered;
         }
-
-        private FrameOp[] _staticFrameOpsSplitBuffer = Array.Empty<FrameOp>();
-        private FrameOp[] _dynamicUiBatchTextFrameOpsSplitBuffer = Array.Empty<FrameOp>();
-
         private void SplitDynamicUiBatchTextFrameOps(
             FrameOp[] ops,
             out FrameOp[] staticOps,
@@ -508,13 +479,11 @@ namespace XREngine.Rendering.Vulkan
             }
 
             int staticCount = ops.Length - dynamicCount;
-            if (_staticFrameOpsSplitBuffer.Length != staticCount)
-                _staticFrameOpsSplitBuffer = new FrameOp[staticCount];
-            if (_dynamicUiBatchTextFrameOpsSplitBuffer.Length != dynamicCount)
-                _dynamicUiBatchTextFrameOpsSplitBuffer = new FrameOp[dynamicCount];
-
-            staticOps = _staticFrameOpsSplitBuffer;
-            dynamicUiBatchTextOps = _dynamicUiBatchTextFrameOpsSplitBuffer;
+            _frameOperationQueue.Diagnostics.EnsureSplitBuffers(
+                staticCount,
+                dynamicCount,
+                out staticOps,
+                out dynamicUiBatchTextOps);
             int staticIndex = 0;
             int dynamicIndex = 0;
             for (int i = 0; i < ops.Length; i++)

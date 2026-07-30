@@ -12,7 +12,7 @@ internal ref struct VulkanCommandRecordingContext
         uint imageIndex,
         CommandBuffer commandBuffer,
         CommandBuffer dynamicUiSecondaryCommandBuffer,
-        VulkanRenderer.FrameOp[] operations,
+        FrameOp[] operations,
         int dynamicUiOperationCount,
         CommandChainSchedule? commandChainSchedule,
         bool preserveSwapchainForOverlay,
@@ -43,7 +43,7 @@ internal ref struct VulkanCommandRecordingContext
     public readonly uint ImageIndex;
     public readonly CommandBuffer CommandBuffer;
     public readonly CommandBuffer DynamicUiSecondaryCommandBuffer;
-    public readonly VulkanRenderer.FrameOp[] Operations;
+    public readonly FrameOp[] Operations;
     public readonly int DynamicUiOperationCount;
     public readonly CommandChainSchedule? CommandChainSchedule;
     public readonly bool PreserveSwapchainForOverlay;

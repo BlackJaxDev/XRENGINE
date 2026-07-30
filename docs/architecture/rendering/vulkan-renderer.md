@@ -96,10 +96,13 @@ The Vulkan renderer lives under
 `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/` and uses the
 same responsibility-based backend taxonomy described in
 [Rendering Code Map](code-map.md). The leaf assembly remains the hard module
-boundary. Most implementation contracts remain internal in
-`XREngine.Rendering.Vulkan`; the folder and explicit owner type identify the
-authority, and new code must depend on that owner rather than ambient facade
-state.
+boundary. Implementation contracts are internal by default. Durable command-recording,
+render-graph, and device-bootstrap contracts use
+XREngine.Rendering.Vulkan.Commands, XREngine.Rendering.Vulkan.RenderGraph,
+and XREngine.Rendering.Vulkan.DeviceBootstrap; renderer adapter partials and
+wrappers remain in XREngine.Rendering.Vulkan. Global usings bridge those
+internal domains without exposing them from the leaf assembly. New code must
+depend on the focused owner rather than ambient facade state.
 
 | Authority | Mutable responsibility |
 | --- | --- |
@@ -195,21 +198,23 @@ From `PhysicalDevice.cs`:
 
 ### Logical Device & Feature Chain
 
-From `Bootstrap/VulkanRenderer.LogicalDevice.cs` (~560 lines):
+`VulkanRenderer.CreateLogicalDevice` is a short composition entry over the
+owners in `Bootstrap/Device/`:
 
-The logical device is created with a carefully constructed `pNext` chain of feature structs:
+- `VulkanDeviceCapabilityQuery` captures the advertised physical-device state.
+- `VulkanPhysicalDevicePolicy` selects required/optional enablement and visible
+  fallbacks.
+- `VulkanDeviceFeatureChainBuilder` and
+  `VulkanLogicalDeviceCreateInfoBuilder` assemble the native feature and create
+  structures.
+- `VulkanDeviceContext` publishes the logical device, queue families, queues,
+  and loaded extension commands as one lifecycle transition.
+- immutable `VulkanDeviceCapabilities` is the runtime feature authority, and
+  `VulkanDeviceCapabilityReporter` logs advertised, required, enabled, and
+  fallback state without conflating them.
 
-```
-DeviceCreateInfo
-  └─ pNext → PhysicalDeviceDescriptorIndexingFeatures
-       └─ pNext → PhysicalDeviceMemoryDecompressionFeaturesNV
-            └─ pNext → PhysicalDeviceCopyMemoryIndirectFeaturesNV
-                 └─ pNext → PhysicalDeviceBufferDeviceAddressFeatures
-                      └─ pNext → PhysicalDeviceDynamicRenderingFeatures
-                           └─ pNext → PhysicalDeviceVulkan11Features
-                                └─ pNext → PhysicalDeviceIndexTypeUint8FeaturesEXT
-```
-
+The builder owns the ordered `pNext` chain; frame, OpenXR, render-graph, and
+wrapper code cannot mutate it after device publication.
 **Features enabled:**
 - `descriptorIndexing` — Runtime arrays, partial descriptor binding, update-after-bind
 - `bufferDeviceAddress` — GPU buffer pointers for advanced rendering
@@ -288,7 +293,7 @@ Startup logs include `Capability.BindlessMaterialTextures` with mode, tier, capa
 
 ### Command Pool
 
-From `Commands/VulkanRenderer.CommandPool.cs`:
+From `Commands/CommandBuffers/VulkanRenderer.CommandPool.cs`:
 
 ```csharp
 private void CreateCommandPool()

@@ -121,11 +121,19 @@ public static class AotRuntimeMetadataStore
         AotRuntimeMetadata metadata = XRRuntimeEnvironment.IsAotRuntimeBuild
             ? RequireMetadata()
             : Metadata ?? new AotRuntimeMetadata();
+        string requestedTypeName = TypeNameOnly(assemblyQualifiedName);
 
         foreach (string candidate in metadata.PublishedRuntimeAssetTypeNames)
         {
-            if (string.Equals(candidate, assemblyQualifiedName, StringComparison.Ordinal))
+            if (string.Equals(candidate, assemblyQualifiedName, StringComparison.Ordinal)
+                || string.Equals(TypeNameOnly(candidate), requestedTypeName, StringComparison.Ordinal))
+            {
+                // NativeAOT may expose a different assembly-qualified identity for a type
+                // than the editor observed while cooking. The full type name is stable;
+                // PublishedCookedAssetRegistry still requires an exact Type registration
+                // before any payload can be deserialized.
                 return true;
+            }
         }
 
         return false;

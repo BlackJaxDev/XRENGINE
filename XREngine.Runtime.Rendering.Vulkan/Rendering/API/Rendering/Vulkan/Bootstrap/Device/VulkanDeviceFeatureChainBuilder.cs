@@ -2,7 +2,7 @@ using Silk.NET.Vulkan;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
-namespace XREngine.Rendering.Vulkan;
+namespace XREngine.Rendering.Vulkan.DeviceBootstrap;
 
 /// <summary>
 /// Stack-only builder for a Vulkan feature <c>pNext</c> chain. Feature nodes

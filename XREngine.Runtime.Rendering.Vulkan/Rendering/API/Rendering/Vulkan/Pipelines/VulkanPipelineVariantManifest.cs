@@ -42,7 +42,7 @@ public unsafe partial class VulkanRenderer
         public void MarkWarmupCompleted() => Volatile.Write(ref _warmupCompleted, 1);
 
         internal static VulkanPipelineVariantManifest Build(
-            VulkanRenderGraphPlan plan,
+            VulkanCompiledRenderGraphPlan plan,
             FrameOp[] ops,
             EMeshSubmissionStrategy submissionStrategy,
             bool dynamicRendering,
@@ -128,7 +128,7 @@ public unsafe partial class VulkanRenderer
     }
 
     private VulkanPipelineVariantManifest GetOrBuildPipelineVariantManifest(
-        VulkanRenderGraphPlan plan,
+        VulkanCompiledRenderGraphPlan plan,
         FrameOp[] ops,
         EMeshSubmissionStrategy submissionStrategy,
         bool dynamicRendering,

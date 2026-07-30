@@ -165,7 +165,7 @@ internal sealed partial class VulkanTextureUploadService
         public Action? OnCanceled { get; }
         public Action<Exception>? OnError { get; }
         public long NotBeforeTimestamp { get; private set; }
-        public VulkanRenderer.VkTexture2D? TextureWrapper { get; set; }
+        public VkTexture2D? TextureWrapper { get; set; }
         public VulkanImportedTextureUploadPreparation? Preparation { get; set; }
         public Task<VulkanImportedTextureUploadWorkerResult>? WorkerPrepTask { get; set; }
         public long? PublicationToken { get; set; }

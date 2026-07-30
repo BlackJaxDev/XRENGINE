@@ -276,10 +276,9 @@ namespace XREngine
         /// and begins simulation for all worlds.
         /// </remarks>
         public static void BeginPlayAllWorlds()
-        {
-            foreach (var world in XRWorldInstance.WorldInstances.Values)
-                world.BeginPlay().Wait();
-        }
+            // Standalone startup must enter the engine play state before each world reaches
+            // EPlayState.Playing. XRWorldInstance uses that state to keep physics enabled.
+            => PlayMode.BeginStandalonePlay();
 
         /// <summary>
         /// Stops play for all world instances.

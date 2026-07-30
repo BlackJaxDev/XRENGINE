@@ -2,38 +2,6 @@
 
 namespace XREngine.Input.Devices
 {
-    public enum EGamePadButton : int
-    {
-        DPadUp,
-        DPadDown,
-        DPadLeft,
-        DPadRight,
-
-        FaceUp,
-        FaceDown,
-        FaceLeft,
-        FaceRight,
-
-        LeftStick,
-        RightStick,
-
-        SpecialLeft,
-        SpecialRight,
-
-        LeftBumper,
-        RightBumper
-    }
-    public enum EGamePadAxis : int
-    {
-        LeftTrigger,
-        RightTrigger,
-
-        LeftThumbstickX,
-        LeftThumbstickY,
-
-        RightThumbstickX,
-        RightThumbstickY,
-    }
     public delegate void ConnectedStateChange(bool nowConnected);
     /// <summary>
     /// Input for local
@@ -102,6 +70,12 @@ namespace XREngine.Input.Devices
             else
                 FindOrCacheAxis(axis)?.RegisterAxis(func, continuousUpdate, false);
         }
+
+        protected void TickButtonState(EGamePadButton button, bool pressed, float delta)
+            => _buttonStates[(int)button]?.Tick(pressed, delta);
+
+        protected void TickAxisState(EGamePadAxis axis, float value, float delta)
+            => _axisStates[(int)axis]?.Tick(value, delta);
 
         /// <summary>
         /// Left motor is low freq, right motor is high freq.

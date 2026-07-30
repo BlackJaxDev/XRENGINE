@@ -753,7 +753,7 @@ public sealed class SecondaryPassShaderContractTests
         => ReadWorkspaceFile(Path.Combine("Build", "CommonAssets", "Shaders", shaderRelativePath));
 
     private static string ReadWorkspaceFile(string relativePath)
-        => global::XREngine.UnitTests.SourceContractWorkspace.ReadFile(relativePath);
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ResolveWorkspacePath(string relativePath)
     {

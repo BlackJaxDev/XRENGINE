@@ -141,7 +141,7 @@ internal sealed class VulkanPhysicalImageGroup
     /// Appends the tracked layout state in deterministic mip/layer order without
     /// allocating the restoration snapshot used by explicit save/restore paths.
     /// </summary>
-    internal void AppendLayoutSignature(ref VulkanRenderer.FrameOpSignatureHasher hash)
+    internal void AppendLayoutSignature(ref FrameOpSignatureHasher hash)
     {
         hash.Add((int)_lastKnownLayout);
         hash.Add(_subresourceLayouts.Count);

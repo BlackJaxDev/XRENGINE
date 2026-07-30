@@ -19,14 +19,15 @@ public sealed class VulkanCpuDirectOcclusionTests
         string cpuDirect = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs");
         string gpuOcclusion = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Occlusion.cs");
         string frameOps = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
-        string queryFrameOp = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanRenderer.QueryOp.cs");
+        string queryFrameOp = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/QueryOp.cs");
         string queryCapability = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.OcclusionQueryCapability.cs");
         string recorder = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string commandChains = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
         string openXr = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
         string query = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Queries/VkRenderQuery.cs");
         string resourceLifetime = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
-        string resourcePlanner = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+        string resourcePlannerContext = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerContext.cs");
+        string contextCompatibility = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/FrameOpContextCompatibility.cs");
         string renderGraph = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderGraphCompiler.cs");
         string commandContainer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/ViewportRenderCommandContainer.cs");
         string runtimeEngine = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEngine.cs");
@@ -191,11 +192,11 @@ public sealed class VulkanCpuDirectOcclusionTests
         resourceLifetime.ShouldContain("key.Type == ObjectType.QueryPool");
         resourceLifetime.ShouldContain("queries[queryIndex].MarkResultEpochSubmitted(commandBufferHandle, in submission);");
         resourceLifetime.ShouldContain("private bool IsVulkanResourceUseCompleted(ObjectType type, ulong handle)");
-        resourcePlanner.ShouldContain("AreFrameOpContextsRecordingCompatible(");
-        resourcePlanner.ShouldContain("AreFrameOpContextsQueryScopeCompatible(");
-        resourcePlanner.ShouldNotContain("hash.Add(context.ContextId)");
-        recorder.ShouldContain("AreFrameOpContextsRecordingCompatible(activeContext, op.Context)");
-        recorder.ShouldContain("AreFrameOpContextsCommandChainBatchCompatible(candidate.Context, firstDraw.Context)");
+        contextCompatibility.ShouldContain("AreRecordingCompatible(");
+        contextCompatibility.ShouldContain("AreQueryScopeCompatible(");
+        resourcePlannerContext.ShouldNotContain("hash.Add(context.ContextId)");
+        recorder.ShouldContain("FrameOpContextCompatibility.AreRecordingCompatible(activeContext, op.Context)");
+        recorder.ShouldContain("FrameOpContextCompatibility.AreCommandChainBatchCompatible(");
         recorder.ShouldContain("bool preservedInlineQueryPass = activeInlineQuery is not null");
         recorder.ShouldContain("bool preservedRenderPass = preservedSwapchainPass || preservedInlineQueryPass;");
         recorder.ShouldContain("activeInlineQuery.InvalidateRecordedResultEpoch(commandBuffer);");
@@ -234,7 +235,7 @@ public sealed class VulkanCpuDirectOcclusionTests
         ulong[] resultAndAvailability,
         ulong expected)
     {
-        VulkanRenderer.VkRenderQuery.TryDecodeOcclusionResult(
+        VkRenderQuery.TryDecodeOcclusionResult(
             resultAndAvailability,
             out ulong result).ShouldBeTrue();
         result.ShouldBe(expected);
@@ -247,7 +248,7 @@ public sealed class VulkanCpuDirectOcclusionTests
     public void VulkanOcclusionResultDecoder_KeepsIncompleteOrMalformedEpochPending(
         ulong[] resultAndAvailability)
     {
-        VulkanRenderer.VkRenderQuery.TryDecodeOcclusionResult(
+        VkRenderQuery.TryDecodeOcclusionResult(
             resultAndAvailability,
             out ulong result).ShouldBeFalse();
         result.ShouldBe(0ul);
@@ -329,12 +330,7 @@ public sealed class VulkanCpuDirectOcclusionTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string root = ResolveWorkspaceRoot();
-        string fullPath = Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
-        File.Exists(fullPath).ShouldBeTrue($"Expected workspace file to exist: {relativePath}");
-        return File.ReadAllText(fullPath).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ResolveWorkspaceRoot()
     {

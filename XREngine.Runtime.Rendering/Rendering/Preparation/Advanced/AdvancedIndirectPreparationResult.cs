@@ -11,8 +11,14 @@ public readonly record struct AdvancedIndirectPreparationResult(
     uint RangeCount,
     uint StaticMeshletCount,
     uint SkinnedMeshletCount,
-    uint TraditionalFallbackCount,
-    uint CpuDiagnosticCount,
+    uint IndirectIndexedCount,
+    uint CpuDirectStaticIndexedCount,
+    uint CpuDirectPreSkinnedCount,
     ulong StructuralGeneration,
     bool RequiresPrimaryRerecord,
-    bool RequiresCpuCount);
+    bool RequiresCpuCount)
+{
+    public uint TraditionalFallbackCount => IndirectIndexedCount;
+    public uint CpuDiagnosticCount
+        => checked(CpuDirectStaticIndexedCount + CpuDirectPreSkinnedCount);
+}

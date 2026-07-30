@@ -578,52 +578,5 @@ public unsafe partial class VulkanRenderer
             _ => descriptorType,
         };
 
-    internal sealed class DescriptorHeapProgramLayout(
-        DescriptorHeapBindingLayout[] bindings,
-        DescriptorSetAndBindingMappingEXTNative[] mappings,
-        Dictionary<DescriptorHeapBindingKey, DescriptorHeapBindingLayout> lookup,
-        uint pushByteCount)
-    {
-        public static DescriptorHeapProgramLayout Empty { get; } = new([], [], [], 0u);
 
-        public DescriptorHeapBindingLayout[] Bindings { get; } = bindings;
-        public DescriptorSetAndBindingMappingEXTNative[] Mappings { get; } = mappings;
-        public uint PushByteCount { get; } = pushByteCount;
-        public int PushDwordCount { get; } = checked((int)((pushByteCount + 3u) / 4u));
-
-        public bool TryGetBinding(uint set, uint binding, out DescriptorHeapBindingLayout layout)
-            => lookup.TryGetValue(new DescriptorHeapBindingKey(set, binding), out layout!);
-    }
-
-    internal readonly record struct DescriptorHeapBindingKey(uint Set, uint Binding);
-
-    internal sealed record DescriptorHeapBindingLayout(
-        DescriptorHeapBindingKey Key,
-        DescriptorType DescriptorType,
-        DescriptorType ResourceDescriptorType,
-        uint DescriptorCount,
-        bool HasResource,
-        bool HasSampler,
-        uint ResourcePushOffset,
-        uint SamplerPushOffset,
-        uint ResourceStride,
-        uint SamplerStride);
-
-    internal sealed class DescriptorHeapPushDataPayload(uint[] dwords)
-    {
-        public static DescriptorHeapPushDataPayload Empty { get; } = new([]);
-
-        public uint[] Dwords { get; } = dwords;
-
-        public void SetDword(uint byteOffset, uint value)
-        {
-            if (byteOffset == uint.MaxValue)
-                return;
-
-            Dwords[checked((int)(byteOffset / sizeof(uint)))] = value;
-        }
-
-        public bool IsValidFor(DescriptorHeapProgramLayout layout)
-            => Dwords.Length >= layout.PushDwordCount;
-    }
 }

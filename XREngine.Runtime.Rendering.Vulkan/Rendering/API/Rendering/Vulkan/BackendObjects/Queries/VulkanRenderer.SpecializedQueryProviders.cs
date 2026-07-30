@@ -5,14 +5,14 @@ public unsafe partial class VulkanRenderer
     private readonly object _specializedQueryProviderLock = new();
     private readonly Dictionary<ERenderQueryKind, IVulkanSpecializedQueryProvider> _specializedQueryProviders = [];
 
-    public void RegisterSpecializedQueryProvider(IVulkanSpecializedQueryProvider provider)
+    internal void RegisterSpecializedQueryProvider(IVulkanSpecializedQueryProvider provider)
     {
         ArgumentNullException.ThrowIfNull(provider);
         lock (_specializedQueryProviderLock)
             _specializedQueryProviders[provider.Kind] = provider;
     }
 
-    public void UnregisterSpecializedQueryProvider(IVulkanSpecializedQueryProvider provider)
+    internal void UnregisterSpecializedQueryProvider(IVulkanSpecializedQueryProvider provider)
     {
         ArgumentNullException.ThrowIfNull(provider);
         lock (_specializedQueryProviderLock)
@@ -25,7 +25,7 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private bool TryGetSpecializedQueryProvider(
+    internal bool TryGetSpecializedQueryProvider(
         ERenderQueryKind kind,
         out IVulkanSpecializedQueryProvider provider)
     {

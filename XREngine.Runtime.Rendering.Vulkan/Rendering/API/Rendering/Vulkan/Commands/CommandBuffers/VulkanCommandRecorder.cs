@@ -8,6 +8,15 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanCommandRecorder
 {
+    private int _activeRecordingScopes;
+
+    public bool IsRecording => Volatile.Read(ref _activeRecordingScopes) > 0;
+
+    public void EnterRecordingScope()
+        => Interlocked.Increment(ref _activeRecordingScopes);
+
+    public void ExitRecordingScope()
+        => Interlocked.Decrement(ref _activeRecordingScopes);
     public bool Prepare(ref VulkanCommandRecordingContext context)
     {
         context.RecordedSwapchainWriteCount = 0;

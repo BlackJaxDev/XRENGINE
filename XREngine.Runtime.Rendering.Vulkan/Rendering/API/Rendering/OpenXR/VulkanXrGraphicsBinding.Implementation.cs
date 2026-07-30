@@ -1066,7 +1066,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         // layout by the Vulkan allocator. Seed both array layers accordingly so
         // the first strict-SPS render records the required read->attachment
         // transition instead of assuming the image is already writable.
-        if (colorObject is VulkanRenderer.IVkFrameBufferAttachmentSource colorAttachmentSource)
+        if (colorObject is IVkFrameBufferAttachmentSource colorAttachmentSource)
         {
             colorAttachmentSource.UpdateAttachmentTrackedLayout(Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal, 0, 0);
             colorAttachmentSource.UpdateAttachmentTrackedLayout(Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal, 0, 1);

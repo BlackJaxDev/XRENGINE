@@ -18,34 +18,77 @@ namespace XREngine.Scene.Physics.Physx
         public PxRigidDynamic* DynamicPtr => _obj;
         public override PxRigidBody* BodyPtr => (PxRigidBody*)_obj;
 
-        public override Vector3 AngularVelocity => _obj->GetAngularVelocity();
-        public override Vector3 LinearVelocity => _obj->GetLinearVelocity();
-
+        private Vector3 _cachedAngularVelocity;
+        private Vector3 _cachedLinearVelocity;
         private bool _cachedIsSleeping = true;
+
         /// <summary>
-        /// Returns the cached sleeping state. This is cached because PhysX does not allow
-        /// calling IsSleeping() while simulation is running. The cache is updated after
-        /// FetchResults via <see cref="RefreshCachedState"/>.
+        /// Returns the angular velocity captured after the latest completed simulation.
+        /// </summary>
+        public override Vector3 AngularVelocity => _cachedAngularVelocity;
+
+        /// <summary>
+        /// Returns the linear velocity captured after the latest completed simulation.
+        /// </summary>
+        public override Vector3 LinearVelocity => _cachedLinearVelocity;
+
+        /// <summary>
+        /// Returns the sleeping state captured after the latest completed simulation.
         /// </summary>
         public override bool IsSleeping => _cachedIsSleeping;
 
         /// <summary>
-        /// Refreshes cached state from PhysX. Call this only when simulation is NOT running
-        /// (i.e., after FetchResults).
+        /// Refreshes cached state from PhysX. Call only after <c>FetchResults</c>, while
+        /// simulation is not running.
         /// </summary>
         public void RefreshCachedState()
         {
+            _cachedAngularVelocity = _obj->GetAngularVelocity();
+            _cachedLinearVelocity = _obj->GetLinearVelocity();
             _cachedIsSleeping = _obj->IsSleeping();
         }
 
         public void SetAngularVelocity(Vector3 value, bool wake = true)
         {
+            _cachedAngularVelocity = value;
+            if (RuntimePhysicsServices.Current.IsPhysicsThread)
+            {
+                SetAngularVelocityInternal(value, wake);
+                return;
+            }
+
+            RuntimeThreadServices.Current.EnqueuePhysicsThread(
+                () => SetAngularVelocityInternal(value, wake));
+        }
+
+        private void SetAngularVelocityInternal(Vector3 value, bool wake)
+        {
+            if (_obj is null || IsReleased)
+                return;
+
             PxVec3 v = value;
             _obj->SetAngularVelocityMut(&v, wake);
             PhysxObjectLog.Modified(this, (nint)_obj, nameof(SetAngularVelocity), $"value={value} wake={wake}");
         }
+
         public void SetLinearVelocity(Vector3 value, bool wake = true)
         {
+            _cachedLinearVelocity = value;
+            if (RuntimePhysicsServices.Current.IsPhysicsThread)
+            {
+                SetLinearVelocityInternal(value, wake);
+                return;
+            }
+
+            RuntimeThreadServices.Current.EnqueuePhysicsThread(
+                () => SetLinearVelocityInternal(value, wake));
+        }
+
+        private void SetLinearVelocityInternal(Vector3 value, bool wake)
+        {
+            if (_obj is null || IsReleased)
+                return;
+
             PxVec3 v = value;
             _obj->SetLinearVelocityMut(&v, wake);
             PhysxObjectLog.Modified(this, (nint)_obj, nameof(SetLinearVelocity), $"value={value} wake={wake}");

@@ -73,7 +73,14 @@ public sealed class AdvancedRenderPipelineFrameContractTests
             pass.PassIndex.ShouldBe((int)stage.Stage);
             pass.Name.ShouldBe(stage.PassName);
             pass.Stage.ShouldBe(stage.RenderGraphStage);
-            pass.ResourceUsages.ShouldBeEmpty();
+            bool visibilityStage = stage.Stage is
+                EAdvancedRenderStage.VisibilityPreparation or
+                EAdvancedRenderStage.VisibilityRaster or
+                EAdvancedRenderStage.DepthPyramidAndLateVisibility or
+                EAdvancedRenderStage.AttributeReconstruction;
+            pass.ResourceUsages.Any().ShouldBe(
+                visibilityStage,
+                stage.Stage.ToString());
 
             if (i == 0)
                 pass.ExplicitDependencies.ShouldBeEmpty();
@@ -83,7 +90,7 @@ public sealed class AdvancedRenderPipelineFrameContractTests
     }
 
     [Test]
-    public void InactiveStageProfiles_DeclareNoPipelineOwnedResources()
+    public void VisibilityProfiles_DeclareCoreResourcesAndImmutableDebugVariants()
     {
         AdvancedRenderPipeline pipeline = new();
         RenderPipelineResourceProfile baseline = CreateProfile(
@@ -95,16 +102,32 @@ public sealed class AdvancedRenderPipelineFrameContractTests
             stereo: true,
             featureMask: ulong.MaxValue);
 
-        pipeline.BuildResourceLayout(baseline).OrderedSpecs.ShouldBeEmpty();
-        pipeline.BuildResourceLayout(maximal).OrderedSpecs.ShouldBeEmpty();
+        RenderPipelineResourceLayout baselineLayout =
+            pipeline.BuildResourceLayout(baseline);
+        RenderPipelineResourceLayout maximalLayout =
+            pipeline.BuildResourceLayout(maximal);
+        baselineLayout.ResourcesByName.ShouldContainKey(
+            AdvancedVisibilityResourceNames.Identity);
+        baselineLayout.ResourcesByName.ShouldNotContainKey(
+            AdvancedVisibilityResourceNames.DebugOutput);
+        maximalLayout.ResourcesByName.ShouldContainKey(
+            AdvancedVisibilityResourceNames.DebugOutput);
 
         XRRenderPipelineInstance instance = new();
         XRViewport viewport = new(null);
         pipeline.BuildResourceFeatureMaskForGenerationKey(instance, viewport)
-            .ShouldBe(0UL);
-        viewport.ApplyCapturePolicy(RenderCapturePolicy.GenericSceneCapture);
+            .ShouldBe(
+                (ulong)AdvancedVisibilityResourceFeature.Core |
+                (ulong)AdvancedReconstructionResourceFeature.Core);
+        viewport.ApplyCapturePolicy(RenderCapturePolicy.DiagnosticFbo);
         pipeline.BuildResourceFeatureMaskForGenerationKey(instance, viewport)
-            .ShouldBe(0UL);
+            .ShouldBe(
+                (ulong)(
+                AdvancedVisibilityResourceFeature.Core |
+                AdvancedVisibilityResourceFeature.DebugOutput) |
+                (ulong)(
+                AdvancedReconstructionResourceFeature.Core |
+                AdvancedReconstructionResourceFeature.DebugOutput));
     }
 
     [TestCase(
@@ -135,6 +158,7 @@ public sealed class AdvancedRenderPipelineFrameContractTests
         RenderPipelineResourceLayout layout =
             new AdvancedRenderPipeline().BuildResourceLayout(profile);
         ExternalResourceSpec output = layout.OrderedSpecs
+            .OfType<ExternalResourceSpec>()
             .ShouldHaveSingleItem()
             .ShouldBeOfType<ExternalResourceSpec>();
 
@@ -146,7 +170,7 @@ public sealed class AdvancedRenderPipelineFrameContractTests
     }
 
     [Test]
-    public void Backends_DoNotAdvertiseIncompleteVisibilityShaderFamily()
+    public void Backends_RemainGatedUntilEveryAdvancedPipelineStageIsImplemented()
     {
         string openGl = SourceContractWorkspace.ReadFile(
             "XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Features/AdvancedPipeline/OpenGLRenderer.AdvancedPipelineCapabilities.cs");
@@ -161,7 +185,7 @@ public sealed class AdvancedRenderPipelineFrameContractTests
     }
 
     [Test]
-    public void Selection_GatesAnOtherwiseCapableBackendUntilVisibilityShadersExist()
+    public void Selection_GatesAnOtherwiseCapableBackendUntilTheFullPipelineExists()
     {
         AdvancedRenderPipelineCapabilities incomplete =
             AdvancedRenderPipelineCapabilityTests.SupportedCapabilities with

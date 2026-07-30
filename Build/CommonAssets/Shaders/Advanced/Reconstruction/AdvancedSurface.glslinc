@@ -1,0 +1,133 @@
+#ifndef XR_ADVANCED_SURFACE_GLSLINC
+#define XR_ADVANCED_SURFACE_GLSLINC
+
+#ifndef XR_ADV_SURFACE_CONTRACT_VERSION
+#error "The advanced surface contract version must be injected by AdvancedShaderAccessLibrary."
+#endif
+
+#define XR_ADV_ATTRIBUTE_POSITION 0x00000001u
+#define XR_ADV_ATTRIBUTE_NORMAL 0x00000002u
+#define XR_ADV_ATTRIBUTE_TANGENT 0x00000004u
+#define XR_ADV_ATTRIBUTE_TEXCOORD0 0x00000008u
+#define XR_ADV_ATTRIBUTE_TEXCOORD1 0x00000010u
+#define XR_ADV_ATTRIBUTE_COLOR0 0x00000020u
+#define XR_ADV_ATTRIBUTE_JOINT_INDICES 0x00000040u
+#define XR_ADV_ATTRIBUTE_JOINT_WEIGHTS 0x00000080u
+#define XR_ADV_ATTRIBUTE_CUSTOM0 0x00000100u
+#define XR_ADV_ATTRIBUTE_FLAT 0x00000200u
+#define XR_ADV_ATTRIBUTE_DEFORMED_POSITION 0x00000400u
+#define XR_ADV_ATTRIBUTE_ANALYTICAL_DERIVATIVES 0x00000800u
+#define XR_ADV_ATTRIBUTE_COLOR1 0x00001000u
+
+#ifndef XR_ADV_REQUIRED_ATTRIBUTE_MASK
+#define XR_ADV_REQUIRED_ATTRIBUTE_MASK 0xFFFFFFFFu
+#endif
+
+#define XR_ADV_SURFACE_VALID 0x00000001u
+#define XR_ADV_SURFACE_BACK_FACING 0x00000002u
+#define XR_ADV_SURFACE_FLAT_ATTRIBUTES 0x00000004u
+#define XR_ADV_SURFACE_DEFORMED 0x00000008u
+#define XR_ADV_SURFACE_DERIVATIVES_VALID 0x00000010u
+#define XR_ADV_SURFACE_VELOCITY_VALID 0x00000020u
+#define XR_ADV_SURFACE_REACTIVE 0x00000040u
+#define XR_ADV_SURFACE_MASKED_EDGE 0x00000080u
+#define XR_ADV_SURFACE_MIRRORED_TRANSFORM 0x00000100u
+#define XR_ADV_SURFACE_CONSERVATIVE_MIP 0x00000200u
+#define XR_ADV_TEMPORAL_VELOCITY_REASON_SHIFT 16u
+#define XR_ADV_TEMPORAL_VELOCITY_REASON_MASK 0x000F0000u
+
+
+#define XR_ADV_RECONSTRUCTION_OK 0u
+#define XR_ADV_RECONSTRUCTION_BACKGROUND 1u
+#define XR_ADV_RECONSTRUCTION_PAYLOAD_VERSION 2u
+#define XR_ADV_RECONSTRUCTION_DRAW_NOT_RESIDENT 3u
+#define XR_ADV_RECONSTRUCTION_STALE_GENERATION 4u
+#define XR_ADV_RECONSTRUCTION_GEOMETRY_MISSING 5u
+#define XR_ADV_RECONSTRUCTION_GEOMETRY_NOT_RESIDENT 6u
+#define XR_ADV_RECONSTRUCTION_PRIMITIVE_OUT_OF_RANGE 7u
+#define XR_ADV_RECONSTRUCTION_MATERIAL_NOT_RESIDENT 8u
+#define XR_ADV_RECONSTRUCTION_KERNEL_NOT_RESIDENT 9u
+#define XR_ADV_RECONSTRUCTION_VIEW_OUT_OF_RANGE 10u
+#define XR_ADV_RECONSTRUCTION_DEGENERATE_TRIANGLE 11u
+#define XR_ADV_RECONSTRUCTION_NON_FINITE 12u
+#define XR_ADV_RECONSTRUCTION_CURRENT_GEOMETRY_MISSING 13u
+#define XR_ADV_RECONSTRUCTION_PREVIOUS_GEOMETRY_MISSING 14u
+
+struct XRAdvancedSurface
+{
+    uvec2 identity;
+    uint producer;
+    uint viewIndex;
+    uint materialDenseIndex;
+    uint shadingKernelDenseIndex;
+    uint primitiveSection;
+    uint requiredAttributeMask;
+    vec3 worldPosition;
+    vec3 geometricNormal;
+    vec3 shadingNormal;
+    vec3 tangent;
+    vec3 bitangent;
+    vec2 texCoord0;
+    vec2 texCoord1;
+    vec4 color0;
+    vec4 color1;
+    uint custom0;
+    vec3 barycentrics;
+    vec3 barycentricDx;
+    vec3 barycentricDy;
+    vec2 texCoord0Dx;
+    vec2 texCoord0Dy;
+    vec4 currentUnjitteredClip;
+    vec4 previousUnjitteredClip;
+    vec2 motionNdc;
+    float depth;
+    float tangentHandedness;
+    uint flags;
+    uint invalidReason;
+};
+
+XRAdvancedSurface XR_ADV_InvalidSurface(
+    uvec2 identity,
+    uint reason)
+{
+    XRAdvancedSurface surface;
+    surface.identity = identity;
+    surface.producer = 0u;
+    surface.viewIndex = 0u;
+    surface.materialDenseIndex = 0u;
+    surface.shadingKernelDenseIndex = 0u;
+    surface.primitiveSection = 0u;
+    surface.requiredAttributeMask = 0u;
+    surface.worldPosition = vec3(0.0);
+    surface.geometricNormal = vec3(0.0, 1.0, 0.0);
+    surface.shadingNormal = surface.geometricNormal;
+    surface.tangent = vec3(1.0, 0.0, 0.0);
+    surface.bitangent = vec3(0.0, 0.0, 1.0);
+    surface.texCoord0 = vec2(0.0);
+    surface.texCoord1 = vec2(0.0);
+    surface.color0 = vec4(1.0);
+    surface.color1 = vec4(1.0);
+    surface.custom0 = 0u;
+    surface.barycentrics = vec3(0.0);
+    surface.barycentricDx = vec3(0.0);
+    surface.barycentricDy = vec3(0.0);
+    surface.texCoord0Dx = vec2(0.0);
+    surface.texCoord0Dy = vec2(0.0);
+    surface.currentUnjitteredClip = vec4(0.0);
+    surface.previousUnjitteredClip = vec4(0.0);
+    surface.motionNdc = vec2(0.0);
+    surface.depth = 1.0;
+    surface.tangentHandedness = 1.0;
+    surface.flags = 0u;
+    surface.invalidReason = reason;
+    return surface;
+}
+
+bool XR_ADV_SurfaceHasAttribute(
+    XRAdvancedSurface surface,
+    uint attributeMask)
+{
+    return (surface.requiredAttributeMask & attributeMask) != 0u;
+}
+
+#endif

@@ -1,4 +1,4 @@
-namespace XREngine.Rendering.Vulkan;
+namespace XREngine.Rendering.Vulkan.DeviceBootstrap;
 
 /// <summary>
 /// Reports the final immutable device snapshot after creation policy and command

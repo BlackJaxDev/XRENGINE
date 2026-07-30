@@ -112,7 +112,7 @@ public sealed class VulkanCpuDirectDynamicDataTests
 
         foreach (ulong requiredBytes in logicalByteCounts)
         {
-            ulong resolved = VulkanRenderer.VkDataBuffer.ResolveResizableBufferCapacity(capacity, requiredBytes);
+            ulong resolved = VkDataBuffer.ResolveResizableBufferCapacity(capacity, requiredBytes);
             if (resolved != capacity)
                 publishedGenerations++;
             capacity = resolved;
@@ -130,13 +130,7 @@ public sealed class VulkanCpuDirectDynamicDataTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string path = Path.Combine(
-            ResolveRepoRoot(),
-            relativePath.Replace('/', Path.DirectorySeparatorChar));
-        File.Exists(path).ShouldBeTrue($"Expected workspace file '{relativePath}'.");
-        return File.ReadAllText(path).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ResolveRepoRoot()
     {

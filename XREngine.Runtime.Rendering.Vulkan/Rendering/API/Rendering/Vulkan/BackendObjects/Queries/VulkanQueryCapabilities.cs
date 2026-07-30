@@ -4,7 +4,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Immutable snapshot of query-related physical-device, logical-device,
 /// extension-command, and queue-family capabilities.
 /// </summary>
-public readonly record struct VulkanQueryCapabilities(
+internal readonly record struct VulkanQueryCapabilities(
     bool OcclusionQueryPreciseAdvertised,
     bool OcclusionQueryPreciseEnabled,
     bool PipelineStatisticsAdvertised,

@@ -501,6 +501,69 @@ public sealed class WindowResizeControllerTests
         keyboard.GetKeyState(EKey.W, EButtonInputType.Released).ShouldBeTrue();
     }
 
+    [Test]
+    public void WindowSnapshotGamepad_ReplaysAxesButtonsAndDisconnectRelease()
+    {
+        WindowSnapshotGamepad gamepad = new(0);
+        float leftX = 0.0f;
+        float leftY = 0.0f;
+        bool? faceDown = null;
+        gamepad.RegisterAxisUpdate(
+            EGamePadAxis.LeftThumbstickX,
+            value => leftX = value,
+            continuousUpdate: false,
+            unregister: false);
+        gamepad.RegisterAxisUpdate(
+            EGamePadAxis.LeftThumbstickY,
+            value => leftY = value,
+            continuousUpdate: false,
+            unregister: false);
+        gamepad.RegisterButtonState(
+            EGamePadButton.FaceDown,
+            pressed => faceDown = pressed,
+            unregister: false);
+
+        WindowInputSnapshotAccumulator accumulator = new();
+        ushort faceDownMask = (ushort)(1u << (int)EGamePadButton.FaceDown);
+        WindowInputSnapshot pressed = accumulator.Publish(
+            keyboardCount: 0,
+            mouseCount: 0,
+            gamepadCount: 1,
+            isFocused: true,
+            isMouseCaptured: false,
+            primaryGamepad: new WindowGamepadSnapshot(
+                true,
+                faceDownMask,
+                0.0f,
+                0.0f,
+                0.75f,
+                -0.5f,
+                0.0f,
+                0.0f));
+
+        gamepad.ApplySnapshot(pressed);
+        gamepad.TickStates(1.0f / 60.0f);
+
+        gamepad.IsConnected.ShouldBeTrue();
+        faceDown.ShouldBe(true);
+        leftX.ShouldBe(0.75f);
+        leftY.ShouldBe(-0.5f);
+
+        WindowInputSnapshot disconnected = accumulator.Publish(
+            keyboardCount: 0,
+            mouseCount: 0,
+            gamepadCount: 0,
+            isFocused: true,
+            isMouseCaptured: false);
+        gamepad.ApplySnapshot(disconnected);
+        gamepad.TickStates(1.0f / 60.0f);
+
+        gamepad.IsConnected.ShouldBeFalse();
+        faceDown.ShouldBe(false);
+        leftX.ShouldBe(0.0f);
+        leftY.ShouldBe(0.0f);
+    }
+
     private static WindowSurfaceSnapshot CreateSnapshot(ulong sequence, int width, int height)
         => new(
             sequence,
@@ -515,21 +578,5 @@ public sealed class WindowResizeControllerTests
             (long)sequence);
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string? directory = TestContext.CurrentContext.TestDirectory;
-        while (!string.IsNullOrEmpty(directory))
-        {
-            string candidate = Path.Combine(directory, "XRENGINE.slnx");
-            if (File.Exists(candidate))
-            {
-                string path = Path.Combine(directory, relativePath.Replace('/', Path.DirectorySeparatorChar));
-                File.Exists(path).ShouldBeTrue($"Expected workspace file '{path}' to exist.");
-                return File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
-            }
-
-            directory = Directory.GetParent(directory)?.FullName;
-        }
-
-        throw new DirectoryNotFoundException("Could not locate repository root from test directory.");
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 }

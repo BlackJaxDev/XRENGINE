@@ -75,11 +75,7 @@ public sealed class GpuIndirectPhase5DescriptorFastPathTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string fullPath = ResolveWorkspacePath(relativePath);
-        File.Exists(fullPath).ShouldBeTrue($"Expected file does not exist: {fullPath}");
-        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ResolveWorkspacePath(string relativePath)
     {

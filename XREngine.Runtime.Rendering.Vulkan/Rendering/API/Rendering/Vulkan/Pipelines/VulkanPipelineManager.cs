@@ -9,15 +9,78 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed class VulkanPipelineManager
 {
     private readonly object _pendingDeviceReadyProgramLinksLock = new();
-    private readonly HashSet<VulkanRenderer.VkRenderProgram> _pendingDeviceReadyProgramLinks = [];
+    private readonly HashSet<VkRenderProgram> _pendingDeviceReadyProgramLinks = [];
     private readonly object _sharedGraphicsPipelineLock = new();
-    private readonly Dictionary<VulkanRenderer.VkMeshRenderer.PipelineKey, Pipeline> _sharedGraphicsPipelines = [];
+    private readonly Dictionary<VkMeshRenderer.PipelineKey, Pipeline> _sharedGraphicsPipelines = [];
     private readonly object _sharedGraphicsPipelineLibraryLock = new();
-    private readonly Dictionary<VulkanRenderer.VkMeshRenderer.GraphicsPipelineLibraryKey, Pipeline>
+    private readonly Dictionary<VkMeshRenderer.GraphicsPipelineLibraryKey, Pipeline>
         _sharedGraphicsPipelineLibraries = [];
-    private readonly HashSet<VulkanRenderer.VkMeshRenderer.GraphicsPipelineLibraryKey>
+    private readonly HashSet<VkMeshRenderer.GraphicsPipelineLibraryKey>
         _sharedGraphicsPipelineLibraryCreations = [];
     private ulong _sharedGraphicsPipelineGeneration;
+    private VulkanPipelinePrewarmDatabase? _prewarmDatabase;
+    private string? _prewarmDatabaseFilePath;
+    private bool _prewarmCaptureEnabled;
+    private int _prewarmNewEntriesSinceSave;
+    private int _prewarmAutoSaveInFlight;
+
+    internal VulkanPipelinePrewarmDatabase? PrewarmDatabase => _prewarmDatabase;
+
+    internal string? PrewarmDatabaseFilePath => _prewarmDatabaseFilePath;
+
+    internal bool PrewarmCaptureEnabled => _prewarmCaptureEnabled;
+
+    internal void ConfigurePrewarmDatabase(
+        VulkanPipelinePrewarmDatabase database,
+        string filePath,
+        bool captureEnabled)
+    {
+        _prewarmDatabase = database;
+        _prewarmDatabaseFilePath = filePath;
+        _prewarmCaptureEnabled = captureEnabled;
+        Interlocked.Exchange(ref _prewarmNewEntriesSinceSave, 0);
+        Interlocked.Exchange(ref _prewarmAutoSaveInFlight, 0);
+    }
+
+    internal bool RecordPrewarmEntry(
+        VulkanPipelinePrewarmEntry entry,
+        bool countForAutoSave,
+        out bool knownAtStartup)
+    {
+        VulkanPipelinePrewarmDatabase? database = _prewarmDatabase;
+        knownAtStartup = database?.WasKnownAtStartup(entry.Key) == true;
+        if (database?.Record(entry) != true || !countForAutoSave)
+            return false;
+
+        Interlocked.Increment(ref _prewarmNewEntriesSinceSave);
+        return true;
+    }
+
+    internal bool TryBeginPrewarmAutoSave(
+        int entryThreshold,
+        out VulkanPipelinePrewarmDatabase database,
+        out string filePath)
+    {
+        database = _prewarmDatabase!;
+        filePath = _prewarmDatabaseFilePath ?? string.Empty;
+        if (!_prewarmCaptureEnabled ||
+            database is null ||
+            string.IsNullOrWhiteSpace(filePath) ||
+            Volatile.Read(ref _prewarmNewEntriesSinceSave) < entryThreshold ||
+            Interlocked.CompareExchange(ref _prewarmAutoSaveInFlight, 1, 0) != 0)
+        {
+            return false;
+        }
+
+        Interlocked.Exchange(ref _prewarmNewEntriesSinceSave, 0);
+        return true;
+    }
+
+    internal bool CompletePrewarmAutoSave(int entryThreshold)
+    {
+        Interlocked.Exchange(ref _prewarmAutoSaveInFlight, 0);
+        return Volatile.Read(ref _prewarmNewEntriesSinceSave) >= entryThreshold;
+    }
 
     internal ulong SharedGraphicsPipelineGeneration
     {
@@ -28,7 +91,7 @@ internal sealed class VulkanPipelineManager
         }
     }
 
-    internal void QueueProgramLinkUntilDeviceReady(VulkanRenderer.VkRenderProgram program)
+    internal void QueueProgramLinkUntilDeviceReady(VkRenderProgram program)
     {
         lock (_pendingDeviceReadyProgramLinksLock)
             _pendingDeviceReadyProgramLinks.Add(program);
@@ -51,7 +114,7 @@ internal sealed class VulkanPipelineManager
     }
 
     internal bool TryGetSharedGraphicsPipeline(
-        in VulkanRenderer.VkMeshRenderer.PipelineKey key,
+        in VkMeshRenderer.PipelineKey key,
         out Pipeline pipeline)
     {
         lock (_sharedGraphicsPipelineLock)
@@ -60,7 +123,7 @@ internal sealed class VulkanPipelineManager
     }
 
     internal Pipeline StoreSharedGraphicsPipeline(
-        in VulkanRenderer.VkMeshRenderer.PipelineKey key,
+        in VkMeshRenderer.PipelineKey key,
         Pipeline pipeline)
     {
         if (pipeline.Handle == 0)
@@ -94,7 +157,7 @@ internal sealed class VulkanPipelineManager
     }
 
     internal bool TryGetOrReserveSharedGraphicsPipelineLibrary(
-        in VulkanRenderer.VkMeshRenderer.GraphicsPipelineLibraryKey key,
+        in VkMeshRenderer.GraphicsPipelineLibraryKey key,
         out Pipeline library,
         out bool creationReserved)
     {
@@ -113,7 +176,7 @@ internal sealed class VulkanPipelineManager
     }
 
     internal Pipeline CompleteSharedGraphicsPipelineLibraryCreation(
-        in VulkanRenderer.VkMeshRenderer.GraphicsPipelineLibraryKey key,
+        in VkMeshRenderer.GraphicsPipelineLibraryKey key,
         Pipeline library)
     {
         if (library.Handle == 0)
@@ -137,7 +200,7 @@ internal sealed class VulkanPipelineManager
     }
 
     internal void CancelSharedGraphicsPipelineLibraryCreation(
-        in VulkanRenderer.VkMeshRenderer.GraphicsPipelineLibraryKey key)
+        in VkMeshRenderer.GraphicsPipelineLibraryKey key)
     {
         lock (_sharedGraphicsPipelineLibraryLock)
             _sharedGraphicsPipelineLibraryCreations.Remove(key);

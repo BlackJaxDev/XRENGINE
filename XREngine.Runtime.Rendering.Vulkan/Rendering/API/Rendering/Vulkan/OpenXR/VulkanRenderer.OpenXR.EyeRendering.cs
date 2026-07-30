@@ -370,7 +370,7 @@ public unsafe partial class VulkanRenderer
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule"))
                 {
                     using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule.Sort"))
-                        ops = _renderGraphCompiler.SortFrameOpsCore(ops, CompiledRenderGraph);
+                        ops = _frameOperationScheduler.SortFrameOpsCore(ops, CompiledRenderGraph);
                     if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                     {
                         Debug.VulkanWarningEvery(
@@ -965,7 +965,7 @@ public unsafe partial class VulkanRenderer
         }
 
         long recordStart = Stopwatch.GetTimestamp();
-        _isRecordingCommandBuffer = true;
+        _commandRecorder.EnterRecordingScope();
         int recordedSwapchainWriteCount = 0;
         bool queryFrameOpsRequireRerecord = false;
         ImageLayout swapchainLayoutAfterCommandBuffer;
@@ -1014,7 +1014,7 @@ public unsafe partial class VulkanRenderer
         }
         finally
         {
-            _isRecordingCommandBuffer = false;
+            _commandRecorder.ExitRecordingScope();
         }
 
         bool wasDirty = variant.Dirty;

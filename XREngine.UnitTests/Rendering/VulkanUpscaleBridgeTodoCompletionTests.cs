@@ -199,7 +199,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         dlssFrameGenerationAfterUpscaleIndex.ShouldBeGreaterThan(dlssUpscaleEnqueueIndex);
 
         string interopSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanRenderer.StreamlineInterop.cs").Replace("\r\n", "\n");
-        string streamlineImageSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanRenderer.VulkanStreamlineImage.cs").Replace("\r\n", "\n");
+        string streamlineImageSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanStreamlineImage.cs").Replace("\r\n", "\n");
         streamlineImageSource.ShouldContain("internal readonly record struct VulkanStreamlineImage");
         interopSource.ShouldContain("GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkImageDescriptorSource source");
         interopSource.ShouldContain("DeviceMemory memory = source.DescriptorMemory;");
@@ -220,8 +220,8 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         commandBufferSource.ShouldContain("Debug.RenderingError($\"Requested NVIDIA DLSS frame generation failed during Vulkan command recording");
 
         string meshRendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs").Replace("\r\n", "\n");
-        string dlssUpscaleOpSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanRenderer.DlssUpscaleOp.cs").Replace("\r\n", "\n");
-        string dlssFrameGenerationOpSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanRenderer.DlssFrameGenerationOp.cs").Replace("\r\n", "\n");
+        string dlssUpscaleOpSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/DlssUpscaleOp.cs").Replace("\r\n", "\n");
+        string dlssFrameGenerationOpSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/DlssFrameGenerationOp.cs").Replace("\r\n", "\n");
         dlssUpscaleOpSource.ShouldContain("internal sealed record DlssUpscaleOp(");
         dlssFrameGenerationOpSource.ShouldContain("internal sealed record DlssFrameGenerationOp(");
         meshRendererSource.ShouldContain("op.PassIndex = validatedPassIndex;");
@@ -235,7 +235,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         streamlineSource.ShouldContain("internal static bool TryRecordNativeVulkanFrameGeneration(");
         streamlineSource.ShouldContain("internal sealed class NativeFrameGenerationSession : IDisposable");
         streamlineSource.ShouldContain("Device = renderer.Device,");
-        streamlineSource.ShouldContain("StreamlineResource CreateResource(in VulkanRenderer.VulkanStreamlineImage image");
+        streamlineSource.ShouldContain("StreamlineResource CreateResource(in VulkanStreamlineImage image");
         streamlineSource.ShouldContain("StreamlineResult evaluateResult = CallEvaluateFeature(FeatureDlss, frameToken, (IntPtr)inputs, 1, commandBufferPtr);");
         streamlineSource.ShouldContain("private const ulong StreamlineSdkVersion = 0x0002000C0000FEDC;");
         streamlineSource.ShouldContain("FeatureDlssG = 1000;");
@@ -724,11 +724,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string fullPath = ResolveWorkspacePath(relativePath);
-        File.Exists(fullPath).ShouldBeTrue($"Expected file does not exist: {fullPath}");
-        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ResolveWorkspacePath(string relativePath)
     {

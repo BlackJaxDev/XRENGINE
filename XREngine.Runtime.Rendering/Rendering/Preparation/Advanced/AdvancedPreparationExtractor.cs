@@ -124,6 +124,8 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         => _visibilityCandidates.AsSpan(0, _drawCount);
     public ReadOnlySpan<AdvancedVisibilityPayload> VisibilityPayloads
         => _visibilityPayloads.AsSpan(0, _drawCount);
+    public ReadOnlySpan<EAdvancedGeometryProducer> VisibilityProducers
+        => _indirectPlanner.ProducersByPayload;
     public ReadOnlySpan<AdvancedVisibilityDispatchPlan> VisibilityPlans
         => _visibilityPlans.AsSpan(0, _visibilityPlanCount);
     public ReadOnlySpan<AdvancedDeformationJobRecord> DeformationJobs
@@ -251,7 +253,9 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             argumentBufferBase: 0u,
             countBufferBase: 0u,
             argumentStride: 20u,
-            countStride: 4u);
+            countStride: 4u,
+            submissionStrategy:
+                RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy());
         _visibilityPlanCount = 0;
         AddVisibilityPlans(viewSet);
 
