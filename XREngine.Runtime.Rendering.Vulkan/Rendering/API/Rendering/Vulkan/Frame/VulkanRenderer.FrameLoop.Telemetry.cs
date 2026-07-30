@@ -9,9 +9,7 @@ namespace XREngine.Rendering.Vulkan
         private void RecordDesktopFrameGap(
             ref VulkanFrameAttempt attempt)
         {
-            long previousTimestamp =
-                Volatile.Read(
-                    ref _lastDesktopFrameTickObservedTimestamp);
+            long previousTimestamp = LastDesktopFrameTickObservedTimestamp;
             if (previousTimestamp == 0)
                 return;
 

@@ -155,19 +155,5 @@ internal sealed class VulkanStrictSpsFailureBoundaryTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        DirectoryInfo? directory = new(AppContext.BaseDirectory);
-        string platformPath = relativePath.Replace('/', Path.DirectorySeparatorChar);
-        while (directory is not null)
-        {
-            string fullPath = Path.Combine(directory.FullName, platformPath);
-            if (File.Exists(fullPath))
-                return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
-
-            directory = directory.Parent;
-        }
-
-        throw new FileNotFoundException(
-            $"Could not resolve workspace path '{relativePath}' from '{AppContext.BaseDirectory}'.");
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 }

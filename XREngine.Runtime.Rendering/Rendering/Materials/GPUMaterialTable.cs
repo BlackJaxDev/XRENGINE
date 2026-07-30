@@ -19,6 +19,8 @@ namespace XREngine.Rendering.Materials
         public static uint MaterialEntryUIntCount => MaterialLayout.RowWordCount;
         private readonly HashSet<uint> _activeMaterialIds = [];
         private readonly Dictionary<uint, GPUMaterialHandleIndices> _materialHandleIndices = [];
+        private readonly Dictionary<uint, GPUMaterialEntry> _sourceMaterialEntries = [];
+        private readonly Dictionary<uint, GPUMaterialTextureReferences> _sourceTextureReferences = [];
         private readonly Dictionary<ulong, uint> _handleIndicesByHandle = [];
         private readonly Dictionary<uint, ulong> _handlesByIndex = [];
         private readonly Dictionary<uint, uint> _handleRefCounts = [];
@@ -27,6 +29,7 @@ namespace XREngine.Rendering.Materials
         private DirtyByteRange _materialDirtyBytes;
         private DirtyByteRange _textureHandleDirtyBytes;
         private uint _nextHandleIndex = InitialHandleIndex;
+        private ulong _publicationGeneration;
 
         public XRDataBuffer Buffer { get; }
         public XRDataBuffer TextureHandleBuffer { get; }
@@ -34,6 +37,7 @@ namespace XREngine.Rendering.Materials
         public uint TextureHandleCapacity { get; private set; }
         public IReadOnlyCollection<uint> ActiveMaterialIds => _activeMaterialIds;
         public IReadOnlyCollection<ulong> ActiveTextureHandles => _handleIndicesByHandle.Keys;
+        public ulong PublicationGeneration => _publicationGeneration;
         public GPUMaterialTableDirtyRange MaterialDirtyRange => _materialDirtyBytes.ToIndexRange(Buffer.ElementSize);
         public GPUMaterialTableDirtyRange TextureHandleDirtyRange => _textureHandleDirtyBytes.ToIndexRange(TextureHandleBuffer.ElementSize);
 
@@ -80,8 +84,12 @@ namespace XREngine.Rendering.Materials
         {
             if (materialID >= Capacity)
                 Resize(Math.Max(Capacity * 2, materialID + 1));
+            if (MaterialStateMatches(materialID, entry, textureReferences))
+                return materialID;
 
             ReleaseMaterialHandleRefs(materialID);
+
+            GPUMaterialEntry sourceEntry = entry;
 
             GPUMaterialHandleIndices indices = new(
                 ResolveTextureReference(textureReferences.Albedo, out uint albedoHandleIndex),
@@ -98,9 +106,29 @@ namespace XREngine.Rendering.Materials
             if (!indices.Equals(GPUMaterialHandleIndices.Empty))
                 _materialHandleIndices[materialID] = indices;
 
+            _sourceMaterialEntries[materialID] = sourceEntry;
+            _sourceTextureReferences[materialID] = textureReferences;
             _activeMaterialIds.Add(materialID);
             return materialID;
         }
+
+        private bool MaterialStateMatches(
+            uint materialID,
+            in GPUMaterialEntry entry,
+            in GPUMaterialTextureReferences textureReferences)
+            => _activeMaterialIds.Contains(materialID) &&
+               _sourceMaterialEntries.TryGetValue(materialID, out GPUMaterialEntry existingEntry) &&
+               _sourceTextureReferences.TryGetValue(materialID, out GPUMaterialTextureReferences existingReferences) &&
+               MaterialEntriesEqual(existingEntry, entry) &&
+               existingReferences.Equals(textureReferences);
+
+        private static bool MaterialEntriesEqual(in GPUMaterialEntry left, in GPUMaterialEntry right)
+            => left.AlbedoHandleIndex == right.AlbedoHandleIndex &&
+               left.NormalHandleIndex == right.NormalHandleIndex &&
+               left.RMHandleIndex == right.RMHandleIndex &&
+               left.Flags == right.Flags &&
+               left.BaseColorOpacity == right.BaseColorOpacity &&
+               left.RMSE == right.RMSE;
 
         private uint ResolveTextureReference(GPUMaterialTextureReference reference, out uint openGlHandleIndex)
         {
@@ -119,6 +147,9 @@ namespace XREngine.Rendering.Materials
                 _ => InvalidTextureHandleIndex,
             };
 
+        public bool IsActive(uint materialID)
+            => _activeMaterialIds.Contains(materialID);
+
         public bool Remove(uint materialID)
         {
             if (materialID >= Capacity)
@@ -128,6 +159,8 @@ namespace XREngine.Rendering.Materials
                 return false;
 
             ReleaseMaterialHandleRefs(materialID);
+            _sourceMaterialEntries.Remove(materialID);
+            _sourceTextureReferences.Remove(materialID);
             Buffer.SetDataRawAtIndex(materialID, default(GPUMaterialEntryWords));
             MarkMaterialRowDirty(materialID);
             return true;
@@ -248,8 +281,11 @@ namespace XREngine.Rendering.Materials
 
         public void PushDirtyRanges()
         {
+            bool publishesChanges = _materialDirtyBytes.HasValue || _textureHandleDirtyBytes.HasValue;
             PushDirtyRange(Buffer, ref _materialDirtyBytes);
             PushDirtyRange(TextureHandleBuffer, ref _textureHandleDirtyBytes);
+            if (publishesChanges)
+                _publicationGeneration++;
         }
 
         private void MarkMaterialRowDirty(uint rowIndex)

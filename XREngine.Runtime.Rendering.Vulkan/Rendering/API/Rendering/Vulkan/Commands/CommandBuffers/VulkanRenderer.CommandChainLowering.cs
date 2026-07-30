@@ -3020,7 +3020,7 @@ public unsafe partial class VulkanRenderer
         return hash.ToHash();
     }
 
-    private static ulong HashSamplerUnitBindingLayout(Dictionary<uint, XRTexture> samplers, Dictionary<uint, string> samplerNamesByUnit)
+    internal static ulong HashSamplerUnitBindingLayout(Dictionary<uint, XRTexture> samplers, Dictionary<uint, string> samplerNamesByUnit)
     {
         ulong xor = 0;
         ulong sum = 0;
@@ -3035,7 +3035,7 @@ public unsafe partial class VulkanRenderer
         return FinishUnorderedHash(samplers.Count, xor, sum);
     }
 
-    private static ulong HashSamplerNameBindingLayout(Dictionary<string, XRTexture> samplers)
+    internal static ulong HashSamplerNameBindingLayout(Dictionary<string, XRTexture> samplers)
     {
         ulong xor = 0;
         ulong sum = 0;
@@ -3049,7 +3049,7 @@ public unsafe partial class VulkanRenderer
         return FinishUnorderedHash(samplers.Count, xor, sum);
     }
 
-    private static ulong HashImageBindingLayout(Dictionary<uint, ProgramImageBinding> images)
+    internal static ulong HashImageBindingLayout(Dictionary<uint, ProgramImageBinding> images)
     {
         ulong xor = 0;
         ulong sum = 0;
@@ -3069,7 +3069,7 @@ public unsafe partial class VulkanRenderer
         return FinishUnorderedHash(images.Count, xor, sum);
     }
 
-    private static ulong HashBufferBindingLayout(Dictionary<uint, VulkanComputeBufferBinding> buffers)
+    internal static ulong HashBufferBindingLayout(Dictionary<uint, VulkanComputeBufferBinding> buffers)
     {
         ulong xor = 0;
         ulong sum = 0;

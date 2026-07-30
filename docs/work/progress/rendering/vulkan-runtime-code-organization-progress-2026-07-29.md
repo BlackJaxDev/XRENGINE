@@ -3,112 +3,164 @@
 Date: 2026-07-29
 Branch: `master`
 Implementation base: `404df57741745359ea7e7dcaa0f3a67f667c1051`
-Final commit: not created; this note describes the dirty integration tree
+Final commit: not created; this note describes the shared dirty integration tree
 
-## Scope And Baseline
+## Outcome
 
-This note tracks implementation of the
-[Vulkan Runtime Code Organization TODO](../../todo/rendering/vulkan-runtime-code-organization-todo.md).
-The work began in a heavily modified shared tree: the initial
-`git status --short` contained 167 entries, including unrelated runtime
-modularization, editor, model-import, documentation, dependency-report, and
-submodule work. Those pre-existing changes were preserved and are not claimed
-as Vulkan organization outputs.
+The implementation pass described by the
+[Vulkan Runtime Code Organization TODO](../../todo/rendering/vulkan-runtime-code-organization-todo.md)
+is complete. Vulkan remains in the leaf
+`XREngine.Runtime.Rendering.Vulkan` assembly and now has explicit authorities
+for device state, backend-object identity, command scheduling/recording,
+render-graph planning, resource lifetime, descriptors, pipelines, desktop
+frames, OpenXR graphics binding, and ImGui.
 
-The pre-refactor leaf build was:
+The implementation and measurable desktop acceptance gates are complete. Two
+exceptions remain visible in the TODO:
 
-```powershell
-dotnet build .\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulkan.csproj `
-  --no-restore -p:XREngineUseExistingNativeBridges=true
-```
+- the compatibility facade still has a one-way legacy budget of 72 stateful
+  partials and 548 fields, so the literal small-facade endpoint is not claimed;
+- SteamVR could not expose an OpenXR system because no HMD/form factor was
+  available.
 
-It completed with zero errors and 140 existing `NU1901`/`NU1902` Magick.NET
-advisory warnings. The same warning baseline applies to the integrated leaf
-build unless a later validation entry says otherwise.
+The earlier compact-submission and allocation exceptions are resolved. The
+material table now waits for descriptor publication, `OnTopForward` is an
+explicit CPU-direct overlay pass, material preparation reuses scratch state,
+and indirect draw operations are frame-pooled.
 
-The initial source-consumer inventory found:
+The work began in a heavily modified shared tree. The initial
+`git status --short` contained 167 entries from several concurrent workstreams.
+Those changes were preserved and are not all claimed by this effort.
 
-- 90 test/script/document files containing an exact Vulkan implementation path;
-- 65 non-Vulkan source or test files naming a nested
-  `VulkanRenderer.SomeType`;
-- 96 local source-reading helper implementations in the test project before
-  consolidation;
-- active overlapping work in runtime modularization, the desktop frame-loop
-  decomposition, renderer hot reload, OpenXR, and model import.
+## Ownership And Organization Delivered
 
-The shared test helper now discovers Vulkan sources recursively. Architecture
-tests use one-way debt baselines: removing a legacy exception is accepted,
-while introducing a new stateful renderer partial or multi-type dumping ground
-fails with its exact path.
-
-## Ownership Added In This Pass
-
-| Responsibility | New owner or contract | Integration state |
+| Responsibility | Owner or contract | Result |
 |---|---|---|
-| Backend object identity | `VulkanBackendObjectRegistry`, per-type `VulkanBackendObjectBucket<T>` | Per-renderer binding slots and wrapper publication replace generic static caches. |
-| Device capabilities | `VulkanDeviceContext`, immutable `VulkanDeviceCapabilities`, query/builder/reporter types | Device creation delegates capability query, feature-chain construction, snapshot publication, and reporting. |
-| Command scheduling | `VulkanCommandScheduler`, `VulkanCommandSchedulingContext` | Per-renderer owner captures cache/retry policy and scheduling inputs. |
-| Command recording | `VulkanCommandRecorder`, `VulkanCommandRecordingContext` | Per-renderer owner validates/reset contexts and owns native begin/end lifecycle boundaries. |
-| Render graph | `VulkanRenderGraphRuntime`, immutable `VulkanRenderGraphPlan`, immutable `VulkanBarrierPlan` | Compiler/planner/allocator/barrier state is grouped behind one runtime authority. |
-| Binding grammar | `VulkanResourceBindingKey`, `EVulkanResourceBindingKind` | `tex::`, `fbo::`, and `buf::` parsing is centralized and tested. |
-| Resource lifetime | `VulkanResourceLifetimeTracker`, `VulkanResourceRetirementQueue` | Mutable publication/retirement registries and counters have one per-renderer owner. |
-| Descriptors | `VulkanDescriptorManager` | Device-lifetime descriptor state, immutable samplers, pools, layouts, allocations, and synchronization are grouped behind one owner. |
-| Pipelines | `VulkanPipelineManager` | Program-link scheduling and graphics pipeline/library caches have an explicit device-lifetime owner. |
-| Desktop frames | `VulkanDesktopFrameCoordinator`, `VulkanFrameAttempt` | Integration is in progress; final state and validation are recorded below. |
+| Backend object identity | `VulkanBackendObjectRegistry`, `VulkanBackendObjectBucket<T>`, `VulkanBackendObjectContext` | Wrapper identity, binding slots, and publication are scoped to one renderer/device. |
+| Device creation and capabilities | `VulkanDeviceContext`, immutable `VulkanDeviceCapabilities`, query/builder/reporter contracts | `CreateLogicalDevice` is a short query/create/publish/report coordinator. |
+| Command scheduling | `VulkanCommandScheduler`, `VulkanCommandSchedulingContext` | Command-chain ordering, parallel buckets, cache selection, and retry policy have an explicit owner. |
+| Command recording | `VulkanCommandRecorder`, `VulkanCommandRecordingContext`, render-scope owner, per-domain recording methods | Recording inputs are captured explicitly; begin/end, scopes, barriers, transfers, uploads, and readback are separated from scheduling policy. |
+| Render graph | `VulkanRenderGraphRuntime`, immutable `VulkanRenderGraphPlan`, immutable `VulkanBarrierPlan` | Compiler/planner/allocator state has one authority and recording consumes versioned plan data. |
+| Binding grammar | `VulkanResourceBindingKey`, `EVulkanResourceBindingKind` | `tex::`, `fbo::`, and `buf::` parsing is centralized; malformed and duplicate prefixes are guarded by tests. |
+| Resource lifetime | `VulkanResourceLifetimeTracker`, `VulkanResourceRetirementQueue` | Use publication, deferred retirement, completed-frame observation, and destruction follow one traceable path. |
+| Descriptors | `VulkanDescriptorManager` | Frame-slot state, pools, layouts, immutable samplers, allocation publication, and descriptor generations have device lifetime. |
+| Pipelines | `VulkanPipelineManager` | Program linking, pipeline caches, prewarm state, and device-lifetime disposal are consolidated. |
+| Desktop frames | `VulkanDesktopFrameCoordinator`, `VulkanFrameAttempt` | Acquire, phase results, submit, present, abort/recovery, completion, and slot advance use typed state and exactly-once paths. |
+| OpenXR graphics | `VulkanOpenXrBackend`, `VulkanOpenXrFrameContext` | Vulkan eye, mirror, preview, external-image, and diagnostics state is separate from generic OpenXR session/pacing policy. |
+| ImGui | `VulkanImGuiBackend` | Input, GPU resources, texture registry, immutable snapshots, submission, and retirement share Vulkan authorities. |
 
-Mechanical cleanup in the same pass removed empty/comment-only partials,
-replaced the excluded ray-tracing prototype with a durable design note, fixed
-`VkSampler` casing, renamed phase-numbered diagnostics by responsibility, and
-moved transform feedback to `BackendObjects/Queries`.
+Mechanical and domain cleanup also completed the frame-op, buffer-allocation,
+readback/pixel-decoding, transform-feedback, domain-folder, one-type-per-file,
+shader uniform, descriptor, program, resource-planner, barrier, and wrapper
+splits listed in the TODO. Implementation types are internal by default and
+subsystem namespace contracts are imported through leaf/test global usings
+without leaking concrete Vulkan types into the stable kernel.
 
-Large descriptor and program files were also separated by responsibility:
-descriptor buffers, fingerprints, images, uniforms, and writes; and program
-bindings, linking, layouts, graphics pipelines, compute descriptors, and
-compute uniforms.
+All Vulkan `[ThreadStatic]` state was removed. Reusable per-thread scratch is
+owned by explicit `ThreadLocal<T>` workspaces with release paths. Persistent
+compute uniforms and reusable descriptor resources are now prepared before the
+command recorder enters its recording scope; command emission does not create
+persistent resources.
+
+## Guardrails
+
+`VulkanSourceArchitectureGuardrailTests` and the focused ownership suites now
+enforce:
+
+- recursive Vulkan source discovery rather than exact implementation paths;
+- one top-level type per file and no syntax-based dumping-ground folders;
+- per-renderer registry/cache isolation and explicit device lifetime;
+- binding grammar centralization and immutable render-graph plan validity;
+- no Vulkan `[ThreadStatic]` production fields;
+- command-buffer and logical-device coordinator size limits;
+- compute persistent-resource preparation before recording;
+- allocation-free microguards for the primary reuse and frame-coordinator
+  paths;
+- a one-way ceiling of 72 stateful `VulkanRenderer` partials and 548 fields.
+
+The final item prevents silent monolith regrowth, but it is intentionally a debt
+ceiling rather than proof that the facade has reached its ideal final size.
+Detailed inventory is in
+[`stateful-partial-fields-inventory.txt`](../../../../Build/_AgentValidation/20260729-vulkan-runtime-organization/reports/stateful-partial-fields-inventory.txt).
 
 ## Validation Ledger
 
-| Gate | Result |
-|---|---|
-| Baseline Vulkan leaf build | Passed: 0 errors; 140 existing package-advisory warnings. |
-| Final integrated Vulkan leaf build at wrap-up | Passed: 0 errors; same 140 pre-existing package-advisory warnings. |
-| Focused ownership and architecture tests from the last built test output | Passed: 22/22 (`VulkanSourceArchitectureGuardrailTests`, backend-object registry, resource-binding key, and runtime-manager ownership). |
-| Rebuilding the focused test project | Blocked outside this work by missing `ModelBinary*`/`ModelCacheReadLimits` types in concurrent ModelingBridge cache work. |
-| Runtime-rendering kernel build | Passed: 0 errors. |
-| Editor build | Pending final integrated source state. |
-| Vulkan phase-3 regression task | Pending final integrated source state. |
-| Isolated Vulkan Unit Testing World startup | Pending final integrated source state. |
-| OpenXR smoke lane | Requires an available OpenXR runtime/headset lane. |
-| Allocation/performance comparison | Pending final integrated source state. |
+| Gate | Result | Evidence |
+|---|---|---|
+| Focused ownership, architecture, lifecycle, binding, and allocation guards | Passed 84/84 | [`vulkan-organization-focused-final-clean.trx`](../../../../Build/_AgentValidation/20260729-vulkan-runtime-organization/reports/vulkan-organization-focused-final-clean.trx) |
+| Canonical Vulkan Phase 3 regression task | Passed 110/110 | [`vulkan-phase3-regression-post-runtime-fix.trx`](../../../../Build/_AgentValidation/20260729-vulkan-runtime-organization/reports/vulkan-phase3-regression-post-runtime-fix.trx) |
+| Vulkan leaf build | Passed, 0 errors; 140 existing `NU1901`/`NU1902` advisories | [`vulkan-runtime-final-build.log`](../../../../Build/_AgentValidation/20260729-vulkan-runtime-organization/logs/vulkan-runtime-final-build.log) |
+| Runtime-rendering kernel build | Passed, 0 errors; 112 existing advisories | [`runtime-rendering-final-build.log`](../../../../Build/_AgentValidation/20260729-vulkan-runtime-organization/logs/runtime-rendering-final-build.log) |
+| Editor build | Passed, 0 errors; 560 existing advisories | [`editor-post-runtime-fix-build.log`](../../../../Build/_AgentValidation/20260729-vulkan-runtime-organization/logs/editor-post-runtime-fix-build.log) |
+| Fresh isolated Vulkan Unit Testing World/MCP startup | Passed: 0 compute-record failures, allocation-guard mentions, VUIDs, device-loss events, or fatal errors | [`runtime-after-fix-summary.txt`](../../../../Build/_AgentValidation/20260729-vulkan-runtime-organization/reports/runtime-after-fix-summary.txt) |
+| SteamVR/OpenXR smoke | Executed but externally blocked before system selection by `ErrorFormFactorUnavailable` | [`openxr-steamvr-smoke-summary.json`](../../../../Build/_AgentValidation/20260729-vulkan-runtime-organization/reports/openxr-steamvr-smoke-summary.json) |
+| Canonical Vulkan `Quick` performance lane | Superseded by the strict authored-material acceptance lane below | [`summary.json`](../../../../Build/_AgentValidation/20260729-vulkan-runtime-organization/perf-final-fixed/reports/summary.json) |
+| Focused GPU material and bloom contracts | Passed 7/7 | Focused `GpuMaterialReadinessContractTests` Release run |
+| Flying-camera Vulkan material/bloom capture | Passed: bloom and final targets finite, varied, and non-magenta | [`investigation`](../../investigations/rendering/vulkan-material-readiness-and-magenta-bloom-2026-07-30.md) |
+| Strict authored-material Vulkan lane | Passed: readiness, fallback, reuse, allocation, compact-pass, submission, and VUID gates | [`summary.json`](../../../../Build/_AgentValidation/20260729-vulkan-runtime-organization/perf-material-final-short/reports/summary.json) |
 
-## Remaining Integration Work
+No new compiler warnings were introduced; the build warnings above are the
+existing Magick.NET advisory set.
 
-This section is intentionally updated from evidence rather than inferred from
-new type names. A phase is complete only when its old mutable authority is
-removed, its tests pass, and the applicable validation gates above are
-recorded.
+## Runtime And OpenXR Details
 
-- Finish migrating legacy renderer-owned command, resource, OpenXR, ImGui, and
-  frame state into the new owners.
-- Remove ordinary command-recording and OpenXR dependence on thread-static
-  context.
-- Complete namespace-level backend-wrapper migration and update external
-  nested-type consumers.
-- Complete the single-type-per-file and domain-folder migration for remaining
-  baseline exceptions.
-- Run the runtime, XR, validation-layer, and allocation/performance gates.
+The post-fix desktop run used the named isolated session
+`codex-vulkan-org-final-fix`. Its Vulkan log contained no compute dispatch
+recording failures, allocation guard violations, validation VUIDs, or device
+loss/fatal diagnostics.
 
-## 2026-07-29 Wrap-Up
+The canonical SteamVR runner was attempted with the installed SteamVR OpenXR
+manifest. The native loader preflight terminated its PowerShell host, so the
+lane was rerun with only `-SkipLoaderPreflight`; the editor and the remainder of
+the canonical smoke checks stayed enabled. Engine initialization then failed in
+`VulkanRenderer.PickPhysicalDevice` because `xrGetSystem` returned
+`ErrorFormFactorUnavailable`. No OpenXR instance/system/session/swapchain was
+available to validate, so this is a hardware/runtime availability block rather
+than an engine smoke pass.
 
-Implementation expansion stopped at the user's request after restoring a clean
-Vulkan leaf build. The integrated tree now includes the explicit owner types,
-namespace-level backend/frame contracts, one-type-per-file command-chain,
-resource allocator, upload, shader, and OpenXR splits, and passing structural
-guardrails. No commit was created.
+The exact startup failure is under:
 
-The broad TODO remains in progress rather than being marked complete. Remaining
-work includes migrating the remaining legacy stateful renderer partials and
-ordinary thread-static mesh/program scopes, rebuilding the test project after
-the unrelated ModelingBridge cache work settles, and running editor, Vulkan
-startup, OpenXR hardware/runtime, validation-layer, and allocation/performance
-gates.
+`Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-29_20-56-25_pid11200/startup-failure.log`
+
+## Material And Performance Acceptance
+
+The authored-material cohort uses
+`XREngine.UnitTests/TestData/Gltf/large-production-scene.gltf`, including its
+checked-in `checker.png` base-color texture. Temporal AA is disabled so the
+capture displays authored material output directly. `Locomotion` is disabled in
+all large-scene Vulkan cohorts, selecting `EditorFlyingCameraPawnComponent`
+instead of the cursor-capturing character pawn.
+
+The first magenta stage was `BloomBlurTexture`, not the glTF material. The bloom
+copy material declared zero textures and supplied `SourceTexture` only through a
+callback, so Vulkan published a fallback descriptor. Bloom now resolves and
+owns a stable source texture slot when its declared framebuffer material is
+created. The intermediate draw-time texture-list update was rejected because it
+fixed color while invalidating primary reuse. Full findings are in
+[Vulkan Material Readiness And Magenta Bloom](../../investigations/rendering/vulkan-material-readiness-and-magenta-bloom-2026-07-30.md).
+
+The final strict material capture produced 628 steady-state samples and reports:
+
+- required/ready material rows: `12 / 12`;
+- non-ready texture references / invalid IDs / fallback rows: `0 / 0 / 0`;
+- eligible primary reuse ratio: `1.0` (`628 / 628`);
+- primary command encoding p50/p95: `0 / 0 ms`;
+- eligible/raw primary-recording allocation bytes: `0 / 0`;
+- unsupported compact passes: `0`;
+- submission rejections / validation VUIDs: `0 / 0`.
+
+Evidence: [`summary.json`](../../../../Build/_AgentValidation/20260729-vulkan-runtime-organization/perf-material-final-short/reports/summary.json).
+The flying-camera Vulkan capture also confirms that `BloomBlurTexture` and the
+final post-process target are finite, varied images rather than solid magenta.
+
+## Remaining Acceptance Work
+
+No implementation or measurable desktop-performance checkbox remains open. Two
+acceptance statements stay unchecked:
+
+1. a later migration that reduces the 72-partial/548-field compatibility facade
+   below the recorded one-way debt ceiling;
+2. a connected SteamVR/OpenXR HMD so system, session, eye-swapchain, submit, and
+   teardown paths can execute.
+
+No commit was created.

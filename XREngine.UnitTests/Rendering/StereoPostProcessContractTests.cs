@@ -414,7 +414,7 @@ public sealed class StereoPostProcessContractTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-        => File.ReadAllText(ResolveWorkspacePath(relativePath));
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static int CountOccurrences(string source, string value)
     {

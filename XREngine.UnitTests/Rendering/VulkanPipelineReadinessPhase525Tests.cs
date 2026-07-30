@@ -59,7 +59,7 @@ public sealed class VulkanPipelineReadinessPhase525Tests
         string metadata = ReadWorkspaceFile("XREngine.Runtime.Rendering/RenderGraph/RenderPassMetadata.cs");
         string builder = ReadWorkspaceFile("XREngine.Runtime.Rendering/RenderGraph/RenderPassBuilder.cs");
         string plan = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.VulkanRenderGraphPlan.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanCompiledRenderGraphPlan.cs");
 
         metadata.ShouldContain("public bool RequiresPipelineReady { get; private set; } = true;");
         builder.ShouldContain("AllowPipelineDeferral()");
@@ -88,8 +88,8 @@ public sealed class VulkanPipelineReadinessPhase525Tests
     {
         RenderPassMetadataCollection metadata = new();
         metadata.ForPass(1, "Opaque");
-        VulkanRenderer.VulkanRenderGraphPlan plan =
-            new VulkanRenderer.VulkanRenderGraphCompiler().Compile(metadata.Build()).Plan;
+        VulkanCompiledRenderGraphPlan plan =
+            new VulkanRenderGraphCompiler().Compile(metadata.Build()).Plan;
         VulkanRenderer.VulkanPipelineVariantManifest manifest =
             VulkanRenderer.VulkanPipelineVariantManifest.Build(
                 plan,
@@ -112,8 +112,8 @@ public sealed class VulkanPipelineReadinessPhase525Tests
         metadata.ForPass(1, "RequiredOpaque");
         metadata.ForPass(2, "OptionalOverlay").AllowPipelineDeferral();
 
-        VulkanRenderer.VulkanRenderGraphPlan plan =
-            new VulkanRenderer.VulkanRenderGraphCompiler().Compile(metadata.Build()).Plan;
+        VulkanCompiledRenderGraphPlan plan =
+            new VulkanRenderGraphCompiler().Compile(metadata.Build()).Plan;
 
         plan.Passes.Single(pass => pass.PassIndex == 1).RequiresPipelineReady.ShouldBeTrue();
         plan.Passes.Single(pass => pass.PassIndex == 2).RequiresPipelineReady.ShouldBeFalse();
@@ -137,16 +137,5 @@ public sealed class VulkanPipelineReadinessPhase525Tests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string? directory = TestContext.CurrentContext.TestDirectory;
-        while (!string.IsNullOrEmpty(directory))
-        {
-            string candidate = Path.Combine(directory, relativePath);
-            if (File.Exists(candidate))
-                return File.ReadAllText(candidate).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
-            directory = Directory.GetParent(directory)?.FullName;
-        }
-
-        throw new FileNotFoundException($"Unable to locate workspace file '{relativePath}'.");
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 }

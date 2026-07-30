@@ -13,7 +13,10 @@ namespace XREngine.Rendering.Vulkan
         internal VulkanBackendObjectContext BackendObjectContext =>
             _backendObjectContext ??= new VulkanBackendObjectContext(
                 _deviceContext,
-                _backendObjectRegistry);
+                _backendObjectRegistry,
+                _resourceLifetimeTracker,
+                _descriptorManager,
+                _pipelineManager);
 
         protected override AbstractRenderAPIObject CreateAPIRenderObject(GenericRenderObject renderObject)
             => renderObject switch

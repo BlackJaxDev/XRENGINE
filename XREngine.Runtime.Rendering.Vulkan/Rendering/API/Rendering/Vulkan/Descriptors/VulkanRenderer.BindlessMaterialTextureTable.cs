@@ -13,25 +13,25 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     private const ulong GlobalMaterialTextureRetireDelayFrames = 300ul;
 
-    private readonly object _globalMaterialTextureTableLock = new();
-    private readonly Dictionary<XRTexture, uint> _globalMaterialTextureDescriptorSlotsByTexture = new(ReferenceTextureComparer.Instance);
-    private readonly Queue<uint> _freeGlobalMaterialTextureDescriptorSlots = new();
-    private readonly List<uint> _dirtyGlobalMaterialTextureDescriptorSlots = [];
-    private MaterialTextureDescriptorSlot[] _globalMaterialTextureDescriptorSlots = [];
-    private DescriptorSetLayout _globalMaterialTextureDescriptorSetLayout;
-    private DescriptorPool _globalMaterialTextureDescriptorPool;
-    private DescriptorSet _globalMaterialTextureDescriptorSet;
-    private uint _globalMaterialTextureDescriptorCapacity;
-    private uint _nextGlobalMaterialTextureDescriptorSlot = 1u;
-    private bool _globalMaterialTextureDescriptorSetUsesUpdateAfterBind;
-    private bool _globalMaterialTextureDescriptorSetUsesVariableDescriptorCount;
-    private VkRenderProgram? _globalMaterialTextureDescriptorScopeProgram;
-    private string _globalMaterialTextureDescriptorScopeConsumer = string.Empty;
-    private ulong _globalMaterialTextureDescriptorWritesTotal;
-    private ulong _globalMaterialTextureDescriptorWritesLastFlush;
-    private ulong _globalMaterialTextureDescriptorSlotRetirementsTotal;
-    private ulong _globalMaterialTextureDescriptorFallbackReferencesTotal;
-    private VulkanBindlessMaterialCapability _bindlessMaterialCapability;
+    private object _globalMaterialTextureTableLock => _bindlessMaterialTextureTableState.Sync;
+    private Dictionary<XRTexture, uint> _globalMaterialTextureDescriptorSlotsByTexture => _bindlessMaterialTextureTableState.SlotsByTexture;
+    private Queue<uint> _freeGlobalMaterialTextureDescriptorSlots => _bindlessMaterialTextureTableState.FreeSlots;
+    private List<uint> _dirtyGlobalMaterialTextureDescriptorSlots => _bindlessMaterialTextureTableState.DirtySlots;
+    private ref MaterialTextureDescriptorSlot[] _globalMaterialTextureDescriptorSlots => ref _bindlessMaterialTextureTableState.Slots;
+    private ref DescriptorSetLayout _globalMaterialTextureDescriptorSetLayout => ref _bindlessMaterialTextureTableState.SetLayout;
+    private ref DescriptorPool _globalMaterialTextureDescriptorPool => ref _bindlessMaterialTextureTableState.Pool;
+    private ref DescriptorSet _globalMaterialTextureDescriptorSet => ref _bindlessMaterialTextureTableState.Set;
+    private ref uint _globalMaterialTextureDescriptorCapacity => ref _bindlessMaterialTextureTableState.Capacity;
+    private ref uint _nextGlobalMaterialTextureDescriptorSlot => ref _bindlessMaterialTextureTableState.NextSlot;
+    private ref bool _globalMaterialTextureDescriptorSetUsesUpdateAfterBind => ref _bindlessMaterialTextureTableState.UsesUpdateAfterBind;
+    private ref bool _globalMaterialTextureDescriptorSetUsesVariableDescriptorCount => ref _bindlessMaterialTextureTableState.UsesVariableDescriptorCount;
+    private ref VkRenderProgram? _globalMaterialTextureDescriptorScopeProgram => ref _bindlessMaterialTextureTableState.ScopeProgram;
+    private ref string _globalMaterialTextureDescriptorScopeConsumer => ref _bindlessMaterialTextureTableState.ScopeConsumer;
+    private ref ulong _globalMaterialTextureDescriptorWritesTotal => ref _bindlessMaterialTextureTableState.WritesTotal;
+    private ref ulong _globalMaterialTextureDescriptorWritesLastFlush => ref _bindlessMaterialTextureTableState.WritesLastFlush;
+    private ref ulong _globalMaterialTextureDescriptorSlotRetirementsTotal => ref _bindlessMaterialTextureTableState.SlotRetirementsTotal;
+    private ref ulong _globalMaterialTextureDescriptorFallbackReferencesTotal => ref _bindlessMaterialTextureTableState.FallbackReferencesTotal;
+    private ref VulkanBindlessMaterialCapability _bindlessMaterialCapability => ref _bindlessMaterialTextureTableState.Capability;
 
     /// <summary>
     /// Gets the current bindless material capability of the Vulkan renderer.
@@ -131,66 +131,52 @@ public unsafe partial class VulkanRenderer
     }
 
     /// <summary>
-    /// Tries to get or create a descriptor index for a material texture in the global material texture descriptor table.
+    /// Resolves a material texture descriptor and reports whether its table slot is published for drawing.
     /// </summary>
-    /// <param name="texture">The material texture for which to get or create a descriptor index.</param>
+    /// <param name="texture">The material texture to resolve.</param>
     /// <param name="semantic">The semantic associated with the material texture.</param>
-    /// <param name="descriptorIndex">The resulting descriptor index for the material texture.</param>
-    /// <param name="usedFallback">Indicates whether a fallback was used instead of a valid descriptor index.</param>
-    /// <returns>True if a descriptor index was successfully obtained or created; otherwise, false.</returns>
-    internal bool TryGetOrCreateMaterialTextureDescriptorIndex(
+    /// <returns>A typed readiness result. Only <see cref="Materials.EMaterialTextureReferenceStatus.Ready"/> is draw-safe.</returns>
+    internal Materials.MaterialTextureReferenceResolution ResolveMaterialTextureDescriptorReference(
         XRTexture? texture,
-        string semantic,
-        out uint descriptorIndex,
-        out bool usedFallback)
+        string semantic)
     {
-        descriptorIndex = 0u;
-        usedFallback = false;
-
         if (texture is null)
         {
-            usedFallback = true;
-            RecordGlobalMaterialTextureFallback(semantic, "texture is null");
-            return true;
+            const string reason = "Material texture is null.";
+            RecordGlobalMaterialTextureFallback(semantic, reason);
+            return Materials.MaterialTextureReferenceResolution.Failed(reason);
         }
 
         if (!TryResolveMaterialTextureDescriptor(texture, semantic, out DescriptorImageInfo imageInfo, out string descriptorReason))
         {
-            usedFallback = true;
             RecordGlobalMaterialTextureFallback(semantic, descriptorReason);
-            return true;
+            return Materials.MaterialTextureReferenceResolution.Pending(descriptorReason);
         }
 
         if (!TryEnsureGlobalMaterialTextureDescriptorTable(out string tableReason))
         {
-            usedFallback = true;
             if (VulkanFeatureProfile.RequireBindlessMaterialTable)
-            {
                 RecordGlobalMaterialTextureBindingFailure(semantic, tableReason, skippedDraw: true);
-                return false;
-            }
+            else
+                RecordGlobalMaterialTextureFallback(semantic, tableReason);
 
-            RecordGlobalMaterialTextureFallback(semantic, tableReason);
-            return true;
+            return Materials.MaterialTextureReferenceResolution.Unsupported(tableReason);
         }
 
+        uint descriptorIndex;
+        bool pendingPublication;
+        uint slotGeneration;
         lock (_globalMaterialTextureTableLock)
         {
-            if (!_globalMaterialTextureDescriptorSlotsByTexture.TryGetValue(texture, out descriptorIndex))
+            if (!_globalMaterialTextureDescriptorSlotsByTexture.TryGetValue(texture, out descriptorIndex) &&
+                !TryAllocateGlobalMaterialTextureDescriptorSlot(texture, out descriptorIndex, out tableReason))
             {
-                if (!TryAllocateGlobalMaterialTextureDescriptorSlot(texture, out descriptorIndex, out tableReason))
-                {
-                    usedFallback = true;
-                    if (VulkanFeatureProfile.RequireBindlessMaterialTable)
-                    {
-                        RecordGlobalMaterialTextureBindingFailure(semantic, tableReason, skippedDraw: true);
-                        return false;
-                    }
-
+                if (VulkanFeatureProfile.RequireBindlessMaterialTable)
+                    RecordGlobalMaterialTextureBindingFailure(semantic, tableReason, skippedDraw: true);
+                else
                     RecordGlobalMaterialTextureFallback(semantic, tableReason);
-                    descriptorIndex = 0u;
-                    return true;
-                }
+
+                return Materials.MaterialTextureReferenceResolution.Failed(tableReason);
             }
 
             ref MaterialTextureDescriptorSlot slot = ref _globalMaterialTextureDescriptorSlots[descriptorIndex];
@@ -206,11 +192,25 @@ public unsafe partial class VulkanRenderer
                 slot.Generation++;
                 MarkGlobalMaterialTextureDescriptorSlotDirty(descriptorIndex);
             }
+
+            pendingPublication = slot.Dirty;
+            slotGeneration = slot.Generation;
         }
 
-        return true;
-    }
+        if (descriptorIndex == 0u)
+            return Materials.MaterialTextureReferenceResolution.Failed(
+                "Descriptor index zero is reserved for shader fallback and is never a resident material reference.");
 
+        Materials.GPUMaterialTextureReference reference =
+            Materials.GPUMaterialTextureReference.FromVulkanDescriptorIndex(descriptorIndex);
+        return pendingPublication
+            ? new Materials.MaterialTextureReferenceResolution(
+                Materials.EMaterialTextureReferenceStatus.Pending,
+                reference,
+                slotGeneration,
+                "Material texture descriptor update is pending publication.")
+            : Materials.MaterialTextureReferenceResolution.Ready(reference, slotGeneration);
+    }
     /// <summary>
     /// Ensures that the global material texture descriptor table is available and ready for use.
     /// </summary>
@@ -227,7 +227,7 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        if (!_supportsDescriptorIndexing ||
+        if (!SupportsDescriptorIndexing ||
             !_supportsRuntimeDescriptorArray ||
             !_supportsDescriptorBindingPartiallyBound ||
             !_supportsDescriptorBindingUpdateAfterBind)
@@ -651,7 +651,7 @@ public unsafe partial class VulkanRenderer
     /// invariant at the publication boundary: no live descriptor snapshot may
     /// reference a resource that is already pending retirement.
     /// </summary>
-    private void RefreshGlobalMaterialTextureDescriptorForPublishedTexture(XRTexture texture)
+    internal void RefreshGlobalMaterialTextureDescriptorForPublishedTexture(XRTexture texture)
     {
         lock (_globalMaterialTextureTableLock)
         {
@@ -780,7 +780,7 @@ public unsafe partial class VulkanRenderer
 
         if (mode == EVulkanBindlessMaterialMode.Disabled)
             reason = "Vulkan bindless material mode is Disabled.";
-        else if (!_supportsDescriptorIndexing ||
+        else if (!SupportsDescriptorIndexing ||
                  !_supportsRuntimeDescriptorArray ||
                  !_supportsDescriptorBindingPartiallyBound ||
                  !_supportsDescriptorBindingUpdateAfterBind)
@@ -803,7 +803,7 @@ public unsafe partial class VulkanRenderer
         _bindlessMaterialCapability = new VulkanBindlessMaterialCapability(
             mode,
             tier,
-            _supportsDescriptorIndexing,
+            SupportsDescriptorIndexing,
             _supportsRuntimeDescriptorArray,
             _supportsDescriptorBindingPartiallyBound,
             _supportsDescriptorBindingUpdateAfterBind,
@@ -838,7 +838,7 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     /// <returns>A formatted string explaining why descriptor indexing prerequisites are unavailable.</returns>
     private string FormatBindlessDescriptorIndexingUnavailableReason()
-        => $"Descriptor indexing prerequisites unavailable (descriptorIndexing={_supportsDescriptorIndexing}, runtimeArray={_supportsRuntimeDescriptorArray}, partiallyBound={_supportsDescriptorBindingPartiallyBound}, updateAfterBind={_supportsDescriptorBindingUpdateAfterBind}).";
+        => $"Descriptor indexing prerequisites unavailable (descriptorIndexing={SupportsDescriptorIndexing}, runtimeArray={_supportsRuntimeDescriptorArray}, partiallyBound={_supportsDescriptorBindingPartiallyBound}, updateAfterBind={_supportsDescriptorBindingUpdateAfterBind}).";
 
     /// <summary>
     /// Records a fallback for the global material texture table, typically used when a descriptor binding cannot be satisfied.

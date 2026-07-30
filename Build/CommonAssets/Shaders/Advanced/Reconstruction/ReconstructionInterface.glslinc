@@ -1,0 +1,206 @@
+#ifndef XR_ADVANCED_RECONSTRUCTION_INTERFACE_GLSLINC
+#define XR_ADVANCED_RECONSTRUCTION_INTERFACE_GLSLINC
+
+#include "Advanced/Visibility/VisibilityInterface.glslinc"
+#include "AdvancedSurface.glslinc"
+
+#ifndef XR_ADV_BINDING_STATIC_VERTICES
+#define XR_ADV_BINDING_STATIC_VERTICES 37
+#endif
+#ifndef XR_ADV_BINDING_PRESKINNED_CURRENT_VERTICES
+#define XR_ADV_BINDING_PRESKINNED_CURRENT_VERTICES 38
+#endif
+#ifndef XR_ADV_BINDING_PRESKINNED_PREVIOUS_VERTICES
+#define XR_ADV_BINDING_PRESKINNED_PREVIOUS_VERTICES 39
+#endif
+#ifndef XR_ADV_BINDING_RECONSTRUCTION_INDICES
+#define XR_ADV_BINDING_RECONSTRUCTION_INDICES 40
+#endif
+#ifndef XR_ADV_BINDING_RECONSTRUCTION_COUNTERS
+#define XR_ADV_BINDING_RECONSTRUCTION_COUNTERS 41
+#endif
+
+#if defined(XR_ADV_BACKEND_VULKAN)
+#define XR_ADV_RECONSTRUCTION_PASS_LAYOUT(bindingIndex) layout(set = XR_ADV_VISIBILITY_SET, binding = bindingIndex)
+#define XR_ADV_RECONSTRUCTION_IMAGE_LAYOUT(formatName, bindingIndex) layout(formatName, set = XR_ADV_VISIBILITY_SET, binding = bindingIndex)
+#elif defined(XR_ADV_BACKEND_OPENGL)
+#define XR_ADV_RECONSTRUCTION_PASS_LAYOUT(bindingIndex) layout(binding = bindingIndex)
+#define XR_ADV_RECONSTRUCTION_IMAGE_LAYOUT(formatName, bindingIndex) layout(formatName, binding = bindingIndex)
+#else
+#error "An advanced reconstruction shader backend must be selected."
+#endif
+
+struct XRAdvancedPackedVertex
+{
+    vec3 position;
+    uint normalOct;
+    uint tangentOctAndSign;
+    uint texCoord0Half;
+    uint texCoord1Half;
+    uint color0Rgba8;
+    uint color1Rgba8;
+    uint custom0;
+    uint sourceVertex;
+    uint flags;
+    uint reserved0;
+    uint reserved1;
+    uint reserved2;
+    uint reserved3;
+};
+
+struct XRAdvancedReconstructionMeshlet
+{
+    vec4 boundsSphere;
+    uint vertexOffset;
+    uint triangleByteOffset;
+    uint vertexCount;
+    uint triangleCount;
+    vec4 cone;
+    vec4 coneApex;
+    uint packedCone;
+    uint reserved0;
+    uint reserved1;
+    uint reserved2;
+};
+
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_STATIC_VERTICES)
+readonly buffer XRAdvancedStaticVertexTable
+{
+    XRAdvancedPackedVertex records[];
+} XR_ADV_StaticVertices;
+
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_PRESKINNED_CURRENT_VERTICES)
+readonly buffer XRAdvancedPreSkinnedCurrentVertexTable
+{
+    XRAdvancedPackedVertex records[];
+} XR_ADV_PreSkinnedCurrentVertices;
+
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_PRESKINNED_PREVIOUS_VERTICES)
+readonly buffer XRAdvancedPreSkinnedPreviousVertexTable
+{
+    XRAdvancedPackedVertex records[];
+} XR_ADV_PreSkinnedPreviousVertices;
+
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_RECONSTRUCTION_INDICES)
+readonly buffer XRAdvancedReconstructionIndexTable
+{
+    uint indices[];
+} XR_ADV_ReconstructionIndices;
+
+// Bindings 31-33 are the exact meshlet tables consumed by phase 04.
+XR_ADV_VIS_TABLE_LAYOUT(31)
+readonly buffer XRAdvancedReconstructionMeshletTable
+{
+    XRAdvancedReconstructionMeshlet records[];
+} XR_ADV_ReconstructionMeshlets;
+
+XR_ADV_VIS_TABLE_LAYOUT(32)
+readonly buffer XRAdvancedReconstructionMeshletVertexTable
+{
+    uint vertexIndices[];
+} XR_ADV_ReconstructionMeshletVertices;
+
+XR_ADV_VIS_TABLE_LAYOUT(33)
+readonly buffer XRAdvancedReconstructionMeshletTriangleTable
+{
+    uint triangleWords[];
+} XR_ADV_ReconstructionMeshletTriangles;
+
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_RECONSTRUCTION_COUNTERS)
+buffer XRAdvancedReconstructionCounterTable
+{
+    uint validSurfaces;
+    uint invalidPayloads;
+    uint staleGenerations;
+    uint missingGeometry;
+    uint primitiveOutOfBounds;
+    uint degenerateTriangles;
+    uint derivativeFailures;
+    uint conservativeMipFallbacks;
+    uint validVelocities;
+    uint invalidVelocities;
+    uint reactivePixels;
+    uint maskedEdges;
+    uint nonFiniteAttributes;
+    uint staticSurfaces;
+    uint deformedSurfaces;
+    uint reserved;
+} XR_ADV_ReconstructionCounters;
+
+uint XR_ADV_ReconstructionTriangleByte(uint byteIndex)
+{
+    uint word =
+        XR_ADV_ReconstructionMeshletTriangles.triangleWords[
+            byteIndex >> 2u];
+    return (word >> ((byteIndex & 3u) * 8u)) & 0xFFu;
+}
+
+vec3 XR_ADV_DecodeOct(uint packed)
+{
+    vec2 value = vec2(
+        float(int(packed << 16u) >> 16u) / 32767.0,
+        float(int(packed) >> 16u) / 32767.0);
+    vec3 decoded =
+        vec3(value, 1.0 - abs(value.x) - abs(value.y));
+    if (decoded.z < 0.0)
+    {
+        vec2 folded =
+            (1.0 - abs(decoded.yx)) *
+            mix(vec2(-1.0), vec2(1.0),
+                greaterThanEqual(decoded.xy, vec2(0.0)));
+        decoded.xy = folded;
+    }
+    return normalize(decoded);
+}
+
+vec3 XR_ADV_DecodeTangent(
+    uint packed,
+    out float handedness)
+{
+    handedness = (packed & 0x80000000u) != 0u
+        ? -1.0
+        : 1.0;
+    int signedY = int((packed >> 16u) & 0x7FFFu);
+    if ((signedY & 0x4000) != 0)
+        signedY |= int(0xFFFF8000u);
+    float x = float(int(packed << 16u) >> 16u) / 32767.0;
+    float y = float(signedY) / 16383.0;
+    vec3 decoded = vec3(x, y, 1.0 - abs(x) - abs(y));
+    if (decoded.z < 0.0)
+    {
+        float oldX = decoded.x;
+        decoded.x =
+            (1.0 - abs(decoded.y)) *
+            (oldX >= 0.0 ? 1.0 : -1.0);
+        decoded.y =
+            (1.0 - abs(oldX)) *
+            (decoded.y >= 0.0 ? 1.0 : -1.0);
+    }
+    return normalize(decoded);
+}
+
+vec4 XR_ADV_UnpackRgba8(uint packed)
+{
+    return vec4(
+        float(packed & 0xFFu),
+        float((packed >> 8u) & 0xFFu),
+        float((packed >> 16u) & 0xFFu),
+        float((packed >> 24u) & 0xFFu)) / 255.0;
+}
+
+bool XR_ADV_IsFinite(vec2 value)
+{
+    return !any(isnan(value)) && !any(isinf(value));
+}
+
+bool XR_ADV_IsFinite(vec3 value)
+{
+    return !any(isnan(value)) && !any(isinf(value));
+}
+
+bool XR_ADV_IsFinite(vec4 value)
+{
+    return !any(isnan(value)) && !any(isinf(value));
+}
+
+#endif

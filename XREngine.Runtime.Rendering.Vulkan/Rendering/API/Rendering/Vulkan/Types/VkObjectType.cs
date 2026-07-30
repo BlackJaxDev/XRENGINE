@@ -3,7 +3,7 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>
 /// The native Vulkan object category represented by a backend wrapper.
 /// </summary>
-public enum VkObjectType
+internal enum VkObjectType
 {
     Buffer,
     ShaderModule,

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -27,7 +27,7 @@ public unsafe partial class VulkanRenderer
     private bool HaveCommandBuffersDirtiedSince(long generation)
         => Volatile.Read(ref _commandBufferDirtyGeneration) != generation;
 
-    private void MarkCommandBuffersDirty([CallerMemberName] string? reason = null)
+    internal void MarkCommandBuffersDirty([CallerMemberName] string? reason = null)
     {
         Volatile.Write(ref _lastCommandBufferDirtyTimestamp, Stopwatch.GetTimestamp());
         Interlocked.Increment(ref _commandBufferDirtyGeneration);
@@ -84,7 +84,7 @@ public unsafe partial class VulkanRenderer
 
     internal void MarkCommandBuffersDirtyForLegacyMeshState([CallerMemberName] string? reason = null)
     {
-        if (VulkanPrimaryCommandBufferReuseEnabled || CommandChainsEnabledForCurrentRecording || t_frameOpCapture is not null)
+        if (VulkanPrimaryCommandBufferReuseEnabled || CommandChainsEnabledForCurrentRecording || _frameOperationQueue.CurrentThread.Capture is not null)
             return;
 
         MarkCommandBuffersDirty(reason);

@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel;
 using System.Numerics;
+using System.Threading;
 using XREngine.Components;
 using XREngine.Components.Capture.Lights;
 using XREngine.Components.Capture.Lights.Types;
@@ -40,6 +41,9 @@ namespace XREngine.Components.Lights
         private readonly float[] _uniformRenderedCascadeBiasMaxes = new float[MaxCascadeRenderCount];
         private readonly float[] _uniformRenderedCascadeReceiverOffsets = new float[MaxCascadeRenderCount];
         private readonly float[] _uniformRenderedCascadeStaleAges = new float[MaxCascadeRenderCount];
+        private long _standaloneShadowRenderRequestCount;
+        private long _standaloneShadowRenderPassCount;
+        private int _primaryShadowCasterCount;
         private readonly Matrix4x4[] _uniformRenderedCascadeMatrices = new Matrix4x4[MaxCascadeRenderCount];
 
         /// <summary>
@@ -81,6 +85,34 @@ namespace XREngine.Components.Lights
         /// Indicates whether the directional light uses the directional shadow atlas for the current shadow map encoding.
         /// </summary>
         protected override EShadowMapStorageFormat DefaultShadowMapStorageFormat => EShadowMapStorageFormat.Depth24;
+
+        /// <summary>
+        /// Number of legacy/dedicated directional shadow render requests accepted by this light.
+        /// </summary>
+        [Browsable(false)]
+        public long StandaloneShadowRenderRequestCount
+            => Interlocked.Read(ref _standaloneShadowRenderRequestCount);
+
+        /// <summary>
+        /// Number of primary dedicated shadow-map passes submitted by this light.
+        /// </summary>
+        [Browsable(false)]
+        public long StandaloneShadowRenderPassCount
+            => Interlocked.Read(ref _standaloneShadowRenderPassCount);
+
+        /// <summary>
+        /// Number of mesh commands collected for the most recently submitted primary shadow pass.
+        /// </summary>
+        [Browsable(false)]
+        public int PrimaryShadowCasterCount
+            => Volatile.Read(ref _primaryShadowCasterCount);
+
+        /// <summary>
+        /// Whether the dedicated directional map exposes a texture that the lighting pass can sample.
+        /// </summary>
+        [Browsable(false)]
+        public bool HasPrimaryShadowReceiverTexture
+            => PrimaryShadowReceiverTexture is not null;
 
         /// <summary>
         /// Determines if the specified shadow map storage format is supported by the directional light.

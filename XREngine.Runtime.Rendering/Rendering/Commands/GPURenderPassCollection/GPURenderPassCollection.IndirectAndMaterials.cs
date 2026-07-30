@@ -34,6 +34,7 @@ namespace XREngine.Rendering.Commands
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanIndirectTrace), "1", StringComparison.OrdinalIgnoreCase);
         private int _resolveMaterialLogBudget = 16;
         private readonly HashSet<uint> _lastMaterialTableIds = [];
+        private readonly HashSet<uint> _currentMaterialTableIdsScratch = [];
         private int _materialResidencyLogBudget = 12;
 
         /// <summary>
@@ -1687,15 +1688,17 @@ namespace XREngine.Rendering.Commands
                 return true;
 
             _materialTable ??= new GPUMaterialTable(128);
-            bool allResident = true;
             var renderState = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState;
             XRMaterial? overrideMaterial = renderState?.OverrideMaterial;
             bool useDepthNormalMaterialVariants = renderState?.UseDepthNormalMaterialVariants ?? false;
 
-            HashSet<uint> currentIds = [.. scene.MaterialMap.Keys];
+            _currentMaterialTableIdsScratch.Clear();
+            foreach (uint materialId in scene.MaterialMap.Keys)
+                _currentMaterialTableIdsScratch.Add(materialId);
+
             foreach (uint removedId in _lastMaterialTableIds)
             {
-                if (currentIds.Contains(removedId))
+                if (_currentMaterialTableIdsScratch.Contains(removedId))
                     continue;
 
                 _materialTable.Remove(removedId);
@@ -1726,6 +1729,14 @@ namespace XREngine.Rendering.Commands
                         _skipGpuSubmissionThisPass = true;
                         _skipGpuSubmissionReason = message;
                         Debug.MeshesWarning(message);
+                        RuntimeEngine.Rendering.Stats.GpuDriven.RecordMaterialReadiness(
+                            _currentMaterialTableIdsScratch.Count,
+                            readyRows: 0,
+                            nonReadyTextureReferences: 0,
+                            invalidMaterialIds: 0,
+                            fallbackSubmittedRows: 0,
+                            materialTableGeneration: _materialTable.PublicationGeneration,
+                            descriptorPublicationGeneration: 0ul);
                         return false;
                     }
 
@@ -1737,23 +1748,37 @@ namespace XREngine.Rendering.Commands
                 }
             }
 
-            foreach (var (materialId, material) in scene.MaterialMap)
+            bool allResident = PopulateMaterialTableRows(
+                scene.MaterialMap,
+                overrideMaterial,
+                useDepthNormalMaterialVariants,
+                textureReferenceMode,
+                materialCapability,
+                out int readyRows,
+                out int nonReadyTextureReferences,
+                out int invalidMaterialIds,
+                out ulong descriptorPublicationGeneration);
+
+            if (textureReferenceMode == EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable)
             {
-                XRMaterial? effectiveMaterial = ResolveEffectiveGpuMaterial(material, overrideMaterial, useDepthNormalMaterialVariants);
-                GPUMaterialEntry entry = BuildMaterialEntry(
-                    effectiveMaterial,
-                    textureReferenceMode,
-                    materialCapability,
-                    out GPUMaterialTextureReferences textureReferences,
-                    out bool resident);
-                _materialTable.AddOrUpdate(materialId, entry, textureReferences);
-                allResident &= resident;
+                materialCapability?.FlushMaterialTextureTableUpdates();
+                if (!allResident && nonReadyTextureReferences > 0)
+                {
+                    allResident = PopulateMaterialTableRows(
+                        scene.MaterialMap,
+                        overrideMaterial,
+                        useDepthNormalMaterialVariants,
+                        textureReferenceMode,
+                        materialCapability,
+                        out readyRows,
+                        out nonReadyTextureReferences,
+                        out invalidMaterialIds,
+                        out descriptorPublicationGeneration);
+                }
             }
 
             _materialTable.TrimTrailingUnused(128u);
             _materialTable.PushDirtyRanges();
-            if (textureReferenceMode == EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable)
-                materialCapability?.FlushMaterialTextureTableUpdates();
 
             if (materialCapability is not null)
             {
@@ -1762,15 +1787,26 @@ namespace XREngine.Rendering.Commands
             }
 
             _lastMaterialTableIds.Clear();
-            foreach (uint materialId in currentIds)
+            foreach (uint materialId in _currentMaterialTableIdsScratch)
                 _lastMaterialTableIds.Add(materialId);
 
             SetMaterialTable(_materialTable);
+            RuntimeEngine.Rendering.Stats.GpuDriven.RecordMaterialReadiness(
+                _currentMaterialTableIdsScratch.Count,
+                readyRows,
+                nonReadyTextureReferences,
+                invalidMaterialIds,
+                fallbackSubmittedRows: 0,
+                _materialTable.PublicationGeneration,
+                descriptorPublicationGeneration);
 
             if (!allResident)
             {
                 _skipGpuSubmissionThisPass = true;
-                _skipGpuSubmissionReason = "Material residency guarantee failed before indirect draw submission.";
+                _skipGpuSubmissionReason =
+                    $"Material readiness guarantee failed before indirect draw submission " +
+                    $"(readyRows={readyRows}/{_currentMaterialTableIdsScratch.Count}, " +
+                    $"nonReadyTextureReferences={nonReadyTextureReferences}, invalidMaterialIds={invalidMaterialIds}).";
                 if (_materialResidencyLogBudget > 0)
                 {
                     Debug.MeshesWarning($"{FormatDebugPrefix("Materials")} {_skipGpuSubmissionReason}");
@@ -1789,20 +1825,70 @@ namespace XREngine.Rendering.Commands
             return true;
         }
 
+        private bool PopulateMaterialTableRows(
+            IReadOnlyDictionary<uint, XRMaterial> materialMap,
+            XRMaterial? overrideMaterial,
+            bool useDepthNormalMaterialVariants,
+            EMaterialTableTextureReferenceMode textureReferenceMode,
+            IMaterialTableBackendCapability? materialCapability,
+            out int readyRows,
+            out int nonReadyTextureReferences,
+            out int invalidMaterialIds,
+            out ulong descriptorPublicationGeneration)
+        {
+            readyRows = 0;
+            nonReadyTextureReferences = 0;
+            invalidMaterialIds = 0;
+            descriptorPublicationGeneration = 0ul;
+
+            foreach (var (materialId, material) in materialMap)
+            {
+                if (materialId == 0u)
+                {
+                    invalidMaterialIds++;
+                    continue;
+                }
+
+                XRMaterial? effectiveMaterial = ResolveEffectiveGpuMaterial(material, overrideMaterial, useDepthNormalMaterialVariants);
+                GPUMaterialEntry entry = BuildMaterialEntry(
+                    effectiveMaterial,
+                    textureReferenceMode,
+                    materialCapability,
+                    out GPUMaterialTextureReferences textureReferences,
+                    out EMaterialTextureReferenceStatus residencyStatus,
+                    out int rowNonReadyTextureReferences,
+                    out ulong rowDescriptorPublicationGeneration);
+                _materialTable!.AddOrUpdate(materialId, entry, textureReferences);
+
+                if (residencyStatus == EMaterialTextureReferenceStatus.Ready)
+                    readyRows++;
+                nonReadyTextureReferences += rowNonReadyTextureReferences;
+                descriptorPublicationGeneration = Math.Max(
+                    descriptorPublicationGeneration,
+                    rowDescriptorPublicationGeneration);
+            }
+
+            return readyRows == materialMap.Count && invalidMaterialIds == 0;
+        }
+
         private static GPUMaterialEntry BuildMaterialEntry(
             XRMaterial? material,
             EMaterialTableTextureReferenceMode textureReferenceMode,
             IMaterialTableBackendCapability? materialCapability,
             out GPUMaterialTextureReferences textureReferences,
-            out bool resident)
+            out EMaterialTextureReferenceStatus residencyStatus,
+            out int nonReadyTextureReferences,
+            out ulong descriptorPublicationGeneration)
         {
             textureReferences = GPUMaterialTextureReferences.Empty;
-            resident = true;
+            residencyStatus = EMaterialTextureReferenceStatus.Ready;
+            nonReadyTextureReferences = 0;
+            descriptorPublicationGeneration = 0ul;
             uint flags = 0u;
 
             if (material is null)
             {
-                resident = false;
+                residencyStatus = EMaterialTextureReferenceStatus.Failed;
                 return new GPUMaterialEntry { Flags = flags };
             }
 
@@ -1813,25 +1899,55 @@ namespace XREngine.Rendering.Commands
             if (albedo is not null)
             {
                 flags |= 1u << 0;
-                resident &= TryResolveMaterialTexture(material, albedo, "Albedo", textureReferenceMode, materialCapability, out GPUMaterialTextureReference reference);
-                textureReferences = textureReferences with { Albedo = reference };
+                MaterialTextureReferenceResolution resolution = ResolveMaterialTexture(
+                    material,
+                    albedo,
+                    "Albedo",
+                    textureReferenceMode,
+                    materialCapability);
+                AccumulateMaterialTextureResolution(
+                    resolution,
+                    ref residencyStatus,
+                    ref nonReadyTextureReferences,
+                    ref descriptorPublicationGeneration);
+                textureReferences = textureReferences with { Albedo = resolution.Reference };
             }
 
             if (normal is not null)
             {
                 flags |= 1u << 1;
-                resident &= TryResolveMaterialTexture(material, normal, "Normal", textureReferenceMode, materialCapability, out GPUMaterialTextureReference reference);
-                textureReferences = textureReferences with { Normal = reference };
+                MaterialTextureReferenceResolution resolution = ResolveMaterialTexture(
+                    material,
+                    normal,
+                    "Normal",
+                    textureReferenceMode,
+                    materialCapability);
+                AccumulateMaterialTextureResolution(
+                    resolution,
+                    ref residencyStatus,
+                    ref nonReadyTextureReferences,
+                    ref descriptorPublicationGeneration);
+                textureReferences = textureReferences with { Normal = resolution.Reference };
             }
 
             if (rm is not null)
             {
                 flags |= 1u << 2;
-                resident &= TryResolveMaterialTexture(material, rm, "RM", textureReferenceMode, materialCapability, out GPUMaterialTextureReference reference);
-                textureReferences = textureReferences with { RM = reference };
+                MaterialTextureReferenceResolution resolution = ResolveMaterialTexture(
+                    material,
+                    rm,
+                    "RM",
+                    textureReferenceMode,
+                    materialCapability);
+                AccumulateMaterialTextureResolution(
+                    resolution,
+                    ref residencyStatus,
+                    ref nonReadyTextureReferences,
+                    ref descriptorPublicationGeneration);
+                textureReferences = textureReferences with { RM = resolution.Reference };
             }
 
-            if (resident)
+            if (residencyStatus == EMaterialTextureReferenceStatus.Ready)
                 flags |= 1u << 31;
 
             return new GPUMaterialEntry
@@ -1842,6 +1958,21 @@ namespace XREngine.Rendering.Commands
             };
         }
 
+        private static void AccumulateMaterialTextureResolution(
+            in MaterialTextureReferenceResolution resolution,
+            ref EMaterialTextureReferenceStatus residencyStatus,
+            ref int nonReadyTextureReferences,
+            ref ulong descriptorPublicationGeneration)
+        {
+            if (resolution.Status != EMaterialTextureReferenceStatus.Ready)
+                nonReadyTextureReferences++;
+
+            if (resolution.Status > residencyStatus)
+                residencyStatus = resolution.Status;
+            descriptorPublicationGeneration = Math.Max(
+                descriptorPublicationGeneration,
+                resolution.PublicationGeneration);
+        }
         private static Vector4 ResolveMaterialBaseColorOpacity(XRMaterial material)
         {
             Vector3 baseColor = material.Parameter<ShaderVector3>("BaseColor")?.Value ?? Vector3.One;
@@ -1873,31 +2004,35 @@ namespace XREngine.Rendering.Commands
             return new Vector4(roughness, metallic, specular, emission);
         }
 
-        private static bool TryResolveMaterialTexture(
+        private static MaterialTextureReferenceResolution ResolveMaterialTexture(
             XRMaterial material,
             XRTexture texture,
             string semantic,
             EMaterialTableTextureReferenceMode textureReferenceMode,
-            IMaterialTableBackendCapability? materialCapability,
-            out GPUMaterialTextureReference reference)
+            IMaterialTableBackendCapability? materialCapability)
         {
-            reference = GPUMaterialTextureReference.None;
             if (!IsTextureArrayAllowedForMaterialTable(material, texture))
-                return false;
+                return MaterialTextureReferenceResolution.Unsupported(
+                    "Texture arrays require explicit material-table support.");
 
             if (textureReferenceMode is
                 EMaterialTableTextureReferenceMode.OpenGLBindlessHandleTable or
                 EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable)
             {
-                return materialCapability?.TryResolveMaterialTextureReference(
-                    texture,
-                    semantic,
-                    out reference) == true;
+                return materialCapability?.ResolveMaterialTextureReference(texture, semantic)
+                    ?? MaterialTextureReferenceResolution.Unsupported(
+                        "The active renderer does not expose a material-table backend capability.");
             }
 
-            return IsTextureResident(texture);
+            return IsTextureResident(texture)
+                ? new MaterialTextureReferenceResolution(
+                    EMaterialTextureReferenceStatus.Ready,
+                    GPUMaterialTextureReference.None,
+                    0ul,
+                    string.Empty)
+                : MaterialTextureReferenceResolution.Pending(
+                    "Material texture is not resident.");
         }
-
         private static bool IsTextureArrayAllowedForMaterialTable(XRMaterial material, XRTexture texture)
         {
             bool isTextureArray =

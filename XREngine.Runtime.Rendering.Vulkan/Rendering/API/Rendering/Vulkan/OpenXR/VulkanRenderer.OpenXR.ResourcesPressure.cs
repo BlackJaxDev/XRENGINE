@@ -331,99 +331,107 @@ public unsafe partial class VulkanRenderer
 
     private void DrainRetiredResourcesFromCompletedSubmittedFrameSlots()
     {
-        lock (_desktopFrameRetirementGate)
+        using DesktopFrameRetirementScope retirement =
+            EnterDesktopFrameRetirementScope();
+        ReadOnlySpan<ulong> timelineValues = retirement.TimelineValues;
+        if (timelineValues.IsEmpty)
         {
-            if (_frameSlotTimelineValues is null)
+            DrainCompletedRecordedTextureUploadPublications();
+            return;
+        }
+
+        int frameSlotCount = Math.Min(
+            timelineValues.Length,
+            MAX_FRAMES_IN_FLIGHT);
+        DesktopFrameActivitySnapshot desktopActivity =
+            CaptureDesktopFrameActivity();
+        Span<bool> drainableSlots =
+            stackalloc bool[MAX_FRAMES_IN_FLIGHT];
+        for (int i = 0; i < frameSlotCount; i++)
+        {
+            if (desktopActivity.IsActive &&
+                i == desktopActivity.FrameSlot)
             {
-                DrainCompletedRecordedTextureUploadPublications();
+                Debug.VulkanEvery(
+                    $"OpenXR.Vulkan.ActiveDesktopFrameSlotDrainSkipped.{GetHashCode()}.{i}",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] Vulkan skipped retired-resource drain for active desktop frame slot {0} while desktop frame {1} is recording.",
+                    i,
+                    desktopActivity.FrameNumber);
+                continue;
+            }
+
+            ulong value = timelineValues[i];
+            if (value != 0 &&
+                !HasTimelineValueCompleted(
+                    retirement.TimelineSemaphore,
+                    value))
+            {
+                Debug.VulkanEvery(
+                    $"OpenXR.Vulkan.PendingFrameSlotDrainSkipped.{GetHashCode()}.{i}",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] Vulkan skipped retired-resource drain before eye rendering because frame slot {0} is still pending at timeline value {1}.",
+                    i,
+                    value);
+                continue;
+            }
+
+            drainableSlots[i] = true;
+        }
+
+        for (int i = 0; i < frameSlotCount; i++)
+            if (drainableSlots[i])
+                DrainRetiredCommandBuffers(i, int.MaxValue);
+        for (int i = 0; i < frameSlotCount; i++)
+            if (drainableSlots[i])
+                DrainRetiredDescriptorSets(i, int.MaxValue);
+        for (int i = 0; i < frameSlotCount; i++)
+            if (drainableSlots[i])
+                DrainRetiredDescriptorPools(i, int.MaxValue);
+        for (int i = 0; i < frameSlotCount; i++)
+            if (drainableSlots[i])
+                DrainRetiredPipelines(i, int.MaxValue);
+        for (int i = 0; i < frameSlotCount; i++)
+            if (drainableSlots[i])
+                DrainRetiredPipelineLayouts(i, int.MaxValue);
+        for (int i = 0; i < frameSlotCount; i++)
+            if (drainableSlots[i])
+                DrainRetiredQueryPools(i, int.MaxValue);
+        for (int i = 0; i < frameSlotCount; i++)
+            if (drainableSlots[i])
+                DrainRetiredBufferViews(i, int.MaxValue);
+        for (int i = 0; i < frameSlotCount; i++)
+            if (drainableSlots[i])
+                DrainRetiredFramebuffers(i, int.MaxValue);
+        for (int i = 0; i < frameSlotCount; i++)
+            if (drainableSlots[i])
+                DrainRetiredBuffers(i, int.MaxValue);
+        for (int pass = 0; pass < frameSlotCount; pass++)
+            for (int i = 0; i < frameSlotCount; i++)
+                if (drainableSlots[i])
+                    DrainRetiredImages(i, int.MaxValue);
+
+        DrainCompletedRecordedTextureUploadPublications();
+    }
+    private void WaitForOpenXrFrameDataSlot(uint frameDataImageIndex, string reason)
+    {
+        ulong value;
+        Silk.NET.Vulkan.Semaphore timelineSemaphore;
+        using (DesktopFrameRetirementScope retirement =
+               EnterDesktopFrameRetirementScope())
+        {
+            ReadOnlySpan<ulong> timelineValues = retirement.TimelineValues;
+            timelineSemaphore = retirement.TimelineSemaphore;
+            if (timelineSemaphore.Handle == 0 ||
+                frameDataImageIndex >= timelineValues.Length)
+            {
                 return;
             }
 
-            int frameSlotCount = Math.Min(
-                _frameSlotTimelineValues.Length,
-                MAX_FRAMES_IN_FLIGHT);
-            DesktopFrameActivitySnapshot desktopActivity =
-                CaptureDesktopFrameActivity();
-            Span<bool> drainableSlots =
-                stackalloc bool[MAX_FRAMES_IN_FLIGHT];
-            for (int i = 0; i < frameSlotCount; i++)
-            {
-                if (desktopActivity.IsActive &&
-                    i == desktopActivity.FrameSlot)
-                {
-                    Debug.VulkanEvery(
-                        $"OpenXR.Vulkan.ActiveDesktopFrameSlotDrainSkipped.{GetHashCode()}.{i}",
-                        TimeSpan.FromSeconds(1),
-                        "[OpenXR] Vulkan skipped retired-resource drain for active desktop frame slot {0} while desktop frame {1} is recording.",
-                        i,
-                        desktopActivity.FrameNumber);
-                    continue;
-                }
-
-                ulong value = _frameSlotTimelineValues[i];
-                if (value != 0 &&
-                    !HasTimelineValueCompleted(
-                        _graphicsTimelineSemaphore,
-                        value))
-                {
-                    Debug.VulkanEvery(
-                        $"OpenXR.Vulkan.PendingFrameSlotDrainSkipped.{GetHashCode()}.{i}",
-                        TimeSpan.FromSeconds(1),
-                        "[OpenXR] Vulkan skipped retired-resource drain before eye rendering because frame slot {0} is still pending at timeline value {1}.",
-                        i,
-                        value);
-                    continue;
-                }
-
-                drainableSlots[i] = true;
-            }
-
-            for (int i = 0; i < frameSlotCount; i++)
-                if (drainableSlots[i])
-                    DrainRetiredCommandBuffers(i, int.MaxValue);
-            for (int i = 0; i < frameSlotCount; i++)
-                if (drainableSlots[i])
-                    DrainRetiredDescriptorSets(i, int.MaxValue);
-            for (int i = 0; i < frameSlotCount; i++)
-                if (drainableSlots[i])
-                    DrainRetiredDescriptorPools(i, int.MaxValue);
-            for (int i = 0; i < frameSlotCount; i++)
-                if (drainableSlots[i])
-                    DrainRetiredPipelines(i, int.MaxValue);
-            for (int i = 0; i < frameSlotCount; i++)
-                if (drainableSlots[i])
-                    DrainRetiredPipelineLayouts(i, int.MaxValue);
-            for (int i = 0; i < frameSlotCount; i++)
-                if (drainableSlots[i])
-                    DrainRetiredQueryPools(i, int.MaxValue);
-            for (int i = 0; i < frameSlotCount; i++)
-                if (drainableSlots[i])
-                    DrainRetiredBufferViews(i, int.MaxValue);
-            for (int i = 0; i < frameSlotCount; i++)
-                if (drainableSlots[i])
-                    DrainRetiredFramebuffers(i, int.MaxValue);
-            for (int i = 0; i < frameSlotCount; i++)
-                if (drainableSlots[i])
-                    DrainRetiredBuffers(i, int.MaxValue);
-            for (int pass = 0; pass < frameSlotCount; pass++)
-                for (int i = 0; i < frameSlotCount; i++)
-                    if (drainableSlots[i])
-                        DrainRetiredImages(i, int.MaxValue);
-
-            DrainCompletedRecordedTextureUploadPublications();
+            value = timelineValues[(int)frameDataImageIndex];
+            if (value == 0 || HasTimelineValueCompleted(timelineSemaphore, value))
+                return;
         }
-    }
-
-    private void WaitForOpenXrFrameDataSlot(uint frameDataImageIndex, string reason)
-    {
-        if (_frameSlotTimelineValues is null ||
-            _graphicsTimelineSemaphore.Handle == 0 ||
-            frameDataImageIndex >= _frameSlotTimelineValues.Length)
-            return;
-
-        ulong value = _frameSlotTimelineValues[frameDataImageIndex];
-        if (value == 0 || HasTimelineValueCompleted(_graphicsTimelineSemaphore, value))
-            return;
 
         Debug.VulkanEvery(
             $"OpenXR.Vulkan.WaitFrameDataSlot.{GetHashCode()}.{frameDataImageIndex}.{reason}",
@@ -433,9 +441,8 @@ public unsafe partial class VulkanRenderer
             reason,
             value);
 
-        WaitForTimelineValue(_graphicsTimelineSemaphore, value);
+        WaitForTimelineValue(timelineSemaphore, value);
     }
-
     private ImageView GetOrCreateOpenXrSwapchainImageView(Image image, Format format)
     {
         ulong key = image.Handle;
@@ -991,20 +998,32 @@ public unsafe partial class VulkanRenderer
             : (long)largestHeapBytes;
     }
 
-    private bool TryGetPendingSubmittedFrameSlot(out int pendingSlot, out ulong pendingTimelineValue)
+    private bool TryGetPendingSubmittedFrameSlot(
+        out int pendingSlot,
+        out ulong pendingTimelineValue)
     {
         pendingSlot = -1;
         pendingTimelineValue = 0;
 
-        if (_frameSlotTimelineValues is null || _graphicsTimelineSemaphore.Handle == 0)
+        using DesktopFrameRetirementScope retirement =
+            EnterDesktopFrameRetirementScope();
+        ReadOnlySpan<ulong> timelineValues = retirement.TimelineValues;
+        Silk.NET.Vulkan.Semaphore timelineSemaphore =
+            retirement.TimelineSemaphore;
+        if (timelineValues.IsEmpty || timelineSemaphore.Handle == 0)
             return false;
 
-        int frameSlotCount = Math.Min(_frameSlotTimelineValues.Length, MAX_FRAMES_IN_FLIGHT);
+        int frameSlotCount = Math.Min(
+            timelineValues.Length,
+            MAX_FRAMES_IN_FLIGHT);
         for (int i = 0; i < frameSlotCount; i++)
         {
-            ulong value = _frameSlotTimelineValues[i];
-            if (value == 0 || HasTimelineValueCompleted(_graphicsTimelineSemaphore, value))
+            ulong value = timelineValues[i];
+            if (value == 0 ||
+                HasTimelineValueCompleted(timelineSemaphore, value))
+            {
                 continue;
+            }
 
             pendingSlot = i;
             pendingTimelineValue = value;
@@ -1013,7 +1032,6 @@ public unsafe partial class VulkanRenderer
 
         return false;
     }
-
     private void DestroyOpenXrPrimaryCommandBufferCache()
     {
         lock (_openXrBackend.PrimaryCommandBufferVariantsLock)

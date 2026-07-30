@@ -64,7 +64,7 @@ public sealed class AdvancedRenderPipelineResourceStateContractTests
     }
 
     [Test]
-    public void InactivePipeline_CapturesCapabilityEncodingsWithoutReservingResources()
+    public void VisibilityPipeline_CapturesCapabilityEncodingsAndPhase04Capacities()
     {
         AdvancedRenderPipelineCapabilityResult capabilityResult =
             AdvancedRenderPipelineCapabilityResolver.Resolve(
@@ -92,7 +92,8 @@ public sealed class AdvancedRenderPipelineResourceStateContractTests
         profile.Synchronization.ShouldBe(
             EAdvancedSynchronizationMode.VulkanSynchronization2);
         profile.ShaderFamily.ShouldBe(EAdvancedShaderFamily.VisibilityBuffer);
-        profile.Capacities.ShouldBe(AdvancedRenderCapacityProfile.Inactive);
+        profile.Capacities.ShouldBe(
+            AdvancedRenderCapacityProfile.VisibilityBuffer);
         profile.ToGenerationKey().Profile.ShouldBe(profile);
     }
 

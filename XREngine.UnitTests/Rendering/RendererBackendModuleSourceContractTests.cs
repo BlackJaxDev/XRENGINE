@@ -316,9 +316,7 @@ public sealed class RendererBackendModuleSourceContractTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        return File.ReadAllText(Path.Combine(FindWorkspaceRoot(), relativePath)).Replace("\r\n", "\n", StringComparison.Ordinal);
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string FindWorkspaceRoot()
     {

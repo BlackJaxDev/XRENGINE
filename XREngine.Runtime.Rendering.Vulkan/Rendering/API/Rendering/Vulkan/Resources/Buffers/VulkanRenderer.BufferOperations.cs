@@ -97,7 +97,7 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>
         /// Vulkan data buffer with best practices: staging, synchronization, descriptor integration, lifetime, mapping, error handling, and multi-frame support.
         /// </summary>
-        private void* MapBuffer(Buffer? vkBuffer, DeviceMemory? vkMemory, ulong offset, ulong length)
+        internal void* MapBuffer(Buffer? vkBuffer, DeviceMemory? vkMemory, ulong offset, ulong length)
         {
             if (vkBuffer is null)
                 throw new ArgumentNullException(nameof(vkBuffer), "Cannot map null Vulkan buffer.");
@@ -107,7 +107,7 @@ namespace XREngine.Rendering.Vulkan
             return MapBufferMemoryOrThrow(vkBuffer.Value, vkMemory.Value, offset, length, "Failed to map Vulkan buffer memory.");
         }
 
-        private bool CopyBuffer(Buffer? stagingBuffer, Buffer? vkBuffer, uint length, ulong offset)
+        internal bool CopyBuffer(Buffer? stagingBuffer, Buffer? vkBuffer, uint length, ulong offset)
         {
             if (_deviceLost)
                 return false;
@@ -121,7 +121,7 @@ namespace XREngine.Rendering.Vulkan
             return ExecuteTransferBufferUpload(stagingBuffer.Value, vkBuffer.Value, length, 0, offset);
         }
 
-        private void UpdateBuffer(Buffer? vkBuffer, DeviceMemory? vkMemory, ulong offset, ulong length, void* addr)
+        internal void UpdateBuffer(Buffer? vkBuffer, DeviceMemory? vkMemory, ulong offset, ulong length, void* addr)
         {
             if (_deviceLost)
                 return;
@@ -138,7 +138,7 @@ namespace XREngine.Rendering.Vulkan
             UnmapBufferMemory(vkBuffer.Value, vkMemory.Value); // Unmap after copying
         }
 
-        private void UnmapBuffer(Buffer? vkBuffer, DeviceMemory? vkMemory)
+        internal void UnmapBuffer(Buffer? vkBuffer, DeviceMemory? vkMemory)
         {
             if (vkBuffer is null)
                 throw new ArgumentNullException(nameof(vkBuffer), "Cannot unmap null Vulkan buffer.");
@@ -658,7 +658,7 @@ namespace XREngine.Rendering.Vulkan
         /// is only safe for the legacy allocator; allocator-backed modes must skip
         /// unknown handles because they may belong to shared native allocator blocks.
         /// </summary>
-        private bool FreeUntrackedBufferMemory(DeviceMemory memory, string owner)
+        internal bool FreeUntrackedBufferMemory(DeviceMemory memory, string owner)
         {
             if (TryFreeTrackedLegacyBufferMemory(memory))
                 return true;
@@ -1038,7 +1038,7 @@ namespace XREngine.Rendering.Vulkan
             heapFlags = heap.Flags;
         }
 
-        private static bool IsDeviceLocalVramAllocation(MemoryPropertyFlags properties)
+        internal static bool IsDeviceLocalVramAllocation(MemoryPropertyFlags properties)
             => (properties & MemoryPropertyFlags.DeviceLocalBit) != 0;
 
         private static string ClassifyVulkanAllocation(

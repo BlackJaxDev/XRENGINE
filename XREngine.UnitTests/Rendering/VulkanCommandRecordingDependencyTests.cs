@@ -534,7 +534,7 @@ public sealed class VulkanCommandRecordingDependencyTests
         ulong currentCapacity,
         ulong requiredBytes,
         ulong expectedCapacity)
-        => VulkanRenderer.VkDataBuffer.ResolveResizableBufferCapacity(currentCapacity, requiredBytes)
+        => VkDataBuffer.ResolveResizableBufferCapacity(currentCapacity, requiredBytes)
             .ShouldBe(expectedCapacity);
 
     private static CommandRecordingDependencySignature CreateSignature()
@@ -563,13 +563,7 @@ public sealed class VulkanCommandRecordingDependencyTests
             VolatileSuffixGeneration: 18UL);
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string path = Path.Combine(
-            ResolveRepoRoot(),
-            relativePath.Replace('/', Path.DirectorySeparatorChar));
-        File.Exists(path).ShouldBeTrue($"Expected workspace file '{relativePath}'.");
-        return File.ReadAllText(path).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string Slice(string source, string startMarker, string endMarker)
     {

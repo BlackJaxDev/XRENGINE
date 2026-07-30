@@ -40,11 +40,11 @@ public unsafe partial class VulkanRenderer
             // Keep selection unavailable until the backend implements the full family.
             ShaderFamily: EAdvancedShaderFamily.None,
             SupportsBufferDeviceAddress: SupportsBufferDeviceAddress,
-            SupportsDescriptorIndexing: _supportsDescriptorIndexing,
+            SupportsDescriptorIndexing: SupportsDescriptorIndexing,
             SupportsDescriptorHeap: SupportsDescriptorHeap,
             SupportsSubgroupOperations: false,
             SupportsMeshShaders: SupportsMeshletDispatch(),
             SupportsAsyncCompute: false,
-            SupportsTimelineSemaphores: _supportsTimelineSemaphores);
+            SupportsTimelineSemaphores: DeviceCapabilities.Supports(EVulkanDeviceCapability.TimelineSemaphores));
     }
 }

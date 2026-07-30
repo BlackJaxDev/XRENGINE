@@ -186,9 +186,9 @@ public sealed class VulkanRenderGraphPlanTests
     [Test]
     public void CompiledPlan_HasStableStructuralIdentityAndDiagnosticDump()
     {
-        VulkanRenderer.VulkanRenderGraphCompiler compiler = new();
-        VulkanRenderer.VulkanCompiledRenderGraph first = compiler.Compile(CreateSimpleGraph());
-        VulkanRenderer.VulkanCompiledRenderGraph second = compiler.Compile(CreateSimpleGraph());
+        VulkanRenderGraphCompiler compiler = new();
+        VulkanCompiledRenderGraph first = compiler.Compile(CreateSimpleGraph());
+        VulkanCompiledRenderGraph second = compiler.Compile(CreateSimpleGraph());
 
         first.Plan.CompatibilityIdentity.ShouldBe(second.Plan.CompatibilityIdentity);
         first.Plan.Generation.ShouldNotBe(second.Plan.Generation);
@@ -217,7 +217,7 @@ public sealed class VulkanRenderGraphPlanTests
             return metadata.Build();
         }
 
-        VulkanRenderer.VulkanRenderGraphCompiler compiler = new();
+        VulkanRenderGraphCompiler compiler = new();
         ulong present = compiler.Compile(Create(RenderGraphImageLayout.Present)).Plan.CompatibilityIdentity;
         ulong general = compiler.Compile(Create(RenderGraphImageLayout.General)).Plan.CompatibilityIdentity;
 
@@ -259,7 +259,7 @@ public sealed class VulkanRenderGraphPlanTests
         metadata.ForPass(2, "Rewrite").UseColorAttachment("History", ERenderGraphAccess.Write);
         metadata.ForPass(3, "Read").SampleTexture("History");
 
-        VulkanRenderer.VulkanCompiledRenderGraph graph = new VulkanRenderer.VulkanRenderGraphCompiler().Compile(metadata.Build());
+        VulkanCompiledRenderGraph graph = new VulkanRenderGraphCompiler().Compile(metadata.Build());
 
         graph.Plan.Passes[0].Resources.Single().LogicalVersion.ShouldBe(0);
         graph.Plan.Passes[1].Resources.Single().LogicalVersion.ShouldBe(1);

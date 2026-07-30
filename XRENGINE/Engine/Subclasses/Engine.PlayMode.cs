@@ -595,6 +595,7 @@ namespace XREngine
                     return;
 
                 Configuration.SimulatePhysics = true;
+                State = EPlayModeState.EnteringPlay;
 
                 var targetWorld = ResolveStartupWorld();
                 _activeGameMode = ResolveGameMode(targetWorld);
@@ -616,12 +617,45 @@ namespace XREngine
                 Debug.LogWarning("Play mode transitions are temporarily disabled; running with physics always simulated.");
             }
 
-            private static void BeginPlayWithoutTransitions()
+            /// <summary>
+            /// Enters play for a standalone runtime without editor snapshot/restore transitions.
+            /// </summary>
+            internal static void BeginStandalonePlay()
             {
                 if (_editModeSimulationActive)
                     return;
 
                 Configuration.SimulatePhysics = true;
+                State = EPlayModeState.EnteringPlay;
+
+                // A cooked standalone world owns its authored pawn and gameplay components.
+                // Do not synthesize the editor's fallback CustomGameMode here: doing so spawns
+                // a second default pawn after the authored graph has begun play.
+                _activeGameMode = null;
+                foreach (var worldInstance in XRWorldInstance.WorldInstances.Values)
+                {
+                    worldInstance.PhysicsEnabled = true;
+                    worldInstance.GameMode = null;
+                    worldInstance.BeginPlay().GetAwaiter().GetResult();
+                }
+
+                State = EPlayModeState.Play;
+                _editModeSimulationActive = true;
+            }
+
+            private static void BeginPlayWithoutTransitions()
+                => BeginPlayWithoutTransitions(warnTransitionsDisabled: true);
+
+            private static void BeginPlayWithoutTransitions(bool warnTransitionsDisabled)
+            {
+                if (_editModeSimulationActive)
+                    return;
+
+                Configuration.SimulatePhysics = true;
+                // XRWorldInstance.PlayState=Playing derives PhysicsEnabled from the engine
+                // play state. Enter the transition before BeginPlay so standalone worlds do
+                // not disable physics again at the end of their own startup lifecycle.
+                State = EPlayModeState.EnteringPlay;
 
                 var targetWorld = ResolveStartupWorld();
                 _activeGameMode = ResolveGameMode(targetWorld);
@@ -640,7 +674,8 @@ namespace XREngine
                 State = EPlayModeState.Play;
                 _editModeSimulationActive = true;
 
-                Debug.LogWarning("Play mode transitions are temporarily disabled; running with physics always simulated.");
+                if (warnTransitionsDisabled)
+                    Debug.LogWarning("Play mode transitions are temporarily disabled; running with physics always simulated.");
             }
 
             /// <summary>

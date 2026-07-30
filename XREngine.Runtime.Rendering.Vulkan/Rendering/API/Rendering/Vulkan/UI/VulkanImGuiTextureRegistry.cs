@@ -9,7 +9,7 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed class VulkanImGuiTextureRegistry
 {
     internal Dictionary<nint, DescriptorSet> DescriptorSets { get; } = [];
-    internal Dictionary<nint, VulkanRenderer.DescriptorHeapPushDataPayload> DescriptorHeapPushData { get; } = [];
+    internal Dictionary<nint, DescriptorHeapPushDataPayload> DescriptorHeapPushData { get; } = [];
     internal Dictionary<XRTexture, VulkanImGuiTextureRegistration> Registrations { get; } = [];
     internal Dictionary<nint, XRTexture> TexturesById { get; } = [];
     internal nint NextTextureId { get; set; } = 2;

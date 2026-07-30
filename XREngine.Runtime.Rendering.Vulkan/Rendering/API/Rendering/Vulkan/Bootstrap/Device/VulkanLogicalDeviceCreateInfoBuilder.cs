@@ -1,7 +1,7 @@
 using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
 
-namespace XREngine.Rendering.Vulkan;
+namespace XREngine.Rendering.Vulkan.DeviceBootstrap;
 
 /// <summary>
 /// Owns transient native extension-name storage while assembling

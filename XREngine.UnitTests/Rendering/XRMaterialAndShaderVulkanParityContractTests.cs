@@ -13,7 +13,7 @@ public sealed class XRMaterialAndShaderVulkanParityContractTests
     {
         string resolverSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/MaterialTextureBindingResolver.cs");
         string vkMaterialSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Materials/VkMaterial.cs");
-        string vkMeshDescriptorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs");
+        string vkMeshDescriptorSource = SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs");
 
         resolverSource.ShouldContain("MaterialTextureBindingResolver");
         resolverSource.ShouldContain("ResolveSamplerName");
@@ -95,7 +95,9 @@ public sealed class XRMaterialAndShaderVulkanParityContractTests
         tableSource.ShouldContain("MaterialBindingRowPacker.TryWriteOpaqueDeferred");
         passSource.ShouldContain("_materialTable.PushDirtyRanges();");
 
-        vulkanTableSource.ShouldContain("TryGetOrCreateMaterialTextureDescriptorIndex");
+        vulkanTableSource.ShouldContain("ResolveMaterialTextureDescriptorReference");
+        vulkanTableSource.ShouldContain("MaterialTextureReferenceResolution.Pending");
+        vulkanTableSource.ShouldContain("MaterialTextureReferenceResolution.Failed");
         vulkanTableSource.ShouldContain("_dirtyGlobalMaterialTextureDescriptorSlots");
         vulkanTableSource.ShouldContain("FlushGlobalMaterialTextureDescriptorUpdates");
         vulkanTableSource.ShouldContain("GlobalMaterialTextureDescriptorFallbackReferencesTotal");
@@ -113,7 +115,7 @@ public sealed class XRMaterialAndShaderVulkanParityContractTests
         string vkMaterialSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Materials/VkMaterial.cs");
         string vkMaterialStateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Materials/VkMaterial.ProgramDescriptorState.cs");
         string vkUniformBindingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Materials/VkMaterial.UniformBindingResource.cs");
-        string vkProgramSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
+        string vkProgramSource = SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
         string vkDescriptorBindingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VulkanRenderer.DescriptorSetLayoutBindingBuilder.cs");
         string glMaterialSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Materials/GLMaterial.cs");
         string glProgramSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.UniformBinding.cs");
@@ -173,7 +175,7 @@ public sealed class XRMaterialAndShaderVulkanParityContractTests
     {
         string statusSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Resources/Shaders/ShaderCompileStatus.cs");
         string vkShaderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkShader.cs");
-        string vkProgramSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
+        string vkProgramSource = SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
         string compilerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/VulkanShaderCompiler.cs");
 
         statusSource.ShouldContain("EShaderCompileFailureKind");
@@ -212,7 +214,7 @@ public sealed class XRMaterialAndShaderVulkanParityContractTests
         string compilerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/VulkanShaderCompiler.cs");
         string reflectionSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/VulkanShaderReflection.cs");
         string artifactCacheSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/VulkanShaderArtifactCache.cs");
-        string prewarmSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelinePrewarmDatabase.cs");
+        string prewarmSource = SourceContractWorkspace.ReadVulkanSourcesContaining("RecordVulkanPipelineCacheMiss(entry.ToProfilerSummary");
         string glDiagnosticsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.Diagnostics.cs");
         string glLifecycleSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/ShaderProgramLifecycleDiagnostics.cs");
 
@@ -261,11 +263,7 @@ public sealed class XRMaterialAndShaderVulkanParityContractTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string fullPath = Path.Combine(ResolveWorkspaceRoot(), relativePath.Replace('/', Path.DirectorySeparatorChar));
-        File.Exists(fullPath).ShouldBeTrue($"Expected file does not exist: {fullPath}");
-        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ResolveWorkspaceRoot()
     {

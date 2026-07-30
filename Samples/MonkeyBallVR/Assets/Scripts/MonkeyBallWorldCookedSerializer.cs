@@ -1,12 +1,14 @@
 using System.Numerics;
 using System.Text;
 using XREngine.Components;
+using XREngine.Components.Capture.Lights;
 using XREngine.Components.Lights;
 using XREngine.Components.Mesh.Shapes;
 using XREngine.Components.Physics;
 using XREngine.Components.VR;
 using XREngine.Data.Colors;
 using XREngine.Data.Components.Scene;
+using XREngine.Data.Rendering;
 using XREngine.Data.Geometry;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -22,7 +24,7 @@ namespace MonkeyBallVR;
 internal static class MonkeyBallWorldCookedSerializer
 {
     private const uint Magic = 0x4D425752;
-    private const int Version = 3;
+    private const int Version = 5;
     private const int MaximumCollectionCount = 16_384;
 
     private enum TransformKind : byte
@@ -414,6 +416,7 @@ internal static class MonkeyBallWorldCookedSerializer
         writer.Write(game.GoalRadius);
         writer.Write(game.RoundDurationSeconds);
         writer.Write(game.MaxTiltDegrees);
+        writer.Write(game.StageTiltInterpolationSpeed);
         writer.Write(game.InitialLives);
         writer.Write(game.MaxBallSpeed);
         writer.Write(game.FallThresholdY);
@@ -438,6 +441,7 @@ internal static class MonkeyBallWorldCookedSerializer
         game.GoalRadius = reader.ReadSingle();
         game.RoundDurationSeconds = reader.ReadSingle();
         game.MaxTiltDegrees = reader.ReadSingle();
+        game.StageTiltInterpolationSpeed = reader.ReadSingle();
         game.InitialLives = reader.ReadInt32();
         game.MaxBallSpeed = reader.ReadSingle();
         game.FallThresholdY = reader.ReadSingle();
@@ -830,13 +834,29 @@ internal static class MonkeyBallWorldCookedSerializer
     {
         WriteColor(writer, light.Color);
         writer.Write(light.DiffuseIntensity);
+        writer.Write((int)light.Type);
         writer.Write(light.CastsShadows);
         writer.Write(light.UseShadowAtlas);
+        writer.Write((int)light.ShadowMapStorageFormat);
+        writer.Write((int)light.ShadowMapEncoding);
         writer.Write(light.EnableCascadedShadows);
         writer.Write(light.EnableContactShadows);
         WriteVector3(writer, light.Scale);
         writer.Write(light.ShadowMapResolutionWidth);
         writer.Write(light.ShadowMapResolutionHeight);
+        writer.Write(light.ShadowMinBias);
+        writer.Write(light.ShadowMaxBias);
+        writer.Write(light.ShadowDepthBiasTexels);
+        writer.Write(light.ShadowSlopeBiasTexels);
+        writer.Write(light.ShadowNormalBiasTexels);
+        writer.Write(light.FilterSamples);
+        writer.Write(light.BlockerSamples);
+        writer.Write(light.FilterRadius);
+        writer.Write(light.BlockerSearchRadius);
+        writer.Write(light.MinPenumbra);
+        writer.Write(light.MaxPenumbra);
+        writer.Write((int)light.SoftShadowMode);
+        writer.Write(light.LightSourceRadius);
     }
 
     private static DirectionalLightComponent ReadDirectionalLight(
@@ -847,12 +867,28 @@ internal static class MonkeyBallWorldCookedSerializer
             static () => new DirectionalLightComponent())!;
         light.Color = ReadColor3(reader);
         light.DiffuseIntensity = reader.ReadSingle();
+        light.Type = (ELightType)reader.ReadInt32();
         light.CastsShadows = reader.ReadBoolean();
         light.UseShadowAtlas = reader.ReadBoolean();
+        light.ShadowMapStorageFormat = (EShadowMapStorageFormat)reader.ReadInt32();
+        light.ShadowMapEncoding = (EShadowMapEncoding)reader.ReadInt32();
         light.EnableCascadedShadows = reader.ReadBoolean();
         light.EnableContactShadows = reader.ReadBoolean();
         light.Scale = ReadVector3(reader);
         light.SetShadowMapResolution(reader.ReadUInt32(), reader.ReadUInt32());
+        light.ShadowMinBias = reader.ReadSingle();
+        light.ShadowMaxBias = reader.ReadSingle();
+        light.ShadowDepthBiasTexels = reader.ReadSingle();
+        light.ShadowSlopeBiasTexels = reader.ReadSingle();
+        light.ShadowNormalBiasTexels = reader.ReadSingle();
+        light.FilterSamples = reader.ReadInt32();
+        light.BlockerSamples = reader.ReadInt32();
+        light.FilterRadius = reader.ReadSingle();
+        light.BlockerSearchRadius = reader.ReadSingle();
+        light.MinPenumbra = reader.ReadSingle();
+        light.MaxPenumbra = reader.ReadSingle();
+        light.SoftShadowMode = (ESoftShadowMode)reader.ReadInt32();
+        light.LightSourceRadius = reader.ReadSingle();
         return light;
     }
 

@@ -4,7 +4,7 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private bool TryAcquireSharedMeshDescriptorAllocation(
+    internal bool TryAcquireSharedMeshDescriptorAllocation(
         in VkMeshRenderer.DescriptorAllocationKey key,
         XRMaterial material,
         out VkMeshRenderer.DescriptorAllocation allocation)
@@ -13,7 +13,7 @@ public unsafe partial class VulkanRenderer
             material,
             out allocation);
 
-    private VkMeshRenderer.DescriptorAllocation PublishSharedMeshDescriptorAllocation(
+    internal VkMeshRenderer.DescriptorAllocation PublishSharedMeshDescriptorAllocation(
         in VkMeshRenderer.DescriptorAllocationKey key,
         VkMeshRenderer.DescriptorAllocation allocation,
         out bool published)
@@ -25,7 +25,7 @@ public unsafe partial class VulkanRenderer
             out published);
     }
 
-    private bool ReleaseSharedMeshDescriptorAllocation(
+    internal bool ReleaseSharedMeshDescriptorAllocation(
         in VkMeshRenderer.DescriptorAllocationKey key,
         VkMeshRenderer.DescriptorAllocation allocation)
         => _descriptorManager.ReleaseSharedMeshDescriptorAllocation(key, allocation);

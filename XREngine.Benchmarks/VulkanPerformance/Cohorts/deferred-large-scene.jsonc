@@ -38,6 +38,7 @@
   "DynamicPointLightCount": 0,
   "DynamicSpotLightCount": 0,
   "LightProbe": "Off",
+  "Locomotion": false,
   "ModelsToImport": [
     {
       "Enabled": true,

@@ -2,8 +2,13 @@
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
+#if defined(XR_ADV_VISIBILITY_ARRAY)
+layout(binding = 0) uniform sampler2DArray SourceDepth;
+layout(r32f, binding = 1) writeonly uniform image2DArray DestinationMip;
+#else
 layout(binding = 0) uniform sampler2D SourceDepth;
 layout(r32f, binding = 1) writeonly uniform image2D DestinationMip;
+#endif
 
 uniform ivec2 DestinationSize;
 uniform int SourceMip;
@@ -16,25 +21,43 @@ void main()
         return;
 
     ivec2 source = destination * 2;
-    ivec2 sourceMaximum = textureSize(SourceDepth, SourceMip) - ivec2(1);
+    ivec2 sourceMaximum =
+        textureSize(SourceDepth, SourceMip).xy - ivec2(1);
+#if defined(XR_ADV_VISIBILITY_ARRAY)
+    int layer = int(gl_GlobalInvocationID.z);
+    int layerCount = textureSize(SourceDepth, SourceMip).z;
+    if (layer >= layerCount)
+        return;
+#endif
+
+    ivec2 source0 = clamp(source + ivec2(0, 0), ivec2(0), sourceMaximum);
+    ivec2 source1 = clamp(source + ivec2(1, 0), ivec2(0), sourceMaximum);
+    ivec2 source2 = clamp(source + ivec2(0, 1), ivec2(0), sourceMaximum);
+    ivec2 source3 = clamp(source + ivec2(1, 1), ivec2(0), sourceMaximum);
+#if defined(XR_ADV_VISIBILITY_ARRAY)
     float d0 = texelFetch(
-        SourceDepth,
-        clamp(source + ivec2(0, 0), ivec2(0), sourceMaximum),
-        SourceMip).r;
+        SourceDepth, ivec3(source0, layer), SourceMip).r;
     float d1 = texelFetch(
-        SourceDepth,
-        clamp(source + ivec2(1, 0), ivec2(0), sourceMaximum),
-        SourceMip).r;
+        SourceDepth, ivec3(source1, layer), SourceMip).r;
     float d2 = texelFetch(
-        SourceDepth,
-        clamp(source + ivec2(0, 1), ivec2(0), sourceMaximum),
-        SourceMip).r;
+        SourceDepth, ivec3(source2, layer), SourceMip).r;
     float d3 = texelFetch(
-        SourceDepth,
-        clamp(source + ivec2(1, 1), ivec2(0), sourceMaximum),
-        SourceMip).r;
+        SourceDepth, ivec3(source3, layer), SourceMip).r;
+#else
+    float d0 = texelFetch(SourceDepth, source0, SourceMip).r;
+    float d1 = texelFetch(SourceDepth, source1, SourceMip).r;
+    float d2 = texelFetch(SourceDepth, source2, SourceMip).r;
+    float d3 = texelFetch(SourceDepth, source3, SourceMip).r;
+#endif
     float reduced = ReversedDepth != 0u
         ? min(min(d0, d1), min(d2, d3))
         : max(max(d0, d1), max(d2, d3));
-    imageStore(DestinationMip, destination, vec4(reduced));
+#if defined(XR_ADV_VISIBILITY_ARRAY)
+    imageStore(DestinationMip, ivec3(destination, layer), vec4(reduced));
+#else
+    imageStore(
+        DestinationMip,
+        destination,
+        vec4(reduced));
+#endif
 }

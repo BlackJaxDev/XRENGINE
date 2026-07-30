@@ -15,4 +15,9 @@ public enum EAdvancedMaterialRequiredAttributeMask : uint
     Color0 = 1u << 5,
     JointIndices = 1u << 6,
     JointWeights = 1u << 7,
+    Custom0 = 1u << 8,
+    FlatAttributes = 1u << 9,
+    DeformedPosition = 1u << 10,
+    AnalyticalDerivatives = 1u << 11,
+    Color1 = 1u << 12,
 }

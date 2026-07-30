@@ -26,7 +26,13 @@ namespace XREngine
                     private static int _activeCommandCount;
                     private static int _materialLookupCapacity;
                     private static int _activeMaterialSlots;
-                    private static long _submissionManagedAllocatedBytes;
+                    private static int _requiredMaterialRows;
+                    private static int _readyMaterialRows;
+                    private static int _nonReadyMaterialTextureReferences;
+                    private static int _invalidMaterialIds;
+                    private static int _fallbackSubmittedMaterialRows;
+                    private static long _materialTablePublicationGeneration;
+                    private static long _materialDescriptorPublicationGeneration;                    private static long _submissionManagedAllocatedBytes;
                     private static long _submissionBackendManagedAllocatedBytes;
                     private static long _indirectCommandGenerationTicks;
                     private static long _gpuCullTicks;
@@ -63,7 +69,13 @@ namespace XREngine
                     private static int _lastFrameActiveCommandCount;
                     private static int _lastFrameMaterialLookupCapacity;
                     private static int _lastFrameActiveMaterialSlots;
-                    private static long _lastFrameSubmissionManagedAllocatedBytes;
+                    private static int _lastFrameRequiredMaterialRows;
+                    private static int _lastFrameReadyMaterialRows;
+                    private static int _lastFrameNonReadyMaterialTextureReferences;
+                    private static int _lastFrameInvalidMaterialIds;
+                    private static int _lastFrameFallbackSubmittedMaterialRows;
+                    private static long _lastFrameMaterialTablePublicationGeneration;
+                    private static long _lastFrameMaterialDescriptorPublicationGeneration;                    private static long _lastFrameSubmissionManagedAllocatedBytes;
                     private static long _lastFrameSubmissionBackendManagedAllocatedBytes;
                     private static long _lastFrameIndirectCommandGenerationTicks;
                     private static long _lastFrameGpuCullTicks;
@@ -112,7 +124,13 @@ namespace XREngine
                     public static int ActiveCommandCount => _lastFrameActiveCommandCount;
                     public static int MaterialLookupCapacity => _lastFrameMaterialLookupCapacity;
                     public static int ActiveMaterialSlots => _lastFrameActiveMaterialSlots;
-                    public static long SubmissionManagedAllocatedBytes => _lastFrameSubmissionManagedAllocatedBytes;
+                    public static int RequiredMaterialRows => _lastFrameRequiredMaterialRows;
+                    public static int ReadyMaterialRows => _lastFrameReadyMaterialRows;
+                    public static int NonReadyMaterialTextureReferences => _lastFrameNonReadyMaterialTextureReferences;
+                    public static int InvalidMaterialIds => _lastFrameInvalidMaterialIds;
+                    public static int FallbackSubmittedMaterialRows => _lastFrameFallbackSubmittedMaterialRows;
+                    public static long MaterialTablePublicationGeneration => _lastFrameMaterialTablePublicationGeneration;
+                    public static long MaterialDescriptorPublicationGeneration => _lastFrameMaterialDescriptorPublicationGeneration;                    public static long SubmissionManagedAllocatedBytes => _lastFrameSubmissionManagedAllocatedBytes;
                     public static long SubmissionBackendManagedAllocatedBytes => _lastFrameSubmissionBackendManagedAllocatedBytes;
                     public static long SubmissionOwnedManagedAllocatedBytes =>
                         Math.Max(0L, _lastFrameSubmissionManagedAllocatedBytes -
@@ -161,7 +179,13 @@ namespace XREngine
                         _lastFrameActiveCommandCount = Interlocked.Exchange(ref _activeCommandCount, 0);
                         _lastFrameMaterialLookupCapacity = Interlocked.Exchange(ref _materialLookupCapacity, 0);
                         _lastFrameActiveMaterialSlots = Interlocked.Exchange(ref _activeMaterialSlots, 0);
-                        _lastFrameSubmissionManagedAllocatedBytes = Interlocked.Exchange(ref _submissionManagedAllocatedBytes, 0);
+                        _lastFrameRequiredMaterialRows = Interlocked.Exchange(ref _requiredMaterialRows, 0);
+                        _lastFrameReadyMaterialRows = Interlocked.Exchange(ref _readyMaterialRows, 0);
+                        _lastFrameNonReadyMaterialTextureReferences = Interlocked.Exchange(ref _nonReadyMaterialTextureReferences, 0);
+                        _lastFrameInvalidMaterialIds = Interlocked.Exchange(ref _invalidMaterialIds, 0);
+                        _lastFrameFallbackSubmittedMaterialRows = Interlocked.Exchange(ref _fallbackSubmittedMaterialRows, 0);
+                        _lastFrameMaterialTablePublicationGeneration = Interlocked.Exchange(ref _materialTablePublicationGeneration, 0);
+                        _lastFrameMaterialDescriptorPublicationGeneration = Interlocked.Exchange(ref _materialDescriptorPublicationGeneration, 0);                        _lastFrameSubmissionManagedAllocatedBytes = Interlocked.Exchange(ref _submissionManagedAllocatedBytes, 0);
                         _lastFrameSubmissionBackendManagedAllocatedBytes = Interlocked.Exchange(ref _submissionBackendManagedAllocatedBytes, 0);
                         _lastFrameIndirectCommandGenerationTicks = Interlocked.Exchange(ref _indirectCommandGenerationTicks, 0);
                         _lastFrameGpuCullTicks = Interlocked.Exchange(ref _gpuCullTicks, 0);
@@ -359,6 +383,30 @@ namespace XREngine
                             Interlocked.Add(ref _materialPassGroups, passGroups);
                     }
 
+                    /// <summary>
+                    /// Records the material rows and descriptor references proven safe for strict GPU submission.
+                    /// Values are summed across render passes while publication generations retain the frame maximum.
+                    /// </summary>
+                    public static void RecordMaterialReadiness(
+                        int requiredRows,
+                        int readyRows,
+                        int nonReadyTextureReferences,
+                        int invalidMaterialIds,
+                        int fallbackSubmittedRows,
+                        ulong materialTableGeneration,
+                        ulong descriptorPublicationGeneration)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        Interlocked.Add(ref _requiredMaterialRows, Math.Max(0, requiredRows));
+                        Interlocked.Add(ref _readyMaterialRows, Math.Max(0, readyRows));
+                        Interlocked.Add(ref _nonReadyMaterialTextureReferences, Math.Max(0, nonReadyTextureReferences));
+                        Interlocked.Add(ref _invalidMaterialIds, Math.Max(0, invalidMaterialIds));
+                        Interlocked.Add(ref _fallbackSubmittedMaterialRows, Math.Max(0, fallbackSubmittedRows));
+                        RecordMaximum(ref _materialTablePublicationGeneration, unchecked((long)materialTableGeneration));
+                        RecordMaximum(ref _materialDescriptorPublicationGeneration, unchecked((long)descriptorPublicationGeneration));
+                    }
                     public static void RecordUnsupportedCompactPass(int renderPass)
                     {
                         if (!EnableTracking)

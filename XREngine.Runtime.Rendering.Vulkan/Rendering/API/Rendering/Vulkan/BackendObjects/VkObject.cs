@@ -5,7 +5,7 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>
 /// Generic Vulkan wrapper for one engine render object.
 /// </summary>
-public abstract class VkObject<T> : VkObjectBase
+internal abstract class VkObject<T> : VkObjectBase
     where T : GenericRenderObject
 {
     public Device Device => BackendContext.Device;

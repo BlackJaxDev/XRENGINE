@@ -13,7 +13,7 @@ public sealed class VulkanArchitectureLifecycleGuardTests
     public void PipelineManager_WarmCacheLookupDoesNotAllocate()
     {
         VulkanPipelineManager manager = new();
-        VulkanRenderer.VkMeshRenderer.PipelineKey key = default;
+        VkMeshRenderer.PipelineKey key = default;
         Pipeline pipeline = new(7);
         manager.StoreSharedGraphicsPipeline(key, pipeline).Handle.ShouldBe(7UL);
         manager.TryGetSharedGraphicsPipeline(key, out _).ShouldBeTrue();
@@ -22,7 +22,8 @@ public sealed class VulkanArchitectureLifecycleGuardTests
         ulong checksum = 0;
         for (int index = 0; index < 10_000; index++)
         {
-            manager.TryGetSharedGraphicsPipeline(key, out Pipeline cached).ShouldBeTrue();
+            if (!manager.TryGetSharedGraphicsPipeline(key, out Pipeline cached))
+                Assert.Fail("Warm pipeline lookup unexpectedly missed.");
             checksum += cached.Handle;
         }
 
@@ -34,8 +35,8 @@ public sealed class VulkanArchitectureLifecycleGuardTests
     public void PipelineManager_DeviceLifetimeDrainRemovesAllCachedHandlesAndReservations()
     {
         VulkanPipelineManager manager = new();
-        VulkanRenderer.VkMeshRenderer.PipelineKey pipelineKey = default;
-        VulkanRenderer.VkMeshRenderer.GraphicsPipelineLibraryKey libraryKey = default;
+        VkMeshRenderer.PipelineKey pipelineKey = default;
+        VkMeshRenderer.GraphicsPipelineLibraryKey libraryKey = default;
 
         manager.StoreSharedGraphicsPipeline(pipelineKey, new Pipeline(11));
         manager.TryGetOrReserveSharedGraphicsPipelineLibrary(
@@ -99,5 +100,87 @@ public sealed class VulkanArchitectureLifecycleGuardTests
 
         (GC.GetAllocatedBytesForCurrentThread() - allocatedBefore).ShouldBe(0);
         checksum.ShouldBeGreaterThan(0);
+    }
+    [Test]
+    public void CommandRecordingPreparation_IsAllocationFreeAfterWarmup()
+    {
+        VulkanCommandRecorder recorder = new();
+        FrameOp[] operations = [];
+        VulkanCommandRecordingContext warmup = new(
+            0,
+            new CommandBuffer(1),
+            default,
+            operations,
+            0,
+            null,
+            false,
+            true,
+            null,
+            null,
+            false,
+            VulkanRenderGraphPlan.Empty);
+        recorder.Prepare(ref warmup).ShouldBeTrue();
+
+        int prepared = 0;
+        long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        for (int index = 0; index < 10_000; index++)
+        {
+            VulkanCommandRecordingContext context = new(
+                0,
+                new CommandBuffer(1),
+                default,
+                operations,
+                0,
+                null,
+                false,
+                true,
+                null,
+                null,
+                false,
+                VulkanRenderGraphPlan.Empty);
+            if (recorder.Prepare(ref context))
+                prepared++;
+        }
+
+        (GC.GetAllocatedBytesForCurrentThread() - allocatedBefore).ShouldBe(0);
+        prepared.ShouldBe(10_000);
+    }
+
+    [Test]
+    public void DesktopCoordinatorAttemptBookkeeping_IsAllocationFreeAfterWarmup()
+    {
+        VulkanDesktopFrameCoordinator coordinator = new(null!);
+        coordinator.TryEnter(out DesktopFrameIdentity warmup).ShouldBeTrue();
+        coordinator.Exit(in warmup);
+
+        ulong checksum = 0;
+        long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        for (int index = 0; index < 10_000; index++)
+        {
+            if (!coordinator.TryEnter(out DesktopFrameIdentity identity))
+                Assert.Fail("Desktop coordinator unexpectedly rejected an uncontended attempt.");
+            checksum += identity.FrameNumber;
+            coordinator.Exit(in identity);
+            coordinator.AdvanceFrameSlot(identity.FrameSlot, 3);
+        }
+
+        (GC.GetAllocatedBytesForCurrentThread() - allocatedBefore).ShouldBe(0);
+        checksum.ShouldBeGreaterThan(0UL);
+    }
+
+    [Test]
+    public void FrameOperationScheduling_UsesCallerWorkspaceWithoutAllocatingAfterWarmup()
+    {
+        VulkanFrameOperationScheduler scheduler = new();
+        List<VulkanSecondaryRecordingBucket> buckets = new(4);
+        FrameOp[] operations = [];
+        scheduler.BuildSecondaryRecordingBuckets(operations, buckets);
+
+        long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        for (int index = 0; index < 10_000; index++)
+            scheduler.BuildSecondaryRecordingBuckets(operations, buckets);
+
+        (GC.GetAllocatedBytesForCurrentThread() - allocatedBefore).ShouldBe(0);
+        buckets.ShouldBeEmpty();
     }
 }

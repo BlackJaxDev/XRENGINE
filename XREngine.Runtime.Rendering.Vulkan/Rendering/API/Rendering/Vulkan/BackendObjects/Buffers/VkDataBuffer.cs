@@ -10,12 +10,10 @@ using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
-    {
         /// <summary>
         /// Vulkan data buffer with best practices: staging, synchronization, descriptor integration, lifetime, mapping, error handling, and multi-frame support.
         /// </summary>
-        public class VkDataBuffer(VulkanRenderer renderer, XRDataBuffer buffer) : VkObject<XRDataBuffer>(renderer, buffer), IApiDataBuffer
+    internal unsafe class VkDataBuffer(VulkanRenderer renderer, XRDataBuffer buffer) : VkObject<XRDataBuffer>(renderer, buffer), IApiDataBuffer
         {
             private const ulong IndirectCopyDeviceAddressThresholdBytes = 256UL * 1024UL;
             private const ulong DeviceLocalStaticUploadMinimumBytes = 64UL * 1024UL;
@@ -454,7 +452,7 @@ namespace XREngine.Rendering.Vulkan
 
                 if (!_vkBuffer.HasValue ||
                     !Renderer.TryGetTrackedBufferAllocation(_vkBuffer.Value, out VulkanMemoryAllocation allocation) ||
-                    !IsDeviceLocalVramAllocation(allocation.Properties))
+                    !VulkanRenderer.IsDeviceLocalVramAllocation(allocation.Properties))
                 {
                     return;
                 }
@@ -1468,5 +1466,4 @@ namespace XREngine.Rendering.Vulkan
                 DeviceAddress = 0ul;
             }
         }
-    }
 }

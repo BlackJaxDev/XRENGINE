@@ -124,7 +124,7 @@ public unsafe partial class VulkanRenderer
             string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(value, "on", StringComparison.OrdinalIgnoreCase));
 
-    private void MarkOpenXrPrimaryCommandBufferVariantsDirty()
+    internal void MarkOpenXrPrimaryCommandBufferVariantsDirty()
     {
         lock (_openXrBackend.PrimaryCommandBufferVariantsLock)
         {

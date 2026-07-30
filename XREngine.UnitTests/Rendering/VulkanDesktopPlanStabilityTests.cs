@@ -11,11 +11,11 @@ public sealed class VulkanDesktopPlanStabilityTests
     [Test]
     public void MainViewportPlanKey_RemainsStableWhileConcreteTargetRecordingIdentityRotates()
     {
-        VulkanRenderer.FrameOpContext first = CreateContext(
-            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+        FrameOpContext first = CreateContext(
+            EVulkanFrameOpContextKind.MainViewport,
             outputTargetIdentity: 101,
             outputTargetName: "SwapchainImage[0]");
-        VulkanRenderer.FrameOpContext rotated = first with
+        FrameOpContext rotated = first with
         {
             OutputTargetIdentity = 202,
             OutputTargetName = "SwapchainImage[1]",
@@ -32,18 +32,18 @@ public sealed class VulkanDesktopPlanStabilityTests
     [Test]
     public void DesktopResizeAndEyeRotation_HaveOutputFamilyScopedPlanKeys()
     {
-        VulkanRenderer.FrameOpContext desktop = CreateContext(
-            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+        FrameOpContext desktop = CreateContext(
+            EVulkanFrameOpContextKind.MainViewport,
             outputTargetIdentity: 101,
             outputTargetName: "SwapchainImage[0]");
-        VulkanRenderer.FrameOpContext resizedDesktop = desktop with
+        FrameOpContext resizedDesktop = desktop with
         {
             DisplayWidth = desktop.DisplayWidth + 1u,
         };
 
         int eyePlannerIdentity = VulkanRenderer.BuildOpenXrExternalSwapchainPlannerTargetIdentity(0u);
-        VulkanRenderer.FrameOpContext eye = CreateContext(
-            VulkanRenderer.EVulkanFrameOpContextKind.OpenXrEye,
+        FrameOpContext eye = CreateContext(
+            EVulkanFrameOpContextKind.OpenXrEye,
             eyePlannerIdentity,
             "OpenXR.LeftEye",
             outputFrameBufferIdentity: 0);
@@ -63,7 +63,7 @@ public sealed class VulkanDesktopPlanStabilityTests
     [Test]
     public void AlternatingExternalTargetsReachABoundedPlannerKeySet()
     {
-        HashSet<VulkanRenderer.FrameOpPlannerStateKey> keys = [];
+        HashSet<VulkanFrameOpPlannerStateKey> keys = [];
         int leftEyeIdentity = VulkanRenderer.BuildOpenXrExternalSwapchainPlannerTargetIdentity(0u);
         int rightEyeIdentity = VulkanRenderer.BuildOpenXrExternalSwapchainPlannerTargetIdentity(1u);
 
@@ -71,21 +71,21 @@ public sealed class VulkanDesktopPlanStabilityTests
         {
             for (int slot = 0; slot < 3; slot++)
             {
-                VulkanRenderer.FrameOpContext desktop = CreateContext(
-                    VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+                FrameOpContext desktop = CreateContext(
+                    EVulkanFrameOpContextKind.MainViewport,
                     outputTargetIdentity: 1000 + slot,
                     outputTargetName: $"SwapchainImage[{slot}]");
                 keys.Add(VulkanRenderer.BuildFrameOpPlannerStateKey(desktop));
 
-                VulkanRenderer.FrameOpContext leftEye = CreateContext(
-                    VulkanRenderer.EVulkanFrameOpContextKind.OpenXrEye,
+                FrameOpContext leftEye = CreateContext(
+                    EVulkanFrameOpContextKind.OpenXrEye,
                     leftEyeIdentity,
                     $"OpenXR.Left.Image[{slot}]",
                     outputFrameBufferIdentity: 0);
                 keys.Add(VulkanRenderer.BuildFrameOpPlannerStateKey(leftEye));
 
-                VulkanRenderer.FrameOpContext mirror = CreateContext(
-                    VulkanRenderer.EVulkanFrameOpContextKind.OpenXrMirror,
+                FrameOpContext mirror = CreateContext(
+                    EVulkanFrameOpContextKind.OpenXrMirror,
                     rightEyeIdentity,
                     $"OpenXR.Mirror.Image[{slot}]",
                     outputFrameBufferIdentity: 0);
@@ -94,8 +94,8 @@ public sealed class VulkanDesktopPlanStabilityTests
 
             for (int face = 0; face < 6; face++)
             {
-                VulkanRenderer.FrameOpContext probeFace = CreateContext(
-                    VulkanRenderer.EVulkanFrameOpContextKind.LightProbeCapture,
+                FrameOpContext probeFace = CreateContext(
+                    EVulkanFrameOpContextKind.LightProbeCapture,
                     outputTargetIdentity: 2000 + face,
                     outputTargetName: $"ProbeFace[{face}]",
                     outputFrameBufferIdentity: 3000 + face);
@@ -244,14 +244,14 @@ public sealed class VulkanDesktopPlanStabilityTests
             "private bool TryGetCachedMergedFrameOpRegistry",
             "private static int IndexOfFrameOpRegistryCacheSource");
 
-        merge.ShouldContain("FrameOpPlannerStateKey ownerKey = BuildFrameOpPlannerStateKey(primaryContext);");
+        merge.ShouldContain("VulkanFrameOpPlannerStateKey ownerKey = BuildFrameOpPlannerStateKey(primaryContext);");
         merge.ShouldContain("retain its descriptors until the compatibility key changes");
         lookup.ShouldContain("!entry.OwnerKey.Equals(ownerKey)");
         lookup.ShouldContain("FrameOpRegistryCacheSource[] accumulatedSources = entry.Sources;");
         lookup.ShouldContain("AddRegistryDescriptors(entry.MergedRegistry, source, overwrite: true);");
         lookup.ShouldContain("AddFrameOpFrameBufferDescriptors(entry.MergedRegistry, ops, overwrite: true);");
         lookup.ShouldNotContain("entry.MergedRegistry = persistentMerged;");
-        state.ShouldContain("public FrameOpPlannerStateKey OwnerKey { get; } = ownerKey;");
+        state.ShouldContain("public VulkanFrameOpPlannerStateKey OwnerKey { get; } = ownerKey;");
     }
 
     [Test]
@@ -431,7 +431,7 @@ public sealed class VulkanDesktopPlanStabilityTests
         reuse.ShouldContain("PrepareQueryFrameOpsForCommandBufferReuse(variant.PrimaryCommandBuffer, ops)");
         record.ShouldContain("transitionSwapchainToPresent: false");
         stereoPublish.ShouldContain("using IDisposable sourcePlannerScope = EnterOpenXrResourcePlannerThreadScope(");
-        stereoPublish.ShouldContain("EOpenXrResourcePlannerPurpose.Mirror");
+        stereoPublish.ShouldContain("EVulkanOpenXrResourcePlannerPurpose.Mirror");
         stereoPublish.IndexOf("sourcePlannerScope", StringComparison.Ordinal)
             .ShouldBeLessThan(stereoPublish.IndexOf("TryPrepareStereoLayerBlit", StringComparison.Ordinal));
     }
@@ -483,8 +483,8 @@ public sealed class VulkanDesktopPlanStabilityTests
         return source[start..end];
     }
 
-    private static VulkanRenderer.FrameOpContext CreateContext(
-        VulkanRenderer.EVulkanFrameOpContextKind contextKind,
+    private static FrameOpContext CreateContext(
+        EVulkanFrameOpContextKind contextKind,
         int outputTargetIdentity,
         string outputTargetName,
         int outputFrameBufferIdentity = 901)
@@ -509,13 +509,7 @@ public sealed class VulkanDesktopPlanStabilityTests
             DescriptorGeneration: 5UL);
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string path = Path.Combine(
-            ResolveRepoRoot(),
-            relativePath.Replace('/', Path.DirectorySeparatorChar));
-        File.Exists(path).ShouldBeTrue($"Expected workspace file '{relativePath}'.");
-        return File.ReadAllText(path).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ResolveRepoRoot()
     {

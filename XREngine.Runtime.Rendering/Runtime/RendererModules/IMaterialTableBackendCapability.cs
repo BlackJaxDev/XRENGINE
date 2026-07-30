@@ -10,10 +10,9 @@ public interface IMaterialTableBackendCapability
     bool SupportsBindlessTextureHandles { get; }
     string BindlessMaterialUnavailableReason { get; }
     bool TryEnsureMaterialTextureTable(out string reason);
-    bool TryResolveMaterialTextureReference(
+    Materials.MaterialTextureReferenceResolution ResolveMaterialTextureReference(
         XRTexture texture,
-        string semantic,
-        out Materials.GPUMaterialTextureReference reference);
+        string semantic);
     void FlushMaterialTextureTableUpdates();
     void ReleaseMaterialTextureReference(in Materials.GPUMaterialRetiredHandle retired);
     bool BeginGlobalMaterialTextureDescriptorScope(XRRenderProgram program, string consumer);

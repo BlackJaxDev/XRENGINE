@@ -713,7 +713,7 @@ namespace XREngine.Rendering.Vulkan
             if (batch.Ops[chain.SourceStartIndex] is not MeshDrawOp firstDraw)
                 throw new InvalidOperationException("Scheduled mesh packet does not begin with a mesh draw.");
             using var pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(firstDraw.Context.PipelineInstance);
-            lock (_frameOpResourcePlannerReadbackLock)
+            lock (_renderGraphRuntime.PlannerReadbackGate)
             {
                 using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(firstDraw.Context);
 
@@ -801,7 +801,7 @@ namespace XREngine.Rendering.Vulkan
             HashSet<nint> executedCommandChainSecondaryHandles,
             FrameOp[] ops,
             int startIndex,
-            VulkanRenderGraphCompiler.SecondaryRecordingBucket bucket,
+            VulkanSecondaryRecordingBucket bucket,
             string label)
         {
             if (!_enableSecondaryCommandBuffers || bucket.Count <= 0)
@@ -1011,17 +1011,17 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private static bool TryGetSecondaryBucketForStart(
-            IReadOnlyList<VulkanRenderGraphCompiler.SecondaryRecordingBucket> buckets,
-            Dictionary<int, VulkanRenderGraphCompiler.SecondaryRecordingBucket>? bucketByStart,
+            IReadOnlyList<VulkanSecondaryRecordingBucket> buckets,
+            Dictionary<int, VulkanSecondaryRecordingBucket>? bucketByStart,
             int startIndex,
-            out VulkanRenderGraphCompiler.SecondaryRecordingBucket bucket)
+            out VulkanSecondaryRecordingBucket bucket)
         {
             if (bucketByStart is not null)
                 return bucketByStart.TryGetValue(startIndex, out bucket);
 
             for (int i = 0; i < buckets.Count; i++)
             {
-                VulkanRenderGraphCompiler.SecondaryRecordingBucket candidate = buckets[i];
+                VulkanSecondaryRecordingBucket candidate = buckets[i];
                 if (candidate.StartIndex == startIndex)
                 {
                     bucket = candidate;

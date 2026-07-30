@@ -1,4 +1,4 @@
-namespace XREngine.Rendering.Vulkan;
+namespace XREngine.Rendering.Vulkan.RenderGraph;
 
 /// <summary>
 /// Immutable, versioned publication consumed at command-recording boundaries.
@@ -8,12 +8,12 @@ internal sealed class VulkanRenderGraphPlan
 {
     public static VulkanRenderGraphPlan Empty { get; } = new(
         0,
-        VulkanRenderer.VulkanCompiledRenderGraph.Empty,
+        VulkanCompiledRenderGraph.Empty,
         VulkanBarrierPlan.Empty);
 
     public VulkanRenderGraphPlan(
         ulong revision,
-        VulkanRenderer.VulkanCompiledRenderGraph compiledGraph,
+        VulkanCompiledRenderGraph compiledGraph,
         VulkanBarrierPlan barriers)
     {
         Revision = revision;
@@ -24,6 +24,6 @@ internal sealed class VulkanRenderGraphPlan
     public ulong Revision { get; }
     public ulong StructuralGeneration => CompiledGraph.Plan.Generation;
     public ulong CompatibilityIdentity => CompiledGraph.Plan.CompatibilityIdentity;
-    public VulkanRenderer.VulkanCompiledRenderGraph CompiledGraph { get; }
+    public VulkanCompiledRenderGraph CompiledGraph { get; }
     public VulkanBarrierPlan Barriers { get; }
 }

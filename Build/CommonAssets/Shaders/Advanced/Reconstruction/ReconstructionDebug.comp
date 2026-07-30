@@ -1,0 +1,231 @@
+#version 450
+
+#include "ReconstructSurface.glslinc"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+#if defined(XR_ADV_VISIBILITY_ARRAY)
+XR_ADV_RECONSTRUCTION_PASS_LAYOUT(0) uniform usampler2DArray VisibilityIdentity;
+XR_ADV_RECONSTRUCTION_PASS_LAYOUT(1) uniform usampler2DArray VisibilityMetadata;
+XR_ADV_RECONSTRUCTION_PASS_LAYOUT(2) uniform sampler2DArray VisibilityDepth;
+XR_ADV_RECONSTRUCTION_IMAGE_LAYOUT(rgba16f, 3) writeonly uniform image2DArray DebugOutput;
+#if defined(XR_ADV_RECONSTRUCTION_DERIVATIVE_DIAGNOSTICS)
+XR_ADV_RECONSTRUCTION_IMAGE_LAYOUT(r16f, 4) writeonly uniform image2DArray DerivativeError;
+XR_ADV_RECONSTRUCTION_IMAGE_LAYOUT(r16f, 5) writeonly uniform image2DArray SelectedMip;
+#endif
+#else
+XR_ADV_RECONSTRUCTION_PASS_LAYOUT(0) uniform usampler2D VisibilityIdentity;
+XR_ADV_RECONSTRUCTION_PASS_LAYOUT(1) uniform usampler2D VisibilityMetadata;
+XR_ADV_RECONSTRUCTION_PASS_LAYOUT(2) uniform sampler2D VisibilityDepth;
+XR_ADV_RECONSTRUCTION_IMAGE_LAYOUT(rgba16f, 3) writeonly uniform image2D DebugOutput;
+#if defined(XR_ADV_RECONSTRUCTION_DERIVATIVE_DIAGNOSTICS)
+XR_ADV_RECONSTRUCTION_IMAGE_LAYOUT(r16f, 4) writeonly uniform image2D DerivativeError;
+XR_ADV_RECONSTRUCTION_IMAGE_LAYOUT(r16f, 5) writeonly uniform image2D SelectedMip;
+#endif
+#endif
+
+uniform uint DebugView;
+uniform vec2 DiagnosticTextureSize;
+
+vec3 XR_ADV_ReconstructionHash(uint value)
+{
+    value ^= value >> 16u;
+    value *= 0x7FEB352Du;
+    value ^= value >> 15u;
+    value *= 0x846CA68Bu;
+    value ^= value >> 16u;
+    return vec3(
+        float(value & 0xFFu),
+        float((value >> 8u) & 0xFFu),
+        float((value >> 16u) & 0xFFu)) / 255.0;
+}
+
+vec4 XR_ADV_ReconstructionDebugColor(
+    XRAdvancedSurface surface,
+    float derivativeError,
+    float selectedMip)
+{
+    if ((surface.flags & XR_ADV_SURFACE_VALID) == 0u)
+        return vec4(1.0, 0.0, 1.0, 1.0);
+    if (DebugView == 1u)
+        return vec4(surface.worldPosition, 1.0);
+    if (DebugView == 2u)
+        return vec4(surface.geometricNormal * 0.5 + 0.5, 1.0);
+    if (DebugView == 3u)
+        return vec4(surface.shadingNormal * 0.5 + 0.5, 1.0);
+    if (DebugView == 4u)
+        return vec4(surface.tangent * 0.5 + 0.5, 1.0);
+    if (DebugView == 5u)
+        return vec4(surface.bitangent * 0.5 + 0.5, 1.0);
+    if (DebugView == 6u)
+        return vec4(fract(surface.texCoord0), 0.0, 1.0);
+    if (DebugView == 7u)
+        return vec4(fract(surface.texCoord1), 0.0, 1.0);
+    if (DebugView == 8u)
+        return surface.color0;
+    if (DebugView == 9u)
+        return vec4(surface.motionNdc * 0.5 + 0.5, 0.0, 1.0);
+    if (DebugView == 10u)
+        return vec4(
+            (surface.flags & XR_ADV_SURFACE_VALID) != 0u
+                ? 0.0
+                : 1.0,
+            (surface.flags & XR_ADV_SURFACE_VELOCITY_VALID) != 0u
+                ? 1.0
+                : 0.0,
+            (surface.flags & XR_ADV_SURFACE_REACTIVE) != 0u
+                ? 1.0
+                : 0.0,
+            1.0);
+    if (DebugView == 11u)
+        return vec4(
+            XR_ADV_ReconstructionHash(surface.materialDenseIndex),
+            1.0);
+    if (DebugView == 12u)
+        return vec4(
+            XR_ADV_ReconstructionHash(surface.viewIndex),
+            1.0);
+    if (DebugView == 13u)
+        return vec4(abs(surface.texCoord0Dx), 0.0, 1.0);
+    if (DebugView == 14u)
+        return vec4(abs(surface.texCoord0Dy), 0.0, 1.0);
+    if (DebugView == 15u)
+    {
+        float errorTexels =
+            derivativeError *
+            max(max(DiagnosticTextureSize.x,
+                    DiagnosticTextureSize.y), 1.0);
+        return vec4(vec3(clamp(errorTexels, 0.0, 1.0)), 1.0);
+    }
+    if (DebugView == 16u)
+    {
+        float maximumMip = max(
+            log2(max(max(DiagnosticTextureSize.x,
+                         DiagnosticTextureSize.y), 2.0)), 1.0);
+        return vec4(vec3(clamp(selectedMip / maximumMip, 0.0, 1.0)), 1.0);
+    }
+    return vec4(surface.shadingNormal * 0.5 + 0.5, 1.0);
+}
+
+void main()
+{
+#if defined(XR_ADV_VISIBILITY_ARRAY)
+    ivec3 pixel = ivec3(gl_GlobalInvocationID);
+    ivec3 outputSize = imageSize(DebugOutput);
+#else
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 outputSize = imageSize(DebugOutput);
+#endif
+    if (any(greaterThanEqual(pixel, outputSize)))
+        return;
+
+    uvec2 identity =
+        texelFetch(VisibilityIdentity, pixel, 0).rg;
+    uint metadata =
+        texelFetch(VisibilityMetadata, pixel, 0).r;
+    float depth =
+        texelFetch(VisibilityDepth, pixel, 0).r;
+    XRAdvancedSurface surface;
+    bool valid = XR_ADV_TryReconstructSurface(
+        identity,
+        metadata,
+        depth,
+        vec2(pixel.xy) + 0.5,
+        surface);
+    if (!valid)
+        surface.flags = 0u;
+
+    float derivativeError = 0.0;
+    float selectedMip = 0.0;
+#if defined(XR_ADV_RECONSTRUCTION_DERIVATIVE_DIAGNOSTICS)
+    ivec2 pixel2 = pixel.xy;
+    ivec2 size2 = outputSize.xy;
+    if (valid)
+    {
+        vec2 scaledDx =
+            surface.texCoord0Dx * DiagnosticTextureSize;
+        vec2 scaledDy =
+            surface.texCoord0Dy * DiagnosticTextureSize;
+        selectedMip = max(
+            0.0,
+            0.5 * log2(max(
+                dot(scaledDx, scaledDx),
+                dot(scaledDy, scaledDy))));
+    }
+    if (valid &&
+        pixel2.x + 1 < size2.x &&
+        pixel2.y + 1 < size2.y)
+    {
+#if defined(XR_ADV_VISIBILITY_ARRAY)
+        ivec3 neighborXPixel =
+            ivec3(pixel2 + ivec2(1, 0), pixel.z);
+        ivec3 neighborYPixel =
+            ivec3(pixel2 + ivec2(0, 1), pixel.z);
+#else
+        ivec2 neighborXPixel = pixel2 + ivec2(1, 0);
+        ivec2 neighborYPixel = pixel2 + ivec2(0, 1);
+#endif
+        uvec2 identityX =
+            texelFetch(VisibilityIdentity, neighborXPixel, 0).rg;
+        uvec2 identityY =
+            texelFetch(VisibilityIdentity, neighborYPixel, 0).rg;
+        if (all(equal(identity, identityX)) &&
+            all(equal(identity, identityY)))
+        {
+            XRAdvancedSurface surfaceX;
+            XRAdvancedSurface surfaceY;
+            bool validX = XR_ADV_TryReconstructSurface(
+                identityX,
+                texelFetch(
+                    VisibilityMetadata,
+                    neighborXPixel,
+                    0).r,
+                texelFetch(
+                    VisibilityDepth,
+                    neighborXPixel,
+                    0).r,
+                vec2(pixel2) + vec2(1.5, 0.5),
+                surfaceX);
+            bool validY = XR_ADV_TryReconstructSurface(
+                identityY,
+                texelFetch(
+                    VisibilityMetadata,
+                    neighborYPixel,
+                    0).r,
+                texelFetch(
+                    VisibilityDepth,
+                    neighborYPixel,
+                    0).r,
+                vec2(pixel2) + vec2(0.5, 1.5),
+                surfaceY);
+            if (validX && validY)
+            {
+                derivativeError = max(
+                    length(
+                        surface.texCoord0Dx -
+                        (surfaceX.texCoord0 -
+                         surface.texCoord0)),
+                    length(
+                        surface.texCoord0Dy -
+                        (surfaceY.texCoord0 -
+                         surface.texCoord0)));
+            }
+        }
+    }
+    imageStore(
+        DerivativeError,
+        pixel,
+        vec4(derivativeError));
+    imageStore(
+        SelectedMip,
+        pixel,
+        vec4(selectedMip));
+#endif
+    imageStore(
+        DebugOutput,
+        pixel,
+        XR_ADV_ReconstructionDebugColor(
+            surface,
+            derivativeError,
+            selectedMip));
+}

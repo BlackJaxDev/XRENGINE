@@ -15,14 +15,15 @@ Scenes:
       GoalRadius: 1.15
       RoundDurationSeconds: 60
       MaxTiltDegrees: 12
+      StageTiltInterpolationSpeed: 2
       InitialLives: 3
       MaxBallSpeed: 12
       FallThresholdY: -3.5
       FallResetDelaySeconds: 0.75
       DesktopCameraOffset: 0 2.5 5.5
       DesktopCameraPitchDegrees: -14
-      DesktopCameraYawResponse: 4.5
-      CameraHeadingVelocityThreshold: 0.15
+      DesktopCameraYawResponse: 0.67
+      CameraHeadingVelocityThreshold: 0.2
       Name: Game Rules
       ID: e8784f38-fca4-4c20-a570-52da5cd04882
     Transform:
@@ -108,11 +109,31 @@ Scenes:
       Name: Procedural Scoreboard
     - Components:
       - __type: XREngine.Components.Lights.DirectionalLightComponent
+        Type: Dynamic
+        CastsShadows: true
         UseShadowAtlas: false
+        ShadowMapStorageFormat: Depth24
+        ShadowMapEncoding: Depth
         Color: 1 0.959999979 0.860000014
         DiffuseIntensity: 2.4
         EnableCascadedShadows: false
         EnableContactShadows: false
+        Scale: 80 80 120
+        ShadowMapResolutionWidth: 2048
+        ShadowMapResolutionHeight: 2048
+        ShadowMinBias: 0.00001
+        ShadowMaxBias: 0.004
+        ShadowDepthBiasTexels: 1
+        ShadowSlopeBiasTexels: 2
+        ShadowNormalBiasTexels: 1
+        FilterSamples: 8
+        BlockerSamples: 8
+        FilterRadius: 0.0012
+        BlockerSearchRadius: 0.01
+        MinPenumbra: 0.001
+        MaxPenumbra: 0.015
+        SoftShadowMode: ContactHardeningPcss
+        LightSourceRadius: 1.2
         ID: 1c76b980-5e71-4616-8b5e-4cc1669a905e
       Transform:
         ID: 23e8a9cf-c57e-4b74-9a0e-5bae36238cd4
@@ -730,35 +751,35 @@ Scenes:
           ID: 6ff5e60f-6f1d-4150-a9d6-c825f3f4bf23
       ID: e0f2f32a-8567-4417-a0c1-15b39e945773
       Name: Player Ball
-      ChildNodes:
-      - Components:
-        - __type: XREngine.Components.CameraComponent
-          CameraParameters:
-            __type: XREngine.Rendering.XRPerspectiveCameraParameters
-            VerticalFieldOfView: 60
-            HorizontalFieldOfView: 60
-            AspectRatio: 1
-            InheritAspectRatio: true
-            NearZ: 0.05
-            FarZ: 500
-          InternalResolutionScale: 1
-          ManualInternalWidth: 1920
-          ManualInternalHeight: 1080
-          CullWithFrustum: true
-          DirectionalShadowRenderingMode: NonCascaded
-          Name: Desktop Follow Camera
-          ID: e69b1850-64ce-43fe-b2a9-db2667aba0bc
-        Transform:
-          ID: 4cca6a33-717a-4ae1-92d9-8e5a61eb1a1e
-          Translation: 0 2.5 5.5
-        ID: aab4d710-ab49-43fb-9e71-2035da6119cb
-        Name: Desktop Camera
+    - Components:
+      - __type: XREngine.Components.CameraComponent
+        CameraParameters:
+          __type: XREngine.Rendering.XRPerspectiveCameraParameters
+          VerticalFieldOfView: 60
+          HorizontalFieldOfView: 60
+          AspectRatio: 1
+          InheritAspectRatio: true
+          NearZ: 0.05
+          FarZ: 500
+        InternalResolutionScale: 1
+        ManualInternalWidth: 1920
+        ManualInternalHeight: 1080
+        CullWithFrustum: true
+        DirectionalShadowRenderingMode: NonCascaded
+        Name: Desktop Follow Camera
+        ID: e69b1850-64ce-43fe-b2a9-db2667aba0bc
+      Transform:
+        ID: 4cca6a33-717a-4ae1-92d9-8e5a61eb1a1e
+        Translation: 0 3.08 10.5
+        Rotation: -0.12186935 0 0 0.99254614
+      ID: aab4d710-ab49-43fb-9e71-2035da6119cb
+      Name: Desktop Camera
   ID: ed77f332-c7e6-433f-b57f-95f4120f0516
   Name: MonkeyBall Course
 Settings:
   __assetType: XREngine.Scene.WorldSettings
   Gravity: 0 -9.81 0
-  PhysicsTimestep: 0.011111111
+  PhysicsTimestep: 0.008333333
   PhysicsSubsteps: 2
   DefaultAngularDamping: 0.05
   DefaultFriction: 0.65

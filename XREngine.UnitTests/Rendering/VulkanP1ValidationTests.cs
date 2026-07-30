@@ -378,7 +378,7 @@ public sealed class VulkanP1ValidationTests
     public void VulkanFrameLoop_GenericRendererApisHaveFocusedOwners()
     {
         string frameLoopSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
-        string frameOpApiSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.FrameOpApi.cs");
+        string frameOpApiSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/FrameOpApi.cs");
         string renderStateApiSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.RenderStateApi.cs");
         string factorySource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/VulkanRenderer.RenderObjectFactory.cs");
 
@@ -671,14 +671,14 @@ public sealed class VulkanP1ValidationTests
         string loweringSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs").Replace("\r\n", "\n");
         string initializationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs").Replace("\r\n", "\n");
 
-        stateSource.ShouldContain("Dictionary<FrameOpPlannerStateKey, ResourcePlannerRuntimeState> States");
+        stateSource.ShouldContain("Dictionary<VulkanFrameOpPlannerStateKey, ResourcePlannerRuntimeState> States");
         stateSource.ShouldContain("private readonly struct FrameOpResourcePlannerPreparationScope : IDisposable");
         stateSource.ShouldContain("private readonly struct FrameOpResourcePlannerRecordingScope : IDisposable");
         stateSource.ShouldContain("switchingState.RecordingScopeActive = true;");
 
         plannerSource.ShouldContain("private ulong PrepareFrameOpResourcePlannerStatesForFrameOps(FrameOp[] ops, ulong frameOpsSignature = 0)");
         plannerSource.ShouldContain("private FrameOpContext PrepareResourcePlannerForFrameOps(");
-        plannerSource.ShouldContain("in FrameOpPlannerStateKey key,");
+        plannerSource.ShouldContain("in VulkanFrameOpPlannerStateKey key,");
         plannerSource.ShouldContain("private bool TryActivateFrameOpResourcePlannerState(in FrameOpContext context)");
         plannerSource.ShouldContain("private void SaveActiveFrameOpResourcePlannerState()");
         plannerSource.ShouldContain("SelectPrimaryPlannerContext(ops, key)");
@@ -688,7 +688,7 @@ public sealed class VulkanP1ValidationTests
         commandBufferSource.ShouldContain("using FrameOpResourcePlannerRecordingScope frameOpResourcePlannerRecordingScope = EnterFrameOpResourcePlannerRecordingScope();");
         commandBufferSource.ShouldContain("_ = TryActivateFrameOpResourcePlannerState(initialContext);");
         commandBufferSource.ShouldContain("if (TryActivateFrameOpResourcePlannerState(activeContext))");
-        commandBufferSource.ShouldContain("FrameOpPlannerStateKey packetPlannerKey = BuildFrameOpPlannerStateKey(packetContext);");
+        commandBufferSource.ShouldContain("VulkanFrameOpPlannerStateKey packetPlannerKey = BuildFrameOpPlannerStateKey(packetContext);");
         commandBufferSource.ShouldContain("BuildFrameOpPlannerStateKey(ops[packetEnd].Context) == packetPlannerKey");
 
         loweringSource.ShouldContain("FrameOpResourcePlannerSwitchingState frameOpSwitchingState = ActiveFrameOpResourcePlannerSwitchingState;");
@@ -698,7 +698,7 @@ public sealed class VulkanP1ValidationTests
     [Test]
     public void FrameOpFrameBuffers_AreDeclaredInPlannerOverlayWithoutMutatingGenerationRegistry()
     {
-        string frameOpApiSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.FrameOpApi.cs")
+        string frameOpApiSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/FrameOpApi.cs")
             .Replace("\r\n", "\n");
         string plannerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs")
             .Replace("\r\n", "\n");
@@ -849,10 +849,10 @@ public sealed class VulkanP1ValidationTests
         string commandBufferSource =
             ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecordingScratch.cs") +
             ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs") +
-            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.FrameOpDiagnostics.cs");
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/FrameOpDiagnostics.cs");
         string frameOpSource =
             ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs") +
-            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VulkanRenderer.FrameOpSignatureHasher.cs");
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/FrameOpSignatureHasher.cs");
         string recordSource = SliceBetween(
             commandBufferSource,
             "private bool TryRecordCommandBuffer",
@@ -1158,11 +1158,7 @@ public sealed class VulkanP1ValidationTests
             ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Telemetry.cs"));
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string? source = TryReadWorkspaceFile(relativePath);
-        source.ShouldNotBeNull($"Expected workspace file '{relativePath}' to exist.");
-        return source;
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string? TryReadWorkspaceFile(string relativePath)
     {

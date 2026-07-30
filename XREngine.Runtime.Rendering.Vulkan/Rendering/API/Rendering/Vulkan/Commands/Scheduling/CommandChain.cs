@@ -15,7 +15,7 @@ internal sealed class CommandChain(CommandChainKey key)
     public bool SecondaryInheritanceDynamicRendering { get; set; }
     public RenderPass SecondaryInheritanceRenderPass { get; set; }
     public Framebuffer SecondaryInheritanceFramebuffer { get; set; }
-    public VulkanRenderer.DynamicRenderingFormatSignature SecondaryInheritanceDynamicRenderingFormats { get; set; }
+    public DynamicRenderingFormatSignature SecondaryInheritanceDynamicRenderingFormats { get; set; }
     public bool SecondaryInheritanceDepthStencilReadOnly { get; set; }
     public SampleCountFlags SecondaryInheritanceSamples { get; set; }
     public ulong StructuralSignature { get; set; }

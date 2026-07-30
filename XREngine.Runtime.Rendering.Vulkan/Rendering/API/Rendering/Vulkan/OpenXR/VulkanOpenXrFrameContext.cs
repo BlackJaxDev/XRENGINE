@@ -14,7 +14,7 @@ internal readonly record struct VulkanOpenXrFrameContext(
     Extent2D Extent,
     int TargetIdentity,
     string? TargetName,
-    VulkanRenderer.EVulkanFrameOpContextKind ContextKind,
+    EVulkanFrameOpContextKind ContextKind,
     bool IsPrewarm = false)
 {
     internal bool HasExternalTarget => Extent.Width != 0 && Extent.Height != 0;

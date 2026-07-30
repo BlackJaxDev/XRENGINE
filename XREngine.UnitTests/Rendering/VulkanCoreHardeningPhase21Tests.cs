@@ -13,11 +13,11 @@ public sealed class VulkanCoreHardeningPhase21Tests
     [Test]
     public void PlannerAllocatorKey_IgnoresDescriptorOnlyGenerationChanges()
     {
-        VulkanRenderer.FrameOpContext first = CreateContext(
-            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+        FrameOpContext first = CreateContext(
+            EVulkanFrameOpContextKind.MainViewport,
             descriptorGeneration: 10);
-        VulkanRenderer.FrameOpContext descriptorOnlyChange = first with { DescriptorGeneration = 11 };
-        VulkanRenderer.FrameOpContext allocationChange = first with { ResourceGeneration = 2 };
+        FrameOpContext descriptorOnlyChange = first with { DescriptorGeneration = 11 };
+        FrameOpContext allocationChange = first with { ResourceGeneration = 2 };
 
         VulkanRenderer.BuildFrameOpPlannerStateKey(first)
             .ShouldBe(VulkanRenderer.BuildFrameOpPlannerStateKey(descriptorOnlyChange));
@@ -41,10 +41,10 @@ public sealed class VulkanCoreHardeningPhase21Tests
             RenderResourceSizePolicy.Absolute(32u, 32u),
             []));
 
-        VulkanRenderer.FrameOpContext first = CreateContext(
-            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+        FrameOpContext first = CreateContext(
+            EVulkanFrameOpContextKind.MainViewport,
             descriptorGeneration: 10) with { ResourceRegistry = firstRegistry };
-        VulkanRenderer.FrameOpContext second = first with { ResourceRegistry = secondRegistry };
+        FrameOpContext second = first with { ResourceRegistry = secondRegistry };
 
         VulkanRenderer.BuildFrameOpPlannerStateKey(first)
             .ShouldNotBe(VulkanRenderer.BuildFrameOpPlannerStateKey(second));
@@ -66,18 +66,18 @@ public sealed class VulkanCoreHardeningPhase21Tests
             RenderResourceSizePolicy.Absolute(64u, 64u),
             []));
 
-        VulkanRenderer.FrameOpContext captured = CreateContext(
-            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+        FrameOpContext captured = CreateContext(
+            EVulkanFrameOpContextKind.MainViewport,
             descriptorGeneration: 10) with
         {
             ResourceRegistry = firstRegistry,
             ResourceRegistrySignatureSnapshot = firstRegistry.DescriptorSignature,
         };
-        VulkanRenderer.FrameOpContext referenceChangedAfterCapture = captured with
+        FrameOpContext referenceChangedAfterCapture = captured with
         {
             ResourceRegistry = secondRegistry,
         };
-        VulkanRenderer.FrameOpContext recaptured = referenceChangedAfterCapture with
+        FrameOpContext recaptured = referenceChangedAfterCapture with
         {
             ResourceRegistrySignatureSnapshot = secondRegistry.DescriptorSignature,
         };
@@ -91,29 +91,29 @@ public sealed class VulkanCoreHardeningPhase21Tests
     [Test]
     public void MainViewportPlannerKey_IgnoresRotatingTargetSlotButPreservesOutputOwnership()
     {
-        VulkanRenderer.FrameOpContext desktop = CreateContext(
-            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+        FrameOpContext desktop = CreateContext(
+            EVulkanFrameOpContextKind.MainViewport,
             descriptorGeneration: 10) with
         {
             OutputFrameBufferIdentity = 700,
             OutputTargetIdentity = 1,
             OutputTargetName = "DesktopSwapchain[0]",
         };
-        VulkanRenderer.FrameOpContext rotatedTarget = desktop with
+        FrameOpContext rotatedTarget = desktop with
         {
             OutputTargetIdentity = 2,
             OutputTargetName = "DesktopSwapchain[1]",
             RecordingFingerprint = desktop.RecordingFingerprint + 1,
         };
-        VulkanRenderer.FrameOpContext anotherViewport = rotatedTarget with
+        FrameOpContext anotherViewport = rotatedTarget with
         {
             ViewportIdentity = desktop.ViewportIdentity + 1,
         };
-        VulkanRenderer.FrameOpContext captureTarget = desktop with
+        FrameOpContext captureTarget = desktop with
         {
-            ContextKind = VulkanRenderer.EVulkanFrameOpContextKind.SceneCapture,
+            ContextKind = EVulkanFrameOpContextKind.SceneCapture,
         };
-        VulkanRenderer.FrameOpContext rotatedCaptureTarget = captureTarget with
+        FrameOpContext rotatedCaptureTarget = captureTarget with
         {
             OutputTargetIdentity = captureTarget.OutputTargetIdentity + 1,
         };
@@ -130,8 +130,8 @@ public sealed class VulkanCoreHardeningPhase21Tests
     public void InteractiveResizePlannerExtents_IsolateDownscaledMainViewportFromOneToOneUiPreview()
     {
         VulkanInteractiveResizePlannerExtentCache cache = new(capacity: 4);
-        VulkanRenderer.FrameOpContext main = CreateContext(
-            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+        FrameOpContext main = CreateContext(
+            EVulkanFrameOpContextKind.MainViewport,
             descriptorGeneration: 10) with
         {
             PipelineIdentity = 301,
@@ -143,8 +143,8 @@ public sealed class VulkanCoreHardeningPhase21Tests
             InternalWidth = 1280,
             InternalHeight = 720,
         };
-        VulkanRenderer.FrameOpContext uiPreview = CreateContext(
-            VulkanRenderer.EVulkanFrameOpContextKind.UiPreview,
+        FrameOpContext uiPreview = CreateContext(
+            EVulkanFrameOpContextKind.UiPreview,
             descriptorGeneration: 10) with
         {
             PipelineIdentity = 302,
@@ -196,7 +196,7 @@ public sealed class VulkanCoreHardeningPhase21Tests
         allocatedBytes.ShouldBe(0);
         capturedMain.ShouldBeFalse();
 
-        VulkanRenderer.FrameOpContext rotatedMainTarget = main with { OutputTargetIdentity = 999 };
+        FrameOpContext rotatedMainTarget = main with { OutputTargetIdentity = 999 };
         VulkanRenderer.BuildInteractiveResizePlannerContextKey(rotatedMainTarget).ShouldBe(mainKey);
 
         cache.Clear();
@@ -209,24 +209,24 @@ public sealed class VulkanCoreHardeningPhase21Tests
     public void InteractiveResizePlannerExtentCache_OverflowPreservesExistingSnapshotsAndReportsOnce()
     {
         VulkanInteractiveResizePlannerExtentCache cache = new(capacity: 2);
-        VulkanRenderer.FrameOpContext main = CreateContext(
-            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+        FrameOpContext main = CreateContext(
+            EVulkanFrameOpContextKind.MainViewport,
             descriptorGeneration: 1) with
         {
             PipelineIdentity = 701,
             ViewportIdentity = 801,
             OutputFrameBufferIdentity = 901,
         };
-        VulkanRenderer.FrameOpContext uiPreview = CreateContext(
-            VulkanRenderer.EVulkanFrameOpContextKind.UiPreview,
+        FrameOpContext uiPreview = CreateContext(
+            EVulkanFrameOpContextKind.UiPreview,
             descriptorGeneration: 1) with
         {
             PipelineIdentity = 702,
             ViewportIdentity = 802,
             OutputFrameBufferIdentity = 902,
         };
-        VulkanRenderer.FrameOpContext diagnostic = CreateContext(
-            VulkanRenderer.EVulkanFrameOpContextKind.DiagnosticCapture,
+        FrameOpContext diagnostic = CreateContext(
+            EVulkanFrameOpContextKind.DiagnosticCapture,
             descriptorGeneration: 1) with
         {
             PipelineIdentity = 703,
@@ -278,23 +278,23 @@ public sealed class VulkanCoreHardeningPhase21Tests
     [Test]
     public void AlternatingPlannerContexts_RetainDistinctAllocatorOwners()
     {
-        VulkanRenderer.FrameOpContext[] contexts =
+        FrameOpContext[] contexts =
         [
-            CreateContext(VulkanRenderer.EVulkanFrameOpContextKind.MainViewport, 1),
-            CreateContext(VulkanRenderer.EVulkanFrameOpContextKind.SceneCapture, 2),
-            CreateContext(VulkanRenderer.EVulkanFrameOpContextKind.LightProbeCapture, 3),
-            CreateContext(VulkanRenderer.EVulkanFrameOpContextKind.OpenXrEye, 4),
-            CreateContext(VulkanRenderer.EVulkanFrameOpContextKind.OpenXrMirror, 5),
+            CreateContext(EVulkanFrameOpContextKind.MainViewport, 1),
+            CreateContext(EVulkanFrameOpContextKind.SceneCapture, 2),
+            CreateContext(EVulkanFrameOpContextKind.LightProbeCapture, 3),
+            CreateContext(EVulkanFrameOpContextKind.OpenXrEye, 4),
+            CreateContext(EVulkanFrameOpContextKind.OpenXrMirror, 5),
         ];
 
-        Dictionary<VulkanRenderer.FrameOpPlannerStateKey, VulkanResourceAllocator> owners = [];
-        foreach (VulkanRenderer.FrameOpContext context in contexts)
+        Dictionary<VulkanFrameOpPlannerStateKey, VulkanResourceAllocator> owners = [];
+        foreach (FrameOpContext context in contexts)
             owners[VulkanRenderer.BuildFrameOpPlannerStateKey(context)] = new VulkanResourceAllocator();
 
         owners.Count.ShouldBe(contexts.Length);
         owners.Values.Select(static allocator => allocator.OwnershipId).Distinct().Count().ShouldBe(contexts.Length);
 
-        VulkanRenderer.FrameOpPlannerStateKey captureKey = VulkanRenderer.BuildFrameOpPlannerStateKey(contexts[1]);
+        VulkanFrameOpPlannerStateKey captureKey = VulkanRenderer.BuildFrameOpPlannerStateKey(contexts[1]);
         VulkanResourceAllocator retiredCapture = owners[captureKey];
         owners.Remove(captureKey).ShouldBeTrue();
         retiredCapture.TryRetirePhysicalResources(null!).ShouldBeTrue();
@@ -306,16 +306,16 @@ public sealed class VulkanCoreHardeningPhase21Tests
     [Test]
     public void DescriptorOnlyChange_ReusesOwnerAndPruningAnotherOwnerDoesNotRetireIt()
     {
-        VulkanRenderer.FrameOpContext main = CreateContext(
-            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+        FrameOpContext main = CreateContext(
+            EVulkanFrameOpContextKind.MainViewport,
             descriptorGeneration: 20);
-        VulkanRenderer.FrameOpContext descriptorChange = main with { DescriptorGeneration = 21 };
-        VulkanRenderer.FrameOpContext capture = CreateContext(
-            VulkanRenderer.EVulkanFrameOpContextKind.SceneCapture,
+        FrameOpContext descriptorChange = main with { DescriptorGeneration = 21 };
+        FrameOpContext capture = CreateContext(
+            EVulkanFrameOpContextKind.SceneCapture,
             descriptorGeneration: 1);
 
-        Dictionary<VulkanRenderer.FrameOpPlannerStateKey, VulkanResourceAllocator> owners = [];
-        VulkanRenderer.FrameOpPlannerStateKey mainKey = VulkanRenderer.BuildFrameOpPlannerStateKey(main);
+        Dictionary<VulkanFrameOpPlannerStateKey, VulkanResourceAllocator> owners = [];
+        VulkanFrameOpPlannerStateKey mainKey = VulkanRenderer.BuildFrameOpPlannerStateKey(main);
         VulkanResourceAllocator mainOwner = owners.GetValueOrDefault(mainKey) ?? new VulkanResourceAllocator();
         owners[mainKey] = mainOwner;
         VulkanResourceAllocator descriptorChangeOwner = owners.GetValueOrDefault(
@@ -331,9 +331,9 @@ public sealed class VulkanCoreHardeningPhase21Tests
     [Test]
     public void OpenXrPlannerPurpose_PreventsEyeMirrorPublishAndPrewarmCollisions()
     {
-        VulkanRenderer.OpenXrViewResourcePlannerContextKey[] keys =
-            Enum.GetValues<VulkanRenderer.EOpenXrResourcePlannerPurpose>()
-                .Select(static purpose => new VulkanRenderer.OpenXrViewResourcePlannerContextKey(
+        VulkanOpenXrViewResourcePlannerContextKey[] keys =
+            Enum.GetValues<EVulkanOpenXrResourcePlannerPurpose>()
+                .Select(static purpose => new VulkanOpenXrViewResourcePlannerContextKey(
                     purpose,
                     ResourcePlannerStateIndex: 0,
                     OpenXrViewIndex: 0,
@@ -424,8 +424,8 @@ public sealed class VulkanCoreHardeningPhase21Tests
         int expected)
         => VulkanDiagnosticOptions.NormalizePositiveCap(requested, defaultValue, maximumValue).ShouldBe(expected);
 
-    private static VulkanRenderer.FrameOpContext CreateContext(
-        VulkanRenderer.EVulkanFrameOpContextKind kind,
+    private static FrameOpContext CreateContext(
+        EVulkanFrameOpContextKind kind,
         ulong descriptorGeneration)
         => new(
             PipelineIdentity: 100,

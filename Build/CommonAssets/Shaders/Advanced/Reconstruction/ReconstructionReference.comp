@@ -1,0 +1,50 @@
+#version 450
+
+// Non-production full-screen reference. Production material kernels include
+// ReconstructSurface.glslinc and consume XRAdvancedSurface on demand.
+#include "ReconstructSurface.glslinc"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+#if defined(XR_ADV_VISIBILITY_ARRAY)
+XR_ADV_RECONSTRUCTION_PASS_LAYOUT(0) uniform usampler2DArray VisibilityIdentity;
+XR_ADV_RECONSTRUCTION_PASS_LAYOUT(1) uniform usampler2DArray VisibilityMetadata;
+XR_ADV_RECONSTRUCTION_PASS_LAYOUT(2) uniform sampler2DArray VisibilityDepth;
+XR_ADV_RECONSTRUCTION_IMAGE_LAYOUT(rgba16f, 3) writeonly uniform image2DArray ReferenceOutput;
+#else
+XR_ADV_RECONSTRUCTION_PASS_LAYOUT(0) uniform usampler2D VisibilityIdentity;
+XR_ADV_RECONSTRUCTION_PASS_LAYOUT(1) uniform usampler2D VisibilityMetadata;
+XR_ADV_RECONSTRUCTION_PASS_LAYOUT(2) uniform sampler2D VisibilityDepth;
+XR_ADV_RECONSTRUCTION_IMAGE_LAYOUT(rgba16f, 3) writeonly uniform image2D ReferenceOutput;
+#endif
+
+void main()
+{
+#if defined(XR_ADV_VISIBILITY_ARRAY)
+    ivec3 pixel = ivec3(gl_GlobalInvocationID);
+    ivec3 outputSize = imageSize(ReferenceOutput);
+#else
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 outputSize = imageSize(ReferenceOutput);
+#endif
+    if (any(greaterThanEqual(pixel, outputSize)))
+        return;
+
+    uvec2 identity =
+        texelFetch(VisibilityIdentity, pixel, 0).rg;
+    uint metadata =
+        texelFetch(VisibilityMetadata, pixel, 0).r;
+    float depth =
+        texelFetch(VisibilityDepth, pixel, 0).r;
+    XRAdvancedSurface surface;
+    bool valid = XR_ADV_TryReconstructSurface(
+        identity,
+        metadata,
+        depth,
+        vec2(pixel.xy) + 0.5,
+        surface);
+    vec4 reference = valid
+        ? vec4(surface.shadingNormal * 0.5 + 0.5, 1.0)
+        : vec4(0.0);
+    imageStore(ReferenceOutput, pixel, reference);
+}

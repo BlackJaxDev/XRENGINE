@@ -27,7 +27,7 @@ struct XRAdvancedSamplerRecord
 {
     uint stableSamplerId;
     uint generation;
-    uint filter;
+    uint filterMode;
     uint flags;
     uint addressU;
     uint addressV;
@@ -152,6 +152,75 @@ vec4 XR_ADV_SampleTexture2D(
     return texture(
         XR_ADV_TextureArray,
         vec3(uv, float(textureReference.payload1)));
+#else
+    return XR_ADV_TextureFallback(textureReference.payload2);
+#endif
+}
+
+vec4 XR_ADV_SampleTexture2DGrad(
+    XRAdvancedEncodedTextureReference textureReference,
+    vec2 uv,
+    vec2 uvDx,
+    vec2 uvDy)
+{
+    if ((textureReference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u)
+        return XR_ADV_TextureFallback(textureReference.payload2);
+
+#if defined(XR_ADV_TEXTURE_MODE_OPENGL_BINDLESS)
+    uint64_t handle =
+        uint64_t(textureReference.payload0) |
+        (uint64_t(textureReference.payload1) << 32);
+    return textureGrad(sampler2D(handle), uv, uvDx, uvDy);
+#elif defined(XR_ADV_TEXTURE_MODE_VULKAN_INDEXING) || \
+      defined(XR_ADV_TEXTURE_MODE_VULKAN_HEAP)
+    uint textureIndex = nonuniformEXT(textureReference.payload0);
+    uint samplerIndex = nonuniformEXT(textureReference.payload1);
+    return textureGrad(
+        sampler2D(
+            XR_ADV_TextureDescriptors[textureIndex],
+            XR_ADV_SamplerDescriptors[samplerIndex]),
+        uv,
+        uvDx,
+        uvDy);
+#elif defined(XR_ADV_TEXTURE_MODE_ARRAY)
+    return textureGrad(
+        XR_ADV_TextureArray,
+        vec3(uv, float(textureReference.payload1)),
+        uvDx,
+        uvDy);
+#else
+    return XR_ADV_TextureFallback(textureReference.payload2);
+#endif
+}
+
+vec4 XR_ADV_SampleTexture2DLod(
+    XRAdvancedEncodedTextureReference textureReference,
+    vec2 uv,
+    float lod)
+{
+    if ((textureReference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u)
+        return XR_ADV_TextureFallback(textureReference.payload2);
+
+#if defined(XR_ADV_TEXTURE_MODE_OPENGL_BINDLESS)
+    uint64_t handle =
+        uint64_t(textureReference.payload0) |
+        (uint64_t(textureReference.payload1) << 32);
+    return textureLod(sampler2D(handle), uv, lod);
+#elif defined(XR_ADV_TEXTURE_MODE_VULKAN_INDEXING) || \
+      defined(XR_ADV_TEXTURE_MODE_VULKAN_HEAP)
+    uint textureIndex = nonuniformEXT(textureReference.payload0);
+    uint samplerIndex = nonuniformEXT(textureReference.payload1);
+    return textureLod(
+        sampler2D(
+            XR_ADV_TextureDescriptors[textureIndex],
+            XR_ADV_SamplerDescriptors[samplerIndex]),
+        uv,
+        lod);
+#elif defined(XR_ADV_TEXTURE_MODE_ARRAY)
+    return textureLod(
+        XR_ADV_TextureArray,
+        vec3(uv, float(textureReference.payload1)),
+        lod);
 #else
     return XR_ADV_TextureFallback(textureReference.payload2);
 #endif

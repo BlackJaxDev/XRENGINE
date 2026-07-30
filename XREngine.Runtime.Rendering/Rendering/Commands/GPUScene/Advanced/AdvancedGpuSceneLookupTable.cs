@@ -115,6 +115,32 @@ public sealed class AdvancedGpuSceneLookupTable
         return true;
     }
 
+    /// <summary>
+    /// Resolves an identity-buffer stable index to its current immutable frame row.
+    /// The returned generation lets consumers rebuild a checked handle before
+    /// following dependent scene records.
+    /// </summary>
+    public bool TryResolveStableIndex(
+        uint stableIndex,
+        in AdvancedGpuLookupSegment segment,
+        out uint denseIndex,
+        out uint generation)
+    {
+        denseIndex = AdvancedGpuHandleRemap.InvalidDenseIndex;
+        generation = 0u;
+        if (stableIndex == 0u || stableIndex >= segment.Count)
+            return false;
+
+        AdvancedGpuHandleLookup lookup =
+            _records[checked((int)(segment.Offset + stableIndex))];
+        if (!lookup.IsResident)
+            return false;
+
+        denseIndex = lookup.DenseIndex;
+        generation = lookup.Generation;
+        return generation != 0u;
+    }
+
     private void CopyAll<T>(
         AdvancedGpuRecordTable<T> table,
         in AdvancedGpuLookupSegment segment)

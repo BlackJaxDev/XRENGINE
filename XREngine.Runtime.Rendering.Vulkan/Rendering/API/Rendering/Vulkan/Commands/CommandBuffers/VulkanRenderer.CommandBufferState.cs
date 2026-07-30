@@ -52,9 +52,9 @@ namespace XREngine.Rendering.Vulkan
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanFrameOpSignatureDiff), "1", StringComparison.Ordinal);
         private static readonly bool FrameDataReuseDiagnosticsEnabled =
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanFrameDataReuseDiag), "1", StringComparison.Ordinal);
-        private static readonly bool CommandRecordingDiagnosticsEnabled =
+        internal static readonly bool CommandRecordingDiagnosticsEnabled =
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanRecordingDiag), "1", StringComparison.Ordinal);
-        private static readonly bool CommandRecordingDetailProfilingEnabled =
+        internal static readonly bool CommandRecordingDetailProfilingEnabled =
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanRecordingProfileDetail), "1", StringComparison.Ordinal);
         private static readonly bool FrameOpTraceEnabled =
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanFrameOpTrace), "1", StringComparison.Ordinal);
@@ -62,7 +62,7 @@ namespace XREngine.Rendering.Vulkan
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanTargetTrace), "1", StringComparison.Ordinal);
         private static readonly bool IndirectTraceEnabled =
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanIndirectTrace), "1", StringComparison.Ordinal);
-        private static readonly bool DescriptorTraceEnabled =
+        internal static readonly bool DescriptorTraceEnabled =
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDescriptorTrace), "1", StringComparison.Ordinal);
         private static readonly bool ParallelRecordingValidationEnabled =
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanParallelRecordingValidate), "1", StringComparison.Ordinal);
@@ -77,7 +77,7 @@ namespace XREngine.Rendering.Vulkan
         // signature before reuse. Value-only publication generations are refreshed
         // through completed frame slots; structural and binding changes rerecord.
         internal const bool VulkanPrimaryCommandBufferReuseSafe = true;
-        private bool VulkanPrimaryCommandBufferReuseEnabled =>
+        internal bool VulkanPrimaryCommandBufferReuseEnabled =>
             VulkanPrimaryCommandBufferReuseSafe &&
             (VulkanPrimaryCommandBufferReuseOverride ??
              RuntimeRenderingHostServices.Settings.EnableVulkanPrimaryCommandBufferReuse);
@@ -125,18 +125,8 @@ namespace XREngine.Rendering.Vulkan
         public int MeshFrameDataManifestFamilyCount => _frameWideMeshFrameDataManifest.PublishedFamilyCount;
         public bool MeshFrameDataManifestIsSealed => _frameWideMeshFrameDataManifest.IsSealed;
         private bool _lastEnsureCommandBufferRecordedPrimary;
-        private int _descriptorFrameSlotFrameCountOverride;
-        internal int DescriptorFrameSlotFrameCount
-        {
-            get
-            {
-                int overrideCount = Volatile.Read(ref _descriptorFrameSlotFrameCountOverride);
-                if (overrideCount > 0)
-                    return overrideCount;
+        internal int DescriptorFrameSlotFrameCount => _descriptorManager.FrameSlotCount;
 
-                return Math.Max(swapChainImages?.Length ?? 0, MAX_FRAMES_IN_FLIGHT);
-            }
-        }
 
         /// <summary>
         /// Determines whether descriptor contents for a frame-data slot can be rewritten without
@@ -180,25 +170,15 @@ namespace XREngine.Rendering.Vulkan
 
         private bool EnsureDescriptorFrameSlotFrameCountFloor(int frameSlotCount)
         {
-            if (frameSlotCount <= 0)
+            if (!_descriptorManager.EnsureFrameSlotCountFloor(frameSlotCount))
                 return false;
 
-            while (true)
-            {
-                int current = Volatile.Read(ref _descriptorFrameSlotFrameCountOverride);
-                if (current >= frameSlotCount)
-                    return false;
-
-                if (Interlocked.CompareExchange(ref _descriptorFrameSlotFrameCountOverride, frameSlotCount, current) == current)
-                {
-                    MarkCommandBuffersDirty();
-                    MarkOpenXrPrimaryCommandBufferVariantsDirty();
-                    return true;
-                }
-            }
+            MarkCommandBuffersDirty();
+            MarkOpenXrPrimaryCommandBufferVariantsDirty();
+            return true;
         }
         private string? _lastReusableFrameDataRefreshFailureReason;
-        private static readonly bool BloomVulkanDiagnosticsEnabled =
+        internal static readonly bool BloomVulkanDiagnosticsEnabled =
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.BloomDiag), "1", StringComparison.Ordinal);
 
         private readonly Dictionary<ulong, CameraPoseReuseState> _cameraPoseReuseStates = new(8);

@@ -6,7 +6,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Device identity and wrapper binding identity are obtained through narrow
 /// renderer-owned contexts rather than static caches.
 /// </summary>
-public abstract class VkObjectBase(VulkanRenderer renderer) :
+internal abstract class VkObjectBase(VulkanRenderer renderer) :
     AbstractRenderer<Silk.NET.Vulkan.Vk>.AbstractRenderObject<VulkanRenderer>(renderer),
     IRenderAPIObject
 {
