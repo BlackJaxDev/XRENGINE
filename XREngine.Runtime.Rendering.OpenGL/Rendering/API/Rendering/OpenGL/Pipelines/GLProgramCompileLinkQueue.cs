@@ -134,7 +134,23 @@ namespace XREngine.Rendering.OpenGL
 
             public bool CanEnqueue => CanEnqueuePriority(EProgramPriority.Main);
             public bool CanEnqueuePriority(EProgramPriority priority)
+                => CanEnqueuePriority(priority, sourceBytes: 0);
+
+            /// <summary>
+            /// Reports whether both the count budget and the large-source memory
+            /// budget can currently admit a program. Callers use this before
+            /// selecting the shared-context lane so a waiting uber shader is not
+            /// rejected and re-logged once per frame while another large shader is
+            /// resident in the driver compiler.
+            /// </summary>
+            public bool CanEnqueuePriority(EProgramPriority priority, long sourceBytes)
             {
+                if (sourceBytes >= LargeSourceLinkDeferralThresholdBytes &&
+                    Volatile.Read(ref _largeSourceInFlight) >= MaxLargeSourceInFlight)
+                {
+                    return false;
+                }
+
                 int limit = MaxInFlightTotal;
                 if (priority == EProgramPriority.Interactive)
                     limit += InteractivePriorityReservePerWorker * _workers.Length;

@@ -17,7 +17,7 @@ public static partial class UnityMaterialImporter
         List<string> warnings)
     {
         bool outlines = HasAnyPositive(document, "_EnableOutlines", "_OutlinesEnabled", "_UseOutline") ||
-                        document.Textures.ContainsKey("_OutlineMask");
+                        HasExternalTexture(document, "_OutlineMask", "_OutlineTexture");
         bool specialEffects = HasSpecialEffects(document);
         bool vertexEffects = HasVertexEffects(document);
         bool audioLink = document.TryGetPositive("_EnableAudioLink") ||
@@ -65,17 +65,22 @@ public static partial class UnityMaterialImporter
     }
 
     private static bool HasSpecialEffects(UnityMaterialDocument document)
-        => document.GetPropertyNames().Any(static name =>
-            name.Contains("Dissolve", StringComparison.Ordinal) ||
-            name.Contains("Pathing", StringComparison.Ordinal) ||
-            name.Contains("Proximity", StringComparison.Ordinal) ||
-            name.Contains("DepthBulge", StringComparison.Ordinal) ||
-            name.Contains("TouchGlow", StringComparison.Ordinal) ||
-            name.Contains("InternalParallax", StringComparison.Ordinal) ||
-            name.Contains("Video", StringComparison.Ordinal) ||
-            name.Contains("Voronoi", StringComparison.Ordinal) ||
-            name.Contains("Truchet", StringComparison.Ordinal) ||
-            name.Contains("UDIM", StringComparison.Ordinal));
+        => HasAnyPositive(
+            document,
+            "_EnableUDIMDiscardOptions",
+            "_UVTileDiscardEnabled",
+            "_PathingEnabled",
+            "_EnablePathing",
+            "_ProximityColorEnabled",
+            "_ProximityEnabled",
+            "_DepthFXEnabled",
+            "_TouchGlowEnabled",
+            "_InternalParallaxEnabled",
+            "_ParallaxInternal",
+            "_ProceduralMode",
+            "_VideoEffectMode",
+            "_VideoBlend",
+            "_VideoTextureStrength");
 
     private static bool HasVertexEffects(UnityMaterialDocument document)
         => HasAnyPositive(

@@ -279,12 +279,37 @@ internal sealed class ImportedTextureStreamingManager
 
     public void RecordUsage(XRMaterial? material, ImportedTextureStreamingUsage usage)
     {
+        EnsureImportedStreamingTexturesRegistered(material);
         _registry.RecordUsage(material, usage, Volatile.Read(ref _collectFrameId));
     }
 
     public void RecordMaterialBinding(XRMaterialBase? material)
     {
+        EnsureImportedStreamingTexturesRegistered(material);
         _registry.RecordMaterialBinding(material, Volatile.Read(ref _collectFrameId));
+    }
+
+    /// <summary>
+    /// Native imported textures retain only a small serialized placeholder and
+    /// their original third-party source path. Register them when a material is
+    /// actually used so loading a large prefab closure does not enqueue residency
+    /// work for template copies and inactive renderer branches.
+    /// </summary>
+    private void EnsureImportedStreamingTexturesRegistered(XRMaterialBase? material)
+    {
+        if (material?.Textures is not { Count: > 0 } textures)
+            return;
+
+        for (int textureIndex = 0; textureIndex < textures.Count; textureIndex++)
+        {
+            if (textures[textureIndex] is not XRTexture2D texture
+                || _registry.IsTracked(texture))
+            {
+                continue;
+            }
+
+            texture.TryRestoreImportedTextureStreamingSource();
+        }
     }
 
     public ImportedTextureStreamingTelemetry GetTelemetry()

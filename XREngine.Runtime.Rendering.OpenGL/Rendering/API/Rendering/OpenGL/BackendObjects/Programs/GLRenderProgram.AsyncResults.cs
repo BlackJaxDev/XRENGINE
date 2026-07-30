@@ -97,10 +97,34 @@ namespace XREngine.Rendering.OpenGL
             {
                 public int Compare(GLRenderProgram? x, GLRenderProgram? y)
                 {
+                    int xActive = HasDispatchedAsyncWork(x) ? 0 : 1;
+                    int yActive = HasDispatchedAsyncWork(y) ? 0 : 1;
+                    int activeComparison = xActive.CompareTo(yActive);
+                    if (activeComparison != 0)
+                        return activeComparison;
+
                     byte xp = (byte)(x?.Data?.Priority ?? EProgramPriority.Main);
                     byte yp = (byte)(y?.Data?.Priority ?? EProgramPriority.Main);
-                    return xp.CompareTo(yp);
+                    int priorityComparison = xp.CompareTo(yp);
+                    if (priorityComparison != 0)
+                        return priorityComparison;
+
+                    long xt = x?._asyncPendingStartTimestamp ?? long.MaxValue;
+                    long yt = y?._asyncPendingStartTimestamp ?? long.MaxValue;
+                    int ageComparison = xt.CompareTo(yt);
+                    if (ageComparison != 0)
+                        return ageComparison;
+
+                    ulong xh = x?.Hash ?? ulong.MaxValue;
+                    ulong yh = y?.Hash ?? ulong.MaxValue;
+                    return xh.CompareTo(yh);
                 }
+
+                private static bool HasDispatchedAsyncWork(GLRenderProgram? program)
+                    => program is not null &&
+                       (program._asyncCompileLinkPending ||
+                        program._asyncBinaryUploadPending ||
+                        program._asyncLinkPhase != EAsyncLinkPhase.Idle);
             }
 
             private static readonly PendingAsyncPriorityComparer _pendingAsyncPriorityComparer = new();

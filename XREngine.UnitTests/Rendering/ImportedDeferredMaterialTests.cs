@@ -11,13 +11,17 @@ using XREngine.Data;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Runtime.Bootstrap;
 
 namespace XREngine.UnitTests.Rendering;
 
 [TestFixture]
+[NonParallelizable]
 public sealed class ImportedDeferredMaterialTests
 {
     private IRuntimeShaderServices? _previousServices;
+    private RendererBackendCatalog? _rendererBackendCatalog;
+    private IDisposable? _rendererBackendRegistrations;
 
     [SetUp]
     public void SetUp()
@@ -25,6 +29,9 @@ public sealed class ImportedDeferredMaterialTests
         _previousServices = RuntimeShaderServices.Current;
         Console.Error.WriteLine($"[SETUP] Before: RuntimeShaderServices.Current type={RuntimeShaderServices.Current?.GetType().Name ?? "null"}");
         RuntimeShaderServices.Current = new TestRuntimeShaderServices();
+        _rendererBackendCatalog = new RendererBackendCatalog();
+        _rendererBackendRegistrations =
+            BuiltInRendererBackendModules.RegisterAll(_rendererBackendCatalog);
         Console.Error.WriteLine($"[SETUP] After: RuntimeShaderServices.Current type={RuntimeShaderServices.Current?.GetType().Name ?? "null"}");
     }
 
@@ -32,6 +39,10 @@ public sealed class ImportedDeferredMaterialTests
     public void TearDown()
     {
         Console.Error.WriteLine($"[TEARDOWN] Before: RuntimeShaderServices.Current type={RuntimeShaderServices.Current?.GetType().Name ?? "null"}, restoring to {_previousServices?.GetType().Name ?? "null"}");
+        _rendererBackendRegistrations?.Dispose();
+        _rendererBackendCatalog?.Dispose();
+        _rendererBackendRegistrations = null;
+        _rendererBackendCatalog = null;
         RuntimeShaderServices.Current = _previousServices;
     }
 
@@ -253,6 +264,14 @@ public sealed class ImportedDeferredMaterialTests
         material.Textures[0]!.SamplerName.ShouldBe("_MainTex");
         material.Textures[1]!.SamplerName.ShouldBe("_BumpMap");
         material.Parameter<ShaderFloat>("_BumpScale")?.Value.ShouldBe(0.0f);
+
+        foreach (XRTexture? texture in material.Textures)
+        {
+            texture?.SamplerName.ShouldNotBe("AmbientOcclusionTextureArray");
+            texture?.SamplerName.ShouldNotBe("DirectionalShadowAtlas");
+            texture?.SamplerName.ShouldNotBe("SpotLightShadowAtlas");
+            texture?.SamplerName.ShouldNotBe("PointLightShadowAtlas");
+        }
     }
 
     [Test]
@@ -397,6 +416,39 @@ public sealed class ImportedDeferredMaterialTests
         source.ShouldContain("XRENGINE_UBER_GENERATED_VARIANT");
         material.ActiveUberVariant.IsEmpty.ShouldBeFalse();
         material.UberVariantStatus.Stage.ShouldBe(EUberMaterialVariantStage.Active);
+    }
+
+    [Test]
+    public void GeneratedUberFragmentWithoutSourcePath_RehydratesCanonicalShaderIdentity()
+    {
+        XRShader canonical = ShaderHelper.UberFragForward();
+        var generated = new XRShader(
+            EShaderType.Fragment,
+            new TextFile
+            {
+                Name = "UberShader",
+                Text = canonical.Source.Text,
+            })
+        {
+            Name = "UberShader",
+            IsGeneratedUberVariant = true,
+            GeneratedUberVariantHash = 0x1234UL,
+        };
+        var material = new XRMaterial(generated);
+
+        material.TryGetUberMaterialState(
+                out XRShader? resolvedCanonical,
+                out ShaderUiManifest manifest)
+            .ShouldBeTrue();
+
+        resolvedCanonical.ShouldNotBeNull();
+        resolvedCanonical.ShouldNotBeSameAs(generated);
+        Path.GetFileName(
+                resolvedCanonical.Source?.FilePath ??
+                resolvedCanonical.FilePath ??
+                string.Empty)
+            .ShouldBe("UberShader.frag");
+        manifest.Properties.ShouldNotBeEmpty();
     }
 
     [Test]

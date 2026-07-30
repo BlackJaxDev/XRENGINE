@@ -1,8 +1,12 @@
 using System;
 using System.IO;
+using System.Numerics;
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.OpenGL;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -84,12 +88,90 @@ public sealed class GLMeshRendererLifecycleContractTests
         shaderSource.ShouldContain("ShouldUsePipelineForPendingUberFallbackMaterial(material)");
         shaderSource.ShouldContain("allowWhenShaderPipelinesDisabled: true");
         shaderSource.ShouldContain("RuntimeEngine.Rendering.Settings.AllowShaderPipelines");
-        shaderSource.ShouldContain("ReferenceEquals(material.Data, s_pendingUberFallbackMaterial)");
+        shaderSource.ShouldContain("IsPendingUberFallbackMaterial(material.Data)");
+        shaderSource.ShouldContain("IsPendingUberFallbackMaterial(material.Data))");
+        shaderSource.ShouldContain("ResolveCombinedProgramPriority(Data.ProgramPriority, material.ShaderProgramPriority)");
 
+        renderSource.ShouldContain("uniformSourceMaterial: material");
+        renderSource.ShouldContain("GLMaterial bindingMaterial = uniformSourceMaterial ?? material;");
+        renderSource.ShouldContain("material.SetUniforms(mat);");
+        renderSource.ShouldContain("Renderer.ApplyRenderParameters(bindingMaterial.Data.RenderOptions);");
+        renderSource.ShouldContain("BindPendingUberFallbackTextures(bindingMaterial, mat);");
+        renderSource.ShouldContain("sourceMaterial.SetTextureUniform(fallbackProgram, _pendingUberFallbackTextureIndex, \"Texture0\");");
+        renderSource.ShouldContain("ShaderHelper.PendingUberTextureFragForward()");
+        renderSource.ShouldContain("FallbackHasTexture");
+        renderSource.ShouldContain("FallbackForceOpaque");
+        renderSource.ShouldContain("FallbackUseAlphaCutoff");
         renderSource.ShouldContain("material.ShaderProgramPriority = EProgramPriority.Interactive;");
         renderSource.ShouldContain("if (RuntimeEngine.Rendering.Settings.AllowShaderPipelines)");
         renderSource.ShouldContain("material.EnsureShaderPipelineProgram();");
+        renderSource.ShouldNotContain("\"FallbackAlphaMode\"");
+
+        string fallbackShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Common/PendingUberTexturedForward.fs");
+        fallbackShader.ShouldContain("FallbackBaseColor");
+        fallbackShader.ShouldContain("FallbackHasTexture");
+        fallbackShader.ShouldContain("FallbackUseAlphaCutoff");
+        fallbackShader.ShouldNotContain("#pragma snippet \"ForwardLighting\"");
+
+        int primeIndex = shaderSource.IndexOf("PrimePendingUberFallbackPrograms(material);", StringComparison.Ordinal);
+        primeIndex.ShouldBeGreaterThanOrEqualTo(0);
+        int uberProgramIndex = shaderSource.IndexOf("EnsureCombinedProgramForMaterial(material);", primeIndex, StringComparison.Ordinal);
+        uberProgramIndex.ShouldBeGreaterThan(primeIndex);
     }
+
+    [Test]
+    public void GLMeshRenderer_PendingUberFallbackPrefersMainTextureSampler()
+    {
+        XRTexture2D secondaryTexture = new() { SamplerName = "_BumpMap" };
+        XRTexture2D mainTexture = new() { SamplerName = "_MainTex" };
+        XRMaterial material = new([secondaryTexture, mainTexture]);
+
+        OpenGLRenderer.GLMeshRenderer.ResolvePendingUberFallbackTextureIndex(material).ShouldBe(1);
+    }
+
+    [Test]
+    public void GLMeshRenderer_PendingUberFallbackUsesFirstTextureWhenMainTextureIsUnavailable()
+    {
+        XRTexture2D firstTexture = new() { SamplerName = "_BaseMap" };
+        XRTexture2D secondTexture = new() { SamplerName = "_EmissionMap" };
+        XRMaterial material = new([null, firstTexture, secondTexture]);
+
+        OpenGLRenderer.GLMeshRenderer.ResolvePendingUberFallbackTextureIndex(material).ShouldBe(1);
+    }
+
+    [Test]
+    public void GLMeshRenderer_PendingUberFallbackPreservesImportedColorTint()
+    {
+        Vector4 expected = new(0.25f, 0.5f, 0.75f, 0.8f);
+        XRMaterial material = new([new ShaderVector4(expected, "_Color")]);
+
+        OpenGLRenderer.GLMeshRenderer.ResolvePendingUberFallbackBaseColor(material).ShouldBe(expected);
+    }
+
+    [TestCase(EDefaultRenderPass.OpaqueForward, ETransparencyMode.Opaque)]
+    [TestCase(EDefaultRenderPass.MaskedForward, ETransparencyMode.Masked)]
+    [TestCase(EDefaultRenderPass.TransparentForward, ETransparencyMode.AlphaBlend)]
+    [TestCase(EDefaultRenderPass.WeightedBlendedOitForward, ETransparencyMode.WeightedBlendedOit)]
+    [TestCase(EDefaultRenderPass.PerPixelLinkedListForward, ETransparencyMode.PerPixelLinkedList)]
+    [TestCase(EDefaultRenderPass.DepthPeelingForward, ETransparencyMode.DepthPeeling)]
+    public void GLMeshRenderer_PendingUberFallbackUsesPassCompatibleTransparencyShader(
+        EDefaultRenderPass renderPass,
+        ETransparencyMode expectedMode)
+    {
+        XRMaterial material = new() { RenderPass = (int)renderPass };
+
+        OpenGLRenderer.GLMeshRenderer.ResolvePendingUberFallbackTransparencyMode(material).ShouldBe(expectedMode);
+    }
+
+    [TestCase(EProgramPriority.Main, EProgramPriority.Interactive, EProgramPriority.Interactive)]
+    [TestCase(EProgramPriority.Shadow, EProgramPriority.Interactive, EProgramPriority.Interactive)]
+    [TestCase(EProgramPriority.Shadow, EProgramPriority.Main, EProgramPriority.Shadow)]
+    public void GLMeshRenderer_CombinedProgramsHonorExplicitInteractiveMaterialPriority(
+        EProgramPriority meshPriority,
+        EProgramPriority materialPriority,
+        EProgramPriority expectedPriority)
+        => OpenGLRenderer.GLMeshRenderer.ResolveCombinedProgramPriority(meshPriority, materialPriority)
+            .ShouldBe(expectedPriority);
 
     [Test]
     public void GLMeshRenderer_UsesSharedShadowMaterialForColdUberShadowPass()

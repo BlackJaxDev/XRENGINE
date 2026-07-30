@@ -21,6 +21,9 @@ internal sealed class TextureStreamingRegistry
     public bool IsEmpty => _recordRefs.IsEmpty;
     public int RecordReferenceCount => _recordRefs.Count;
 
+    public bool IsTracked(XRTexture2D texture)
+        => _recordsByTexture.TryGetValue(texture, out _);
+
     public ImportedTextureStreamingRecord GetOrCreateRecord(
         XRTexture2D texture,
         string? filePath,

@@ -23,8 +23,24 @@ public static class OutlinePassVariantFactory
             return null;
         }
 
-        XRShader? sourceFragment = sourceMaterial.GetShader(EShaderType.Fragment);
-        XRShader? fragment = ShaderHelper.CreateDefinedShaderVariant(sourceFragment, OutlinePassDefine);
+        XRShader? fragment;
+        if (sourceMaterial.TryGetUberMaterialState(out XRShader? canonicalFragment, out ShaderUiManifest manifest) &&
+            canonicalFragment is not null)
+        {
+            sourceMaterial.EnsureUberStateInitialized(canonicalFragment, manifest);
+            fragment = UberShaderVariantBuilder.PrepareVariant(
+                sourceMaterial,
+                canonicalFragment,
+                manifest,
+                additionalPipelineMacros: [OutlinePassDefine],
+                additionalEnabledFeatures: ["outline"]).FragmentShader;
+        }
+        else
+        {
+            XRShader? sourceFragment = sourceMaterial.GetShader(EShaderType.Fragment);
+            fragment = ShaderHelper.CreateDefinedShaderVariant(sourceFragment, OutlinePassDefine);
+        }
+
         if (fragment is null)
             return null;
 

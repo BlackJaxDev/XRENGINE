@@ -212,8 +212,14 @@ public static partial class EditorImGuiUI
             ? concreteType
             : typeof(XRAsset);
 
-        if (assets.GetAssetByPath(path) is XRAsset cached)
+        // A prior caller may have requested the file using an incompatible
+        // type. Only trust the path cache when it agrees with the serialized
+        // header; AssetManager.Load will evict a mismatched entry below.
+        if (assets.GetAssetByPath(path) is XRAsset cached &&
+            loadType.IsInstanceOfType(cached))
+        {
             return cached;
+        }
 
         if (typeof(XRPrefabSource).IsAssignableFrom(loadType))
         {
@@ -497,7 +503,7 @@ public static partial class EditorImGuiUI
             if (_prefabPreviewActive)
                 RevertPrefabPreview();
 
-            SpawnPrefabNode(world, parent, prefab, worldPosition);
+            return SpawnPrefabNode(world, parent, prefab, worldPosition);
         }
 
         return true;
@@ -647,17 +653,16 @@ public static partial class EditorImGuiUI
         }
     }
 
-    private static void SpawnPrefabNode(XRWorldInstance world, SceneNode? parent, XRPrefabSource prefab, Vector3? worldPosition = null)
+    private static bool SpawnPrefabNode(XRWorldInstance world, SceneNode? parent, XRPrefabSource prefab, Vector3? worldPosition = null)
     {
         if (world is null || prefab is null)
-            return;
+            return false;
 
-        SceneNode? instance = world.InstantiatePrefab(prefab, parent, maintainWorldTransform: false);
-        if (instance is null)
-            return;
+        SceneNode instance = world.InstantiatePrefab(prefab, parent, maintainWorldTransform: false);
 
         ApplySpawnWorldPosition(instance, worldPosition);
         FinalizeSpawnedPrefabNode(world, instance);
+        return true;
     }
 
     private static void FinalizeSpawnedPrefabNode(XRWorldInstance world, SceneNode instance)
@@ -665,18 +670,41 @@ public static partial class EditorImGuiUI
         if (world is null || instance is null)
             return;
 
-        // Record structural undo
         var parentTfm = instance.Transform.Parent;
+        XRScene? owningScene = parentTfm?.SceneNode is SceneNode parent
+            ? FindSceneForNode(parent, world)
+            : ResolveDefaultSpawnScene(world);
+        if (parentTfm is null && owningScene is not null)
+        {
+            if (!owningScene.RootNodes.Contains(instance))
+                owningScene.RootNodes.Add(instance);
+
+            if (owningScene.IsVisible)
+            {
+                if (!world.RootNodes.Contains(instance))
+                    world.RootNodes.Add(instance);
+            }
+            else
+            {
+                world.RootNodes.Remove(instance);
+            }
+        }
+
+        // Record structural undo
         using var interaction = Undo.BeginUserInteraction();
         using var scope = Undo.BeginChange("Spawn Prefab");
         Undo.TrackSceneNode(instance);
+        XRScene? sceneCapture = owningScene;
         Undo.RecordStructuralChange("Spawn Prefab",
             undoAction: () =>
             {
                 if (parentTfm is not null)
                     parentTfm.RemoveChild(instance.Transform, Scene.Transforms.EParentAssignmentMode.Immediate);
                 else
+                {
+                    sceneCapture?.RootNodes.Remove(instance);
                     world.RootNodes.Remove(instance);
+                }
                 instance.IsActiveSelf = false;
             },
             redoAction: () =>
@@ -684,13 +712,29 @@ public static partial class EditorImGuiUI
                 if (parentTfm is not null)
                     instance.Transform.SetParent(parentTfm, false, Scene.Transforms.EParentAssignmentMode.Immediate);
                 else
-                    world.RootNodes.Add(instance);
+                {
+                    if (sceneCapture is not null && !sceneCapture.RootNodes.Contains(instance))
+                        sceneCapture.RootNodes.Add(instance);
+                    if ((sceneCapture is null || sceneCapture.IsVisible) && !world.RootNodes.Contains(instance))
+                        world.RootNodes.Add(instance);
+                }
                 instance.IsActiveSelf = true;
                 Undo.TrackSceneNode(instance);
             });
 
         Selection.SceneNode = instance;
-        MarkSceneHierarchyDirty(instance, owningScene: null, world);
+        MarkSceneHierarchyDirty(instance, owningScene, world);
+    }
+
+    private static XRScene? ResolveDefaultSpawnScene(XRWorldInstance world)
+    {
+        var scenes = world.TargetWorld?.Scenes;
+        if (scenes is null || scenes.Count == 0)
+            return null;
+
+        return scenes.FirstOrDefault(static scene => scene is not null && scene.IsVisible && !scene.IsEditorOnly)
+            ?? scenes.FirstOrDefault(static scene => scene is not null && !scene.IsEditorOnly)
+            ?? scenes.FirstOrDefault();
     }
 
     private static void UpdatePrefabPreview(XRWorldInstance world, SceneNode? parent, XRPrefabSource prefab, Vector3? worldPosition = null)

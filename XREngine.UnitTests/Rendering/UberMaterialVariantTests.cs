@@ -65,6 +65,39 @@ public sealed class UberMaterialVariantTests
     }
 
     [Test]
+    public void EnsureUberStateInitialized_ReconcilesLegacyParameterTypesAndVectorDefaults()
+    {
+        XRMaterial material = CreateUberMaterial(
+            """
+            #version 450 core
+            //@feature(id="legacy-values", name="Legacy Values", default=on)
+            #ifndef XRENGINE_UBER_DISABLE_LEGACY_VALUES
+            //@property(name="_Mode", display="Mode", mode=static, default="0")
+            uniform int _Mode;
+            //@property(name="_Grid", display="Grid", mode=static, default="vec2(1.0)")
+            uniform vec2 _Grid;
+            //@property(name="_Bounds", display="Bounds", mode=static, default="vec4(1.0)")
+            uniform vec4 _Bounds;
+            #endif
+            """);
+        material.Parameters =
+        [
+            new ShaderFloat(3.0f, "_Mode"),
+            new ShaderFloat(0.0f, "_Grid"),
+            new ShaderVector3(new Vector3(0.25f, 0.5f, 0.75f), "_Bounds"),
+            new ShaderInt(7, "_Mode"),
+        ];
+
+        material.EnsureUberStateInitialized();
+
+        material.Parameters.Count(parameter => parameter.Name == "_Mode").ShouldBe(1);
+        material.Parameter<ShaderInt>("_Mode").ShouldNotBeNull().Value.ShouldBe(7);
+        material.Parameter<ShaderVector2>("_Grid").ShouldNotBeNull().Value.ShouldBe(Vector2.One);
+        material.Parameter<ShaderVector4>("_Bounds").ShouldNotBeNull().Value
+            .ShouldBe(new Vector4(0.25f, 0.5f, 0.75f, 1.0f));
+    }
+
+    [Test]
     public void RequestUberVariantRebuild_StripsCanonicalFeatureGuard_WhenFeatureIsEnabled()
     {
         XRMaterial material = CreateUberMaterial(
@@ -359,6 +392,37 @@ public sealed class UberMaterialVariantTests
         string generatedSource = material.GetShader(EShaderType.Fragment)!.Source?.Text ?? string.Empty;
         generatedSource.ShouldNotContain("#define _Color ");
         generatedSource.ShouldContain("vec4 ResolveColor() { return vec4(0.2, 0.4, 0.6, 1.0); }");
+    }
+
+    [Test]
+    public void UseRuntimeUberPropertyBindings_AnimatesImplicitRuntimePropertiesInOneRevision()
+    {
+        XRMaterial material = CreateUberMaterial(
+            """
+            #version 450 core
+            //@property(name="_Color", display="Color", mode=static)
+            //@property(name="_Strength", display="Strength", mode=static)
+            uniform vec4 _Color;
+            uniform float _Strength;
+            vec4 ResolveColor() { return _Color * _Strength; }
+            """,
+            new ShaderVector4(Vector4.One, "_Color"),
+            new ShaderFloat(0.5f, "_Strength"));
+
+        material.EnsureUberStateInitialized();
+        long beforeRevision = material.UberStateRevision;
+
+        material.UseRuntimeUberPropertyBindings().ShouldBeTrue();
+
+        material.UberStateRevision.ShouldBe(beforeRevision + 1);
+        material.UberAuthoredState.GetProperty("_Color").ShouldNotBeNull().Mode
+            .ShouldBe(EShaderUiPropertyMode.Animated);
+        material.UberAuthoredState.GetProperty("_Strength").ShouldNotBeNull().Mode
+            .ShouldBe(EShaderUiPropertyMode.Animated);
+        material.PrepareUberVariantImmediately().ShouldBeTrue(material.UberVariantStatus.FailureReason);
+        material.RequestedUberVariant.AnimatedProperties.ShouldContain("_Color");
+        material.RequestedUberVariant.AnimatedProperties.ShouldContain("_Strength");
+        material.RequestedUberVariant.StaticProperties.ShouldBeEmpty();
     }
 
     [Test]

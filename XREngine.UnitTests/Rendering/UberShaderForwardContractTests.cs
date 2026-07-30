@@ -88,8 +88,19 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         uniforms.ShouldContain("uniform float RenderTime;");
         uniforms.ShouldContain("#define u_Time RenderTime");
         uniforms.ShouldNotContain("uniform float Time;");
-        uniforms.ShouldNotContain("uniform float ScreenWidth;");
-        uniforms.ShouldNotContain("uniform float ScreenHeight;");
+        uniforms.ShouldContain("#ifndef XRENGINE_UBER_MVP_FRAGMENT");
+        uniforms.ShouldContain("uniform float ScreenWidth;");
+        uniforms.ShouldContain("uniform float ScreenHeight;");
+    }
+
+    [Test]
+    public void UberShaderUniforms_DeclareMainColorThemeIndexOnce()
+    {
+        string uniforms = LoadShaderSource(Path.Combine("Uber", "uniforms.glsl"));
+        string surfaceUniforms = LoadShaderSource(Path.Combine("Uber", "poiyomi_surface_uniforms.glsl"));
+
+        uniforms.ShouldContain("uniform int _ColorThemeIndex;");
+        surfaceUniforms.ShouldNotContain("uniform int _ColorThemeIndex;");
     }
 
     [Test]

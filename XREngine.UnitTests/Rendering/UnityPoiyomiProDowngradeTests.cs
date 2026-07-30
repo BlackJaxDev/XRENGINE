@@ -119,6 +119,10 @@ public sealed class UnityPoiyomiProDowngradeTests
         material.UberAuthoredState.GetFeature("emission")
             .ShouldNotBeNull().Enabled.ShouldBeTrue();
         material.TransparencyMode.ShouldBe(ETransparencyMode.PremultipliedAlpha);
+        material.UberAuthoredState.GetProperty("_Color").ShouldNotBeNull().Mode
+            .ShouldBe(EShaderUiPropertyMode.Static);
+        material.UberAuthoredState.GetProperty("_LightingMode").ShouldNotBeNull().Mode
+            .ShouldBe(EShaderUiPropertyMode.Static);
 
         material.Parameter<ShaderFloat>("_GrabPass").ShouldBeNull();
         material.Parameter<ShaderFloat>("_RefractionEnabled").ShouldBeNull();
@@ -136,6 +140,31 @@ public sealed class UnityPoiyomiProDowngradeTests
             feature.Contains("grab", StringComparison.OrdinalIgnoreCase) ||
             feature.Contains("refract", StringComparison.OrdinalIgnoreCase) ||
             feature.Contains("blur", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Test]
+    public void Matcher_DoesNotTreatSupportedProximityPropertiesAsProEvidence()
+    {
+        PoiyomiShaderMatchResult match = PoiyomiShaderMatcher.Match(
+            new PoiyomiShaderMatchInput
+            {
+                ShaderPath = "Assets/_PoiyomiShaders/Shaders/9.3/Toon/Poiyomi Toon.shader",
+                ShaderSource = "Shader \".poiyomi/Poiyomi Toon\" { // Poiyomi 9.3.64 }",
+                PropertyNames = new HashSet<string>(StringComparer.Ordinal)
+                {
+                    "_MainTex",
+                    "_ShadingEnabled",
+                    "_ShaderOptimizerEnabled",
+                    "_ProximityColorEnabled",
+                    "shader_master_label",
+                    "shader_is_using_thry_editor",
+                },
+                OverrideTags = new Dictionary<string, string>(StringComparer.Ordinal),
+            });
+
+        match.IsAccepted.ShouldBeTrue();
+        match.IsDowngradeSource.ShouldBeFalse();
+        match.SourceFamily.ShouldBe(PoiyomiShaderFamily.Toon);
     }
 
     private static string ResolveFixturePath(params string[] segments)

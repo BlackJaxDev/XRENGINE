@@ -194,18 +194,48 @@ No `MirrorNode` or mirror component was present. The default Unit Testing World
 can create one when `Mirror` is true, but the mirror renderer is currently
 broken and is intentionally outside this validation.
 
-The base `Body` and `Face` renderers were isolated from modular outfit and
-face-tracking branches for the final render check. OpenGL produced a correctly
-placed, skinned, textured T-pose with the downgraded materials and no collider
-overlay. The front capture is
-`mcp-captures/Screenshot_20260730_010436_853_de190ccce7024d73a11025a45e2854a0.png`.
-After an immediate camera cut and two seconds of continuous rendering, the
-oblique profile capture is
+The earlier `Body`/`Face`-only captures are useful skinning and fresh-frame
+evidence, but they are not complete-avatar acceptance evidence. Their paths are
+`mcp-captures/Screenshot_20260730_010436_853_de190ccce7024d73a11025a45e2854a0.png`
+and
 `mcp-captures/Screenshot_20260730_010523_132_a1b72b4ad8954be8b7dded2f46fe6250.png`.
-The silhouette, highlights, occlusion, and visible facial profile all change
-with the camera, proving that the second image is a new live frame rather than
-stale capture data. The process remained bounded near 3.45 GiB working set and
-4.81 GiB private bytes.
+
+The follow-up inspection kept the prefab's authored active renderer set intact.
+Of 52 model components, 22 are effectively active and match the Unity outfit:
+body, face, horns, ears, tail, jewelry, glove, shorts, thigh-highs, shoes,
+underwear, tank/zip-up, and the authored active hair branches. The active
+silhouette is visible against the temporary neutral validation backdrop in
+`mcp-captures/Screenshot_20260730_095012_951_cddd01eb77fd4129bd9f3ece73499c65.png`.
+That capture is still not accepted: exposure/material output leaves major
+body, face, and hair regions blown out or flat compared with the supplied Unity
+reference.
+
+Dependency and runtime inspection found no unexplained required visual loss.
+The main-avatar manifest has 128 required visual texture references, represented
+by 112 distinct imported source textures after deduplication. Live streaming
+tracked 77 material texture bindings with zero failures, and representative
+body, hair, tank, shorts, socks, and accessory slots resolve to their expected
+Unity files. Logs also show the compact pending material binding real
+`_MainTex` textures. The remaining failure is therefore in material
+specialization/output and visual acceptance, not missing imported mesh or
+texture records.
+
+The compact textured pending-Uber shader now links in approximately 12-14 ms,
+instead of the previous 30-52 second large fallback, and makes the complete
+silhouette inspectable while final variants compile. Final Pro-authored
+variants remained approximately 324-360 KiB and 8,500-9,200 lines, however,
+and took approximately 85-100 seconds each to link. The editor reached roughly
+16 GiB while compiling them, so the named session was stopped.
+
+The cause was unconditional `UseRuntimeUberPropertyBindings()` during lossy
+Pro import. It converted all implicitly authored constants into uniforms and
+prevented constant folding from pruning inactive Pro branches. The importer now
+leaves implicit Pro-downgrade values static while preserving explicit
+runtime-mutability declarations. Authored static changes continue to rebuild
+the material variant. The normal test project builds with this change and the
+focused Pro-downgrade/Uber contract selection passes 43/43. The avatar has not
+yet been reimported and rendered with this final specialization change, so no
+visual or memory acceptance is claimed.
 
 Vulkan was then launched from the same isolated build with the Vulkan profile.
 `get_render_capabilities` confirmed Vulkan, no mirror node existed, and the
@@ -215,13 +245,11 @@ and 7.34 GiB private bytes before the exact named session was stopped. There was
 no managed exception in stdout. Vulkan backend initialization and prefab
 placement therefore pass, but Vulkan frame rendering/capture does not.
 
-The current solution-wide test build is independently blocked by concurrent
-Vulkan/frame-package API work. To avoid changing that unrelated work, validation
-uses a disposable focused test project under the task run root and records the
-solution-build blocker separately. A final normal test-project compile reported
-41 errors in unrelated Vulkan tests, principally removed or moving
-`EDesktopFramePhase`, `OpenXrViewResourcePlannerContextKey`, and
-`AreFrameOpContextsCommandChainBatchCompatible` APIs.
+An earlier normal test-project compile was independently blocked by concurrent
+Vulkan/frame-package API work. The latest focused invocation built the normal
+test project successfully, so that transient 41-error blocker is no longer a
+current limitation. The complete test suite was not rerun after the final
+specialization change.
 
 ## Remaining Risks
 
@@ -230,9 +258,18 @@ solution-build blocker separately. A final normal test-project compile reported
 - Poiyomi Pro conversion is intentionally lossy and is not a Pro parity path.
 - Optional stale expression/menu references remain behavior-incomplete by
   design but do not reduce visual completion.
+- Reimport the unchanged private source with the final static Pro-downgrade
+  specialization change. Measure representative generated shader source sizes
+  and stop the named session if memory again approaches the validation bound.
+- Obtain accepted complete-avatar OpenGL front and oblique captures with a
+  static flying camera and neutral backdrop. Keep every authored active mesh
+  branch enabled, and compare the visible textures/materials with the supplied
+  Unity reference.
 - Vulkan frame rendering/capture hangs after successful backend startup and
   prefab placement. Debug this against the current Vulkan renderer without a
-  mirror node and without weakening the passing OpenGL path.
+  mirror node or locomotion and without weakening the OpenGL path. Run
+  `rdc doctor`, capture, export and visually inspect the final/suspicious render
+  target, then close the RenderDoc session.
 - The repository has pinned CC0 Unity Poiyomi reference images, but a live
   XRENGINE capture of that exact representative scene/camera matrix has not yet
   been produced. Do not treat the private avatar screenshot as a like-for-like

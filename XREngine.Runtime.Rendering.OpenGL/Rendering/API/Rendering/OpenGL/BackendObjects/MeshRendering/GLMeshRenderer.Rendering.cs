@@ -1,7 +1,6 @@
 using System;
 using System.Linq;
 using System.Numerics;
-using XREngine.Data.Colors;
 using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -451,7 +450,8 @@ namespace XREngine.Rendering.OpenGL
                         renderOptionsOverride,
                         instances,
                         billboardMode,
-                        forceNoStereo))
+                        forceNoStereo,
+                        uniformSourceMaterial: material))
                 {
                     LogBatchedTextDraw("Render pending-uber-fallback", instances);
                     LogModelDrawDiagnostic("Render pending-uber-fallback", instances);
@@ -472,10 +472,13 @@ namespace XREngine.Rendering.OpenGL
                 RenderingParameters? renderOptionsOverride,
                 uint instances,
                 EMeshBillboardMode billboardMode,
-                bool forceNoStereo)
+                bool forceNoStereo,
+                GLMaterial? uniformSourceMaterial = null)
             {
                 if (!GetPrograms(material, out var vtx, out var mat))
                     return false;
+
+                GLMaterial bindingMaterial = uniformSourceMaterial ?? material;
 
                 Dbg("Programs ready - binding SSBOs and uniforms", "Render");
                 ConfigureDrawTopology(vtx!, mat);
@@ -514,29 +517,39 @@ namespace XREngine.Rendering.OpenGL
                 using (RuntimeEngine.Profiler.Start("GLMeshRenderer.Render.SetMaterialUniforms", ProfilerScopeKind.AlwaysOnHotPathLoop))
                 {
                     material.SetUniforms(mat);
+                    if (uniformSourceMaterial is not null)
+                    {
+                        // Keep Poiyomi vertex-effect parameters out of the lightweight
+                        // fallback program. Only the source render state and the fragment
+                        // inputs needed for a stable textured preview are transferred.
+                        Renderer.ApplyRenderParameters(bindingMaterial.Data.RenderOptions);
+                        mat!.Uniform("AlphaCutoff", Math.Clamp(bindingMaterial.Data.AlphaCutoff, 0.0f, 1.0f));
+                        BindPendingUberFallbackTextures(bindingMaterial, mat);
+                    }
+
                     if (renderOptionsOverride is not null)
                         Renderer.ApplyRenderParameters(renderOptionsOverride);
                 }
 
                 OnSettingUniforms(vtx!, mat!);
-                SetDirectionalCascadeLayeredVertexUniforms(vtx!, material.Data);
-                SetPointLightLayeredVertexUniforms(vtx!, material.Data);
+                SetDirectionalCascadeLayeredVertexUniforms(vtx!, bindingMaterial.Data);
+                SetPointLightLayeredVertexUniforms(vtx!, bindingMaterial.Data);
                 material.FinalizeUniformBindings(mat);
                 GLRenderProgram materialProgram = mat!;
                 Renderer.SetDrawDebugContext(
                     materialProgram.Data.Name,
-                    material.Data.Name,
+                    bindingMaterial.Data.Name,
                     Mesh?.Name,
                     materialProgram.GetBoundSamplerUnitsView());
 
-                uint drawInstances = ResolveLayeredShadowInstanceCount(material.Data, instances);
+                uint drawInstances = ResolveLayeredShadowInstanceCount(bindingMaterial.Data, instances);
                 try
                 {
                     using (RuntimeEngine.Profiler.Start("GLMeshRenderer.Render.Draw", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
-                        LogBatchedTextDraw("Render draw-submit", drawInstances, $"program='{materialProgram.Data.Name}', material='{material.Data.Name}'");
-                        LogModelDrawDiagnostic("Render draw-submit", drawInstances, $"program='{materialProgram.Data.Name}', material='{material.Data.Name}'");
-                        RecordSceneAssetCost(material.Data, drawInstances);
+                        LogBatchedTextDraw("Render draw-submit", drawInstances, $"program='{materialProgram.Data.Name}', material='{bindingMaterial.Data.Name}'");
+                        LogModelDrawDiagnostic("Render draw-submit", drawInstances, $"program='{materialProgram.Data.Name}', material='{bindingMaterial.Data.Name}'");
+                        RecordSceneAssetCost(bindingMaterial.Data, drawInstances);
                         Renderer.RenderMesh(this, false, drawInstances);
                     }
                 }
@@ -548,6 +561,75 @@ namespace XREngine.Rendering.OpenGL
                 Dbg("Render mesh submitted", "Render");
                 return true;
             }
+
+            private void BindPendingUberFallbackTextures(GLMaterial sourceMaterial, GLRenderProgram fallbackProgram)
+            {
+                XRMaterial data = sourceMaterial.Data;
+                ulong bindingLayoutVersion = data.BindingLayoutVersion;
+                if (!ReferenceEquals(_pendingUberFallbackTextureSource, data) ||
+                    _pendingUberFallbackTextureLayoutVersion != bindingLayoutVersion)
+                {
+                    _pendingUberFallbackTextureSource = data;
+                    _pendingUberFallbackTextureLayoutVersion = bindingLayoutVersion;
+                    _pendingUberFallbackTextureIndex = ResolvePendingUberFallbackTextureIndex(data);
+                }
+
+                if (_pendingUberFallbackTextureIndex >= 0)
+                    sourceMaterial.SetTextureUniform(fallbackProgram, _pendingUberFallbackTextureIndex, "Texture0");
+
+                ETransparencyMode mode = ResolvePendingUberFallbackTransparencyMode(data);
+                fallbackProgram.Uniform("FallbackBaseColor", ResolvePendingUberFallbackBaseColor(data));
+                fallbackProgram.Uniform("FallbackHasTexture", _pendingUberFallbackTextureIndex >= 0);
+                fallbackProgram.Uniform("FallbackForceOpaque", mode == ETransparencyMode.Opaque);
+                fallbackProgram.Uniform("FallbackUseAlphaCutoff", mode == ETransparencyMode.Masked);
+            }
+
+            internal static int ResolvePendingUberFallbackTextureIndex(XRMaterial material)
+            {
+                int firstTextureIndex = -1;
+                for (int textureIndex = 0; textureIndex < material.Textures.Count; ++textureIndex)
+                {
+                    XRTexture? texture = material.Textures[textureIndex];
+                    if (texture is null)
+                        continue;
+
+                    if (firstTextureIndex < 0)
+                        firstTextureIndex = textureIndex;
+
+                    if (string.Equals(
+                        texture.ResolveSamplerName(textureIndex, null),
+                        "_MainTex",
+                        StringComparison.Ordinal))
+                    {
+                        return textureIndex;
+                    }
+                }
+
+                return firstTextureIndex;
+            }
+
+            internal static Vector4 ResolvePendingUberFallbackBaseColor(XRMaterial material)
+            {
+                if (material.Parameter<ShaderVector4>("_Color") is { } color)
+                    return color.Value;
+                if (material.Parameter<ShaderVector4>("BaseColor") is { } baseColor)
+                    return baseColor.Value;
+                if (material.Parameter<ShaderVector4>("MatColor") is { } materialColor)
+                    return materialColor.Value;
+
+                return Vector4.One;
+            }
+
+            internal static ETransparencyMode ResolvePendingUberFallbackTransparencyMode(XRMaterial material)
+                => material.RenderPass switch
+                {
+                    (int)EDefaultRenderPass.MaskedForward => ETransparencyMode.Masked,
+                    (int)EDefaultRenderPass.WeightedBlendedOitForward => ETransparencyMode.WeightedBlendedOit,
+                    (int)EDefaultRenderPass.PerPixelLinkedListForward => ETransparencyMode.PerPixelLinkedList,
+                    (int)EDefaultRenderPass.DepthPeelingForward => ETransparencyMode.DepthPeeling,
+                    (int)EDefaultRenderPass.TransparentForward => ETransparencyMode.AlphaBlend,
+                    _ => ETransparencyMode.Opaque,
+                };
 
             private void RecordSceneAssetCost(XRMaterial material, uint instances)
             {
@@ -602,7 +684,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!ShouldUsePendingUberFallback(blockedMaterial))
                     return false;
 
-                XRMaterial fallbackData = GetPendingUberFallbackMaterial();
+                XRMaterial fallbackData = GetPendingUberFallbackMaterial(blockedMaterial.Data);
                 fallbackMaterial = Renderer.GenericToAPI<GLMaterial>(fallbackData);
                 if (fallbackMaterial is null)
                     return false;
@@ -618,16 +700,20 @@ namespace XREngine.Rendering.OpenGL
                 return true;
             }
 
+            private void PrimePendingUberFallbackPrograms(GLMaterial blockedMaterial)
+            {
+                if (!CanUsePendingUberFallback(blockedMaterial))
+                    return;
+
+                XRMaterial fallbackData = GetPendingUberFallbackMaterial(blockedMaterial.Data);
+                GLMaterial? fallbackMaterial = Renderer.GenericToAPI<GLMaterial>(fallbackData);
+                if (fallbackMaterial is not null)
+                    _ = GetPrograms(fallbackMaterial, out _, out _);
+            }
+
             private bool ShouldUsePendingUberFallback(GLMaterial blockedMaterial)
             {
-                if (RuntimeEngine.Rendering.State.IsShadowPass)
-                    return false;
-
-                var renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
-                if (renderState?.UseDepthNormalMaterialVariants ?? false)
-                    return false;
-
-                if (!blockedMaterial.Data.TryGetUberMaterialState(out _, out _))
+                if (!CanUsePendingUberFallback(blockedMaterial))
                     return false;
 
                 bool combinedUnavailable = ReferenceEquals(_combinedProgramMaterialKey, blockedMaterial.Data) &&
@@ -640,27 +726,88 @@ namespace XREngine.Rendering.OpenGL
                 return separableProgram is not null && !separableProgram.IsLinked;
             }
 
-            private static XRMaterial GetPendingUberFallbackMaterial()
+            private static bool CanUsePendingUberFallback(GLMaterial blockedMaterial)
             {
-                XRMaterial? material = s_pendingUberFallbackMaterial;
+                if (RuntimeEngine.Rendering.State.IsShadowPass)
+                    return false;
+
+                var renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
+                if (renderState?.UseDepthNormalMaterialVariants ?? false)
+                    return false;
+
+                if (!blockedMaterial.Data.TryGetUberMaterialState(out _, out _))
+                    return false;
+
+                return true;
+            }
+
+            private static XRMaterial GetPendingUberFallbackMaterial(XRMaterial sourceMaterial)
+            {
+                ETransparencyMode mode = ResolvePendingUberFallbackTransparencyMode(sourceMaterial);
+                XRMaterial? material = GetCachedPendingUberFallbackMaterial(mode);
                 if (material is not null)
                     return material;
 
                 lock (s_pendingUberFallbackMaterialLock)
                 {
-                    material = s_pendingUberFallbackMaterial;
+                    material = GetCachedPendingUberFallbackMaterial(mode);
                     if (material is not null)
                         return material;
 
-                    material = XRMaterial.CreateUnlitColorMaterialForward(new ColorF4(0.82f, 0.72f, 0.38f, 1.0f));
-                    material.Name = "PendingUberFallbackMaterial";
+                    material = new XRMaterial(ShaderHelper.PendingUberTextureFragForward());
+                    material.Name = $"PendingUberFallbackMaterial:{mode}";
                     material.ShaderProgramPriority = EProgramPriority.Interactive;
+                    material.TransparencyMode = mode;
                     if (RuntimeEngine.Rendering.Settings.AllowShaderPipelines)
                         material.EnsureShaderPipelineProgram();
-                    s_pendingUberFallbackMaterial = material;
+                    SetCachedPendingUberFallbackMaterial(mode, material);
                     return material;
                 }
             }
+
+            private static XRMaterial? GetCachedPendingUberFallbackMaterial(ETransparencyMode mode)
+                => mode switch
+                {
+                    ETransparencyMode.Masked => s_pendingUberMaskedFallbackMaterial,
+                    ETransparencyMode.AlphaBlend => s_pendingUberTransparentFallbackMaterial,
+                    ETransparencyMode.WeightedBlendedOit => s_pendingUberWeightedOitFallbackMaterial,
+                    ETransparencyMode.PerPixelLinkedList => s_pendingUberPpllFallbackMaterial,
+                    ETransparencyMode.DepthPeeling => s_pendingUberDepthPeelingFallbackMaterial,
+                    _ => s_pendingUberOpaqueFallbackMaterial,
+                };
+
+            private static void SetCachedPendingUberFallbackMaterial(ETransparencyMode mode, XRMaterial material)
+            {
+                switch (mode)
+                {
+                    case ETransparencyMode.Masked:
+                        s_pendingUberMaskedFallbackMaterial = material;
+                        break;
+                    case ETransparencyMode.AlphaBlend:
+                        s_pendingUberTransparentFallbackMaterial = material;
+                        break;
+                    case ETransparencyMode.WeightedBlendedOit:
+                        s_pendingUberWeightedOitFallbackMaterial = material;
+                        break;
+                    case ETransparencyMode.PerPixelLinkedList:
+                        s_pendingUberPpllFallbackMaterial = material;
+                        break;
+                    case ETransparencyMode.DepthPeeling:
+                        s_pendingUberDepthPeelingFallbackMaterial = material;
+                        break;
+                    default:
+                        s_pendingUberOpaqueFallbackMaterial = material;
+                        break;
+                }
+            }
+
+            private static bool IsPendingUberFallbackMaterial(XRMaterial material)
+                => ReferenceEquals(material, s_pendingUberOpaqueFallbackMaterial) ||
+                   ReferenceEquals(material, s_pendingUberMaskedFallbackMaterial) ||
+                   ReferenceEquals(material, s_pendingUberTransparentFallbackMaterial) ||
+                   ReferenceEquals(material, s_pendingUberWeightedOitFallbackMaterial) ||
+                   ReferenceEquals(material, s_pendingUberPpllFallbackMaterial) ||
+                   ReferenceEquals(material, s_pendingUberDepthPeelingFallbackMaterial);
 
             private static uint ResolveLayeredShadowInstanceCount(XRMaterial material, uint instances)
             {

@@ -972,6 +972,12 @@ namespace XREngine.Rendering.OpenGL
                         return IsLinked;
                     }
 
+                    if (ShouldKeepWaitingForSharedCompileQueueCapacity())
+                    {
+                        RegisterPendingAsyncProgram();
+                        return ReturnPendingBuildResult();
+                    }
+
                     bool duplicateHashWaitInProgress = _asyncCompileDuplicateHashWaitPending &&
                         InFlightCompilations.ContainsKey(Hash);
                     if (!duplicateHashWaitInProgress)
@@ -1116,7 +1122,8 @@ namespace XREngine.Rendering.OpenGL
                         BinaryUploadCanEnqueue: Renderer.ProgramBinaryUploadQueue is { CanEnqueue: true },
                         DriverParallelAvailable: driverParallelSourceAvailable,
                         SharedContextCompileAvailable: sharedContextCompileAvailable,
-                        SharedContextCompileCanEnqueue: sharedContextCompileAvailable && compileQueue?.CanEnqueuePriority(priority) == true,
+                        SharedContextCompileCanEnqueue: sharedContextCompileAvailable &&
+                            compileQueue?.CanEnqueuePriority(priority, _preparedCompileSourceBytes) == true,
                         CompileInputsReady: inputs is { Length: > 0 },
                         IsKnownAsyncLinkHazard: isKnownAsyncLinkHazard,
                         PreferSharedContextForLargeSource: preferSharedContextForLargeSource,

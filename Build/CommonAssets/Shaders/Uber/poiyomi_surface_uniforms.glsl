@@ -33,8 +33,6 @@ uniform int _MainTexDistortionMaskUV;
 
 //@property(name="_MainContrast", display="Contrast", mode=static, default="1.0")
 uniform float _MainContrast;
-//@property(name="_ColorThemeIndex", display="Main Color Theme", mode=static, default="0")
-uniform int _ColorThemeIndex;
 //@property(name="_MainGrayscale", display="Grayscale", mode=static, default="0.0")
 uniform float _MainGrayscale;
 //@property(name="_MainColorReplace", display="Replacement Color", mode=static, default="vec4(1.0)")

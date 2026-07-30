@@ -34,6 +34,7 @@ public static class ShaderHelper
         "LitTexturedSpecForward.fs",
         "LitTexturedAlphaForward.fs",
         "LitTexturedSpecAlphaForward.fs",
+        "PendingUberTexturedForward.fs",
         "UnlitTexturedForward.fs",
         "UnlitTexturedStereoForward.fs",
         "UnlitAlphaTexturedForward.fs",
@@ -224,6 +225,13 @@ public static class ShaderHelper
     /// </summary>
     public static XRShader LitColorFragForward()
         => LoadEngineShader(Path.Combine("Common", "LitColoredForward.fs"));
+
+    /// <summary>
+    /// Compact textured preview used only while an Uber material's full shader is
+    /// compiling. It deliberately avoids the large ForwardLighting include.
+    /// </summary>
+    public static XRShader PendingUberTextureFragForward()
+        => LoadEngineShader(Path.Combine("Common", "PendingUberTexturedForward.fs"));
 
     #endregion
 
@@ -468,6 +476,7 @@ public static class ShaderHelper
             "LitTexturedAlphaForward.fs" => LitTextureAlphaFragForward(),
             "LitTexturedSpecAlphaForward.fs" => LitTextureSpecAlphaFragForward(),
             "LitColoredForward.fs" => LitColorFragForward(),
+            "PendingUberTexturedForward.fs" => PendingUberTextureFragForward(),
             "UnlitTexturedForward.fs" => UnlitTextureFragForward(),
             "UnlitTexturedStereoForward.fs" => UnlitTextureStereoFragForward(),
             "UnlitAlphaTexturedForward.fs" => UnlitAlphaTextureFragForward(),
@@ -590,6 +599,7 @@ public static class ShaderHelper
             "LitTexturedAlphaForward.fs" => LitTextureAlphaFragForwardWeightedOit(),
             "LitTexturedSpecAlphaForward.fs" => LitTextureSpecAlphaFragForwardWeightedOit(),
             "LitColoredForward.fs" => LitColorFragForwardWeightedOit(),
+            "PendingUberTexturedForward.fs" => CreateDefinedShaderVariant(sourceShader, WeightedBlendedOitDefine),
             "UnlitTexturedForward.fs" => UnlitTextureFragForwardWeightedOit(),
             "UnlitTexturedStereoForward.fs" => UnlitTextureStereoFragForwardWeightedOit(),
             "UnlitAlphaTexturedForward.fs" => UnlitAlphaTextureFragForwardWeightedOit(),
@@ -626,6 +636,7 @@ public static class ShaderHelper
             "LitTexturedAlphaForward.fs" => LitTextureAlphaFragForwardPerPixelLinkedList(),
             "LitTexturedSpecAlphaForward.fs" => LitTextureSpecAlphaFragForwardPerPixelLinkedList(),
             "LitColoredForward.fs" => LitColorFragForwardPerPixelLinkedList(),
+            "PendingUberTexturedForward.fs" => CreateDefinedShaderVariant(sourceShader, PerPixelLinkedListDefine),
             "UnlitTexturedForward.fs" => UnlitTextureFragForwardPerPixelLinkedList(),
             "UnlitTexturedStereoForward.fs" => UnlitTextureStereoFragForwardPerPixelLinkedList(),
             "UnlitAlphaTexturedForward.fs" => UnlitAlphaTextureFragForwardPerPixelLinkedList(),
@@ -661,6 +672,7 @@ public static class ShaderHelper
             "LitTexturedAlphaForward.fs" => LitTextureAlphaFragForwardDepthPeeling(),
             "LitTexturedSpecAlphaForward.fs" => LitTextureSpecAlphaFragForwardDepthPeeling(),
             "LitColoredForward.fs" => LitColorFragForwardDepthPeeling(),
+            "PendingUberTexturedForward.fs" => CreateDefinedShaderVariant(sourceShader, DepthPeelingDefine),
             "UnlitTexturedForward.fs" => UnlitTextureFragForwardDepthPeeling(),
             "UnlitTexturedStereoForward.fs" => UnlitTextureStereoFragForwardDepthPeeling(),
             "UnlitAlphaTexturedForward.fs" => UnlitAlphaTextureFragForwardDepthPeeling(),
@@ -768,6 +780,7 @@ public static class ShaderHelper
             "LitTexturedSpecForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
             "LitTexturedSpecAlphaForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
             "LitTexturedSilhouettePOMForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
+            "PendingUberTexturedForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
             "UnlitTexturedForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
             "UnlitTexturedStereoForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
             "UnlitTexturedArraySliceForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),

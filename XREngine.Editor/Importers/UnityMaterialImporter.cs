@@ -112,7 +112,12 @@ public static partial class UnityMaterialImporter
         try
         {
             XRMaterial material = isPoiyomiConversion
-                ? ConvertPoiyomiToUberMaterial(conversionDocument, resolver, warnings, diagnostics)
+                ? ConvertPoiyomiToUberMaterial(
+                    conversionDocument,
+                    resolver,
+                    warnings,
+                    diagnostics,
+                    promoteImplicitRuntimeBindings: !isPoiyomiProDowngrade)
                 : isLilToon
                     ? ConvertLilToonToUberMaterial(document, resolver, warnings, shaderPath)
                     : ConvertGenericUnityMaterial(document, resolver, warnings);
@@ -232,7 +237,8 @@ public static partial class UnityMaterialImporter
         UnityMaterialDocument document,
         UnityAssetResolver resolver,
         List<string> warnings,
-        List<MaterialConversionDiagnostic> diagnostics)
+        List<MaterialConversionDiagnostic> diagnostics,
+        bool promoteImplicitRuntimeBindings)
     {
         XRTexture2D main = ResolveUberTexture(document, resolver, warnings, "_MainTex", "_MainTex")
             ?? GetDefaultUberSamplerTexture("_MainTex", ColorF4.White);
@@ -354,19 +360,17 @@ public static partial class UnityMaterialImporter
         ApplyPoiyomiSurfaceFeatures(material, document, resolver, diagnostics, warnings);
         ApplyPoiyomiEffectsAndIntegrations(material, document, resolver, diagnostics, warnings);
         ApplyPoiyomiRenderState(material, document, diagnostics);
+        // Pro material animation/controller semantics are not part of the lossy
+        // Toon conversion contract. Keep their imported authored values as
+        // variant constants so inactive branches can be pruned instead of
+        // handing the driver a several-hundred-kilobyte all-runtime shader.
+        // Explicit runtime-mutability annotations remain uniforms, and editing a
+        // static material value still requests a normal variant rebuild.
+        if (promoteImplicitRuntimeBindings)
+            material.UseRuntimeUberPropertyBindings();
+
         PoiyomiSourceDocuments.Remove(material);
         PoiyomiSourceDocuments.Add(material, document);
-        try
-        {
-            _ = material.PrewarmUberPassSetImmediately();
-        }
-        catch (Exception ex)
-        {
-            diagnostics.Add(new MaterialConversionDiagnostic(
-                MaterialConversionDiagnosticCodes.PassPrewarmFailed,
-                MaterialConversionDiagnosticSeverity.Warning,
-                $"The material was converted, but one or more pass variants could not be prewarmed: {ex.GetBaseException().Message}"));
-        }
         return material;
     }
 
@@ -465,7 +469,7 @@ public static partial class UnityMaterialImporter
             parallaxSource);
 
         ApplyLilToonRenderState(material, document, shaderPath);
-        material.PrepareUberVariantImmediately();
+        material.UseRuntimeUberPropertyBindings();
         return material;
     }
 

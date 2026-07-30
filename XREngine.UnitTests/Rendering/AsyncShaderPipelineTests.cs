@@ -948,12 +948,16 @@ THIS IS NOT VALID GLSL;";
 
             compileQueue.TryEnqueueCompileAndLink(largeProgram, largeInputs, out _).ShouldBeTrue();
             compileQueue.LargeSourceInFlightCount.ShouldBe(1);
+            compileQueue.CanEnqueuePriority(
+                EProgramPriority.Main,
+                GLProgramCompileLinkQueue.LargeSourceLinkDeferralThresholdBytes).ShouldBeFalse();
+            compileQueue.CanEnqueuePriority(EProgramPriority.Main, sourceBytes: 1).ShouldBeTrue();
 
             compileQueue.TryEnqueueCompileAndLink(
                 rejectedLargeProgram,
                 largeInputs,
                 out string? rejectReason).ShouldBeFalse();
-            rejectReason.ShouldContain("large-source");
+            rejectReason.ShouldNotBeNull().ShouldContain("large-source");
 
             compileQueue.TryEnqueueCompileAndLink(smallProgram, smallInputs, out _).ShouldBeTrue();
             compileQueue.InFlightCount.ShouldBe(2);

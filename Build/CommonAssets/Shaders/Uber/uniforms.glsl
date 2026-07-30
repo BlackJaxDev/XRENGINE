@@ -16,6 +16,14 @@ uniform mat4 ViewProjectionMatrix_VTX;
 // Camera (matches EEngineUniform.CameraPosition)
 uniform vec3 CameraPosition;
 
+// The inverse-hull outline expands vertices in screen space. Fragment-stage
+// lighting snippets declare these separately, so keep this declaration scoped
+// to the vertex variants that consume u_ScreenParams.
+#ifndef XRENGINE_UBER_MVP_FRAGMENT
+uniform float ScreenWidth;
+uniform float ScreenHeight;
+#endif
+
 // Time for animations (provided by engine when RenderTime is requested)
 //@feature(id="render-time", name="Render Time", default=on, cost=none)
 #ifndef XRENGINE_UBER_DISABLE_RENDER_TIME
@@ -81,6 +89,7 @@ uniform int _MainTexUV;
 //@property(name="_Color", display="Tint", mode=static, indirect=field, semantic=baseColorOpacity, default="vec4(1.0, 1.0, 1.0, 1.0)")
 //@tooltip("Color tint multiplied into the sampled albedo.")
 uniform vec4 _Color;                // Main color tint
+//@property(name="_ColorThemeIndex", display="Main Color Theme", mode=static, default="0")
 uniform int _ColorThemeIndex;
 
 // ============================================

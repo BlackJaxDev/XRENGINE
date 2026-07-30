@@ -137,6 +137,37 @@ public partial class XRMaterial
             : defaultMode;
     }
 
+    /// <summary>
+    /// Keeps authorable runtime-mutable Uber properties as uniforms instead of
+    /// baking their current values into a material-specific shader variant.
+    /// Explicit material/pass/engine/debug-static declarations remain static.
+    /// </summary>
+    public bool UseRuntimeUberPropertyBindings()
+    {
+        if (!TryGetUberMaterialState(out _, out ShaderUiManifest manifest))
+            return false;
+
+        List<string> runtimePropertyNames = [];
+        foreach (ShaderUiProperty property in manifest.Properties)
+        {
+            if (property.IsSampler ||
+                !IsAuthorableUberProperty(property) ||
+                property.HasExplicitMutability &&
+                property.Mutability != EShaderUiPropertyMutability.Runtime)
+            {
+                continue;
+            }
+
+            runtimePropertyNames.Add(property.Name);
+        }
+
+        return UpdateUberAuthoredState(
+            static (state, propertyNames) => state.SetPropertyModes(
+                propertyNames,
+                EShaderUiPropertyMode.Animated),
+            runtimePropertyNames);
+    }
+
     internal void EnsureUberStateInitialized(XRShader fragmentShader, ShaderUiManifest manifest)
     {
         UberMaterialAuthoredState current = UberAuthoredState ?? UberMaterialAuthoredState.Empty;
@@ -160,7 +191,21 @@ public partial class XRMaterial
         if (!current.Equals(next))
             UberAuthoredState = next;
 
+        EnsureUberAuthorableParameters(manifest);
         EnsureUberEnabledFeatureResources(manifest);
+    }
+
+    private void EnsureUberAuthorableParameters(ShaderUiManifest manifest)
+    {
+        bool changed = false;
+        foreach (ShaderUiProperty property in manifest.Properties)
+        {
+            if (!property.IsSampler && IsAuthorableUberProperty(property))
+                changed |= EnsureUberDefaultParameter(property);
+        }
+
+        if (changed)
+            MarkDirty();
     }
 
     private void EnsureUberFeatureResources(string featureId)
@@ -196,6 +241,13 @@ public partial class XRMaterial
 
         foreach (ShaderUiProperty property in manifest.Properties)
         {
+            // Pipeline-owned inputs (shadow atlases, AO buffers, camera state, and
+            // similar resources) are bound by the renderer. Material initialization
+            // must not create placeholder assets for them or they become serialized
+            // as if they were authored Unity material properties.
+            if (!IsAuthorableUberProperty(property))
+                continue;
+
             if (!string.Equals(property.FeatureId, featureId, StringComparison.Ordinal))
                 continue;
 
@@ -216,23 +268,195 @@ public partial class XRMaterial
 
     private bool EnsureUberDefaultParameter(ShaderUiProperty property)
     {
-        if (Parameter<ShaderVar>(property.Name) is ShaderVar existingParameter)
-            return TryApplyUberDefaultLiteral(existingParameter, property);
-
         if (!ShaderVar.GlslTypeMap.TryGetValue(property.GlslType, out EShaderVarType shaderVarType))
             return false;
 
-        ShaderVar? parameter = ShaderVar.CreateForType(shaderVarType, property.Name);
-        if (parameter is null)
-            return false;
-
-        ApplyUberDefaultLiteral(parameter, property.DefaultLiteral);
-
         ShaderVar[] current = Parameters ?? [];
-        Array.Resize(ref current, current.Length + 1);
-        current[^1] = parameter;
-        Parameters = current;
+        ShaderVar? firstNamedParameter = null;
+        ShaderVar? matchingParameter = null;
+        int namedParameterCount = 0;
+        foreach (ShaderVar parameter in current)
+        {
+            if (parameter is null ||
+                !string.Equals(parameter.Name, property.Name, StringComparison.Ordinal))
+                continue;
+
+            firstNamedParameter ??= parameter;
+            namedParameterCount++;
+            if (parameter.TypeName == shaderVarType)
+                matchingParameter ??= parameter;
+        }
+
+        ShaderVar? resolvedParameter = matchingParameter;
+        if (resolvedParameter is null)
+        {
+            resolvedParameter = ShaderVar.CreateForType(shaderVarType, property.Name);
+            if (resolvedParameter is null)
+                return false;
+
+            // Unity stores many enum/toggle properties as floats and legacy YAML
+            // could infer vec3 for aliased vec4 values. Seed a replacement from
+            // the manifest default, then overlay authored components when the
+            // legacy value is non-default.
+            ApplyUberDefaultLiteral(resolvedParameter, property.DefaultLiteral);
+            if (firstNamedParameter is not null &&
+                !IsShaderParameterAtLanguageDefault(firstNamedParameter))
+            {
+                CopyCompatibleUberParameterValue(firstNamedParameter, resolvedParameter);
+            }
+        }
+
+        bool parametersChanged = NormalizeUberParameter(
+            property.Name,
+            resolvedParameter,
+            current,
+            namedParameterCount);
+        bool defaultChanged = TryApplyUberDefaultLiteral(resolvedParameter, property);
+        return parametersChanged || defaultChanged;
+    }
+
+    private bool NormalizeUberParameter(
+        string parameterName,
+        ShaderVar resolvedParameter,
+        ShaderVar[] current,
+        int namedParameterCount)
+    {
+        if (namedParameterCount == 1 &&
+            current.Any(parameter => ReferenceEquals(parameter, resolvedParameter)))
+        {
+            return false;
+        }
+
+        List<ShaderVar> normalized = new(
+            current.Length - Math.Max(0, namedParameterCount - 1) + (namedParameterCount == 0 ? 1 : 0));
+        bool inserted = false;
+        foreach (ShaderVar parameter in current)
+        {
+            if (parameter is null)
+                continue;
+
+            if (string.Equals(parameter.Name, parameterName, StringComparison.Ordinal))
+            {
+                if (!inserted)
+                {
+                    normalized.Add(resolvedParameter);
+                    inserted = true;
+                }
+
+                continue;
+            }
+
+            normalized.Add(parameter);
+        }
+
+        if (!inserted)
+            normalized.Add(resolvedParameter);
+
+        Parameters = [.. normalized];
         return true;
+    }
+
+    private static void CopyCompatibleUberParameterValue(ShaderVar source, ShaderVar destination)
+    {
+        if (TryGetUberScalarValue(source, out double scalar))
+        {
+            switch (destination)
+            {
+                case ShaderBool shaderBool:
+                    shaderBool.SetValue(Math.Abs(scalar) > double.Epsilon);
+                    return;
+                case ShaderInt shaderInt:
+                    shaderInt.SetValue((int)Math.Clamp(Math.Truncate(scalar), int.MinValue, int.MaxValue));
+                    return;
+                case ShaderUInt shaderUInt:
+                    shaderUInt.SetValue((uint)Math.Clamp(Math.Truncate(scalar), uint.MinValue, uint.MaxValue));
+                    return;
+                case ShaderFloat shaderFloat:
+                    shaderFloat.SetValue((float)scalar);
+                    return;
+            }
+        }
+
+        if (!TryGetUberVectorValue(source, out Vector4 vector, out int componentCount))
+            return;
+
+        switch (destination)
+        {
+            case ShaderVector2 shaderVector2:
+                shaderVector2.SetValue(new Vector2(vector.X, vector.Y));
+                break;
+            case ShaderVector3 shaderVector3:
+                shaderVector3.SetValue(new Vector3(vector.X, vector.Y, vector.Z));
+                break;
+            case ShaderVector4 shaderVector4:
+            {
+                Vector4 current = shaderVector4.Value;
+                shaderVector4.SetValue(new Vector4(
+                    vector.X,
+                    componentCount >= 2 ? vector.Y : current.Y,
+                    componentCount >= 3 ? vector.Z : current.Z,
+                    componentCount >= 4 ? vector.W : current.W));
+                break;
+            }
+        }
+    }
+
+    private static bool TryGetUberScalarValue(ShaderVar parameter, out double value)
+    {
+        switch (parameter)
+        {
+            case ShaderBool shaderBool:
+                value = shaderBool.Value ? 1.0 : 0.0;
+                return true;
+            case ShaderInt shaderInt:
+                value = shaderInt.Value;
+                return true;
+            case ShaderUInt shaderUInt:
+                value = shaderUInt.Value;
+                return true;
+            case ShaderFloat shaderFloat:
+                value = shaderFloat.Value;
+                return true;
+            case ShaderDouble shaderDouble:
+                value = shaderDouble.Value;
+                return true;
+            default:
+                value = 0.0;
+                return false;
+        }
+    }
+
+    private static bool TryGetUberVectorValue(
+        ShaderVar parameter,
+        out Vector4 value,
+        out int componentCount)
+    {
+        switch (parameter)
+        {
+            case ShaderVector2 shaderVector2:
+                value = new Vector4(shaderVector2.Value, 0.0f, 0.0f);
+                componentCount = 2;
+                return true;
+            case ShaderVector3 shaderVector3:
+                value = new Vector4(shaderVector3.Value, 0.0f);
+                componentCount = 3;
+                return true;
+            case ShaderVector4 shaderVector4:
+                value = shaderVector4.Value;
+                componentCount = 4;
+                return true;
+            default:
+                if (TryGetUberScalarValue(parameter, out double scalar))
+                {
+                    value = new Vector4((float)scalar, 0.0f, 0.0f, 0.0f);
+                    componentCount = 1;
+                    return true;
+                }
+
+                value = Vector4.Zero;
+                componentCount = 0;
+                return false;
+        }
     }
 
     private bool TryApplyUberDefaultLiteral(ShaderVar parameter, ShaderUiProperty property)
@@ -450,7 +674,7 @@ public partial class XRMaterial
             return false;
 
         string[] parts = literal[(prefix.Length + 1)..^1].Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length != expectedComponentCount)
+        if (parts.Length != 1 && parts.Length != expectedComponentCount)
             return false;
 
         float[] parsed = new float[expectedComponentCount];
@@ -459,6 +683,9 @@ public partial class XRMaterial
             if (!float.TryParse(parts[i], NumberStyles.Float, CultureInfo.InvariantCulture, out parsed[i]))
                 return false;
         }
+
+        if (parts.Length == 1)
+            Array.Fill(parsed, parsed[0]);
 
         values = parsed;
         return true;
@@ -811,6 +1038,11 @@ public partial class XRMaterial
             return fragmentShader;
         }
 
+        // Native material serialization embeds generated variant text but does
+        // not persist the canonical engine shader's FilePath. Rehydrate that
+        // canonical identity explicitly so a reloaded material is still
+        // recognized as Uber-backed. This also keeps the lightweight pending
+        // fallback active while a large OpenGL variant finishes linking.
         string? shaderPath = fragmentShader.Source?.FilePath ?? fragmentShader.FilePath;
         if (!string.IsNullOrWhiteSpace(shaderPath) && File.Exists(shaderPath))
         {
@@ -825,7 +1057,8 @@ public partial class XRMaterial
             return _uberCanonicalFragmentShader;
         }
 
-        return fragmentShader;
+        _uberCanonicalFragmentShader = ShaderHelper.UberFragForward();
+        return _uberCanonicalFragmentShader;
     }
 
     private static string? ResolveShaderPathOrName(XRShader shader)

@@ -24,7 +24,10 @@ public static partial class PoiyomiShaderMatcher
         "_Refraction",
         "_Blur",
         "_Touch",
-        "_Pro",
+        "_ProIntegration",
+        "_ProLTCGI",
+        "_ProAudio",
+        "_ProVertex",
     ];
 
     public static PoiyomiShaderMatchResult Match(PoiyomiShaderMatchInput input)
