@@ -136,12 +136,7 @@ public sealed class McpServerAutomationTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string repoRoot = ResolveRepoRoot();
-        string path = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
-        File.Exists(path).ShouldBeTrue($"Expected workspace file '{path}' to exist.");
-        return File.ReadAllText(path);
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ResolveRepoRoot()
     {

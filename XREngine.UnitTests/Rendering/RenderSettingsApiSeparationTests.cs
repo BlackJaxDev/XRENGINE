@@ -200,20 +200,5 @@ public sealed class RenderSettingsApiSeparationTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string? directory = TestContext.CurrentContext.TestDirectory;
-        while (!string.IsNullOrEmpty(directory))
-        {
-            if (File.Exists(Path.Combine(directory, "XRENGINE.slnx")))
-            {
-                string path = Path.Combine(directory, relativePath.Replace('/', Path.DirectorySeparatorChar));
-                File.Exists(path).ShouldBeTrue($"Expected workspace file '{path}' to exist.");
-                return File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
-            }
-
-            directory = Directory.GetParent(directory)?.FullName;
-        }
-
-        throw new DirectoryNotFoundException("Could not locate repository root containing XRENGINE.slnx.");
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 }

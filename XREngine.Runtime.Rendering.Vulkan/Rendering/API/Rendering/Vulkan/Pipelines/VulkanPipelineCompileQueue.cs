@@ -27,13 +27,6 @@ public unsafe partial class VulkanRenderer
     private long _vulkanPipelineCompileDependencyGeneration;
     private long _vulkanPipelineCompileActivityGeneration;
 
-    internal readonly record struct VulkanGraphicsPipelineCompileResult(
-        bool Success,
-        Pipeline Pipeline,
-        string? ErrorMessage,
-        double CompileMilliseconds,
-        bool Retryable = false);
-
     private sealed class VulkanGraphicsPipelineCompileJob(
         VkMeshRenderer.GraphicsPipelineBuildRequest request,
         Task<VulkanGraphicsPipelineCompileResult> task)
@@ -493,7 +486,7 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private bool IsVulkanPipelineCompileDependencyGenerationCurrent(
+    internal bool IsVulkanPipelineCompileDependencyGenerationCurrent(
         long dependencyGeneration)
         => dependencyGeneration ==
            Volatile.Read(ref _vulkanPipelineCompileDependencyGeneration);

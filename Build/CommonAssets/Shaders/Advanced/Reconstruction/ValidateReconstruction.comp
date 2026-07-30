@@ -1,0 +1,120 @@
+#version 450
+
+#include "ReconstructSurface.glslinc"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+#if defined(XR_ADV_VISIBILITY_ARRAY)
+XR_ADV_RECONSTRUCTION_PASS_LAYOUT(0) uniform usampler2DArray VisibilityIdentity;
+XR_ADV_RECONSTRUCTION_PASS_LAYOUT(1) uniform usampler2DArray VisibilityMetadata;
+XR_ADV_RECONSTRUCTION_PASS_LAYOUT(2) uniform sampler2DArray VisibilityDepth;
+#else
+XR_ADV_RECONSTRUCTION_PASS_LAYOUT(0) uniform usampler2D VisibilityIdentity;
+XR_ADV_RECONSTRUCTION_PASS_LAYOUT(1) uniform usampler2D VisibilityMetadata;
+XR_ADV_RECONSTRUCTION_PASS_LAYOUT(2) uniform sampler2D VisibilityDepth;
+#endif
+
+void main()
+{
+#if defined(XR_ADV_VISIBILITY_ARRAY)
+    ivec3 pixel = ivec3(gl_GlobalInvocationID);
+    ivec3 inputSize = textureSize(VisibilityIdentity, 0);
+#else
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 inputSize = textureSize(VisibilityIdentity, 0);
+#endif
+    if (any(greaterThanEqual(pixel, inputSize)))
+        return;
+
+    XRAdvancedSurface surface;
+    bool valid = XR_ADV_TryReconstructSurface(
+        texelFetch(VisibilityIdentity, pixel, 0).rg,
+        texelFetch(VisibilityMetadata, pixel, 0).r,
+        texelFetch(VisibilityDepth, pixel, 0).r,
+        vec2(pixel.xy) + 0.5,
+        surface);
+    if (valid)
+    {
+        atomicAdd(
+            XR_ADV_ReconstructionCounters.validSurfaces,
+            1u);
+        if ((surface.flags & XR_ADV_SURFACE_DEFORMED) != 0u)
+            atomicAdd(
+                XR_ADV_ReconstructionCounters.deformedSurfaces,
+                1u);
+        else
+            atomicAdd(
+                XR_ADV_ReconstructionCounters.staticSurfaces,
+                1u);
+        if ((surface.flags &
+             XR_ADV_SURFACE_VELOCITY_VALID) != 0u)
+        {
+            atomicAdd(
+                XR_ADV_ReconstructionCounters.validVelocities,
+                1u);
+        }
+        else
+        {
+            atomicAdd(
+                XR_ADV_ReconstructionCounters.invalidVelocities,
+                1u);
+        }
+        if ((surface.flags & XR_ADV_SURFACE_REACTIVE) != 0u)
+            atomicAdd(
+                XR_ADV_ReconstructionCounters.reactivePixels,
+                1u);
+        if ((surface.flags & XR_ADV_SURFACE_MASKED_EDGE) != 0u)
+            atomicAdd(
+                XR_ADV_ReconstructionCounters.maskedEdges,
+                1u);
+        return;
+    }
+
+    if (surface.invalidReason ==
+        XR_ADV_RECONSTRUCTION_STALE_GENERATION)
+    {
+        atomicAdd(
+            XR_ADV_ReconstructionCounters.staleGenerations,
+            1u);
+    }
+    else if (surface.invalidReason ==
+             XR_ADV_RECONSTRUCTION_GEOMETRY_MISSING ||
+             surface.invalidReason ==
+             XR_ADV_RECONSTRUCTION_GEOMETRY_NOT_RESIDENT ||
+             surface.invalidReason ==
+             XR_ADV_RECONSTRUCTION_CURRENT_GEOMETRY_MISSING ||
+             surface.invalidReason ==
+             XR_ADV_RECONSTRUCTION_PREVIOUS_GEOMETRY_MISSING)
+    {
+        atomicAdd(
+            XR_ADV_ReconstructionCounters.missingGeometry,
+            1u);
+    }
+    else if (surface.invalidReason ==
+             XR_ADV_RECONSTRUCTION_PRIMITIVE_OUT_OF_RANGE)
+    {
+        atomicAdd(
+            XR_ADV_ReconstructionCounters.primitiveOutOfBounds,
+            1u);
+    }
+    else if (surface.invalidReason ==
+             XR_ADV_RECONSTRUCTION_DEGENERATE_TRIANGLE)
+    {
+        atomicAdd(
+            XR_ADV_ReconstructionCounters.degenerateTriangles,
+            1u);
+    }
+    else if (surface.invalidReason ==
+             XR_ADV_RECONSTRUCTION_NON_FINITE)
+    {
+        atomicAdd(
+            XR_ADV_ReconstructionCounters.nonFiniteAttributes,
+            1u);
+    }
+    else
+    {
+        atomicAdd(
+            XR_ADV_ReconstructionCounters.invalidPayloads,
+            1u);
+    }
+}

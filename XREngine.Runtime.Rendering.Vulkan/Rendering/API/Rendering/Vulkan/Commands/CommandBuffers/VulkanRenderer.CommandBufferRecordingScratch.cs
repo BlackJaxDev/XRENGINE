@@ -7,7 +7,9 @@ namespace XREngine.Rendering.Vulkan
     {
         private sealed class CommandBufferRecordingScratch
         {
-            public Dictionary<int, VulkanRenderGraphCompiler.SecondaryRecordingBucket> SecondaryBucketByStart { get; } = new();
+            public VulkanRenderScopeController RenderScope { get; } = new();
+            public Dictionary<int, VulkanSecondaryRecordingBucket> SecondaryBucketByStart { get; } = new();
+            public List<VulkanSecondaryRecordingBucket> SecondaryRecordingBuckets { get; } = new(32);
             public Dictionary<int, int> SwapchainWritesByPipeline { get; } = new();
             public Dictionary<int, string> SwapchainWriterLabelByPipeline { get; } = new();
             public Dictionary<int, string> SwapchainWriterDetailByPipeline { get; } = new();

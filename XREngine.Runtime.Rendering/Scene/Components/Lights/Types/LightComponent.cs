@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Numerics;
+using System.Threading;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -99,6 +100,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private long _lastMovedTicks;
         private uint _movementVersion = 0;
+        private long _activationCount;
 
         internal static float TimeSinceLastMovementSeconds(long currentTicks, long lastMovedTicks)
             => RuntimeTiming.TicksToSeconds(Math.Max(0L, currentTicks - lastMovedTicks));
@@ -109,6 +111,12 @@ namespace XREngine.Components.Capture.Lights.Types
         /// </summary>
         [Browsable(false)]
         public uint MovementVersion => _movementVersion;
+
+        /// <summary>
+        /// Number of times this light has entered the active scene hierarchy.
+        /// </summary>
+        [Browsable(false)]
+        public long ActivationCount => Interlocked.Read(ref _activationCount);
 
         /// <summary>
         /// Seconds since the last observed movement of this light.
@@ -212,6 +220,7 @@ namespace XREngine.Components.Capture.Lights.Types
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            Interlocked.Increment(ref _activationCount);
             EnsureShadowMapForActiveDynamicLight();
             SyncDynamicWorldRegistration();
         }

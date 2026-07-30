@@ -30,15 +30,6 @@ struct VisibilityState
     uint Flags;
 };
 
-struct DrawIndexedIndirect
-{
-    uint IndexCount;
-    uint InstanceCount;
-    uint FirstIndex;
-    int VertexOffset;
-    uint FirstInstance;
-};
-
 layout(std430, binding = 0) readonly buffer Candidates
 {
     VisibilityCandidate CandidateRows[];
@@ -49,30 +40,28 @@ layout(std430, binding = 1) buffer PersistentVisibility
     VisibilityState PersistentRows[];
 };
 
-layout(std430, binding = 2) writeonly buffer EarlyArguments
-{
-    DrawIndexedIndirect EarlyDraws[];
-};
-
-layout(std430, binding = 3) writeonly buffer DeferredCandidates
+layout(std430, binding = 2) writeonly buffer DeferredCandidates
 {
     uint DeferredDrawIndices[];
 };
 
-layout(std430, binding = 4) buffer GpuCounters
+layout(std430, binding = 3) buffer GpuCounters
 {
     uint EarlyCount;
     uint DeferredCount;
     uint LateCount;
-    uint ReservedCount;
+    uint RecoveredCount;
+    uint ValidPixelCount;
+    uint InvalidPixelCount;
+    uint PayloadOverflowCount;
+    uint MaskedCoverageCount;
+    uint DecodeOutOfBoundsCount;
+    uint DepthPyramidBuildCount;
+    uint UnsupportedDisplacementCount;
+    uint ReservedCounters[5];
 };
 
-layout(std430, binding = 5) readonly buffer SourceArguments
-{
-    DrawIndexedIndirect SourceDraws[];
-};
-
-layout(std430, binding = 6) writeonly buffer EarlyVisiblePayloadIndices
+layout(std430, binding = 4) writeonly buffer EarlyVisiblePayloadIndices
 {
     uint EarlyVisibleIndices[];
 };
@@ -85,6 +74,9 @@ uniform uvec2 FrameId;
 uniform uvec2 ActiveViewMask;
 uniform uint CandidateCount;
 uniform uint PersistentStateBase;
+uniform uint PersistentStateCapacity;
+uniform uint EarlyVisibleCapacity;
+uniform uint DeferredCapacity;
 uniform uint PreviousDepthPyramidValid;
 uniform uint DepthZeroToOne;
 uniform uint ReversedDepth;
@@ -105,9 +97,11 @@ bool previousDepthOccludes(vec4 sphere)
     if (PreviousDepthPyramidValid == 0u)
         return false;
 
-    vec4 clip = PreviousViewProjection * vec4(sphere.xyz, 1.0);
+    vec4 clip =
+        PreviousViewProjection * vec4(sphere.xyz, 1.0);
     if (clip.w <= 0.0)
         return false;
+
     vec3 ndc = clip.xyz / clip.w;
     vec2 uv = ndc.xy * 0.5 + 0.5;
     if (any(lessThan(uv, vec2(0.0))) ||
@@ -119,8 +113,9 @@ bool previousDepthOccludes(vec4 sphere)
         0.000001);
     float diameterPixels =
         projectedRadius *
-        float(max(textureSize(PreviousDepthPyramid, 0).x,
-                  textureSize(PreviousDepthPyramid, 0).y));
+        float(max(
+            textureSize(PreviousDepthPyramid, 0).x,
+            textureSize(PreviousDepthPyramid, 0).y));
     float mip = clamp(
         floor(log2(max(diameterPixels, 1.0))),
         0.0,
@@ -141,13 +136,22 @@ bool previousDepthOccludes(vec4 sphere)
 void appendEarly(uint candidateIndex)
 {
     uint outputIndex = atomicAdd(EarlyCount, 1u);
-    EarlyDraws[outputIndex] = SourceDraws[candidateIndex];
+    if (outputIndex >= EarlyVisibleCapacity)
+    {
+        atomicAdd(PayloadOverflowCount, 1u);
+        return;
+    }
     EarlyVisibleIndices[outputIndex] = candidateIndex;
 }
 
 void appendDeferred(uint candidateIndex)
 {
     uint outputIndex = atomicAdd(DeferredCount, 1u);
+    if (outputIndex >= DeferredCapacity)
+    {
+        atomicAdd(PayloadOverflowCount, 1u);
+        return;
+    }
     DeferredDrawIndices[outputIndex] = candidateIndex;
 }
 
@@ -158,10 +162,24 @@ void main()
         return;
 
     VisibilityCandidate candidate = CandidateRows[candidateIndex];
+    if (candidate.Draw.x == 0u)
+    {
+        atomicAdd(DecodeOutOfBoundsCount, 1u);
+        return;
+    }
+
     uint persistentIndex =
         PersistentStateBase + candidate.Draw.x - 1u;
+    if (persistentIndex >= PersistentStateCapacity)
+    {
+        atomicAdd(DecodeOutOfBoundsCount, 1u);
+        return;
+    }
+
     VisibilityState state = PersistentRows[persistentIndex];
-    if (all(equal(candidate.ViewMask & ActiveViewMask, uvec2(0u))))
+    if (all(equal(
+            candidate.ViewMask & ActiveViewMask,
+            uvec2(0u))))
     {
         state.Draw = candidate.Draw;
         state.LastTestedFrame = FrameId;
@@ -169,6 +187,7 @@ void main()
         PersistentRows[persistentIndex] = state;
         return;
     }
+
     bool conservative =
         (candidate.Flags &
          (FLAG_NEW |
@@ -193,8 +212,6 @@ void main()
     }
     else if (frustumVisible)
     {
-        // Only previous-depth rejects can be recovered by the current-frame
-        // late test. Frustum rejects never enter the deferred list.
         appendDeferred(candidateIndex);
         state.Flags = FLAG_DEFERRED;
     }

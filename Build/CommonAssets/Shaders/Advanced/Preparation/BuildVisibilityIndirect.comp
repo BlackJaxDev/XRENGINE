@@ -4,8 +4,9 @@ layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 const uint PRODUCER_STATIC_MESHLET = 0u;
 const uint PRODUCER_SKINNED_MESHLET = 1u;
-const uint PRODUCER_TRADITIONAL = 2u;
-const uint PRODUCER_CPU_DIAGNOSTIC = 3u;
+const uint PRODUCER_INDIRECT_INDEXED = 2u;
+const uint PRODUCER_CPU_DIRECT_STATIC_INDEXED = 3u;
+const uint PRODUCER_CPU_DIRECT_PRE_SKINNED = 4u;
 
 struct VisibilityPayload
 {
@@ -40,6 +41,13 @@ struct DrawIndexedIndirect
     uint FirstInstance;
 };
 
+struct DrawMeshTasksIndirect
+{
+    uint GroupCountX;
+    uint GroupCountY;
+    uint GroupCountZ;
+};
+
 layout(std430, binding = 0) readonly buffer Payloads
 {
     VisibilityPayload PayloadRows[];
@@ -55,9 +63,9 @@ layout(std430, binding = 2) readonly buffer Producers
     uint ProducerRows[];
 };
 
-layout(std430, binding = 3) writeonly buffer IndirectArguments
+layout(std430, binding = 3) writeonly buffer IndexedIndirectArguments
 {
-    DrawIndexedIndirect Arguments[];
+    DrawIndexedIndirect IndexedArguments[];
 };
 
 layout(std430, binding = 4) buffer RangeCounts
@@ -75,57 +83,109 @@ layout(std430, binding = 6) readonly buffer RangeArgumentOffsets
     uint ArgumentOffsets[];
 };
 
-layout(std430, binding = 7) readonly buffer VisibilityCounters
+layout(std430, binding = 7) buffer VisibilityCounters
 {
     uint EarlyCount;
     uint DeferredCount;
     uint LateCount;
-    uint ReservedCount;
+    uint RecoveredCount;
+    uint ValidPixelCount;
+    uint InvalidPixelCount;
+    uint PayloadOverflowCount;
+    uint MaskedCoverageCount;
+    uint DecodeOutOfBoundsCount;
+    uint DepthPyramidBuildCount;
+    uint UnsupportedDisplacementCount;
+    uint ReservedCounters[5];
+};
+
+layout(std430, binding = 8) writeonly buffer MeshIndirectArguments
+{
+    DrawMeshTasksIndirect MeshArguments[];
+};
+
+layout(std430, binding = 9) writeonly buffer MeshPayloadIndices
+{
+    uint MeshPayloadRows[];
 };
 
 uniform uint VisibleCapacity;
+uniform uint PayloadCount;
+uniform uint RangeCount;
+uniform uint ArgumentCapacity;
 uniform uint UseLateVisibleList;
 
 void main()
 {
     uint visibleIndex = gl_GlobalInvocationID.x;
-    uint visibleCount =
-        UseLateVisibleList != 0u ? LateCount : EarlyCount;
-    if (visibleIndex >= VisibleCapacity ||
-        visibleIndex >= visibleCount)
+    uint visibleCount = UseLateVisibleList != 0u
+        ? LateCount
+        : EarlyCount;
+    if (visibleIndex >= visibleCount)
+        return;
+    if (visibleIndex >= VisibleCapacity)
         return;
 
     uint payloadIndex = VisibleIndices[visibleIndex];
-    VisibilityPayload payload = PayloadRows[payloadIndex];
+    if (payloadIndex >= PayloadCount)
+    {
+        atomicAdd(DecodeOutOfBoundsCount, 1u);
+        return;
+    }
+
     uint producer = ProducerRows[payloadIndex];
-    uint range = RangeIndices[payloadIndex];
-    uint rangeLocal = atomicAdd(Counts[range], 1u);
-    uint outputIndex = ArgumentOffsets[range] + rangeLocal;
-
-    DrawIndexedIndirect argument;
-    argument.IndexCount = payload.IndexCount;
-    argument.InstanceCount = max(payload.InstanceCount, 1u);
-    argument.FirstIndex = payload.FirstIndex;
-    argument.VertexOffset = int(payload.VertexOffset);
-    argument.FirstInstance = payloadIndex;
-
-    // Static and skinned meshlets differ only in vertex source. Both preserve
-    // Draw/Geometry/Material identity in the payload consumed by raster.
-    if (producer == PRODUCER_STATIC_MESHLET ||
-        producer == PRODUCER_SKINNED_MESHLET)
-    {
-        argument.FirstIndex = payload.MeshletOffset;
-        argument.IndexCount = payload.MeshletCount;
-    }
-    else if (producer == PRODUCER_CPU_DIAGNOSTIC)
-    {
-        // The explicit diagnostic path consumes the same payload/argument
-        // schema; only command production occurs on CPU.
-    }
-    else if (producer != PRODUCER_TRADITIONAL)
+    if (producer == PRODUCER_CPU_DIRECT_STATIC_INDEXED ||
+        producer == PRODUCER_CPU_DIRECT_PRE_SKINNED)
     {
         return;
     }
 
-    Arguments[outputIndex] = argument;
+    uint range = RangeIndices[payloadIndex];
+    if (range >= RangeCount)
+    {
+        atomicAdd(DecodeOutOfBoundsCount, 1u);
+        return;
+    }
+
+    uint rangeLocal = atomicAdd(Counts[range], 1u);
+    uint outputIndex =
+        ArgumentOffsets[range] + rangeLocal;
+    if (outputIndex >= ArgumentCapacity)
+    {
+        atomicAdd(PayloadOverflowCount, 1u);
+        return;
+    }
+
+    VisibilityPayload payload = PayloadRows[payloadIndex];
+    if (producer == PRODUCER_INDIRECT_INDEXED)
+    {
+        DrawIndexedIndirect argument;
+        argument.IndexCount = payload.IndexCount;
+        argument.InstanceCount = max(payload.InstanceCount, 1u);
+        argument.FirstIndex = payload.FirstIndex;
+        argument.VertexOffset = int(payload.VertexOffset);
+        argument.FirstInstance = payloadIndex;
+        IndexedArguments[outputIndex] = argument;
+        return;
+    }
+
+    if (producer == PRODUCER_STATIC_MESHLET ||
+        producer == PRODUCER_SKINNED_MESHLET)
+    {
+        if (payload.MeshletCount == 0u)
+        {
+            atomicAdd(DecodeOutOfBoundsCount, 1u);
+            return;
+        }
+
+        DrawMeshTasksIndirect argument;
+        argument.GroupCountX = payload.MeshletCount;
+        argument.GroupCountY = 1u;
+        argument.GroupCountZ = 1u;
+        MeshArguments[outputIndex] = argument;
+        MeshPayloadRows[outputIndex] = payloadIndex;
+        return;
+    }
+
+    atomicAdd(DecodeOutOfBoundsCount, 1u);
 }

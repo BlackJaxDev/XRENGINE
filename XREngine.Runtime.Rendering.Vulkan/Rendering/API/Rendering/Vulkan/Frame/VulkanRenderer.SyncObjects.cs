@@ -41,7 +41,7 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     internal bool IsDeviceOperational => device.Handle != 0 && _deviceStateMachine.IsOperational;
 
-    private void MarkDeviceLost(string? reason = null)
+    internal void MarkDeviceLost(string? reason = null)
     {
         RecordFirstFailingVulkanApi(reason);
 
@@ -241,7 +241,7 @@ public unsafe partial class VulkanRenderer
 
     private void CreateSyncObjects()
     {
-        if (!_supportsTimelineSemaphores)
+        if (!DeviceCapabilities.Supports(EVulkanDeviceCapability.TimelineSemaphores))
             throw new InvalidOperationException("Vulkan timeline semaphores are required but were not enabled on the logical device.");
 
         acquireBridgeSemaphores = new Semaphore[MAX_FRAMES_IN_FLIGHT];

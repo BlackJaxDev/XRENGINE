@@ -196,11 +196,27 @@ if (-not $NoClean) {
     }
 }
 
-$buildArgs = @("run")
-if ($NoEditorBuild) {
-    $buildArgs += "--no-build"
+$editorBuildText = ""
+if (-not $NoEditorBuild) {
+    Write-Host "Rebuilding canonical $EditorConfiguration editor/tooling output..."
+    $editorBuildArguments = @(
+        "build", $editorProject,
+        "-c", $EditorConfiguration,
+        "-p:Platform=AnyCPU",
+        "--no-incremental"
+    )
+    $editorBuildResult = Invoke-ProcessCapture `
+        -FilePath "dotnet" `
+        -Arguments $editorBuildArguments `
+        -WorkingDirectory $repoRoot
+    $editorBuildText = $editorBuildResult.Output
+    if ($editorBuildResult.ExitCode -ne 0) {
+        Set-Content -Path $publishLog -Value $editorBuildText -Encoding UTF8
+        throw "Canonical $EditorConfiguration editor/tooling rebuild failed. See $publishLog"
+    }
 }
 
+$buildArgs = @("run", "--no-build")
 $buildArgs += @(
     "--project", $editorProject,
     "-c", $EditorConfiguration,
@@ -218,6 +234,13 @@ $buildArgs += @(
 $buildResult = Invoke-ProcessCapture -FilePath "dotnet" -Arguments $buildArgs -WorkingDirectory $repoRoot
 $buildExit = $buildResult.ExitCode
 $buildText = $buildResult.Output
+if (-not [string]::IsNullOrWhiteSpace($editorBuildText)) {
+    $buildText =
+        "=== Canonical editor/tooling rebuild ===" + [Environment]::NewLine +
+        $editorBuildText + [Environment]::NewLine +
+        "=== Final game build and NativeAOT publish ===" + [Environment]::NewLine +
+        $buildText
+}
 Set-Content -Path $publishLog -Value $buildText -Encoding UTF8
 
 $launcherPublishLog = Get-LatestLauncherPublishLog -ProjectDirectory $projectDir

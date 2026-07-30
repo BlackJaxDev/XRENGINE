@@ -1,6 +1,6 @@
 using Silk.NET.Vulkan;
 
-namespace XREngine.Rendering.Vulkan;
+namespace XREngine.Rendering.Vulkan.DeviceBootstrap;
 
 /// <summary>
 /// Owns the logical-device handle and the queues selected for engine work.

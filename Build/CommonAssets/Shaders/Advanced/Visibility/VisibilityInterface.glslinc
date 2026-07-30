@@ -1,0 +1,219 @@
+#ifndef XR_ADVANCED_VISIBILITY_INTERFACE_GLSLINC
+#define XR_ADVANCED_VISIBILITY_INTERFACE_GLSLINC
+
+#ifndef XR_ADV_VISIBILITY_PAYLOAD_VERSION
+#error "The advanced visibility payload version must be injected by AdvancedShaderAccessLibrary."
+#endif
+
+#include "Advanced/Access/AdvancedAccess.glslinc"
+
+#define XR_ADV_VIS_INVALID 0xFFFFFFFFu
+#define XR_ADV_VIS_PRODUCER_STATIC_MESHLET 0u
+#define XR_ADV_VIS_PRODUCER_SKINNED_MESHLET 1u
+#define XR_ADV_VIS_PRODUCER_INDIRECT_INDEXED 2u
+#define XR_ADV_VIS_PRODUCER_CPU_STATIC_INDEXED 3u
+#define XR_ADV_VIS_PRODUCER_CPU_PRE_SKINNED 4u
+
+#define XR_ADV_VIS_PRODUCER_MASK 0x7u
+#define XR_ADV_VIS_ORIGIN_SHIFT 3u
+#define XR_ADV_VIS_MASKED_SHIFT 4u
+#define XR_ADV_VIS_FRONT_FACE_SHIFT 5u
+#define XR_ADV_VIS_VELOCITY_VALID_SHIFT 6u
+#define XR_ADV_VIS_VIEW_SHIFT 8u
+#define XR_ADV_VIS_VERSION_SHIFT 16u
+#define XR_ADV_VIS_SELECTION_VALID_SHIFT 24u
+
+bool XR_ADV_IsSupportedVisibilityProducer(uint producer)
+{
+    return producer <=
+        XR_ADV_VIS_PRODUCER_CPU_PRE_SKINNED;
+}
+
+#ifndef XR_ADV_VISIBILITY_SET
+#define XR_ADV_VISIBILITY_SET 1
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_PAYLOADS
+#define XR_ADV_BINDING_VISIBILITY_PAYLOADS 28
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_COUNTERS
+#define XR_ADV_BINDING_VISIBILITY_COUNTERS 29
+#endif
+
+#if defined(XR_ADV_BACKEND_VULKAN)
+#define XR_ADV_VIS_TABLE_LAYOUT(bindingIndex) layout(set = XR_ADV_VISIBILITY_SET, binding = bindingIndex, std430, row_major)
+#elif defined(XR_ADV_BACKEND_OPENGL)
+#define XR_ADV_VIS_TABLE_LAYOUT(bindingIndex) layout(binding = bindingIndex, std430, row_major)
+#else
+#error "An advanced visibility shader backend must be selected."
+#endif
+
+struct XRAdvancedVisibilityPayload
+{
+    XRAdvancedGpuHandle draw;
+    XRAdvancedGpuHandle geometry;
+    XRAdvancedGpuHandle material;
+    uint vertexOffset;
+    uint previousVertexOffset;
+    uint indexOffset;
+    uint weightOffset;
+    uint paletteOffset;
+    uint meshletOffset;
+    uint meshletCount;
+    uint primitiveSection;
+    uint instanceCount;
+    uint firstIndex;
+    uint indexCount;
+    uint vertexCount;
+    uint rasterStateClass;
+    uint coverage;
+    uint cullMode;
+    uint primitiveTopology;
+    uint flags;
+};
+
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_PAYLOADS)
+readonly buffer XRAdvancedVisibilityPayloadTable
+{
+    XRAdvancedVisibilityPayload records[];
+} XR_ADV_VisibilityPayloads;
+
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_COUNTERS)
+buffer XRAdvancedVisibilityCounterTable
+{
+    uint earlyDraws;
+    uint deferredCandidates;
+    uint lateDraws;
+    uint recoveredCandidates;
+    uint validPixels;
+    uint invalidPixels;
+    uint payloadOverflow;
+    uint maskedCoveragePixels;
+    uint decodeOutOfBounds;
+    uint depthPyramidBuilds;
+    uint unsupportedDisplacement;
+    uint reserved[5];
+} XR_ADV_VisibilityCounters;
+
+uniform uvec2 VisibilityDrawLookupSegment;
+uniform uvec2 VisibilityInstanceLookupSegment;
+uniform uvec2 VisibilityTransformLookupSegment;
+uniform uvec2 VisibilityRenderStateLookupSegment;
+uniform uvec2 VisibilityEditorIdentityLookupSegment;
+uniform uvec2 VisibilityGeometryLookupSegment;
+uniform uvec2 VisibilityMaterialLookupSegment;
+uniform uvec2 VisibilityShadingKernelLookupSegment;
+uniform uvec2 VisibilityTextureLookupSegment;
+
+uint XR_ADV_ResolveVisibilityHandle(
+    XRAdvancedGpuHandle handle,
+    uvec2 segment,
+    uint diagnosticCategory)
+{
+    return XR_ADV_ResolveHandle(
+        handle,
+        segment.x,
+        segment.y,
+        diagnosticCategory);
+}
+
+uint XR_ADV_ResolveVisibilityStableIndex(
+    uint stableIndex,
+    uvec2 segment,
+    uint diagnosticCategory)
+{
+    if (stableIndex == 0u ||
+        stableIndex >= segment.y ||
+        segment.x + stableIndex >= uint(XR_ADV_HandleLookups.records.length()))
+    {
+#ifdef XR_ADV_DIAGNOSTIC_BOUNDS
+        XR_ADV_RecordOutOfBounds(diagnosticCategory);
+#endif
+        return XR_ADV_INVALID_DENSE_INDEX;
+    }
+
+    return XR_ADV_HandleLookups.records[segment.x + stableIndex].denseIndex;
+}
+
+bool XR_ADV_TryResolveTextureReference(
+    XRAdvancedTextureReference logicalReference,
+    out XRAdvancedEncodedTextureReference encodedReference)
+{
+    encodedReference = XRAdvancedEncodedTextureReference(
+        0u,
+        0u,
+        logicalReference.fallback,
+        XR_ADV_RESOURCE_FLAG_FALLBACK);
+    if (!XR_ADV_IsValidHandle(logicalReference.handle))
+        return false;
+
+    uint textureDense = XR_ADV_ResolveVisibilityHandle(
+        logicalReference.handle,
+        VisibilityTextureLookupSegment,
+        XR_ADV_DIAGNOSTIC_TEXTURE);
+    if (textureDense == XR_ADV_INVALID_DENSE_INDEX ||
+        textureDense >= uint(XR_ADV_Textures.records.length()))
+        return false;
+
+    XRAdvancedTextureRecord textureRecord =
+        XR_ADV_LoadTexture(textureDense);
+    if (textureRecord.stableTextureId != logicalReference.handle.index ||
+        textureRecord.generation != logicalReference.handle.generation ||
+        textureRecord.encodedReferenceIndex >=
+            uint(XR_ADV_EncodedTextures.records.length()))
+    {
+        return false;
+    }
+
+    encodedReference =
+        XR_ADV_LoadEncodedTexture(textureRecord.encodedReferenceIndex);
+    return true;
+}
+
+uint XR_ADV_EncodeVisibilityPrimitive(
+    uint producer,
+    uint primitiveBase,
+    uint meshletIndex,
+    uint localPrimitiveIndex)
+{
+    if (producer == XR_ADV_VIS_PRODUCER_STATIC_MESHLET ||
+        producer == XR_ADV_VIS_PRODUCER_SKINNED_MESHLET)
+    {
+        if (meshletIndex > 0xFFFFFFu ||
+            localPrimitiveIndex > 0xFFu)
+            return XR_ADV_VIS_INVALID;
+
+        uint encoded = (meshletIndex << 8u) | localPrimitiveIndex;
+        return encoded != XR_ADV_VIS_INVALID
+            ? encoded
+            : XR_ADV_VIS_INVALID;
+    }
+
+    uint encoded = primitiveBase + localPrimitiveIndex;
+    return encoded >= primitiveBase
+        ? encoded
+        : XR_ADV_VIS_INVALID;
+}
+
+uint XR_ADV_PackVisibilityMetadata(
+    uint producer,
+    uint origin,
+    bool masked,
+    bool frontFace,
+    bool velocityValid,
+    uint viewIndex,
+    bool selectionValid)
+{
+    return (producer & XR_ADV_VIS_PRODUCER_MASK) |
+        ((origin & 1u) << XR_ADV_VIS_ORIGIN_SHIFT) |
+        ((masked ? 1u : 0u) << XR_ADV_VIS_MASKED_SHIFT) |
+        ((frontFace ? 1u : 0u) << XR_ADV_VIS_FRONT_FACE_SHIFT) |
+        ((velocityValid ? 1u : 0u) <<
+            XR_ADV_VIS_VELOCITY_VALID_SHIFT) |
+        ((viewIndex & 0xFFu) << XR_ADV_VIS_VIEW_SHIFT) |
+        (XR_ADV_VISIBILITY_PAYLOAD_VERSION <<
+            XR_ADV_VIS_VERSION_SHIFT) |
+        ((selectionValid ? 1u : 0u) <<
+            XR_ADV_VIS_SELECTION_VALID_SHIFT);
+}
+
+#endif

@@ -2,7 +2,7 @@ using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Vulkan;
 
-public sealed record AutoUniformBlockInfo(
+internal sealed record AutoUniformBlockInfo(
     string BlockName,
     string InstanceName,
     uint Set,

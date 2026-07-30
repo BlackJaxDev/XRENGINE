@@ -6,7 +6,7 @@ public unsafe partial class VulkanRenderer
 
     /// <summary>
     /// Releases managed caches whose storage is associated with renderer worker threads.
-    /// Collectible backend generations must not leave backend objects in runtime thread-static
+    /// Collectible backend generations must not leave backend objects in reusable thread-local
     /// storage after the renderer has crossed its GPU-idle teardown boundary.
     /// </summary>
     private void ReleaseHotReloadManagedCaches()
@@ -20,6 +20,7 @@ public unsafe partial class VulkanRenderer
         PooledExternalResourcePlannerReadbackScope.ReleaseCurrentThreadPool();
         FrameOp.ReleaseCurrentThreadPools();
         VkMeshRenderer.ReleaseCurrentThreadDescriptorScratch();
+        VkRenderProgram.ReleaseCurrentThreadBindingCaptureWorkspace();
 
         if (_threadLocalScratchDisposed)
             return;

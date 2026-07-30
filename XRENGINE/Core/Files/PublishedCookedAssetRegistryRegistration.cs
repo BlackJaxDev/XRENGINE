@@ -7,10 +7,13 @@ using XREngine.Core.Files;
 namespace XREngine;
 
 [SuppressMessage("Usage", "CA2255:The 'ModuleInitializer' attribute is only intended to be used in application code or advanced source generator scenarios", Justification = "Published cooked asset serializers must register when the engine assembly loads.")]
-internal static class EnginePublishedCookedAssetRegistryRegistration
+public static class EnginePublishedCookedAssetRegistryRegistration
 {
+    /// <summary>
+    /// Registers the engine-owned NativeAOT cooked-asset serializers.
+    /// </summary>
     [ModuleInitializer]
-    internal static void Register()
+    public static void Register()
     {
         RegisterMemoryPackAsset<GameStartupSettings>();
         RegisterMemoryPackAsset<UserSettings>();

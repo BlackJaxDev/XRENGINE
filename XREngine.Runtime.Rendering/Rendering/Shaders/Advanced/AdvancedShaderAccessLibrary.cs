@@ -23,6 +23,8 @@ public static class AdvancedShaderAccessLibrary
         AppendRequiredExtensions(source, backend, textureEncoding);
         source.Append(AdvancedShaderRecordLayout.BuildCpuLayoutDefines());
         AppendDefine(source, "XR_ADV_GLOBAL_SET", descriptorSet);
+        AppendDefine(source, "XR_ADV_VISIBILITY_PAYLOAD_VERSION", AdvancedVisibilityBufferContract.PayloadVersion);
+        AppendDefine(source, "XR_ADV_SURFACE_CONTRACT_VERSION", AdvancedSurfaceContract.ContractVersion);
         AppendDefine(source, "XR_ADV_BINDING_DRAWS", AdvancedGlobalResourceBindings.Draws);
         AppendDefine(source, "XR_ADV_BINDING_INSTANCES", AdvancedGlobalResourceBindings.Instances);
         AppendDefine(source, "XR_ADV_BINDING_MESHES", AdvancedGlobalResourceBindings.Meshes);
@@ -51,6 +53,11 @@ public static class AdvancedShaderAccessLibrary
         AppendDefine(source, "XR_ADV_BINDING_SAMPLER_DESCRIPTORS", AdvancedGlobalResourceBindings.SamplerDescriptors);
         AppendDefine(source, "XR_ADV_BINDING_TEXTURE_ARRAY", AdvancedGlobalResourceBindings.TextureArray);
         AppendDefine(source, "XR_ADV_BINDING_HANDLE_LOOKUPS", AdvancedGlobalResourceBindings.HandleLookups);
+        AppendDefine(source, "XR_ADV_BINDING_STATIC_VERTICES", AdvancedReconstructionShaderBindings.StaticVertices);
+        AppendDefine(source, "XR_ADV_BINDING_PRESKINNED_CURRENT_VERTICES", AdvancedReconstructionShaderBindings.PreSkinnedCurrentVertices);
+        AppendDefine(source, "XR_ADV_BINDING_PRESKINNED_PREVIOUS_VERTICES", AdvancedReconstructionShaderBindings.PreSkinnedPreviousVertices);
+        AppendDefine(source, "XR_ADV_BINDING_RECONSTRUCTION_INDICES", AdvancedReconstructionShaderBindings.Indices);
+        AppendDefine(source, "XR_ADV_BINDING_RECONSTRUCTION_COUNTERS", AdvancedReconstructionShaderBindings.Counters);
 
         source.AppendLine(backend == RuntimeGraphicsApiKind.OpenGL
             ? "#define XR_ADV_BACKEND_OPENGL 1"

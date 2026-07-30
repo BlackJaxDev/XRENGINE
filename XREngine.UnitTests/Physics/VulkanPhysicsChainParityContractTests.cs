@@ -25,7 +25,7 @@ public sealed class VulkanPhysicsChainParityContractTests
     {
         string adapter = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/PhysicsCompute/VulkanPhysicsChainComputeBackend.cs");
         string work = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ComputeWork.cs")
-            + ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.FrameOpApi.cs");
+            + ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/FrameOpApi.cs");
         string recorder = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
 
         adapter.ShouldContain("TryDispatchComputeIndirect");
@@ -46,7 +46,7 @@ public sealed class VulkanPhysicsChainParityContractTests
         string adapter = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/PhysicsCompute/VulkanPhysicsChainComputeBackend.cs");
         string dispatcher = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs");
         string recorder = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
-        string diagnostics = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.FrameOpDiagnostics.cs");
+        string diagnostics = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/FrameOpDiagnostics.cs");
         string preflightPolicy = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Preflight.Policy.cs");
         string markers = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.SubmissionMarkers.cs");
 
@@ -149,12 +149,5 @@ public sealed class VulkanPhysicsChainParityContractTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string root = TestContext.CurrentContext.TestDirectory;
-        while (!string.IsNullOrEmpty(root) && !File.Exists(Path.Combine(root, "XRENGINE.slnx")))
-            root = Directory.GetParent(root)?.FullName ?? string.Empty;
-
-        File.Exists(Path.Combine(root, "XRENGINE.slnx")).ShouldBeTrue();
-        return File.ReadAllText(Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar)));
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 }

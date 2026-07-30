@@ -11,4 +11,6 @@ public enum EAdvancedVelocityValidityReason : uint
     TopologyChanged = 3u,
     VertexCountChanged = 4u,
     ArenaOverflow = 5u,
+    Teleported = 6u,
+    HistoryReset = 7u,
 }

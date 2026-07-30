@@ -18,24 +18,10 @@ public partial class VulkanRenderer : IMaterialTableBackendCapability
     bool IMaterialTableBackendCapability.TryEnsureMaterialTextureTable(out string reason)
         => TryEnsureGlobalMaterialTextureDescriptorTable(out reason);
 
-    bool IMaterialTableBackendCapability.TryResolveMaterialTextureReference(
+    Materials.MaterialTextureReferenceResolution IMaterialTableBackendCapability.ResolveMaterialTextureReference(
         XRTexture texture,
-        string semantic,
-        out Materials.GPUMaterialTextureReference reference)
-    {
-        if (TryGetOrCreateMaterialTextureDescriptorIndex(
-            texture,
-            semantic,
-            out uint descriptorIndex,
-            out _))
-        {
-            reference = Materials.GPUMaterialTextureReference.FromVulkanDescriptorIndex(descriptorIndex);
-            return true;
-        }
-
-        reference = Materials.GPUMaterialTextureReference.None;
-        return false;
-    }
+        string semantic)
+        => ResolveMaterialTextureDescriptorReference(texture, semantic);
 
     void IMaterialTableBackendCapability.FlushMaterialTextureTableUpdates()
         => FlushGlobalMaterialTextureDescriptorUpdates();

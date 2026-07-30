@@ -13,19 +13,37 @@ internal sealed class VulkanDescriptorManager
 {
     private readonly object _sharedMeshDescriptorAllocationLock = new();
     private readonly Dictionary<
-        VulkanRenderer.VkMeshRenderer.DescriptorAllocationKey,
-        List<VulkanRenderer.VkMeshRenderer.DescriptorAllocation>> _sharedMeshDescriptorAllocations = [];
+        VkMeshRenderer.DescriptorAllocationKey,
+        List<VkMeshRenderer.DescriptorAllocation>> _sharedMeshDescriptorAllocations = [];
     private long _descriptorSetContentUpdateGeneration;
     private int _descriptorUpdateInvalidationDiagnosticCount;
     private int _meshOwnershipDiagnosticCount;
+    private int _frameSlotCount = 2;
 
     internal Sampler[] CanonicalImmutableSamplers { get; } = new Sampler[5];
     internal ConcurrentDictionary<ulong, string> LiveDescriptorSetLayoutHandles { get; } = new();
     internal object MeshDescriptorPoolSlabLock { get; } = new();
     internal Dictionary<
-        VulkanRenderer.MeshDescriptorPoolSlabKey,
-        List<VulkanRenderer.MeshDescriptorPoolSlab>> MeshDescriptorPoolSlabs { get; } = [];
+        MeshDescriptorPoolSlabKey,
+        List<MeshDescriptorPoolSlab>> MeshDescriptorPoolSlabs { get; } = [];
 
+    internal int FrameSlotCount => Volatile.Read(ref _frameSlotCount);
+
+    internal bool EnsureFrameSlotCountFloor(int frameSlotCount)
+    {
+        if (frameSlotCount <= 0)
+            return false;
+
+        while (true)
+        {
+            int current = Volatile.Read(ref _frameSlotCount);
+            if (current >= frameSlotCount)
+                return false;
+
+            if (Interlocked.CompareExchange(ref _frameSlotCount, frameSlotCount, current) == current)
+                return true;
+        }
+    }
     internal long SnapshotDescriptorSetContentUpdateGeneration()
         => Volatile.Read(ref _descriptorSetContentUpdateGeneration);
 
@@ -42,19 +60,19 @@ internal sealed class VulkanDescriptorManager
         => Interlocked.Increment(ref _meshOwnershipDiagnosticCount);
 
     internal bool TryAcquireSharedMeshDescriptorAllocation(
-        in VulkanRenderer.VkMeshRenderer.DescriptorAllocationKey key,
+        in VkMeshRenderer.DescriptorAllocationKey key,
         XRMaterial material,
-        out VulkanRenderer.VkMeshRenderer.DescriptorAllocation allocation)
+        out VkMeshRenderer.DescriptorAllocation allocation)
     {
         lock (_sharedMeshDescriptorAllocationLock)
         {
             if (_sharedMeshDescriptorAllocations.TryGetValue(
                     key,
-                    out List<VulkanRenderer.VkMeshRenderer.DescriptorAllocation>? candidates))
+                    out List<VkMeshRenderer.DescriptorAllocation>? candidates))
             {
                 for (int i = 0; i < candidates.Count; i++)
                 {
-                    VulkanRenderer.VkMeshRenderer.DescriptorAllocation candidate = candidates[i];
+                    VkMeshRenderer.DescriptorAllocation candidate = candidates[i];
                     if (candidate.UsesSharedMaterialTier &&
                         !ReferenceEquals(candidate.Material, material))
                     {
@@ -72,16 +90,16 @@ internal sealed class VulkanDescriptorManager
         return false;
     }
 
-    internal VulkanRenderer.VkMeshRenderer.DescriptorAllocation PublishSharedMeshDescriptorAllocation(
-        in VulkanRenderer.VkMeshRenderer.DescriptorAllocationKey key,
-        VulkanRenderer.VkMeshRenderer.DescriptorAllocation allocation,
+    internal VkMeshRenderer.DescriptorAllocation PublishSharedMeshDescriptorAllocation(
+        in VkMeshRenderer.DescriptorAllocationKey key,
+        VkMeshRenderer.DescriptorAllocation allocation,
         out bool published)
     {
         lock (_sharedMeshDescriptorAllocationLock)
         {
             if (!_sharedMeshDescriptorAllocations.TryGetValue(
                     key,
-                    out List<VulkanRenderer.VkMeshRenderer.DescriptorAllocation>? candidates))
+                    out List<VkMeshRenderer.DescriptorAllocation>? candidates))
             {
                 candidates = [];
                 _sharedMeshDescriptorAllocations.Add(key, candidates);
@@ -90,7 +108,7 @@ internal sealed class VulkanDescriptorManager
             {
                 for (int i = 0; i < candidates.Count; i++)
                 {
-                    VulkanRenderer.VkMeshRenderer.DescriptorAllocation candidate = candidates[i];
+                    VkMeshRenderer.DescriptorAllocation candidate = candidates[i];
                     if (candidate.UsesSharedMaterialTier &&
                         !ReferenceEquals(candidate.Material, allocation.Material))
                     {
@@ -111,8 +129,8 @@ internal sealed class VulkanDescriptorManager
     }
 
     internal bool ReleaseSharedMeshDescriptorAllocation(
-        in VulkanRenderer.VkMeshRenderer.DescriptorAllocationKey key,
-        VulkanRenderer.VkMeshRenderer.DescriptorAllocation allocation)
+        in VkMeshRenderer.DescriptorAllocationKey key,
+        VkMeshRenderer.DescriptorAllocation allocation)
     {
         lock (_sharedMeshDescriptorAllocationLock)
         {
@@ -123,7 +141,7 @@ internal sealed class VulkanDescriptorManager
 
             if (_sharedMeshDescriptorAllocations.TryGetValue(
                     key,
-                    out List<VulkanRenderer.VkMeshRenderer.DescriptorAllocation>? candidates))
+                    out List<VkMeshRenderer.DescriptorAllocation>? candidates))
             {
                 candidates.Remove(allocation);
                 if (candidates.Count == 0)

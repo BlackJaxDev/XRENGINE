@@ -97,7 +97,9 @@ public partial class DefaultRenderPipeline
                 RenderCaptureCommandPolicy.AddConditional(c, this, ERenderCapturePass.OnTop, branch =>
                 {
                     branch.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
-                    branch.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, MeshSubmissionStrategy);
+                    // On-top debug/UI materials use arbitrary forward shaders and explicit Always-depth semantics.
+                    // They are an authored CPU-direct overlay pass, not a fallback from compact scene geometry.
+                    branch.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, EMeshSubmissionStrategy.CpuDirect);
                     branch.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
                 });
                 RenderCaptureCommandPolicy.AddConditional(c, this, ERenderCapturePass.DebugOverlays, branch =>
@@ -882,7 +884,8 @@ public partial class DefaultRenderPipeline
             c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, MeshSubmissionStrategy);
             c.Add<VPRC_RenderMeshletDebugDisplay>();
             c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
-            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, MeshSubmissionStrategy);
+            // Keep custom on-top materials outside the generated material-table shader contract.
+            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, EMeshSubmissionStrategy.CpuDirect);
             c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
             c.Add<VPRC_DepthWrite>().Allow = true;
             c.Add<VPRC_ColorMask>().Set(true, true, true, true);

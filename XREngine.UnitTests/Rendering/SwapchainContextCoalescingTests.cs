@@ -10,7 +10,6 @@ using XREngine.Rendering;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Vulkan;
 using static XREngine.Rendering.Vulkan.VulkanRenderer;
-using static XREngine.Rendering.Vulkan.VulkanRenderer.VulkanRenderGraphCompiler;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -164,12 +163,7 @@ public sealed class SwapchainContextCoalescingTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string repoRoot = ResolveRepoRoot();
-        string path = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
-        File.Exists(path).ShouldBeTrue($"Expected workspace file '{path}' to exist.");
-        return File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ResolveRepoRoot()
     {
@@ -199,8 +193,8 @@ public sealed class SwapchainContextCoalescingTests
         };
         FrameOpContext second = first with { ContextId = 42 };
 
-        VulkanRenderer.AreFrameOpContextsRecordingCompatible(first, second).ShouldBeTrue();
-        VulkanRenderer.AreFrameOpContextsRecordingCompatible(
+        FrameOpContextCompatibility.AreRecordingCompatible(first, second).ShouldBeTrue();
+        FrameOpContextCompatibility.AreRecordingCompatible(
             first,
             second with { PreserveSubmissionOrderBlock = true }).ShouldBeFalse();
     }
@@ -219,7 +213,7 @@ public sealed class SwapchainContextCoalescingTests
             RecordingFingerprint = ulong.MaxValue,
         };
 
-        VulkanRenderer.AreFrameOpContextsRecordingCompatible(first, second).ShouldBeFalse();
+        FrameOpContextCompatibility.AreRecordingCompatible(first, second).ShouldBeFalse();
     }
 
     [Test]
@@ -238,11 +232,11 @@ public sealed class SwapchainContextCoalescingTests
             DescriptorGeneration = 11,
         };
 
-        VulkanRenderer.AreFrameOpContextsQueryScopeCompatible(first, descriptorAdvanced).ShouldBeTrue();
-        VulkanRenderer.AreFrameOpContextsQueryScopeCompatible(
+        FrameOpContextCompatibility.AreQueryScopeCompatible(first, descriptorAdvanced).ShouldBeTrue();
+        FrameOpContextCompatibility.AreQueryScopeCompatible(
             first,
             descriptorAdvanced with { MultiviewEnabled = true }).ShouldBeFalse();
-        VulkanRenderer.AreFrameOpContextsQueryScopeCompatible(
+        FrameOpContextCompatibility.AreQueryScopeCompatible(
             first,
             descriptorAdvanced with { ResourceGeneration = 11 }).ShouldBeFalse();
     }
@@ -255,7 +249,7 @@ public sealed class SwapchainContextCoalescingTests
     public void OpTargetsSwapchain_ClearOp_NullTarget_ReturnsTrue()
     {
         var op = SwapchainClear(passIndex: 0, CtxPipelineA);
-        VulkanRenderGraphCompiler.OpTargetsSwapchain(op).ShouldBeTrue();
+        VulkanSwapchainContextCoalescer.TargetsSwapchain(op).ShouldBeTrue();
     }
 
     [Test]
@@ -265,7 +259,7 @@ public sealed class SwapchainContextCoalescingTests
         // Since ClearOp checks `Target is null`, a non-null Target means FBO.
         // We verify via a swapchain clear with Target overridden.
         var swapchainOp = SwapchainClear(passIndex: 0, CtxPipelineA);
-        VulkanRenderGraphCompiler.OpTargetsSwapchain(swapchainOp).ShouldBeTrue();
+        VulkanSwapchainContextCoalescer.TargetsSwapchain(swapchainOp).ShouldBeTrue();
 
         // And the default helper for FBO targeting would return false if we could
         // construct an XRFrameBuffer.  We verify the inverse pattern: null → true.
@@ -275,14 +269,14 @@ public sealed class SwapchainContextCoalescingTests
     public void OpTargetsSwapchain_MeshDrawOp_NullTarget_ReturnsTrue()
     {
         var op = SwapchainDraw(passIndex: 0, CtxPipelineA);
-        VulkanRenderGraphCompiler.OpTargetsSwapchain(op).ShouldBeTrue();
+        VulkanSwapchainContextCoalescer.TargetsSwapchain(op).ShouldBeTrue();
     }
 
     [Test]
     public void OpTargetsSwapchain_BlitOp_NullOutFbo_ReturnsTrue()
     {
         var op = SwapchainBlit(passIndex: 0, CtxPipelineA);
-        VulkanRenderGraphCompiler.OpTargetsSwapchain(op).ShouldBeTrue();
+        VulkanSwapchainContextCoalescer.TargetsSwapchain(op).ShouldBeTrue();
     }
 
     [Test]
@@ -290,7 +284,7 @@ public sealed class SwapchainContextCoalescingTests
     {
         var fbo = new XREngine.Rendering.XRFrameBuffer { Name = "GraphDestinationFBO" };
         var op = FboBlit(passIndex: 0, CtxPipelineA, fbo);
-        VulkanRenderGraphCompiler.OpTargetsSwapchain(op).ShouldBeFalse();
+        VulkanSwapchainContextCoalescer.TargetsSwapchain(op).ShouldBeFalse();
     }
 
     [Test]
@@ -312,21 +306,21 @@ public sealed class SwapchainContextCoalescingTests
     public void OpTargetsSwapchain_IndirectDrawOp_ReturnsTrue()
     {
         var op = SwapchainIndirectDraw(passIndex: 0, CtxPipelineA);
-        VulkanRenderGraphCompiler.OpTargetsSwapchain(op).ShouldBeTrue();
+        VulkanSwapchainContextCoalescer.TargetsSwapchain(op).ShouldBeTrue();
     }
 
     [Test]
     public void OpTargetsSwapchain_ComputeDispatchOp_ReturnsFalse()
     {
         var op = ComputeDispatch(passIndex: 0, CtxPipelineA);
-        VulkanRenderGraphCompiler.OpTargetsSwapchain(op).ShouldBeFalse();
+        VulkanSwapchainContextCoalescer.TargetsSwapchain(op).ShouldBeFalse();
     }
 
     [Test]
     public void OpTargetsSwapchain_MemoryBarrierOp_ReturnsFalse()
     {
         var op = MemoryBarrier(passIndex: 0, CtxPipelineA);
-        VulkanRenderGraphCompiler.OpTargetsSwapchain(op).ShouldBeFalse();
+        VulkanSwapchainContextCoalescer.TargetsSwapchain(op).ShouldBeFalse();
     }
 
     #endregion
@@ -346,7 +340,7 @@ public sealed class SwapchainContextCoalescingTests
             SwapchainDraw(3, CtxPipelineB),
         ];
 
-        VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
+        VulkanSwapchainContextCoalescer.Coalesce(ops);
 
         foreach (var op in ops)
             op.Context.ShouldBe(CtxPipelineA, $"Op at passIndex {op.PassIndex} should have been coalesced to pipeline A context");
@@ -362,7 +356,7 @@ public sealed class SwapchainContextCoalescingTests
             SwapchainDraw(2, CtxPipelineC),
         ];
 
-        VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
+        VulkanSwapchainContextCoalescer.Coalesce(ops);
 
         ops.ShouldAllBe(op => op.Context == CtxPipelineA);
     }
@@ -383,7 +377,7 @@ public sealed class SwapchainContextCoalescingTests
             MemoryBarrier(3, CtxPipelineC),    // Not a swapchain op
         ];
 
-        VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
+        VulkanSwapchainContextCoalescer.Coalesce(ops);
 
         // Swapchain ops should be coalesced to pipeline A
         ops[0].Context.ShouldBe(CtxPipelineA);
@@ -404,7 +398,7 @@ public sealed class SwapchainContextCoalescingTests
             SwapchainDraw(2, CtxPipelineA),
         ];
 
-        VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
+        VulkanSwapchainContextCoalescer.Coalesce(ops);
 
         ops.ShouldAllBe(op => op.Context == CtxPipelineA);
     }
@@ -413,7 +407,7 @@ public sealed class SwapchainContextCoalescingTests
     public void Coalesce_EmptyOps_DoesNotThrow()
     {
         FrameOp[] ops = [];
-        Should.NotThrow(() => VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops));
+        Should.NotThrow(() => VulkanSwapchainContextCoalescer.Coalesce(ops));
     }
 
     [Test]
@@ -425,7 +419,7 @@ public sealed class SwapchainContextCoalescingTests
             MemoryBarrier(1, CtxPipelineB),
         ];
 
-        VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
+        VulkanSwapchainContextCoalescer.Coalesce(ops);
 
         ops[0].Context.ShouldBe(CtxPipelineA);
         ops[1].Context.ShouldBe(CtxPipelineB);
@@ -440,7 +434,7 @@ public sealed class SwapchainContextCoalescingTests
             SwapchainIndirectDraw(1, CtxPipelineB),
         ];
 
-        VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
+        VulkanSwapchainContextCoalescer.Coalesce(ops);
 
         ops[1].Context.ShouldBe(CtxPipelineA);
     }
@@ -454,7 +448,7 @@ public sealed class SwapchainContextCoalescingTests
             SwapchainBlit(1, CtxPipelineB),
         ];
 
-        VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
+        VulkanSwapchainContextCoalescer.Coalesce(ops);
 
         ops[1].Context.ShouldBe(CtxPipelineA);
     }
@@ -483,7 +477,7 @@ public sealed class SwapchainContextCoalescingTests
             SwapchainDraw(3, CtxPipelineB),
         ];
 
-        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, graph);
+        FrameOp[] sorted = VulkanFrameOperationScheduler.SortFrameOps(ops, graph);
 
         // Pipeline A ops should come before pipeline B ops
         sorted[0].PassIndex.ShouldBe(0);
@@ -508,7 +502,7 @@ public sealed class SwapchainContextCoalescingTests
             SwapchainDraw(3, CtxPipelineB),   // GroupOrder 1 (same as first B)
         ];
 
-        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, graph);
+        FrameOp[] sorted = VulkanFrameOperationScheduler.SortFrameOps(ops, graph);
 
         // Original order is preserved across contexts.
         sorted[0].Context.ShouldBe(CtxPipelineA);
@@ -535,7 +529,7 @@ public sealed class SwapchainContextCoalescingTests
             SwapchainIndirectDraw(1, CtxPipelineA),
         ];
 
-        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, graph);
+        FrameOp[] sorted = VulkanFrameOperationScheduler.SortFrameOps(ops, graph);
 
         sorted.Select(op => op.GetType()).ToArray().ShouldBe(
         [
@@ -557,7 +551,7 @@ public sealed class SwapchainContextCoalescingTests
 
         // Establish that this pair is normally eligible for canonical reordering.
         FrameOp[] canonicalControl = [higherDraw, lowerDraw];
-        VulkanRenderGraphCompiler.SortFrameOps(canonicalControl, VulkanCompiledRenderGraph.Empty);
+        VulkanFrameOperationScheduler.SortFrameOps(canonicalControl, VulkanCompiledRenderGraph.Empty);
         canonicalControl[0].ShouldBeSameAs(lowerDraw);
         canonicalControl[1].ShouldBeSameAs(higherDraw);
 
@@ -588,7 +582,7 @@ public sealed class SwapchainContextCoalescingTests
 
         FrameOp[] ops = [higherDraw, lowerDraw, begin, proxy, end];
 
-        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(
+        FrameOp[] sorted = VulkanFrameOperationScheduler.SortFrameOps(
             ops,
             VulkanCompiledRenderGraph.Empty);
 
@@ -613,7 +607,7 @@ public sealed class SwapchainContextCoalescingTests
         // With no graph metadata both pass IDs have the same fallback rank, and
         // ordinary opaque sorting would move the lower-hash draw first.
         FrameOp[] canonicalControl = [beforeBracket, afterBracket];
-        VulkanRenderGraphCompiler.SortFrameOps(canonicalControl, VulkanCompiledRenderGraph.Empty);
+        VulkanFrameOperationScheduler.SortFrameOps(canonicalControl, VulkanCompiledRenderGraph.Empty);
         canonicalControl[0].ShouldBeSameAs(afterBracket);
 
         var query = (VkRenderQuery)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
@@ -640,7 +634,7 @@ public sealed class SwapchainContextCoalescingTests
             ERenderQueryOperation.End,
             CtxPipelineA);
 
-        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(
+        FrameOp[] sorted = VulkanFrameOperationScheduler.SortFrameOps(
             [beforeBracket, begin, proxy, end, afterBracket],
             VulkanCompiledRenderGraph.Empty);
 
@@ -680,7 +674,7 @@ public sealed class SwapchainContextCoalescingTests
             CtxPipelineA);
         ClearOp clear = SwapchainClear(passIndex, CtxPipelineA);
 
-        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(
+        FrameOp[] sorted = VulkanFrameOperationScheduler.SortFrameOps(
             [begin, draw, end, clear],
             VulkanCompiledRenderGraph.Empty);
 
@@ -693,7 +687,8 @@ public sealed class SwapchainContextCoalescingTests
     [Test]
     public void SecondaryBuckets_SplitBlitsByResolvedTarget()
     {
-        var compiler = new VulkanRenderGraphCompiler();
+        VulkanFrameOperationScheduler scheduler = new();
+        List<VulkanSecondaryRecordingBucket> buckets = [];
         var firstFbo = new XREngine.Rendering.XRFrameBuffer { Name = "FirstTarget" };
         var secondFbo = new XREngine.Rendering.XRFrameBuffer { Name = "SecondTarget" };
         FrameOp[] ops =
@@ -702,7 +697,7 @@ public sealed class SwapchainContextCoalescingTests
             FboBlit(1, CtxPipelineA, secondFbo),
         ];
 
-        IReadOnlyList<SecondaryRecordingBucket> buckets = compiler.BuildSecondaryRecordingBuckets(ops);
+        scheduler.BuildSecondaryRecordingBuckets(ops, buckets);
 
         buckets.Count.ShouldBe(2);
         buckets[0].StartIndex.ShouldBe(0);
@@ -716,7 +711,8 @@ public sealed class SwapchainContextCoalescingTests
     [Test]
     public void SecondaryBuckets_SplitIndirectDrawsByResolvedTarget()
     {
-        var compiler = new VulkanRenderGraphCompiler();
+        VulkanFrameOperationScheduler scheduler = new();
+        List<VulkanSecondaryRecordingBucket> buckets = [];
         var firstFbo = new XREngine.Rendering.XRFrameBuffer { Name = "FirstTarget" };
         var secondFbo = new XREngine.Rendering.XRFrameBuffer { Name = "SecondTarget" };
         FrameOp[] ops =
@@ -725,7 +721,7 @@ public sealed class SwapchainContextCoalescingTests
             FboIndirectDraw(1, CtxPipelineA, secondFbo),
         ];
 
-        IReadOnlyList<SecondaryRecordingBucket> buckets = compiler.BuildSecondaryRecordingBuckets(ops);
+        scheduler.BuildSecondaryRecordingBuckets(ops, buckets);
 
         buckets.Count.ShouldBe(2);
         buckets[0].TargetIdentity.ShouldBe(firstFbo.GetHashCode());
@@ -735,7 +731,8 @@ public sealed class SwapchainContextCoalescingTests
     [Test]
     public void SecondaryBuckets_CoalesceContextsThatDifferOnlyByDiagnosticId()
     {
-        var compiler = new VulkanRenderGraphCompiler();
+        VulkanFrameOperationScheduler scheduler = new();
+        List<VulkanSecondaryRecordingBucket> buckets = [];
         var fbo = new XREngine.Rendering.XRFrameBuffer { Name = "SharedTarget" };
         FrameOpContext firstContext = CtxPipelineA with { ContextId = 41 };
         FrameOpContext recapturedContext = firstContext with { ContextId = 42 };
@@ -745,7 +742,7 @@ public sealed class SwapchainContextCoalescingTests
             FboIndirectDraw(1, recapturedContext, fbo),
         ];
 
-        IReadOnlyList<SecondaryRecordingBucket> buckets = compiler.BuildSecondaryRecordingBuckets(ops);
+        scheduler.BuildSecondaryRecordingBuckets(ops, buckets);
 
         buckets.Count.ShouldBe(1);
         buckets[0].Count.ShouldBe(2);
@@ -754,7 +751,7 @@ public sealed class SwapchainContextCoalescingTests
             1,
             recapturedContext with { PreserveSubmissionOrderBlock = true },
             fbo);
-        buckets = compiler.BuildSecondaryRecordingBuckets(ops);
+        scheduler.BuildSecondaryRecordingBuckets(ops, buckets);
 
         buckets.Count.ShouldBe(2);
     }
@@ -780,7 +777,7 @@ public sealed class SwapchainContextCoalescingTests
             SwapchainDraw(30, CtxPipelineA),  // PassOrder 0
         ];
 
-        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, graph);
+        FrameOp[] sorted = VulkanFrameOperationScheduler.SortFrameOps(ops, graph);
 
         // Should be sorted by PassOrder: 30 (order 0), 20 (order 1), 10 (order 2)
         sorted[0].PassIndex.ShouldBe(30);
@@ -804,7 +801,7 @@ public sealed class SwapchainContextCoalescingTests
             SwapchainDraw(10, CtxPipelineA),  // Known PassIndex → order 0
         ];
 
-        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, graph);
+        FrameOp[] sorted = VulkanFrameOperationScheduler.SortFrameOps(ops, graph);
 
         sorted[0].PassIndex.ShouldBe(10);
         sorted[1].PassIndex.ShouldBe(99);
@@ -816,7 +813,7 @@ public sealed class SwapchainContextCoalescingTests
         var compiler = new VulkanRenderGraphCompiler();
         FrameOp[] ops = [SwapchainClear(0, CtxPipelineA)];
 
-        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, VulkanCompiledRenderGraph.Empty);
+        FrameOp[] sorted = VulkanFrameOperationScheduler.SortFrameOps(ops, VulkanCompiledRenderGraph.Empty);
 
         sorted.ShouldBeSameAs(ops);
     }
@@ -827,7 +824,7 @@ public sealed class SwapchainContextCoalescingTests
         var compiler = new VulkanRenderGraphCompiler();
         FrameOp[] ops = [];
 
-        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, VulkanCompiledRenderGraph.Empty);
+        FrameOp[] sorted = VulkanFrameOperationScheduler.SortFrameOps(ops, VulkanCompiledRenderGraph.Empty);
 
         sorted.ShouldBeSameAs(ops);
     }
@@ -860,7 +857,7 @@ public sealed class SwapchainContextCoalescingTests
             SwapchainDraw(6, CtxPipelineB),
         ];
 
-        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, graph);
+        FrameOp[] sorted = VulkanFrameOperationScheduler.SortFrameOps(ops, graph);
 
         // Matching pass ranks stay in first-occurrence order: scene then UI.
         sorted[0].PassIndex.ShouldBe(0);
@@ -897,8 +894,8 @@ public sealed class SwapchainContextCoalescingTests
             SwapchainDraw(screenSpaceUiPass, nestedUiContext),
         ];
 
-        VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
-        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, graph);
+        VulkanSwapchainContextCoalescer.Coalesce(ops);
+        FrameOp[] sorted = VulkanFrameOperationScheduler.SortFrameOps(ops, graph);
 
         sorted.Select(op => op.PassIndex).ToArray().ShouldBe([finalSceneOutputPass, screenSpaceUiPass]);
         sorted[1].Context.ShouldBe(sceneContext);
@@ -929,7 +926,7 @@ public sealed class SwapchainContextCoalescingTests
             SwapchainDraw(uiLocalOnTopPass, nestedUiContext),
         ];
 
-        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, graph);
+        FrameOp[] sorted = VulkanFrameOperationScheduler.SortFrameOps(ops, graph);
 
         sorted.Select(op => op.PassIndex).ToArray().ShouldBe([finalSceneOutputPass, uiLocalOnTopPass]);
         sorted[1].Context.ShouldBe(nestedUiContext);
@@ -955,10 +952,10 @@ public sealed class SwapchainContextCoalescingTests
         ];
 
         // Step 1: Coalesce
-        VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
+        VulkanSwapchainContextCoalescer.Coalesce(ops);
 
         // Step 2: Sort
-        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, graph);
+        FrameOp[] sorted = VulkanFrameOperationScheduler.SortFrameOps(ops, graph);
 
         // All ops should now share the same context
         FrameOpContext expectedContext = CtxPipelineA;
@@ -993,15 +990,15 @@ public sealed class SwapchainContextCoalescingTests
             ComputeDispatch(4, CtxPipelineC),   // FBO-like op — keeps C
         ];
 
-        VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
-        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, graph);
+        VulkanSwapchainContextCoalescer.Coalesce(ops);
+        FrameOp[] sorted = VulkanFrameOperationScheduler.SortFrameOps(ops, graph);
 
         // All swapchain ops should have context A
-        foreach (var op in sorted.Where(o => VulkanRenderGraphCompiler.OpTargetsSwapchain(o)))
+        foreach (var op in sorted.Where(o => VulkanSwapchainContextCoalescer.TargetsSwapchain(o)))
             op.Context.ShouldBe(CtxPipelineA);
 
         // Non-swapchain ops should retain their original context
-        var nonSwapchainOps = sorted.Where(o => !VulkanRenderGraphCompiler.OpTargetsSwapchain(o)).ToArray();
+        var nonSwapchainOps = sorted.Where(o => !VulkanSwapchainContextCoalescer.TargetsSwapchain(o)).ToArray();
         nonSwapchainOps.ShouldContain(op => op.Context == CtxPipelineB);
         nonSwapchainOps.ShouldContain(op => op.Context == CtxPipelineC);
     }
@@ -1027,8 +1024,8 @@ public sealed class SwapchainContextCoalescingTests
                 SwapchainDraw(4, CtxPipelineB),
             ];
 
-            VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
-            FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, graph);
+            VulkanSwapchainContextCoalescer.Coalesce(ops);
+            FrameOp[] sorted = VulkanFrameOperationScheduler.SortFrameOps(ops, graph);
             allResults[run] = sorted.Select(o => o.PassIndex).ToArray();
         }
 

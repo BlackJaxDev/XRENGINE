@@ -1,3 +1,5 @@
+using XREngine.Data.Rendering;
+
 namespace XREngine.Rendering;
 
 /// <summary>
@@ -10,6 +12,7 @@ public sealed class AdvancedIndirectRangePlanner
     private readonly AdvancedIndirectRange[] _ranges;
     private readonly int[] _payloadIndices;
     private readonly EAdvancedGeometryProducer[] _producers;
+    private readonly EAdvancedGeometryProducer[] _producersByPayload;
     private readonly uint[] _writeCursors;
     private int _rangeCount;
     private int _payloadCount;
@@ -28,6 +31,8 @@ public sealed class AdvancedIndirectRangePlanner
         _ranges = new AdvancedIndirectRange[maximumRanges];
         _payloadIndices = new int[maximumPayloads];
         _producers = new EAdvancedGeometryProducer[maximumPayloads];
+        _producersByPayload =
+            new EAdvancedGeometryProducer[maximumPayloads];
         _writeCursors = new uint[maximumRanges];
     }
 
@@ -37,13 +42,17 @@ public sealed class AdvancedIndirectRangePlanner
         => _payloadIndices.AsSpan(0, _payloadCount);
     public ReadOnlySpan<EAdvancedGeometryProducer> Producers
         => _producers.AsSpan(0, _payloadCount);
+    public ReadOnlySpan<EAdvancedGeometryProducer> ProducersByPayload
+        => _producersByPayload.AsSpan(0, _payloadCount);
 
     public AdvancedIndirectPreparationResult Build(
         ReadOnlySpan<AdvancedVisibilityPayload> payloads,
         uint argumentBufferBase,
         uint countBufferBase,
         uint argumentStride,
-        uint countStride)
+        uint countStride,
+        EMeshSubmissionStrategy submissionStrategy =
+            EMeshSubmissionStrategy.GpuMeshletZeroReadback)
     {
         if (payloads.Length > _payloadIndices.Length)
             throw new ArgumentOutOfRangeException(nameof(payloads));
@@ -54,15 +63,18 @@ public sealed class AdvancedIndirectRangePlanner
         _payloadCount = 0;
         uint staticMeshlet = 0u;
         uint skinnedMeshlet = 0u;
-        uint traditional = 0u;
-        uint cpuDiagnostic = 0u;
+        uint indirectIndexed = 0u;
+        uint cpuDirectStatic = 0u;
+        uint cpuDirectPreSkinned = 0u;
 
         for (int payloadIndex = 0;
              payloadIndex < payloads.Length;
              payloadIndex++)
         {
             AdvancedVisibilityPayload payload = payloads[payloadIndex];
-            EAdvancedGeometryProducer producer = ResolveProducer(payload);
+            EAdvancedGeometryProducer producer =
+                ResolveProducer(payload, submissionStrategy);
+            _producersByPayload[payloadIndex] = producer;
             switch (producer)
             {
                 case EAdvancedGeometryProducer.StaticMeshlet:
@@ -71,11 +83,14 @@ public sealed class AdvancedIndirectRangePlanner
                 case EAdvancedGeometryProducer.SkinnedMeshlet:
                     skinnedMeshlet++;
                     break;
-                case EAdvancedGeometryProducer.TraditionalIndirect:
-                    traditional++;
+                case EAdvancedGeometryProducer.IndirectIndexed:
+                    indirectIndexed++;
                     break;
-                case EAdvancedGeometryProducer.CpuDirectDiagnostic:
-                    cpuDiagnostic++;
+                case EAdvancedGeometryProducer.CpuDirectStaticIndexed:
+                    cpuDirectStatic++;
+                    break;
+                case EAdvancedGeometryProducer.CpuDirectPreSkinned:
+                    cpuDirectPreSkinned++;
                     break;
             }
 
@@ -128,8 +143,7 @@ public sealed class AdvancedIndirectRangePlanner
              payloadIndex < payloads.Length;
              payloadIndex++)
         {
-            EAdvancedGeometryProducer producer =
-                ResolveProducer(payloads[payloadIndex]);
+            EAdvancedGeometryProducer producer = _producersByPayload[payloadIndex];
             int rangeIndex = FindRange(new AdvancedIndirectRangeKey(
                 payloads[payloadIndex].RasterStateClass,
                 payloads[payloadIndex].Coverage,
@@ -155,8 +169,9 @@ public sealed class AdvancedIndirectRangePlanner
             RangeCount: checked((uint)_rangeCount),
             StaticMeshletCount: staticMeshlet,
             SkinnedMeshletCount: skinnedMeshlet,
-            TraditionalFallbackCount: traditional,
-            CpuDiagnosticCount: cpuDiagnostic,
+            IndirectIndexedCount: indirectIndexed,
+            CpuDirectStaticIndexedCount: cpuDirectStatic,
+            CpuDirectPreSkinnedCount: cpuDirectPreSkinned,
             StructuralGeneration: _structuralGeneration,
             RequiresPrimaryRerecord: requiresRerecord,
             RequiresCpuCount: false);
@@ -164,15 +179,16 @@ public sealed class AdvancedIndirectRangePlanner
 
     public static EAdvancedGeometryProducer ResolveProducer(
         in AdvancedVisibilityPayload payload)
-    {
-        if (payload.ForceCpuDiagnostic)
-            return EAdvancedGeometryProducer.CpuDirectDiagnostic;
-        if (!payload.MeshletsResident)
-            return EAdvancedGeometryProducer.TraditionalIndirect;
-        return payload.Skinned
-            ? EAdvancedGeometryProducer.SkinnedMeshlet
-            : EAdvancedGeometryProducer.StaticMeshlet;
-    }
+        => ResolveProducer(
+            payload,
+            EMeshSubmissionStrategy.GpuMeshletZeroReadback);
+
+    public static EAdvancedGeometryProducer ResolveProducer(
+        in AdvancedVisibilityPayload payload,
+        EMeshSubmissionStrategy submissionStrategy)
+        => AdvancedVisibilityProducerResolver.Resolve(
+            submissionStrategy,
+            payload);
 
     private int FindRange(in AdvancedIndirectRangeKey key)
     {

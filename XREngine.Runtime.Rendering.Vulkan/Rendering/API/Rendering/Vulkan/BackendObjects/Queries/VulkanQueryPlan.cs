@@ -5,7 +5,7 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>
 /// Fully validated Vulkan representation of one engine query descriptor.
 /// </summary>
-public readonly record struct VulkanQueryPlan(
+internal readonly record struct VulkanQueryPlan(
     bool Supported,
     QueryType QueryType,
     QueryPipelineStatisticFlags PipelineStatistics,

@@ -21,6 +21,7 @@ namespace XREngine.Runtime.InputIntegration
 
         private readonly WindowSnapshotKeyboard _snapshotKeyboard = new(0);
         private readonly WindowSnapshotMouse _snapshotMouse = new(0);
+        private readonly WindowSnapshotGamepad _snapshotGamepad = new(0);
 
         private IRuntimeLocalPlayerViewport? _viewport = null;
         [YamlIgnore]
@@ -119,7 +120,7 @@ namespace XREngine.Runtime.InputIntegration
                 Input.UpdateDevices(
                     keyboard: null,
                     mouse: null,
-                    gamepad: null,
+                    gamepad: _snapshotGamepad,
                     RuntimeVrInputServices.Actions);
             }
         }
@@ -132,7 +133,7 @@ namespace XREngine.Runtime.InputIntegration
                 Input.UpdateDevices(
                     keyboard: null,
                     mouse: null,
-                    gamepad: null,
+                    gamepad: _snapshotGamepad,
                     RuntimeVrInputServices.Actions);
                 return;
             }
@@ -149,7 +150,7 @@ namespace XREngine.Runtime.InputIntegration
             Input.UpdateDevices(
                 keyboardAndMousePlayer ? _snapshotKeyboard : null,
                 keyboardAndMousePlayer ? _snapshotMouse : null,
-                gamepad: null,
+                gamepad: _snapshotGamepad,
                 RuntimeVrInputServices.Actions);
         }
 
@@ -159,6 +160,7 @@ namespace XREngine.Runtime.InputIntegration
                 return;
 
             WindowInputSnapshot snapshot = _viewport.ConsumeInputSnapshot();
+            _snapshotGamepad.ApplySnapshot(snapshot);
             _snapshotKeyboard.ApplySnapshot(snapshot);
             _snapshotMouse.ApplySnapshot(snapshot);
         }

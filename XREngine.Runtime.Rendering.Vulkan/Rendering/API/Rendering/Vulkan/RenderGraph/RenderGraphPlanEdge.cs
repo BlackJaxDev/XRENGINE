@@ -1,6 +1,6 @@
 using XREngine.Rendering.RenderGraph;
 
-namespace XREngine.Rendering.Vulkan;
+namespace XREngine.Rendering.Vulkan.RenderGraph;
 
 internal sealed record RenderGraphPlanEdge(
     int ProducerPassIndex,

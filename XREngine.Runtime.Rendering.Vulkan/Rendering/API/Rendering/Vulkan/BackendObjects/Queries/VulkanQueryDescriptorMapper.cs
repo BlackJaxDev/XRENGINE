@@ -5,7 +5,7 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>
 /// Central descriptor-to-Vulkan mapping and capability validation.
 /// </summary>
-public static class VulkanQueryDescriptorMapper
+internal static class VulkanQueryDescriptorMapper
 {
     private const int QueryTypeResultStatusOnlyKhr = 1_000_023_000;
     private const int QueryTypeTransformFeedbackStreamExt = 1_000_028_004;

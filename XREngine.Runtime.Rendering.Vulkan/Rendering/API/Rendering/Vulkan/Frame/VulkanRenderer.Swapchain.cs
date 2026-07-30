@@ -601,6 +601,7 @@ public unsafe partial class VulkanRenderer
             throw new InvalidOperationException("Swapchain image count was zero.");
 
         swapChainImages = new Image[imageCount];
+        _descriptorManager.EnsureFrameSlotCountFloor(checked((int)imageCount));
         _swapchainImageEverPresented = new bool[imageCount];
         _swapchainImageHasValidPresentedContent = new bool[imageCount];
         fixed (Image* swapChainImagesPtr = swapChainImages)

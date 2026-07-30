@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -34,7 +34,7 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private CommandScope NewCommandScope()
+        internal CommandScope NewCommandScope()
             => new(this, CommandsStart(useTransferQueue: false), useTransferQueue: false);
 
         private CommandScope NewTransferCommandScope()

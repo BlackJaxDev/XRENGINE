@@ -344,7 +344,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (name == BloomMip0FBOName)
             {
                 targetMip = 0;
-                material = CreateCopyMaterial(Path.Combine(SceneShaderPath, GetCopyShaderName()));
+                XRTexture sourceTexture = ResolveBloomCopySourceTexture(instance);
+                _bloomCopySourceTexture = sourceTexture;
+                material = CreateCopyMaterial(sourceTexture, Path.Combine(SceneShaderPath, GetCopyShaderName()));
                 uniformCallback = BloomCopy_SettingUniforms;
             }
             else if (name is BloomDS1FBOName or BloomDS2FBOName or BloomDS3FBOName or BloomDS4FBOName)
@@ -371,6 +373,20 @@ namespace XREngine.Rendering.Pipelines.Commands
             return frameBuffer;
         }
 
+        private XRTexture ResolveBloomCopySourceTexture(XRRenderPipelineInstance instance)
+        {
+            if (VPRCSourceTextureHelpers.TryResolveColorTexture(
+                    instance,
+                    null,
+                    InputFBOName,
+                    out XRTexture? sourceTexture,
+                    out string failure) &&
+                sourceTexture is not null)
+                return sourceTexture;
+
+            throw new InvalidOperationException($"Bloom input FBO '{InputFBOName}' has no source texture: {failure}");
+        }
+
         private XRMaterial CreateDownsampleMaterial(XRTexture outputTexture, int sourceMip, string downsampleShader)
             => new(
                 [
@@ -385,9 +401,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                 RenderOptions = NoDepthTestParams()
             };
 
-        private XRMaterial CreateCopyMaterial(string copyShader)
+        private XRMaterial CreateCopyMaterial(XRTexture sourceTexture, string copyShader)
             => new(
-                Array.Empty<XRTexture?>(),
+                new XRTexture?[] { sourceTexture },
                 XRShader.EngineShader(copyShader, EShaderType.Fragment))
             {
                 RenderOptions = NoDepthTestParams()
@@ -448,6 +464,13 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             // Step 1: Copy HDR scene into bloom texture mip 0.
             {
+                if (mip0.Material?.Textures.Count != 1 ||
+                    !ReferenceEquals(mip0.Material.Textures[0], inputTexture))
+                {
+                    LogGuardFailure(nameof(Execute), "Bloom copy material source is stale; declared resources must be rebuilt.");
+                    return;
+                }
+
                 _bloomCopySourceTexture = inputTexture;
                 BoundingRectangle copyRegion = ResolveBloomMipRegion(_lastWidth, _lastHeight, 0);
                 ValidateBloomRenderRegion(mip0, copyRegion, 0);

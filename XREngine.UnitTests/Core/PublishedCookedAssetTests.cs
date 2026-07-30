@@ -139,6 +139,26 @@ public sealed class PublishedCookedAssetTests
     }
 
     [Test]
+    public void AotRuntimeMetadataStore_RuntimeAssetTypeMatch_UsesStableFullTypeName()
+    {
+        Type startupType = typeof(GameStartupSettings);
+        string relocatedIdentity =
+            $"{startupType.FullName}, NativeAot.RelocatedImage, Version=99.0.0.0, Culture=neutral, PublicKeyToken=null";
+        string archivePath = CreateConfigArchive(new AotRuntimeMetadata
+        {
+            KnownTypeAssemblyQualifiedNames = [startupType.AssemblyQualifiedName!],
+            PublishedRuntimeAssetTypeNames = [relocatedIdentity],
+        });
+
+        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.PublishedAot);
+        XRRuntimeEnvironment.ConfigurePublishedPaths(archivePath);
+
+        AotRuntimeMetadataStore.IsPublishedRuntimeAssetType(startupType).ShouldBeTrue();
+        AotRuntimeMetadataStore.IsPublishedRuntimeAssetType(
+            typeof(UserSettings).AssemblyQualifiedName!).ShouldBeFalse();
+    }
+
+    [Test]
     public void AotRuntimeMetadataStore_RequireMetadata_LoadsPublishedConfigArchive()
     {
         string meshTypeName = typeof(XRMesh).AssemblyQualifiedName!;

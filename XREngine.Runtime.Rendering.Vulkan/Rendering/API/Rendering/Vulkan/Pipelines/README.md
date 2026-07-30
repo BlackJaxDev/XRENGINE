@@ -1,3 +1,7 @@
 # Vulkan Pipelines
 
-Owns render passes, graphics pipeline setup, pipeline caches, compile queues, prewarm databases, render-target mode selection, and graphics-pipeline-library cache policy.
+Owns render-pass compatibility, graphics/compute pipeline creation, shared
+pipeline and library caches, compile queues, prewarm database policy, and
+render-target mode selection. `VulkanPipelineManager` owns device-lifetime
+cache, deferred-link, and prewarm autosave state. Wrappers access those services
+through `VulkanBackendObjectContext.Pipelines`.

@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Collections;
 using System.ComponentModel;
+using System.Threading;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Capture.Lights.Types;
@@ -3956,6 +3957,8 @@ namespace XREngine.Components.Lights
             if (!IsActiveInHierarchy || !CastsShadows)
                 return;
 
+            Interlocked.Increment(ref _standaloneShadowRenderRequestCount);
+
             if (collectVisibleNow)
             {
                 CollectVisibleItems();
@@ -3976,7 +3979,11 @@ namespace XREngine.Components.Lights
                 if (primaryViewport.RenderPipeline is ShadowRenderPipeline shadowPipeline)
                     shadowPipeline.ClearColor = GetShadowMapClearColor();
 
+                int casterCount = primaryViewport.RenderPipelineInstance.MeshRenderCommands
+                    .GetRenderingMeshCommandCount();
+                Volatile.Write(ref _primaryShadowCasterCount, casterCount);
                 primaryViewport.Render(shadowMap, null, null, true, shadowMaterial);
+                Interlocked.Increment(ref _standaloneShadowRenderPassCount);
                 GenerateMomentShadowMipmapsIfNeeded();
             }
 

@@ -128,21 +128,5 @@ public class ColorGradingSettingsTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string current = Path.GetFullPath(AppContext.BaseDirectory);
-        while (!string.IsNullOrEmpty(current))
-        {
-            string candidate = Path.Combine(current, relativePath);
-            if (File.Exists(candidate))
-                return File.ReadAllText(candidate).Replace("\r\n", "\n", StringComparison.Ordinal);
-
-            DirectoryInfo? parent = Directory.GetParent(current);
-            if (parent is null)
-                break;
-
-            current = parent.FullName;
-        }
-
-        throw new FileNotFoundException($"Could not locate '{relativePath}' from '{AppContext.BaseDirectory}'.");
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 }

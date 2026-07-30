@@ -407,7 +407,7 @@ public unsafe partial class VulkanRenderer
         if (string.IsNullOrWhiteSpace(name))
             return;
 
-        _trackedBuffersByName[name] = buffer;
+        _renderGraphRuntime.TrackedBuffersByName[name] = buffer;
     }
 
     internal bool TryResolveTrackedBuffer(string resourceName, out Buffer buffer, out ulong size)
@@ -415,7 +415,7 @@ public unsafe partial class VulkanRenderer
         if (ResourceAllocator.TryGetBuffer(resourceName, out buffer, out size))
             return true;
 
-        if (_trackedBuffersByName.TryGetValue(resourceName, out XRDataBuffer? dataBuffer) &&
+        if (_renderGraphRuntime.TrackedBuffersByName.TryGetValue(resourceName, out XRDataBuffer? dataBuffer) &&
             GetOrCreateAPIRenderObject(dataBuffer, true) is VkDataBuffer vkBuffer)
         {
             vkBuffer.Generate();

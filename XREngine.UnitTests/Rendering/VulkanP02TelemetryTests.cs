@@ -134,11 +134,7 @@ public sealed class VulkanP02TelemetryTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string path = Path.Combine(ResolveRepoRoot(), relativePath.Replace('/', Path.DirectorySeparatorChar));
-        File.Exists(path).ShouldBeTrue($"Expected workspace file '{relativePath}'.");
-        return File.ReadAllText(path).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ResolveRepoRoot()
     {

@@ -35,16 +35,19 @@ public sealed class VulkanFullyBindlessMaterialTests
         string logicalDeviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
         string profileSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Vulkan/VulkanFeatureProfile.cs");
         string hostInterfaceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderSettingsServices.cs");
-        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
-        string bindingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/Structs/VulkanRenderer.VulkanBindlessMaterialDescriptorBinding.cs");
-        string frameOpSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanRenderer.IndirectDrawOp.cs");
+        string commandBufferSource = SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string bindingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/Structs/VulkanBindlessMaterialDescriptorBinding.cs");
+        string frameOpSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/IndirectDrawOp.cs");
 
         profileSource.ShouldContain("enum EVulkanBindlessMaterialMode");
         profileSource.ShouldContain("enum EVulkanBindlessMaterialCapabilityTier");
         profileSource.ShouldContain("XREngineEnvironmentVariables.VulkanBindlessMaterialMode");
         profileSource.ShouldContain("VulkanBindlessMaterialCapability");
 
-        tableSource.ShouldContain("TryGetOrCreateMaterialTextureDescriptorIndex");
+        tableSource.ShouldContain("ResolveMaterialTextureDescriptorReference");
+        tableSource.ShouldContain("MaterialTextureReferenceResolution.Pending");
+        tableSource.ShouldContain("MaterialTextureReferenceResolution.Failed");
+        tableSource.ShouldContain("slot.Dirty");
         tableSource.ShouldContain("TryEnsureGlobalMaterialTextureDescriptorTable");
         tableSource.ShouldContain("DescriptorPoolCreateFlags.UpdateAfterBindBit");
         tableSource.ShouldContain("DescriptorSetVariableDescriptorCountAllocateInfo");
@@ -90,7 +93,7 @@ public sealed class VulkanFullyBindlessMaterialTests
 
         passSource.ShouldContain("EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable");
         passSource.ShouldContain("materialCapability.TryEnsureMaterialTextureTable");
-        passSource.ShouldContain("materialCapability?.TryResolveMaterialTextureReference");
+        passSource.ShouldContain("materialCapability?.ResolveMaterialTextureReference");
         passSource.ShouldContain("materialCapability?.FlushMaterialTextureTableUpdates();");
 
         hybridSource.ShouldContain("ResolveMaterialTableTextureReferenceMode");
@@ -102,11 +105,7 @@ public sealed class VulkanFullyBindlessMaterialTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string fullPath = ResolveWorkspacePath(relativePath);
-        File.Exists(fullPath).ShouldBeTrue($"Expected file does not exist: {fullPath}");
-        return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ResolveWorkspacePath(string relativePath)
     {

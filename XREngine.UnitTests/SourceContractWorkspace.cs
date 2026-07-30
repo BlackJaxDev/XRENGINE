@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 
 namespace XREngine.UnitTests;
@@ -11,6 +12,8 @@ internal static class SourceContractWorkspace
     private const string VulkanProjectDirectory = "XREngine.Runtime.Rendering.Vulkan";
     private static readonly Lazy<IReadOnlyList<SourceFile>> VulkanSourceFiles =
         new(DiscoverVulkanSourceFiles);
+    private static readonly ConcurrentDictionary<string, string> VulkanTypeFamilySources =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly string RepositoryRoot = FindRepositoryRoot();
 
     internal readonly record struct SourceFile(string RelativePath, string Source);
@@ -21,6 +24,13 @@ internal static class SourceContractWorkspace
     /// </summary>
     public static string ReadFile(string relativePath)
     {
+        string exactPath = Path.GetFullPath(Path.Combine(RepositoryRoot, relativePath));
+        if (File.Exists(exactPath))
+            return NormalizeLineEndings(File.ReadAllText(exactPath));
+
+        if (IsVulkanCSharpSourcePath(relativePath))
+            return ReadPartialType(relativePath);
+
         string fullPath = ResolveFile(relativePath);
         return NormalizeLineEndings(File.ReadAllText(fullPath));
     }
@@ -30,24 +40,34 @@ internal static class SourceContractWorkspace
     /// </summary>
     public static string ReadPartialType(string relativePath)
     {
-        string fullPath = ResolveFile(relativePath);
+        if (IsVulkanCSharpSourcePath(relativePath))
+        {
+            string vulkanTypeStem = ResolveVulkanTypeStem(relativePath);
+            return VulkanTypeFamilySources.GetOrAdd(vulkanTypeStem, static stem =>
+            {
+                SourceFile[] relatedFiles =
+                [
+                    .. GetVulkanSourceFiles()
+                        .Where(file => IsTypeFamilyFile(file.RelativePath, stem))
+                        .OrderBy(file => file.RelativePath, StringComparer.OrdinalIgnoreCase),
+                ];
 
+                if (relatedFiles.Length == 0)
+                    throw new FileNotFoundException($"No Vulkan source files belong to the requested type family '{stem}'.");
+
+                return CombineSources(relatedFiles);
+            });
+        }
+
+        string fullPath = ResolveFile(relativePath);
         if (!string.Equals(Path.GetExtension(fullPath), ".cs", StringComparison.OrdinalIgnoreCase))
             return NormalizeLineEndings(File.ReadAllText(fullPath));
 
-        string fileName = Path.GetFileNameWithoutExtension(fullPath);
-        int separatorIndex = fileName.IndexOf('.');
-        string typeStem = separatorIndex >= 0 ? fileName[..separatorIndex] : fileName;
+        string typeStem = GetTypeStem(fullPath);
         string projectRoot = ResolveProjectRoot(relativePath);
-
         string[] relatedPaths = Directory
             .EnumerateFiles(projectRoot, $"{typeStem}*.cs", SearchOption.AllDirectories)
-            .Where(path =>
-            {
-                string candidateName = Path.GetFileNameWithoutExtension(path);
-                return string.Equals(candidateName, typeStem, StringComparison.OrdinalIgnoreCase) ||
-                    candidateName.StartsWith($"{typeStem}.", StringComparison.OrdinalIgnoreCase);
-            })
+            .Where(path => IsTypeFamilyFile(path, typeStem))
             .Where(path => !IsGeneratedOrValidationPath(path))
             .OrderBy(path => string.Equals(path, fullPath, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
             .ThenBy(path => path, StringComparer.OrdinalIgnoreCase)
@@ -106,6 +126,50 @@ internal static class SourceContractWorkspace
                 $"No Vulkan source file contains any requested marker: {string.Join(", ", markers)}.");
 
         return CombineSources(matches);
+    }
+
+    private static bool IsVulkanCSharpSourcePath(string relativePath)
+    {
+        string normalized = relativePath.Replace(Path.DirectorySeparatorChar, '/');
+        return normalized.StartsWith($"{VulkanProjectDirectory}/", StringComparison.OrdinalIgnoreCase) &&
+            normalized.EndsWith(".cs", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ResolveVulkanTypeStem(string relativePath)
+    {
+        string requestedFileName = Path.GetFileName(relativePath);
+        string exactPath = Path.GetFullPath(Path.Combine(RepositoryRoot, relativePath));
+        if (File.Exists(exactPath))
+            return GetTypeStem(requestedFileName);
+
+        const string rendererPrefix = "VulkanRenderer.";
+        if (requestedFileName.StartsWith(rendererPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            string deNestedFileName = requestedFileName[rendererPrefix.Length..];
+            SourceFile[] matches =
+            [
+                .. GetVulkanSourceFiles().Where(file =>
+                    string.Equals(Path.GetFileName(file.RelativePath), deNestedFileName, StringComparison.OrdinalIgnoreCase)),
+            ];
+            if (matches.Length == 1)
+                return GetTypeStem(deNestedFileName);
+        }
+
+        return GetTypeStem(requestedFileName);
+    }
+
+    private static string GetTypeStem(string path)
+    {
+        string fileName = Path.GetFileNameWithoutExtension(path);
+        int separatorIndex = fileName.IndexOf('.');
+        return separatorIndex >= 0 ? fileName[..separatorIndex] : fileName;
+    }
+
+    private static bool IsTypeFamilyFile(string path, string typeStem)
+    {
+        string candidateName = Path.GetFileNameWithoutExtension(path);
+        return string.Equals(candidateName, typeStem, StringComparison.OrdinalIgnoreCase) ||
+            candidateName.StartsWith($"{typeStem}.", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ResolveFile(string relativePath)

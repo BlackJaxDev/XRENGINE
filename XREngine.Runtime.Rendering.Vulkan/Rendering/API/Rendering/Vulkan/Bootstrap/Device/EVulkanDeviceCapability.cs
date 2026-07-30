@@ -1,4 +1,4 @@
-namespace XREngine.Rendering.Vulkan;
+namespace XREngine.Rendering.Vulkan.DeviceBootstrap;
 
 [Flags]
 internal enum EVulkanDeviceCapability : ulong

@@ -12,47 +12,47 @@ internal sealed class VulkanDesktopFrameLoopPolicyTests
     [Test]
     public void PhaseTransitions_AllowOnlyDeclaredLifecycleEdges()
     {
-        foreach (VulkanRenderer.EDesktopFramePhase current in
-                 Enum.GetValues<VulkanRenderer.EDesktopFramePhase>())
+        foreach (EDesktopFramePhase current in
+                 Enum.GetValues<EDesktopFramePhase>())
         {
-            foreach (VulkanRenderer.EDesktopFramePhase next in
-                     Enum.GetValues<VulkanRenderer.EDesktopFramePhase>())
+            foreach (EDesktopFramePhase next in
+                     Enum.GetValues<EDesktopFramePhase>())
             {
                 bool expected =
-                    next == VulkanRenderer.EDesktopFramePhase.Finalized
+                    next == EDesktopFramePhase.Finalized
                         ? current !=
-                          VulkanRenderer.EDesktopFramePhase.Finalized
+                          EDesktopFramePhase.Finalized
                         : (current, next) switch
                         {
-                            (VulkanRenderer.EDesktopFramePhase.Entered,
-                                VulkanRenderer.EDesktopFramePhase
+                            (EDesktopFramePhase.Entered,
+                                EDesktopFramePhase
                                     .PreflightComplete) => true,
-                            (VulkanRenderer.EDesktopFramePhase
+                            (EDesktopFramePhase
                                     .PreflightComplete,
-                                VulkanRenderer.EDesktopFramePhase
+                                EDesktopFramePhase
                                     .SlotReady) => true,
-                            (VulkanRenderer.EDesktopFramePhase.SlotReady,
-                                VulkanRenderer.EDesktopFramePhase
+                            (EDesktopFramePhase.SlotReady,
+                                EDesktopFramePhase
                                     .ImageAcquired) => true,
-                            (VulkanRenderer.EDesktopFramePhase.ImageAcquired,
-                                VulkanRenderer.EDesktopFramePhase.ImageReady
-                                or VulkanRenderer.EDesktopFramePhase
+                            (EDesktopFramePhase.ImageAcquired,
+                                EDesktopFramePhase.ImageReady
+                                or EDesktopFramePhase
                                     .Recovered) => true,
-                            (VulkanRenderer.EDesktopFramePhase.ImageReady,
-                                VulkanRenderer.EDesktopFramePhase.Recorded
-                                or VulkanRenderer.EDesktopFramePhase
+                            (EDesktopFramePhase.ImageReady,
+                                EDesktopFramePhase.Recorded
+                                or EDesktopFramePhase
                                     .Recovered) => true,
-                            (VulkanRenderer.EDesktopFramePhase.Recorded,
-                                VulkanRenderer.EDesktopFramePhase.Validated
-                                or VulkanRenderer.EDesktopFramePhase
+                            (EDesktopFramePhase.Recorded,
+                                EDesktopFramePhase.Validated
+                                or EDesktopFramePhase
                                     .Recovered) => true,
-                            (VulkanRenderer.EDesktopFramePhase.Validated,
-                                VulkanRenderer.EDesktopFramePhase.Submitted
-                                or VulkanRenderer.EDesktopFramePhase
+                            (EDesktopFramePhase.Validated,
+                                EDesktopFramePhase.Submitted
+                                or EDesktopFramePhase
                                     .Recovered) => true,
-                            (VulkanRenderer.EDesktopFramePhase.Submitted,
-                                VulkanRenderer.EDesktopFramePhase.Presented
-                                or VulkanRenderer.EDesktopFramePhase
+                            (EDesktopFramePhase.Submitted,
+                                EDesktopFramePhase.Presented
+                                or EDesktopFramePhase
                                     .Recovered) => true,
                             _ => false,
                         };

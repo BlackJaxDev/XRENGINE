@@ -851,7 +851,7 @@ public sealed class VulkanDeferredProbeGiFixesTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-        => global::XREngine.UnitTests.SourceContractWorkspace.ReadFile(relativePath);
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ReadWorkspaceFiles(string relativeDirectory, string searchPattern)
     {

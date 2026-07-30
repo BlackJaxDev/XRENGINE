@@ -152,7 +152,7 @@ UdpServerSendPort: 5000
 ServerIP: 127.0.0.1
 TargetUpdatesPerSecond: 90
 TargetFramesPerSecond: 90
-FixedFramesPerSecond: 90
+FixedFramesPerSecond: 120
 RunVRInPlace: true
 LayerNames:
   0: Dynamic

@@ -436,60 +436,42 @@ internal sealed class VulkanResourceAllocator
 
     private static IEnumerable<string> ExpandLogicalResources(RenderPassResourceUsage usage, VulkanResourcePlanner planner)
     {
-        string resourceBinding = usage.ResourceName;
-        if (string.IsNullOrWhiteSpace(resourceBinding))
+        if (!VulkanResourceBindingKey.TryParse(usage.ResourceName, out VulkanResourceBindingKey binding))
             yield break;
 
         bool imageType = IsImageResourceType(usage.ResourceType);
         bool bufferType = IsBufferResourceType(usage.ResourceType);
-
-        if (resourceBinding.Equals(RenderGraphResourceNames.OutputRenderTarget, StringComparison.OrdinalIgnoreCase))
+        switch (binding.Kind)
         {
-            foreach (string resourceName in ExpandOutputFrameBufferResources(usage, planner))
-                yield return resourceName;
-
-            yield break;
-        }
-
-        if (imageType && resourceBinding.StartsWith("fbo::", StringComparison.OrdinalIgnoreCase))
-        {
-            string[] segments = resourceBinding.Split("::", StringSplitOptions.RemoveEmptyEntries);
-            if (segments.Length < 2)
+            case EVulkanResourceBindingKind.Output:
+                foreach (string resourceName in ExpandOutputFrameBufferResources(usage, planner))
+                    yield return resourceName;
                 yield break;
 
-            string fboName = segments[1];
-            string slot = segments.Length >= 3 ? segments[2] : "color";
-            if (!planner.TryGetFrameBufferDescriptor(fboName, out FrameBufferResourceDescriptor? descriptor))
+            case EVulkanResourceBindingKind.FrameBuffer when imageType:
+                if (!planner.TryGetFrameBufferDescriptor(binding.Name, out FrameBufferResourceDescriptor? descriptor))
+                    yield break;
+
+                foreach (FrameBufferAttachmentDescriptor attachment in descriptor?.Attachments ?? [])
+                {
+                    if (MatchesSlot(attachment.Attachment, binding.Slot) && !string.IsNullOrWhiteSpace(attachment.ResourceName))
+                        yield return planner.ResolveImageResourceName(attachment.ResourceName);
+                }
                 yield break;
 
-            foreach (FrameBufferAttachmentDescriptor attachment in descriptor?.Attachments ?? [])
-            {
-                if (MatchesSlot(attachment.Attachment, slot) && !string.IsNullOrWhiteSpace(attachment.ResourceName))
-                    yield return planner.ResolveImageResourceName(attachment.ResourceName);
-            }
+            case EVulkanResourceBindingKind.Texture when imageType:
+                yield return planner.ResolveImageResourceName(binding.Name);
+                yield break;
 
-            yield break;
+            case EVulkanResourceBindingKind.Buffer when bufferType:
+                yield return binding.Name;
+                yield break;
+
+            default:
+                yield return imageType ? planner.ResolveImageResourceName(binding.Name) : binding.Name;
+                yield break;
         }
-
-        if (imageType && resourceBinding.StartsWith("tex::", StringComparison.OrdinalIgnoreCase))
-        {
-            string textureName = resourceBinding["tex::".Length..];
-            if (!string.IsNullOrWhiteSpace(textureName))
-                yield return planner.ResolveImageResourceName(textureName);
-            yield break;
-        }
-
-        if (bufferType && resourceBinding.StartsWith("buf::", StringComparison.OrdinalIgnoreCase))
-        {
-            string bufferName = resourceBinding["buf::".Length..];
-            if (!string.IsNullOrWhiteSpace(bufferName))
-                yield return bufferName;
-            yield break;
-        }
-
-        yield return imageType ? planner.ResolveImageResourceName(resourceBinding) : resourceBinding;
     }
-
     private static IEnumerable<string> ExpandOutputFrameBufferResources(RenderPassResourceUsage usage, VulkanResourcePlanner planner)
     {
         if (!IsImageResourceType(usage.ResourceType) ||
@@ -601,17 +583,17 @@ internal sealed class VulkanResourceAllocator
     private static Format ResolveFormat(VulkanImageCreateTemplate template)
     {
         if (template.SizedInternalFormat is ESizedInternalFormat sizedFormat)
-            return VulkanRenderer.VkFormatConversions.FromSizedFormat(sizedFormat);
+            return VkFormatConversions.FromSizedFormat(sizedFormat);
 
         if (template.InternalFormat is EPixelInternalFormat internalFormat)
-            return VulkanRenderer.VkFormatConversions.FromPixelInternalFormat(internalFormat);
+            return VkFormatConversions.FromPixelInternalFormat(internalFormat);
 
         string? formatLabel = template.FormatLabel;
         if (string.IsNullOrWhiteSpace(formatLabel))
             throw new InvalidOperationException("Vulkan image descriptor is missing a format.");
 
         if (Enum.TryParse(formatLabel, ignoreCase: true, out ESizedInternalFormat sizedFromLabel))
-            return VulkanRenderer.VkFormatConversions.FromSizedFormat(sizedFromLabel);
+            return VkFormatConversions.FromSizedFormat(sizedFromLabel);
 
         if (Enum.TryParse(formatLabel, ignoreCase: true, out Format parsed))
             return parsed;

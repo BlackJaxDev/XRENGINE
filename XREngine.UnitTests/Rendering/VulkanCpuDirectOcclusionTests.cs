@@ -19,7 +19,7 @@ public sealed class VulkanCpuDirectOcclusionTests
         string cpuDirect = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs");
         string gpuOcclusion = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Occlusion.cs");
         string frameOps = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
-        string queryFrameOp = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanRenderer.QueryOp.cs");
+        string queryFrameOp = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/QueryOp.cs");
         string queryCapability = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.OcclusionQueryCapability.cs");
         string recorder = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string commandChains = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
@@ -234,7 +234,7 @@ public sealed class VulkanCpuDirectOcclusionTests
         ulong[] resultAndAvailability,
         ulong expected)
     {
-        VulkanRenderer.VkRenderQuery.TryDecodeOcclusionResult(
+        VkRenderQuery.TryDecodeOcclusionResult(
             resultAndAvailability,
             out ulong result).ShouldBeTrue();
         result.ShouldBe(expected);
@@ -247,7 +247,7 @@ public sealed class VulkanCpuDirectOcclusionTests
     public void VulkanOcclusionResultDecoder_KeepsIncompleteOrMalformedEpochPending(
         ulong[] resultAndAvailability)
     {
-        VulkanRenderer.VkRenderQuery.TryDecodeOcclusionResult(
+        VkRenderQuery.TryDecodeOcclusionResult(
             resultAndAvailability,
             out ulong result).ShouldBeFalse();
         result.ShouldBe(0ul);
@@ -329,12 +329,7 @@ public sealed class VulkanCpuDirectOcclusionTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string root = ResolveWorkspaceRoot();
-        string fullPath = Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
-        File.Exists(fullPath).ShouldBeTrue($"Expected workspace file to exist: {relativePath}");
-        return File.ReadAllText(fullPath).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ResolveWorkspaceRoot()
     {

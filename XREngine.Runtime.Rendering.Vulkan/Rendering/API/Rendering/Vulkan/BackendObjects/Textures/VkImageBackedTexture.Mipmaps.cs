@@ -10,120 +10,94 @@ using Image = Silk.NET.Vulkan.Image;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTexture<TTexture>, IVkFrameBufferAttachmentSource where TTexture : XRTexture
 {
-    internal abstract partial class VkImageBackedTexture<TTexture> : VkTexture<TTexture>, IVkFrameBufferAttachmentSource where TTexture : XRTexture
+    #region Mipmap Generation
+
+    /// <summary>
+    /// Generates a full mipmap chain for the current image using <c>vkCmdBlitImage</c>.
+    /// Each mip level is transitioned from <see cref="ImageLayout.TransferDstOptimal"/> to
+    /// <see cref="ImageLayout.TransferSrcOptimal"/>, blitted to the next smaller level,
+    /// then transitioned to <see cref="ImageLayout.ShaderReadOnlyOptimal"/>.
+    /// The final mip level is transitioned directly.
+    /// </summary>
+    /// <remarks>
+    /// This method verifies that the image format supports linear blitting. If it does not,
+    /// a warning is emitted and the image is transitioned to shader-read without mips.
+    /// </remarks>
+    protected void GenerateMipmapsWithBlit()
     {
-        #region Mipmap Generation
+        Generate();
 
-        /// <summary>
-        /// Generates a full mipmap chain for the current image using <c>vkCmdBlitImage</c>.
-        /// Each mip level is transitioned from <see cref="ImageLayout.TransferDstOptimal"/> to
-        /// <see cref="ImageLayout.TransferSrcOptimal"/>, blitted to the next smaller level,
-        /// then transitioned to <see cref="ImageLayout.ShaderReadOnlyOptimal"/>.
-        /// The final mip level is transitioned directly.
-        /// </summary>
-        /// <remarks>
-        /// This method verifies that the image format supports linear blitting. If it does not,
-        /// a warning is emitted and the image is transitioned to shader-read without mips.
-        /// </remarks>
-        protected void GenerateMipmapsWithBlit()
+        if (ResolvedMipLevels <= 1)
         {
-            Generate();
+            ImageLayout currentLayout = CurrentImageLayout;
+            if (currentLayout != ImageLayout.ShaderReadOnlyOptimal &&
+                currentLayout != ImageLayout.DepthStencilReadOnlyOptimal)
+                TransitionImageLayout(currentLayout, ImageLayout.ShaderReadOnlyOptimal);
+            
+            return;
+        }
 
-            if (ResolvedMipLevels <= 1)
+        Api!.GetPhysicalDeviceFormatProperties(PhysicalDevice, ResolvedFormat, out FormatProperties props);
+        if ((props.OptimalTilingFeatures & FormatFeatureFlags.SampledImageFilterLinearBit) == 0)
+        {
+            Debug.VulkanWarning($"Texture format '{ResolvedFormat}' does not support linear blitting; skipping mipmap generation.");
+            TransitionImageLayout(CurrentImageLayout, ImageLayout.ShaderReadOnlyOptimal);
+            return;
+        }
+
+        ImageLayout sourceLayout = CurrentImageLayout;
+        if (sourceLayout != ImageLayout.TransferDstOptimal)
+            TransitionImageLayout(sourceLayout, ImageLayout.TransferDstOptimal);
+
+        using var scope = Renderer.NewCommandScope();
+        CommandBuffer cmd = scope.CommandBuffer;
+
+        ImageMemoryBarrier barrier = new()
+        {
+            SType = StructureType.ImageMemoryBarrier,
+            Image = Image,
+            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+            SubresourceRange = new ImageSubresourceRange
             {
-                ImageLayout currentLayout = CurrentImageLayout;
-                if (currentLayout != ImageLayout.ShaderReadOnlyOptimal &&
-                    currentLayout != ImageLayout.DepthStencilReadOnlyOptimal)
-                    TransitionImageLayout(currentLayout, ImageLayout.ShaderReadOnlyOptimal);
-                
-                return;
+                AspectMask = AspectFlags,
+                BaseArrayLayer = 0,
+                LayerCount = ResolvedArrayLayers,
+                LevelCount = 1,
             }
+        };
 
-            Api!.GetPhysicalDeviceFormatProperties(PhysicalDevice, ResolvedFormat, out FormatProperties props);
-            if ((props.OptimalTilingFeatures & FormatFeatureFlags.SampledImageFilterLinearBit) == 0)
-            {
-                Debug.VulkanWarning($"Texture format '{ResolvedFormat}' does not support linear blitting; skipping mipmap generation.");
-                TransitionImageLayout(CurrentImageLayout, ImageLayout.ShaderReadOnlyOptimal);
-                return;
-            }
+        int mipWidth = (int)ResolvedExtent.Width;
+        int mipHeight = (int)ResolvedExtent.Height;
 
-            ImageLayout sourceLayout = CurrentImageLayout;
-            if (sourceLayout != ImageLayout.TransferDstOptimal)
-                TransitionImageLayout(sourceLayout, ImageLayout.TransferDstOptimal);
-
-            using var scope = Renderer.NewCommandScope();
-            CommandBuffer cmd = scope.CommandBuffer;
-
-            ImageMemoryBarrier barrier = new()
-            {
-                SType = StructureType.ImageMemoryBarrier,
-                Image = Image,
-                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                SubresourceRange = new ImageSubresourceRange
-                {
-                    AspectMask = AspectFlags,
-                    BaseArrayLayer = 0,
-                    LayerCount = ResolvedArrayLayers,
-                    LevelCount = 1,
-                }
-            };
-
-            int mipWidth = (int)ResolvedExtent.Width;
-            int mipHeight = (int)ResolvedExtent.Height;
-
-            for (uint level = 1; level < ResolvedMipLevels; level++)
-            {
-                barrier.SubresourceRange.BaseMipLevel = level - 1;
-                barrier.OldLayout = ImageLayout.TransferDstOptimal;
-                barrier.NewLayout = ImageLayout.TransferSrcOptimal;
-                barrier.SrcAccessMask = AccessFlags.TransferWriteBit;
-                barrier.DstAccessMask = AccessFlags.TransferReadBit;
-
-                Renderer.CmdPipelineBarrierTracked(
-                    cmd,
-                    PipelineStageFlags.TransferBit,
-                    PipelineStageFlags.TransferBit,
-                    0,
-                    0,
-                    null,
-                    0,
-                    null,
-                    1,
-                    &barrier);
-
-                ImageBlit blit = CreateMipBlit(level, mipWidth, mipHeight);
-                Renderer.CmdBlitImageTracked(cmd, Image, ImageLayout.TransferSrcOptimal, Image, ImageLayout.TransferDstOptimal, 1, &blit, Filter.Linear);
-
-                barrier.OldLayout = ImageLayout.TransferSrcOptimal;
-                barrier.NewLayout = ImageLayout.ShaderReadOnlyOptimal;
-                barrier.SrcAccessMask = AccessFlags.TransferReadBit;
-                barrier.DstAccessMask = AccessFlags.ShaderReadBit;
-
-                Renderer.CmdPipelineBarrierTracked(
-                    cmd,
-                    PipelineStageFlags.TransferBit,
-                    PipelineStageFlags.FragmentShaderBit,
-                    0,
-                    0,
-                    null,
-                    0,
-                    null,
-                    1,
-                    &barrier);
-
-                if (mipWidth > 1)
-                    mipWidth /= 2;
-                if (mipHeight > 1)
-                    mipHeight /= 2;
-            }
-
-            barrier.SubresourceRange.BaseMipLevel = ResolvedMipLevels - 1;
+        for (uint level = 1; level < ResolvedMipLevels; level++)
+        {
+            barrier.SubresourceRange.BaseMipLevel = level - 1;
             barrier.OldLayout = ImageLayout.TransferDstOptimal;
-            barrier.NewLayout = ImageLayout.ShaderReadOnlyOptimal;
+            barrier.NewLayout = ImageLayout.TransferSrcOptimal;
             barrier.SrcAccessMask = AccessFlags.TransferWriteBit;
+            barrier.DstAccessMask = AccessFlags.TransferReadBit;
+
+            Renderer.CmdPipelineBarrierTracked(
+                cmd,
+                PipelineStageFlags.TransferBit,
+                PipelineStageFlags.TransferBit,
+                0,
+                0,
+                null,
+                0,
+                null,
+                1,
+                &barrier);
+
+            ImageBlit blit = CreateMipBlit(level, mipWidth, mipHeight);
+            Renderer.CmdBlitImageTracked(cmd, Image, ImageLayout.TransferSrcOptimal, Image, ImageLayout.TransferDstOptimal, 1, &blit, Filter.Linear);
+
+            barrier.OldLayout = ImageLayout.TransferSrcOptimal;
+            barrier.NewLayout = ImageLayout.ShaderReadOnlyOptimal;
+            barrier.SrcAccessMask = AccessFlags.TransferReadBit;
             barrier.DstAccessMask = AccessFlags.ShaderReadBit;
 
             Renderer.CmdPipelineBarrierTracked(
@@ -138,50 +112,73 @@ public unsafe partial class VulkanRenderer
                 1,
                 &barrier);
 
-            _currentImageLayout = ImageLayout.ShaderReadOnlyOptimal;
-            _physicalGroup?.LastKnownLayout = ImageLayout.ShaderReadOnlyOptimal;
+            if (mipWidth > 1)
+                mipWidth /= 2;
+            if (mipHeight > 1)
+                mipHeight /= 2;
         }
 
-        /// <summary>
-        /// Builds an <see cref="ImageBlit"/> descriptor that copies from mip level
-        /// <paramref name="targetLevel"/> − 1 to <paramref name="targetLevel"/>, halving
-        /// the width and height (clamped to 1).
-        /// </summary>
-        /// <param name="targetLevel">The destination mip level (source is <c>targetLevel − 1</c>).</param>
-        /// <param name="mipWidth">Width of the source mip level.</param>
-        /// <param name="mipHeight">Height of the source mip level.</param>
-        /// <returns>A configured <see cref="ImageBlit"/> ready for <c>CmdBlitImage</c>.</returns>
-        private ImageBlit CreateMipBlit(uint targetLevel, int mipWidth, int mipHeight)
-        {
-            int dstWidth = Math.Max(mipWidth / 2, 1);
-            int dstHeight = Math.Max(mipHeight / 2, 1);
+        barrier.SubresourceRange.BaseMipLevel = ResolvedMipLevels - 1;
+        barrier.OldLayout = ImageLayout.TransferDstOptimal;
+        barrier.NewLayout = ImageLayout.ShaderReadOnlyOptimal;
+        barrier.SrcAccessMask = AccessFlags.TransferWriteBit;
+        barrier.DstAccessMask = AccessFlags.ShaderReadBit;
 
-            ImageBlit blit = new()
-            {
-                SrcSubresource = new ImageSubresourceLayers
-                {
-                    AspectMask = AspectFlags,
-                    MipLevel = targetLevel - 1,
-                    BaseArrayLayer = 0,
-                    LayerCount = ResolvedArrayLayers,
-                },
-                DstSubresource = new ImageSubresourceLayers
-                {
-                    AspectMask = AspectFlags,
-                    MipLevel = targetLevel,
-                    BaseArrayLayer = 0,
-                    LayerCount = ResolvedArrayLayers,
-                }
-            };
+        Renderer.CmdPipelineBarrierTracked(
+            cmd,
+            PipelineStageFlags.TransferBit,
+            PipelineStageFlags.FragmentShaderBit,
+            0,
+            0,
+            null,
+            0,
+            null,
+            1,
+            &barrier);
 
-            blit.SrcOffsets.Element0 = new Offset3D(0, 0, 0);
-            blit.SrcOffsets.Element1 = new Offset3D(mipWidth, mipHeight, 1);
-            blit.DstOffsets.Element0 = new Offset3D(0, 0, 0);
-            blit.DstOffsets.Element1 = new Offset3D(dstWidth, dstHeight, 1);
-
-            return blit;
-        }
-
-        #endregion
+        _currentImageLayout = ImageLayout.ShaderReadOnlyOptimal;
+        _physicalGroup?.LastKnownLayout = ImageLayout.ShaderReadOnlyOptimal;
     }
+
+    /// <summary>
+    /// Builds an <see cref="ImageBlit"/> descriptor that copies from mip level
+    /// <paramref name="targetLevel"/> − 1 to <paramref name="targetLevel"/>, halving
+    /// the width and height (clamped to 1).
+    /// </summary>
+    /// <param name="targetLevel">The destination mip level (source is <c>targetLevel − 1</c>).</param>
+    /// <param name="mipWidth">Width of the source mip level.</param>
+    /// <param name="mipHeight">Height of the source mip level.</param>
+    /// <returns>A configured <see cref="ImageBlit"/> ready for <c>CmdBlitImage</c>.</returns>
+    private ImageBlit CreateMipBlit(uint targetLevel, int mipWidth, int mipHeight)
+    {
+        int dstWidth = Math.Max(mipWidth / 2, 1);
+        int dstHeight = Math.Max(mipHeight / 2, 1);
+
+        ImageBlit blit = new()
+        {
+            SrcSubresource = new ImageSubresourceLayers
+            {
+                AspectMask = AspectFlags,
+                MipLevel = targetLevel - 1,
+                BaseArrayLayer = 0,
+                LayerCount = ResolvedArrayLayers,
+            },
+            DstSubresource = new ImageSubresourceLayers
+            {
+                AspectMask = AspectFlags,
+                MipLevel = targetLevel,
+                BaseArrayLayer = 0,
+                LayerCount = ResolvedArrayLayers,
+            }
+        };
+
+        blit.SrcOffsets.Element0 = new Offset3D(0, 0, 0);
+        blit.SrcOffsets.Element1 = new Offset3D(mipWidth, mipHeight, 1);
+        blit.DstOffsets.Element0 = new Offset3D(0, 0, 0);
+        blit.DstOffsets.Element1 = new Offset3D(dstWidth, dstHeight, 1);
+
+        return blit;
+    }
+
+    #endregion
 }

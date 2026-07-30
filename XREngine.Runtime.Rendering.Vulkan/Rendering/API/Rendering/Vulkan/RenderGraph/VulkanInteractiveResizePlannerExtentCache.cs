@@ -1,7 +1,7 @@
 using System;
 using System.Threading;
 
-namespace XREngine.Rendering.Vulkan;
+namespace XREngine.Rendering.Vulkan.RenderGraph;
 
 /// <summary>
 /// Stores a bounded set of per-output resize extents without allocating in the render hot path.

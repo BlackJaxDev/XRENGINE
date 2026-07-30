@@ -2,7 +2,7 @@ using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Vulkan;
 
-public readonly record struct AutoUniformMember(
+internal readonly record struct AutoUniformMember(
     string Name,
     string GlslType,
     EShaderVarType? EngineType,

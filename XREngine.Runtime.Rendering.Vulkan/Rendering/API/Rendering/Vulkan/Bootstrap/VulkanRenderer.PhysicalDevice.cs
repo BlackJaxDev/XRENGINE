@@ -9,7 +9,7 @@ public unsafe partial class VulkanRenderer
     private VulkanPhysicalDeviceCapabilitySnapshot? _physicalDeviceCapabilitySnapshot;
     public PhysicalDevice PhysicalDevice => _physicalDevice;
     private ulong _nonCoherentAtomSize = 1;
-    private ulong _uniformBufferOffsetAlignment = 1;
+    internal ulong _uniformBufferOffsetAlignment = 1;
 
     private void PickPhysicalDevice()
     {

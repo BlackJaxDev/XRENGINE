@@ -181,14 +181,7 @@ public sealed class VulkanCoreHardeningPhase51Tests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string path = Path.Combine(
-            ResolveRepoRoot(),
-            relativePath.Replace('/', Path.DirectorySeparatorChar));
-        path = ResolveRelocatedCommandBufferPath(path);
-        File.Exists(path).ShouldBeTrue($"Expected workspace file '{relativePath}'.");
-        return File.ReadAllText(path).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ResolveRelocatedCommandBufferPath(string path)
     {

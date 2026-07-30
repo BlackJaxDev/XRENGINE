@@ -212,8 +212,8 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     [Test]
     public void ReservationManifest_SealsThreeUsesAndRejectsLateCapacityMutation()
     {
-        var renderer = (VulkanRenderer.VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
-            typeof(VulkanRenderer.VkMeshRenderer));
+        var renderer = (VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
+            typeof(VkMeshRenderer));
         VulkanRenderer.VulkanMeshFrameDataReservationManifest manifest = new();
 
         manifest.Begin(generation: 4, capacityHint: 1);
@@ -230,10 +230,10 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     [Test]
     public void ReservationManifest_AllowsCapacityGrowthOnlyAtNextGenerationBoundary()
     {
-        var desktopRenderer = (VulkanRenderer.VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
-            typeof(VulkanRenderer.VkMeshRenderer));
-        var spsRenderer = (VulkanRenderer.VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
-            typeof(VulkanRenderer.VkMeshRenderer));
+        var desktopRenderer = (VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
+            typeof(VkMeshRenderer));
+        var spsRenderer = (VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
+            typeof(VkMeshRenderer));
         VulkanRenderer.VulkanMeshFrameDataReservationManifest manifest = new();
 
         manifest.Begin(generation: 1, capacityHint: 2);
@@ -253,13 +253,13 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     [Test]
     public void FrameWideManifest_DefersLateFamiliesAndPublishesThemAtTheNextFrameBoundary()
     {
-        var renderer = (VulkanRenderer.VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
-            typeof(VulkanRenderer.VkMeshRenderer));
-        var requirements = new Dictionary<VulkanRenderer.VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
-        var eyeFamily = new VulkanRenderer.VulkanMeshFrameDataFamilyKey(
+        var renderer = (VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
+            typeof(VkMeshRenderer));
+        var requirements = new Dictionary<VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
+        var eyeFamily = new VulkanMeshFrameDataFamilyKey(
             3,
-            VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
-            VulkanRenderer.EVulkanFrameOpContextKind.OpenXrEye,
+            EVulkanMeshFrameDataStreamKind.Primary,
+            EVulkanFrameOpContextKind.OpenXrEye,
             10,
             20,
             30,
@@ -268,10 +268,10 @@ public sealed class VulkanUniformBufferGenerationCacheTests
             StereoRightEyeCameraIdentity: 51,
             StereoEnabled: true,
             MultiviewEnabled: true);
-        var desktopFamily = new VulkanRenderer.VulkanMeshFrameDataFamilyKey(
+        var desktopFamily = new VulkanMeshFrameDataFamilyKey(
             0,
-            VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
-            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+            EVulkanMeshFrameDataStreamKind.Primary,
+            EVulkanFrameOpContextKind.MainViewport,
             11,
             21,
             31,
@@ -280,17 +280,17 @@ public sealed class VulkanUniformBufferGenerationCacheTests
             StereoRightEyeCameraIdentity: 0,
             StereoEnabled: false,
             MultiviewEnabled: false);
-        var rendererFamilies = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
-            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance)
+        var rendererFamilies = new Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanMeshFrameDataRendererFamilyKeyComparer.Instance)
         {
             [new(renderer, eyeFamily)] = 3,
         };
-        var familyStrides = new Dictionary<VulkanRenderer.VulkanMeshFrameDataFamilyKey, int>
+        var familyStrides = new Dictionary<VulkanMeshFrameDataFamilyKey, int>
         {
             [eyeFamily] = 3,
         };
-        var familyBases = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
-            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+        var familyBases = new Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
         VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
 
         manifest.TryRegister(
@@ -343,12 +343,12 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     [Test]
     public void FrameWideManifest_AllocatesDisjointFamilyRangesWithinOneFrameDataSlot()
     {
-        var renderer = (VulkanRenderer.VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
-            typeof(VulkanRenderer.VkMeshRenderer));
-        var primaryFamily = new VulkanRenderer.VulkanMeshFrameDataFamilyKey(
+        var renderer = (VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
+            typeof(VkMeshRenderer));
+        var primaryFamily = new VulkanMeshFrameDataFamilyKey(
             2,
-            VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
-            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+            EVulkanMeshFrameDataStreamKind.Primary,
+            EVulkanFrameOpContextKind.MainViewport,
             10,
             20,
             30,
@@ -359,22 +359,22 @@ public sealed class VulkanUniformBufferGenerationCacheTests
             false);
         var dynamicUiFamily = primaryFamily with
         {
-            StreamKind = VulkanRenderer.EVulkanMeshFrameDataStreamKind.DynamicUi,
+            StreamKind = EVulkanMeshFrameDataStreamKind.DynamicUi,
         };
-        var requirements = new Dictionary<VulkanRenderer.VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
-        var rendererFamilies = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
-            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance)
+        var requirements = new Dictionary<VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
+        var rendererFamilies = new Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanMeshFrameDataRendererFamilyKeyComparer.Instance)
         {
             [new(renderer, primaryFamily)] = 3,
             [new(renderer, dynamicUiFamily)] = 5,
         };
-        var familyStrides = new Dictionary<VulkanRenderer.VulkanMeshFrameDataFamilyKey, int>
+        var familyStrides = new Dictionary<VulkanMeshFrameDataFamilyKey, int>
         {
             [primaryFamily] = 3,
             [dynamicUiFamily] = 5,
         };
-        var familyBases = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
-            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+        var familyBases = new Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
         VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
 
         manifest.TryRegister(
@@ -397,14 +397,14 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     [Test]
     public void FrameWideManifest_DoesNotChargeOneRendererForUnrelatedRendererFamilies()
     {
-        var firstRenderer = (VulkanRenderer.VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
-            typeof(VulkanRenderer.VkMeshRenderer));
-        var secondRenderer = (VulkanRenderer.VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
-            typeof(VulkanRenderer.VkMeshRenderer));
-        var firstFamily = new VulkanRenderer.VulkanMeshFrameDataFamilyKey(
+        var firstRenderer = (VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
+            typeof(VkMeshRenderer));
+        var secondRenderer = (VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
+            typeof(VkMeshRenderer));
+        var firstFamily = new VulkanMeshFrameDataFamilyKey(
             2,
-            VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
-            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+            EVulkanMeshFrameDataStreamKind.Primary,
+            EVulkanFrameOpContextKind.MainViewport,
             10,
             20,
             30,
@@ -418,20 +418,20 @@ public sealed class VulkanUniformBufferGenerationCacheTests
             PipelineIdentity = 11,
             OutputTargetIdentity = 41,
         };
-        var requirements = new Dictionary<VulkanRenderer.VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
-        var rendererFamilies = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
-            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance)
+        var requirements = new Dictionary<VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
+        var rendererFamilies = new Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanMeshFrameDataRendererFamilyKeyComparer.Instance)
         {
             [new(firstRenderer, firstFamily)] = 3,
             [new(secondRenderer, secondFamily)] = 5,
         };
-        var familyStrides = new Dictionary<VulkanRenderer.VulkanMeshFrameDataFamilyKey, int>
+        var familyStrides = new Dictionary<VulkanMeshFrameDataFamilyKey, int>
         {
             [firstFamily] = 3,
             [secondFamily] = 5,
         };
-        var familyBases = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
-            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+        var familyBases = new Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
         VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
 
         manifest.TryRegister(
@@ -455,16 +455,16 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     public void FrameWideManifest_DenseSingleDrawFamiliesKeepPerRendererCapacityBounded()
     {
         const int rendererCount = 400;
-        var requirements = new Dictionary<VulkanRenderer.VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
-        var rendererFamilies = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
-            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
-        var familyStrides = new Dictionary<VulkanRenderer.VulkanMeshFrameDataFamilyKey, int>();
-        var familyBases = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
-            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
-        var family = new VulkanRenderer.VulkanMeshFrameDataFamilyKey(
+        var requirements = new Dictionary<VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
+        var rendererFamilies = new Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+        var familyStrides = new Dictionary<VulkanMeshFrameDataFamilyKey, int>();
+        var familyBases = new Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+        var family = new VulkanMeshFrameDataFamilyKey(
             0,
-            VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
-            VulkanRenderer.EVulkanFrameOpContextKind.Shadow,
+            EVulkanMeshFrameDataStreamKind.Primary,
+            EVulkanFrameOpContextKind.Shadow,
             10,
             20,
             30,
@@ -476,8 +476,8 @@ public sealed class VulkanUniformBufferGenerationCacheTests
 
         for (int i = 0; i < rendererCount; i++)
         {
-            var renderer = (VulkanRenderer.VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
-                typeof(VulkanRenderer.VkMeshRenderer));
+            var renderer = (VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
+                typeof(VkMeshRenderer));
             rendererFamilies.Add(new(renderer, family), 1);
         }
         familyStrides.Add(family, 1);
@@ -503,12 +503,12 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     [Test]
     public void FrameWideManifest_KeepsPublishedFamilyBaseStableAcrossBoundedDrawCountVariation()
     {
-        var renderer = (VulkanRenderer.VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
-            typeof(VulkanRenderer.VkMeshRenderer));
-        var family = new VulkanRenderer.VulkanMeshFrameDataFamilyKey(
+        var renderer = (VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
+            typeof(VkMeshRenderer));
+        var family = new VulkanMeshFrameDataFamilyKey(
             2,
-            VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
-            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+            EVulkanMeshFrameDataStreamKind.Primary,
+            EVulkanFrameOpContextKind.MainViewport,
             10,
             20,
             30,
@@ -517,18 +517,18 @@ public sealed class VulkanUniformBufferGenerationCacheTests
             0,
             false,
             false);
-        var requirements = new Dictionary<VulkanRenderer.VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
-        var rendererFamilies = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
-            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance)
+        var requirements = new Dictionary<VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
+        var rendererFamilies = new Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanMeshFrameDataRendererFamilyKeyComparer.Instance)
         {
             [new(renderer, family)] = 3,
         };
-        var familyStrides = new Dictionary<VulkanRenderer.VulkanMeshFrameDataFamilyKey, int>
+        var familyStrides = new Dictionary<VulkanMeshFrameDataFamilyKey, int>
         {
             [family] = 3,
         };
-        var familyBases = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
-            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+        var familyBases = new Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
         VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
 
         manifest.TryRegister(
@@ -565,12 +565,12 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     [Test]
     public void FrameWideManifest_GrowthAbovePublishedCapacityRelocatesFamilyAndAdvancesGeneration()
     {
-        var renderer = (VulkanRenderer.VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
-            typeof(VulkanRenderer.VkMeshRenderer));
-        var primaryFamily = new VulkanRenderer.VulkanMeshFrameDataFamilyKey(
+        var renderer = (VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
+            typeof(VkMeshRenderer));
+        var primaryFamily = new VulkanMeshFrameDataFamilyKey(
             2,
-            VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
-            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+            EVulkanMeshFrameDataStreamKind.Primary,
+            EVulkanFrameOpContextKind.MainViewport,
             10,
             20,
             30,
@@ -581,22 +581,22 @@ public sealed class VulkanUniformBufferGenerationCacheTests
             false);
         var overlayFamily = primaryFamily with
         {
-            StreamKind = VulkanRenderer.EVulkanMeshFrameDataStreamKind.DynamicUi,
+            StreamKind = EVulkanMeshFrameDataStreamKind.DynamicUi,
         };
-        var requirements = new Dictionary<VulkanRenderer.VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
-        var rendererFamilies = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
-            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance)
+        var requirements = new Dictionary<VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
+        var rendererFamilies = new Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanMeshFrameDataRendererFamilyKeyComparer.Instance)
         {
             [new(renderer, primaryFamily)] = 4,
             [new(renderer, overlayFamily)] = 1,
         };
-        var familyStrides = new Dictionary<VulkanRenderer.VulkanMeshFrameDataFamilyKey, int>
+        var familyStrides = new Dictionary<VulkanMeshFrameDataFamilyKey, int>
         {
             [primaryFamily] = 4,
             [overlayFamily] = 1,
         };
-        var familyBases = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
-            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+        var familyBases = new Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
         VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
 
         manifest.TryRegister(
@@ -665,12 +665,12 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     [Test]
     public void FrameWideManifest_AppendOnlyFamilyPublicationDoesNotRelocateExistingOffsets()
     {
-        var renderer = (VulkanRenderer.VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
-            typeof(VulkanRenderer.VkMeshRenderer));
-        var primaryFamily = new VulkanRenderer.VulkanMeshFrameDataFamilyKey(
+        var renderer = (VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
+            typeof(VkMeshRenderer));
+        var primaryFamily = new VulkanMeshFrameDataFamilyKey(
             0,
-            VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
-            VulkanRenderer.EVulkanFrameOpContextKind.MainViewport,
+            EVulkanMeshFrameDataStreamKind.Primary,
+            EVulkanFrameOpContextKind.MainViewport,
             10,
             20,
             30,
@@ -681,21 +681,21 @@ public sealed class VulkanUniformBufferGenerationCacheTests
             false);
         var appendedFamily = primaryFamily with
         {
-            ContextKind = VulkanRenderer.EVulkanFrameOpContextKind.Shadow,
+            ContextKind = EVulkanFrameOpContextKind.Shadow,
             OutputTargetIdentity = 41,
         };
-        var requirements = new Dictionary<VulkanRenderer.VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
-        var rendererFamilies = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
-            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance)
+        var requirements = new Dictionary<VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
+        var rendererFamilies = new Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanMeshFrameDataRendererFamilyKeyComparer.Instance)
         {
             [new(renderer, primaryFamily)] = 1,
         };
-        var familyStrides = new Dictionary<VulkanRenderer.VulkanMeshFrameDataFamilyKey, int>
+        var familyStrides = new Dictionary<VulkanMeshFrameDataFamilyKey, int>
         {
             [primaryFamily] = 1,
         };
-        var familyBases = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
-            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+        var familyBases = new Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
         VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
 
         manifest.TryRegister(
@@ -881,10 +881,10 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     [Test]
     public void FrameWideFamilyIdentity_IsStableAcrossExternalTargetRotationButSeparatesFrameSlots()
     {
-        var leftSlot = new VulkanRenderer.VulkanMeshFrameDataFamilyKey(
+        var leftSlot = new VulkanMeshFrameDataFamilyKey(
             3,
-            VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
-            VulkanRenderer.EVulkanFrameOpContextKind.OpenXrEye,
+            EVulkanMeshFrameDataStreamKind.Primary,
+            EVulkanFrameOpContextKind.OpenXrEye,
             10,
             20,
             30,

@@ -21,7 +21,9 @@ namespace XREngine.Rendering.Vulkan
         IStreamlinePresentationBackendCapability
     {
         private readonly VulkanBufferResourceManager _bufferResourceManager = new();
-        private readonly VulkanImageAllocationTracker _imageAllocationTracker = new();
+        internal readonly VulkanImageAllocationTracker _imageAllocationTracker = new();
+        internal Vk VulkanApi => Api!;
+        private readonly VulkanBindlessMaterialTextureTableState _bindlessMaterialTextureTableState = new();
         private readonly VulkanStagingManager _stagingManager = new();
 
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> ComputeDispatchOperationNames =
@@ -1128,7 +1130,7 @@ namespace XREngine.Rendering.Vulkan
             return HasSecondaryGraphicsQueue;
         }
 
-        private static CompareOp ToVulkanCompareOp(EComparison comparison)
+        internal static CompareOp ToVulkanCompareOp(EComparison comparison)
             => comparison switch
             {
                 EComparison.Never => CompareOp.Never,

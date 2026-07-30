@@ -125,7 +125,7 @@ internal sealed class VulkanCommandScheduler
     }
 
     public int ResolveParallelRecordingBucket(
-        in VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey rendererFamily,
+        in VulkanMeshFrameDataRendererFamilyKey rendererFamily,
         int workerCount)
     {
         if (workerCount <= 1)

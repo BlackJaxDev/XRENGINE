@@ -28,13 +28,17 @@ public sealed class PhysicsTimingTests
     }
 
     [Test]
-    public void RigidBodyTransform_ShouldUseImmediatePhysicsPose_ForDiscreteOrSlowUpdate()
+    public void RigidBodyTransform_ShouldUseImmediatePhysicsPose_OnlyForDiscretePresentation()
     {
-        long fixedTicks = Stopwatch.Frequency / 60L;
-
-        RigidBodyTransform.ShouldUseImmediatePhysicsPose(RigidBodyTransform.EInterpolationMode.Discrete, fixedTicks / 2L, fixedTicks).ShouldBeTrue();
-        RigidBodyTransform.ShouldUseImmediatePhysicsPose(RigidBodyTransform.EInterpolationMode.Interpolate, fixedTicks + 1L, fixedTicks).ShouldBeTrue();
-        RigidBodyTransform.ShouldUseImmediatePhysicsPose(RigidBodyTransform.EInterpolationMode.Interpolate, fixedTicks / 2L, fixedTicks).ShouldBeFalse();
+        RigidBodyTransform
+            .ShouldUseImmediatePhysicsPose(RigidBodyTransform.EInterpolationMode.Discrete)
+            .ShouldBeTrue();
+        RigidBodyTransform
+            .ShouldUseImmediatePhysicsPose(RigidBodyTransform.EInterpolationMode.Interpolate)
+            .ShouldBeFalse();
+        RigidBodyTransform
+            .ShouldUseImmediatePhysicsPose(RigidBodyTransform.EInterpolationMode.Extrapolate)
+            .ShouldBeFalse();
     }
 
     [Test]

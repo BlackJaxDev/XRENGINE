@@ -1,4 +1,4 @@
-namespace XREngine.Rendering.Vulkan;
+namespace XREngine.Rendering.Vulkan.RenderGraph;
 
 /// <summary>
 /// Identifies one stable render-resource planner output while a window resize is in progress.
@@ -6,7 +6,7 @@ namespace XREngine.Rendering.Vulkan;
 /// retained until the resize ends.
 /// </summary>
 internal readonly record struct VulkanInteractiveResizePlannerContextKey(
-    VulkanRenderer.EVulkanFrameOpContextKind ContextKind,
+    EVulkanFrameOpContextKind ContextKind,
     int PipelineIdentity,
     int ViewportIdentity,
     int OutputFrameBufferIdentity,

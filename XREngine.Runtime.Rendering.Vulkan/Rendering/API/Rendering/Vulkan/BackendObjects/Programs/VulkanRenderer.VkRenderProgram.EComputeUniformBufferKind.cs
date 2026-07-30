@@ -1,13 +1,10 @@
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal unsafe partial class VkRenderProgram
 {
-    public partial class VkRenderProgram
+    private enum EComputeUniformBufferKind : byte
     {
-        private enum EComputeUniformBufferKind : byte
-        {
-            Auto,
-            Fallback
-        }
+        Auto,
+        Fallback
     }
 }

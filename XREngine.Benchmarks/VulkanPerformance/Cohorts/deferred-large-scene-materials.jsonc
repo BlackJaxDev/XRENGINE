@@ -1,0 +1,80 @@
+{
+  "$schema": "../../../.vscode/schemas/unit-testing-world-settings.schema.json",
+  "WorldKind": "Default",
+  "EditorType": "None",
+  "Rendering": {
+    "RenderBackend": "Vulkan",
+    "BackendFallbackPolicy": "RequireRequested",
+    "Vulkan": {
+      "RenderTargetMode": "DynamicRendering"
+    }
+  },
+  "GPURenderDispatch": true,
+  "StartInPlayModeWithoutTransitions": true,
+  "VR": {
+    "Mode": "Desktop",
+    "ViewRenderMode": "ParallelCommandBufferRecording",
+    "PreviewStereoViews": false,
+    "AllowDesktopEditing": true,
+    "Foveation": {
+      "Mode": "Off",
+      "QualityPreset": "Balanced",
+      "RequireRequested": false
+    },
+    "OpenXrEyeResolution": {
+      "Preset": "RuntimeRecommended",
+      "Scale": 1.0,
+      "CustomWidth": 0,
+      "CustomHeight": 0
+    }
+  },
+  "Skybox": false,
+  "ProceduralSky": false,
+  "Mirror": false,
+  "DirLight": true,
+  "SpotLight": false,
+  "DirLight2": false,
+  "PointLight": false,
+  "DynamicPointLightCount": 0,
+  "DynamicSpotLightCount": 0,
+  "LightProbe": "Off",
+  "Locomotion": false,
+  "ModelsToImport": [
+    {
+      "Enabled": true,
+      "Kind": "Static",
+      "MaterialMode": "Deferred",
+      "UseForwardForTransparent": false,
+      "ImporterBackend": "PreferNativeThenAssimp",
+      "Path": "XREngine.UnitTests/TestData/Gltf/large-production-scene.gltf",
+      "ImportFlags": "Triangulate, GenerateNormals, CalculateTangentSpace, JoinIdenticalVertices, ImproveCacheLocality, SortByPrimitiveType",
+      "Scale": 1.0,
+      "ZUp": false,
+      "PostImportFlags": "None",
+      "YawPitchRoll": null,
+      "Translation": null
+    }
+  ],
+  "SoundNode": false,
+  "Microphone": false,
+  "LipSync": false,
+  "AnimationClipVMD": false,
+  "AnimationClipAnim": false,
+  "IKTest": false,
+  "TestAnimation": false,
+  "AllowSkinning": false,
+  "RenderMeshBounds": false,
+  "CameraAntiAliasingModeOverride": "None",
+  "RenderPhysicsDebug": false,
+  "RenderWindowsWhileInVR": true,
+  "EditorCameraRenderOnDemand": false,
+  "RenderTransformDebugInfo": false,
+  "RenderTransformPoints": false,
+  "RenderTransformCapsules": false,
+  "RenderTransformLines": false,
+  "CreateUnitBox": false,
+  "VSyncOverride": "Off",
+  "RenderFPS": 0.0,
+  "UpdateFPS": 60.0,
+  "FixedFPS": 30.0
+}

@@ -1,7 +1,7 @@
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
-    public interface IVkObject : IRenderAPIObject
+    internal interface IVkObject : IRenderAPIObject
     {
         bool IsActive { get; }
         //uint BindingId { get; }

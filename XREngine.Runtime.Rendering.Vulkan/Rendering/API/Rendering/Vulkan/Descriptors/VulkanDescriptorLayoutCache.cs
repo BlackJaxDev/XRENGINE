@@ -35,7 +35,7 @@ public unsafe partial class VulkanRenderer
     /// <summary>
     /// Indicates whether the Vulkan renderer supports descriptor indexing.
     /// </summary>
-    internal bool SupportsDescriptorIndexing => _supportsDescriptorIndexing;
+    internal bool SupportsDescriptorIndexing => DeviceCapabilities.Supports(EVulkanDeviceCapability.DescriptorIndexing);
 
     /// <summary>
     /// Tries to acquire a cached descriptor set layout for the specified set index and bindings.
@@ -286,7 +286,7 @@ public unsafe partial class VulkanRenderer
             };
 
             DescriptorBindingFlags[]? bindingFlags = null;
-            if (_supportsDescriptorIndexing && layoutBindings.Length > 0)
+            if (SupportsDescriptorIndexing && layoutBindings.Length > 0)
             {
                 bindingFlags = new DescriptorBindingFlags[layoutBindings.Length];
                 bool hasUpdateAfterBindBinding = false;

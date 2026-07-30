@@ -330,11 +330,11 @@ namespace XREngine.Rendering.DLSS
             internal static bool TryRecordNativeVulkanUpscale(
                 NativeVulkanSession session,
                 CommandBuffer commandBuffer,
-                in VulkanRenderer.VulkanStreamlineImage sourceColor,
-                in VulkanRenderer.VulkanStreamlineImage depth,
-                in VulkanRenderer.VulkanStreamlineImage motion,
-                in VulkanRenderer.VulkanStreamlineImage outputColor,
-                in VulkanRenderer.VulkanStreamlineImage? exposure,
+                in VulkanStreamlineImage sourceColor,
+                in VulkanStreamlineImage depth,
+                in VulkanStreamlineImage motion,
+                in VulkanStreamlineImage outputColor,
+                in VulkanStreamlineImage? exposure,
                 in VulkanUpscaleBridgeDispatchParameters parameters,
                 out string failureReason)
                 => session.Record(
@@ -374,10 +374,10 @@ namespace XREngine.Rendering.DLSS
             internal static bool TryRecordNativeVulkanFrameGeneration(
                 NativeFrameGenerationSession session,
                 CommandBuffer commandBuffer,
-                in VulkanRenderer.VulkanStreamlineImage depth,
-                in VulkanRenderer.VulkanStreamlineImage motion,
-                in VulkanRenderer.VulkanStreamlineImage hudlessColor,
-                in VulkanRenderer.VulkanStreamlineImage uiColorAndAlpha,
+                in VulkanStreamlineImage depth,
+                in VulkanStreamlineImage motion,
+                in VulkanStreamlineImage hudlessColor,
+                in VulkanStreamlineImage uiColorAndAlpha,
                 in VulkanUpscaleBridgeDispatchParameters parameters,
                 out string failureReason)
                 => session.Record(
@@ -476,9 +476,9 @@ namespace XREngine.Rendering.DLSS
             internal static bool TryDispatchFrameGeneration(
                 XRViewport viewport,
                 in VulkanUpscaleBridgeDispatchParameters parameters,
-                in VulkanRenderer.VulkanStreamlineImage depth,
-                in VulkanRenderer.VulkanStreamlineImage motion,
-                in VulkanRenderer.VulkanStreamlineImage hudlessColor,
+                in VulkanStreamlineImage depth,
+                in VulkanStreamlineImage motion,
+                in VulkanStreamlineImage hudlessColor,
                 ENvidiaDlssFrameGenerationMode mode,
                 out int errorCode,
                 out string? errorMessage)
@@ -584,10 +584,10 @@ namespace XREngine.Rendering.DLSS
                 VulkanRenderer renderer,
                 ref StreamlineViewportHandle viewport,
                 in VulkanUpscaleBridgeDispatchParameters parameters,
-                in VulkanRenderer.VulkanStreamlineImage depth,
-                in VulkanRenderer.VulkanStreamlineImage motion,
-                in VulkanRenderer.VulkanStreamlineImage hudlessColor,
-                in VulkanRenderer.VulkanStreamlineImage uiColorAndAlpha,
+                in VulkanStreamlineImage depth,
+                in VulkanStreamlineImage motion,
+                in VulkanStreamlineImage hudlessColor,
+                in VulkanStreamlineImage uiColorAndAlpha,
                 ENvidiaDlssFrameGenerationMode mode,
                 out string failureReason)
             {
@@ -1552,10 +1552,10 @@ namespace XREngine.Rendering.DLSS
             private static StreamlineDlssGOptions CreateFrameGenerationOptions(
                 VulkanRenderer renderer,
                 in VulkanUpscaleBridgeDispatchParameters parameters,
-                in VulkanRenderer.VulkanStreamlineImage depth,
-                in VulkanRenderer.VulkanStreamlineImage motion,
-                in VulkanRenderer.VulkanStreamlineImage hudlessColor,
-                in VulkanRenderer.VulkanStreamlineImage uiColorAndAlpha,
+                in VulkanStreamlineImage depth,
+                in VulkanStreamlineImage motion,
+                in VulkanStreamlineImage hudlessColor,
+                in VulkanStreamlineImage uiColorAndAlpha,
                 ENvidiaDlssFrameGenerationMode mode)
             {
                 Extent2D swapchainExtent = renderer.SwapchainExtent;
@@ -1992,11 +1992,11 @@ namespace XREngine.Rendering.DLSS
 
                 public unsafe bool Record(
                     CommandBuffer commandBuffer,
-                    in VulkanRenderer.VulkanStreamlineImage sourceColor,
-                    in VulkanRenderer.VulkanStreamlineImage depthImage,
-                    in VulkanRenderer.VulkanStreamlineImage motionImage,
-                    in VulkanRenderer.VulkanStreamlineImage outputColor,
-                    in VulkanRenderer.VulkanStreamlineImage? exposureImage,
+                    in VulkanStreamlineImage sourceColor,
+                    in VulkanStreamlineImage depthImage,
+                    in VulkanStreamlineImage motionImage,
+                    in VulkanStreamlineImage outputColor,
+                    in VulkanStreamlineImage? exposureImage,
                     in VulkanUpscaleBridgeDispatchParameters parameters,
                     out string failureReason)
                 {
@@ -2303,7 +2303,7 @@ namespace XREngine.Rendering.DLSS
                     };
                 }
 
-                private static StreamlineResource CreateResource(in VulkanRenderer.VulkanStreamlineImage image, uint width, uint height)
+                private static StreamlineResource CreateResource(in VulkanStreamlineImage image, uint width, uint height)
                 {
                     return new StreamlineResource
                     {
@@ -2370,10 +2370,10 @@ namespace XREngine.Rendering.DLSS
 
                 public unsafe bool Record(
                     CommandBuffer commandBuffer,
-                    in VulkanRenderer.VulkanStreamlineImage depthImage,
-                    in VulkanRenderer.VulkanStreamlineImage motionImage,
-                    in VulkanRenderer.VulkanStreamlineImage hudlessColorImage,
-                    in VulkanRenderer.VulkanStreamlineImage uiColorAndAlphaImage,
+                    in VulkanStreamlineImage depthImage,
+                    in VulkanStreamlineImage motionImage,
+                    in VulkanStreamlineImage hudlessColorImage,
+                    in VulkanStreamlineImage uiColorAndAlphaImage,
                     in VulkanUpscaleBridgeDispatchParameters parameters,
                     out string failureReason)
                 {
@@ -2564,7 +2564,7 @@ namespace XREngine.Rendering.DLSS
                     };
                 }
 
-                private static StreamlineResource CreateResource(in VulkanRenderer.VulkanStreamlineImage image, uint width, uint height)
+                private static StreamlineResource CreateResource(in VulkanStreamlineImage image, uint width, uint height)
                 {
                     return new StreamlineResource
                     {

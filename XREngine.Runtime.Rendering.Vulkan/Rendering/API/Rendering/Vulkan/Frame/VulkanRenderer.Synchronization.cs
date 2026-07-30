@@ -13,38 +13,61 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    [ThreadStatic]
-    private static bool t_excludeDesktopSwapchainBarriers;
-    [ThreadStatic]
-    private static SemaphoreSubmitInfo[]? t_submitWaitInfoScratch;
-    [ThreadStatic]
-    private static SemaphoreSubmitInfo[]? t_submitSignalInfoScratch;
-    [ThreadStatic]
-    private static CommandBufferSubmitInfo[]? t_submitCommandBufferInfoScratch;
-
-    private static void ReleaseCurrentThreadSynchronizationScratch()
+    private sealed class VulkanSynchronizationThreadWorkspace
     {
-        t_submitWaitInfoScratch = null;
-        t_submitSignalInfoScratch = null;
-        t_submitCommandBufferInfoScratch = null;
-        t_excludeDesktopSwapchainBarriers = false;
+        private readonly ThreadLocal<ThreadState> _current =
+            new(static () => new ThreadState(), trackAllValues: false);
+
+        public ThreadState Current
+            => _current.Value
+                ?? throw new InvalidOperationException(
+                    "The Vulkan synchronization workspace has been disposed.");
+
+        public void ReleaseCurrentThread()
+            => Current.Reset();
+
+        public sealed class ThreadState
+        {
+            public bool ExcludeDesktopSwapchainBarriers;
+            public SemaphoreSubmitInfo[]? SubmitWaitInfoScratch;
+            public SemaphoreSubmitInfo[]? SubmitSignalInfoScratch;
+            public CommandBufferSubmitInfo[]? SubmitCommandBufferInfoScratch;
+
+            public void Reset()
+            {
+                ExcludeDesktopSwapchainBarriers = false;
+                SubmitWaitInfoScratch = null;
+                SubmitSignalInfoScratch = null;
+                SubmitCommandBufferInfoScratch = null;
+            }
+        }
     }
+
+    private readonly VulkanSynchronizationThreadWorkspace _synchronizationThreadWorkspace = new();
+    private VulkanSynchronizationThreadWorkspace.ThreadState SynchronizationThreadContext
+        => _synchronizationThreadWorkspace.Current;
+
+    private void ReleaseCurrentThreadSynchronizationScratch()
+        => _synchronizationThreadWorkspace.ReleaseCurrentThread();
 
     private readonly ref struct DesktopSwapchainBarrierExclusionScope
     {
+        private readonly VulkanSynchronizationThreadWorkspace.ThreadState _state;
         private readonly bool _previous;
 
-        public DesktopSwapchainBarrierExclusionScope(bool exclude)
+        public DesktopSwapchainBarrierExclusionScope(
+            VulkanSynchronizationThreadWorkspace.ThreadState state,
+            bool exclude)
         {
-            _previous = t_excludeDesktopSwapchainBarriers;
+            _state = state;
+            _previous = state.ExcludeDesktopSwapchainBarriers;
             if (exclude)
-                t_excludeDesktopSwapchainBarriers = true;
+                state.ExcludeDesktopSwapchainBarriers = true;
         }
 
         public void Dispose()
-            => t_excludeDesktopSwapchainBarriers = _previous;
+            => _state.ExcludeDesktopSwapchainBarriers = _previous;
     }
-
     private const int VulkanQueueOperationHistoryCapacity = 64;
     private EVulkanSynchronizationBackend _activeSynchronizationBackend = EVulkanSynchronizationBackend.Legacy;
     private readonly object _vulkanImageLayoutLock = new();
@@ -695,13 +718,13 @@ public unsafe partial class VulkanRenderer
 
         TimelineSemaphoreSubmitInfo* timelineInfo = FindTimelineSemaphoreSubmitInfo(submitInfo.PNext);
         SemaphoreSubmitInfo[] waitInfosArray = EnsureThreadScratchCapacity(
-            ref t_submitWaitInfoScratch,
+            ref SynchronizationThreadContext.SubmitWaitInfoScratch,
             waitCount);
         SemaphoreSubmitInfo[] signalInfosArray = EnsureThreadScratchCapacity(
-            ref t_submitSignalInfoScratch,
+            ref SynchronizationThreadContext.SubmitSignalInfoScratch,
             signalCount);
         CommandBufferSubmitInfo[] commandBufferInfosArray = EnsureThreadScratchCapacity(
-            ref t_submitCommandBufferInfoScratch,
+            ref SynchronizationThreadContext.SubmitCommandBufferInfoScratch,
             commandBufferCount);
 
         for (int i = 0; i < waitCount; i++)
@@ -772,7 +795,7 @@ public unsafe partial class VulkanRenderer
         return scratch;
     }
 
-    private unsafe void CmdPipelineBarrierTracked(
+    internal unsafe void CmdPipelineBarrierTracked(
         CommandBuffer commandBuffer,
         PipelineStageFlags srcStageMask,
         PipelineStageFlags dstStageMask,
@@ -785,7 +808,7 @@ public unsafe partial class VulkanRenderer
         ImageMemoryBarrier* imageBarriers,
         [CallerMemberName] string? caller = null)
     {
-        if (t_excludeDesktopSwapchainBarriers && imageBarrierCount > 0)
+        if (SynchronizationThreadContext.ExcludeDesktopSwapchainBarriers && imageBarrierCount > 0)
         {
             uint retainedBarrierCount = 0;
             for (uint readIndex = 0; readIndex < imageBarrierCount; readIndex++)
@@ -1132,7 +1155,7 @@ public unsafe partial class VulkanRenderer
         return contended;
     }
 
-    private void ClearTrackedImageLayouts(Image image)
+    internal void ClearTrackedImageLayouts(Image image)
     {
         ulong imageHandle = image.Handle;
         if (imageHandle == 0)

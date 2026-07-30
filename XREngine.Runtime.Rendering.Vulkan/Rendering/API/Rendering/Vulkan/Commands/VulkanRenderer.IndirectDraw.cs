@@ -236,7 +236,7 @@ namespace XREngine.Rendering.Vulkan
             FrameOpContext context = CaptureFrameOpContext();
             int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
             XRFrameBuffer? target = ResolveCurrentFrameOpDrawTarget();
-            EnqueueFrameOp(new IndirectDrawOp(
+            EnqueueFrameOp(IndirectDrawOp.Rent(
                 EnsureValidPassIndex(passIndex, "IndirectDraw", context.PassMetadata),
                 target,
                 _boundIndirectBuffer,
@@ -247,7 +247,7 @@ namespace XREngine.Rendering.Vulkan
                 stride,
                 byteOffset,
                 0,
-                UseCount: false,
+                useCount: false,
                 CaptureGlobalMaterialTextureDescriptorBindingForNextFrameOp(),
                 context));
 
@@ -255,7 +255,7 @@ namespace XREngine.Rendering.Vulkan
 
         public override void MultiDrawElementsIndirectCount(uint maxDrawCount, uint stride, nuint byteOffset, nuint countByteOffset)
         {
-            if (!_supportsDrawIndirectCount)
+            if (!DeviceCapabilities.Supports(EVulkanDeviceCapability.DrawIndirectCount))
             {
                 Debug.VulkanWarning("MultiDrawElementsIndirectCount called but VK_KHR_draw_indirect_count is not supported. Falling back to regular indirect draw.");
                 MultiDrawElementsIndirectWithOffset(maxDrawCount, stride, byteOffset);
@@ -287,7 +287,7 @@ namespace XREngine.Rendering.Vulkan
             FrameOpContext context = CaptureFrameOpContext();
             int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
             XRFrameBuffer? target = ResolveCurrentFrameOpDrawTarget();
-            EnqueueFrameOp(new IndirectDrawOp(
+            EnqueueFrameOp(IndirectDrawOp.Rent(
                 EnsureValidPassIndex(passIndex, "IndirectCountDraw", context.PassMetadata),
                 target,
                 _boundIndirectBuffer,
@@ -298,7 +298,7 @@ namespace XREngine.Rendering.Vulkan
                 stride,
                 byteOffset,
                 countByteOffset,
-                UseCount: true,
+                useCount: true,
                 CaptureGlobalMaterialTextureDescriptorBindingForNextFrameOp(),
                 context));
 
@@ -315,7 +315,7 @@ namespace XREngine.Rendering.Vulkan
 
         public override bool SupportsIndirectCountDraw()
         {
-            return _supportsDrawIndirectCount;
+            return DeviceCapabilities.Supports(EVulkanDeviceCapability.DrawIndirectCount);
         }
 
         public override void ConfigureVAOAttributesForProgram(XRRenderProgram program, XRMeshRenderer.BaseVersion? version)
