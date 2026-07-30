@@ -223,7 +223,9 @@ internal static partial class UnitySceneImporter
             string name = child.Name ?? SceneNode.DefaultName;
             siblingCounts.TryGetValue(name, out int occurrence);
             siblingCounts[name] = occurrence + 1;
-            string segment = occurrence == 0 ? name : $"{name}{occurrence}";
+            string segment = occurrence == 0 ? name : $"{name} {occurrence}";
+            if (occurrence > 0)
+                child.Name = segment;
             IndexModelHierarchy(child, $"{unityPath}/{segment}", hierarchy, state);
         }
     }
@@ -285,10 +287,43 @@ internal static partial class UnitySceneImporter
             importedRoot = singleAuthoredRoot;
         }
 
+        // ModelImporter expresses imported submesh bounds relative to its outer file wrapper.
+        // That wrapper is removed here for Unity's generation-2 hierarchy, so every surviving
+        // submesh must point at the replacement root rather than a detached random transform.
+        RebindCollapsedRootTransform(importedRoot, root.Transform, importedRoot.Transform);
+        if (!ReferenceEquals(importedRoot, syntheticRoot))
+            RebindCollapsedRootTransform(importedRoot, syntheticRoot.Transform, importedRoot.Transform);
+
         string? importedRootName = root.Name;
         importedRoot.Parent = null;
         importedRoot.Name = importedRootName;
         return importedRoot;
+    }
+
+    private static void RebindCollapsedRootTransform(
+        SceneNode node,
+        TransformBase collapsedRoot,
+        TransformBase importedRoot)
+    {
+        foreach (ModelComponent component in node.Components.OfType<ModelComponent>())
+        {
+            if (component.Model is not Model model)
+                continue;
+
+            foreach (SubMesh subMesh in model.Meshes)
+            {
+                if (ReferenceEquals(subMesh.RootTransform, collapsedRoot))
+                    subMesh.RootTransform = importedRoot;
+                if (ReferenceEquals(subMesh.RootBone, collapsedRoot))
+                    subMesh.RootBone = importedRoot;
+            }
+        }
+
+        foreach (TransformBase childTransform in node.Transform.Children)
+        {
+            if (childTransform.SceneNode is SceneNode child)
+                RebindCollapsedRootTransform(child, collapsedRoot, importedRoot);
+        }
     }
 
     private static bool IsIdentityTransform(Transform transform)

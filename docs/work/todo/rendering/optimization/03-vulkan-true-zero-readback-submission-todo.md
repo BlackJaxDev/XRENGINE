@@ -1,8 +1,8 @@
 # 03 - True GPU-Driven Zero-Readback Submission TODO
 
-Last Updated: 2026-07-28
+Last Updated: 2026-07-29
 Owner: Rendering / Vulkan / GPU-Driven Submission
-Status: Paused; Implementation Complete; WS03 Acceptance Validation Open
+Status: Implementation Complete; Acceptance Deferred To 01-08 Closeout
 Sequence: 03 of 08
 Predecessor: [02 - Vulkan Primary Reuse Correctness](02-vulkan-primary-reuse-correctness-todo.md)
 Blocks: [04 - Next-Frame Preparation And Collect-Visible Handoff](04-next-frame-preparation-and-collect-visible-handoff-todo.md)
@@ -32,8 +32,11 @@ Technical children:
 
 - Do not start this workstream until workstream 02 is marked `Complete`.
 - Preserve the corrected primary-reuse behavior while changing submission.
-- Do not start workstream 04 until every exit-gate item here is checked,
-  evidence is recorded, and this status is `Complete`.
+- Owner sequencing change (2026-07-29): the remaining long-form validation is
+  retained in the
+  [01-08 Acceptance Closeout](../../../testing/rendering/01-08-optimization-acceptance-closeout.md).
+  Workstream 04 may begin because this implementation is complete. No unchecked
+  acceptance item is waived or promoted.
 
 ## Goal
 
@@ -445,6 +448,10 @@ Windows Balanced power plan after every run.
 
 ### Ordered next steps
 
+The steps below are deferred intact to the
+[01-08 Acceptance Closeout](../../../testing/rendering/01-08-optimization-acceptance-closeout.md)
+and run after workstreams 01-08 are implementation complete.
+
 1. Reproduce only `phase3-capacity-1x-active-fixed` with the Quick preset and
    both `XRE_VULKAN_FRAME_DATA_REUSE_DIAG=1` and
    `XRE_VULKAN_RECORDING_DIAG=1`. Inspect the retained frame stream and source
@@ -494,5 +501,7 @@ Windows Balanced power plan after every run.
    generic frame-data-refresh/command-encoding and absolute-budget handoffs to
    workstreams 04, 05, and 08.
 
-Until those steps pass, do not mark this workstream complete and do not begin
-[04 - Next-Frame Preparation And Collect-Visible Handoff](04-next-frame-preparation-and-collect-visible-handoff-todo.md).
+Until those steps pass, do not mark workstream-03 acceptance complete or
+promote zero-readback submission. The implementation sequence may proceed to
+[04 - Next-Frame Preparation And Collect-Visible Handoff](04-next-frame-preparation-and-collect-visible-handoff-todo.md)
+under the 2026-07-29 owner-authorized deferral.

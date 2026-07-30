@@ -443,7 +443,20 @@ namespace XREngine
                     private static int _vulkanVisibilityPacketCount;
                     private static int _vulkanRenderPacketCount;
                     private static int _vulkanSecondaryCommandBufferCount;
+                    private static int _vulkanCommandChainWorkerQueuedChains;
+                    private static int _vulkanCommandChainWorkersStarted;
+                    private static int _vulkanCommandChainWorkersCompleted;
+                    private static int _vulkanCommandChainSeriallyRecorded;
+                    private static int _vulkanCommandChainWorkerReused;
+                    private static int _vulkanCommandChainWorkerConflicts;
+                    private static int _vulkanCommandChainWorkerFailures;
+                    private static int _vulkanCommandChainWorkerWaitTimeouts;
+                    private static int _vulkanCommandChainPeakConcurrentWorkers;
+                    private static long _vulkanCommandChainWorkerQueueDelayTicks;
                     private static long _vulkanCommandChainWorkerRecordTicks;
+                    private static long _vulkanCommandChainWorkerActiveSpanTicks;
+                    private static long _vulkanCommandChainWorkerOverlapTicks;
+                    private static long _vulkanCommandChainWorkerMergeTicks;
                     private static long _vulkanRenderThreadWaitForChainWorkersTicks;
                     private static string _vulkanFirstCommandChainStructuralDirtyReason = string.Empty;
                     private static string _vulkanFirstCommandChainDescriptorGenerationMismatch = string.Empty;
@@ -458,7 +471,20 @@ namespace XREngine
                     private static int _lastFrameVulkanVisibilityPacketCount;
                     private static int _lastFrameVulkanRenderPacketCount;
                     private static int _lastFrameVulkanSecondaryCommandBufferCount;
+                    private static int _lastFrameVulkanCommandChainWorkerQueuedChains;
+                    private static int _lastFrameVulkanCommandChainWorkersStarted;
+                    private static int _lastFrameVulkanCommandChainWorkersCompleted;
+                    private static int _lastFrameVulkanCommandChainSeriallyRecorded;
+                    private static int _lastFrameVulkanCommandChainWorkerReused;
+                    private static int _lastFrameVulkanCommandChainWorkerConflicts;
+                    private static int _lastFrameVulkanCommandChainWorkerFailures;
+                    private static int _lastFrameVulkanCommandChainWorkerWaitTimeouts;
+                    private static int _lastFrameVulkanCommandChainPeakConcurrentWorkers;
+                    private static long _lastFrameVulkanCommandChainWorkerQueueDelayTicks;
                     private static long _lastFrameVulkanCommandChainWorkerRecordTicks;
+                    private static long _lastFrameVulkanCommandChainWorkerActiveSpanTicks;
+                    private static long _lastFrameVulkanCommandChainWorkerOverlapTicks;
+                    private static long _lastFrameVulkanCommandChainWorkerMergeTicks;
                     private static long _lastFrameVulkanRenderThreadWaitForChainWorkersTicks;
                     private static string _lastFrameVulkanFirstCommandChainStructuralDirtyReason = string.Empty;
                     private static string _lastFrameVulkanFirstCommandChainDescriptorGenerationMismatch = string.Empty;
@@ -747,7 +773,20 @@ namespace XREngine
                     public static int VulkanVisibilityPacketCount => _lastFrameVulkanVisibilityPacketCount;
                     public static int VulkanRenderPacketCount => _lastFrameVulkanRenderPacketCount;
                     public static int VulkanSecondaryCommandBufferCount => _lastFrameVulkanSecondaryCommandBufferCount;
+                    public static int VulkanCommandChainWorkerQueuedChains => _lastFrameVulkanCommandChainWorkerQueuedChains;
+                    public static int VulkanCommandChainWorkersStarted => _lastFrameVulkanCommandChainWorkersStarted;
+                    public static int VulkanCommandChainWorkersCompleted => _lastFrameVulkanCommandChainWorkersCompleted;
+                    public static int VulkanCommandChainSeriallyRecorded => _lastFrameVulkanCommandChainSeriallyRecorded;
+                    public static int VulkanCommandChainWorkerReused => _lastFrameVulkanCommandChainWorkerReused;
+                    public static int VulkanCommandChainWorkerConflicts => _lastFrameVulkanCommandChainWorkerConflicts;
+                    public static int VulkanCommandChainWorkerFailures => _lastFrameVulkanCommandChainWorkerFailures;
+                    public static int VulkanCommandChainWorkerWaitTimeouts => _lastFrameVulkanCommandChainWorkerWaitTimeouts;
+                    public static int VulkanCommandChainPeakConcurrentWorkers => _lastFrameVulkanCommandChainPeakConcurrentWorkers;
+                    public static double VulkanCommandChainWorkerQueueDelayMs => TimeSpan.FromTicks(_lastFrameVulkanCommandChainWorkerQueueDelayTicks).TotalMilliseconds;
                     public static double VulkanCommandChainWorkerRecordMs => TimeSpan.FromTicks(_lastFrameVulkanCommandChainWorkerRecordTicks).TotalMilliseconds;
+                    public static double VulkanCommandChainWorkerActiveSpanMs => TimeSpan.FromTicks(_lastFrameVulkanCommandChainWorkerActiveSpanTicks).TotalMilliseconds;
+                    public static double VulkanCommandChainWorkerOverlapMs => TimeSpan.FromTicks(_lastFrameVulkanCommandChainWorkerOverlapTicks).TotalMilliseconds;
+                    public static double VulkanCommandChainWorkerMergeMs => TimeSpan.FromTicks(_lastFrameVulkanCommandChainWorkerMergeTicks).TotalMilliseconds;
                     public static double VulkanRenderThreadWaitForChainWorkersMs => TimeSpan.FromTicks(_lastFrameVulkanRenderThreadWaitForChainWorkersTicks).TotalMilliseconds;
                     public static string VulkanFirstCommandChainStructuralDirtyReason => _lastFrameVulkanFirstCommandChainStructuralDirtyReason;
                     public static string VulkanFirstCommandChainDescriptorGenerationMismatch => _lastFrameVulkanFirstCommandChainDescriptorGenerationMismatch;
@@ -1387,11 +1426,8 @@ namespace XREngine
                         AddNonNegative(ref _vulkanVisibilityPacketCount, visibilityPackets);
                         AddNonNegative(ref _vulkanRenderPacketCount, renderPackets);
                         AddNonNegative(ref _vulkanSecondaryCommandBufferCount, secondaryCommandBuffers);
-
-                        if (chainWorkerRecordTime.Ticks > 0)
-                            Interlocked.Add(ref _vulkanCommandChainWorkerRecordTicks, chainWorkerRecordTime.Ticks);
-                        if (renderThreadWaitForWorkersTime.Ticks > 0)
-                            Interlocked.Add(ref _vulkanRenderThreadWaitForChainWorkersTicks, renderThreadWaitForWorkersTime.Ticks);
+                        AddPositiveTicks(ref _vulkanCommandChainWorkerRecordTicks, chainWorkerRecordTime);
+                        AddPositiveTicks(ref _vulkanRenderThreadWaitForChainWorkersTicks, renderThreadWaitForWorkersTime);
 
                         if (string.IsNullOrWhiteSpace(firstStructuralDirtyReason) &&
                             string.IsNullOrWhiteSpace(firstDescriptorGenerationMismatch) &&
@@ -1419,6 +1455,64 @@ namespace XREngine
                             {
                                 _vulkanFirstCommandChainResourcePlanRevisionMismatch = firstResourcePlanRevisionMismatch;
                             }
+                        }
+                    }
+
+                    public static void RecordVulkanCommandChainWorkerMetrics(
+                        int queuedChains = 0,
+                        int workersStarted = 0,
+                        int workersCompleted = 0,
+                        int seriallyRecordedChains = 0,
+                        int reusedChains = 0,
+                        int conflictChains = 0,
+                        int workerFailures = 0,
+                        int waitTimeouts = 0,
+                        int peakConcurrentWorkers = 0,
+                        TimeSpan queueDelay = default,
+                        TimeSpan workerRecordTime = default,
+                        TimeSpan workerActiveSpan = default,
+                        TimeSpan workerOverlapTime = default,
+                        TimeSpan mergeTime = default,
+                        TimeSpan waitForWorkersTime = default)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        AddNonNegative(ref _vulkanCommandChainWorkerQueuedChains, queuedChains);
+                        AddNonNegative(ref _vulkanCommandChainWorkersStarted, workersStarted);
+                        AddNonNegative(ref _vulkanCommandChainWorkersCompleted, workersCompleted);
+                        AddNonNegative(ref _vulkanCommandChainSeriallyRecorded, seriallyRecordedChains);
+                        AddNonNegative(ref _vulkanCommandChainWorkerReused, reusedChains);
+                        AddNonNegative(ref _vulkanCommandChainWorkerConflicts, conflictChains);
+                        AddNonNegative(ref _vulkanCommandChainWorkerFailures, workerFailures);
+                        AddNonNegative(ref _vulkanCommandChainWorkerWaitTimeouts, waitTimeouts);
+                        UpdateCommandChainWorkerPeak(peakConcurrentWorkers);
+                        AddPositiveTicks(ref _vulkanCommandChainWorkerQueueDelayTicks, queueDelay);
+                        AddPositiveTicks(ref _vulkanCommandChainWorkerRecordTicks, workerRecordTime);
+                        AddPositiveTicks(ref _vulkanCommandChainWorkerActiveSpanTicks, workerActiveSpan);
+                        AddPositiveTicks(ref _vulkanCommandChainWorkerOverlapTicks, workerOverlapTime);
+                        AddPositiveTicks(ref _vulkanCommandChainWorkerMergeTicks, mergeTime);
+                        AddPositiveTicks(ref _vulkanRenderThreadWaitForChainWorkersTicks, waitForWorkersTime);
+                    }
+
+                    private static void AddPositiveTicks(ref long target, TimeSpan value)
+                    {
+                        if (value.Ticks > 0)
+                            Interlocked.Add(ref target, value.Ticks);
+                    }
+
+                    private static void UpdateCommandChainWorkerPeak(int candidate)
+                    {
+                        int current = Volatile.Read(ref _vulkanCommandChainPeakConcurrentWorkers);
+                        while (candidate > current)
+                        {
+                            int observed = Interlocked.CompareExchange(
+                                ref _vulkanCommandChainPeakConcurrentWorkers,
+                                candidate,
+                                current);
+                            if (observed == current)
+                                return;
+                            current = observed;
                         }
                     }
 
@@ -2015,7 +2109,20 @@ namespace XREngine
                         _lastFrameVulkanVisibilityPacketCount = _vulkanVisibilityPacketCount;
                         _lastFrameVulkanRenderPacketCount = _vulkanRenderPacketCount;
                         _lastFrameVulkanSecondaryCommandBufferCount = _vulkanSecondaryCommandBufferCount;
+                        _lastFrameVulkanCommandChainWorkerQueuedChains = _vulkanCommandChainWorkerQueuedChains;
+                        _lastFrameVulkanCommandChainWorkersStarted = _vulkanCommandChainWorkersStarted;
+                        _lastFrameVulkanCommandChainWorkersCompleted = _vulkanCommandChainWorkersCompleted;
+                        _lastFrameVulkanCommandChainSeriallyRecorded = _vulkanCommandChainSeriallyRecorded;
+                        _lastFrameVulkanCommandChainWorkerReused = _vulkanCommandChainWorkerReused;
+                        _lastFrameVulkanCommandChainWorkerConflicts = _vulkanCommandChainWorkerConflicts;
+                        _lastFrameVulkanCommandChainWorkerFailures = _vulkanCommandChainWorkerFailures;
+                        _lastFrameVulkanCommandChainWorkerWaitTimeouts = _vulkanCommandChainWorkerWaitTimeouts;
+                        _lastFrameVulkanCommandChainPeakConcurrentWorkers = _vulkanCommandChainPeakConcurrentWorkers;
+                        _lastFrameVulkanCommandChainWorkerQueueDelayTicks = _vulkanCommandChainWorkerQueueDelayTicks;
                         _lastFrameVulkanCommandChainWorkerRecordTicks = _vulkanCommandChainWorkerRecordTicks;
+                        _lastFrameVulkanCommandChainWorkerActiveSpanTicks = _vulkanCommandChainWorkerActiveSpanTicks;
+                        _lastFrameVulkanCommandChainWorkerOverlapTicks = _vulkanCommandChainWorkerOverlapTicks;
+                        _lastFrameVulkanCommandChainWorkerMergeTicks = _vulkanCommandChainWorkerMergeTicks;
                         _lastFrameVulkanRenderThreadWaitForChainWorkersTicks = _vulkanRenderThreadWaitForChainWorkersTicks;
                         _lastFrameVulkanRetiredDescriptorPoolCount = _vulkanRetiredDescriptorPoolCount;
                         _lastFrameVulkanRetiredDescriptorSetCount = _vulkanRetiredDescriptorSetCount;
@@ -2214,7 +2321,20 @@ namespace XREngine
                         _vulkanVisibilityPacketCount = 0;
                         _vulkanRenderPacketCount = 0;
                         _vulkanSecondaryCommandBufferCount = 0;
+                        _vulkanCommandChainWorkerQueuedChains = 0;
+                        _vulkanCommandChainWorkersStarted = 0;
+                        _vulkanCommandChainWorkersCompleted = 0;
+                        _vulkanCommandChainSeriallyRecorded = 0;
+                        _vulkanCommandChainWorkerReused = 0;
+                        _vulkanCommandChainWorkerConflicts = 0;
+                        _vulkanCommandChainWorkerFailures = 0;
+                        _vulkanCommandChainWorkerWaitTimeouts = 0;
+                        _vulkanCommandChainPeakConcurrentWorkers = 0;
+                        _vulkanCommandChainWorkerQueueDelayTicks = 0;
                         _vulkanCommandChainWorkerRecordTicks = 0;
+                        _vulkanCommandChainWorkerActiveSpanTicks = 0;
+                        _vulkanCommandChainWorkerOverlapTicks = 0;
+                        _vulkanCommandChainWorkerMergeTicks = 0;
                         _vulkanRenderThreadWaitForChainWorkersTicks = 0;
                         _vulkanRetiredDescriptorPoolCount = 0;
                         _vulkanRetiredDescriptorSetCount = 0;

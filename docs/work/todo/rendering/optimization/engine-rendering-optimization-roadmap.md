@@ -1,6 +1,6 @@
 # Engine Rendering Optimization Roadmap
 
-Last Updated: 2026-07-28
+Last Updated: 2026-07-30
 Owner: Rendering
 Status: Umbrella Index; Vulkan Desktop 200+ Hz And RVC 120 Hz Execution Delegated To Workstreams 01-08
 Execution: This document does not authorize implementation out of the numbered
@@ -38,11 +38,21 @@ performance-gate authority:
 7. [07 - Occlusion Systems Performance](07-occlusion-systems-performance-todo.md)
 8. [08 - Render Tail Latency](08-render-tail-latency-shadows-streaming-jobs-todo.md)
 
-They execute strictly in order. A later workstream may not begin until its
-predecessor is marked `Complete` with the required evidence. The phases below
-remain a backend-neutral, VR, avatar, and future-renderer roadmap; duplicated
-Vulkan implementation items are satisfied only through the numbered owner and
-must not be executed as a parallel checklist.
+Implementation status: workstream 05 is
+`Implementation Complete; Acceptance Deferred`. Workstream 06 is unblocked
+for implementation; all workstream-05 performance, overlap, allocation, and
+stress claims remain owned by the shared acceptance closeout.
+
+They execute strictly in implementation order. By owner direction on
+2026-07-29, the repeated long-form acceptance matrices are deferred to the
+[01-08 Acceptance Closeout](../../../testing/rendering/01-08-optimization-acceptance-closeout.md).
+A later workstream may begin when its predecessor is marked
+`Implementation Complete; Acceptance Deferred`. Targeted tests, narrow builds,
+and implementation smokes remain mandatory, and any failure that reveals an
+implementation defect still blocks progression. The phases below remain a
+backend-neutral, VR, avatar, and future-renderer roadmap; duplicated Vulkan
+implementation items are satisfied only through the numbered owner and must
+not be executed as a parallel checklist.
 
 Detailed implementation and longer-horizon design also live in:
 

@@ -397,7 +397,26 @@ For detailed documentation of each command including parameters and return value
 | `enter_play_mode` / `exit_play_mode` | Toggle play-mode transitions         |
 | `create_primitive_shape`     | Create primitive nodes (cube/box/sphere/cone) |
 | `save_world` / `load_world`  | Save or load world assets                      |
+| `run_editor_command`         | Run allowlisted UI workflows, including external import and asset drop |
 | `list_tools`                 | List MCP tools from inside a tool call         |
+
+### External Import And Asset Drop Workflows
+
+`run_editor_command` supports two workflow-validation commands that deliberately
+reuse the editor UI implementation:
+
+- `import_external_asset` queues `source_path` through the ImGui external-file
+  importer. Optional arguments are `dest_folder`, `unity_project_root`, and
+  `overwrite`. A Unity prefab is read from its original project so GUID
+  dependencies remain resolvable; only native output is written below the game
+  assets destination.
+- `drop_asset` sends a native `asset_path` through the Asset Explorer drag/drop
+  spawn helper. Optional `parent_id` and `position_x`/`position_y`/`position_z`
+  arguments select placement. Native Unity conversion output follows the same
+  hydrated `XRPrefabSource` path as other imported prefabs.
+
+These commands are intended for exact editor-workflow validation; direct
+importer or scene-instantiation calls do not prove those UI paths.
 
 ### Viewport Sequence Capture Sessions
 
@@ -598,7 +617,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `restart_renderer` | Transactionally restart the selected active backend generation. Active OpenXR requires restart_openxr_session=true; active OpenVR remains blocked. |
 | `restore_world_state` | Restore the active world from a previously captured snapshot. |
 | `rotate_transform` | Apply a local rotation to a scene node's transform (degrees). |
-| `run_editor_command` | Execute an allowlisted editor command via MCP (undo/redo/selection/play-mode/save/load/focus/select). |
+| `run_editor_command` | Execute an allowlisted editor command via MCP (undo/redo/selection/play-mode/save/load/focus/select/import_external_asset/drop_asset). |
 | `save_world` | Save the active world asset to disk. |
 | `scaffold_component` | Generate a new XRComponent subclass from a template. Creates a .cs file with backing fields, SetField pattern, lifecycle hooks, and Description attribute. |
 | `scaffold_game_mode` | Generate a new game mode class from template. Creates a .cs file extending GameMode<T> with standard lifecycle methods. |

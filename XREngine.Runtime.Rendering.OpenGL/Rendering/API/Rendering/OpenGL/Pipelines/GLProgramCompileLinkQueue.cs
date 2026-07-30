@@ -34,9 +34,11 @@ namespace XREngine.Rendering.OpenGL
             private readonly bool _serializeProgramLinkDriverCalls;
             private readonly ConcurrentDictionary<uint, CompileResult> _completed = new();
             private readonly ConcurrentDictionary<uint, byte> _inFlightProgramIds = new();
+            private readonly ConcurrentDictionary<uint, byte> _inFlightLargeSourceProgramIds = new();
             private readonly ConcurrentDictionary<uint, byte> _cancelledProgramIds = new();
             private int _roundRobinCursor;
             private int _inFlight;
+            private int _largeSourceInFlight;
             private long _completedCount;
             private long _failedCount;
             private long _rejectedCount;
@@ -44,7 +46,7 @@ namespace XREngine.Rendering.OpenGL
             private const int WorkerCompletionFastPollIterations = 64;
             private const double WorkerCompletionStuckFlushMilliseconds = 5000.0;
             private const double WorkerLinkDeferralMilliseconds = 5000.0;
-            private const long LargeSourceLinkDeferralThresholdBytes = 64 * 1024;
+            internal const long LargeSourceLinkDeferralThresholdBytes = 64 * 1024;
             private const int DeferredLinkRepollDelayMilliseconds = 50;
             private const double DeferredLinkProgressLogMilliseconds = 15000.0;
             private const double ShaderCompletionPollGlCallSlowLogMilliseconds = 1.0;
@@ -81,6 +83,13 @@ namespace XREngine.Rendering.OpenGL
             /// multiplied by the worker count.
             /// </summary>
             public const int MaxInFlight = 4;
+            /// <summary>
+            /// Maximum number of large source programs that may occupy driver compiler
+            /// memory concurrently. Large Uber shaders can consume several GiB apiece
+            /// while a deferred link is pending, so count-based queue capacity alone is
+            /// not a sufficient memory bound.
+            /// </summary>
+            public const int MaxLargeSourceInFlight = 1;
             private const int InteractivePriorityReservePerWorker = 2;
 
             public GLProgramCompileLinkQueue(GLSharedContext sharedContext)
@@ -133,6 +142,7 @@ namespace XREngine.Rendering.OpenGL
                 return Volatile.Read(ref _inFlight) < limit;
             }
             public int InFlightCount => Volatile.Read(ref _inFlight);
+            public int LargeSourceInFlightCount => Volatile.Read(ref _largeSourceInFlight);
             public long CompletedCount => Interlocked.Read(ref _completedCount);
             public long FailedCount => Interlocked.Read(ref _failedCount);
             public long RejectedCount => Interlocked.Read(ref _rejectedCount);
@@ -378,6 +388,16 @@ namespace XREngine.Rendering.OpenGL
                     return false;
                 }
 
+                bool isLargeSource = summary.SourceBytes >= LargeSourceLinkDeferralThresholdBytes;
+                if (isLargeSource &&
+                    Volatile.Read(ref _largeSourceInFlight) >= MaxLargeSourceInFlight)
+                {
+                    rejectReason = "large-source compile/link memory budget is at capacity";
+                    LogRenderingQueueEvent("LARGE_SOURCE_BACKPRESSURE", programId, summary, rejectReason);
+                    Interlocked.Increment(ref _backpressureCount);
+                    return false;
+                }
+
                 if (!CanEnqueuePriority(priority))
                 {
                     rejectReason = "compile/link queue is at capacity";
@@ -395,6 +415,15 @@ namespace XREngine.Rendering.OpenGL
                     return false;
                 }
 
+                if (isLargeSource &&
+                    Interlocked.CompareExchange(ref _largeSourceInFlight, 1, 0) != 0)
+                {
+                    rejectReason = "large-source compile/link memory budget is at capacity";
+                    LogRenderingQueueEvent("LARGE_SOURCE_BACKPRESSURE", programId, summary, rejectReason);
+                    Interlocked.Increment(ref _backpressureCount);
+                    return false;
+                }
+
                 rejectReason = null;
                 LogRenderingQueueEvent(
                     "ENQUEUE",
@@ -402,6 +431,8 @@ namespace XREngine.Rendering.OpenGL
                     summary,
                     $"inFlight={InFlightCount}/{MaxInFlightTotal} workers={_workers.Length} pickedPending={worker.PendingCount}");
                 _inFlightProgramIds[programId] = 0;
+                if (isLargeSource)
+                    _inFlightLargeSourceProgramIds[programId] = 0;
                 Interlocked.Increment(ref _inFlight);
                 worker.Enqueue(gl =>
                 {
@@ -1259,17 +1290,21 @@ namespace XREngine.Rendering.OpenGL
                 if (_completed.TryRemove(programId, out result))
                 {
                     _cancelledProgramIds.TryRemove(programId, out _);
-                    _inFlightProgramIds.TryRemove(programId, out _);
-                    Interlocked.Decrement(ref _inFlight);
+                    ReleaseInFlightSlot(programId);
                     return true;
                 }
                 return false;
             }
 
             private void CompleteCancelledCompile(uint programId)
+                => ReleaseInFlightSlot(programId);
+
+            private void ReleaseInFlightSlot(uint programId)
             {
                 if (_inFlightProgramIds.TryRemove(programId, out _))
                     Interlocked.Decrement(ref _inFlight);
+                if (_inFlightLargeSourceProgramIds.TryRemove(programId, out _))
+                    Interlocked.Decrement(ref _largeSourceInFlight);
             }
 
             public static bool ContainsKnownAsyncLinkHazard(ReadOnlySpan<ShaderInput> shaders)

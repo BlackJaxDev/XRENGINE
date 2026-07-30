@@ -537,6 +537,7 @@ namespace XREngine
             // Make the generated asset path available during import so importers can resolve
             // stable sibling output paths (e.g., externalized meshes/materials/textures).
             asset.FilePath = generatedAssetPath;
+            asset.AdoptPersistentID(CreateGeneratedAssetPersistentID(generatedAssetPath, asset.GetType()));
 
             long importStart = Stopwatch.GetTimestamp();
             bool ok;
@@ -718,6 +719,7 @@ namespace XREngine
 
                 // ── Phase C: Topological write, leaves-first ─────────────────
                 int exportedCount = 0;
+                int reusedCount = 0;
                 int skippedCount = 0;
                 int failedCount = 0;
                 var overwrittenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -761,10 +763,13 @@ namespace XREngine
                         {
                             Debug.Log(ELogCategory.Meshes, "[ExternalizeEmbedded] Exporting {0} '{1}' -> '{2}'", subAsset.GetType().Name, subAsset.Name ?? string.Empty, targetPath);
                             long exportStart = Stopwatch.GetTimestamp();
-                            SaveAssetToPathCore(subAsset, targetPath);
+                            bool wroteAsset = SaveAssetToPathCore(subAsset, targetPath);
                             EnsureMetadataForAssetPath(targetPath, isDirectory: false);
                             overwrittenPaths.Add(targetPath);
-                            exportedCount++;
+                            if (wroteAsset)
+                                exportedCount++;
+                            else
+                                reusedCount++;
                             double exportMs = ElapsedMilliseconds(exportStart);
                             if (exportMs >= 100.0)
                             {
@@ -800,7 +805,13 @@ namespace XREngine
                     }
                 }
 
-                Debug.Log(ELogCategory.Meshes, "[ExternalizeEmbedded] Externalization complete: {0} exported, {1} skipped, {2} failed", exportedCount, skippedCount, failedCount);
+                Debug.Log(
+                    ELogCategory.Meshes,
+                    "[ExternalizeEmbedded] Externalization complete: {0} written, {1} unchanged/reused, {2} skipped, {3} failed",
+                    exportedCount,
+                    reusedCount,
+                    skippedCount,
+                    failedCount);
                 if (failedCount > 0)
                 {
                     throw new InvalidDataException(
@@ -958,6 +969,7 @@ namespace XREngine
             // Track claimed filenames per kind folder so collisions are deduped deterministically.
             var claimedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var generatedNameCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+            var generatedAssets = new List<XRAsset>(discovered.Count);
 
             foreach (XRAsset subAsset in discovered)
             {
@@ -995,6 +1007,8 @@ namespace XREngine
                 claimedPaths.Add(targetPath);
 
                 subAsset.FilePath = targetPath;
+                subAsset.AdoptPersistentID(CreateGeneratedAssetPersistentID(targetPath, subAsset.GetType()));
+                generatedAssets.Add(subAsset);
 
                 // Write a placeholder file so XRAssetYamlConverter.ShouldWriteReference's File.Exists
                 // check passes while nested references are emitted during Phase C.
@@ -1012,6 +1026,13 @@ namespace XREngine
                     throw;
                 }
             }
+
+            // All external references now have their final paths and stable IDs. Refresh each
+            // generated root independently, then stabilize IDs for assets that remain embedded
+            // in that root (for example generated shader variants and engine fallback textures).
+            // This makes exact serialized-byte comparison meaningful on subsequent imports.
+            foreach (XRAsset generatedAsset in generatedAssets)
+                AssignDeterministicEmbeddedAssetIDs(generatedAsset);
         }
 
         private static string ReserveUniqueAssetPath(string candidatePath, XRAsset subAsset, HashSet<string> claimedPaths)
@@ -1065,17 +1086,131 @@ namespace XREngine
             }
         }
 
-        private void SaveAssetToPathCore(XRAsset asset, string filePath)
+        private bool SaveAssetToPathCore(XRAsset asset, string filePath)
         {
             string? directory = Path.GetDirectoryName(filePath);
             if (!string.IsNullOrWhiteSpace(directory))
                 Directory.CreateDirectory(directory);
 
+            bool hadExistingContent = File.Exists(filePath) && new FileInfo(filePath).Length > 0;
+            string comparisonPath = Path.Combine(
+                directory ?? string.Empty,
+                $".{Path.GetFileName(filePath)}.{Guid.NewGuid():N}.import-compare");
+
             asset.FilePath = filePath;
-            MarkRecentlySaved(filePath);
             XRAssetGraphUtility.RefreshAssetGraph(asset);
-            SerializeAssetForThirdPartyImport(asset, filePath);
-            PostSaved(asset, newAsset: true);
+            try
+            {
+                SerializeAssetForThirdPartyImport(asset, comparisonPath);
+                if (hadExistingContent && FilesHaveSameContent(filePath, comparisonPath))
+                {
+                    PostSaved(asset, newAsset: false);
+                    return false;
+                }
+
+                File.Move(comparisonPath, filePath, overwrite: true);
+                MarkRecentlySaved(filePath);
+                PostSaved(asset, newAsset: !hadExistingContent);
+                return true;
+            }
+            finally
+            {
+                if (File.Exists(comparisonPath))
+                    File.Delete(comparisonPath);
+            }
+        }
+
+        private static Guid CreateGeneratedAssetPersistentID(string filePath, Type assetType)
+            => PersistentObjectID.FromIdentity(
+                $"xrengine:generated-asset:{Path.GetFullPath(filePath).ToLowerInvariant()}:{assetType.FullName}");
+
+        private static void AssignDeterministicEmbeddedAssetIDs(XRAsset root)
+        {
+            XRAssetGraphUtility.RefreshAssetGraph(root);
+            var identityCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (XRAsset embedded in root.EmbeddedAssets
+                .OrderBy(BuildEmbeddedAssetIdentityBase, StringComparer.Ordinal))
+            {
+                string identityBase = BuildEmbeddedAssetIdentityBase(embedded);
+                identityCounts.TryGetValue(identityBase, out int existingCount);
+                int ordinal = existingCount + 1;
+                identityCounts[identityBase] = ordinal;
+                embedded.AdoptPersistentID(PersistentObjectID.FromIdentity(
+                    $"xrengine:generated-embedded:{identityBase}:{ordinal}"));
+            }
+
+            // MaterialPassSet is an immutable value wrapper rather than an XRObjectBase, so the
+            // general asset-graph traversal intentionally does not walk through it. Stabilize its
+            // embedded render-state assets by their owning material and semantic pass identity.
+            // This prevents an unchanged material reimport from receiving fresh GUIDs solely for
+            // its pass-local RenderingParameters instances.
+            if (root is XRMaterial material)
+            {
+                string materialIdentity = root.ID.ToString("N");
+                material.RenderOptions.AdoptPersistentID(PersistentObjectID.FromIdentity(
+                    $"xrengine:generated-material-state:{materialIdentity}:base"));
+
+                MaterialPassDefinition[] passes = material.PassSet.Passes;
+                for (int index = 0; index < passes.Length; index++)
+                {
+                    MaterialPassDefinition pass = passes[index];
+                    pass.RenderOptions.AdoptPersistentID(PersistentObjectID.FromIdentity(
+                        $"xrengine:generated-material-state:{materialIdentity}:pass:" +
+                        $"{pass.Identity}:{pass.Order}:{index}"));
+                }
+
+                material.PassSet.ForwardAddRenderOptions?.AdoptPersistentID(
+                    PersistentObjectID.FromIdentity(
+                        $"xrengine:generated-material-state:{materialIdentity}:forward-add"));
+            }
+        }
+
+        private static string BuildEmbeddedAssetIdentityBase(XRAsset asset)
+        {
+            string typeName = asset.GetType().FullName ?? asset.GetType().Name;
+            if (!string.IsNullOrWhiteSpace(asset.OriginalPath))
+            {
+                return $"source:{Path.GetFullPath(asset.OriginalPath).ToLowerInvariant()}:{typeName}:" +
+                       $"{GetGeneratedShaderIdentity(asset)}";
+            }
+
+            if (!string.IsNullOrWhiteSpace(asset.FilePath))
+            {
+                return $"file:{Path.GetFullPath(asset.FilePath).ToLowerInvariant()}:{typeName}:" +
+                       $"{GetGeneratedShaderIdentity(asset)}";
+            }
+
+            return $"named:{typeName}:{asset.Name ?? string.Empty}:{GetGeneratedShaderIdentity(asset)}";
+        }
+
+        private static string GetGeneratedShaderIdentity(XRAsset asset)
+            => asset is XRShader shader && shader.IsGeneratedUberVariant
+                ? $"{shader.Type}:{shader.GeneratedUberVariantHash:x16}"
+                : string.Empty;
+
+        private static bool FilesHaveSameContent(string leftPath, string rightPath)
+        {
+            var leftInfo = new FileInfo(leftPath);
+            var rightInfo = new FileInfo(rightPath);
+            if (leftInfo.Length != rightInfo.Length)
+                return false;
+
+            const int BufferSize = 64 * 1024;
+            byte[] leftBuffer = new byte[BufferSize];
+            byte[] rightBuffer = new byte[BufferSize];
+            using var left = new FileStream(leftPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var right = new FileStream(rightPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            while (true)
+            {
+                int leftRead = left.Read(leftBuffer, 0, leftBuffer.Length);
+                int rightRead = right.Read(rightBuffer, 0, rightBuffer.Length);
+                if (leftRead != rightRead)
+                    return false;
+                if (leftRead == 0)
+                    return true;
+                if (!leftBuffer.AsSpan(0, leftRead).SequenceEqual(rightBuffer.AsSpan(0, rightRead)))
+                    return false;
+            }
         }
 
         // Imported mesh .asset files are already wrapped in a Zstd-compressed DataSource by

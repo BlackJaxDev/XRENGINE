@@ -476,9 +476,35 @@ draw occurrence order or shader/program relink therefore re-records the
 affected secondary instead of replaying stale dynamic offsets, pipeline
 layouts, or descriptors.
 
-Primary command-buffer reuse is tracked separately from secondary reuse. A primary can be reused when the pass-group layout, schedule signature, and ordered secondary command-buffer handles are unchanged. When only frame data changes, the chain metrics report frame-data refreshes rather than command-buffer records. The profiler/runtime stat surface exposes scheduled, recorded, reused, refreshed, dirty-reason, secondary-count, primary-record/reuse, worker-record, and render-thread-wait metrics.
+Primary command-buffer reuse is tracked separately from secondary reuse. A primary can be reused when the pass-group layout, schedule signature, and ordered secondary command-buffer handles are unchanged. When only frame data changes, the chain metrics report frame-data refreshes rather than command-buffer records.
 
-The worker infrastructure owns per-worker graphics/compute command pools, scratch state, bind-state containers, cancellation, and teardown. Current worker execution is conservative: inheritance-sensitive graphics secondary recording remains on the validated primary-compatible path, while worker timing and scheduling boundaries are available for expansion and measurement. Worker state is cancelled on command-buffer destruction and destroyed before the main command pools.
+Dirty scheduled mesh chains use persistent renderer-owned workers when at least
+two independent chains are available. Before dispatch, the render thread
+finishes pipeline, descriptor, image-transition, and frame-data preparation,
+then captures an immutable planner runtime snapshot for each chain. Each worker
+owns graphics command pools per indexed frame slot and private planner
+switching state; worker encoding does not take the renderer-wide planner lock.
+
+Renderer ownership is assigned per batch. Every `VkMeshRenderer` touched by a
+chain is pinned to one worker, including heterogeneous chains. A chain that
+would bridge two existing ownership components is recorded on the explicit
+serial path after worker completion. Contexts may be coalesced when they differ
+only by the immutable planner/resource/descriptor generations captured for
+each chain; render target, dimensions, pipeline, viewport, queue family,
+stereo/multiview, registry identity, and ordering policy must still match.
+
+Workers record independently, but the primary executes secondary command
+buffers in scheduled order. Worker completion order therefore cannot reorder
+passes or transparent draws. Dispatch, cancellation, idle, and thread joins
+are bounded. An exception or timeout faults the worker domain, fails the frame
+before submission, and leaves later frames on the visible serial path.
+
+The profiler/runtime stat surface separately exposes scheduled, queued,
+worker-started, worker-completed, serial, reused, conflict, failure, and timeout
+counts plus queue delay, aggregate record time, active span, overlap, merge,
+and render-thread wait. Schedule-building time is not labeled as worker time.
+Worker state is cancelled on command-buffer destruction and stopped before its
+owned pools are destroyed; pools are retained when a bounded join times out.
 
 VR and shadow passes use explicit command-chain view specialization. VR eye chains use left/right eye indices, with a multiview sentinel reserved for single-pass stereo. Shadow chains include light identity, cascade/face identity, target identity, and shadow atlas/fallback state in their structural signatures so atlas repacks or stale-tile fallback modes dirty only the affected chains.
 

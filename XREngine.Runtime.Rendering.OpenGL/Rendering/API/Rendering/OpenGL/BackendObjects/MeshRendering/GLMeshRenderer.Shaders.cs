@@ -581,11 +581,25 @@ namespace XREngine.Rendering.OpenGL
                     return false;
                 }
 
-                if (_combinedProgram is not { IsAsyncBuildPending: true })
+                // Uber materials already render through PendingUberFallbackMaterial while
+                // their combined program links. Building the full separable Uber program
+                // here duplicates a very large driver compile and can exhaust memory when
+                // an avatar brings many cold material variants into view at once.
+                if (_combinedProgram is not { IsAsyncBuildPending: true } combinedProgram)
+                    return false;
+
+                if (IsUberMaterial(material.Data) ||
+                    combinedProgram.PreparedCompileSourceBytes >= GLProgramCompileLinkQueue.LargeSourceLinkDeferralThresholdBytes)
                     return false;
 
                 return true;
             }
+
+            private static bool IsUberMaterial(XRMaterial material)
+                => !material.RequestedUberVariant.IsEmpty ||
+                   !material.ActiveUberVariant.IsEmpty ||
+                   material.UberVariantStatus.Stage != EUberMaterialVariantStage.None ||
+                   material.TryGetUberMaterialState(out _, out _);
 
             private bool ShouldSkipShadowDrawForProgramBuild(GLMaterial material)
             {

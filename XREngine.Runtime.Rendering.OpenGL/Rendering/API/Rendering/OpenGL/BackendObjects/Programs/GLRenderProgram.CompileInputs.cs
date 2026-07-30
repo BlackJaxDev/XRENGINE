@@ -63,6 +63,7 @@ namespace XREngine.Rendering.OpenGL
                 _preparedIsCached = isCached;
                 _preparedBinProg = binProg;
                 _preparedCompileInputs = compileInputs;
+                Volatile.Write(ref _preparedCompileSourceBytes, CountCompileInputSourceBytes(compileInputs));
                 _linkPreparationFailure = null;
                 _linkDataPrepared = true;
 
@@ -292,6 +293,18 @@ namespace XREngine.Rendering.OpenGL
                 return false;
             }
 
+            private static long CountCompileInputSourceBytes(GLProgramCompileLinkQueue.ShaderInput[]? inputs)
+            {
+                if (inputs is not { Length: > 0 })
+                    return 0;
+
+                long sourceBytes = 0;
+                for (int index = 0; index < inputs.Length; index++)
+                    sourceBytes += CountUtf8Bytes(inputs[index].ResolvedSource);
+
+                return sourceBytes;
+            }
+
             private static bool ShouldPreferSharedContextForLargeSource(ulong hash, GLProgramCompileLinkQueue.ShaderInput[]? inputs)
                 => (hash == 0 || !SharedContextLargeSourceTimeouts.ContainsKey(hash)) &&
                    ShouldPreferSharedContextForLargeSource(inputs);
@@ -324,6 +337,7 @@ namespace XREngine.Rendering.OpenGL
                 Volatile.Write(ref _linkPreparationPendingGeneration, -1);
                 _linkPreparationFailure = null;
                 _preparedCompileInputs = null;
+                Volatile.Write(ref _preparedCompileSourceBytes, 0);
                 _preparedHash = 0;
                 _preparedCacheKey = null;
                 _preparedIsCached = false;

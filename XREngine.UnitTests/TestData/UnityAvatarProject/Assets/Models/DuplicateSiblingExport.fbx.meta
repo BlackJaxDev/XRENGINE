@@ -1,0 +1,20 @@
+fileFormatVersion: 2
+guid: 99999999999999999999999999999991
+ModelImporter:
+  serializedVersion: 22200
+  externalObjects: {}
+  materials:
+    materialImportMode: 0
+  animations:
+    importAnimation: 0
+  meshes:
+    globalScale: 1
+    importBlendShapes: 1
+    fileIdsGeneration: 2
+    useFileUnits: 1
+  animationType: 0
+  globalScale: 1
+  useFileScale: 1
+  bakeAxisConversion: 0
+  preserveHierarchy: 0
+  sortHierarchyByName: 0

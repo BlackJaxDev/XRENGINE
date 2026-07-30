@@ -640,7 +640,8 @@ namespace XREngine.Rendering.Vulkan
 
         private void RecordScheduledMeshCommandChainWorker(
             CommandChainRecordingBatch batch,
-            int chainIndex)
+            int chainIndex,
+            CommandChainRecordingWorkerState? worker = null)
         {
             CommandChain chain = batch.Chains[chainIndex];
             CommandBuffer secondary = batch.SecondaryBuffers[chainIndex];
@@ -712,75 +713,78 @@ namespace XREngine.Rendering.Vulkan
 
             if (batch.Ops[chain.SourceStartIndex] is not MeshDrawOp firstDraw)
                 throw new InvalidOperationException("Scheduled mesh packet does not begin with a mesh draw.");
+            if (!batch.HasPlannerState[chainIndex])
+                throw new InvalidOperationException("Scheduled mesh packet has no prepared resource-plan snapshot.");
+
+            ResourcePlannerRuntimeState plannerState = batch.PlannerStates[chainIndex];
+            plannerState.FrameOpResourcePlannerSwitchingState =
+                worker?.PlannerSwitchingState ?? batch.SerialPlannerSwitchingState;
             using var pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(firstDraw.Context.PipelineInstance);
-            lock (_frameOpResourcePlannerReadbackLock)
+            using var plannerScope = EnterThreadResourcePlannerRuntimeStateScope(in plannerState);
+
+            // Graphics pipeline materialization and descriptor transitions are owned by the
+            // render thread. Workers consume the immutable planner snapshot captured after
+            // that preparation and never publish planner mutations.
+
+            if (Api.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
+                throw new InvalidOperationException("Failed to begin Vulkan worker mesh command-chain secondary command buffer.");
+
+            ResetCommandBufferBindState(secondary);
+            for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
             {
-                using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(firstDraw.Context);
+                int opIndex = chain.SourceStartIndex + drawIndex;
+                if (batch.Ops[opIndex] is not MeshDrawOp drawOp)
+                    throw new InvalidOperationException($"Scheduled mesh packet contains non-mesh op at source index {opIndex}.");
 
-                // Graphics pipeline materialization is deliberately owned by the render thread before
-                // vkBeginCommandBuffer. Repeating it here can race pipeline creation across workers and,
-                // previously, allowed the caller to execute a secondary that was never begun.
-
-                if (Api.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
-                    throw new InvalidOperationException("Failed to begin Vulkan worker mesh command-chain secondary command buffer.");
-
-                ResetCommandBufferBindState(secondary);
-                for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
+                Viewport viewport = drawOp.Draw.Viewport;
+                Rect2D scissor = drawOp.Draw.Scissor;
+                uint viewportScissorCount = drawOp.Draw.ViewportScissorCount;
+                if (viewportScissorCount > 1 &&
+                    drawOp.Draw.IndexedViewports is { } indexedViewports &&
+                    drawOp.Draw.IndexedScissors is { } indexedScissors &&
+                    indexedViewports.Length >= (int)viewportScissorCount &&
+                    indexedScissors.Length >= (int)viewportScissorCount)
                 {
-                    int opIndex = chain.SourceStartIndex + drawIndex;
-                    if (batch.Ops[opIndex] is not MeshDrawOp drawOp)
-                        throw new InvalidOperationException($"Scheduled mesh packet contains non-mesh op at source index {opIndex}.");
-
-                    Viewport viewport = drawOp.Draw.Viewport;
-                    Rect2D scissor = drawOp.Draw.Scissor;
-                    uint viewportScissorCount = drawOp.Draw.ViewportScissorCount;
-                    if (viewportScissorCount > 1 &&
-                        drawOp.Draw.IndexedViewports is { } indexedViewports &&
-                        drawOp.Draw.IndexedScissors is { } indexedScissors &&
-                        indexedViewports.Length >= (int)viewportScissorCount &&
-                        indexedScissors.Length >= (int)viewportScissorCount)
-                    {
-                        SetViewportScissorTracked(secondary, indexedViewports, indexedScissors, viewportScissorCount);
-                    }
-                    else
-                    {
-                        SetViewportScissorTracked(secondary, viewport, scissor);
-                    }
-
-                    int uniformSlot = batch.UniformSlots[opIndex - batch.StartIndex];
-                    bool recorded = drawOp.Draw.Renderer.RecordDraw(
-                        secondary,
-                        drawOp.Draw,
-                        batch.RenderPass,
-                        batch.DynamicRendering,
-                        batch.DynamicRenderingFormats,
-                        batch.PassIndex,
-                        drawOp.Context.PassMetadata,
-                        batch.DepthStencilReadOnly,
-                        drawOp.Context.PipelineInstance?.DebugName ?? "<no pipeline>",
-                        batch.TargetName,
-                        uniformSlot,
-                        batch.FrameSlot);
-                    if (!recorded)
-                    {
-                        chain.State = CommandChainState.NotReady;
-                        chain.DirtyReason |= CommandChainDirtyReason.PipelineGeneration;
-                        throw new InvalidOperationException(
-                            $"A prewarmed Vulkan command-chain draw became unavailable during secondary recording. " +
-                            $"sourceIndex={opIndex} mesh='{drawOp.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' " +
-                            $"material='{(drawOp.Draw.MaterialOverride ?? drawOp.Draw.Renderer.MeshRenderer.Material)?.Name ?? "<unnamed material>"}' " +
-                            $"reason={drawOp.Draw.Renderer.DescribeReusableCommandBufferFrameDataBlocker(drawOp.Draw, uniformSlot)}");
-                    }
+                    SetViewportScissorTracked(secondary, indexedViewports, indexedScissors, viewportScissorCount);
+                }
+                else
+                {
+                    SetViewportScissorTracked(secondary, viewport, scissor);
                 }
 
-                if (EndCommandBufferTracked(secondary) != Result.Success)
-                    throw new InvalidOperationException("Failed to end Vulkan worker mesh command-chain secondary command buffer.");
-
-                chain.RecordedUniformSlotSignature = ComputeCommandChainUniformSlotSignature(
-                    batch.UniformSlots,
-                    chain.SourceStartIndex - batch.StartIndex,
-                    chain.SourceCount);
+                int uniformSlot = batch.UniformSlots[opIndex - batch.StartIndex];
+                bool recorded = drawOp.Draw.Renderer.RecordDraw(
+                    secondary,
+                    drawOp.Draw,
+                    batch.RenderPass,
+                    batch.DynamicRendering,
+                    batch.DynamicRenderingFormats,
+                    batch.PassIndex,
+                    drawOp.Context.PassMetadata,
+                    batch.DepthStencilReadOnly,
+                    drawOp.Context.PipelineInstance?.DebugName ?? "<no pipeline>",
+                    batch.TargetName,
+                    uniformSlot,
+                    batch.FrameSlot);
+                if (!recorded)
+                {
+                    chain.State = CommandChainState.NotReady;
+                    chain.DirtyReason |= CommandChainDirtyReason.PipelineGeneration;
+                    throw new InvalidOperationException(
+                        $"A prewarmed Vulkan command-chain draw became unavailable during secondary recording. " +
+                        $"sourceIndex={opIndex} mesh='{drawOp.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' " +
+                        $"material='{(drawOp.Draw.MaterialOverride ?? drawOp.Draw.Renderer.MeshRenderer.Material)?.Name ?? "<unnamed material>"}' " +
+                        $"reason={drawOp.Draw.Renderer.DescribeReusableCommandBufferFrameDataBlocker(drawOp.Draw, uniformSlot)}");
+                }
             }
+
+            if (EndCommandBufferTracked(secondary) != Result.Success)
+                throw new InvalidOperationException("Failed to end Vulkan worker mesh command-chain secondary command buffer.");
+
+            chain.RecordedUniformSlotSignature = ComputeCommandChainUniformSlotSignature(
+                batch.UniformSlots,
+                chain.SourceStartIndex - batch.StartIndex,
+                chain.SourceCount);
 
             chain.State = CommandChainState.Recorded;
             chain.FrameDataRefreshTouchedDescriptors = false;
@@ -807,11 +811,6 @@ namespace XREngine.Rendering.Vulkan
             if (!_enableSecondaryCommandBuffers || bucket.Count <= 0)
                 return false;
 
-            bool useParallelSecondary =
-                _enableParallelSecondaryCommandBufferRecording &&
-                !CommandChainsEnabledForCurrentRecording &&
-                bucket.Count >= Math.Max(_parallelSecondaryIndirectRunThreshold, 2);
-
             if (CommandChainsEnabledForCurrentRecording)
             {
                 ExecutePrimaryOwnedSecondaryCommandBufferBatch(
@@ -821,24 +820,7 @@ namespace XREngine.Rendering.Vulkan
                     ops,
                     startIndex,
                     bucket.Count,
-                    useParallelSecondary,
                     executedCommandChainSecondaryHandles,
-                    (relativeIndex, secondary) =>
-                    {
-                        int opIndex = startIndex + relativeIndex;
-                        FrameOp runOp = ops[opIndex];
-                        RecordFrameOpInSecondary(secondary, imageIndex, runOp, opIndex);
-                    });
-                return true;
-            }
-
-            if (bucket.Count > 1 && useParallelSecondary)
-            {
-                ExecuteSecondaryCommandBufferBatchParallel(
-                    primaryCommandBuffer,
-                    $"{label}Batch",
-                    bucket.Count,
-                    imageIndex,
                     (relativeIndex, secondary) =>
                     {
                         int opIndex = startIndex + relativeIndex;
@@ -869,7 +851,6 @@ namespace XREngine.Rendering.Vulkan
             FrameOp[] ops,
             int startIndex,
             int count,
-            bool useParallelSecondary,
             HashSet<nint> executedCommandChainSecondaryHandles,
             Action<int, CommandBuffer> recorder)
         {
@@ -879,16 +860,11 @@ namespace XREngine.Rendering.Vulkan
             bool primaryLabelActive = false;
             if (CanRecordCommandBufferDebugLabels)
             {
-                primaryLabelActive = CmdBeginLabel(primaryCommandBuffer, useParallelSecondary && count > 1
-                    ? $"{label}PrimaryOwnedBatch"
-                    : $"{label}PrimaryOwned");
+                primaryLabelActive = CmdBeginLabel(primaryCommandBuffer, $"{label}PrimaryOwned");
             }
 
             CommandBuffer[] secondaryBuffers = ArrayPool<CommandBuffer>.Shared.Rent(count);
             CommandChain[] secondaryChains = ArrayPool<CommandChain>.Shared.Rent(count);
-            Task[]? tasks = useParallelSecondary && count > 1
-                ? ArrayPool<Task>.Shared.Rent(count)
-                : null;
             Exception? firstError = null;
             object errorLock = new();
 
@@ -965,22 +941,8 @@ namespace XREngine.Rendering.Vulkan
                     }
                 }
 
-                if (tasks is not null)
-                {
-                    for (int i = 0; i < count; i++)
-                    {
-                        int taskIndex = i;
-                        tasks[i] = Task.Run(() => RecordSecondaryAt(taskIndex));
-                    }
-
-                    for (int i = 0; i < count; i++)
-                        tasks[i]!.Wait();
-                }
-                else
-                {
-                    for (int i = 0; i < count; i++)
-                        RecordSecondaryAt(i);
-                }
+                for (int i = 0; i < count; i++)
+                    RecordSecondaryAt(i);
 
                 if (firstError is not null)
                     throw firstError;
@@ -995,12 +957,6 @@ namespace XREngine.Rendering.Vulkan
             }
             finally
             {
-                if (tasks is not null)
-                {
-                    Array.Clear(tasks, 0, count);
-                    ArrayPool<Task>.Shared.Return(tasks);
-                }
-
                 Array.Clear(secondaryBuffers, 0, count);
                 Array.Clear(secondaryChains, 0, count);
                 ArrayPool<CommandBuffer>.Shared.Return(secondaryBuffers);
@@ -1153,154 +1109,5 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private void ExecuteSecondaryCommandBufferBatchParallel(
-            CommandBuffer primaryCommandBuffer,
-            string label,
-            int count,
-            uint imageIndex,
-            Action<int, CommandBuffer> recorder)
-        {
-            if (count <= 0)
-                return;
-
-            if (count == 1)
-            {
-                ExecuteSecondaryCommandBuffer(primaryCommandBuffer, label, imageIndex, cmd => recorder(0, cmd));
-                return;
-            }
-
-            bool primaryLabelActive = CmdBeginLabel(primaryCommandBuffer, label);
-            CommandBuffer[] secondaryBuffers = new CommandBuffer[count];
-            CommandPool[] ownerPools = new CommandPool[count];
-            bool[] allocated = new bool[count];
-            Exception? firstError = null;
-            object errorLock = new();
-            bool executedInPrimary = false;
-
-            try
-            {
-                Task[] tasks = new Task[count];
-                for (int i = 0; i < count; i++)
-                {
-                    int index = i;
-                    tasks[index] = Task.Run(() =>
-                    {
-                        if (firstError is not null)
-                            return;
-
-                        CommandBuffer secondary = default;
-                        bool localAllocated = false;
-                        CommandPool pool = default;
-
-                        try
-                        {
-                            pool = GetThreadCommandPool();
-                            CommandBufferAllocateInfo allocInfo = new()
-                            {
-                                SType = StructureType.CommandBufferAllocateInfo,
-                                CommandPool = pool,
-                                Level = CommandBufferLevel.Secondary,
-                                CommandBufferCount = 1
-                            };
-
-                            Result allocateResult = AllocateVulkanCommandBuffersTracked(
-                                ref allocInfo,
-                                out secondary,
-                                "SecondaryCommandBuffer.ParallelWorker");
-                            localAllocated = allocateResult == Result.Success && secondary.Handle != 0;
-                            if (!localAllocated)
-                                throw new InvalidOperationException($"Failed to allocate Vulkan secondary command buffer ({allocateResult}).");
-                            if (localAllocated)
-                            {
-                                RegisterCommandBufferImageIndex(secondary, imageIndex);
-                                if (SupportsDebugUtils)
-                                    SetDebugObjectName(ObjectType.CommandBuffer, unchecked((ulong)secondary.Handle), $"{label}.Secondary[{imageIndex}:{index}]");
-                            }
-
-                            CommandBufferBeginInfo beginInfo = new()
-                            {
-                                SType = StructureType.CommandBufferBeginInfo,
-                                Flags = CommandBufferUsageFlags.OneTimeSubmitBit
-                            };
-
-                            CommandBufferInheritanceInfo inheritanceInfo = new()
-                            {
-                                SType = StructureType.CommandBufferInheritanceInfo,
-                                RenderPass = default,
-                                Subpass = 0,
-                                Framebuffer = default,
-                                OcclusionQueryEnable = Vk.False,
-                                QueryFlags = QueryControlFlags.None,
-                                PipelineStatistics = QueryPipelineStatisticFlags.None
-                            };
-
-                            beginInfo.PInheritanceInfo = &inheritanceInfo;
-
-                            if (Api!.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
-                                throw new Exception("Failed to begin Vulkan secondary command buffer.");
-
-                            ResetCommandBufferBindState(secondary);
-
-                            recorder(index, secondary);
-
-                            if (EndCommandBufferTracked(secondary) != Result.Success)
-                                throw new Exception("Failed to end Vulkan secondary command buffer.");
-
-                            secondaryBuffers[index] = secondary;
-                            ownerPools[index] = pool;
-                            allocated[index] = localAllocated;
-                        }
-                        catch (Exception ex)
-                        {
-                            lock (errorLock)
-                            {
-                                firstError ??= ex;
-                            }
-
-                            if (localAllocated && pool.Handle != 0)
-                            {
-                                try
-                                {
-                                    FreeVulkanCommandBufferTracked(pool, ref secondary, "SecondaryCommandBuffer.BatchFailure");
-                                    RemoveCommandBufferBindState(secondary);
-                                }
-                                catch
-                                {
-                                }
-                            }
-                        }
-                    });
-                }
-
-                Task.WaitAll(tasks);
-
-                if (firstError is not null)
-                    throw firstError;
-
-                fixed (CommandBuffer* secondaryPtr = secondaryBuffers)
-                    CmdExecuteCommandsTracked(primaryCommandBuffer, (uint)count, secondaryPtr);
-
-                executedInPrimary = true;
-            }
-            finally
-            {
-                for (int i = 0; i < count; i++)
-                {
-                    if (!allocated[i] || ownerPools[i].Handle == 0 || secondaryBuffers[i].Handle == 0)
-                        continue;
-
-                    if (executedInPrimary)
-                        DeferSecondaryCommandBufferFree(imageIndex, ownerPools[i], secondaryBuffers[i]);
-                    else
-                    {
-                        FreeVulkanCommandBufferTracked(ownerPools[i], ref secondaryBuffers[i], "SecondaryCommandBuffer.BatchCleanup");
-                        RemoveCommandBufferBindState(secondaryBuffers[i]);
-                    }
-                }
-
-                if (primaryLabelActive)
-                    CmdEndLabel(primaryCommandBuffer);
-            }
-        }
     }
 }

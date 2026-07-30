@@ -208,12 +208,19 @@ public static partial class EditorImGuiUI
             return null;
         }
 
-        if (assets.GetAssetByPath(path) is XRAsset cached)
-            return cached;
-
         Type loadType = TryResolveConcreteAssetTypeFromHeader(path, out Type concreteType)
             ? concreteType
             : typeof(XRAsset);
+
+        if (assets.GetAssetByPath(path) is XRAsset cached)
+            return cached;
+
+        if (typeof(XRPrefabSource).IsAssignableFrom(loadType))
+        {
+            return await assets
+                .LoadPrefabWithReferencesAsync(path, bypassJobThread: true)
+                .ConfigureAwait(false);
+        }
 
         return await assets.LoadAsync(path, loadType).ConfigureAwait(false);
     }
@@ -421,7 +428,12 @@ public static partial class EditorImGuiUI
         node.Transform.DeriveWorldMatrix(worldMatrix);
     }
 
-    private static bool TryHandleDroppedSpawnableAsset(XRWorldInstance world, SceneNode? parent, string path, Vector3? worldPosition = null)
+    /// <summary>
+    /// Resolves and spawns an asset through the same path used by hierarchy and
+    /// viewport drag/drop. Kept internal so editor automation can exercise the
+    /// user-facing workflow without duplicating its loading or prefab logic.
+    /// </summary>
+    internal static bool TryHandleDroppedSpawnableAsset(XRWorldInstance world, SceneNode? parent, string path, Vector3? worldPosition = null)
     {
         if (world is null || string.IsNullOrWhiteSpace(path))
             return false;
@@ -517,41 +529,62 @@ public static partial class EditorImGuiUI
 
     private static async Task SpawnDroppedAssetWhenReadyAsync(XRWorldInstance world, SceneNode? parent, string path, Vector3? worldPosition, Guid trackingId)
     {
+        string? error = await TrySpawnDroppedAssetThroughDropPathAsync(
+            world,
+            parent,
+            path,
+            worldPosition).ConfigureAwait(false);
+        if (error is null)
+            EditorJobTracker.Complete(trackingId, $"Spawned {Path.GetFileName(path)}");
+        else
+            EditorJobTracker.Fault(trackingId, error);
+    }
+
+    /// <summary>
+    /// Completes the asynchronous portion of a prefab/model drop and waits for
+    /// its scene edit to be applied. The hierarchy/viewport handlers and MCP
+    /// automation share this loader and the same final spawn methods.
+    /// </summary>
+    internal static async Task<string?> TrySpawnDroppedAssetThroughDropPathAsync(
+        XRWorldInstance world,
+        SceneNode? parent,
+        string path,
+        Vector3? worldPosition)
+    {
         try
         {
             await RequestDroppedAssetLoad(path, allowImport: true).ConfigureAwait(false);
-            if (!TryGetDroppedAssetLoadResult(path, out var result))
-            {
-                EditorJobTracker.Fault(trackingId, $"Unable to resolve {Path.GetFileName(path)}.");
-                return;
-            }
+            if (!TryGetDroppedAssetLoadResult(path, out DroppedAssetLoadResult result))
+                return $"Unable to resolve {Path.GetFileName(path)}.";
 
-            if (result.Prefab is not null)
+            if (result.Prefab is null && result.Model is null)
+                return result.ErrorMessage ?? $"No spawnable asset found for {Path.GetFileName(path)}.";
+
+            TaskCompletionSource<string?> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            EnqueueSceneEdit(() =>
             {
-                EnqueueSceneEdit(() =>
+                try
                 {
-                    SpawnDroppedPrefab(world, parent, result.Prefab, worldPosition, enqueueSceneEdit: false);
-                    EditorJobTracker.Complete(trackingId, $"Spawned {Path.GetFileName(path)}");
-                });
-                return;
-            }
-
-            if (result.Model is not null)
-            {
-                EnqueueSceneEdit(() =>
+                    bool spawned = result.Prefab is not null
+                        ? SpawnDroppedPrefab(world, parent, result.Prefab, worldPosition, enqueueSceneEdit: false)
+                        : SpawnDroppedModel(world, parent, result.Model!, path, worldPosition, enqueueSceneEdit: false);
+                    completion.TrySetResult(spawned
+                        ? null
+                        : $"The editor could not spawn {Path.GetFileName(path)}.");
+                }
+                catch (Exception ex)
                 {
-                    SpawnDroppedModel(world, parent, result.Model, path, worldPosition, enqueueSceneEdit: false);
-                    EditorJobTracker.Complete(trackingId, $"Spawned {Path.GetFileName(path)}");
-                });
-                return;
-            }
+                    Debug.LogException(ex, $"Failed to spawn dropped asset '{path}'.");
+                    completion.TrySetResult(ex.Message);
+                }
+            });
 
-            EditorJobTracker.Fault(trackingId, result.ErrorMessage ?? $"No spawnable asset found for {Path.GetFileName(path)}.");
+            return await completion.Task.ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            EditorJobTracker.Fault(trackingId, ex.Message);
-            Debug.LogException(ex, $"Failed to spawn dropped asset '{path}'.");
+            Debug.LogException(ex, $"Failed to load dropped asset '{path}'.");
+            return ex.Message;
         }
     }
 

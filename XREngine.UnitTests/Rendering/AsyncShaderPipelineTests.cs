@@ -912,6 +912,70 @@ THIS IS NOT VALID GLSL;";
     }
 
     [Test]
+    public void CompileLink_LargeSourceBudget_AllowsOnlyOneDriverResidentProgram()
+    {
+        RunWithGLContext((gl, window) =>
+        {
+            var (ctx, sharedWindow) = CreateTestSharedContext(window);
+            if (ctx is null)
+            {
+                Assert.Inconclusive("Failed to create shared context.");
+                return;
+            }
+
+            var compileQueue = new GLProgramCompileLinkQueue(ctx);
+
+            using var blocker = new ManualResetEventSlim(false);
+            ctx.Enqueue(_ => blocker.Wait(TimeSpan.FromSeconds(10)));
+
+            string largeFragmentSource =
+                TrivialFragmentSource + Environment.NewLine +
+                new string(' ', 64 * 1024);
+            var largeInputs = new GLProgramCompileLinkQueue.ShaderInput[]
+            {
+                new(TrivialVertexSource, ShaderType.VertexShader),
+                new(largeFragmentSource, ShaderType.FragmentShader),
+            };
+            var smallInputs = new GLProgramCompileLinkQueue.ShaderInput[]
+            {
+                new(TrivialVertexSource, ShaderType.VertexShader),
+                new(TrivialFragmentSource, ShaderType.FragmentShader),
+            };
+
+            uint largeProgram = gl.CreateProgram();
+            uint rejectedLargeProgram = gl.CreateProgram();
+            uint smallProgram = gl.CreateProgram();
+
+            compileQueue.TryEnqueueCompileAndLink(largeProgram, largeInputs, out _).ShouldBeTrue();
+            compileQueue.LargeSourceInFlightCount.ShouldBe(1);
+
+            compileQueue.TryEnqueueCompileAndLink(
+                rejectedLargeProgram,
+                largeInputs,
+                out string? rejectReason).ShouldBeFalse();
+            rejectReason.ShouldContain("large-source");
+
+            compileQueue.TryEnqueueCompileAndLink(smallProgram, smallInputs, out _).ShouldBeTrue();
+            compileQueue.InFlightCount.ShouldBe(2);
+
+            blocker.Set();
+            SpinWait.SpinUntil(() =>
+            {
+                compileQueue.TryGetResult(largeProgram, out _);
+                compileQueue.TryGetResult(smallProgram, out _);
+                return compileQueue.InFlightCount == 0;
+            }, TimeSpan.FromSeconds(15));
+
+            compileQueue.LargeSourceInFlightCount.ShouldBe(0);
+
+            gl.DeleteProgram(largeProgram);
+            gl.DeleteProgram(rejectedLargeProgram);
+            gl.DeleteProgram(smallProgram);
+            ctx.Dispose();
+        });
+    }
+
+    [Test]
     public void CompileLink_Enqueue_DoesNotBlockMainThread_WhenWorkerIsBusy()
     {
         RunWithGLContext((gl, window) =>

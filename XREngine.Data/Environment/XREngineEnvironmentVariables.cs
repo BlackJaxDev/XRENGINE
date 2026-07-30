@@ -235,7 +235,6 @@ public static class XREngineEnvironmentVariables
     public const string VulkanTextureUploadService = "XRE_VULKAN_TEXTURE_UPLOAD_SERVICE";
     public const string VulkanPipelinePrewarmCapture = "XRE_VK_PIPELINE_PREWARM_CAPTURE";
     public const string VulkanPipelineCompileWorkers = "XRE_VK_PIPELINE_COMPILE_WORKERS";
-    public const string VulkanDisableParallelSecondaryRecording = "XRE_VULKAN_DISABLE_PARALLEL_SECONDARY_RECORDING";
     public const string VulkanFrameOpSignatureDiffLimit = "XRE_VULKAN_FRAMEOP_SIGNATURE_DIFF_LIMIT";
     public const string VulkanFrameOpSignatureDiff = "XRE_VULKAN_FRAMEOP_SIGNATURE_DIFF";
     public const string VulkanFrameDataReuseDiag = "XRE_VULKAN_FRAME_DATA_REUSE_DIAG";

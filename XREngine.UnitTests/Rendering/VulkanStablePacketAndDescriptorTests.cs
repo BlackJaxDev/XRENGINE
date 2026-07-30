@@ -663,11 +663,10 @@ public sealed class VulkanStablePacketAndDescriptorTests
         worker.ShouldContain("StoreCommandChainSecondaryInheritance(");
         source.ShouldContain("CommandChainSecondaryInheritanceMatches(");
         source.ShouldContain("ActiveMeshSecondaryInheritanceMatches(");
-        worker.ShouldContain("using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(firstDraw.Context);");
-        worker.ShouldContain("lock (_frameOpResourcePlannerReadbackLock)");
-        worker.IndexOf("lock (_frameOpResourcePlannerReadbackLock)", StringComparison.Ordinal)
-            .ShouldBeLessThan(worker.IndexOf("EnterFrameOpResourcePlannerReadbackScope(firstDraw.Context)", StringComparison.Ordinal));
-        worker.IndexOf("EnterFrameOpResourcePlannerReadbackScope(firstDraw.Context)", StringComparison.Ordinal)
+        worker.ShouldContain("using var plannerScope = EnterThreadResourcePlannerRuntimeStateScope(in plannerState);");
+        worker.ShouldContain("batch.HasPlannerState[chainIndex]");
+        worker.ShouldNotContain("_frameOpResourcePlannerReadbackLock");
+        worker.IndexOf("EnterThreadResourcePlannerRuntimeStateScope(in plannerState)", StringComparison.Ordinal)
             .ShouldBeLessThan(worker.IndexOf("for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)", StringComparison.Ordinal));
         worker.ShouldContain("chain.State = CommandChainState.Recorded;");
         worker.ShouldContain("A prewarmed Vulkan command-chain draw became unavailable during secondary recording.");
@@ -773,7 +772,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
     }
 
     [Test]
-    public void WorkerDispatch_UsesStablePoolCapacityAndRejectsIncompleteBatches()
+    public void WorkerDispatch_UsesStablePoolCapacityAndSerializesOwnershipConflicts()
     {
         string workers = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainWorkers.cs");
@@ -781,11 +780,13 @@ public sealed class VulkanStablePacketAndDescriptorTests
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
 
         workers.ShouldContain("workerCount = workers.Length;");
-        workers.ShouldContain("private const bool ParallelCommandChainWorkerRecordingSafe = false;");
-        workers.ShouldContain("ParallelCommandChainWorkerRecordingSafe &&");
+        workers.ShouldContain("TryAssignCommandChainRecordingWorker(");
+        workers.ShouldContain("batch.TryGetRendererOwner(renderer, out int rendererOwner)");
+        workers.ShouldContain("CommandChainWorkerWaitTimeoutMilliseconds");
         workers.ShouldContain("batch.ActiveWorkerMask");
         workers.ShouldContain("_commandChainRecordingWorkerCountdown.Reset(activeWorkerCount);");
-        recording.ShouldContain("TryResolveCommandChainRecordingRendererFamily(");
+        recording.ShouldContain("TryAssignCommandChainRecordingWorker(");
+        recording.ShouldContain("schedulingConflictCount++");
         recording.ShouldContain("recordJobWorkerIndices[jobIndex] < 0");
         recording.IndexOf("MarkCommandChainSecondaryCommandBufferInvalid(chain);", StringComparison.Ordinal)
             .ShouldBeLessThan(recording.IndexOf("DispatchCommandChainRecordingWorkers(batch, workers, workerCount)", StringComparison.Ordinal));

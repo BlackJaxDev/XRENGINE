@@ -1,8 +1,9 @@
 # Unity Prefab Avatar Import Investigation
 
 - Date: 2026-07-29
-- Status: paused at user-requested wrap-up; live visual validation is blocked
-  by shader failures
+- Updated: 2026-07-30
+- Status: implementation and OpenGL visual acceptance complete; Vulkan live
+  rendering and a like-for-like Unity reference comparison remain open
 - Subsystems: Unity import, model import, materials, avatar components, editor
 - Private validation input: local `jax2026.prefab`; never copied or committed
 
@@ -74,6 +75,14 @@ past 31 GB. Conversion now creates deferred file-backed texture streaming
 sources, suppresses renderer authority/cooking while externalizing, and rebuilds
 runtime renderables after deserialization. A clean import peaks near 2.5 GB.
 
+The named MCP session manager also removes the reproducible texture cache from
+every stopped session, retains build artifacts for only the two newest stopped
+sessions, and refuses to start below 10 GiB free disk space. Agent-validation
+output is disposable and repository policy limits retained run roots. There is
+still no operating-system byte quota on an active session directory, so long
+runs must remain monitored; the retention policy prevents stopped builds and
+caches from accumulating without bound.
+
 ### Inline YAML references inherited the wrong property name
 
 Unanchored property matching classified inline list references as the
@@ -93,6 +102,39 @@ The native root and its owned sibling tree are now backed up before replacement.
 Externalized placeholders are cleaned on failure, and a failed reimport restores
 the previous asset bytes and paths.
 
+### Native prefab references reloaded as empty placeholders
+
+The partial native-prefab pass discovered compact external `{ID}` references,
+but the root asset could deserialize before those assets were populated.
+`AssetManager.LoadPrefabWithReferencesAsync` now preloads the bounded reference
+set before parsing the root. The editor drag/drop path and MCP scene-authoring
+path both use this hydration entry point, so the native Unity output remains an
+ordinary `XRPrefabSource` rather than a Unity-specific placement type.
+
+### User workflows were not directly testable through MCP
+
+`run_editor_command` now exposes `import_external_asset` and `drop_asset`.
+They invoke the same ImGui external-file queue and Asset Explorer drag/drop
+spawn helpers used by a person in the editor. The sanitized fixture and private
+avatar were both exercised through those commands rather than by calling the
+importer or prefab-instantiation APIs directly.
+
+### Large Uber programs duplicated driver-resident shader source
+
+The OpenGL asynchronous compile path could admit several multi-megabyte Uber
+programs at once and could also build a duplicate separable fallback from the
+same prepared source. That drove the editor into multi-gigabyte growth and an
+eventual driver draw crash. The compile queue now admits only one large-source
+program at a time while preserving capacity for small/interactive programs, and
+large prepared Uber programs skip the redundant separable fallback.
+
+### Physics-chain colliders rendered as an always-on yellow overlay
+
+`PhysicsChainCollider` and `PhysicsChainPlaneCollider` previously submitted
+debug geometry unconditionally. Collider visualization is now an opt-in
+`DebugDraw` property on `PhysicsChainColliderBase`, uses the gizmo render layer,
+and does not submit while disabled. Physics behavior remains active.
+
 ## Automated Validation
 
 The redistributable fixture at
@@ -105,9 +147,13 @@ and contains no Unity, VRChat, or Poiyomi package source.
 
 Results:
 
-- focused project/dependency/model/avatar/Pro/reimport suite: 13 passed;
-- existing Unity scene and Poiyomi Toon regression suite: 7 passed;
-- private full-avatar integration: 1 passed in 29 seconds;
+- isolated focused Unity/avatar/Poiyomi/prefab/physics/OpenGL contract suite:
+  105 passed;
+- real OpenGL large-source compile admission regression: passed;
+- private full-avatar structure and unchanged-source integration: passed;
+- private externalized native-prefab reload: passed;
+- private imported Uber material SPIR-V compilation regression: passed in
+  13 minutes 38 seconds;
 - clean private import: 883 nodes, 93 converted components, 52 model
   components, six blendshape-default groups, 21 colliders, 14 physics chains,
   three constraints, one avatar descriptor, two animator metadata components,
@@ -121,38 +167,61 @@ Results:
 
 Ignored local evidence is stored under
 `Build/_AgentValidation/20260729-unity-avatar-import/`. The important logs are
-`logs/private-avatar-probe-17.log`,
-`logs/sanitized-fixture-probe-2.log`,
-`logs/unity-fileid-probe.log`, and
-`logs/unity-nested-fileid-probe.log`.
+under `logs/`, the MCP responses are under `mcp-output/`, and focused NUnit
+TRX results are under `reports/targeted-tests/`. These are disposable evidence;
+the implementation and durable conclusions do not depend on committing them.
 
 ## Live Editor Validation
 
-The private native asset was instantiated through the ordinary
-`XRPrefabSource` API in a named isolated OpenGL MCP session. Character
-locomotion and the third-person pawn were disabled; all later validation must
-retain that setup and use only the flying camera.
+The sanitized fixture was queued through the editor's external-file UI helper,
+produced a native `XRPrefabSource`, and was placed through the exact Asset
+Explorer drag/drop helper. The private avatar followed the same two workflows.
+MCP inspection recorded the hierarchy, skeleton chain
+`Armature -> Hips -> Spine -> Chest -> Neck -> Head`, model/mesh bindings,
+authored blendshape defaults, material slots, and component properties. The
+importer-owned avatar root contains 883 nodes; the broader live scene inventory
+reported 899 nodes after editor/runtime scene nodes were included.
 
-The instance contained 899 nodes and 120 components, including 63 model
-components, 14 physics chains, 21 collider-like components, and three
-constraints. Three screenshots from different focus/view states were inspected.
-They exposed the yellow collider/debug silhouette, but did not yet prove
-camera-relative live rendering or show a correctly rendered, textured, skinned
-avatar.
+The final OpenGL profile explicitly set:
 
-The OpenGL editor then crashed in the driver's indexed-instanced draw path after
-large imported Uber variants became ready. `MAT FACE 2` separately failed
-fragment compilation because the Poiyomi global-mask helper allowed a compiler
-to infer a negative vector subscript for an encoded zero channel. The helper was
-changed to clamp the decoded index and select RGBA channels explicitly, and a
-focused regression was added, but no complete post-fix editor run was performed.
+- `CharacterLocomotion = false`;
+- `UseThirdPersonCharacterPawn = false`;
+- `Mirror = false`;
+- all transform/physics debug rendering off; and
+- a render-on-demand desktop flying-camera pawn.
 
-An offline Vulkan probe found 41 bound materials and attempted 37 Uber
-variants. Eight compiled and 29 failed; four non-Uber materials were skipped.
-Its exception path did not retain actionable backend diagnostics, so extracting
-those diagnostics is the first shader-debug step on resume. The exact ordered
-handoff and all remaining acceptance boxes are in
-`docs/work/todo/assets/unity-prefab-avatar-import-todo.md`.
+No `MirrorNode` or mirror component was present. The default Unit Testing World
+can create one when `Mirror` is true, but the mirror renderer is currently
+broken and is intentionally outside this validation.
+
+The base `Body` and `Face` renderers were isolated from modular outfit and
+face-tracking branches for the final render check. OpenGL produced a correctly
+placed, skinned, textured T-pose with the downgraded materials and no collider
+overlay. The front capture is
+`mcp-captures/Screenshot_20260730_010436_853_de190ccce7024d73a11025a45e2854a0.png`.
+After an immediate camera cut and two seconds of continuous rendering, the
+oblique profile capture is
+`mcp-captures/Screenshot_20260730_010523_132_a1b72b4ad8954be8b7dded2f46fe6250.png`.
+The silhouette, highlights, occlusion, and visible facial profile all change
+with the camera, proving that the second image is a new live frame rather than
+stale capture data. The process remained bounded near 3.45 GiB working set and
+4.81 GiB private bytes.
+
+Vulkan was then launched from the same isolated build with the Vulkan profile.
+`get_render_capabilities` confirmed Vulkan, no mirror node existed, and the
+ordinary native prefab drag/drop completed. Enabling continuous rendering for
+the capture made the editor unresponsive; it reached about 5.05 GiB working set
+and 7.34 GiB private bytes before the exact named session was stopped. There was
+no managed exception in stdout. Vulkan backend initialization and prefab
+placement therefore pass, but Vulkan frame rendering/capture does not.
+
+The current solution-wide test build is independently blocked by concurrent
+Vulkan/frame-package API work. To avoid changing that unrelated work, validation
+uses a disposable focused test project under the task run root and records the
+solution-build blocker separately. A final normal test-project compile reported
+41 errors in unrelated Vulkan tests, principally removed or moving
+`EDesktopFramePhase`, `OpenXrViewResourcePlannerContextKey`, and
+`AreFrameOpContextsCommandChainBatchCompatible` APIs.
 
 ## Remaining Risks
 
@@ -161,7 +230,10 @@ handoff and all remaining acceptance boxes are in
 - Poiyomi Pro conversion is intentionally lossy and is not a Pro parity path.
 - Optional stale expression/menu references remain behavior-incomplete by
   design but do not reduce visual completion.
-- The 29 Vulkan Uber failures and the OpenGL draw crash block visual acceptance.
-- Unchanged generated-subasset reuse is not implemented.
-- Generation-2 FBX file-ID correspondence still needs validation across
-  multiple independent Unity exports.
+- Vulkan frame rendering/capture hangs after successful backend startup and
+  prefab placement. Debug this against the current Vulkan renderer without a
+  mirror node and without weakening the passing OpenGL path.
+- The repository has pinned CC0 Unity Poiyomi reference images, but a live
+  XRENGINE capture of that exact representative scene/camera matrix has not yet
+  been produced. Do not treat the private avatar screenshot as a like-for-like
+  Unity comparison.

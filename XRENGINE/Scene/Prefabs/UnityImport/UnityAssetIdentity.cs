@@ -1,5 +1,8 @@
 namespace XREngine.Scene.Prefabs;
 
+using System.Globalization;
+using XREngine.Data.Core;
+
 /// <summary>
 /// Stable identity for an object serialized in, or imported from, a Unity asset.
 /// </summary>
@@ -24,6 +27,16 @@ public sealed class UnityAssetIdentity : IEquatable<UnityAssetIdentity>
             StringComparer.OrdinalIgnoreCase.GetHashCode(AssetGuid ?? string.Empty),
             LocalFileId,
             ObjectKind);
+
+    /// <summary>
+    /// Converts this Unity source identity into the stable XRENGINE object ID
+    /// used by generated native assets.
+    /// </summary>
+    public Guid ToPersistentID()
+        => PersistentObjectID.FromIdentity(
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"xrengine:unity:{AssetGuid?.Trim().ToLowerInvariant()}:{LocalFileId}:{ObjectKind}"));
 
     public override string ToString()
         => $"{AssetGuid}:{LocalFileId}:{ObjectKind}";

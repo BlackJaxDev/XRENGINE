@@ -3,6 +3,7 @@ using System.Numerics;
 using System.Text;
 using System.Text.RegularExpressions;
 using XREngine.Components;
+using XREngine.Data.Core;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 using YamlDotNet.RepresentationModel;
@@ -76,6 +77,10 @@ internal static partial class UnitySceneImporter
         {
             string rootName = Path.GetFileNameWithoutExtension(normalizedPath);
             rootNode = new SceneNode(rootName, new Transform());
+            rootNode.AdoptPersistentID(PersistentObjectID.FromIdentity(
+                $"xrengine:unity:synthetic-root:{normalizedPath.ToLowerInvariant()}"));
+            rootNode.Transform.AdoptPersistentID(PersistentObjectID.FromIdentity(
+                $"xrengine:unity:synthetic-root-transform:{normalizedPath.ToLowerInvariant()}"));
             foreach (ImportedRootEntry rootEntry in hierarchy.RootEntries)
                 rootEntry.Node.Parent = rootNode;
         }
@@ -195,6 +200,7 @@ internal static partial class UnitySceneImporter
             }
 
             AttachAvatarComponents(parsed, hierarchy, state);
+            RegisterIdentityMappings(hierarchy);
             ReorderChildren(parsed, hierarchy, prefabRootsByInstanceId);
             PopulateRootEntries(parsed, hierarchy, prefabRootsByInstanceId);
             hierarchy.SortRoots();
@@ -331,34 +337,40 @@ internal static partial class UnitySceneImporter
 
         foreach ((long fileId, SceneNode node) in hierarchy.NodesByGameObjectId)
         {
-            hierarchy.NodesByIdentity[new UnityAssetIdentity
+            var identity = new UnityAssetIdentity
             {
                 AssetGuid = hierarchy.SourceGuid,
                 LocalFileId = fileId,
                 ObjectKind = UnityAssetObjectKind.GameObject,
-            }] = node;
+            };
+            node.AdoptPersistentID(identity.ToPersistentID());
+            hierarchy.NodesByIdentity[identity] = node;
         }
 
         foreach ((long fileId, SceneNode node) in hierarchy.NodesByTransformId)
         {
-            hierarchy.NodesByIdentity[new UnityAssetIdentity
+            var identity = new UnityAssetIdentity
             {
                 AssetGuid = hierarchy.SourceGuid,
                 LocalFileId = fileId,
                 ObjectKind = UnityAssetObjectKind.Transform,
-            }] = node;
+            };
+            node.Transform.AdoptPersistentID(identity.ToPersistentID());
+            hierarchy.NodesByIdentity[identity] = node;
         }
 
         foreach ((long fileId, XRComponent component) in hierarchy.ComponentsByFileId)
         {
-            hierarchy.ComponentsByIdentity[new UnityAssetIdentity
+            var identity = new UnityAssetIdentity
             {
                 AssetGuid = hierarchy.SourceGuid,
                 LocalFileId = fileId,
                 ObjectKind = component is XREngine.Components.Scene.Mesh.ModelComponent
                     ? UnityAssetObjectKind.Renderer
                     : UnityAssetObjectKind.Component,
-            }] = component;
+            };
+            component.AdoptPersistentID(identity.ToPersistentID());
+            hierarchy.ComponentsByIdentity[identity] = component;
         }
     }
 

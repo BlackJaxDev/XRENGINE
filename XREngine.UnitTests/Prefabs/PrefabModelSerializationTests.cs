@@ -308,6 +308,63 @@ public sealed class PrefabModelSerializationTests
     }
 
     [Test]
+    public async Task LoadPrefabWithReferencesAsync_HydratesExternalModelBeforeBindingRoot()
+    {
+        string assetsRoot = Engine.Assets.GameAssetsPath;
+        string metadataRoot = Engine.Assets.GameMetadataPath.ShouldNotBeNull();
+        string relativeFolder = Path.Combine("_PrefabModelSerializationTests", Guid.NewGuid().ToString("N"));
+        string assetDirectory = Path.Combine(assetsRoot, relativeFolder);
+        string metadataDirectory = Path.Combine(metadataRoot, relativeFolder);
+
+        Directory.CreateDirectory(assetDirectory);
+
+        string modelPath = Path.Combine(assetDirectory, "ExternalModel.asset");
+        string prefabPath = Path.Combine(assetDirectory, "HydratedPrefab.asset");
+
+        try
+        {
+            Model externalModel = CreateTriangleModel(
+                modelName: "HydratedExternalModel",
+                subMeshName: "HydratedExternalSubMesh");
+            externalModel.FilePath = modelPath;
+            externalModel.SourceAsset = externalModel;
+
+            XRAssetGraphUtility.RefreshAssetGraph(externalModel);
+            externalModel.SerializeTo(modelPath, AssetManager.Serializer);
+            WriteMetadataForGameAsset(modelPath, externalModel.ID);
+
+            XRPrefabSource prefab = new()
+            {
+                RootNode = CreateSceneNodeWithModel(externalModel),
+                FilePath = prefabPath,
+            };
+            prefab.SourceAsset = prefab;
+
+            XRAssetGraphUtility.RefreshAssetGraph(prefab);
+            prefab.SerializeTo(prefabPath, AssetManager.Serializer);
+            WriteMetadataForGameAsset(prefabPath, prefab.ID);
+
+            ClearAssetCaches();
+
+            XRPrefabSource loaded = (await Engine.Assets
+                .LoadPrefabWithReferencesAsync(prefabPath))
+                .ShouldNotBeNull();
+            ModelComponent component = loaded.RootNode
+                .ShouldNotBeNull()
+                .GetComponent<ModelComponent>()
+                .ShouldNotBeNull();
+            component.Model.ShouldNotBeNull().ID.ShouldBe(externalModel.ID);
+            AssertModelShape(component.Model, "HydratedExternalSubMesh");
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(assetDirectory);
+            DeleteDirectoryIfExists(metadataDirectory);
+            ClearAssetCaches();
+        }
+    }
+
+    [Test]
     public void ModelYaml_ExternalSubMesh_EmitsIdReferenceInsteadOfInlineBody()
     {
         string assetsRoot = Engine.Assets.GameAssetsPath;

@@ -48,6 +48,12 @@ public interface IRuntimeScreenSpaceUserInterface
     void CollectVisibleItemsScreenSpace(IRuntimeViewportHost? viewport);
 
     /// <summary>
+    /// Freezes the collected UI command membership and backend-planning inputs
+    /// before the command buffers are published to the render consumer.
+    /// </summary>
+    void PrepareBackendReadyFramePackage(IRuntimeViewportHost viewport);
+
+    /// <summary>
     /// Swaps the UI command buffers used by screen-space rendering.
     /// </summary>
     void SwapBuffersScreenSpace();

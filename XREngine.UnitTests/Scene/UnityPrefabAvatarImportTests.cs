@@ -66,8 +66,9 @@ public sealed class UnityPrefabAvatarImportTests
         model.SceneNode.ShouldNotBeNull().Name.ShouldBe("MeshNode");
         model.MeshCastsShadows.ShouldBe(false);
         model.Meshes.Single().RenderInfo.ReceivesShadows.ShouldBeFalse();
-        XRMaterial material = model.Model.ShouldNotBeNull()
-            .Meshes.Single()
+        SubMesh subMesh = model.Model.ShouldNotBeNull().Meshes.Single();
+        subMesh.RootTransform.ShouldBeSameAs(root.Transform);
+        XRMaterial material = subMesh
             .LODs.Single()
             .Material.ShouldNotBeNull();
         material.Name.ShouldBe("Synthetic Locked Pro Downgrade");
@@ -150,10 +151,74 @@ public sealed class UnityPrefabAvatarImportTests
         UnityModelFileId.ForComponent("MeshRenderer", "//RootNode/root/MeshNode")
             .ShouldBe(-1659616240894028630L);
 
-        long firstDuplicate = UnityModelFileId.ForTransform("//RootNode/root/Bone");
-        long secondDuplicate = UnityModelFileId.ForTransform("//RootNode/root/Bone1");
-        firstDuplicate.ShouldNotBe(secondDuplicate);
-        UnityModelFileId.ForTransform("//RootNode/root/Bone").ShouldBe(firstDuplicate);
+        const string firstDuplicatePath = "//RootNode/root/Bone";
+        UnityModelFileId.ForGameObject(firstDuplicatePath)
+            .ShouldBe(-7579103995338469470L);
+        UnityModelFileId.ForTransform(firstDuplicatePath)
+            .ShouldBe(3196138216412401344L);
+        UnityModelFileId.ForComponent("MeshFilter", firstDuplicatePath)
+            .ShouldBe(-3059082876634828310L);
+        UnityModelFileId.ForComponent("MeshRenderer", firstDuplicatePath)
+            .ShouldBe(6384671596192732850L);
+
+        const string secondDuplicatePath = "//RootNode/root/Bone 1";
+        UnityModelFileId.ForGameObject(secondDuplicatePath)
+            .ShouldBe(-4808815610696325722L);
+        UnityModelFileId.ForTransform(secondDuplicatePath)
+            .ShouldBe(4351210694208761930L);
+        UnityModelFileId.ForComponent("MeshFilter", secondDuplicatePath)
+            .ShouldBe(455129110483282244L);
+        UnityModelFileId.ForComponent("MeshRenderer", secondDuplicatePath)
+            .ShouldBe(-651623331918672479L);
+    }
+
+    [Test]
+    public void DuplicateSiblingExport_UsesUnityNamesAndPersistentGenerationTwoIdentities()
+    {
+        const string modelGuid = "99999999999999999999999999999991";
+        SceneNode root = UnitySceneImporter.ImportPrefab(
+            ResolveFixturePath("Assets", "DuplicateSiblingAvatar.prefab"));
+
+        root.Name.ShouldBe("DuplicateSiblingExport");
+        SceneNode[] children =
+        [
+            .. root.Transform.Children
+                .Select(static transform => transform.SceneNode)
+                .Where(static node => node is not null)
+                .Cast<SceneNode>(),
+        ];
+        children.Select(static child => child.Name).ShouldBe(["Bone", "Bone 1"]);
+
+        AssertUnityIdentity(
+            root,
+            modelGuid,
+            919132149155446097L,
+            -8679921383154817045L);
+        AssertUnityIdentity(
+            children[0],
+            modelGuid,
+            -7579103995338469470L,
+            3196138216412401344L);
+        AssertUnityIdentity(
+            children[1],
+            modelGuid,
+            -4808815610696325722L,
+            4351210694208761930L);
+
+        children[0].GetComponent<ModelComponent>().ShouldNotBeNull().ID.ShouldBe(
+            new UnityAssetIdentity
+            {
+                AssetGuid = modelGuid,
+                LocalFileId = 6384671596192732850L,
+                ObjectKind = UnityAssetObjectKind.Renderer,
+            }.ToPersistentID());
+        children[1].GetComponent<ModelComponent>().ShouldNotBeNull().ID.ShouldBe(
+            new UnityAssetIdentity
+            {
+                AssetGuid = modelGuid,
+                LocalFileId = -651623331918672479L,
+                ObjectKind = UnityAssetObjectKind.Renderer,
+            }.ToPersistentID());
     }
 
     [Test]
@@ -204,6 +269,32 @@ public sealed class UnityPrefabAvatarImportTests
                     .Select(Path.GetFullPath)
                     .Order(StringComparer.OrdinalIgnoreCase),
             ];
+            string[] reusableSubAssets =
+            [
+                .. firstClosurePaths.Where(path =>
+                    !string.Equals(path, destination, StringComparison.OrdinalIgnoreCase)),
+            ];
+            DateTime timestampBaseline = DateTime.UtcNow.AddHours(-2);
+            var unchangedSnapshots = new Dictionary<string, (string Hash, DateTime LastWriteTimeUtc)>(
+                StringComparer.OrdinalIgnoreCase);
+            for (int index = 0; index < reusableSubAssets.Length; index++)
+            {
+                string path = reusableSubAssets[index];
+                File.SetLastWriteTimeUtc(path, timestampBaseline.AddSeconds(index));
+                unchangedSnapshots[path] = (ComputeSha256(path), File.GetLastWriteTimeUtc(path));
+            }
+
+            manager.ImportExternalThirdPartyFile(
+                    sourcePrefab,
+                    destination,
+                    options,
+                    overwrite: true)
+                .ShouldBeTrue();
+            foreach ((string path, (string hash, DateTime lastWriteTimeUtc)) in unchangedSnapshots)
+            {
+                ComputeSha256(path).ShouldBe(hash, path);
+                File.GetLastWriteTimeUtc(path).ShouldBe(lastWriteTimeUtc, path);
+            }
 
             sourceSandbox.WriteAssetWithMeta(
                 "Assets/Unrelated.asset",
@@ -291,6 +382,26 @@ public sealed class UnityPrefabAvatarImportTests
                 stack.Push(child);
             }
         }
+    }
+
+    private static void AssertUnityIdentity(
+        SceneNode node,
+        string assetGuid,
+        long gameObjectFileId,
+        long transformFileId)
+    {
+        node.ID.ShouldBe(new UnityAssetIdentity
+        {
+            AssetGuid = assetGuid,
+            LocalFileId = gameObjectFileId,
+            ObjectKind = UnityAssetObjectKind.GameObject,
+        }.ToPersistentID());
+        node.Transform.ID.ShouldBe(new UnityAssetIdentity
+        {
+            AssetGuid = assetGuid,
+            LocalFileId = transformFileId,
+            ObjectKind = UnityAssetObjectKind.Transform,
+        }.ToPersistentID());
     }
 
     private static string ResolveFixturePath(params string[] segments)

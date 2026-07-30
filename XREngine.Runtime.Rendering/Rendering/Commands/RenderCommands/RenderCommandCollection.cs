@@ -305,6 +305,9 @@ namespace XREngine.Rendering.Commands
                 _renderingCommandCount = 0;
                 _renderingMeshCommandCount = 0;
                 _gpuPasses = [];
+                _updatingRevision++;
+                _updatingBackendReadyPackage.Reset();
+                _renderingBackendReadyPackage.Reset();
 
                 _passMetadata = incomingPassMetadata;
 
@@ -444,6 +447,12 @@ namespace XREngine.Rendering.Commands
         private ulong _renderingShadowCasterCommandSetSignature;
         private int _renderingCommandCount = 0;
         private int _renderingMeshCommandCount = 0;
+        private BackendReadyFramePackage _updatingBackendReadyPackage = new();
+        private BackendReadyFramePackage _renderingBackendReadyPackage = new();
+        private BackendReadyFramePackageIdentity _updatingBackendReadyIdentity =
+            BackendReadyFramePackageIdentity.Unspecified;
+        private long _updatingRevision;
+        private long _backendReadyPackageGeneration;
         private Dictionary<int, GPURenderPassCollection> _gpuPasses = [];
         private Dictionary<int, RenderPassMetadata> _passMetadata = [];
         private IRuntimeRenderPipelineDebugContext? _ownerPipeline;
@@ -590,6 +599,56 @@ namespace XREngine.Rendering.Commands
         public int GetRenderingMeshCommandCount()
             => Volatile.Read(ref _renderingMeshCommandCount);
 
+        /// <summary>
+        /// Gets the immutable package currently owned by the render consumer.
+        /// </summary>
+        public BackendReadyFramePackage RenderingBackendReadyPackage
+            => _renderingBackendReadyPackage;
+
+        /// <summary>
+        /// Prepares sorted pass membership, material selections, dependency
+        /// signatures, and resource-plan metadata on the collect-visible side.
+        /// </summary>
+        public void PrepareBackendReadyFramePackage(in BackendReadyFramePackageIdentity identity)
+        {
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
+
+            using (_lock.EnterScope())
+            {
+                _updatingBackendReadyIdentity = identity;
+                PrepareBackendReadyFramePackageNoLock();
+            }
+
+            RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordFramePackageProduction(
+                System.Diagnostics.Stopwatch.GetTimestamp() - started);
+        }
+
+        private void PrepareBackendReadyFramePackageNoLock()
+        {
+            IReadOnlyCollection<RenderPassMetadata>? passMetadata =
+                (_ownerPipeline as XRRenderPipelineInstance)?.Pipeline?.PassMetadata;
+            _updatingBackendReadyPackage.Prepare(
+                _updatingBackendReadyIdentity,
+                Interlocked.Increment(ref _backendReadyPackageGeneration),
+                _updatingRevision,
+                _updatingPasses,
+                passMetadata);
+        }
+
+        /// <summary>
+        /// Cancels producer and consumer packages during viewport or pipeline
+        /// shutdown after subscriptions have been detached.
+        /// </summary>
+        public void CancelBackendReadyFramePackages()
+        {
+            using (_lock.EnterScope())
+            {
+                using var renderingBufferScope = EnterRenderingBufferWriteScope();
+                _updatingBackendReadyPackage.Cancel();
+                _renderingBackendReadyPackage.Cancel();
+            }
+        }
+
         public int GetRenderingPassCommandCount(int renderPass)
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
@@ -609,14 +668,38 @@ namespace XREngine.Rendering.Commands
         public bool TryGetRenderingPassCommands(int renderPass, out IReadOnlyCollection<RenderCommand>? commands)
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
-            if (_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list) &&
-                list is IReadOnlyCollection<RenderCommand> readOnly)
+            if (TryGetPublishedPassNoLock(renderPass, out BackendReadyRenderPass pass))
             {
-                commands = readOnly;
+                commands = pass.Commands;
                 return true;
             }
 
             commands = null;
+            return false;
+        }
+
+        private bool TryGetPublishedPassNoLock(
+            int renderPass,
+            out BackendReadyRenderPass pass)
+        {
+            if (_renderingBackendReadyPackage.State == EBackendReadyFramePackageState.Published)
+                return _renderingBackendReadyPackage.TryGetPass(renderPass, out pass);
+
+            pass = default;
+            return false;
+        }
+
+        private bool TryGetPublishedPassCommandsNoLock(
+            int renderPass,
+            out ICollection<RenderCommand> commands)
+        {
+            if (TryGetPublishedPassNoLock(renderPass, out BackendReadyRenderPass pass))
+            {
+                commands = (ICollection<RenderCommand>)pass.Commands;
+                return true;
+            }
+
+            commands = null!;
             return false;
         }
 
@@ -659,6 +742,7 @@ namespace XREngine.Rendering.Commands
                 }
                 int afterCount = set.Count;
                 ++_numCommandsRecentlyAddedToUpdate;
+                _updatingRevision++;
                 // Dirty-delta enqueue: only swap commands whose state has actually changed since
                 // the last publish. Queue membership is local to this collection so another
                 // viewport cannot starve this collection before either one reaches SwapBuffers().
@@ -812,7 +896,7 @@ namespace XREngine.Rendering.Commands
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
 
-            if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
+            if (!TryGetPublishedPassCommandsNoLock(renderPass, out ICollection<RenderCommand> list))
                 return;
 
             // Deferred Vulkan frame-op callbacks can execute after the ambient pipeline
@@ -915,8 +999,12 @@ namespace XREngine.Rendering.Commands
                 {
                     // Skip mesh commands that should go through GPU dispatch.
                     // Optionally allow opt-out meshes to keep rendering on CPU for diagnostics.
-                    var material = meshCmd.MaterialOverride ?? meshCmd.Mesh?.Material;
-                    bool excludedFromGpuIndirect = meshCmd.ForceCpuRendering || material?.RenderOptions?.ExcludeFromGpuIndirect == true;
+                    bool excludedFromGpuIndirect =
+                        !_renderingBackendReadyPackage.TryGetMeshSelection(
+                            meshCmd.StableQueryKey,
+                            out BackendReadyMeshSelection selection) ||
+                        selection.ForceCpuRendering ||
+                        selection.ExcludeFromGpuIndirect;
                     if (!excludedFromGpuIndirect)
                     {
                         LogSponzaCpuDiag("skip-gpu-owned", renderPass, cmd, camera, "skipGpuCommands=True");
@@ -1482,7 +1570,7 @@ namespace XREngine.Rendering.Commands
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
 
-            if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
+            if (!TryGetPublishedPassCommandsNoLock(renderPass, out ICollection<RenderCommand> list))
                 return;
 
             bool filterExactTransparentSps = BeginCpuExactTransparentSpsFilter(renderPass);
@@ -1510,7 +1598,7 @@ namespace XREngine.Rendering.Commands
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
 
-            if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
+            if (!TryGetPublishedPassCommandsNoLock(renderPass, out ICollection<RenderCommand> list))
                 return;
 
             bool filterExactTransparentSps = BeginCpuExactTransparentSpsFilter(renderPass);
@@ -1525,8 +1613,12 @@ namespace XREngine.Rendering.Commands
 
                 if (cmd is IRenderCommandMesh meshCmd)
                 {
-                    var material = meshCmd.MaterialOverride ?? meshCmd.Mesh?.Material;
-                    bool excludedFromGpuIndirect = meshCmd.ForceCpuRendering || material?.RenderOptions?.ExcludeFromGpuIndirect == true;
+                    bool excludedFromGpuIndirect =
+                        !_renderingBackendReadyPackage.TryGetMeshSelection(
+                            meshCmd.StableQueryKey,
+                            out BackendReadyMeshSelection selection) ||
+                        selection.ForceCpuRendering ||
+                        selection.ExcludeFromGpuIndirect;
                     if (!excludedFromGpuIndirect)
                         continue;
                 }
@@ -1550,7 +1642,7 @@ namespace XREngine.Rendering.Commands
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
 
-            if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
+            if (!TryGetPublishedPassCommandsNoLock(renderPass, out ICollection<RenderCommand> list))
                 return;
 
             bool suppressOcclusion = ShouldSuppressOcclusionForCurrentPass(false, out _, out _);
@@ -1844,23 +1936,24 @@ namespace XREngine.Rendering.Commands
         public bool HasGpuEligibleMeshCommands(int renderPass)
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
-            if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list) || list.Count == 0)
+            if (!TryGetPublishedPassNoLock(renderPass, out BackendReadyRenderPass pass) ||
+                pass.MeshCommandCount == 0)
                 return false;
 
-            for (int i = 0; i < list.Count; i++)
-                if (IsGpuEligibleMeshCommand(GetCommandAt(list, i)))
+            ReadOnlySpan<BackendReadyMeshSelection> selections =
+                _renderingBackendReadyPackage.MeshSelections;
+            for (int i = 0; i < selections.Length; i++)
+            {
+                BackendReadyMeshSelection selection = selections[i];
+                if (selection.RenderPass == renderPass &&
+                    !selection.ForceCpuRendering &&
+                    !selection.ExcludeFromGpuIndirect)
+                {
                     return true;
+                }
+            }
 
             return false;
-        }
-
-        private static bool IsGpuEligibleMeshCommand(RenderCommand command)
-        {
-            if (command is not IRenderCommandMesh meshCommand)
-                return false;
-
-            var material = meshCommand.MaterialOverride ?? meshCommand.Mesh?.Material;
-            return !meshCommand.ForceCpuRendering && material?.RenderOptions?.ExcludeFromGpuIndirect != true;
         }
 
         private static void GetActiveViewportSize(out int width, out int height)
@@ -1969,11 +2062,23 @@ namespace XREngine.Rendering.Commands
             using (_lock.EnterScope())
             {
                 using var renderingBufferScope = EnterRenderingBufferWriteScope();
+                long publishStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                bool preparedLate =
+                    _updatingBackendReadyPackage.State != EBackendReadyFramePackageState.Prepared ||
+                    _updatingBackendReadyPackage.SourceRevision != _updatingRevision;
+                if (preparedLate)
+                    PrepareBackendReadyFramePackageNoLock();
 
                 (_updatingPasses, _renderingPasses) = (_renderingPasses, _updatingPasses);
                 (_updatingSwapQueue, _renderingSwapQueue) = (_renderingSwapQueue, _updatingSwapQueue);
                 (_updatingSwapQueueMembership, _renderingSwapQueueMembership) = (_renderingSwapQueueMembership, _updatingSwapQueueMembership);
-                PublishRenderingCommandCountsNoLock();
+                (_updatingBackendReadyPackage, _renderingBackendReadyPackage) =
+                    (_renderingBackendReadyPackage, _updatingBackendReadyPackage);
+                _renderingBackendReadyPackage.Publish();
+                PublishRenderingCommandCountsNoLock(_renderingBackendReadyPackage);
+                RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordFramePackagePublication(
+                    System.Diagnostics.Stopwatch.GetTimestamp() - publishStarted,
+                    preparedLate);
 
                 using (RuntimeEngine.Profiler.Start("RenderCommandCollection.SwapBuffers.RenderPasses"))
                 {
@@ -2026,33 +2131,31 @@ namespace XREngine.Rendering.Commands
                 }
 
                 _numCommandsRecentlyAddedToUpdate = 0;
+                _updatingRevision++;
+                _updatingBackendReadyPackage.Reset();
             }
         }
 
-        private void PublishRenderingCommandCountsNoLock()
+        private void PublishRenderingCommandCountsNoLock(BackendReadyFramePackage package)
         {
             _renderingPassCommandCounts.Clear();
-            _renderingPassCommandCounts.EnsureCapacity(_renderingPasses.Count);
+            _renderingPassCommandCounts.EnsureCapacity(package.Passes.Length);
             _renderingPassMeshCommandCounts.Clear();
-            _renderingPassMeshCommandCounts.EnsureCapacity(_renderingPasses.Count);
+            _renderingPassMeshCommandCounts.EnsureCapacity(package.Passes.Length);
             _renderingPassCommandSetSignatures.Clear();
-            int total = 0;
-            int meshTotal = 0;
-            foreach ((int passIndex, ICollection<RenderCommand> pass) in _renderingPasses)
+            ReadOnlySpan<BackendReadyRenderPass> passes = package.Passes;
+            for (int i = 0; i < passes.Length; i++)
             {
-                int count = pass.Count;
-                ulong commandSetSignature = ComputeOcclusionCommandSetSignature(pass, out int meshCount);
-                _renderingPassCommandCounts[passIndex] = count;
-                _renderingPassMeshCommandCounts[passIndex] = meshCount;
-                _renderingPassCommandSetSignatures[passIndex] = commandSetSignature;
-                total += count;
-                meshTotal += meshCount;
+                BackendReadyRenderPass pass = passes[i];
+                _renderingPassCommandCounts[pass.PassIndex] = pass.CommandCount;
+                _renderingPassMeshCommandCounts[pass.PassIndex] = pass.MeshCommandCount;
+                _renderingPassCommandSetSignatures[pass.PassIndex] = pass.CommandSetSignature;
             }
 
-            _renderingShadowCasterCommandSetSignature = ComputeShadowCasterCommandSetSignature();
+            _renderingShadowCasterCommandSetSignature = package.ShadowCasterCommandSetSignature;
 
-            Volatile.Write(ref _renderingCommandCount, total);
-            Volatile.Write(ref _renderingMeshCommandCount, meshTotal);
+            Volatile.Write(ref _renderingCommandCount, package.CommandCount);
+            Volatile.Write(ref _renderingMeshCommandCount, package.MeshCommandCount);
         }
 
         internal ulong ShadowCasterCommandSetSignature
@@ -2085,7 +2188,7 @@ namespace XREngine.Rendering.Commands
             hash *= 1099511628211UL;
         }
 
-        private static ulong ComputeShadowCasterPassContentSignature(ICollection<RenderCommand> commands)
+        internal static ulong ComputeShadowCasterPassContentSignature(ICollection<RenderCommand> commands)
         {
             // Shadow-atlas reuse depends on the content that will be rendered, not only
             // command membership. Keep the aggregate order-independent because normal
@@ -2161,7 +2264,7 @@ namespace XREngine.Rendering.Commands
         private static ulong ComputeOcclusionCommandSetSignature(ICollection<RenderCommand> commands)
             => ComputeOcclusionCommandSetSignature(commands, out _);
 
-        private static ulong ComputeOcclusionCommandSetSignature(
+        internal static ulong ComputeOcclusionCommandSetSignature(
             ICollection<RenderCommand> commands,
             out int meshCommandCount)
         {
@@ -2184,7 +2287,7 @@ namespace XREngine.Rendering.Commands
             return MixOcclusionCommandKey(xor ^ BitOperations.RotateLeft(sum, 23) ^ (uint)commands.Count);
         }
 
-        private static RenderCommand GetCommandAt(
+        internal static RenderCommand GetCommandAt(
             ICollection<RenderCommand> commands,
             int index)
             => commands switch

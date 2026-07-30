@@ -728,17 +728,17 @@ public class GpuRenderingBacklogTests
     }
 
     [Test]
-    public void VR_Vulkan_ParallelSecondaryCommands_NoRenderThreadBlock()
+    public void VR_Vulkan_CommandChainWorkers_DoNotUseGenericScheduler()
     {
         string recording = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string secondary = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
         string workers = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainWorkers.cs");
         string commandPools = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandPool.cs");
 
-        secondary.ShouldContain("ExecuteSecondaryCommandBufferBatchParallel");
-        secondary.ShouldContain("Task.Run");
+        secondary.ShouldNotContain("Task.Run");
         recording.ShouldContain("TryExecuteIndirectCommandChainSecondaryRun");
         workers.ShouldContain("DispatchCommandChainRecordingWorkers");
+        workers.ShouldContain("new Thread");
         commandPools.ShouldContain("GetThreadCommandPool");
     }
 

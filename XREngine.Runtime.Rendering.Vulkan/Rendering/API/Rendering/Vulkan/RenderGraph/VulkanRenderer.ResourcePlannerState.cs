@@ -201,7 +201,8 @@ public unsafe partial class VulkanRenderer
             viewport is null ? 0 : RuntimeHelpers.GetHashCode(viewport),
             pipeline,
             pipeline?.Resources,
-            pipeline?.Pipeline?.PassMetadata,
+            pipeline?.ActiveMeshRenderCommands.RenderingBackendReadyPackage.PassMetadata
+                ?? pipeline?.Pipeline?.PassMetadata,
             displayWidth,
             displayHeight,
             internalWidth,
@@ -565,7 +566,8 @@ public unsafe partial class VulkanRenderer
                 : RuntimeHelpers.GetHashCode(viewport),
             pipeline,
             pipeline.Resources,
-            pipeline.Pipeline?.PassMetadata,
+            pipeline.ActiveMeshRenderCommands.RenderingBackendReadyPackage.PassMetadata
+                ?? pipeline.Pipeline?.PassMetadata,
             displayWidth,
             displayHeight,
             internalWidth,
@@ -708,6 +710,41 @@ public unsafe partial class VulkanRenderer
         // Keep record equality for every other field so future context additions
         // automatically participate in the compatibility decision.
         return (first with { ContextId = 0UL }).Equals(second with { ContextId = 0UL });
+    }
+
+    /// <summary>
+    /// Determines whether independently recorded command chains can share one
+    /// worker-dispatch batch and Vulkan rendering scope.
+    /// </summary>
+    internal static bool AreFrameOpContextsCommandChainBatchCompatible(
+        in FrameOpContext first,
+        in FrameOpContext second)
+    {
+        if (AreFrameOpContextsRecordingCompatible(first, second))
+            return true;
+
+        // Resource and descriptor generations select immutable snapshots for
+        // each chain; they do not alter render-pass inheritance. Normalize only
+        // those captured planning fields. Target, dimensions, queue family,
+        // stereo/multiview, pipeline, registry identity, and ordering policy
+        // remain exact so incompatible rendering scopes never share a batch.
+        FrameOpContext normalizedFirst = first with
+        {
+            ContextId = 0UL,
+            RecordingFingerprint = 0UL,
+            ResourceGeneration = 0UL,
+            DescriptorGeneration = 0UL,
+            ResourceRegistrySignatureSnapshot = null,
+        };
+        FrameOpContext normalizedSecond = second with
+        {
+            ContextId = 0UL,
+            RecordingFingerprint = 0UL,
+            ResourceGeneration = 0UL,
+            DescriptorGeneration = 0UL,
+            ResourceRegistrySignatureSnapshot = null,
+        };
+        return normalizedFirst.Equals(normalizedSecond);
     }
 
     /// <summary>

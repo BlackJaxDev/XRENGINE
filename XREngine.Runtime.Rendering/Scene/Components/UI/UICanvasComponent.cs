@@ -7,6 +7,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -309,6 +310,31 @@ namespace XREngine.Components
 
         void IRuntimeScreenSpaceUserInterface.CollectVisibleItemsScreenSpace(IRuntimeViewportHost? viewport)
             => CollectVisibleItemsScreenSpace(viewport as XRViewport);
+
+        void IRuntimeScreenSpaceUserInterface.PrepareBackendReadyFramePackage(
+            IRuntimeViewportHost viewport)
+        {
+            int descriptorGeneration =
+                _renderPipeline.ActiveGeneration?.Registry.DescriptorRevision ?? 0;
+            BackendReadyFramePackageIdentity identity = new(
+                RuntimeRenderingHostServices.FrameTiming.CollectFrameId,
+                RuntimeRenderingHostServices.FrameTiming.RequestedCollectGeneration,
+                _renderPipeline.AssignedPipeline?.CommandGeneration ?? 0UL,
+                _renderPipeline.ResourceGeneration,
+                descriptorGeneration,
+                ResolveRenderGraphGeneration(_renderPipeline.Pipeline?.PassMetadata),
+                viewport.Width,
+                viewport.Height,
+                viewport.InternalWidth,
+                viewport.InternalHeight);
+            _renderPipeline.MeshRenderCommands.PrepareBackendReadyFramePackage(identity);
+        }
+
+        private static int ResolveRenderGraphGeneration(
+            IReadOnlyCollection<RenderPassMetadata>? passMetadata)
+            => passMetadata is RenderPassMetadataSnapshot snapshot
+                ? snapshot.RevisionStamp
+                : 0;
 
         void IRuntimeScreenSpaceUserInterface.SwapBuffersScreenSpace()
             => SwapBuffersScreenSpace();

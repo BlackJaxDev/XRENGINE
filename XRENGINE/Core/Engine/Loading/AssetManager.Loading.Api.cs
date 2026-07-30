@@ -53,6 +53,82 @@ namespace XREngine
             return await RunOnJobThreadAsync(() => PreparePrefabPartialLoad(filePath), priority, bypassJobThread).ConfigureAwait(false);
         }
 
+        /// <summary>
+        /// Loads a prefab after hydrating every external asset reference
+        /// discovered by the lightweight partial-prefab pass.
+        /// </summary>
+        /// <remarks>
+        /// Loading the root YAML first would bind compact <c>{ID}</c> references
+        /// to empty placeholders. Preloading the referenced assets and then
+        /// parsing the root makes the final hierarchy bind the populated cache
+        /// instances instead.
+        /// </remarks>
+        public async Task<XRPrefabSource?> LoadPrefabWithReferencesAsync(
+            string filePath,
+            JobPriority priority = JobPriority.Normal,
+            bool bypassJobThread = false,
+            CancellationToken cancellationToken = default,
+            int maxConcurrentReferenceLoads = 4)
+        {
+            if (maxConcurrentReferenceLoads <= 0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(maxConcurrentReferenceLoads),
+                    maxConcurrentReferenceLoads,
+                    "Reference-load concurrency must be positive.");
+
+            cancellationToken.ThrowIfCancellationRequested();
+            PrefabPartialLoadPlan? plan = await PreparePrefabPartialLoadAsync(
+                filePath,
+                priority,
+                bypassJobThread).ConfigureAwait(false);
+            if (plan is null)
+                return null;
+
+            IReadOnlyList<DeferredAssetLoadReference> references = plan.ExternalReferences;
+            if (references.Count > 0)
+            {
+                int nextReferenceIndex = -1;
+                int workerCount = Math.Min(maxConcurrentReferenceLoads, references.Count);
+                Task[] workers = new Task[workerCount];
+                for (int workerIndex = 0; workerIndex < workerCount; workerIndex++)
+                {
+                    workers[workerIndex] = Task.Run(async () =>
+                    {
+                        while (true)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            int referenceIndex = Interlocked.Increment(ref nextReferenceIndex);
+                            if (referenceIndex >= references.Count)
+                                return;
+
+                            DeferredAssetLoadReference reference = references[referenceIndex];
+                            if (TryGetAssetByPath(reference.AssetPath, out _))
+                                continue;
+
+                            XRAsset? loaded = await LoadAsync(
+                                reference.AssetPath,
+                                reference.AssetType,
+                                priority,
+                                bypassJobThread: true).ConfigureAwait(false);
+                            if (loaded is null)
+                            {
+                                throw new InvalidDataException(
+                                    $"Referenced asset '{reference.AssetPath}' could not be loaded as '{reference.AssetType.FullName}'.");
+                            }
+                        }
+                    }, cancellationToken);
+                }
+
+                await Task.WhenAll(workers).ConfigureAwait(false);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            return await LoadAsync<XRPrefabSource>(
+                filePath,
+                priority,
+                bypassJobThread).ConfigureAwait(false);
+        }
+
         public XRAsset? Load(string filePath, Type type, JobPriority priority = JobPriority.Normal, bool bypassJobThread = false)
         {
             if (!File.Exists(filePath) && ShouldAttemptRemoteAssetDownload())

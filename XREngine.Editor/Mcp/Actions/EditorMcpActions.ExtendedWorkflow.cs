@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Numerics;
 using System.Reflection;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -379,7 +380,7 @@ namespace XREngine.Editor.Mcp
         }
 
         [XRMcp(Name = "run_editor_command", Permission = McpPermissionLevel.Mutate, PermissionReason = "Executes allowlisted editor workflow commands.")]
-        [Description("Execute an allowlisted editor command via MCP (undo/redo/selection/play-mode/save/load/focus/select).")]
+        [Description("Execute an allowlisted editor command via MCP (undo/redo/selection/play-mode/save/load/focus/select/import_external_asset/drop_asset).")]
         public static Task<McpToolResponse> RunEditorCommandAsync(
             McpToolContext context,
             [McpName("command"), Description("Allowlisted command name.")]
@@ -410,10 +411,133 @@ namespace XREngine.Editor.Mcp
                     TryGetStringArg(args, "node_id"),
                     TryGetStringArrayArg(args, "node_ids"),
                     TryGetBoolArg(args, "append") ?? false),
+                "import_external_asset" => ImportExternalAssetAsync(
+                    TryGetStringArg(args, "source_path"),
+                    TryGetStringArg(args, "dest_folder"),
+                    TryGetStringArg(args, "unity_project_root"),
+                    TryGetBoolArg(args, "overwrite") ?? false),
+                "drop_asset" => DropAssetAsync(
+                    context,
+                    TryGetStringArg(args, "asset_path"),
+                    TryGetStringArg(args, "parent_id"),
+                    TryGetFloatArg(args, "position_x"),
+                    TryGetFloatArg(args, "position_y"),
+                    TryGetFloatArg(args, "position_z")),
                 _ => Task.FromResult(new McpToolResponse(
-                    $"Unsupported command '{command}'. Supported: undo, redo, clear_selection, delete_selected_nodes, enter_play_mode, exit_play_mode, save_world, load_world, focus_node, select_node.",
+                    $"Unsupported command '{command}'. Supported: undo, redo, clear_selection, delete_selected_nodes, enter_play_mode, exit_play_mode, save_world, load_world, focus_node, select_node, import_external_asset, drop_asset.",
                     isError: true))
             };
+        }
+
+        private static Task<McpToolResponse> ImportExternalAssetAsync(
+            string? sourcePath,
+            string? destinationFolder,
+            string? unityProjectRoot,
+            bool overwrite)
+        {
+            if (string.IsNullOrWhiteSpace(sourcePath))
+                return Task.FromResult(new McpToolResponse("source_path is required.", isError: true));
+
+            string fullSourcePath;
+            try
+            {
+                fullSourcePath = Path.GetFullPath(sourcePath);
+            }
+            catch (Exception ex)
+            {
+                return Task.FromResult(new McpToolResponse(
+                    $"Invalid source_path '{sourcePath}': {ex.Message}",
+                    isError: true));
+            }
+
+            if (!File.Exists(fullSourcePath))
+                return Task.FromResult(new McpToolResponse($"Source file not found: '{fullSourcePath}'.", isError: true));
+
+            string normalizedDestination = destinationFolder?.Trim() ?? string.Empty;
+            bool queued = EditorImGuiUI.TryQueueExternalFileImport(
+                fullSourcePath,
+                normalizedDestination,
+                unityProjectRoot,
+                overwrite,
+                out string? error);
+            if (!queued)
+                return Task.FromResult(new McpToolResponse(
+                    error ?? $"The external-file import workflow rejected '{fullSourcePath}'.",
+                    isError: true));
+
+            return Task.FromResult(new McpToolResponse(
+                $"Queued '{Path.GetFileName(fullSourcePath)}' through the editor external-file import workflow.",
+                new
+                {
+                    sourcePath = fullSourcePath,
+                    destinationFolder = normalizedDestination,
+                    unityProjectRoot,
+                    overwrite,
+                    queued = true,
+                    workflow = "editor-external-file-import"
+                }));
+        }
+
+        private static async Task<McpToolResponse> DropAssetAsync(
+            McpToolContext context,
+            string? assetPath,
+            string? parentId,
+            float? positionX,
+            float? positionY,
+            float? positionZ)
+        {
+            if (string.IsNullOrWhiteSpace(assetPath))
+                return new McpToolResponse("asset_path is required.", isError: true);
+
+            if (!TryGetGameAssetsPath(out string assetsPath, out McpToolResponse? assetsError))
+                return assetsError!;
+
+            string fullPath;
+            try
+            {
+                fullPath = Path.IsPathRooted(assetPath)
+                    ? Path.GetFullPath(assetPath)
+                    : Path.GetFullPath(Path.Combine(assetsPath, assetPath));
+            }
+            catch (Exception ex)
+            {
+                return new McpToolResponse(
+                    $"Invalid asset_path '{assetPath}': {ex.Message}",
+                    isError: true);
+            }
+
+            if (!File.Exists(fullPath))
+                return new McpToolResponse($"Asset file not found: '{fullPath}'.", isError: true);
+
+            SceneNode? parent = null;
+            if (!string.IsNullOrWhiteSpace(parentId)
+                && (!TryGetNodeById(context.WorldInstance, parentId, out parent, out string? parentError) || parent is null))
+            {
+                return new McpToolResponse(parentError ?? "Parent node not found.", isError: true);
+            }
+
+            Vector3? position = positionX.HasValue || positionY.HasValue || positionZ.HasValue
+                ? new Vector3(positionX ?? 0.0f, positionY ?? 0.0f, positionZ ?? 0.0f)
+                : null;
+
+            string? error = await EditorImGuiUI.TrySpawnDroppedAssetThroughDropPathAsync(
+                context.WorldInstance,
+                parent,
+                fullPath,
+                position).ConfigureAwait(false);
+            if (error is not null)
+                return new McpToolResponse(error, isError: true);
+
+            return new McpToolResponse(
+                $"Spawned '{Path.GetFileName(fullPath)}' through the editor drag/drop path.",
+                new
+                {
+                    assetPath = fullPath,
+                    parentId = parent?.ID,
+                    position,
+                    spawned = true,
+                    workflow = "editor-drag-drop"
+                });
         }
 
         [XRMcp(Name = "list_asset_import_options", Permission = McpPermissionLevel.ReadOnly)]

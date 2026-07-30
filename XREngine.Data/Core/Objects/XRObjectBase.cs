@@ -17,8 +17,14 @@ namespace XREngine.Data.Core
         [ThreadStatic]
         private static int _suppressObjectCacheRegistrationDepth;
 
+        private Guid _id = Guid.NewGuid();
+
         [Browsable(false)]
-        public Guid ID { get; internal set; } = Guid.NewGuid();
+        public Guid ID
+        {
+            get => _id;
+            internal set => SetObjectID(value, publishNotifications: true);
+        }
         
         private static ConcurrentDictionary<Guid, XRObjectBase> ObjectsCacheInternal { get; } = [];
         public static IReadOnlyDictionary<Guid, XRObjectBase> ObjectsCache => ObjectsCacheInternal;
@@ -51,7 +57,7 @@ namespace XREngine.Data.Core
 
         public virtual void Generate()
         {
-            ID = Guid.NewGuid();
+            SetObjectID(Guid.NewGuid(), publishNotifications: false);
             IsDestroyed = false;
             ClearDestroyQueuedFlag();
 
@@ -62,14 +68,52 @@ namespace XREngine.Data.Core
             }
 
             int tries = 0;
-            while (ObjectsCacheInternal.ContainsKey(ID))
+            XRObjectBase? existing;
+            while (ObjectsCacheInternal.TryGetValue(ID, out existing) &&
+                   !ReferenceEquals(existing, this))
             {
                 //Collision, update ID and try again
-                ID = Guid.NewGuid();
+                SetObjectID(Guid.NewGuid(), publishNotifications: false);
                 if (tries++ > 10)
                     throw new Exception("Failed to generate a unique ID for an object."); //Highly unlikely
             }
-                    _isRegisteredInObjectCache = ObjectsCacheInternal.TryAdd(ID, this);
+
+            _isRegisteredInObjectCache =
+                ObjectsCacheInternal.TryGetValue(ID, out existing) && ReferenceEquals(existing, this) ||
+                ObjectsCacheInternal.TryAdd(ID, this);
+        }
+
+        /// <summary>
+        /// Adopts a stable identifier derived from persistent source identity.
+        /// Importers use this before serialization so unchanged object graphs retain
+        /// coherent references across independent import runs.
+        /// </summary>
+        /// <param name="persistentID">The non-empty persistent identifier to adopt.</param>
+        public void AdoptPersistentID(Guid persistentID)
+        {
+            if (persistentID == Guid.Empty)
+                throw new ArgumentException("A persistent object ID cannot be empty.", nameof(persistentID));
+
+            ID = persistentID;
+        }
+
+        private void SetObjectID(Guid value, bool publishNotifications)
+        {
+            Guid previous = _id;
+            bool wasRegistered = _isRegisteredInObjectCache;
+            if (!SetField(ref _id, value, publishNotifications, nameof(ID)))
+                return;
+
+            if (!wasRegistered)
+                return;
+
+            if (ObjectsCacheInternal.TryGetValue(previous, out XRObjectBase? existing) &&
+                ReferenceEquals(existing, this))
+            {
+                ObjectsCacheInternal.TryRemove(previous, out _);
+            }
+
+            _isRegisteredInObjectCache = ObjectsCacheInternal.TryAdd(value, this);
         }
 
         /// <summary>
