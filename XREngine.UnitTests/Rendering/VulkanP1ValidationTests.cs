@@ -874,8 +874,8 @@ public sealed class VulkanP1ValidationTests
         commandBufferSource.ShouldContain("SwapchainWriterSummaryBuilder { get; }");
         commandBufferSource.ShouldContain("RecordSwapchainWriterCapacityHint { get; set; }");
         commandBufferSource.ShouldContain("RecordFboLayoutCapacityHint { get; set; }");
-        commandBufferSource.ShouldContain("XREngineEnvironmentVariables.VulkanDisableParallelSecondaryRecording");
-        commandBufferSource.ShouldContain("IsParallelSecondaryCommandBufferRecordingDisabled");
+        commandBufferSource.ShouldNotContain("VulkanDisableParallelSecondaryRecording");
+        commandBufferSource.ShouldNotContain("IsParallelSecondaryCommandBufferRecordingDisabled");
         recordSource.ShouldContain("secondaryBucketByStart = recordingScratch.SecondaryBucketByStart;");
         recordSource.ShouldContain("secondaryBucketByStart.Clear();");
         recordSource.ShouldContain("secondaryBucketByStart.EnsureCapacity(Math.Max(recordingScratch.SecondaryBucketByStartCapacityHint, secondaryBuckets.Count));");

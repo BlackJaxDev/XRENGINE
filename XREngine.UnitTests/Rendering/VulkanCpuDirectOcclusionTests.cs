@@ -195,7 +195,7 @@ public sealed class VulkanCpuDirectOcclusionTests
         resourcePlanner.ShouldContain("AreFrameOpContextsQueryScopeCompatible(");
         resourcePlanner.ShouldNotContain("hash.Add(context.ContextId)");
         recorder.ShouldContain("AreFrameOpContextsRecordingCompatible(activeContext, op.Context)");
-        recorder.ShouldContain("AreFrameOpContextsRecordingCompatible(candidate.Context, activeContext)");
+        recorder.ShouldContain("AreFrameOpContextsCommandChainBatchCompatible(candidate.Context, firstDraw.Context)");
         recorder.ShouldContain("bool preservedInlineQueryPass = activeInlineQuery is not null");
         recorder.ShouldContain("bool preservedRenderPass = preservedSwapchainPass || preservedInlineQueryPass;");
         recorder.ShouldContain("activeInlineQuery.InvalidateRecordedResultEpoch(commandBuffer);");

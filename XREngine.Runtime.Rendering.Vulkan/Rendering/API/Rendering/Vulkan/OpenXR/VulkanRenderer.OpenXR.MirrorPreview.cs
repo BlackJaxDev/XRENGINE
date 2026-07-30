@@ -1018,8 +1018,6 @@ public unsafe partial class VulkanRenderer
             secondaryCommandBuffers: stats.SecondaryCommandBuffers,
             visibilityPackets: stats.VisibilityPackets,
             renderPackets: stats.RenderPackets,
-            chainWorkerRecordTime: stats.WorkerRecordTime,
-            renderThreadWaitForWorkersTime: stats.WaitForWorkersTime,
             firstStructuralDirtyReason: stats.FirstStructuralDirtyReason,
             firstDescriptorGenerationMismatch: stats.FirstDescriptorGenerationMismatch,
             firstResourcePlanRevisionMismatch: stats.FirstResourcePlanRevisionMismatch);

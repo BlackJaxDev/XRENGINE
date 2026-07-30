@@ -630,6 +630,19 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     return;
                 }
                 _resizeCatchUpSkippedFrameId = ulong.MaxValue;
+                RenderCommandCollection activeCommands =
+                    meshRenderCommandsOverride ?? MeshRenderCommands;
+                if (!TryValidateBackendReadyFramePackage(activeCommands, viewport, out string? packageFailure))
+                {
+                    Debug.RenderingWarningEvery(
+                        $"RenderFramePackage.Invalid.{ProfilerKey}",
+                        TimeSpan.FromMilliseconds(250),
+                        "[RenderFramePackage] Skipping command chain because the published package is invalid. Pipeline={0} Reason={1}",
+                        ProfilerKey,
+                        packageFailure ?? "Unknown");
+                    return;
+                }
+
                 BeginRenderGraphValidationFrame();
 
                 if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.OpenGL)
@@ -645,13 +658,54 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
                 using (AbstractRenderer.Current?.EnterRenderPipelineFrameResourceScope(this, viewport))
                 {
+                    long consumptionStarted = System.Diagnostics.Stopwatch.GetTimestamp();
                     Pipeline.CommandChain.Execute();
+                    RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordFramePackageConsumption(
+                        System.Diagnostics.Stopwatch.GetTimestamp() - consumptionStarted);
                 }
 
                 ValidateActiveGenerationDescriptorParity();
                 ValidateRenderGraphExecutionAgainstMetadata();
             }
         }
+    }
+
+    private bool TryValidateBackendReadyFramePackage(
+        RenderCommandCollection commands,
+        XRViewport? viewport,
+        out string? failureReason)
+    {
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
+        BackendReadyFramePackage package = commands.RenderingBackendReadyPackage;
+        BackendReadyFramePackageIdentity identity = package.Identity;
+        long requiredGeneration = RuntimeRenderingHostServices.FrameTiming.RequiredCollectGeneration;
+        int generationAge = identity.CollectGeneration < 0L || requiredGeneration < identity.CollectGeneration
+            ? 0
+            : (int)Math.Min(int.MaxValue, requiredGeneration - identity.CollectGeneration);
+        int descriptorGeneration = ActiveGeneration?.Registry.DescriptorRevision ?? 0;
+        int renderGraphGeneration =
+            Pipeline?.PassMetadata is RenderPassMetadataSnapshot snapshot
+                ? snapshot.RevisionStamp
+                : 0;
+        BackendReadyFramePackageValidationContext context = new(
+            RuntimeRenderingHostServices.FrameTiming.ConsumedCollectGeneration,
+            Pipeline?.CommandGeneration ?? 0UL,
+            ResourceGeneration,
+            descriptorGeneration,
+            renderGraphGeneration,
+            viewport?.Width ?? identity.ViewportWidth,
+            viewport?.Height ?? identity.ViewportHeight,
+            viewport?.InternalWidth ?? identity.InternalWidth,
+            viewport?.InternalHeight ?? identity.InternalHeight);
+        BackendReadyFramePackageValidationResult result =
+            BackendReadyFramePackageValidator.Validate(package, in context);
+        bool accepted = result.Accepted;
+        failureReason = accepted ? null : result.Failure.ToString();
+        RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordFramePackageValidation(
+            System.Diagnostics.Stopwatch.GetTimestamp() - started,
+            accepted,
+            generationAge);
+        return accepted;
     }
 
     //public void CollectVisible(VisualScene scene, XRCamera? camera, XRViewport viewport, XRFrameBuffer? targetFBO, bool shadowPass, UICanvasComponent? userInterface = null)

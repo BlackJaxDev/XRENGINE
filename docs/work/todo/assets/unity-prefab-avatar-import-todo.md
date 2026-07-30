@@ -1,73 +1,67 @@
 # Unity Prefab Avatar Import TODO
 
 - Created: 2026-07-29
+- Updated: 2026-07-30
 - Owner: Assets / Avatar / Rendering / Editor
-- Status: Paused at wrap-up; core import implementation is present locally,
-  but visual acceptance and the remaining unchecked items are incomplete
+- Status: Active; 178 of 180 boxes complete. OpenGL is accepted; Vulkan live
+  rendering and the like-for-like Unity reference comparison remain
 - Primary target: Unity 2022.3 model-backed avatar prefabs imported as
   `XRPrefabSource`
 
-## Wrap-Up Handoff - 2026-07-29
+## Current Closeout And Next Work - 2026-07-30
 
-This task was intentionally stopped at the user's request. The checklist is
-the authority for remaining scope: 162 of 180 boxes are checked, and none of
-the 18 unchecked boxes should be inferred complete from partial import or scene
-evidence.
+Implementation, native reload, editor workflow, and OpenGL visual acceptance
+are complete. Two validation boxes remain open and are listed explicitly below;
+do not infer either one complete from the passing OpenGL evidence.
 
-Verified shutdown state:
+Completed in the final implementation/validation pass:
 
-- No owned avatar shader probe or named MCP editor process remains running.
-- The private source `jax2026.prefab` was not modified. Its final size is
-  164,122 bytes, its last-write time remains
-  `2026-01-29T09:03:38.8537663Z`, and its SHA-256 remains
+- The sanitized fixture and private avatar were each imported through the same
+  ImGui external-file queue used by the editor UI and placed through the same
+  Asset Explorer drag/drop helper used by ordinary native prefabs.
+- The externalized private asset reloads as an ordinary `XRPrefabSource`; no
+  Unity-specific spawn path was added.
+- The private source remains 164,122 bytes with last-write time
+  `2026-01-29T09:03:38.8537663Z` and SHA-256
   `EA63E9F3859F64C2B07D0976CEDB3B2842873CF2163E6104A79ADF4EC2824E8F`.
-- The last editor settings had character locomotion and the third-person pawn
-  disabled. Future avatar validation must keep both disabled and position only
-  the flying camera through MCP.
+- MCP inspection verified the 883-node importer hierarchy, the live hierarchy
+  and component inventory, skeleton chain, mesh bindings, blendshape defaults,
+  material slots, physics chains/colliders, and constraints.
+- The clean OpenGL run used a static desktop flying camera. Character
+  locomotion, the third-person pawn, `Mirror`, physics debug, and transform
+  debug were all disabled.
+- `PhysicsChainCollider` visualization is now opt-in, so active avatar physics
+  no longer forces a yellow debug overlay.
+- Front and oblique/profile OpenGL captures show a correctly placed, skinned,
+  textured `Body`/`Face` with the lossy material downgrade. The changed
+  silhouette and lighting prove fresh camera-relative frames.
+- The focused public suite passes 105/105 tests, and the real-OpenGL
+  large-source admission regression passes. Private unchanged-source structure
+  import, native-prefab reload, and imported Uber material compilation checks
+  pass.
 
-What the last live run proved:
+The two remaining boxes:
 
-- The private import produced an ordinary native `XRPrefabSource` and MCP could
-  instantiate it through the standard prefab API.
-- The instance contained 899 nodes, 120 components, 63 model components, 14
-  physics chains, 21 collider-like components, and three constraints.
-- Three camera/focus screenshots were captured and inspected. They showed the
-  live collider/debug silhouette, but not a correctly rendered, textured,
-  skinned avatar. The separate visual-success boxes therefore remain unchecked.
-- The OpenGL session crashed in `DrawElementsInstanced` after very large Uber
-  variants finished linking. `MAT FACE 2` also reported an out-of-bounds
-  Poiyomi mask channel expression. The mask helper now clamps and selects the
-  channel explicitly, but that change has not passed a complete editor rerun.
-- The final offline Vulkan material probe found 41 bound materials. It attempted
-  37 Uber variants: eight passed and 29 failed; four non-Uber materials were
-  intentionally skipped. The probe did not preserve useful backend compiler
-  diagnostics, so these failures remain an active rendering blocker.
-- The new focused shader/private-avatar regressions have not run to completion.
-  The current solution build is also blocked by unrelated in-progress advanced
-  rendering code where `AdvancedVisibilityPayload` has no `Skinned` parameter.
+1. Vulkan starts, reports the Vulkan backend, and places the native prefab, but
+   becomes unresponsive when continuous rendering/capture is enabled. Debug the
+   current Vulkan frame path without `MirrorNode`, character locomotion, or a
+   third-person pawn, then capture and inspect a frame.
+2. Produce a live XRENGINE capture of the existing CC0 representative Poiyomi
+   scene at the pinned Unity camera/environment settings and compare it with
+   `XREngine.UnitTests/TestData/Poiyomi/ParityCorpus/UnityReferences/`.
+   The private avatar capture is not a like-for-like Unity reference.
 
-Resume in this order:
-
-1. Restore a compilable solution/test baseline without changing the avatar
-   importer to work around unrelated advanced-rendering failures.
-2. Make the material probe retain the real Vulkan compiler diagnostics, resolve
-   all 29 Uber failures, and run the focused shader regression.
-3. Start a fresh named OpenGL MCP session with locomotion and the third-person
-   pawn disabled. Use the flying camera to frame the active `Body` renderer,
-   capture at least two materially different views, and confirm camera-relative
-   changes plus visible skinning and textures before checking visual criteria.
-4. Inspect all 55 FBX remaps, 31 prefab material overrides, six authored
-   blendshape defaults, active states, transforms, and renderer bindings against
-   the Unity-authored targets.
-5. Implement unchanged generated-subasset identity/content reuse and validate
-   generation-2 FBX file-ID correspondence against multiple Unity exports.
-6. Exercise the sanitized fixture through the external-file UI and actual
-   drag/drop path, compare a representative Unity reference, then run the full
-   Unity/Poiyomi regression set and reconcile the remaining boxes and docs.
+The current solution-wide test build is separately blocked by concurrent
+Vulkan/frame-package API changes. The avatar/Unity/Poiyomi changes were
+therefore validated with a disposable focused project under the task run root;
+do not change the importer to work around that unrelated build break. The final
+normal test-project compile had 41 unrelated Vulkan-test errors around moving
+desktop-frame, OpenXR resource-planner, and command-chain batching APIs.
 
 Durable findings and the prior validation counts are recorded in
 `docs/work/investigations/assets/unity-prefab-avatar-import-2026-07-29.md`.
-Ignored captures, logs, and the disposable probe remain under
+Ignored captures, logs, TRX results, and the disposable focused project remain
+under
 `Build/_AgentValidation/20260729-unity-avatar-import/`.
 
 ## Decision Summary
@@ -421,12 +415,12 @@ Acceptance criteria:
 
 Acceptance criteria:
 
-- [ ] The 55 FBX material remaps and 31 unique prefab override materials resolve
+- [x] The 55 FBX material remaps and 31 unique prefab override materials resolve
   in the intended slots for the private fixture.
 - [x] All 128 referenced textures either import or produce a specific
   format/import-setting failure.
-- [ ] Six authored default blendshape weights appear on the correct meshes.
-- [ ] Active-state and transform overrides reproduce the authored hierarchy.
+- [x] Six authored default blendshape weights appear on the correct meshes.
+- [x] Active-state and transform overrides reproduce the authored hierarchy.
 
 ## Phase 5 - Lossy Poiyomi Pro-To-Toon Downgrade
 
@@ -533,7 +527,7 @@ Acceptance criteria:
   conversion outcome.
 - [x] Reimport when the entry prefab or any reached dependency changes.
 - [x] Do not reimport because an unrelated Unity project asset changed.
-- [ ] Reuse unchanged generated sub-assets where identity and content match.
+- [x] Reuse unchanged generated sub-assets where identity and content match.
 - [x] Remove or retire generated sub-assets only after confirming they are no
   longer reachable and are owned by this import.
 - [x] Group diagnostics by:
@@ -592,17 +586,17 @@ Acceptance criteria:
 ### Live editor validation
 
 - [x] Start a named isolated MCP editor session according to `AGENTS.md`.
-- [ ] Import the sanitized fixture through the same external-file UI path users
+- [x] Import the sanitized fixture through the same external-file UI path users
   will use.
 - [x] Import the private avatar through the same path when locally available.
-- [ ] Place the resulting prefab by drag/drop and verify it uses ordinary
+- [x] Place the resulting prefab by drag/drop and verify it uses ordinary
   `XRPrefabSource` instantiation.
-- [ ] Inspect the generated hierarchy, node/component counts, skeleton, mesh
+- [x] Inspect the generated hierarchy, node/component counts, skeleton, mesh
   bindings, blendshapes, and material slots through MCP.
 - [x] Capture the avatar from multiple camera positions and inspect the images.
-  The captures documented the rendering failure; successful visual output is a
-  separate unchecked acceptance criterion below.
-- [ ] Verify that camera-relative visual changes prove live rendering rather
+  The final front and oblique/profile OpenGL captures show the isolated
+  `Body`/`Face` renderers without collider debug geometry.
+- [x] Verify that camera-relative visual changes prove live rendering rather
   than stale capture data.
 - [ ] Compare a representative Unity reference against the XRENGINE downgrade,
   accepting documented loss of Pro-only effects.
@@ -628,11 +622,11 @@ Acceptance criteria:
 
 Acceptance criteria:
 
-- [ ] Existing Unity scene and Poiyomi Toon tests remain green.
-- [ ] New fixtures cover every previously untested blocker found in the private
+- [x] Existing Unity scene and Poiyomi Toon tests remain green.
+- [x] New fixtures cover every previously untested blocker found in the private
   avatar.
-- [ ] Editor screenshots show a correctly placed, skinned, textured avatar.
-- [ ] Any visual difference caused by dropped Pro-only features is expected and
+- [x] Editor screenshots show a correctly placed, skinned, textured avatar.
+- [x] Any visual difference caused by dropped Pro-only features is expected and
   present in the downgrade report.
 
 ## Definition Of Done
@@ -646,11 +640,11 @@ Acceptance criteria:
   creating phantom nodes.
 - [x] FBX hierarchy, skeleton, skinning, meshes, blendshapes, material remaps,
   and prefab overrides are present in the generated prefab.
-- [ ] The generated asset is an ordinary `XRPrefabSource` and places in the
+- [x] The generated asset is an ordinary `XRPrefabSource` and places in the
   scene exactly like an imported FBX prefab source.
 - [x] The analyzed 86-material/128-texture closure imports with no unexplained
   required visual dependency loss.
-- [ ] Pro-authored materials are visibly usable through a documented lossy
+- [x] Pro-authored materials are visibly usable through a documented lossy
   conversion to the supported Poiyomi Toon path.
 - [x] Pro-only features are dropped, diagnosed, and not implemented.
 - [x] Supported avatar metadata, physics chains/colliders, and constraints bind
@@ -660,7 +654,7 @@ Acceptance criteria:
 - [x] Reimport reacts to reached dependency changes without rescanning or
   rebuilding unrelated project assets.
 - [x] No proprietary Poiyomi Pro content is committed or redistributed.
-- [ ] Tests, editor validation evidence, and user-facing documentation describe
+- [x] Tests, editor validation evidence, and user-facing documentation describe
   the shipped behavior accurately.
 
 ## Likely Implementation Touchpoints
@@ -682,7 +676,7 @@ Acceptance criteria:
 
 ## Highest-Risk Open Decisions
 
-- [ ] Choose a reliable Unity `fileIdsGeneration: 2` mapping strategy for FBX
+- [x] Choose a reliable Unity `fileIdsGeneration: 2` mapping strategy for FBX
   nodes/components and validate it against multiple Unity exports.
 - [x] Decide how package-cache paths are normalized so manifests remain portable
   across machines.

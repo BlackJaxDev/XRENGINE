@@ -2095,6 +2095,49 @@ public sealed class VulkanCommandChainDataModelTests
             .ShouldBe(1);
     }
 
+    [TestCase(1, 16, false, false, false, false)]
+    [TestCase(2, 16, false, false, false, true)]
+    [TestCase(128, 2, false, false, false, false)]
+    [TestCase(128, 16, true, false, false, false)]
+    [TestCase(128, 16, false, true, false, false)]
+    [TestCase(128, 16, false, false, true, false)]
+    public void ParallelCommandChainRecordingPolicy_RequiresAmortizableHealthyWorkerDomain(
+        int independentChainCount,
+        int processorCount,
+        bool singleThread,
+        bool parallelDisabled,
+        bool workerDomainFaulted,
+        bool expected)
+    {
+        VulkanRenderer.ShouldUseParallelCommandChainRecording(
+                independentChainCount,
+                processorCount,
+                singleThread,
+                parallelDisabled,
+                workerDomainFaulted)
+            .ShouldBe(expected);
+    }
+
+    [Test]
+    public void PersistentCommandChainWorkers_UseThreadLocalPlannerSnapshotsAndNoTasks()
+    {
+        string workers = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainWorkers.cs");
+        string secondary = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
+        string recording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+
+        workers.ShouldContain("new Thread");
+        workers.ShouldContain("CommandChainWorkerWaitTimeoutMilliseconds");
+        workers.ShouldContain("GraphicsCommandPoolsByFrameSlot");
+        workers.ShouldNotContain("ParallelCommandChainWorkerRecordingSafe = false");
+        secondary.ShouldContain("EnterThreadResourcePlannerRuntimeStateScope");
+        secondary.ShouldNotContain("_frameOpResourcePlannerReadbackLock");
+        secondary.ShouldNotContain("Task.Run");
+        recording.ShouldNotContain("Task.Run(() => RecordSecondaryAt");
+    }
+
     private static VulkanRenderer.VulkanResourceLifetimeRecord CreateLifetimeRecord(
         ObjectType type,
         ulong handle,

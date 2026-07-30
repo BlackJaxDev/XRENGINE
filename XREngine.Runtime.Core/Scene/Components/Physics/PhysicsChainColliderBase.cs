@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Numerics;
 using XREngine.Scene.Transforms;
 
@@ -7,6 +8,20 @@ public class PhysicsChainColliderBase : XRComponent
 {
     private TransformBase? _rootTransformOverride;
     private Quaternion _localRotationOffset = Quaternion.Identity;
+    private bool _debugDraw;
+
+    /// <summary>
+    /// Shows this collider's editor visualization. Collision remains active
+    /// when the visualization is disabled.
+    /// </summary>
+    [Category("Debug")]
+    [DisplayName("Draw Collider")]
+    [Description("Shows the physics-chain collider gizmo. Disabled by default so runtime and imported-avatar views remain unobstructed.")]
+    public bool DebugDraw
+    {
+        get => _debugDraw;
+        set => SetField(ref _debugDraw, value);
+    }
 
     /// <summary>
     /// Optional transform used by import adapters when the authored collider is

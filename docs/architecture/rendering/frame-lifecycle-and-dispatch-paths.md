@@ -156,10 +156,20 @@ For a normal 3D viewport, the flow is:
 XRViewport.CollectVisible()
   -> resolve camera and world
   -> world.VisualScene.CollectRenderedItems(...)
-  -> optional screen-space UI collect
+  -> optional screen-space UI collect and UI-package preparation
+  -> prepare BackendReadyFramePackage
 ```
 
 The viewport does not decide the spatial structure itself. It delegates that to the scene.
+
+The backend-ready package is prepared before the collect thread waits for the
+previous render. It captures sorted pass membership, command/mesh counts,
+mesh/material/render-option selections, dependency signatures, pass metadata,
+and the collect/pipeline/resource/descriptor/render-graph/viewport generations
+needed for bounded validation. It contains no mutable backend handles. Two retained
+package instances follow the same producer/consumer ownership split as the
+command buffers, so preparation can overlap the previous render without
+overwriting in-flight data.
 
 ### 4. SwapBuffers
 
@@ -200,10 +210,15 @@ Separately, each viewport swaps its own render-pass command buckets:
 ```text
 XRViewport.SwapBuffers()
   -> RenderCommandCollection.SwapBuffers()
+       -> publish the already-prepared BackendReadyFramePackage
   -> optional screen-space UI swap
 ```
 
-This is the handoff from command collection to command consumption for that viewport's pipeline.
+This is the handoff from command collection to command consumption for that
+viewport's pipeline. Normal publication does not traverse scene or material
+state. A manual/custom caller that mutates commands after explicit preparation
+triggers a counted late preparation at swap so it cannot publish a partial
+package.
 
 ### 5. Render
 
@@ -214,6 +229,14 @@ thread may dispatch with the last published visibility snapshot instead of
 waiting. The frame lifecycle telemetry then records
 `render_wait_reason=ReusingPreviousVisibility`,
 `skipped_collect_frames`, and `stale_collect_reuse_frames` for that sample.
+
+Before executing the command chain, the pipeline validates the package state,
+consumed collect generation, pipeline command generation, resource/descriptor
+generations, render-graph revision, and viewport extents. A mismatch produces a counted rejection and
+skips the command chain; render never repairs the package by traversing live
+scene or material state. Render-pass lookup is served from the validated
+package, and Vulkan consumes its pass metadata as the resource-planning input,
+while Vulkan handles and command encoding remain render-thread-owned.
 
 At the window level the relevant order is:
 
@@ -580,7 +603,9 @@ The process environment override is `XRE_COLLECT_VISIBLE_LATE_POLICY`. Use
 when measuring whether visible-collection work or render-thread pressure is the
 limiting factor. Profile captures and the live profiler report the effective
 policy, frame lifecycle ids, wait durations, wait reasons, skipped collect
-frames, and stale reuse counts.
+frames, and stale reuse counts. The same surfaces report package production,
+publication, validation, and consumption time; prepared/published/consumed,
+late-prepared, and rejected counts; and package generation age.
 
 ## CollectVisible, SwapBuffers, and Render by Responsibility
 
@@ -603,6 +628,8 @@ Viewport responsibilities:
 
 - camera/frustum/collection volume resolution
 - command generation per render pass
+- sorted pass and dependency-package preparation
+- material/render-option and resource-plan input capture
 
 ### SwapBuffers
 
@@ -619,6 +646,7 @@ World responsibilities:
 Viewport responsibilities:
 
 - swap `RenderCommandCollection`
+- publish its complete backend-ready package by ownership transfer
 - swap screen-space UI command buffers
 
 ### Render
@@ -626,6 +654,7 @@ Viewport responsibilities:
 Purpose:
 
 - consume the published snapshot only
+- validate the backend-ready package without scene traversal
 - execute render-pipeline passes
 - submit graphics backend work
 

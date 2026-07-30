@@ -202,6 +202,40 @@ public static partial class EditorImGuiUI
         };
     }
 
+    /// <summary>
+    /// Queues one file through the same planning and job path as the external
+    /// import dialog. This gives editor automation a deterministic way to
+    /// exercise the user-facing workflow without scripting native file-picker
+    /// windows.
+    /// </summary>
+    internal static bool TryQueueExternalFileImport(
+        string sourcePath,
+        string destinationRelativePath,
+        string? unityProjectRoot,
+        bool overwrite,
+        out string? error)
+    {
+        error = null;
+        BeginExternalFileImport([sourcePath], sourceIsFolder: false);
+
+        ExternalFileImportDialogState? state = _externalFileImportDialog;
+        if (state is null)
+        {
+            error = $"Unable to open the external import workflow for '{sourcePath}'.";
+            return false;
+        }
+
+        state.DestinationRelativePath = destinationRelativePath.Replace('\\', '/');
+        state.OverwriteExisting = overwrite;
+        if (state.HasDirectUnityPrefabImport && !string.IsNullOrWhiteSpace(unityProjectRoot))
+            state.UnityProjectRoot = unityProjectRoot;
+
+        bool queued = TryStartExternalFileImportJob(state);
+        error = state.Error;
+        CloseExternalFileImportDialog(closePopup: false);
+        return queued;
+    }
+
     private static void DrawExternalFileImportDialog()
     {
         ExternalFileImportDialogState? state = _externalFileImportDialog;

@@ -9,6 +9,18 @@ namespace XREngine.UnitTests.Physics;
 public sealed class PhysicsChainColliderTests
 {
     [Test]
+    public void ColliderDebugVisualization_IsOptIn()
+    {
+        var collider = new PhysicsChainCollider();
+
+        collider.DebugDraw.ShouldBeFalse();
+
+        collider.DebugDraw = true;
+
+        collider.DebugDraw.ShouldBeTrue();
+    }
+
+    [Test]
     public void SphereCollider_CollideWithoutTransform_ReturnsFalse()
     {
         var collider = new PhysicsChainSphereCollider();

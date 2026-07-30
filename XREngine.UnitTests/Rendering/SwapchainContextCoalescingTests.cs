@@ -247,6 +247,35 @@ public sealed class SwapchainContextCoalescingTests
             descriptorAdvanced with { ResourceGeneration = 11 }).ShouldBeFalse();
     }
 
+    [Test]
+    public void CommandChainBatchCompatibility_AllowsImmutablePlanGenerationsButRejectsRenderScopeChanges()
+    {
+        FrameOpContext first = CtxPipelineA with
+        {
+            ContextId = 41,
+            RecordingFingerprint = 100,
+            ResourceGeneration = 10,
+            DescriptorGeneration = 20,
+            ResourceRegistrySignatureSnapshot = 30,
+        };
+        FrameOpContext nextSnapshot = first with
+        {
+            ContextId = 42,
+            RecordingFingerprint = 101,
+            ResourceGeneration = 11,
+            DescriptorGeneration = 21,
+            ResourceRegistrySignatureSnapshot = 31,
+        };
+
+        VulkanRenderer.AreFrameOpContextsCommandChainBatchCompatible(first, nextSnapshot).ShouldBeTrue();
+        VulkanRenderer.AreFrameOpContextsCommandChainBatchCompatible(
+            first,
+            nextSnapshot with { MultiviewEnabled = true }).ShouldBeFalse();
+        VulkanRenderer.AreFrameOpContextsCommandChainBatchCompatible(
+            first,
+            nextSnapshot with { SubmissionQueueFamily = 7 }).ShouldBeFalse();
+    }
+
     #endregion
 
     #region OpTargetsSwapchain

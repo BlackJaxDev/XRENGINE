@@ -187,64 +187,12 @@ namespace XREngine.Editor.Mcp
             AssetManager assets,
             string fullPath,
             CancellationToken token)
-        {
-            token.ThrowIfCancellationRequested();
-
-            PrefabPartialLoadPlan? plan = await assets
-                .PreparePrefabPartialLoadAsync(fullPath, bypassJobThread: true)
+            => await assets
+                .LoadPrefabWithReferencesAsync(
+                    fullPath,
+                    bypassJobThread: true,
+                    cancellationToken: token)
                 .ConfigureAwait(false);
-            if (plan is null)
-                return null;
-
-            await PreloadPrefabReferencesAsync(assets, plan.ExternalReferences, token).ConfigureAwait(false);
-            token.ThrowIfCancellationRequested();
-
-            // The final parse now resolves references from the asset cache and avoids
-            // recursively serializing all dependency work through one MCP request thread.
-            return await assets
-                .LoadAsync<XRPrefabSource>(fullPath, bypassJobThread: true)
-                .ConfigureAwait(false);
-        }
-
-        private static async Task PreloadPrefabReferencesAsync(
-            AssetManager assets,
-            IReadOnlyList<DeferredAssetLoadReference> references,
-            CancellationToken token)
-        {
-            if (references.Count == 0)
-                return;
-
-            int nextReferenceIndex = -1;
-            int workerCount = Math.Min(4, references.Count);
-            Task[] workers = new Task[workerCount];
-
-            for (int workerIndex = 0; workerIndex < workerCount; workerIndex++)
-            {
-                workers[workerIndex] = Task.Run(async () =>
-                {
-                    while (true)
-                    {
-                        token.ThrowIfCancellationRequested();
-                        int referenceIndex = Interlocked.Increment(ref nextReferenceIndex);
-                        if (referenceIndex >= references.Count)
-                            return;
-
-                        DeferredAssetLoadReference reference = references[referenceIndex];
-                        if (assets.TryGetAssetByPath(reference.AssetPath, out _))
-                            continue;
-
-                        XRAsset? loaded = await assets
-                            .LoadAsync(reference.AssetPath, reference.AssetType, bypassJobThread: true)
-                            .ConfigureAwait(false);
-                        if (loaded is null)
-                            throw new InvalidDataException(
-                                $"Referenced asset '{reference.AssetPath}' could not be loaded as '{reference.AssetType.FullName}'.");
-                    }
-                }, token);
-            }
-
-            await Task.WhenAll(workers).ConfigureAwait(false);
-        }
 
         /// <summary>
         /// Saves an existing scene node hierarchy as a new <see cref="XRPrefabSource"/> asset.

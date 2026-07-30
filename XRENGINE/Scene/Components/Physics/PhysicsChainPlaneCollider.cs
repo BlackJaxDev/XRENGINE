@@ -73,7 +73,7 @@ public class PhysicsChainPlaneCollider : PhysicsChainColliderBase, IRenderable
 
     private void OnDrawGizmosSelected()
     {
-        if (!IsActiveInHierarchy || RuntimeEngine.Rendering.State.IsShadowPass)
+        if (!DebugDraw || !IsActiveInHierarchy || RuntimeEngine.Rendering.State.IsShadowPass)
             return;
 
         if (Transform is null)

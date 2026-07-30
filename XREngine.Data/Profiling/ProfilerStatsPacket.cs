@@ -331,7 +331,20 @@ public sealed partial class VulkanFrameLoopTelemetryData
     public int VisibilityPacketCount { get; set; }
     public int RenderPacketCount { get; set; }
     public int SecondaryCommandBufferCount { get; set; }
+    public int CommandChainWorkerQueuedChains { get; set; }
+    public int CommandChainWorkersStarted { get; set; }
+    public int CommandChainWorkersCompleted { get; set; }
+    public int CommandChainSeriallyRecorded { get; set; }
+    public int CommandChainWorkerReused { get; set; }
+    public int CommandChainWorkerConflicts { get; set; }
+    public int CommandChainWorkerFailures { get; set; }
+    public int CommandChainWorkerWaitTimeouts { get; set; }
+    public int CommandChainPeakConcurrentWorkers { get; set; }
+    public double CommandChainWorkerQueueDelayMs { get; set; }
     public double CommandChainWorkerRecordMs { get; set; }
+    public double CommandChainWorkerActiveSpanMs { get; set; }
+    public double CommandChainWorkerOverlapMs { get; set; }
+    public double CommandChainWorkerMergeMs { get; set; }
     public double RenderThreadWaitForChainWorkersMs { get; set; }
     public string FirstCommandChainStructuralDirtyReason { get; set; } = string.Empty;
     public string FirstCommandChainDescriptorGenerationMismatch { get; set; } = string.Empty;

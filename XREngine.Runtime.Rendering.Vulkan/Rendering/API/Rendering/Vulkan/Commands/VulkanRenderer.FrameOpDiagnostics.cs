@@ -6,7 +6,6 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
@@ -18,14 +17,6 @@ namespace XREngine.Rendering.Vulkan
         private static bool IsBloomDiagnosticName(string? name)
             => !string.IsNullOrWhiteSpace(name) &&
                name.Contains("Bloom", StringComparison.OrdinalIgnoreCase);
-
-        private static bool IsParallelSecondaryCommandBufferRecordingDisabled()
-        {
-            string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDisableParallelSecondaryRecording);
-            return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
-        }
 
         private static int ReadFrameOpSignatureDiffLogLimit()
         {

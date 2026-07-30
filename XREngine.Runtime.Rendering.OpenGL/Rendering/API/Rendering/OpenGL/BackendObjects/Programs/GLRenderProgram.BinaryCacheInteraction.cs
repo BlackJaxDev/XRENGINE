@@ -117,9 +117,13 @@ namespace XREngine.Rendering.OpenGL
             private bool _preparedIsCached;
             private BinaryProgram _preparedBinProg;
             private GLProgramCompileLinkQueue.ShaderInput[]? _preparedCompileInputs;
+            private long _preparedCompileSourceBytes;
             private int _linkPreparationPendingGeneration = -1;
             private int _linkPreparationGeneration;
             private Exception? _linkPreparationFailure;
+
+            internal long PreparedCompileSourceBytes
+                => Volatile.Read(ref _preparedCompileSourceBytes);
 
             // Async binary upload state: set when a glProgramBinary call has been
             // dispatched to the shared context thread and we are waiting for completion.

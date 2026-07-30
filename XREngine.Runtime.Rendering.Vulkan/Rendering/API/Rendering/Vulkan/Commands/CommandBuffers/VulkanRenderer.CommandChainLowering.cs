@@ -126,8 +126,6 @@ public unsafe partial class VulkanRenderer
         int ChainsFrameDataRefreshed,
         int VolatileChainsRecorded,
         int SecondaryCommandBuffers,
-        TimeSpan WorkerRecordTime,
-        TimeSpan WaitForWorkersTime,
         string? FirstStructuralDirtyReason,
         string? FirstDescriptorGenerationMismatch,
         string? FirstResourcePlanRevisionMismatch);
@@ -367,7 +365,6 @@ public unsafe partial class VulkanRenderer
             return null;
         }
 
-        long start = Stopwatch.GetTimestamp();
         List<RenderPacket> packets = _commandChainPacketScratch;
         packets.Clear();
         packets.EnsureCapacity(Math.Max(staticOps.Length + volatileOps.Length, 1));
@@ -404,7 +401,7 @@ public unsafe partial class VulkanRenderer
             if (staticOps.Length != 0 || volatileOps.Length != 0)
                 return null;
 
-            stats = new CommandChainLoweringStats(0, 0, 0, 0, 0, 0, 0, 0, Stopwatch.GetElapsedTime(start), TimeSpan.Zero, null, null, null);
+            stats = new CommandChainLoweringStats(0, 0, 0, 0, 0, 0, 0, 0, null, null, null);
             CommandChainSchedule emptySchedule = RentCommandChainSchedule(imageIndex);
             emptySchedule.Reset(0, resourcePlanRevision, ReadOnlySpan<RenderPassChainGroup>.Empty);
             CacheCommandChainSchedule(imageIndex, fastScheduleSignature, emptySchedule);
@@ -583,7 +580,6 @@ public unsafe partial class VulkanRenderer
         ulong scheduleSignature = ComputeScheduleStructuralSignature(groupSpan);
         schedule.Reset(scheduleSignature, resourcePlanRevision, groupSpan);
         int visibilityPacketCount = CountDistinctViewKeys(packets);
-        TimeSpan workerRecordTime = Stopwatch.GetElapsedTime(start);
         RenderPacket lastPacket = packets[^1];
         CommandRecordingDependencySignature scheduleDependencySignature =
             BuildCommandChainDependencySignature(
@@ -639,8 +635,6 @@ public unsafe partial class VulkanRenderer
             chainsFrameDataRefreshed,
             volatileChainsRecorded,
             packets.Count,
-            workerRecordTime,
-            CommandChainsSingleThread || ParallelCommandChainRecordingDisabled ? TimeSpan.Zero : TimeSpan.Zero,
             firstStructuralDirtyReason,
             firstDescriptorMismatch,
             firstResourcePlanMismatch);
@@ -826,8 +820,6 @@ public unsafe partial class VulkanRenderer
             ChainsFrameDataRefreshed: 0,
             VolatileChainsRecorded: 0,
             SecondaryCommandBuffers: chainCount,
-            WorkerRecordTime: TimeSpan.Zero,
-            WaitForWorkersTime: TimeSpan.Zero,
             FirstStructuralDirtyReason: null,
             FirstDescriptorGenerationMismatch: null,
             FirstResourcePlanRevisionMismatch: null);

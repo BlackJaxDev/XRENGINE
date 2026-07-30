@@ -1,4 +1,5 @@
 using System.Numerics;
+using XREngine.Components.Scene.Transforms;
 using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
@@ -23,10 +24,11 @@ public class PhysicsChainCollider : PhysicsChainColliderBase, IRenderable
 
     public PhysicsChainCollider()
     {
-        RenderedObjects =
-        [
-            RenderInfo3D.New(this, new RenderCommandMethod3D((int)EDefaultRenderPass.OpaqueForward, RenderGizmos))
-        ];
+        var renderInfo = RenderInfo3D.New(
+            this,
+            new RenderCommandMethod3D((int)EDefaultRenderPass.OpaqueForward, RenderGizmos));
+        renderInfo.Layer = DefaultLayers.GizmosIndex;
+        RenderedObjects = [renderInfo];
     }
 
     public RenderInfo[] RenderedObjects { get; }
@@ -386,7 +388,7 @@ public class PhysicsChainCollider : PhysicsChainColliderBase, IRenderable
 
     private void RenderGizmos()
     {
-        if (!IsActiveInHierarchy || RuntimeEngine.Rendering.State.IsShadowPass)
+        if (!DebugDraw || !IsActiveInHierarchy || RuntimeEngine.Rendering.State.IsShadowPass)
             return;
 
         Prepare();

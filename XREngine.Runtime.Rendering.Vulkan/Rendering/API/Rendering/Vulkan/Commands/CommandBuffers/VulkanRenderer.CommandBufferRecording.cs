@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -509,8 +510,6 @@ namespace XREngine.Rendering.Vulkan
                     visibilityPackets: commandChainStats.VisibilityPackets,
                     renderPackets: commandChainStats.RenderPackets,
                     secondaryCommandBuffers: commandChainStats.SecondaryCommandBuffers,
-                    chainWorkerRecordTime: commandChainStats.WorkerRecordTime,
-                    renderThreadWaitForWorkersTime: commandChainStats.WaitForWorkersTime,
                     firstStructuralDirtyReason: commandChainStats.FirstStructuralDirtyReason,
                     firstDescriptorGenerationMismatch: commandChainStats.FirstDescriptorGenerationMismatch,
                     firstResourcePlanRevisionMismatch: commandChainStats.FirstResourcePlanRevisionMismatch);
@@ -5352,7 +5351,7 @@ namespace XREngine.Rendering.Vulkan
                         break;
                     if (candidate.Target != firstDraw.Target)
                         break;
-                    if (!AreFrameOpContextsRecordingCompatible(candidate.Context, activeContext))
+                    if (!AreFrameOpContextsCommandChainBatchCompatible(candidate.Context, firstDraw.Context))
                         break;
                     if (candidate.Context.SchedulingIdentity != activeSchedulingIdentity)
                         break;
@@ -5635,30 +5634,18 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
-                // Command-chain mode already owns a persistent worker domain for
-                // mesh packets. Running the older Task-based secondary recorder in
-                // the same frame races shared program/resource state during startup.
-                // Keep indirect chain secondaries serial until they use that worker
-                // domain too.
-                bool useParallelSecondary = false;
-
                 CommandBuffer[] secondaryBuffers = ArrayPool<CommandBuffer>.Shared.Rent(runCount);
                 CommandChain[] secondaryChains = ArrayPool<CommandChain>.Shared.Rent(runCount);
                 int[] uniformSlots = ArrayPool<int>.Shared.Rent(runCount);
                 VkMeshRenderer.IndirectDrawRecordingState[] recordingStates = ArrayPool<VkMeshRenderer.IndirectDrawRecordingState>.Shared.Rent(runCount);
                 bool[] recordingStatePrepared = ArrayPool<bool>.Shared.Rent(runCount);
-                Task[]? tasks = useParallelSecondary
-                    ? ArrayPool<Task>.Shared.Rent(runCount)
-                    : null;
                 Exception? firstError = null;
                 object errorLock = new();
 
                 bool indirectLabelActive = false;
                 if (CanRecordCommandBufferDebugLabels)
                 {
-                    indirectLabelActive = CmdBeginLabel(commandBuffer, useParallelSecondary
-                        ? $"IndirectCommandChainSecondaryParallel[{runCount}]"
-                        : $"IndirectCommandChainSecondary[{runCount}]");
+                    indirectLabelActive = CmdBeginLabel(commandBuffer, $"IndirectCommandChainSecondary[{runCount}]");
                 }
 
                 try
@@ -5854,22 +5841,8 @@ namespace XREngine.Rendering.Vulkan
                         }
                     }
 
-                    if (useParallelSecondary && tasks is not null)
-                    {
-                        for (int i = 0; i < runCount; i++)
-                        {
-                            int taskIndex = i;
-                            tasks[i] = Task.Run(() => RecordSecondaryAt(taskIndex));
-                        }
-
-                        for (int i = 0; i < runCount; i++)
-                            tasks[i]!.Wait();
-                    }
-                    else
-                    {
-                        for (int i = 0; i < runCount; i++)
-                            RecordSecondaryAt(i);
-                    }
+                    for (int i = 0; i < runCount; i++)
+                        RecordSecondaryAt(i);
 
                     if (firstError is not null)
                         throw firstError;
@@ -5906,19 +5879,13 @@ namespace XREngine.Rendering.Vulkan
                     RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(secondaryCommandBuffers: runCount);
                     RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanIndirectRecordingMode(
                         usedSecondary: true,
-                        usedParallel: useParallelSecondary,
+                        usedParallel: false,
                         opCount: runCount);
                     return true;
                 }
                 finally
                 {
                     EndActiveRenderPass();
-
-                    if (tasks is not null)
-                    {
-                        Array.Clear(tasks, 0, runCount);
-                        ArrayPool<Task>.Shared.Return(tasks);
-                    }
 
                     Array.Clear(secondaryBuffers, 0, runCount);
                     Array.Clear(secondaryChains, 0, runCount);
@@ -6052,18 +6019,21 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
-                CommandBuffer[] secondaryBuffers = ArrayPool<CommandBuffer>.Shared.Rent(runCount);
-                CommandChain[] secondaryChains = ArrayPool<CommandChain>.Shared.Rent(runCount);
-                int[] recordJobChainIndices = ArrayPool<int>.Shared.Rent(runCount);
-                int[] recordJobWorkerIndices = ArrayPool<int>.Shared.Rent(runCount);
-                int[] uniformSlots = ArrayPool<int>.Shared.Rent(runCount);
+                CommandChainRecordingBatch batch = _commandChainRecordingBatch;
+                batch.EnsureCapacity(runCount);
+                CommandBuffer[] secondaryBuffers = batch.SecondaryBuffers;
+                CommandChain[] secondaryChains = batch.Chains;
+                int[] recordJobChainIndices = batch.RecordJobChainIndices;
+                int[] recordJobWorkerIndices = batch.RecordJobWorkerIndices;
+                int[] uniformSlots = batch.UniformSlots;
                 Array.Clear(secondaryBuffers, 0, runCount);
                 Array.Clear(secondaryChains, 0, runCount);
+                Array.Clear(batch.PlannerStates, 0, runCount);
+                Array.Clear(batch.HasPlannerState, 0, runCount);
                 int secondaryCount = 0;
                 int scheduledOpCount = 0;
                 int recordJobCount = 0;
                 bool meshLabelActive = false;
-                CommandChainRecordingBatch batch = _commandChainRecordingBatch;
 
                 if (CanRecordCommandBufferDebugLabels)
                     meshLabelActive = CmdBeginLabel(commandBuffer, "ScheduledMeshCommandChainSecondary");
@@ -6200,6 +6170,7 @@ namespace XREngine.Rendering.Vulkan
                         return false;
 
                     batch.Ops = ops;
+                    batch.ChainCount = secondaryCount;
                     batch.Chains = secondaryChains;
                     batch.SecondaryBuffers = secondaryBuffers;
                     batch.RecordJobChainIndices = recordJobChainIndices;
@@ -6223,15 +6194,8 @@ namespace XREngine.Rendering.Vulkan
                     for (int jobIndex = 0; jobIndex < recordJobCount; jobIndex++)
                     {
                         CommandChain chain = secondaryChains[recordJobChainIndices[jobIndex]];
-                        if (TryResolveCommandChainRecordingRendererFamily(
-                                ops,
-                                chain,
-                                commandBufferImageSlot,
-                                EVulkanMeshFrameDataStreamKind.Primary,
-                                out _))
-                        {
+                        if (IsCommandChainWorkerEncodable(ops, chain))
                             workerEligibleJobCount++;
-                        }
                     }
 
                     bool useWorkers = TryPrepareCommandChainRecordingWorkers(
@@ -6240,6 +6204,7 @@ namespace XREngine.Rendering.Vulkan
                         out CommandChainRecordingWorkerState[] workers,
                         out int workerCount,
                         out int workerFrameSlot);
+                    int schedulingConflictCount = 0;
                     for (int jobIndex = 0; jobIndex < recordJobCount; jobIndex++)
                     {
                         int chainIndex = recordJobChainIndices[jobIndex];
@@ -6248,16 +6213,16 @@ namespace XREngine.Rendering.Vulkan
                         // released. If one worker fails, chains that had not yet
                         // begun recording cannot retain an executable old state.
                         MarkCommandChainSecondaryCommandBufferInvalid(chain);
-                        bool hasHomogeneousRendererFamily =
-                            TryResolveCommandChainRecordingRendererFamily(
-                                ops,
+                        int recordingWorkerIndex = useWorkers &&
+                            TryAssignCommandChainRecordingWorker(
+                                batch,
                                 chain,
-                                commandBufferImageSlot,
-                                EVulkanMeshFrameDataStreamKind.Primary,
-                                out VulkanMeshFrameDataRendererFamilyKey rendererFamily);
-                        int recordingWorkerIndex = useWorkers && hasHomogeneousRendererFamily
-                            ? _commandScheduler.ResolveParallelRecordingBucket(rendererFamily, workerCount)
+                                workerCount,
+                                out int assignedWorkerIndex)
+                            ? assignedWorkerIndex
                             : -1;
+                        if (useWorkers && recordingWorkerIndex < 0)
+                            schedulingConflictCount++;
                         recordJobWorkerIndices[jobIndex] = recordingWorkerIndex;
                         if (recordingWorkerIndex >= 0)
                             batch.ActiveWorkerMask |= 1u << recordingWorkerIndex;
@@ -6278,14 +6243,29 @@ namespace XREngine.Rendering.Vulkan
                             throw new InvalidOperationException("Failed to allocate Vulkan scheduled mesh command-chain secondary command buffer.");
 
                         secondaryBuffers[chainIndex] = secondary;
+                        if (ops[chain.SourceStartIndex] is not MeshDrawOp plannerDraw)
+                            throw new InvalidOperationException("Scheduled mesh command chain does not begin with a mesh draw.");
+
+                        using (EnterFrameOpResourcePlannerReadbackScope(plannerDraw.Context))
+                            batch.PlannerStates[chainIndex] = CaptureResourcePlannerRuntimeState();
+                        batch.HasPlannerState[chainIndex] = true;
                     }
 
+                    int serialRecordedCount = 0;
+                    int conflictCount = schedulingConflictCount;
                     if (useWorkers)
                     {
                         CommandChainWorkerTiming timing = DispatchCommandChainRecordingWorkers(batch, workers, workerCount);
-                        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(
-                            chainWorkerRecordTime: timing.WorkerRecordTime,
-                            renderThreadWaitForWorkersTime: timing.WaitForWorkersTime);
+                        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainWorkerMetrics(
+                            queuedChains: timing.QueuedChains,
+                            workersStarted: timing.WorkersStarted,
+                            workersCompleted: timing.WorkersCompleted,
+                            peakConcurrentWorkers: timing.PeakConcurrentWorkers,
+                            queueDelay: timing.QueueDelay,
+                            workerRecordTime: timing.WorkerRecordTime,
+                            workerActiveSpan: timing.WorkerActiveSpan,
+                            workerOverlapTime: timing.WorkerOverlapTime,
+                            waitForWorkersTime: timing.WaitForWorkersTime);
                     }
 
                     using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.SecondaryRecording))
@@ -6293,10 +6273,14 @@ namespace XREngine.Rendering.Vulkan
                         for (int jobIndex = 0; jobIndex < recordJobCount; jobIndex++)
                         {
                             if (recordJobWorkerIndices[jobIndex] < 0)
+                            {
                                 RecordScheduledMeshCommandChainWorker(batch, recordJobChainIndices[jobIndex]);
+                                serialRecordedCount++;
+                            }
                         }
                     }
 
+                    long mergeStart = Stopwatch.GetTimestamp();
                     for (int i = 0; i < secondaryCount; i++)
                     {
                         CommandChain chain = secondaryChains[i];
@@ -6348,21 +6332,19 @@ namespace XREngine.Rendering.Vulkan
                     }
 
                     RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(secondaryCommandBuffers: secondaryCount);
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainWorkerMetrics(
+                        seriallyRecordedChains: serialRecordedCount,
+                        reusedChains: secondaryCount - recordJobCount,
+                        conflictChains: conflictCount,
+                        mergeTime: Stopwatch.GetElapsedTime(mergeStart));
                     return true;
                 }
                 finally
                 {
                     EndActiveRenderPass();
 
-                    batch.ClearReferences();
-
-                    Array.Clear(secondaryBuffers, 0, runCount);
-                    Array.Clear(secondaryChains, 0, runCount);
-                    ArrayPool<CommandBuffer>.Shared.Return(secondaryBuffers);
-                    ArrayPool<CommandChain>.Shared.Return(secondaryChains);
-                    ArrayPool<int>.Shared.Return(recordJobChainIndices);
-                    ArrayPool<int>.Shared.Return(recordJobWorkerIndices);
-                    ArrayPool<int>.Shared.Return(uniformSlots);
+                    if (!batch.Abandoned)
+                        batch.ClearReferences();
 
                     if (meshLabelActive)
                         CmdEndLabel(commandBuffer);

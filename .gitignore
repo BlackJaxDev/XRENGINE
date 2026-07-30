@@ -79,6 +79,7 @@ StyleCopReport.xml
 *_h.h
 *.ilk
 *.meta
+!XREngine.UnitTests/TestData/UnityAvatarProject/**/*.meta
 !/XREngine.UnitTests/TestData/Poiyomi/texture-import-modern.meta
 *.iobj
 *.pch

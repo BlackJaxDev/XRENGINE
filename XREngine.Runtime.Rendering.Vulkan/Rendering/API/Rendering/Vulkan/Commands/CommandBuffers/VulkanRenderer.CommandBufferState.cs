@@ -45,8 +45,6 @@ namespace XREngine.Rendering.Vulkan
         private readonly object _ownedCommandChainSecondaryPoolsLock = new();
         private readonly Dictionary<ulong, OwnedCommandChainSecondaryPool> _ownedCommandChainSecondaryPools = new();
         private bool _enableSecondaryCommandBuffers = true;
-        private bool _enableParallelSecondaryCommandBufferRecording = !IsParallelSecondaryCommandBufferRecordingDisabled();
-        private int _parallelSecondaryIndirectRunThreshold = 4;
         private static readonly int FrameOpSignatureDiffLogLimit = ReadFrameOpSignatureDiffLogLimit();
         private static readonly bool FrameOpSignatureDiffDiagnosticsEnabled =
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanFrameOpSignatureDiff), "1", StringComparison.Ordinal);

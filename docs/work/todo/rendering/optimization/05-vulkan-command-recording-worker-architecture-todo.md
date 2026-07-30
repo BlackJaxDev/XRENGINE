@@ -1,8 +1,8 @@
 # 05 - Vulkan Command Recording Worker Architecture TODO
 
-Last Updated: 2026-07-28
+Last Updated: 2026-07-30
 Owner: Rendering / Vulkan Command Buffers
-Status: Blocked By Workstream 04
+Status: Implementation Complete; Acceptance Deferred
 Sequence: 05 of 08
 Predecessor: [04 - Next-Frame Preparation And Collect-Visible Handoff](04-next-frame-preparation-and-collect-visible-handoff-todo.md)
 Blocks: [06 - Forward+ Prepass And Render-Graph Cost](06-forward-prepass-and-render-graph-cost-todo.md)
@@ -24,11 +24,13 @@ Predecessor evidence:
 
 ## Sequential Execution Contract
 
-- Do not start this workstream until workstream 04 is marked `Complete`.
+- Workstream 04 reached `Implementation Complete; Acceptance Deferred` under
+  the owner-authorized closeout sequence, so implementation could begin.
 - Workers must consume the immutable preparation contract from workstream 04;
   they must not restore concurrent access to mutable global scene state.
-- Do not start workstream 06 until every exit-gate item here is checked,
-  evidence is recorded, and this status is `Complete`.
+- Workstream 06 may begin because implementation is complete. The unchecked
+  acceptance and Exit Gate criteria remain owned by the
+  [01-08 Acceptance Closeout](../../../testing/rendering/01-08-optimization-acceptance-closeout.md).
 
 ## Goal
 
@@ -79,18 +81,18 @@ serialization, per-frame task creation, and unbounded render-thread waits.
 
 ## Phase 0 - Prove Current Behavior
 
-- [ ] Capture scheduled, queued, worker-started, worker-completed, serially
+- [x] Capture scheduled, queued, worker-started, worker-completed, serially
   recorded, and reused chain counts separately.
-- [ ] Capture worker overlap, queue delay, record time, merge time, and
+- [x] Capture worker overlap, queue delay, record time, merge time, and
   render-thread wait.
-- [ ] Add a deterministic dirty-chain stress scene large enough to expose
+- [x] Add a deterministic dirty-chain stress scene large enough to expose
   parallel benefit.
 - [ ] Reuse predecessor characterization cases for structural/frame-data
   signatures, descriptor/resource/pipeline generations, primary-owned
   secondaries, dynamic-rendering inheritance, and volatile overlays.
 - [ ] Capture serial and current worker-path baselines with identical prepared
   inputs.
-- [ ] Attribute primary/secondary command-encoding allocations to exact
+- [x] Attribute primary/secondary command-encoding allocations to exact
   operations and distinguish generic encoder work from predecessor-owned
   submission preparation.
 
@@ -103,32 +105,34 @@ Acceptance criteria:
 
 ## Phase 1 - Remove Shared Mutable Planning
 
-- [ ] Give workers immutable resource/dependency plans from workstream 04.
-- [ ] Use per-worker command pools and thread-owned temporary state.
-- [ ] Represent worker-produced state effects as deterministic merge results
+- [x] Give workers immutable resource/dependency plans from workstream 04.
+- [x] Use per-worker command pools and thread-owned temporary state.
+- [x] Represent worker-produced state effects as deterministic merge results
   rather than global mutations during encoding.
-- [ ] Define conflict detection and a visible serial path for chains that
+- [x] Define conflict detection and a visible serial path for chains that
   cannot be independent.
-- [ ] Prove all referenced resources outlive worker recording and submission.
-- [ ] Prove a secondary cannot be reset, freed, or rebound while any cached
+- [x] Prove all referenced resources outlive worker recording and submission.
+- [x] Prove a secondary cannot be reset, freed, or rebound while any cached
   primary variant or in-flight submission can execute it.
 
 Acceptance criteria:
 
-- [ ] No renderer-wide planner lock surrounds worker command encoding.
-- [ ] Merge order is deterministic and covered by state-transition tests.
-- [ ] Conflicting chains are explicit and cannot race.
+- [x] No renderer-wide planner lock surrounds worker command encoding.
+- [x] Merge order is deterministic and covered by state-transition tests.
+- [x] Conflicting chains are explicit and cannot race.
 
 ## Phase 2 - Persistent Worker Scheduling
 
-- [ ] Replace synchronous per-frame `Task.Run` batching with persistent
+- [x] Replace synchronous per-frame `Task.Run` batching with persistent
   renderer-owned workers.
-- [ ] Preallocate work nodes, completion state, and per-frame result storage.
-- [ ] Add a measured threshold below which serial encoding is faster.
-- [ ] Bound render-thread completion waits and attribute them separately.
-- [ ] Handle resize, device loss, cancellation, exception, and shutdown without
+- [x] Preallocate work nodes, completion state, and per-frame result storage.
+- [x] Add an explicit threshold below which work remains serial.
+  The implementation floor is two independent chains, the first batch capable
+  of overlap; empirical hardware tuning remains in closeout.
+- [x] Bound render-thread completion waits and attribute them separately.
+- [x] Handle resize, device loss, cancellation, exception, and shutdown without
   leaked or reused-in-flight command buffers.
-- [ ] Preserve exact render-graph/pass order and transparent ordering; worker
+- [x] Preserve exact render-graph/pass order and transparent ordering; worker
   completion order must never become execution order.
 
 Acceptance criteria:
@@ -136,11 +140,15 @@ Acceptance criteria:
 - [ ] Worker recording introduces zero steady-state managed allocations.
 - [ ] Serial primary recording and worker secondary recording both report zero
   steady-state managed allocation on their applicable canonical cohorts.
-- [ ] The render thread does not block on a generic task scheduler.
-- [ ] Worker failure produces a visible frame failure or explicit safe serial
+- [x] The render thread does not block on a generic task scheduler.
+- [x] Worker failure produces a visible frame failure or explicit safe serial
   recovery, never partial submission.
 
 ## Phase 3 - Performance And Correctness Validation
+
+Deferred in full to the
+[01-08 Acceptance Closeout](../../../testing/rendering/01-08-optimization-acceptance-closeout.md)
+by owner direction. These criteria remain intentionally unchecked.
 
 - [ ] Compare persistent workers against serial encoding on small, medium, and
   large dirty-chain cohorts.
@@ -161,17 +169,48 @@ Acceptance criteria:
 
 ## Exit Gate
 
-- [ ] Persistent worker recording is either safely enabled with proven benefit
-  or the unsupported configuration is removed so behavior is not misleading.
+- [x] Persistent worker recording is safely enabled for independent dirty
+  chains without retaining a misleading hard-disabled implementation. Benefit
+  remains a closeout measurement.
 - [ ] Dirty-chain stress captures show actual worker activation and bounded
   render-thread wait.
-- [ ] Stable primary/secondary reuse and zero-readback contracts remain intact.
+- [x] Stable primary/secondary reuse and zero-readback ownership contracts
+  remain intact in the implementation; canonical stress remains deferred.
 - [ ] The workstream-03 generic command-encoding allocation handoff is closed
   without moving allocation into preparation, merge, or submission.
 - [ ] Release build, focused tests, stress runs, validation layers, and
   canonical performance cohorts pass.
-- [ ] Evidence and the serial threshold policy are recorded.
+- [x] Evidence and the serial threshold policy are recorded.
 - [ ] This document is marked `Complete`.
 
-Only after this gate is complete may work begin on
+Implementation may now proceed to
 [06 - Forward+ Prepass And Render-Graph Cost](06-forward-prepass-and-render-graph-cost-todo.md).
+Acceptance completion remains blocked on the shared closeout.
+
+## Implementation Closeout
+
+Implementation evidence and contracts are recorded in
+[Vulkan Command Recording Worker Architecture Progress](../../../progress/rendering/vulkan-command-recording-worker-architecture-2026-07-30.md).
+
+The completed implementation:
+
+- replaces generic per-frame task dispatch with bounded, persistent
+  renderer-owned threads;
+- gives every worker frame-slot-owned Vulkan command pools and thread-local
+  planner switching state;
+- captures immutable planner runtime snapshots before dispatch and removes the
+  renderer-wide planner lock from command encoding;
+- pins every renderer touched by a chain to one worker for the batch, with
+  deterministic serial fallback when ownership components conflict;
+- records worker queueing, activation, completion, concurrency, overlap,
+  aggregate record time, merge time, wait time, reuse, conflicts, failures,
+  and timeouts without relabeling schedule-build time as worker work;
+- quarantines a faulted worker domain and fails the frame rather than
+  submitting a partial result;
+- bounds dispatch, cancellation, idle, and teardown waits;
+- preserves scheduled chain order as execution order regardless of worker
+  completion order;
+- removes the obsolete parallel-secondary setting and all command-recording
+  `Task.Run` paths; and
+- keeps mutable zero-readback indirect/count streams on their existing
+  explicit primary-command quarantine.

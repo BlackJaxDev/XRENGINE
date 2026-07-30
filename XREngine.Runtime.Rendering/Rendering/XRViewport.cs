@@ -11,6 +11,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Picking;
+using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.UI;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
@@ -730,6 +731,7 @@ namespace XREngine.Rendering
             _destroyed = true;
             SetSwapBuffersSubscription(false);
             SetCollectVisibleSubscription(false);
+            _renderPipeline.MeshRenderCommands.CancelBackendReadyFramePackages();
             RuntimeEngine.Rendering.ReleaseVulkanUpscaleBridge(this, "viewport destroyed");
             AssociatedPlayer = null;
             CameraComponent = null;
@@ -1138,7 +1140,37 @@ namespace XREngine.Rendering
 
             if (allowScreenSpaceUICollectVisible)
                 CollectVisible_ScreenSpaceUI();
+
+            PrepareBackendReadyFramePackage(commandCollection);
         }
+
+        /// <summary>
+        /// Captures pure backend-planning inputs after visibility collection,
+        /// while the previous frame is still rendering.
+        /// </summary>
+        private void PrepareBackendReadyFramePackage(RenderCommandCollection commandCollection)
+        {
+            int descriptorGeneration =
+                _renderPipeline.ActiveGeneration?.Registry.DescriptorRevision ?? 0;
+            BackendReadyFramePackageIdentity identity = new(
+                RuntimeRenderingHostServices.FrameTiming.CollectFrameId,
+                RuntimeRenderingHostServices.FrameTiming.RequestedCollectGeneration,
+                _renderPipeline.AssignedPipeline?.CommandGeneration ?? 0UL,
+                _renderPipeline.ResourceGeneration,
+                descriptorGeneration,
+                ResolveRenderGraphGeneration(_renderPipeline.Pipeline?.PassMetadata),
+                Width,
+                Height,
+                InternalWidth,
+                InternalHeight);
+            commandCollection.PrepareBackendReadyFramePackage(identity);
+        }
+
+        private static int ResolveRenderGraphGeneration(
+            IReadOnlyCollection<RenderPassMetadata>? passMetadata)
+            => passMetadata is RenderPassMetadataSnapshot snapshot
+                ? snapshot.RevisionStamp
+                : 0;
 
         //private static int s_vpScreenUIDiagCount = 0;
         
@@ -1171,6 +1203,7 @@ namespace XREngine.Rendering
                 //    Debug.Out($"[VP:ScreenUI] CollectVisible dispatching to canvas. DrawSpace={ui.CanvasTransform.DrawSpace} active={ui.IsActive} VP[{Index}]");
                 //s_vpScreenUIDiagCount++;
                 ui.CollectVisibleItemsScreenSpace(this);
+                ui.PrepareBackendReadyFramePackage(this);
             }
             //else if (s_vpScreenUIDiagCount < 5)
             //{
@@ -1198,6 +1231,7 @@ namespace XREngine.Rendering
                 // Skip expensive 3D scene collection but still collect UI
                 // so the editor overlay stays responsive.
                 CollectVisible_ScreenSpaceUI();
+                PrepareBackendReadyFramePackage(_renderPipeline.MeshRenderCommands);
                 RecordFrameOutput(
                     EFrameOutputPhase.Collect,
                     pacing,
@@ -1212,6 +1246,7 @@ namespace XREngine.Rendering
             {
                 long skipStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 CollectVisible_ScreenSpaceUI();
+                PrepareBackendReadyFramePackage(_renderPipeline.MeshRenderCommands);
                 RecordFrameOutput(
                     EFrameOutputPhase.Collect,
                     pacing,

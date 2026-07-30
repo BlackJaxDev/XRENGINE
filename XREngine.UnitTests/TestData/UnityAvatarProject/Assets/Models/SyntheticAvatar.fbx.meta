@@ -1,0 +1,29 @@
+fileFormatVersion: 2
+guid: 11111111111111111111111111111111
+ModelImporter:
+  serializedVersion: 22200
+  externalObjects:
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: Stone
+    second: {fileID: 2100000, guid: 22222222222222222222222222222222, type: 2}
+  materials:
+    materialImportMode: 1
+    materialName: 0
+    materialSearch: 1
+    materialLocation: 1
+  animations:
+    importAnimation: 1
+  meshes:
+    globalScale: 1
+    importBlendShapes: 1
+    fileIdsGeneration: 2
+    useFileUnits: 1
+  animationType: 3
+  globalScale: 1
+  useFileScale: 1
+  bakeAxisConversion: 0
+  preserveHierarchy: 0
+  sortHierarchyByName: 0
+
