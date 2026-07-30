@@ -29,12 +29,14 @@ This document is the execution companion to Phase 11 in the Vulkan GPU-driven un
 
 OpenGL and Vulkan backend files use a shared responsibility vocabulary under
 `XREngine.Runtime.Rendering.<Backend>/Rendering/API/Rendering/<Backend>/`.
-Namespaces currently remain stable as `XREngine.Rendering.OpenGL` and
-`XREngine.Rendering.Vulkan`. Durable subsystem owners, rather than folders
-alone, enforce the new Vulkan boundaries. Subsystem namespace changes are
-deferred until the remaining nested wrapper/test contracts have migrated, so
-namespace churn does not obscure ownership changes.
-
+OpenGL remains in `XREngine.Rendering.OpenGL`. Vulkan keeps facade adapters and
+wrappers in `XREngine.Rendering.Vulkan`, while durable device bootstrap,
+render-graph, and command-recording contracts use
+`XREngine.Rendering.Vulkan.DeviceBootstrap`,
+`XREngine.Rendering.Vulkan.RenderGraph`, and
+`XREngine.Rendering.Vulkan.Commands`. Those namespaces are internal leaf
+boundaries; dependency direction runs from facade/coordinators to owners, and
+owners do not call the facade to discover caches or ambient context.
 Common backend folders:
 
 - `Bootstrap/` - context/API creation, instance/device setup, extension probes,
@@ -83,9 +85,9 @@ adjustments required by the split.
 | `Vulkan/Drawing.Core.cs` | `Vulkan/Frame/VulkanRenderer.FrameLoop.cs`, `Vulkan/Commands/VulkanRenderer.FrameOpApi.cs`, `Vulkan/Commands/VulkanRenderer.RenderStateApi.cs`, `Vulkan/BackendObjects/VulkanRenderer.RenderObjectFactory.cs` |
 | `Vulkan/SwapChain.cs` | `Vulkan/Frame/VulkanRenderer.Swapchain.cs` |
 | `Vulkan/VulkanSynchronization.cs` | `Vulkan/Frame/VulkanRenderer.Synchronization.cs` |
-| `Vulkan/Objects/CommandBuffers.cs` | `Vulkan/Commands/VulkanRenderer.CommandBuffer*.cs` |
-| `Vulkan/VulkanCommandChain*.cs` | `Vulkan/Commands/VulkanCommandChain*.cs` |
-| `Vulkan/VulkanRenderer.State.cs` | `Vulkan/Commands/VulkanRenderer.StateTracking.cs`, `Vulkan/Commands/VulkanRenderer.RenderStateMutation.cs`, `Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs`, `Vulkan/Resources/VulkanRenderer.ResourceRegistration.cs` |
+| `Vulkan/Objects/CommandBuffers.cs` | `Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBuffer*.cs` and focused `VulkanCommandScheduler` / `VulkanCommandRecorder` owners |
+| `Vulkan/VulkanCommandChain*.cs` | `Vulkan/Commands/Scheduling/CommandChain*.cs` |
+| `Vulkan/VulkanRenderer.State.cs` | `Vulkan/Commands/VulkanRenderer.RenderStateMutation.cs`, `Vulkan/RenderGraph/VulkanRenderer.RenderGraphState.cs` plus focused planner partials, and `Vulkan/Resources/VulkanRenderer.ResourceRegistration.cs` |
 | `Vulkan/VulkanRenderGraphCompiler.cs` | `Vulkan/RenderGraph/VulkanRenderGraphCompiler.cs` |
 | `Vulkan/VulkanBarrierPlanner.cs` | `Vulkan/RenderGraph/VulkanBarrierPlanner.cs` |
 | `Vulkan/VulkanResourcePlanner.cs` | `Vulkan/RenderGraph/VulkanResourcePlanner.cs` |
@@ -93,7 +95,7 @@ adjustments required by the split.
 | `Vulkan/VulkanStagingManager.cs` | `Vulkan/Resources/Uploads/VulkanStagingManager.cs` |
 | `Vulkan/Memory/*` | `Vulkan/Resources/Memory/*` |
 | `Vulkan/VulkanDescriptor*.cs` | `Vulkan/Descriptors/VulkanDescriptor*.cs` |
-| `Vulkan/VulkanShaderTools.cs` | `Vulkan/Shaders/VulkanShaderAutoUniforms.cs`, `Vulkan/Shaders/VulkanShaderCompiler.cs`, `Vulkan/Shaders/VulkanShaderReflection.cs`, `Vulkan/Shaders/VulkanShaderSourceFixups.cs`, `Vulkan/Shaders/VulkanShaderTransformFeedback.cs`, `Vulkan/Shaders/VulkanShaderTypes.cs` |
+| `Vulkan/VulkanShaderTools.cs` | `Vulkan/Shaders/VulkanShaderAutoUniforms.cs`, `Vulkan/Shaders/VulkanShaderCompiler.cs`, `Vulkan/Shaders/VulkanShaderReflection.cs`, `Vulkan/Shaders/VulkanShaderSourceFixups.cs`, `Vulkan/Shaders/VulkanShaderTransformFeedback.cs`, `Vulkan/Shaders/DescriptorBindingInfo.cs` |
 | `Vulkan/VulkanPipeline*.cs` | `Vulkan/Pipelines/VulkanPipeline*.cs` |
 | `Vulkan/VulkanUpscaleBridge*.cs` | `Vulkan/Features/Upscaling/VulkanUpscaleBridge*.cs` |
 | `Vulkan/Objects/Types/*` | `Vulkan/BackendObjects/*` or `Vulkan/Types/*` |

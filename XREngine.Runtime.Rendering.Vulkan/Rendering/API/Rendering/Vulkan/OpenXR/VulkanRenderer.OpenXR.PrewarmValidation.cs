@@ -77,7 +77,7 @@ public unsafe partial class VulkanRenderer
                     "eye swapchain prewarm");
 
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.PrewarmEye.Sort"))
-                    ops = _renderGraphCompiler.SortFrameOpsCore(ops, CompiledRenderGraph);
+                    ops = _frameOperationScheduler.SortFrameOpsCore(ops, CompiledRenderGraph);
                 if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                 {
                     Debug.VulkanWarningEvery(
@@ -195,7 +195,7 @@ public unsafe partial class VulkanRenderer
                     "eye mirror prewarm");
 
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.PrewarmEyeMirror.Sort"))
-                    ops = _renderGraphCompiler.SortFrameOpsCore(ops, CompiledRenderGraph);
+                    ops = _frameOperationScheduler.SortFrameOpsCore(ops, CompiledRenderGraph);
                 if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                 {
                     Debug.VulkanWarningEvery(

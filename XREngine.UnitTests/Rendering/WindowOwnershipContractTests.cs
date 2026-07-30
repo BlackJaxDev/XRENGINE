@@ -534,21 +534,5 @@ public sealed class WindowOwnershipContractTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string? directory = TestContext.CurrentContext.TestDirectory;
-        while (!string.IsNullOrEmpty(directory))
-        {
-            string candidate = Path.Combine(directory, "XRENGINE.slnx");
-            if (File.Exists(candidate))
-            {
-                string path = Path.Combine(directory, relativePath.Replace('/', Path.DirectorySeparatorChar));
-                File.Exists(path).ShouldBeTrue($"Expected workspace file '{path}' to exist.");
-                return File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
-            }
-
-            directory = Directory.GetParent(directory)?.FullName;
-        }
-
-        throw new DirectoryNotFoundException("Could not locate repository root from test directory.");
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 }

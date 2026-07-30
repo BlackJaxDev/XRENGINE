@@ -1,6 +1,6 @@
 using System.Collections;
 
-namespace XREngine.Rendering.Vulkan;
+namespace XREngine.Rendering.Vulkan.DeviceBootstrap;
 
 /// <summary>
 /// Immutable, ordinally sorted device-extension names with allocation-free lookup.

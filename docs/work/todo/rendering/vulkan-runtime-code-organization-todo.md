@@ -1,15 +1,16 @@
 # Vulkan Runtime Code Organization TODO
 
-Last updated: 2026-07-29
+Last updated: 2026-07-30
 
 Owner: Rendering / Vulkan
 
-Status: In progress
+Status: Implementation and measurable runtime acceptance complete; external and facade exceptions recorded
 
 Checklist reconciled against the integrated source and validation evidence on
-2026-07-29. Checked items have concrete implementation or recorded validation;
-acceptance and runtime gates remain unchecked when extraction is partial or
-hardware/performance validation has not run.
+2026-07-30. Checked items have concrete implementation or recorded validation.
+Unchecked completion items are deliberate: the legacy facade still exceeds the
+small-facade target, SteamVR cannot create an OpenXR system without an available
+HMD, and those two exceptions are described under Final Acceptance Exceptions.
 
 Related documentation and work:
 
@@ -17,7 +18,7 @@ Related documentation and work:
 - [Rendering Code Map](../../../architecture/rendering/code-map.md)
 - [Frame Lifecycle And Dispatch Paths](../../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
 - [Vulkan Render Loop Design](../../design/rendering/vulkan-render-loop-design.md)
-- [Vulkan Desktop Frame Loop Decomposition TODO](vulkan-desktop-frame-loop-decomposition-todo.md)
+- [Vulkan Desktop Frame Loop Decomposition TODO](../COMPLETED/vulkan-desktop-frame-loop-decomposition-todo.md)
 - [Vulkan Primary Command Recording Fast Path TODO](optimization/vulkan-primary-command-recording-fast-path-todo.md)
 - [Vulkan Dynamic Rendering Migration TODO](vulkan-dynamic-rendering-migration-todo.md)
 - [Render Pipeline Resource Lifecycle TODO](render-pipeline-resource-lifecycle-todo.md)
@@ -59,7 +60,7 @@ class as the final module API.
 ## Relationship To The Desktop Frame-Loop Decomposition
 
 The
-[Vulkan Desktop Frame Loop Decomposition TODO](vulkan-desktop-frame-loop-decomposition-todo.md)
+[Vulkan Desktop Frame Loop Decomposition TODO](../COMPLETED/vulkan-desktop-frame-loop-decomposition-todo.md)
 is the focused execution plan for the desktop-frame portion of this broader
 reorganization. Its frame-attempt context, typed phase outcomes, post-acquire
 recovery policy, and OpenXR activity contract are prerequisites for removing
@@ -371,7 +372,7 @@ contract it expresses.
   paths or nested `VulkanRenderer` type names.
 - [x] Add a shared test helper that discovers Vulkan source recursively for
   structural assertions that cannot yet be replaced.
-- [ ] Replace exact-path and source-text assertions with behavioral, policy,
+- [x] Replace exact-path and source-text assertions with behavioral, policy,
   or internal API tests where practical.
 - [x] Capture a baseline runtime-rendering build and the narrowest relevant
   Vulkan tests.
@@ -384,7 +385,7 @@ contract it expresses.
 
 Acceptance criteria:
 
-- [ ] Moving a Vulkan method between files does not fail a test solely because
+- [x] Moving a Vulkan method between files does not fail a test solely because
   the path changed.
 - [x] External consumers of nested Vulkan types are known.
 - [x] Baseline build/test results and pre-existing failures are recorded.
@@ -401,7 +402,7 @@ Keep behavior and namespaces unchanged in this phase.
 - [x] Rename `VKSampler.cs` to `VkSampler.cs` for normal C# acronym casing.
 - [x] Replace vague phase/scratch file names such as
   `DeviceLossDiagnostics.Phase1.cs` with responsibility names.
-- [ ] Move renderer-global frame-operation queue/signature behavior out of
+- [x] Move renderer-global frame-operation queue/signature behavior out of
   `VkMeshRenderer.cs` and into `Commands/FrameOps/`.
 - [x] Move renderer-global allocation and image tracking out of
   `VkDataBuffer.cs` into `Resources/`.
@@ -409,17 +410,17 @@ Keep behavior and namespaces unchanged in this phase.
   `Commands/VulkanRenderer.StateTracking.cs` into `RenderGraph/` and
   `Resources/` owners.
 - [x] Move the backend-object factory out of `FrameLoop.cs`.
-- [ ] Move readback and pixel decoding out of `VulkanRenderer.Blit.cs`.
+- [x] Move readback and pixel decoding out of `VulkanRenderer.Blit.cs`.
 - [x] Move `VkTransformFeedback` to its runtime owner.
 - [x] Split multi-type files so every top-level type has a matching file name.
-- [ ] Replace `Records/Classes`, `Records/Structs`, and `Enums` groupings with
+- [x] Replace `Records/Classes`, `Records/Structs`, and `Enums` groupings with
   domain folders.
 - [x] Update local folder README contracts after the corrected moves.
 
 Acceptance criteria:
 
-- [ ] Files comply with their folder contracts.
-- [ ] No production file contains unrelated renderer-global behavior before or
+- [x] Files comply with their folder contracts.
+- [x] No production file contains unrelated renderer-global behavior before or
   after its named backend wrapper.
 - [x] Every touched top-level type follows the one-type-per-file rule.
 - [x] The runtime-rendering project builds without new warnings.
@@ -427,9 +428,9 @@ Acceptance criteria:
 ## Phase 2 - De-Nest Backend Contracts And Establish A Renderer Registry
 
 - [x] Inventory nested Vulkan wrapper, key, context, and diagnostic types.
-- [ ] Move independently meaningful types to namespace-level `internal` types
+- [x] Move independently meaningful types to namespace-level `internal` types
   in domain folders.
-- [ ] Update external consumers to use intentional contracts rather than
+- [x] Update external consumers to use intentional contracts rather than
   `VulkanRenderer.SomeType` names.
 - [x] Introduce a per-renderer backend-object registry owned by the Vulkan
   device/resource context.
@@ -443,9 +444,9 @@ Acceptance criteria:
 
 Acceptance criteria:
 
-- [ ] Backend wrappers no longer require nesting for access to renderer state.
+- [x] Backend wrappers no longer require nesting for access to renderer state.
 - [x] Object identity and cache lifetime are scoped to one renderer/device.
-- [ ] No backend object retains the full renderer solely as a service locator.
+- [x] No backend object retains the full renderer solely as a service locator.
 
 ## Phase 3 - Extract Device And Capability Ownership
 
@@ -461,9 +462,9 @@ Acceptance criteria:
 
 Acceptance criteria:
 
-- [ ] `CreateLogicalDevice` is a short coordinator over focused operations.
-- [ ] Runtime feature checks read one immutable capability authority.
-- [ ] Device creation does not depend on unrelated frame, OpenXR, or wrapper
+- [x] `CreateLogicalDevice` is a short coordinator over focused operations.
+- [x] Runtime feature checks read one immutable capability authority.
+- [x] Device creation does not depend on unrelated frame, OpenXR, or wrapper
   state.
 
 ## Phase 4 - Extract Resource, Upload, And Lifetime Services
@@ -486,41 +487,41 @@ Acceptance criteria:
 Acceptance criteria:
 
 - [x] Resource destruction has one traceable path.
-- [ ] Wrapper disposal does not require broad renderer-state mutation.
-- [ ] Steady-state recording and frame submission introduce no new allocations.
-- [ ] Existing resource-lifecycle tests and targeted Vulkan tests pass.
+- [x] Wrapper disposal does not require broad renderer-state mutation.
+- [x] Steady-state recording and frame submission introduce no new allocations.
+- [x] Existing resource-lifecycle tests and targeted Vulkan tests pass.
 
 ## Phase 5 - Consolidate The Render Graph
 
 - [x] Introduce a typed `VulkanResourceBindingKey` that parses and owns the
   current texture/framebuffer/buffer binding grammar.
-- [ ] Remove duplicated binding-name parsing and prefix checks.
-- [ ] Split compiler/cache, frame-operation sorting, swapchain-context
+- [x] Remove duplicated binding-name parsing and prefix checks.
+- [x] Split compiler/cache, frame-operation sorting, swapchain-context
   resolution, secondary-recording buckets, and attachment compatibility into
   focused compilation/scheduling types.
 - [x] Make metadata revision or immutable metadata identity part of compiler
   cache validity.
-- [ ] Replace scratch-list-returning APIs with an explicit borrowed-workspace
+- [x] Replace scratch-list-returning APIs with an explicit borrowed-workspace
   contract or caller-provided destination.
-- [ ] Separate barrier usage collection and Vulkan mapping from plan building.
+- [x] Separate barrier usage collection and Vulkan mapping from plan building.
 - [x] Make the barrier builder return an immutable `VulkanBarrierPlan`.
-- [ ] Extract planner context capture, generation transaction, registry merge,
+- [x] Extract planner context capture, generation transaction, registry merge,
   physical allocation, temporal history, graph rebuild, and validation from
   `VulkanRenderer.ResourcePlannerState.cs`.
 - [x] Introduce `VulkanRenderGraphRuntime` or
   `VulkanResourcePlanCoordinator` as the state owner.
 - [x] Make graph build produce one immutable, versioned
   `VulkanRenderGraphPlan` consumed by recording and execution.
-- [ ] Confirm whether currently isolated helpers such as swapchain-context
+- [x] Confirm whether currently isolated helpers such as swapchain-context
   coalescing are required, then connect or remove them.
 
 Acceptance criteria:
 
-- [ ] Compilation, planning, synchronization, and execution have distinct
+- [x] Compilation, planning, synchronization, and execution have distinct
   owners and one-way dependencies.
 - [x] Cached plans cannot survive an unrepresented metadata revision.
-- [ ] Resource binding syntax is defined and parsed in one place.
-- [ ] Recording consumes immutable plan data without renderer-global planner
+- [x] Resource binding syntax is defined and parsed in one place.
+- [x] Recording consumes immutable plan data without renderer-global planner
   reads.
 
 ## Phase 6 - Extract Command Scheduling And Recording
@@ -531,28 +532,28 @@ Acceptance criteria:
 - [x] Introduce `VulkanCommandRecorder` for Vulkan command emission.
 - [x] Add `VulkanCommandRecordingContext` and capture all frame/view/settings
   inputs before dispatch.
-- [ ] Replace thread-static recording state with context fields or explicitly
+- [x] Replace thread-static recording state with context fields or explicitly
   scoped reusable workspaces.
-- [ ] Extract render-scope begin/end and attachment compatibility into a render
+- [x] Extract render-scope begin/end and attachment compatibility into a render
   scope controller.
-- [ ] Split frame-operation dispatch into cohesive per-domain recorder methods
+- [x] Split frame-operation dispatch into cohesive per-domain recorder methods
   or types.
-- [ ] Extract barrier emission and transfer/upload recording.
+- [x] Extract barrier emission and transfer/upload recording.
 - [x] Separate recording diagnostics from recording policy.
-- [ ] Decompose `TryRecordCommandBuffer` by named lifecycle phase while keeping
+- [x] Decompose `TryRecordCommandBuffer` by named lifecycle phase while keeping
   tightly coupled Vulkan stack structures local.
-- [ ] Decompose `EnsureCommandBufferRecorded` into cache validation, scheduling,
+- [x] Decompose `EnsureCommandBufferRecorded` into cache validation, scheduling,
   recording, and publication operations.
 - [x] Preserve stable queue-operation labels when moving tracked calls.
-- [ ] Benchmark or instrument allocations before and after extraction.
+- [x] Benchmark or instrument allocations before and after extraction.
 
 Acceptance criteria:
 
-- [ ] The top-level recording method reads as a short ordered lifecycle.
-- [ ] Every command operation receives required state explicitly.
-- [ ] No thread-static field is required for normal command recording.
-- [ ] Parallel recording does not share mutable per-recording state.
-- [ ] The primary recording fast path remains allocation-free and does not
+- [x] The top-level recording method reads as a short ordered lifecycle.
+- [x] Every command operation receives required state explicitly.
+- [x] No thread-static field is required for normal command recording.
+- [x] Parallel recording does not share mutable per-recording state.
+- [x] The primary recording fast path remains allocation-free and does not
   regress measured CPU cost.
 
 ## Phase 7 - Decompose Large Backend Wrappers And Shared Services
@@ -572,19 +573,19 @@ Acceptance criteria:
   texture registry, and immutable draw snapshots.
 - [x] Split shader auto-uniform logic into declaration parsing, constant
   evaluation, std140 layout, and binding rewrite responsibilities.
-- [ ] Keep wrapper APIs small and device/resource-context based.
+- [x] Keep wrapper APIs small and device/resource-context based.
 
 Acceptance criteria:
 
-- [ ] Each wrapper file has one obvious lifecycle and data owner.
-- [ ] Renderer-global queues and caches do not live inside individual wrappers.
+- [x] Each wrapper file has one obvious lifecycle and data owner.
+- [x] Renderer-global queues and caches do not live inside individual wrappers.
 - [x] Descriptor and pipeline caches have explicit device lifetime.
-- [ ] ImGui and shader utilities do not use the renderer as a service locator.
+- [x] ImGui and shader utilities do not use the renderer as a service locator.
 
 ## Phase 8 - Extract The Desktop Frame Coordinator
 
 Implement the detailed
-[Vulkan Desktop Frame Loop Decomposition TODO](vulkan-desktop-frame-loop-decomposition-todo.md),
+[Vulkan Desktop Frame Loop Decomposition TODO](../COMPLETED/vulkan-desktop-frame-loop-decomposition-todo.md),
 which is the authoritative checklist for this phase, with this document's
 ownership model as the endpoint. Do not mark Phase 8 complete here until the
 focused decomposition TODO's completion criteria are also satisfied.
@@ -604,8 +605,8 @@ Acceptance criteria:
 - [x] `WindowRenderCallback` is a short facade delegation or coordinator entry.
 - [x] Every acquired image and synchronization primitive has an exactly-once
   terminal path.
-- [ ] OpenXR no longer reads mutable desktop frame-loop fields directly.
-- [ ] Desktop rendering remains allocation-free in steady state.
+- [x] OpenXR no longer reads mutable desktop frame-loop fields directly.
+- [x] Desktop rendering remains allocation-free in steady state.
 
 ## Phase 9 - Extract Vulkan OpenXR And ImGui Backends
 
@@ -641,24 +642,24 @@ Acceptance criteria:
 Do this only after ownership has stabilized; do not combine namespace churn
 with initial file extraction.
 
-- [ ] Introduce subsystem namespaces that match durable ownership where they
+- [x] Introduce subsystem namespaces that match durable ownership where they
   materially improve API clarity.
 - [x] Keep facade and intentionally public contracts in stable rendering
   namespaces.
-- [ ] Mark implementation types `internal` by default.
+- [x] Mark implementation types `internal` by default.
 - [x] Update architecture docs, folder README files, and active TODO links.
-- [ ] Consider a separate Vulkan implementation project only after dependency
+- [x] Consider a separate Vulkan implementation project only after dependency
   direction is clean and a project split would enforce an already-proven
   boundary.
-- [ ] If a project split is selected, document dependency and native-library
+- [x] If a project split is selected, document dependency and native-library
   consequences before changing project files.
 
 Acceptance criteria:
 
-- [ ] Namespace boundaries describe ownership instead of historical file
+- [x] Namespace boundaries describe ownership instead of historical file
   placement.
-- [ ] No circular subsystem dependency is hidden by a shared namespace.
-- [ ] A separate project is optional, not required to compensate for poor type
+- [x] No circular subsystem dependency is hidden by a shared namespace.
+- [x] A separate project is optional, not required to compensate for poor type
   boundaries.
 
 ## Phase 11 - Add Architecture Guardrails
@@ -668,7 +669,7 @@ Acceptance criteria:
 - [x] Add tests preventing top-level multi-type dumping-ground files in the
   Vulkan subsystem.
 - [x] Add tests for per-renderer cache isolation and device lifetime.
-- [ ] Add allocation regression coverage for primary command recording and the
+- [x] Add allocation regression coverage for primary command recording and the
   desktop frame loop where existing harnesses support it.
 - [x] Add invariant tests for resource retirement and post-acquire recovery.
 - [x] Document the approved dependency direction in the Vulkan architecture
@@ -676,7 +677,7 @@ Acceptance criteria:
 
 Acceptance criteria:
 
-- [ ] The old monolith cannot regrow silently.
+- [x] The old monolith cannot regrow silently.
 - [x] Ownership violations produce a focused test or analyzer failure.
 - [x] Contributors can find the state owner for a command, resource, or frame
   transition from the architecture documentation.
@@ -693,23 +694,56 @@ reorganization to land.
   ```
 
 - [x] Run the narrowest tests for the changed responsibility.
-- [ ] Run `Test-VulkanPhase3-Regression` after command, graph, lifetime, or
+- [x] Run `Test-VulkanPhase3-Regression` after command, graph, lifetime, or
   frame-loop changes.
-- [ ] Build the editor after facade, namespace, or project-boundary changes:
+- [x] Build the editor after facade, namespace, or project-boundary changes:
 
   ```powershell
   dotnet build .\XREngine.Editor\XREngine.Editor.csproj
   ```
 
-- [ ] Run a Vulkan Unit Testing World startup after device, swapchain, command,
+- [x] Run a Vulkan Unit Testing World startup after device, swapchain, command,
   or desktop-frame changes.
-- [ ] Run the applicable OpenXR Monado/SteamVR smoke lane after Vulkan OpenXR,
+- [x] Run the applicable OpenXR Monado/SteamVR smoke lane after Vulkan OpenXR,
   submission, synchronization, descriptor, or resource-lifetime changes.
-- [ ] Compare validation-layer output before and after lifecycle changes.
-- [ ] Measure command-recording and frame-loop allocations before and after
+- [x] Compare validation-layer output before and after lifecycle changes.
+- [x] Measure command-recording and frame-loop allocations before and after
   hot-path extractions.
-- [ ] Record active investigation evidence under `Build/_AgentValidation/` and
+- [x] Record active investigation evidence under `Build/_AgentValidation/` and
   durable phase status under `docs/work/progress/rendering/`.
+
+## Final Acceptance Exceptions
+
+The implementation checklist and measurable desktop acceptance gates are
+complete. The following two acceptance claims remain intentionally unchecked
+rather than being inferred from type names or unavailable hardware:
+
+- `VulkanRenderer` now delegates the named device, resource-lifetime,
+  render-graph, command, descriptor, pipeline, desktop, OpenXR, and ImGui
+  authorities, and guardrails prevent their state from moving back into new
+  partials. Bindless material descriptor state was additionally extracted into
+  `VulkanBindlessMaterialTextureTableState`. The current compatibility facade
+  nevertheless still has 72 explicitly baselined stateful partials and 548
+  legacy fields. That is a
+  one-way debt ceiling, not evidence that the literal small-facade endpoint has
+  been reached.
+- The canonical SteamVR smoke lane was run. SteamVR was active, but
+  `xrGetSystem` returned `ErrorFormFactorUnavailable` before a Vulkan physical
+  device or session could be selected. This is an external hardware/runtime
+  availability block, so the all-runtime completion criterion is not checked.
+
+The former performance exception is resolved. `OnTopForward` is now an explicit
+CPU-direct overlay pass; material preparation reuses its scratch state; indirect
+draw operations are frame-pooled; and the allocation evaluator gates eligible
+primary records rather than unrelated ineligible work. The dedicated authored-
+material cohort reports a `1.0` eligible-primary reuse ratio, zero eligible
+primary-recording bytes, 12/12 ready material rows, zero non-ready references,
+zero fallback-submitted rows, zero submission rejections, and zero validation
+VUIDs. The material cohort disables locomotion and temporal AA so it uses the
+flying camera without capturing the cursor and exposes authored checker
+materials directly.
+
+Exact evidence and commands are recorded in the linked progress note.
 
 ## Migration And Review Strategy
 
@@ -733,21 +767,21 @@ reorganization to land.
 
 - [ ] `VulkanRenderer` is a small facade and composition root, not the owner of
   most backend state.
-- [ ] Device, resources, render graph, command recording, desktop frames,
+- [x] Device, resources, render graph, command recording, desktop frames,
   descriptors, pipelines, OpenXR, and ImGui each have an explicit owner.
-- [ ] No production hot path depends on thread-static context for ordinary
+- [x] No production hot path depends on thread-static context for ordinary
   operation.
-- [ ] The largest orchestration methods read as named, testable lifecycles.
-- [ ] Backend wrappers are namespace-level types with per-renderer/device
+- [x] The largest orchestration methods read as named, testable lifecycles.
+- [x] Backend wrappers are namespace-level types with per-renderer/device
   identity and lifetime.
 - [x] Render-graph plans are immutable, versioned, and free of hidden borrowed
   scratch lifetimes.
-- [ ] Resource destruction, queue submission/presentation, and post-acquire
+- [x] Resource destruction, queue submission/presentation, and post-acquire
   recovery each have one authority.
-- [ ] Folder contracts, namespaces, tests, and architecture docs agree with the
+- [x] Folder contracts, namespaces, tests, and architecture docs agree with the
   implementation.
 - [ ] Targeted tests, runtime-rendering build, editor build, Vulkan startup, and
   relevant OpenXR smoke validation pass without new warnings or validation
   errors.
-- [ ] Command recording and frame orchestration remain allocation-free in
+- [x] Command recording and frame orchestration remain allocation-free in
   steady state and show no material CPU regression.

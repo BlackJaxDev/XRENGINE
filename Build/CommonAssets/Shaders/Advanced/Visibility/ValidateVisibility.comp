@@ -1,0 +1,52 @@
+#version 450
+
+#include "VisibilityInterface.glslinc"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+#if defined(XR_ADV_VISIBILITY_ARRAY)
+layout(binding = 0) uniform usampler2DArray VisibilityIdentity;
+layout(binding = 1) uniform usampler2DArray VisibilityMetadata;
+#else
+layout(binding = 0) uniform usampler2D VisibilityIdentity;
+layout(binding = 1) uniform usampler2D VisibilityMetadata;
+#endif
+
+void main()
+{
+#if defined(XR_ADV_VISIBILITY_ARRAY)
+    ivec3 pixel = ivec3(gl_GlobalInvocationID);
+    ivec3 size = textureSize(VisibilityIdentity, 0);
+#else
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = textureSize(VisibilityIdentity, 0);
+#endif
+    if (any(greaterThanEqual(pixel, size)))
+        return;
+
+    uvec2 identity =
+        texelFetch(VisibilityIdentity, pixel, 0).rg;
+    uint metadata =
+        texelFetch(VisibilityMetadata, pixel, 0).r;
+    uint version =
+        (metadata >> XR_ADV_VIS_VERSION_SHIFT) & 0xFFu;
+    bool valid =
+        identity.x != 0u &&
+        identity.x != XR_ADV_VIS_INVALID &&
+        identity.y != XR_ADV_VIS_INVALID &&
+        metadata != XR_ADV_VIS_INVALID &&
+        version == XR_ADV_VISIBILITY_PAYLOAD_VERSION;
+    if (valid)
+    {
+        uint drawDense = XR_ADV_ResolveVisibilityStableIndex(
+            identity.x,
+            VisibilityDrawLookupSegment,
+            XR_ADV_DIAGNOSTIC_DRAW);
+        valid = drawDense != XR_ADV_INVALID_DENSE_INDEX;
+    }
+
+    if (valid)
+        atomicAdd(XR_ADV_VisibilityCounters.validPixels, 1u);
+    else
+        atomicAdd(XR_ADV_VisibilityCounters.invalidPixels, 1u);
+}

@@ -281,7 +281,7 @@ internal sealed partial class VulkanTextureUploadService
             return false;
         }
 
-        if (renderer.GetOrCreateAPIRenderObject(texture, generateNow: false) is not VulkanRenderer.VkTexture2D vkTexture)
+        if (renderer.GetOrCreateAPIRenderObject(texture, generateNow: false) is not VkTexture2D vkTexture)
         {
             failureReason = "Vulkan texture wrapper could not be resolved for imported texture upload.";
             return false;

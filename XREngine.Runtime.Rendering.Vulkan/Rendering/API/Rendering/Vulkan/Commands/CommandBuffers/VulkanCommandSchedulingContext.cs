@@ -18,7 +18,7 @@ internal ref struct VulkanCommandSchedulingContext<TVariant>
         RecordingDeferredReason = string.Empty;
         DynamicUiSecondaryCommandBuffer = default;
         DynamicUiOverlayOperationCount = 0;
-        DynamicUiOverlayOperations = Array.Empty<VulkanRenderer.FrameOp>();
+        DynamicUiOverlayOperations = Array.Empty<FrameOp>();
         DynamicUiOverlaySignature = 0;
         DynamicUiOverlayVariant = null;
         TextureUploadCommandBuffer = default;
@@ -34,7 +34,7 @@ internal ref struct VulkanCommandSchedulingContext<TVariant>
     public string RecordingDeferredReason;
     public Silk.NET.Vulkan.CommandBuffer DynamicUiSecondaryCommandBuffer;
     public int DynamicUiOverlayOperationCount;
-    public VulkanRenderer.FrameOp[] DynamicUiOverlayOperations;
+    public FrameOp[] DynamicUiOverlayOperations;
     public ulong DynamicUiOverlaySignature;
     public TVariant? DynamicUiOverlayVariant;
     public Silk.NET.Vulkan.CommandBuffer TextureUploadCommandBuffer;

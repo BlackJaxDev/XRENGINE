@@ -1,6 +1,6 @@
 using XREngine.Rendering.RenderGraph;
 
-namespace XREngine.Rendering.Vulkan;
+namespace XREngine.Rendering.Vulkan.RenderGraph;
 
 /// <summary>Final state exported by the graph for a logical resource version.</summary>
 internal sealed record RenderGraphPlanOutputContract(

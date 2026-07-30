@@ -7,29 +7,6 @@ public unsafe partial class VulkanRenderer
     private const int MeshDescriptorPoolSlabAllocationCapacity = 64;
     private const int MeshOwnershipDiagnosticLimit = 64;
 
-    internal readonly record struct MeshDescriptorPoolSlabKey(
-        ulong PoolSizeFingerprint,
-        int SetsPerAllocation,
-        bool UpdateAfterBind);
-
-    internal sealed class MeshDescriptorPoolSlab
-    {
-        public required MeshDescriptorPoolSlabKey Key { get; init; }
-        public required DescriptorPool Pool { get; init; }
-        public int IssuedAllocationCount;
-        public int LiveAllocationCount;
-    }
-
-    internal sealed class MeshDescriptorPoolSlabLease
-    {
-        internal readonly MeshDescriptorPoolSlab _slab;
-        internal MeshDescriptorPoolSlabLease(MeshDescriptorPoolSlab slab)
-            => _slab = slab;
-
-        internal DescriptorPool Pool => _slab.Pool;
-        internal bool Released { get; set; }
-    }
-
     internal bool TryAcquireMeshDescriptorPoolSlab(
         DescriptorPoolSize[] perAllocationPoolSizes,
         int setsPerAllocation,
@@ -126,7 +103,7 @@ public unsafe partial class VulkanRenderer
                 return;
             lease.Released = true;
 
-            MeshDescriptorPoolSlab slab = lease._slab;
+            MeshDescriptorPoolSlab slab = lease.Slab;
             slab.LiveAllocationCount--;
             if (slab.LiveAllocationCount < 0)
                 throw new InvalidOperationException("Mesh descriptor pool slab lease underflow.");

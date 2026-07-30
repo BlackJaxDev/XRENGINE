@@ -84,7 +84,7 @@ public sealed class BackendReadyFramePackageTests
     public void VulkanResourcePlanner_ConsumesPublishedPackageMetadata()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerContext.cs");
 
         source.ShouldContain(
             "pipeline.ActiveMeshRenderCommands.RenderingBackendReadyPackage.PassMetadata");

@@ -300,9 +300,7 @@ namespace XREngine.Rendering.Vulkan
             if (attempt.SlotCompleted)
                 return;
 
-            Volatile.Write(
-                ref _desktopFrameSlot,
-                (attempt.FrameSlot + 1) % MAX_FRAMES_IN_FLIGHT);
+            AdvanceDesktopFrameSlot(attempt.FrameSlot);
             attempt.SlotCompleted = true;
             RecordDesktopFrameTickObserved(Stopwatch.GetTimestamp());
         }

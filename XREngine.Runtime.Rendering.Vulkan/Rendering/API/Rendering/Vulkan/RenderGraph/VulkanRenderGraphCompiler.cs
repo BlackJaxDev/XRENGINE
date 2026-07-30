@@ -1,650 +1,105 @@
-using System;
-using System.Buffers;
-using System.Collections.Generic;
 using System.Collections.Concurrent;
-using System.Collections.ObjectModel;
-using System.Linq;
-using System.Runtime.CompilerServices;
 using XREngine.Rendering.RenderGraph;
 
-namespace XREngine.Rendering.Vulkan;
+namespace XREngine.Rendering.Vulkan.RenderGraph;
 
-public unsafe partial class VulkanRenderer
+/// <summary>
+/// Compiles immutable Vulkan render-graph structures and owns the metadata compilation cache.
+/// </summary>
+internal sealed class VulkanRenderGraphCompiler
 {
-    private VulkanRenderGraphCompiler _renderGraphCompiler => _renderGraphRuntime.Compiler;
+    private const string ScreenSpaceUiPassName = "VPRC_RenderScreenSpaceUI";
+    private const int MaxMetadataCacheEntries = 64;
+    private sealed class CompiledGraphCacheEntry(IReadOnlyCollection<RenderPassMetadata> metadata)
+    {
+        public VulkanCompiledRenderGraph Graph { get; } = BuildCompiledGraph(metadata);
+    }
+
+    // Do not use ConditionalWeakTable here. Its runtime dependent handles let stable
+    // render-graph metadata keys retain collectible-generation cache values after the
+    // owning compiler becomes unreachable. A bounded, generation-owned dictionary is
+    // released atomically with the renderer and therefore unloads without ephemerons.
+    private readonly ConcurrentDictionary<IReadOnlyCollection<RenderPassMetadata>, CompiledGraphCacheEntry>
+        _compiledGraphCache = new(ReferenceEqualityComparer.Instance);
+
+    internal void ReleaseCaches()
+        => _compiledGraphCache.Clear();
 
     /// <summary>
-    /// Compiles frame-level render graph metadata into a compact Vulkan-friendly plan and
-    /// provides deterministic operation ordering/grouping helpers used during command recording.
+    /// Compiles the high-level pass metadata into:
+    /// 1) topological pass order,
+    /// 2) compatible graphics pass batches,
+    /// 3) synchronization plan.
     /// </summary>
-    internal sealed class VulkanRenderGraphCompiler
+    /// <param name="passMetadata">Per-pass metadata emitted by render graph construction.</param>
+    /// <returns>A compiled graph snapshot consumed by frame op sorting and barrier emission.</returns>
+    public VulkanCompiledRenderGraph Compile(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
     {
-        private const string ScreenSpaceUiPassName = "VPRC_RenderScreenSpaceUI";
-        private const string RenderUiBatchedPassNamePrefix = "RenderUIBatched_";
-        private const int MaxMetadataCacheEntries = 64;
-        private readonly List<SecondaryRecordingBucket> _secondaryRecordingBucketScratch = new(32);
-
-        /// <summary>
-        /// Describes one contiguous run of compatible operations that can be recorded into
-        /// secondary command buffers as a batch.
-        /// </summary>
-        internal readonly record struct SecondaryRecordingBucket(
-            int StartIndex,
-            int Count,
-            int PassIndex,
-            int TargetIdentity,
-            int SchedulingIdentity,
-            Type OpType,
-            FrameOpContext Context);
-
-        private readonly struct FrameOpSortKey(
-            FrameOp operation,
-            int contextBlockOrder,
-            int passOrder,
-            int originalIndex,
-            int queryOrderBlock)
-        {
-            public FrameOp Operation { get; } = operation;
-            public int ContextBlockOrder { get; } = contextBlockOrder;
-            public int PassOrder { get; } = passOrder;
-            public int OriginalIndex { get; } = originalIndex;
-            public int QueryOrderBlock { get; } = queryOrderBlock;
-        }
-
-        private sealed class FrameOpSortKeyComparer : IComparer<FrameOpSortKey>
-        {
-            public static readonly FrameOpSortKeyComparer Instance = new();
-
-            public int Compare(FrameOpSortKey x, FrameOpSortKey y)
-            {
-                int blockCompare = x.ContextBlockOrder.CompareTo(y.ContextBlockOrder);
-                if (blockCompare != 0)
-                    return blockCompare;
-
-                int passCompare = x.PassOrder.CompareTo(y.PassOrder);
-                if (passCompare != 0)
-                    return passCompare;
-
-                // Passes absent from graph metadata share the same fallback rank. Use
-                // one global query-boundary ordinal at that rank so draws from another
-                // equal-ranked pass cannot make this comparator non-transitive or enter
-                // an inline query bracket.
-                int queryBlockCompare = x.QueryOrderBlock.CompareTo(y.QueryOrderBlock);
-                if (queryBlockCompare != 0)
-                    return queryBlockCompare;
-
-                if (x.Operation is MeshDrawOp xDraw &&
-                    y.Operation is MeshDrawOp yDraw &&
-                    CanCanonicalizeMeshDrawOrder(xDraw) &&
-                    CanCanonicalizeMeshDrawOrder(yDraw))
-                {
-                    int drawCompare = CompareCanonicalMeshDrawOrder(xDraw, yDraw);
-                    if (drawCompare != 0)
-                        return drawCompare;
-                }
-
-                return x.OriginalIndex.CompareTo(y.OriginalIndex);
-            }
-
-            private static bool CanCanonicalizeMeshDrawOrder(MeshDrawOp op)
-                => op.Draw.Renderer is not null &&
-                   !op.Draw.BlendEnabled &&
-                   !op.PreserveSubmissionOrder &&
-                   !IsUiPipelineDraw(op);
-
-            private static bool IsUiPipelineDraw(MeshDrawOp op)
-                => op.Context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline;
-
-            private static int CompareCanonicalMeshDrawOrder(MeshDrawOp x, MeshDrawOp y)
-            {
-                int targetCompare = (x.Target?.GetHashCode() ?? 0).CompareTo(y.Target?.GetHashCode() ?? 0);
-                if (targetCompare != 0)
-                    return targetCompare;
-
-                int materialCompare = (x.Draw.MaterialOverride?.GetHashCode() ?? 0).CompareTo(y.Draw.MaterialOverride?.GetHashCode() ?? 0);
-                if (materialCompare != 0)
-                    return materialCompare;
-
-                int rendererCompare = x.Draw.Renderer.GetHashCode().CompareTo(y.Draw.Renderer.GetHashCode());
-                if (rendererCompare != 0)
-                    return rendererCompare;
-
-                int instanceCompare = x.Draw.Instances.CompareTo(y.Draw.Instances);
-                if (instanceCompare != 0)
-                    return instanceCompare;
-
-                return ((int)x.Draw.BillboardMode).CompareTo((int)y.Draw.BillboardMode);
-            }
-        }
-        private static readonly Comparison<FrameOpSortKey> FrameOpSortComparison =
-            FrameOpSortKeyComparer.Instance.Compare;
-
-        private sealed class PassOrderCacheEntry
-        {
-            public PassOrderCacheEntry(IReadOnlyCollection<RenderPassMetadata> metadata)
-            {
-                IReadOnlyList<RenderPassMetadata> orderedPasses = RenderGraphSynchronizationPlanner.TopologicallySort(metadata);
-                Dictionary<int, int> passOrder = new(orderedPasses.Count);
-                for (int i = 0; i < orderedPasses.Count; i++)
-                    passOrder[orderedPasses[i].PassIndex] = i;
-
-                PassOrder = passOrder;
-            }
-
-            public IReadOnlyDictionary<int, int> PassOrder { get; }
-        }
-
-        private sealed class CompiledGraphCacheEntry(IReadOnlyCollection<RenderPassMetadata> metadata)
-        {
-            public VulkanCompiledRenderGraph Graph { get; } = BuildCompiledGraph(metadata);
-        }
-
-        // Do not use ConditionalWeakTable here. Its runtime dependent handles let stable
-        // render-graph metadata keys retain collectible-generation cache values after the
-        // owning compiler becomes unreachable. A bounded, generation-owned dictionary is
-        // released atomically with the renderer and therefore unloads without ephemerons.
-        private readonly ConcurrentDictionary<IReadOnlyCollection<RenderPassMetadata>, PassOrderCacheEntry>
-            _passOrderCache = new(ReferenceEqualityComparer.Instance);
-        private readonly ConcurrentDictionary<IReadOnlyCollection<RenderPassMetadata>, CompiledGraphCacheEntry>
-            _compiledGraphCache = new(ReferenceEqualityComparer.Instance);
-
-        internal void ReleaseCaches()
-        {
-            _passOrderCache.Clear();
-            _compiledGraphCache.Clear();
-            _secondaryRecordingBucketScratch.Clear();
-        }
-
-        /// <summary>
-        /// Compiles the high-level pass metadata into:
-        /// 1) topological pass order,
-        /// 2) compatible graphics pass batches,
-        /// 3) synchronization plan.
-        /// </summary>
-        /// <param name="passMetadata">Per-pass metadata emitted by render graph construction.</param>
-        /// <returns>A compiled graph snapshot consumed by frame op sorting and barrier emission.</returns>
-        public VulkanCompiledRenderGraph Compile(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
-        {
-            // No metadata means there is no ordering/batching/synchronization work to perform.
-            if (passMetadata is null || passMetadata.Count == 0)
-                return VulkanCompiledRenderGraph.Empty;
-
-            TrimMetadataCachesIfRequired();
-            return _compiledGraphCache.GetOrAdd(
-                passMetadata,
-                static metadata => new CompiledGraphCacheEntry(metadata)).Graph;
-        }
-
-        private void TrimMetadataCachesIfRequired()
-        {
-            if (_compiledGraphCache.Count < MaxMetadataCacheEntries &&
-                _passOrderCache.Count < MaxMetadataCacheEntries)
-            {
-                return;
-            }
-
-            _compiledGraphCache.Clear();
-            _passOrderCache.Clear();
-        }
-
-        private static VulkanCompiledRenderGraph BuildCompiledGraph(IReadOnlyCollection<RenderPassMetadata> passMetadata)
-        {
-            // Topological order ensures producers are recorded before their consumers.
-            IReadOnlyList<RenderPassMetadata> orderedPasses = RenderGraphSynchronizationPlanner.TopologicallySort(passMetadata);
-
-            // Build explicit synchronization requirements from the same metadata source.
-            RenderGraphSynchronizationInfo synchronization = RenderGraphSynchronizationPlanner.Build(passMetadata);
-
-            // passIndex -> topological order index lookup used by SortFrameOps.
-            Dictionary<int, int> passOrder = new(orderedPasses.Count);
-            int screenSpaceUiPassOrder = int.MaxValue;
-
-            // Graphics passes with compatible attachment signatures are merged into batches.
-            List<VulkanCompiledPassBatch> batches = [];
-
-            for (int i = 0; i < orderedPasses.Count; i++)
-            {
-                RenderPassMetadata pass = orderedPasses[i];
-                passOrder[pass.PassIndex] = i;
-                if (screenSpaceUiPassOrder == int.MaxValue &&
-                    string.Equals(pass.Name, ScreenSpaceUiPassName, StringComparison.OrdinalIgnoreCase))
-                {
-                    screenSpaceUiPassOrder = i;
-                }
-
-                // Signature captures the effective attachment contract for compatibility checks.
-                string signature = BuildAttachmentSignature(pass);
-                if (batches.Count > 0 && IsBatchCompatible(batches[^1], pass, signature))
-                {
-                    // Extend current batch when stage/signature compatibility holds.
-                    batches[^1].AddPass(pass.PassIndex);
-                }
-                else
-                {
-                    // Start a new batch when compatibility is broken or this is the first pass.
-                    VulkanCompiledPassBatch batch = new(batches.Count, pass.Stage, signature);
-                    batch.AddPass(pass.PassIndex);
-                    batches.Add(batch);
-                }
-            }
-
-            return new VulkanCompiledRenderGraph(
-                orderedPasses,
-                passOrder,
-                batches,
-                synchronization,
-                screenSpaceUiPassOrder);
-        }
-
-        /// <summary>
-        /// Sorts frame operations deterministically by:
-        /// 1) compiled pass topological order,
-        /// 2) canonical opaque mesh draw order when both operations are safe to reorder,
-        /// 3) original index for all dependency-carrying operations,
-        /// 4) same-pass target clear-before-use normalization.
-        /// </summary>
-        /// <remarks>
-        /// Pass order must dominate scheduling groups so consumers cannot be recorded before
-        /// producers when different pipeline/viewport contexts enqueue related work. The pass
-        /// rank is resolved from the compiled frame graph first; per-context metadata is only
-        /// a fallback for nested work that is absent from the active graph.
-        /// Same-pass operations preserve original enqueue order unless both are canonicalizable
-        /// opaque mesh draws. After sorting, target clears are lifted just far enough to precede
-        /// earlier uses of the same scheduling context and exact target; this keeps clears from
-        /// landing after desktop/HMD work when simultaneous render contexts interleave.
-        /// </remarks>
-        /// <param name="ops">Operations to sort.</param>
-        /// <param name="graph">Compiled pass-order metadata.</param>
-        /// <returns>The input array, sorted in place (or unchanged for length 0/1).</returns>
-        public static FrameOp[] SortFrameOps(FrameOp[] ops, VulkanCompiledRenderGraph graph)
-            => new VulkanRenderGraphCompiler().SortFrameOpsCore(ops, graph);
-
-        /// <summary>
-        /// Sorts frame operations using caches owned by the active renderer generation.
-        /// </summary>
-        public FrameOp[] SortFrameOpsCore(FrameOp[] ops, VulkanCompiledRenderGraph graph)
-        {
-            // Fast path: trivial arrays are already sorted and preserving reference identity helps tests.
-            if (ops.Length <= 1)
-                return ops;
-
-            int opCount = ops.Length;
-            FrameOpSortKey[] sortKeys =
-                ArrayPool<FrameOpSortKey>.Shared.Rent(opCount);
-
-            try
-            {
-                bool preserveContextBlocks = HasSubmissionOrderBlock(ops);
-                int queryOrderBlock = 0;
-
-                for (int i = 0; i < opCount; i++)
-                {
-                    FrameOp op = ops[i];
-                    sortKeys[i] = new FrameOpSortKey(
-                        op,
-                        preserveContextBlocks ? ResolveContextBlockOrder(ops, i) : 0,
-                        ResolvePassOrder(op, graph),
-                        i,
-                        queryOrderBlock);
-
-                    // The current query op terminates its preceding order block. A
-                    // single forward ordinal makes this O(N) and fences equal-ranked
-                    // passes as well as operations with the same PassIndex.
-                    if (op is QueryOp)
-                        queryOrderBlock++;
-                }
-
-                bool alreadySorted = true;
-                for (int i = 1; i < opCount; i++)
-                {
-                    if (FrameOpSortKeyComparer.Instance.Compare(sortKeys[i - 1], sortKeys[i]) <= 0)
-                        continue;
-
-                    alreadySorted = false;
-                    break;
-                }
-
-                if (!alreadySorted)
-                    SortFrameOpKeysInPlace(sortKeys, opCount);
-
-                bool movedTargetClear = MoveTargetClearsBeforeFirstSameTargetUse(sortKeys, opCount);
-                if (alreadySorted && !movedTargetClear)
-                    return ops;
-
-                for (int i = 0; i < opCount; i++)
-                    ops[i] = sortKeys[i].Operation;
-
-                return ops;
-            }
-            finally
-            {
-                Array.Clear(sortKeys, 0, opCount);
-                ArrayPool<FrameOpSortKey>.Shared.Return(sortKeys);
-            }
-        }
-
-        /// <summary>
-        /// Sorts the warmed frame-op scratch with the span introsort.
-        /// Camera motion can interleave hundreds of cascade and scene operations, so an
-        /// insertion sort here becomes quadratic precisely when frame time matters most.
-        /// The comparison delegate is cached because adapting an <see cref="IComparer{T}"/>
-        /// inside the generic sort helper allocates once per non-trivial command re-record.
-        /// </summary>
-        private static void SortFrameOpKeysInPlace(FrameOpSortKey[] sortKeys, int opCount)
-            => sortKeys.AsSpan(0, opCount).Sort(FrameOpSortComparison);
-
-        private static bool HasSubmissionOrderBlock(FrameOp[] ops)
-        {
-            for (int i = 0; i < ops.Length; i++)
-            {
-                if (ops[i].Context.PreserveSubmissionOrderBlock)
-                    return true;
-            }
-
-            return false;
-        }
-
-        private static int ResolveContextBlockOrder(FrameOp[] ops, int index)
-        {
-            int schedulingIdentity = ops[index].Context.SchedulingIdentity;
-            for (int i = 0; i < index; i++)
-            {
-                if (ops[i].Context.SchedulingIdentity == schedulingIdentity)
-                    return i;
-            }
-
-            return index;
-        }
-
-        private static bool MoveTargetClearsBeforeFirstSameTargetUse(FrameOpSortKey[] sortKeys, int opCount)
-        {
-            bool moved = false;
-            for (int i = 1; i < opCount; i++)
-            {
-                FrameOpSortKey clearKey = sortKeys[i];
-                if (clearKey.Operation is not ClearOp clear)
-                    continue;
-
-                int insertIndex = i;
-                for (int j = i - 1; j >= 0; j--)
-                {
-                    FrameOpSortKey previous = sortKeys[j];
-                    if (previous.PassOrder != clearKey.PassOrder)
-                        break;
-                    if (IsSameSchedulingTarget(clear, previous.Operation) &&
-                        IsTargetUseThatClearMustPrecede(previous.Operation))
-                    {
-                        insertIndex = j;
-                    }
-                }
-
-                if (insertIndex == i)
-                    continue;
-
-                Array.Copy(sortKeys, insertIndex, sortKeys, insertIndex + 1, i - insertIndex);
-                sortKeys[insertIndex] = clearKey;
-                moved = true;
-            }
-
-            return moved;
-        }
-
-        private static bool IsSameSchedulingTarget(FrameOp x, FrameOp y)
-            => x.Context.SchedulingIdentity == y.Context.SchedulingIdentity &&
-               ReferenceEquals(x.Target, y.Target);
-
-        private static bool IsTargetUseThatClearMustPrecede(FrameOp op)
-            => op is MeshDrawOp or QueryOp or BlitOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp or TransformFeedbackOp;
-
-        private int ResolvePassOrder(FrameOp op, VulkanCompiledRenderGraph graph)
-        {
-            if (op is TextureUploadFrameOp)
-                return int.MinValue;
-
-            if (TryResolveNestedScreenSpaceUiPassOrder(op, graph, out int screenSpaceUiOrder))
-                return screenSpaceUiOrder;
-
-            if (graph.PassOrder.TryGetValue(op.PassIndex, out int graphOrder))
-                return graphOrder;
-
-            if (op.Context.PassMetadata is { Count: > 0 } metadata)
-            {
-                TrimMetadataCachesIfRequired();
-                IReadOnlyDictionary<int, int> contextPassOrder = _passOrderCache.GetOrAdd(
-                    metadata,
-                    static key => new PassOrderCacheEntry(key)).PassOrder;
-
-                if (contextPassOrder.TryGetValue(op.PassIndex, out int contextOrder))
-                    return contextOrder;
-            }
-
-            return int.MaxValue;
-        }
-
-        private static bool TryResolveNestedScreenSpaceUiPassOrder(
-            FrameOp op,
-            VulkanCompiledRenderGraph graph,
-            out int passOrder)
-        {
-            passOrder = 0;
-
-            if (!OpTargetsSwapchain(op) || !IsNestedUiPipelineOp(op))
-                return false;
-
-            if (graph.ScreenSpaceUiPassOrder == int.MaxValue)
-                return false;
-
-            passOrder = graph.ScreenSpaceUiPassOrder;
-            return true;
-        }
-
-        private static bool IsNestedUiPipelineOp(FrameOp op)
-        {
-            if (op.Context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline)
-                return true;
-
-            if (op.Context.PassMetadata is not { } metadata)
-                return false;
-
-            if (metadata is IReadOnlyList<RenderPassMetadata> list)
-            {
-                for (int i = 0; i < list.Count; i++)
-                    if (list[i].Name.StartsWith(RenderUiBatchedPassNamePrefix, StringComparison.Ordinal))
-                        return true;
-
-                return false;
-            }
-
-            // Pipeline pass metadata is normally array/list-backed. Preserve support for
-            // custom collection implementations outside the frame-wide desktop fast path.
-            foreach (RenderPassMetadata pass in metadata)
-                if (pass.Name.StartsWith(RenderUiBatchedPassNamePrefix, StringComparison.Ordinal))
-                    return true;
-
-            return false;
-        }
-
-        /// <summary>
-        /// Determines whether a <see cref="FrameOp"/> targets the swapchain (i.e. has no
-        /// explicit FBO target).  Swapchain-targeting ops must share a single context to
-        /// avoid render-pass restarts that lose composited content.
-        /// </summary>
-        internal static bool OpTargetsSwapchain(FrameOp op) => op switch
-        {
-            ClearOp c => c.Target is null,
-            MeshDrawOp d => d.Target is null,
-            QueryOp q => q.Target is null,
-            BlitOp b => b.OutFbo is null,
-            IndirectDrawOp id => id.Target is null,
-            MeshTaskDispatchIndirectCountOp meshTask => meshTask.Target is null,
-            TransformFeedbackOp transformFeedback => transformFeedback.Target is null,
-            _ => false,
-        };
-
-        /// <summary>
-        /// Coalesces all swapchain-targeting ops so they share the context of the first
-        /// swapchain op.  This prevents render-pass restarts across pipeline boundaries
-        /// when multiple pipelines (e.g. scene + UI) composite onto the swapchain.
-        /// FBO-targeting ops keep their original context for correct barrier/resource planning.
-        /// </summary>
-        internal static void CoalesceSwapchainContexts(FrameOp[] ops)
-        {
-            // Null until first swapchain op is observed.
-            FrameOpContext? firstSwapchainContext = null;
-            for (int i = 0; i < ops.Length; i++)
-            {
-                if (OpTargetsSwapchain(ops[i]))
-                {
-                    if (firstSwapchainContext is null)
-                    {
-                        // First swapchain op establishes canonical context.
-                        firstSwapchainContext = ops[i].Context;
-                    }
-                    else if (!Equals(ops[i].Context, firstSwapchainContext.Value))
-                    {
-                        // Rewrite only swapchain ops; non-swapchain ops retain original contexts.
-                        ops[i].Context = firstSwapchainContext.Value;
-                    }
-                }
-            }
-        }
-
-        /// <summary>
-        /// Builds contiguous runs of secondary-command-buffer-eligible operations.
-        /// A run ends when op type, pass, scheduling identity, or full context changes.
-        /// </summary>
-        /// <param name="ops">Sorted frame operations for the current frame.</param>
-        /// <returns>Ordered bucket list for optional parallel secondary recording.</returns>
-        public IReadOnlyList<SecondaryRecordingBucket> BuildSecondaryRecordingBuckets(FrameOp[] ops)
-        {
-            if (ops.Length == 0)
-                return Array.Empty<SecondaryRecordingBucket>();
-
-            List<SecondaryRecordingBucket> buckets = _secondaryRecordingBucketScratch;
-            buckets.Clear();
-            int runStart = -1;
-            int runPassIndex = int.MinValue;
-            int runTargetIdentity = int.MinValue;
-            int runSchedulingIdentity = int.MinValue;
-            Type? runType = null;
-            FrameOpContext runContext = default;
-
-            for (int i = 0; i < ops.Length; i++)
-            {
-                FrameOp op = ops[i];
-                if (!IsSecondaryBucketEligible(op))
-                {
-                    // Ineligible ops break the current run.
-                    FinalizeRun(i);
-                    continue;
-                }
-
-                int passIndex = op.PassIndex;
-                int targetIdentity = ResolveFrameOpTargetIdentity(op);
-                int schedulingIdentity = op.Context.SchedulingIdentity;
-                Type opType = op.GetType();
-
-                if (runStart < 0)
-                {
-                    runStart = i;
-                    runPassIndex = passIndex;
-                    runTargetIdentity = targetIdentity;
-                    runSchedulingIdentity = schedulingIdentity;
-                    runType = opType;
-                    runContext = op.Context;
-                    continue;
-                }
-
-                // Runs must remain homogeneous to be safely co-recorded.
-                bool sameBucket =
-                    runType == opType &&
-                    runPassIndex == passIndex &&
-                    runTargetIdentity == targetIdentity &&
-                    runSchedulingIdentity == schedulingIdentity &&
-                    AreFrameOpContextsRecordingCompatible(runContext, op.Context);
-
-                if (!sameBucket)
-                {
-                    // Close previous run and start a new compatible run at i.
-                    FinalizeRun(i);
-                    runStart = i;
-                    runPassIndex = passIndex;
-                    runTargetIdentity = targetIdentity;
-                    runSchedulingIdentity = schedulingIdentity;
-                    runType = opType;
-                    runContext = op.Context;
-                }
-            }
-
-            FinalizeRun(ops.Length);
-            return buckets;
-
-            void FinalizeRun(int runEndExclusive)
-            {
-                if (runStart < 0 || runType is null)
-                    return;
-
-                int runCount = runEndExclusive - runStart;
-                if (runCount > 0)
-                {
-                    // Emit one bucket per contiguous compatible run.
-                    buckets.Add(new SecondaryRecordingBucket(
-                        runStart,
-                        runCount,
-                        runPassIndex,
-                        runTargetIdentity,
-                        runSchedulingIdentity,
-                        runType,
-                        runContext));
-                }
-
-                runStart = -1;
-                runPassIndex = int.MinValue;
-                runTargetIdentity = int.MinValue;
-                runSchedulingIdentity = int.MinValue;
-                runType = null;
-                runContext = default;
-            }
-        }
-
-        /// <summary>
-        /// Determines whether an op type participates in secondary command recording buckets.
-        /// </summary>
-        private static bool IsSecondaryBucketEligible(FrameOp op)
-            => op is BlitOp or IndirectDrawOp;
-
-        private static int ResolveFrameOpTargetIdentity(FrameOp op)
-            => op.Target?.GetHashCode() ?? 0;
-
-        /// <summary>
-        /// Determines whether a pass can be merged into an existing compiled batch.
-        /// </summary>
-        private static bool IsBatchCompatible(VulkanCompiledPassBatch existingBatch, RenderPassMetadata pass, string signature)
-            => existingBatch.Stage == ERenderGraphPassStage.Graphics &&
-               pass.Stage == ERenderGraphPassStage.Graphics &&
-               string.Equals(existingBatch.AttachmentSignature, signature, StringComparison.Ordinal);
-
-        /// <summary>
-        /// Builds an order-insensitive attachment signature used for graphics batch compatibility.
-        /// </summary>
-        /// <remarks>
-        /// Signature format: ResourceType:ResourceName:LoadOp:StoreOp joined by '|'.
-        /// Non-attachment usages are excluded.
-        /// </remarks>
-        private static string BuildAttachmentSignature(RenderPassMetadata pass)
-        {
-            if (pass.ResourceUsages.Count == 0)
-                return "none";
-
-            string[] attachmentEntries = pass.ResourceUsages
-                .Where(static usage => usage.IsAttachment)
-                .Select(static usage => $"{usage.ResourceType}:{usage.ResourceName}:{usage.LoadOp}:{usage.StoreOp}")
-                .OrderBy(static entry => entry, StringComparer.Ordinal)
-                .ToArray();
-
-            return attachmentEntries.Length == 0
-                ? "none"
-                : string.Join("|", attachmentEntries);
-        }
+        // No metadata means there is no ordering/batching/synchronization work to perform.
+        if (passMetadata is null || passMetadata.Count == 0)
+            return VulkanCompiledRenderGraph.Empty;
+
+        TrimMetadataCachesIfRequired();
+        return _compiledGraphCache.GetOrAdd(
+            passMetadata,
+            static metadata => new CompiledGraphCacheEntry(metadata)).Graph;
     }
+
+    private void TrimMetadataCachesIfRequired()
+    {
+        if (_compiledGraphCache.Count < MaxMetadataCacheEntries)
+            return;
+
+        _compiledGraphCache.Clear();
+    }
+
+    private static VulkanCompiledRenderGraph BuildCompiledGraph(IReadOnlyCollection<RenderPassMetadata> passMetadata)
+    {
+        // Topological order ensures producers are recorded before their consumers.
+        IReadOnlyList<RenderPassMetadata> orderedPasses = RenderGraphSynchronizationPlanner.TopologicallySort(passMetadata);
+
+        // Build explicit synchronization requirements from the same metadata source.
+        RenderGraphSynchronizationInfo synchronization = RenderGraphSynchronizationPlanner.Build(passMetadata);
+
+        // passIndex -> topological order index lookup used by SortFrameOps.
+        Dictionary<int, int> passOrder = new(orderedPasses.Count);
+        int screenSpaceUiPassOrder = int.MaxValue;
+
+        // Graphics passes with compatible attachment signatures are merged into batches.
+        List<VulkanCompiledPassBatch> batches = [];
+
+        for (int i = 0; i < orderedPasses.Count; i++)
+        {
+            RenderPassMetadata pass = orderedPasses[i];
+            passOrder[pass.PassIndex] = i;
+            if (screenSpaceUiPassOrder == int.MaxValue &&
+                string.Equals(pass.Name, ScreenSpaceUiPassName, StringComparison.OrdinalIgnoreCase))
+            {
+                screenSpaceUiPassOrder = i;
+            }
+
+            // Signature captures the effective attachment contract for compatibility checks.
+            string signature = VulkanAttachmentCompatibility.BuildSignature(pass);
+            if (batches.Count > 0 && VulkanAttachmentCompatibility.AreCompatible(batches[^1], pass, signature))
+            {
+                // Extend current batch when stage/signature compatibility holds.
+                batches[^1].AddPass(pass.PassIndex);
+            }
+            else
+            {
+                // Start a new batch when compatibility is broken or this is the first pass.
+                VulkanCompiledPassBatch batch = new(batches.Count, pass.Stage, signature);
+                batch.AddPass(pass.PassIndex);
+                batches.Add(batch);
+            }
+        }
+
+        return new VulkanCompiledRenderGraph(
+            orderedPasses,
+            passOrder,
+            batches,
+            synchronization,
+            screenSpaceUiPassOrder);
+    }
+
 }

@@ -148,7 +148,7 @@ struct XRAdvancedGpuHandleLookup
 
 struct XRAdvancedBufferReference
 {
-    XRAdvancedGpuHandle buffer;
+    XRAdvancedGpuHandle bufferHandle;
     uvec2 byteOffset;
     uint elementOffset;
     uint elementCount;

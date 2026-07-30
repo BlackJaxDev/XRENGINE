@@ -46,5 +46,21 @@
     <!-- Untracked WIP test file using xUnit (Fact) instead of NUnit; excluded until ready -->
     <Compile Remove="Rendering\RenderPipelineScriptCompilerTests.cs" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Compile the sample's real gameplay types into the test assembly so
+         cooked-world and input regressions do not depend on generated build output. -->
+    <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\IMonkeyBallGameInputTarget.cs" Link="Games\MonkeyBallVR\IMonkeyBallGameInputTarget.cs" />
+    <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\MonkeyBallAction.cs" Link="Games\MonkeyBallVR\MonkeyBallAction.cs" />
+    <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\MonkeyBallActionSet.cs" Link="Games\MonkeyBallVR\MonkeyBallActionSet.cs" />
+    <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\MonkeyBallGameComponent.cs" Link="Games\MonkeyBallVR\MonkeyBallGameComponent.cs" />
+    <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\MonkeyBallGlobalUsings.cs" Link="Games\MonkeyBallVR\MonkeyBallGlobalUsings.cs" />
+    <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\MonkeyBallPawnComponent.cs" Link="Games\MonkeyBallVR\MonkeyBallPawnComponent.cs" />
+    <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\MonkeyBallRoundState.cs" Link="Games\MonkeyBallVR\MonkeyBallRoundState.cs" />
+    <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\MonkeyBallRuntimeDiagnostics.cs" Link="Games\MonkeyBallVR\MonkeyBallRuntimeDiagnostics.cs" />
+    <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\MonkeyBallRuntimeValidation.cs" Link="Games\MonkeyBallVR\MonkeyBallRuntimeValidation.cs" />
+    <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\MonkeyBallWorldAsset.cs" Link="Games\MonkeyBallVR\MonkeyBallWorldAsset.cs" />
+    <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\MonkeyBallWorldCookedSerializer.cs" Link="Games\MonkeyBallVR\MonkeyBallWorldCookedSerializer.cs" />
+  </ItemGroup>
+
 
 </Project>

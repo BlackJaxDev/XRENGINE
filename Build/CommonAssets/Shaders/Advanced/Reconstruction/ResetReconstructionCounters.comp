@@ -1,0 +1,42 @@
+#version 450
+
+#include "ReconstructionInterface.glslinc"
+
+layout(local_size_x = 16, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    uint index = gl_LocalInvocationID.x;
+    if (index == 0u)
+        XR_ADV_ReconstructionCounters.validSurfaces = 0u;
+    else if (index == 1u)
+        XR_ADV_ReconstructionCounters.invalidPayloads = 0u;
+    else if (index == 2u)
+        XR_ADV_ReconstructionCounters.staleGenerations = 0u;
+    else if (index == 3u)
+        XR_ADV_ReconstructionCounters.missingGeometry = 0u;
+    else if (index == 4u)
+        XR_ADV_ReconstructionCounters.primitiveOutOfBounds = 0u;
+    else if (index == 5u)
+        XR_ADV_ReconstructionCounters.degenerateTriangles = 0u;
+    else if (index == 6u)
+        XR_ADV_ReconstructionCounters.derivativeFailures = 0u;
+    else if (index == 7u)
+        XR_ADV_ReconstructionCounters.conservativeMipFallbacks = 0u;
+    else if (index == 8u)
+        XR_ADV_ReconstructionCounters.validVelocities = 0u;
+    else if (index == 9u)
+        XR_ADV_ReconstructionCounters.invalidVelocities = 0u;
+    else if (index == 10u)
+        XR_ADV_ReconstructionCounters.reactivePixels = 0u;
+    else if (index == 11u)
+        XR_ADV_ReconstructionCounters.maskedEdges = 0u;
+    else if (index == 12u)
+        XR_ADV_ReconstructionCounters.nonFiniteAttributes = 0u;
+    else if (index == 13u)
+        XR_ADV_ReconstructionCounters.staticSurfaces = 0u;
+    else if (index == 14u)
+        XR_ADV_ReconstructionCounters.deformedSurfaces = 0u;
+    else
+        XR_ADV_ReconstructionCounters.reserved = 0u;
+}

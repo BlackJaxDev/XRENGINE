@@ -184,6 +184,7 @@ namespace XREngine.Scene.Transforms
             }
         }
 
+        private readonly object _interpolationSync = new();
         private long _accumulatedTimeTicks = 0L;
 
         internal static float ComputeInterpolationAlpha(long accumulatedTimeTicks, long fixedDeltaTicks)
@@ -194,8 +195,13 @@ namespace XREngine.Scene.Transforms
         internal static float AccumulatedTicksToSeconds(long accumulatedTimeTicks)
             => (float)(Math.Max(0L, accumulatedTimeTicks) / (double)Stopwatch.Frequency);
 
-        internal static bool ShouldUseImmediatePhysicsPose(EInterpolationMode mode, long updateDeltaTicks, long fixedDeltaTicks)
-            => mode == EInterpolationMode.Discrete || updateDeltaTicks > fixedDeltaTicks;
+        /// <summary>
+        /// Only discrete presentation may mutate the scene pose directly from
+        /// the fixed-update thread. Interpolated and extrapolated modes are
+        /// always presented by the ordered normal-update transform tick.
+        /// </summary>
+        internal static bool ShouldUseImmediatePhysicsPose(EInterpolationMode mode)
+            => mode == EInterpolationMode.Discrete;
 
         private void OnUpdate()
         {
@@ -208,42 +214,44 @@ namespace XREngine.Scene.Transforms
             if (fixedDeltaTicks <= 0L)
                 return;
 
-            _accumulatedTimeTicks += Math.Max(0L, updateDeltaTicks);
-            float alpha = ComputeInterpolationAlpha(_accumulatedTimeTicks, fixedDeltaTicks);
-            float accumulatedTime = AccumulatedTicksToSeconds(_accumulatedTimeTicks);
-
-            var (lastPosUpdate, lastRotUpdate) = LastPhysicsTransform;
-            switch (mode)
+            lock (_interpolationSync)
             {
-                default:
-                    return;
-                //case EInterpolationMode.Discrete:
-                //    {
-                //        SetPositionAndRotation(lastPosUpdate, lastRotUpdate);
-                //        break;
-                //    }
-                case EInterpolationMode.Interpolate:
-                    {
-                        SetPositionAndRotation(
-                            Vector3.Lerp(LastPosition, lastPosUpdate, alpha),
-                            Quaternion.Slerp(LastRotation, lastRotUpdate, alpha));
-                        break;
-                    }
-                case EInterpolationMode.Extrapolate:
-                    {
-                        Vector3 posDelta = LastPhysicsLinearVelocity * accumulatedTime;
-                        float angle = LastPhysicsAngularVelocity.Length() * accumulatedTime;
+                _accumulatedTimeTicks += Math.Max(0L, updateDeltaTicks);
+                float alpha = ComputeInterpolationAlpha(_accumulatedTimeTicks, fixedDeltaTicks);
+                float accumulatedTime = AccumulatedTicksToSeconds(_accumulatedTimeTicks);
 
-                        bool posMoved = posDelta.Length() > float.Epsilon;
-                        bool rotMoved = angle > float.Epsilon;
-                        if (!posMoved && !rotMoved)
+                var (lastPosUpdate, lastRotUpdate) = LastPhysicsTransform;
+                switch (mode)
+                {
+                    default:
+                        return;
+                    case EInterpolationMode.Interpolate:
+                        {
+                            SetPositionAndRotation(
+                                Vector3.Lerp(LastPosition, lastPosUpdate, alpha),
+                                Quaternion.Slerp(LastRotation, lastRotUpdate, alpha));
                             break;
-                        
-                        SetPositionAndRotation(
-                            posMoved ? lastPosUpdate + posDelta : lastPosUpdate,
-                            rotMoved ? Quaternion.CreateFromAxisAngle(LastPhysicsAngularVelocity.Normalized(), angle) * lastRotUpdate : lastRotUpdate);
-                        break;
-                    }
+                        }
+                    case EInterpolationMode.Extrapolate:
+                        {
+                            Vector3 posDelta = LastPhysicsLinearVelocity * accumulatedTime;
+                            float angle = LastPhysicsAngularVelocity.Length() * accumulatedTime;
+
+                            bool posMoved = posDelta.Length() > float.Epsilon;
+                            bool rotMoved = angle > float.Epsilon;
+                            if (!posMoved && !rotMoved)
+                                break;
+
+                            SetPositionAndRotation(
+                                posMoved ? lastPosUpdate + posDelta : lastPosUpdate,
+                                rotMoved
+                                    ? Quaternion.CreateFromAxisAngle(
+                                        LastPhysicsAngularVelocity.Normalized(),
+                                        angle) * lastRotUpdate
+                                    : lastRotUpdate);
+                            break;
+                        }
+                }
             }
 
             // Intentionally do NOT force immediate matrix hierarchy recalculation here.
@@ -286,8 +294,8 @@ namespace XREngine.Scene.Transforms
 
         private Vector3 _lastPosition;
         /// <summary>
-        /// The position of this transform at the last physics update.
-        /// Not used when InterpolationMode is set to Discrete, or when normal update ticks are running slower than the fixed update ticks.
+        /// The presented position captured when the latest physics pose arrived.
+        /// Not used when <see cref="InterpolationMode"/> is <see cref="EInterpolationMode.Discrete"/>.
         /// </summary>
         [YamlIgnore]
         public Vector3 LastPosition
@@ -298,8 +306,8 @@ namespace XREngine.Scene.Transforms
 
         private Quaternion _lastRotation;
         /// <summary>
-        /// The rotation of this transform at the last physics update.
-        /// Not used when InterpolationMode is set to Discrete, or when normal update ticks are running slower than the fixed update ticks.
+        /// The presented rotation captured when the latest physics pose arrived.
+        /// Not used when <see cref="InterpolationMode"/> is <see cref="EInterpolationMode.Discrete"/>.
         /// </summary>
         [YamlIgnore]
         public Quaternion LastRotation
@@ -313,38 +321,35 @@ namespace XREngine.Scene.Transforms
             if (RigidBody is null)
                 return;
 
-            if (RuntimeTransformServices.Current?.IsEditing ?? false)
+            lock (_interpolationSync)
             {
-                LastPhysicsTransform = (Position, Rotation);
-                LastPhysicsLinearVelocity = Vector3.Zero;
-                LastPhysicsAngularVelocity = Vector3.Zero;
-            }
-            else
-            {
-                LastPhysicsTransform = RigidBody.Transform;
-                LastPhysicsLinearVelocity = RigidBody.LinearVelocity;
-                LastPhysicsAngularVelocity = RigidBody.AngularVelocity;
-            }
-
-            LastPosition = Position;
-            LastRotation = Rotation;
-            _accumulatedTimeTicks = 0L;
-
-            long updateDeltaTicks = RuntimeTransformServices.Current?.UpdateDeltaTicks ?? 0L;
-            long fixedDeltaTicks = RuntimeTransformServices.Current?.FixedUpdateDeltaTicks ?? 0L;
-            if (ShouldUseImmediatePhysicsPose(InterpolationMode, updateDeltaTicks, fixedDeltaTicks))
-            {
-                if (!RigidBody.IsSleeping)
+                if (RuntimeTransformServices.Current?.IsEditing ?? false)
                 {
-                    SetPositionAndRotation(LastPhysicsTransform.position, LastPhysicsTransform.rotation);
-                    // Ensure matrices are recalculated for discrete mode since OnUpdate skips discrete
-                    RecalculateMatrices(true, false);
+                    LastPhysicsTransform = (Position, Rotation);
+                    LastPhysicsLinearVelocity = Vector3.Zero;
+                    LastPhysicsAngularVelocity = Vector3.Zero;
                 }
-            }
-            else
-            {
+                else
+                {
+                    LastPhysicsTransform = RigidBody.Transform;
+                    LastPhysicsLinearVelocity = RigidBody.LinearVelocity;
+                    LastPhysicsAngularVelocity = RigidBody.AngularVelocity;
+                }
+
                 LastPosition = Position;
                 LastRotation = Rotation;
+                _accumulatedTimeTicks = 0L;
+
+                if (ShouldUseImmediatePhysicsPose(InterpolationMode) &&
+                    !RigidBody.IsSleeping)
+                {
+                    SetPositionAndRotation(
+                        LastPhysicsTransform.position,
+                        LastPhysicsTransform.rotation);
+                    // Discrete presentation intentionally publishes each
+                    // fixed-step pose without waiting for normal update.
+                    RecalculateMatrices(true, false);
+                }
             }
         }
 

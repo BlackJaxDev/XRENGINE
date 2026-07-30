@@ -23,82 +23,79 @@ using XREngine.Rendering.Models.Materials.Textures;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal unsafe partial class VkMeshRenderer
 {
-	public partial class VkMeshRenderer
-	{
 private bool TryResolveEngineUniformBuffer(DescriptorBindingInfo binding, int frameIndex, int drawUniformSlot, out DescriptorBufferInfo bufferInfo)
+		{
+			bufferInfo = default;
+			string bindingName = binding.Name ?? string.Empty;
+			if (string.IsNullOrWhiteSpace(bindingName))
+				return false;
+			string name = NormalizeEngineUniformName(bindingName);
+
+			uint size = GetEngineUniformSize(bindingName);
+			if (size == 0)
 			{
-				bufferInfo = default;
-				string bindingName = binding.Name ?? string.Empty;
-				if (string.IsNullOrWhiteSpace(bindingName))
-					return false;
-				string name = NormalizeEngineUniformName(bindingName);
-
-				uint size = GetEngineUniformSize(bindingName);
-				if (size == 0)
-				{
-					if (!IsOptionalPipelineStorageBuffer(binding))
-						WarnOnce($"Descriptor binding '{name}' could not be matched to an engine uniform.");
-					return false;
-				}
-
-				if (!EnsureEngineUniformBuffer(name, size))
-					return false;
-
-				if (!_engineUniformBuffers.TryGetValue(name, out EngineUniformBuffer[]? buffers) || buffers.Length == 0)
-					return false;
-
-				int idx = ResolveUniformBufferIndex(frameIndex, drawUniformSlot, buffers.Length);
-				EngineUniformBuffer target = buffers[idx];
-				if (target.Buffer.Handle == 0)
-					return false;
-
-				bufferInfo = new DescriptorBufferInfo
-				{
-					Buffer = target.Buffer,
-					Offset = binding.DescriptorType == DescriptorType.UniformBufferDynamic &&
-						!Renderer.IsDescriptorHeapDrawBindingActive ? 0UL : target.Offset,
-					Range = size,
-				};
-
-				return true;
+				if (!IsOptionalPipelineStorageBuffer(binding))
+					WarnOnce($"Descriptor binding '{name}' could not be matched to an engine uniform.");
+				return false;
 			}
 
-			/// <summary>
-			/// Resolves a descriptor buffer binding for a reflection-driven auto uniform
-			/// block. Creates the per-frame UBO on demand.
-			/// </summary>
-			private bool TryResolveAutoUniformBuffer(DescriptorBindingInfo binding, int frameIndex, int drawUniformSlot, out DescriptorBufferInfo bufferInfo)
+			if (!EnsureEngineUniformBuffer(name, size))
+				return false;
+
+			if (!_engineUniformBuffers.TryGetValue(name, out EngineUniformBuffer[]? buffers) || buffers.Length == 0)
+				return false;
+
+			int idx = ResolveUniformBufferIndex(frameIndex, drawUniformSlot, buffers.Length);
+			EngineUniformBuffer target = buffers[idx];
+			if (target.Buffer.Handle == 0)
+				return false;
+
+			bufferInfo = new DescriptorBufferInfo
 			{
-				bufferInfo = default;
-				if (_program is null)
-					return false;
+				Buffer = target.Buffer,
+				Offset = binding.DescriptorType == DescriptorType.UniformBufferDynamic &&
+					!Renderer.IsDescriptorHeapDrawBindingActive ? 0UL : target.Offset,
+				Range = size,
+			};
 
-				if (!_program.TryGetAutoUniformBlockFuzzy(binding.Name ?? string.Empty, binding.Set, binding.Binding, out AutoUniformBlockInfo block))
-					return false;
+			return true;
+		}
 
-				uint size = Math.Max(block.Size, 1u);
-				if (!EnsureAutoUniformBuffer(block.InstanceName, size))
-					return false;
+		/// <summary>
+		/// Resolves a descriptor buffer binding for a reflection-driven auto uniform
+		/// block. Creates the per-frame UBO on demand.
+		/// </summary>
+		private bool TryResolveAutoUniformBuffer(DescriptorBindingInfo binding, int frameIndex, int drawUniformSlot, out DescriptorBufferInfo bufferInfo)
+		{
+			bufferInfo = default;
+			if (_program is null)
+				return false;
 
-				if (!_autoUniformBuffers.TryGetValue(block.InstanceName, out AutoUniformBuffer[]? buffers) || buffers.Length == 0)
-					return false;
+			if (!_program.TryGetAutoUniformBlockFuzzy(binding.Name ?? string.Empty, binding.Set, binding.Binding, out AutoUniformBlockInfo block))
+				return false;
 
-				int idx = ResolveUniformBufferIndex(frameIndex, drawUniformSlot, buffers.Length);
-				AutoUniformBuffer target = buffers[idx];
-				if (target.Buffer.Handle == 0)
-					return false;
+			uint size = Math.Max(block.Size, 1u);
+			if (!EnsureAutoUniformBuffer(block.InstanceName, size))
+				return false;
 
-				bufferInfo = new DescriptorBufferInfo
-				{
-					Buffer = target.Buffer,
-					Offset = binding.DescriptorType == DescriptorType.UniformBufferDynamic &&
-						!Renderer.IsDescriptorHeapDrawBindingActive ? 0UL : target.Offset,
-					Range = size,
-				};
+			if (!_autoUniformBuffers.TryGetValue(block.InstanceName, out AutoUniformBuffer[]? buffers) || buffers.Length == 0)
+				return false;
 
-				return true;
-			}
-	}
+			int idx = ResolveUniformBufferIndex(frameIndex, drawUniformSlot, buffers.Length);
+			AutoUniformBuffer target = buffers[idx];
+			if (target.Buffer.Handle == 0)
+				return false;
+
+			bufferInfo = new DescriptorBufferInfo
+			{
+				Buffer = target.Buffer,
+				Offset = binding.DescriptorType == DescriptorType.UniformBufferDynamic &&
+					!Renderer.IsDescriptorHeapDrawBindingActive ? 0UL : target.Offset,
+				Range = size,
+			};
+
+			return true;
+		}
 }

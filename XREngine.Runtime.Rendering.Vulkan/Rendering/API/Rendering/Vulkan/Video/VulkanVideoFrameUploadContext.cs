@@ -6,7 +6,7 @@ internal sealed class VulkanVideoFrameUploadContext(VulkanRenderer renderer) :
     IVulkanVideoFrameUploadContext
 {
     public IVulkanVideoFrameTextureHandle? ResolveTexture(XRTexture2D texture)
-        => renderer.GenericToAPI<VulkanRenderer.VkTexture2D>(texture) is { } handle
+        => renderer.GenericToAPI<VkTexture2D>(texture) is { } handle
             ? new VulkanVideoFrameTextureHandle(handle)
             : null;
 }

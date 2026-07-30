@@ -24,7 +24,7 @@ public sealed class VulkanCommandChainDataModelTests
     [TestCase(0x80000000u, 1u)]
     public void OcclusionQueryViewSlots_MatchActiveMultiviewViewCount(uint viewMask, uint expectedSlots)
     {
-        var resolver = typeof(VulkanRenderer.VkRenderQuery).GetMethod(
+        var resolver = typeof(VkRenderQuery).GetMethod(
             "ResolveOcclusionQueryViewSlotCount",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
 
@@ -61,8 +61,8 @@ public sealed class VulkanCommandChainDataModelTests
     {
         XRCamera leftCamera = new(new Transform(), new XROVRCameraParameters(true, 0.1f, 1000.0f));
         XRCamera rightCamera = new(new Transform(), new XROVRCameraParameters(false, 0.1f, 1000.0f));
-        VulkanRenderer.MeshDrawOp leftOp = CreateMeshDrawOp(default(VulkanRenderer.PendingMeshDraw) with { Camera = leftCamera });
-        VulkanRenderer.MeshDrawOp rightOp = CreateMeshDrawOp(default(VulkanRenderer.PendingMeshDraw) with { Camera = rightCamera });
+        MeshDrawOp leftOp = CreateMeshDrawOp(default(PendingMeshDraw) with { Camera = leftCamera });
+        MeshDrawOp rightOp = CreateMeshDrawOp(default(PendingMeshDraw) with { Camera = rightCamera });
 
         RenderViewKey leftKey = VulkanRenderer.BuildRenderViewKey(leftOp, dynamicOverlay: false);
         RenderViewKey rightKey = VulkanRenderer.BuildRenderViewKey(rightOp, dynamicOverlay: false);
@@ -77,7 +77,7 @@ public sealed class VulkanCommandChainDataModelTests
     [Test]
     public void BuildRenderViewKey_SinglePassStereoUsesMultiviewSentinel()
     {
-        VulkanRenderer.MeshDrawOp op = CreateMeshDrawOp(default(VulkanRenderer.PendingMeshDraw) with { IsStereoPass = true });
+        MeshDrawOp op = CreateMeshDrawOp(default(PendingMeshDraw) with { IsStereoPass = true });
 
         RenderViewKey key = VulkanRenderer.BuildRenderViewKey(op, dynamicOverlay: false);
 
@@ -89,7 +89,7 @@ public sealed class VulkanCommandChainDataModelTests
     public void BuildRenderViewKey_SinglePassStereoPrefersMultiviewSentinelOverEyeCamera()
     {
         XRCamera leftCamera = new(new Transform(), new XROVRCameraParameters(true, 0.1f, 1000.0f));
-        VulkanRenderer.MeshDrawOp op = CreateMeshDrawOp(default(VulkanRenderer.PendingMeshDraw) with
+        MeshDrawOp op = CreateMeshDrawOp(default(PendingMeshDraw) with
         {
             Camera = leftCamera,
             IsStereoPass = true
@@ -155,8 +155,8 @@ public sealed class VulkanCommandChainDataModelTests
         left.ResourcePlannerStateIndex.ShouldNotBe(right.ResourcePlannerStateIndex);
         left.FoveationResourceKey.ShouldNotBe(right.FoveationResourceKey);
         left.FoveationAttachmentKind.ShouldNotBe(right.FoveationAttachmentKind);
-        VulkanRenderer.OpenXrViewResourcePlannerContextKey.FromTarget(left)
-            .ShouldNotBe(VulkanRenderer.OpenXrViewResourcePlannerContextKey.FromTarget(right));
+        VulkanOpenXrViewResourcePlannerContextKey.FromTarget(left)
+            .ShouldNotBe(VulkanOpenXrViewResourcePlannerContextKey.FromTarget(right));
 
         ulong leftKey = VulkanRenderer.BuildOpenXrPrimaryCommandBufferCacheKey(left.CommandChainImageKey, left);
         ulong rightKey = VulkanRenderer.BuildOpenXrPrimaryCommandBufferCacheKey(right.CommandChainImageKey, right);
@@ -179,8 +179,8 @@ public sealed class VulkanCommandChainDataModelTests
 
         VulkanRenderer.BuildOpenXrExternalSwapchainPlannerTargetIdentity(firstImage.OpenXrViewIndex)
             .ShouldBe(VulkanRenderer.BuildOpenXrExternalSwapchainPlannerTargetIdentity(secondImage.OpenXrViewIndex));
-        VulkanRenderer.OpenXrViewResourcePlannerContextKey.FromTarget(firstImage)
-            .ShouldBe(VulkanRenderer.OpenXrViewResourcePlannerContextKey.FromTarget(secondImage));
+        VulkanOpenXrViewResourcePlannerContextKey.FromTarget(firstImage)
+            .ShouldBe(VulkanOpenXrViewResourcePlannerContextKey.FromTarget(secondImage));
 
         VulkanRenderer.BuildOpenXrPrimaryCommandBufferCacheKey(firstImage.CommandChainImageKey, firstImage)
             .ShouldNotBe(VulkanRenderer.BuildOpenXrPrimaryCommandBufferCacheKey(secondImage.CommandChainImageKey, secondImage));
@@ -214,14 +214,14 @@ public sealed class VulkanCommandChainDataModelTests
     [Test]
     public void NullSwapchainFrameOps_UseExternalOutputTargetIdentity()
     {
-        VulkanRenderer.FrameOpContext leftContext = CreateFrameOpContext(
+        FrameOpContext leftContext = CreateFrameOpContext(
             outputTargetIdentity: 101,
             outputTargetName: "<left-eye>");
-        VulkanRenderer.FrameOpContext rightContext = CreateFrameOpContext(
+        FrameOpContext rightContext = CreateFrameOpContext(
             outputTargetIdentity: 202,
             outputTargetName: "<right-eye>");
-        VulkanRenderer.ClearOp left = CreateClearOp(0) with { Context = leftContext };
-        VulkanRenderer.ClearOp right = CreateClearOp(0) with { Context = rightContext };
+        ClearOp left = CreateClearOp(0) with { Context = leftContext };
+        ClearOp right = CreateClearOp(0) with { Context = rightContext };
 
         VulkanRenderer.ResolveCommandChainTargetIdentity(left).ShouldBe(101);
         VulkanRenderer.ResolveCommandChainTargetIdentity(right).ShouldBe(202);
@@ -243,6 +243,7 @@ public sealed class VulkanCommandChainDataModelTests
     public void OpenXrEyePrimaryRecording_PassesTargetContextIntoCommandBufferRecording()
     {
         string openXrSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string openXrBackendSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanOpenXrBackend.cs");
         string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
 
         commandBufferSource.ShouldContain("OpenXrEyeRenderTargetContext? openXrTargetContext = null");
@@ -274,6 +275,7 @@ public sealed class VulkanCommandChainDataModelTests
     public void OpenXrExternalSwapchainBlits_AreNormalizedAndValidatedAsFullEyeWriters()
     {
         string openXrSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string openXrBackendSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanOpenXrBackend.cs");
 
         openXrSource.ShouldContain("NormalizeOpenXrExternalSwapchainFrameOps(ops, request.Extent)");
         openXrSource.ShouldContain("NormalizeOpenXrExternalSwapchainFrameOps(ops, extent)");
@@ -287,10 +289,10 @@ public sealed class VulkanCommandChainDataModelTests
     {
         string openXrSource = ReadOpenXrVulkanRendererSources();
 
-        openXrSource.ShouldContain("private readonly Dictionary<OpenXrViewResourcePlannerContextKey, ResourcePlannerRuntimeState> _openXrResourcePlannerStates = new();");
+        openXrSource.ShouldContain("private readonly Dictionary<VulkanOpenXrViewResourcePlannerContextKey, ResourcePlannerRuntimeState> _openXrResourcePlannerStates = new();");
         openXrSource.ShouldContain("private readonly object _openXrResourcePlannerStatesLock = new();");
-        openXrSource.ShouldContain("EnterOpenXrResourcePlannerThreadScope(OpenXrViewResourcePlannerContextKey.FromTarget(in targetContext))");
-        openXrSource.ShouldContain("EOpenXrResourcePlannerPurpose purpose");
+        openXrSource.ShouldContain("EnterOpenXrResourcePlannerThreadScope(VulkanOpenXrViewResourcePlannerContextKey.FromTarget(in targetContext))");
+        openXrSource.ShouldContain("EVulkanOpenXrResourcePlannerPurpose purpose");
         openXrSource.ShouldContain("CreateLegacyOpenXrResourcePlannerContextKey(stateIndex, purpose)");
         openXrSource.ShouldContain("purpose={key.Purpose}");
         openXrSource.ShouldContain("target.FoveationResourceKey");
@@ -326,27 +328,29 @@ public sealed class VulkanCommandChainDataModelTests
         openXrSource.ShouldContain("state.FrameOpResourcePlannerSwitchingState = _frameOpThreadScope.CaptureCurrent(_renderer);");
         resourcePlannerSource.ShouldContain("FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;");
         commandChainSource.ShouldContain("FrameOpResourcePlannerSwitchingState frameOpSwitchingState = ActiveFrameOpResourcePlannerSwitchingState;");
-        commandBufferSource.ShouldContain("FrameOpPlannerStateKey packetPlannerKey = BuildFrameOpPlannerStateKey(packetContext);");
+        commandBufferSource.ShouldContain("VulkanFrameOpPlannerStateKey packetPlannerKey = BuildFrameOpPlannerStateKey(packetContext);");
         commandBufferSource.ShouldContain("using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(packetContext);");
         commandBufferSource.ShouldNotContain("if (ActiveFrameOpResourcePlannerSwitchingState.SwitchingActive)\n                return false;");
         stateTrackingSource.ShouldNotContain("private bool _frameOpResourcePlannerSwitchingActive;");
         stateTrackingSource.ShouldNotContain("private bool _frameOpResourcePlannerRecordingScopeActive;");
         stateTrackingSource.ShouldNotContain("private bool _hasActiveFrameOpResourcePlannerStateKey;");
-        stateTrackingSource.ShouldNotContain("private FrameOpPlannerStateKey _activeFrameOpResourcePlannerStateKey;");
+        stateTrackingSource.ShouldNotContain("private VulkanFrameOpPlannerStateKey _activeFrameOpResourcePlannerStateKey;");
     }
 
     [Test]
     public void OpenXrExternalTargetAndUploadBlockState_AreThreadScopedForEyeWorkers()
     {
         string openXrSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string openXrBackendSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanOpenXrBackend.cs");
         string externalScopeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXrExternalSwapchainRenderScope.cs");
         string uploadBlockScopeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.SynchronousResourceUploadBlockScope.cs");
 
-        openXrSource.ShouldContain("[ThreadStatic]");
-        openXrSource.ShouldContain("private static VulkanRenderer? _threadOpenXrExternalSwapchainRenderer;");
+        openXrSource.ShouldNotContain("[ThreadStatic]");
+        openXrBackendSource.ShouldContain("ThreadLocal<VulkanOpenXrThreadExecutionState>");
+        openXrSource.ShouldContain("_openXrBackend.CurrentThreadExecutionState");
         openXrSource.ShouldContain("public override bool IsRenderingExternalSwapchainTarget => IsThreadOpenXrExternalSwapchainTarget;");
         openXrSource.ShouldContain("private bool IsThreadOpenXrExternalSwapchainTarget");
-        openXrSource.ShouldContain("_threadOpenXrExternalSwapchainTargetRegion");
+        openXrSource.ShouldContain("_openXrBackend.CurrentThreadExecutionState.ExternalSwapchainTargetRegion");
         openXrSource.ShouldContain("using IDisposable externalScope = EnterOpenXrExternalSwapchainRenderScope(");
         openXrSource.ShouldNotContain("_openXrExternalSwapchainRenderDepth++;");
         openXrSource.ShouldNotContain("_openXrExternalSwapchainRenderDepth--;");
@@ -384,6 +388,7 @@ public sealed class VulkanCommandChainDataModelTests
     public void OpenXrEyePrimaryCommandBuffers_UseEyeOwnedCommandPools()
     {
         string openXrSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string openXrBackendSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanOpenXrBackend.cs");
         string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs")
             + ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferCacheVariant.cs");
 
@@ -401,6 +406,7 @@ public sealed class VulkanCommandChainDataModelTests
     public void OpenXrPrimaryCommandBufferCache_AccessIsLockedWithoutLockingWholeRecordPath()
     {
         string openXrSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string openXrBackendSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanOpenXrBackend.cs");
 
         openXrSource.ShouldContain("private readonly object _openXrPrimaryCommandBufferVariantsLock = new();");
         openXrSource.ShouldContain("lock (_openXrPrimaryCommandBufferVariantsLock)");
@@ -438,6 +444,7 @@ public sealed class VulkanCommandChainDataModelTests
     public void OpenXrSubmitDiagnostics_ReportFrameSlotsUploadsAndRetirementFlushes()
     {
         string openXrSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string openXrBackendSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanOpenXrBackend.cs");
 
         openXrSource.ShouldContain("uint FrameDataSlotIndex");
         openXrSource.ShouldContain("CountOpenXrEyeRecordedTextureUploads()");
@@ -456,6 +463,7 @@ public sealed class VulkanCommandChainDataModelTests
         VulkanRenderer.ResolveOpenXrEyeUploadPublicationBufferIndex(99u).ShouldBe(1);
 
         string openXrSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string openXrBackendSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanOpenXrBackend.cs");
         openXrSource.ShouldContain("private readonly List<VulkanImportedTexturePendingUpload>[] _openXrEyeRecordedTextureUploadsForSubmit = [new(), new()];");
         openXrSource.ShouldContain("MoveRecordedTextureUploadsForSubmitTo(eyeUploads);");
         openXrSource.ShouldContain("PublishOpenXrEyeRecordedTextureUploadsAfterCompletedSubmit(\"OpenXR eye batch\")");
@@ -466,6 +474,7 @@ public sealed class VulkanCommandChainDataModelTests
     public void OpenXrEyeUploadPublicationBuffers_HandleRecordSubmitAndDeviceLostFailures()
     {
         string openXrSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string openXrBackendSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanOpenXrBackend.cs");
 
         openXrSource.ShouldContain("ClearOpenXrEyeRecordedTextureUploads();");
         openXrSource.ShouldContain("TryPrepareOpenXrEyeSwapchainCommandBuffer(firstEye, out firstPrepared)");
@@ -509,7 +518,7 @@ public sealed class VulkanCommandChainDataModelTests
 
         recordingSource.ShouldContain(
             "private bool TryRefreshReusableCommandBufferFrameData(\n            uint imageIndex,\n            FrameOp[] ops,");
-        recordingSource.ShouldContain("FrameOpPlannerStateKey packetPlannerKey = BuildFrameOpPlannerStateKey(packetContext);");
+        recordingSource.ShouldContain("VulkanFrameOpPlannerStateKey packetPlannerKey = BuildFrameOpPlannerStateKey(packetContext);");
         recordingSource.ShouldContain("using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(packetContext);");
         recordingSource.ShouldNotContain("using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(op.Context);");
         recordingSource.ShouldContain("case IndirectDrawOp indirectDrawOp:");
@@ -656,6 +665,7 @@ public sealed class VulkanCommandChainDataModelTests
         left.ShouldNotBe(right);
 
         string openXrSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string openXrBackendSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanOpenXrBackend.cs");
         string frameBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
 
         openXrSource.ShouldContain("hash.Add(targetContext.Image.Handle);");
@@ -693,7 +703,7 @@ public sealed class VulkanCommandChainDataModelTests
         openXrSource.ShouldContain("FrameOpContext PlannerContext");
         openXrSource.ShouldContain("plannerContext,");
         openXrSource.ShouldContain("CommandChainSchedule? CommandChainSchedule");
-        openXrSource.ShouldContain("EnterOpenXrResourcePlannerThreadScope(OpenXrViewResourcePlannerContextKey.FromTarget(in targetContext))");
+        openXrSource.ShouldContain("EnterOpenXrResourcePlannerThreadScope(VulkanOpenXrViewResourcePlannerContextKey.FromTarget(in targetContext))");
         openXrSource.ShouldContain("ResetDynamicUniformRingBuffer(recordImageIndex);");
         openXrSource.ShouldNotContain("renderer.RestoreResourcePlannerRuntimeState(openXrState)");
     }
@@ -937,7 +947,7 @@ public sealed class VulkanCommandChainDataModelTests
         openXrSource.ShouldContain("TryRecordPreparedOpenXrEyeSwapchainCommandBuffer(in prepared, out recorded)");
         openXrSource.ShouldContain("using ThreadRenderStateScope renderStateScope = EnterThreadRenderStateScope(");
         openXrSource.ShouldContain("CreateOpenXrEyeRenderStateTracker(in targetContext)");
-        openXrSource.ShouldContain("EnterOpenXrResourcePlannerThreadScope(OpenXrViewResourcePlannerContextKey.FromTarget(in targetContext))");
+        openXrSource.ShouldContain("EnterOpenXrResourcePlannerThreadScope(VulkanOpenXrViewResourcePlannerContextKey.FromTarget(in targetContext))");
         workerSource.ShouldContain("TryRecordOpenXrEyeSwapchainCommandBufferFromWorker");
         workerSource.ShouldContain("thread-scoped prepared primary record");
         workerSource.ShouldContain("private readonly object _openXrParallelEyePrimaryRecordSharedStateLock = new();");
@@ -957,20 +967,20 @@ public sealed class VulkanCommandChainDataModelTests
     [Test]
     public void RepeatedRendererReservation_StrictSpsCommandPinsReferencedGenerationsUntilCompletion()
     {
-        var renderer = (VulkanRenderer.VkMeshRenderer)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
-            typeof(VulkanRenderer.VkMeshRenderer));
-        System.Reflection.FieldInfo capacityField = typeof(VulkanRenderer.VkMeshRenderer).GetField(
+        var renderer = (VkMeshRenderer)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+            typeof(VkMeshRenderer));
+        System.Reflection.FieldInfo capacityField = typeof(VkMeshRenderer).GetField(
             "_uniformDrawSlotCapacity",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).ShouldNotBeNull();
         capacityField.SetValue(renderer, 4);
 
-        VulkanRenderer.PendingMeshDraw draw = default(VulkanRenderer.PendingMeshDraw) with { Renderer = renderer };
-        VulkanRenderer.FrameOpContext context = CreateFrameOpContext();
-        VulkanRenderer.FrameOp[] ops =
+        PendingMeshDraw draw = default(PendingMeshDraw) with { Renderer = renderer };
+        FrameOpContext context = CreateFrameOpContext();
+        FrameOp[] ops =
         [
-            new VulkanRenderer.MeshDrawOp(0, null, draw, context),
-            new VulkanRenderer.MeshDrawOp(0, null, draw, context),
-            new VulkanRenderer.IndirectDrawOp(
+            new MeshDrawOp(0, null, draw, context),
+            new MeshDrawOp(0, null, draw, context),
+            new IndirectDrawOp(
                 0,
                 null,
                 null!,
@@ -985,14 +995,14 @@ public sealed class VulkanCommandChainDataModelTests
                 BindlessMaterialTextures: null,
                 context),
         ];
-        var rendererFamilies = new Dictionary<VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey, int>(
-            VulkanRenderer.VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
-        var familyStrides = new Dictionary<VulkanRenderer.VulkanMeshFrameDataFamilyKey, int>();
+        var rendererFamilies = new Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>(
+            VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+        var familyStrides = new Dictionary<VulkanMeshFrameDataFamilyKey, int>();
 
         VulkanRenderer.CollectMeshFrameDataRequirementsForRecording(
             ops,
             4,
-            VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
+            EVulkanMeshFrameDataStreamKind.Primary,
             rendererFamilies,
             familyStrides);
         rendererFamilies.Single().Value.ShouldBe(3);
@@ -1005,7 +1015,7 @@ public sealed class VulkanCommandChainDataModelTests
         VulkanRenderer.CollectMeshFrameDataRequirementsForRecording(
             ops,
             4,
-            VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
+            EVulkanMeshFrameDataStreamKind.Primary,
             rendererFamilies,
             familyStrides);
         rendererFamilies.Single().Value.ShouldBe(3);
@@ -1089,8 +1099,8 @@ public sealed class VulkanCommandChainDataModelTests
             DirectionalCascadeInstancedLayeredShadowPass = true,
             DirectionalCascadeShadowLayerCount = 4,
         };
-        VulkanRenderer.MeshDrawOp op = CreateMeshDrawOp(
-            default(VulkanRenderer.PendingMeshDraw) with { ShadowUniformState = shadowState },
+        MeshDrawOp op = CreateMeshDrawOp(
+            default(PendingMeshDraw) with { ShadowUniformState = shadowState },
             passIndex: 5,
             context: CreateFrameOpContext(passMetadata: [shadowPass]));
 
@@ -1157,8 +1167,8 @@ public sealed class VulkanCommandChainDataModelTests
     [Test]
     public void ClassifyRenderPacketVolatility_StaticClearAndBarrier_AreStaticStructural()
     {
-        VulkanRenderer.FrameOpContext context = CreateFrameOpContext();
-        VulkanRenderer.ClearOp clear = new(
+        FrameOpContext context = CreateFrameOpContext();
+        ClearOp clear = new(
             PassIndex: 0,
             Target: null,
             ClearColor: true,
@@ -1169,7 +1179,7 @@ public sealed class VulkanCommandChainDataModelTests
             Stencil: 0,
             Rect: default,
             Context: context);
-        VulkanRenderer.MemoryBarrierOp barrier = new(
+        MemoryBarrierOp barrier = new(
             PassIndex: 0,
             Mask: EMemoryBarrierMask.TextureFetch,
             Context: context);
@@ -1184,8 +1194,8 @@ public sealed class VulkanCommandChainDataModelTests
     public void ClassifyRenderPacketVolatility_OverlayPassMetadata_IsDynamicCommand()
     {
         RenderPassMetadata overlayPass = new(7, "ProfilerOverlay", ERenderGraphPassStage.Graphics);
-        VulkanRenderer.FrameOpContext context = CreateFrameOpContext(passMetadata: [overlayPass]);
-        VulkanRenderer.ClearOp clear = new(
+        FrameOpContext context = CreateFrameOpContext(passMetadata: [overlayPass]);
+        ClearOp clear = new(
             PassIndex: 7,
             Target: null,
             ClearColor: true,
@@ -1204,7 +1214,7 @@ public sealed class VulkanCommandChainDataModelTests
     [Test]
     public void ClassifyRenderPacketVolatility_DynamicOverlayFlag_OverridesStaticOp()
     {
-        VulkanRenderer.ClearOp clear = new(
+        ClearOp clear = new(
             PassIndex: 0,
             Target: null,
             ClearColor: true,
@@ -1223,7 +1233,7 @@ public sealed class VulkanCommandChainDataModelTests
     [Test]
     public void ClassifyRenderPacketVolatility_ComputeDispatch_IsFrameDataOnlyUnlessOverlay()
     {
-        VulkanRenderer.ComputeDispatchOp compute = CreateComputeDispatchOp();
+        ComputeDispatchOp compute = CreateComputeDispatchOp();
 
         VulkanRenderer.ClassifyRenderPacketVolatility(compute, dynamicOverlay: false)
             .ShouldBe(RenderPacketVolatility.FrameDataOnly);
@@ -1863,8 +1873,8 @@ public sealed class VulkanCommandChainDataModelTests
     [Test]
     public void ValidatePrimaryCommandChainSchedule_RequiresStaticGroupsBeforeOverlayGroups()
     {
-        VulkanRenderer.MeshDrawOp firstStatic = CreateMeshDrawOp(default, passIndex: 0);
-        VulkanRenderer.MeshDrawOp secondStatic = CreateMeshDrawOp(default, passIndex: 0);
+        MeshDrawOp firstStatic = CreateMeshDrawOp(default, passIndex: 0);
+        MeshDrawOp secondStatic = CreateMeshDrawOp(default, passIndex: 0);
         CommandChainSchedule valid = new(
             structuralSignature: 0x100,
             resourcePlanRevision: 0x200,
@@ -2269,31 +2279,31 @@ public sealed class VulkanCommandChainDataModelTests
             supportsSecondaryCommandBuffers: true,
             dynamicOverlay: false);
 
-    private static VulkanRenderer.MeshDrawOp CreateMeshDrawOp(
-        VulkanRenderer.PendingMeshDraw draw,
+    private static MeshDrawOp CreateMeshDrawOp(
+        PendingMeshDraw draw,
         int passIndex = 0,
-        VulkanRenderer.FrameOpContext? context = null)
+        FrameOpContext? context = null)
         => new(
             passIndex,
             Target: null,
             draw,
             context ?? CreateFrameOpContext());
 
-    private static VulkanRenderer.ComputeDispatchOp CreateComputeDispatchOp(
+    private static ComputeDispatchOp CreateComputeDispatchOp(
         int passIndex = 0,
-        VulkanRenderer.FrameOpContext? context = null)
+        FrameOpContext? context = null)
         => new(
             passIndex,
             Program: null!,
             GroupsX: 1,
             GroupsY: 1,
             GroupsZ: 1,
-            Snapshot: new VulkanRenderer.ComputeDispatchSnapshot(
-                new Dictionary<string, VulkanRenderer.ProgramUniformValue>(),
+            Snapshot: new ComputeDispatchSnapshot(
+                new Dictionary<string, ProgramUniformValue>(),
                 new Dictionary<uint, XRTexture>(),
                 new Dictionary<uint, string>(),
                 new Dictionary<string, XRTexture>(),
-                new Dictionary<uint, VulkanRenderer.ProgramImageBinding>(),
+                new Dictionary<uint, ProgramImageBinding>(),
                 new Dictionary<uint, XRDataBuffer>()),
             context ?? CreateFrameOpContext());
 
@@ -2309,7 +2319,7 @@ public sealed class VulkanCommandChainDataModelTests
             StructuralSignature: 0x10,
             FrameDataSignature: 0x20);
 
-    private static VulkanRenderer.ClearOp CreateClearOp(int passIndex)
+    private static ClearOp CreateClearOp(int passIndex)
         => new(
             PassIndex: passIndex,
             Target: null,
@@ -2322,7 +2332,7 @@ public sealed class VulkanCommandChainDataModelTests
             Rect: default,
             Context: CreateFrameOpContext());
 
-    private static VulkanRenderer.FrameOpContext CreateFrameOpContext(
+    private static FrameOpContext CreateFrameOpContext(
         IReadOnlyCollection<RenderPassMetadata>? passMetadata = null,
         int outputTargetIdentity = 0,
         string? outputTargetName = null)
@@ -2366,27 +2376,5 @@ public sealed class VulkanCommandChainDataModelTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        DirectoryInfo? dir = new(AppContext.BaseDirectory);
-        string platformPath = relativePath.Replace('/', Path.DirectorySeparatorChar);
-
-        while (dir is not null)
-        {
-            string fullPath = Path.Combine(dir.FullName, platformPath);
-            if (File.Exists(fullPath))
-                return File.ReadAllText(fullPath).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
-
-            string marker = $"{Path.DirectorySeparatorChar}Commands{Path.DirectorySeparatorChar}VulkanRenderer.";
-            string relocatedPath = fullPath.Replace(
-                marker,
-                $"{Path.DirectorySeparatorChar}Commands{Path.DirectorySeparatorChar}CommandBuffers{Path.DirectorySeparatorChar}VulkanRenderer.",
-                StringComparison.Ordinal);
-            if (File.Exists(relocatedPath))
-                return File.ReadAllText(relocatedPath).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
-
-            dir = dir.Parent;
-        }
-
-        throw new FileNotFoundException($"Could not resolve workspace path for '{relativePath}' from test base directory '{AppContext.BaseDirectory}'.");
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 }

@@ -18,7 +18,7 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    internal bool SamplerAnisotropyEnabled => _supportsAnisotropy;
+    internal bool SamplerAnisotropyEnabled => DeviceCapabilities.Supports(EVulkanDeviceCapability.Anisotropy);
     internal IInputContext? ImGuiInputContext => XRWindow.Input;
     private VulkanImGuiBackend? _imguiBackend;
     private readonly VulkanImGuiDrawDataCache _imguiDrawData = new();

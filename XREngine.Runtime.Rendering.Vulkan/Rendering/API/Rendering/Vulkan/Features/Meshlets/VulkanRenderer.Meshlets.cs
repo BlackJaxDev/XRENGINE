@@ -163,7 +163,7 @@ public unsafe partial class VulkanRenderer
                 features |= ERvcVulkanProductionFeature.FragmentDensityMap;
             if (SupportsProductionMeshletShaders())
                 features |= ERvcVulkanProductionFeature.MeshShader;
-            if (_supportsTimelineSemaphores)
+            if (DeviceCapabilities.Supports(EVulkanDeviceCapability.TimelineSemaphores))
                 features |= ERvcVulkanProductionFeature.TimelineSemaphore;
 
             return features;

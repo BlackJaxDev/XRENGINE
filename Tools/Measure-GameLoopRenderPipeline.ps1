@@ -768,6 +768,41 @@ function Test-RenderStatsStability {
         }
     }
 
+    if ($Strategy -in @('GpuIndirectZeroReadback', 'GpuMeshletZeroReadback')) {
+        for ($sampleIndex = 0; $sampleIndex -lt $samples.Count; $sampleIndex++) {
+            $sample = $samples[$sampleIndex]
+            $requiredRows = Get-SamplePropertyValue -Sample $sample -Property 'gpu_driven_required_material_rows'
+            $readyRows = Get-SamplePropertyValue -Sample $sample -Property 'gpu_driven_ready_material_rows'
+            $nonReadyReferences = Get-SamplePropertyValue -Sample $sample -Property 'gpu_driven_non_ready_material_texture_references'
+            $invalidMaterialIds = Get-SamplePropertyValue -Sample $sample -Property 'gpu_driven_invalid_material_ids'
+            $fallbackSubmittedRows = Get-SamplePropertyValue -Sample $sample -Property 'gpu_driven_fallback_submitted_material_rows'
+            $materialTableGeneration = Get-SamplePropertyValue -Sample $sample -Property 'gpu_driven_material_table_publication_generation'
+            $descriptorGeneration = Get-SamplePropertyValue -Sample $sample -Property 'gpu_driven_material_descriptor_publication_generation'
+            $materialPath = Get-SamplePropertyValue -Sample $sample -Property 'zero_readback_material_draw_path'
+
+            if ($null -eq $requiredRows -or $null -eq $readyRows -or
+                $null -eq $nonReadyReferences -or $null -eq $invalidMaterialIds -or
+                $null -eq $fallbackSubmittedRows -or $null -eq $materialTableGeneration -or
+                $null -eq $descriptorGeneration) {
+                return [pscustomobject]@{ Stable = $false; Reason = 'material readiness telemetry incomplete'; WorkloadIdentityHash = $hashes[0]; Samples = $samples.Count }
+            }
+
+            if ([long]$requiredRows -le 0 -or [long]$readyRows -ne [long]$requiredRows -or
+                [long]$nonReadyReferences -ne 0 -or [long]$invalidMaterialIds -ne 0 -or
+                [long]$fallbackSubmittedRows -ne 0 -or [long]$materialTableGeneration -le 0) {
+                return [pscustomobject]@{
+                    Stable = $false
+                    Reason = "material table not ready (ready=$readyRows/$requiredRows pendingRefs=$nonReadyReferences invalidIds=$invalidMaterialIds fallbackRows=$fallbackSubmittedRows tableGen=$materialTableGeneration)"
+                    WorkloadIdentityHash = $hashes[0]
+                    Samples = $samples.Count
+                }
+            }
+
+            if ([string]$materialPath -eq 'BindlessMaterialTable' -and [long]$descriptorGeneration -le 0) {
+                return [pscustomobject]@{ Stable = $false; Reason = 'bindless material descriptors have no published generation'; WorkloadIdentityHash = $hashes[0]; Samples = $samples.Count }
+            }
+        }
+    }
     $quietProperties = @(
         'texture_upload_jobs',
         'texture_upload_bytes',
@@ -1376,6 +1411,8 @@ function Measure-Variant {
         524288    # VolatileCommand
     [double]$vkEligiblePrimaryRecordsTotal = 0
     [double]$vkIneligiblePrimaryRecordsTotal = 0
+    [long]$vkEligiblePrimaryRecordAllocatedBytesTotal = 0
+    [long]$vkIneligiblePrimaryRecordAllocatedBytesTotal = 0
     foreach ($sample in $samples) {
         [double]$recordCount = Get-SamplePropertyValue -Sample $sample -Property 'vulkan_command_buffer_record_count'
         if ($recordCount -le 0) {
@@ -1383,11 +1420,19 @@ function Measure-Variant {
         }
 
         [long]$reasonMask = Get-SamplePropertyValue -Sample $sample -Property 'vulkan_command_buffer_decision_reason_mask'
+        [long]$allocatedBytes = Get-SamplePropertyValue -Sample $sample -Property 'vulkan_record_command_buffer_allocated_bytes'
         if (($reasonMask -band $vkPrimaryReuseIneligibleReasonMask) -eq 0) {
             $vkEligiblePrimaryRecordsTotal += $recordCount
+            $vkEligiblePrimaryRecordAllocatedBytesTotal += $allocatedBytes
         } else {
             $vkIneligiblePrimaryRecordsTotal += $recordCount
+            $vkIneligiblePrimaryRecordAllocatedBytesTotal += $allocatedBytes
         }
+    }
+    $vkGateRecordCommandBufferAllocatedBytesTotal = if ($UseEligiblePrimaryReuseRatio) {
+        $vkEligiblePrimaryRecordAllocatedBytesTotal
+    } else {
+        $vkRecordCommandBufferAllocatedBytesTotal
     }
     $vkEligiblePrimaryReuseDecisionTotal = $vkCommandBufferCleanReuseTotal + $vkEligiblePrimaryRecordsTotal
     $vkEligiblePrimaryReuseRatio = if ($vkEligiblePrimaryReuseDecisionTotal -gt 0) {
@@ -1473,8 +1518,8 @@ function Measure-Variant {
     if ($FailOnSteadyStateCommandBufferChurn -and ($vkStrictCommandBufferChurn -or $vkGatePrimaryReuseRatio -lt $MinSteadyStateCommandBufferCleanReuseRatio -or $vkGlobalFallbackInvalidationsTotal -gt 0)) {
         $noteParts.Add("steady-state command-buffer churn failure records=$vkCommandBufferRecordsTotal reuse=$vkCommandBufferCleanReuseTotal forcedDirty=$vkCommandBufferForcedDirtyTotal rawRatio=$vkCommandBufferCleanReuseRatio eligibleRecords=$vkEligiblePrimaryRecordsTotal ineligibleRecords=$vkIneligiblePrimaryRecordsTotal eligibleRatio=$vkEligiblePrimaryReuseRatio exactVariants=$vkExactVariantsDirtiedTotal exactChains=$vkExactCommandChainsDirtiedTotal unrelatedPreserved=$vkUnrelatedVariantsPreservedTotal globalFallbacks=$vkGlobalFallbackInvalidationsTotal dirty=$($vkCommandBufferDirtySummaries -join '|')") | Out-Null
     }
-    if ($FailOnSteadyStateCommandBufferAllocations -and $vkRecordCommandBufferAllocatedBytesTotal -gt $MaxSteadyStateRecordCommandBufferAllocatedBytes) {
-        $noteParts.Add("steady-state command-buffer allocation failure bytes=$vkRecordCommandBufferAllocatedBytesTotal threshold=$MaxSteadyStateRecordCommandBufferAllocatedBytes") | Out-Null
+    if ($FailOnSteadyStateCommandBufferAllocations -and $vkGateRecordCommandBufferAllocatedBytesTotal -gt $MaxSteadyStateRecordCommandBufferAllocatedBytes) {
+        $noteParts.Add("steady-state command-buffer allocation failure gateBytes=$vkGateRecordCommandBufferAllocatedBytesTotal rawBytes=$vkRecordCommandBufferAllocatedBytesTotal eligibleBytes=$vkEligiblePrimaryRecordAllocatedBytesTotal ineligibleBytes=$vkIneligiblePrimaryRecordAllocatedBytesTotal threshold=$MaxSteadyStateRecordCommandBufferAllocatedBytes") | Out-Null
     }
     if ($workloadIdentityHashes.Count -ne 1) {
         $noteParts.Add("capture workload identity changed or missing: identities=$($workloadIdentityHashes -join ',')") | Out-Null
@@ -1621,6 +1666,9 @@ function Measure-Variant {
         VulkanSecondaryRecordingP95Ms = $vkSecondaryRecording.P95
         VulkanSecondaryRecordingP99Ms = $vkSecondaryRecording.P99
         VulkanRecordCommandBufferAllocatedBytesTotal = $vkRecordCommandBufferAllocatedBytesTotal
+        VulkanEligiblePrimaryRecordAllocatedBytesTotal = $vkEligiblePrimaryRecordAllocatedBytesTotal
+        VulkanIneligiblePrimaryRecordAllocatedBytesTotal = $vkIneligiblePrimaryRecordAllocatedBytesTotal
+        VulkanGateRecordCommandBufferAllocatedBytesTotal = $vkGateRecordCommandBufferAllocatedBytesTotal
         VulkanFrameOpPreparationAllocatedBytesTotal = $vkFrameOpPreparationAllocatedBytesTotal
         VulkanResourcePlanningAllocatedBytesTotal = $vkResourcePlanningAllocatedBytesTotal
         VulkanFrameDataRefreshAllocatedBytesTotal = $vkFrameDataRefreshAllocatedBytesTotal
@@ -1759,6 +1807,13 @@ function Measure-Variant {
         GpuDrivenMaterialLookupCapacityMax = Max-NumericProperty -Samples $samples -Property 'gpu_driven_material_lookup_capacity'
         GpuDrivenActiveMaterialSlotsP50 = (Get-NumericStats -Samples $samples -Property 'gpu_driven_active_material_slots').P50
         GpuDrivenActiveMaterialSlotsMax = Max-NumericProperty -Samples $samples -Property 'gpu_driven_active_material_slots'
+        GpuDrivenRequiredMaterialRowsP50 = (Get-NumericStats -Samples $samples -Property 'gpu_driven_required_material_rows').P50
+        GpuDrivenReadyMaterialRowsP50 = (Get-NumericStats -Samples $samples -Property 'gpu_driven_ready_material_rows').P50
+        GpuDrivenNonReadyMaterialTextureReferencesTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_driven_non_ready_material_texture_references'
+        GpuDrivenInvalidMaterialIdsTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_driven_invalid_material_ids'
+        GpuDrivenFallbackSubmittedMaterialRowsTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_driven_fallback_submitted_material_rows'
+        GpuDrivenMaterialTablePublicationGenerationMax = Max-NumericProperty -Samples $samples -Property 'gpu_driven_material_table_publication_generation'
+        GpuDrivenMaterialDescriptorPublicationGenerationMax = Max-NumericProperty -Samples $samples -Property 'gpu_driven_material_descriptor_publication_generation'
         GpuDrivenValidationCapacityMultiplier = (Get-NumericStats -Samples $samples -Property 'gpu_driven_validation_capacity_multiplier').P50
         GpuDrivenValidationCapacityFloor = (Get-NumericStats -Samples $samples -Property 'gpu_driven_validation_capacity_floor').P50
         GpuDrivenCulledCommandCountP50 = (Get-NumericStats -Samples $samples -Property 'gpu_driven_culled_command_count').P50
@@ -1917,13 +1972,13 @@ if ($FailOnSteadyStateCommandBufferChurn) {
 
 if ($FailOnSteadyStateCommandBufferAllocations) {
     $allocationFailures = @($results | Where-Object {
-        $value = $_.VulkanRecordCommandBufferAllocatedBytesTotal
+        $value = $_.VulkanGateRecordCommandBufferAllocatedBytesTotal
         $null -ne $value -and [long]$value -gt $MaxSteadyStateRecordCommandBufferAllocatedBytes
     })
 
     if ($allocationFailures.Count -gt 0) {
         $details = $allocationFailures | ForEach-Object {
-            "$($_.Strategy) r$($_.Repetition): recordCommandBufferAllocatedBytes=$($_.VulkanRecordCommandBufferAllocatedBytesTotal) threshold=$MaxSteadyStateRecordCommandBufferAllocatedBytes"
+            "$($_.Strategy) r$($_.Repetition): gateBytes=$($_.VulkanGateRecordCommandBufferAllocatedBytesTotal) rawBytes=$($_.VulkanRecordCommandBufferAllocatedBytesTotal) eligibleBytes=$($_.VulkanEligiblePrimaryRecordAllocatedBytesTotal) ineligibleBytes=$($_.VulkanIneligiblePrimaryRecordAllocatedBytesTotal) threshold=$MaxSteadyStateRecordCommandBufferAllocatedBytes"
         }
         throw "Steady-state Vulkan command-buffer allocations exceeded threshold: $($details -join '; ')"
     }

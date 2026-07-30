@@ -52,7 +52,7 @@ public sealed class Mipmap2DTests
             Data = new DataSource(rgba)
         };
 
-        DataSource? uploadData = VulkanRenderer.VkFormatConversions.CreateNormalizedUploadData2D(
+        DataSource? uploadData = VkFormatConversions.CreateNormalizedUploadData2D(
             mipmap,
             Format.R8Unorm,
             out bool ownsData);
@@ -80,7 +80,7 @@ public sealed class Mipmap2DTests
             Data = new DataSource([1, 2, 3, 4, 5, 6])
         };
 
-        DataSource? uploadData = VulkanRenderer.VkFormatConversions.CreateNormalizedUploadData2D(
+        DataSource? uploadData = VkFormatConversions.CreateNormalizedUploadData2D(
             mipmap,
             Format.R8G8B8A8Unorm,
             out bool ownsData);
@@ -107,7 +107,7 @@ public sealed class Mipmap2DTests
             Data = new DataSource([1, 2, 3, 4])
         };
 
-        DataSource? uploadData = VulkanRenderer.VkFormatConversions.CreateNormalizedUploadData2D(
+        DataSource? uploadData = VkFormatConversions.CreateNormalizedUploadData2D(
             mipmap,
             Format.R8G8B8A8Unorm,
             out bool ownsData);

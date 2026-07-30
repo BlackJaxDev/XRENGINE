@@ -87,8 +87,8 @@ public sealed class VulkanStablePacketAndDescriptorTests
     [Test]
     public void BindingSnapshot_ResetReusesDictionaryStorageWithoutAllocating()
     {
-        VulkanRenderer.ComputeDispatchSnapshot snapshot = new();
-        Dictionary<string, VulkanRenderer.ProgramUniformValue> uniforms =
+        ComputeDispatchSnapshot snapshot = new();
+        Dictionary<string, ProgramUniformValue> uniforms =
             new(StringComparer.Ordinal)
             {
                 ["FrameValue"] = default,
@@ -96,10 +96,10 @@ public sealed class VulkanStablePacketAndDescriptorTests
         Dictionary<uint, XRTexture> samplers = [];
         Dictionary<uint, string> samplerNames = [];
         Dictionary<string, XRTexture> samplersByName = new(StringComparer.Ordinal);
-        Dictionary<uint, VulkanRenderer.ProgramImageBinding> images = [];
+        Dictionary<uint, ProgramImageBinding> images = [];
 
         snapshot.Reset(uniforms, samplers, samplerNames, samplersByName, images);
-        Dictionary<string, VulkanRenderer.ProgramUniformValue> uniformStorage = snapshot.Uniforms;
+        Dictionary<string, ProgramUniformValue> uniformStorage = snapshot.Uniforms;
 
         long before = GC.GetAllocatedBytesForCurrentThread();
         for (int iteration = 0; iteration < 1_000; iteration++)
@@ -116,19 +116,19 @@ public sealed class VulkanStablePacketAndDescriptorTests
     {
         const ulong resourceFingerprint = 0x123456789ABCDEF0UL;
 
-        VulkanRenderer.VkMeshRenderer.ResolveDescriptorAllocationResourceVariantFingerprint(
+        VkMeshRenderer.ResolveDescriptorAllocationResourceVariantFingerprint(
             allActiveSetsUpdateAfterBind: true,
             hasCapturedBindingSnapshot: true,
             resourceFingerprint).ShouldBe(resourceFingerprint);
-        VulkanRenderer.VkMeshRenderer.ResolveDescriptorAllocationResourceVariantFingerprint(
+        VkMeshRenderer.ResolveDescriptorAllocationResourceVariantFingerprint(
             allActiveSetsUpdateAfterBind: false,
             hasCapturedBindingSnapshot: true,
             resourceFingerprint).ShouldBe(resourceFingerprint);
-        VulkanRenderer.VkMeshRenderer.ResolveDescriptorAllocationResourceVariantFingerprint(
+        VkMeshRenderer.ResolveDescriptorAllocationResourceVariantFingerprint(
             allActiveSetsUpdateAfterBind: false,
             hasCapturedBindingSnapshot: false,
             resourceFingerprint).ShouldBe(resourceFingerprint);
-        VulkanRenderer.VkMeshRenderer.ResolveDescriptorAllocationResourceVariantFingerprint(
+        VkMeshRenderer.ResolveDescriptorAllocationResourceVariantFingerprint(
             allActiveSetsUpdateAfterBind: true,
             hasCapturedBindingSnapshot: false,
             resourceFingerprint).ShouldBe(0UL);
@@ -154,7 +154,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
     [Test]
     public void BindingSnapshot_NamedSamplerLookupUsesCapturedDictionary()
     {
-        VulkanRenderer.ComputeDispatchSnapshot snapshot = new();
+        ComputeDispatchSnapshot snapshot = new();
         XRTexture2D texture = new();
         snapshot.SamplersByName["LightingTexture"] = texture;
 
@@ -171,7 +171,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
     public void FrameOpSignatureHasher_ReusesStableStringSignatureWithoutAllocating()
     {
         string value = string.Concat("Prepared", "Program", "Identity");
-        VulkanRenderer.FrameOpSignatureHasher warm = new();
+        FrameOpSignatureHasher warm = new();
         warm.Add(value);
         ulong expected = warm.ToHash();
 
@@ -179,7 +179,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         long before = GC.GetAllocatedBytesForCurrentThread();
         for (int iteration = 0; iteration < 1_000; iteration++)
         {
-            VulkanRenderer.FrameOpSignatureHasher hash = new();
+            FrameOpSignatureHasher hash = new();
             hash.Add(value);
             actual = hash.ToHash();
         }
@@ -188,7 +188,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         actual.ShouldBe(expected);
         allocated.ShouldBe(0);
         string equivalentValue = new(value.ToCharArray());
-        VulkanRenderer.FrameOpSignatureHasher equivalent = new();
+        FrameOpSignatureHasher equivalent = new();
         equivalent.Add(equivalentValue);
         equivalent.ToHash().ShouldBe(expected);
     }
@@ -209,7 +209,8 @@ public sealed class VulkanStablePacketAndDescriptorTests
         program.ShouldContain("private ComputeDispatchSnapshot CaptureComputeSnapshotNoLock()");
         program.ShouldContain("private bool HasBoundDescriptorResourcesNoLock()");
         program.ShouldContain("private void SetSamplerNoLock(");
-        capture.ShouldContain("[ThreadStatic]");
+        capture.ShouldNotContain("[ThreadStatic]");
+        capture.ShouldContain("ThreadLocal<BindingCaptureWorkspace>");
         capture.ShouldContain("ReferenceEquals(state.Owner, this)");
         capture.ShouldContain("private sealed class BindingCaptureState");
         capture.ShouldContain("internal ComputeDispatchSnapshot? RentFrameSnapshot()");
@@ -253,7 +254,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         string program = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
         string snapshot = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanRenderer.ComputeDispatchSnapshot.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/ComputeDispatchSnapshot.cs");
         string uniformArrayPool = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.FrameUniformArrayPool.cs");
 
@@ -274,11 +275,11 @@ public sealed class VulkanStablePacketAndDescriptorTests
     [Test]
     public void MeshDrawOp_ResetReusesTheLargeCapturedDrawStorageWithoutAllocating()
     {
-        VulkanRenderer.PendingMeshDraw firstDraw = default(VulkanRenderer.PendingMeshDraw) with { Instances = 1u };
-        VulkanRenderer.PendingMeshDraw secondDraw = default(VulkanRenderer.PendingMeshDraw) with { Instances = 2u };
-        VulkanRenderer.FrameOpContext context = default;
-        VulkanRenderer.MeshDrawOp op = new(1, null, firstDraw, context);
-        ref readonly VulkanRenderer.PendingMeshDraw drawRef = ref op.DrawRef;
+        PendingMeshDraw firstDraw = default(PendingMeshDraw) with { Instances = 1u };
+        PendingMeshDraw secondDraw = default(PendingMeshDraw) with { Instances = 2u };
+        FrameOpContext context = default;
+        MeshDrawOp op = new(1, null, firstDraw, context);
+        ref readonly PendingMeshDraw drawRef = ref op.DrawRef;
 
         op.Reset(2, null, secondDraw, context, preserveSubmissionOrder: true);
 
@@ -297,17 +298,17 @@ public sealed class VulkanStablePacketAndDescriptorTests
     public void DefaultPipelineFrameOps_ReuseSharedFrameBoundedStorage()
     {
         string frameOp = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanRenderer.FrameOp.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/FrameOp.cs");
         string clearOp = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanRenderer.ClearOp.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/ClearOp.cs");
         string computeOp = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VulkanRenderer.ComputeDispatchOp.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/ComputeDispatchOp.cs");
         string barrierOp = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanRenderer.MemoryBarrierOp.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/MemoryBarrierOp.cs");
         string initialization = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
         string frameOpApi = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.FrameOpApi.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/FrameOpApi.cs");
         string recording = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string meshRenderer = ReadWorkspaceFile(
@@ -317,9 +318,9 @@ public sealed class VulkanStablePacketAndDescriptorTests
         string openXr = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
         string blitOp = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanRenderer.BlitOp.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/BlitOp.cs");
         string publishOp = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanRenderer.PublishFramebufferForSamplingOp.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/PublishFramebufferForSamplingOp.cs");
 
         frameOp.ShouldContain("protected static bool TryRentForCurrentFrame<T>");
         frameOp.ShouldContain("private static class FramePool<T>");
@@ -567,7 +568,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         string recording = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string diagnostics = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.FrameOpDiagnostics.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/FrameOpDiagnostics.cs");
         string markers = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.SubmissionMarkers.cs");
         string meshRenderer = ReadWorkspaceFile(
@@ -688,13 +689,13 @@ public sealed class VulkanStablePacketAndDescriptorTests
     [Test]
     public void WorkerPoolAssignment_UsesStableMutableRendererAffinity()
     {
-        var renderer = (VulkanRenderer.VkMeshRenderer)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
-            typeof(VulkanRenderer.VkMeshRenderer));
-        VulkanRenderer.VulkanMeshFrameDataFamilyKey firstFamily = new(
-            2, VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary, default,
+        var renderer = (VkMeshRenderer)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+            typeof(VkMeshRenderer));
+        VulkanMeshFrameDataFamilyKey firstFamily = new(
+            2, EVulkanMeshFrameDataStreamKind.Primary, default,
             3, 4, 5, 6, 7, 8, false, false);
-        VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey firstKey = new(renderer, firstFamily);
-        VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey anotherFamilyOfSameRenderer = new(
+        VulkanMeshFrameDataRendererFamilyKey firstKey = new(renderer, firstFamily);
+        VulkanMeshFrameDataRendererFamilyKey anotherFamilyOfSameRenderer = new(
             renderer,
             firstFamily with { ViewportIdentity = 99 });
 
@@ -711,14 +712,14 @@ public sealed class VulkanStablePacketAndDescriptorTests
     [Test]
     public void CommandChainRendererFamily_MixedChainsRequireSerialRecording()
     {
-        var firstRenderer = (VulkanRenderer.VkMeshRenderer)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
-            typeof(VulkanRenderer.VkMeshRenderer));
-        var secondRenderer = (VulkanRenderer.VkMeshRenderer)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
-            typeof(VulkanRenderer.VkMeshRenderer));
-        VulkanRenderer.FrameOpContext firstContext = new(1, 2, null, null, null);
-        VulkanRenderer.FrameOpContext differentFamilyContext = firstContext with { ViewportIdentity = 3 };
-        VulkanRenderer.PendingMeshDraw firstDraw = default(VulkanRenderer.PendingMeshDraw) with { Renderer = firstRenderer };
-        VulkanRenderer.PendingMeshDraw secondDraw = default(VulkanRenderer.PendingMeshDraw) with { Renderer = secondRenderer };
+        var firstRenderer = (VkMeshRenderer)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+            typeof(VkMeshRenderer));
+        var secondRenderer = (VkMeshRenderer)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+            typeof(VkMeshRenderer));
+        FrameOpContext firstContext = new(1, 2, null, null, null);
+        FrameOpContext differentFamilyContext = firstContext with { ViewportIdentity = 3 };
+        PendingMeshDraw firstDraw = default(PendingMeshDraw) with { Renderer = firstRenderer };
+        PendingMeshDraw secondDraw = default(PendingMeshDraw) with { Renderer = secondRenderer };
         CommandChain chain = new(new CommandChainKey(
             0,
             new RenderViewKey(1, 2, 0, RenderViewKind.Main, 0, -1),
@@ -731,42 +732,42 @@ public sealed class VulkanStablePacketAndDescriptorTests
             SourceCount = 2,
         };
 
-        VulkanRenderer.FrameOp[] homogeneousOps =
+        FrameOp[] homogeneousOps =
         [
-            new VulkanRenderer.MeshDrawOp(0, null, firstDraw, firstContext),
-            new VulkanRenderer.MeshDrawOp(0, null, firstDraw, firstContext),
+            new MeshDrawOp(0, null, firstDraw, firstContext),
+            new MeshDrawOp(0, null, firstDraw, firstContext),
         ];
-        VulkanRenderer.FrameOp[] mixedRendererOps =
+        FrameOp[] mixedRendererOps =
         [
             homogeneousOps[0],
-            new VulkanRenderer.MeshDrawOp(0, null, secondDraw, firstContext),
+            new MeshDrawOp(0, null, secondDraw, firstContext),
         ];
-        VulkanRenderer.FrameOp[] mixedFamilyOps =
+        FrameOp[] mixedFamilyOps =
         [
             homogeneousOps[0],
-            new VulkanRenderer.MeshDrawOp(0, null, firstDraw, differentFamilyContext),
+            new MeshDrawOp(0, null, firstDraw, differentFamilyContext),
         ];
 
         VulkanRenderer.TryResolveCommandChainRecordingRendererFamily(
                 homogeneousOps,
                 chain,
                 frameDataSlot: 0,
-                VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
-                out VulkanRenderer.VulkanMeshFrameDataRendererFamilyKey rendererFamily)
+                EVulkanMeshFrameDataStreamKind.Primary,
+                out VulkanMeshFrameDataRendererFamilyKey rendererFamily)
             .ShouldBeTrue();
         rendererFamily.Renderer.ShouldBeSameAs(firstRenderer);
         VulkanRenderer.TryResolveCommandChainRecordingRendererFamily(
                 mixedRendererOps,
                 chain,
                 frameDataSlot: 0,
-                VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
+                EVulkanMeshFrameDataStreamKind.Primary,
                 out _)
             .ShouldBeFalse();
         VulkanRenderer.TryResolveCommandChainRecordingRendererFamily(
                 mixedFamilyOps,
                 chain,
                 frameDataSlot: 0,
-                VulkanRenderer.EVulkanMeshFrameDataStreamKind.Primary,
+                EVulkanMeshFrameDataStreamKind.Primary,
                 out _)
             .ShouldBeFalse();
     }
@@ -870,7 +871,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
     [Test]
     public void DescriptorAllocationIdentity_UsesImmutableResourcesOnlyWithoutUpdateAfterBind()
     {
-        VulkanRenderer.VkMeshRenderer.DescriptorAllocationKey immutableIdentity = new(
+        VkMeshRenderer.DescriptorAllocationKey immutableIdentity = new(
             LayoutFingerprint: 11,
             SchemaFingerprint: 12,
             ProgramBindingId: 13,
@@ -882,23 +883,23 @@ public sealed class VulkanStablePacketAndDescriptorTests
             DrawUniformSlot: 8,
             BindingIdentityFingerprint: 9,
             ImmutableResourceFingerprint: 20);
-        VulkanRenderer.VkMeshRenderer.DescriptorAllocationKey changedContent = immutableIdentity with
+        VkMeshRenderer.DescriptorAllocationKey changedContent = immutableIdentity with
         {
             ImmutableResourceFingerprint = 21,
         };
-        VulkanRenderer.VkMeshRenderer.DescriptorAllocationKey changedBinding = immutableIdentity with
+        VkMeshRenderer.DescriptorAllocationKey changedBinding = immutableIdentity with
         {
             BindingIdentityFingerprint = 10,
         };
-        VulkanRenderer.VkMeshRenderer.DescriptorAllocationKey changedProgram = immutableIdentity with
+        VkMeshRenderer.DescriptorAllocationKey changedProgram = immutableIdentity with
         {
             ProgramBindingId = 14,
         };
-        VulkanRenderer.VkMeshRenderer.DescriptorAllocationKey updateAfterBindIdentity = immutableIdentity with
+        VkMeshRenderer.DescriptorAllocationKey updateAfterBindIdentity = immutableIdentity with
         {
             ImmutableResourceFingerprint = 0,
         };
-        VulkanRenderer.VkMeshRenderer.DescriptorAllocationKey sameUpdateAfterBindIdentity = updateAfterBindIdentity with { };
+        VkMeshRenderer.DescriptorAllocationKey sameUpdateAfterBindIdentity = updateAfterBindIdentity with { };
 
         changedContent.ShouldNotBe(immutableIdentity);
         changedBinding.ShouldNotBe(immutableIdentity);
@@ -938,7 +939,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
 
         for (int completedSlot = 0; completedSlot < slotFingerprints.Length; completedSlot++)
         {
-            VulkanRenderer.VkMaterial.DescriptorSlotRequiresPublication(
+            VkMaterial.DescriptorSlotRequiresPublication(
                     slotFingerprints,
                     completedSlot,
                     publishedResource)
@@ -1236,16 +1237,5 @@ public sealed class VulkanStablePacketAndDescriptorTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string? directory = TestContext.CurrentContext.TestDirectory;
-        while (!string.IsNullOrEmpty(directory))
-        {
-            if (File.Exists(Path.Combine(directory, "XRENGINE.slnx")))
-                return File.ReadAllText(Path.Combine(directory, relativePath.Replace('/', Path.DirectorySeparatorChar)));
-
-            directory = Directory.GetParent(directory)?.FullName;
-        }
-
-        throw new DirectoryNotFoundException("Could not locate repository root from test directory.");
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 }

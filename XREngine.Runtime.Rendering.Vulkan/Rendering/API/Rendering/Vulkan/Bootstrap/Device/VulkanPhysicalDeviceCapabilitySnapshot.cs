@@ -1,6 +1,6 @@
 using Silk.NET.Vulkan;
 
-namespace XREngine.Rendering.Vulkan;
+namespace XREngine.Rendering.Vulkan.DeviceBootstrap;
 
 /// <summary>
 /// One immutable bootstrap query of physical-device core features, properties,

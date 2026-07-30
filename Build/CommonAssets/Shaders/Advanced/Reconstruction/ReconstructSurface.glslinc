@@ -1,0 +1,817 @@
+#ifndef XR_ADVANCED_RECONSTRUCT_SURFACE_GLSLINC
+#define XR_ADVANCED_RECONSTRUCT_SURFACE_GLSLINC
+
+#include "ReconstructionInterface.glslinc"
+
+#define XR_ADV_RECONSTRUCTION_MIN_W 1.0e-6
+#define XR_ADV_RECONSTRUCTION_MIN_AREA 1.0e-6
+#define XR_ADV_GEOMETRY_SOURCE_PRESKINNED 1u
+#define XR_ADV_GEOMETRY_MISSING_USE_FALLBACK 1u
+
+vec2 XR_ADV_ClipToPixel(
+    vec4 clip,
+    vec2 viewportSize)
+{
+    return (clip.xy / clip.w * 0.5 + 0.5) * viewportSize;
+}
+
+bool XR_ADV_TryPerspectiveBarycentrics(
+    vec2 pixelCenter,
+    vec4 clip0,
+    vec4 clip1,
+    vec4 clip2,
+    vec2 viewportSize,
+    out vec3 weights,
+    out vec3 weightDx,
+    out vec3 weightDy)
+{
+    weights = vec3(0.0);
+    weightDx = vec3(0.0);
+    weightDy = vec3(0.0);
+    if (!XR_ADV_IsFinite(clip0) ||
+        !XR_ADV_IsFinite(clip1) ||
+        !XR_ADV_IsFinite(clip2) ||
+        abs(clip0.w) <= XR_ADV_RECONSTRUCTION_MIN_W ||
+        abs(clip1.w) <= XR_ADV_RECONSTRUCTION_MIN_W ||
+        abs(clip2.w) <= XR_ADV_RECONSTRUCTION_MIN_W)
+    {
+        return false;
+    }
+
+    vec2 p0 = XR_ADV_ClipToPixel(clip0, viewportSize);
+    vec2 p1 = XR_ADV_ClipToPixel(clip1, viewportSize);
+    vec2 p2 = XR_ADV_ClipToPixel(clip2, viewportSize);
+    float denominator =
+        (p1.y - p2.y) * (p0.x - p2.x) +
+        (p2.x - p1.x) * (p0.y - p2.y);
+    if (isnan(denominator) ||
+        isinf(denominator) ||
+        abs(denominator) <= XR_ADV_RECONSTRUCTION_MIN_AREA)
+    {
+        return false;
+    }
+
+    vec3 linear;
+    linear.x =
+        ((p1.y - p2.y) * (pixelCenter.x - p2.x) +
+         (p2.x - p1.x) * (pixelCenter.y - p2.y)) /
+        denominator;
+    linear.y =
+        ((p2.y - p0.y) * (pixelCenter.x - p2.x) +
+         (p0.x - p2.x) * (pixelCenter.y - p2.y)) /
+        denominator;
+    linear.z = 1.0 - linear.x - linear.y;
+    vec3 linearDx = vec3(
+        p1.y - p2.y,
+        p2.y - p0.y,
+        p0.y - p1.y) / denominator;
+    vec3 linearDy = vec3(
+        p2.x - p1.x,
+        p0.x - p2.x,
+        p1.x - p0.x) / denominator;
+    vec3 inverseW =
+        1.0 / vec3(clip0.w, clip1.w, clip2.w);
+    vec3 numerator = linear * inverseW;
+    vec3 numeratorDx = linearDx * inverseW;
+    vec3 numeratorDy = linearDy * inverseW;
+    float sum = numerator.x + numerator.y + numerator.z;
+    if (isnan(sum) ||
+        isinf(sum) ||
+        abs(sum) <= XR_ADV_RECONSTRUCTION_MIN_W)
+    {
+        return false;
+    }
+
+    float sumDx =
+        numeratorDx.x + numeratorDx.y + numeratorDx.z;
+    float sumDy =
+        numeratorDy.x + numeratorDy.y + numeratorDy.z;
+    float inverseSum = 1.0 / sum;
+    weights = numerator * inverseSum;
+    weightDx =
+        (numeratorDx * sum - numerator * sumDx) *
+        (inverseSum * inverseSum);
+    weightDy =
+        (numeratorDy * sum - numerator * sumDy) *
+        (inverseSum * inverseSum);
+    return XR_ADV_IsFinite(weights) &&
+        XR_ADV_IsFinite(weightDx) &&
+        XR_ADV_IsFinite(weightDy);
+}
+
+vec2 XR_ADV_Interpolate(
+    vec2 value0,
+    vec2 value1,
+    vec2 value2,
+    vec3 weights,
+    bool flatQualified)
+{
+    return flatQualified
+        ? value0
+        : value0 * weights.x +
+          value1 * weights.y +
+          value2 * weights.z;
+}
+
+vec3 XR_ADV_Interpolate(
+    vec3 value0,
+    vec3 value1,
+    vec3 value2,
+    vec3 weights,
+    bool flatQualified)
+{
+    return flatQualified
+        ? value0
+        : value0 * weights.x +
+          value1 * weights.y +
+          value2 * weights.z;
+}
+
+vec4 XR_ADV_Interpolate(
+    vec4 value0,
+    vec4 value1,
+    vec4 value2,
+    vec3 weights,
+    bool flatQualified)
+{
+    return flatQualified
+        ? value0
+        : value0 * weights.x +
+          value1 * weights.y +
+          value2 * weights.z;
+}
+
+vec2 XR_ADV_Gradient(
+    vec2 value0,
+    vec2 value1,
+    vec2 value2,
+    vec3 weightDerivative)
+{
+    return value0 * weightDerivative.x +
+        value1 * weightDerivative.y +
+        value2 * weightDerivative.z;
+}
+
+bool XR_ADV_TryPrimitiveVertices(
+    XRAdvancedGeometryRecord geometry,
+    uint producer,
+    uint encodedPrimitive,
+    out uvec3 vertices)
+{
+    vertices = uvec3(0u);
+    bool meshlet =
+        producer == XR_ADV_VIS_PRODUCER_STATIC_MESHLET ||
+        producer == XR_ADV_VIS_PRODUCER_SKINNED_MESHLET;
+    if (!meshlet)
+    {
+        uint firstIndex = encodedPrimitive * 3u;
+        uint geometryEnd =
+            geometry.indexData.elementOffset +
+            geometry.indexData.elementCount;
+        if (firstIndex < geometry.indexData.elementOffset ||
+            firstIndex > geometryEnd ||
+            geometryEnd - firstIndex < 3u ||
+            firstIndex + 2u >=
+                uint(XR_ADV_ReconstructionIndices.indices.length()))
+        {
+            return false;
+        }
+        vertices = uvec3(
+            XR_ADV_ReconstructionIndices.indices[firstIndex],
+            XR_ADV_ReconstructionIndices.indices[firstIndex + 1u],
+            XR_ADV_ReconstructionIndices.indices[firstIndex + 2u]);
+        return true;
+    }
+
+    uint meshletIndex = encodedPrimitive >> 8u;
+    uint localPrimitive = encodedPrimitive & 0xFFu;
+    if (meshletIndex < geometry.meshletFirst ||
+        meshletIndex - geometry.meshletFirst >= geometry.meshletCount ||
+        meshletIndex >=
+            uint(XR_ADV_ReconstructionMeshlets.records.length()))
+    {
+        return false;
+    }
+
+    XRAdvancedReconstructionMeshlet descriptor =
+        XR_ADV_ReconstructionMeshlets.records[meshletIndex];
+    if (localPrimitive >= descriptor.triangleCount)
+        return false;
+    uint triangleByte =
+        descriptor.triangleByteOffset + localPrimitive * 3u;
+    uvec3 localVertices = uvec3(
+        XR_ADV_ReconstructionTriangleByte(triangleByte),
+        XR_ADV_ReconstructionTriangleByte(triangleByte + 1u),
+        XR_ADV_ReconstructionTriangleByte(triangleByte + 2u));
+    if (any(greaterThanEqual(
+            localVertices,
+            uvec3(descriptor.vertexCount))))
+    {
+        return false;
+    }
+
+    uvec3 remapIndices =
+        uvec3(descriptor.vertexOffset) + localVertices;
+    uint remapCount =
+        uint(XR_ADV_ReconstructionMeshletVertices.vertexIndices.length());
+    if (any(greaterThanEqual(remapIndices, uvec3(remapCount))))
+        return false;
+    vertices = uvec3(
+        XR_ADV_ReconstructionMeshletVertices.vertexIndices[
+            remapIndices.x],
+        XR_ADV_ReconstructionMeshletVertices.vertexIndices[
+            remapIndices.y],
+        XR_ADV_ReconstructionMeshletVertices.vertexIndices[
+            remapIndices.z]);
+    return true;
+}
+
+bool XR_ADV_TryLoadVertex(
+    bool deformed,
+    bool previous,
+    uint index,
+    out XRAdvancedPackedVertex vertex)
+{
+    vertex = XRAdvancedPackedVertex(
+        vec3(0.0),
+        0u, 0u, 0u, 0u, 0u, 0u, 0u,
+        0u, 0u, 0u, 0u, 0u, 0u);
+    if (!deformed)
+    {
+        if (index >= uint(XR_ADV_StaticVertices.records.length()))
+            return false;
+        vertex = XR_ADV_StaticVertices.records[index];
+        return true;
+    }
+    if (previous)
+    {
+        if (index >=
+            uint(XR_ADV_PreSkinnedPreviousVertices.records.length()))
+        {
+            return false;
+        }
+        vertex =
+            XR_ADV_PreSkinnedPreviousVertices.records[index];
+        return true;
+    }
+    if (index >=
+        uint(XR_ADV_PreSkinnedCurrentVertices.records.length()))
+    {
+        return false;
+    }
+    vertex = XR_ADV_PreSkinnedCurrentVertices.records[index];
+    return true;
+}
+
+vec3 XR_ADV_ReconstructWorldPositionFromDepth(
+    vec2 pixelCenter,
+    float depth,
+    XRAdvancedViewRecord viewRecord)
+{
+    vec2 ndc =
+        pixelCenter * viewRecord.renderSizeAndInverse.zw *
+        2.0 - 1.0;
+#if defined(XR_ADV_BACKEND_OPENGL)
+    float clipDepth = depth * 2.0 - 1.0;
+#else
+    float clipDepth = depth;
+#endif
+    vec4 world =
+        vec4(ndc, clipDepth, 1.0) *
+        viewRecord.inverseViewProjectionJittered;
+    return world.xyz / world.w;
+}
+
+bool XR_ADV_TryReconstructSurface(
+    uvec2 identity,
+    uint metadata,
+    float depth,
+    vec2 pixelCenter,
+    out XRAdvancedSurface surface)
+{
+    surface = XR_ADV_InvalidSurface(
+        identity,
+        XR_ADV_RECONSTRUCTION_BACKGROUND);
+    uint payloadVersion =
+        (metadata >> XR_ADV_VIS_VERSION_SHIFT) & 0xFFu;
+    if (identity.x == 0u ||
+        identity.x == XR_ADV_VIS_INVALID ||
+        identity.y == XR_ADV_VIS_INVALID ||
+        metadata == XR_ADV_VIS_INVALID)
+    {
+        return false;
+    }
+    if (payloadVersion != XR_ADV_VISIBILITY_PAYLOAD_VERSION)
+    {
+        surface.invalidReason =
+            XR_ADV_RECONSTRUCTION_PAYLOAD_VERSION;
+        return false;
+    }
+
+    uint producer = metadata & XR_ADV_VIS_PRODUCER_MASK;
+    uint viewIndex =
+        (metadata >> XR_ADV_VIS_VIEW_SHIFT) & 0xFFu;
+    if (!XR_ADV_IsSupportedVisibilityProducer(producer))
+        return false;
+    uint drawDense = XR_ADV_ResolveVisibilityStableIndex(
+        identity.x,
+        VisibilityDrawLookupSegment,
+        XR_ADV_DIAGNOSTIC_DRAW);
+    if (drawDense == XR_ADV_INVALID_DENSE_INDEX ||
+        drawDense >= uint(XR_ADV_Draws.records.length()))
+    {
+        surface.invalidReason =
+            XR_ADV_RECONSTRUCTION_DRAW_NOT_RESIDENT;
+        return false;
+    }
+
+    XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
+    uint velocityValidityReason =
+        (draw.flags & XR_ADV_TEMPORAL_VELOCITY_REASON_MASK) >>
+        XR_ADV_TEMPORAL_VELOCITY_REASON_SHIFT;
+    uint geometryDense = XR_ADV_ResolveVisibilityHandle(
+        draw.geometry,
+        VisibilityGeometryLookupSegment,
+        XR_ADV_DIAGNOSTIC_MESH);
+    if (geometryDense == XR_ADV_INVALID_DENSE_INDEX)
+    {
+        surface.invalidReason =
+            XR_ADV_RECONSTRUCTION_GEOMETRY_MISSING;
+        return false;
+    }
+    XRAdvancedGeometryRecord geometry =
+        XR_ADV_LoadGeometry(geometryDense);
+    if (!XR_ADV_GeometryIsResident(geometry) &&
+        geometry.missingBehavior ==
+            XR_ADV_GEOMETRY_MISSING_USE_FALLBACK &&
+        geometry.fallbackGeometry.index != draw.geometry.index)
+    {
+        uint fallbackDense = XR_ADV_ResolveVisibilityHandle(
+            geometry.fallbackGeometry,
+            VisibilityGeometryLookupSegment,
+            XR_ADV_DIAGNOSTIC_MESH);
+        if (fallbackDense != XR_ADV_INVALID_DENSE_INDEX)
+        {
+            geometry = XR_ADV_LoadGeometry(fallbackDense);
+            geometryDense = fallbackDense;
+        }
+    }
+    if (!XR_ADV_GeometryIsResident(geometry))
+    {
+        surface.invalidReason =
+            XR_ADV_RECONSTRUCTION_GEOMETRY_NOT_RESIDENT;
+        return false;
+    }
+
+    uint materialDense = XR_ADV_ResolveVisibilityHandle(
+        draw.material,
+        VisibilityMaterialLookupSegment,
+        XR_ADV_DIAGNOSTIC_MATERIAL);
+    if (materialDense == XR_ADV_INVALID_DENSE_INDEX)
+    {
+        surface.invalidReason =
+            XR_ADV_RECONSTRUCTION_MATERIAL_NOT_RESIDENT;
+        return false;
+    }
+    XRAdvancedMaterialRecord material =
+        XR_ADV_LoadMaterial(materialDense);
+    XRAdvancedGpuHandle kernelHandle = XRAdvancedGpuHandle(
+        material.shadingKernelId,
+        material.shadingKernelGeneration);
+    uint kernelDense = XR_ADV_ResolveVisibilityHandle(
+        kernelHandle,
+        VisibilityShadingKernelLookupSegment,
+        XR_ADV_DIAGNOSTIC_MATERIAL);
+    if (kernelDense == XR_ADV_INVALID_DENSE_INDEX)
+    {
+        surface.invalidReason =
+            XR_ADV_RECONSTRUCTION_KERNEL_NOT_RESIDENT;
+        return false;
+    }
+    if (viewIndex >= uint(XR_ADV_Views.records.length()))
+    {
+        surface.invalidReason =
+            XR_ADV_RECONSTRUCTION_VIEW_OUT_OF_RANGE;
+        return false;
+    }
+
+    uint currentTransformDense = XR_ADV_ResolveVisibilityHandle(
+        draw.currentTransform,
+        VisibilityTransformLookupSegment,
+        XR_ADV_DIAGNOSTIC_DRAW);
+    uint previousTransformDense = XR_ADV_ResolveVisibilityHandle(
+        draw.previousTransform,
+        VisibilityTransformLookupSegment,
+        XR_ADV_DIAGNOSTIC_DRAW);
+    if (currentTransformDense == XR_ADV_INVALID_DENSE_INDEX ||
+        previousTransformDense == XR_ADV_INVALID_DENSE_INDEX)
+    {
+        surface.invalidReason =
+            XR_ADV_RECONSTRUCTION_STALE_GENERATION;
+        return false;
+    }
+
+    uvec3 sourceVertices;
+    if (!XR_ADV_TryPrimitiveVertices(
+            geometry,
+            producer,
+            identity.y,
+            sourceVertices))
+    {
+        surface.invalidReason =
+            XR_ADV_RECONSTRUCTION_PRIMITIVE_OUT_OF_RANGE;
+        return false;
+    }
+
+    bool deformed =
+        geometry.source == XR_ADV_GEOMETRY_SOURCE_PRESKINNED ||
+        producer == XR_ADV_VIS_PRODUCER_SKINNED_MESHLET ||
+        producer == XR_ADV_VIS_PRODUCER_CPU_PRE_SKINNED;
+    uvec3 currentIndices =
+        uvec3(geometry.currentVertexData.elementOffset) +
+        sourceVertices;
+    uvec3 previousIndices = deformed
+        ? uvec3(geometry.previousVertexData.elementOffset) +
+          sourceVertices
+        : currentIndices;
+    XRAdvancedPackedVertex current0;
+    XRAdvancedPackedVertex current1;
+    XRAdvancedPackedVertex current2;
+    if (!XR_ADV_TryLoadVertex(
+            deformed, false, currentIndices.x, current0) ||
+        !XR_ADV_TryLoadVertex(
+            deformed, false, currentIndices.y, current1) ||
+        !XR_ADV_TryLoadVertex(
+            deformed, false, currentIndices.z, current2))
+    {
+        surface.invalidReason =
+            XR_ADV_RECONSTRUCTION_CURRENT_GEOMETRY_MISSING;
+        return false;
+    }
+
+    XRAdvancedPackedVertex previous0;
+    XRAdvancedPackedVertex previous1;
+    XRAdvancedPackedVertex previous2;
+    bool previousGeometryValid =
+        XR_ADV_TryLoadVertex(
+            deformed, deformed, previousIndices.x, previous0) &&
+        XR_ADV_TryLoadVertex(
+            deformed, deformed, previousIndices.y, previous1) &&
+        XR_ADV_TryLoadVertex(
+            deformed, deformed, previousIndices.z, previous2);
+    XRAdvancedTransformRecord currentTransform =
+        XR_ADV_LoadTransform(currentTransformDense);
+    XRAdvancedTransformRecord previousTransform =
+        XR_ADV_LoadTransform(previousTransformDense);
+    XRAdvancedViewRecord viewRecord =
+        XR_ADV_LoadView(viewIndex);
+
+    vec3 currentWorld0 =
+        XR_ADV_TransformPositionRowVector(
+            current0.position,
+            currentTransform.world);
+    vec3 currentWorld1 =
+        XR_ADV_TransformPositionRowVector(
+            current1.position,
+            currentTransform.world);
+    vec3 currentWorld2 =
+        XR_ADV_TransformPositionRowVector(
+            current2.position,
+            currentTransform.world);
+    vec4 currentClip0 =
+        XR_ADV_CurrentJitteredClip(viewRecord, currentWorld0);
+    vec4 currentClip1 =
+        XR_ADV_CurrentJitteredClip(viewRecord, currentWorld1);
+    vec4 currentClip2 =
+        XR_ADV_CurrentJitteredClip(viewRecord, currentWorld2);
+    vec3 weights;
+    vec3 weightDx;
+    vec3 weightDy;
+    if (!XR_ADV_TryPerspectiveBarycentrics(
+            pixelCenter,
+            currentClip0,
+            currentClip1,
+            currentClip2,
+            viewRecord.renderSizeAndInverse.xy,
+            weights,
+            weightDx,
+            weightDy))
+    {
+        surface.invalidReason =
+            XR_ADV_RECONSTRUCTION_DEGENERATE_TRIANGLE;
+        return false;
+    }
+
+    uint requiredMask =
+        material.requiredAttributeMask &
+        XR_ADV_LoadShadingKernel(kernelDense).requiredAttributeMask &
+        XR_ADV_REQUIRED_ATTRIBUTE_MASK;
+    bool flatQualified =
+        (requiredMask & XR_ADV_ATTRIBUTE_FLAT) != 0u;
+    vec3 geometricNormal =
+        cross(
+            currentWorld1 - currentWorld0,
+            currentWorld2 - currentWorld0);
+    float geometricLength = length(geometricNormal);
+    if (geometricLength <= XR_ADV_RECONSTRUCTION_MIN_AREA ||
+        isnan(geometricLength) ||
+        isinf(geometricLength))
+    {
+        surface.invalidReason =
+            XR_ADV_RECONSTRUCTION_DEGENERATE_TRIANGLE;
+        return false;
+    }
+    geometricNormal /= geometricLength;
+
+    bool requiresTangent =
+        (requiredMask & XR_ADV_ATTRIBUTE_TANGENT) != 0u;
+    mat3 world3 = mat3(currentTransform.world);
+    bool mirrored = determinant(world3) < 0.0;
+    vec3 shadingNormal = geometricNormal;
+    if ((requiredMask & XR_ADV_ATTRIBUTE_NORMAL) != 0u)
+    {
+        vec3 localNormal = normalize(XR_ADV_Interpolate(
+            XR_ADV_DecodeOct(current0.normalOct),
+            XR_ADV_DecodeOct(current1.normalOct),
+            XR_ADV_DecodeOct(current2.normalOct),
+            weights,
+            flatQualified));
+        mat3 normalMatrix =
+            transpose(inverse(world3));
+        shadingNormal = normalize(localNormal * normalMatrix);
+    }
+    vec3 tangent;
+    vec3 bitangent;
+    float handedness = 1.0;
+    if (requiresTangent)
+    {
+        float tangentSign0;
+        float tangentSign1;
+        float tangentSign2;
+        vec3 localTangent0 =
+            XR_ADV_DecodeTangent(
+                current0.tangentOctAndSign,
+                tangentSign0);
+        vec3 localTangent1 =
+            XR_ADV_DecodeTangent(
+                current1.tangentOctAndSign,
+                tangentSign1);
+        vec3 localTangent2 =
+            XR_ADV_DecodeTangent(
+                current2.tangentOctAndSign,
+                tangentSign2);
+        tangent =
+            normalize(
+                XR_ADV_Interpolate(
+                    localTangent0,
+                    localTangent1,
+                    localTangent2,
+                    weights,
+                    flatQualified) * world3);
+        tangent =
+            normalize(
+                tangent -
+                shadingNormal * dot(shadingNormal, tangent));
+        float sourceHandedness = flatQualified
+            ? tangentSign0
+            : dot(
+                vec3(tangentSign0, tangentSign1, tangentSign2),
+                weights) < 0.0
+                ? -1.0
+                : 1.0;
+        handedness =
+            sourceHandedness * (mirrored ? -1.0 : 1.0);
+        bitangent =
+            normalize(cross(shadingNormal, tangent)) *
+            handedness;
+    }
+    else
+    {
+        vec3 helperAxis = abs(shadingNormal.z) < 0.999
+            ? vec3(0.0, 0.0, 1.0)
+            : vec3(0.0, 1.0, 0.0);
+        tangent =
+            normalize(cross(helperAxis, shadingNormal));
+        bitangent =
+            normalize(cross(shadingNormal, tangent));
+    }
+
+    bool derivativesRequested =
+        (requiredMask &
+         XR_ADV_ATTRIBUTE_ANALYTICAL_DERIVATIVES) != 0u;
+    bool texCoord0Requested =
+        (requiredMask & XR_ADV_ATTRIBUTE_TEXCOORD0) != 0u ||
+        derivativesRequested;
+    vec2 uv0 = texCoord0Requested
+        ? XR_ADV_Interpolate(
+            unpackHalf2x16(current0.texCoord0Half),
+            unpackHalf2x16(current1.texCoord0Half),
+            unpackHalf2x16(current2.texCoord0Half),
+            weights,
+            flatQualified)
+        : vec2(0.0);
+    vec2 uv1 =
+        (requiredMask & XR_ADV_ATTRIBUTE_TEXCOORD1) != 0u
+            ? XR_ADV_Interpolate(
+                unpackHalf2x16(current0.texCoord1Half),
+                unpackHalf2x16(current1.texCoord1Half),
+                unpackHalf2x16(current2.texCoord1Half),
+                weights,
+                flatQualified)
+            : vec2(0.0);
+    vec4 color0 =
+        (requiredMask & XR_ADV_ATTRIBUTE_COLOR0) != 0u
+            ? XR_ADV_Interpolate(
+                XR_ADV_UnpackRgba8(current0.color0Rgba8),
+                XR_ADV_UnpackRgba8(current1.color0Rgba8),
+                XR_ADV_UnpackRgba8(current2.color0Rgba8),
+                weights,
+                flatQualified)
+            : vec4(1.0);
+    vec4 color1 =
+        (requiredMask & XR_ADV_ATTRIBUTE_COLOR1) != 0u
+            ? XR_ADV_Interpolate(
+                XR_ADV_UnpackRgba8(current0.color1Rgba8),
+                XR_ADV_UnpackRgba8(current1.color1Rgba8),
+                XR_ADV_UnpackRgba8(current2.color1Rgba8),
+                weights,
+                flatQualified)
+            : vec4(1.0);
+    vec2 uv0Dx = !derivativesRequested || flatQualified
+        ? vec2(0.0)
+        : XR_ADV_Gradient(
+            unpackHalf2x16(current0.texCoord0Half),
+            unpackHalf2x16(current1.texCoord0Half),
+            unpackHalf2x16(current2.texCoord0Half),
+            weightDx);
+    vec2 uv0Dy = !derivativesRequested || flatQualified
+        ? vec2(0.0)
+        : XR_ADV_Gradient(
+            unpackHalf2x16(current0.texCoord0Half),
+            unpackHalf2x16(current1.texCoord0Half),
+            unpackHalf2x16(current2.texCoord0Half),
+            weightDy);
+
+    vec3 interpolatedCurrentWorld = XR_ADV_Interpolate(
+        currentWorld0,
+        currentWorld1,
+        currentWorld2,
+        weights,
+        false);
+    vec3 worldPosition =
+        (requiredMask & XR_ADV_ATTRIBUTE_DEFORMED_POSITION) != 0u
+            ? interpolatedCurrentWorld
+            : XR_ADV_ReconstructWorldPositionFromDepth(
+                pixelCenter,
+                depth,
+                viewRecord);
+    vec4 currentUnjitteredClip =
+        vec4(interpolatedCurrentWorld, 1.0) *
+        viewRecord.viewProjectionUnjittered;
+    vec4 previousUnjitteredClip = vec4(0.0);
+    bool velocityValid =
+        ((metadata >> XR_ADV_VIS_VELOCITY_VALID_SHIFT) & 1u) != 0u &&
+        previousGeometryValid &&
+        velocityValidityReason == 0u;
+    if (previousGeometryValid)
+    {
+        vec3 previousWorld0 =
+            XR_ADV_TransformPositionRowVector(
+                previous0.position,
+                previousTransform.world);
+        vec3 previousWorld1 =
+            XR_ADV_TransformPositionRowVector(
+                previous1.position,
+                previousTransform.world);
+        vec3 previousWorld2 =
+            XR_ADV_TransformPositionRowVector(
+                previous2.position,
+                previousTransform.world);
+        vec3 previousWorld = XR_ADV_Interpolate(
+            previousWorld0,
+            previousWorld1,
+            previousWorld2,
+            weights,
+            false);
+        previousUnjitteredClip =
+            vec4(previousWorld, 1.0) *
+            viewRecord.previousViewProjectionUnjittered;
+        velocityValid = velocityValid &&
+            XR_ADV_IsFinite(previousUnjitteredClip) &&
+            abs(previousUnjitteredClip.w) >
+                XR_ADV_RECONSTRUCTION_MIN_W;
+    }
+    velocityValid = velocityValid &&
+        XR_ADV_IsFinite(currentUnjitteredClip) &&
+        abs(currentUnjitteredClip.w) >
+            XR_ADV_RECONSTRUCTION_MIN_W;
+
+    bool masked =
+        ((metadata >> XR_ADV_VIS_MASKED_SHIFT) & 1u) != 0u;
+    bool frontFacing =
+        ((metadata >> XR_ADV_VIS_FRONT_FACE_SHIFT) & 1u) != 0u;
+    bool reactive = masked || velocityValidityReason != 0u;
+    uint flags = XR_ADV_SURFACE_VALID;
+    if (derivativesRequested)
+        flags |= XR_ADV_SURFACE_DERIVATIVES_VALID;
+    if (!frontFacing)
+        flags |= XR_ADV_SURFACE_BACK_FACING;
+    if (flatQualified)
+        flags |= XR_ADV_SURFACE_FLAT_ATTRIBUTES;
+    if (deformed)
+        flags |= XR_ADV_SURFACE_DEFORMED;
+    if (velocityValid)
+        flags |= XR_ADV_SURFACE_VELOCITY_VALID;
+    if (masked)
+        flags |= XR_ADV_SURFACE_MASKED_EDGE;
+    if (reactive)
+        flags |= XR_ADV_SURFACE_REACTIVE;
+    if (mirrored)
+        flags |= XR_ADV_SURFACE_MIRRORED_TRANSFORM;
+
+    surface.identity = identity;
+    surface.producer = producer;
+    surface.viewIndex = viewIndex;
+    surface.materialDenseIndex = materialDense;
+    surface.shadingKernelDenseIndex = kernelDense;
+    surface.primitiveSection = draw.primitiveSection;
+    surface.requiredAttributeMask = requiredMask;
+    surface.worldPosition = worldPosition;
+    surface.geometricNormal = geometricNormal;
+    surface.shadingNormal = shadingNormal;
+    surface.tangent = tangent;
+    surface.bitangent = bitangent;
+    surface.texCoord0 = uv0;
+    surface.texCoord1 = uv1;
+    surface.color0 = color0;
+    surface.color1 = color1;
+    surface.custom0 =
+        (requiredMask & XR_ADV_ATTRIBUTE_CUSTOM0) != 0u
+        ? current0.custom0
+        : 0u;
+    surface.barycentrics = weights;
+    surface.barycentricDx = weightDx;
+    surface.barycentricDy = weightDy;
+    surface.texCoord0Dx = uv0Dx;
+    surface.texCoord0Dy = uv0Dy;
+    surface.currentUnjitteredClip = currentUnjitteredClip;
+    surface.previousUnjitteredClip = previousUnjitteredClip;
+    surface.motionNdc = velocityValid
+        ? clamp(
+            currentUnjitteredClip.xy /
+                currentUnjitteredClip.w -
+            previousUnjitteredClip.xy /
+                previousUnjitteredClip.w,
+            vec2(-2.0),
+            vec2(2.0))
+        : vec2(0.0);
+    surface.depth = depth;
+    surface.tangentHandedness = handedness;
+    surface.flags = flags;
+    surface.invalidReason = XR_ADV_RECONSTRUCTION_OK;
+    bool finite = XR_ADV_IsFinite(surface.worldPosition) &&
+        XR_ADV_IsFinite(surface.shadingNormal) &&
+        XR_ADV_IsFinite(surface.tangent) &&
+        XR_ADV_IsFinite(surface.bitangent) &&
+        XR_ADV_IsFinite(surface.texCoord0) &&
+        XR_ADV_IsFinite(surface.texCoord0Dx) &&
+        XR_ADV_IsFinite(surface.texCoord0Dy);
+    if (!finite)
+    {
+        surface.flags = 0u;
+        surface.invalidReason =
+            XR_ADV_RECONSTRUCTION_NON_FINITE;
+    }
+    return finite;
+}
+
+float XR_ADV_ConservativeMip(
+    XRAdvancedTextureRecord textureRecord)
+{
+    return float(max(textureRecord.mipCount, 1u) - 1u);
+}
+
+vec4 XR_ADV_SampleSurfaceTexture2D(
+    XRAdvancedEncodedTextureReference textureReference,
+    XRAdvancedTextureRecord textureRecord,
+    inout XRAdvancedSurface surface)
+{
+    if ((surface.flags & XR_ADV_SURFACE_DERIVATIVES_VALID) != 0u)
+    {
+        return XR_ADV_SampleTexture2DGrad(
+            textureReference,
+            surface.texCoord0,
+            surface.texCoord0Dx,
+            surface.texCoord0Dy);
+    }
+    surface.flags |= XR_ADV_SURFACE_CONSERVATIVE_MIP;
+    atomicAdd(
+        XR_ADV_ReconstructionCounters.conservativeMipFallbacks,
+        1u);
+    return XR_ADV_SampleTexture2DLod(
+        textureReference,
+        surface.texCoord0,
+        XR_ADV_ConservativeMip(textureRecord));
+}
+
+#endif

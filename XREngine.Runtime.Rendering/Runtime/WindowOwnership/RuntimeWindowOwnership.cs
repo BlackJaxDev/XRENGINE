@@ -115,6 +115,7 @@ public readonly record struct WindowInputSnapshot(
     int KeyboardCount,
     int MouseCount,
     int GamepadCount,
+    WindowGamepadSnapshot PrimaryGamepad,
     bool IsFocused,
     bool IsMouseCaptured,
     float PointerX,
@@ -138,7 +139,7 @@ public readonly record struct WindowInputSnapshot(
 {
     public bool HasKeyboard => KeyboardCount > 0;
     public bool HasMouse => MouseCount > 0;
-    public bool HasGamepad => GamepadCount > 0;
+    public bool HasGamepad => GamepadCount > 0 && PrimaryGamepad.IsConnected;
     public ReadOnlySpan<WindowKeyTransition> KeyTransitionSpan => KeyTransitions ?? Array.Empty<WindowKeyTransition>();
     public ReadOnlySpan<EKey> PressedKeySpan => PressedKeys ?? Array.Empty<EKey>();
     public ReadOnlySpan<WindowMouseButtonTransition> MouseButtonTransitionSpan => MouseButtonTransitions ?? Array.Empty<WindowMouseButtonTransition>();
@@ -352,7 +353,8 @@ public sealed class WindowInputSnapshotAccumulator
         int mouseCount,
         int gamepadCount,
         bool isFocused,
-        bool isMouseCaptured)
+        bool isMouseCaptured,
+        WindowGamepadSnapshot primaryGamepad = default)
     {
         ulong sequence = (ulong)Interlocked.Increment(ref _sequence);
         WindowInputSnapshot snapshot;
@@ -394,6 +396,7 @@ public sealed class WindowInputSnapshotAccumulator
                 keyboardCount,
                 mouseCount,
                 gamepadCount,
+                primaryGamepad,
                 isFocused,
                 isMouseCaptured,
                 _lastPointerX,

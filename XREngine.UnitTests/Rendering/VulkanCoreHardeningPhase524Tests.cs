@@ -49,9 +49,9 @@ public sealed class VulkanCoreHardeningPhase524Tests
     public void DeferredComputeDispatchCapturesImmutableBufferGenerationsWithoutExtraSnapshotMaps()
     {
         string snapshot = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanRenderer.ComputeDispatchSnapshot.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/ComputeDispatchSnapshot.cs");
         string binding = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanRenderer.VulkanComputeBufferBinding.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/VulkanComputeBufferBinding.cs");
         string program = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
 
@@ -430,11 +430,7 @@ public sealed class VulkanCoreHardeningPhase524Tests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string path = Path.Combine(ResolveRepoRoot(), relativePath.Replace('/', Path.DirectorySeparatorChar));
-        File.Exists(path).ShouldBeTrue($"Expected workspace file '{relativePath}'.");
-        return File.ReadAllText(path).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ResolveRepoRoot()
     {

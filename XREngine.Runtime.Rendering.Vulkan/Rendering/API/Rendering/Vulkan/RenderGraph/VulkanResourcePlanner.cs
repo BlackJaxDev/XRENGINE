@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Resources;
 
-namespace XREngine.Rendering.Vulkan;
+namespace XREngine.Rendering.Vulkan.RenderGraph;
 
 /// <summary>
 /// Lightweight view of the render pipeline's logical resource registry that Vulkan can inspect

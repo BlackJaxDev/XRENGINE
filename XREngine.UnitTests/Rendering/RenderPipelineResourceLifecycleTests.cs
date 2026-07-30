@@ -2878,18 +2878,5 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        foreach (string start in new[] { TestContext.CurrentContext.TestDirectory, Environment.CurrentDirectory })
-        {
-            DirectoryInfo? directory = new(start);
-            while (directory is not null)
-            {
-                if (File.Exists(Path.Combine(directory.FullName, "XRENGINE.slnx")))
-                    return File.ReadAllText(Path.Combine(directory.FullName, relativePath)).Replace("\r\n", "\n").Replace("\r\n", "\n", StringComparison.Ordinal);
-                directory = directory.Parent;
-            }
-        }
-
-        throw new DirectoryNotFoundException("Could not locate the XRENGINE workspace root.");
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 }

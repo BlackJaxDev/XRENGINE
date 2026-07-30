@@ -1,3 +1,7 @@
 # Vulkan UI
 
-Owns Vulkan-specific ImGui/editor UI integration. Keep editor UI rendering glue here; shared UI widgets and engine UI contracts live outside the Vulkan backend.
+Owns Vulkan-specific ImGui input routing, clipboard integration, immutable draw
+snapshots, GPU resources/rendering, and texture registration.
+`VulkanImGuiBackend` reuses the shared descriptor, upload, command, and
+retirement authorities; it must not create parallel caches or use
+`VulkanRenderer` as a service locator.

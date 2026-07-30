@@ -219,10 +219,10 @@ public unsafe partial class VulkanRenderer
     private static VulkanResourceLifetimeKey ResourceKey(ObjectType type, ulong handle)
         => new(type, handle);
 
-    private ulong GetCurrentVulkanResourceGeneration(ObjectType type, ulong handle)
+    internal ulong GetCurrentVulkanResourceGeneration(ObjectType type, ulong handle)
         => _resourceLifetimeTracker.GetPublishedGeneration(ResourceKey(type, handle));
 
-    private void RegisterVulkanResource(
+    internal void RegisterVulkanResource(
         ObjectType type,
         ulong handle,
         string owner,
@@ -235,7 +235,7 @@ public unsafe partial class VulkanRenderer
     internal void RegisterVulkanPipeline(Pipeline pipeline, string owner)
         => RegisterVulkanResource(ObjectType.Pipeline, pipeline.Handle, owner);
 
-    private Result CreateVulkanImageTracked(
+    internal Result CreateVulkanImageTracked(
         ref ImageCreateInfo createInfo,
         Image* image,
         string owner)
@@ -247,7 +247,7 @@ public unsafe partial class VulkanRenderer
         return result;
     }
 
-    private Result CreateVulkanImageTracked(
+    internal Result CreateVulkanImageTracked(
         ref ImageCreateInfo createInfo,
         out Image image,
         string owner)
@@ -257,7 +257,7 @@ public unsafe partial class VulkanRenderer
             return CreateVulkanImageTracked(ref createInfo, imagePtr, owner);
     }
 
-    private void DestroyVulkanImageImmediateTracked(Image image, string owner)
+    internal void DestroyVulkanImageImmediateTracked(Image image, string owner)
     {
         if (image.Handle == 0)
             return;
@@ -492,7 +492,7 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private void TrackVulkanCommandBufferResource(
+    internal void TrackVulkanCommandBufferResource(
         CommandBuffer commandBuffer,
         ObjectType type,
         ulong handle,
@@ -569,7 +569,7 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private void TrackVulkanCommandBufferResource_NoLock(
+    internal void TrackVulkanCommandBufferResource_NoLock(
         ulong commandBufferHandle,
         VulkanResourceLifetimeKey key,
         string owner)
@@ -910,7 +910,7 @@ public unsafe partial class VulkanRenderer
         Api!.CmdCopyBuffer(commandBuffer, source, destination, regionCount, regions);
     }
 
-    private void CmdCopyBufferToImageTracked(
+    internal void CmdCopyBufferToImageTracked(
         CommandBuffer commandBuffer,
         Silk.NET.Vulkan.Buffer source,
         Image destination,
@@ -923,7 +923,7 @@ public unsafe partial class VulkanRenderer
         Api!.CmdCopyBufferToImage(commandBuffer, source, destination, destinationLayout, regionCount, regions);
     }
 
-    private void CmdCopyBufferToImageTracked(
+    internal void CmdCopyBufferToImageTracked(
         CommandBuffer commandBuffer,
         Silk.NET.Vulkan.Buffer source,
         Image destination,
@@ -991,7 +991,7 @@ public unsafe partial class VulkanRenderer
             regions);
     }
 
-    private void CmdBlitImageTracked(
+    internal void CmdBlitImageTracked(
         CommandBuffer commandBuffer,
         Image source,
         ImageLayout sourceLayout,
@@ -1001,7 +1001,7 @@ public unsafe partial class VulkanRenderer
         ImageBlit* regions,
         Filter filter)
     {
-        if (t_excludeDesktopSwapchainBarriers &&
+        if (SynchronizationThreadContext.ExcludeDesktopSwapchainBarriers &&
             (IsDesktopSwapchainImage(source) || IsDesktopSwapchainImage(destination)))
         {
             return;
@@ -1020,7 +1020,7 @@ public unsafe partial class VulkanRenderer
             filter);
     }
 
-    private void CmdBlitImageTracked(
+    internal void CmdBlitImageTracked(
         CommandBuffer commandBuffer,
         Image source,
         ImageLayout sourceLayout,
@@ -1030,7 +1030,7 @@ public unsafe partial class VulkanRenderer
         ref ImageBlit region,
         Filter filter)
     {
-        if (t_excludeDesktopSwapchainBarriers &&
+        if (SynchronizationThreadContext.ExcludeDesktopSwapchainBarriers &&
             (IsDesktopSwapchainImage(source) || IsDesktopSwapchainImage(destination)))
         {
             return;
@@ -1049,7 +1049,7 @@ public unsafe partial class VulkanRenderer
             filter);
     }
 
-    private void CmdClearColorImageTracked(
+    internal void CmdClearColorImageTracked(
         CommandBuffer commandBuffer,
         Image image,
         ImageLayout imageLayout,
@@ -1067,7 +1067,7 @@ public unsafe partial class VulkanRenderer
             ref ranges);
     }
 
-    private void CmdClearDepthStencilImageTracked(
+    internal void CmdClearDepthStencilImageTracked(
         CommandBuffer commandBuffer,
         Image image,
         ImageLayout imageLayout,
@@ -1085,7 +1085,7 @@ public unsafe partial class VulkanRenderer
             ref ranges);
     }
 
-    private void RegisterVulkanDescriptorSet(
+    internal void RegisterVulkanDescriptorSet(
         DescriptorPool pool,
         DescriptorSet descriptorSet,
         bool usesUpdateAfterBind,
@@ -1238,7 +1238,7 @@ public unsafe partial class VulkanRenderer
             state.IndexedReferences.Add(currentReference);
     }
 
-    private void RegisterVulkanDescriptorSets(
+    internal void RegisterVulkanDescriptorSets(
         DescriptorPool pool,
         ReadOnlySpan<DescriptorSet> descriptorSets,
         bool usesUpdateAfterBind,
@@ -2539,7 +2539,7 @@ public unsafe partial class VulkanRenderer
         return submission;
     }
 
-    private void RegisterVulkanRenderQuery(QueryPool queryPool, VkRenderQuery query)
+    internal void RegisterVulkanRenderQuery(QueryPool queryPool, VkRenderQuery query)
     {
         if (queryPool.Handle == 0)
             return;
@@ -2557,7 +2557,7 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private void UnregisterVulkanRenderQuery(QueryPool queryPool, VkRenderQuery query)
+    internal void UnregisterVulkanRenderQuery(QueryPool queryPool, VkRenderQuery query)
     {
         if (queryPool.Handle == 0)
             return;
@@ -2661,7 +2661,7 @@ public unsafe partial class VulkanRenderer
     /// Explicit blocking query reads use this to distinguish the current queued
     /// reset/query epoch from stale host-visible availability.
     /// </summary>
-    private bool WaitForVulkanSubmissionCompletion(
+    internal bool WaitForVulkanSubmissionCompletion(
         in VulkanLifetimeSubmission submission,
         string reason)
     {
@@ -2733,7 +2733,7 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private bool IsVulkanSubmissionCompleted(in VulkanLifetimeSubmission submission)
+    internal bool IsVulkanSubmissionCompleted(in VulkanLifetimeSubmission submission)
     {
         if (submission.QueueSequence == 0ul)
             return false;

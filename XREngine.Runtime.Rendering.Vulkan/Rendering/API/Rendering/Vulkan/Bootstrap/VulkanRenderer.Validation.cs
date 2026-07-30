@@ -72,7 +72,7 @@ public unsafe partial class VulkanRenderer
         debugUtils!.CmdEndDebugUtilsLabel(commandBuffer);
     }
 
-    private void SetDebugObjectName(ObjectType objectType, ulong objectHandle, string name)
+    internal void SetDebugObjectName(ObjectType objectType, ulong objectHandle, string name)
     {
         if (!SupportsDebugUtils || device.Handle == 0 || objectHandle == 0 || string.IsNullOrWhiteSpace(name))
             return;
@@ -96,10 +96,10 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private void SetDebugDescriptorSetName(DescriptorSet descriptorSet, string name)
+    internal void SetDebugDescriptorSetName(DescriptorSet descriptorSet, string name)
         => SetDebugObjectName(ObjectType.DescriptorSet, descriptorSet.Handle, name);
 
-    private void SetDebugDescriptorSetNames(DescriptorSet[]? sets, string prefix)
+    internal void SetDebugDescriptorSetNames(DescriptorSet[]? sets, string prefix)
     {
         if (sets is null || sets.Length == 0)
             return;

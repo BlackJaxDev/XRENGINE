@@ -5,24 +5,27 @@ using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Scene;
+using XREngine.Rendering.Vulkan.Commands.Readback;
 
 namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
+        private readonly VulkanReadbackTaskTracker _readbackTasks = new();
+
         // =========== Render Parameters ===========
 
         private ulong _materialUniformFrameTimeFrameId = ulong.MaxValue;
-        private float _materialUniformUpdateDeltaLive;
-        private float _materialUniformSecondsLive;
-        private float _materialUniformDeltaSecondsLive;
+        internal float _materialUniformUpdateDeltaLive;
+        internal float _materialUniformSecondsLive;
+        internal float _materialUniformDeltaSecondsLive;
 
         /// <summary>
         /// Captures the time uniforms once for the current engine render frame.
         /// Material setup and deferred frame-data refresh both run on the render thread,
         /// so the render-frame ID is the ownership boundary and no per-draw lock is needed.
         /// </summary>
-        private void EnsureMaterialUniformFrameTime()
+        internal void EnsureMaterialUniformFrameTime()
         {
             ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
             if (_materialUniformFrameTimeFrameId == frameId)
@@ -123,7 +126,7 @@ namespace XREngine.Rendering.Vulkan
         public override void SetMaterialUniforms(XRMaterial material, XRRenderProgram program)
             => SetMaterialUniforms(material, program, LayeredShadowUniformState.CaptureFromCurrentRenderingState());
 
-        private void SetMaterialUniforms(XRMaterial material, XRRenderProgram program, in LayeredShadowUniformState shadowState)
+        internal void SetMaterialUniforms(XRMaterial material, XRRenderProgram program, in LayeredShadowUniformState shadowState)
         {
             if (material is null || program is null)
                 return;
@@ -318,7 +321,7 @@ namespace XREngine.Rendering.Vulkan
 
         // =========== Vulkan State Conversion Helpers ===========
 
-        private static ECullMode ResolveCullMode(ECullMode mode)
+        internal static ECullMode ResolveCullMode(ECullMode mode)
         {
             if (!RuntimeEngine.Rendering.State.ReverseCulling)
                 return mode;
@@ -331,7 +334,7 @@ namespace XREngine.Rendering.Vulkan
             };
         }
 
-        private static EWinding ResolveWinding(EWinding winding)
+        internal static EWinding ResolveWinding(EWinding winding)
         {
             if (!RuntimeEngine.Rendering.State.ReverseWinding)
                 return winding;
@@ -339,7 +342,7 @@ namespace XREngine.Rendering.Vulkan
             return winding == EWinding.Clockwise ? EWinding.CounterClockwise : EWinding.Clockwise;
         }
 
-        private static BlendMode? ResolveBlendMode(RenderingParameters parameters)
+        internal static BlendMode? ResolveBlendMode(RenderingParameters parameters)
         {
             if (parameters.BlendModeAllDrawBuffers is not null)
                 return parameters.BlendModeAllDrawBuffers;
@@ -355,7 +358,7 @@ namespace XREngine.Rendering.Vulkan
             return null;
         }
 
-        private static ColorComponentFlags ToVulkanColorWriteMask(RenderingParameters parameters)
+        internal static ColorComponentFlags ToVulkanColorWriteMask(RenderingParameters parameters)
         {
             ColorComponentFlags mask = 0;
             if (parameters.WriteRed)
@@ -369,7 +372,7 @@ namespace XREngine.Rendering.Vulkan
             return mask;
         }
 
-        private static CullModeFlags ToVulkanCullMode(ECullMode mode)
+        internal static CullModeFlags ToVulkanCullMode(ECullMode mode)
             => mode switch
             {
                 ECullMode.None => CullModeFlags.None,
@@ -379,7 +382,7 @@ namespace XREngine.Rendering.Vulkan
                 _ => CullModeFlags.BackBit
             };
 
-        private static FrontFace ToVulkanFrontFace(EWinding winding)
+        internal static FrontFace ToVulkanFrontFace(EWinding winding)
             => winding switch
             {
                 EWinding.Clockwise => FrontFace.Clockwise,
@@ -387,7 +390,7 @@ namespace XREngine.Rendering.Vulkan
                 _ => FrontFace.CounterClockwise
             };
 
-        private static StencilOpState ToVulkanStencilState(StencilTestFace face)
+        internal static StencilOpState ToVulkanStencilState(StencilTestFace face)
             => new()
             {
                 FailOp = ToVulkanStencilOp(face.BothFailOp),
@@ -413,7 +416,7 @@ namespace XREngine.Rendering.Vulkan
                 _ => Silk.NET.Vulkan.StencilOp.Keep
             };
 
-        private static BlendOp ToVulkanBlendOp(EBlendEquationMode mode)
+        internal static BlendOp ToVulkanBlendOp(EBlendEquationMode mode)
             => mode switch
             {
                 EBlendEquationMode.FuncAdd => BlendOp.Add,
@@ -424,7 +427,7 @@ namespace XREngine.Rendering.Vulkan
                 _ => BlendOp.Add
             };
 
-        private static BlendFactor ToVulkanBlendFactor(EBlendingFactor factor)
+        internal static BlendFactor ToVulkanBlendFactor(EBlendingFactor factor)
             => factor switch
             {
                 EBlendingFactor.Zero => BlendFactor.Zero,

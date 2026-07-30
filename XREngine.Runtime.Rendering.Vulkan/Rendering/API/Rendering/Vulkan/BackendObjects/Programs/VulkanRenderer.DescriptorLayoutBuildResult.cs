@@ -1,15 +1,10 @@
-using System.Collections.Generic;
 using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
-{
-    private readonly record struct DescriptorLayoutBuildResult(
-        DescriptorSetLayout[] Layouts,
-        List<DescriptorBindingInfo> Bindings,
-        bool[] SetUsesUpdateAfterBind,
-        bool RequiresUpdateAfterBind,
-        bool RequiresVariableDescriptorCount);
-
-    }
+internal readonly record struct DescriptorLayoutBuildResult(
+    DescriptorSetLayout[] Layouts,
+    List<DescriptorBindingInfo> Bindings,
+    bool[] SetUsesUpdateAfterBind,
+    bool RequiresUpdateAfterBind,
+    bool RequiresVariableDescriptorCount);

@@ -486,7 +486,8 @@ public class GpuRenderingBacklogTests
         source.ShouldContain("MESH_DATA_ATLAS_TIER_MASK");
         source.ShouldContain("uint tierFlags = meshData[meshBase + 3u]");
         source.ShouldContain("uint tier = tierFlags & MESH_DATA_ATLAS_TIER_MASK");
-        source.ShouldContain("uint bucketIndex = slotIndex * MATERIAL_TIER_COUNT + tier");
+        source.ShouldContain("uint bucketIndex = CompactMaterialTableOutput != 0u");
+        source.ShouldContain("? tier\n        : slotIndex * MATERIAL_TIER_COUNT + tier;");
     }
 
     [Test]
@@ -824,7 +825,7 @@ public class GpuRenderingBacklogTests
             .Replace("\r\n", "\n");
         string commandBufferAllocation = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs")
             .Replace("\r\n", "\n");
-        string imgui = global::XREngine.UnitTests.SourceContractWorkspace.ReadFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.cs")
+        string imgui = global::XREngine.UnitTests.SourceContractWorkspace.ReadFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.Rendering.cs")
             .Replace("\r\n", "\n");
 
         recording.ShouldContain("TryConsumeRenderableImGuiOverlaySnapshot(\n                            out imguiOverlaySnapshot)");
@@ -1027,14 +1028,7 @@ public class GpuRenderingBacklogTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-    {
-        string workspaceRoot = GltfImportTestUtilities.ResolveWorkspaceRoot();
-        string path = Path.Combine(workspaceRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
-        if (File.Exists(path))
-            return global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType(relativePath);
-
-        throw new FileNotFoundException($"Unable to locate file '{relativePath}' from '{workspaceRoot}'.");
-    }
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private sealed class StubBvhProvider(bool isReady) : IGpuBvhProvider
     {

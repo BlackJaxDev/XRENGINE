@@ -1,6 +1,6 @@
 using XREngine.Data.Rendering;
 
-namespace XREngine.Rendering.Vulkan;
+namespace XREngine.Rendering.Vulkan.RenderGraph;
 
 internal readonly record struct VulkanBufferAliasKey(
     ulong SizeInBytes,

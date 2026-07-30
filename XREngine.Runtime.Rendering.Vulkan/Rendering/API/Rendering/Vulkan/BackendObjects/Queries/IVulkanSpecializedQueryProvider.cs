@@ -6,7 +6,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Records property, performance, or video queries that cannot use the generic
 /// begin/end command family. Providers are registered only by a real subsystem owner.
 /// </summary>
-public interface IVulkanSpecializedQueryProvider
+internal interface IVulkanSpecializedQueryProvider
 {
     ERenderQueryKind Kind { get; }
 

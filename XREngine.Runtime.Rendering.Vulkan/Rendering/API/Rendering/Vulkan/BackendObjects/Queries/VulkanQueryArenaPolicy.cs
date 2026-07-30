@@ -3,7 +3,7 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>
 /// Defines the bounded growth policy used by renderer-owned Vulkan query arenas.
 /// </summary>
-public static class VulkanQueryArenaPolicy
+internal static class VulkanQueryArenaPolicy
 {
     public const uint DefaultChunkCapacity = 256u;
     public const int MaxChunksPerKey = 16;

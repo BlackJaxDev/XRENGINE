@@ -50,9 +50,9 @@ public sealed class VulkanRuntimeManagerOwnershipTests
     public void PipelineManager_DeduplicatesPendingProgramLinksPerRenderer()
     {
         VulkanPipelineManager manager = new();
-        VulkanRenderer.VkRenderProgram program =
-            (VulkanRenderer.VkRenderProgram)RuntimeHelpers.GetUninitializedObject(
-                typeof(VulkanRenderer.VkRenderProgram));
+        VkRenderProgram program =
+            (VkRenderProgram)RuntimeHelpers.GetUninitializedObject(
+                typeof(VkRenderProgram));
 
         manager.QueueProgramLinkUntilDeviceReady(program);
         manager.QueueProgramLinkUntilDeviceReady(program);
@@ -66,7 +66,7 @@ public sealed class VulkanRuntimeManagerOwnershipTests
     {
         FieldInfo[] rendererGlobalCollections =
         [
-            .. typeof(VulkanRenderer.VkRenderProgram)
+            .. typeof(VkRenderProgram)
                 .GetFields(
                     BindingFlags.Public |
                     BindingFlags.NonPublic |
@@ -75,7 +75,7 @@ public sealed class VulkanRuntimeManagerOwnershipTests
                 .Where(static field =>
                     field.FieldType.IsGenericType &&
                     field.FieldType.GetGenericArguments()
-                        .Contains(typeof(VulkanRenderer.VkRenderProgram))),
+                        .Contains(typeof(VkRenderProgram))),
         ];
 
         rendererGlobalCollections.ShouldBeEmpty(

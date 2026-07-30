@@ -8,29 +8,68 @@ public partial class AdvancedRenderPipeline
 
     /// <summary>
     /// Captures the complete immutable resource/state profile for this pipeline.
-    /// The inactive skeleton reserves no production stage capacity.
     /// </summary>
     internal AdvancedRenderResourceProfile CaptureAdvancedResourceProfile(
         in RenderPipelineResourceProfile targetProfile)
-        => AdvancedRenderResourceProfile.CreateInactive(
+        => AdvancedRenderResourceProfile.CreateAttributeReconstruction(
             targetProfile,
             CapabilityResult.Capabilities);
 
     /// <summary>
-    /// The frame skeleton owns no layout-affecting feature resources yet.
-    /// Future slices add immutable profile bits alongside their first declarations.
+    /// Captures every optional visibility/capture allocation before generation.
     /// </summary>
     internal override ulong BuildResourceFeatureMaskForGenerationKey(
         XRRenderPipelineInstance instance,
         XRViewport? viewport)
-        => 0UL;
+    {
+        AdvancedVisibilityResourceFeature visibilityFeatures =
+            AdvancedVisibilityResourceFeature.Core;
+        if (VisibilityDebugView != EAdvancedVisibilityDebugView.Disabled ||
+            viewport?.CapturePolicy.RenderDebugOverlays == true)
+        {
+            visibilityFeatures |= AdvancedVisibilityResourceFeature.DebugOutput;
+        }
+        if (EnableVisibilityGpuValidation)
+            visibilityFeatures |= AdvancedVisibilityResourceFeature.GpuValidation;
+
+        AdvancedReconstructionResourceFeature reconstructionFeatures =
+            AdvancedReconstructionResourceFeature.Core;
+        if (ReconstructionDebugView !=
+                EAdvancedReconstructionDebugView.Disabled ||
+            viewport?.CapturePolicy.RenderDebugOverlays == true)
+        {
+            reconstructionFeatures |=
+                AdvancedReconstructionResourceFeature.DebugOutput;
+        }
+        bool derivativeDebugView =
+            ReconstructionDebugView is
+                EAdvancedReconstructionDebugView.DerivativeError or
+                EAdvancedReconstructionDebugView.SelectedMip;
+        if (EnableReconstructionDerivativeDiagnostics ||
+            derivativeDebugView)
+        {
+            reconstructionFeatures |=
+                AdvancedReconstructionResourceFeature.DerivativeDiagnostics |
+                AdvancedReconstructionResourceFeature.DebugOutput;
+        }
+        if (EnableReconstructionGpuValidation)
+            reconstructionFeatures |=
+                AdvancedReconstructionResourceFeature.GpuValidation;
+        if (EnableReconstructionReferenceOutput)
+            reconstructionFeatures |=
+                AdvancedReconstructionResourceFeature.ReferenceOutput;
+
+        return (ulong)visibilityFeatures | (ulong)reconstructionFeatures;
+    }
 
     /// <summary>
-    /// Until GPU-scene and visibility resources are implemented, the advanced
-    /// layout contains only the externally owned output boundary.
+    /// Declares the document-04/05 visibility and reconstruction resource contract.
     /// </summary>
     protected override void DescribeResources(RenderPipelineResourceLayoutBuilder builder)
     {
+        DeclareVisibilityBufferResources(builder);
+        DeclareAttributeReconstructionResources(builder);
+
         RenderPipelineExternalTargetKind kind = builder.Profile.ExternalTargetKind;
         if (kind == RenderPipelineExternalTargetKind.None)
             return;

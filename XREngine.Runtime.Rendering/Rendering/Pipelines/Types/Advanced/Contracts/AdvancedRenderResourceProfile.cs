@@ -18,12 +18,12 @@ public readonly record struct AdvancedRenderResourceProfile(
     AdvancedRenderCapacityProfile Capacities)
 {
     /// <summary>
-    /// First version of the advanced resource/state contract.
+    /// Document-05 resource contract, including shader-local surface reconstruction.
     /// </summary>
-    public const uint CurrentContractVersion = 1u;
+    public const uint CurrentContractVersion = 3u;
 
     /// <summary>
-    /// Captures the inactive frame skeleton without speculatively reserving stage resources.
+    /// Captures the inactive frame skeleton for tests of unsupported hosts.
     /// </summary>
     public static AdvancedRenderResourceProfile CreateInactive(
         in RenderPipelineResourceProfile target,
@@ -38,6 +38,40 @@ public readonly record struct AdvancedRenderResourceProfile(
             capabilities.Synchronization,
             capabilities.ShaderFamily,
             AdvancedRenderCapacityProfile.Inactive);
+
+    /// <summary>
+    /// Captures the declared visibility/depth/history/frame-slot layout.
+    /// </summary>
+    public static AdvancedRenderResourceProfile CreateVisibilityBuffer(
+        in RenderPipelineResourceProfile target,
+        in AdvancedRenderPipelineCapabilities capabilities)
+        => new(
+            CurrentContractVersion,
+            target,
+            AdvancedFrameSlotContract.DefaultSlotCount,
+            capabilities.VisibilityTargetEncoding,
+            capabilities.IndirectSubmission,
+            capabilities.TextureIndirection,
+            capabilities.Synchronization,
+            capabilities.ShaderFamily,
+            AdvancedRenderCapacityProfile.VisibilityBuffer);
+
+    /// <summary>
+    /// Captures visibility plus shader-local reconstruction diagnostics and counters.
+    /// </summary>
+    public static AdvancedRenderResourceProfile CreateAttributeReconstruction(
+        in RenderPipelineResourceProfile target,
+        in AdvancedRenderPipelineCapabilities capabilities)
+        => new(
+            CurrentContractVersion,
+            target,
+            AdvancedFrameSlotContract.DefaultSlotCount,
+            capabilities.VisibilityTargetEncoding,
+            capabilities.IndirectSubmission,
+            capabilities.TextureIndirection,
+            capabilities.Synchronization,
+            capabilities.ShaderFamily,
+            AdvancedRenderCapacityProfile.AttributeReconstruction);
 
     /// <summary>
     /// Creates the structural resource-generation key after validating slot separation.

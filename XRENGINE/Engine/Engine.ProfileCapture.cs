@@ -771,6 +771,13 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "gpu_driven_active_command_count", RuntimeEngine.Rendering.Stats.GpuDriven.ActiveCommandCount, ref first);
             AppendNumberField(s_lineBuilder, "gpu_driven_material_lookup_capacity", RuntimeEngine.Rendering.Stats.GpuDriven.MaterialLookupCapacity, ref first);
             AppendNumberField(s_lineBuilder, "gpu_driven_active_material_slots", RuntimeEngine.Rendering.Stats.GpuDriven.ActiveMaterialSlots, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_required_material_rows", RuntimeEngine.Rendering.Stats.GpuDriven.RequiredMaterialRows, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_ready_material_rows", RuntimeEngine.Rendering.Stats.GpuDriven.ReadyMaterialRows, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_non_ready_material_texture_references", RuntimeEngine.Rendering.Stats.GpuDriven.NonReadyMaterialTextureReferences, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_invalid_material_ids", RuntimeEngine.Rendering.Stats.GpuDriven.InvalidMaterialIds, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_fallback_submitted_material_rows", RuntimeEngine.Rendering.Stats.GpuDriven.FallbackSubmittedMaterialRows, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_material_table_publication_generation", RuntimeEngine.Rendering.Stats.GpuDriven.MaterialTablePublicationGeneration, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_material_descriptor_publication_generation", RuntimeEngine.Rendering.Stats.GpuDriven.MaterialDescriptorPublicationGeneration, ref first);
             AppendNumberField(s_lineBuilder, "gpu_driven_submission_managed_allocated_bytes", RuntimeEngine.Rendering.Stats.GpuDriven.SubmissionManagedAllocatedBytes, ref first);
             AppendNumberField(s_lineBuilder, "gpu_driven_submission_backend_managed_allocated_bytes", RuntimeEngine.Rendering.Stats.GpuDriven.SubmissionBackendManagedAllocatedBytes, ref first);
             AppendNumberField(s_lineBuilder, "gpu_driven_submission_owned_managed_allocated_bytes", RuntimeEngine.Rendering.Stats.GpuDriven.SubmissionOwnedManagedAllocatedBytes, ref first);

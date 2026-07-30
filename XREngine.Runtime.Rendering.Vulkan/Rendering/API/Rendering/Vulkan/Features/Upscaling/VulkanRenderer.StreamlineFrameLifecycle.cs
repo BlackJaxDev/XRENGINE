@@ -10,7 +10,7 @@ namespace XREngine.Rendering.Vulkan
             if (!_streamlineFrameGenerationSwapchainActive)
                 return;
 
-            uint frameIndex = unchecked((uint)Math.Min(uint.MaxValue, _vkDebugFrameCounter));
+            uint frameIndex = unchecked((uint)Math.Min(uint.MaxValue, AcceptedDesktopFrameAttemptCount));
             if (NvidiaDlssManager.Native.TryMarkFrameGenerationPclMarker(this, marker, frameIndex, out string failureReason))
                 return;
 
