@@ -34,7 +34,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="ImGui.NET" Version="1.90.8.1" />
+    <PackageReference Include="ImGui.NET" Version="1.91.6.1" />
     <PackageReference Include="Silk.NET.Core" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Core.Win32Extras" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Input" Version="2.23.0" />
@@ -96,9 +96,7 @@
     <Copy SourceFiles="@(NvidiaSdkNative)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
   </Target>
 
-  <Target Name="PrepareVulkanMemoryAllocatorBridgeBuildState"
-          BeforeTargets="BuildVulkanMemoryAllocatorBridge"
-          Condition="'$(XREngineUseExistingNativeBridges)' != 'true' and '$(OS)' == 'Windows_NT' and Exists('$(VmaBridgeProject)')">
+  <Target Name="PrepareVulkanMemoryAllocatorBridgeBuildState" BeforeTargets="BuildVulkanMemoryAllocatorBridge" Condition="'$(XREngineUseExistingNativeBridges)' != 'true' and '$(OS)' == 'Windows_NT' and Exists('$(VmaBridgeProject)')">
     <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(VmaBridgeBuildStateFile)'))" />
     <PropertyGroup>
       <VmaBridgeCurrentBuildState>$(Configuration)|x64|$(VULKAN_SDK)</VmaBridgeCurrentBuildState>
@@ -106,11 +104,7 @@
     <WriteLinesToFile File="$(VmaBridgeBuildStateFile)" Lines="$(VmaBridgeCurrentBuildState)" Overwrite="true" WriteOnlyWhenDifferent="true" />
   </Target>
 
-  <Target Name="BuildVulkanMemoryAllocatorBridge"
-          BeforeTargets="PrepareForBuild"
-          Inputs="@(VmaBridgeBuildInput);$(VmaBridgeBuildStateFile)"
-          Outputs="$(VmaBridgeNativeDll);$(VmaBridgeBuildStampFile)"
-          Condition="'$(XREngineUseExistingNativeBridges)' != 'true' and '$(OS)' == 'Windows_NT' and Exists('$(VmaBridgeProject)')">
+  <Target Name="BuildVulkanMemoryAllocatorBridge" BeforeTargets="PrepareForBuild" Inputs="@(VmaBridgeBuildInput);$(VmaBridgeBuildStateFile)" Outputs="$(VmaBridgeNativeDll);$(VmaBridgeBuildStampFile)" Condition="'$(XREngineUseExistingNativeBridges)' != 'true' and '$(OS)' == 'Windows_NT' and Exists('$(VmaBridgeProject)')">
     <PropertyGroup>
       <VsWhereExe>$(MSBuildProgramFiles32)\Microsoft Visual Studio\Installer\vswhere.exe</VsWhereExe>
       <VmaBridgeMsBuildPathFile>$(BaseIntermediateOutputPath)vma-bridge-msbuild-path.txt</VmaBridgeMsBuildPathFile>
@@ -140,9 +134,7 @@
     <WriteLinesToFile File="$(VmaBridgeBuildStampFile)" Lines="$(VmaBridgeCurrentBuildState)" Overwrite="true" />
   </Target>
 
-  <Target Name="ValidateExistingVulkanMemoryAllocatorBridge"
-          BeforeTargets="PrepareForBuild"
-          Condition="'$(XREngineUseExistingNativeBridges)' == 'true' and !Exists('$(VmaBridgeNativeDll)')">
+  <Target Name="ValidateExistingVulkanMemoryAllocatorBridge" BeforeTargets="PrepareForBuild" Condition="'$(XREngineUseExistingNativeBridges)' == 'true' and !Exists('$(VmaBridgeNativeDll)')">
     <Error Text="Isolated editor builds reuse the repository-managed VulkanMemoryAllocatorBridge native binary, but $(VmaBridgeNativeDll) is missing. Build the native bridge once before starting an isolated editor session." />
   </Target>
 

@@ -15,4 +15,8 @@ internal sealed record QueryOp(
     Silk.NET.Vulkan.Buffer ResultDestination = default,
     ulong ResultDestinationOffset = 0ul,
     ulong ResultStride = 0ul,
-    bool IncludeAvailability = true) : FrameOp(PassIndex, Target, Context);
+    bool IncludeAvailability = true) 
+    : FrameOp(PassIndex, Target, Context)
+{
+    public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.Query;
+}

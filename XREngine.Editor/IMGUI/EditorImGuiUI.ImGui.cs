@@ -207,7 +207,7 @@ public static partial class EditorImGuiUI
         private static bool _assetDragInProgress;
         private static string? _assetDragPath;
 
-        private const string ClosePromptPopupId = "CloseWithUnsavedChanges";
+        private const string ClosePromptPopupId = "Close Editor##CloseConfirmation";
         private const int ClosePromptRenderFailureBypassThreshold = 3;
         private static bool _closePromptOpen;
         private static bool _closePromptRequested;
@@ -296,6 +296,13 @@ public static partial class EditorImGuiUI
 
         private static bool ShouldRenderEditorImGui()
             => Engine.PlayMode.IsEditing && !ShouldSuppressEditorImGuiForRuntimeVrView();
+
+        /// <summary>
+        /// Installs editor-wide ImGui lifecycle hooks before the first draw. This must be
+        /// called during UI creation because Play can suppress that first draw entirely.
+        /// </summary>
+        internal static void Initialize()
+            => Engine.WindowCloseRequested = HandleWindowCloseRequested;
 
         internal static void ForceAllowWindowCloseForShutdown()
         {
@@ -561,7 +568,7 @@ public static partial class EditorImGuiUI
 
             if (!ShouldRenderEditorImGui())
             {
-                Engine.Input.SetUIInputCaptured(false);
+                RenderClosePromptOnly();
                 return;
             }
 
@@ -573,7 +580,7 @@ public static partial class EditorImGuiUI
             bool showSettings = EditorUnitTests.Toggles.EditorType == EditorUnitTests.UnitTestEditorType.IMGUI;
             if (!showSettings)
             {
-                Engine.Input.SetUIInputCaptured(false);
+                RenderClosePromptOnly();
                 return;
             }
 
@@ -862,7 +869,26 @@ public static partial class EditorImGuiUI
             Engine.Input.SetUIInputCaptured(uiWantsCapture && !allowEngineInputThroughScenePanel && Engine.PlayMode.State != EPlayModeState.EnteringPlay && !Engine.PlayMode.IsPlaying);
         }
 
-        internal static bool ShouldBypassUnsavedChangesPromptForRenderFailure(
+        /// <summary>
+        /// Renders only the close confirmation while the editor shell is suppressed, such as
+        /// during Play. The modal captures input for the complete frame so its confirmation
+        /// click cannot leak through to game UI.
+        /// </summary>
+        private static void RenderClosePromptOnly()
+        {
+            if (!_closePromptOpen)
+            {
+                Engine.Input.SetUIInputCaptured(false);
+                return;
+            }
+
+            EnsureProfessionalImGuiStyling();
+            using (Engine.Profiler.Start("UI.DrawClosePromptDialog"))
+                DrawClosePromptDialog();
+            Engine.Input.SetUIInputCaptured(true);
+        }
+
+        internal static bool ShouldBypassClosePromptForRenderFailure(
             int consecutiveRenderFailures,
             bool renderPermanentlyDisabled)
             => renderPermanentlyDisabled ||
@@ -898,14 +924,13 @@ public static partial class EditorImGuiUI
             int dirtyAssetCount = _closePromptOpen
                 ? _closePromptAssets.Count
                 : Engine.Assets?.DirtyAssets.Count ?? 0;
-            if (dirtyAssetCount > 0 &&
-                ShouldBypassUnsavedChangesPromptForRenderFailure(
+            if (ShouldBypassClosePromptForRenderFailure(
                     window.ConsecutiveRenderFailures,
                     window.IsRenderPermanentlyDisabled))
             {
                 Debug.RenderingWarning(
-                    "[EditorClose] Allowing explicit window close without the ImGui unsaved-changes prompt because rendering is unavailable. " +
-                    "dirtyAssets={0} consecutiveRenderFailures={1} permanentlyDisabled={2} lastError='{3}'. Unsaved changes will be discarded.",
+                    "[EditorClose] Allowing explicit window close without the ImGui confirmation because rendering is unavailable. " +
+                    "dirtyAssets={0} consecutiveRenderFailures={1} permanentlyDisabled={2} lastError='{3}'.",
                     dirtyAssetCount,
                     window.ConsecutiveRenderFailures,
                     window.IsRenderPermanentlyDisabled,
@@ -918,19 +943,7 @@ public static partial class EditorImGuiUI
             if (_closePromptOpen)
                 return Engine.WindowCloseRequestResult.Defer;
 
-            var assets = Engine.Assets;
-            if (assets is null)
-            {
-                FlushImGuiLayoutImmediate();
-                return Engine.WindowCloseRequestResult.Allow;
-            }
-
-            var dirtyAssets = assets.DirtyAssets.Values.ToArray();
-            if (dirtyAssets.Length == 0)
-            {
-                FlushImGuiLayoutImmediate();
-                return Engine.WindowCloseRequestResult.Allow;
-            }
+            XRAsset[] dirtyAssets = Engine.Assets?.DirtyAssets.Values.ToArray() ?? [];
 
             BeginClosePrompt(window, dirtyAssets);
             return Engine.WindowCloseRequestResult.Defer;
@@ -976,44 +989,52 @@ public static partial class EditorImGuiUI
 
             ClosePromptDialogAction action = ClosePromptDialogAction.None;
 
-            ImGui.TextUnformatted("You have unsaved changes. Select which files to save before closing.");
-            ImGui.Separator();
-
-            var listSize = new Vector2(520, MathF.Min(300, 22 + (_closePromptAssets.Count * 22)));
-            if (ImGui.BeginChild("##UnsavedList", listSize, ImGuiChildFlags.Border))
+            bool hasUnsavedChanges = _closePromptAssets.Count > 0;
+            if (hasUnsavedChanges)
             {
-                foreach (var asset in _closePromptAssets)
-                {
-                    string label = EditorUnitTests.UserInterface.GetAssetDisplayName(asset);
-                    bool selected = _closePromptSelections.TryGetValue(asset.ID, out var value) ? value : true;
-                    if (ImGui.Checkbox(label, ref selected))
-                        _closePromptSelections[asset.ID] = selected;
+                ImGui.TextUnformatted("You have unsaved changes. Select which files to save before closing.");
+                ImGui.Separator();
 
-                    if (!string.IsNullOrWhiteSpace(asset.FilePath))
+                var listSize = new Vector2(520, MathF.Min(300, 22 + (_closePromptAssets.Count * 22)));
+                if (ImGui.BeginChild("##UnsavedList", listSize, ImGuiChildFlags.Border))
+                {
+                    foreach (var asset in _closePromptAssets)
                     {
-                        ImGui.SameLine();
-                        ImGui.TextDisabled(Path.GetFileName(asset.FilePath));
+                        string label = EditorUnitTests.UserInterface.GetAssetDisplayName(asset);
+                        bool selected = _closePromptSelections.TryGetValue(asset.ID, out var value) ? value : true;
+                        if (ImGui.Checkbox(label, ref selected))
+                            _closePromptSelections[asset.ID] = selected;
+
+                        if (!string.IsNullOrWhiteSpace(asset.FilePath))
+                        {
+                            ImGui.SameLine();
+                            ImGui.TextDisabled(Path.GetFileName(asset.FilePath));
+                        }
                     }
                 }
-            }
-            ImGui.EndChild();
+                ImGui.EndChild();
 
-            if (ImGui.Button("Select All"))
-            {
-                foreach (var asset in _closePromptAssets)
-                    _closePromptSelections[asset.ID] = true;
-            }
-            ImGui.SameLine();
-            if (ImGui.Button("Select None"))
-            {
-                foreach (var asset in _closePromptAssets)
-                    _closePromptSelections[asset.ID] = false;
-            }
+                if (ImGui.Button("Select All"))
+                {
+                    foreach (var asset in _closePromptAssets)
+                        _closePromptSelections[asset.ID] = true;
+                }
+                ImGui.SameLine();
+                if (ImGui.Button("Select None"))
+                {
+                    foreach (var asset in _closePromptAssets)
+                        _closePromptSelections[asset.ID] = false;
+                }
 
-            if (!string.IsNullOrWhiteSpace(_closePromptSaveError))
+                if (!string.IsNullOrWhiteSpace(_closePromptSaveError))
+                {
+                    ImGui.Spacing();
+                    ImGui.TextColored(new Vector4(1f, 0.35f, 0.35f, 1f), _closePromptSaveError);
+                }
+            }
+            else
             {
-                ImGui.Spacing();
-                ImGui.TextColored(new Vector4(1f, 0.35f, 0.35f, 1f), _closePromptSaveError);
+                ImGui.TextUnformatted("Close the editor?");
             }
 
             ImGui.Separator();
@@ -1024,21 +1045,32 @@ public static partial class EditorImGuiUI
             }
             else
             {
-                bool canSave = HasSelectedClosePromptAssets();
-                if (!canSave)
-                    ImGui.BeginDisabled();
+                if (hasUnsavedChanges)
+                {
+                    bool canSave = HasSelectedClosePromptAssets();
+                    if (!canSave)
+                        ImGui.BeginDisabled();
 
-                if (ImGui.Button("Save Selected and Close"))
-                    action = ClosePromptDialogAction.SaveSelectedAndClose;
+                    if (ImGui.Button("Save Selected and Close"))
+                        action = ClosePromptDialogAction.SaveSelectedAndClose;
 
-                if (!canSave)
-                    ImGui.EndDisabled();
+                    if (!canSave)
+                        ImGui.EndDisabled();
 
-                ImGui.SameLine();
-                if (ImGui.Button("Don't Save and Close"))
-                    action = ClosePromptDialogAction.CloseWithoutSaving;
+                    ImGui.SameLine();
+                    if (ImGui.Button("Don't Save and Close"))
+                        action = ClosePromptDialogAction.CloseWithoutSaving;
 
-                ImGui.SameLine();
+                    ImGui.SameLine();
+                }
+                else
+                {
+                    if (ImGui.Button("Close Editor"))
+                        action = ClosePromptDialogAction.CloseWithoutSaving;
+
+                    ImGui.SameLine();
+                }
+
                 if (ImGui.Button("Cancel"))
                     action = ClosePromptDialogAction.Cancel;
             }

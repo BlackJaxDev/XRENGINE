@@ -33,8 +33,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AssimpNetter" Version="6.0.2.1" />
-    <PackageReference Include="Magick.NET-Q16-HDRI-AnyCPU" Version="14.14.0" />
+    <PackageReference Include="AssimpNetter" Version="6.0.5" />
+    <PackageReference Include="Magick.NET-Q16-HDRI-AnyCPU" Version="14.16.0" />
     <PackageReference Include="MemoryPack" Version="1.21.4" />
     <PackageReference Include="Meshoptimizer.NET" Version="1.0.7" />
   </ItemGroup>

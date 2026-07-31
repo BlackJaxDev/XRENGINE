@@ -1,9 +1,9 @@
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingMeshDraw Draw, FrameOpContext Context) : FrameOp(PassIndex, Target, Context)
+internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingMeshDraw Draw, FrameOpContext Context) 
+    : FrameOp(PassIndex, Target, Context)
 {
     private PendingMeshDraw _draw = Draw;
-
     public PendingMeshDraw Draw
     {
         get => _draw;
@@ -21,6 +21,8 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
     /// VUID-vkEndCommandBuffer-commandBuffer-00061).
     /// </summary>
     internal bool PreserveSubmissionOrder { get; set; }
+
+    public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.MeshDraw;
 
     internal static MeshDrawOp Rent(
         int passIndex,

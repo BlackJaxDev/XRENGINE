@@ -388,3 +388,35 @@ The current machine passes the full doctor check with RenderDoc 1.44,
 Vulkan layer. A GPU capture was unnecessary for this final regression because
 the out-of-process held-mouse screenshots directly prove the presentation and
 layout behavior.
+
+## 2026-07-31 Vulkan Resize Crash And Presentation Regression
+
+Status: active investigation
+
+The reporter reproduced three current symptoms on Vulkan:
+
+- resizing the editor can terminate the process with `0xC0000005` while
+  recording a non-indexed draw in `VkMeshRenderer.RecordDrawNoLock`;
+- the whole 3D scene can intermittently occupy a smaller upper-left portion of
+  the window;
+- the wireframe floor in the basic startup world can flicker.
+
+The supplied crash run is
+`Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-31_11-45-36_pid21996/`.
+Its last complete resize sequence changed the framebuffer from `1920x1080` to
+`2560x1494`. The default pipeline committed a new
+`2560x1494/1715x1000` display/internal generation, the old generation fence
+reported `Failed`, and Vulkan recreated the swapchain at `2560x1494`. The
+renderer then rejected one newly recorded primary for stale output-pass
+attachments and began the next inline recording; the native fault occurred in
+`vkCmdDraw` before another renderer diagnostic could be written.
+
+This timing makes stale resize-generation or command-buffer lifetime state the
+first crash hypothesis. The smaller upper-left presentation is being checked
+against the same display/internal/swapchain generation boundary. The floor
+flicker will be classified separately as either a presentation artifact or a
+coplanar/debug-line ownership problem after stable full-frame presentation is
+restored.
+
+Current evidence root:
+`Build/_AgentValidation/self-iteration/vulkan-resize-presentation-floor-20260731/`.

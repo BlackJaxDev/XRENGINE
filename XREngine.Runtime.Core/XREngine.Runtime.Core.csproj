@@ -27,12 +27,12 @@
   <ItemGroup>
     <PackageReference Include="BitsKit" Version="1.2.0" />
     <PackageReference Include="DotnetNoise" Version="1.0.0" />
-    <PackageReference Include="JoltPhysicsSharp" Version="2.20.1" />
+    <PackageReference Include="JoltPhysicsSharp" Version="2.22.0" />
     <PackageReference Include="MagicPhysX" Version="1.0.0" />
-    <PackageReference Include="Jitter2" Version="2.7.9" />
+    <PackageReference Include="Jitter2" Version="2.8.9" />
     <PackageReference Include="MemoryPack" Version="1.21.4" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
-    <PackageReference Include="YamlDotNet" Version="16.3.0" />
+    <PackageReference Include="YamlDotNet" Version="18.1.0" />
   </ItemGroup>
 
 

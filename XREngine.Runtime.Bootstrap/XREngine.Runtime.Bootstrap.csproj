@@ -32,7 +32,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AssimpNetter" Version="6.0.2.1" />
+    <PackageReference Include="AssimpNetter" Version="6.0.5" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="SharpFont.Dependencies" Version="2.6.0" />
   </ItemGroup>
@@ -47,11 +47,9 @@
     <ProjectReference Include="..\XREngine.Runtime.AudioIntegration\XREngine.Runtime.AudioIntegration.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.InputIntegration\XREngine.Runtime.InputIntegration.csproj" />
-    <ProjectReference Include="..\XREngine.Runtime.Rendering.OpenGL\XREngine.Runtime.Rendering.OpenGL.csproj"
-                      Condition="'$(XREngineIncludeOpenGlBackend)' == 'true'" />
+    <ProjectReference Include="..\XREngine.Runtime.Rendering.OpenGL\XREngine.Runtime.Rendering.OpenGL.csproj" Condition="'$(XREngineIncludeOpenGlBackend)' == 'true'" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
-    <ProjectReference Include="..\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulkan.csproj"
-                      Condition="'$(XREngineIncludeVulkanBackend)' == 'true'" />
+    <ProjectReference Include="..\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulkan.csproj" Condition="'$(XREngineIncludeVulkanBackend)' == 'true'" />
     <!-- Transitional Phase 3 edge: Bootstrap still composes facade-owned world, pawn,
          movement, and concrete physics types. Remove this reference when those open
          ownership slices move to their target runtime assemblies. -->
@@ -59,8 +57,7 @@
   </ItemGroup>
 
   <Target Name="ValidateRendererBackendSelection" BeforeTargets="PrepareForBuild">
-    <Error Condition="'$(XREngineIncludeOpenGlBackend)' != 'true' and '$(XREngineIncludeVulkanBackend)' != 'true'"
-           Text="XREngine.Runtime.Bootstrap requires at least one statically packaged renderer backend. Set XREngineRendererBackends to All, OpenGL, or Vulkan." />
+    <Error Condition="'$(XREngineIncludeOpenGlBackend)' != 'true' and '$(XREngineIncludeVulkanBackend)' != 'true'" Text="XREngine.Runtime.Bootstrap requires at least one statically packaged renderer backend. Set XREngineRendererBackends to All, OpenGL, or Vulkan." />
   </Target>
 
   <ItemGroup>

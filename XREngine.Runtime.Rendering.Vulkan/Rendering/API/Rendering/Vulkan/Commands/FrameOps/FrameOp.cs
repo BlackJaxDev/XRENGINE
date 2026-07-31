@@ -7,6 +7,7 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
     public int PassIndex { get; internal set; } = PassIndex;
     public XRFrameBuffer? Target { get; internal set; } = Target;
     public FrameOpContext Context { get; internal set; } = Context;
+    public virtual EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.Unsupported;
 
     /// <summary>
     /// Rents an operation whose lifetime is bounded by the current render frame.
