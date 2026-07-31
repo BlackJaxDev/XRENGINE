@@ -60,14 +60,29 @@ Required retained work:
 The existing evidence and invalidated attempts remain recorded in the
 [Vulkan framerate root-cause investigation](../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md).
 
-## Workstream 04 Deferred Acceptance
+## Workstream 04 Reopened Implementation And Deferred Acceptance
 
 Carry forward every unchecked acceptance and Exit Gate criterion from:
 
 - [04 - Next-Frame Preparation And Collect-Visible Handoff](../../todo/rendering/optimization/04-next-frame-preparation-and-collect-visible-handoff-todo.md)
+- [Vulkan Editor Steady-Frame CPU Cost Investigation](../../investigations/rendering/vulkan-editor-frame-time-spikes-2026-07-30.md)
+- [Vulkan Command Recording Architecture Optimization](../../todo/rendering/optimization/vulkan-command-recording-architecture-optimization-todo.md)
+
+The 2026-07-30 steady-frame audit is an implementation blocker, not merely a
+deferred canonical measurement. The current package retains live
+command/mesh/material references and does not carry the packed binding data,
+descriptor identities, stable offsets, or dirty ranges required by the
+workstream-04 contract.
 
 Required retained work:
 
+- implement the frequency-separated frame/view/pass/material/object data
+  contract and compiled binding schema;
+- make stable package consumption perform zero live-material traversal,
+  program-dictionary emission, binding snapshot copy, and per-draw reflected
+  auto-uniform template copy/member scan;
+- make reusable frame-data and descriptor publication dirty-owner-driven rather
+  than a full visible-draw scan;
 - canonical stable allocation captures for package production, publication,
   validation, and consumption;
 - static, moving, mutation, streaming, resize, pause/resume, failed-submit,
@@ -77,13 +92,23 @@ Required retained work:
 - proof that Vulkan non-encoding preparation meets its workstream-01 budget;
 - deterministic image/draw-order parity;
 - closure of the 40,384-byte frame-data-refresh handoff without moving the
-  allocation to another stage.
+  allocation to another stage;
+- closure of the new CPU budgets and scaling invariants defined by the Vulkan
+  command-recording architecture plan.
 
 Targeted implementation evidence already retained for closeout comparison:
 
 - the final isolated editor smoke reported zero late-prepared and rejected
   packages, package age within the one-frame policy, and zero frame-data
   refresh allocation in its sampled Vulkan frame;
+- a later stable 647-command Debug diagnostic frame reused all 22 command
+  chains and the primary yet spent 60.265 ms emitting material/program
+  bindings, 55.187 ms copying binding snapshots, 120.188 ms constructing or
+  copying/scanning/patching reflected auto-uniform blocks, and 30.187 ms
+  validating descriptors;
+- the same frame spent only 0.113 ms in the native present call, proving the
+  outer 226.904 ms Present output was engine-side processing rather than a
+  swapchain-present wait;
 - canonical cohorts must still determine whether those results hold under the
   deferred desktop/RVC mutation and stress matrix.
 

@@ -22,7 +22,7 @@ namespace XREngine.Rendering.Vulkan
                         $"Interactive resize frame slot {attempt.FrameSlot} is still busy. TimelineValue={slotWaitValue}");
                     MarkSkippedResizeFrameObserved(attempt.StartTimestamp);
                     VulkanDesktopPreflightOutcome outcome =
-                        VulkanDesktopFramePolicy.ClassifyPreflight(
+                        DesktopWsiTarget.ClassifyPreflight(
                             EVulkanDesktopPreflightStatus
                                 .InteractiveSlotBusy);
                     attempt.Stop(

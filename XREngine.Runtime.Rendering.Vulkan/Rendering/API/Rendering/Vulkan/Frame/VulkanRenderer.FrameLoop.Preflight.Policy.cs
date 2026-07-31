@@ -13,8 +13,8 @@ namespace XREngine.Rendering.Vulkan
         {
             FrameOp[] droppedOps = DrainFrameOps(out _);
             FailUnsubmittedSubmissionMarkers(droppedOps);
-            var liveFramebufferSize = XRWindow.EffectiveFramebufferSize;
-            var resizeExtents = XRWindow.ResizeExtents;
+            var liveFramebufferSize = DesktopWsiTarget.EffectiveFramebufferSize;
+            var resizeExtents = DesktopWsiTarget.ResizeExtents;
 
             Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.ResizeSkip",

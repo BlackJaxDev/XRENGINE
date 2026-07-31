@@ -727,7 +727,6 @@ function Start-Session {
             'XRE_GAME_ASSETS_PATH' = (Join-Path $repoRoot 'Assets')
             'XRE_GAME_CACHE_PATH' = (Join-Path $sessionRoot 'cache')
             'XRE_GAME_METADATA_PATH' = (Join-Path $sessionRoot 'metadata')
-            'XRE_TEXTURE_STREAMING_CACHE_WARMUP_ENABLED' = 'false'
             'XRE_NET_MODE' = 'Local'
             'XRE_WINDOW_TITLE' = "XRE Editor [MCP: $Name @ $($manifest.port)]"
         }

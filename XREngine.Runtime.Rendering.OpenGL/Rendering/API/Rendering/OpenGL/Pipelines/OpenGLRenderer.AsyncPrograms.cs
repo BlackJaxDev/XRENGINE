@@ -169,18 +169,14 @@ public partial class OpenGLRenderer
         if (configured <= 1)
             return 1;
 
-        if (string.Equals(
-            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EnableOpenGlCompileLinkWorkerPool),
-            "1",
-            StringComparison.Ordinal))
-        {
+        if (!XREnvironment.IsEnabled(
+                XREngineEnvironmentVariables.DisableOpenGlCompileLinkWorkerPool))
             return configured;
-        }
 
         Debug.OpenGL(
             $"[ShaderCache] OpenGLProgramCompileLinkWorkerCount={configured} requested, " +
-            "but compile/link worker pools are disabled by default for OpenGL driver startup stability. " +
-            "Using 1 worker; set XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1 to opt in.");
+            $"but {XREngineEnvironmentVariables.DisableOpenGlCompileLinkWorkerPool}=1 requested the single-worker compatibility path. " +
+            "Using 1 worker.");
         return 1;
     }
 

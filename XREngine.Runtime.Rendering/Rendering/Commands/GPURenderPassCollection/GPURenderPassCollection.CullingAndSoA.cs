@@ -20,11 +20,8 @@ namespace XREngine.Rendering.Commands
     public sealed partial class GPURenderPassCollection
     {
         private const uint ComputeWorkGroupSize = 256;
-        private static readonly bool ForceGpuBvhCulling =
-            string.Equals(
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ForceGpuBvhCulling),
-                "1",
-                StringComparison.OrdinalIgnoreCase);
+        private static bool ForceGpuBvhCulling
+            => XREnvironment.IsEnabled(XREngineEnvironmentVariables.ForceGpuBvhCulling);
         private GpuBvhSelectorCalibration _gpuBvhSelectorCalibration = new();
         private float _gpuBvhEstimatedVisibleRatio = 0.5f;
 

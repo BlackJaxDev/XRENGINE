@@ -13,7 +13,7 @@ namespace XREngine
             private static readonly object AdvancedPipelineSelectionLock = new();
             private static AdvancedRenderPipelineSelectionResult _lastAdvancedPipelineSelection =
                 AdvancedRenderPipelineSelectionResolver.Resolve(
-                    EAdvancedRenderPipelineMode.Disabled,
+                    EAdvancedRenderPipelineMode.Available,
                     AdvancedRenderPipelineCapabilities.NoRenderer,
                     stereo: false);
 

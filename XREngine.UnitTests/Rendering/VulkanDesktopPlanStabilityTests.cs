@@ -410,6 +410,42 @@ public sealed class VulkanDesktopPlanStabilityTests
             transitionToPresent).ShouldBe(expected);
     }
 
+    [TestCase(false, true, false, false, true)]
+    [TestCase(true, true, false, false, false)]
+    [TestCase(false, false, false, false, false)]
+    [TestCase(false, true, true, false, false)]
+    [TestCase(false, true, false, true, false)]
+    public void UninitializedUnwrittenSwapchain_IsClearedBeforeItsFirstPresent(
+        bool hasRecordedSwapchainWrite,
+        bool transitionToPresent,
+        bool imageWasEverPresented,
+        bool refreshedFromLastPresentSource,
+        bool expected)
+    {
+        VulkanRenderer.ShouldRecordUnwrittenSwapchainInitializationClear(
+            hasRecordedSwapchainWrite,
+            transitionToPresent,
+            imageWasEverPresented,
+            refreshedFromLastPresentSource).ShouldBe(expected);
+    }
+
+    [TestCase(true, false, false, true)]
+    [TestCase(false, false, false, false)]
+    [TestCase(true, true, false, false)]
+    [TestCase(true, false, true, false)]
+    [TestCase(true, true, true, false)]
+    public void FrameOpPlannerAllocatorReuse_RequiresExclusiveKeyOwnership(
+        bool allocatorIsUsable,
+        bool preparationOwnsAllocator,
+        bool anotherKeyOwnsAllocator,
+        bool expected)
+    {
+        VulkanRenderer.CanReuseFrameOpPlannerAllocator(
+            allocatorIsUsable,
+            preparationOwnsAllocator,
+            anotherKeyOwnsAllocator).ShouldBe(expected);
+    }
+
     [Test]
     public void OpenXrOffscreenMirror_DoesNotTransitionDesktopSwapchainAndResetsReusedQueries()
     {

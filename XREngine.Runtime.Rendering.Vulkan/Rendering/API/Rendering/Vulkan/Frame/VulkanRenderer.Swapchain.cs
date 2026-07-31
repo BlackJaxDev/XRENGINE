@@ -12,6 +12,12 @@ using Semaphore = Silk.NET.Vulkan.Semaphore;
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
+    internal void CreateDesktopFinalOutput()
+        => CreateAllSwapChainObjects();
+
+    internal void DestroyDesktopFinalOutput()
+        => DestroyAllSwapChainObjects();
+
     private readonly struct SurfaceFormatPreference(Format format, ColorSpaceKHR colorSpace)
     {
         public Format Format { get; } = format;
@@ -104,7 +110,7 @@ public unsafe partial class VulkanRenderer
     internal Format SwapchainImageFormat => swapChainImageFormat;
     internal Extent2D SwapchainExtent => swapChainExtent;
 
-    private bool RecreateSwapChain()
+    internal bool RecreateDesktopSwapchainCore()
     {
         if (Interlocked.CompareExchange(ref _recreateSwapChainInProgress, 1, 0) != 0)
             return false;
@@ -114,7 +120,7 @@ public unsafe partial class VulkanRenderer
             WindowSurfaceSnapshot snapshot = XRWindow.LatestWindowSurfaceSnapshot;
             Vector2D<int> framebufferSize = snapshot.HasValidFramebufferExtent
                 ? snapshot.FramebufferExtent
-                : XRWindow.EffectiveFramebufferSize;
+                : DesktopWsiTarget.EffectiveFramebufferSize;
             Vector2D<int> windowSize = snapshot.HasValidClientExtent
                 ? snapshot.ClientExtent
                 : XRWindow.EffectiveWindowSize;
@@ -651,7 +657,7 @@ public unsafe partial class VulkanRenderer
 
     private SurfaceFormatKHR ChooseSwapSurfaceFormat(IReadOnlyList<SurfaceFormatKHR> availableFormats)
     {
-        bool requestHdr = XRWindow.PreferHDROutput;
+        bool requestHdr = DesktopWsiTarget.PreferHdrOutput;
 
         if (_supportsSwapchainColorspace
             && requestHdr
@@ -786,7 +792,7 @@ public unsafe partial class VulkanRenderer
             return true;
         }
 
-        Vector2D<int> framebufferSize = XRWindow.EffectiveFramebufferSize;
+        Vector2D<int> framebufferSize = DesktopWsiTarget.EffectiveFramebufferSize;
         Vector2D<int> windowSize = Window.Size;
 
         if ((framebufferSize.X <= 0 || framebufferSize.Y <= 0) &&

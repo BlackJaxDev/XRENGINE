@@ -14,8 +14,6 @@ namespace XREngine.Rendering.Occlusion
     /// </summary>
     public sealed class CpuSoftwareOcclusionCuller
     {
-        private static readonly bool EnvironmentEnabled = ReadEnvironmentEnabled();
-
         private readonly MaskedOcclusionBuffer _leftBuffer = new();
         private readonly MaskedOcclusionBuffer _rightBuffer = new();
         private readonly MaskedOcclusionRasterizer _rasterizer = new();
@@ -48,7 +46,7 @@ namespace XREngine.Rendering.Occlusion
                 if (RuntimeEngine.EffectiveSettings.EnableCpuSoftwareOcclusionCulling)
                     return true;
 
-                return EnvironmentEnabled;
+                return XREnvironment.IsEnabled(XREngineEnvironmentVariables.CpuSoftwareOcclusion);
             }
         }
 
@@ -213,17 +211,6 @@ namespace XREngine.Rendering.Occlusion
 
         public int FrameOccludersSubmitted => _frameOccludersRasterized;
         public int FrameTestsRun => _frameTestsRun;
-
-        private static bool ReadEnvironmentEnabled()
-        {
-            string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CpuSoftwareOcclusion);
-            if (string.IsNullOrWhiteSpace(raw))
-                return false;
-
-            ReadOnlySpan<char> value = raw.AsSpan().Trim();
-            return value.SequenceEqual("1".AsSpan()) ||
-                   value.Equals("true".AsSpan(), StringComparison.OrdinalIgnoreCase);
-        }
 
         private void SelectOccluders(
             RenderCommandCollection commands,

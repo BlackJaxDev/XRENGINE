@@ -24,12 +24,31 @@ public unsafe partial class VulkanRenderer
         EVrFoveationAttachmentKind FoveationAttachmentKind,
         bool FoveationAttachmentOwnedByResourcePlanner)
     {
+        public VulkanFrameTargetLease FrameTargetLease
+            => VulkanOpenXrTargetDriver.MapRuntimeOwnedImage(
+                new VulkanRenderFrameTarget(
+                    Image,
+                    ImageView,
+                    DepthImage,
+                    DepthView,
+                    Extent,
+                    Layers: 1,
+                    ImageLayout.Undefined,
+                    ImageLayout.ColorAttachmentOptimal),
+                ImageFormat,
+                DepthFormat,
+                SampleCountFlags.Count1Bit,
+                OpenXrImageIndex,
+                OpenXrViewIndex,
+                supportsHiddenAreaMask: true);
+
         public bool IsValid =>
             Image.Handle != 0 &&
             ImageView.Handle != 0 &&
             Extent.Width != 0 &&
             Extent.Height != 0 &&
             DepthImage.Handle != 0 &&
-            DepthView.Handle != 0;
+            DepthView.Handle != 0 &&
+            FrameTargetLease.IsValid;
     }
 }

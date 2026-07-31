@@ -8,7 +8,7 @@ public unsafe partial class VulkanRenderer
         /// <summary>
         /// Coordinates one allocation-free desktop Vulkan frame attempt.
         /// </summary>
-        protected override void WindowRenderCallback(double delta)
+        protected override void RenderFrameCallback(double delta)
             => DesktopFrameCoordinator.Render(delta);
 
         internal bool TryEnterCoordinatedDesktopFrame(
@@ -51,7 +51,7 @@ public unsafe partial class VulkanRenderer
 
         internal EDesktopFrameFlow AcquireCoordinatedDesktopSwapchainImage(
             ref VulkanFrameAttempt attempt)
-            => AcquireDesktopSwapchainImage(ref attempt);
+            => DesktopWsiTarget.AcquireFrameTarget(this, ref attempt);
 
         internal void PrepareCoordinatedDesktopImage(
             ref VulkanFrameAttempt attempt)

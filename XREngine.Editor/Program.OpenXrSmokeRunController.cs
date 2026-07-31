@@ -25,7 +25,8 @@ internal partial class Program
         private const int MaxOcclusionViewSnapshotsPerFrame = 32;
         private const int MaxOutputSnapshotsPerFrame = 16;
         private const int MaxOcclusionEvidenceSnapshotsPerFrame = CpuOcclusionValidationEvidence.MaximumEntriesPerFrame;
-        private const string ExternalValidationAllowlistEnvironmentVariable = "XRE_VULKAN_EXTERNAL_VALIDATION_ALLOWLIST";
+        private const string ExternalValidationAllowlistEnvironmentVariable =
+            XREngineEnvironmentVariables.VulkanExternalValidationAllowlist;
         private const string DesktopFinalCaptureStage = "15_FinalOutput";
         private static readonly string[] RequiredPhase524bCaptureStages =
         [

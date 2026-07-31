@@ -56,6 +56,8 @@ internal unsafe partial class VkRenderProgram
         }
 
         _autoUniformBlocks.Clear();
+        _frameMaterialBindingSnapshots.Clear();
+        _materialUniformBindingPayloads.Clear();
         foreach (VkShader shader in _shaderCache.Values)
         {
             if (shader.AutoUniformBlock is { } block)
@@ -239,6 +241,8 @@ internal unsafe partial class VkRenderProgram
         _descriptorSetUsesUpdateAfterBind = Array.Empty<bool>();
         _descriptorSetsRequireUpdateAfterBind = false;
         _descriptorSetsRequireVariableDescriptorCount = false;
+        _frameMaterialBindingSnapshots.Clear();
+        _materialUniformBindingPayloads.Clear();
         IsLinked = false;
         if (invalidatedPublishedInterface)
             Interlocked.Increment(ref _linkGeneration);

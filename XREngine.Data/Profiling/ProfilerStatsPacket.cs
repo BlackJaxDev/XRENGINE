@@ -313,6 +313,31 @@ public sealed partial class VulkanFrameLoopTelemetryData
     public int FrameOpUniqueContextCount { get; set; }
     public int FrameOpUniqueTargetCount { get; set; }
 
+    public long MaterialPayloadCacheHits { get; set; }
+    public long MaterialPayloadCacheMisses { get; set; }
+    public long MaterialPayloadsPacked { get; set; }
+    public long MaterialUniformsPacked { get; set; }
+    public long MaterialParameterEmissions { get; set; }
+    public long MaterialDictionaryWrites { get; set; }
+    public long FrameMaterialSnapshotCacheHits { get; set; }
+    public long FrameMaterialSnapshotCacheMisses { get; set; }
+    public long BindingSnapshotsCaptured { get; set; }
+    public long BindingSnapshotEntries { get; set; }
+    public long FastPathBindingSnapshots { get; set; }
+    public long LegacyBindingSnapshots { get; set; }
+    public long AutoUniformPlanCacheHits { get; set; }
+    public long AutoUniformPlanCacheMisses { get; set; }
+    public long AutoUniformStaticBytesCopied { get; set; }
+    public long AutoUniformDynamicBytesCleared { get; set; }
+    public long AutoUniformDynamicMembersPatched { get; set; }
+    public long AutoUniformReflectedMembersScanned { get; set; }
+    public long AutoUniformLegacyFullBlockBytes { get; set; }
+    public long AutoUniformFastPathDraws { get; set; }
+    public long AutoUniformLegacyFallbackDraws { get; set; }
+    public long FrameDataDrawsVisited { get; set; }
+    public long DescriptorRecordsValidated { get; set; }
+    public long DescriptorRecordsWritten { get; set; }
+
     public int CommandBufferCleanReuseCount { get; set; }
     public int CommandBufferRecordCount { get; set; }
     public int CommandBufferForcedDirtyCount { get; set; }

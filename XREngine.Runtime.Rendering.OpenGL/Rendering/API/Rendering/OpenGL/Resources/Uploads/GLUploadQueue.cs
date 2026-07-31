@@ -28,7 +28,8 @@ namespace XREngine.Rendering.OpenGL
             private const double DefaultHardFrameBudgetMs = 2.0;
             private const string HardBudgetEnvVar = XREngineEnvironmentVariables.UploadQueueHardBudgetMs;
             private const string ChunkLoggingEnvVar = XREngineEnvironmentVariables.UploadQueueChunkLogging;
-            private static readonly bool EnableChunkLogging = IsEnabledEnvironmentVariable(ChunkLoggingEnvVar);
+            private static bool EnableChunkLogging
+                => XREnvironment.IsEnabled(ChunkLoggingEnvVar);
 
             /// <summary>
             /// Hard upper bound for upload work in a render frame. Boosted startup budgets

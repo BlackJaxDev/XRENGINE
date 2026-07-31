@@ -53,28 +53,16 @@ namespace XREngine.Rendering.OpenGL
             private const double DefaultWorkerCompletionHardAbandonMilliseconds = 180000.0;
             private const string SharedContextAbandonedLinkMarker = "abandoned to keep the async link queue moving";
             private static readonly double WorkerCompletionHardAbandonMilliseconds = ResolveWorkerCompletionHardAbandonMilliseconds();
-            private static readonly bool TraceShaderCompletionPollGlCalls = string.Equals(
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.TraceShaderCompletionPollGlCalls),
-                "1",
-                StringComparison.Ordinal);
-            private static readonly bool TraceShaderLinkQueueGateEvents = string.Equals(
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.TraceShaderLinkQueueGates),
-                "1",
-                StringComparison.Ordinal);
-            private static readonly bool DisableCompletionPollingForSharedContextWorkerPrograms = string.Equals(
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.SharedContextDisableCompletionPolling),
-                "1",
-                StringComparison.Ordinal);
-            private static readonly bool SuppressParallelCompileForSingleStageWorkerPrograms =
-                string.Equals(
-                    Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.SharedContextHazardDisableParallel),
-                    "1",
-                    StringComparison.Ordinal);
-            private static readonly bool DisableProgramLinkSerialization =
-                string.Equals(
-                    Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.SharedContextDisableLinkSerialization),
-                    "1",
-                    StringComparison.Ordinal);
+            private static bool TraceShaderCompletionPollGlCalls
+                => XREnvironment.IsEnabled(XREngineEnvironmentVariables.TraceShaderCompletionPollGlCalls);
+            private static bool TraceShaderLinkQueueGateEvents
+                => XREnvironment.IsEnabled(XREngineEnvironmentVariables.TraceShaderLinkQueueGates);
+            private static bool DisableCompletionPollingForSharedContextWorkerPrograms
+                => XREnvironment.IsEnabled(XREngineEnvironmentVariables.SharedContextDisableCompletionPolling);
+            private static bool SuppressParallelCompileForSingleStageWorkerPrograms
+                => XREnvironment.IsEnabled(XREngineEnvironmentVariables.SharedContextHazardDisableParallel);
+            private static bool DisableProgramLinkSerialization
+                => XREnvironment.IsEnabled(XREngineEnvironmentVariables.SharedContextDisableLinkSerialization);
 
             /// <summary>
             /// Per-worker in-flight cap. Compilation is heavier than binary upload;

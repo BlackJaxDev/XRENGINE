@@ -8,10 +8,12 @@ namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     private Instance instance;
+    private string[] _enabledInstanceExtensions = [];
     private uint _vulkanInstanceApiVersion;
     private bool _vulkanInstanceCreatedThroughOpenXr;
     private OpenXrVulkanEnable2BootstrapContext? _openXrVulkanEnable2Context;
     public Instance Instance => instance;
+    internal IReadOnlyList<string> EnabledInstanceExtensions => _enabledInstanceExtensions;
     internal bool UsesOpenXrVulkanEnable2Creation => _vulkanInstanceCreatedThroughOpenXr && _vulkanDeviceCreatedThroughOpenXr;
     internal bool TryGetOpenXrVulkanEnable2BootstrapInstance(
         out Silk.NET.OpenXR.XR api,
@@ -63,6 +65,7 @@ public unsafe partial class VulkanRenderer
             Api!.DestroyInstance(instance, null);
             instance = default;
         }
+        _enabledInstanceExtensions = [];
 
         if (_deviceLost)
         {
@@ -106,6 +109,7 @@ public unsafe partial class VulkanRenderer
         };
 
         var extensions = GetRequiredExtensions();
+        _enabledInstanceExtensions = extensions;
         createInfo.EnabledExtensionCount = (uint)extensions.Length;
         createInfo.PpEnabledExtensionNames = (byte**)SilkMarshal.StringArrayToPtr(extensions); ;
 

@@ -57,6 +57,7 @@ namespace XREngine
         private EditorViewportPreferences? _viewport;
         private EditorSelectionPreferences? _selection;
         private EditorDiagnosticsPreferences? _diagnostics;
+        private EditorRuntimeEnvironmentPreferences? _runtimeEnvironment;
         private bool _mcpServerEnabled = false;
         private int _mcpServerPort = 5467;
         private bool _mcpServerRequireAuth = false;
@@ -146,6 +147,15 @@ namespace XREngine
         [MemoryPackIgnore]
         public EditorDiagnosticsPreferences Diagnostics
             => _diagnostics ??= new EditorDiagnosticsPreferences(Debug);
+
+        [JsonIgnore]
+        [YamlIgnore]
+        [MemoryPackIgnore]
+        [Category("Runtime Environment")]
+        [DisplayName("Runtime Environment")]
+        [Description("Session-scoped runtime overrides for every environment variable recognized by XREngine. Launch values are preserved and can be restored at any time.")]
+        public EditorRuntimeEnvironmentPreferences RuntimeEnvironment
+            => _runtimeEnvironment ??= new EditorRuntimeEnvironmentPreferences();
 
         [Category("Renderer Development")]
         [DisplayName("Automatic Shader Reload")]
@@ -1592,8 +1602,8 @@ namespace XREngine
         private bool _vkTextureUploadTrace = XREngine.Rendering.RenderDiagnosticsFlags.VkTextureUploadTrace;
         private bool _vkProgressiveTextureUpload = XREngine.Rendering.RenderDiagnosticsFlags.VkProgressiveTextureUpload;
         private bool _vkImportedTexturePreviewFreeze = XREngine.Rendering.RenderDiagnosticsFlags.VkImportedTexturePreviewFreeze;
-        private string? _vkDiagnosticPreset = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDiagnosticPreset);
-        private string? _vkDiagnosticFlags = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDiagnosticFlags);
+        private string? _vkDiagnosticPreset = XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanDiagnosticPreset);
+        private string? _vkDiagnosticFlags = XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanDiagnosticFlags);
 
         private static int NormalizeProfilerProducerBufferCapacity(int value)
         {
@@ -2602,8 +2612,7 @@ namespace XREngine
             set
             {
                 string? normalized = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-                if (SetField(ref _vkDiagnosticPreset, normalized))
-                    Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDiagnosticPreset, normalized);
+                SetField(ref _vkDiagnosticPreset, normalized);
             }
         }
 
@@ -2618,8 +2627,7 @@ namespace XREngine
             set
             {
                 string? normalized = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-                if (SetField(ref _vkDiagnosticFlags, normalized))
-                    Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDiagnosticFlags, normalized);
+                SetField(ref _vkDiagnosticFlags, normalized);
             }
         }
 
@@ -3303,8 +3311,76 @@ namespace XREngine
             XREngine.Rendering.RenderDiagnosticsFlags.SetVkTextureUploadTrace(_vkTextureUploadTrace);
             XREngine.Rendering.RenderDiagnosticsFlags.SetVkProgressiveTextureUpload(_vkProgressiveTextureUpload);
             XREngine.Rendering.RenderDiagnosticsFlags.SetVkImportedTexturePreviewFreeze(_vkImportedTexturePreviewFreeze);
-            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDiagnosticPreset, _vkDiagnosticPreset);
-            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDiagnosticFlags, _vkDiagnosticFlags);
+            PublishEnvironmentPreferenceValues();
+            XREngine.Rendering.RenderDiagnosticsFlags.ApplyConfiguredEnvironmentOverrides();
+
+            string? glSubmitTrace = XREnvironment.GetValue(XREngineEnvironmentVariables.GlSubmitTrace);
+            if (int.TryParse(glSubmitTrace, out int glSubmitTraceLevel))
+                XREngine.Rendering.GLSubmitTracer.SetLevel(Math.Clamp(glSubmitTraceLevel, 0, 2));
+
+            string? firstChanceFilter = XREnvironment.GetValue(XREngineEnvironmentVariables.FirstChanceExceptions);
+            if (firstChanceFilter is not null)
+                XREngine.Debug.FirstChanceExceptionFilter = firstChanceFilter;
+        }
+
+        private void PublishEnvironmentPreferenceValues()
+        {
+            static string BooleanValue(bool value) => value ? "1" : "0";
+            static string IntegerValue(int value)
+                => value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            static string DoubleValue(double value)
+                => value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+            XREnvironment.SetPreferenceValue(
+                XREngineEnvironmentVariables.GlSubmitTrace,
+                IntegerValue(_glSubmitTraceLevel));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.HizCullTrace, BooleanValue(_hiZCullTrace));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DiagVendorUpscale, BooleanValue(_diagVendorUpscale));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DiagQuadBlit, BooleanValue(_diagQuadBlit));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DiagPostProcess, BooleanValue(_diagPostProcess));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DebugPresentClear, BooleanValue(_debugPresentClear));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.PushSubDataBreakdown, BooleanValue(_pushSubDataBreakdown));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.PushSubDataTrace, BooleanValue(_pushSubDataTrace));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DispatchTrace, BooleanValue(_dispatchTrace));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DispatchFinish, BooleanValue(_dispatchFinish));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.UploadStageLogging, BooleanValue(_uploadStageLogging));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.CrashBreadcrumbs, BooleanValue(_crashBreadcrumbs));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DeferredDebug, IntegerValue(_deferredDebugView));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DiagDeferredLighting, BooleanValue(_diagDeferredLighting));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DebugModelRender, BooleanValue(_modelRenderDiagEnabled));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.ModelRenderDiag, BooleanValue(_modelRenderDiagEnabled));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DirectionalShadowAudit, BooleanValue(_directionalShadowAudit));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.ShadowAudit, BooleanValue(_directionalShadowAudit));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.SkinningPrepassDiag, BooleanValue(_skinningPrepassDiag));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.ForceSkinnedUnbounded, BooleanValue(_forceSkinnedUnbounded));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.SkinCullRejectDiag, BooleanValue(_skinCullRejectDiag));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.FirstChanceExceptions, _firstChanceExceptionFilter);
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.BypassVendorUpscale, BooleanValue(_bypassVendorUpscale));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.GlDebug, BooleanValue(_glDebug));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.ForceFullViewport, BooleanValue(_forceFullViewport));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.ForceDebugOpaquePipeline, BooleanValue(_forceDebugOpaquePipeline));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.GpuHizDirtyBypass, BooleanValue(_gpuHiZDirtyBypass));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.OutputSourceFbo, _outputSourceFboOverride);
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VkEnableAutoUniformRewrite, BooleanValue(_vkEnableAutoUniformRewrite));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VkDumpShaderOnError, BooleanValue(_vkDumpShaderOnError));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.ShaderSourceOptimizer, BooleanValue(_shaderSourceOptimizerEnabled));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VkTracePipeCreate, BooleanValue(_vkTracePipeCreate));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VkTraceSwapDraw, BooleanValue(_vkTraceSwapDraw));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VkTraceDraw, BooleanValue(_vkTraceDraw));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VkSkipUiPipeline, BooleanValue(_vkSkipUiPipeline));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VkSkipUiBatchText, BooleanValue(_vkSkipUiBatchText));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VkSkipOcclusionQueryOps, BooleanValue(_vkSkipOcclusionQueryOps));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VkForceSwapchainMagenta, BooleanValue(_vkForceSwapchainMagenta));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VkSkipImGui, BooleanValue(_vkSkipImGui));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VulkanAsyncTextureUpload, BooleanValue(_vkAsyncTextureUpload));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VulkanTextureUploadTransferQueue, BooleanValue(_vkTextureUploadTransferQueue));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VulkanTextureUploadPrepWorker, BooleanValue(_vkTextureUploadPrepWorker));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VulkanTextureUploadPrepBudgetMs, DoubleValue(_vkTextureUploadPrepBudgetMilliseconds));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VulkanTextureUploadTrace, BooleanValue(_vkTextureUploadTrace));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VulkanProgressiveTextureUpload, BooleanValue(_vkProgressiveTextureUpload));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VulkanImportedTexturePreviewFreeze, BooleanValue(_vkImportedTexturePreviewFreeze));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VulkanDiagnosticPreset, _vkDiagnosticPreset);
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VulkanDiagnosticFlags, _vkDiagnosticFlags);
         }
 
         public void CopyFrom(EditorDebugOptions source)

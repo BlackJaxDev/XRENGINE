@@ -688,6 +688,24 @@ public sealed partial class XRRenderPipelineInstance
         private ScopedBufferBinding[] _bufferBindingScratch = [];
         private ScopedShaderGlobals[] _shaderGlobalsScratch = [];
         private ScopedProgramBindings[] _programBindingsScratch = [];
+        private ulong _scopedBindingRevision = 1;
+
+        /// <summary>
+        /// Changes whenever a scoped texture, buffer, shader-global, or program-binding
+        /// layer is pushed or popped. Queued backends use it to reuse immutable binding
+        /// snapshots only while the exact pipeline binding scope remains active.
+        /// </summary>
+        public ulong ScopedBindingRevision
+            => _scopedBindingRevision;
+
+        private void IncrementScopedBindingRevision()
+        {
+            unchecked
+            {
+                ulong next = _scopedBindingRevision + 1;
+                _scopedBindingRevision = next == 0 ? 1 : next;
+            }
+        }
 
         public StateObject PushTextureBinding(ScopedTextureBinding binding)
         {
@@ -695,12 +713,18 @@ public sealed partial class XRRenderPipelineInstance
             return StateObject.New(PopTextureBindingAction, this);
         }
         internal void PushTextureBindingState(ScopedTextureBinding binding)
-            => _textureBindings.Push(binding);
+        {
+            _textureBindings.Push(binding);
+            IncrementScopedBindingRevision();
+        }
 
         public void PopTextureBinding()
         {
             if (_textureBindings.Count > 0)
+            {
                 _textureBindings.Pop();
+                IncrementScopedBindingRevision();
+            }
         }
 
         public StateObject PushBufferBinding(ScopedBufferBinding binding)
@@ -709,12 +733,18 @@ public sealed partial class XRRenderPipelineInstance
             return StateObject.New(PopBufferBindingAction, this);
         }
         internal void PushBufferBindingState(ScopedBufferBinding binding)
-            => _bufferBindings.Push(binding);
+        {
+            _bufferBindings.Push(binding);
+            IncrementScopedBindingRevision();
+        }
 
         public void PopBufferBinding()
         {
             if (_bufferBindings.Count > 0)
+            {
                 _bufferBindings.Pop();
+                IncrementScopedBindingRevision();
+            }
         }
 
         public StateObject PushShaderGlobals(ScopedShaderGlobals globals)
@@ -723,12 +753,18 @@ public sealed partial class XRRenderPipelineInstance
             return StateObject.New(PopShaderGlobalsAction, this);
         }
         internal void PushShaderGlobalsState(ScopedShaderGlobals globals)
-            => _shaderGlobals.Push(globals);
+        {
+            _shaderGlobals.Push(globals);
+            IncrementScopedBindingRevision();
+        }
 
         public void PopShaderGlobals()
         {
             if (_shaderGlobals.Count > 0)
+            {
                 _shaderGlobals.Pop();
+                IncrementScopedBindingRevision();
+            }
         }
 
         public StateObject PushProgramBindings(ScopedProgramBindings bindings)
@@ -737,12 +773,18 @@ public sealed partial class XRRenderPipelineInstance
             return StateObject.New(PopProgramBindingsAction, this);
         }
         internal void PushProgramBindingsState(ScopedProgramBindings bindings)
-            => _programBindings.Push(bindings);
+        {
+            _programBindings.Push(bindings);
+            IncrementScopedBindingRevision();
+        }
 
         public void PopProgramBindings()
         {
             if (_programBindings.Count > 0)
+            {
                 _programBindings.Pop();
+                IncrementScopedBindingRevision();
+            }
         }
 
         public void ApplyScopedProgramBindings(XRRenderProgram program)

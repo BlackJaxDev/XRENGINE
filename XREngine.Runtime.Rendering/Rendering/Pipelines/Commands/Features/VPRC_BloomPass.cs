@@ -65,10 +65,10 @@ namespace XREngine.Rendering.Pipelines.Commands
         private const string BloomUpsampleStereoFallbackScopeName = "Bloom Upsample shader=BloomUpsampleStereo.fs";
         private const string BloomSourceSamplerName = "SourceTexture";
         private const string BloomCopyPassName = "Bloom_Copy_Mip0";
-        private static readonly bool BloomDebugSolidOutput =
-            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.BloomDebugSolid), "1", StringComparison.OrdinalIgnoreCase);
-        private static readonly bool BloomDiagEnabled =
-            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.BloomDiag), "1", StringComparison.OrdinalIgnoreCase);
+        private static bool BloomDebugSolidOutput
+            => XREnvironment.IsEnabled(XREngineEnvironmentVariables.BloomDebugSolid);
+        private static bool BloomDiagEnabled
+            => XREnvironment.IsEnabled(XREngineEnvironmentVariables.BloomDiag);
 
         private static readonly string[] BloomDownsampleScopeNames =
         [

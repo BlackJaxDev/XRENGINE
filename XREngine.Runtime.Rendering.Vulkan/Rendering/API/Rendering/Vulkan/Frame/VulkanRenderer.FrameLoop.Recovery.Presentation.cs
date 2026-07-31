@@ -19,7 +19,8 @@ namespace XREngine.Rendering.Vulkan
             bool recoveryFrameWritten)
         {
             VulkanDesktopPresentDispatchOutcome dispatch =
-                QueueDesktopPresent(
+                DesktopWsiTarget.PresentFrameTarget(
+                    this,
                     ref attempt,
                     "Vulkan.FrameLifecycle.DirtyAbortQueuePresent",
                     $"presenting rejected Vulkan frame {attempt.FrameNumber} ({rejectionStage})");

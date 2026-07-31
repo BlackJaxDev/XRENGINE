@@ -14,6 +14,9 @@ Primary evidence:
 Related tracker:
 
 - [Vulkan Primary Command Recording Fast Path](vulkan-primary-command-recording-fast-path-todo.md)
+- [Vulkan Command Recording Architecture Optimization](vulkan-command-recording-architecture-optimization-todo.md)
+  tracks post-closeout prepared-draw, cache/lifetime, image-state, and broader
+  secondary-eligibility work.
 
 Predecessor evidence:
 

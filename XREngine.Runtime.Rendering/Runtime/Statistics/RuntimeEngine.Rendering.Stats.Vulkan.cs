@@ -10,7 +10,7 @@ namespace XREngine
         {
             public static partial class Stats
             {
-                public static class Vulkan
+                public static partial class Vulkan
                 {
                     private static int _vulkanIndirectCountPathCalls;
                     private static int _vulkanIndirectNonCountPathCalls;
@@ -1917,6 +1917,7 @@ namespace XREngine
 
                     internal static void SnapshotAndReset()
                     {
+                        SnapshotAndResetBindingTelemetry();
                         _lastFrameVulkanIndirectCountPathCalls = _vulkanIndirectCountPathCalls;
                         _lastFrameVulkanIndirectNonCountPathCalls = _vulkanIndirectNonCountPathCalls;
                         _lastFrameVulkanIndirectLoopFallbackCalls = _vulkanIndirectLoopFallbackCalls;

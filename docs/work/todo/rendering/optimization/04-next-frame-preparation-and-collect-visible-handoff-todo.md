@@ -1,8 +1,8 @@
 # 04 - Next-Frame Preparation And Collect-Visible Handoff TODO
 
-Last Updated: 2026-07-29
+Last Updated: 2026-07-30
 Owner: Rendering / Frame Scheduling
-Status: Implementation Complete; Acceptance Deferred To 01-08 Closeout
+Status: Implementation Reopened; Binding/Data Handoff Acceptance Failed
 Sequence: 04 of 08
 Predecessor: [03 - True GPU-Driven Zero-Readback Submission](03-vulkan-true-zero-readback-submission-todo.md)
 Blocks: [05 - Vulkan Command Recording Worker Architecture](05-vulkan-command-recording-worker-architecture-todo.md)
@@ -11,6 +11,7 @@ Primary evidence:
 
 - [Vulkan Framerate Root-Cause Investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md)
 - [Workstream 04 Implementation Progress](../../../progress/rendering/next-frame-preparation-and-collect-visible-handoff-2026-07-29.md)
+- [Vulkan Editor Steady-Frame CPU Cost Investigation](../../../investigations/rendering/vulkan-editor-frame-time-spikes-2026-07-30.md)
 - [01-08 Acceptance Closeout](../../../testing/rendering/01-08-optimization-acceptance-closeout.md)
 
 Predecessor evidence:
@@ -26,10 +27,11 @@ Predecessor evidence:
   deferred intact to the 01-08 closeout by owner direction on 2026-07-29.
 - Treat the submission contract produced by workstream 03 as an input, not a
   moving target.
-- Workstream 05 may begin after this workstream is marked
-  `Implementation Complete; Acceptance Deferred`. Targeted failures still
-  block progression; canonical performance and stress acceptance runs after
-  workstreams 01-08 are implementation complete.
+- Workstream 05 began after the ordering/selection portion of this workstream
+  was marked implementation complete. The 2026-07-30 steady-frame audit proved
+  that descriptor/uniform inputs and backend-ready binding data were not moved.
+  Workstream 05's completed worker mechanics remain valid, but they do not close
+  this reopened handoff.
 
 ## Goal
 
@@ -56,6 +58,28 @@ not consume its critical path.
   `VulkanFrameDataRefreshAllocatedBytesTotal=40,384`. This is an explicit
   workstream-04 handoff: eliminate generic frame-data-refresh allocation while
   preserving the predecessor's validated zero-readback submission contract.
+
+## 2026-07-30 Acceptance Reconciliation
+
+The implemented package carries pass ordering, stable selection identity,
+revisions, and live command/mesh/material references. It does not carry packed
+uniform bytes, a frequency-separated binding payload, compiled binding-copy
+plans, resolved descriptor tier handles, stable data offsets, or dirty byte
+ranges.
+
+On a stable 647-command Debug diagnostic frame:
+
+- scene/package consumption took 172.468 ms;
+- material/program binding emission took 60.265 ms;
+- binding snapshot copy took 55.187 ms;
+- backend frame-data refresh took 170.201 ms;
+- reflected auto-uniform template/copy/scan/patch processing took 120.188 ms;
+- descriptor validation took 30.187 ms.
+
+All 22 command chains and the primary command buffer were reused, so this is
+unfinished handoff/data-publication work rather than useful workstream-05
+recording. The detailed root cause and replacement architecture are recorded in
+the linked investigation and Vulkan command-recording architecture TODO.
 
 ## Target Package Contract
 
@@ -124,10 +148,10 @@ Acceptance criteria:
 
 - [x] Build render packets, sorting keys, material selections, and dependency
   snapshots alongside collect-visible.
-- [x] Prepare resource-plan and descriptor/uniform inputs for the upcoming
+- [ ] Prepare resource-plan and descriptor/uniform inputs for the upcoming
   frame.
-- [x] Cache stable data by precise generations rather than rebuilding all
-  entries.
+- [ ] Cache stable binding/data inputs by precise generations rather than
+  rebuilding all entries.
 - [x] Use bounded parallel collection only where measured work and ownership
   make it beneficial.
 - [x] Preserve the existing `BlockUntilFresh` default and explicitly count any
@@ -138,16 +162,17 @@ Acceptance criteria:
 
 Acceptance criteria:
 
-- [x] The immutable package is complete before publication.
-- [x] Render-thread scene/material traversal is eliminated from steady-state
+- [ ] The immutable package is complete before publication.
+- [ ] Render-thread scene/material traversal is eliminated from steady-state
   submission.
-- [x] Preparation overlaps rendering rather than waiting idle behind it.
+- [ ] The expensive preparation moved by this workstream overlaps rendering
+  rather than remaining in package consumption/frame-data refresh.
 - [ ] Canonical stable captures report zero steady-state managed allocation in
   frame-data refresh and in the package producer/consumer hot paths.
 
 ## Phase 3 - Consume And Validate
 
-- [x] Make Vulkan consume only validated package data for steady-state frames.
+- [ ] Make Vulkan consume only validated package data for steady-state frames.
 - [x] Measure package production, publish, wait, validation, and consumption
   separately.
 - [ ] Stress rapid scene mutation, streaming publication, viewport changes,
@@ -164,9 +189,9 @@ Acceptance criteria:
 
 ## Exit Gate
 
-- [x] A documented immutable backend-ready frame package is produced alongside
+- [ ] A documented immutable backend-ready frame package is produced alongside
   collect-visible and consumed by Vulkan.
-- [x] The render thread primarily validates, encodes, submits, and presents.
+- [ ] The render thread primarily validates, encodes, submits, and presents.
 - [ ] Collect/render overlap and backpressure metrics prove improved
   utilization.
 - [ ] Evidence shows improvement from overlapped useful preparation, not merely
@@ -176,10 +201,12 @@ Acceptance criteria:
 - [ ] Static, moving, mutation, resize, and shutdown stress tests pass.
 - [ ] Release build, focused tests, and canonical performance cohorts pass.
 - [x] Evidence and remaining thread-affine work are recorded.
-- [x] Implementation is marked complete and every unchecked acceptance item is
+- [ ] Implementation is marked complete and every unchecked acceptance item is
   retained in the 01-08 closeout.
 
-Implementation work may proceed to
-[05 - Vulkan Command Recording Worker Architecture](05-vulkan-command-recording-worker-architecture-todo.md).
-Do not promote workstream 04 acceptance until its remaining gates pass in the
-01-08 closeout.
+The already-implemented
+[05 - Vulkan Command Recording Worker Architecture](05-vulkan-command-recording-worker-architecture-todo.md)
+may remain in place. Do not promote workstream 04 acceptance until the
+frequency-separated binding/data contract in the
+[Vulkan Command Recording Architecture Optimization TODO](vulkan-command-recording-architecture-optimization-todo.md)
+lands and all remaining gates pass in the 01-08 closeout.

@@ -299,7 +299,12 @@ public unsafe partial class VulkanRenderer
             for (int i = 0; i < keys.Count; i++)
             {
                 VulkanFrameOpPlannerStateKey key = keys[i];
-                bool cached = switchingState.States.TryGetValue(key, out ResourcePlannerRuntimeState existingState);
+                bool cached =
+                    switchingState.States.TryGetValue(key, out ResourcePlannerRuntimeState existingState) &&
+                    IsFrameOpPlannerAllocatorExclusivelyOwnedByKey(
+                        switchingState,
+                        key,
+                        existingState.ResourceAllocator);
                 ResourcePlannerRuntimeState state = cached
                     ? existingState
                     : ResourcePlannerRuntimeState.CreateEmpty();
@@ -394,6 +399,47 @@ public unsafe partial class VulkanRenderer
     {
         switchingState.LastUsedSerials[key] = ++switchingState.UsageSerial;
     }
+
+    private static bool IsFrameOpPlannerAllocatorExclusivelyOwnedByKey(
+        FrameOpResourcePlannerSwitchingState switchingState,
+        in VulkanFrameOpPlannerStateKey key,
+        VulkanResourceAllocator? allocator)
+    {
+        bool allocatorIsUsable = allocator is not null && !allocator.IsRetired;
+        bool preparationOwnsAllocator =
+            allocatorIsUsable &&
+            switchingState.HasPreparationState &&
+            ReferenceEquals(switchingState.PreparationState.ResourceAllocator, allocator);
+        bool anotherKeyOwnsAllocator = false;
+
+        if (allocatorIsUsable)
+        {
+            foreach (KeyValuePair<VulkanFrameOpPlannerStateKey, ResourcePlannerRuntimeState> pair in switchingState.States)
+            {
+                if (pair.Key.Equals(key))
+                    continue;
+
+                if (!ReferenceEquals(pair.Value.ResourceAllocator, allocator))
+                    continue;
+
+                anotherKeyOwnsAllocator = true;
+                break;
+            }
+        }
+
+        return CanReuseFrameOpPlannerAllocator(
+            allocatorIsUsable,
+            preparationOwnsAllocator,
+            anotherKeyOwnsAllocator);
+    }
+
+    internal static bool CanReuseFrameOpPlannerAllocator(
+        bool allocatorIsUsable,
+        bool preparationOwnsAllocator,
+        bool anotherKeyOwnsAllocator)
+        => allocatorIsUsable &&
+           !preparationOwnsAllocator &&
+           !anotherKeyOwnsAllocator;
 
     private void PruneFrameOpResourcePlannerStatesToCapacity(FrameOpResourcePlannerSwitchingState switchingState)
     {

@@ -7,9 +7,9 @@ namespace XREngine.Rendering.Vulkan
     {
         private EDesktopFrameFlow RunDesktopFramePreflight(ref VulkanFrameAttempt attempt)
         {
-            attempt.InteractiveResize = XRWindow.IsInteractiveResizeInProgress;
+            attempt.InteractiveResize = DesktopWsiTarget.IsInteractiveResizeInProgress;
 
-            var liveFramebufferSize = XRWindow.EffectiveFramebufferSize;
+            var liveFramebufferSize = DesktopWsiTarget.EffectiveFramebufferSize;
             var liveWindowSize = Window.Size;
             attempt.LiveFramebufferWidth = liveFramebufferSize.X;
             attempt.LiveFramebufferHeight = liveFramebufferSize.Y;
@@ -102,7 +102,7 @@ namespace XREngine.Rendering.Vulkan
             string detail)
         {
             VulkanDesktopPreflightOutcome outcome =
-                VulkanDesktopFramePolicy.ClassifyPreflight(status);
+                DesktopWsiTarget.ClassifyPreflight(status);
             EDesktopFrameReason reason = outcome.Reason switch
             {
                 EVulkanDesktopPolicyReason.ZeroSurface =>

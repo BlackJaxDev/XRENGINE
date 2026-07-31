@@ -127,9 +127,32 @@ namespace XREngine.Rendering.Vulkan
             => SetMaterialUniforms(material, program, LayeredShadowUniformState.CaptureFromCurrentRenderingState());
 
         internal void SetMaterialUniforms(XRMaterial material, XRRenderProgram program, in LayeredShadowUniformState shadowState)
+            => SetMaterialUniforms(
+                material,
+                program,
+                GetOrCreateAPIRenderObject(program, generateNow: false) as VkRenderProgram,
+                shadowState);
+
+        internal void SetMaterialUniforms(
+            XRMaterial material,
+            XRRenderProgram program,
+            VkRenderProgram? backendProgram,
+            in LayeredShadowUniformState shadowState)
         {
             if (material is null || program is null)
                 return;
+
+            // The normal material path has two distinct frequencies. Parameter
+            // values are owned by the material and can be captured once per
+            // material revision; resource and render-scope bindings must still
+            // be evaluated for the current draw. Shadow plans remain on the
+            // conservative combined path because they can substitute sources.
+            if (!shadowState.IsShadowPass)
+            {
+                SetMaterialStaticUniforms(material, program);
+                SetMaterialRuntimeUniforms(material, program, backendProgram, shadowState);
+                return;
+            }
 
             XRMaterial? shadowBindingSource = null;
             MaterialShadowBindingPlan? shadowBindingPlan = null;
@@ -174,8 +197,15 @@ namespace XREngine.Rendering.Vulkan
             bool lightingUniformsBound = false;
             if ((reqs & EUniformRequirements.Lights) != 0)
             {
-                RuntimeEngine.Rendering.State.RenderingWorld?.Lights?.SetForwardLightingUniforms(program);
-                lightingUniformsBound = RuntimeEngine.Rendering.State.RenderingWorld?.Lights is not null;
+                Lights3DCollection? lights = RuntimeEngine.Rendering.State.RenderingWorld?.Lights;
+                if (lights is not null)
+                {
+                    if (backendProgram is not null)
+                        SetForwardLightingUniformsCached(lights, program, backendProgram);
+                    else
+                        lights.SetForwardLightingUniforms(program);
+                    lightingUniformsBound = true;
+                }
             }
 
             if ((reqs & EUniformRequirements.AmbientOcclusion) != 0 && !lightingUniformsBound)
@@ -231,6 +261,106 @@ namespace XREngine.Rendering.Vulkan
                 material.OnSettingUniforms(program);
                 RuntimeEngine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(program);
             }
+        }
+
+        /// <summary>
+        /// Emits only material-owned numeric parameters. Callers that need the
+        /// cross-frame material payload cache use this entry point while an
+        /// isolated binding capture is active.
+        /// </summary>
+        internal static void SetMaterialStaticUniforms(XRMaterial material, XRRenderProgram program)
+        {
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanMaterialParameterEmission(
+                material.Parameters.Length);
+            foreach (ShaderVar parameter in material.Parameters)
+                parameter.SetUniform(program, forceUpdate: true);
+        }
+
+        /// <summary>
+        /// Emits resource and render-scope bindings for a non-shadow material.
+        /// Material numeric parameters are deliberately excluded so advancing a
+        /// frame cannot force their re-emission or recapture.
+        /// </summary>
+        internal void SetMaterialRuntimeUniforms(
+            XRMaterial material,
+            XRRenderProgram program,
+            VkRenderProgram? backendProgram,
+            in LayeredShadowUniformState shadowState)
+        {
+            if (material.RenderOptions is not null)
+                ApplyRenderParameters(material.RenderOptions);
+
+            SetTextureUniforms(program, material);
+
+            EUniformRequirements reqs =
+                (material.RenderOptions?.RequiredEngineUniforms ?? EUniformRequirements.None) |
+                program.GetActiveEngineUniformRequirements();
+
+            if ((reqs & EUniformRequirements.Camera) != 0)
+            {
+                RuntimeEngine.Rendering.State.RenderingCamera?.SetUniforms(program, true);
+                RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera?.SetUniforms(program, false);
+            }
+
+            bool lightingUniformsBound = false;
+            if ((reqs & EUniformRequirements.Lights) != 0)
+            {
+                Lights3DCollection? lights = RuntimeEngine.Rendering.State.RenderingWorld?.Lights;
+                if (lights is not null)
+                {
+                    if (backendProgram is not null)
+                        SetForwardLightingUniformsCached(lights, program, backendProgram);
+                    else
+                        lights.SetForwardLightingUniforms(program);
+                    lightingUniformsBound = true;
+                }
+            }
+
+            if ((reqs & EUniformRequirements.AmbientOcclusion) != 0 && !lightingUniformsBound)
+                Lights3DCollection.SetForwardAmbientOcclusionUniforms(program);
+
+            if ((reqs & EUniformRequirements.RenderTime) != 0)
+            {
+                EnsureMaterialUniformFrameTime();
+                program.Uniform(EEngineUniform.RenderTime.ToStringFast(), _materialUniformSecondsLive);
+                program.Uniform(EEngineUniform.EngineTime.ToStringFast(), _materialUniformSecondsLive);
+                program.Uniform(EEngineUniform.DeltaTime.ToStringFast(), _materialUniformDeltaSecondsLive);
+            }
+
+            if ((reqs & EUniformRequirements.ViewportDimensions) != 0)
+            {
+                var area = RuntimeEngine.Rendering.State.RenderArea;
+                float screenWidth = area.Width;
+                float screenHeight = area.Height;
+                if (screenWidth <= 0f || screenHeight <= 0f)
+                {
+                    XRFrameBuffer? drawTarget = GetCurrentDrawFrameBuffer();
+                    if (drawTarget is not null)
+                    {
+                        screenWidth = drawTarget.Width;
+                        screenHeight = drawTarget.Height;
+                    }
+                    else
+                    {
+                        Extent2D targetExtent = GetCurrentTargetExtent();
+                        screenWidth = targetExtent.Width;
+                        screenHeight = targetExtent.Height;
+                    }
+                }
+                program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), screenWidth);
+                program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), screenHeight);
+                program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), new Vector2(area.X, area.Y));
+            }
+
+            if ((reqs & EUniformRequirements.ClipSpacePolicy) != 0)
+            {
+                program.Uniform(EEngineUniform.ClipSpaceYDirection.ToStringFast(), (int)RuntimeEngine.Rendering.Settings.ClipSpaceYDirection);
+                program.Uniform(EEngineUniform.ClipDepthRange.ToStringFast(), (int)RuntimeEngine.Rendering.EffectiveClipDepthRange);
+                program.Uniform(EEngineUniform.FramebufferTextureYDirection.ToStringFast(), (int)RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeGraphicsApiKind.Vulkan));
+            }
+
+            material.OnSettingUniforms(program);
+            RuntimeEngine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(program);
         }
 
         private MaterialShadowBindingPlan GetOrCreateVulkanShadowBindingPlan(XRRenderProgram program, XRMaterial sourceMaterial)

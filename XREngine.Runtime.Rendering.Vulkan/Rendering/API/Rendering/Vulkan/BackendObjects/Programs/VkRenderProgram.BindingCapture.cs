@@ -41,11 +41,11 @@ internal unsafe partial class VkRenderProgram
         internal VkRenderProgram? Owner;
         internal BindingCaptureState? Parent;
         internal BindingCaptureState? NextFree;
-        internal Dictionary<string, ProgramUniformValue> Uniforms { get; } = new(StringComparer.Ordinal);
-        internal Dictionary<uint, XRTexture> SamplersByUnit { get; } = [];
-        internal Dictionary<uint, string> SamplerNamesByUnit { get; } = [];
-        internal Dictionary<string, XRTexture> SamplersByName { get; } = new(StringComparer.Ordinal);
-        internal Dictionary<uint, ProgramImageBinding> ImagesByUnit { get; } = [];
+        internal Dictionary<string, ProgramUniformValue> Uniforms = new(StringComparer.Ordinal);
+        internal Dictionary<uint, XRTexture> SamplersByUnit = [];
+        internal Dictionary<uint, string> SamplerNamesByUnit = [];
+        internal Dictionary<string, XRTexture> SamplersByName = new(StringComparer.Ordinal);
+        internal Dictionary<uint, ProgramImageBinding> ImagesByUnit = [];
         internal Dictionary<uint, XRDataBuffer> BuffersByBinding { get; } = [];
 
         internal void Clear()

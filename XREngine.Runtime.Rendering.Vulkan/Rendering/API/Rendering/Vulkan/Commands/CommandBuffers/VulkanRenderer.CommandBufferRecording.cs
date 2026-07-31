@@ -699,7 +699,12 @@ namespace XREngine.Rendering.Vulkan
                 using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.FrameDataRefresh))
                 {
                     refreshedReusableFrameData = !hasStaticFrameOps ||
-                        TryRefreshReusableCommandBufferFrameData(imageIndex, ops, EVulkanMeshFrameDataStreamKind.Primary);
+                        TryRefreshReusableCommandBufferFrameData(
+                            imageIndex,
+                            ops,
+                            EVulkanMeshFrameDataStreamKind.Primary,
+                            descriptorResourcesCapturedByFrameSignature:
+                                usingCommandChains && allCommandChainGroupsUseSecondaryBuffers);
                     if (refreshedReusableFrameData && dynamicUiBatchTextOps.Length > 0)
                         refreshedReusableFrameData = TryRefreshReusableCommandBufferFrameData(imageIndex, dynamicUiBatchTextOps, EVulkanMeshFrameDataStreamKind.DynamicUi);
                 }
@@ -1917,7 +1922,6 @@ namespace XREngine.Rendering.Vulkan
                     // identity; otherwise a primary recorded for query A can be replayed
                     // while the current frame refreshes proxy data for query B.
                     variant.RecordedGenerations.Query != currentGenerations.Query ||
-                    variant.PlannerRevision != plannerRevision ||
                     IsCommandBufferVariantImageLayoutStateDirty(variant, imageLayoutStartSignature) ||
                     variant.PreserveSwapchainForOverlay != preserveSwapchainForOverlay ||
                     (requiresTrackedPresentSourceRefresh && !variant.RecordedSwapchainRefreshFromLastPresentSource) ||
@@ -1934,7 +1938,12 @@ namespace XREngine.Rendering.Vulkan
                 using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.FrameDataRefresh))
                 {
                     refreshedReusableFrameData = ops.Length == 0 ||
-                        TryRefreshReusableCommandBufferFrameData(imageIndex, ops, EVulkanMeshFrameDataStreamKind.Primary);
+                        TryRefreshReusableCommandBufferFrameData(
+                            imageIndex,
+                            ops,
+                            EVulkanMeshFrameDataStreamKind.Primary,
+                            descriptorResourcesCapturedByFrameSignature:
+                                allCommandChainGroupsUseSecondaryBuffers);
                     if (refreshedReusableFrameData && dynamicUiBatchTextOps.Length > 0)
                         refreshedReusableFrameData = TryRefreshReusableCommandBufferFrameData(imageIndex, dynamicUiBatchTextOps, EVulkanMeshFrameDataStreamKind.DynamicUi);
                 }
@@ -2039,6 +2048,7 @@ namespace XREngine.Rendering.Vulkan
             uint imageIndex,
             FrameOp[] ops,
             EVulkanMeshFrameDataStreamKind streamKind = EVulkanMeshFrameDataStreamKind.Primary,
+            bool descriptorResourcesCapturedByFrameSignature = false,
             bool refreshMaterialUniforms = true)
         {
             if (ops.Length == 0)
@@ -2086,7 +2096,13 @@ namespace XREngine.Rendering.Vulkan
                                     streamKind,
                                     drawOp.Context,
                                     drawOp.Draw);
-                                if (!drawOp.Draw.Renderer.TryRefreshReusableCommandBufferFrameData(imageIndex, drawOp.Draw, drawUniformSlot, out string reason, refreshMaterialUniforms))
+                                if (!drawOp.Draw.Renderer.TryRefreshReusableCommandBufferFrameData(
+                                        imageIndex,
+                                        drawOp.Draw,
+                                        drawUniformSlot,
+                                        out string reason,
+                                        refreshMaterialUniforms,
+                                        descriptorResourcesCapturedByFrameSignature))
                                 {
                                     _lastReusableFrameDataRefreshFailureReason =
                                         $"mesh op={i}/{ops.Length} mesh='{drawOp.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' material='{(drawOp.Draw.MaterialOverride ?? drawOp.Draw.Renderer.MeshRenderer.Material)?.Name ?? "<unnamed material>"}' slot={drawUniformSlot}: {reason}";
@@ -2123,7 +2139,8 @@ namespace XREngine.Rendering.Vulkan
                                         indirectDrawOp.Draw,
                                         drawUniformSlot,
                                         out string reason,
-                                        refreshMaterialUniforms);
+                                        refreshMaterialUniforms,
+                                        descriptorResourcesCapturedByFrameSignature);
                                 if (!refreshed)
                                 {
                                     _lastReusableFrameDataRefreshFailureReason =
@@ -5632,7 +5649,8 @@ namespace XREngine.Rendering.Vulkan
                                         refreshDraw.Draw,
                                         refreshUniformSlot,
                                         out string refreshReason,
-                                        refreshMaterialUniforms: true);
+                                        refreshMaterialUniforms: true,
+                                        descriptorResourcesCapturedByFrameSignature: true);
                                 bool descriptorsInvalidated =
                                     HaveDescriptorSetContentsUpdatedSince(descriptorSetContentUpdateGeneration);
                                 if (!refreshedFrameData || descriptorsInvalidated)
@@ -7251,10 +7269,45 @@ namespace XREngine.Rendering.Vulkan
                     else
                     {
                         EndActiveRenderPass();
-                        if (ShouldRefreshUnwrittenSwapchainForPresent(
-                                touchSwapchainForFinalOverlay,
-                                transitionSwapchainToPresent) &&
-                            !TryRefreshUnwrittenSwapchainFromLastWindowPresentSource())
+                        bool refreshRequested = ShouldRefreshUnwrittenSwapchainForPresent(
+                            touchSwapchainForFinalOverlay,
+                            transitionSwapchainToPresent);
+                        bool refreshedFromLastPresentSource =
+                            refreshRequested &&
+                            TryRefreshUnwrittenSwapchainFromLastWindowPresentSource();
+                        if (ShouldRecordUnwrittenSwapchainInitializationClear(
+                                actualSwapchainWriteCount > 0,
+                                transitionSwapchainToPresent,
+                                imageWasEverPresentedAtRecordStart,
+                                refreshedFromLastPresentSource))
+                        {
+                            int initializationPassIndex = activePassIndex != int.MinValue
+                                ? activePassIndex
+                                : VulkanBarrierPlanner.SwapchainPassIndex;
+                            FrameOpContext initializationContext =
+                                hasActiveContext ? activeContext : initialContext;
+                            BeginRenderPassForTarget(
+                                null,
+                                initializationPassIndex,
+                                initializationContext);
+                            swapchainWriteCount++;
+                            actualSwapchainWriteCount++;
+                            swapchainClearWrites++;
+                            forcedDiagnosticSwapchainWriters++;
+                            MarkSwapchainStaticWriter(
+                                "InitializationClear",
+                                "initialized an unwritten swapchain image before its first present",
+                                initializationPassIndex,
+                                ops.Length,
+                                initializationContext.PipelineIdentity);
+
+                            Debug.VulkanEvery(
+                                $"Vulkan.UnwrittenSwapchainInitializationClear.{GetHashCode()}",
+                                TimeSpan.FromSeconds(1),
+                                "[Vulkan] Cleared previously unwritten swapchain image {0} before its first present because no completed present source was available.",
+                                imageIndex);
+                        }
+                        else if (refreshRequested && !refreshedFromLastPresentSource)
                         {
                             TransitionUnwrittenSwapchainToPresent();
                         }
@@ -7460,6 +7513,15 @@ namespace XREngine.Rendering.Vulkan
             bool transitionSwapchainToPresent)
             => !touchedSwapchain && transitionSwapchainToPresent;
 
+        internal static bool ShouldRecordUnwrittenSwapchainInitializationClear(
+            bool hasRecordedSwapchainWrite,
+            bool transitionSwapchainToPresent,
+            bool imageWasEverPresented,
+            bool refreshedFromLastPresentSource)
+            => !hasRecordedSwapchainWrite &&
+               transitionSwapchainToPresent &&
+               !imageWasEverPresented &&
+               !refreshedFromLastPresentSource;
 
     }
 }

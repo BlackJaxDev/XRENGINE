@@ -62,8 +62,9 @@ Related settings:
   driver implementation maximum for local throughput experiments.
 - `OpenGLProgramCompileLinkWorkerCount` configures the shared-context source
   worker count. The runtime uses one worker by default for OpenGL driver
-  startup stability; values above one require
-  `XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1`.
+  startup stability and honors higher configured values automatically.
+  `XRE_DISABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1` forces the single-worker
+  compatibility path.
 - Shader program priorities drain in this order: `Interactive`, `Main`,
   `Forward`, `DepthPrepass`, `Shadow`, `VR`, `Compute`, `Deferred`.
   `Interactive` is for editor/user-interaction overlays such as transform
@@ -74,11 +75,10 @@ Related settings:
 - `XRE_ALLOW_RENDER_THREAD_DRIVER_PARALLEL_SOURCE=1` opts back into the older
   render-thread driver-parallel source lane for local driver experiments. Leave
   it unset for editor/runtime work.
-- `XRE_ENABLE_SHARED_LINKED_PROGRAM_REUSE=1` opts into reusing one live linked
-  OpenGL program object across multiple logical program wrappers that share the
-  same binary fingerprint. The default keeps independent GL handles because
-  NVIDIA drivers have crashed during Sponza-scale startup floods while this
-  reuse path was active.
+- Linked OpenGL programs are reused across logical program wrappers that share
+  the same binary fingerprint. Set
+  `XRE_DISABLE_SHARED_LINKED_PROGRAM_REUSE=1` only to request independent GL
+  handles as a compatibility downgrade.
 - Large generated graphics sources (128 KiB and up) are treated as a scheduling
   hint, not a failure reason. The selector prefers the shared-context source
   lane for those cold links so Sponza-scale Uber fragments can compile without

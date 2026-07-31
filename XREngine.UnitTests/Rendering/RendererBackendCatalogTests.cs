@@ -145,6 +145,7 @@ public sealed class RendererBackendCatalogTests
         using IDisposable lease = catalog.Register(
             CreateRegistration(
                 RendererBackendId.Vulkan,
+                RendererBackendCapabilities.DesktopPresentation,
                 factory: factory,
                 generation: 7));
 

@@ -22,9 +22,9 @@ namespace XREngine.Components
 
         /// <summary>Typed rendering-layer view of the core pawn viewport.</summary>
         public new XRViewport? Viewport => base.Viewport as XRViewport;
-        protected static readonly bool CameraInputDiagnosticsEnabled =
-            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DebugCameraInput), "1", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CameraInputDiag), "1", StringComparison.OrdinalIgnoreCase);
+        protected static bool CameraInputDiagnosticsEnabled =>
+            XREnvironment.IsEnabled(XREngineEnvironmentVariables.DebugCameraInput) ||
+            XREnvironment.IsEnabled(XREngineEnvironmentVariables.CameraInputDiag);
 
         protected float
             _incRight = 0.0f,

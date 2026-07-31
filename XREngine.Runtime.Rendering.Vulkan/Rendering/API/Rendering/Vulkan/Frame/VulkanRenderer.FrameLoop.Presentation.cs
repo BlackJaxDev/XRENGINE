@@ -18,7 +18,8 @@ namespace XREngine.Rendering.Vulkan
             ref VulkanFrameAttempt attempt)
         {
             VulkanDesktopPresentDispatchOutcome dispatch =
-                QueueDesktopPresent(
+                DesktopWsiTarget.PresentFrameTarget(
+                this,
                 ref attempt,
                 "Vulkan.FrameLifecycle.QueuePresent",
                 disableFrameGenerationReason: null);
@@ -44,7 +45,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             VulkanDesktopPresentOutcome presentOutcome =
-                VulkanDesktopFramePolicy.ClassifyPresent(result);
+                DesktopWsiTarget.ClassifyPresent(result);
             bool presentAccepted =
                 presentOutcome.PresentationAccepted;
             RecordDesktopPresentBookkeeping(
@@ -110,7 +111,7 @@ namespace XREngine.Rendering.Vulkan
             return EDesktopFrameFlow.Completed;
         }
 
-        private VulkanDesktopPresentDispatchOutcome QueueDesktopPresent(
+        internal VulkanDesktopPresentDispatchOutcome QueueDesktopPresentCore(
             ref VulkanFrameAttempt attempt,
             string profileScope,
             string? disableFrameGenerationReason)
@@ -159,7 +160,7 @@ namespace XREngine.Rendering.Vulkan
                         ref presentInfo,
                         out result,
                         out string failureReason,
-                        caller: nameof(WindowRenderCallback));
+                        caller: nameof(RenderFrameCallback));
                 if (!dispatched)
                 {
                     if (result == Result.ErrorDeviceLost)
@@ -266,7 +267,8 @@ namespace XREngine.Rendering.Vulkan
                 case Result.Success:
                     return null;
                 case Result.SuboptimalKhr:
-                    if (!ShouldKeepPresentScalingSwapchain(
+                    if (!DesktopWsiTarget.ShouldKeepPresentScalingSwapchain(
+                            this,
                             result,
                             attempt.InteractiveResize))
                     {

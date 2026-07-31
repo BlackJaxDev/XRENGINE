@@ -126,37 +126,80 @@ namespace XREngine.Rendering
         #endregion
 
         #region Window / Lifecycle
-        private XRWindow _window;
+        private readonly RendererHostContext _hostContext;
 
         protected AbstractRenderer(
-            XRWindow window,
-            bool shouldLinkWindow = true,
-            long backendGeneration = 0)
+            RendererHostContext hostContext)
         {
-            _window = window;
-            BackendGeneration = backendGeneration;
+            ArgumentNullException.ThrowIfNull(hostContext.Target);
+            hostContext.Target.Validate();
+            _hostContext = hostContext;
+            BackendGeneration = hostContext.BackendGeneration;
 
-            //Set the initial object cache for this window of all existing render objects
+            // The cache belongs to the renderer generation, not to a desktop window.
             using (_roCacheLock.EnterScope())
                 _renderObjectCache = RuntimeRenderObjectServices.Current?.CreateObjectsForOwner(this) ?? [];
         }
 
-        public IWindow Window => XRWindow.Window;
-
-        public XRWindow XRWindow
+        /// <summary>Compatibility constructor for existing desktop renderer implementations.</summary>
+        protected AbstractRenderer(
+            XRWindow window,
+            bool shouldLinkWindow = true,
+            long backendGeneration = 0)
+            : this(RendererHostContext.CreateDesktop(window, shouldLinkWindow, backendGeneration))
         {
-            get => _window;
-            protected set => _window = value;
         }
+
+        /// <summary>Gets the stable target-first context owned by this renderer.</summary>
+        public RendererHostContext HostContext => _hostContext;
+
+        /// <summary>Gets the presentation target selected before backend creation.</summary>
+        public IRendererPresentationTarget PresentationTarget => _hostContext.Target;
+
+        /// <summary>Gets the execution mode without requiring desktop window services.</summary>
+        public RenderExecutionMode ExecutionMode => _hostContext.ExecutionMode;
+
+        /// <summary>Gets whether this renderer has explicit desktop window services.</summary>
+        public bool HasDesktopWindowServices => _hostContext.HasDesktopWindowServices;
+
+        /// <summary>Attempts to resolve desktop window services for mode-specific behavior.</summary>
+        public bool TryGetDesktopWindowHost(out IRuntimeRenderWindowHost? window)
+            => _hostContext.TryGetDesktopWindowHost(out window);
+
+        /// <summary>Gets required desktop window services or throws at the mode boundary.</summary>
+        public IRuntimeRenderWindowHost RequireDesktopWindowHost()
+            => _hostContext.RequireDesktopWindowHost();
+
+        /// <summary>Gets a required concrete desktop host type.</summary>
+        protected TWindow RequireDesktopWindow<TWindow>()
+            where TWindow : class, IRuntimeRenderWindowHost
+            => _hostContext.RequireDesktopWindow<TWindow>();
+
+        /// <summary>
+        /// Compatibility accessor for desktop renderer code. Non-window modes
+        /// fail here with an actionable diagnostic instead of a null reference.
+        /// </summary>
+        public XRWindow XRWindow => RequireDesktopWindow<XRWindow>();
+
+        /// <summary>
+        /// Compatibility accessor for the native desktop window. Target-neutral
+        /// code should use <see cref="HostContext"/> instead.
+        /// </summary>
+        public IWindow Window => XRWindow.Window;
 
         public string RenderApiWrapperOwnerName
         {
             get
             {
-                string? title = XRWindow.Window?.Title;
-                return string.IsNullOrWhiteSpace(title)
-                    ? $"{GetType().Name}@{GetHashCode()}"
-                    : title;
+                if (TryGetDesktopWindowHost(out IRuntimeRenderWindowHost? window) &&
+                    window is XRWindow desktopWindow)
+                {
+                    string? title = desktopWindow.Window?.Title;
+                    if (!string.IsNullOrWhiteSpace(title))
+                        return title;
+                }
+
+                return $"{GetType().Name}[{_hostContext.BuildDiagnosticIdentity()}]@{GetHashCode():X8}";
             }
         }
 
@@ -188,7 +231,7 @@ namespace XREngine.Rendering
         public virtual bool IsDeviceLost => false;
         public virtual string? DeviceLostReason => null;
 
-        protected abstract void WindowRenderCallback(double delta);
+        protected abstract void RenderFrameCallback(double delta);
 
         /// <summary>
         /// Processes any pending async uploads within a frame time budget.
@@ -196,10 +239,19 @@ namespace XREngine.Rendering
         /// </summary>
         public virtual void ProcessPendingUploads() { }
 
-        public void RenderWindow(double delta)
-            => WindowRenderCallback(delta);
+        /// <summary>Executes one renderer frame independently from host loop ownership.</summary>
+        public void RenderFrame(double delta)
+            => RenderFrameCallback(delta);
 
-        protected virtual void MainLoop() => Window?.Run();
+        /// <summary>
+        /// Compatibility entry point invoked by <see cref="XRWindow"/>. The
+        /// desktop host owns its native event/render loop.
+        /// </summary>
+        public void RenderWindow(double delta)
+        {
+            _ = RequireDesktopWindowHost();
+            RenderFrame(delta);
+        }
 
         public void Dispose()
         {
@@ -1447,13 +1499,23 @@ namespace XREngine.Rendering
 
         #endregion
     }
-    public abstract unsafe partial class AbstractRenderer<TAPI>(
-        XRWindow window,
-        bool shouldLinkWindow = true,
-        long backendGeneration = 0) :
-        AbstractRenderer(window, shouldLinkWindow, backendGeneration)
+    public abstract unsafe partial class AbstractRenderer<TAPI> : AbstractRenderer
         where TAPI : NativeAPI
     {
+        protected AbstractRenderer(RendererHostContext hostContext)
+            : base(hostContext)
+        {
+        }
+
+        /// <summary>Compatibility constructor for current desktop API renderers.</summary>
+        protected AbstractRenderer(
+            XRWindow window,
+            bool shouldLinkWindow = true,
+            long backendGeneration = 0)
+            : base(window, shouldLinkWindow, backendGeneration)
+        {
+        }
+
         ~AbstractRenderer() => _api?.Dispose();
 
         private TAPI? _api;

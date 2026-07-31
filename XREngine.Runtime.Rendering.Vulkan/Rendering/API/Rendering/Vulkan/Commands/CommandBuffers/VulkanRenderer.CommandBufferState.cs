@@ -45,32 +45,33 @@ namespace XREngine.Rendering.Vulkan
         private readonly object _ownedCommandChainSecondaryPoolsLock = new();
         private readonly Dictionary<ulong, OwnedCommandChainSecondaryPool> _ownedCommandChainSecondaryPools = new();
         private bool _enableSecondaryCommandBuffers = true;
-        private static readonly int FrameOpSignatureDiffLogLimit = ReadFrameOpSignatureDiffLogLimit();
-        private static readonly bool FrameOpSignatureDiffDiagnosticsEnabled =
-            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanFrameOpSignatureDiff), "1", StringComparison.Ordinal);
-        private static readonly bool FrameDataReuseDiagnosticsEnabled =
-            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanFrameDataReuseDiag), "1", StringComparison.Ordinal);
-        internal static readonly bool CommandRecordingDiagnosticsEnabled =
-            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanRecordingDiag), "1", StringComparison.Ordinal);
-        internal static readonly bool CommandRecordingDetailProfilingEnabled =
-            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanRecordingProfileDetail), "1", StringComparison.Ordinal);
-        private static readonly bool FrameOpTraceEnabled =
-            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanFrameOpTrace), "1", StringComparison.Ordinal);
-        private static readonly bool TargetTraceEnabled =
-            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanTargetTrace), "1", StringComparison.Ordinal);
-        private static readonly bool IndirectTraceEnabled =
-            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanIndirectTrace), "1", StringComparison.Ordinal);
-        internal static readonly bool DescriptorTraceEnabled =
-            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDescriptorTrace), "1", StringComparison.Ordinal);
-        private static readonly bool ParallelRecordingValidationEnabled =
-            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanParallelRecordingValidate), "1", StringComparison.Ordinal);
-        private static readonly bool OpenXrVulkanTraceEnabled =
-            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanTrace), "1", StringComparison.Ordinal);
-        private static readonly bool? OpenXrVulkanPrimaryReuseOverride =
-            ReadOptionalBooleanEnvironmentOverride(
+        private static int FrameOpSignatureDiffLogLimit => ReadFrameOpSignatureDiffLogLimit();
+        private static bool FrameOpSignatureDiffDiagnosticsEnabled
+            => XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanFrameOpSignatureDiff);
+        private static bool FrameDataReuseDiagnosticsEnabled
+            => XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanFrameDataReuseDiag);
+        internal static bool CommandRecordingDiagnosticsEnabled
+            => XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanRecordingDiag);
+        internal static bool CommandRecordingDetailProfilingEnabled
+            => XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanRecordingProfileDetail);
+        private static bool FrameOpTraceEnabled
+            => XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanFrameOpTrace);
+        private static bool TargetTraceEnabled
+            => XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanTargetTrace);
+        private static bool IndirectTraceEnabled
+            => XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanIndirectTrace);
+        internal static bool DescriptorTraceEnabled
+            => XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanDescriptorTrace);
+        private static bool ParallelRecordingValidationEnabled
+            => XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanParallelRecordingValidate);
+        private static bool OpenXrVulkanTraceEnabled
+            => XREnvironment.IsEnabled(XREngineEnvironmentVariables.OpenXrVulkanTrace);
+        private static bool? OpenXrVulkanPrimaryReuseOverride
+            => XREnvironment.GetBooleanOverride(
                 XREngineEnvironmentVariables.OpenXrVulkanPrimaryReuse);
-        private static readonly bool? VulkanPrimaryCommandBufferReuseOverride =
-            ReadOptionalBooleanEnvironmentOverride(XREngineEnvironmentVariables.VulkanPrimaryCommandBufferReuse);
+        private static bool? VulkanPrimaryCommandBufferReuseOverride
+            => XREnvironment.GetBooleanOverride(
+                XREngineEnvironmentVariables.VulkanPrimaryCommandBufferReuse);
         // Every cached primary is checked against an immutable dependency
         // signature before reuse. Value-only publication generations are refreshed
         // through completed frame slots; structural and binding changes rerecord.
@@ -87,25 +88,6 @@ namespace XREngine.Rendering.Vulkan
             XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||
             XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw;
 
-        private static bool? ReadOptionalBooleanEnvironmentOverride(string name)
-        {
-            string? value = Environment.GetEnvironmentVariable(name);
-            if (string.IsNullOrWhiteSpace(value))
-                return null;
-            if (value is "1" || value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
-                value.Equals("yes", StringComparison.OrdinalIgnoreCase) || value.Equals("on", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-            if (value is "0" || value.Equals("false", StringComparison.OrdinalIgnoreCase) ||
-                value.Equals("no", StringComparison.OrdinalIgnoreCase) || value.Equals("off", StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-
-            Debug.VulkanWarning("[Vulkan] Ignoring invalid {0}='{1}'. Expected 0/1, false/true, no/yes, or off/on.", name, value);
-            return null;
-        }
         private FrameOpSignatureDebugPart[][]? _commandBufferFrameOpSignatureDebugParts;
         private int _frameOpSignatureDiffLogCount;
         private string? _vulkanDiagnosticBaseWindowTitle;
@@ -176,8 +158,8 @@ namespace XREngine.Rendering.Vulkan
             return true;
         }
         private string? _lastReusableFrameDataRefreshFailureReason;
-        internal static readonly bool BloomVulkanDiagnosticsEnabled =
-            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.BloomDiag), "1", StringComparison.Ordinal);
+        internal static bool BloomVulkanDiagnosticsEnabled
+            => XREnvironment.IsEnabled(XREngineEnvironmentVariables.BloomDiag);
 
         private readonly Dictionary<ulong, CameraPoseReuseState> _cameraPoseReuseStates = new(8);
 

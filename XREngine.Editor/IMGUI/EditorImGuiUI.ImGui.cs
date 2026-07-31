@@ -208,6 +208,7 @@ public static partial class EditorImGuiUI
         private static string? _assetDragPath;
 
         private const string ClosePromptPopupId = "CloseWithUnsavedChanges";
+        private const int ClosePromptRenderFailureBypassThreshold = 3;
         private static bool _closePromptOpen;
         private static bool _closePromptRequested;
         private static bool _closePromptSaving;
@@ -861,6 +862,12 @@ public static partial class EditorImGuiUI
             Engine.Input.SetUIInputCaptured(uiWantsCapture && !allowEngineInputThroughScenePanel && Engine.PlayMode.State != EPlayModeState.EnteringPlay && !Engine.PlayMode.IsPlaying);
         }
 
+        internal static bool ShouldBypassUnsavedChangesPromptForRenderFailure(
+            int consecutiveRenderFailures,
+            bool renderPermanentlyDisabled)
+            => renderPermanentlyDisabled ||
+               consecutiveRenderFailures >= ClosePromptRenderFailureBypassThreshold;
+
         private static Engine.WindowCloseRequestResult HandleWindowCloseRequested(XRWindow window)
         {
             if (_forceAllowWindowCloseForShutdown)
@@ -885,6 +892,26 @@ public static partial class EditorImGuiUI
             if (_closePromptBypassWindow == window)
             {
                 _closePromptBypassWindow = null;
+                return Engine.WindowCloseRequestResult.Allow;
+            }
+
+            int dirtyAssetCount = _closePromptOpen
+                ? _closePromptAssets.Count
+                : Engine.Assets?.DirtyAssets.Count ?? 0;
+            if (dirtyAssetCount > 0 &&
+                ShouldBypassUnsavedChangesPromptForRenderFailure(
+                    window.ConsecutiveRenderFailures,
+                    window.IsRenderPermanentlyDisabled))
+            {
+                Debug.RenderingWarning(
+                    "[EditorClose] Allowing explicit window close without the ImGui unsaved-changes prompt because rendering is unavailable. " +
+                    "dirtyAssets={0} consecutiveRenderFailures={1} permanentlyDisabled={2} lastError='{3}'. Unsaved changes will be discarded.",
+                    dirtyAssetCount,
+                    window.ConsecutiveRenderFailures,
+                    window.IsRenderPermanentlyDisabled,
+                    window.LastRenderException?.Message ?? "<none>");
+                ResetClosePromptState();
+                FlushImGuiLayoutImmediate();
                 return Engine.WindowCloseRequestResult.Allow;
             }
 

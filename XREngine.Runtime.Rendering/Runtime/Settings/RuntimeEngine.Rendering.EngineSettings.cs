@@ -547,7 +547,7 @@ public static partial class RuntimeEngine
                 private EVrFoveationMode _vrFoveationMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationMode;
                 private EVrFoveationQualityPreset _vrFoveationQualityPreset = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationQualityPreset;
                 private bool _vrFoveationRequireRequested = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationRequireRequested;
-                private EAdvancedRenderPipelineMode _advancedRenderPipelineMode = EAdvancedRenderPipelineMode.Disabled;
+                private EAdvancedRenderPipelineMode _advancedRenderPipelineMode = EAdvancedRenderPipelineMode.Available;
                 private ERvcPipelineMode _rvcPipelineMode = ERvcPipelineMode.Off;
                 private bool _rvcQuadViewEnabled = false;
                 private bool _rvcStereoReuseEnabled = false;
@@ -1147,11 +1147,12 @@ public static partial class RuntimeEngine
                 /// <summary>
                 /// Number of shared-context worker threads used to compile and link
                 /// uncached OpenGL shader programs. The runtime uses one worker by
-                /// default for driver startup stability; values above one require
-                /// XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1. Clamped to [1, 16].
+                /// default for driver startup stability. The configured count is honored
+                /// unless XRE_DISABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1 requests the
+                /// single-worker compatibility path. Clamped to [1, 16].
                 /// </summary>
                 [Category("Performance")]
-                [Description("Number of shared-context worker threads used to compile and link uncached OpenGL shader programs. Values above one require XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1. Clamped to [1, 16].")]
+                [Description("Number of shared-context worker threads used to compile and link uncached OpenGL shader programs. XRE_DISABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1 forces the single-worker compatibility path. Clamped to [1, 16].")]
                 public int OpenGLProgramCompileLinkWorkerCount
                 {
                     get => OpenGL.ShaderLinking.ProgramCompileLinkWorkerCount;

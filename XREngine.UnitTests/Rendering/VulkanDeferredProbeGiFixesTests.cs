@@ -840,7 +840,7 @@ public sealed class VulkanDeferredProbeGiFixesTests
         string indirectSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.IndirectDraw.cs");
         string meshletSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/Meshlets/VulkanRenderer.Meshlets.cs");
 
-        meshSource.ShouldContain("FrameOpContext context = Renderer.CaptureFrameOpContext();");
+        meshSource.ShouldContain("Renderer.CaptureFrameOpContextForCurrentPipelineScope();");
         meshSource.ShouldContain("Renderer.EnsureValidPassIndex(passIndex, \"MeshDraw\", context.PassMetadata)");
         blitSource.ShouldContain("FrameOpContext context = CaptureFrameOpContext();");
         blitSource.ShouldContain("EnsureValidPassIndex(passIndex, \"Blit\", context.PassMetadata)");

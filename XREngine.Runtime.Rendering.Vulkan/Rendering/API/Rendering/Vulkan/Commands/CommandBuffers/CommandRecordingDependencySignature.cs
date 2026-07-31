@@ -97,13 +97,28 @@ internal readonly record struct CommandRecordingDependencySignature(
         if (!commandChainPrimaryTopologyValidatedSeparately &&
             DescriptorSetGeneration != current.DescriptorSetGeneration)
             return Binding(CommandRecordingDependencyField.DescriptorSetGeneration);
-        if (ResourcePlanGeneration != current.ResourcePlanGeneration)
+        // Command-chain primaries contain only pass boundaries, barriers, and
+        // vkCmdExecuteCommands calls. Their concrete topology is validated by the
+        // schedule/group signatures and their exact Vulkan image entry states are
+        // validated immediately before reuse. A renderer-wide planner revision can
+        // advance when streaming adds an unrelated logical resource; treating that
+        // coarse generation as a primary binding dependency turns an otherwise thin
+        // command chain into a full-frame re-record.
+        if (!commandChainPrimaryTopologyValidatedSeparately &&
+            ResourcePlanGeneration != current.ResourcePlanGeneration)
             return Binding(CommandRecordingDependencyField.ResourcePlanGeneration);
         if (ExternalTargetVariant != current.ExternalTargetVariant)
             return Binding(CommandRecordingDependencyField.ExternalTargetVariant);
         if (FrameSlotVariant != current.FrameSlotVariant)
             return Binding(CommandRecordingDependencyField.FrameSlotVariant);
-        if (DescriptorPublicationGeneration != current.DescriptorPublicationGeneration)
+        // A command-chain primary never records descriptor bindings when every
+        // group executes secondary command buffers. Each secondary owns and
+        // validates its exact descriptor snapshot, so a renderer-wide publication
+        // advance caused by an unrelated streamed material cannot invalidate the
+        // thin primary that only executes those secondaries. Inline primary draws
+        // still require the spec-mandated invalidation.
+        if (!secondaryDrawBindingsOwnedElsewhere &&
+            DescriptorPublicationGeneration != current.DescriptorPublicationGeneration)
             return Binding(CommandRecordingDependencyField.DescriptorPublicationGeneration);
         if (DataPublicationGeneration != current.DataPublicationGeneration)
             return Data(CommandRecordingDependencyField.DataPublicationGeneration);

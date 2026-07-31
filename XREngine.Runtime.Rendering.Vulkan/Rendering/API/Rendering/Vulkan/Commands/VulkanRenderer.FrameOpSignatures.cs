@@ -526,7 +526,7 @@ namespace XREngine.Rendering.Vulkan
                 opIndex,
                 opType,
                 $"{prefix}.uniforms",
-                GetUniformBindingLayoutSignature(snapshot),
+                HashUniformBindingLayout(snapshot.Uniforms),
                 $"count={snapshot.Uniforms.Count} valueHash=0x{unchecked((ulong)HashUniformBindings(snapshot.Uniforms)):X16} stableValueHash=0x{unchecked((ulong)HashUniformBindingsStable(snapshot.Uniforms)):X16} keys=[{SampleKeys(snapshot.Uniforms.Keys)}]");
             AddSignaturePart(
                 parts,

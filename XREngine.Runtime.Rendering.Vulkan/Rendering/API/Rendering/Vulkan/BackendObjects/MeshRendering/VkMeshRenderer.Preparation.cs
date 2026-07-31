@@ -78,6 +78,67 @@ internal unsafe partial class VkMeshRenderer
 		return SetPrepareResult(true, "Ready", BuildPrepareSuccessDetail("Ready"), out reason);
 	}
 
+	/// <summary>
+	/// Prepares only the immutable program and geometry resources required to
+	/// capture a deferred draw. Descriptor publication, scoped material/light
+	/// bindings, and vertex-input construction belong to command recording,
+	/// where the captured program and binding snapshot are authoritative.
+	/// </summary>
+	private bool TryPrepareForDrawEnqueue(XRMaterial material, out string reason)
+	{
+		reason = "Ready";
+
+		if (!IsActive)
+			Generate();
+
+		if (!IsActive)
+			return SetPrepareResult(false, "GenerateFailed", "Vulkan mesh renderer wrapper is not active.", out reason);
+
+		if (Data is null)
+			return SetPrepareResult(false, "DataMissing", "XRMeshRenderer.BaseVersion data is null.", out reason);
+
+		if (ReferenceEquals(material, null))
+			return SetPrepareResult(false, "MaterialMissing", "No material could be resolved for this draw.", out reason);
+
+		bool materialChanged = !ReferenceEquals(_lastPreparedMaterial, material);
+		if (materialChanged)
+		{
+			_pipelineDirty = true;
+			_descriptorDirty = true;
+			_lastPreparedMaterial = material;
+		}
+
+		if (MeshRenderer.HasRenderDataPreparation)
+			MeshRenderer.OnPreparingRenderData();
+
+		EnsureRuntimeDeformationBuffersCurrent();
+
+		bool shaderConfigurationChanged =
+			_pipelineShaderConfigVersion != RuntimeEngine.Rendering.Settings.ShaderConfigVersion ||
+			_pipelineUsesShaderClipDepthRemap != RuntimeEngine.Rendering.ShouldUseVulkanShaderClipDepthRemap ||
+			_pipelineUsesNativeDepthClipControl != RuntimeEngine.Rendering.ShouldUseNativeVulkanDepthClipControl;
+		bool canReuseProgramAndBuffers =
+			!materialChanged &&
+			_program is not null &&
+			_activeProgramLinkGeneration == _program.LinkGeneration &&
+			!_buffersDirty &&
+			!shaderConfigurationChanged;
+		if (canReuseProgramAndBuffers &&
+			AreCachedBuffersReadyForRendering(out _, ProgramUsesShaderGeneratedVertices()))
+			return true;
+
+		if (!EnsureProgram(material))
+			return SetPrepareResult(false, "ProgramsPending", "No compatible Vulkan render program is available yet.", out reason);
+
+		bool usesShaderGeneratedVertices = ProgramUsesShaderGeneratedVertices();
+		EnsureBuffers(usesShaderGeneratedVertices);
+
+		if (!AreCachedBuffersReadyForRendering(out string bufferDetail, usesShaderGeneratedVertices))
+			return SetPrepareResult(false, "BuffersPending", bufferDetail, out reason);
+
+		return SetPrepareResult(true, "Ready", BuildPrepareSuccessDetail("DeferredUntilRecording"), out reason);
+	}
+
 	private bool TryPrepareCapturedProgramForRecording(
 		XRMaterial material,
 		VkRenderProgram preparedProgram,

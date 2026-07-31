@@ -149,12 +149,12 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     internal override BoundingRectangle MapWindowPresentationRegionToBackbuffer(BoundingRectangle region)
     {
-        if (!_swapchainPresentScalingActive || !XRWindow.IsInteractiveResizeInProgress)
+        if (!_swapchainPresentScalingActive || !DesktopWsiTarget.IsInteractiveResizeInProgress)
             return region;
 
-        Vector2D<int> presentationExtent = XRWindow.ResizeExtents.PresentationExtent;
+        Vector2D<int> presentationExtent = DesktopWsiTarget.ResizeExtents.PresentationExtent;
         if (presentationExtent.X <= 0 || presentationExtent.Y <= 0)
-            presentationExtent = XRWindow.EffectiveFramebufferSize;
+            presentationExtent = DesktopWsiTarget.EffectiveFramebufferSize;
 
         return ScalePresentationRegionToBackbuffer(
             region,

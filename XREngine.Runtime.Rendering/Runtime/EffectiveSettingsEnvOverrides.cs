@@ -3,22 +3,22 @@ using System;
 namespace XREngine.Rendering;
 
 /// <summary>
-/// Centralized cache for engine environment-variable overrides that participate in the
-/// effective-settings cascade (CPU/GPU culling structure, zero-readback draw path, forced
-/// mesh submission strategy, etc.).
-/// <para>
-/// Each field captures the raw <see cref="Environment.GetEnvironmentVariable"/> value
-/// once at static-ctor time. Consumers should treat env-vars as a startup-only seed:
-/// the process environment is fixed for the duration of the run, so caching here removes
-/// per-call OS calls and centralizes the env-var contract for the editor and runtime.
-/// </para>
+/// Runtime-refreshable cache for environment overrides that participate in the effective
+/// rendering-settings cascade.
 /// </summary>
 public static class EffectiveSettingsEnvOverrides
 {
     static EffectiveSettingsEnvOverrides()
     {
         Reload();
+        XREnvironment.VariableChanged += HandleEnvironmentVariableChanged;
     }
+
+    /// <summary>
+    /// Re-reads every effective-settings override from the runtime environment facade.
+    /// </summary>
+    public static void ReloadFromEnvironment()
+        => Reload();
 
     private static void Reload()
     {
@@ -67,10 +67,25 @@ public static class EffectiveSettingsEnvOverrides
 
     private static string? Read(string name)
     {
-        string? raw = Environment.GetEnvironmentVariable(name);
+        string? raw = XREnvironment.GetValue(name);
         if (string.IsNullOrWhiteSpace(raw))
             return null;
         // ForceMeshSubmissionStrategy parser handles its own trimming; everything else is trimmed here.
         return name == XREngineEnvironmentVariables.ForceMeshSubmissionStrategy ? raw : raw.Trim();
+    }
+
+    private static void HandleEnvironmentVariableChanged(RuntimeEnvironmentVariableChange change)
+    {
+        if (change.Name.Equals(XREngineEnvironmentVariables.CpuSceneCullingStructure, StringComparison.OrdinalIgnoreCase) ||
+            change.Name.Equals(XREngineEnvironmentVariables.ZeroReadbackMaterialDrawPath, StringComparison.OrdinalIgnoreCase) ||
+            change.Name.Equals(XREngineEnvironmentVariables.ForceMeshSubmissionStrategy, StringComparison.OrdinalIgnoreCase) ||
+            change.Name.Equals(XREngineEnvironmentVariables.ForceCpuIndirectBuild, StringComparison.OrdinalIgnoreCase) ||
+            change.Name.Equals(XREngineEnvironmentVariables.OcclusionCullingMode, StringComparison.OrdinalIgnoreCase) ||
+            change.Name.Equals(XREngineEnvironmentVariables.CpuQueryOcclusionRetestPeriodFrames, StringComparison.OrdinalIgnoreCase) ||
+            change.Name.Equals(XREngineEnvironmentVariables.CpuSoftwareOcclusion, StringComparison.OrdinalIgnoreCase) ||
+            change.Name.Equals(XREngineEnvironmentVariables.AdvancedRenderPipelineMode, StringComparison.OrdinalIgnoreCase))
+        {
+            Reload();
+        }
     }
 }

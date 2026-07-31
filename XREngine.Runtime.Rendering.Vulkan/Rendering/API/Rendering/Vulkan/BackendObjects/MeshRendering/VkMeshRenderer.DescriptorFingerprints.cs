@@ -402,11 +402,20 @@ internal unsafe partial class VkMeshRenderer
 			return true;
 		}
 
-		XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
-		if (!SnapshotHasFrameSourceSampler(snapshot, pipeline) &&
-			!DescriptorBindingsHaveFrameSourceSampler(material, _program.DescriptorBindings, snapshot))
+		DescriptorAllocation? allocation = _activeDescriptorAllocation;
+		if (allocation?.FrameSourceDescriptorClassificationInitialized == true)
 		{
-			return true;
+			if (!allocation.HasFrameSourceDescriptors)
+				return true;
+		}
+		else
+		{
+			XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+			if (!SnapshotHasFrameSourceSampler(snapshot, pipeline) &&
+				!DescriptorBindingsHaveFrameSourceSampler(material, _program.DescriptorBindings, snapshot))
+			{
+				return true;
+			}
 		}
 
 		if (_descriptorSets is null || _descriptorSets.Length == 0)
@@ -468,6 +477,18 @@ internal unsafe partial class VkMeshRenderer
 	{
 		bool refreshed = false;
 		reason = "no frame-source sampler descriptors";
+
+		if (allocation is not null &&
+			snapshot is { HasPublishedBindingLayoutSignatures: true } &&
+			(uint)descriptorSlotIndex < (uint)allocation.SlotFrameSourceSamplerSignatures.Length &&
+			(uint)descriptorSlotIndex < (uint)allocation.SlotFrameSourceSamplerSignaturesValid.Length &&
+			allocation.SlotFrameSourceSamplerSignaturesValid[descriptorSlotIndex] &&
+			allocation.SlotFrameSourceSamplerSignatures[descriptorSlotIndex] ==
+				snapshot.ExactSamplerResourceSignature)
+		{
+			reason = "frame-source sampler descriptors already match";
+			return true;
+		}
 
 		Span<DescriptorImageInfo> imageInfos = stackalloc DescriptorImageInfo[8];
 		for (int i = 0; i < bindings.Count; i++)
@@ -560,6 +581,16 @@ internal unsafe partial class VkMeshRenderer
 
 			RecordFrameSourceDescriptorWriteSignature(allocation, descriptorSlotIndex, binding, descriptorCount, resolvedImageInfos);
 			refreshed = true;
+		}
+
+		if (allocation is not null &&
+			snapshot is { HasPublishedBindingLayoutSignatures: true } &&
+			(uint)descriptorSlotIndex < (uint)allocation.SlotFrameSourceSamplerSignatures.Length &&
+			(uint)descriptorSlotIndex < (uint)allocation.SlotFrameSourceSamplerSignaturesValid.Length)
+		{
+			allocation.SlotFrameSourceSamplerSignatures[descriptorSlotIndex] =
+				snapshot.ExactSamplerResourceSignature;
+			allocation.SlotFrameSourceSamplerSignaturesValid[descriptorSlotIndex] = true;
 		}
 
 		if (refreshed)

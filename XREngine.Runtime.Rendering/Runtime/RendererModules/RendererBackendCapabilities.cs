@@ -9,9 +9,13 @@ public enum RendererBackendCapabilities
 {
     None = 0,
     DesktopPresentation = 1 << 0,
-    HeadlessRendering = 1 << 1,
+    PresentationlessRendering = 1 << 1,
     OpenXrPresentation = 1 << 2,
     GpuCompute = 1 << 3,
     EditorTextureInterop = 1 << 4,
     SparseTextureStreaming = 1 << 5,
+    HeadlessWsiPresentation = 1 << 6,
+
+    [Obsolete("Use PresentationlessRendering or HeadlessWsiPresentation; 'headless' is not a stable execution mode.")]
+    HeadlessRendering = PresentationlessRendering,
 }
