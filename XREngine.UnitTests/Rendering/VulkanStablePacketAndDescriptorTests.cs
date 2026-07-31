@@ -112,6 +112,53 @@ public sealed class VulkanStablePacketAndDescriptorTests
     }
 
     [Test]
+    public void BindingSnapshot_MaterialPayloadIsReleasedWhenFrameContentChanges()
+    {
+        ComputeDispatchSnapshot snapshot = new();
+        MaterialUniformBindingPayload payload = new(
+            new Dictionary<string, ProgramUniformValue>(StringComparer.Ordinal)
+            {
+                ["BaseColor"] = default,
+            });
+        snapshot.SetMaterialUniformBindings(payload);
+
+        snapshot.MaterialUniformBindings.ShouldBeSameAs(payload);
+
+        snapshot.Reset(
+            new Dictionary<string, ProgramUniformValue>(StringComparer.Ordinal),
+            [],
+            [],
+            new Dictionary<string, XRTexture>(StringComparer.Ordinal),
+            []);
+
+        snapshot.MaterialUniformBindings.ShouldBeNull();
+    }
+
+    [Test]
+    public void BindingSnapshot_RuntimeUniformNameSignatureTracksTopologyNotValues()
+    {
+        ComputeDispatchSnapshot snapshot = new();
+        Dictionary<string, ProgramUniformValue> first =
+            new(StringComparer.Ordinal)
+            {
+                ["ScopedValue"] = default,
+            };
+        snapshot.Reset(first, [], [], new Dictionary<string, XRTexture>(StringComparer.Ordinal), []);
+        snapshot.PublishBindingLayoutSignatures();
+        ulong baseline = snapshot.RuntimeUniformNameSignature;
+
+        first["ScopedValue"] = new ProgramUniformValue(EShaderVarType._float, 42.0f);
+        snapshot.Reset(first, [], [], new Dictionary<string, XRTexture>(StringComparer.Ordinal), []);
+        snapshot.PublishBindingLayoutSignatures();
+        snapshot.RuntimeUniformNameSignature.ShouldBe(baseline);
+
+        first["AnotherScopedValue"] = default;
+        snapshot.Reset(first, [], [], new Dictionary<string, XRTexture>(StringComparer.Ordinal), []);
+        snapshot.PublishBindingLayoutSignatures();
+        snapshot.RuntimeUniformNameSignature.ShouldNotBe(baseline);
+    }
+
+    [Test]
     public void CapturedDescriptorAllocation_AlwaysKeepsItsResourceFingerprintVariant()
     {
         const ulong resourceFingerprint = 0x123456789ABCDEF0UL;

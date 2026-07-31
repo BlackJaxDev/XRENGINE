@@ -123,26 +123,28 @@ public unsafe partial class VulkanRenderer
         out QueueFamilyIndices indices)
     {
         indices = VulkanQueueFamilySelector.Select(
-            khrSurface!,
+            snapshot.QueueFamilyArray,
+            _targetDriver.RequiresPresentQueue ? khrSurface : null,
             device,
-            surface,
-            snapshot.QueueFamilyArray);
+            surface);
         bool extensionsSupported =
             VulkanPhysicalDevicePolicy.SupportsRequiredExtensions(
                 snapshot.AvailableExtensions,
                 _requiredDeviceExtensions,
                 _streamlineRequiredDeviceExtensions);
 
-        bool swapChainAdequate = false;
-        if (extensionsSupported)
+        bool finalOutputAdequate = extensionsSupported;
+        if (extensionsSupported && _targetDriver.RequiresSwapchainOutput)
         {
             var swapChainSupport = QuerySwapChainSupport(device);
-            swapChainAdequate = VulkanPhysicalDevicePolicy.IsSwapchainAdequate(
+            finalOutputAdequate = VulkanPhysicalDevicePolicy.IsSwapchainAdequate(
                 swapChainSupport.Formats.Length,
                 swapChainSupport.PresentModes.Length);
         }
 
-        return indices.IsComplete() && extensionsSupported && swapChainAdequate;
+        return indices.IsComplete(_targetDriver.RequiresPresentQueue) &&
+            extensionsSupported &&
+            finalOutputAdequate;
     }
 
     public uint FindMemoryType(uint typeFilter, MemoryPropertyFlags memProps)

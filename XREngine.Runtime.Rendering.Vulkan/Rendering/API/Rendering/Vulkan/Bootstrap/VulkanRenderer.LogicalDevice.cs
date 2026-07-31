@@ -1055,7 +1055,9 @@ public unsafe partial class VulkanRenderer
         uint graphicsFamily = indices.GraphicsFamilyIndex.Value;
         uint computeFamily = indices.ComputeFamilyIndex ?? graphicsFamily;
         uint transferFamily = indices.TransferFamilyIndex ?? computeFamily;
-        uint presentFamily = indices.PresentFamilyIndex!.Value;
+        uint? presentFamily = indices.PresentFamilyIndex;
+        if (_targetDriver.RequiresPresentQueue && !presentFamily.HasValue)
+            throw new InvalidOperationException("The selected Vulkan target requires a presentation queue family.");
         Dictionary<uint, uint> requestedQueueCounts = [];
 
         static void RequireEngineQueues(Dictionary<uint, uint> counts, uint family, uint count)
@@ -1065,7 +1067,8 @@ public unsafe partial class VulkanRenderer
         }
 
         RequireEngineQueues(requestedQueueCounts, graphicsFamily, engineGraphicsQueueCount);
-        RequireEngineQueues(requestedQueueCounts, presentFamily, 1);
+        if (presentFamily.HasValue)
+            RequireEngineQueues(requestedQueueCounts, presentFamily.Value, 1);
         RequireEngineQueues(requestedQueueCounts, computeFamily, 1);
         RequireEngineQueues(requestedQueueCounts, transferFamily, 1);
 
@@ -2477,7 +2480,8 @@ public unsafe partial class VulkanRenderer
         _deviceContext.ResolveQueues(
             Api!,
             indices,
-            supportsMultipleGraphicsQueues);
+            supportsMultipleGraphicsQueues,
+            _targetDriver.RequiresPresentQueue);
     }
 
     /// <summary>

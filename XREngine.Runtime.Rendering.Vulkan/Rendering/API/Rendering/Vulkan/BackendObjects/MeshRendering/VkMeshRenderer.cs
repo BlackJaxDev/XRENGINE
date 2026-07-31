@@ -116,6 +116,7 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
     private DescriptorSet[][]? _descriptorSets;
     private DescriptorAllocation? _activeDescriptorAllocation;
     private readonly Dictionary<DescriptorAllocationKey, DescriptorAllocation> _descriptorAllocations = new();
+    private readonly Dictionary<int, DescriptorAllocation> _descriptorAllocationsByDrawSlot = new();
     private bool _descriptorDirty = true;
     private ulong _descriptorSchemaFingerprint;
     private ulong _descriptorResourceFingerprint;
@@ -125,6 +126,8 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
     private readonly Dictionary<string, EngineUniformBuffer[]> _engineUniformBuffers = new(StringComparer.Ordinal);
     private readonly HashSet<string> _engineUniformWarnings = new(StringComparer.Ordinal);
     private readonly Dictionary<string, AutoUniformBuffer[]> _autoUniformBuffers = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Dictionary<XRMaterial, AutoUniformMaterialWritePlan>> _autoUniformMaterialWritePlans = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, AutoUniformMaterialWritePlan?[]> _publishedAutoUniformMaterialWritePlans = new(StringComparer.Ordinal);
     private readonly HashSet<string> _autoUniformWarnings = new(StringComparer.Ordinal);
     private const string VertexUniformSuffix = "_VTX";
     private const string TransformIdUniformName = "TransformId";
@@ -293,6 +296,9 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
 
     private void OnRenderRequested(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo)
     {
+        using VulkanRenderer.VulkanCpuStageScope preparationStage =
+            new(EVulkanCpuStage.MeshDrawPreparation);
+
         if (!IsActive)
             Generate();
 
@@ -309,7 +315,14 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
         // instead of inheriting stale values from the global state tracker.
         XRMaterial effectiveMaterial = ResolveMaterial(materialOverride, instances);
         uint drawInstances = MeshRenderMaterialResolver.ResolveLayeredShadowInstanceCount(effectiveMaterial, instances);
-        if (!TryPrepareForRendering(effectiveMaterial, out string prepareReason))
+        bool prepared;
+        string prepareReason;
+        using (VulkanRenderer.VulkanCpuStageScope resourcePreparationStage =
+               new(EVulkanCpuStage.MeshDrawResourcePreparation))
+        {
+            prepared = TryPrepareForDrawEnqueue(effectiveMaterial, out prepareReason);
+        }
+        if (!prepared)
         {
             // A skipped draw means the recorded frame is incomplete. Keep the
             // command buffers invalid until the pending program/buffers/descriptors
@@ -546,7 +559,19 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
         }
 
         LayeredShadowUniformState shadowUniformState = LayeredShadowUniformState.CaptureFromCurrentRenderingState();
-        ComputeDispatchSnapshot? programBindingSnapshot = CaptureProgramBindingSnapshot(effectiveMaterial, shadowUniformState);
+        // The pipeline frame-resource scope already captured and installed the immutable
+        // context that owns this command list. Recomputing it for every visible mesh repeats
+        // registry/pass hashing and allocates a new diagnostic context id per draw, putting
+        // workstream-04 package consumption back on the render-thread critical path.
+        FrameOpContext context =
+            Renderer.CaptureFrameOpContextForCurrentPipelineScope();
+        ComputeDispatchSnapshot? programBindingSnapshot;
+        using (VulkanRenderer.VulkanCpuStageScope bindingSnapshotStage =
+               new(EVulkanCpuStage.MeshDrawBindingPreparation))
+        {
+            programBindingSnapshot =
+                CaptureProgramBindingSnapshot(effectiveMaterial, shadowUniformState);
+        }
         IndexedViewportScissorSnapshot indexedViewportScissors = Renderer.GetCurrentIndexedViewportScissorSnapshot();
         uint viewportScissorCount = indexedViewportScissors.Count > 1 ? indexedViewportScissors.Count : 1u;
         Viewport viewportSnapshot = Renderer.GetCurrentViewport();
@@ -664,13 +689,16 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
                 p3.W);
         }
 
-        FrameOpContext context = Renderer.CaptureFrameOpContext();
-        Renderer.EnqueueFrameOp(MeshDrawOp.Rent(
-            Renderer.EnsureValidPassIndex(passIndex, "MeshDraw", context.PassMetadata),
-            target,
-            draw,
-            context,
-            Renderer.IsInOcclusionQueryBracket));
+        using (VulkanRenderer.VulkanCpuStageScope enqueueStage =
+               new(EVulkanCpuStage.MeshDrawEnqueue))
+        {
+            Renderer.EnqueueFrameOp(MeshDrawOp.Rent(
+                Renderer.EnsureValidPassIndex(passIndex, "MeshDraw", context.PassMetadata),
+                target,
+                draw,
+                context,
+                Renderer.IsInOcclusionQueryBracket));
+        }
     }
 
     private static Vector4 ProjectUiDiagCorner(float x, float y, in Matrix4x4 worldViewProjection)
@@ -898,7 +926,9 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
         return true;
     }
 
-    private ComputeDispatchSnapshot? CaptureProgramBindingSnapshot(XRMaterial material, in LayeredShadowUniformState shadowUniformState)
+    private ComputeDispatchSnapshot? CaptureProgramBindingSnapshot(
+        XRMaterial material,
+        in LayeredShadowUniformState shadowUniformState)
     {
         if (_program is not { Data: { } programData } program)
             return null;
@@ -910,21 +940,117 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
         if (!captureUniforms && !mayNeedDescriptorResourceSnapshot)
             return null;
 
+        bool shareSnapshot =
+            !captureUniforms &&
+            !shadowUniformState.IsShadowPass &&
+            !MeshRenderer.HasSettingUniformsHandlers &&
+            !material.HasSettingUniformsHandlers;
+        MaterialBindingSnapshotCacheKey snapshotCacheKey = default;
+        MaterialUniformBindingPayload? materialUniformPayload = null;
+        if (shareSnapshot)
+        {
+            var renderingState = RuntimeEngine.Rendering.State.RenderingPipelineState;
+            var renderArea = RuntimeEngine.Rendering.State.RenderArea;
+            snapshotCacheKey = new MaterialBindingSnapshotCacheKey(
+                material,
+                RuntimeEngine.Rendering.State.CurrentRenderingPipeline,
+                RuntimeEngine.Rendering.State.RenderingCamera,
+                RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera,
+                RuntimeEngine.Rendering.State.RenderingWorld,
+                Renderer.ResolveCurrentFrameOpDrawTarget(),
+                program.LinkGeneration,
+                renderingState?.ScopedBindingRevision ?? 0UL,
+                RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex,
+                renderArea.X,
+                renderArea.Y,
+                renderArea.Width,
+                renderArea.Height,
+                RuntimeEngine.Rendering.State.IsStereoPass,
+                renderingState?.UseUnjitteredProjection ?? false);
+            if (program.TryGetFrameMaterialBindingSnapshot(
+                    snapshotCacheKey,
+                    out ComputeDispatchSnapshot? cachedSnapshot))
+            {
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanFrameMaterialSnapshotCacheLookup(hit: true);
+                return cachedSnapshot;
+            }
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanFrameMaterialSnapshotCacheLookup(hit: false);
+
+            MaterialUniformBindingCacheKey materialPayloadKey =
+                new(material, program.LinkGeneration);
+            bool materialPayloadCacheHit = program.TryGetMaterialUniformBindingPayload(
+                    materialPayloadKey,
+                    out materialUniformPayload);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanMaterialPayloadCacheLookup(
+                materialPayloadCacheHit);
+            if (!materialPayloadCacheHit)
+            {
+                // Capture only the material-owned numeric dictionary once per
+                // material revision. Resource and render-scope bindings are
+                // intentionally omitted because their lifetimes differ.
+                using VkRenderProgram.BindingUpdateScope materialBindingUpdate =
+                    program.BeginBindingUpdate();
+                program.ClearBindings();
+                VulkanRenderer.SetMaterialStaticUniforms(material, programData);
+                materialUniformPayload = program.CaptureMaterialUniformBindingPayload();
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanMaterialPayloadPacked(
+                    materialUniformPayload.Uniforms.Count);
+                program.CacheMaterialUniformBindingPayload(
+                    materialPayloadKey,
+                    materialUniformPayload);
+            }
+        }
+
         VulkanFixedFunctionStateSnapshot stateSnapshot = Renderer.CaptureFixedFunctionState();
         using VkRenderProgram.BindingUpdateScope bindingUpdate = program.BeginBindingUpdate();
         try
         {
             program.ClearBindings();
-            Renderer.SetMaterialUniforms(material, programData, shadowUniformState);
+            using (VulkanRenderer.VulkanCpuStageScope materialBindingsStage =
+                   new(EVulkanCpuStage.MeshDrawMaterialBindings))
+            {
+                if (shareSnapshot)
+                {
+                    Renderer.SetMaterialRuntimeUniforms(
+                        material,
+                        programData,
+                        program,
+                        shadowUniformState);
+                }
+                else
+                {
+                    Renderer.SetMaterialUniforms(material, programData, program, shadowUniformState);
+                }
+            }
             if (MeshRenderer.HasSettingUniformsHandlers)
                 MeshRenderer.OnSettingUniforms(programData, programData);
             else
                 RuntimeEngine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(programData);
             MeshRenderMaterialResolver.ApplyShadowUniforms(programData, material, shadowUniformState);
             if (!captureUniforms && !program.HasBoundDescriptorResources())
+            {
+                if (shareSnapshot)
+                    program.CacheFrameMaterialBindingSnapshot(snapshotCacheKey, null);
                 return null;
+            }
 
-            ComputeDispatchSnapshot snapshot = program.CaptureComputeSnapshot();
+            ComputeDispatchSnapshot snapshot;
+            using (VulkanRenderer.VulkanCpuStageScope snapshotCopyStage =
+                   new(EVulkanCpuStage.MeshDrawBindingSnapshotCopy))
+            {
+                snapshot = program.CaptureComputeSnapshot();
+            }
+            snapshot.SetMaterialUniformBindings(materialUniformPayload);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindingSnapshotCaptured(
+                snapshot.Uniforms.Count +
+                snapshot.Samplers.Count +
+                snapshot.SamplerNamesByUnit.Count +
+                snapshot.SamplersByName.Count +
+                snapshot.Images.Count +
+                snapshot.Buffers.Count,
+                fastPath: shareSnapshot);
+            if (shareSnapshot)
+                program.CacheFrameMaterialBindingSnapshot(snapshotCacheKey, snapshot);
             LogGizmoBindingSnapshot(material, snapshot, "capture");
             return snapshot;
         }

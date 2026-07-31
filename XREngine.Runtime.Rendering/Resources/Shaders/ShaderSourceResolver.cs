@@ -41,8 +41,8 @@ internal static partial class ShaderSourceResolver
     private static long _registeredSnippetVersion;
 
     // Default-disabled. See ExpandIncludesRecursive for rationale.
-    private static readonly bool s_emitIncludeDceMarkers =
-        string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GlslDceIncludes), "1", StringComparison.Ordinal);
+    private static bool EmitIncludeDceMarkers
+        => XREnvironment.IsEnabled(XREngineEnvironmentVariables.GlslDceIncludes);
 
     // Matches `#include "path"` or `#include <path>` optionally followed by whitespace and/or a `//` line comment.
     [GeneratedRegex(@"^\s*#\s*include\s+[""<](?<path>[^"">]+)["">]\s*(?://.*)?$", RegexOptions.Compiled | RegexOptions.Multiline)]
@@ -376,14 +376,14 @@ internal static partial class ShaderSourceResolver
             // Enable with environment variable XRE_GLSL_DCE_INCLUDES=1 to opt
             // back into include DCE globally; Uber variant generation opts in
             // locally after feature/static pruning has made the source smaller.
-            if (emitIncludeDeadCodeMarkers || s_emitIncludeDceMarkers)
+            if (emitIncludeDeadCodeMarkers || EmitIncludeDceMarkers)
                 output.AppendLine($"// ===== BEGIN INCLUDE: {includePath} =====");
             if (annotateIncludes)
                 output.AppendLine($"// begin include {includePath}");
             output.AppendLine(expandedInclude.ExpandedSource);
             if (annotateIncludes)
                 output.AppendLine($"// end include {includePath}");
-            if (emitIncludeDeadCodeMarkers || s_emitIncludeDceMarkers)
+            if (emitIncludeDeadCodeMarkers || EmitIncludeDceMarkers)
                 output.AppendLine($"// ===== END INCLUDE: {includePath} =====");
         }
 

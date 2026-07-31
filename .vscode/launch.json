@@ -10,10 +10,7 @@
             "args": [],
             "cwd": "${workspaceFolder}",
             "console": "internalConsole",
-            "stopAtEntry": false,
-            "env": {
-                "XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL": "1"
-            }
+            "stopAtEntry": false
         },
         {
             "name": "Editor (Renderer Development)",
@@ -24,10 +21,7 @@
             "args": ["--renderer-development"],
             "cwd": "${workspaceFolder}",
             "console": "internalConsole",
-            "stopAtEntry": false,
-            "env": {
-                "XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL": "1"
-            }
+            "stopAtEntry": false
         },
         {
             "name": "Editor (Unit Testing World)",
@@ -40,8 +34,7 @@
             "console": "internalConsole",
             "stopAtEntry": false,
             "env": {
-                "XRE_WORLD_MODE": "UnitTesting",
-                "XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL": "1"
+                "XRE_WORLD_MODE": "UnitTesting"
             }
         },
         {
@@ -59,9 +52,7 @@
                 "XRE_UNIT_TEST_WORLD_KIND": "Default",
                 "XRE_UNIT_TEST_VR_MODE": "OpenXR",
                 "XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS": "1",
-                "XRE_OCCLUSION_CULLING_MODE": "Disabled",
-                "XRE_WINDOW_TITLE": "XRE Editor (OpenXR SteamVR)",
-                "XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL": "1"
+                "XRE_WINDOW_TITLE": "XRE Editor (OpenXR SteamVR)"
             }
         },
         {
@@ -76,7 +67,6 @@
             "stopAtEntry": false,
             "env": {
                 "XRE_WORLD_MODE": "UnitTesting",
-                "XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL": "1",
                 "XRE_VULKAN_VALIDATION": "1",
                 "XRE_GL_DEBUG": "1"
             }

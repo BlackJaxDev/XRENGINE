@@ -434,6 +434,8 @@ internal unsafe partial class VkMeshRenderer
 				}
 				if (recordDescriptorTableGeneration)
 					Renderer.RecordVulkanDescriptorTableGeneration("MeshRendererDescriptorSets.Update");
+				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorRecordsWritten(
+					writeArray.Length);
 
 				if (allocation is not null)
 					for (int signatureIndex = 0; signatureIndex < signatures.Count; signatureIndex++)

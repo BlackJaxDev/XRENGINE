@@ -10,6 +10,12 @@ public sealed class OpenGLRendererBackendFactory : IRendererBackendFactory
 {
     public IRuntimeRendererHost Create(in RendererBackendCreateContext context)
     {
+        if (context.EffectiveTarget.ExecutionMode != RenderExecutionMode.DesktopWsi)
+        {
+            throw new NotSupportedException(
+                $"The built-in OpenGL backend supports only {RenderExecutionMode.DesktopWsi}; requested {context.EffectiveTarget.ExecutionMode}.");
+        }
+
         if (context.Window is not XRWindow window)
         {
             throw new ArgumentException(
@@ -18,9 +24,6 @@ public sealed class OpenGLRendererBackendFactory : IRendererBackendFactory
                 nameof(context));
         }
 
-        return new OpenGLRenderer(
-            window,
-            context.LinkRendererToWindow,
-            context.ModuleGeneration);
+        return new OpenGLRenderer(context.ToRendererHostContext());
     }
 }

@@ -32,26 +32,15 @@ public partial class OpenGLRenderer
     /// for 60-120 seconds at a time. The worker queue is therefore ON by default
     /// whenever async program compilation is enabled.
     ///
-    /// <c>XRE_ENABLE_SHARED_CONTEXT_LINK_QUEUE=1</c> is kept as a compatibility
-    /// no-op for existing launch profiles.
-    ///
     /// <c>XRE_DISABLE_SHARED_CONTEXT_LINK_QUEUE=1</c> still forces the queue
-    /// off (kept for parity with prior tooling).
+    /// off for explicit compatibility/diagnostic runs.
     /// </summary>
-    private static readonly bool s_enableSharedContextLinkQueueEnv =
-        string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EnableSharedContextLinkQueue), "1", StringComparison.Ordinal);
-
-    private static readonly bool s_disableSharedContextLinkQueueEnv =
-        string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DisableSharedContextLinkQueue), "1", StringComparison.Ordinal);
-
     private static bool WantsSharedContextProgramCompileLinkQueue
     {
         get
         {
-            if (s_disableSharedContextLinkQueueEnv)
+            if (XREnvironment.IsEnabled(XREngineEnvironmentVariables.DisableSharedContextLinkQueue))
                 return false;
-
-            _ = s_enableSharedContextLinkQueueEnv;
 
             if (!RuntimeEngine.Rendering.Settings.AsyncProgramCompilation)
                 return false;

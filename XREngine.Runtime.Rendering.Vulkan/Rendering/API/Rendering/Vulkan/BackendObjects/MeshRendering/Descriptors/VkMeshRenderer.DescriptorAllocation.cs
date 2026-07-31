@@ -33,7 +33,11 @@ internal unsafe partial class VkMeshRenderer
         public ulong BindingIdentityFingerprint;
         public ulong ResourceFingerprint;
         public ulong[] SlotResourceFingerprints = [];
+        public ulong[] SlotFrameSourceSamplerSignatures = [];
+        public bool[] SlotFrameSourceSamplerSignaturesValid = [];
         public string ResourceFingerprintDetails = string.Empty;
+        public bool HasFrameSourceDescriptors;
+        public bool FrameSourceDescriptorClassificationInitialized;
         public ulong LastUsedSerial;
         public int SharedReferenceCount;
         public readonly Dictionary<DescriptorWriteKey, ulong> DescriptorWriteSignatures = new();

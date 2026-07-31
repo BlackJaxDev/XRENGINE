@@ -80,7 +80,8 @@ public sealed class VulkanRendererBackendModuleEntry : IRendererBackendModule
             "XREngine Vulkan",
             version ?? assembly.GetName().Version ?? new Version(1, 0),
             RendererBackendCapabilities.DesktopPresentation |
-            RendererBackendCapabilities.HeadlessRendering |
+            RendererBackendCapabilities.PresentationlessRendering |
+            RendererBackendCapabilities.HeadlessWsiPresentation |
             RendererBackendCapabilities.OpenXrPresentation |
             RendererBackendCapabilities.GpuCompute |
             RendererBackendCapabilities.EditorTextureInterop,

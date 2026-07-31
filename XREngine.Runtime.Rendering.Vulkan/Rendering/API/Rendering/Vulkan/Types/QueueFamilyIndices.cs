@@ -15,8 +15,9 @@ public unsafe partial class VulkanRenderer
         /// </summary>
         public bool GraphicsFamilySupportsCompute { get; set; }
 
-        public readonly bool IsComplete()
-            => GraphicsFamilyIndex.HasValue && PresentFamilyIndex.HasValue;
+        public readonly bool IsComplete(bool requirePresentQueue = true)
+            => GraphicsFamilyIndex.HasValue &&
+                (!requirePresentQueue || PresentFamilyIndex.HasValue);
     }
 
     private QueueFamilyIndices? _familyQueueIndicesCache = null;
@@ -41,9 +42,9 @@ public unsafe partial class VulkanRenderer
         VulkanPhysicalDeviceCapabilitySnapshot snapshot =
             VulkanDeviceCapabilityQuery.Query(Api!, device);
         return VulkanQueueFamilySelector.Select(
-            khrSurface!,
+            snapshot.QueueFamilyArray,
+            _targetDriver.RequiresPresentQueue ? khrSurface : null,
             device,
-            surface,
-            snapshot.QueueFamilyArray);
+            surface);
     }
 }

@@ -48,7 +48,7 @@ namespace XREngine.Rendering.Vulkan
                 "[Vulkan] Recreating swapchain immediately. Reason={0}",
                 reason);
 
-            if (!RecreateSwapChain())
+            if (!DesktopWsiTarget.RecreateFinalOutput(this))
             {
                 TimeSpan failedElapsed = Stopwatch.GetElapsedTime(recreateStart);
                 Debug.VulkanEvery(
@@ -73,7 +73,7 @@ namespace XREngine.Rendering.Vulkan
             _pendingSurfaceHeight = 0;
             ResetImGuiFrameMarker();
 
-            var liveFramebufferSize = XRWindow.EffectiveFramebufferSize;
+            var liveFramebufferSize = DesktopWsiTarget.EffectiveFramebufferSize;
             Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.RecreateResult",
                 TimeSpan.FromMilliseconds(500),
@@ -284,7 +284,7 @@ namespace XREngine.Rendering.Vulkan
                 swapchainHeight);
         }
 
-        private bool ShouldKeepPresentScalingSwapchain(Result result, bool interactiveResize)
+        internal bool ShouldKeepDesktopPresentScalingSwapchainCore(Result result, bool interactiveResize)
             => result == Result.SuboptimalKhr &&
                 interactiveResize &&
                 _swapchainPresentScalingActive;

@@ -83,6 +83,7 @@ internal partial class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        XREnvironment.Initialize();
         RuntimeRenderingBootstrap.InstallEngineHostServices();
         WriteBootstrapTrace("Editor process entry.");
         InstallGlobalCrashDiagnostics();

@@ -255,7 +255,11 @@ public static partial class EditorImGuiUI
                     ImGui.Separator();
                 }
 
-                if (primary is XRAsset asset)
+                if (primary is EditorRuntimeEnvironmentPreferences runtimeEnvironment)
+                {
+                    DrawRuntimeEnvironmentPreferences(runtimeEnvironment);
+                }
+                else if (primary is XRAsset asset)
                 {
                     // Ensure edits from the reflection inspector mark this asset dirty.
                     using var assetScope = new InspectorAssetContextScope(asset.SourceAsset ?? asset);
@@ -4420,32 +4424,26 @@ public static partial class EditorImGuiUI
                 if (string.IsNullOrWhiteSpace(name))
                     continue;
 
-                ImGui.PushID($"MachineEnv_{name}");
-                string? machineValue = null;
-                string? readError = null;
-                try
-                {
-                    machineValue = Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.Machine);
-                }
-                catch (Exception ex)
-                {
-                    readError = ex.Message;
-                }
-
-                string status = readError is not null
-                    ? $"{name}: machine read failed"
-                    : machineValue is null
-                        ? $"{name}: machine unset"
-                        : $"{name}: machine set";
+                ImGui.PushID($"RuntimeEnv_{name}");
+                RuntimeEnvironmentVariableState state = XREnvironment.GetState(name);
+                string status = state.HasRuntimeOverride
+                    ? $"{name}: runtime override"
+                    : state.LaunchValue is not null
+                        ? $"{name}: explicit launch value"
+                        : state.PreferenceValue is not null
+                            ? $"{name}: editor preference"
+                            : $"{name}: unset";
                 ImGui.TextDisabled(status);
                 if (ImGui.IsItemHovered())
                 {
-                    if (readError is not null)
-                        ImGui.SetTooltip(readError);
-                    else if (machineValue is not null)
-                        ImGui.SetTooltip(machineValue);
-                    else
-                        ImGui.SetTooltip("No machine-scope environment variable is set.");
+                    RuntimeEnvironmentVariableDescriptor? descriptor =
+                        XREngineEnvironmentVariableCatalog.Find(name);
+                    string defaultBehavior = descriptor?.DefaultBehavior ??
+                        "Unset uses the subsystem default.";
+                    ImGui.SetTooltip(
+                        $"Launch: {state.LaunchValue ?? "<unset>"}\n" +
+                        $"Effective: {state.EffectiveValue ?? "<unset>"}\n" +
+                        defaultBehavior);
                 }
 
                 string? valueToSet = null;
@@ -4453,42 +4451,59 @@ public static partial class EditorImGuiUI
                 ImGui.SameLine();
                 using (new ImGuiDisabledScope(!canSet))
                 {
-                    if (ImGui.SmallButton("Set Machine") && canSet && valueToSet is not null)
+                    if (ImGui.SmallButton("Use Current At Runtime") && canSet && valueToSet is not null)
                     {
                         try
                         {
-                            Environment.SetEnvironmentVariable(name, valueToSet, EnvironmentVariableTarget.Machine);
-                            EnvironmentVariablePreferenceStatus[name] = $"Set machine {name}={valueToSet}.";
+                            XREnvironment.SetRuntimeOverride(name, valueToSet);
+                            ReapplyEditorRuntimeEnvironment();
+                            RuntimeEnvironmentApplyMode applyMode =
+                                XREngineEnvironmentVariableCatalog.Find(name)?.ApplyMode ??
+                                RuntimeEnvironmentApplyMode.NextOperation;
+                            MarkRuntimeEnvironmentRestartPending(applyMode);
+                            EnvironmentVariablePreferenceStatus[name] =
+                                $"Set temporary runtime override {name}={valueToSet}.";
                         }
                         catch (Exception ex)
                         {
-                            EnvironmentVariablePreferenceStatus[name] = $"Failed to set machine {name}: {ex.Message}";
+                            EnvironmentVariablePreferenceStatus[name] =
+                                $"Failed to set runtime override {name}: {ex.Message}";
                         }
                     }
                     if (ImGui.IsItemHovered())
                     {
                         string tooltip = canSet && valueToSet is not null
-                            ? $"Set machine {name} to {valueToSet}."
+                            ? $"Override {name} with {valueToSet} for this process only."
                             : "Current editor value cannot be written as an environment variable.";
                         ImGui.SetTooltip(tooltip);
                     }
                 }
 
-                ImGui.SameLine();
-                if (ImGui.SmallButton("Clear Machine"))
+                if (state.HasRuntimeOverride)
                 {
-                    try
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton("Inherit"))
                     {
-                        Environment.SetEnvironmentVariable(name, null, EnvironmentVariableTarget.Machine);
-                        EnvironmentVariablePreferenceStatus[name] = $"Cleared machine {name}.";
+                        try
+                        {
+                            XREnvironment.ClearRuntimeOverride(name);
+                            ReapplyEditorRuntimeEnvironment();
+                            RuntimeEnvironmentApplyMode applyMode =
+                                XREngineEnvironmentVariableCatalog.Find(name)?.ApplyMode ??
+                                RuntimeEnvironmentApplyMode.NextOperation;
+                            MarkRuntimeEnvironmentRestartPending(applyMode);
+                            EnvironmentVariablePreferenceStatus[name] =
+                                $"Cleared runtime override for {name}.";
+                        }
+                        catch (Exception ex)
+                        {
+                            EnvironmentVariablePreferenceStatus[name] =
+                                $"Failed to clear runtime override {name}: {ex.Message}";
+                        }
                     }
-                    catch (Exception ex)
-                    {
-                        EnvironmentVariablePreferenceStatus[name] = $"Failed to clear machine {name}: {ex.Message}";
-                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip($"Restore the explicit launch value or editor preference for {name}.");
                 }
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip($"Clear the machine-scope {name} environment variable.");
 
                 if (EnvironmentVariablePreferenceStatus.TryGetValue(name, out string? lastStatus))
                     ImGui.TextWrapped(lastStatus);

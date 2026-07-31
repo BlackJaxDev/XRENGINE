@@ -29,11 +29,9 @@ namespace XREngine.Rendering.Commands
 {
     public partial class GPUScene
     {
-        private static readonly bool ForceGpuBvhRebuildEveryFrame =
-            string.Equals(
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ForceGpuBvhRebuildEveryFrame),
-                "1",
-                StringComparison.OrdinalIgnoreCase);
+        private static bool ForceGpuBvhRebuildEveryFrame
+            => XREnvironment.IsEnabled(
+                XREngineEnvironmentVariables.ForceGpuBvhRebuildEveryFrame);
 
         // -------------------------------------------------------------------------
         // BVH Configuration: Settings for GPU-accelerated hierarchical culling.

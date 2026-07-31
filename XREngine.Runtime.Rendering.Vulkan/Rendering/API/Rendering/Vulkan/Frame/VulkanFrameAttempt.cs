@@ -30,6 +30,7 @@ internal ref struct VulkanFrameAttempt
     public Result AcquireResult;
     public Semaphore AcquireSemaphore;
     public Semaphore PresentSemaphore;
+    public VulkanFrameTargetLease FrameTargetLease;
     public ulong AcquireTimelineValue;
     public ulong GraphicsSignalValue;
 

@@ -44,6 +44,7 @@ public sealed class VulkanCommandRecordingDependencyTests
             MeshBindingIdentity = recorded.MeshBindingIdentity + 1UL,
             IndexBufferBindingIdentity = recorded.IndexBufferBindingIdentity + 1UL,
             VertexBufferBindingIdentity = recorded.VertexBufferBindingIdentity + 1UL,
+            DescriptorPublicationGeneration = recorded.DescriptorPublicationGeneration + 1UL,
         };
 
         recorded.Compare(changedSecondaryBindings).RequiresRecording.ShouldBeTrue();
@@ -57,6 +58,20 @@ public sealed class VulkanCommandRecordingDependencyTests
             secondaryDrawBindingsOwnedElsewhere: false);
         inlineBindingChange.RequiresRecording.ShouldBeTrue();
         inlineBindingChange.Field.ShouldBe(CommandRecordingDependencyField.PipelineLayoutGeneration);
+
+        CommandRecordingDependencySignature changedDescriptorPublication =
+            recorded with
+            {
+                DescriptorPublicationGeneration = recorded.DescriptorPublicationGeneration + 1UL,
+            };
+        recorded.CompareCommandChainPrimary(
+                changedDescriptorPublication,
+                secondaryDrawBindingsOwnedElsewhere: true)
+            .ShouldBe(CommandRecordingDependencyMismatch.None);
+        recorded.CompareCommandChainPrimary(
+                changedDescriptorPublication,
+                secondaryDrawBindingsOwnedElsewhere: false)
+            .Field.ShouldBe(CommandRecordingDependencyField.DescriptorPublicationGeneration);
 
         recorded.CompareCommandChainPrimary(
             recorded with
@@ -112,14 +127,16 @@ public sealed class VulkanCommandRecordingDependencyTests
                 secondaryDrawBindingsOwnedElsewhere: false)
             .ShouldBe(CommandRecordingDependencyMismatch.None);
 
-        CommandRecordingDependencyMismatch resourcePlanChange = recorded.CompareCommandChainPrimary(
-            recorded with
-            {
-                ResourcePlanGeneration = recorded.ResourcePlanGeneration + 1UL,
-            },
-            secondaryDrawBindingsOwnedElsewhere: false);
-        resourcePlanChange.RequiresRecording.ShouldBeTrue();
-        resourcePlanChange.Field.ShouldBe(CommandRecordingDependencyField.ResourcePlanGeneration);
+        CommandRecordingDependencySignature changedResourcePlan = recorded with
+        {
+            ResourcePlanGeneration = recorded.ResourcePlanGeneration + 1UL,
+        };
+        recorded.Compare(changedResourcePlan)
+            .Field.ShouldBe(CommandRecordingDependencyField.ResourcePlanGeneration);
+        recorded.CompareCommandChainPrimary(
+                changedResourcePlan,
+                secondaryDrawBindingsOwnedElsewhere: false)
+            .ShouldBe(CommandRecordingDependencyMismatch.None);
     }
 
     [Test]
@@ -287,7 +304,11 @@ public sealed class VulkanCommandRecordingDependencyTests
             "                        currentDependencySignature,\n" +
             "                        allCommandChainGroupsUseSecondaryBuffers)");
         fastReuse.ShouldContain(
+            "descriptorResourcesCapturedByFrameSignature:\n" +
+            "                                allCommandChainGroupsUseSecondaryBuffers");
+        fastReuse.ShouldContain(
             "variant.CommandChainPrimarySkeletonSignature != currentPrimarySkeletonSignature");
+        fastReuse.ShouldNotContain("variant.PlannerRevision != plannerRevision");
     }
 
     [Test]

@@ -47,7 +47,7 @@
 			"args": [
 				"/d",
 				"/c",
-				"set XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1 && set XRE_WINDOW_TITLE=XRE Editor (Renderer Development) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\" --renderer-development"
+				"set XRE_WINDOW_TITLE=XRE Editor (Renderer Development) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\" --renderer-development"
 			],
 			"dependsOn": "Build-Editor",
 			"presentation": {
@@ -197,7 +197,7 @@
 			"args": [
 				"/d",
 				"/c",
-				"set XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1 && set XRE_WINDOW_TITLE=XRE Editor (Separate) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+				"set XRE_WINDOW_TITLE=XRE Editor (Separate) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
 			],
 			"dependsOn": "Build-Editor",
 			"presentation": {
@@ -212,7 +212,7 @@
 			"args": [
 				"/d",
 				"/c",
-				"set XRE_WORLD_MODE=UnitTesting && set XRE_UNIT_TEST_WORLD_KIND=Default && set XRE_UNIT_TEST_VR_MODE=MonadoOpenXR && set XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS=1 && set XRE_OCCLUSION_CULLING_MODE=Disabled && set XRE_WINDOW_TITLE=XRE Editor (OpenXR Monado, Occlusion=Disabled) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+				"set XRE_WORLD_MODE=UnitTesting && set XRE_UNIT_TEST_WORLD_KIND=Default && set XRE_UNIT_TEST_VR_MODE=MonadoOpenXR && set XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS=1 && set XRE_WINDOW_TITLE=XRE Editor (OpenXR Monado) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
 			],
 			"dependsOn": "Build-Editor",
 			"presentation": {
@@ -227,7 +227,7 @@
 			"args": [
 				"/d",
 				"/c",
-				"set XRE_WORLD_MODE=UnitTesting && set XRE_UNIT_TEST_WORLD_KIND=Default && set XRE_UNIT_TEST_VR_MODE=OpenXR && set XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS=1 && set XRE_OCCLUSION_CULLING_MODE=Disabled && set XRE_WINDOW_TITLE=XRE Editor (OpenXR SteamVR, Occlusion=Disabled) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+				"set XRE_WORLD_MODE=UnitTesting && set XRE_UNIT_TEST_WORLD_KIND=Default && set XRE_UNIT_TEST_VR_MODE=OpenXR && set XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS=1 && set XRE_WINDOW_TITLE=XRE Editor (OpenXR SteamVR) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
 			],
 			"dependsOn": "Build-Editor",
 			"presentation": {

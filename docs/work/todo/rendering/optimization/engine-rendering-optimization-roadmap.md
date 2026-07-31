@@ -71,6 +71,7 @@ Detailed implementation and longer-horizon design also live in:
 - [Collect-Visible Render Wait Decoupling TODO](../../COMPLETED/collect-visible-render-wait-decoupling-todo.md)
 - [Superseded Rendering Clean Performance Baseline Profile Contract TODO](rendering-clean-performance-baseline-profile-contract-todo.md)
 - [Rendering Profiler And Benchmarking TODO](../../COMPLETED/rendering-profiler-and-benchmarking-todo.md)
+- [Vulkan Headless MCP Component Profiling TODO](vulkan-headless-mcp-component-profiling-todo.md)
 
 Avatar asset transformation is tracked separately under
 [Avatar Optimization Roadmap](../../avatar/avatar-optimization-roadmap.md).

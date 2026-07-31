@@ -118,6 +118,26 @@ public unsafe partial class VulkanRenderer
     }
 
     /// <summary>
+    /// Returns the immutable context installed by the active pipeline resource scope.
+    /// Mesh command consumption calls this once per draw, so the fallback performs the
+    /// full context capture only when no matching pipeline scope is active.
+    /// </summary>
+    internal FrameOpContext CaptureFrameOpContextForCurrentPipelineScope()
+    {
+        XRRenderPipelineInstance? pipeline = ResolveFrameOpContextPipeline(
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline,
+            RuntimeEngine.Rendering.State.CurrentRenderGraphPassPipeline,
+            RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex);
+        if (ActiveLastActiveFrameOpContext is { } active &&
+            ReferenceEquals(active.PipelineInstance, pipeline))
+        {
+            return active;
+        }
+
+        return CaptureFrameOpContext();
+    }
+
+    /// <summary>
     /// Resolves the pipeline whose render-graph metadata owns the active pass.
     /// A nested pipeline may be active while a parent pass remains on the thread-local stack.
     /// </summary>
@@ -648,7 +668,11 @@ public unsafe partial class VulkanRenderer
             VulkanFrameOpPlannerStateKey requestedKey = BuildFrameOpPlannerStateKey(context);
             bool canReusePreviousState = ResourcePlannerRuntimeStateMatchesPlannerStateKeyIgnoringRegistry(
                 _previousState,
-                requestedKey);
+                requestedKey) &&
+                IsFrameOpPlannerAllocatorExclusivelyOwnedByKey(
+                    switchingState,
+                    requestedKey,
+                    _previousState.ResourceAllocator);
             bool foundCachedState = TryFindBestCompatibleFrameOpPlannerState(
                 context,
                 switchingState,
@@ -721,11 +745,17 @@ public unsafe partial class VulkanRenderer
             {
                 currentState = _renderer.CaptureResourcePlannerRuntimeState();
                 currentState.LastActiveFrameOpContext = _context;
-                _renderer.ActiveFrameOpResourcePlannerSwitchingState.States[_key] =
-                    currentState;
-                _renderer.MarkFrameOpResourcePlannerStateUsed(
-                    _renderer.ActiveFrameOpResourcePlannerSwitchingState,
-                    _key);
+                FrameOpResourcePlannerSwitchingState switchingState =
+                    _renderer.ActiveFrameOpResourcePlannerSwitchingState;
+                canPublish = IsFrameOpPlannerAllocatorExclusivelyOwnedByKey(
+                    switchingState,
+                    _key,
+                    currentState.ResourceAllocator);
+                if (canPublish)
+                {
+                    switchingState.States[_key] = currentState;
+                    _renderer.MarkFrameOpResourcePlannerStateUsed(switchingState, _key);
+                }
             }
 
             ResourcePlannerRuntimeState restoreState =
@@ -807,8 +837,14 @@ public unsafe partial class VulkanRenderer
 
         foreach (KeyValuePair<VulkanFrameOpPlannerStateKey, ResourcePlannerRuntimeState> pair in switchingState.States)
         {
-            if (!FrameOpContextMatchesPlannerStateKey(context, pair.Key))
+            if (!FrameOpContextMatchesPlannerStateKey(context, pair.Key) ||
+                !IsFrameOpPlannerAllocatorExclusivelyOwnedByKey(
+                    switchingState,
+                    pair.Key,
+                    pair.Value.ResourceAllocator))
+            {
                 continue;
+            }
 
             int score = ScoreCompatibleFrameOpPlannerState(pair.Key, pair.Value);
             if (!found || score > bestScore)

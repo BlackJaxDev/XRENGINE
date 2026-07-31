@@ -352,10 +352,9 @@ namespace XREngine.Rendering.OpenGL
             private static readonly ConcurrentDictionary<ulong, byte> DriverParallelSourceTimeouts = new();
             private static readonly ConcurrentDictionary<string, byte> AsyncBinaryUploadTimeoutCacheKeys = new(StringComparer.Ordinal);
             private const string SharedContextAbandonedLinkMarker = "abandoned to keep the async link queue moving";
-            private static readonly bool AllowSynchronousSourceRetryAfterAsyncTimeout = string.Equals(
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.AllowSyncSourceRetryAfterAsyncTimeout),
-                "1",
-                StringComparison.Ordinal);
+            private static bool AllowSynchronousSourceRetryAfterAsyncTimeout
+                => XREnvironment.IsEnabled(
+                    XREngineEnvironmentVariables.AllowSyncSourceRetryAfterAsyncTimeout);
             private static bool IsAsyncBinaryUploadTimedOutCacheKey(string? cacheKey)
                 => !string.IsNullOrWhiteSpace(cacheKey) && AsyncBinaryUploadTimeoutCacheKeys.ContainsKey(cacheKey);
 

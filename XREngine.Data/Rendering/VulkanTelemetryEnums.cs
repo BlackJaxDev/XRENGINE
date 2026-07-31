@@ -33,6 +33,15 @@ public enum EVulkanCpuStage
     ContextPassTransitions,
     BarrierPlanningEmission,
     OpDispatch,
+    MeshDrawPreparation,
+    MeshDrawResourcePreparation,
+    MeshDrawBindingPreparation,
+    MeshDrawMaterialBindings,
+    MeshDrawBindingSnapshotCopy,
+    MeshDrawEnqueue,
+    FrameDataDescriptorValidation,
+    FrameDataEngineUniformUpload,
+    FrameDataAutoUniformUpload,
     Count,
 }
 

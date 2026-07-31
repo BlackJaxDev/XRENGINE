@@ -19,7 +19,6 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed partial class VulkanTextureUploadService
 {
-    public const string EnableSynchronizedImportedTextureUploadsEnvVar = XREngineEnvironmentVariables.VulkanTextureUploadService;
     private const int MaxPreparedUploadsPerDrain = 1;
     private const double AllocationPressureRetryDelayMilliseconds = 500.0;
 
@@ -125,12 +124,6 @@ internal sealed partial class VulkanTextureUploadService
         builder.Append("VulkanTextureUploadTransferWaitMs: ").Append(Volatile.Read(ref s_lastTransferWaitMilliseconds).ToString("F3")).AppendLine();
         builder.Append("VulkanTextureUploadPublicationMs: ").Append(Volatile.Read(ref s_lastPublicationMilliseconds).ToString("F3")).AppendLine();
     }
-
-    public static bool IsExplicitlyRequested()
-        => string.Equals(
-            Environment.GetEnvironmentVariable(EnableSynchronizedImportedTextureUploadsEnvVar),
-            "1",
-            StringComparison.OrdinalIgnoreCase);
 
     private sealed class VulkanImportedTextureUploadJob
     {

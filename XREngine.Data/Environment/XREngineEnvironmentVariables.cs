@@ -95,6 +95,8 @@ public static class XREngineEnvironmentVariables
     public const string ShowGlTestMs = "XR_SHOW_GL_TEST_MS";
     public const string DisableImGuiFileDialogs = "XR_DISABLE_IMGUI_FILE_DIALOGS";
     public const string CookCommonAssetsArchive = "XRE_COOK_COMMONASSETS_ARCHIVE";
+    public const string PhysicsDebugPreset = "XRE_PHYSICS_DEBUG_PRESET";
+    public const string PhysicsChainBenchmarkRunRoot = "XRE_PHYSICS_CHAIN_BENCHMARK_RUN_ROOT";
     public const string OpenXrSmokeFrames = "XRE_SMOKE_FRAMES";
     public const string OpenXrSmokeWarmupFrames = "XRE_SMOKE_WARMUP_FRAMES";
     public const string OpenXrSmokeTimeoutSeconds = "XRE_SMOKE_TIMEOUT_SECONDS";
@@ -232,7 +234,6 @@ public static class XREngineEnvironmentVariables
     public const string VulkanTextureUploadTrace = "XRE_VULKAN_TEXTURE_UPLOAD_TRACE";
     public const string VulkanProgressiveTextureUpload = "XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD";
     public const string VulkanImportedTexturePreviewFreeze = "XRE_VULKAN_IMPORTED_TEXTURE_PREVIEW_FREEZE";
-    public const string VulkanTextureUploadService = "XRE_VULKAN_TEXTURE_UPLOAD_SERVICE";
     public const string VulkanPipelinePrewarmCapture = "XRE_VK_PIPELINE_PREWARM_CAPTURE";
     public const string VulkanPipelineCompileWorkers = "XRE_VK_PIPELINE_COMPILE_WORKERS";
     public const string VulkanFrameOpSignatureDiffLimit = "XRE_VULKAN_FRAMEOP_SIGNATURE_DIFF_LIMIT";
@@ -248,9 +249,9 @@ public static class XREngineEnvironmentVariables
     public const string VulkanCommandChainValidate = "XRE_VULKAN_COMMAND_CHAIN_VALIDATE";
     public const string VulkanCommandChainTrace = "XRE_VULKAN_COMMAND_CHAIN_TRACE";
     public const string VulkanDisableParallelChainRecording = "XRE_VULKAN_DISABLE_PARALLEL_CHAIN_RECORDING";
-    public const string VulkanParallelPacketBuild = "XRE_VULKAN_PARALLEL_PACKET_BUILD";
     public const string VulkanCommandChainMultiQueue = "XRE_VULKAN_COMMAND_CHAIN_MULTI_QUEUE";
     public const string VulkanCommandChainStabilityGuard = "XRE_VULKAN_COMMAND_CHAIN_STABILITY_GUARD";
+    public const string VulkanCommandChainsAllowIndependentDesktop = "XRE_VULKAN_COMMAND_CHAINS_ALLOW_INDEPENDENT_DESKTOP";
     public const string VulkanCommandChainMeshSecondaryNoop = "XRE_VULKAN_COMMAND_CHAIN_MESH_SECONDARY_NOOP";
     public const string VulkanPrimaryCommandBufferReuse = "XRE_VULKAN_PRIMARY_COMMAND_BUFFER_REUSE";
     /// <summary>
@@ -293,6 +294,11 @@ public static class XREngineEnvironmentVariables
     public const string VulkanPhase524bTsrResolutionScale = "XRE_VULKAN_PHASE524B_TSR_RESOLUTION_SCALE";
     public const string VulkanPhase525Validation = "XRE_VULKAN_PHASE525_VALIDATION";
     public const string VulkanDirectionalCascades = "XRE_VULKAN_DIRECTIONAL_CASCADES";
+    public const string VulkanExternalValidationAllowlist = "XRE_VULKAN_EXTERNAL_VALIDATION_ALLOWLIST";
+    public const string VulkanPromoteOpenXrGpuFamilyCulling = "XRE_VK_PROMOTE_OPENXR_GPU_FAMILY_CULLING";
+    public const string VulkanValidateOpenXrGpuFamilyCulling = "XRE_VK_VALIDATE_OPENXR_GPU_FAMILY_CULLING";
+    public const string VulkanPromoteMeshletMultiviewOcclusion = "XRE_VK_PROMOTE_MESHLET_MULTIVIEW_OCCLUSION";
+    public const string VulkanValidateMeshletMultiviewOcclusion = "XRE_VK_VALIDATE_MESHLET_MULTIVIEW_OCCLUSION";
     /// <summary>Forces scene-BVH traversal for explicit diagnostics/capture runs.</summary>
     public const string ForceGpuBvhCulling = "XRE_FORCE_GPU_BVH_CULLING";
     /// <summary>Forces scene-BVH reconstruction each frame for producer/consumer captures.</summary>
@@ -308,10 +314,8 @@ public static class XREngineEnvironmentVariables
     public const string BucketLoopSkipEmpty = "XRE_BUCKET_LOOP_SKIP_EMPTY";
     public const string ForceSingleBucket = "XRE_FORCE_SINGLE_BUCKET";
 
-    public const string EnableSharedContextLinkQueue = "XRE_ENABLE_SHARED_CONTEXT_LINK_QUEUE";
     public const string DisableSharedContextLinkQueue = "XRE_DISABLE_SHARED_CONTEXT_LINK_QUEUE";
-    public const string EnableOpenGlCompileLinkWorkerPool = "XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL";
-    public const string EnableLargeOpenGlSourceLinks = "XRE_ENABLE_LARGE_OPENGL_SOURCE_LINKS";
+    public const string DisableOpenGlCompileLinkWorkerPool = "XRE_DISABLE_OPENGL_COMPILE_LINK_WORKER_POOL";
     public const string TraceShaderCompletionPollGlCalls = "XRE_TRACE_SHADER_COMPLETION_POLL_GLCALLS";
     public const string TraceShaderLinkQueueGates = "XRE_TRACE_SHADER_LINK_QUEUE_GATES";
     public const string SharedContextDisableCompletionPolling = "XRE_SHARED_CONTEXT_DISABLE_COMPLETION_POLLING";
@@ -322,7 +326,7 @@ public static class XREngineEnvironmentVariables
     public const string SyncSrcHazardDisableParallel = "XRE_SYNCSRC_HAZARD_DISABLE_PARALLEL";
     public const string DumpSlowShaderSource = "XRE_DUMP_SLOW_SHADER_SOURCE";
     public const string AllowRenderThreadDriverParallelSource = "XRE_ALLOW_RENDER_THREAD_DRIVER_PARALLEL_SOURCE";
-    public const string EnableSharedLinkedProgramReuse = "XRE_ENABLE_SHARED_LINKED_PROGRAM_REUSE";
+    public const string DisableSharedLinkedProgramReuse = "XRE_DISABLE_SHARED_LINKED_PROGRAM_REUSE";
     public const string ProgramBinaryRetrievableHint = "XRE_PROGRAM_BINARY_RETRIEVABLE_HINT";
     public const string UploadQueueHardBudgetMs = "XRE_UPLOAD_QUEUE_HARD_BUDGET_MS";
     public const string UploadQueueChunkLogging = "XRE_UPLOAD_QUEUE_CHUNK_LOGGING";

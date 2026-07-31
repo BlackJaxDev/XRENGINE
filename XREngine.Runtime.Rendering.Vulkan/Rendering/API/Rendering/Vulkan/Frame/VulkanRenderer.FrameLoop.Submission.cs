@@ -156,7 +156,7 @@ namespace XREngine.Rendering.Vulkan
                         ref submitInfo,
                         default,
                         diagnosticContext,
-                        caller: nameof(WindowRenderCallback));
+                        caller: nameof(RenderFrameCallback));
                 }
             }
 

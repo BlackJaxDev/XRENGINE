@@ -118,9 +118,16 @@ internal unsafe partial class VkRenderProgram
         ComputeDispatchSnapshot? snapshot,
         string name,
         out ProgramUniformValue value)
-        => snapshot is not null
-            ? TryGetUniformValueNoLock(snapshot.Uniforms, name, out value)
-            : TryGetUniformValue(name, out value);
+    {
+        if (snapshot is null)
+            return TryGetUniformValue(name, out value);
+
+        if (TryGetUniformValueNoLock(snapshot.Uniforms, name, out value))
+            return true;
+
+        return snapshot.MaterialUniformBindings is { } materialBindings &&
+               TryGetUniformValueNoLock(materialBindings.Uniforms, name, out value);
+    }
 
     private static bool TryGetUniformValueNoLock(
         Dictionary<string, ProgramUniformValue> uniforms,
@@ -157,6 +164,46 @@ internal unsafe partial class VkRenderProgram
         ArgumentNullException.ThrowIfNull(snapshot);
         lock (_bindingLock)
             _appliedBindingSnapshot = snapshot;
+    }
+
+    /// <summary>
+    /// Replays one immutable binding layer into the active private capture.
+    /// This is used for frame/view globals such as forward lighting, which are
+    /// assembled once and shared by many material programs.
+    /// </summary>
+    internal void MergeBindingSnapshot(ComputeDispatchSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (!TryGetActiveBindingCaptureState(out BindingCaptureState capture))
+            throw new InvalidOperationException(
+                "Immutable binding layers may only be merged into an active private capture.");
+
+        capture.Uniforms.EnsureCapacity(capture.Uniforms.Count + snapshot.Uniforms.Count);
+        foreach (KeyValuePair<string, ProgramUniformValue> pair in snapshot.Uniforms)
+            capture.Uniforms[pair.Key] = pair.Value;
+
+        capture.SamplersByUnit.EnsureCapacity(capture.SamplersByUnit.Count + snapshot.Samplers.Count);
+        foreach (KeyValuePair<uint, XRTexture> pair in snapshot.Samplers)
+            capture.SamplersByUnit[pair.Key] = pair.Value;
+
+        capture.SamplerNamesByUnit.EnsureCapacity(
+            capture.SamplerNamesByUnit.Count + snapshot.SamplerNamesByUnit.Count);
+        foreach (KeyValuePair<uint, string> pair in snapshot.SamplerNamesByUnit)
+            capture.SamplerNamesByUnit[pair.Key] = pair.Value;
+
+        capture.SamplersByName.EnsureCapacity(
+            capture.SamplersByName.Count + snapshot.SamplersByName.Count);
+        foreach (KeyValuePair<string, XRTexture> pair in snapshot.SamplersByName)
+            capture.SamplersByName[pair.Key] = pair.Value;
+
+        capture.ImagesByUnit.EnsureCapacity(capture.ImagesByUnit.Count + snapshot.Images.Count);
+        foreach (KeyValuePair<uint, ProgramImageBinding> pair in snapshot.Images)
+            capture.ImagesByUnit[pair.Key] = pair.Value;
+
+        capture.BuffersByBinding.EnsureCapacity(
+            capture.BuffersByBinding.Count + snapshot.Buffers.Count);
+        foreach (KeyValuePair<uint, VulkanComputeBufferBinding> pair in snapshot.Buffers)
+            capture.BuffersByBinding[pair.Key] = pair.Value.Data;
     }
 
     /// <summary>
@@ -199,22 +246,105 @@ internal unsafe partial class VkRenderProgram
     internal ComputeDispatchSnapshot CaptureComputeSnapshot()
     {
         if (TryGetActiveBindingCaptureState(out BindingCaptureState capture))
-        {
-            return CaptureComputeSnapshot(
-                capture.Uniforms,
-                capture.SamplersByUnit,
-                capture.SamplerNamesByUnit,
-                capture.SamplersByName,
-                capture.ImagesByUnit,
-                capture.BuffersByBinding,
-                capture.RentFrameSnapshot());
-        }
+            return CaptureComputeSnapshot(capture);
 
         if (Monitor.IsEntered(_bindingLock))
             return CaptureComputeSnapshotNoLock();
 
         lock (_bindingLock)
             return CaptureComputeSnapshotNoLock();
+    }
+
+    /// <summary>
+    /// Looks up a material binding snapshot captured earlier in the current
+    /// render frame and exact pipeline binding scope.
+    /// </summary>
+    internal bool TryGetFrameMaterialBindingSnapshot(
+        in MaterialBindingSnapshotCacheKey key,
+        out ComputeDispatchSnapshot? snapshot)
+    {
+        ulong frameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
+        if (frameId == 0)
+        {
+            snapshot = null;
+            return false;
+        }
+
+        PrepareFrameMaterialBindingSnapshotCache(frameId);
+        return _frameMaterialBindingSnapshots.TryGetValue(key, out snapshot);
+    }
+
+    /// <summary>
+    /// Publishes a completed immutable material snapshot for the remainder of
+    /// the current frame. A null entry is meaningful and avoids repeating an
+    /// expensive binding callback that produced no descriptor resources.
+    /// </summary>
+    internal void CacheFrameMaterialBindingSnapshot(
+        in MaterialBindingSnapshotCacheKey key,
+        ComputeDispatchSnapshot? snapshot)
+    {
+        ulong frameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
+        if (frameId == 0)
+            return;
+
+        PrepareFrameMaterialBindingSnapshotCache(frameId);
+        snapshot?.EnableMaterialBindingFastPath();
+        _frameMaterialBindingSnapshots[key] = snapshot;
+    }
+
+    /// <summary>
+    /// Retrieves material-owned numeric bindings whose key includes every
+    /// material and linked-program revision that can change their content.
+    /// The cache deliberately excludes resources and render-scope values.
+    /// </summary>
+    internal bool TryGetMaterialUniformBindingPayload(
+        in MaterialUniformBindingCacheKey key,
+        out MaterialUniformBindingPayload? payload)
+        => _materialUniformBindingPayloads.TryGetValue(key, out payload);
+
+    internal void CacheMaterialUniformBindingPayload(
+        in MaterialUniformBindingCacheKey key,
+        MaterialUniformBindingPayload payload)
+    {
+        const int maximumCachedMaterialPayloads = 4096;
+        if (_materialUniformBindingPayloads.Count >= maximumCachedMaterialPayloads)
+            _materialUniformBindingPayloads.Clear();
+
+        _materialUniformBindingPayloads[key] = payload;
+    }
+
+    /// <summary>
+    /// Captures only numeric material values from the active private binding
+    /// workspace. This bounded copy happens on a material revision, never as a
+    /// consequence of advancing the render frame.
+    /// </summary>
+    internal MaterialUniformBindingPayload CaptureMaterialUniformBindingPayload()
+    {
+        if (TryGetActiveBindingCaptureState(out BindingCaptureState capture))
+            return new MaterialUniformBindingPayload(
+                new Dictionary<string, ProgramUniformValue>(capture.Uniforms, StringComparer.Ordinal));
+
+        if (Monitor.IsEntered(_bindingLock))
+            return CaptureMaterialUniformBindingPayloadNoLock();
+
+        lock (_bindingLock)
+            return CaptureMaterialUniformBindingPayloadNoLock();
+    }
+
+    private MaterialUniformBindingPayload CaptureMaterialUniformBindingPayloadNoLock()
+    {
+        DetachAppliedBindingSnapshotNoLock();
+        return new MaterialUniformBindingPayload(
+            new Dictionary<string, ProgramUniformValue>(_uniformValues, StringComparer.Ordinal));
+    }
+
+    private void PrepareFrameMaterialBindingSnapshotCache(ulong frameId)
+    {
+        if (_frameMaterialBindingSnapshotCacheFrame == frameId)
+            return;
+
+        _frameMaterialBindingSnapshotCacheFrame = frameId;
+        _frameMaterialBindingSnapshots.Clear();
     }
 
     private ComputeDispatchSnapshot CaptureComputeSnapshotNoLock()
@@ -228,6 +358,21 @@ internal unsafe partial class VkRenderProgram
             _imagesByUnit,
             _buffersByBinding,
             RentFrameBindingSnapshot());
+    }
+
+    private ComputeDispatchSnapshot CaptureComputeSnapshot(BindingCaptureState capture)
+    {
+        ComputeDispatchSnapshot snapshot =
+            capture.RentFrameSnapshot() ?? new ComputeDispatchSnapshot();
+        snapshot.ExchangeCapturedBindings(
+            ref capture.Uniforms,
+            ref capture.SamplersByUnit,
+            ref capture.SamplerNamesByUnit,
+            ref capture.SamplersByName,
+            ref capture.ImagesByUnit);
+        CaptureComputeBufferBindings(capture.BuffersByBinding, snapshot);
+        snapshot.PublishBindingLayoutSignatures();
+        return snapshot;
     }
 
     private ComputeDispatchSnapshot CaptureComputeSnapshot(
@@ -246,6 +391,16 @@ internal unsafe partial class VkRenderProgram
             samplerNamesByUnit,
             samplersByName,
             imagesByUnit);
+        CaptureComputeBufferBindings(buffersByBinding, snapshot);
+        snapshot.PublishBindingLayoutSignatures();
+
+        return snapshot;
+    }
+
+    private void CaptureComputeBufferBindings(
+        Dictionary<uint, XRDataBuffer> buffersByBinding,
+        ComputeDispatchSnapshot snapshot)
+    {
         snapshot.Buffers.EnsureCapacity(buffersByBinding.Count);
         bool allowSynchronousUpload = Renderer.AllowSynchronousResourceUploads;
         foreach (KeyValuePair<uint, XRDataBuffer> pair in buffersByBinding)
@@ -261,10 +416,6 @@ internal unsafe partial class VkRenderProgram
             if (!string.IsNullOrWhiteSpace(buffer.AttributeName))
                 snapshot.BuffersByName.TryAdd(buffer.AttributeName, bufferBinding);
         }
-
-        snapshot.PublishBindingLayoutSignatures();
-
-        return snapshot;
     }
 
     /// <summary>

@@ -141,6 +141,7 @@ internal unsafe partial class VkMeshRenderer
 
 			DestroyAutoUniformBufferArray(existing);
 			_autoUniformBuffers.Remove(name);
+			_publishedAutoUniformMaterialWritePlans.Remove(name);
 		}
 
 		if (useFrameArena)
@@ -351,7 +352,7 @@ internal unsafe partial class VkMeshRenderer
 			if (buffer.Buffer.Handle == 0)
 				continue;
 
-			TryWriteAutoUniformBlock(block, buffer, material, draw);
+			TryWriteAutoUniformBlock(block, buffer, idx, buffers.Length, material, draw);
 		}
 	}
 
@@ -359,13 +360,60 @@ internal unsafe partial class VkMeshRenderer
 	/// Clears an auto uniform buffer and writes each member from engine state,
 	/// program overrides, and material parameters.
 	/// </summary>
-	private bool TryWriteAutoUniformBlock(AutoUniformBlockInfo block, AutoUniformBuffer buffer, XRMaterial material, in PendingMeshDraw draw)
+	private bool TryWriteAutoUniformBlock(
+		AutoUniformBlockInfo block,
+		AutoUniformBuffer buffer,
+		int bufferIndex,
+		int bufferCount,
+		XRMaterial material,
+		in PendingMeshDraw draw)
 	{
 		if (buffer.MappedPtr == null)
 			return false;
 
 		Span<byte> data = new(buffer.MappedPtr, (int)buffer.Size);
+		if (draw.ProgramBindingSnapshot is { AllowsMaterialBindingFastPath: true } bindingSnapshot &&
+			TryGetAutoUniformMaterialWritePlan(block, buffer.Size, material, bindingSnapshot, out AutoUniformMaterialWritePlan? plan) &&
+			plan is not null)
+		{
+			int staticBytesCopied = 0;
+			if (!_publishedAutoUniformMaterialWritePlans.TryGetValue(
+					block.InstanceName,
+					out AutoUniformMaterialWritePlan?[]? publishedPlans) ||
+				publishedPlans.Length != bufferCount)
+			{
+				publishedPlans = new AutoUniformMaterialWritePlan?[bufferCount];
+				_publishedAutoUniformMaterialWritePlans[block.InstanceName] = publishedPlans;
+			}
+
+			if (!ReferenceEquals(publishedPlans[bufferIndex], plan))
+			{
+				plan.StaticBytes.AsSpan().CopyTo(data);
+				publishedPlans[bufferIndex] = plan;
+				staticBytesCopied = plan.StaticBytes.Length;
+			}
+
+			AutoUniformMember[] dynamicMembers = plan.DynamicMembers;
+			int dynamicBytesCleared = 0;
+			for (int memberIndex = 0; memberIndex < dynamicMembers.Length; memberIndex++)
+			{
+				AutoUniformMember member = dynamicMembers[memberIndex];
+				data.Slice((int)member.Offset, (int)member.Size).Clear();
+				dynamicBytesCleared += (int)member.Size;
+				TryWriteAutoUniformMember(data, member, material, draw);
+			}
+			RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAutoUniformFastWrite(
+				staticBytesCopied,
+				dynamicBytesCleared,
+				dynamicMembers.Length);
+
+			return true;
+		}
+
 		data.Clear();
+		RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAutoUniformLegacyWrite(
+			(int)buffer.Size,
+			block.Members.Count);
 
 		for (int memberIndex = 0; memberIndex < block.Members.Count; memberIndex++)
 		{
@@ -377,6 +425,111 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		return true;
+	}
+
+	/// <summary>
+	/// Compiles reflected members into a material byte template plus the small
+	/// set of values that genuinely depend on draw or render-scope state. This
+	/// removes the steady-state per-draw material name lookup and type dispatch
+	/// without allowing callbacks or shadow bindings into the fast path.
+	/// </summary>
+	private bool TryGetAutoUniformMaterialWritePlan(
+		AutoUniformBlockInfo block,
+		uint bufferSize,
+		XRMaterial material,
+		ComputeDispatchSnapshot bindingSnapshot,
+		out AutoUniformMaterialWritePlan? plan)
+	{
+		plan = null;
+		if (_program is null || bufferSize == 0 || bufferSize > int.MaxValue)
+			return false;
+
+		string blockName = block.InstanceName;
+		if (!_autoUniformMaterialWritePlans.TryGetValue(blockName, out Dictionary<XRMaterial, AutoUniformMaterialWritePlan>? plans))
+		{
+			plans = [];
+			_autoUniformMaterialWritePlans.Add(blockName, plans);
+		}
+
+		ulong linkGeneration = _program.LinkGeneration;
+		if (plans.TryGetValue(material, out AutoUniformMaterialWritePlan? cached) &&
+			ReferenceEquals(cached.Block, block) &&
+			cached.ProgramLinkGeneration == linkGeneration &&
+			cached.MaterialLayoutVersion == material.BindingLayoutVersion &&
+			cached.MaterialValueVersion == material.BindingValueVersion &&
+			cached.RuntimeUniformNameSignature == bindingSnapshot.RuntimeUniformNameSignature &&
+			cached.StaticBytes.Length == (int)bufferSize)
+		{
+			RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAutoUniformPlanLookup(hit: true);
+			plan = cached;
+			return true;
+		}
+		RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAutoUniformPlanLookup(hit: false);
+
+		byte[] staticBytes = new byte[(int)bufferSize];
+		List<AutoUniformMember> dynamicMembers = [];
+		for (int memberIndex = 0; memberIndex < block.Members.Count; memberIndex++)
+		{
+			AutoUniformMember member = block.Members[memberIndex];
+			if (member.Offset + member.Size > bufferSize)
+				continue;
+
+			if (!TryWriteStaticMaterialAutoUniform(staticBytes, member, material, bindingSnapshot))
+				dynamicMembers.Add(member);
+		}
+
+		plan = new AutoUniformMaterialWritePlan(
+			block,
+			linkGeneration,
+			material.BindingLayoutVersion,
+			material.BindingValueVersion,
+			bindingSnapshot.RuntimeUniformNameSignature,
+			staticBytes,
+			[.. dynamicMembers]);
+		plans[material] = plan;
+		return true;
+	}
+
+	private bool TryWriteStaticMaterialAutoUniform(
+		Span<byte> data,
+		AutoUniformMember member,
+		XRMaterial material,
+		ComputeDispatchSnapshot bindingSnapshot)
+	{
+		if (member.StructMembers is { Count: > 0 } ||
+			IsRenderScopeAutoUniform(member.Name) ||
+			bindingSnapshot.HasRuntimeUniform(member.Name))
+		{
+			return false;
+		}
+
+		ShaderVar? parameter = material.Parameter<ShaderVar>(member.Name);
+		if (parameter is null)
+			return false;
+
+		return member.IsArray
+			? TryWriteAutoUniformArray(data, member, parameter)
+			: TryWriteMaterialUniformValue(data, member, parameter);
+	}
+
+	private static bool IsRenderScopeAutoUniform(string name)
+	{
+		if (name is "CurrViewProjection" or "PrevViewProjection" or
+			"CurrViewProjectionStereo" or "PrevViewProjectionStereo")
+		{
+			return true;
+		}
+
+		string normalized = NormalizeEngineUniformName(name);
+		return Enum.TryParse(normalized, ignoreCase: false, out EEngineUniform _) ||
+			normalized is
+				TransformIdUniformName or
+				SkinPaletteBaseUniformName or
+				SkinPaletteCountUniformName or
+				SkinningInfluenceCapUniformName or
+				BlendshapeActiveCountUniformName or
+				BlendshapeWeightThresholdUniformName or
+				UsePrecombinedBlendshapeDeltasUniformName;
 	}
 
 	/// <summary>
@@ -1076,21 +1229,6 @@ internal unsafe partial class VkMeshRenderer
 		value = default;
 		type = EShaderVarType._float;
 		string normalized = NormalizeEngineUniformName(name);
-		// Use camera state captured at enqueue time; by the time the command
-		// buffer is recorded the pipeline camera stack has already been popped.
-		XRCamera? camera = draw.Camera;
-		bool stereoPass = draw.IsStereoPass;
-
-		// Camera matrices/vectors come from the draw snapshot captured at enqueue time.
-		// Reading live camera state here can be stale because the pipeline camera stack
-		// has already been popped.
-		Matrix4x4 viewMatrix = draw.ViewMatrix;
-		Matrix4x4 inverseViewMatrix = draw.InverseViewMatrix;
-		Matrix4x4 projMatrix = draw.ProjectionMatrix;
-		Matrix4x4 inverseProjMatrix = draw.InverseProjectionMatrix;
-		Matrix4x4 rightEyeViewMatrix = draw.RightEyeViewMatrix;
-		Matrix4x4 rightEyeProjMatrix = draw.RightEyeProjectionMatrix;
-		Matrix4x4 rightEyeInverseProjMatrix = draw.RightEyeInverseProjectionMatrix;
 
 		switch (normalized)
 		{
@@ -1161,7 +1299,7 @@ internal unsafe partial class VkMeshRenderer
 				return true;
 			case nameof(EEngineUniform.ViewMatrix):
 			case nameof(EEngineUniform.LeftEyeViewMatrix):
-				value = viewMatrix;
+				value = draw.ViewMatrix;
 				type = EShaderVarType._mat4;
 				return true;
 			case nameof(EEngineUniform.PrevViewMatrix):
@@ -1170,7 +1308,7 @@ internal unsafe partial class VkMeshRenderer
 				type = EShaderVarType._mat4;
 				return true;
 			case nameof(EEngineUniform.RightEyeViewMatrix):
-				value = rightEyeViewMatrix;
+				value = draw.RightEyeViewMatrix;
 				type = EShaderVarType._mat4;
 				return true;
 			case nameof(EEngineUniform.PrevRightEyeViewMatrix):
@@ -1178,11 +1316,11 @@ internal unsafe partial class VkMeshRenderer
 				type = EShaderVarType._mat4;
 				return true;
 			case nameof(EEngineUniform.InverseViewMatrix):
-				value = inverseViewMatrix;
+				value = draw.InverseViewMatrix;
 				type = EShaderVarType._mat4;
 				return true;
 			case nameof(EEngineUniform.InverseProjMatrix):
-				value = inverseProjMatrix;
+				value = draw.InverseProjectionMatrix;
 				type = EShaderVarType._mat4;
 				return true;
 			case nameof(EEngineUniform.ViewProjectionMatrix):
@@ -1190,7 +1328,7 @@ internal unsafe partial class VkMeshRenderer
 				type = EShaderVarType._mat4;
 				return true;
 			case nameof(EEngineUniform.ProjMatrix):
-				value = projMatrix;
+				value = draw.ProjectionMatrix;
 				type = EShaderVarType._mat4;
 				return true;
 			case nameof(EEngineUniform.PrevProjMatrix):
@@ -1207,11 +1345,11 @@ internal unsafe partial class VkMeshRenderer
 				type = EShaderVarType._mat4;
 				return true;
 			case nameof(EEngineUniform.LeftEyeInverseViewMatrix):
-				value = inverseViewMatrix;
+				value = draw.InverseViewMatrix;
 				type = EShaderVarType._mat4;
 				return true;
 			case nameof(EEngineUniform.LeftEyeInverseProjMatrix):
-				value = inverseProjMatrix;
+				value = draw.InverseProjectionMatrix;
 				type = EShaderVarType._mat4;
 				return true;
 			case nameof(EEngineUniform.RightEyeInverseViewMatrix):
@@ -1219,7 +1357,7 @@ internal unsafe partial class VkMeshRenderer
 				type = EShaderVarType._mat4;
 				return true;
 			case nameof(EEngineUniform.RightEyeInverseProjMatrix):
-				value = rightEyeInverseProjMatrix;
+				value = draw.RightEyeInverseProjectionMatrix;
 				type = EShaderVarType._mat4;
 				return true;
 			case nameof(EEngineUniform.RightEyeViewProjectionMatrix):
@@ -1227,11 +1365,11 @@ internal unsafe partial class VkMeshRenderer
 				type = EShaderVarType._mat4;
 				return true;
 			case nameof(EEngineUniform.LeftEyeProjMatrix):
-				value = projMatrix;
+				value = draw.ProjectionMatrix;
 				type = EShaderVarType._mat4;
 				return true;
 			case nameof(EEngineUniform.RightEyeProjMatrix):
-				value = rightEyeProjMatrix;
+				value = draw.RightEyeProjectionMatrix;
 				type = EShaderVarType._mat4;
 				return true;
 			case nameof(EEngineUniform.CameraPosition):
@@ -1251,27 +1389,27 @@ internal unsafe partial class VkMeshRenderer
 				type = EShaderVarType._vec4;
 				return true;
 			case nameof(EEngineUniform.CameraNearZ):
-				value = camera?.NearZ ?? 0f;
+				value = draw.Camera?.NearZ ?? 0f;
 				type = EShaderVarType._float;
 				return true;
 			case nameof(EEngineUniform.CameraFarZ):
-				value = camera?.FarZ ?? 0f;
+				value = draw.Camera?.FarZ ?? 0f;
 				type = EShaderVarType._float;
 				return true;
 			case nameof(EEngineUniform.CameraFovX):
-				value = camera?.Parameters is XRPerspectiveCameraParameters persp ? persp.HorizontalFieldOfView : 0f;
+				value = draw.Camera?.Parameters is XRPerspectiveCameraParameters persp ? persp.HorizontalFieldOfView : 0f;
 				type = EShaderVarType._float;
 				return true;
 			case nameof(EEngineUniform.CameraFovY):
-				value = camera?.Parameters is XRPerspectiveCameraParameters perspY ? perspY.VerticalFieldOfView : 0f;
+				value = draw.Camera?.Parameters is XRPerspectiveCameraParameters perspY ? perspY.VerticalFieldOfView : 0f;
 				type = EShaderVarType._float;
 				return true;
 			case nameof(EEngineUniform.CameraAspect):
-				value = camera?.Parameters is XRPerspectiveCameraParameters perspA ? perspA.AspectRatio : 0f;
+				value = draw.Camera?.Parameters is XRPerspectiveCameraParameters perspA ? perspA.AspectRatio : 0f;
 				type = EShaderVarType._float;
 				return true;
 			case nameof(EEngineUniform.DepthMode):
-				value = (int)(camera?.DepthMode ?? XRCamera.EDepthMode.Normal);
+				value = (int)(draw.Camera?.DepthMode ?? XRCamera.EDepthMode.Normal);
 				type = EShaderVarType._int;
 				return true;
 			case nameof(EEngineUniform.ClipSpaceYDirection):
@@ -1318,11 +1456,15 @@ internal unsafe partial class VkMeshRenderer
 				type = EShaderVarType._int;
 				return true;
 			case nameof(EEngineUniform.VRMode):
-				value = stereoPass ? 1 : 0;
+				value = draw.IsStereoPass ? 1 : 0;
 				type = EShaderVarType._int;
 				return true;
-			case nameof(EEngineUniform.UIXYWH):
-				if (_program is not null && _program.TryGetUniformValue(nameof(EEngineUniform.UIXYWH), out ProgramUniformValue bounds))
+            case nameof(EEngineUniform.UIXYWH):
+                if (_program is not null &&
+                    _program.TryGetUniformValue(
+                        draw.ProgramBindingSnapshot,
+                        nameof(EEngineUniform.UIXYWH),
+                        out ProgramUniformValue bounds))
 				{
 					value = EngineUniformValue.FromProgramValue(in bounds);
 					type = bounds.Type;
@@ -1334,14 +1476,22 @@ internal unsafe partial class VkMeshRenderer
 			case nameof(EEngineUniform.UIWidth):
 			case nameof(EEngineUniform.UIHeight):
 			case nameof(EEngineUniform.UIX):
-			case nameof(EEngineUniform.UIY):
-				if (_program is not null && _program.TryGetUniformValue(normalized, out ProgramUniformValue uiScalar))
+            case nameof(EEngineUniform.UIY):
+                if (_program is not null &&
+                    _program.TryGetUniformValue(
+                        draw.ProgramBindingSnapshot,
+                        normalized,
+                        out ProgramUniformValue uiScalar))
 				{
 					value = EngineUniformValue.FromProgramValue(in uiScalar);
 					type = uiScalar.Type;
 					return true;
 				}
-				if (_program is not null && _program.TryGetUniformValue(nameof(EEngineUniform.UIXYWH), out ProgramUniformValue uiBounds) &&
+                if (_program is not null &&
+                    _program.TryGetUniformValue(
+                        draw.ProgramBindingSnapshot,
+                        nameof(EEngineUniform.UIXYWH),
+                        out ProgramUniformValue uiBounds) &&
 					uiBounds.HasInlineValue && uiBounds.Type == EShaderVarType._vec4)
 				{
 					Vector4 b = uiBounds.Vector4;
@@ -1838,17 +1988,28 @@ internal unsafe partial class VkMeshRenderer
 			case nameof(EEngineUniform.VRMode):
 				return UploadUniform(buffer, stereoPass ? 1 : 0);
 			case nameof(EEngineUniform.UIXYWH):
-				if (_program is not null && _program.TryGetUniformValue(nameof(EEngineUniform.UIXYWH), out ProgramUniformValue uiBounds))
+				if (_program is not null &&
+					_program.TryGetUniformValue(
+						draw.ProgramBindingSnapshot,
+						nameof(EEngineUniform.UIXYWH),
+						out ProgramUniformValue uiBounds))
 					return UploadProgramUniform(buffer, uiBounds);
 				return UploadUniform(buffer, Vector4.Zero);
 			case nameof(EEngineUniform.UIX):
 			case nameof(EEngineUniform.UIY):
 			case nameof(EEngineUniform.UIWidth):
 			case nameof(EEngineUniform.UIHeight):
-				if (_program is not null && _program.TryGetUniformValue(normalized, out ProgramUniformValue uiScalar))
+				if (_program is not null &&
+					_program.TryGetUniformValue(
+						draw.ProgramBindingSnapshot,
+						normalized,
+						out ProgramUniformValue uiScalar))
 					return UploadProgramUniform(buffer, uiScalar);
 				if (_program is not null &&
-					_program.TryGetUniformValue(nameof(EEngineUniform.UIXYWH), out ProgramUniformValue packedBounds) &&
+					_program.TryGetUniformValue(
+						draw.ProgramBindingSnapshot,
+						nameof(EEngineUniform.UIXYWH),
+						out ProgramUniformValue packedBounds) &&
 					packedBounds.TryGetVector4(out Vector4 b))
 				{
 					float scalar = normalized switch

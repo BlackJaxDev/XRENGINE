@@ -20,6 +20,9 @@ namespace XREngine.Rendering.OpenGL
         /// </summary>
         public partial class GLMeshRenderer(OpenGLRenderer renderer, XRMeshRenderer.BaseVersion mesh) : GLObject<XRMeshRenderer.BaseVersion>(renderer, mesh), IRenderPreparationState
         {
+            static GLMeshRenderer()
+                => XREnvironment.VariableChanged += HandleEnvironmentVariableChanged;
+
             public XRMeshRenderer MeshRenderer => Data.Parent;
             public XRMesh? Mesh => MeshRenderer.Mesh;
 
@@ -253,11 +256,11 @@ namespace XREngine.Rendering.OpenGL
             private static readonly ConcurrentDictionary<string, int> s_modelDrawDiagPhaseCounts = new();
             private static readonly string[] ModelDrawDiagDefaultFilters = [];
 
-            private static readonly string[] ModelDrawDiagFilters = BuildModelDrawDiagFilters();
+            private static string[] ModelDrawDiagFilters = BuildModelDrawDiagFilters();
 
             private static string[] BuildModelDrawDiagFilters()
             {
-                string? env = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ModelDrawDiagFilter);
+                string? env = XREnvironment.GetValue(XREngineEnvironmentVariables.ModelDrawDiagFilter);
                 if (string.IsNullOrWhiteSpace(env))
                     return ModelDrawDiagDefaultFilters;
 
@@ -275,7 +278,8 @@ namespace XREngine.Rendering.OpenGL
 
             private bool IsModelDrawDiagnosticMesh()
             {
-                if (ModelDrawDiagFilters.Length == 0)
+                string[] modelDrawDiagFilters = System.Threading.Volatile.Read(ref ModelDrawDiagFilters);
+                if (modelDrawDiagFilters.Length == 0)
                     return false;
 
                 var meshRenderer = Data?.Parent;
@@ -284,9 +288,9 @@ namespace XREngine.Rendering.OpenGL
                 string? rendererName = meshRenderer?.Name;
                 string? sourceSubMeshName = meshRenderer?.SourceSubMeshAsset?.Name;
 
-                for (int i = 0; i < ModelDrawDiagFilters.Length; i++)
+                for (int i = 0; i < modelDrawDiagFilters.Length; i++)
                 {
-                    string filter = ModelDrawDiagFilters[i];
+                    string filter = modelDrawDiagFilters[i];
                     if (filter == "*")
                         return true;
 
@@ -300,6 +304,20 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 return false;
+            }
+
+            private static void HandleEnvironmentVariableChanged(RuntimeEnvironmentVariableChange change)
+            {
+                if (!change.Name.Equals(
+                        XREngineEnvironmentVariables.ModelDrawDiagFilter,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                System.Threading.Volatile.Write(
+                    ref ModelDrawDiagFilters,
+                    BuildModelDrawDiagFilters());
             }
 
             private static bool ContainsDiagnosticFilter(string? value, string filter)

@@ -240,12 +240,12 @@ public sealed class GLMeshRendererLifecycleContractTests
     }
 
     [Test]
-    public void GLRenderProgram_DisablesSharedLinkedProgramReuseByDefault()
+    public void GLRenderProgram_EnablesSharedLinkedProgramReuseUnlessExplicitlyDisabled()
     {
         string linkSource = ReadGlRenderProgramLinkingSources();
 
-        linkSource.ShouldContain("XREngineEnvironmentVariables.EnableSharedLinkedProgramReuse");
-        linkSource.ShouldContain("private static readonly bool SharedLinkedProgramReuseEnabled");
+        linkSource.ShouldContain("XREngineEnvironmentVariables.DisableSharedLinkedProgramReuse");
+        linkSource.ShouldContain("private static bool SharedLinkedProgramReuseEnabled");
         linkSource.ShouldContain("if (!SharedLinkedProgramReuseEnabled)");
         linkSource.ShouldContain("if (!SharedLinkedProgramReuseEnabled ||");
     }

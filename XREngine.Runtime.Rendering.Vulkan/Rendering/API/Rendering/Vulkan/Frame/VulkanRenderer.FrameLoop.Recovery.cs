@@ -180,7 +180,8 @@ namespace XREngine.Rendering.Vulkan
             ref VulkanFrameAttempt attempt)
         {
             VulkanDesktopPresentDispatchOutcome dispatch =
-                QueueDesktopPresent(
+                DesktopWsiTarget.PresentFrameTarget(
+                    this,
                     ref attempt,
                     "Vulkan.FrameLifecycle.RecoveryFailureQueuePresent",
                     "settling a recovered desktop frame after an auxiliary failure");

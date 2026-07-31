@@ -193,7 +193,7 @@ public static partial class EditorUnitTests
 
     private static void ApplyPhysicsDebugBenchmarkPreset(PhysicsVisualizeSettings settings)
     {
-        string? preset = Environment.GetEnvironmentVariable("XRE_PHYSICS_DEBUG_PRESET");
+        string? preset = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.PhysicsDebugPreset);
         if (string.IsNullOrWhiteSpace(preset))
             return;
 

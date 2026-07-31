@@ -116,8 +116,10 @@ public sealed class RendererBackendCatalog : IRendererBackendCatalog, IDisposabl
         in RendererBackendCreateContext context,
         RendererBackendCapabilities requiredCapabilities = RendererBackendCapabilities.None)
     {
+        context.Target.Validate();
         RendererBackendId id = RendererBackendId.FromGraphicsApi(graphicsApi);
-        RendererBackendRegistration registration = GetRequired(id, requiredCapabilities);
+        RendererBackendCapabilities targetCapabilities = context.EffectiveTarget.RequiredBackendCapabilities;
+        RendererBackendRegistration registration = GetRequired(id, requiredCapabilities | targetCapabilities);
         RendererBackendCreateContext generationContext = context with
         {
             ModuleGeneration = registration.Metadata.Generation,

@@ -58,7 +58,6 @@ public static class CpuOcclusionValidationEvidence
         new(),
         new(),
     ];
-    private static readonly bool s_enabled = ReadEnabled();
     private static long s_overflowCount;
 
     private struct MutableEntry
@@ -82,12 +81,13 @@ public static class CpuOcclusionValidationEvidence
         public readonly MutableEntry[] Entries = new MutableEntry[MaximumEntriesPerFrame];
     }
 
-    public static bool Enabled => s_enabled;
+    public static bool Enabled
+        => XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanPhase524bValidation);
     public static long OverflowCount => Interlocked.Read(ref s_overflowCount);
 
     public static ECpuOcclusionValidationRole ResolveRole(IRenderCommandMesh command)
     {
-        if (!s_enabled)
+        if (!Enabled)
             return ECpuOcclusionValidationRole.None;
 
         return ResolveRole((command.MaterialOverride ?? command.Mesh?.Material)?.Name);
@@ -95,7 +95,7 @@ public static class CpuOcclusionValidationEvidence
 
     public static bool IsApplicableToScope(IRenderCommandMesh command, EOcclusionViewScope scope)
     {
-        if (!s_enabled)
+        if (!Enabled)
             return false;
 
         return IsApplicableToScope((command.MaterialOverride ?? command.Mesh?.Material)?.Name, scope);
@@ -146,7 +146,7 @@ public static class CpuOcclusionValidationEvidence
         ECpuOcclusionValidationRole role,
         EOcclusionCullingMode mode)
     {
-        if (!s_enabled)
+        if (!Enabled)
             return;
 
         RecordCandidateCore(
@@ -164,7 +164,7 @@ public static class CpuOcclusionValidationEvidence
         EOcclusionCullingMode mode,
         ECpuOcclusionDecision decision)
     {
-        if (!s_enabled)
+        if (!Enabled)
             return;
 
         RecordOutcomeCore(
@@ -187,7 +187,7 @@ public static class CpuOcclusionValidationEvidence
         uint proofCoverageMask,
         ECpuOcclusionDecision decision)
     {
-        if (!s_enabled)
+        if (!Enabled)
             return;
 
         RecordOutcomeCore(
@@ -424,11 +424,4 @@ public static class CpuOcclusionValidationEvidence
             entry.HasDecision,
             entry.Decision);
 
-    private static bool ReadEnabled()
-    {
-        string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanPhase524bValidation);
-        return string.Equals(value, "1", StringComparison.Ordinal) ||
-               string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
-    }
 }

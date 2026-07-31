@@ -51,6 +51,17 @@ namespace XREngine.Rendering
         public ulong BindingLayoutVersion
             => _bindingLayoutVersion;
 
+        private ulong _bindingValueVersion = 1;
+        /// <summary>
+        /// Monotonic revision for material parameter values captured by queued render backends.
+        /// Unlike <see cref="BindingLayoutVersion"/>, this changes when an existing
+        /// <see cref="ShaderVar"/> value changes without altering the binding layout.
+        /// </summary>
+        [Browsable(false)]
+        [YamlIgnore]
+        public ulong BindingValueVersion
+            => _bindingValueVersion;
+
         public XRMaterialBase()
             => AttachTextureListHandlers(_textures);
         protected XRMaterialBase(ShaderVar[] parameters) : this()
@@ -193,15 +204,49 @@ namespace XREngine.Rendering
         }
 
         private void TexturesModified()
-            => IncrementBindingLayoutVersion();
+        {
+            IncrementBindingLayoutVersion();
+            IncrementBindingValueVersion();
+        }
 
         private void IncrementBindingLayoutVersion()
         {
             unchecked
             {
-                _bindingLayoutVersion++;
-                if (_bindingLayoutVersion == 0)
-                    _bindingLayoutVersion = 1;
+                ulong next = _bindingLayoutVersion + 1;
+                SetField(ref _bindingLayoutVersion, next == 0 ? 1 : next, nameof(BindingLayoutVersion));
+            }
+        }
+
+        private void AttachParameterHandlers(ShaderVar[]? parameters)
+        {
+            if (parameters is null)
+                return;
+
+            for (int index = 0; index < parameters.Length; index++)
+                if (parameters[index] is { } parameter)
+                    parameter.ValueChanged += ParameterValueChanged;
+        }
+
+        private void DetachParameterHandlers(ShaderVar[]? parameters)
+        {
+            if (parameters is null)
+                return;
+
+            for (int index = 0; index < parameters.Length; index++)
+                if (parameters[index] is { } parameter)
+                    parameter.ValueChanged -= ParameterValueChanged;
+        }
+
+        private void ParameterValueChanged(ShaderVar _)
+            => IncrementBindingValueVersion();
+
+        private void IncrementBindingValueVersion()
+        {
+            unchecked
+            {
+                ulong next = _bindingValueVersion + 1;
+                SetField(ref _bindingValueVersion, next == 0 ? 1 : next, nameof(BindingValueVersion));
             }
         }
 
@@ -211,13 +256,17 @@ namespace XREngine.Rendering
             switch (propName)
             {
                 case nameof(Parameters):
+                    DetachParameterHandlers(prev as ShaderVar[]);
+                    AttachParameterHandlers(field as ShaderVar[]);
                     ResetNameIndexCache();
                     IncrementBindingLayoutVersion();
+                    IncrementBindingValueVersion();
                     break;
                 case nameof(Textures):
                     DetachTextureListHandlers(prev as EventList<XRTexture?>);
                     AttachTextureListHandlers(field as EventList<XRTexture?>);
                     IncrementBindingLayoutVersion();
+                    IncrementBindingValueVersion();
                     break;
             }
         }

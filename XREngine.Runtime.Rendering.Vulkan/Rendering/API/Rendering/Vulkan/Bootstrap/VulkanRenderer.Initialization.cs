@@ -12,17 +12,39 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer(
-        XRWindow window,
-        bool shouldLinkWindow = true,
-        long backendGeneration = 0) :
-        AbstractRenderer<Vk>(window, shouldLinkWindow, backendGeneration),
+    public unsafe partial class VulkanRenderer :
+        AbstractRenderer<Vk>,
         ISparseTextureStreamingBackendCapability,
         IStreamlinePresentationBackendCapability
     {
+        public VulkanRenderer(
+            XRWindow window,
+            bool shouldLinkWindow = true,
+            long backendGeneration = 0)
+            : this(RendererHostContext.CreateDesktop(window, shouldLinkWindow, backendGeneration))
+        {
+        }
+
+        public VulkanRenderer(RendererHostContext hostContext)
+            : base(hostContext)
+        {
+            _targetDriver = VulkanRendererTargetDriverFactory.Create(hostContext);
+            _requiredDeviceExtensions =
+            [
+                .. CommonRequiredDeviceExtensions,
+                .. _targetDriver.RequiredDeviceExtensions,
+            ];
+        }
+
+        private readonly IVulkanRendererTargetDriver _targetDriver;
         private readonly VulkanBufferResourceManager _bufferResourceManager = new();
         internal readonly VulkanImageAllocationTracker _imageAllocationTracker = new();
         internal Vk VulkanApi => Api!;
+        internal string TargetDriverName => _targetDriver.GetType().Name;
+        internal bool TargetRequiresPresentQueue => _targetDriver.RequiresPresentQueue;
+        internal bool TargetRequiresSwapchainOutput => _targetDriver.RequiresSwapchainOutput;
+        internal bool HasInitializedMemoryAllocator => _bufferResourceManager.MemoryAllocator is not null;
+        internal bool HasExplicitFrameTarget => _targetDriver is IVulkanExplicitFrameTargetDriver;
         private readonly VulkanBindlessMaterialTextureTableState _bindlessMaterialTextureTableState = new();
         private readonly VulkanStagingManager _stagingManager = new();
 
@@ -36,22 +58,21 @@ namespace XREngine.Rendering.Vulkan
 
         public override void Initialize()
         {
-            if (Window?.VkSurface is null)
-                throw new Exception("Windowing platform doesn't support Vulkan.");
-
-            PrepareStreamlineVulkanRequirements();
+            if (_targetDriver.SupportsStreamlinePresentation)
+                PrepareStreamlineVulkanRequirements();
             CreateInstance();
             SetupDebugMessenger();
-            CreateSurface();
+            _targetDriver.CreateInstanceResources(this);
             PickPhysicalDevice();
-            ValidateStreamlineSelectedPhysicalDevice();
+            if (_targetDriver.SupportsStreamlinePresentation)
+                ValidateStreamlineSelectedPhysicalDevice();
             CreateLogicalDevice();
             InitializeMemoryAllocator();
             InitializeCanonicalImmutableSamplers();
             CreateCommandPool();
 
             CreateDescriptorSetLayout();
-            CreateAllSwapChainObjects();
+            _targetDriver.InitializeFinalOutput(this);
 
             //CreateTestModel();
             //CreateUniformBuffers();
@@ -102,6 +123,54 @@ namespace XREngine.Rendering.Vulkan
             };
             Debug.Vulkan($"[Vulkan] Memory allocator initialized: {backend} (lazyAlloc={SupportsLazyAllocation})");
         }
+
+        internal void SubmitExplicitTargetFrame(Action<Vk, CommandBuffer, VulkanRenderFrameTarget> record)
+            => ExecuteExplicitTargetFrame(record);
+
+        internal byte[] ReadbackExplicitTargetColor(
+            int maxByteCount,
+            ImageLayout sourceLayout = ImageLayout.TransferSrcOptimal)
+            => RequireExplicitFrameTarget().ReadbackLastSubmittedColor(maxByteCount, sourceLayout);
+
+        internal string ComputeExplicitTargetColorHash(
+            ImageLayout sourceLayout = ImageLayout.TransferSrcOptimal)
+            => RequireExplicitFrameTarget().ComputeLastSubmittedColorHash(sourceLayout);
+
+        internal RenderTargetOutputProperties ExplicitTargetOutputProperties
+            => RequireExplicitFrameTarget().OutputProperties;
+
+        internal ulong ExplicitTargetGeneration
+            => RequireExplicitFrameTarget().TargetGeneration;
+
+        internal double ExplicitTargetLastCompletedGpuFrameNanoseconds
+            => RequireExplicitFrameTarget().LastCompletedGpuFrameNanoseconds;
+
+        internal string ExplicitTargetPresentationDescription
+            => RequireExplicitFrameTarget().PresentationDescription;
+
+        internal bool ExplicitTargetIsDeviceLost
+            => _targetDriver is IVulkanExplicitFrameTargetDriver explicitTarget &&
+               explicitTarget.IsDeviceLost;
+
+        private IVulkanExplicitFrameTargetDriver RequireExplicitFrameTarget()
+            => _targetDriver as IVulkanExplicitFrameTargetDriver
+                ?? throw new InvalidOperationException(
+                    $"Vulkan target '{ExecutionMode}' does not expose explicit target-frame submission.");
+
+        private VulkanDesktopWsiTargetDriver DesktopWsiTarget
+            => _targetDriver as VulkanDesktopWsiTargetDriver
+                ?? throw new InvalidOperationException(
+                    $"Vulkan target '{ExecutionMode}' does not provide desktop WSI policy.");
+
+        internal bool TryMapMemoryAllocation(
+            VulkanMemoryAllocation allocation,
+            ulong offset,
+            ulong length,
+            out void* mapped)
+            => MemoryAllocator.TryMap(Api!, device, allocation, offset, length, out mapped);
+
+        internal void UnmapMemoryAllocation(VulkanMemoryAllocation allocation)
+            => MemoryAllocator.Unmap(Api!, device, allocation);
 
         public override void CleanUp() => CleanUp(waitForGpu: true);
 
@@ -154,7 +223,7 @@ namespace XREngine.Rendering.Vulkan
             DisposeImGuiResources();
             DestroyOpenXrRenderingResources();
             DestroyFrameOpResourcePlannerStates();
-            DestroyAllSwapChainObjects();
+            _targetDriver.DestroyFinalOutput(this);
             // FBO render passes are NOT destroyed during swapchain recreation
             // (they are swapchain-independent). Clean them up here at full shutdown.
             DestroyFrameBufferRenderPasses();
@@ -204,7 +273,7 @@ namespace XREngine.Rendering.Vulkan
 
             DestroyLogicalDevice();
             DestroyValidationLayers();
-            DestroySurface();
+            _targetDriver.DestroyInstanceResources(this);
             DestroyInstance();
             }
             finally

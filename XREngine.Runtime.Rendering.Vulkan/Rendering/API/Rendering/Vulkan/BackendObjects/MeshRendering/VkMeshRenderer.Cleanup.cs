@@ -52,6 +52,8 @@ internal unsafe partial class VkMeshRenderer
 				DestroyAutoUniformBufferArray(toDestroy);
 
 			_autoUniformBuffers.Remove(singleName);
+			_autoUniformMaterialWritePlans.Remove(singleName);
+			_publishedAutoUniformMaterialWritePlans.Remove(singleName);
 			return;
 		}
 
@@ -59,6 +61,8 @@ internal unsafe partial class VkMeshRenderer
 			DestroyAutoUniformBufferArray(buffers);
 
 		_autoUniformBuffers.Clear();
+		_autoUniformMaterialWritePlans.Clear();
+		_publishedAutoUniformMaterialWritePlans.Clear();
 	}
 
 	private void DestroyEngineUniformBufferArray(EngineUniformBuffer[] buffers)
@@ -118,7 +122,8 @@ internal unsafe partial class VkMeshRenderer
 			ReleaseDescriptorAllocationReference(pair.Key, allocation, destroyPoolImmediately);
 		}
 
-		_descriptorAllocations.Clear();
+        _descriptorAllocations.Clear();
+        _descriptorAllocationsByDrawSlot.Clear();
 
 		if (!activePoolReleased && _descriptorPool.Handle != 0)
 			ReleaseDescriptorPool(_descriptorPool, destroyPoolImmediately);

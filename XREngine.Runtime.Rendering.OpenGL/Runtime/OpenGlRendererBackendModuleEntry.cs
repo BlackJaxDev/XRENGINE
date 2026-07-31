@@ -79,7 +79,7 @@ public sealed class OpenGlRendererBackendModuleEntry : IRendererBackendModule
             "XREngine OpenGL",
             version ?? assembly.GetName().Version ?? new Version(1, 0),
             RendererBackendCapabilities.DesktopPresentation |
-            RendererBackendCapabilities.HeadlessRendering |
+            RendererBackendCapabilities.PresentationlessRendering |
             RendererBackendCapabilities.OpenXrPresentation |
             RendererBackendCapabilities.GpuCompute |
             RendererBackendCapabilities.EditorTextureInterop |

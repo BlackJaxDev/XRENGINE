@@ -3,22 +3,22 @@ namespace XREngine.Rendering.Commands;
 public sealed partial class GPURenderPassCollection
 {
     private const string PromoteExternalOpenXrFamilyCullingEnvironmentVariable =
-        "XRE_VK_PROMOTE_OPENXR_GPU_FAMILY_CULLING";
+        XREngineEnvironmentVariables.VulkanPromoteOpenXrGpuFamilyCulling;
     private const string ValidateExternalOpenXrFamilyCullingEnvironmentVariable =
-        "XRE_VK_VALIDATE_OPENXR_GPU_FAMILY_CULLING";
+        XREngineEnvironmentVariables.VulkanValidateOpenXrGpuFamilyCulling;
     private const string PromoteMeshletMultiviewOcclusionEnvironmentVariable =
-        "XRE_VK_PROMOTE_MESHLET_MULTIVIEW_OCCLUSION";
+        XREngineEnvironmentVariables.VulkanPromoteMeshletMultiviewOcclusion;
     private const string ValidateMeshletMultiviewOcclusionEnvironmentVariable =
-        "XRE_VK_VALIDATE_MESHLET_MULTIVIEW_OCCLUSION";
+        XREngineEnvironmentVariables.VulkanValidateMeshletMultiviewOcclusion;
 
-    private static readonly bool s_externalOpenXrFamilyCullingRequested =
-        IsPromotionEnabled(PromoteExternalOpenXrFamilyCullingEnvironmentVariable);
-    private static readonly bool s_externalOpenXrFamilyCullingValidated =
-        IsPromotionEnabled(ValidateExternalOpenXrFamilyCullingEnvironmentVariable);
-    private static readonly bool s_meshletMultiviewOcclusionRequested =
-        IsPromotionEnabled(PromoteMeshletMultiviewOcclusionEnvironmentVariable);
-    private static readonly bool s_meshletMultiviewOcclusionValidated =
-        IsPromotionEnabled(ValidateMeshletMultiviewOcclusionEnvironmentVariable);
+    private static bool ExternalOpenXrFamilyCullingRequested
+        => IsPromotionEnabled(PromoteExternalOpenXrFamilyCullingEnvironmentVariable);
+    private static bool ExternalOpenXrFamilyCullingValidated
+        => IsPromotionEnabled(ValidateExternalOpenXrFamilyCullingEnvironmentVariable);
+    private static bool MeshletMultiviewOcclusionRequested
+        => IsPromotionEnabled(PromoteMeshletMultiviewOcclusionEnvironmentVariable);
+    private static bool MeshletMultiviewOcclusionValidated
+        => IsPromotionEnabled(ValidateMeshletMultiviewOcclusionEnvironmentVariable);
 
     private GpuMultiViewPromotionDecision _externalOpenXrFamilyCullingDecision;
     private GpuMultiViewPromotionDecision _meshletMultiviewOcclusionDecision;
@@ -37,8 +37,8 @@ public sealed partial class GPURenderPassCollection
     {
         GpuMultiViewPromotionDecision decision = ResolvePromotion(
             EGpuMultiViewPromotionLane.ExternalOpenXrPerFamilyCulling,
-            s_externalOpenXrFamilyCullingRequested,
-            s_externalOpenXrFamilyCullingValidated,
+            ExternalOpenXrFamilyCullingRequested,
+            ExternalOpenXrFamilyCullingValidated,
             perFamilyCullingOwner: false,
             layeredHiZ: false);
         PublishPromotionDecision(decision, ref _externalOpenXrFamilyCullingDecision,
@@ -50,8 +50,8 @@ public sealed partial class GPURenderPassCollection
     {
         GpuMultiViewPromotionDecision decision = ResolvePromotion(
             EGpuMultiViewPromotionLane.MeshletStereoQuadOcclusion,
-            s_meshletMultiviewOcclusionRequested,
-            s_meshletMultiviewOcclusionValidated,
+            MeshletMultiviewOcclusionRequested,
+            MeshletMultiviewOcclusionValidated,
             perFamilyCullingOwner: false,
             // The current pyramid and meshlet sampling contract is sampler2D, not layered.
             layeredHiZ: false);
@@ -104,11 +104,5 @@ public sealed partial class GPURenderPassCollection
     }
 
     private static bool IsPromotionEnabled(string variableName)
-    {
-        string? value = Environment.GetEnvironmentVariable(variableName);
-        return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(value, "on", StringComparison.OrdinalIgnoreCase);
-    }
+        => XREnvironment.IsEnabled(variableName);
 }

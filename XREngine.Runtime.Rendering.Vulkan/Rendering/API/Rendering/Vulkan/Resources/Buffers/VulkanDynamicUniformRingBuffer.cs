@@ -173,8 +173,9 @@ public unsafe partial class VulkanRenderer
     /// while draw-specific data is selected with a dynamic offset.
     /// </summary>
     private const ulong DynamicUniformRingBufferCapacity = 32 * 1024 * 1024;
-    private static readonly bool? DynamicUniformBufferEnabledOverride =
-        ReadOptionalBooleanEnvironmentOverride(XREngineEnvironmentVariables.VulkanDynamicUniformBuffer);
+    private static bool? DynamicUniformBufferEnabledOverride
+        => XREnvironment.GetBooleanOverride(
+            XREngineEnvironmentVariables.VulkanDynamicUniformBuffer);
 
     private bool DynamicUniformBufferEnabled =>
         DynamicUniformBufferEnabledOverride ??

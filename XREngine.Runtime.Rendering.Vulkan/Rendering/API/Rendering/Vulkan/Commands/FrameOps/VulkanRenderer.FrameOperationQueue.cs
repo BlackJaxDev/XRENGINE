@@ -895,7 +895,6 @@ public unsafe partial class VulkanRenderer
         }
 
         hash.Add(1);
-        hash.Add(GetUniformBindingLayoutSignature(snapshot));
         hash.Add(HashSamplerUnitBindings(snapshot.Samplers, snapshot.SamplerNamesByUnit, pipeline, includeMutableFrameSourceDescriptors));
         hash.Add(HashSamplerNameBindings(snapshot.SamplersByName, pipeline, includeMutableFrameSourceDescriptors));
         hash.Add(HashImageBindings(snapshot.Images));
@@ -913,7 +912,6 @@ public unsafe partial class VulkanRenderer
         hash.Add(1);
         if (snapshot.HasPublishedBindingLayoutSignatures)
         {
-            hash.Add(snapshot.UniformBindingLayoutSignature);
             hash.Add(snapshot.SamplerUnitBindingLayoutSignature);
             hash.Add(snapshot.SamplerNameBindingLayoutSignature);
             hash.Add(snapshot.ImageBindingLayoutSignature);
@@ -921,17 +919,11 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        hash.Add(HashUniformBindingLayout(snapshot.Uniforms));
         hash.Add(HashSamplerUnitBindingLayout(snapshot.Samplers, snapshot.SamplerNamesByUnit));
         hash.Add(HashSamplerNameBindingLayout(snapshot.SamplersByName));
         hash.Add(HashImageBindingLayout(snapshot.Images));
         hash.Add(HashBufferBindingLayout(snapshot.Buffers));
     }
-
-    private static ulong GetUniformBindingLayoutSignature(ComputeDispatchSnapshot snapshot)
-        => snapshot.HasPublishedBindingLayoutSignatures
-            ? snapshot.UniformBindingLayoutSignature
-            : HashUniformBindingLayout(snapshot.Uniforms);
 
     private static ulong HashUniformBindingLayout(Dictionary<string, ProgramUniformValue> uniforms)
     {
@@ -966,7 +958,7 @@ public unsafe partial class VulkanRenderer
         return unchecked((int)FinishUnorderedHash(uniforms.Count, xor, sum));
     }
 
-    private static ulong HashSamplerUnitBindings(
+    internal static ulong HashSamplerUnitBindings(
         Dictionary<uint, XRTexture> samplers,
         Dictionary<uint, string> samplerNamesByUnit,
         XRRenderPipelineInstance? pipeline = null,
@@ -990,7 +982,7 @@ public unsafe partial class VulkanRenderer
         return FinishUnorderedHash(samplers.Count, xor, sum);
     }
 
-    private static ulong HashSamplerNameBindings(
+    internal static ulong HashSamplerNameBindings(
         Dictionary<string, XRTexture> samplers,
         XRRenderPipelineInstance? pipeline = null,
         bool includeMutableFrameSourceDescriptors = false)

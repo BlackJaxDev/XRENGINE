@@ -84,9 +84,11 @@ public static partial class Engine
         private const int MaxBufferedCharacters = 256 * 1024;
         private const double MaxRuntimeCaptureSeconds = 600.0;
 
-        private static readonly bool s_envCaptureEnabled = IsEnvFlagEnabled(XREngineEnvironmentVariables.ProfileCapture);
-        private static readonly bool s_envAutoDumpGpuTimings =
-            s_envCaptureEnabled || IsEnvFlagEnabled(XREngineEnvironmentVariables.ProfileAutoDump);
+        private static bool s_envCaptureEnabled
+            => IsEnvFlagEnabled(XREngineEnvironmentVariables.ProfileCapture);
+        private static bool s_envAutoDumpGpuTimings
+            => s_envCaptureEnabled ||
+               IsEnvFlagEnabled(XREngineEnvironmentVariables.ProfileAutoDump);
         private static readonly object s_lock = new();
         private static readonly StringBuilder s_sampleBuffer = new(MaxBufferedCharacters);
         private static readonly StringBuilder s_lineBuilder = new(4096);
@@ -874,6 +876,30 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_frame_op_unique_pass_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameOpUniquePassCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_op_unique_context_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameOpUniqueContextCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_op_unique_target_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameOpUniqueTargetCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_material_payload_cache_hits", RuntimeEngine.Rendering.Stats.Vulkan.VulkanMaterialPayloadCacheHits, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_material_payload_cache_misses", RuntimeEngine.Rendering.Stats.Vulkan.VulkanMaterialPayloadCacheMisses, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_material_payloads_packed", RuntimeEngine.Rendering.Stats.Vulkan.VulkanMaterialPayloadsPacked, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_material_uniforms_packed", RuntimeEngine.Rendering.Stats.Vulkan.VulkanMaterialUniformsPacked, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_material_parameter_emissions", RuntimeEngine.Rendering.Stats.Vulkan.VulkanMaterialParameterEmissions, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_material_dictionary_writes", RuntimeEngine.Rendering.Stats.Vulkan.VulkanMaterialDictionaryWrites, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_material_snapshot_cache_hits", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameMaterialSnapshotCacheHits, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_material_snapshot_cache_misses", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameMaterialSnapshotCacheMisses, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_binding_snapshots_captured", RuntimeEngine.Rendering.Stats.Vulkan.VulkanBindingSnapshotsCaptured, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_binding_snapshot_entries", RuntimeEngine.Rendering.Stats.Vulkan.VulkanBindingSnapshotEntries, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_fast_path_binding_snapshots", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFastPathBindingSnapshots, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_legacy_binding_snapshots", RuntimeEngine.Rendering.Stats.Vulkan.VulkanLegacyBindingSnapshots, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_plan_cache_hits", RuntimeEngine.Rendering.Stats.Vulkan.VulkanAutoUniformPlanCacheHits, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_plan_cache_misses", RuntimeEngine.Rendering.Stats.Vulkan.VulkanAutoUniformPlanCacheMisses, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_static_bytes_copied", RuntimeEngine.Rendering.Stats.Vulkan.VulkanAutoUniformStaticBytesCopied, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_dynamic_bytes_cleared", RuntimeEngine.Rendering.Stats.Vulkan.VulkanAutoUniformDynamicBytesCleared, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_dynamic_members_patched", RuntimeEngine.Rendering.Stats.Vulkan.VulkanAutoUniformDynamicMembersPatched, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_reflected_members_scanned", RuntimeEngine.Rendering.Stats.Vulkan.VulkanAutoUniformReflectedMembersScanned, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_legacy_full_block_bytes", RuntimeEngine.Rendering.Stats.Vulkan.VulkanAutoUniformLegacyFullBlockBytes, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_fast_path_draws", RuntimeEngine.Rendering.Stats.Vulkan.VulkanAutoUniformFastPathDraws, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_legacy_fallback_draws", RuntimeEngine.Rendering.Stats.Vulkan.VulkanAutoUniformLegacyFallbackDraws, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_data_draws_visited", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameDataDrawsVisited, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_descriptor_records_validated", RuntimeEngine.Rendering.Stats.Vulkan.VulkanDescriptorRecordsValidated, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_descriptor_records_written", RuntimeEngine.Rendering.Stats.Vulkan.VulkanDescriptorRecordsWritten, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_buffer_clean_reuse_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandBufferCleanReuseCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_buffer_record_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandBufferRecordCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_buffer_forced_dirty_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandBufferForcedDirtyCount, ref first);
@@ -1573,17 +1599,7 @@ public static partial class Engine
         }
 
         private static bool IsEnvFlagEnabled(string name)
-        {
-            string? raw = Environment.GetEnvironmentVariable(name);
-            if (string.IsNullOrWhiteSpace(raw))
-                return false;
-
-            raw = raw.Trim();
-            return raw == "1" ||
-                   raw.Equals("true", StringComparison.OrdinalIgnoreCase) ||
-                   raw.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
-                   raw.Equals("on", StringComparison.OrdinalIgnoreCase);
-        }
+            => XREnvironment.IsEnabled(name);
 
         private static string CaptureSceneIdentity()
         {

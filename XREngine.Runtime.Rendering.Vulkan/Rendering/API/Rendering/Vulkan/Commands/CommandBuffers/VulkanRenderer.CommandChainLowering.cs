@@ -21,9 +21,10 @@ public unsafe partial class VulkanRenderer
     internal const string CommandChainValidateEnvVar = XREngineEnvironmentVariables.VulkanCommandChainValidate;
     internal const string CommandChainTraceEnvVar = XREngineEnvironmentVariables.VulkanCommandChainTrace;
     internal const string DisableParallelChainRecordingEnvVar = XREngineEnvironmentVariables.VulkanDisableParallelChainRecording;
-    internal const string ParallelPacketBuildEnvVar = XREngineEnvironmentVariables.VulkanParallelPacketBuild;
     internal const string CommandChainMultiQueueEnvVar = XREngineEnvironmentVariables.VulkanCommandChainMultiQueue;
     internal const string CommandChainStabilityGuardEnvVar = XREngineEnvironmentVariables.VulkanCommandChainStabilityGuard;
+    internal const string CommandChainsAllowIndependentDesktopEnvVar =
+        XREngineEnvironmentVariables.VulkanCommandChainsAllowIndependentDesktop;
     internal const int CommandChainLeftEyeViewIndex = 0;
     internal const int CommandChainRightEyeViewIndex = 1;
     internal const int CommandChainStereoMultiviewViewIndex = -1;
@@ -64,20 +65,24 @@ public unsafe partial class VulkanRenderer
     // introduce a CPU readback; only the command buffer that owns the draw changes.
     internal const bool IndirectCommandChainSecondaryRecordingSafe = false;
 
-    private static readonly bool? CommandChainsEnvironmentOverride =
-        ReadOptionalBooleanEnvironmentOverride(CommandChainsEnvVar);
-    private static readonly bool CommandChainsSingleThread = IsCommandChainFlagEnabled(CommandChainsSingleThreadEnvVar);
-    private static readonly bool CommandChainValidationEnabled = IsCommandChainFlagEnabled(CommandChainValidateEnvVar);
-    private static readonly bool CommandChainTraceEnabled = IsCommandChainFlagEnabled(CommandChainTraceEnvVar);
-    private static readonly bool ParallelCommandChainRecordingDisabled = IsCommandChainFlagEnabled(DisableParallelChainRecordingEnvVar);
-    private static readonly bool ParallelPacketBuildEnabled = IsCommandChainFlagEnabled(ParallelPacketBuildEnvVar);
-    private static readonly bool CommandChainMultiQueueEnabled = IsCommandChainFlagEnabled(CommandChainMultiQueueEnvVar);
-    private static readonly bool CommandChainStabilityGuardEnabled =
+    private static bool? CommandChainsEnvironmentOverride
+        => XREnvironment.GetBooleanOverride(CommandChainsEnvVar);
+    private static bool CommandChainsSingleThread
+        => IsCommandChainFlagEnabled(CommandChainsSingleThreadEnvVar);
+    private static bool CommandChainValidationEnabled
+        => IsCommandChainFlagEnabled(CommandChainValidateEnvVar);
+    private static bool CommandChainTraceEnabled
+        => IsCommandChainFlagEnabled(CommandChainTraceEnvVar);
+    private static bool ParallelCommandChainRecordingDisabled
+        => IsCommandChainFlagEnabled(DisableParallelChainRecordingEnvVar);
+    private static bool CommandChainMultiQueueEnabled
+        => IsCommandChainFlagEnabled(CommandChainMultiQueueEnvVar);
+    private static bool CommandChainStabilityGuardEnabled =>
         !CommandChainTraceEnabled &&
         !CommandChainValidationEnabled &&
         !IsCommandChainFlagDisabled(CommandChainStabilityGuardEnvVar);
-    private static readonly bool AllowIndependentDesktopCommandChains =
-        IsCommandChainFlagEnabled("XRE_VULKAN_COMMAND_CHAINS_ALLOW_INDEPENDENT_DESKTOP");
+    private static bool AllowIndependentDesktopCommandChains
+        => IsCommandChainFlagEnabled(CommandChainsAllowIndependentDesktopEnvVar);
     private bool CommandChainsRequested =>
         ResolveCommandChainsRequested(
             RuntimeRenderingHostServices.Settings.VulkanCommandRecordingMode,
@@ -146,12 +151,7 @@ public unsafe partial class VulkanRenderer
     }
 
     private static bool IsCommandChainFlagEnabled(string name)
-    {
-        string? value = Environment.GetEnvironmentVariable(name);
-        return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
-    }
+        => XREnvironment.IsEnabled(name);
 
     internal static bool ResolveCommandChainsRequested(
         EVulkanCommandRecordingMode mode,
@@ -164,13 +164,7 @@ public unsafe partial class VulkanRenderer
     }
 
     private static bool IsCommandChainFlagDisabled(string name)
-    {
-        string? value = Environment.GetEnvironmentVariable(name);
-        return string.Equals(value, "0", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(value, "false", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(value, "no", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(value, "off", StringComparison.OrdinalIgnoreCase);
-    }
+        => XREnvironment.GetBooleanOverride(name) == false;
 
     internal static int ResolveCommandChainRecordingWorkerIndex(
         in VulkanMeshFrameDataRendererFamilyKey rendererFamily,
@@ -3004,7 +2998,6 @@ public unsafe partial class VulkanRenderer
 
         FrameOpSignatureHasher hash = new();
         hash.Add(1);
-        hash.Add(HashUniformBindingLayout(snapshot.Uniforms));
         hash.Add(HashSamplerUnitBindingLayout(snapshot.Samplers, snapshot.SamplerNamesByUnit));
         hash.Add(HashSamplerNameBindingLayout(snapshot.SamplersByName));
         hash.Add(HashImageBindingLayout(snapshot.Images));

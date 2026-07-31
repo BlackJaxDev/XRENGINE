@@ -20,6 +20,9 @@ public sealed class VulkanRendererBackendFactory :
         => VulkanRenderer.CapturePhase524bDesktopRejectionEvidence();
     public IRuntimeRendererHost Create(in RendererBackendCreateContext context)
     {
+        if (context.Target is PresentationlessRenderTarget or ComponentRenderTarget or HeadlessWsiRenderTarget)
+            return new VulkanExplicitTargetRendererHost(context.Target, context.ModuleGeneration);
+
         if (context.Window is not XRWindow window)
         {
             throw new ArgumentException(
@@ -28,9 +31,6 @@ public sealed class VulkanRendererBackendFactory :
                 nameof(context));
         }
 
-        return new VulkanRenderer(
-            window,
-            context.LinkRendererToWindow,
-            context.ModuleGeneration);
+        return new VulkanRenderer(context.ToRendererHostContext());
     }
 }

@@ -62,7 +62,8 @@ internal sealed class VulkanDeviceContext
     public void ResolveQueues(
         Vk api,
         in VulkanRenderer.QueueFamilyIndices indices,
-        bool supportsMultipleGraphicsQueues)
+        bool supportsMultipleGraphicsQueues,
+        bool requirePresentQueue)
     {
         ArgumentNullException.ThrowIfNull(api);
         if (!IsReady)
@@ -70,8 +71,9 @@ internal sealed class VulkanDeviceContext
 
         uint graphicsFamily = indices.GraphicsFamilyIndex
             ?? throw new InvalidOperationException("A graphics queue family is required before logical-device creation.");
-        uint presentFamily = indices.PresentFamilyIndex
-            ?? throw new InvalidOperationException("A presentation queue family is required before logical-device creation.");
+        uint? presentFamily = indices.PresentFamilyIndex;
+        if (requirePresentQueue && !presentFamily.HasValue)
+            throw new InvalidOperationException("A presentation queue family is required before logical-device creation.");
         uint computeFamily = indices.ComputeFamilyIndex ?? graphicsFamily;
         uint transferFamily = indices.TransferFamilyIndex ?? computeFamily;
 
@@ -80,12 +82,14 @@ internal sealed class VulkanDeviceContext
         if (supportsMultipleGraphicsQueues)
             api.GetDeviceQueue(Device, graphicsFamily, 1, out secondaryGraphicsQueue);
 
-        api.GetDeviceQueue(Device, presentFamily, 0, out Queue presentQueue);
+        Queue presentQueue = default;
+        if (presentFamily.HasValue)
+            api.GetDeviceQueue(Device, presentFamily.Value, 0, out presentQueue);
         api.GetDeviceQueue(Device, computeFamily, 0, out Queue computeQueue);
         api.GetDeviceQueue(Device, transferFamily, 0, out Queue transferQueue);
 
         GraphicsFamily = graphicsFamily;
-        PresentFamily = presentFamily;
+        PresentFamily = presentFamily ?? 0;
         ComputeFamily = computeFamily;
         TransferFamily = transferFamily;
         SupportsMultipleGraphicsQueues = supportsMultipleGraphicsQueues;

@@ -820,10 +820,8 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>
         /// The list of required Vulkan device extensions for the application.
         /// </summary>
-        private readonly string[] _requiredDeviceExtensions =
-        [
-            KhrSwapchain.ExtensionName
-        ];
+        private static readonly string[] CommonRequiredDeviceExtensions = [];
+        private readonly string[] _requiredDeviceExtensions;
 
         /// <summary>
         /// Optional extensions that will be enabled if supported by the device.
@@ -924,12 +922,14 @@ namespace XREngine.Rendering.Vulkan
         /// <returns>An array of strings representing the required Vulkan instance extensions.</returns>
         private string[] GetRequiredExtensions()
         {
-            var glfwExtensions = Window!.VkSurface!.GetRequiredExtensions(out var glfwExtensionCount);
-            var extensions = SilkMarshal.PtrToStringArray((nint)glfwExtensions, (int)glfwExtensionCount);
-            _supportsSwapchainColorspace = IsInstanceExtensionAvailable(ExtSwapchainColorspaceExtensionName);
+            string[] extensions = _targetDriver.GetRequiredInstanceExtensions();
+            _supportsSwapchainColorspace =
+                _targetDriver.RequiresSwapchainOutput &&
+                IsInstanceExtensionAvailable(ExtSwapchainColorspaceExtensionName);
             if (_supportsSwapchainColorspace)
                 extensions = [.. extensions, ExtSwapchainColorspaceExtensionName];
             _surfacePresentScalingInstanceExtensionsEnabled =
+                _targetDriver.RequiresSwapchainOutput &&
                 IsInstanceExtensionAvailable(GetSurfaceCapabilities2ExtensionName) &&
                 IsInstanceExtensionAvailable(SurfaceMaintenance1ExtensionName);
             if (_surfacePresentScalingInstanceExtensionsEnabled)

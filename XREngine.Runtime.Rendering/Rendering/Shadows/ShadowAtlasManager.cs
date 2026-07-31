@@ -24,8 +24,6 @@ public sealed partial class ShadowAtlasManager
     // relevance gaps without repacking visible cascades a few frames later.
     private const ulong ResidentEvictionTtlFrames = 240u;
     private const float DemotionSwitchMargin = 0.25f;
-    private static readonly Lazy<double?> SlowSolveWarningThresholdOverride = new(ReadSlowSolveWarningThresholdOverride);
-
     private sealed class RequestComparer : IComparer<ShadowMapRequest>
     {
         public static readonly RequestComparer Instance = new(null);
@@ -698,11 +696,11 @@ public sealed partial class ShadowAtlasManager
     }
 
     private static double ResolveSlowSolveWarningThresholdMilliseconds(ShadowAtlasManagerSettings settings)
-        => SlowSolveWarningThresholdOverride.Value ?? Math.Max(2.0, settings.MaxRenderMilliseconds);
+        => ReadSlowSolveWarningThresholdOverride() ?? Math.Max(2.0, settings.MaxRenderMilliseconds);
 
     private static double? ReadSlowSolveWarningThresholdOverride()
     {
-        string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ShadowAtlasSolveWarnMs);
+        string? value = XREnvironment.GetValue(XREngineEnvironmentVariables.ShadowAtlasSolveWarnMs);
         if (!string.IsNullOrWhiteSpace(value) &&
             double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double threshold) &&
             threshold > 0.0)

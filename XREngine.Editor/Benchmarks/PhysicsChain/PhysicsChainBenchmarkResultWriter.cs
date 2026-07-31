@@ -8,7 +8,8 @@ namespace XREngine.Editor.Benchmarks.PhysicsChain;
 /// </summary>
 public static class PhysicsChainBenchmarkResultWriter
 {
-    public const string RunRootEnvironmentVariable = "XRE_PHYSICS_CHAIN_BENCHMARK_RUN_ROOT";
+    public const string RunRootEnvironmentVariable =
+        XREngineEnvironmentVariables.PhysicsChainBenchmarkRunRoot;
 
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 

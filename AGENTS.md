@@ -20,6 +20,25 @@ XRENGINE is a Windows-first C# XR engine and editor. It has not shipped v1, so t
 - When asked to commit, use simple imperative commit messages.
 - If this file conflicts with an explicit user request, follow the user request and note the deviation.
 
+## Model Routing And Cost Control
+
+Optimize for the lowest cost per successfully validated task, not the lowest cost per request. Rework from an underpowered route can cost more than using the appropriate model once. Do not use fixed workload percentages or file counts as routing rules; classify the ambiguity, reasoning difficulty, risk, and strength of the available validation.
+
+- Use GPT-5.6 Terra as the default coordinator and implementer for repository exploration, scoped design and implementation, ordinary debugging, code review, refactoring, integration, and test iteration.
+- Use GPT-5.6 Luna for bounded, reversible, low-ambiguity work with deterministic acceptance checks: searches and inventories, mechanical edits, boilerplate, documentation, straightforward test scaffolding, build/test execution, and log classification. Do not choose Luna for unresolved architecture, novel algorithms, ambiguous root-cause analysis, security-sensitive changes, or subtle concurrency, lifetime, unsafe-code, renderer, GPU, or performance work.
+- Use GPT-5.6 Sol only for the difficult or high-risk reasoning slice: cross-subsystem architecture, unclear root causes after evidence-driven investigation, complex concurrency or GPU/rendering failures, sophisticated algorithms, security or data-loss risk, and final review of consequential changes. Once that slice is resolved, move routine implementation and verification back to Terra or Luna.
+- Give an expensive model a compact evidence packet instead of the repository's entire history. Include only the objective, success criteria, constraints, relevant files and symbols, current diff, commands and results, failed hypotheses, unresolved questions, and next decision.
+- For repeated workloads, compare the current reasoning effort with one level lower on representative tasks. Keep the cheaper setting only when the same validation passes. Reserve high, xhigh, max, or pro-style execution for measured quality gains; never use them merely because a task is large.
+- A model may recommend moving up or down a tier, but it must not silently switch tiers. The user controls the switch.
+
+When the active model is Terra, treat these user instructions as routing commands:
+
+- **"Escalate to Sol"**: stop substantive Terra work at a coherent boundary, preserve all completed work, and hand the unfinished task to `gpt-5.6-sol`. Provide the compact evidence packet above so Sol does not repeat discovery. Do not wait for an arbitrary failure count when the user has explicitly requested escalation.
+- **"De-escalate to Luna"**: stop substantive Terra work at a coherent boundary, preserve all completed work, and hand the unfinished task to `gpt-5.6-luna`. Convert the remaining work into a bounded checklist with exact files, constraints, acceptance criteria, and validation commands. Carry forward any known risk or ambiguity instead of hiding it.
+- Use an in-place model switch or supported handoff when the current Codex surface provides one. Otherwise, state that the runtime cannot switch itself and return the handoff packet for the user to continue with the named model. Never claim a switch occurred when it did not.
+- A routing command does not authorize creating a new task, thread, branch, or worktree, committing, pushing, or performing external writes. Do not create those merely to simulate a model switch unless the user separately asks for them.
+- After a handoff, continue from the recorded state. Do not redo completed investigation, edits, or validation unless the evidence is stale or the receiving model identifies a concrete reason.
+
 ## Platform And Constraints
 
 - Primary platform: Windows 10/11.

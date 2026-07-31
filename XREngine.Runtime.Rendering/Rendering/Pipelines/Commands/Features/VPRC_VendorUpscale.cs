@@ -1571,7 +1571,7 @@ void main()
                 InputHeight = inputHeight,
                 OutputWidth = outputWidth,
                 OutputHeight = outputHeight,
-                // Viewport commands are prepared before WindowRenderCallback advances the
+                // Viewport commands are prepared before RenderFrameCallback advances the
                 // Vulkan frame counter. Streamline tokens must identify the upcoming frame
                 // so their constants match the PCL markers and proxy Present call.
                 FrameIndex = unchecked((uint)Math.Min(uint.MaxValue, renderer.FrameIndex + 1UL)),

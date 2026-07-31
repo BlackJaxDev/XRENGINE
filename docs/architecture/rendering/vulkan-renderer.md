@@ -423,6 +423,12 @@ Graphics targets are selected through the resolved render target mode. Dynamic m
 
 #### Vulkan Command-Recording Modes
 
+For the complete current primary/secondary lifecycle, persistent worker
+ownership, deterministic merge, lifetime rules, and OpenXR differences, see
+[Vulkan Primary And Secondary Command Recording](vulkan-command-recording.md).
+Future changes are tracked in the
+[Vulkan Command Recording Architecture Optimization TODO](../../work/todo/rendering/optimization/vulkan-command-recording-architecture-optimization-todo.md).
+
 Vulkan lowers the sorted `FrameOp` stream into reusable packet schedules before
 recording. `Vulkan.CommandRecording.Mode` controls the policy:
 
@@ -445,7 +451,7 @@ Additional diagnostic flags are:
 |---|---|
 | `XRE_VULKAN_COMMAND_CHAINS_SINGLE_THREAD=1` | Forces deterministic single-thread chain processing for bisection. |
 | `XRE_VULKAN_DISABLE_PARALLEL_CHAIN_RECORDING=1` | Keeps command-chain lowering enabled while disabling worker dispatch. |
-| `XRE_VULKAN_PARALLEL_PACKET_BUILD=1` | Builds packet snapshots in parallel and validates them against the sequential result in validation mode. |
+| `XRE_VULKAN_PARALLEL_PACKET_BUILD=1` | Retained compatibility flag. Packet lowering is currently deterministic and sequential; Vulkan recording concurrency belongs to the persistent command-chain workers. |
 | `XRE_VULKAN_COMMAND_CHAIN_VALIDATE=1` | Enables expensive schedule, view-specialization, queue-schedule, and signature checks. |
 | `XRE_VULKAN_COMMAND_CHAIN_TRACE=1` | Emits throttled first-dirty-reason and schedule diagnostics. |
 | `XRE_VULKAN_COMMAND_CHAIN_MESH_SECONDARY_NOOP=1` | Diagnostic mode that records secondary mesh chains without draw payloads. |
@@ -950,6 +956,56 @@ NVIDIA RTX IO extensions for streaming:
 - `VK_NV_copy_memory_indirect` — Indirect memory copies driven by GPU-generated commands
 
 Both are optional and only enabled when the extensions are available on the physical device.
+
+### Presentation-Independent Hosts
+
+The Vulkan backend factory accepts fixed-output `PresentationlessRenderTarget`,
+`ComponentRenderTarget`, and `HeadlessWsiRenderTarget` contracts without
+constructing an `XRWindow`.
+
+Backend factory input is frozen into a renderer-owned `RendererHostContext`.
+`AbstractRenderer` exposes the selected presentation target and execution mode
+without requiring a window. Desktop window services are provided only through
+the optional `IRendererDesktopWindowServices` target capability; compatibility
+`XRWindow` access fails explicitly for non-window modes. Native desktop event
+and render-loop ownership remains with `XRWindow`.
+
+- Production `VulkanRenderer` selects an immutable Vulkan target driver before
+  instance creation. The driver supplies target instance/device extensions,
+  present-queue requirements, instance-scope resources, and the final-output
+  lifecycle. Desktop WSI alone creates a desktop surface and swapchain during
+  common bootstrap; presentationless/component and OpenXR initialize the same
+  device core without a surface or present queue.
+- `VulkanPresentationlessTargetDriver` owns one immutable fixed-output
+  generation. Each slot contains production-allocator-backed color/depth
+  images, a completion fence, command resources, timestamp queries, and a
+  preallocated host-visible readback buffer. Acquisition waits only the slot
+  fence. Submission uses the production graphics queue and performs no WSI
+  acquire, present, readback, or device-wide wait.
+- `VulkanHeadlessWsiTargetDriver` is optional. It reuses the side-effect-free
+  `VK_EXT_headless_surface` probe, creates a headless surface only after the
+  extension is enabled, and validates the selected surface's queue, format,
+  usage, layer, extent, and FIFO-present capabilities. Render-finished
+  semaphores are swapchain-image-scoped, so reuse is proven by image
+  reacquisition. Its acquire/present cycle is labeled headless WSI no-op
+  presentation, not desktop-compositor evidence.
+- `VulkanDesktopWsiTargetDriver` owns desktop surface/swapchain lifecycle and
+  the window-derived framebuffer, resize, HDR, present-scaling, acquire,
+  present, out-of-date, and surface-loss policy boundary. Existing Streamline
+  proxy swapchain behavior, diagnostics, recovery, and per-generation
+  retirement remain in the desktop path.
+- OpenXR images are mapped into `VulkanFrameTargetLease` as externally owned
+  targets whose completion disposition is `OpenXrRuntimeRelease`. The adapter
+  carries view/layer and hidden-area-mask capability but introduces no Vulkan
+  acquire or present. The OpenXR binding retains runtime acquire/wait/release
+  order and session-loss handling.
+
+`VulkanExplicitTargetRendererHost` is a thin runtime interface adapter over a
+production `VulkanRenderer`; it owns no Vulkan resources. Explicit callbacks
+receive `VulkanRenderFrameTarget` images/views, extent, generation, slot, and
+layout requirements. Bounded post-measurement readback and SHA-256 identity
+are presentationless-only. Phase 4 threads the new lease value through the
+normal production frame loop; Phase 5 binds the complete render graph to it.
 
 ---
 

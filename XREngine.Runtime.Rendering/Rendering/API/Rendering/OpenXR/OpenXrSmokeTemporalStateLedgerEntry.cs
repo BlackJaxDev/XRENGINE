@@ -52,17 +52,17 @@ public static class Phase524bTemporalStateDiagnostics
     private const int Capacity = 4096;
     private static readonly object s_lock = new();
     private static readonly OpenXrSmokeTemporalStateLedgerEntry[] s_entries = new OpenXrSmokeTemporalStateLedgerEntry[Capacity];
-    private static readonly bool s_enabled = ReadEnabled();
     private static int s_next;
     private static int s_count;
     private static long s_overflowCount;
 
-    public static bool Enabled => s_enabled;
+    public static bool Enabled
+        => XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanPhase524bValidation);
     public static long OverflowCount => Interlocked.Read(ref s_overflowCount);
 
     public static void Record(in OpenXrSmokeTemporalStateLedgerEntry entry)
     {
-        if (!s_enabled)
+        if (!Enabled)
             return;
 
         lock (s_lock)
@@ -98,11 +98,4 @@ public static class Phase524bTemporalStateDiagnostics
         }
     }
 
-    private static bool ReadEnabled()
-    {
-        string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanPhase524bValidation);
-        return string.Equals(value, "1", StringComparison.Ordinal) ||
-               string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
-    }
 }

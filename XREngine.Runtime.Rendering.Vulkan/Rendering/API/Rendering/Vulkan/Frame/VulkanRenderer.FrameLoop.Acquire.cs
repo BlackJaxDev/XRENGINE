@@ -13,7 +13,7 @@ namespace XREngine.Rendering.Vulkan
         private VulkanDesktopAcquireAvailabilityTracker
             _desktopAcquireAvailability;
 
-        private EDesktopFrameFlow AcquireDesktopSwapchainImage(
+        internal EDesktopFrameFlow AcquireDesktopSwapchainImageCore(
             ref VulkanFrameAttempt attempt)
         {
             attempt.ImageIndex = 0;
@@ -75,8 +75,7 @@ namespace XREngine.Rendering.Vulkan
             attempt.Timing.AcquireImage +=
                 Stopwatch.GetElapsedTime(stageStartTimestamp);
             VulkanDesktopAcquireOutcome acquireOutcome =
-                VulkanDesktopFramePolicy.ClassifyAcquire(
-                    attempt.AcquireResult);
+                DesktopWsiTarget.ClassifyAcquire(attempt.AcquireResult);
 
             if (VulkanFrameDiagnosticsTraceEnabled)
             {
@@ -95,7 +94,8 @@ namespace XREngine.Rendering.Vulkan
                 case Result.Success:
                     break;
                 case Result.SuboptimalKhr:
-                    if (!ShouldKeepPresentScalingSwapchain(
+                    if (!DesktopWsiTarget.ShouldKeepPresentScalingSwapchain(
+                            this,
                             attempt.AcquireResult,
                             attempt.InteractiveResize))
                     {

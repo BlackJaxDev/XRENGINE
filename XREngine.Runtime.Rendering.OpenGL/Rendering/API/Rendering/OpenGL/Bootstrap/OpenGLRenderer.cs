@@ -81,9 +81,15 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>, ISparseTextureStream
     public OpenGLRenderer(
         XRWindow window,
         bool shouldLinkWindow = true,
-        long backendGeneration = 0) :
-        base(window, shouldLinkWindow, backendGeneration)
+        long backendGeneration = 0)
+        : this(RendererHostContext.CreateDesktop(window, shouldLinkWindow, backendGeneration))
     {
+    }
+
+    public OpenGLRenderer(RendererHostContext hostContext)
+        : base(hostContext)
+    {
+        _ = hostContext.RequireDesktopWindow<XRWindow>();
         ESApi = Silk.NET.OpenGLES.GL.GetApi(Window.GLContext);
 
         EXTMemoryObject = ESApi.TryGetExtension<ExtMemoryObject>(out var ext) ? ext : null;
@@ -441,7 +447,7 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>, ISparseTextureStream
         }
     }
 
-    protected override void WindowRenderCallback(double delta)
+    protected override void RenderFrameCallback(double delta)
     {
 
     }

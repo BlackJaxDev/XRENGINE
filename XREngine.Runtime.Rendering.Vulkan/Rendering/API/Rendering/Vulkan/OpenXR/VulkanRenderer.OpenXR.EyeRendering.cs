@@ -660,7 +660,7 @@ public unsafe partial class VulkanRenderer
             CancelRecordedTextureUploads(_openXrBackend.EyeRecordedTextureUploadsForSubmit[i], reason);
     }
 
-    internal static OpenXrEyeRenderTargetContext CreateOpenXrEyeRenderTargetContext(
+    internal OpenXrEyeRenderTargetContext CreateOpenXrEyeRenderTargetContext(
         in OpenXrEyeSwapchainRenderRequest request,
         ImageView imageView,
         in VulkanOpenXrDepthTarget depthTarget,
@@ -672,7 +672,6 @@ public unsafe partial class VulkanRenderer
             0,
             (int)Math.Min(request.Extent.Width, (uint)int.MaxValue),
             (int)Math.Min(request.Extent.Height, (uint)int.MaxValue));
-
         return new OpenXrEyeRenderTargetContext(
             request.OpenXrViewIndex,
             request.OpenXrImageIndex,

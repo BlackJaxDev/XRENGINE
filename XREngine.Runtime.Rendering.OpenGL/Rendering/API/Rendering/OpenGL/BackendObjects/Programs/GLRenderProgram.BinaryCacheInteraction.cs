@@ -175,23 +175,19 @@ namespace XREngine.Rendering.OpenGL
             private const double SlowLinkPreparationWarningMilliseconds = 100.0;
             private const double SlowShaderLinkSourceDumpMilliseconds = 5000.0;
             private const double ShaderCompletionPollGlCallSlowLogMilliseconds = 1.0;
-            private static readonly bool DumpSlowShaderSources = string.Equals(
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DumpSlowShaderSource),
-                "1",
-                StringComparison.Ordinal);
-            private static readonly bool TraceShaderCompletionPollGlCalls = string.Equals(
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.TraceShaderCompletionPollGlCalls),
-                "1",
-                StringComparison.Ordinal);
-            private static readonly bool AllowRenderThreadDriverParallelSourceLinks = string.Equals(
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.AllowRenderThreadDriverParallelSource),
-                "1",
-                StringComparison.Ordinal);
-            private static readonly bool SharedLinkedProgramReuseEnabled = string.Equals(
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EnableSharedLinkedProgramReuse),
-                "1",
-                StringComparison.Ordinal);
-            private static readonly ProgramBinaryRetrievableHintMode BinaryRetrievableHintMode = ResolveBinaryRetrievableHintMode();
+            private static bool DumpSlowShaderSources
+                => XREnvironment.IsEnabled(XREngineEnvironmentVariables.DumpSlowShaderSource);
+            private static bool TraceShaderCompletionPollGlCalls
+                => XREnvironment.IsEnabled(
+                    XREngineEnvironmentVariables.TraceShaderCompletionPollGlCalls);
+            private static bool AllowRenderThreadDriverParallelSourceLinks
+                => XREnvironment.IsEnabled(
+                    XREngineEnvironmentVariables.AllowRenderThreadDriverParallelSource);
+            private static bool SharedLinkedProgramReuseEnabled =>
+                !XREnvironment.IsEnabled(
+                    XREngineEnvironmentVariables.DisableSharedLinkedProgramReuse);
+            private static ProgramBinaryRetrievableHintMode BinaryRetrievableHintMode
+                => ResolveBinaryRetrievableHintMode();
 
             private enum ProgramBinaryRetrievableHintMode : byte
             {
@@ -202,7 +198,8 @@ namespace XREngine.Rendering.OpenGL
 
             private static ProgramBinaryRetrievableHintMode ResolveBinaryRetrievableHintMode()
             {
-                string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProgramBinaryRetrievableHint);
+                string? value = XREnvironment.GetValue(
+                    XREngineEnvironmentVariables.ProgramBinaryRetrievableHint);
                 if (string.IsNullOrWhiteSpace(value))
                     return ProgramBinaryRetrievableHintMode.SourceBuildOnly;
 

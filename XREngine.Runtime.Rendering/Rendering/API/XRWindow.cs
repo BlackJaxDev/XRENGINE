@@ -3135,7 +3135,7 @@ namespace XREngine.Rendering
                 }
 
                 // Viewport/pipeline rendering is isolated so that exceptions during scene rendering
-                // do not prevent Vulkan's WindowRenderCallback (acquire/record/submit/present) from
+                // do not prevent Vulkan's RenderFrameCallback (acquire/record/submit/present) from
                 // executing. In OpenGL the window swap is handled by Silk.NET automatically, but
                 // Vulkan requires explicit present — skipping it leaves the window uninitialized (white).
                 bool viewportRenderFailed = false;

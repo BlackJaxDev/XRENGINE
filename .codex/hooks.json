@@ -7,7 +7,8 @@
           {
             "type": "command",
             "command": "cat >/dev/null || true; repo_root=$(git rev-parse --show-toplevel 2>/dev/null) && powershell -NoProfile -ExecutionPolicy Bypass -File \"$repo_root/Tools/Invoke-CodeReviewGraph.ps1\" update --skip-flows || true",
-            "timeout": 30,
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$null = [Console]::In.ReadToEnd(); $d = (Get-Location).Path; while ($true) { $launcher = Join-Path $d 'Tools/Invoke-CodeReviewGraph.ps1'; if (Test-Path -LiteralPath $launcher -PathType Leaf) { break }; $parent = [System.IO.Directory]::GetParent($d); if ($null -eq $parent) { exit 0 }; $d = $parent.FullName }; try { & $launcher update --skip-flows } catch { Write-Warning $_; exit 0 }\"",
+            "timeout": 120,
             "statusMessage": "Updating code-review-graph"
           }
         ]
@@ -20,7 +21,8 @@
           {
             "type": "command",
             "command": "cat >/dev/null || true; repo_root=$(git rev-parse --show-toplevel 2>/dev/null) && powershell -NoProfile -ExecutionPolicy Bypass -File \"$repo_root/Tools/Invoke-CodeReviewGraph.ps1\" status || true",
-            "timeout": 10,
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$null = [Console]::In.ReadToEnd(); $d = (Get-Location).Path; while ($true) { $launcher = Join-Path $d 'Tools/Invoke-CodeReviewGraph.ps1'; if (Test-Path -LiteralPath $launcher -PathType Leaf) { break }; $parent = [System.IO.Directory]::GetParent($d); if ($null -eq $parent) { exit 0 }; $d = $parent.FullName }; try { & $launcher status } catch { Write-Warning $_; exit 0 }\"",
+            "timeout": 45,
             "statusMessage": "Checking code-review-graph status"
           }
         ]

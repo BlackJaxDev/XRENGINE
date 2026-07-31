@@ -83,6 +83,34 @@ public unsafe partial class VulkanRenderer
             SignalTimelineValue = signalTimelineValue,
         };
 
+    private VulkanSubmissionDiagnosticContext
+        CreateFrameTargetSubmissionDiagnosticContext(
+            string submissionKind,
+            string outputTargetName,
+            in VulkanFrameTargetLease lease,
+            ulong frameNumber,
+            ulong signalTimelineValue)
+        => new()
+        {
+            SubmissionKind = submissionKind,
+            FrameOpKind = "MainViewport",
+            OutputTargetName = outputTargetName,
+            OutputWidth = lease.Target.Extent.Width,
+            OutputHeight = lease.Target.Extent.Height,
+            InternalWidth = lease.Target.Extent.Width,
+            InternalHeight = lease.Target.Extent.Height,
+            FrameId = frameNumber,
+            FrameSlot = unchecked((int)Math.Min(
+                lease.Target.FrameSlotIndex,
+                int.MaxValue)),
+            SwapchainImageIndex = lease.ImageIndex,
+            CommandBufferDirtyGeneration =
+                SnapshotCommandBufferDirtyGeneration(),
+            ResourceGeneration = lease.Target.TargetGeneration,
+            WaitTimelineValue = 0,
+            SignalTimelineValue = signalTimelineValue,
+        };
+
     /// <summary>
     /// Creates a Vulkan submission diagnostic context for an OpenXR submission.
     /// </summary>

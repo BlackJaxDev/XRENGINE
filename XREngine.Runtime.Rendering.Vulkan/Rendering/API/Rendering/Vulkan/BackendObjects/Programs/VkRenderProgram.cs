@@ -41,6 +41,9 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
     private readonly List<ComputeDispatchSnapshot> _frameBindingSnapshotPool = [];
     private ulong _frameBindingSnapshotPoolFrame;
     private int _frameBindingSnapshotPoolCursor;
+    private readonly Dictionary<MaterialBindingSnapshotCacheKey, ComputeDispatchSnapshot?> _frameMaterialBindingSnapshots = [];
+    private ulong _frameMaterialBindingSnapshotCacheFrame;
+    private readonly Dictionary<MaterialUniformBindingCacheKey, MaterialUniformBindingPayload> _materialUniformBindingPayloads = [];
     private readonly ConcurrentDictionary<string, byte> _computeWarnings = new(StringComparer.Ordinal);
     private readonly Dictionary<ComputeUniformBufferKey, ComputeUniformBuffer> _computeUniformBuffers = new();
     private readonly HashSet<(uint ImageIndex, ulong BindingKey)> _reusableComputeDescriptorRefreshKeys = [];

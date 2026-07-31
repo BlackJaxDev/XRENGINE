@@ -25,11 +25,8 @@ namespace XREngine.Rendering.OpenGL
             private static readonly TranslateInputKeyDelegate? TranslateInputKey = CreateTranslateInputKeyDelegate();
             private static readonly List<IWindow> AbandonedShutdownWindows = [];
             private static readonly List<IInputContext> AbandonedShutdownInputContexts = [];
-            private static readonly bool DisposeNativeViewportWindows =
-                string.Equals(
-                    Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ImGuiViewportDisposeNative),
-                    "1",
-                    StringComparison.Ordinal);
+            private static bool DisposeNativeViewportWindows
+                => XREnvironment.IsEnabled(XREngineEnvironmentVariables.ImGuiViewportDisposeNative);
 
             private readonly OpenGLRenderer _renderer;
             private readonly ImGuiController _controller;

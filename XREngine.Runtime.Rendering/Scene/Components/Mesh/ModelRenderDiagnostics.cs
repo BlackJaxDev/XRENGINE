@@ -31,7 +31,10 @@ internal static class ModelRenderDiagnostics
     private static int s_visibilityLines;
     private static int s_commandLines;
     private static int s_rejectLines;
-    private static readonly string[] s_priorityTokens = BuildPriorityTokens();
+    private static string[] s_priorityTokens = BuildPriorityTokens();
+
+    static ModelRenderDiagnostics()
+        => XREnvironment.VariableChanged += HandleEnvironmentVariableChanged;
 
     private static bool Enabled
     {
@@ -416,8 +419,9 @@ internal static class ModelRenderDiagnostics
         if (string.IsNullOrWhiteSpace(value))
             return false;
 
-        for (int tokenIndex = 0; tokenIndex < s_priorityTokens.Length; tokenIndex++)
-            if (value.Contains(s_priorityTokens[tokenIndex], StringComparison.OrdinalIgnoreCase))
+        string[] priorityTokens = Volatile.Read(ref s_priorityTokens);
+        for (int tokenIndex = 0; tokenIndex < priorityTokens.Length; tokenIndex++)
+            if (value.Contains(priorityTokens[tokenIndex], StringComparison.OrdinalIgnoreCase))
                 return true;
 
         return false;
@@ -425,7 +429,7 @@ internal static class ModelRenderDiagnostics
 
     private static string[] BuildPriorityTokens()
     {
-        string? env = System.Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ModelRenderDiagFilter);
+        string? env = XREnvironment.GetValue(XREngineEnvironmentVariables.ModelRenderDiagFilter);
         if (string.IsNullOrWhiteSpace(env))
             return ["body"];
 
@@ -438,6 +442,18 @@ internal static class ModelRenderDiagnostics
         }
 
         return trimmed.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    private static void HandleEnvironmentVariableChanged(RuntimeEnvironmentVariableChange change)
+    {
+        if (!change.Name.Equals(
+                XREngineEnvironmentVariables.ModelRenderDiagFilter,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        Volatile.Write(ref s_priorityTokens, BuildPriorityTokens());
     }
 
     private static string ComponentLabel(ModelComponent component)
