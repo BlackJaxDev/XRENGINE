@@ -9,5 +9,6 @@ internal readonly record struct VulkanSecondaryRecordingBucket(
     int PassIndex,
     int TargetIdentity,
     int SchedulingIdentity,
+    EVulkanSecondaryCommandFamily Family,
     Type OpType,
     FrameOpContext Context);

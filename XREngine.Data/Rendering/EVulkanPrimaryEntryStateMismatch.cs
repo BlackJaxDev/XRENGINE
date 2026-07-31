@@ -18,4 +18,5 @@ public enum EVulkanPrimaryEntryStateMismatch
     DescriptorLayout,
     ResourceGeneration,
     QueueFamily,
+    ExternalOwnership,
 }

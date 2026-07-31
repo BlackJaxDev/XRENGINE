@@ -740,6 +740,8 @@ public unsafe partial class VulkanRenderer
                     hash.Add(indirect.ByteOffset);
                     hash.Add(indirect.CountByteOffset);
                     hash.Add(indirect.UseCount);
+                    hash.Add(
+                        (int)indirect.SecondaryRecordingContract.Eligibility);
                     break;
                 case MeshTaskDispatchIndirectCountOp meshTaskDispatch:
                     hash.Add(ComputeCommandBufferDataBufferSignature(meshTaskDispatch.IndirectBuffer));
@@ -941,7 +943,8 @@ public unsafe partial class VulkanRenderer
         return FinishUnorderedHash(uniforms.Count, xor, sum);
     }
 
-    private static int HashUniformBindings(Dictionary<string, ProgramUniformValue> uniforms)
+    internal static ulong HashUniformBindings(
+        Dictionary<string, ProgramUniformValue> uniforms)
     {
         ulong xor = 0;
         ulong sum = 0;
@@ -955,7 +958,43 @@ public unsafe partial class VulkanRenderer
             AddUnorderedItemHash(ref xor, ref sum, unchecked((ulong)item.ToHashCode()));
         }
 
-        return unchecked((int)FinishUnorderedHash(uniforms.Count, xor, sum));
+        return FinishUnorderedHash(uniforms.Count, xor, sum);
+    }
+
+    /// <summary>
+    /// Hashes only callback-owned numeric bindings. The immutable snapshot
+    /// producer pays this bounded cost once, while command-buffer reuse compares
+    /// the resulting publication without re-running callbacks or scanning UBOs.
+    /// </summary>
+    internal static ulong HashUniformBindings(
+        Dictionary<string, ProgramUniformValue> uniforms,
+        HashSet<string> selectedNames)
+    {
+        ulong xor = 0;
+        ulong sum = 0;
+        int count = 0;
+        foreach (string name in selectedNames)
+        {
+            if (!uniforms.TryGetValue(
+                    name,
+                    out ProgramUniformValue value))
+            {
+                continue;
+            }
+
+            HashCode item = new();
+            item.Add(name, StringComparer.Ordinal);
+            item.Add((int)value.Type);
+            item.Add(value.IsArray);
+            HashUniformValue(ref item, value);
+            AddUnorderedItemHash(
+                ref xor,
+                ref sum,
+                unchecked((ulong)item.ToHashCode()));
+            count++;
+        }
+
+        return FinishUnorderedHash(count, xor, sum);
     }
 
     internal static ulong HashSamplerUnitBindings(

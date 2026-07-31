@@ -3,3 +3,11 @@ command = "powershell"
 args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "$d = (Get-Location).Path; while ($true) { $launcher = Join-Path $d 'Tools/Invoke-CodeReviewGraph.ps1'; if (Test-Path -LiteralPath $launcher -PathType Leaf) { break }; $parent = [System.IO.Directory]::GetParent($d); if ($null -eq $parent) { throw 'Unable to locate the XRENGINE code-review-graph launcher.' }; $d = $parent.FullName }; & $launcher serve"]
 required = false
 startup_timeout_sec = 30
+
+[mcp_servers.local-agent-broker]
+command = "powershell"
+args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "$d = (Get-Location).Path; while ($true) { $launcher = Join-Path $d 'Tools/Invoke-LocalAgentBroker.ps1'; if (Test-Path -LiteralPath $launcher -PathType Leaf) { break }; $parent = [System.IO.Directory]::GetParent($d); if ($null -eq $parent) { throw 'Unable to locate the XRENGINE local-agent-broker launcher.' }; $d = $parent.FullName }; & $launcher"]
+enabled_tools = ["recommend_agent_route", "start_agent_run", "get_agent_run", "cancel_agent_run", "list_agent_runs"]
+required = false
+startup_timeout_sec = 30
+tool_timeout_sec = 30

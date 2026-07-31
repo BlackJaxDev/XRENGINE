@@ -3,6 +3,11 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed class ComputeDispatchSnapshot
 {
     public Dictionary<string, ProgramUniformValue> Uniforms { get; private set; }
+    internal Dictionary<string, VulkanRuntimeUniformPublication>
+        RuntimeUniformPublications { get; private set; } =
+            new(StringComparer.Ordinal);
+    internal HashSet<string> MutableLegacyUniformNames { get; private set; } =
+        new(StringComparer.Ordinal);
     public Dictionary<uint, XRTexture> Samplers { get; private set; }
     public Dictionary<uint, string> SamplerNamesByUnit { get; private set; }
     public Dictionary<string, XRTexture> SamplersByName { get; private set; }
@@ -65,6 +70,12 @@ internal sealed class ComputeDispatchSnapshot
     internal ulong DescriptorSetLayoutSignature { get; private set; }
     internal ulong ExactSamplerResourceSignature { get; private set; }
     internal ulong RuntimeUniformNameSignature { get; private set; }
+    internal ulong RuntimeUniformValueSignature { get; private set; }
+    internal ulong MutableLegacyUniformNameSignature { get; private set; }
+    internal ulong MutableLegacyUniformValueSignature { get; private set; }
+    internal ulong RuntimeUniformPublicationLayoutSignature { get; private set; }
+    internal VulkanBindingFrequencyGenerations TypedPublicationGenerations
+        { get; private set; }
 
     public ComputeDispatchSnapshot(
         Dictionary<string, ProgramUniformValue> uniforms,
@@ -118,6 +129,13 @@ internal sealed class ComputeDispatchSnapshot
         DescriptorSetLayoutSignature = 0;
         ExactSamplerResourceSignature = 0;
         RuntimeUniformNameSignature = 0;
+        RuntimeUniformValueSignature = 0;
+        MutableLegacyUniformNameSignature = 0;
+        MutableLegacyUniformValueSignature = 0;
+        RuntimeUniformPublicationLayoutSignature = 0;
+        TypedPublicationGenerations = default;
+        RuntimeUniformPublications.Clear();
+        MutableLegacyUniformNames.Clear();
     }
 
     /// <summary>
@@ -127,6 +145,9 @@ internal sealed class ComputeDispatchSnapshot
     /// </summary>
     internal void ExchangeCapturedBindings(
         ref Dictionary<string, ProgramUniformValue> uniforms,
+        ref Dictionary<string, VulkanRuntimeUniformPublication>
+            runtimeUniformPublications,
+        ref HashSet<string> mutableLegacyUniformNames,
         ref Dictionary<uint, XRTexture> samplers,
         ref Dictionary<uint, string> samplerNamesByUnit,
         ref Dictionary<string, XRTexture> samplersByName,
@@ -134,6 +155,10 @@ internal sealed class ComputeDispatchSnapshot
     {
         BeginNewContent();
         (Uniforms, uniforms) = (uniforms, Uniforms);
+        (RuntimeUniformPublications, runtimeUniformPublications) =
+            (runtimeUniformPublications, RuntimeUniformPublications);
+        (MutableLegacyUniformNames, mutableLegacyUniformNames) =
+            (mutableLegacyUniformNames, MutableLegacyUniformNames);
         (Samplers, samplers) = (samplers, Samplers);
         (SamplerNamesByUnit, samplerNamesByUnit) = (samplerNamesByUnit, SamplerNamesByUnit);
         (SamplersByName, samplersByName) = (samplersByName, SamplersByName);
@@ -148,6 +173,11 @@ internal sealed class ComputeDispatchSnapshot
         DescriptorSetLayoutSignature = 0;
         ExactSamplerResourceSignature = 0;
         RuntimeUniformNameSignature = 0;
+        RuntimeUniformValueSignature = 0;
+        MutableLegacyUniformNameSignature = 0;
+        MutableLegacyUniformValueSignature = 0;
+        RuntimeUniformPublicationLayoutSignature = 0;
+        TypedPublicationGenerations = default;
         Buffers.Clear();
         BuffersByName.Clear();
     }
@@ -160,6 +190,23 @@ internal sealed class ComputeDispatchSnapshot
 
     internal bool HasRuntimeUniform(string name)
         => Uniforms.ContainsKey(name);
+
+    internal bool IsMutableLegacyUniform(string name)
+    {
+        if (MutableLegacyUniformNames.Contains(name))
+            return true;
+
+        if (name.EndsWith("_VTX", StringComparison.Ordinal))
+            return MutableLegacyUniformNames.Contains(name[..^4]);
+
+        return MutableLegacyUniformNames.Contains(
+            string.Concat(name, "_VTX"));
+    }
+
+    internal bool TryGetRuntimeUniformPublication(
+        string name,
+        out VulkanRuntimeUniformPublication publication)
+        => RuntimeUniformPublications.TryGetValue(name, out publication);
 
     private void BeginNewContent()
     {
@@ -200,6 +247,15 @@ internal sealed class ComputeDispatchSnapshot
             includeMutableFrameSourceDescriptors: true));
         ExactSamplerResourceSignature = samplerResourceHash.ToHash();
         RuntimeUniformNameSignature = HashUniformNames(Uniforms);
+        RuntimeUniformValueSignature =
+            VulkanRenderer.HashUniformBindings(Uniforms);
+        MutableLegacyUniformNameSignature =
+            HashUniformNames(MutableLegacyUniformNames);
+        MutableLegacyUniformValueSignature =
+            VulkanRenderer.HashUniformBindings(
+                Uniforms,
+                MutableLegacyUniformNames);
+        PublishRuntimeUniformPublicationSignatures();
 
         FrameOpSignatureHasher hash = new();
         hash.Add(1);
@@ -209,6 +265,107 @@ internal sealed class ComputeDispatchSnapshot
         hash.Add(BufferBindingLayoutSignature);
         DescriptorSetLayoutSignature = hash.ToHash();
         HasPublishedBindingLayoutSignatures = true;
+    }
+
+    private void PublishRuntimeUniformPublicationSignatures()
+    {
+        Span<ulong> xorByFrequency =
+            stackalloc ulong[(int)EVulkanBindingFrequency.Count];
+        Span<ulong> sumByFrequency =
+            stackalloc ulong[(int)EVulkanBindingFrequency.Count];
+        Span<int> countByFrequency =
+            stackalloc int[(int)EVulkanBindingFrequency.Count];
+        ulong layoutXor = 0;
+        ulong layoutSum = 0;
+
+        foreach ((string name, VulkanRuntimeUniformPublication publication)
+                 in RuntimeUniformPublications)
+        {
+            int frequencyIndex = (int)publication.Frequency;
+            if ((uint)frequencyIndex >=
+                (uint)EVulkanBindingFrequency.Count)
+            {
+                continue;
+            }
+
+            FrameOpSignatureHasher layoutItem = new();
+            layoutItem.Add(name);
+            layoutItem.Add((byte)publication.Frequency);
+            ulong layoutHash = layoutItem.ToHash();
+            VulkanRenderer.AddUnorderedItemHash(
+                ref layoutXor,
+                ref layoutSum,
+                layoutHash);
+
+            FrameOpSignatureHasher generationItem = new();
+            generationItem.Add(name);
+            generationItem.Add(publication.Generation);
+            ulong generationHash = generationItem.ToHash();
+            VulkanRenderer.AddUnorderedItemHash(
+                ref xorByFrequency[frequencyIndex],
+                ref sumByFrequency[frequencyIndex],
+                generationHash);
+            countByFrequency[frequencyIndex]++;
+        }
+
+        RuntimeUniformPublicationLayoutSignature =
+            VulkanRenderer.FinishUnorderedHash(
+                RuntimeUniformPublications.Count,
+                layoutXor,
+                layoutSum);
+        TypedPublicationGenerations =
+            new VulkanBindingFrequencyGenerations(
+                FinishFrequencyGeneration(
+                    EVulkanBindingFrequency.Frame,
+                    xorByFrequency,
+                    sumByFrequency,
+                    countByFrequency),
+                FinishFrequencyGeneration(
+                    EVulkanBindingFrequency.View,
+                    xorByFrequency,
+                    sumByFrequency,
+                    countByFrequency),
+                FinishFrequencyGeneration(
+                    EVulkanBindingFrequency.Pass,
+                    xorByFrequency,
+                    sumByFrequency,
+                    countByFrequency),
+                FinishFrequencyGeneration(
+                    EVulkanBindingFrequency.Material,
+                    xorByFrequency,
+                    sumByFrequency,
+                    countByFrequency),
+                FinishFrequencyGeneration(
+                    EVulkanBindingFrequency.Object,
+                    xorByFrequency,
+                    sumByFrequency,
+                    countByFrequency),
+                FinishFrequencyGeneration(
+                    EVulkanBindingFrequency.Instance,
+                    xorByFrequency,
+                    sumByFrequency,
+                    countByFrequency),
+                FinishFrequencyGeneration(
+                    EVulkanBindingFrequency.RuntimeCallback,
+                    xorByFrequency,
+                    sumByFrequency,
+                    countByFrequency));
+    }
+
+    private static ulong FinishFrequencyGeneration(
+        EVulkanBindingFrequency frequency,
+        ReadOnlySpan<ulong> xorByFrequency,
+        ReadOnlySpan<ulong> sumByFrequency,
+        ReadOnlySpan<int> countByFrequency)
+    {
+        int index = (int)frequency;
+        if (countByFrequency[index] == 0)
+            return 0UL;
+
+        return VulkanRenderer.FinishUnorderedHash(
+            countByFrequency[index],
+            xorByFrequency[index],
+            sumByFrequency[index]);
     }
 
     private static void Copy<TKey, TValue>(
@@ -245,6 +402,23 @@ internal sealed class ComputeDispatchSnapshot
         }
 
         return VulkanRenderer.FinishUnorderedHash(uniforms.Count, xor, sum);
+    }
+
+    private static ulong HashUniformNames(HashSet<string> uniformNames)
+    {
+        ulong xor = 0;
+        ulong sum = 0;
+        foreach (string name in uniformNames)
+        {
+            FrameOpSignatureHasher item = new();
+            item.Add(name);
+            VulkanRenderer.AddUnorderedItemHash(ref xor, ref sum, item.ToHash());
+        }
+
+        return VulkanRenderer.FinishUnorderedHash(
+            uniformNames.Count,
+            xor,
+            sum);
     }
 
     private static Dictionary<uint, VulkanComputeBufferBinding> BuildBindings(Dictionary<uint, XRDataBuffer> buffers)

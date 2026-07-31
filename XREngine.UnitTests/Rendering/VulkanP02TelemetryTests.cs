@@ -40,6 +40,8 @@ public sealed class VulkanP02TelemetryTests
         string statsSource = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vulkan.cs");
         string captureSource = ReadWorkspaceFile("XRENGINE/Engine/Engine.ProfileCapture.cs");
+        string mcpSource = ReadWorkspaceFile(
+            "XREngine.Editor/Mcp/Actions/EditorMcpActions.Profiler.cs");
 
         foreach (string stage in new[]
         {
@@ -50,6 +52,13 @@ public sealed class VulkanP02TelemetryTests
             "SubmissionResourceLifetimeValidation", "QueueSubmit", "SubmissionPublication",
             "CommandChainFastSignature", "CommandChainPacketLowering", "CommandChainScheduleEvaluation",
             "PrimaryFrameDataManifest", "PrimaryPrewarm", "PrimaryCommandEncoding",
+            "PreparedDrawConstruction", "SecondaryMerge", "CommandDependencyComparison",
+            "CommandDirtyPropagation", "CommandCacheScanning",
+            "MeshDrawPreparation", "MeshDrawResourcePreparation",
+            "MeshDrawBindingPreparation", "MeshDrawMaterialBindings",
+            "MeshDrawBindingSnapshotCopy", "MeshDrawEnqueue",
+            "FrameDataDescriptorValidation", "FrameDataEngineUniformUpload",
+            "FrameDataAutoUniformUpload",
         })
             stageSource.ShouldContain(stage);
 
@@ -73,8 +82,155 @@ public sealed class VulkanP02TelemetryTests
         recordingSource.ShouldContain("EVulkanCpuStage.PrimaryFrameDataManifest");
         recordingSource.ShouldContain("EVulkanCpuStage.PrimaryPrewarm");
         recordingSource.ShouldContain("EVulkanCpuStage.PrimaryCommandEncoding");
+        recordingSource.ShouldContain("EVulkanCpuStage.PreparedDrawConstruction");
+        recordingSource.ShouldContain("EVulkanCpuStage.SecondaryMerge");
+        recordingSource.ShouldContain("EVulkanCpuStage.CommandDependencyComparison");
+        recordingSource.ShouldContain("EVulkanCpuStage.CommandDirtyPropagation");
+        recordingSource.ShouldContain("EVulkanCpuStage.CommandCacheScanning");
         statsSource.ShouldContain("VulkanCpuStageAllocationHighWaterBytes");
+        statsSource.ShouldContain("VulkanCpuStageInvocationCount");
+        statsSource.ShouldContain("VulkanCpuStageCumulativeMs");
+        statsSource.ShouldContain("VulkanCpuStagePeakMs");
         captureSource.ShouldContain("vulkan_cpu_{name}_allocation_high_water_bytes");
+        captureSource.ShouldContain("vulkan_cpu_{name}_process_invocation_count");
+        captureSource.ShouldContain("vulkan_cpu_{name}_process_elapsed_ms");
+        captureSource.ShouldContain("vulkan_cpu_{name}_process_peak_ms");
+        captureSource.ShouldContain(
+            "\"prepared_draw_construction\", EVulkanCpuStage.PreparedDrawConstruction");
+        captureSource.ShouldContain(
+            "\"secondary_recording\", EVulkanCpuStage.SecondaryRecording");
+        captureSource.ShouldContain(
+            "\"secondary_merge\", EVulkanCpuStage.SecondaryMerge");
+        captureSource.ShouldContain(
+            "\"primary_command_encoding\", EVulkanCpuStage.PrimaryCommandEncoding");
+        captureSource.ShouldContain(
+            "\"submission\", EVulkanCpuStage.Submission");
+        captureSource.ShouldContain(
+            "\"mesh_draw_material_bindings\", EVulkanCpuStage.MeshDrawMaterialBindings");
+        captureSource.ShouldContain(
+            "\"mesh_draw_binding_snapshot_copy\", EVulkanCpuStage.MeshDrawBindingSnapshotCopy");
+        captureSource.ShouldContain(
+            "\"frame_data_auto_uniform_upload\", EVulkanCpuStage.FrameDataAutoUniformUpload");
+        mcpSource.ShouldContain(
+            "prepared_draw_construction = VulkanCpuStage(EVulkanCpuStage.PreparedDrawConstruction)");
+        mcpSource.ShouldContain(
+            "secondary_merge = VulkanCpuStage(EVulkanCpuStage.SecondaryMerge)");
+        mcpSource.ShouldContain(
+            "command_dependency_comparison = VulkanCpuStage(EVulkanCpuStage.CommandDependencyComparison)");
+        mcpSource.ShouldContain(
+            "command_dirty_propagation = VulkanCpuStage(EVulkanCpuStage.CommandDirtyPropagation)");
+        mcpSource.ShouldContain(
+            "command_cache_scanning = VulkanCpuStage(EVulkanCpuStage.CommandCacheScanning)");
+        mcpSource.ShouldContain(
+            "process_invocation_count = VulkanStats.VulkanCpuStageInvocationCount(stage)");
+        mcpSource.ShouldContain(
+            "process_elapsed_ms = VulkanStats.VulkanCpuStageCumulativeMs(stage)");
+        mcpSource.ShouldContain(
+            "process_peak_ms = VulkanStats.VulkanCpuStagePeakMs(stage)");
+    }
+
+    [Test]
+    public void CommandBufferRecycling_ExposesProcessLifetimeCounters()
+    {
+        string statsSource = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vulkan.Binding.cs");
+        string captureSource = ReadWorkspaceFile(
+            "XRENGINE/Engine/Engine.ProfileCapture.cs");
+        string mcpSource = ReadWorkspaceFile(
+            "XREngine.Editor/Mcp/Actions/EditorMcpActions.Profiler.cs");
+
+        foreach (string counter in new[]
+        {
+            "VulkanProcessResetCommandBufferCalls",
+            "VulkanProcessResetCommandPoolCalls",
+            "VulkanProcessAllocateCommandBufferCalls",
+            "VulkanProcessCommandBuffersAllocated",
+            "VulkanProcessExecuteSecondaryCommandBufferCalls",
+            "VulkanProcessSecondaryCommandBuffersInvoked",
+            "VulkanProcessWorkerSecondaryCommandBufferResetCalls",
+            "VulkanProcessWorkerSecondaryCommandBufferAllocations",
+            "VulkanProcessWorkerSecondaryReplacementAllocations",
+        })
+        {
+            statsSource.ShouldContain(counter);
+            mcpSource.ShouldContain(counter);
+        }
+
+        foreach (string field in new[]
+        {
+            "vulkan_process_reset_command_buffer_calls",
+            "vulkan_process_reset_command_pool_calls",
+            "vulkan_process_allocate_command_buffer_calls",
+            "vulkan_process_command_buffers_allocated",
+            "vulkan_process_execute_secondary_command_buffer_calls",
+            "vulkan_process_secondary_command_buffers_invoked",
+            "vulkan_process_worker_secondary_command_buffer_reset_calls",
+            "vulkan_process_worker_secondary_command_buffer_allocations",
+            "vulkan_process_worker_secondary_replacement_allocations",
+        })
+            captureSource.ShouldContain(field);
+    }
+
+    [Test]
+    public void FrequencyPublication_ReportsDirtyReuseAndByteCountsPerOwner()
+    {
+        string writeSource = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
+        string statsSource = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vulkan.Binding.cs");
+        string captureSource = ReadWorkspaceFile(
+            "XRENGINE/Engine/Engine.ProfileCapture.cs");
+        string mcpSource = ReadWorkspaceFile(
+            "XREngine.Editor/Mcp/Actions/EditorMcpActions.Profiler.cs");
+
+        writeSource.ShouldContain(
+            "RecordVulkanAutoUniformFrequencyPublication(");
+        statsSource.ShouldContain(
+            "GetVulkanAutoUniformFrequencyPublicationCount");
+        statsSource.ShouldContain(
+            "GetVulkanAutoUniformFrequencyReuseCount");
+        statsSource.ShouldContain(
+            "GetVulkanAutoUniformFrequencyPublishedBytes");
+        statsSource.ShouldContain(
+            "_lastFrameVulkanAutoUniformFrequencyPublications");
+        captureSource.ShouldContain(
+            "vulkan_auto_uniform_{name}_published_bytes");
+        mcpSource.ShouldContain(
+            "auto_uniform_frequency_publication = new");
+        mcpSource.ShouldContain(
+            "runtime_callback = VulkanFrequencyPublication(VulkanStats.VulkanBindingFrequencyRuntimeCallbackIndex)");
+    }
+
+    [Test]
+    public void CommandRecordingCounts_CoverVisiblePreparedAndRetiredArtifacts()
+    {
+        string recordingSource = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string statsSource = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vulkan.Binding.cs");
+        string captureSource = ReadWorkspaceFile(
+            "XRENGINE/Engine/Engine.ProfileCapture.cs");
+        string mcpSource = ReadWorkspaceFile(
+            "XREngine.Editor/Mcp/Actions/EditorMcpActions.Profiler.cs");
+
+        recordingSource.ShouldContain(
+            "RecordVulkanVisibleMeshDrawCohort(");
+        recordingSource.ShouldContain(
+            "RecordVulkanPreparedMeshDraws(");
+        recordingSource.ShouldContain(
+            "RecordVulkanRecordedCommandArtifactRetirement(");
+        statsSource.ShouldContain("VulkanVisibleMeshDraws");
+        statsSource.ShouldContain("VulkanUniqueVisibleMaterials");
+        statsSource.ShouldContain(
+            "VulkanRecordedCommandArtifactRetirements");
+        captureSource.ShouldContain("vulkan_visible_mesh_draws");
+        captureSource.ShouldContain("vulkan_unique_visible_materials");
+        captureSource.ShouldContain(
+            "vulkan_recorded_command_artifact_retirements");
+        mcpSource.ShouldContain("visible_mesh_draws");
+        mcpSource.ShouldContain("unique_visible_materials");
+        mcpSource.ShouldContain(
+            "recorded_command_artifact_retirements");
     }
 
     [Test]

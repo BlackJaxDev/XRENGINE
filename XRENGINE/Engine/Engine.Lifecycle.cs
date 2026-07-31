@@ -99,6 +99,9 @@ namespace XREngine
                         LoadSandboxSettings();
                 }
 
+#if !XRE_PUBLISHED
+                ProfileCapture.ApplyPerformanceProfileContract();
+#endif
                 EnsureMemoryPolicyConfigured(startupSettings);
                 ValidateGpuRenderingStartupConfiguration();
                 ConfigureJobManager(GameSettings);
@@ -109,6 +112,9 @@ namespace XREngine
                 CreateWindows(startupSettings.StartupWindows);
                 AfterCreateWindows?.Invoke(startupSettings, state);
                 EngineRenderingSettingsApplication.LogVulkanFeatureProfileFingerprint(force: true);
+#if !XRE_PUBLISHED
+                ProfileCapture.LogActivePerformanceProfile();
+#endif
                 RuntimeEngine.Rendering.SecondaryContext.InitializeIfSupported(RuntimeEngine.Windows.FirstOrDefault());
                 XRWindow.AnyWindowFocusChanged += WindowFocusChanged;
 

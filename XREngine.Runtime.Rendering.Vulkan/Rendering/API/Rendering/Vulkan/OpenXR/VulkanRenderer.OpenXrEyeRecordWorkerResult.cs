@@ -7,5 +7,7 @@ public unsafe partial class VulkanRenderer
         OpenXrRecordedEyeCommandBuffer Recorded,
         int ThreadId,
         TimeSpan RecordTime,
-        string? ErrorMessage);
+        string? ErrorMessage,
+        long StartTimestamp = 0,
+        long EndTimestamp = 0);
 }

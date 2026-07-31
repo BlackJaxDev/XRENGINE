@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using Silk.NET.Vulkan;
 using XREngine;
 using XREngine.Data;
@@ -117,6 +118,7 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
     private DescriptorAllocation? _activeDescriptorAllocation;
     private readonly Dictionary<DescriptorAllocationKey, DescriptorAllocation> _descriptorAllocations = new();
     private readonly Dictionary<int, DescriptorAllocation> _descriptorAllocationsByDrawSlot = new();
+    private readonly Dictionary<DescriptorOwnerLookupKey, DescriptorAllocation> _descriptorAllocationsByOwner = new();
     private bool _descriptorDirty = true;
     private ulong _descriptorSchemaFingerprint;
     private ulong _descriptorResourceFingerprint;
@@ -126,9 +128,12 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
     private readonly Dictionary<string, EngineUniformBuffer[]> _engineUniformBuffers = new(StringComparer.Ordinal);
     private readonly HashSet<string> _engineUniformWarnings = new(StringComparer.Ordinal);
     private readonly Dictionary<string, AutoUniformBuffer[]> _autoUniformBuffers = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, Dictionary<XRMaterial, AutoUniformMaterialWritePlan>> _autoUniformMaterialWritePlans = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, AutoUniformMaterialWritePlan?[]> _publishedAutoUniformMaterialWritePlans = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _autoUniformWarnings = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, VulkanAutoUniformOwnerSlotTable> _autoUniformOwnerSlotTables = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, VulkanAutoUniformPublicationState[]> _publishedAutoUniformMaterialWritePlans = new(StringComparer.Ordinal);
+    private readonly HashSet<(
+        string Block,
+        EVulkanAutoUniformFallbackReason Reason,
+        string? Detail)> _autoUniformWarnings = [];
     private const string VertexUniformSuffix = "_VTX";
     private const string TransformIdUniformName = "TransformId";
     private const string SkinPaletteBaseUniformName = "skinPaletteBase";
@@ -315,31 +320,6 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
         // instead of inheriting stale values from the global state tracker.
         XRMaterial effectiveMaterial = ResolveMaterial(materialOverride, instances);
         uint drawInstances = MeshRenderMaterialResolver.ResolveLayeredShadowInstanceCount(effectiveMaterial, instances);
-        bool prepared;
-        string prepareReason;
-        using (VulkanRenderer.VulkanCpuStageScope resourcePreparationStage =
-               new(EVulkanCpuStage.MeshDrawResourcePreparation))
-        {
-            prepared = TryPrepareForDrawEnqueue(effectiveMaterial, out prepareReason);
-        }
-        if (!prepared)
-        {
-            // A skipped draw means the recorded frame is incomplete. Keep the
-            // command buffers invalid until the pending program/buffers/descriptors
-            // are ready on the legacy primary path. Command-chain primaries are
-            // invalidated by the frame-op signature when the draw becomes available.
-            Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
-            Debug.VulkanWarningEvery(
-                $"Vulkan.MeshRenderer.PrepareSkip.{MeshRenderer.Name ?? "UnnamedRenderer"}.{prepareReason}",
-                TimeSpan.FromSeconds(2),
-                "[Vulkan] Skipping mesh draw enqueue for renderer='{0}' mesh='{1}' material='{2}' because render preparation is not ready: {3}. {4}",
-                MeshRenderer.Name ?? "<unnamed renderer>",
-                Mesh?.Name ?? "<unnamed mesh>",
-                effectiveMaterial.Name ?? "<unnamed material>",
-                prepareReason,
-                LastPrepareDetail);
-            return;
-        }
 
         RenderingParameters? matOpts = renderOptionsOverride ?? effectiveMaterial.RenderOptions;
 
@@ -566,11 +546,55 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
         FrameOpContext context =
             Renderer.CaptureFrameOpContextForCurrentPipelineScope();
         ComputeDispatchSnapshot? programBindingSnapshot;
-        using (VulkanRenderer.VulkanCpuStageScope bindingSnapshotStage =
-               new(EVulkanCpuStage.MeshDrawBindingPreparation))
+        VkRenderProgram? preparedProgramSnapshot;
+        string? preparedProgramIdentitySnapshot;
+        ulong preparedProgramLinkGenerationSnapshot;
+        lock (_recordDrawSync)
         {
-            programBindingSnapshot =
-                CaptureProgramBindingSnapshot(effectiveMaterial, shadowUniformState);
+            bool prepared;
+            string prepareReason;
+            using (VulkanRenderer.VulkanCpuStageScope resourcePreparationStage =
+                   new(EVulkanCpuStage.MeshDrawResourcePreparation))
+            {
+                prepared = TryPrepareForDrawEnqueue(
+                    effectiveMaterial,
+                    out prepareReason);
+            }
+            if (!prepared)
+            {
+                // A skipped draw means the recorded frame is incomplete. Keep the
+                // command buffers invalid until the pending program/buffers/descriptors
+                // are ready on the legacy primary path. Command-chain primaries are
+                // invalidated by the frame-op signature when the draw becomes available.
+                Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.MeshRenderer.PrepareSkip.{MeshRenderer.Name ?? "UnnamedRenderer"}.{prepareReason}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Skipping mesh draw enqueue for renderer='{0}' mesh='{1}' material='{2}' because render preparation is not ready: {3}. {4}",
+                    MeshRenderer.Name ?? "<unnamed renderer>",
+                    Mesh?.Name ?? "<unnamed mesh>",
+                    effectiveMaterial.Name ?? "<unnamed material>",
+                    prepareReason,
+                    LastPrepareDetail);
+                return;
+            }
+
+            using (VulkanRenderer.VulkanCpuStageScope bindingSnapshotStage =
+                   new(EVulkanCpuStage.MeshDrawBindingPreparation))
+            {
+                programBindingSnapshot =
+                    CaptureProgramBindingSnapshot(
+                        effectiveMaterial,
+                        shadowUniformState);
+            }
+
+            // Resource preparation, program selection, and binding capture are
+            // one publication transaction. RecordDraw uses the same lock, so a
+            // shader reload cannot retire the selected program interface between
+            // capture and publication or mix a new program with an old snapshot.
+            preparedProgramSnapshot = _program;
+            preparedProgramIdentitySnapshot = _activeProgramIdentity;
+            preparedProgramLinkGenerationSnapshot = _program?.LinkGeneration ?? 0UL;
         }
         IndexedViewportScissorSnapshot indexedViewportScissors = Renderer.GetCurrentIndexedViewportScissorSnapshot();
         uint viewportScissorCount = indexedViewportScissors.Count > 1 ? indexedViewportScissors.Count : 1u;
@@ -639,9 +663,15 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
             renderAreaWidthSnapshot,
             renderAreaHeightSnapshot,
             shadowUniformState,
-            _program,
-            _activeProgramIdentity,
+            preparedProgramSnapshot,
+            preparedProgramIdentitySnapshot,
+            preparedProgramLinkGenerationSnapshot,
             programBindingSnapshot);
+        draw = draw with
+        {
+            AutoUniformPublication =
+                VulkanAutoUniformPublicationSnapshot.Capture(draw),
+        };
 
         if (s_screenSpaceUiDrawDiagCount < 32 &&
             passIndex == (int)EDefaultRenderPass.OnTopForward &&
@@ -715,6 +745,7 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
         XRMaterial effectiveMaterial,
         VkRenderProgram preparedProgram,
         string? preparedProgramIdentity,
+        ulong preparedProgramLinkGeneration,
         ComputeDispatchSnapshot? programBindingSnapshot,
         Matrix4x4 modelMatrix,
         XRFrameBuffer? target,
@@ -730,26 +761,26 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
         bool preparedForIndirect;
         if (Renderer.IsPrewarmingOpenXrExternalSwapchainTarget)
         {
-            preparedForIndirect = TryPrepareCapturedProgramForRecording(effectiveMaterial, preparedProgram, preparedProgramIdentity, programBindingSnapshot, 0, out reason);
+            preparedForIndirect = TryPrepareCapturedProgramForRecording(effectiveMaterial, preparedProgram, preparedProgramIdentity, preparedProgramLinkGeneration, programBindingSnapshot, 0, out reason);
         }
         else if (Renderer.IsRenderingExternalSwapchainTarget)
         {
             using (Renderer.BlockSynchronousResourceUploads("IndirectDrawSnapshot"))
             {
-                preparedForIndirect = TryReuseCapturedProgramForIndirectDrawSnapshot(effectiveMaterial, preparedProgram, preparedProgramIdentity, programBindingSnapshot, 0, out reason);
+                preparedForIndirect = TryReuseCapturedProgramForIndirectDrawSnapshot(effectiveMaterial, preparedProgram, preparedProgramIdentity, preparedProgramLinkGeneration, programBindingSnapshot, 0, out reason);
                 if (!preparedForIndirect)
-                    preparedForIndirect = TryPrepareCapturedProgramForRecording(effectiveMaterial, preparedProgram, preparedProgramIdentity, programBindingSnapshot, 0, out reason);
+                    preparedForIndirect = TryPrepareCapturedProgramForRecording(effectiveMaterial, preparedProgram, preparedProgramIdentity, preparedProgramLinkGeneration, programBindingSnapshot, 0, out reason);
             }
         }
         else
         {
             using (Renderer.BlockSynchronousResourceUploads("IndirectDrawSnapshot"))
             {
-                preparedForIndirect = TryReuseCapturedProgramForIndirectDrawSnapshot(effectiveMaterial, preparedProgram, preparedProgramIdentity, programBindingSnapshot, 0, out reason);
+                preparedForIndirect = TryReuseCapturedProgramForIndirectDrawSnapshot(effectiveMaterial, preparedProgram, preparedProgramIdentity, preparedProgramLinkGeneration, programBindingSnapshot, 0, out reason);
             }
 
             if (!preparedForIndirect)
-                preparedForIndirect = TryPrepareCapturedProgramForRecording(effectiveMaterial, preparedProgram, preparedProgramIdentity, programBindingSnapshot, 0, out reason);
+                preparedForIndirect = TryPrepareCapturedProgramForRecording(effectiveMaterial, preparedProgram, preparedProgramIdentity, preparedProgramLinkGeneration, programBindingSnapshot, 0, out reason);
         }
 
         if (!preparedForIndirect)
@@ -921,7 +952,13 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
             shadowUniformState,
             preparedProgram,
             preparedProgramIdentity,
+            preparedProgramLinkGeneration,
             programBindingSnapshot);
+        draw = draw with
+        {
+            AutoUniformPublication =
+                VulkanAutoUniformPublicationSnapshot.Capture(draw),
+        };
 
         return true;
     }
@@ -933,16 +970,34 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
         if (_program is not { Data: { } programData } program)
             return null;
 
-        bool captureUniforms = MeshRenderer.CaptureUniformsOnRender;
+        // Vulkan command recording may run after collection or on a worker.
+        // Mutable renderer/material callbacks therefore require the same
+        // immutable enqueue-time boundary as explicit capture users. The flag
+        // remains useful for scoped pipeline callbacks that are not represented
+        // by either event subscription.
+        bool captureUniforms =
+            MeshRenderer.CaptureUniformsOnRender ||
+            MeshRenderer.HasSettingUniformsHandlers ||
+            material.HasSettingUniformsHandlers;
         bool mayNeedDescriptorResourceSnapshot =
             program.DescriptorBindings.Count != 0 &&
             program.DescriptorSetLayouts.Count != 0;
         if (!captureUniforms && !mayNeedDescriptorResourceSnapshot)
             return null;
 
+        IRenderBindingPublisher[] materialBindingPublishers =
+            material.BindingPublishers.CaptureSnapshot();
+        IRenderBindingPublisher[] meshBindingPublishers =
+            MeshRenderer.BindingPublishers.CaptureSnapshot();
+        ulong typedBindingPublisherSignature =
+            ComputeTypedBindingPublisherSignature(
+                materialBindingPublishers,
+                meshBindingPublishers);
+        bool useMaterialPayloadFastPath =
+            !shadowUniformState.IsShadowPass;
         bool shareSnapshot =
+            useMaterialPayloadFastPath &&
             !captureUniforms &&
-            !shadowUniformState.IsShadowPass &&
             !MeshRenderer.HasSettingUniformsHandlers &&
             !material.HasSettingUniformsHandlers;
         MaterialBindingSnapshotCacheKey snapshotCacheKey = default;
@@ -960,6 +1015,7 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
                 Renderer.ResolveCurrentFrameOpDrawTarget(),
                 program.LinkGeneration,
                 renderingState?.ScopedBindingRevision ?? 0UL,
+                typedBindingPublisherSignature,
                 RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex,
                 renderArea.X,
                 renderArea.Y,
@@ -975,16 +1031,53 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
                 return cachedSnapshot;
             }
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanFrameMaterialSnapshotCacheLookup(hit: false);
+        }
 
+        if (useMaterialPayloadFastPath)
+        {
             MaterialUniformBindingCacheKey materialPayloadKey =
-                new(material, program.LinkGeneration);
-            bool materialPayloadCacheHit = program.TryGetMaterialUniformBindingPayload(
+                new(material);
+            VkMaterial? materialOwner =
+                Renderer.GetOrCreateAPIRenderObject(
+                    material,
+                    generateNow: true) as VkMaterial;
+            bool materialPayloadCacheHit =
+                materialOwner?.TryGetMaterialUniformBindingPayload(
                     materialPayloadKey,
-                    out materialUniformPayload);
+                    out materialUniformPayload) == true;
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanMaterialPayloadCacheLookup(
                 materialPayloadCacheHit);
             if (!materialPayloadCacheHit)
             {
+                if (XREnvironment.IsEnabled(
+                        XREngineEnvironmentVariables.VulkanFrameDataReuseDiag))
+                {
+                    bool hasCachedPayload = false;
+                    bool cacheKeyMatches = false;
+                    if (materialOwner is not null)
+                    {
+                        materialOwner.GetMaterialUniformBindingPayloadCacheState(
+                            materialPayloadKey,
+                            out hasCachedPayload,
+                            out cacheKeyMatches);
+                    }
+                    Debug.VulkanEvery(
+                        $"Vulkan.MaterialPayloadCacheMiss.{material.ID}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan.MaterialPayloadCacheMiss] material='{0}' id={1} " +
+                        "ownerBinding={2} hasPayload={3} keyMatches={4} " +
+                        "layout={5} value={6} shader={7} uber={8}.",
+                        material.Name ?? "<unnamed>",
+                        material.ID,
+                        materialOwner?.BindingId ?? 0u,
+                        materialOwner is not null && hasCachedPayload,
+                        materialOwner is not null && cacheKeyMatches,
+                        material.BindingLayoutVersion,
+                        material.BindingValueVersion,
+                        material.ShaderStateRevision,
+                        material.UberStateRevision);
+                }
+
                 // Capture only the material-owned numeric dictionary once per
                 // material revision. Resource and render-scope bindings are
                 // intentionally omitted because their lifetimes differ.
@@ -995,7 +1088,7 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
                 materialUniformPayload = program.CaptureMaterialUniformBindingPayload();
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanMaterialPayloadPacked(
                     materialUniformPayload.Uniforms.Count);
-                program.CacheMaterialUniformBindingPayload(
+                materialOwner?.CacheMaterialUniformBindingPayload(
                     materialPayloadKey,
                     materialUniformPayload);
             }
@@ -1009,7 +1102,7 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
             using (VulkanRenderer.VulkanCpuStageScope materialBindingsStage =
                    new(EVulkanCpuStage.MeshDrawMaterialBindings))
             {
-                if (shareSnapshot)
+                if (useMaterialPayloadFastPath)
                 {
                     Renderer.SetMaterialRuntimeUniforms(
                         material,
@@ -1022,11 +1115,30 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
                     Renderer.SetMaterialUniforms(material, programData, program, shadowUniformState);
                 }
             }
-            if (MeshRenderer.HasSettingUniformsHandlers)
-                MeshRenderer.OnSettingUniforms(programData, programData);
-            else
-                RuntimeEngine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(programData);
-            MeshRenderMaterialResolver.ApplyShadowUniforms(programData, material, shadowUniformState);
+            using (VkRenderProgram.MutableLegacyBindingPublicationScope
+                   legacyPublication =
+                       program.BeginMutableLegacyBindingPublication())
+            {
+                if (MeshRenderer.HasSettingUniformsHandlers)
+                    MeshRenderer.OnSettingUniforms(
+                        programData,
+                        programData);
+                else
+                    RuntimeEngine.Rendering.State.RenderingPipelineState
+                        ?.ApplyScopedProgramBindings(programData);
+                MeshRenderMaterialResolver.ApplyShadowUniforms(
+                    programData,
+                    material,
+                    shadowUniformState);
+            }
+            PublishTypedBindingPublishers(
+                program,
+                programData,
+                materialBindingPublishers);
+            PublishTypedBindingPublishers(
+                program,
+                programData,
+                meshBindingPublishers);
             if (!captureUniforms && !program.HasBoundDescriptorResources())
             {
                 if (shareSnapshot)
@@ -1041,6 +1153,8 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
                 snapshot = program.CaptureComputeSnapshot();
             }
             snapshot.SetMaterialUniformBindings(materialUniformPayload);
+            if (useMaterialPayloadFastPath)
+                snapshot.EnableMaterialBindingFastPath();
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindingSnapshotCaptured(
                 snapshot.Uniforms.Count +
                 snapshot.Samplers.Count +
@@ -1048,7 +1162,7 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
                 snapshot.SamplersByName.Count +
                 snapshot.Images.Count +
                 snapshot.Buffers.Count,
-                fastPath: shareSnapshot);
+                fastPath: useMaterialPayloadFastPath);
             if (shareSnapshot)
                 program.CacheFrameMaterialBindingSnapshot(snapshotCacheKey, snapshot);
             LogGizmoBindingSnapshot(material, snapshot, "capture");
@@ -1057,6 +1171,79 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
         finally
         {
             Renderer.RestoreFixedFunctionState(stateSnapshot);
+        }
+    }
+
+    private static ulong ComputeTypedBindingPublisherSignature(
+        IRenderBindingPublisher[] materialPublishers,
+        IRenderBindingPublisher[] meshPublishers)
+    {
+        FrameOpSignatureHasher hash = new();
+        AddPublishersToSignature(
+            ref hash,
+            materialPublishers,
+            ownerKind: 1);
+        AddPublishersToSignature(
+            ref hash,
+            meshPublishers,
+            ownerKind: 2);
+        return hash.ToHash();
+    }
+
+    private static void AddPublishersToSignature(
+        ref FrameOpSignatureHasher hash,
+        IRenderBindingPublisher[] publishers,
+        byte ownerKind)
+    {
+        hash.Add(ownerKind);
+        hash.Add(publishers.Length);
+        for (int index = 0; index < publishers.Length; index++)
+        {
+            IRenderBindingPublisher publisher = publishers[index];
+            ERenderBindingFrequency frequency = publisher.Frequency;
+            ulong generation = publisher.Generation;
+            if (frequency is <= ERenderBindingFrequency.Unknown or
+                >= ERenderBindingFrequency.Count)
+            {
+                throw new InvalidOperationException(
+                    $"Typed binding publisher '{publisher.GetType().FullName}' " +
+                    $"declared invalid frequency '{frequency}'.");
+            }
+            if (generation == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Typed binding publisher '{publisher.GetType().FullName}' " +
+                    "declared generation zero.");
+            }
+
+            hash.Add(RuntimeHelpers.GetHashCode(publisher));
+            hash.Add((byte)frequency);
+            hash.Add(generation);
+        }
+    }
+
+    private static void PublishTypedBindingPublishers(
+        VkRenderProgram backendProgram,
+        XRRenderProgram program,
+        IRenderBindingPublisher[] publishers)
+    {
+        for (int index = 0; index < publishers.Length; index++)
+        {
+            IRenderBindingPublisher publisher = publishers[index];
+            ERenderBindingFrequency frequency = publisher.Frequency;
+            ulong generation = publisher.Generation;
+            using VkRenderProgram.TypedBindingPublicationScope publication =
+                backendProgram.BeginTypedBindingPublication(
+                    frequency,
+                    generation);
+            publisher.PublishUniforms(program, program);
+            if (publisher.Frequency != frequency ||
+                publisher.Generation != generation)
+            {
+                throw new InvalidOperationException(
+                    $"Typed binding publisher '{publisher.GetType().FullName}' " +
+                    "changed its frequency or generation while publishing.");
+            }
         }
     }
 

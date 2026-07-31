@@ -274,6 +274,7 @@ public static partial class EditorUnitTests
                 XRMaterial material = Toggles.UnitBoxDeferredMaterial
                     ? XRMaterial.CreateColorMaterialDeferred(ColorF4.Red)
                     : XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Red);
+                material.Name = $"UnitBox Shared Material {materialIndex + 1}";
                 material.RenderOptions.CullMode = ECullMode.None;
                 material.RenderPass = Toggles.UnitBoxDeferredMaterial
                     ? (int)EDefaultRenderPass.OpaqueDeferred

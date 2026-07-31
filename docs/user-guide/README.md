@@ -10,6 +10,7 @@ These docs should stay practical: what the concept is, when to use it, which set
 
 - [Engine](engine.md)
 - [MCP Server And Assistant](ai/mcp-server.md)
+- [Local Agent Broker](ai/local-agent-broker.md)
 - [Bootstrap And First-Time Setup](setup/bootstrap.md)
 - [Scene System](scene.md)
 - [Component System](components.md)

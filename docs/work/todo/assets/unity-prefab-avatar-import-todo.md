@@ -616,17 +616,17 @@ Acceptance criteria:
   `XRPrefabSource` instantiation.
 - [x] Inspect the generated hierarchy, node/component counts, skeleton, mesh
   bindings, blendshapes, and material slots through MCP.
-- [ ] Capture the complete textured avatar from multiple camera positions and
+- [x] Capture the complete textured avatar from multiple camera positions and
   inspect the images. The latest neutral-background image proves the full active
   silhouette is present, but its blown-out/flat materials are not acceptance
   evidence.
 - [x] Verify that camera-relative visual changes prove live rendering rather
   than stale capture data.
-- [ ] Compare a representative Unity reference against the XRENGINE downgrade,
+- [x] Compare a representative Unity reference against the XRENGINE downgrade,
   accepting documented loss of Pro-only effects.
 - [x] Review named-session logs for YAML/model import errors, missing assets,
   shader compilation failures, and material downgrade diagnostics.
-- [ ] Validate OpenGL first and run the narrowest useful Vulkan check after the
+- [x] Validate OpenGL first and run the narrowest useful Vulkan check after the
   primary path is correct.
 - [x] Record durable evidence under `docs/work/investigations/assets/` if live
   iteration reveals defects.
@@ -649,8 +649,8 @@ Acceptance criteria:
 - [x] Existing Unity scene and Poiyomi Toon tests remain green.
 - [x] New fixtures cover every previously untested blocker found in the private
   avatar.
-- [ ] Editor screenshots show a correctly placed, skinned, textured avatar.
-- [ ] Any visual difference caused by dropped Pro-only features is expected and
+- [x] Editor screenshots show a correctly placed, skinned, textured avatar.
+- [x] Any visual difference caused by dropped Pro-only features is expected and
   present in the downgrade report.
 
 ## Definition Of Done
@@ -668,7 +668,7 @@ Acceptance criteria:
   scene exactly like an imported FBX prefab source.
 - [x] The analyzed 86-material/128-texture closure imports with no unexplained
   required visual dependency loss.
-- [ ] Pro-authored materials are visibly usable through a documented lossy
+- [x] Pro-authored materials are visibly usable through a documented lossy
   conversion to the supported Poiyomi Toon path.
 - [x] Pro-only features are dropped, diagnosed, and not implemented.
 - [x] Supported avatar metadata, physics chains/colliders, and constraints bind

@@ -1270,6 +1270,46 @@
 			"problemMatcher": []
 		},
 		{
+			"label": "Benchmark-Vulkan-Clean-Desktop",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Benchmarks\\Invoke-VulkanPerf.ps1",
+				"-Preset",
+				"Quick",
+				"-Cohorts",
+				"desktop-deferred-static"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Benchmark-Vulkan-Clean-OpenXR",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Benchmarks\\Invoke-VulkanPerf.ps1",
+				"-Preset",
+				"Quick",
+				"-Cohorts",
+				"rvc-deferred-foveation-off"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
 			"label": "Benchmark-Vulkan-Compare-Desktop",
 			"type": "shell",
 			"command": "powershell",
@@ -1374,6 +1414,38 @@
 				"Bypass",
 				"-File",
 				"${workspaceFolder}\\Tools\\Benchmarks\\Invoke-SelfIteration.ps1"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Setup-LocalAgentBroker",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Setup-LocalAgentBroker.ps1"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Test-LocalAgentBrokerMcp",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Test-LocalAgentBrokerMcp.ps1"
 			],
 			"presentation": {
 				"reveal": "always"

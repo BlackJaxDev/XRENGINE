@@ -49,8 +49,8 @@ namespace XREngine.Rendering.Models.Materials
             get => _value;
             set
             {
-                SetField(ref _value, value);
-                OnValueChanged();
+                if (SetField(ref _value, value))
+                    OnValueChanged();
             }
         }
 

@@ -128,6 +128,53 @@ public sealed class PrefabModelSerializationTests
     }
 
     [Test]
+    public void CloneHierarchy_InitializesSkinPaletteAfterRecalculatingTransforms()
+    {
+        SceneNode templateRoot = new("SkinnedPaletteRoot");
+        SceneNode templateMeshNode = new("MeshNode")
+        {
+            Parent = templateRoot
+        };
+        SceneNode templateBoneNode = new("BoneNode")
+        {
+            Parent = templateRoot
+        };
+        ((Transform)templateBoneNode.Transform).Translation = new Vector3(0.25f, 1.5f, -0.75f);
+
+        XRMesh mesh = CreateSkinnedBlendshapeMesh("SkinnedPaletteMesh", templateBoneNode.Transform, "Smile");
+        SubMesh subMesh = new(new SubMeshLOD(new XRMaterial(), mesh, 0.0f))
+        {
+            Name = "SkinnedPaletteSubMesh",
+            RootBone = templateBoneNode.Transform,
+            RootTransform = templateRoot.Transform,
+        };
+        ModelComponent templateComponent = templateMeshNode.AddComponent<ModelComponent>().ShouldNotBeNull();
+        templateComponent.Model = new Model(subMesh);
+
+        SceneNode clone = SceneNodePrefabUtility.CloneHierarchy(templateRoot);
+
+        SceneNode cloneMeshNode = clone.FindDescendantByName("MeshNode").ShouldNotBeNull();
+        SceneNode cloneBoneNode = clone.FindDescendantByName("BoneNode").ShouldNotBeNull();
+        XRMeshRenderer renderer = cloneMeshNode
+            .GetComponent<ModelComponent>()
+            .ShouldNotBeNull()
+            .Meshes
+            .ShouldHaveSingleItem()
+            .CurrentLODRenderer
+            .ShouldNotBeNull();
+        XRDataBuffer palette = renderer.SkinPaletteBuffer.ShouldNotBeNull();
+        SkinPaletteMatrix? bufferedPalette = palette.Get<SkinPaletteMatrix>(palette.ElementSize);
+
+        renderer.Mesh.ShouldNotBeNull().UtilizedBones.ShouldHaveSingleItem().tfm
+            .ShouldBeSameAs(cloneBoneNode.Transform);
+        bufferedPalette.HasValue.ShouldBeTrue();
+        Vector3.Distance(
+                bufferedPalette.GetValueOrDefault().ToRowVectorMatrix().Translation,
+                cloneBoneNode.Transform.WorldMatrix.Translation)
+            .ShouldBeLessThan(0.0001f);
+    }
+
+    [Test]
     public void CloneHierarchy_PreservesExternalModelSubmeshes()
     {
         string assetsRoot = Engine.Assets.GameAssetsPath;

@@ -27,6 +27,11 @@ internal static class VulkanQueueFamilySelector
                 indices.GraphicsFamilyIndex = i;
                 indices.GraphicsFamilySupportsCompute =
                     (queueFamily.QueueFlags & QueueFlags.ComputeBit) != 0;
+                indices.GraphicsFamilySupportsTransfer =
+                    (queueFamily.QueueFlags &
+                        (QueueFlags.TransferBit |
+                         QueueFlags.GraphicsBit |
+                         QueueFlags.ComputeBit)) != 0;
             }
 
             if ((queueFamily.QueueFlags & QueueFlags.ComputeBit) != 0 &&

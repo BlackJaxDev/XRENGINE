@@ -855,7 +855,7 @@ public sealed class VrViewRenderModeContractTests
         window.ShouldContain("TryRenderDesktopMirrorComposition");
         packet.ShouldContain("FrameOutputManifestData");
         profileCapture.ShouldContain("\"frame_outputs\"");
-        profileCapture.ShouldContain("ProfileCaptureSchemaVersion = 4");
+        profileCapture.ShouldContain("ProfileCaptureSchemaVersion = 5");
     }
 
     [Test]

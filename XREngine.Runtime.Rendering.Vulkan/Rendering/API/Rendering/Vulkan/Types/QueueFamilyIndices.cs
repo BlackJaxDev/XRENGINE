@@ -14,6 +14,11 @@ public unsafe partial class VulkanRenderer
         /// into the primary graphics command stream.
         /// </summary>
         public bool GraphicsFamilySupportsCompute { get; set; }
+        /// <summary>
+        /// Whether the selected graphics family can execute transfer commands
+        /// recorded into the primary graphics command stream.
+        /// </summary>
+        public bool GraphicsFamilySupportsTransfer { get; set; }
 
         public readonly bool IsComplete(bool requirePresentQueue = true)
             => GraphicsFamilyIndex.HasValue &&

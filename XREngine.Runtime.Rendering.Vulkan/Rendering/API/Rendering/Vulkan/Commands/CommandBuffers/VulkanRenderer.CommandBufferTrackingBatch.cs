@@ -132,12 +132,14 @@ public unsafe partial class VulkanRenderer
         public readonly Dictionary<ulong, ulong> ExpandedDescriptorGenerations = new(8);
         public readonly Dictionary<ulong, (ulong DescriptorGeneration, ulong LayoutVersion)> ValidatedDescriptorGenerations = new(8);
         public readonly List<VulkanImageAccessRangeDelta> ImageAccessDeltas = new(32);
+        public readonly List<VulkanQueueOwnershipTransferRequirement> QueueOwnershipTransfers = new(4);
         public readonly VulkanCommandBufferImageAccessIndex LatestImageAccessStates = new(32);
         public ulong RecordingGeneration;
         public ulong LayoutVersion;
         public int DependencyBindCount;
         public int ImageAccessWriteCount;
         public int PublishedImageDeltaCount;
+        public int PublishedQueueOwnershipTransferCount;
         public int ReportedDependencyBindCount;
         public int ReportedImageAccessWriteCount;
         public int QueuedSubmissionCount;
@@ -149,12 +151,14 @@ public unsafe partial class VulkanRenderer
             ExpandedDescriptorGenerations.Clear();
             ValidatedDescriptorGenerations.Clear();
             ImageAccessDeltas.Clear();
+            QueueOwnershipTransfers.Clear();
             LatestImageAccessStates.Clear();
             RecordingGeneration = recordingGeneration;
             LayoutVersion = 0;
             DependencyBindCount = 0;
             ImageAccessWriteCount = 0;
             PublishedImageDeltaCount = 0;
+            PublishedQueueOwnershipTransferCount = 0;
             ReportedDependencyBindCount = 0;
             ReportedImageAccessWriteCount = 0;
             QueuedSubmissionCount = 0;
@@ -211,6 +215,13 @@ public unsafe partial class VulkanRenderer
             }
 
             ImageAccessDeltas.Add(delta);
+        }
+
+        public void RecordQueueOwnershipTransfer(
+            in VulkanQueueOwnershipTransferRequirement requirement)
+        {
+            LayoutVersion++;
+            QueueOwnershipTransfers.Add(requirement);
         }
 
         private static bool SameRange(in ImageSubresourceRange left, in ImageSubresourceRange right)
@@ -323,6 +334,56 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Discards a recording that did not reach <see cref="EndCommandBufferTracked"/>.
+    /// Vulkan permits a non-pending recording command buffer to be reset, but the
+    /// engine-side batch and frame-data lease must stop reporting it as recording
+    /// before the next reset attempt.
+    /// </summary>
+    private bool TryAbandonCommandBufferRecording(CommandBuffer commandBuffer)
+    {
+        ulong handle = unchecked((ulong)commandBuffer.Handle);
+        if (handle == 0)
+            return false;
+
+        bool abandoned = false;
+        lock (_resourceLifetimeTracker.SyncRoot)
+        {
+            if (!_commandBufferTrackingBatches.TryGetValue(
+                    handle,
+                    out VulkanCommandBufferTrackingBatch? batch))
+            {
+                return false;
+            }
+
+            lock (batch)
+            {
+                if (!batch.IsRecording)
+                    return false;
+                if (batch.QueuedSubmissionCount != 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Command buffer 0x{handle:X} recording cannot be abandoned while queued for submission.");
+                }
+
+                batch.IsRecording = false;
+                _commandBufferTrackingBatches.TryRemove(handle, out _);
+                abandoned = true;
+            }
+
+            if (_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(
+                    handle,
+                    out VulkanCommandBufferLifetimeRecord? lifetime))
+            {
+                lifetime.FrameDataLease.AbandonRecording();
+            }
+        }
+
+        if (abandoned)
+            ResetRecordedImageLayoutState(commandBuffer);
+        return abandoned;
+    }
+
     private bool TryRecordCommandBufferDependency(CommandBuffer commandBuffer, ObjectType type, ulong handle)
     {
         ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
@@ -401,7 +462,108 @@ public unsafe partial class VulkanRenderer
                 queueFamilyIndex,
                 serial,
                 GetCurrentVulkanResourceGeneration(ObjectType.Image, image.Handle));
+            if (batch.LatestImageAccessStates.TryGet(
+                    image.Handle,
+                    range,
+                    out VulkanImageAccessState prior))
+            {
+                resolved = resolved with
+                {
+                    ExternalOwnership = prior.ExternalOwnership,
+                };
+            }
+            else
+            {
+                resolved = resolved with
+                {
+                    ExternalOwnership = ResolveTrackedExternalImageOwnership(
+                        image,
+                        range,
+                        resolved.ResourceGeneration),
+                };
+            }
+
             batch.RecordImageAccess(new VulkanImageAccessRangeDelta(image.Handle, range, resolved));
+            return true;
+        }
+    }
+
+    private bool TryRecordQueueOwnershipTransferRequirement(
+        CommandBuffer commandBuffer,
+        in VulkanQueueOwnershipTransferRequirement requirement)
+    {
+        ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+        if (commandBufferHandle == 0 || !requirement.IsValid)
+            return false;
+
+        if (!_commandBufferTrackingBatches.TryGetValue(
+                commandBufferHandle,
+                out VulkanCommandBufferTrackingBatch? batch))
+        {
+            return false;
+        }
+
+        lock (batch)
+        {
+            if (!_commandBufferTrackingBatches.TryGetValue(commandBufferHandle, out var currentBatch) ||
+                !ReferenceEquals(batch, currentBatch))
+            {
+                return false;
+            }
+            if (batch.QueuedSubmissionCount != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Command buffer 0x{commandBufferHandle:X} cannot record queue-ownership requirements while queued for submission.");
+            }
+
+            batch.RecordQueueOwnershipTransfer(requirement);
+            return true;
+        }
+    }
+
+    private bool TryRecordExternalImageOwnershipDelta(
+        CommandBuffer commandBuffer,
+        Image image,
+        ImageSubresourceRange range,
+        EVulkanExternalImageOwnership ownership)
+    {
+        ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+        if (commandBufferHandle == 0 || image.Handle == 0)
+            return false;
+
+        if (!_commandBufferTrackingBatches.TryGetValue(
+                commandBufferHandle,
+                out VulkanCommandBufferTrackingBatch? batch))
+        {
+            return false;
+        }
+
+        lock (batch)
+        {
+            if (!_commandBufferTrackingBatches.TryGetValue(
+                    commandBufferHandle,
+                    out VulkanCommandBufferTrackingBatch? currentBatch) ||
+                !ReferenceEquals(batch, currentBatch) ||
+                batch.QueuedSubmissionCount != 0 ||
+                !batch.LatestImageAccessStates.TryGet(
+                    image.Handle,
+                    range,
+                    out VulkanImageAccessState prior))
+            {
+                return false;
+            }
+
+            ulong serial = unchecked((ulong)Interlocked.Increment(
+                ref _vulkanImageLayoutTransitionSerial));
+            batch.RecordImageAccess(
+                new VulkanImageAccessRangeDelta(
+                    image.Handle,
+                    range,
+                    prior with
+                    {
+                        ExternalOwnership = ownership,
+                        Serial = serial,
+                    }));
             return true;
         }
     }

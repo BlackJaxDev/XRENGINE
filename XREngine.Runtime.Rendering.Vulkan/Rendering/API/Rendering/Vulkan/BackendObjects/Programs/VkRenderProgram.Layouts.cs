@@ -56,17 +56,31 @@ internal unsafe partial class VkRenderProgram
         }
 
         _autoUniformBlocks.Clear();
+        _autoUniformBlocksByBinding.Clear();
         _frameMaterialBindingSnapshots.Clear();
-        _materialUniformBindingPayloads.Clear();
+        _autoUniformMaterialWritePlans.Clear();
+        _frequencyOwnedAutoUniformWritePlans.Clear();
         foreach (VkShader shader in _shaderCache.Values)
         {
-            if (shader.AutoUniformBlock is { } block)
+            IReadOnlyList<AutoUniformBlockInfo> shaderBlocks =
+                shader.AutoUniformBlocks;
+            for (int blockIndex = 0;
+                 blockIndex < shaderBlocks.Count;
+                 blockIndex++)
+            {
+                AutoUniformBlockInfo block = shaderBlocks[blockIndex];
                 _autoUniformBlocks[block.InstanceName] = block;
+                _autoUniformBlocksByBinding[(block.Set, block.Binding)] = block;
+            }
         }
 
+        ulong linkGeneration = unchecked((ulong)Interlocked.Increment(ref _linkGeneration));
+        _bindingSchema = VulkanProgramBindingSchema.Compile(
+            linkGeneration,
+            _autoUniformBlocks,
+            _programDescriptorBindings);
         CreatePipelineLayout(_descriptorSetLayouts);
         IsLinked = true;
-        Interlocked.Increment(ref _linkGeneration);
     }
 
     /// <summary>
@@ -122,6 +136,16 @@ internal unsafe partial class VkRenderProgram
     }
 
     /// <summary>
+    /// Resolves a reflected auto-uniform block through its immutable descriptor
+    /// coordinates without inspecting reflection names.
+    /// </summary>
+    public bool TryGetAutoUniformBlock(
+        uint set,
+        uint binding,
+        out AutoUniformBlockInfo block)
+        => _autoUniformBlocksByBinding.TryGetValue((set, binding), out block!);
+
+    /// <summary>
     /// Searches for an auto-uniform block by block name (in addition to
     /// instance name) or by (set, binding) coordinates. This handles the
     /// common case where SPIR-V reflection produces the struct type name
@@ -151,15 +175,9 @@ internal unsafe partial class VkRenderProgram
             }
         }
 
-        // 3. Fall back to (set, binding) coordinates.
-        foreach (AutoUniformBlockInfo candidate in _autoUniformBlocks.Values)
-        {
-            if (candidate.Set == set && candidate.Binding == binding)
-            {
-                block = candidate;
-                return true;
-            }
-        }
+        // 3. Fall back to immutable descriptor coordinates.
+        if (TryGetAutoUniformBlock(set, binding, out block))
+            return true;
 
         block = default!;
         return false;
@@ -207,9 +225,14 @@ internal unsafe partial class VkRenderProgram
     }
 
     private void DestroyLayouts()
-        => Renderer.ExecuteWithVulkanPipelineCompilationQuiesced(
-            DestroyLayoutsAfterPipelineCompileDrain,
-            $"pipeline layout mutation for '{Data.Name ?? "<unnamed program>"}'");
+    {
+        lock (_linkLock)
+        {
+            Renderer.ExecuteWithVulkanPipelineCompilationQuiesced(
+                DestroyLayoutsAfterPipelineCompileDrain,
+                $"pipeline layout mutation for '{Data.Name ?? "<unnamed program>"}'");
+        }
+    }
 
     private void DestroyLayoutsAfterPipelineCompileDrain()
     {
@@ -235,6 +258,9 @@ internal unsafe partial class VkRenderProgram
             DestroyPipelineLayout("VkRenderProgram.DestroyLayouts");
 
         _programDescriptorBindings.Clear();
+        _autoUniformBlocks.Clear();
+        _autoUniformBlocksByBinding.Clear();
+        _bindingSchema = null;
         _descriptorLayoutFingerprint = 0UL;
         _descriptorSchemaFingerprint = 0UL;
         _descriptorHeapLayout = null;
@@ -242,7 +268,8 @@ internal unsafe partial class VkRenderProgram
         _descriptorSetsRequireUpdateAfterBind = false;
         _descriptorSetsRequireVariableDescriptorCount = false;
         _frameMaterialBindingSnapshots.Clear();
-        _materialUniformBindingPayloads.Clear();
+        _autoUniformMaterialWritePlans.Clear();
+        _frequencyOwnedAutoUniformWritePlans.Clear();
         IsLinked = false;
         if (invalidatedPublishedInterface)
             Interlocked.Increment(ref _linkGeneration);

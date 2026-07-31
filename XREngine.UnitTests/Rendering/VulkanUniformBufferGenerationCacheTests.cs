@@ -210,6 +210,34 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     }
 
     [Test]
+    public void UniformArenaExhaustionAndInvalidLifetimeFailExplicitly()
+    {
+        string arena = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanDynamicUniformRingBuffer.cs");
+        string uniforms = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
+
+        AssertOrdered(
+            arena,
+            "if (aligned > DynamicUniformRingBufferCapacity || size > DynamicUniformRingBufferCapacity - aligned)",
+            "RecordVulkanDynamicUniformExhaustion();",
+            "return false;");
+        AssertOrdered(
+            arena,
+            "if (!manifestOwnsDraw && !workerOwnsSealedDraw)",
+            "reason = $\"late or unsealed frame-data request",
+            "RecordVulkanDynamicUniformExhaustion();",
+            "return false;");
+        arena.ShouldContain("could not acquire frame-data generation");
+        uniforms.ShouldContain(
+            "if (!Renderer.TryReserveMeshFrameDataRange(this, name, isAutoUniform: false, drawSlot, size, out ulong offset))");
+        uniforms.ShouldContain(
+            "if (!Renderer.TryReserveMeshFrameDataRange(this, name, isAutoUniform: true, drawSlot, size, out ulong offset))");
+        uniforms.ShouldContain("if (!Renderer.TryGetMeshFrameDataArenaRange(");
+        uniforms.ShouldNotContain("ownsBuffer: true");
+    }
+
+    [Test]
     public void ReservationManifest_SealsThreeUsesAndRejectsLateCapacityMutation()
     {
         var renderer = (VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(

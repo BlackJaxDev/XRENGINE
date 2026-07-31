@@ -73,7 +73,10 @@ private bool TryResolveEngineUniformBuffer(DescriptorBindingInfo binding, int fr
 			if (_program is null)
 				return false;
 
-			if (!_program.TryGetAutoUniformBlockFuzzy(binding.Name ?? string.Empty, binding.Set, binding.Binding, out AutoUniformBlockInfo block))
+			if (!_program.TryGetAutoUniformBlock(
+					binding.Set,
+					binding.Binding,
+					out AutoUniformBlockInfo block))
 				return false;
 
 			uint size = Math.Max(block.Size, 1u);

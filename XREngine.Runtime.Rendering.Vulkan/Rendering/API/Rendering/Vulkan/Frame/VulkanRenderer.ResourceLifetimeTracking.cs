@@ -462,7 +462,9 @@ public unsafe partial class VulkanRenderer
                 $"Command buffer 0x{unchecked((ulong)commandBuffer.Handle):X} cannot be reset: {reason}.");
         }
 
-        return Api!.ResetCommandBuffer(commandBuffer, 0);
+        Result result = Api!.ResetCommandBuffer(commandBuffer, 0);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResetCommandBufferCall();
+        return result;
     }
 
     private void RemoveVulkanCommandBufferLifetime(CommandBuffer commandBuffer, bool destroyed = false)
@@ -787,6 +789,8 @@ public unsafe partial class VulkanRenderer
         MergeVulkanSecondaryCommandBufferDependencies(primary, secondaries);
         MergeRecordedImageLayoutStates(primary, secondaries);
         Api!.CmdExecuteCommands(primary, commandBufferCount, secondaryCommandBuffers);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanExecuteSecondaryCommandBuffers(
+            commandBufferCount);
     }
 
     private void CmdBeginRenderPassTracked(
@@ -817,6 +821,9 @@ public unsafe partial class VulkanRenderer
         string owner = "CommandBuffer.Allocation")
     {
         Result result = Api!.AllocateCommandBuffers(device, ref allocateInfo, commandBuffers);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAllocateCommandBuffersCall(
+            allocateInfo.CommandBufferCount,
+            result == Result.Success);
         if (result != Result.Success || commandBuffers is null)
             return result;
 

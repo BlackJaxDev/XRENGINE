@@ -11,6 +11,8 @@ public sealed class VulkanPerformanceProfileDefinition
     public bool P3LoggingAllowed { get; init; }
     public bool ImGuiAllowed { get; init; }
     public bool DynamicTextAllowed { get; init; }
+    public bool CleanComparisonSuitable { get; init; }
     public bool PromotionEligible { get; init; }
+    public string MaximumLogVerbosity { get; init; } = "Verbose";
     public string ExpectedOverhead { get; init; } = string.Empty;
 }

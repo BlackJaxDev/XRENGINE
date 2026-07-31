@@ -36,6 +36,7 @@ $results = [System.Collections.Generic.List[object]]::new()
 foreach ($mode in @('ReleaseBenchmark', 'CleanProfile', 'DevelopmentProfile', 'Diagnostics')) {
     $modeOutput = Join-Path $runFullPath "reports\$mode"
     $intrusive = $mode -in @('DevelopmentProfile', 'Diagnostics')
+    $profileDefinition = $contract.profileModes.$mode
     $arguments = @{
         WarmupSec = $WarmupSec
         CaptureSec = $CaptureSec
@@ -82,9 +83,12 @@ foreach ($mode in @('ReleaseBenchmark', 'CleanProfile', 'DevelopmentProfile', 'D
         $summary = @(Get-Content -Raw -LiteralPath $summaryPath | ConvertFrom-Json)[0]
         $results.Add([pscustomobject]@{
             ProfileMode = $mode
+            ContractCleanComparisonSuitable = [bool]$profileDefinition.cleanComparisonSuitable
+            ExpectedObserverOverhead = [string]$profileDefinition.expectedOverhead
             Status = 'Measured'
             Failure = $null
             RenderP50Ms = $summary.RenderP50Ms
+            RenderP90Ms = $summary.RenderP90Ms
             RenderP95Ms = $summary.RenderP95Ms
             RenderP99Ms = $summary.RenderP99Ms
             RenderWorstMs = $summary.RenderWorstMs
@@ -94,9 +98,12 @@ foreach ($mode in @('ReleaseBenchmark', 'CleanProfile', 'DevelopmentProfile', 'D
     } catch {
         $results.Add([pscustomobject]@{
             ProfileMode = $mode
+            ContractCleanComparisonSuitable = [bool]$profileDefinition.cleanComparisonSuitable
+            ExpectedObserverOverhead = [string]$profileDefinition.expectedOverhead
             Status = 'UnsupportedOrFailed'
             Failure = $_.Exception.Message
             RenderP50Ms = $null
+            RenderP90Ms = $null
             RenderP95Ms = $null
             RenderP99Ms = $null
             RenderWorstMs = $null
@@ -122,9 +129,12 @@ $report = @($results | ForEach-Object {
     }
     [pscustomobject]@{
         ProfileMode = $_.ProfileMode
+        ContractCleanComparisonSuitable = $_.ContractCleanComparisonSuitable
+        ExpectedObserverOverhead = $_.ExpectedObserverOverhead
         Status = $_.Status
         Failure = $_.Failure
         RenderP50Ms = $_.RenderP50Ms
+        RenderP90Ms = $_.RenderP90Ms
         RenderP95Ms = $_.RenderP95Ms
         RenderP99Ms = $_.RenderP99Ms
         RenderWorstMs = $_.RenderWorstMs

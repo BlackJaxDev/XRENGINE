@@ -117,7 +117,7 @@ public sealed class VulkanCoreHardeningPhase521Tests
         string capture = ReadWorkspaceFile("XRENGINE/Engine/Engine.ProfileCapture.cs");
         string harness = ReadWorkspaceFile("Tools/Measure-GameLoopRenderPipeline.ps1");
 
-        capture.ShouldContain("ProfileCaptureSchemaVersion = 4");
+        capture.ShouldContain("ProfileCaptureSchemaVersion = 5");
         capture.ShouldContain("frame_output_workload_identity_hash");
         capture.ShouldContain("frame_output_unapproved_policy_event_count");
         capture.ShouldContain("frame_output_submission_rejection_count");
@@ -126,6 +126,9 @@ public sealed class VulkanCoreHardeningPhase521Tests
         capture.ShouldContain("VulkanSkipImGui");
         capture.ShouldContain("SceneSettingsHash");
         capture.ShouldContain("OutputInventory");
+        capture.ShouldContain("ProfileComparisonSuitable");
+        capture.ShouldContain("LogSessionPath");
+        capture.ShouldContain("ActiveRenderFeatures");
 
         harness.ShouldContain("Test-RenderStatsStability");
         harness.ShouldContain("vulkan_retired_image_view_count");

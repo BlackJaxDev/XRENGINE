@@ -70,6 +70,10 @@ public static class VulkanPerformanceCommand
 
             Console.WriteLine(
                 $"Vulkan performance evaluation: {report.Status}");
+            Console.WriteLine(
+                $"Profile: {report.ProfileMode}; " +
+                $"clean comparison: {report.CleanComparisonSuitable}; " +
+                $"observer overhead: {report.ExpectedObserverOverhead}");
             foreach (VulkanPerformanceCohortReport cohort in report.Cohorts)
             {
                 Console.WriteLine(

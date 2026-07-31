@@ -7,6 +7,7 @@ public unsafe partial class VulkanRenderer
         VulkanOpenXrFrameContext FrameContext,
         OpenXrEyeRenderTargetContext TargetContext,
         FrameOp[] Ops,
+        VulkanOpenXrFrameDataRefreshRequestLease FrameDataRefreshLease,
         FrameOpContext PlannerContext,
         ulong FrameOpsSignature,
         ulong PlannerRevision,

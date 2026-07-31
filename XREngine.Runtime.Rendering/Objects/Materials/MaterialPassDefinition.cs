@@ -18,6 +18,8 @@ public sealed record MaterialPassDefinition
 
     [YamlMember(DefaultValuesHandling = DefaultValuesHandling.Preserve)]
     public required int RenderPass { get; init; }
+
+    [YamlMember(DefaultValuesHandling = DefaultValuesHandling.Preserve)]
     public bool Enabled { get; init; } = true;
     public string? SourcePassName { get; init; }
     public string? VertexShaderPath { get; init; }

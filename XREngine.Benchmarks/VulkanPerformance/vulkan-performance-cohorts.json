@@ -22,7 +22,9 @@
       "p3LoggingAllowed": true,
       "imGuiAllowed": true,
       "dynamicTextAllowed": true,
+      "cleanComparisonSuitable": false,
       "promotionEligible": false,
+      "maximumLogVerbosity": "Verbose",
       "expectedOverhead": "Intrusive and workload-dependent; measure against ReleaseBenchmark."
     },
     "DevelopmentProfile": {
@@ -32,7 +34,9 @@
       "p3LoggingAllowed": true,
       "imGuiAllowed": true,
       "dynamicTextAllowed": true,
+      "cleanComparisonSuitable": false,
       "promotionEligible": false,
+      "maximumLogVerbosity": "Verbose",
       "expectedOverhead": "Development trend only; observer features are recorded in the manifest."
     },
     "CleanProfile": {
@@ -42,7 +46,9 @@
       "p3LoggingAllowed": false,
       "imGuiAllowed": false,
       "dynamicTextAllowed": false,
+      "cleanComparisonSuitable": true,
       "promotionEligible": false,
+      "maximumLogVerbosity": "Normal",
       "expectedOverhead": "Low-overhead quick feedback; still non-promotable because the window is short."
     },
     "ReleaseBenchmark": {
@@ -52,7 +58,9 @@
       "p3LoggingAllowed": false,
       "imGuiAllowed": false,
       "dynamicTextAllowed": false,
+      "cleanComparisonSuitable": true,
       "promotionEligible": true,
+      "maximumLogVerbosity": "Normal",
       "expectedOverhead": "Canonical comparison mode; capture and aggregation overhead remains visible in stage metrics."
     }
   },
@@ -403,6 +411,102 @@
         }
       ],
       "gate": true
+    },
+    {
+      "id": "command-recording-dirty-small-serial",
+      "lane": "CommandRecordingDirty",
+      "settingsPath": "XREngine.Benchmarks/VulkanPerformance/Cohorts/command-recording-dirty-small.jsonc",
+      "scene": "CommandRecordingDirty-Small-128",
+      "camera": "Static", "lights": "CanonicalDirectionalNoShadows", "viewport": "1920x1080", "renderScale": "1.0",
+      "strategy": "CpuDirect", "zeroReadbackMaterialDrawPath": "FullBucketScanDiagnostic",
+      "vrMode": "Desktop", "foveationMode": "Off", "requireFoveation": false,
+      "vulkanPrimaryReuse": "Disabled",
+      "vulkanParallelCommandChainRecording": "Disabled",
+      "forceCommandChainRerecord": true,
+      "budgetMetric": "vulkan_frame_record_command_buffer_ms", "budgetMilliseconds": 5.0,
+      "enforceAbsoluteBudget": false,
+      "requiredOutputs": [{ "kind": "DesktopScene", "minimumRenderedViews": 1 }],
+      "gate": false
+    },
+    {
+      "id": "command-recording-dirty-small-parallel",
+      "lane": "CommandRecordingDirty",
+      "settingsPath": "XREngine.Benchmarks/VulkanPerformance/Cohorts/command-recording-dirty-small.jsonc",
+      "scene": "CommandRecordingDirty-Small-128",
+      "camera": "Static", "lights": "CanonicalDirectionalNoShadows", "viewport": "1920x1080", "renderScale": "1.0",
+      "strategy": "CpuDirect", "zeroReadbackMaterialDrawPath": "FullBucketScanDiagnostic",
+      "vrMode": "Desktop", "foveationMode": "Off", "requireFoveation": false,
+      "vulkanPrimaryReuse": "Disabled",
+      "vulkanParallelCommandChainRecording": "Enabled",
+      "forceCommandChainRerecord": true,
+      "budgetMetric": "vulkan_frame_record_command_buffer_ms", "budgetMilliseconds": 5.0,
+      "enforceAbsoluteBudget": false,
+      "requiredOutputs": [{ "kind": "DesktopScene", "minimumRenderedViews": 1 }],
+      "gate": false
+    },
+    {
+      "id": "command-recording-dirty-medium-serial",
+      "lane": "CommandRecordingDirty",
+      "settingsPath": "XREngine.Benchmarks/VulkanPerformance/Cohorts/command-recording-dirty-medium.jsonc",
+      "scene": "CommandRecordingDirty-Medium-512",
+      "camera": "Static", "lights": "CanonicalDirectionalNoShadows", "viewport": "1920x1080", "renderScale": "1.0",
+      "strategy": "CpuDirect", "zeroReadbackMaterialDrawPath": "FullBucketScanDiagnostic",
+      "vrMode": "Desktop", "foveationMode": "Off", "requireFoveation": false,
+      "vulkanPrimaryReuse": "Disabled",
+      "vulkanParallelCommandChainRecording": "Disabled",
+      "forceCommandChainRerecord": true,
+      "budgetMetric": "vulkan_frame_record_command_buffer_ms", "budgetMilliseconds": 5.0,
+      "enforceAbsoluteBudget": false,
+      "requiredOutputs": [{ "kind": "DesktopScene", "minimumRenderedViews": 1 }],
+      "gate": false
+    },
+    {
+      "id": "command-recording-dirty-medium-parallel",
+      "lane": "CommandRecordingDirty",
+      "settingsPath": "XREngine.Benchmarks/VulkanPerformance/Cohorts/command-recording-dirty-medium.jsonc",
+      "scene": "CommandRecordingDirty-Medium-512",
+      "camera": "Static", "lights": "CanonicalDirectionalNoShadows", "viewport": "1920x1080", "renderScale": "1.0",
+      "strategy": "CpuDirect", "zeroReadbackMaterialDrawPath": "FullBucketScanDiagnostic",
+      "vrMode": "Desktop", "foveationMode": "Off", "requireFoveation": false,
+      "vulkanPrimaryReuse": "Disabled",
+      "vulkanParallelCommandChainRecording": "Enabled",
+      "forceCommandChainRerecord": true,
+      "budgetMetric": "vulkan_frame_record_command_buffer_ms", "budgetMilliseconds": 5.0,
+      "enforceAbsoluteBudget": false,
+      "requiredOutputs": [{ "kind": "DesktopScene", "minimumRenderedViews": 1 }],
+      "gate": false
+    },
+    {
+      "id": "command-recording-dirty-large-serial",
+      "lane": "CommandRecordingDirty",
+      "settingsPath": "XREngine.Benchmarks/VulkanPerformance/Cohorts/command-recording-dirty-large.jsonc",
+      "scene": "CommandRecordingDirty-Large-896",
+      "camera": "Static", "lights": "CanonicalDirectionalNoShadows", "viewport": "1920x1080", "renderScale": "1.0",
+      "strategy": "CpuDirect", "zeroReadbackMaterialDrawPath": "FullBucketScanDiagnostic",
+      "vrMode": "Desktop", "foveationMode": "Off", "requireFoveation": false,
+      "vulkanPrimaryReuse": "Disabled",
+      "vulkanParallelCommandChainRecording": "Disabled",
+      "forceCommandChainRerecord": true,
+      "budgetMetric": "vulkan_frame_record_command_buffer_ms", "budgetMilliseconds": 5.0,
+      "enforceAbsoluteBudget": false,
+      "requiredOutputs": [{ "kind": "DesktopScene", "minimumRenderedViews": 1 }],
+      "gate": false
+    },
+    {
+      "id": "command-recording-dirty-large-parallel",
+      "lane": "CommandRecordingDirty",
+      "settingsPath": "XREngine.Benchmarks/VulkanPerformance/Cohorts/command-recording-dirty-large.jsonc",
+      "scene": "CommandRecordingDirty-Large-896",
+      "camera": "Static", "lights": "CanonicalDirectionalNoShadows", "viewport": "1920x1080", "renderScale": "1.0",
+      "strategy": "CpuDirect", "zeroReadbackMaterialDrawPath": "FullBucketScanDiagnostic",
+      "vrMode": "Desktop", "foveationMode": "Off", "requireFoveation": false,
+      "vulkanPrimaryReuse": "Disabled",
+      "vulkanParallelCommandChainRecording": "Enabled",
+      "forceCommandChainRerecord": true,
+      "budgetMetric": "vulkan_frame_record_command_buffer_ms", "budgetMilliseconds": 5.0,
+      "enforceAbsoluteBudget": false,
+      "requiredOutputs": [{ "kind": "DesktopScene", "minimumRenderedViews": 1 }],
+      "gate": false
     },
     {
       "id": "phase3-capacity-1x-active-fixed",

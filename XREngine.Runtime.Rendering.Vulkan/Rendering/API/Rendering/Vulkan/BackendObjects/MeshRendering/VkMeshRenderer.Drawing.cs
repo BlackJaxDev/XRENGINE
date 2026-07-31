@@ -91,7 +91,7 @@ internal unsafe partial class VkMeshRenderer
 		using (StartMeshDrawDetailScope("Vulkan.MeshDraw.Prepare"))
 		{
 			preparedForRecord = draw.PreparedProgram is { } preparedProgram
-				? TryPrepareCapturedProgramForRecording(material, preparedProgram, draw.PreparedProgramIdentity, draw.ProgramBindingSnapshot, drawUniformSlot, out prepareReason)
+				? TryPrepareCapturedProgramForRecording(material, preparedProgram, draw.PreparedProgramIdentity, draw.PreparedProgramLinkGeneration, draw.ProgramBindingSnapshot, drawUniformSlot, out prepareReason)
 				: TryPrepareForRendering(material, out prepareReason);
 		}
 		if (!preparedForRecord)
@@ -354,6 +354,913 @@ internal unsafe partial class VkMeshRenderer
 		return drew;
 	}
 
+	internal bool TryPrepareMeshDrawRecordingState(
+		int frameIndex,
+		in PendingMeshDraw draw,
+		RenderPass renderPass,
+		bool useDynamicRendering,
+		DynamicRenderingFormatSignature dynamicRenderingFormats,
+		int passIndex,
+		IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+		bool depthStencilReadOnly,
+		string pipelineName,
+		int drawUniformSlot,
+		out VulkanPreparedMeshDrawState recordingState,
+		out string reason)
+	{
+		lock (_recordDrawSync)
+		{
+			return TryPrepareMeshDrawRecordingStateNoLock(
+				frameIndex,
+				draw,
+				renderPass,
+				useDynamicRendering,
+				dynamicRenderingFormats,
+				passIndex,
+				passMetadata,
+				depthStencilReadOnly,
+				pipelineName,
+				drawUniformSlot,
+				out recordingState,
+				out reason);
+		}
+	}
+
+	private bool TryPrepareMeshDrawRecordingStateNoLock(
+		int frameIndex,
+		in PendingMeshDraw draw,
+		RenderPass renderPass,
+		bool useDynamicRendering,
+		DynamicRenderingFormatSignature dynamicRenderingFormats,
+		int passIndex,
+		IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+		bool depthStencilReadOnly,
+		string pipelineName,
+		int drawUniformSlot,
+		out VulkanPreparedMeshDrawState recordingState,
+		out string reason)
+	{
+		recordingState = default;
+		frameIndex = Math.Max(frameIndex, 0);
+		if (!TryPrewarmFrameDataForRecordingNoLock(
+				draw,
+				drawUniformSlot,
+				frameIndex,
+				out reason))
+		{
+			return false;
+		}
+
+		XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
+		if (_program is not { } program)
+		{
+			reason = "program missing after mesh draw preparation";
+			return false;
+		}
+
+		if (Mesh?.HasSkinning == true)
+			MeshRenderer.PushBoneMatricesToGPU();
+		if (Mesh?.HasBlendshapes == true)
+			MeshRenderer.PushBlendshapeWeightsToGPU();
+
+		if (!TryRentVertexBufferSnapshot(
+				out VkBufferHandle[]? vertexBuffers,
+				out uint[]? vertexBindings,
+				out int vertexBufferCount,
+				out reason))
+		{
+			return false;
+		}
+
+		VulkanPreparedDescriptorSetBinding[]? preparedDescriptorBindings = null;
+		uint[]? preparedDynamicOffsets = null;
+		uint[]? preparedDescriptorHeapPushDwords = null;
+		VulkanPreparedFrameDataPayloadHandle[]?
+			preparedFrameDataPayloadHandles = null;
+		try
+		{
+			VulkanPreparedMeshPrimitive primitive0 = default;
+			VulkanPreparedMeshPrimitive primitive1 = default;
+			VulkanPreparedMeshPrimitive primitive2 = default;
+			int primitiveCount = 0;
+			bool triangleOnly =
+				MeshRenderMaterialResolver.RequiresTriangleOnlyDrawsForCurrentPass();
+
+			if (!TryPrepareIndexedMeshPrimitive(
+					material,
+					draw,
+					renderPass,
+					useDynamicRendering,
+					dynamicRenderingFormats,
+					passIndex,
+					passMetadata,
+					depthStencilReadOnly,
+					pipelineName,
+					_triangleIndexBuffer,
+					_triangleIndexSize,
+					PrimitiveTopology.TriangleList,
+					out VulkanPreparedMeshPrimitive trianglePrimitive,
+					out reason))
+			{
+				return false;
+			}
+			AddPreparedMeshPrimitive(
+				trianglePrimitive,
+				ref primitive0,
+				ref primitive1,
+				ref primitive2,
+				ref primitiveCount);
+
+			if (!triangleOnly)
+			{
+				if (!TryPrepareIndexedMeshPrimitive(
+						material,
+						draw,
+						renderPass,
+						useDynamicRendering,
+						dynamicRenderingFormats,
+						passIndex,
+						passMetadata,
+						depthStencilReadOnly,
+						pipelineName,
+						_lineIndexBuffer,
+						_lineIndexSize,
+						PrimitiveTopology.LineList,
+						out VulkanPreparedMeshPrimitive linePrimitive,
+						out reason))
+				{
+					return false;
+				}
+				AddPreparedMeshPrimitive(
+					linePrimitive,
+					ref primitive0,
+					ref primitive1,
+					ref primitive2,
+					ref primitiveCount);
+
+				if (!TryPrepareIndexedMeshPrimitive(
+						material,
+						draw,
+						renderPass,
+						useDynamicRendering,
+						dynamicRenderingFormats,
+						passIndex,
+						passMetadata,
+						depthStencilReadOnly,
+						pipelineName,
+						_pointIndexBuffer,
+						_pointIndexSize,
+						PrimitiveTopology.PointList,
+						out VulkanPreparedMeshPrimitive pointPrimitive,
+						out reason))
+				{
+					return false;
+				}
+				AddPreparedMeshPrimitive(
+					pointPrimitive,
+					ref primitive0,
+					ref primitive1,
+					ref primitive2,
+					ref primitiveCount);
+			}
+
+			if (primitiveCount == 0)
+			{
+				if (Mesh is null || Mesh.VertexCount <= 0)
+				{
+					reason = "mesh has no indexed or non-indexed elements";
+					return false;
+				}
+
+				PrimitiveTopology fallbackTopology = Mesh.Type switch
+				{
+					EPrimitiveType.Points => PrimitiveTopology.PointList,
+					EPrimitiveType.Lines => PrimitiveTopology.LineList,
+					EPrimitiveType.LineStrip => PrimitiveTopology.LineStrip,
+					EPrimitiveType.TriangleStrip => PrimitiveTopology.TriangleStrip,
+					EPrimitiveType.TriangleFan => PrimitiveTopology.TriangleFan,
+					EPrimitiveType.Patches => PrimitiveTopology.PatchList,
+					_ => PrimitiveTopology.TriangleList,
+				};
+				if (triangleOnly && !IsTriangleClassTopology(fallbackTopology))
+				{
+					reason = $"non-triangle fallback topology {fallbackTopology} is disabled for this pass";
+					return false;
+				}
+
+				if (!EnsurePipeline(
+						material,
+						fallbackTopology,
+						draw,
+						renderPass,
+						useDynamicRendering,
+						dynamicRenderingFormats,
+						passIndex,
+						passMetadata,
+						depthStencilReadOnly,
+						pipelineName,
+						out Pipeline fallbackPipeline))
+				{
+					reason = $"pipeline pending for {fallbackTopology}";
+					return false;
+				}
+
+				primitive0 = new VulkanPreparedMeshPrimitive(
+					fallbackPipeline,
+					fallbackTopology,
+					default,
+					default,
+					(uint)Mesh.VertexCount,
+					Indexed: false);
+				primitiveCount = 1;
+			}
+
+			UpdateEngineUniformBuffersForDraw(frameIndex, drawUniformSlot, draw);
+			UpdateAutoUniformBuffersForDraw(
+				frameIndex,
+				drawUniformSlot,
+				material,
+				draw);
+			if (!TryRentPreparedFrameDataPayloadHandles(
+					program,
+					frameIndex,
+					drawUniformSlot,
+					material,
+					draw,
+					out preparedFrameDataPayloadHandles,
+					out int preparedFrameDataPayloadHandleCount,
+					out reason))
+			{
+				return false;
+			}
+			Renderer.TryCaptureCpuDirectDynamicData(
+				this,
+				frameIndex,
+				drawUniformSlot,
+				draw,
+				ResolvePassMask(passIndex));
+
+			DescriptorSet[]? descriptorSets = null;
+			DescriptorHeapPushDataPayload? descriptorHeapPushData = null;
+			int preparedDescriptorBindingCount = 0;
+			int preparedDescriptorHeapPushDwordCount = 0;
+			bool usesDescriptorHeap = Renderer.IsDescriptorHeapDrawBindingActive;
+			bool requiresDescriptors =
+				program.DescriptorSetLayouts.Count > 0 &&
+				program.DescriptorBindings.Count > 0;
+			if (requiresDescriptors)
+			{
+				if (_descriptorSets is not { Length: > 0 })
+				{
+					reason = "descriptor set array is empty after preparation";
+					return false;
+				}
+
+				int descriptorSlotIndex =
+					ResolveDescriptorFrameIndex(frameIndex, _descriptorSets.Length);
+				descriptorSets = _descriptorSets[descriptorSlotIndex];
+				if (descriptorSets.Length == 0)
+				{
+					reason = $"descriptor set array at frame {frameIndex} is empty";
+					return false;
+				}
+
+				if (_activeDescriptorAllocation?.DescriptorHeapPushData is
+						{ Length: > 0 } heapPayloads &&
+					(uint)descriptorSlotIndex < (uint)heapPayloads.Length)
+				{
+					descriptorHeapPushData = heapPayloads[descriptorSlotIndex];
+				}
+
+				if (!usesDescriptorHeap &&
+					!TryRentPreparedDescriptorBindings(
+						program,
+						descriptorSets,
+						frameIndex,
+						drawUniformSlot,
+						out preparedDescriptorBindings,
+						out preparedDescriptorBindingCount,
+						out preparedDynamicOffsets,
+						out reason))
+				{
+					return false;
+				}
+
+				if (usesDescriptorHeap &&
+					program.DescriptorHeapLayout is
+						{ PushDwordCount: > 0 } heapLayout)
+				{
+					if (descriptorHeapPushData is null ||
+						!descriptorHeapPushData.IsValidFor(heapLayout))
+					{
+						reason =
+							"descriptor heap push payload is unavailable after preparation";
+						return false;
+					}
+
+					preparedDescriptorHeapPushDwordCount =
+						heapLayout.PushDwordCount;
+					preparedDescriptorHeapPushDwords =
+						ArrayPool<uint>.Shared.Rent(
+							preparedDescriptorHeapPushDwordCount);
+					descriptorHeapPushData.Dwords.AsSpan(
+						0,
+						preparedDescriptorHeapPushDwordCount).CopyTo(
+							preparedDescriptorHeapPushDwords);
+				}
+			}
+
+			recordingState = new VulkanPreparedMeshDrawState(
+				this,
+				Renderer,
+				program,
+				program.PipelineLayout,
+				usesDescriptorHeap,
+				preparedDescriptorBindings,
+				preparedDescriptorBindingCount,
+				preparedDynamicOffsets,
+				preparedDescriptorHeapPushDwords,
+				preparedDescriptorHeapPushDwordCount,
+				vertexBuffers,
+				vertexBindings,
+				vertexBufferCount,
+				primitive0,
+				primitive1,
+				primitive2,
+				primitiveCount,
+				frameIndex,
+				drawUniformSlot,
+				Renderer.MeshFrameDataReservationGeneration,
+				preparedFrameDataPayloadHandles,
+				preparedFrameDataPayloadHandleCount,
+				CreatePerDrawPushConstants(material, draw),
+				draw.Instances);
+			vertexBuffers = null;
+			vertexBindings = null;
+			preparedDescriptorBindings = null;
+			preparedDynamicOffsets = null;
+			preparedDescriptorHeapPushDwords = null;
+			preparedFrameDataPayloadHandles = null;
+			reason = "Ready";
+			return true;
+		}
+		finally
+		{
+			if (vertexBuffers is not null || vertexBindings is not null)
+				ReturnRentedVertexBufferSnapshot(vertexBuffers, vertexBindings);
+			if (preparedDescriptorBindings is not null || preparedDynamicOffsets is not null)
+				ReturnPreparedDescriptorBindings(preparedDescriptorBindings, preparedDynamicOffsets);
+			if (preparedDescriptorHeapPushDwords is not null)
+				ArrayPool<uint>.Shared.Return(preparedDescriptorHeapPushDwords);
+			if (preparedFrameDataPayloadHandles is not null)
+			{
+				ArrayPool<VulkanPreparedFrameDataPayloadHandle>.Shared.Return(
+					preparedFrameDataPayloadHandles,
+					clearArray: true);
+			}
+		}
+	}
+
+	private bool TryPrepareIndexedMeshPrimitive(
+		XRMaterial material,
+		in PendingMeshDraw draw,
+		RenderPass renderPass,
+		bool useDynamicRendering,
+		DynamicRenderingFormatSignature dynamicRenderingFormats,
+		int passIndex,
+		IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+		bool depthStencilReadOnly,
+		string pipelineName,
+		VkDataBuffer? indexBuffer,
+		IndexSize indexSize,
+		PrimitiveTopology topology,
+		out VulkanPreparedMeshPrimitive primitive,
+		out string reason)
+	{
+		primitive = default;
+		reason = "Ready";
+		if (indexBuffer?.BufferHandle is not { Handle: not 0 })
+			return true;
+
+		if (!TryResolveIndexBinding(
+				indexBuffer,
+				indexSize,
+				out VkBufferHandle indexHandle,
+				out IndexType indexType,
+				out uint indexCount) ||
+			indexCount == 0)
+		{
+			reason = $"index binding is unavailable for {topology}";
+			return false;
+		}
+
+		if (!EnsurePipeline(
+				material,
+				topology,
+				draw,
+				renderPass,
+				useDynamicRendering,
+				dynamicRenderingFormats,
+				passIndex,
+				passMetadata,
+				depthStencilReadOnly,
+				pipelineName,
+				out Pipeline pipeline))
+		{
+			reason = $"pipeline pending for {topology}";
+			return false;
+		}
+
+		primitive = new VulkanPreparedMeshPrimitive(
+			pipeline,
+			topology,
+			indexHandle,
+			indexType,
+			indexCount,
+			Indexed: true);
+		return true;
+	}
+
+	private static void AddPreparedMeshPrimitive(
+		in VulkanPreparedMeshPrimitive primitive,
+		ref VulkanPreparedMeshPrimitive primitive0,
+		ref VulkanPreparedMeshPrimitive primitive1,
+		ref VulkanPreparedMeshPrimitive primitive2,
+		ref int primitiveCount)
+	{
+		if (primitive.Pipeline.Handle == 0)
+			return;
+
+		switch (primitiveCount)
+		{
+			case 0:
+				primitive0 = primitive;
+				break;
+			case 1:
+				primitive1 = primitive;
+				break;
+			case 2:
+				primitive2 = primitive;
+				break;
+			default:
+				throw new InvalidOperationException(
+					"A prepared mesh draw exceeded the bounded primitive count.");
+		}
+
+		primitiveCount++;
+	}
+
+	internal static bool RecordPreparedMeshDrawState(
+		CommandBuffer commandBuffer,
+		in VulkanPreparedMeshDrawState recordingState)
+	{
+		if (recordingState.OwnerIdentity is null ||
+			recordingState.Renderer is null ||
+			recordingState.Program is null ||
+			recordingState.PipelineLayout.Handle == 0 ||
+			recordingState.PrimitiveCount <= 0 ||
+			!recordingState.HasValidFrameDataPayloadHandles())
+		{
+			return false;
+		}
+
+		VulkanRenderer renderer = recordingState.Renderer;
+		for (int primitiveIndex = 0;
+			 primitiveIndex < recordingState.PrimitiveCount;
+			 primitiveIndex++)
+		{
+			VulkanPreparedMeshPrimitive primitive =
+				recordingState.GetPrimitive(primitiveIndex);
+			if (primitive.Pipeline.Handle == 0 || primitive.ElementCount == 0)
+				return false;
+
+			renderer.BindPipelineTracked(
+				commandBuffer,
+				PipelineBindPoint.Graphics,
+				primitive.Pipeline);
+			if (recordingState.VertexBufferCount > 0)
+			{
+				if (recordingState.VertexBuffers is null ||
+					recordingState.VertexBindings is null)
+				{
+					return false;
+				}
+
+				for (int bufferIndex = 0;
+					 bufferIndex < recordingState.VertexBufferCount;
+					 bufferIndex++)
+				{
+					renderer.BindVertexBufferTracked(
+						commandBuffer,
+						recordingState.VertexBindings[bufferIndex],
+						recordingState.VertexBuffers[bufferIndex],
+						0);
+				}
+			}
+
+			renderer.PushConstantsTracked(
+				commandBuffer,
+				recordingState.PipelineLayout,
+				VulkanRenderer.CommonPushConstantStageFlags,
+				0,
+				recordingState.PushConstants);
+
+			if (recordingState.UsesDescriptorHeap)
+			{
+				if (!renderer.TryPushPreparedDescriptorHeapProgramData(
+						commandBuffer,
+						recordingState.Program,
+						recordingState.DescriptorHeapPushDwords,
+						recordingState.DescriptorHeapPushDwordCount,
+						out _))
+				{
+					return false;
+				}
+			}
+			else if (!BindPreparedMeshDescriptorSets(
+				renderer,
+				commandBuffer,
+				recordingState))
+			{
+				return false;
+			}
+
+			if (primitive.Indexed)
+			{
+				renderer.BindIndexBufferTracked(
+					commandBuffer,
+					primitive.IndexBuffer,
+					0,
+					primitive.IndexType);
+				renderer.VulkanApi.CmdDrawIndexed(
+					commandBuffer,
+					primitive.ElementCount,
+					recordingState.InstanceCount,
+					0,
+					0,
+					0);
+			}
+			else
+			{
+				renderer.VulkanApi.CmdDraw(
+					commandBuffer,
+					primitive.ElementCount,
+					recordingState.InstanceCount,
+					0,
+					0);
+			}
+		}
+
+		return true;
+	}
+
+	internal static void ReturnPreparedMeshDrawStateBuffers(
+		in VulkanPreparedMeshDrawState recordingState)
+	{
+		ReturnRentedVertexBufferSnapshot(
+			recordingState.VertexBuffers,
+			recordingState.VertexBindings);
+		ReturnPreparedDescriptorBindings(
+			recordingState.DescriptorBindings,
+			recordingState.DynamicOffsets);
+		if (recordingState.DescriptorHeapPushDwords is not null)
+			ArrayPool<uint>.Shared.Return(
+				recordingState.DescriptorHeapPushDwords);
+		if (recordingState.FrameDataPayloadHandles is not null)
+		{
+			ArrayPool<VulkanPreparedFrameDataPayloadHandle>.Shared.Return(
+				recordingState.FrameDataPayloadHandles,
+				clearArray: true);
+		}
+	}
+
+	private bool TryRentPreparedFrameDataPayloadHandles(
+		VkRenderProgram program,
+		int frameIndex,
+		int drawUniformSlot,
+		XRMaterial material,
+		in PendingMeshDraw draw,
+		out VulkanPreparedFrameDataPayloadHandle[]? handles,
+		out int handleCount,
+		out string reason)
+	{
+		handles = null;
+		handleCount = 0;
+		reason = "Ready";
+
+		int candidateCount = 0;
+		for (int bindingIndex = 0;
+			 bindingIndex < program.DescriptorBindings.Count;
+			 bindingIndex++)
+		{
+			DescriptorType descriptorType =
+				program.DescriptorBindings[bindingIndex].DescriptorType;
+			if (descriptorType is DescriptorType.UniformBuffer or
+				DescriptorType.UniformBufferDynamic)
+			{
+				candidateCount++;
+			}
+		}
+
+		if (candidateCount == 0)
+			return true;
+
+		handles =
+			ArrayPool<VulkanPreparedFrameDataPayloadHandle>.Shared.Rent(
+				candidateCount);
+		ulong arenaGeneration = Renderer.MeshFrameDataReservationGeneration;
+		ulong materialGeneration = ComputeMaterialPublicationGeneration(
+			material.BindingLayoutVersion,
+			material.BindingValueVersion,
+			draw.ProgramBindingSnapshot?.RuntimeUniformNameSignature ?? 0UL,
+			draw.ProgramBindingSnapshot
+				?.MutableLegacyUniformValueSignature ?? 0UL);
+
+		for (int bindingIndex = 0;
+			 bindingIndex < program.DescriptorBindings.Count;
+			 bindingIndex++)
+		{
+			DescriptorBindingInfo binding =
+				program.DescriptorBindings[bindingIndex];
+			if (binding.DescriptorType is not (
+				DescriptorType.UniformBuffer or
+				DescriptorType.UniformBufferDynamic))
+			{
+				continue;
+			}
+
+			if (program.TryGetAutoUniformBlock(
+					binding.Set,
+					binding.Binding,
+					out AutoUniformBlockInfo block))
+			{
+				if (!_autoUniformBuffers.TryGetValue(
+						block.InstanceName,
+						out AutoUniformBuffer[]? autoBuffers) ||
+					autoBuffers.Length == 0)
+				{
+					reason =
+						$"auto-uniform payload '{block.InstanceName}' is unavailable after publication";
+					return false;
+				}
+
+				AutoUniformBuffer target = autoBuffers[
+					ResolvePublishedAutoUniformBufferIndex(
+						block,
+						frameIndex,
+						drawUniformSlot,
+						autoBuffers.Length)];
+				EVulkanBindingFrequencyMask frequencyMask =
+					program.BindingSchema is { } programSchema &&
+					programSchema.TryGetAutoUniformBlock(
+						block.InstanceName,
+						out VulkanAutoUniformBindingSchema blockSchema)
+						? blockSchema.FrequencyMask
+						: EVulkanBindingFrequencyMask.All;
+				handles[handleCount++] =
+					new VulkanPreparedFrameDataPayloadHandle(
+						this,
+						target.Buffer,
+						target.Offset,
+						Math.Min(target.Size, Math.Max(block.Size, 1u)),
+						binding.Set,
+						binding.Binding,
+						frameIndex,
+						drawUniformSlot,
+						arenaGeneration,
+						frequencyMask,
+						draw.AutoUniformPublication,
+						materialGeneration);
+				continue;
+			}
+
+			string engineUniformName =
+				NormalizeEngineUniformName(binding.Name ?? string.Empty);
+			uint engineUniformSize =
+				GetEngineUniformSize(binding.Name ?? string.Empty);
+			if (engineUniformSize == 0)
+				continue;
+			if (!_engineUniformBuffers.TryGetValue(
+					engineUniformName,
+					out EngineUniformBuffer[]? engineBuffers) ||
+				engineBuffers.Length == 0)
+			{
+				reason =
+					$"engine-uniform payload '{engineUniformName}' is unavailable after publication";
+				return false;
+			}
+
+			EngineUniformBuffer engineTarget = engineBuffers[
+				ResolveUniformBufferIndex(
+					frameIndex,
+					drawUniformSlot,
+					engineBuffers.Length)];
+			handles[handleCount++] =
+				new VulkanPreparedFrameDataPayloadHandle(
+					this,
+					engineTarget.Buffer,
+					engineTarget.Offset,
+					Math.Min(engineTarget.Size, engineUniformSize),
+					binding.Set,
+					binding.Binding,
+					frameIndex,
+					drawUniformSlot,
+					arenaGeneration,
+					EVulkanBindingFrequencyMask.All,
+					draw.AutoUniformPublication,
+					materialGeneration);
+		}
+
+		return true;
+	}
+
+	private bool TryRentPreparedDescriptorBindings(
+		VkRenderProgram program,
+		DescriptorSet[] descriptorSets,
+		int frameIndex,
+		int drawUniformSlot,
+		out VulkanPreparedDescriptorSetBinding[]? preparedBindings,
+		out int preparedBindingCount,
+		out uint[]? dynamicOffsets,
+		out string reason)
+	{
+		preparedBindings = null;
+		preparedBindingCount = 0;
+		dynamicOffsets = null;
+		reason = "Ready";
+
+		int totalDynamicOffsetCount = 0;
+		for (int setIndex = 0; setIndex < descriptorSets.Length; setIndex++)
+		{
+			if (descriptorSets[setIndex].Handle == 0)
+				continue;
+
+			preparedBindingCount++;
+			int setDynamicOffsetCount = 0;
+			for (int bindingIndex = 0;
+				 bindingIndex < program.DescriptorBindings.Count;
+				 bindingIndex++)
+			{
+				DescriptorBindingInfo binding =
+					program.DescriptorBindings[bindingIndex];
+				if (binding.Set != (uint)setIndex ||
+					binding.DescriptorType != DescriptorType.UniformBufferDynamic)
+				{
+					continue;
+				}
+
+				setDynamicOffsetCount = checked(
+					setDynamicOffsetCount +
+					(int)VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding));
+			}
+
+			if (setDynamicOffsetCount > 64)
+			{
+				reason =
+					$"descriptor set {setIndex} has {setDynamicOffsetCount} dynamic uniform offsets; the bounded limit is 64";
+				return false;
+			}
+
+			totalDynamicOffsetCount = checked(
+				totalDynamicOffsetCount + setDynamicOffsetCount);
+		}
+
+		if (preparedBindingCount == 0)
+			return true;
+
+		preparedBindings =
+			ArrayPool<VulkanPreparedDescriptorSetBinding>.Shared.Rent(
+				preparedBindingCount);
+		if (totalDynamicOffsetCount > 0)
+			dynamicOffsets = ArrayPool<uint>.Shared.Rent(totalDynamicOffsetCount);
+
+		int preparedBindingIndex = 0;
+		int dynamicOffsetIndex = 0;
+		for (int setIndex = 0; setIndex < descriptorSets.Length; setIndex++)
+		{
+			DescriptorSet descriptorSet = descriptorSets[setIndex];
+			if (descriptorSet.Handle == 0)
+				continue;
+
+			int dynamicOffsetStart = dynamicOffsetIndex;
+			for (int bindingIndex = 0;
+				 bindingIndex < program.DescriptorBindings.Count;
+				 bindingIndex++)
+			{
+				DescriptorBindingInfo binding =
+					program.DescriptorBindings[bindingIndex];
+				if (binding.Set != (uint)setIndex ||
+					binding.DescriptorType != DescriptorType.UniformBufferDynamic)
+				{
+					continue;
+				}
+
+				uint descriptorCount =
+					VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding);
+				if (descriptorCount != 1 ||
+					dynamicOffsets is null ||
+					!TryResolveDynamicUniformOffset(
+						program,
+						binding,
+						frameIndex,
+						drawUniformSlot,
+						out uint offset))
+				{
+					reason =
+						$"dynamic uniform '{binding.Name}' in descriptor set {setIndex} could not resolve a bounded offset";
+					return false;
+				}
+
+				dynamicOffsets[dynamicOffsetIndex++] = offset;
+			}
+
+			preparedBindings[preparedBindingIndex++] =
+				new VulkanPreparedDescriptorSetBinding(
+					descriptorSet,
+					(uint)setIndex,
+					dynamicOffsetStart,
+					dynamicOffsetIndex - dynamicOffsetStart);
+		}
+
+		return true;
+	}
+
+	private static bool BindPreparedMeshDescriptorSets(
+		VulkanRenderer renderer,
+		CommandBuffer commandBuffer,
+		in VulkanPreparedMeshDrawState recordingState)
+	{
+		if (recordingState.DescriptorBindingCount == 0)
+			return true;
+		if (recordingState.DescriptorBindings is not { } descriptorBindings ||
+			descriptorBindings.Length < recordingState.DescriptorBindingCount)
+		{
+			return false;
+		}
+
+		if (!renderer.TryAcquireMeshFrameDataRecordingLease(
+				commandBuffer,
+				recordingState.OwnerIdentity,
+				recordingState.DrawUniformSlot,
+				recordingState.FrameDataGeneration,
+				out _))
+		{
+			return false;
+		}
+
+		Span<DescriptorSet> oneSet = stackalloc DescriptorSet[1];
+		for (int bindingIndex = 0;
+			 bindingIndex < recordingState.DescriptorBindingCount;
+			 bindingIndex++)
+		{
+			VulkanPreparedDescriptorSetBinding binding =
+				descriptorBindings[bindingIndex];
+			if (binding.DescriptorSet.Handle == 0 ||
+				binding.DynamicOffsetStart < 0 ||
+				binding.DynamicOffsetCount < 0)
+			{
+				return false;
+			}
+
+			ReadOnlySpan<uint> offsets = ReadOnlySpan<uint>.Empty;
+			if (binding.DynamicOffsetCount > 0)
+			{
+				if (recordingState.DynamicOffsets is not { } dynamicOffsets ||
+					binding.DynamicOffsetStart >
+						dynamicOffsets.Length - binding.DynamicOffsetCount)
+				{
+					return false;
+				}
+
+				offsets = dynamicOffsets.AsSpan(
+					binding.DynamicOffsetStart,
+					binding.DynamicOffsetCount);
+			}
+
+			oneSet[0] = binding.DescriptorSet;
+			renderer.BindDescriptorSetsTracked(
+				commandBuffer,
+				PipelineBindPoint.Graphics,
+				recordingState.PipelineLayout,
+				binding.SetIndex,
+				oneSet,
+				offsets);
+		}
+
+		return true;
+	}
+
+	private static void ReturnPreparedDescriptorBindings(
+		VulkanPreparedDescriptorSetBinding[]? preparedBindings,
+		uint[]? dynamicOffsets)
+	{
+		if (preparedBindings is not null)
+			ArrayPool<VulkanPreparedDescriptorSetBinding>.Shared.Return(
+				preparedBindings);
+		if (dynamicOffsets is not null)
+			ArrayPool<uint>.Shared.Return(dynamicOffsets);
+	}
+
 	internal bool RecordIndirectDrawState(
 		CommandBuffer commandBuffer,
 		in PendingMeshDraw draw,
@@ -371,7 +1278,7 @@ internal unsafe partial class VkMeshRenderer
 		indexType = IndexType.Uint32;
 		var material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
         bool preparedForRecord = draw.PreparedProgram is { } preparedProgram
-            ? TryPrepareCapturedProgramForRecording(material, preparedProgram, draw.PreparedProgramIdentity, draw.ProgramBindingSnapshot, drawUniformSlot, out global::System.String prepareReason)
+            ? TryPrepareCapturedProgramForRecording(material, preparedProgram, draw.PreparedProgramIdentity, draw.PreparedProgramLinkGeneration, draw.ProgramBindingSnapshot, drawUniformSlot, out global::System.String prepareReason)
             : TryPrepareForRendering(material, out prepareReason);
         if (!preparedForRecord)
 		{
@@ -452,7 +1359,7 @@ internal unsafe partial class VkMeshRenderer
 
         var material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
         bool preparedForRecord = draw.PreparedProgram is { } preparedProgram
-			? TryPrepareCapturedProgramForRecording(material, preparedProgram, draw.PreparedProgramIdentity, draw.ProgramBindingSnapshot, drawUniformSlot, out reason)
+			? TryPrepareCapturedProgramForRecording(material, preparedProgram, draw.PreparedProgramIdentity, draw.PreparedProgramLinkGeneration, draw.ProgramBindingSnapshot, drawUniformSlot, out reason)
 			: TryPrepareForRendering(material, out reason);
 		if (!preparedForRecord)
 			return false;
@@ -593,8 +1500,9 @@ internal unsafe partial class VkMeshRenderer
 		else if (recordingState.DescriptorSets is { Length: > 0 } descriptorSets &&
 			!BindMeshDescriptorSets(
 				commandBuffer,
+				recordingState.Program,
 				recordingState.PipelineLayout,
-					descriptorSets,
+				descriptorSets,
 					recordingState.FrameIndex,
 					recordingState.DrawUniformSlot,
 					recordingState.FrameDataGeneration))
@@ -845,7 +1753,13 @@ internal unsafe partial class VkMeshRenderer
 			return true;
 		}
 
-		return BindMeshDescriptorSets(commandBuffer, _program.PipelineLayout, sets, imageIndex, drawUniformSlot);
+		return BindMeshDescriptorSets(
+			commandBuffer,
+			_program,
+			_program.PipelineLayout,
+			sets,
+			imageIndex,
+			drawUniformSlot);
 	}
 
 	private static uint ResolvePassMask(int passIndex)
@@ -853,14 +1767,13 @@ internal unsafe partial class VkMeshRenderer
 
 	private bool BindMeshDescriptorSets(
 		CommandBuffer commandBuffer,
+		VkRenderProgram program,
 		PipelineLayout pipelineLayout,
 		DescriptorSet[] sets,
 		int frameIndex,
 		int drawUniformSlot,
 		ulong sealedFrameDataGeneration = 0)
 	{
-		if (_program is null)
-			return false;
 		if (!Renderer.TryAcquireMeshFrameDataRecordingLease(
 				commandBuffer,
 				this,
@@ -880,9 +1793,9 @@ internal unsafe partial class VkMeshRenderer
 				continue;
 
 			int dynamicOffsetCount = 0;
-			for (int i = 0; i < _program.DescriptorBindings.Count; i++)
+			for (int i = 0; i < program.DescriptorBindings.Count; i++)
 			{
-				DescriptorBindingInfo binding = _program.DescriptorBindings[i];
+				DescriptorBindingInfo binding = program.DescriptorBindings[i];
 				if (binding.Set == (uint)setIndex && binding.DescriptorType == DescriptorType.UniformBufferDynamic)
 					dynamicOffsetCount += checked((int)VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding));
 			}
@@ -895,14 +1808,20 @@ internal unsafe partial class VkMeshRenderer
 
 			Span<uint> dynamicOffsets = dynamicOffsetScratch[..dynamicOffsetCount];
 			int offsetIndex = 0;
-			for (int i = 0; i < _program.DescriptorBindings.Count; i++)
+			for (int i = 0; i < program.DescriptorBindings.Count; i++)
 			{
-				DescriptorBindingInfo binding = _program.DescriptorBindings[i];
+				DescriptorBindingInfo binding = program.DescriptorBindings[i];
 				if (binding.Set != (uint)setIndex || binding.DescriptorType != DescriptorType.UniformBufferDynamic)
 					continue;
 
 				uint descriptorCount = VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding);
-				if (descriptorCount != 1 || !TryResolveDynamicUniformOffset(binding, frameIndex, drawUniformSlot, out uint offset))
+				if (descriptorCount != 1 ||
+					!TryResolveDynamicUniformOffset(
+						program,
+						binding,
+						frameIndex,
+						drawUniformSlot,
+						out uint offset))
 				{
 					WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because dynamic uniform '{binding.Name}' could not resolve a bounded offset.");
 					return false;
@@ -923,18 +1842,26 @@ internal unsafe partial class VkMeshRenderer
 	}
 
 	private bool TryResolveDynamicUniformOffset(
+		VkRenderProgram program,
 		DescriptorBindingInfo binding,
 		int frameIndex,
 		int drawUniformSlot,
 		out uint dynamicOffset)
 	{
 		dynamicOffset = 0;
-		if (_program is not null &&
-			_program.TryGetAutoUniformBlockFuzzy(binding.Name ?? string.Empty, binding.Set, binding.Binding, out AutoUniformBlockInfo block) &&
+		if (program.TryGetAutoUniformBlock(
+				binding.Set,
+				binding.Binding,
+				out AutoUniformBlockInfo block) &&
 			_autoUniformBuffers.TryGetValue(block.InstanceName, out AutoUniformBuffer[]? autoBuffers) &&
 			autoBuffers.Length > 0)
 		{
-			AutoUniformBuffer target = autoBuffers[ResolveUniformBufferIndex(frameIndex, drawUniformSlot, autoBuffers.Length)];
+			AutoUniformBuffer target = autoBuffers[
+				ResolvePublishedAutoUniformBufferIndex(
+					block,
+					frameIndex,
+					drawUniformSlot,
+					autoBuffers.Length)];
 			if (target.Offset <= uint.MaxValue)
 			{
 				dynamicOffset = (uint)target.Offset;
@@ -975,6 +1902,36 @@ internal unsafe partial class VkMeshRenderer
 	/// that this draw will bind. A logical texture can rotate to a newer physical
 	/// generation after submission, so re-resolving the texture is not sufficient.
 	/// </summary>
+	internal bool TryTransitionPreparedDescriptorImagesForSampling(
+		CommandBuffer commandBuffer,
+		in VulkanPreparedMeshDrawState recordingState,
+		XRFrameBuffer? target)
+	{
+		if (recordingState.UsesDescriptorHeap ||
+			recordingState.DescriptorBindingCount <= 0 ||
+			recordingState.DescriptorBindings is not { } descriptorBindings ||
+			descriptorBindings.Length < recordingState.DescriptorBindingCount)
+		{
+			return false;
+		}
+
+		bool transitionedPublishedSet = false;
+		for (int bindingIndex = 0;
+			 bindingIndex < recordingState.DescriptorBindingCount;
+			 bindingIndex++)
+		{
+			DescriptorSet set = descriptorBindings[bindingIndex].DescriptorSet;
+			if (set.Handle != 0)
+				transitionedPublishedSet |=
+					Renderer.TransitionPublishedDescriptorSetImagesForSampling(
+						commandBuffer,
+						set,
+						target);
+		}
+
+		return transitionedPublishedSet;
+	}
+
 	internal bool TryTransitionPreparedDescriptorImagesForSampling(
 		CommandBuffer commandBuffer,
 		in PendingMeshDraw draw,
@@ -1054,7 +2011,7 @@ internal unsafe partial class VkMeshRenderer
 
 		if (draw.PreparedProgram is { } preparedProgram)
 		{
-			if (!ActivateCapturedProgram(material, preparedProgram, draw.PreparedProgramIdentity))
+			if (!ActivateCapturedProgram(material, preparedProgram, draw.PreparedProgramIdentity, draw.PreparedProgramLinkGeneration))
 			{
 				reason = "program pending";
 				return false;
@@ -1229,6 +2186,130 @@ internal unsafe partial class VkMeshRenderer
 				descriptorResourcesCapturedByFrameSignature);
 	}
 
+	internal bool TryRefreshReusableFrequencyData(
+		uint imageIndex,
+		in PendingMeshDraw draw,
+		int drawUniformSlot,
+		EVulkanBindingFrequencyMask frequencyMask,
+		out string reason)
+	{
+		lock (_recordDrawSync)
+		{
+			reason = "frame-frequency reusable";
+			XRMaterial material =
+				draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
+			if (draw.PreparedProgram is not { } preparedProgram ||
+				!ActivateCapturedProgram(
+					material,
+					preparedProgram,
+					draw.PreparedProgramIdentity,
+					draw.PreparedProgramLinkGeneration))
+			{
+				reason = "captured program pending";
+				return false;
+			}
+
+			if (!Renderer.MeshFrameDataArenaEnabled ||
+				Renderer.IsDescriptorHeapDrawBindingActive ||
+				_program is null ||
+				!ReferenceEquals(_program, draw.PreparedProgram))
+			{
+				reason = "owner-only refresh eligibility changed";
+				return false;
+			}
+
+			int frameIndex = unchecked(
+				(int)Math.Min(imageIndex, int.MaxValue));
+			using VulkanRenderer.VulkanCpuStageScope autoUniformStage =
+				new(EVulkanCpuStage.FrameDataAutoUniformUpload);
+			UpdateAutoUniformBuffersForDraw(
+				frameIndex,
+				drawUniformSlot,
+				material,
+				draw,
+				frequencyMask);
+			return true;
+		}
+	}
+
+	internal bool SupportsOwnerOnlyReusableFrameDataRefresh(
+		in PendingMeshDraw draw)
+	{
+		lock (_recordDrawSync)
+			return SupportsOwnerOnlyReusableFrameDataRefreshNoLock(draw);
+	}
+
+	internal string? DescribeOwnerOnlyReusableFrameDataRefreshBlocker(
+		in PendingMeshDraw draw)
+	{
+		lock (_recordDrawSync)
+			return DescribeOwnerOnlyReusableFrameDataRefreshBlockerNoLock(draw);
+	}
+
+	private bool SupportsOwnerOnlyReusableFrameDataRefreshNoLock(
+		in PendingMeshDraw draw)
+		=> DescribeOwnerOnlyReusableFrameDataRefreshBlockerNoLock(draw) is null;
+
+	private string? DescribeOwnerOnlyReusableFrameDataRefreshBlockerNoLock(
+		in PendingMeshDraw draw)
+	{
+		if (!Renderer.MeshFrameDataArenaEnabled)
+			return "mesh frame-data arena disabled";
+		if (Renderer.IsDescriptorHeapDrawBindingActive)
+			return "descriptor-heap draw binding";
+		if (_program is null)
+			return "active program unavailable";
+		if (!ReferenceEquals(_program, draw.PreparedProgram))
+			return "prepared program is not active";
+		XRMaterial? material =
+			draw.MaterialOverride ?? MeshRenderer.Material;
+		bool hasLegacyUniformCallback =
+			MeshRenderer.CaptureUniformsOnRender ||
+			MeshRenderer.HasSettingUniformsHandlers ||
+			material?.HasSettingUniformsHandlers == true;
+		if (hasLegacyUniformCallback)
+		{
+			if (draw.ProgramBindingSnapshot is null)
+				return "mutable legacy callback writes were not captured";
+		}
+		if (draw.ProgramBindingSnapshot is { } bindingSnapshot &&
+			!bindingSnapshot.HasPublishedBindingLayoutSignatures)
+			return "prepared binding signatures are unpublished";
+		if (_engineUniformBuffers.Count != 0)
+		{
+			foreach (string engineUniformName in
+					 _engineUniformBuffers.Keys)
+			{
+				// The unresolved-descriptor fallback is zero-initialized during
+				// full publication and has no frame-varying content. Its exact
+				// descriptor generation is already part of the reusable batch
+				// signature, so stable reuse does not need to clear it again.
+				if (string.Equals(
+						engineUniformName,
+						FallbackDescriptorUniformName,
+						StringComparison.Ordinal))
+				{
+					continue;
+				}
+
+				return $"legacy engine uniform buffer '{engineUniformName}' is active";
+			}
+		}
+		if (Mesh?.HasSkinning == true)
+			return "skinning frame-source descriptors are active";
+		if (Mesh?.HasBlendshapes == true)
+			return "blendshape frame-source descriptors are active";
+
+		foreach (AutoUniformBlockInfo block in
+				 _program.AutoUniformBlockMap.Values)
+		{
+			if (block.Frequency == EVulkanBindingFrequency.Unknown)
+				return $"auto-uniform block '{block.InstanceName}' has unknown frequency";
+		}
+
+		return null;
+	}
+
 	private bool TryRefreshReusableCommandBufferFrameDataNoLock(
 		uint imageIndex,
 		in PendingMeshDraw draw,
@@ -1241,7 +2322,7 @@ internal unsafe partial class VkMeshRenderer
 		XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
 		if (draw.PreparedProgram is { } preparedProgram)
 		{
-			if (!ActivateCapturedProgram(material, preparedProgram, draw.PreparedProgramIdentity))
+			if (!ActivateCapturedProgram(material, preparedProgram, draw.PreparedProgramIdentity, draw.PreparedProgramLinkGeneration))
 			{
 				reason = "captured program pending";
 				return false;

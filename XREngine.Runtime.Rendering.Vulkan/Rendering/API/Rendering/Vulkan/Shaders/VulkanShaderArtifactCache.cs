@@ -11,7 +11,7 @@ namespace XREngine.Rendering.Vulkan;
 
 internal static class VulkanShaderArtifactCache
 {
-    internal const int SchemaVersion = 2;
+    internal const int SchemaVersion = 4;
     private const string CacheRootDirectoryName = "Build";
     private const string CacheSubDirectoryName = "Cache";
     private const string CacheApiDirectoryName = "Vulkan";
@@ -56,6 +56,40 @@ internal static class VulkanShaderArtifactCache
             stageFlags,
             string.Empty,
             out artifact);
+
+    internal static bool TryRead(
+        string artifactIdentity,
+        XRShader shader,
+        int shaderConfigVersion,
+        bool usesVulkanClipDepthRemap,
+        string rewrittenSource,
+        IReadOnlyList<AutoUniformBlockInfo> autoUniformBlocks,
+        ShaderStageFlags stageFlags,
+        string transformFeedbackPlanIdentity,
+        out VulkanShaderArtifact artifact)
+    {
+        AutoUniformBlockInfo? firstBlock =
+            autoUniformBlocks.Count == 0 ? null : autoUniformBlocks[0];
+        bool read = TryRead(
+            artifactIdentity,
+            shader,
+            shaderConfigVersion,
+            usesVulkanClipDepthRemap,
+            rewrittenSource,
+            firstBlock,
+            stageFlags,
+            transformFeedbackPlanIdentity,
+            out artifact);
+        if (read)
+        {
+            artifact = artifact with
+            {
+                FrequencyOwnedAutoUniformBlocks = autoUniformBlocks,
+            };
+        }
+
+        return read;
+    }
 
     internal static bool TryRead(
         string artifactIdentity,

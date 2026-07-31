@@ -37,7 +37,8 @@ public static class VulkanPerformanceFixtureTests
             TestPrimaryReuseRatioGate(fixtureRoot);
             TestStructurallyIneligiblePrimaryRecordsAreExcluded(fixtureRoot);
             TestSelectedGateScope(fixtureRoot);
-            Console.WriteLine("Vulkan performance fixture tests: 11 passed.");
+            TestProfileContractEnforcement(fixtureRoot);
+            Console.WriteLine("Vulkan performance fixture tests: 12 passed.");
             return 0;
         }
         catch (Exception exception)
@@ -64,6 +65,12 @@ public static class VulkanPerformanceFixtureTests
             VulkanPerformanceEvaluator.Percentile(values, 0.95),
             "nearest-rank p95");
         AssertEqual(
+            9.0,
+            VulkanPerformanceEvaluator.Percentile(
+                [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0],
+                0.90),
+            "nearest-rank p90");
+        AssertEqual(
             20.0,
             VulkanPerformanceEvaluator.CalculateRelativeRangePercent(
                 [4.5, 5.0, 5.5],
@@ -89,6 +96,15 @@ public static class VulkanPerformanceFixtureTests
         Assert(
             report.PromotionStatus == "NonPromotableQuickRun",
             "Quick promotion status must be NonPromotableQuickRun.");
+        Assert(
+            report.ProfileMode == "CleanProfile",
+            "Quick report must identify its profile mode.");
+        Assert(
+            report.CleanComparisonSuitable,
+            "Quick report must identify clean-comparison suitability.");
+        Assert(
+            !string.IsNullOrWhiteSpace(report.ExpectedObserverOverhead),
+            "Quick report must describe expected observer overhead.");
         Assert(report.Issues.Count == 0, "Valid Quick fixture must pass.");
 
         string outputPath = Path.Combine(root, "command-output.json");
@@ -391,6 +407,31 @@ public static class VulkanPerformanceFixtureTests
         AssertIssue(fullReport, "MissingGateCohort");
     }
 
+    private static void TestProfileContractEnforcement(string fixtureRoot)
+    {
+        Fixture fixture = CreateFixture(
+            Path.Combine(fixtureRoot, "profile-contract-violation"),
+            "Quick",
+            promotionEligible: false,
+            repetitions: 1,
+            budgetValues: [4.0],
+            profileContractViolation: true);
+        VulkanPerformanceEvaluationReport report = Evaluate(
+            fixture,
+            baseline: null,
+            acceptingBaseline: false);
+
+        AssertIssue(report, "IntrusiveCommandLabels");
+        AssertIssue(report, "IntrusiveDiagnosticTraceFlags");
+        AssertIssue(report, "ProfileNotCleanComparisonSuitable");
+        AssertIssue(report, "IntrusiveLogVerbosity");
+        AssertIssue(report, "ManifestNotCleanComparisonSuitable");
+        AssertIssue(report, "ManifestIntrusiveDiagnosticTraceFlags");
+        Assert(
+            !report.CleanComparisonSuitable,
+            "A profile-contract violation must not be reported as clean-comparison suitable.");
+    }
+
     private static VulkanPerformanceEvaluationReport Evaluate(
         Fixture fixture,
         VulkanPerformanceEvaluationReport? baseline,
@@ -419,7 +460,8 @@ public static class VulkanPerformanceFixtureTests
         int submissionOwnedAllocatedBytes = 0,
         int unsupportedCompactPasses = 0,
         string gateScope = "Full",
-        bool includeUnselectedGateCohort = false)
+        bool includeUnselectedGateCohort = false,
+        bool profileContractViolation = false)
     {
         Directory.CreateDirectory(root);
         string settingsPath = Path.Combine(root, "settings.jsonc");
@@ -438,6 +480,7 @@ public static class VulkanPerformanceFixtureTests
                     OperatingSystem = "fixture-os",
                     DisplayMode = "fixture-display",
                 },
+            ProfileModes = CreateProfileModes(),
             Presets = new Dictionary<
                 string,
                 VulkanPerformancePresetDefinition>(
@@ -527,16 +570,47 @@ public static class VulkanPerformanceFixtureTests
                 unsupportedCompactPasses,
                 promotionEligible
                     ? "ReleaseBenchmark"
-                    : "CleanProfile");
+                    : "CleanProfile",
+                profileContractViolation);
             WriteJson(
                 Path.Combine(
                     logDirectory,
                     "profiler-capture-manifest.json"),
                 new
                 {
-                    schema = "4",
+                    schema = "xrengine.profile_capture.render_stats.v5",
                     run = new
                     {
+                        ProfileMode = promotionEligible
+                            ? "ReleaseBenchmark"
+                            : "CleanProfile",
+                        ProfileComparisonSuitable =
+                            !profileContractViolation,
+                        ProfilePromotionEligible =
+                            promotionEligible &&
+                            !profileContractViolation,
+                        VulkanCommandBufferLabelsEnabled =
+                            profileContractViolation,
+                        P3LoggingEnabled = profileContractViolation,
+                        DiagnosticTraceFlagsEnabled =
+                            profileContractViolation,
+                        ActiveDiagnosticTraceFlags =
+                            profileContractViolation
+                                ? "XRE_VULKAN_RECORDING_DIAG"
+                                : string.Empty,
+                        EditorUiState = profileContractViolation
+                            ? "Enabled"
+                            : "Disabled",
+                        ProfilerUiState = profileContractViolation
+                            ? "Active"
+                            : "Disabled",
+                        DynamicTextOverlayEnabled =
+                            profileContractViolation,
+                        DebugOverlayEnabled = profileContractViolation,
+                        LogVerbosity = profileContractViolation
+                            ? "Verbose"
+                            : "Normal",
+                        LogSessionPath = logDirectory,
                         SceneIdentityHash = "fixture-scene",
                         SettingsIdentityHash = "fixture-settings",
                         ValidationLayersEnabled = false,
@@ -602,6 +676,49 @@ public static class VulkanPerformanceFixtureTests
         return new Fixture(contractPath, runManifestPath);
     }
 
+    private static Dictionary<
+        string,
+        VulkanPerformanceProfileDefinition> CreateProfileModes()
+        => new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Diagnostics"] = new VulkanPerformanceProfileDefinition
+            {
+                ValidationAllowed = true,
+                CommandLabelsAllowed = true,
+                DenseGpuTimestampsAllowed = true,
+                P3LoggingAllowed = true,
+                ImGuiAllowed = true,
+                DynamicTextAllowed = true,
+                MaximumLogVerbosity = "Verbose",
+                ExpectedOverhead = "Fixture diagnostics.",
+            },
+            ["DevelopmentProfile"] = new VulkanPerformanceProfileDefinition
+            {
+                ValidationAllowed = true,
+                CommandLabelsAllowed = true,
+                DenseGpuTimestampsAllowed = true,
+                P3LoggingAllowed = true,
+                ImGuiAllowed = true,
+                DynamicTextAllowed = true,
+                MaximumLogVerbosity = "Verbose",
+                ExpectedOverhead = "Fixture development profile.",
+            },
+            ["CleanProfile"] = CreateCleanProfileDefinition(
+                promotionEligible: false),
+            ["ReleaseBenchmark"] = CreateCleanProfileDefinition(
+                promotionEligible: true),
+        };
+
+    private static VulkanPerformanceProfileDefinition
+        CreateCleanProfileDefinition(bool promotionEligible)
+        => new()
+        {
+            CleanComparisonSuitable = true,
+            PromotionEligible = promotionEligible,
+            MaximumLogVerbosity = "Normal",
+            ExpectedOverhead = "Fixture clean profile.",
+        };
+
     private static void WriteFrameStream(
         string logDirectory,
         DateTimeOffset start,
@@ -613,7 +730,8 @@ public static class VulkanPerformanceFixtureTests
         string zeroReadbackMaterialDrawPath,
         int submissionOwnedAllocatedBytes,
         int unsupportedCompactPasses,
-        string profileMode)
+        string profileMode,
+        bool profileContractViolation)
     {
         string path = Path.Combine(
             logDirectory,
@@ -630,7 +748,53 @@ public static class VulkanPerformanceFixtureTests
                     zeroReadbackMaterialDrawPath,
                 ["vr_foveation_mode"] = "Off",
                 ["profile_mode"] = profileMode,
+                ["profile_suitability"] = profileContractViolation
+                    ? "IntrusiveConfiguration"
+                    : profileMode == "ReleaseBenchmark"
+                        ? "PromotionEligible"
+                        : "CleanComparison",
+                ["profile_comparison_suitable"] =
+                    !profileContractViolation,
+                ["profile_promotion_eligible"] =
+                    profileMode == "ReleaseBenchmark" &&
+                    !profileContractViolation,
+                ["profile_intrusive"] = profileContractViolation,
                 ["gpu_timestamps_dense_mode"] = false,
+                ["validation_layers_enabled"] = false,
+                ["debug_output_enabled"] = false,
+                ["vulkan_command_buffer_labels_enabled"] =
+                    profileContractViolation,
+                ["p3_logging_enabled"] = profileContractViolation,
+                ["diagnostic_trace_flags_enabled"] =
+                    profileContractViolation,
+                ["active_diagnostic_trace_flags"] =
+                    profileContractViolation
+                        ? "XRE_VULKAN_RECORDING_DIAG"
+                        : string.Empty,
+                ["profiler_ui_state"] = profileContractViolation
+                    ? "Active"
+                    : "Disabled",
+                ["editor_ui_state"] = profileContractViolation
+                    ? "Enabled"
+                    : "Disabled",
+                ["dynamic_text_overlay_enabled"] =
+                    profileContractViolation,
+                ["debug_overlay_enabled"] = profileContractViolation,
+                ["log_verbosity"] = profileContractViolation
+                    ? "Verbose"
+                    : "Normal",
+                ["shader_cache_state"] = "Warm",
+                ["texture_cache_state"] = "Warm",
+                ["xr_runtime"] = "None",
+                ["anti_aliasing_mode"] = "Tsr",
+                ["msaa_sample_count"] = 1,
+                ["tsr_render_scale"] = 1.0,
+                ["ambient_occlusion_enabled"] = true,
+                ["ambient_occlusion_mode"] =
+                    "GroundTruthAmbientOcclusion",
+                ["auto_exposure_enabled"] = true,
+                ["bloom_enabled"] = true,
+                ["motion_vectors_requested"] = true,
                 ["gpu_readback_bytes"] = readbackBytes,
                 ["gpu_mapped_buffers"] = readbackBytes == 0 ? 0 : 1,
                 ["forbidden_gpu_fallback_events"] = fallbackEvents,

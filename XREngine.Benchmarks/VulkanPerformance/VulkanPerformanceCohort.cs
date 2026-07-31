@@ -22,6 +22,9 @@ public sealed class VulkanPerformanceCohort
     public double BudgetMilliseconds { get; init; }
     public bool EnforceAbsoluteBudget { get; init; } = true;
     public double MinimumPrimaryReuseRatio { get; init; }
+    public string VulkanPrimaryReuse { get; init; } = "Enabled";
+    public string VulkanParallelCommandChainRecording { get; init; } = "Enabled";
+    public bool ForceCommandChainRerecord { get; init; }
     public uint GpuDrivenValidationCapacityMultiplier { get; init; } = 1u;
     public uint GpuDrivenValidationCapacityFloor { get; init; }
     public List<VulkanPerformanceOutputRequirement> RequiredOutputs { get; init; } = [];

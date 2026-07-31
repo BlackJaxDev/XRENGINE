@@ -118,6 +118,9 @@ namespace XREngine
                     private static readonly long[] _lastFrameVulkanCpuStageAllocatedBytes = new long[(int)EVulkanCpuStage.Count];
                     private static readonly long[] _vulkanCpuStageAllocationHighWaterBytes = new long[(int)EVulkanCpuStage.Count];
                     private static readonly long[] _lastFrameVulkanCpuStageAllocationHighWaterBytes = new long[(int)EVulkanCpuStage.Count];
+                    private static readonly long[] _vulkanCpuStageInvocationCount = new long[(int)EVulkanCpuStage.Count];
+                    private static readonly long[] _vulkanCpuStageCumulativeTicks = new long[(int)EVulkanCpuStage.Count];
+                    private static readonly long[] _vulkanCpuStagePeakTicks = new long[(int)EVulkanCpuStage.Count];
                     private static int _lastFrameVulkanIndirectCountPathCalls;
                     private static int _lastFrameVulkanIndirectNonCountPathCalls;
                     private static int _lastFrameVulkanIndirectLoopFallbackCalls;
@@ -631,6 +634,12 @@ namespace XREngine
                         => Volatile.Read(ref _lastFrameVulkanCpuStageAllocatedBytes[(int)stage]);
                     public static long VulkanCpuStageAllocationHighWaterBytes(EVulkanCpuStage stage)
                         => Volatile.Read(ref _lastFrameVulkanCpuStageAllocationHighWaterBytes[(int)stage]);
+                    public static long VulkanCpuStageInvocationCount(EVulkanCpuStage stage)
+                        => Volatile.Read(ref _vulkanCpuStageInvocationCount[(int)stage]);
+                    public static double VulkanCpuStageCumulativeMs(EVulkanCpuStage stage)
+                        => TimeSpan.FromTicks(Volatile.Read(ref _vulkanCpuStageCumulativeTicks[(int)stage])).TotalMilliseconds;
+                    public static double VulkanCpuStagePeakMs(EVulkanCpuStage stage)
+                        => TimeSpan.FromTicks(Volatile.Read(ref _vulkanCpuStagePeakTicks[(int)stage])).TotalMilliseconds;
                     public static int VulkanDeviceLocalAllocationCount => _lastFrameVulkanDeviceLocalAllocationCount;
                     public static long VulkanDeviceLocalAllocatedBytes => _lastFrameVulkanDeviceLocalAllocatedBytes;
                     public static int VulkanUploadAllocationCount => _lastFrameVulkanUploadAllocationCount;
@@ -1612,8 +1621,13 @@ namespace XREngine
                         if (!EnableTracking || index < 0 || index >= (int)EVulkanCpuStage.Count)
                             return;
 
+                        Interlocked.Increment(ref _vulkanCpuStageInvocationCount[index]);
                         if (elapsed.Ticks > 0)
+                        {
                             Interlocked.Add(ref _vulkanCpuStageTicks[index], elapsed.Ticks);
+                            Interlocked.Add(ref _vulkanCpuStageCumulativeTicks[index], elapsed.Ticks);
+                            UpdateHighWater(ref _vulkanCpuStagePeakTicks[index], elapsed.Ticks);
+                        }
                         if (allocatedBytes > 0)
                         {
                             Interlocked.Add(ref _vulkanCpuStageAllocatedBytes[index], allocatedBytes);
@@ -1918,6 +1932,8 @@ namespace XREngine
                     internal static void SnapshotAndReset()
                     {
                         SnapshotAndResetBindingTelemetry();
+                        SnapshotAndResetIndirectSecondaryTelemetry();
+                        SnapshotAndResetSecondaryRecordingTelemetry();
                         _lastFrameVulkanIndirectCountPathCalls = _vulkanIndirectCountPathCalls;
                         _lastFrameVulkanIndirectNonCountPathCalls = _vulkanIndirectNonCountPathCalls;
                         _lastFrameVulkanIndirectLoopFallbackCalls = _vulkanIndirectLoopFallbackCalls;

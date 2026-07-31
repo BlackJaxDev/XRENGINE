@@ -81,6 +81,7 @@ internal unsafe partial class VkRenderProgram
         if (capture is not null)
         {
             capture.Uniforms[name] = value;
+            capture.RecordUniform(name);
             return;
         }
 
@@ -180,7 +181,10 @@ internal unsafe partial class VkRenderProgram
 
         capture.Uniforms.EnsureCapacity(capture.Uniforms.Count + snapshot.Uniforms.Count);
         foreach (KeyValuePair<string, ProgramUniformValue> pair in snapshot.Uniforms)
+        {
             capture.Uniforms[pair.Key] = pair.Value;
+            capture.RecordUniform(pair.Key);
+        }
 
         capture.SamplersByUnit.EnsureCapacity(capture.SamplersByUnit.Count + snapshot.Samplers.Count);
         foreach (KeyValuePair<uint, XRTexture> pair in snapshot.Samplers)
@@ -292,25 +296,66 @@ internal unsafe partial class VkRenderProgram
         _frameMaterialBindingSnapshots[key] = snapshot;
     }
 
-    /// <summary>
-    /// Retrieves material-owned numeric bindings whose key includes every
-    /// material and linked-program revision that can change their content.
-    /// The cache deliberately excludes resources and render-scope values.
-    /// </summary>
-    internal bool TryGetMaterialUniformBindingPayload(
-        in MaterialUniformBindingCacheKey key,
-        out MaterialUniformBindingPayload? payload)
-        => _materialUniformBindingPayloads.TryGetValue(key, out payload);
-
-    internal void CacheMaterialUniformBindingPayload(
-        in MaterialUniformBindingCacheKey key,
-        MaterialUniformBindingPayload payload)
+    internal bool TryGetAutoUniformMaterialWritePlan(
+        string blockName,
+        ulong publicationLayoutSignature,
+        XRMaterial material,
+        ulong runtimeUniformNameSignature,
+        ulong runtimeUniformPublicationLayoutSignature,
+        bool materialOwned,
+        out AutoUniformMaterialWritePlan? plan)
     {
-        const int maximumCachedMaterialPayloads = 4096;
-        if (_materialUniformBindingPayloads.Count >= maximumCachedMaterialPayloads)
-            _materialUniformBindingPayloads.Clear();
+        if (!materialOwned)
+            return _frequencyOwnedAutoUniformWritePlans.TryGetValue(
+                blockName,
+                out plan);
 
-        _materialUniformBindingPayloads[key] = payload;
+        plan = null;
+        AutoUniformMaterialWritePlanCacheKey key = new(
+            publicationLayoutSignature,
+            material,
+            runtimeUniformNameSignature,
+            runtimeUniformPublicationLayoutSignature);
+        return _autoUniformMaterialWritePlans.TryGetValue(
+                blockName,
+                out Dictionary<AutoUniformMaterialWritePlanCacheKey, AutoUniformMaterialWritePlan>? plans) &&
+            plans.TryGetValue(key, out plan);
+    }
+
+    internal void CacheAutoUniformMaterialWritePlan(
+        string blockName,
+        ulong publicationLayoutSignature,
+        XRMaterial material,
+        ulong runtimeUniformNameSignature,
+        ulong runtimeUniformPublicationLayoutSignature,
+        bool materialOwned,
+        AutoUniformMaterialWritePlan plan)
+    {
+        if (!materialOwned)
+        {
+            _frequencyOwnedAutoUniformWritePlans[blockName] = plan;
+            return;
+        }
+
+        const int maximumCachedMaterialPlansPerBlock = 4096;
+        AutoUniformMaterialWritePlanCacheKey key = new(
+            publicationLayoutSignature,
+            material,
+            runtimeUniformNameSignature,
+            runtimeUniformPublicationLayoutSignature);
+        if (!_autoUniformMaterialWritePlans.TryGetValue(
+                blockName,
+                out Dictionary<AutoUniformMaterialWritePlanCacheKey, AutoUniformMaterialWritePlan>? plans))
+        {
+            plans = [];
+            _autoUniformMaterialWritePlans.Add(blockName, plans);
+        }
+        else if (plans.Count >= maximumCachedMaterialPlansPerBlock)
+        {
+            plans.Clear();
+        }
+
+        plans[key] = plan;
     }
 
     /// <summary>
@@ -366,6 +411,8 @@ internal unsafe partial class VkRenderProgram
             capture.RentFrameSnapshot() ?? new ComputeDispatchSnapshot();
         snapshot.ExchangeCapturedBindings(
             ref capture.Uniforms,
+            ref capture.RuntimeUniformPublications,
+            ref capture.MutableLegacyUniformNames,
             ref capture.SamplersByUnit,
             ref capture.SamplerNamesByUnit,
             ref capture.SamplersByName,
@@ -569,6 +616,7 @@ internal unsafe partial class VkRenderProgram
         uint unit = textureUnit < 0 ? 0u : (uint)textureUnit;
         if (capture is not null)
         {
+            capture.RejectTypedResourceWrite("sampler");
             capture.SetSampler(name, xrTexture, unit);
         }
         else if (Monitor.IsEntered(_bindingLock))
@@ -613,6 +661,7 @@ internal unsafe partial class VkRenderProgram
         ProgramImageBinding binding = new(xrTexture, level, layered, layer, access, format);
         if (capture is not null)
         {
+            capture.RejectTypedResourceWrite("storage image");
             capture.ImagesByUnit[unit] = binding;
         }
         else if (Monitor.IsEntered(_bindingLock))
@@ -642,6 +691,7 @@ internal unsafe partial class VkRenderProgram
 
         if (capture is not null)
         {
+            capture.RejectTypedResourceWrite("buffer");
             capture.BuffersByBinding[index] = buffer;
         }
         else if (Monitor.IsEntered(_bindingLock))

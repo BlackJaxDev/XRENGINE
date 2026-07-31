@@ -1,6 +1,6 @@
 namespace XREngine.Rendering;
 
-public struct LayeredShadowUniformState
+public struct LayeredShadowUniformState : IEquatable<LayeredShadowUniformState>
 {
     public bool IsShadowPass;
     public bool DirectionalCascadeInstancedLayeredShadowPass;
@@ -124,6 +124,77 @@ public struct LayeredShadowUniformState
             _ => index,
         };
         return true;
+    }
+
+    /// <summary>
+    /// Compares the complete captured shadow state without boxing this large value type.
+    /// </summary>
+    public readonly bool Equals(LayeredShadowUniformState other)
+        => IsShadowPass == other.IsShadowPass &&
+           DirectionalCascadeInstancedLayeredShadowPass ==
+               other.DirectionalCascadeInstancedLayeredShadowPass &&
+           DirectionalCascadeShadowLayerCount ==
+               other.DirectionalCascadeShadowLayerCount &&
+           PointLightInstancedLayeredShadowPass ==
+               other.PointLightInstancedLayeredShadowPass &&
+           PointLightShadowFaceCount == other.PointLightShadowFaceCount &&
+           _directionalCascadeShadowMatrix0.Equals(other._directionalCascadeShadowMatrix0) &&
+           _directionalCascadeShadowMatrix1.Equals(other._directionalCascadeShadowMatrix1) &&
+           _directionalCascadeShadowMatrix2.Equals(other._directionalCascadeShadowMatrix2) &&
+           _directionalCascadeShadowMatrix3.Equals(other._directionalCascadeShadowMatrix3) &&
+           _directionalCascadeShadowMatrix4.Equals(other._directionalCascadeShadowMatrix4) &&
+           _directionalCascadeShadowMatrix5.Equals(other._directionalCascadeShadowMatrix5) &&
+           _directionalCascadeShadowMatrix6.Equals(other._directionalCascadeShadowMatrix6) &&
+           _directionalCascadeShadowMatrix7.Equals(other._directionalCascadeShadowMatrix7) &&
+           _pointLightShadowFaceMatrix0.Equals(other._pointLightShadowFaceMatrix0) &&
+           _pointLightShadowFaceMatrix1.Equals(other._pointLightShadowFaceMatrix1) &&
+           _pointLightShadowFaceMatrix2.Equals(other._pointLightShadowFaceMatrix2) &&
+           _pointLightShadowFaceMatrix3.Equals(other._pointLightShadowFaceMatrix3) &&
+           _pointLightShadowFaceMatrix4.Equals(other._pointLightShadowFaceMatrix4) &&
+           _pointLightShadowFaceMatrix5.Equals(other._pointLightShadowFaceMatrix5) &&
+           _pointLightShadowFaceIndex0 == other._pointLightShadowFaceIndex0 &&
+           _pointLightShadowFaceIndex1 == other._pointLightShadowFaceIndex1 &&
+           _pointLightShadowFaceIndex2 == other._pointLightShadowFaceIndex2 &&
+           _pointLightShadowFaceIndex3 == other._pointLightShadowFaceIndex3 &&
+           _pointLightShadowFaceIndex4 == other._pointLightShadowFaceIndex4 &&
+           _pointLightShadowFaceIndex5 == other._pointLightShadowFaceIndex5;
+
+    public override readonly bool Equals(object? obj)
+        => obj is LayeredShadowUniformState other && Equals(other);
+
+    /// <summary>
+    /// Hashes the complete captured shadow state without falling through
+    /// <see cref="ValueType.GetHashCode"/>, which boxes this large struct.
+    /// </summary>
+    public override readonly int GetHashCode()
+    {
+        HashCode hash = new();
+        hash.Add(IsShadowPass);
+        hash.Add(DirectionalCascadeInstancedLayeredShadowPass);
+        hash.Add(DirectionalCascadeShadowLayerCount);
+        hash.Add(PointLightInstancedLayeredShadowPass);
+        hash.Add(PointLightShadowFaceCount);
+        hash.Add(_directionalCascadeShadowMatrix0);
+        hash.Add(_directionalCascadeShadowMatrix1);
+        hash.Add(_directionalCascadeShadowMatrix2);
+        hash.Add(_directionalCascadeShadowMatrix3);
+        hash.Add(_directionalCascadeShadowMatrix4);
+        hash.Add(_directionalCascadeShadowMatrix5);
+        hash.Add(_directionalCascadeShadowMatrix6);
+        hash.Add(_directionalCascadeShadowMatrix7);
+        hash.Add(_pointLightShadowFaceMatrix0);
+        hash.Add(_pointLightShadowFaceMatrix1);
+        hash.Add(_pointLightShadowFaceMatrix2);
+        hash.Add(_pointLightShadowFaceMatrix3);
+        hash.Add(_pointLightShadowFaceMatrix4);
+        hash.Add(_pointLightShadowFaceMatrix5);
+        hash.Add(_pointLightShadowFaceIndex0);
+        hash.Add(_pointLightShadowFaceIndex1);
+        hash.Add(_pointLightShadowFaceIndex2);
+        hash.Add(_pointLightShadowFaceIndex3);
+        hash.Add(_pointLightShadowFaceIndex4);
+        hash.Add(_pointLightShadowFaceIndex5);
+        return hash.ToHashCode();
     }
 
     private void SetDirectionalCascadeShadowMatrix(int index, Matrix4x4 matrix)

@@ -5,7 +5,7 @@
     <NvidiaSdkRuntimeDir Condition="'$(NvidiaSdkRuntimeDir)' == '' and Exists('$(MSBuildThisFileDirectory)XRENGINE\nvngx_dlss.dll')">$(MSBuildThisFileDirectory)XRENGINE\</NvidiaSdkRuntimeDir>
   </PropertyGroup>
 
-  <ItemGroup Condition="('$(OutputType)' == 'Exe' or '$(OutputType)' == 'WinExe') and Exists('$(YtDlpRepositoryPath)')">
+  <ItemGroup Condition="'$(XREngineIncludeSharedExecutableDependencies)' != 'false' and ('$(OutputType)' == 'Exe' or '$(OutputType)' == 'WinExe') and Exists('$(YtDlpRepositoryPath)')">
     <Content Include="$(YtDlpRepositoryPath)">
       <Link>yt-dlp.exe</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -13,7 +13,7 @@
     </Content>
   </ItemGroup>
 
-  <ItemGroup Condition="('$(OutputType)' == 'Exe' or '$(OutputType)' == 'WinExe') and '$(NvidiaSdkRuntimeDir)' != ''">
+  <ItemGroup Condition="'$(XREngineIncludeSharedExecutableDependencies)' != 'false' and ('$(OutputType)' == 'Exe' or '$(OutputType)' == 'WinExe') and '$(NvidiaSdkRuntimeDir)' != ''">
     <Content Include="$(NvidiaSdkRuntimeDir)nvngx_*.dll">
       <Link>%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

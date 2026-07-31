@@ -74,6 +74,8 @@ public sealed unsafe class VulkanPresentationIndependentHostTests
 
         indices.IsComplete(requirePresentQueue: false).ShouldBeTrue();
         indices.GraphicsFamilyIndex.ShouldBe(0u);
+        indices.GraphicsFamilySupportsCompute.ShouldBeTrue();
+        indices.GraphicsFamilySupportsTransfer.ShouldBeTrue();
         indices.ComputeFamilyIndex.ShouldBe(1u);
         indices.TransferFamilyIndex.ShouldBe(2u);
         indices.PresentFamilyIndex.ShouldBeNull();

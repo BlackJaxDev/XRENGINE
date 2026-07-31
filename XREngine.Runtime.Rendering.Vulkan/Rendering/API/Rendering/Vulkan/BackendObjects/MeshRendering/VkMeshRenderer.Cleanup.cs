@@ -52,7 +52,7 @@ internal unsafe partial class VkMeshRenderer
 				DestroyAutoUniformBufferArray(toDestroy);
 
 			_autoUniformBuffers.Remove(singleName);
-			_autoUniformMaterialWritePlans.Remove(singleName);
+			_autoUniformOwnerSlotTables.Remove(singleName);
 			_publishedAutoUniformMaterialWritePlans.Remove(singleName);
 			return;
 		}
@@ -61,7 +61,7 @@ internal unsafe partial class VkMeshRenderer
 			DestroyAutoUniformBufferArray(buffers);
 
 		_autoUniformBuffers.Clear();
-		_autoUniformMaterialWritePlans.Clear();
+		_autoUniformOwnerSlotTables.Clear();
 		_publishedAutoUniformMaterialWritePlans.Clear();
 	}
 
@@ -124,6 +124,7 @@ internal unsafe partial class VkMeshRenderer
 
         _descriptorAllocations.Clear();
         _descriptorAllocationsByDrawSlot.Clear();
+        _descriptorAllocationsByOwner.Clear();
 
 		if (!activePoolReleased && _descriptorPool.Handle != 0)
 			ReleaseDescriptorPool(_descriptorPool, destroyPoolImmediately);
@@ -142,11 +143,37 @@ internal unsafe partial class VkMeshRenderer
 		DescriptorAllocation allocation,
 		bool destroyPoolImmediately = false)
 	{
+		RemoveDescriptorOwnerLookupEntries(allocation);
 		if (!BackendContext.Descriptors.ReleaseSharedMeshDescriptorAllocation(key, allocation))
 			return;
 
 		ReleaseDescriptorOwnershipTelemetry(allocation);
 		ReleaseDescriptorAllocationResources(allocation, destroyPoolImmediately);
+	}
+
+	private void RemoveDescriptorOwnerLookupEntries(
+		DescriptorAllocation allocation)
+	{
+		while (true)
+		{
+			DescriptorOwnerLookupKey keyToRemove = default;
+			bool found = false;
+			foreach (KeyValuePair<DescriptorOwnerLookupKey, DescriptorAllocation> pair
+				in _descriptorAllocationsByOwner)
+			{
+				if (!ReferenceEquals(pair.Value, allocation))
+					continue;
+
+				keyToRemove = pair.Key;
+				found = true;
+				break;
+			}
+
+			if (!found)
+				return;
+
+			_descriptorAllocationsByOwner.Remove(keyToRemove);
+		}
 	}
 
 	private void ReleaseDescriptorPool(DescriptorPool descriptorPool, bool destroyImmediately = false)

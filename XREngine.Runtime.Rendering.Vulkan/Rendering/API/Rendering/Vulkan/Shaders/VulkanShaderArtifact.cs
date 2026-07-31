@@ -19,4 +19,13 @@ internal sealed record VulkanShaderArtifact(
     int ShaderConfigVersion,
     bool UsesVulkanClipDepthRemap,
     bool LoadedFromDiskCache = false,
-    string TransformFeedbackPlanIdentity = "");
+    string TransformFeedbackPlanIdentity = "",
+    IReadOnlyList<AutoUniformBlockInfo>? FrequencyOwnedAutoUniformBlocks = null)
+{
+    internal IReadOnlyList<AutoUniformBlockInfo> AutoUniformBlocks
+        => FrequencyOwnedAutoUniformBlocks is { Count: > 0 } blocks
+            ? blocks
+            : AutoUniformBlock is null
+                ? Array.Empty<AutoUniformBlockInfo>()
+                : [AutoUniformBlock];
+}

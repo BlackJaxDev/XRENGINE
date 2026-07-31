@@ -22,12 +22,15 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
 {
     private readonly Dictionary<XRShader, VkShader> _shaderCache = new();
     private readonly Dictionary<EProgramStageMask, VkShader> _stageLookup = new();
+    private readonly object _linkLock = new();
     private DescriptorSetLayout[] _descriptorSetLayouts = Array.Empty<DescriptorSetLayout>();
     private ulong _descriptorLayoutFingerprint;
     private ulong _descriptorSchemaFingerprint;
     private PipelineLayout _pipelineLayout;
     private readonly List<DescriptorBindingInfo> _programDescriptorBindings = new();
     private readonly Dictionary<string, AutoUniformBlockInfo> _autoUniformBlocks = new(StringComparer.Ordinal);
+    private readonly Dictionary<(uint Set, uint Binding), AutoUniformBlockInfo> _autoUniformBlocksByBinding = [];
+    private VulkanProgramBindingSchema? _bindingSchema;
     private readonly object _bindingLock = new();
     private readonly Dictionary<string, ProgramUniformValue> _uniformValues = new(StringComparer.Ordinal);
     private static readonly ConcurrentDictionary<string, string> VertexSuffixedUniformNames = new(StringComparer.Ordinal);
@@ -43,7 +46,10 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
     private int _frameBindingSnapshotPoolCursor;
     private readonly Dictionary<MaterialBindingSnapshotCacheKey, ComputeDispatchSnapshot?> _frameMaterialBindingSnapshots = [];
     private ulong _frameMaterialBindingSnapshotCacheFrame;
-    private readonly Dictionary<MaterialUniformBindingCacheKey, MaterialUniformBindingPayload> _materialUniformBindingPayloads = [];
+    private readonly Dictionary<string, Dictionary<AutoUniformMaterialWritePlanCacheKey, AutoUniformMaterialWritePlan>> _autoUniformMaterialWritePlans =
+        new(StringComparer.Ordinal);
+    private readonly Dictionary<string, AutoUniformMaterialWritePlan> _frequencyOwnedAutoUniformWritePlans =
+        new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _computeWarnings = new(StringComparer.Ordinal);
     private readonly Dictionary<ComputeUniformBufferKey, ComputeUniformBuffer> _computeUniformBuffers = new();
     private readonly HashSet<(uint ImageIndex, ulong BindingKey)> _reusableComputeDescriptorRefreshKeys = [];
@@ -80,6 +86,7 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
     public IReadOnlyList<DescriptorSetLayout> DescriptorSetLayouts => _descriptorSetLayouts;
     public IReadOnlyList<DescriptorBindingInfo> DescriptorBindings => _programDescriptorBindings;
     public IReadOnlyDictionary<string, AutoUniformBlockInfo> AutoUniformBlocks => _autoUniformBlocks;
+    internal VulkanProgramBindingSchema? BindingSchema => _bindingSchema;
 
     /// <summary>
     /// Exposes the concrete auto-uniform map to Vulkan hot paths so dictionary
@@ -266,8 +273,14 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
 
     private void OnShaderInvalidated(VkShader shader)
     {
-        if (RuntimeEngine.InvokeOnMainThread(() => OnShaderInvalidated(shader), "VkRenderProgram.ShaderInvalidated"))
+        if (RuntimeRenderingHostServices.HasConcreteHost &&
+            !RuntimeRenderingHostServices.Scheduling.IsFrameSwapThread)
+        {
+            RuntimeRenderingHostServices.Scheduling.EnqueueFrameSwapTask(
+                () => OnShaderInvalidated(shader),
+                "VkRenderProgram.ShaderInvalidated");
             return;
+        }
 
         DestroyLayouts();
         _stageLookup.Clear();

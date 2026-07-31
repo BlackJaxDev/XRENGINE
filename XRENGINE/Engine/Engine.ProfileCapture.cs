@@ -6,7 +6,10 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using XREngine.Data.Profiling;
+using XREngine.Data.Rendering;
+using XREngine.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Vulkan;
 using XREngine.Timers;
 using OcclusionTelemetry = XREngine.Rendering.Occlusion.OcclusionTelemetry;
 
@@ -78,7 +81,7 @@ public static partial class Engine
         private const string ManifestFileName = "profiler-capture-manifest.json";
         private const string SummaryFileName = "profiler-capture-summary.json";
         private const string RuntimeCaptureDirectoryName = "speed-profiles";
-        private const int ProfileCaptureSchemaVersion = 4;
+        private const int ProfileCaptureSchemaVersion = 5;
         private const int RuntimeCaptureRetentionCount = 3;
         private const int FlushIntervalMilliseconds = 1000;
         private const int MaxBufferedCharacters = 256 * 1024;
@@ -93,6 +96,20 @@ public static partial class Engine
         private static readonly StringBuilder s_sampleBuffer = new(MaxBufferedCharacters);
         private static readonly StringBuilder s_lineBuilder = new(4096);
         private static readonly JsonSerializerOptions s_jsonOptions = new() { WriteIndented = true };
+        private static readonly string[] s_diagnosticTraceEnvironmentVariables =
+        [
+            XREngineEnvironmentVariables.VulkanFrameDataReuseDiag,
+            XREngineEnvironmentVariables.VulkanAutoUniformParity,
+            XREngineEnvironmentVariables.VulkanDescriptorFingerprintDiag,
+            XREngineEnvironmentVariables.VulkanMaterialBindingDiag,
+            XREngineEnvironmentVariables.VulkanRecordingDiag,
+            XREngineEnvironmentVariables.VulkanRecordingProfileDetail,
+            XREngineEnvironmentVariables.VulkanFrameOpTrace,
+            XREngineEnvironmentVariables.VulkanTargetTrace,
+            XREngineEnvironmentVariables.VulkanIndirectTrace,
+            XREngineEnvironmentVariables.VulkanCounterDiagnostics,
+            XREngineEnvironmentVariables.VulkanDescriptorTrace,
+        ];
 
         private static volatile bool s_runtimeCaptureEnabled;
         private static long s_runtimeCaptureEndTicks;
@@ -105,6 +122,11 @@ public static partial class Engine
         private static bool s_manifestWritten;
         private static bool s_shutdown;
         private static RunMetadata? s_metadata;
+        private static IRuntimeDebugHostServices? s_uncappedDebugHostServices;
+
+        internal static EOutputVerbosity? OutputVerbosityOverride { get; private set; }
+        internal static bool? GpuIndirectDebugLoggingOverride { get; private set; }
+        internal static bool? GpuIndirectValidationLoggingOverride { get; private set; }
 
         public static bool IsRuntimeCaptureActive
         {
@@ -140,6 +162,104 @@ public static partial class Engine
                 {
                     return s_lastRuntimeSummaryPath;
                 }
+            }
+        }
+
+        /// <summary>
+        /// Applies the non-intrusive observer policy before renderer creation.
+        /// The overrides are process-local and only activate for an explicitly
+        /// selected clean or release benchmark profile.
+        /// </summary>
+        public static void ApplyPerformanceProfileContract()
+        {
+            string profileMode = ResolvePerformanceProfileMode();
+            if (!IsCleanPerformanceProfile(profileMode))
+            {
+                OutputVerbosityOverride = null;
+                GpuIndirectDebugLoggingOverride = null;
+                GpuIndirectValidationLoggingOverride = null;
+                RestoreDebugHostServices();
+                return;
+            }
+
+            SetEnvironmentFlag(XREngineEnvironmentVariables.VkSkipImGui, enabled: true);
+            SetEnvironmentFlag(XREngineEnvironmentVariables.P3Logging, enabled: false);
+            SetEnvironmentFlag(XREngineEnvironmentVariables.GpuTimestampDense, enabled: false);
+            SetEnvironmentFlag(XREngineEnvironmentVariables.VulkanValidation, enabled: false);
+            SetEnvironmentFlag(XREngineEnvironmentVariables.VulkanSynchronizationValidation, enabled: false);
+            SetEnvironmentFlag(XREngineEnvironmentVariables.VulkanGpuAssistedValidation, enabled: false);
+            SetEnvironmentFlag(XREngineEnvironmentVariables.VulkanBestPracticesValidation, enabled: false);
+            SetEnvironmentFlag(XREngineEnvironmentVariables.VulkanCommandBufferLabels, enabled: false);
+            SetEnvironmentFlag(XREngineEnvironmentVariables.VulkanCrashBreadcrumbs, enabled: false);
+            SetEnvironmentFlag(XREngineEnvironmentVariables.VulkanDeviceFault, enabled: false);
+            SetEnvironmentFlag(XREngineEnvironmentVariables.VulkanDeviceAddressBindingReport, enabled: false);
+            SetEnvironmentFlag(XREngineEnvironmentVariables.VulkanNvDiagnosticCheckpoints, enabled: false);
+            SetEnvironmentFlag(XREngineEnvironmentVariables.VulkanNvDiagnosticsConfig, enabled: false);
+            SetEnvironmentFlag(XREngineEnvironmentVariables.VulkanRenderDocFriendly, enabled: false);
+            for (int i = 0; i < s_diagnosticTraceEnvironmentVariables.Length; i++)
+            {
+                SetEnvironmentFlag(
+                    s_diagnosticTraceEnvironmentVariables[i],
+                    enabled: false);
+            }
+            Environment.SetEnvironmentVariable(
+                XREngineEnvironmentVariables.VulkanDiagnosticPreset,
+                "Off");
+            Environment.SetEnvironmentVariable(
+                XREngineEnvironmentVariables.VulkanDiagnosticFlags,
+                "None");
+
+            RenderDiagnosticsFlags.SetVkSkipImGui(true);
+            OutputVerbosityOverride = EOutputVerbosity.Normal;
+            GpuIndirectDebugLoggingOverride = false;
+            GpuIndirectValidationLoggingOverride = false;
+            if (s_uncappedDebugHostServices is null)
+            {
+                s_uncappedDebugHostServices = RuntimeDebugHostServices.Current;
+                RuntimeDebugHostServices.Current =
+                    new PerformanceProfileDebugHostServices(
+                        s_uncappedDebugHostServices,
+                        EOutputVerbosity.Normal);
+            }
+        }
+
+        private static void RestoreDebugHostServices()
+        {
+            if (s_uncappedDebugHostServices is null)
+                return;
+
+            RuntimeDebugHostServices.Current = s_uncappedDebugHostServices;
+            s_uncappedDebugHostServices = null;
+        }
+
+        /// <summary>
+        /// Emits the single startup identity line required by the performance
+        /// profile contract and warns when a clean mode still has intrusive state.
+        /// </summary>
+        public static void LogActivePerformanceProfile()
+        {
+            string profileMode = ResolvePerformanceProfileMode();
+            RuntimeEngine.Rendering.Stats.FrameOutputManifestSnapshot outputManifest =
+                RuntimeEngine.Rendering.Stats.FrameOutputs.LastManifest;
+            PerformanceObserverMetadata observers =
+                CapturePerformanceObserverMetadata(profileMode, outputManifest);
+            Debug.Rendering(
+                EOutputVerbosity.Normal,
+                false,
+                "[PerformanceProfile] Mode={0} Suitability={1} CleanComparison={2} PromotionEligible={3} Intrusive={4} WarmupSec={5} CaptureSec={6}",
+                profileMode,
+                observers.Suitability,
+                observers.ComparisonSuitable,
+                observers.PromotionEligible,
+                observers.Intrusive,
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileWarmupSeconds) ?? "unspecified",
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileCaptureSeconds) ?? "unspecified");
+
+            if (IsCleanPerformanceProfile(profileMode) && !observers.ComparisonSuitable)
+            {
+                Debug.LogWarning(
+                    $"[PerformanceProfile] {profileMode} requested, but intrusive observer state remains active. " +
+                    "The capture will be rejected for clean comparison.");
             }
         }
 
@@ -384,6 +504,11 @@ public static partial class Engine
             string settingsIdentityHash = ComputeStableIdentityHash(settingsIdentity);
             string sceneSettingsHash = ComputeStableIdentityHash(sceneIdentity + "|" + settingsIdentity);
             RuntimeEngine.Rendering.Stats.FrameOutputManifestSnapshot outputManifest = RuntimeEngine.Rendering.Stats.FrameOutputs.LastManifest;
+            string profileMode = ResolvePerformanceProfileMode();
+            PerformanceObserverMetadata observers =
+                CapturePerformanceObserverMetadata(profileMode, outputManifest);
+            ActiveRenderFeaturesMetadata activeRenderFeatures =
+                CaptureActiveRenderFeatures(outputManifest);
 
             s_metadata = new RunMetadata(
                 SchemaVersion: ProfileCaptureSchemaVersion,
@@ -436,7 +561,25 @@ public static partial class Engine
                 ShaderCacheState: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ShaderCacheMode) ?? string.Empty,
                 TextureCacheState: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.TextureCacheMode) ?? string.Empty,
                 CacheMode: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileCacheMode) ?? string.Empty,
-                ProfileMode: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileMode) ?? string.Empty,
+                ProfileMode: profileMode,
+                ProfileSuitability: observers.Suitability,
+                ProfileComparisonSuitable: observers.ComparisonSuitable,
+                ProfilePromotionEligible: observers.PromotionEligible,
+                ProfileIntrusive: observers.Intrusive,
+                VulkanCommandBufferLabelsEnabled: observers.CommandBufferLabelsEnabled,
+                P3LoggingEnabled: observers.P3LoggingEnabled,
+                DiagnosticTraceFlagsEnabled: observers.DiagnosticTraceFlagsEnabled,
+                ActiveDiagnosticTraceFlags: observers.ActiveDiagnosticTraceFlags,
+                ProfilerUiState: observers.ProfilerUiState,
+                EditorUiState: observers.EditorUiState,
+                DynamicTextOverlayEnabled: observers.DynamicTextOverlayEnabled,
+                DebugOverlayEnabled: observers.DebugOverlayEnabled,
+                LogVerbosity: RuntimeDebugHostServices.Current.OutputVerbosity.ToString(),
+                LogOutputToFile: RuntimeDebugHostServices.Current.LogOutputToFile,
+                LogSessionPath: CaptureString(Debug.EnsureLogRunDirectory),
+                XrRuntime: CaptureString(() => RuntimeEngine.VRState.ActiveRuntime.ToString()),
+                XrRuntimeManifest: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson) ?? string.Empty,
+                ActiveRenderFeatures: activeRenderFeatures,
                 GpuClockPolicy: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GpuClockPolicy) ?? string.Empty,
                 TargetRefreshHz: targetRefreshHz,
                 XrFrameBudgetMs: xrFrameBudgetMs,
@@ -469,7 +612,7 @@ public static partial class Engine
             var manifest = new
             {
                 capture_file = FrameStatsFileName,
-                schema = "xrengine.profile_capture.render_stats.v4",
+                schema = "xrengine.profile_capture.render_stats.v5",
                 schema_version = ProfileCaptureSchemaVersion,
                 fields_note = "One JSON object per completed render frame. CPU frame timings are wall-clock thread loop durations; GPU pipeline timings are backend timestamp-query snapshots when ready.",
                 run = metadata,
@@ -530,6 +673,33 @@ public static partial class Engine
             AppendBoolField(s_lineBuilder, "vr_desktop_auto_skip_when_over_budget", RuntimeEngine.Rendering.Settings.VrDesktopAutoSkipWhenOverBudget, ref first);
             AppendStringField(s_lineBuilder, "active_render_backend", RuntimeEngine.Rendering.Stats.RendererState.ActiveRenderBackend, ref first);
             AppendStringField(s_lineBuilder, "profile_mode", metadata.ProfileMode, ref first);
+            AppendStringField(s_lineBuilder, "profile_suitability", metadata.ProfileSuitability, ref first);
+            AppendBoolField(s_lineBuilder, "profile_comparison_suitable", metadata.ProfileComparisonSuitable, ref first);
+            AppendBoolField(s_lineBuilder, "profile_promotion_eligible", metadata.ProfilePromotionEligible, ref first);
+            AppendBoolField(s_lineBuilder, "profile_intrusive", metadata.ProfileIntrusive, ref first);
+            AppendBoolField(s_lineBuilder, "vulkan_command_buffer_labels_enabled", metadata.VulkanCommandBufferLabelsEnabled, ref first);
+            AppendBoolField(s_lineBuilder, "p3_logging_enabled", metadata.P3LoggingEnabled, ref first);
+            AppendBoolField(s_lineBuilder, "diagnostic_trace_flags_enabled", metadata.DiagnosticTraceFlagsEnabled, ref first);
+            AppendStringField(s_lineBuilder, "active_diagnostic_trace_flags", metadata.ActiveDiagnosticTraceFlags, ref first);
+            AppendStringField(s_lineBuilder, "profiler_ui_state", metadata.ProfilerUiState, ref first);
+            AppendStringField(s_lineBuilder, "editor_ui_state", metadata.EditorUiState, ref first);
+            AppendBoolField(s_lineBuilder, "dynamic_text_overlay_enabled", metadata.DynamicTextOverlayEnabled, ref first);
+            AppendBoolField(s_lineBuilder, "debug_overlay_enabled", metadata.DebugOverlayEnabled, ref first);
+            AppendStringField(s_lineBuilder, "log_verbosity", metadata.LogVerbosity, ref first);
+            AppendStringField(s_lineBuilder, "log_session_path", metadata.LogSessionPath, ref first);
+            AppendStringField(s_lineBuilder, "xr_runtime", metadata.XrRuntime, ref first);
+            AppendStringField(s_lineBuilder, "shader_cache_state", metadata.ShaderCacheState, ref first);
+            AppendStringField(s_lineBuilder, "texture_cache_state", metadata.TextureCacheState, ref first);
+            AppendBoolField(s_lineBuilder, "render_feature_state_available", metadata.ActiveRenderFeatures.CameraStateAvailable, ref first);
+            AppendStringField(s_lineBuilder, "anti_aliasing_mode", metadata.ActiveRenderFeatures.AntiAliasingMode, ref first);
+            AppendNumberField(s_lineBuilder, "msaa_sample_count", metadata.ActiveRenderFeatures.MsaaSampleCount, ref first);
+            AppendNumberField(s_lineBuilder, "tsr_render_scale", metadata.ActiveRenderFeatures.TsrRenderScale, ref first);
+            AppendBoolField(s_lineBuilder, "ambient_occlusion_enabled", metadata.ActiveRenderFeatures.AmbientOcclusionEnabled, ref first);
+            AppendStringField(s_lineBuilder, "ambient_occlusion_mode", metadata.ActiveRenderFeatures.AmbientOcclusionMode, ref first);
+            AppendBoolField(s_lineBuilder, "auto_exposure_enabled", metadata.ActiveRenderFeatures.AutoExposureEnabled, ref first);
+            AppendBoolField(s_lineBuilder, "bloom_enabled", metadata.ActiveRenderFeatures.BloomEnabled, ref first);
+            AppendBoolField(s_lineBuilder, "motion_blur_enabled", metadata.ActiveRenderFeatures.MotionBlurEnabled, ref first);
+            AppendBoolField(s_lineBuilder, "motion_vectors_requested", metadata.ActiveRenderFeatures.MotionVectorsRequested, ref first);
             AppendBoolField(s_lineBuilder, "validation_layers_enabled", RuntimeEngine.Rendering.Stats.RendererState.ValidationLayersEnabled, ref first);
             AppendBoolField(s_lineBuilder, "debug_output_enabled", RuntimeEngine.Rendering.Stats.RendererState.DebugOutputEnabled, ref first);
             AppendNumberField(s_lineBuilder, "deferred_debug_view", global::XREngine.Rendering.RenderDiagnosticsFlags.DeferredDebugView, ref first);
@@ -900,6 +1070,32 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_frame_data_draws_visited", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameDataDrawsVisited, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_descriptor_records_validated", RuntimeEngine.Rendering.Stats.Vulkan.VulkanDescriptorRecordsValidated, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_descriptor_records_written", RuntimeEngine.Rendering.Stats.Vulkan.VulkanDescriptorRecordsWritten, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_binding_schemas_compiled", RuntimeEngine.Rendering.Stats.Vulkan.VulkanBindingSchemasCompiled, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_binding_schema_value_operations", RuntimeEngine.Rendering.Stats.Vulkan.VulkanBindingSchemaValueOperations, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_binding_schema_descriptor_entries", RuntimeEngine.Rendering.Stats.Vulkan.VulkanBindingSchemaDescriptorEntries, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_binding_schema_fallback_operations", RuntimeEngine.Rendering.Stats.Vulkan.VulkanBindingSchemaFallbackOperations, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_typed_operations_executed", RuntimeEngine.Rendering.Stats.Vulkan.VulkanAutoUniformTypedOperationsExecuted, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_reflected_name_lookups", RuntimeEngine.Rendering.Stats.Vulkan.VulkanAutoUniformReflectedNameLookups, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_generic_conversions", RuntimeEngine.Rendering.Stats.Vulkan.VulkanAutoUniformGenericConversions, ref first);
+            AppendVulkanFrequencyPublicationFields(s_lineBuilder, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_fallback_binding_snapshot_ineligible", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.BindingSnapshotIneligible), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_fallback_program_unavailable", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.ProgramUnavailable), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_fallback_invalid_buffer_size", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.InvalidBufferSize), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_fallback_binding_schema_unavailable", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.BindingSchemaUnavailable), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_fallback_binding_schema_mismatch", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.BindingSchemaMismatch), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_fallback_invalid_member_name", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.InvalidMemberName), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_fallback_unsupported_shader_type", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.UnsupportedShaderType), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_fallback_invalid_destination_range", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.InvalidDestinationRange), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_fallback_invalid_array_layout", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.InvalidArrayLayout), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_fallback_struct_snapshot_required", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.StructSnapshotRequired), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_fallback_engine_source_type_mismatch", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.EngineSourceTypeMismatch), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_fallback_mesh_state_source_type_mismatch", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.MeshStateSourceTypeMismatch), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_fallback_typed_engine_source_unavailable", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.TypedEngineSourceUnavailable), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_fallback_typed_engine_write_failed", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.TypedEngineWriteFailed), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_fallback_typed_temporal_write_failed", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.TypedTemporalWriteFailed), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_fallback_typed_mesh_state_source_unavailable", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.TypedMeshStateSourceUnavailable), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_fallback_typed_mesh_state_write_failed", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.TypedMeshStateWriteFailed), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_auto_uniform_fallback_typed_material_or_runtime_write_failed", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.TypedMaterialOrRuntimeWriteFailed), ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_buffer_clean_reuse_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandBufferCleanReuseCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_buffer_record_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandBufferRecordCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_buffer_forced_dirty_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandBufferForcedDirtyCount, ref first);
@@ -968,6 +1164,31 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_mesh_descriptor_set_high_water", RuntimeEngine.Rendering.Stats.Vulkan.VulkanMeshDescriptorSetHighWater, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_layout_lock_contentions", RuntimeEngine.Rendering.Stats.Vulkan.VulkanLayoutLockContentions, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_record_command_buffer_allocated_bytes", RuntimeEngine.Rendering.Stats.Vulkan.VulkanRecordCommandBufferAllocatedBytes, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_reset_command_buffer_calls", RuntimeEngine.Rendering.Stats.Vulkan.VulkanResetCommandBufferCalls, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_reset_command_pool_calls", RuntimeEngine.Rendering.Stats.Vulkan.VulkanResetCommandPoolCalls, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_allocate_command_buffer_calls", RuntimeEngine.Rendering.Stats.Vulkan.VulkanAllocateCommandBufferCalls, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_command_buffers_allocated", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandBuffersAllocated, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_execute_secondary_command_buffer_calls", RuntimeEngine.Rendering.Stats.Vulkan.VulkanExecuteSecondaryCommandBufferCalls, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_secondary_command_buffers_invoked", RuntimeEngine.Rendering.Stats.Vulkan.VulkanSecondaryCommandBuffersInvoked, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_process_reset_command_buffer_calls", RuntimeEngine.Rendering.Stats.Vulkan.VulkanProcessResetCommandBufferCalls, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_process_reset_command_pool_calls", RuntimeEngine.Rendering.Stats.Vulkan.VulkanProcessResetCommandPoolCalls, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_process_allocate_command_buffer_calls", RuntimeEngine.Rendering.Stats.Vulkan.VulkanProcessAllocateCommandBufferCalls, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_process_command_buffers_allocated", RuntimeEngine.Rendering.Stats.Vulkan.VulkanProcessCommandBuffersAllocated, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_process_execute_secondary_command_buffer_calls", RuntimeEngine.Rendering.Stats.Vulkan.VulkanProcessExecuteSecondaryCommandBufferCalls, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_process_secondary_command_buffers_invoked", RuntimeEngine.Rendering.Stats.Vulkan.VulkanProcessSecondaryCommandBuffersInvoked, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_process_worker_secondary_command_buffer_reset_calls", RuntimeEngine.Rendering.Stats.Vulkan.VulkanProcessWorkerSecondaryCommandBufferResetCalls, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_process_worker_secondary_command_buffer_allocations", RuntimeEngine.Rendering.Stats.Vulkan.VulkanProcessWorkerSecondaryCommandBufferAllocations, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_process_worker_secondary_replacement_allocations", RuntimeEngine.Rendering.Stats.Vulkan.VulkanProcessWorkerSecondaryReplacementAllocations, ref first);
+            AppendNumberField(s_lineBuilder, "vr_openxr_eye_primary_record_span_ms", RuntimeEngine.Rendering.Stats.Vr.VrOpenXrEyePrimaryRecordSpanMs, ref first);
+            AppendNumberField(s_lineBuilder, "vr_openxr_eye_primary_record_overlap_ms", RuntimeEngine.Rendering.Stats.Vr.VrOpenXrEyePrimaryRecordOverlapMs, ref first);
+            AppendNumberField(s_lineBuilder, "vr_openxr_eye_primary_record_overlap_ratio", RuntimeEngine.Rendering.Stats.Vr.VrOpenXrEyePrimaryRecordOverlapRatio, ref first);
+            AppendNumberField(s_lineBuilder, "vr_process_openxr_eye_primary_record_samples", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrEyePrimaryRecordSamples, ref first);
+            AppendNumberField(s_lineBuilder, "vr_process_openxr_eye_primary_record_span_ms", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrEyePrimaryRecordSpanMs, ref first);
+            AppendNumberField(s_lineBuilder, "vr_process_openxr_eye_primary_record_overlap_ms", RuntimeEngine.Rendering.Stats.Vr.VrProcessOpenXrEyePrimaryRecordOverlapMs, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_visible_mesh_draws", RuntimeEngine.Rendering.Stats.Vulkan.VulkanVisibleMeshDraws, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_unique_visible_materials", RuntimeEngine.Rendering.Stats.Vulkan.VulkanUniqueVisibleMaterials, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_prepared_mesh_draws", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPreparedMeshDraws, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_recorded_command_artifact_retirements", RuntimeEngine.Rendering.Stats.Vulkan.VulkanRecordedCommandArtifactRetirements, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_preparation", EVulkanCpuStage.FrameOpPreparation, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "resource_planning", EVulkanCpuStage.ResourcePlanning, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "frame_data_refresh", EVulkanCpuStage.FrameDataRefresh, ref first);
@@ -992,6 +1213,20 @@ public static partial class Engine
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_frame_data_manifest", EVulkanCpuStage.PrimaryFrameDataManifest, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_prewarm", EVulkanCpuStage.PrimaryPrewarm, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_command_encoding", EVulkanCpuStage.PrimaryCommandEncoding, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "prepared_draw_construction", EVulkanCpuStage.PreparedDrawConstruction, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "secondary_merge", EVulkanCpuStage.SecondaryMerge, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "command_dependency_comparison", EVulkanCpuStage.CommandDependencyComparison, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "command_dirty_propagation", EVulkanCpuStage.CommandDirtyPropagation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "command_cache_scanning", EVulkanCpuStage.CommandCacheScanning, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "mesh_draw_preparation", EVulkanCpuStage.MeshDrawPreparation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "mesh_draw_resource_preparation", EVulkanCpuStage.MeshDrawResourcePreparation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "mesh_draw_binding_preparation", EVulkanCpuStage.MeshDrawBindingPreparation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "mesh_draw_material_bindings", EVulkanCpuStage.MeshDrawMaterialBindings, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "mesh_draw_binding_snapshot_copy", EVulkanCpuStage.MeshDrawBindingSnapshotCopy, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "mesh_draw_enqueue", EVulkanCpuStage.MeshDrawEnqueue, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "frame_data_descriptor_validation", EVulkanCpuStage.FrameDataDescriptorValidation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "frame_data_engine_uniform_upload", EVulkanCpuStage.FrameDataEngineUniformUpload, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "frame_data_auto_uniform_upload", EVulkanCpuStage.FrameDataAutoUniformUpload, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "queue_lock_acquisition", EVulkanCpuStage.QueueLockAcquisition, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "auxiliary_fence_wait", EVulkanCpuStage.AuxiliaryFenceWait, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "context_pass_transitions", EVulkanCpuStage.ContextPassTransitions, ref first);
@@ -1008,7 +1243,26 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_visibility_packet_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanVisibilityPacketCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_render_packet_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanRenderPacketCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_secondary_command_buffer_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanSecondaryCommandBufferCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_indirect_primary_record_ops", RuntimeEngine.Rendering.Stats.Vulkan.VulkanIndirectPrimaryRecordOps, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_indirect_secondary_record_ops", RuntimeEngine.Rendering.Stats.Vulkan.VulkanIndirectSecondaryRecordOps, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_indirect_parallel_secondary_record_ops", RuntimeEngine.Rendering.Stats.Vulkan.VulkanIndirectParallelSecondaryRecordOps, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_indirect_secondary_eligibility", (int)RuntimeEngine.Rendering.Stats.Vulkan.VulkanLastIndirectSecondaryEligibility, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_indirect_secondary_eligible_producer_complete", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.EligibleProducerComplete), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_indirect_secondary_mutable_current_frame", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.MutableCurrentFrame), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_indirect_secondary_producer_incomplete", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.ProducerIncomplete), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_indirect_secondary_buffer_identity_changed", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.BufferIdentityChanged), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_indirect_secondary_invalid_range", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.InvalidRange), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_indirect_secondary_command_chains_disabled", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.CommandChainsDisabled), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_indirect_secondary_unsupported_inheritance", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.UnsupportedInheritance), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_indirect_secondary_resource_preparation_failed", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.ResourcePreparationFailed), ref first);
+            AppendVulkanSecondaryRecordingFields(s_lineBuilder, "compute", EVulkanSecondaryCommandFamily.Compute, ref first);
+            AppendVulkanSecondaryRecordingFields(s_lineBuilder, "transfer", EVulkanSecondaryCommandFamily.Transfer, ref first);
+            AppendVulkanSecondaryRecordingFields(s_lineBuilder, "query", EVulkanSecondaryCommandFamily.Query, ref first);
+            AppendBoolField(
+                s_lineBuilder,
+                "vulkan_command_chain_benchmark_force_rerecord",
+                XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanCommandChainBenchmarkForceRerecord),
+                ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_chain_worker_queued_chains", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandChainWorkerQueuedChains, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_chain_workers_started", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandChainWorkersStarted, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_chain_workers_completed", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandChainWorkersCompleted, ref first);
@@ -1017,6 +1271,15 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_command_chain_worker_conflicts", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandChainWorkerConflicts, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_chain_worker_failures", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandChainWorkerFailures, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_chain_worker_wait_timeouts", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandChainWorkerWaitTimeouts, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_command_chain_worker_eligibility", (int)RuntimeEngine.Rendering.Stats.Vulkan.VulkanLastCommandChainWorkerEligibility, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_command_chain_worker_eligible", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.Eligible), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_command_chain_worker_too_little_independent_work", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.TooLittleIndependentWork), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_command_chain_worker_mutable_renderer_conflict", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.MutableRendererConflict), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_command_chain_worker_unsupported_operation", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.UnsupportedOperation), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_command_chain_worker_unsupported_inheritance", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.UnsupportedInheritance), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_command_chain_worker_primary_owned_indirect_stream", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.PrimaryOwnedIndirectStream), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_command_chain_worker_quarantined", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.WorkerQuarantined), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_command_chain_worker_resource_preparation_failed", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.ResourcePreparationFailed), ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_chain_peak_concurrent_workers", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandChainPeakConcurrentWorkers, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_chain_worker_queue_delay_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandChainWorkerQueueDelayMs, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_chain_worker_record_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandChainWorkerRecordMs, ref first);
@@ -1267,6 +1530,7 @@ public static partial class Engine
                     policy_reason = output.PolicyReason.ToString(),
                     name = output.Name,
                     pipeline_name = output.PipelineName,
+                    anti_aliasing_mode = output.AntiAliasingMode,
                     active = output.Active,
                     rendered = output.Rendered,
                     scene_rendered = output.SceneRendered,
@@ -1360,6 +1624,215 @@ public static partial class Engine
             AppendNumberField(builder, $"vulkan_cpu_{name}_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageMs(stage), ref first);
             AppendNumberField(builder, $"vulkan_cpu_{name}_allocated_bytes", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageAllocatedBytes(stage), ref first);
             AppendNumberField(builder, $"vulkan_cpu_{name}_allocation_high_water_bytes", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageAllocationHighWaterBytes(stage), ref first);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_process_invocation_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageInvocationCount(stage), ref first);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_process_elapsed_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageCumulativeMs(stage), ref first);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_process_peak_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStagePeakMs(stage), ref first);
+        }
+
+        private static void AppendVulkanSecondaryRecordingFields(
+            StringBuilder builder,
+            string familyName,
+            EVulkanSecondaryCommandFamily family,
+            ref bool first)
+        {
+            string prefix = $"vulkan_{familyName}_secondary";
+            AppendNumberField(
+                builder,
+                $"{prefix}_eligibility",
+                (int)RuntimeEngine.Rendering.Stats.Vulkan
+                    .GetVulkanLastSecondaryRecordingEligibility(family),
+                ref first);
+            AppendVulkanSecondaryRecordingReason(
+                builder,
+                prefix,
+                family,
+                "eligible",
+                EVulkanSecondaryRecordingEligibility.Eligible,
+                ref first);
+            AppendVulkanSecondaryRecordingReason(
+                builder,
+                prefix,
+                family,
+                "family_disabled",
+                EVulkanSecondaryRecordingEligibility.FamilyDisabled,
+                ref first);
+            AppendVulkanSecondaryRecordingReason(
+                builder,
+                prefix,
+                family,
+                "command_buffers_disabled",
+                EVulkanSecondaryRecordingEligibility
+                    .SecondaryCommandBuffersDisabled,
+                ref first);
+            AppendVulkanSecondaryRecordingReason(
+                builder,
+                prefix,
+                family,
+                "empty_range",
+                EVulkanSecondaryRecordingEligibility.EmptyRange,
+                ref first);
+            AppendVulkanSecondaryRecordingReason(
+                builder,
+                prefix,
+                family,
+                "queue_family_unsupported",
+                EVulkanSecondaryRecordingEligibility
+                    .QueueFamilyUnsupported,
+                ref first);
+            AppendVulkanSecondaryRecordingReason(
+                builder,
+                prefix,
+                family,
+                "active_render_scope",
+                EVulkanSecondaryRecordingEligibility.ActiveRenderScope,
+                ref first);
+            AppendVulkanSecondaryRecordingReason(
+                builder,
+                prefix,
+                family,
+                "query_inheritance_unsupported",
+                EVulkanSecondaryRecordingEligibility
+                    .QueryInheritanceUnsupported,
+                ref first);
+            AppendVulkanSecondaryRecordingReason(
+                builder,
+                prefix,
+                family,
+                "barrier_plan_unavailable",
+                EVulkanSecondaryRecordingEligibility
+                    .BarrierPlanUnavailable,
+                ref first);
+            AppendVulkanSecondaryRecordingReason(
+                builder,
+                prefix,
+                family,
+                "query_reset_primary_owned",
+                EVulkanSecondaryRecordingEligibility
+                    .QueryResetPrimaryOwned,
+                ref first);
+            AppendVulkanSecondaryRecordingReason(
+                builder,
+                prefix,
+                family,
+                "query_pair_primary_owned",
+                EVulkanSecondaryRecordingEligibility
+                    .QueryPairPrimaryOwned,
+                ref first);
+            AppendVulkanSecondaryRecordingReason(
+                builder,
+                prefix,
+                family,
+                "query_timestamp_primary_owned",
+                EVulkanSecondaryRecordingEligibility
+                    .QueryTimestampPrimaryOwned,
+                ref first);
+            AppendVulkanSecondaryRecordingReason(
+                builder,
+                prefix,
+                family,
+                "query_properties_primary_owned",
+                EVulkanSecondaryRecordingEligibility
+                    .QueryPropertiesPrimaryOwned,
+                ref first);
+            AppendVulkanSecondaryRecordingReason(
+                builder,
+                prefix,
+                family,
+                "query_result_ordering_unavailable",
+                EVulkanSecondaryRecordingEligibility
+                    .QueryResultOrderingUnavailable,
+                ref first);
+            AppendVulkanSecondaryRecordingReason(
+                builder,
+                prefix,
+                family,
+                "invalid_operation_state",
+                EVulkanSecondaryRecordingEligibility
+                    .InvalidOperationState,
+                ref first);
+        }
+
+        private static void AppendVulkanSecondaryRecordingReason(
+            StringBuilder builder,
+            string prefix,
+            EVulkanSecondaryCommandFamily family,
+            string reasonName,
+            EVulkanSecondaryRecordingEligibility reason,
+            ref bool first)
+            => AppendNumberField(
+                builder,
+                $"{prefix}_{reasonName}",
+                RuntimeEngine.Rendering.Stats.Vulkan
+                    .GetVulkanSecondaryRecordingEligibilityCount(
+                        family,
+                        reason),
+                ref first);
+
+        private static void AppendVulkanFrequencyPublicationFields(
+            StringBuilder builder,
+            ref bool first)
+        {
+            AppendVulkanFrequencyPublicationFields(
+                builder,
+                "frame",
+                RuntimeEngine.Rendering.Stats.Vulkan.VulkanBindingFrequencyFrameIndex,
+                ref first);
+            AppendVulkanFrequencyPublicationFields(
+                builder,
+                "view",
+                RuntimeEngine.Rendering.Stats.Vulkan.VulkanBindingFrequencyViewIndex,
+                ref first);
+            AppendVulkanFrequencyPublicationFields(
+                builder,
+                "pass",
+                RuntimeEngine.Rendering.Stats.Vulkan.VulkanBindingFrequencyPassIndex,
+                ref first);
+            AppendVulkanFrequencyPublicationFields(
+                builder,
+                "material",
+                RuntimeEngine.Rendering.Stats.Vulkan.VulkanBindingFrequencyMaterialIndex,
+                ref first);
+            AppendVulkanFrequencyPublicationFields(
+                builder,
+                "object",
+                RuntimeEngine.Rendering.Stats.Vulkan.VulkanBindingFrequencyObjectIndex,
+                ref first);
+            AppendVulkanFrequencyPublicationFields(
+                builder,
+                "instance",
+                RuntimeEngine.Rendering.Stats.Vulkan.VulkanBindingFrequencyInstanceIndex,
+                ref first);
+            AppendVulkanFrequencyPublicationFields(
+                builder,
+                "runtime_callback",
+                RuntimeEngine.Rendering.Stats.Vulkan.VulkanBindingFrequencyRuntimeCallbackIndex,
+                ref first);
+        }
+
+        private static void AppendVulkanFrequencyPublicationFields(
+            StringBuilder builder,
+            string name,
+            int frequency,
+            ref bool first)
+        {
+            AppendNumberField(
+                builder,
+                $"vulkan_auto_uniform_{name}_publications",
+                RuntimeEngine.Rendering.Stats.Vulkan
+                    .GetVulkanAutoUniformFrequencyPublicationCount(frequency),
+                ref first);
+            AppendNumberField(
+                builder,
+                $"vulkan_auto_uniform_{name}_reuses",
+                RuntimeEngine.Rendering.Stats.Vulkan
+                    .GetVulkanAutoUniformFrequencyReuseCount(frequency),
+                ref first);
+            AppendNumberField(
+                builder,
+                $"vulkan_auto_uniform_{name}_published_bytes",
+                RuntimeEngine.Rendering.Stats.Vulkan
+                    .GetVulkanAutoUniformFrequencyPublishedBytes(frequency),
+                ref first);
         }
 
         private static void AppendRenderThreadJobFields(StringBuilder builder, ref bool first)
@@ -1601,6 +2074,251 @@ public static partial class Engine
         private static bool IsEnvFlagEnabled(string name)
             => XREnvironment.IsEnabled(name);
 
+        private static void SetEnvironmentFlag(string name, bool enabled)
+            => Environment.SetEnvironmentVariable(name, enabled ? "1" : "0");
+
+        private static string ResolvePerformanceProfileMode()
+        {
+            string? raw = Environment.GetEnvironmentVariable(
+                XREngineEnvironmentVariables.ProfileMode);
+            if (string.IsNullOrWhiteSpace(raw))
+                return "DevelopmentProfile";
+
+            string value = raw.Trim();
+            string[] knownModes =
+            [
+                "Diagnostics",
+                "DevelopmentProfile",
+                "CleanProfile",
+                "ReleaseBenchmark",
+            ];
+            for (int i = 0; i < knownModes.Length; i++)
+            {
+                if (value.Equals(
+                        knownModes[i],
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return knownModes[i];
+                }
+            }
+
+            return value;
+        }
+
+        private static bool IsCleanPerformanceProfile(string profileMode)
+            => profileMode.Equals(
+                    "CleanProfile",
+                    StringComparison.OrdinalIgnoreCase)
+               || profileMode.Equals(
+                    "ReleaseBenchmark",
+                    StringComparison.OrdinalIgnoreCase);
+
+        private static PerformanceObserverMetadata CapturePerformanceObserverMetadata(
+            string profileMode,
+            RuntimeEngine.Rendering.Stats.FrameOutputManifestSnapshot outputManifest)
+        {
+            bool validationLayersEnabled = CaptureBoolean(
+                () => RuntimeEngine.Rendering.Stats.RendererState.ValidationLayersEnabled);
+            bool debugOutputEnabled = CaptureBoolean(
+                () => RuntimeEngine.Rendering.Stats.RendererState.DebugOutputEnabled);
+            bool commandBufferLabelsEnabled =
+                ResolveOptionalBooleanOverride(
+                    Environment.GetEnvironmentVariable(
+                        XREngineEnvironmentVariables.VulkanCommandBufferLabels)) ??
+                CaptureBoolean(
+                    () => Engine.EffectiveSettings.VulkanDiagnosticFlags.HasFlag(
+                        EVulkanDiagnosticFlags.CommandBufferLabels));
+            bool denseGpuTimestamps = IsEnvFlagEnabled(
+                XREngineEnvironmentVariables.GpuTimestampDense);
+            bool p3LoggingEnabled = IsEnvFlagEnabled(
+                XREngineEnvironmentVariables.P3Logging);
+            string activeDiagnosticTraceFlags =
+                CaptureActiveDiagnosticTraceFlags();
+            bool diagnosticTraceFlagsEnabled =
+                activeDiagnosticTraceFlags.Length > 0;
+            bool skipImGui = IsEnvFlagEnabled(
+                XREngineEnvironmentVariables.VkSkipImGui);
+            bool profilerUiActive =
+                ProfilerObserverTelemetry.VisibleRows > 0;
+            bool dynamicTextOverlayEnabled = HasOutputWork(
+                outputManifest,
+                "DynamicTextOverlay");
+            bool debugOverlayEnabled =
+                dynamicTextOverlayEnabled ||
+                CaptureBoolean(
+                    () => RenderDiagnosticsFlags.DeferredDebugView != 0);
+            bool verboseLogging =
+                (int)RuntimeDebugHostServices.Current.OutputVerbosity >
+                (int)EOutputVerbosity.Normal;
+            bool intrusive =
+                validationLayersEnabled ||
+                debugOutputEnabled ||
+                commandBufferLabelsEnabled ||
+                denseGpuTimestamps ||
+                p3LoggingEnabled ||
+                diagnosticTraceFlagsEnabled ||
+                !skipImGui ||
+                profilerUiActive ||
+                dynamicTextOverlayEnabled ||
+                debugOverlayEnabled ||
+                verboseLogging;
+            bool warmCaches =
+                IsWarmCacheState(XREngineEnvironmentVariables.ProfileCacheMode) &&
+                IsWarmCacheState(XREngineEnvironmentVariables.ShaderCacheMode) &&
+                IsWarmCacheState(XREngineEnvironmentVariables.TextureCacheMode);
+            bool cleanMode = IsCleanPerformanceProfile(profileMode);
+            bool comparisonSuitable = cleanMode && !intrusive && warmCaches;
+            bool promotionEligible =
+                profileMode.Equals(
+                    "ReleaseBenchmark",
+                    StringComparison.OrdinalIgnoreCase) &&
+                comparisonSuitable;
+            string suitability = profileMode switch
+            {
+                "Diagnostics" => "IntrusiveDiagnostics",
+                "DevelopmentProfile" => "DevelopmentTrendOnly",
+                "CleanProfile" when comparisonSuitable => "CleanComparison",
+                "ReleaseBenchmark" when comparisonSuitable => "PromotionEligible",
+                "CleanProfile" or "ReleaseBenchmark" => "IntrusiveConfiguration",
+                _ => "InvalidProfileMode",
+            };
+
+            return new PerformanceObserverMetadata(
+                suitability,
+                comparisonSuitable,
+                promotionEligible,
+                intrusive,
+                commandBufferLabelsEnabled,
+                p3LoggingEnabled,
+                diagnosticTraceFlagsEnabled,
+                activeDiagnosticTraceFlags,
+                skipImGui
+                    ? "Disabled"
+                    : profilerUiActive
+                        ? "Active"
+                        : "Inactive",
+                skipImGui ? "Disabled" : "Enabled",
+                dynamicTextOverlayEnabled,
+                debugOverlayEnabled);
+        }
+
+        private static string CaptureActiveDiagnosticTraceFlags()
+        {
+            StringBuilder? enabled = null;
+            for (int i = 0; i < s_diagnosticTraceEnvironmentVariables.Length; i++)
+            {
+                string variableName = s_diagnosticTraceEnvironmentVariables[i];
+                if (!IsEnvFlagEnabled(variableName))
+                    continue;
+
+                enabled ??= new StringBuilder();
+                if (enabled.Length > 0)
+                    enabled.Append(',');
+                enabled.Append(variableName);
+            }
+
+            return enabled?.ToString() ?? string.Empty;
+        }
+
+        private static bool IsWarmCacheState(string environmentVariable)
+            => string.Equals(
+                Environment.GetEnvironmentVariable(environmentVariable),
+                "Warm",
+                StringComparison.OrdinalIgnoreCase);
+
+        private static bool HasOutputWork(
+            RuntimeEngine.Rendering.Stats.FrameOutputManifestSnapshot snapshot,
+            string outputKind)
+        {
+            RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs =
+                snapshot.Outputs ?? [];
+            for (int i = 0; i < outputs.Length; i++)
+            {
+                RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot output =
+                    outputs[i];
+                if (output.CommandCount > 0 &&
+                    output.OutputKindName.Equals(
+                        outputKind,
+                        StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static ActiveRenderFeaturesMetadata CaptureActiveRenderFeatures(
+            RuntimeEngine.Rendering.Stats.FrameOutputManifestSnapshot outputManifest)
+        {
+            XRRenderPipelineInstance? pipeline =
+                RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            XRCamera? camera =
+                RuntimeEngine.Rendering.State.RenderingCamera ??
+                pipeline?.RenderState.SceneCamera ??
+                pipeline?.LastSceneCamera ??
+                pipeline?.LastRenderingCamera;
+            EAntiAliasingMode antiAliasingMode =
+                camera?.AntiAliasingModeOverride ??
+                Engine.EffectiveSettings.AntiAliasingMode;
+            uint msaaSampleCount =
+                camera?.MsaaSampleCountOverride ??
+                Engine.EffectiveSettings.MsaaSampleCount;
+            float tsrRenderScale =
+                camera?.TsrRenderScaleOverride ??
+                RuntimeEngine.Rendering.Settings.TsrRenderScale;
+
+            AmbientOcclusionSettings? ambientOcclusion =
+                TryGetPostProcessSettings<AmbientOcclusionSettings>(camera);
+            ColorGradingSettings? colorGrading =
+                TryGetPostProcessSettings<ColorGradingSettings>(camera);
+            BloomSettings? bloom =
+                TryGetPostProcessSettings<BloomSettings>(camera);
+            MotionBlurSettings? motionBlur =
+                TryGetPostProcessSettings<MotionBlurSettings>(camera);
+            bool motionBlurEnabled = motionBlur?.Enabled ?? false;
+            bool motionVectorsRequested =
+                antiAliasingMode is EAntiAliasingMode.Taa
+                    or EAntiAliasingMode.Tsr
+                    or EAntiAliasingMode.Dlaa ||
+                Engine.EffectiveSettings.EnableNvidiaDlss ||
+                Engine.EffectiveSettings.EnableIntelXess ||
+                motionBlurEnabled;
+
+            return new ActiveRenderFeaturesMetadata(
+                CameraStateAvailable: camera is not null,
+                AntiAliasingMode: antiAliasingMode.ToString(),
+                MsaaSampleCount: msaaSampleCount,
+                TsrRenderScale: tsrRenderScale,
+                AmbientOcclusionEnabled: ambientOcclusion?.Enabled ?? false,
+                AmbientOcclusionMode:
+                    ambientOcclusion?.Type.ToString() ?? "Unavailable",
+                AutoExposureEnabled: colorGrading?.AutoExposure ?? false,
+                BloomEnabled: bloom?.Enabled ?? false,
+                MotionBlurEnabled: motionBlurEnabled,
+                MotionVectorsRequested: motionVectorsRequested,
+                ImGuiOverlayEnabled: HasOutputWork(
+                    outputManifest,
+                    "ImGuiOverlay"),
+                DynamicTextOverlayEnabled: HasOutputWork(
+                    outputManifest,
+                    "DynamicTextOverlay"));
+        }
+
+        private static TSettings? TryGetPostProcessSettings<TSettings>(
+            XRCamera? camera)
+            where TSettings : class
+        {
+            if (camera?.GetPostProcessStageState<TSettings>() is not
+                { } stage ||
+                !stage.TryGetBacking(out TSettings? settings))
+            {
+                return null;
+            }
+
+            return settings;
+        }
+
         private static string CaptureSceneIdentity()
         {
             try
@@ -1704,6 +2422,7 @@ public static partial class Engine
                     output.Request.Target.SampleCount,
                     output.Request.Target.ViewMask,
                     output.Request.Target.ExternalImageSlot,
+                    output.AntiAliasingMode,
                     output.Request.Schedule.DesiredRateHz,
                     output.Request.Schedule.DeadlineMs,
                     output.Request.Schedule.MaxCpuBudgetMs,
@@ -1770,6 +2489,24 @@ public static partial class Engine
             string TextureCacheState,
             string CacheMode,
             string ProfileMode,
+            string ProfileSuitability,
+            bool ProfileComparisonSuitable,
+            bool ProfilePromotionEligible,
+            bool ProfileIntrusive,
+            bool VulkanCommandBufferLabelsEnabled,
+            bool P3LoggingEnabled,
+            bool DiagnosticTraceFlagsEnabled,
+            string ActiveDiagnosticTraceFlags,
+            string ProfilerUiState,
+            string EditorUiState,
+            bool DynamicTextOverlayEnabled,
+            bool DebugOverlayEnabled,
+            string LogVerbosity,
+            bool LogOutputToFile,
+            string LogSessionPath,
+            string XrRuntime,
+            string XrRuntimeManifest,
+            ActiveRenderFeaturesMetadata ActiveRenderFeatures,
             string GpuClockPolicy,
             double? TargetRefreshHz,
             double? XrFrameBudgetMs,
@@ -1807,6 +2544,7 @@ public static partial class Engine
             uint SampleCount,
             uint ViewMask,
             int ExternalImageSlot,
+            string AntiAliasingMode,
             float DesiredRateHz,
             double DeadlineMs,
             double MaxCpuBudgetMs,
@@ -1818,6 +2556,34 @@ public static partial class Engine
             string CompletionRequirement,
             ulong ProducerDependencySetId,
             ulong ConsumerDependencySetId);
+
+        private sealed record PerformanceObserverMetadata(
+            string Suitability,
+            bool ComparisonSuitable,
+            bool PromotionEligible,
+            bool Intrusive,
+            bool CommandBufferLabelsEnabled,
+            bool P3LoggingEnabled,
+            bool DiagnosticTraceFlagsEnabled,
+            string ActiveDiagnosticTraceFlags,
+            string ProfilerUiState,
+            string EditorUiState,
+            bool DynamicTextOverlayEnabled,
+            bool DebugOverlayEnabled);
+
+        private sealed record ActiveRenderFeaturesMetadata(
+            bool CameraStateAvailable,
+            string AntiAliasingMode,
+            uint MsaaSampleCount,
+            float TsrRenderScale,
+            bool AmbientOcclusionEnabled,
+            string AmbientOcclusionMode,
+            bool AutoExposureEnabled,
+            bool BloomEnabled,
+            bool MotionBlurEnabled,
+            bool MotionVectorsRequested,
+            bool ImGuiOverlayEnabled,
+            bool DynamicTextOverlayEnabled);
 
         private sealed record CaptureCompletion(
             RunMetadata Metadata,

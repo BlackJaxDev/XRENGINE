@@ -441,6 +441,11 @@ internal sealed class EngineRuntimeRenderingHostServices :
     public void EnqueueRenderThreadTask(Action task, string reason, RenderThreadJobKind renderThreadKind)
         => Engine.EnqueueRenderThreadTask(task, reason, renderThreadKind);
 
+    public bool IsFrameSwapThread => Engine.IsFrameSwapThread;
+
+    public void EnqueueFrameSwapTask(Action task, string reason)
+        => Engine.EnqueueSwapTask(task);
+
     public T InvokeRenderThreadTask<T>(
         Func<T> task,
         string reason,

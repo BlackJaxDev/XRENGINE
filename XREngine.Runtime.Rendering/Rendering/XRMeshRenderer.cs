@@ -517,6 +517,13 @@ namespace XREngine.Rendering
 
         internal bool HasSettingUniformsHandlers => _settingUniforms is not null;
 
+        /// <summary>
+        /// Typed, generation-owned numeric binding publishers eligible for
+        /// immutable backend capture and frequency-scoped reuse.
+        /// </summary>
+        [MemoryPackIgnore]
+        public RenderBindingPublisherCollection BindingPublishers { get; } = new();
+
         public delegate void DelPrepareRenderData();
         /// <summary>
         /// Subscribe to this event to upload renderer-owned dynamic data before readiness checks.

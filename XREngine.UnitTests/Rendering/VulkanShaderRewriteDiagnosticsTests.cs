@@ -139,6 +139,134 @@ void main()
     }
 
     [Test]
+    public void Rewrite_SeparatesAutoUniformBlocksByDeclaredFrequency()
+    {
+        const string source = """
+#version 460
+uniform float RenderTime;
+uniform mat4 ViewMatrix;
+uniform float ScreenWidth;
+uniform vec4 Tint;
+uniform mat4 ModelMatrix;
+layout(location = 0) out vec4 OutColor;
+void main()
+{
+    OutColor =
+        vec4(RenderTime + ScreenWidth) +
+        ViewMatrix[0] +
+        Tint +
+        ModelMatrix[0];
+}
+""";
+
+        object rewriteResult = RewriteForVulkan(source, EShaderType.Fragment);
+        IReadOnlyList<object> blockInfos =
+            GetProperty<System.Collections.IEnumerable>(
+                rewriteResult,
+                "BlockInfos")!
+            .Cast<object>()
+            .ToArray();
+
+        blockInfos.Count.ShouldBe(5);
+        blockInfos
+            .Select(block => GetProperty<object>(block, "Frequency")!.ToString())
+            .ShouldBe(
+            [
+                "Frame",
+                "View",
+                "Pass",
+                "Material",
+                "Object",
+            ]);
+        blockInfos
+            .Select(block => GetProperty<uint>(block, "Binding"))
+            .ShouldBe([64u, 65u, 66u, 67u, 68u]);
+        blockInfos
+                .Select(block => GetProperty<System.Collections.IEnumerable>(
+                    block,
+                    "Members")!
+                .Cast<object>()
+                .Select(member => GetProperty<string>(member, "Name"))
+                .ShouldHaveSingleItem())
+            .ShouldBe(
+            [
+                "RenderTime",
+                "ViewMatrix",
+                "ScreenWidth",
+                "Tint",
+                "ModelMatrix",
+            ]);
+
+        string rewritten = GetProperty<string>(rewriteResult, "Source")!;
+        rewritten.ShouldContain(
+            "XREngine_AutoUniforms_Fragment_Frame_Instance.RenderTime");
+        rewritten.ShouldContain(
+            "XREngine_AutoUniforms_Fragment_View_Instance.ViewMatrix");
+        rewritten.ShouldContain(
+            "XREngine_AutoUniforms_Fragment_Pass_Instance.ScreenWidth");
+        rewritten.ShouldContain(
+            "XREngine_AutoUniforms_Fragment_Material_Instance.Tint");
+        rewritten.ShouldContain(
+            "XREngine_AutoUniforms_Fragment_Object_Instance.ModelMatrix");
+    }
+
+    [Test]
+    public void Rewrite_ExplicitFrequencyAnnotationOverridesLooseUniformClassification()
+    {
+        const string source = """
+#version 460
+uniform float Radius = 2.2f; // XRENGINE_FREQUENCY(View)
+uniform float Roughness = 0.5f;
+layout(location = 0) out vec4 OutColor;
+void main()
+{
+    OutColor = vec4(Radius + Roughness);
+}
+""";
+
+        object radiusBlock = RewriteForVulkanAutoUniformBlockInfoContaining(
+            source,
+            EShaderType.Fragment,
+            "Radius");
+        object roughnessBlock = RewriteForVulkanAutoUniformBlockInfoContaining(
+            source,
+            EShaderType.Fragment,
+            "Roughness");
+
+        GetProperty<object>(radiusBlock, "Frequency")!
+            .ToString()
+            .ShouldBe("View");
+        GetProperty<object>(roughnessBlock, "Frequency")!
+            .ToString()
+            .ShouldBe("Material");
+    }
+
+    [Test]
+    public void Rewrite_InvalidExplicitFrequencyAnnotationFailsWithActionableMessage()
+    {
+        const string source = """
+#version 460
+uniform float Radius = 2.2f; // XRENGINE_FREQUENCY(Camera)
+void main()
+{
+    gl_FragDepth = Radius;
+}
+""";
+
+        TargetInvocationException exception =
+            Should.Throw<TargetInvocationException>(
+                () => RewriteForVulkan(source, EShaderType.Fragment));
+
+        InvalidOperationException inner =
+            exception.InnerException
+                .ShouldBeOfType<InvalidOperationException>();
+        inner.Message.ShouldContain(
+            "Unsupported XRENGINE_FREQUENCY annotation 'Camera'");
+        inner.Message.ShouldContain(
+            "Expected Frame, View, Pass, Material, Object, Instance, or RuntimeCallback.");
+    }
+
+    [Test]
     public void Rewrite_ComputesStd140StructAndMatrixArrayOffsets()
     {
         const string source = """
@@ -236,7 +364,10 @@ void main()
     public void Diagnostic_DumpDirLightLayout_FromRealDeferredLightingDirShader()
     {
         LoadedShaderSource loadedShader = LoadShaderSource("Scene3D/DeferredLightingDir.fs");
-        object blockInfo = RewriteForVulkanAutoUniformBlockInfo(loadedShader.Source, EShaderType.Fragment);
+        object blockInfo = RewriteForVulkanAutoUniformBlockInfoContaining(
+            loadedShader.Source,
+            EShaderType.Fragment,
+            "LightData");
         uint blockSize = GetProperty<uint>(blockInfo, "Size");
         TestContext.WriteLine($"Auto-uniform block size = {blockSize}");
 
@@ -301,6 +432,47 @@ void main()
 
     private static object RewriteForVulkanAutoUniformBlockInfo(string source, EShaderType shaderType)
     {
+        object result = RewriteForVulkan(source, shaderType);
+
+        PropertyInfo? blockInfoProperty = result.GetType().GetProperty("BlockInfo", BindingFlags.Instance | BindingFlags.Public);
+        blockInfoProperty.ShouldNotBeNull();
+
+        object? blockInfo = blockInfoProperty!.GetValue(result);
+        blockInfo.ShouldNotBeNull();
+        return blockInfo!;
+    }
+
+    private static object RewriteForVulkanAutoUniformBlockInfoContaining(
+        string source,
+        EShaderType shaderType,
+        string memberName)
+    {
+        object result = RewriteForVulkan(source, shaderType);
+        object[] blockInfos = GetProperty<System.Collections.IEnumerable>(
+                result,
+                "BlockInfos")!
+            .Cast<object>()
+            .ToArray();
+        foreach (object blockInfo in blockInfos)
+        {
+            if (GetProperty<System.Collections.IEnumerable>(
+                    blockInfo,
+                    "Members")!
+                .Cast<object>()
+                .Any(member =>
+                    GetProperty<string>(member, "Name") == memberName))
+            {
+                return blockInfo;
+            }
+        }
+
+        Assert.Fail($"No auto-uniform block contains member '{memberName}'.");
+        throw new InvalidOperationException(
+            $"No auto-uniform block contains member '{memberName}'.");
+    }
+
+    private static object RewriteForVulkan(string source, EShaderType shaderType)
+    {
         Type? autoUniformType = typeof(VulkanShaderCompiler).Assembly
             .GetType("XREngine.Rendering.Vulkan.VulkanShaderAutoUniforms", throwOnError: true);
 
@@ -310,13 +482,7 @@ void main()
 
         object? result = rewriteMethod!.Invoke(null, [source, shaderType]);
         result.ShouldNotBeNull();
-
-        PropertyInfo? blockInfoProperty = result!.GetType().GetProperty("BlockInfo", BindingFlags.Instance | BindingFlags.Public);
-        blockInfoProperty.ShouldNotBeNull();
-
-        object? blockInfo = blockInfoProperty!.GetValue(result);
-        blockInfo.ShouldNotBeNull();
-        return blockInfo!;
+        return result!;
     }
 
     private static object GetMember(object blockInfo, string memberName)

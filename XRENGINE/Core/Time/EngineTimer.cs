@@ -430,7 +430,15 @@ namespace XREngine.Timers
 
                     using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.ProcessCollectVisibleSwapJobs", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
-                        Engine.Jobs.ProcessCollectVisibleSwapJobs();
+                        Engine.SetFrameSwapThread(true);
+                        try
+                        {
+                            Engine.Jobs.ProcessCollectVisibleSwapJobs();
+                        }
+                        finally
+                        {
+                            Engine.SetFrameSwapThread(false);
+                        }
                     }
 
                     using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.DispatchSwapBuffers", ProfilerScopeKind.AlwaysOnHotPathLoop))

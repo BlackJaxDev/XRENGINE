@@ -445,6 +445,15 @@ public unsafe partial class VulkanRenderer
                     frameContext,
                     targetContext,
                     CloneFrameOpsForPreparedOpenXrEye(ops),
+                    _openXrBackend.EyeFrameDataRefreshRequests[
+                        ResolveOpenXrEyeUploadPublicationBufferIndex(
+                            targetContext.OpenXrViewIndex)].Publish(
+                            _commandBufferRecordingScratch.Value!
+                                .PrimaryReusableFrameDataRefreshRequests,
+                            _commandBufferRecordingScratch.Value!
+                                .PrimaryReusableFrameDataOwnerWorkRequests,
+                            _commandBufferRecordingScratch.Value!
+                                .PrimaryReusableFrameDataRefreshBatchInfo),
                     plannerContext,
                     frameOpsSignature,
                     plannerRevision,
@@ -506,6 +515,9 @@ public unsafe partial class VulkanRenderer
                 bool reusedPrimary;
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.ReuseOrRecordPrimary"))
                 {
+                    PublishOpenXrExternalImageAcquireState(
+                        targetContext.Image,
+                        CreateOpenXrRuntimeColorSubresourceRange());
                     ulong imageLayoutStartSignature = ComputeImageLayoutStateSignature();
                     FrameOpContext fallbackContext = prepared.Ops.Length > 0
                         ? prepared.Ops[0].Context
@@ -518,19 +530,40 @@ public unsafe partial class VulkanRenderer
                         prepared.Ops,
                         Array.Empty<FrameOp>(),
                         fallbackContext);
-                    reusedPrimary = TryReuseOpenXrPrimaryCommandBuffer(
-                        targetContext.FrameDataSlotIndex,
-                        targetContext.CommandChainImageKey,
-                        targetContext,
-                        prepared.Request,
-                        prepared.Ops,
-                        prepared.FrameOpsSignature,
-                        frameOpContextFingerprint,
-                        frameOpContextId,
-                        prepared.PlannerRevision,
-                        imageLayoutStartSignature,
-                        prepared.CommandChainSchedule,
-                        out commandBuffer);
+                    if (!prepared.FrameDataRefreshLease.TryAcquire(
+                            out ReadOnlySpan<VulkanReusableFrameDataRefreshRequest>
+                                frameDataRefreshRequests,
+                            out ReadOnlySpan<VulkanReusableFrameDataRefreshRequest>
+                                frameDataOwnerWorkRequests,
+                            out VulkanReusableFrameDataRefreshBatchInfo
+                                frameDataRefreshBatchInfo))
+                    {
+                        return false;
+                    }
+
+                    try
+                    {
+                        reusedPrimary = TryReuseOpenXrPrimaryCommandBuffer(
+                            targetContext.FrameDataSlotIndex,
+                            targetContext.CommandChainImageKey,
+                            targetContext,
+                            prepared.Request,
+                            prepared.Ops,
+                            frameDataRefreshRequests,
+                            frameDataOwnerWorkRequests,
+                            frameDataRefreshBatchInfo,
+                            prepared.FrameOpsSignature,
+                            frameOpContextFingerprint,
+                            frameOpContextId,
+                            prepared.PlannerRevision,
+                            imageLayoutStartSignature,
+                            prepared.CommandChainSchedule,
+                            out commandBuffer);
+                    }
+                    finally
+                    {
+                        prepared.FrameDataRefreshLease.Release();
+                    }
 
                     if (!reusedPrimary)
                     {
@@ -716,13 +749,29 @@ public unsafe partial class VulkanRenderer
            $"foveationKey=0x{context.FoveationResourceKey:X} foveationAttachment={context.FoveationAttachmentKind} " +
            $"foveationOwned={context.FoveationAttachmentOwnedByResourcePlanner} commandKey={context.CommandChainImageKey}";
 
+    private static ImageSubresourceRange CreateOpenXrRuntimeColorSubresourceRange()
+        => new()
+        {
+            AspectMask = ImageAspectFlags.ColorBit,
+            BaseMipLevel = 0,
+            LevelCount = 1,
+            BaseArrayLayer = 0,
+            LayerCount = 1,
+        };
+
     private bool TryReuseOpenXrPrimaryCommandBuffer(
         uint recordImageIndex,
         uint commandChainImageIndex,
         in OpenXrEyeRenderTargetContext targetContext,
-        in OpenXrEyeSwapchainRenderRequest request,
-        FrameOp[] ops,
-        ulong frameOpsSignature,
+            in OpenXrEyeSwapchainRenderRequest request,
+            FrameOp[] ops,
+            ReadOnlySpan<VulkanReusableFrameDataRefreshRequest>
+                frameDataRefreshRequests,
+            ReadOnlySpan<VulkanReusableFrameDataRefreshRequest>
+                frameDataOwnerWorkRequests,
+            in VulkanReusableFrameDataRefreshBatchInfo
+                frameDataRefreshBatchInfo,
+            ulong frameOpsSignature,
         ulong frameOpContextFingerprint,
         ulong frameOpContextId,
         ulong plannerRevision,
@@ -821,7 +870,13 @@ public unsafe partial class VulkanRenderer
                 _lastReusableFrameDataRefreshFailureReason = null;
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.RefreshFrameData"))
                 {
-                    if (!TryRefreshReusableCommandBufferFrameData(recordImageIndex, ops))
+                    if (!TryRefreshReusableCommandBufferFrameData(
+                            recordImageIndex,
+                            frameDataRefreshRequests,
+                            frameDataOwnerWorkRequests,
+                            frameDataRefreshBatchInfo,
+                            variant.PrimaryFrameDataRefreshState,
+                            dynamicUi: false))
                         return false;
                 }
 
@@ -998,6 +1053,8 @@ public unsafe partial class VulkanRenderer
             {
                 CancelRecordedTextureUploadSubmitBatch(
                     $"OpenXR eye command buffer recording deferred: {recordingDeferredReason}");
+                variant.Dirty = true;
+                variant.DirtyReason = recordingDeferredReason;
                 Debug.VulkanWarningEvery(
                     $"OpenXR.Vulkan.EyePrimaryRecordDeferred.{GetHashCode()}",
                     TimeSpan.FromSeconds(1),
@@ -1006,9 +1063,12 @@ public unsafe partial class VulkanRenderer
                 return default;
             }
         }
-        catch
+        catch (Exception ex)
         {
             CancelRecordedTextureUploadSubmitBatch("OpenXR eye command buffer recording failed before upload submit");
+            _ = TryAbandonCommandBufferRecording(variant.PrimaryCommandBuffer);
+            variant.Dirty = true;
+            variant.DirtyReason = ex.Message;
             throw;
         }
         finally
@@ -1032,6 +1092,23 @@ public unsafe partial class VulkanRenderer
         variant.RecordedImageLayoutStartSignature = imageLayoutStartSignature;
         CaptureCommandBufferVariantImageLayoutEndState(variant);
         variant.CommandChainScheduleSignature = commandChainSchedule?.StructuralSignature ?? ulong.MaxValue;
+        if (commandChainSchedule is not null)
+        {
+            Dictionary<CommandChainKey, CommandChain> commandChainCache =
+                GetCommandChainCache(commandChainImageIndex);
+            if (!TryValidatePrimaryCommandBufferGroupSharedDependencies(
+                    commandChainSchedule,
+                    commandChainCache,
+                    out CommandRecordingDependencyMismatch sharedDependencyMismatch))
+            {
+                throw new InvalidOperationException(
+                    $"Recorded OpenXR primary command buffer contains a secondary artifact whose " +
+                    $"shared dependency identity is not executable or disagrees with its command " +
+                    $"chain. Field={sharedDependencyMismatch.Field} " +
+                    $"Class={sharedDependencyMismatch.InvalidationClass}.");
+            }
+        }
+
         if (!TryComputeOpenXrPrimaryCommandBufferGroupSignature(
                 commandChainImageIndex,
                 commandChainSchedule,
@@ -1247,6 +1324,9 @@ public unsafe partial class VulkanRenderer
                 if (!chains.TryGetValue(keys[keyIndex], out CommandChain? chain) ||
                     chain.SecondaryCommandBuffer.Handle == 0 ||
                     !chain.SecondaryCommandBufferExecutable ||
+                    !chain.RecordedArtifact.TryValidateSharedDependency(
+                        chain.DependencySignature,
+                        out _) ||
                     chain.State is not (CommandChainState.Reused or CommandChainState.FrameDataRefreshed) ||
                     (chain.State == CommandChainState.FrameDataRefreshed && chain.FrameDataRefreshTouchedDescriptors))
                 {
@@ -1457,13 +1537,14 @@ public unsafe partial class VulkanRenderer
                 hash.Add(key.ViewKey.CascadeIndex);
                 if (chains.TryGetValue(key, out CommandChain? chain))
                 {
-                    hash.Add(chain.SecondaryCommandBuffer.Handle);
-                    hash.Add(chain.SecondaryCommandBufferGeneration);
+                    VulkanRecordedCommandArtifactReference artifact =
+                        chain.RecordedArtifact.CreateReference();
+                    artifact.AddTo(ref hash);
                 }
                 else
                 {
-                    hash.Add(0UL);
-                    hash.Add(0UL);
+                    default(VulkanRecordedCommandArtifactReference)
+                        .AddTo(ref hash);
                 }
             }
         }

@@ -415,20 +415,44 @@ namespace XREngine
             /// Resolved from: User Override > Project Override > Engine Default
             /// </summary>
             public static bool EnableGpuIndirectDebugLogging
-                => OverrideableSettingExtensions.ResolveCascade(
-                    RuntimeEngine.Rendering.Settings.EnableGpuIndirectDebugLogging,
-                    GameSettings?.EnableGpuIndirectDebugLoggingOverride,
-                    UserSettings?.EnableGpuIndirectDebugLoggingOverride);
+            {
+                get
+                {
+#if !XRE_PUBLISHED
+                    if (ProfileCapture.GpuIndirectDebugLoggingOverride is
+                        { } profileOverride)
+                    {
+                        return profileOverride;
+                    }
+#endif
+                    return OverrideableSettingExtensions.ResolveCascade(
+                        RuntimeEngine.Rendering.Settings.EnableGpuIndirectDebugLogging,
+                        GameSettings?.EnableGpuIndirectDebugLoggingOverride,
+                        UserSettings?.EnableGpuIndirectDebugLoggingOverride);
+                }
+            }
 
             /// <summary>
             /// Gets the effective GPU indirect validation logging setting.
             /// Resolved from: User Override > Project Override > Engine Default
             /// </summary>
             public static bool EnableGpuIndirectValidationLogging
-                => OverrideableSettingExtensions.ResolveCascade(
-                    RuntimeEngine.Rendering.Settings.EnableGpuIndirectValidationLogging,
-                    GameSettings?.EnableGpuIndirectValidationLoggingOverride,
-                    UserSettings?.EnableGpuIndirectValidationLoggingOverride);
+            {
+                get
+                {
+#if !XRE_PUBLISHED
+                    if (ProfileCapture.GpuIndirectValidationLoggingOverride is
+                        { } profileOverride)
+                    {
+                        return profileOverride;
+                    }
+#endif
+                    return OverrideableSettingExtensions.ResolveCascade(
+                        RuntimeEngine.Rendering.Settings.EnableGpuIndirectValidationLogging,
+                        GameSettings?.EnableGpuIndirectValidationLoggingOverride,
+                        UserSettings?.EnableGpuIndirectValidationLoggingOverride);
+                }
+            }
 
             /// <summary>
             /// Gets the effective GPU indirect CPU fallback setting.
@@ -810,10 +834,22 @@ namespace XREngine
             /// Resolved from: User Override > Project Override > Engine Default
             /// </summary>
             public static EOutputVerbosity OutputVerbosity
-                => OverrideableSettingExtensions.ResolveCascade(
-                    RuntimeEngine.Rendering.Settings.OutputVerbosity,
-                    GameSettings?.OutputVerbosityOverride,
-                    UserSettings?.OutputVerbosityOverride);
+            {
+                get
+                {
+#if !XRE_PUBLISHED
+                    if (ProfileCapture.OutputVerbosityOverride is
+                        { } profileOverride)
+                    {
+                        return profileOverride;
+                    }
+#endif
+                    return OverrideableSettingExtensions.ResolveCascade(
+                        RuntimeEngine.Rendering.Settings.OutputVerbosity,
+                        GameSettings?.OutputVerbosityOverride,
+                        UserSettings?.OutputVerbosityOverride);
+                }
+            }
 
             #endregion
 

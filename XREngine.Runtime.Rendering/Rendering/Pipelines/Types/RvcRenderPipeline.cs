@@ -336,7 +336,7 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline
 
     private void DeclareRvcResources(RenderPipelineResourceLayoutBuilder builder)
     {
-        uint layerCount = RenderFrameViewSet.MaxViewCount;
+        uint layerCount = ResolveRvcViewLayerCount(builder.Profile);
         RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
 
         Texture(builder, RvcFrameGraphContract.PerViewDepthArray, internalSize, RvcSampledDepthStencilAttachment,
@@ -367,9 +367,8 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline
 
         Texture(builder, RvcFrameGraphContract.PerViewHzbDepthArray, internalSize, RvcSampledStorageTexture,
             EPixelInternalFormat.R32f, EPixelFormat.Red, EPixelType.Float, ESizedInternalFormat.R32f,
-            null, storage: true)
+            null, storage: true, mipLevelCount: 8u)
             .Layers(layerCount)
-            .Mips(new RenderResourceMipPolicy(0u, 8u, AutoGenerateMipmaps: false, RequireImmutableStorage: true))
             .StereoCompatible(layerCount > 1u)
             .DependsOn(RvcFrameGraphContract.PerViewDepthArray)
             .DebugLabel("RVC conservative HZB")
@@ -497,15 +496,45 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline
         EPixelType pixelType,
         ESizedInternalFormat sizedInternalFormat,
         EFrameBufferAttachment? attachment,
-        bool storage)
-        => builder.Texture(name)
+        bool storage,
+        uint mipLevelCount = 1u)
+    {
+        uint layerCount = ResolveRvcViewLayerCount(builder.Profile);
+        mipLevelCount = Math.Max(1u, mipLevelCount);
+        RenderPipelineResourceLayoutBuilder.TextureSpecBuilder texture =
+            builder.Texture(name)
             .Size(sizePolicy)
             .Lifetime(RenderResourceLifetime.Persistent)
             .Usage(usage)
             .Format(internalFormat, pixelFormat, pixelType)
             .SizedFormat(sizedInternalFormat)
             .RequiresStorageUsage(storage)
-            .Factory(() => CreateRvcTexture(name, internalFormat, pixelFormat, pixelType, sizedInternalFormat, attachment, storage));
+            .Factory(() => CreateRvcTexture(
+                name,
+                internalFormat,
+                pixelFormat,
+                pixelType,
+                sizedInternalFormat,
+                attachment,
+                storage,
+                layerCount,
+                mipLevelCount));
+
+        if (mipLevelCount > 1u)
+        {
+            texture.Mips(new RenderResourceMipPolicy(
+                0u,
+                mipLevelCount,
+                AutoGenerateMipmaps: false,
+                RequireImmutableStorage: true));
+        }
+
+        return texture;
+    }
+
+    private static uint ResolveRvcViewLayerCount(
+        in RenderPipelineResourceProfile profile)
+        => Math.Max(profile.ViewCount, profile.Stereo ? 2u : 1u);
 
     private static RenderPipelineResourceLayoutBuilder.BufferSpecBuilder Buffer(
         RenderPipelineResourceLayoutBuilder builder,
@@ -535,11 +564,13 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline
         EPixelType pixelType,
         ESizedInternalFormat sizedInternalFormat,
         EFrameBufferAttachment? attachment,
-        bool storage)
+        bool storage,
+        uint layerCount,
+        uint mipLevelCount)
     {
         XRTexture2DArray texture = attachment.HasValue
             ? XRTexture2DArray.CreateFrameBufferTexture(
-                RenderFrameViewSet.MaxViewCount,
+                layerCount,
                 InternalWidth,
                 InternalHeight,
                 internalFormat,
@@ -547,12 +578,15 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline
                 pixelType,
                 attachment.Value)
             : XRTexture2DArray.CreateFrameBufferTexture(
-                RenderFrameViewSet.MaxViewCount,
+                layerCount,
                 InternalWidth,
                 InternalHeight,
                 internalFormat,
                 pixelFormat,
                 pixelType);
+
+        if (mipLevelCount > 1u)
+            ConfigureRvcMipChain(texture, mipLevelCount, internalFormat, pixelFormat, pixelType);
 
         texture.Resizable = false;
         texture.SizedInternalFormat = sizedInternalFormat;
@@ -560,6 +594,37 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline
         texture.Name = name;
         texture.SamplerName = name;
         return texture;
+    }
+
+    private static void ConfigureRvcMipChain(
+        XRTexture2DArray texture,
+        uint mipLevelCount,
+        EPixelInternalFormat internalFormat,
+        EPixelFormat pixelFormat,
+        EPixelType pixelType)
+    {
+        int count = checked((int)mipLevelCount);
+        foreach (XRTexture2D layer in texture.Textures)
+        {
+            Mipmap2D[] mipmaps = new Mipmap2D[count];
+            uint width = layer.Width;
+            uint height = layer.Height;
+            for (int mipIndex = 0; mipIndex < count; mipIndex++)
+            {
+                mipmaps[mipIndex] = new Mipmap2D(
+                    width,
+                    height,
+                    internalFormat,
+                    pixelFormat,
+                    pixelType,
+                    allocateData: false);
+                width = Math.Max(1u, width >> 1);
+                height = Math.Max(1u, height >> 1);
+            }
+
+            layer.Mipmaps = mipmaps;
+            layer.AutoGenerateMipmaps = false;
+        }
     }
 
     private static XRDataBuffer CreateRvcBuffer(

@@ -18,6 +18,8 @@ internal sealed class VulkanRenderScopeController
     public FrameBufferAttachmentSignature[]? AttachmentSignature { get; set; }
     public Rect2D RenderArea { get; set; }
     public bool DepthStencilReadOnly { get; set; }
+    public DynamicRenderingLocalReadSignature LocalReadSignature { get; set; }
+    public RenderingFlags InheritanceRenderingFlags { get; set; }
 
     public void Activate(
         XRFrameBuffer? target,
@@ -27,7 +29,9 @@ internal sealed class VulkanRenderScopeController
         in DynamicRenderingFormatSignature dynamicRenderingFormats,
         FrameBufferAttachmentSignature[]? attachmentSignature,
         in Rect2D renderArea,
-        bool depthStencilReadOnly)
+        bool depthStencilReadOnly,
+        DynamicRenderingLocalReadSignature localReadSignature = default,
+        RenderingFlags inheritanceRenderingFlags = 0)
     {
         Target = target;
         UsesDynamicRendering = usesDynamicRendering;
@@ -37,6 +41,8 @@ internal sealed class VulkanRenderScopeController
         AttachmentSignature = attachmentSignature;
         RenderArea = renderArea;
         DepthStencilReadOnly = depthStencilReadOnly;
+        LocalReadSignature = localReadSignature;
+        InheritanceRenderingFlags = inheritanceRenderingFlags;
         IsActive = true;
     }
 
@@ -51,6 +57,8 @@ internal sealed class VulkanRenderScopeController
         AttachmentSignature = null;
         RenderArea = default;
         DepthStencilReadOnly = false;
+        LocalReadSignature = default;
+        InheritanceRenderingFlags = 0;
     }
 
     public bool MatchesTarget(XRFrameBuffer? target)

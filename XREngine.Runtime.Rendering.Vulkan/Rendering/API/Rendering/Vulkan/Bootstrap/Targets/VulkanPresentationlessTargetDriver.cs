@@ -106,7 +106,9 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
         if (_slotSubmitted[slotIndex])
             SampleFrameTimestamp(api, device, in slot);
         ThrowIfDeviceFailure(api.ResetFences(device, 1, in fence), "reset presentationless frame fence");
-        ThrowIfDeviceFailure(api.ResetCommandPool(device, slot.CommandPool, 0), "reset presentationless command pool");
+        Result resetCommandPoolResult = api.ResetCommandPool(device, slot.CommandPool, 0);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResetCommandPoolCall();
+        ThrowIfDeviceFailure(resetCommandPoolResult, "reset presentationless command pool");
 
         try
         {
@@ -234,7 +236,11 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
         ThrowIfDeviceFailure(api.WaitForFences(device, 1, in fence, true, ulong.MaxValue), "wait for presentationless readback source");
         SampleFrameTimestamp(api, device, in slot);
         ThrowIfDeviceFailure(api.ResetFences(device, 1, in fence), "reset presentationless readback fence");
-        ThrowIfDeviceFailure(api.ResetCommandPool(device, slot.CommandPool, 0), "reset presentationless readback command pool");
+        Result resetReadbackCommandPoolResult = api.ResetCommandPool(device, slot.CommandPool, 0);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResetCommandPoolCall();
+        ThrowIfDeviceFailure(
+            resetReadbackCommandPoolResult,
+            "reset presentationless readback command pool");
 
         CommandBufferBeginInfo begin = new()
         {
@@ -317,7 +323,14 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
                 Level = CommandBufferLevel.Primary,
                 CommandBufferCount = 1,
             };
-            ThrowIfDeviceFailure(api.AllocateCommandBuffers(device, in allocate, out CommandBuffer commandBuffer), "allocate presentationless command buffer");
+            Result allocateCommandBufferResult =
+                api.AllocateCommandBuffers(device, in allocate, out CommandBuffer commandBuffer);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAllocateCommandBuffersCall(
+                allocate.CommandBufferCount,
+                allocateCommandBufferResult == Result.Success);
+            ThrowIfDeviceFailure(
+                allocateCommandBufferResult,
+                "allocate presentationless command buffer");
             FenceCreateInfo fenceInfo = new() { SType = StructureType.FenceCreateInfo, Flags = FenceCreateFlags.SignaledBit };
             ThrowIfDeviceFailure(api.CreateFence(device, in fenceInfo, null, out fence), "create presentationless frame fence");
             QueryPoolCreateInfo queryInfo = new() { SType = StructureType.QueryPoolCreateInfo, QueryType = QueryType.Timestamp, QueryCount = 2 };
@@ -536,6 +549,7 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
         Device device = renderer.Device;
         VulkanPresentationlessFrameSlot slot = _slots[slotIndex];
         _ = api.ResetCommandPool(device, slot.CommandPool, 0);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResetCommandPoolCall();
         if (slot.Fence.Handle != 0)
             api.DestroyFence(device, slot.Fence, null);
 

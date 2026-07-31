@@ -1,0 +1,326 @@
+using Silk.NET.Vulkan;
+
+namespace XREngine.Rendering.Vulkan;
+
+public unsafe partial class VulkanRenderer
+{
+    /// <summary>
+    /// Evaluates the exact contract for compute, transfer, and query secondary
+    /// recording.
+    /// The primary remains authoritative for render-scope closure, pass barriers,
+    /// and queue-ownership transfers before the secondary is executed.
+    /// </summary>
+    private VulkanSecondaryRecordingContract EvaluateSecondaryRecordingContract(
+        FrameOp[] operations,
+        int startIndex,
+        in VulkanSecondaryRecordingBucket bucket,
+        int resolvedPassIndex,
+        bool renderScopeActive,
+        bool primaryQueryActive)
+    {
+        EVulkanSecondaryCommandFamily family = bucket.Family;
+        VulkanQuerySecondaryInheritanceContract queryInheritance =
+            VulkanQuerySecondaryInheritanceContract.Create(
+                primaryQueryActive,
+                QueryCapabilities.InheritedQueriesEnabled);
+        if (!IsSecondaryFamilyEnabled(family))
+        {
+            return new(
+                family,
+                EVulkanSecondaryRecordingEligibility.FamilyDisabled,
+                queryInheritance);
+        }
+
+        if (!_enableSecondaryCommandBuffers)
+        {
+            return new(
+                family,
+                EVulkanSecondaryRecordingEligibility.SecondaryCommandBuffersDisabled,
+                queryInheritance);
+        }
+
+        if (bucket.Count <= 0 ||
+            startIndex < 0 ||
+            startIndex > operations.Length - bucket.Count)
+        {
+            return new(
+                family,
+                EVulkanSecondaryRecordingEligibility.EmptyRange,
+                queryInheritance);
+        }
+
+        if (family == EVulkanSecondaryCommandFamily.Query)
+        {
+            EVulkanSecondaryRecordingEligibility queryEligibility =
+                EvaluateQuerySecondaryOperations(
+                    operations,
+                    startIndex,
+                    bucket);
+            if (queryEligibility !=
+                EVulkanSecondaryRecordingEligibility.Eligible)
+            {
+                return new(
+                    family,
+                    queryEligibility,
+                    queryInheritance);
+            }
+        }
+
+        if (!queryInheritance.CanExecuteWithoutInheritedQueryState)
+        {
+            return new(
+                family,
+                EVulkanSecondaryRecordingEligibility
+                    .QueryInheritanceUnsupported,
+                queryInheritance);
+        }
+
+        if (renderScopeActive)
+        {
+            return new(
+                family,
+                EVulkanSecondaryRecordingEligibility.ActiveRenderScope,
+                queryInheritance);
+        }
+
+        QueueFamilyIndices queueFamilies = FamilyQueueIndices;
+        bool queueFamilySupported = family switch
+        {
+            EVulkanSecondaryCommandFamily.Compute =>
+                queueFamilies.GraphicsFamilyIndex.HasValue &&
+                queueFamilies.GraphicsFamilySupportsCompute,
+            EVulkanSecondaryCommandFamily.Transfer =>
+                queueFamilies.GraphicsFamilyIndex.HasValue &&
+                queueFamilies.GraphicsFamilySupportsTransfer,
+            EVulkanSecondaryCommandFamily.Query =>
+                queueFamilies.GraphicsFamilyIndex.HasValue &&
+                queueFamilies.GraphicsFamilySupportsTransfer,
+            _ => false,
+        };
+        if (!queueFamilySupported)
+        {
+            return new(
+                family,
+                EVulkanSecondaryRecordingEligibility.QueueFamilyUnsupported,
+                queryInheritance);
+        }
+
+        if (!BarrierPlanner.HasKnownPass(resolvedPassIndex))
+        {
+            return new(
+                family,
+                EVulkanSecondaryRecordingEligibility.BarrierPlanUnavailable,
+                queryInheritance);
+        }
+
+        int endIndex = startIndex + bucket.Count;
+        for (int operationIndex = startIndex;
+             operationIndex < endIndex;
+             operationIndex++)
+        {
+            FrameOp operation = operations[operationIndex];
+            bool operationValid = family switch
+            {
+                EVulkanSecondaryCommandFamily.Compute =>
+                    operation is ComputeDispatchOp dispatch &&
+                    IsComputeSecondaryOperationValid(dispatch, bucket),
+                EVulkanSecondaryCommandFamily.Transfer =>
+                    operation is BufferCopyOp copy &&
+                    IsTransferSecondaryOperationValid(copy, bucket),
+                EVulkanSecondaryCommandFamily.Query =>
+                    operation is QueryOp query &&
+                    query.Operation ==
+                        ERenderQueryOperation.CopyResults,
+                _ => false,
+            };
+            if (!operationValid)
+            {
+                return new(
+                    family,
+                    EVulkanSecondaryRecordingEligibility.InvalidOperationState,
+                    queryInheritance);
+            }
+        }
+
+        return new(
+            family,
+            EVulkanSecondaryRecordingEligibility.Eligible,
+            queryInheritance);
+    }
+
+    private bool IsSecondaryFamilyEnabled(
+        EVulkanSecondaryCommandFamily family)
+        => family switch
+        {
+            EVulkanSecondaryCommandFamily.Compute =>
+                ComputeSecondaryCommandBuffersEnabled,
+            EVulkanSecondaryCommandFamily.Transfer =>
+                TransferSecondaryCommandBuffersEnabled,
+            EVulkanSecondaryCommandFamily.Query =>
+                QuerySecondaryCommandBuffersEnabled,
+            _ => false,
+        };
+
+    private static EVulkanSecondaryRecordingEligibility
+        EvaluateQuerySecondaryOperations(
+            FrameOp[] operations,
+            int startIndex,
+            in VulkanSecondaryRecordingBucket bucket)
+    {
+        int endIndex = startIndex + bucket.Count;
+        for (int operationIndex = startIndex;
+             operationIndex < endIndex;
+             operationIndex++)
+        {
+            if (operations[operationIndex] is not QueryOp query)
+            {
+                return EVulkanSecondaryRecordingEligibility
+                    .InvalidOperationState;
+            }
+
+            EVulkanSecondaryRecordingEligibility eligibility =
+                query.Operation switch
+                {
+                    ERenderQueryOperation.Reset =>
+                        EVulkanSecondaryRecordingEligibility
+                            .QueryResetPrimaryOwned,
+                    ERenderQueryOperation.Begin or
+                    ERenderQueryOperation.End =>
+                        EVulkanSecondaryRecordingEligibility
+                            .QueryPairPrimaryOwned,
+                    ERenderQueryOperation.WriteTimestamp =>
+                        EVulkanSecondaryRecordingEligibility
+                            .QueryTimestampPrimaryOwned,
+                    ERenderQueryOperation.WriteProperties =>
+                        EVulkanSecondaryRecordingEligibility
+                            .QueryPropertiesPrimaryOwned,
+                    ERenderQueryOperation.CopyResults =>
+                        IsQueryResultCopyOrdered(
+                            operations,
+                            operationIndex,
+                            query)
+                            ? EVulkanSecondaryRecordingEligibility.Eligible
+                            : EVulkanSecondaryRecordingEligibility
+                                .QueryResultOrderingUnavailable,
+                    _ => EVulkanSecondaryRecordingEligibility
+                        .InvalidOperationState,
+                };
+            if (eligibility !=
+                EVulkanSecondaryRecordingEligibility.Eligible)
+            {
+                return eligibility;
+            }
+
+            if (!query.Query.CanCopyResults(
+                    query.ResultDestination,
+                    query.ResultDestinationOffset,
+                    query.ResultStride,
+                    query.IncludeAvailability))
+            {
+                return EVulkanSecondaryRecordingEligibility
+                    .InvalidOperationState;
+            }
+        }
+
+        return EVulkanSecondaryRecordingEligibility.Eligible;
+    }
+
+    private static bool IsQueryResultCopyOrdered(
+        FrameOp[] operations,
+        int copyIndex,
+        QueryOp copy)
+    {
+        bool queryActive = false;
+        bool producerRecorded = false;
+        for (int operationIndex = 0;
+             operationIndex < copyIndex;
+             operationIndex++)
+        {
+            if (operations[operationIndex] is not QueryOp query ||
+                !ReferenceEquals(query.Query, copy.Query))
+            {
+                continue;
+            }
+
+            switch (query.Operation)
+            {
+                case ERenderQueryOperation.Reset:
+                    queryActive = false;
+                    producerRecorded = false;
+                    break;
+                case ERenderQueryOperation.Begin:
+                    queryActive = true;
+                    producerRecorded = false;
+                    break;
+                case ERenderQueryOperation.End:
+                    if (queryActive)
+                    {
+                        queryActive = false;
+                        producerRecorded = true;
+                    }
+                    break;
+                case ERenderQueryOperation.WriteTimestamp:
+                case ERenderQueryOperation.WriteProperties:
+                    producerRecorded = true;
+                    break;
+            }
+        }
+
+        return producerRecorded && !queryActive;
+    }
+
+    private static bool IsComputeSecondaryOperationValid(
+        ComputeDispatchOp operation,
+        in VulkanSecondaryRecordingBucket bucket)
+        => operation.PassIndex == bucket.PassIndex &&
+           operation.GroupsX > 0 &&
+           operation.GroupsY > 0 &&
+           operation.GroupsZ > 0 &&
+           operation.Program is not null &&
+           operation.Snapshot is not null;
+
+    private static bool IsTransferSecondaryOperationValid(
+        BufferCopyOp operation,
+        in VulkanSecondaryRecordingBucket bucket)
+    {
+        if (operation.PassIndex != bucket.PassIndex ||
+            operation.SourceOwner is null ||
+            operation.DestinationOwner is null ||
+            operation.SourceBuffer.Handle == 0 ||
+            operation.DestinationBuffer.Handle == 0 ||
+            operation.ByteCount == 0)
+        {
+            return false;
+        }
+
+        if (operation.SourceOwner.BufferHandle is not { } sourceHandle ||
+            sourceHandle.Handle != operation.SourceBuffer.Handle ||
+            operation.DestinationOwner.BufferHandle is not { } destinationHandle ||
+            destinationHandle.Handle != operation.DestinationBuffer.Handle)
+        {
+            return false;
+        }
+
+        if ((operation.SourceOwner.LastUsageFlags &
+                BufferUsageFlags.TransferSrcBit) == 0 ||
+            (operation.DestinationOwner.LastUsageFlags &
+                BufferUsageFlags.TransferDstBit) == 0 ||
+            !IsBufferRangeValid(
+                operation.SourceOwner.AllocatedByteSize,
+                operation.SourceOffset,
+                operation.ByteCount) ||
+            !IsBufferRangeValid(
+                operation.DestinationOwner.AllocatedByteSize,
+                operation.DestinationOffset,
+                operation.ByteCount))
+        {
+            return false;
+        }
+
+        return operation.SourceBuffer.Handle != operation.DestinationBuffer.Handle ||
+               operation.SourceOffset >=
+                   operation.DestinationOffset + operation.ByteCount ||
+               operation.DestinationOffset >=
+                   operation.SourceOffset + operation.ByteCount;
+    }
+}

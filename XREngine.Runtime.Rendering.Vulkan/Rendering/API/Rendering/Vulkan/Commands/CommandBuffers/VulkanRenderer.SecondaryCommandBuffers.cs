@@ -139,8 +139,6 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            ResetVulkanCommandBufferTracked(secondaryCommandBuffer);
-
             CommandBufferInheritanceInfo inheritanceInfo = new()
             {
                 SType = StructureType.CommandBufferInheritanceInfo,
@@ -321,106 +319,125 @@ namespace XREngine.Rendering.Vulkan
             }
             using VulkanMeshFrameDataManifestRecordingScope frameDataManifestScope = new(frameDataManifest);
 
-            if (Api!.BeginCommandBuffer(secondaryCommandBuffer, ref beginInfo) != Result.Success)
-                throw new Exception("Failed to begin dynamic UI text secondary command buffer.");
+            // Pipeline/materialization deferral must not reset the last executable secondary.
+            // A cached primary may still reference it until that primary is safely re-recorded.
+            variant.DynamicUiSecondaryRecorded = false;
+            Result resetResult = ResetVulkanCommandBufferTracked(secondaryCommandBuffer);
+            if (resetResult != Result.Success)
+                throw new InvalidOperationException(
+                    $"Failed to reset dynamic UI text secondary command buffer: {resetResult}.");
 
-            ResetCommandBufferBindState(secondaryCommandBuffer);
-
-            meshDrawSlotsByRendererFamily.Clear();
-
+            bool recordingStarted = false;
             int recordedDrawCount = 0;
-            for (int i = 0; i < dynamicUiBatchTextOps.Length; i++)
+            try
             {
-                if (dynamicUiBatchTextOps[i] is not MeshDrawOp drawOp)
-                    continue;
+                if (Api!.BeginCommandBuffer(secondaryCommandBuffer, ref beginInfo) != Result.Success)
+                    throw new Exception("Failed to begin dynamic UI text secondary command buffer.");
 
-                int opPassIndex = EnsureValidPassIndex(drawOp.PassIndex, drawOp.GetType().Name, drawOp.Context.PassMetadata);
-                if (opPassIndex == int.MinValue)
-                    continue;
+                ResetCommandBufferBindState(secondaryCommandBuffer);
+                recordingStarted = true;
+                meshDrawSlotsByRendererFamily.Clear();
 
-                using var pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(drawOp.Context.PipelineInstance);
-
-                Viewport viewport = drawOp.Draw.Viewport;
-                Rect2D scissor = drawOp.Draw.Scissor;
-                uint viewportScissorCount = drawOp.Draw.ViewportScissorCount;
-                if (viewportScissorCount > 1 &&
-                    drawOp.Draw.IndexedViewports is { } indexedViewports &&
-                    drawOp.Draw.IndexedScissors is { } indexedScissors &&
-                    indexedViewports.Length >= (int)viewportScissorCount &&
-                    indexedScissors.Length >= (int)viewportScissorCount)
+                for (int i = 0; i < dynamicUiBatchTextOps.Length; i++)
                 {
-                    SetViewportScissorTracked(secondaryCommandBuffer, indexedViewports, indexedScissors, viewportScissorCount);
-                }
-                else
-                {
-                    SetViewportScissorTracked(secondaryCommandBuffer, viewport, scissor);
-                }
+                    if (dynamicUiBatchTextOps[i] is not MeshDrawOp drawOp)
+                        continue;
 
-                int drawUniformSlot = GetFrameWideMeshDrawUniformSlot(
-                    meshDrawSlotsByRendererFamily,
-                    meshFrameDataFamilyBases,
-                    drawOp.Draw.Renderer,
-                    unchecked((int)Math.Min(imageIndex, int.MaxValue)),
-                    EVulkanMeshFrameDataStreamKind.DynamicUi,
-                    drawOp.Context,
-                    drawOp.Draw);
-                bool recordedDraw = drawOp.Draw.Renderer.RecordDraw(
-                    secondaryCommandBuffer,
-                    drawOp.Draw,
-                    inheritedRenderPass,
-                    useDynamicRendering,
-                    dynamicRenderingFormats,
-                    opPassIndex,
-                    drawOp.Context.PassMetadata,
-                    depthStencilReadOnly: false,
-                    drawOp.Context.PipelineInstance?.DebugName ?? "<no pipeline>",
-                    drawOp.Target?.Name ?? "<swapchain>",
-                    drawUniformSlot,
-                    unchecked((int)Math.Min(imageIndex, int.MaxValue)));
-                if (recordedDraw)
-                {
-                    recordedDrawCount++;
-                    if (XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||
-                        XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw)
+                    int opPassIndex = EnsureValidPassIndex(drawOp.PassIndex, drawOp.GetType().Name, drawOp.Context.PassMetadata);
+                    if (opPassIndex == int.MinValue)
+                        continue;
+
+                    using var pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(drawOp.Context.PipelineInstance);
+
+                    Viewport viewport = drawOp.Draw.Viewport;
+                    Rect2D scissor = drawOp.Draw.Scissor;
+                    uint viewportScissorCount = drawOp.Draw.ViewportScissorCount;
+                    if (viewportScissorCount > 1 &&
+                        drawOp.Draw.IndexedViewports is { } indexedViewports &&
+                        drawOp.Draw.IndexedScissors is { } indexedScissors &&
+                        indexedViewports.Length >= (int)viewportScissorCount &&
+                        indexedScissors.Length >= (int)viewportScissorCount)
                     {
-                        Debug.VulkanEvery(
-                            $"Vulkan.DynamicUiText.DrawRecorded.{drawOp.Draw.Renderer.GetHashCode()}",
+                        SetViewportScissorTracked(secondaryCommandBuffer, indexedViewports, indexedScissors, viewportScissorCount);
+                    }
+                    else
+                    {
+                        SetViewportScissorTracked(secondaryCommandBuffer, viewport, scissor);
+                    }
+
+                    int drawUniformSlot = GetFrameWideMeshDrawUniformSlot(
+                        meshDrawSlotsByRendererFamily,
+                        meshFrameDataFamilyBases,
+                        drawOp.Draw.Renderer,
+                        unchecked((int)Math.Min(imageIndex, int.MaxValue)),
+                        EVulkanMeshFrameDataStreamKind.DynamicUi,
+                        drawOp.Context,
+                        drawOp.Draw);
+                    bool recordedDraw = drawOp.Draw.Renderer.RecordDraw(
+                        secondaryCommandBuffer,
+                        drawOp.Draw,
+                        inheritedRenderPass,
+                        useDynamicRendering,
+                        dynamicRenderingFormats,
+                        opPassIndex,
+                        drawOp.Context.PassMetadata,
+                        depthStencilReadOnly: false,
+                        drawOp.Context.PipelineInstance?.DebugName ?? "<no pipeline>",
+                        drawOp.Target?.Name ?? "<swapchain>",
+                        drawUniformSlot,
+                        unchecked((int)Math.Min(imageIndex, int.MaxValue)));
+                    if (recordedDraw)
+                    {
+                        recordedDrawCount++;
+                        if (XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||
+                            XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw)
+                        {
+                            Debug.VulkanEvery(
+                                $"Vulkan.DynamicUiText.DrawRecorded.{drawOp.Draw.Renderer.GetHashCode()}",
+                                TimeSpan.FromSeconds(1),
+                                "[Vulkan] Dynamic UI text draw recorded. image={0} pass={1} mesh='{2}' slot={3} colors={4} depth={5} viewport=({6},{7},{8},{9}) scissor=({10},{11},{12},{13}) instances={14}",
+                                imageIndex,
+                                opPassIndex,
+                                drawOp.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>",
+                                drawUniformSlot,
+                                dynamicRenderingFormats.DescribeColorFormats(),
+                                dynamicRenderingFormats.DepthAttachmentFormat,
+                                drawOp.Draw.Viewport.X,
+                                drawOp.Draw.Viewport.Y,
+                                drawOp.Draw.Viewport.Width,
+                                drawOp.Draw.Viewport.Height,
+                                drawOp.Draw.Scissor.Offset.X,
+                                drawOp.Draw.Scissor.Offset.Y,
+                                drawOp.Draw.Scissor.Extent.Width,
+                                drawOp.Draw.Scissor.Extent.Height,
+                                drawOp.Draw.Instances);
+                        }
+                    }
+                    else
+                    {
+                        Debug.VulkanWarningEvery(
+                            $"Vulkan.DynamicUiText.DrawNotRecorded.{drawOp.Draw.Renderer.GetHashCode()}",
                             TimeSpan.FromSeconds(1),
-                            "[Vulkan] Dynamic UI text draw recorded. image={0} pass={1} mesh='{2}' slot={3} colors={4} depth={5} viewport=({6},{7},{8},{9}) scissor=({10},{11},{12},{13}) instances={14}",
-                            imageIndex,
+                            "[Vulkan] Dynamic UI text draw emitted no commands. pass={0} mesh='{1}' material='{2}' reason={3}",
                             opPassIndex,
                             drawOp.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>",
-                            drawUniformSlot,
-                            dynamicRenderingFormats.DescribeColorFormats(),
-                            dynamicRenderingFormats.DepthAttachmentFormat,
-                            drawOp.Draw.Viewport.X,
-                            drawOp.Draw.Viewport.Y,
-                            drawOp.Draw.Viewport.Width,
-                            drawOp.Draw.Viewport.Height,
-                            drawOp.Draw.Scissor.Offset.X,
-                            drawOp.Draw.Scissor.Offset.Y,
-                            drawOp.Draw.Scissor.Extent.Width,
-                            drawOp.Draw.Scissor.Extent.Height,
-                            drawOp.Draw.Instances);
+                            (drawOp.Draw.MaterialOverride ?? drawOp.Draw.Renderer.MeshRenderer.Material)?.Name ?? "<unnamed material>",
+                            drawOp.Draw.Renderer.DescribeReusableCommandBufferFrameDataBlocker(
+                                drawOp.Draw,
+                                drawUniformSlot));
                     }
                 }
-                else
-                {
-                    Debug.VulkanWarningEvery(
-                        $"Vulkan.DynamicUiText.DrawNotRecorded.{drawOp.Draw.Renderer.GetHashCode()}",
-                        TimeSpan.FromSeconds(1),
-                        "[Vulkan] Dynamic UI text draw emitted no commands. pass={0} mesh='{1}' material='{2}' reason={3}",
-                        opPassIndex,
-                        drawOp.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>",
-                        (drawOp.Draw.MaterialOverride ?? drawOp.Draw.Renderer.MeshRenderer.Material)?.Name ?? "<unnamed material>",
-                        drawOp.Draw.Renderer.DescribeReusableCommandBufferFrameDataBlocker(
-                            drawOp.Draw,
-                            drawUniformSlot));
-                }
-            }
 
-            if (EndCommandBufferTracked(secondaryCommandBuffer) != Result.Success)
-                throw new Exception("Failed to end dynamic UI text secondary command buffer.");
+                if (EndCommandBufferTracked(secondaryCommandBuffer) != Result.Success)
+                    throw new Exception("Failed to end dynamic UI text secondary command buffer.");
+                recordingStarted = false;
+            }
+            catch
+            {
+                if (recordingStarted)
+                    TryAbandonCommandBufferRecording(secondaryCommandBuffer);
+                throw;
+            }
 
             if (recordedDrawCount == 0)
             {
@@ -640,57 +657,96 @@ namespace XREngine.Rendering.Vulkan
 
         private void RecordScheduledMeshCommandChainWorker(
             CommandChainRecordingBatch batch,
-            int chainIndex,
-            CommandChainRecordingWorkerState? worker = null)
+            int chainIndex)
         {
+            using PreparedCommandChainEncodingScope encodingScope =
+                EnterPreparedCommandChainEncodingScope();
             CommandChain chain = batch.Chains[chainIndex];
+            ref readonly VulkanPreparedCommandChain preparedChain =
+                ref batch.PreparedFrame.GetCommandChain(chainIndex);
+            if (!preparedChain.Matches(chain))
+            {
+                throw new InvalidOperationException(
+                    $"Prepared Vulkan command-chain input became stale before encoding. " +
+                    $"key={preparedChain.Key} source={preparedChain.SourceStartIndex}+" +
+                    $"{preparedChain.SourceCount} artifactGeneration=" +
+                    $"{preparedChain.WritableArtifact.ArtifactGeneration}.");
+            }
+
+            VulkanRecordedCommandInheritance inheritance =
+                preparedChain.Inheritance;
+            using VulkanWorkerSecondaryCommandArena.RecordingLease arenaLease =
+                VulkanWorkerSecondaryCommandArena.EnterRecording(
+                    chain.RecordedArtifact.WorkerArenaOwner);
             CommandBuffer secondary = batch.SecondaryBuffers[chainIndex];
             MarkCommandChainSecondaryCommandBufferInvalid(chain);
-            ResetVulkanCommandBufferTracked(secondary);
+            Result resetResult = ResetVulkanCommandBufferTracked(secondary);
+            RuntimeEngine.Rendering.Stats.Vulkan
+                .RecordVulkanWorkerSecondaryCommandBufferReset();
+            if (resetResult != Result.Success)
+            {
+                throw new InvalidOperationException(
+                    $"Failed to reset Vulkan worker mesh command-chain secondary command buffer: {resetResult}.");
+            }
 
             CommandBufferInheritanceInfo inheritanceInfo = new()
             {
                 SType = StructureType.CommandBufferInheritanceInfo,
-                RenderPass = batch.DynamicRendering ? default : batch.RenderPass,
+                RenderPass = inheritance.DynamicRendering
+                    ? default
+                    : inheritance.RenderPass,
                 Subpass = 0,
-                Framebuffer = batch.DynamicRendering ? default : batch.Framebuffer,
+                Framebuffer = inheritance.DynamicRendering
+                    ? default
+                    : inheritance.Framebuffer,
                 OcclusionQueryEnable = Vk.False,
                 QueryFlags = QueryControlFlags.None,
                 PipelineStatistics = QueryPipelineStatisticFlags.None,
             };
 
-            uint colorAttachmentCount = batch.DynamicRenderingFormats.ColorAttachmentCount;
+            uint colorAttachmentCount =
+                inheritance.DynamicRenderingFormats.ColorAttachmentCount;
             Format* colorAttachmentFormats = stackalloc Format[(int)Math.Max(colorAttachmentCount, 1u)];
             CommandBufferInheritanceRenderingInfo renderingInheritanceInfo = default;
-            if (batch.DynamicRendering)
+            if (inheritance.DynamicRendering)
             {
-                batch.DynamicRenderingFormats.CopyColorAttachmentFormats(
+                inheritance.DynamicRenderingFormats.CopyColorAttachmentFormats(
                     colorAttachmentFormats,
                     colorAttachmentCount);
                 renderingInheritanceInfo = new CommandBufferInheritanceRenderingInfo
                 {
                     SType = StructureType.CommandBufferInheritanceRenderingInfo,
-                    Flags = 0,
-                    ViewMask = batch.DynamicRenderingFormats.ViewMask,
+                    Flags = inheritance.RenderingFlags,
+                    ViewMask =
+                        inheritance.DynamicRenderingFormats.ViewMask,
                     ColorAttachmentCount = colorAttachmentCount,
                     PColorAttachmentFormats = colorAttachmentCount > 0 ? colorAttachmentFormats : null,
-                    DepthAttachmentFormat = batch.DynamicRenderingFormats.DepthAttachmentFormat,
-                    StencilAttachmentFormat = batch.DynamicRenderingFormats.StencilAttachmentFormat,
-                    RasterizationSamples = batch.Samples,
+                    DepthAttachmentFormat =
+                        inheritance.DynamicRenderingFormats.DepthAttachmentFormat,
+                    StencilAttachmentFormat =
+                        inheritance.DynamicRenderingFormats.StencilAttachmentFormat,
+                    RasterizationSamples = inheritance.Samples,
                 };
 
-                DynamicRenderingLocalReadPlan localReadInheritance = default;
+                RenderingAttachmentLocationInfo localReadAttachmentLocations = default;
+                RenderingInputAttachmentIndexInfo localReadInputIndices = default;
+                uint* colorAttachmentLocations = stackalloc uint[(int)Math.Max(colorAttachmentCount, 1u)];
+                uint* colorInputAttachmentIndices = stackalloc uint[(int)Math.Max(colorAttachmentCount, 1u)];
+                uint* depthInputAttachmentIndex = stackalloc uint[1];
+                uint* stencilInputAttachmentIndex = stackalloc uint[1];
                 void* localReadInheritancePNext = renderingInheritanceInfo.PNext;
-                TryAppendDynamicRenderingLocalReadPNext(
-                    in localReadInheritance,
+                DynamicRenderingLocalReadSignature localReadSignature =
+                    inheritance.LocalReadSignature;
+                TryAppendDynamicRenderingLocalReadInheritancePNext(
+                    in localReadSignature,
                     colorAttachmentCount,
                     ref localReadInheritancePNext,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null);
+                    &localReadAttachmentLocations,
+                    &localReadInputIndices,
+                    colorAttachmentLocations,
+                    colorInputAttachmentIndices,
+                    depthInputAttachmentIndex,
+                    stencilInputAttachmentIndex);
                 renderingInheritanceInfo.PNext = localReadInheritancePNext;
                 inheritanceInfo.PNext = &renderingInheritanceInfo;
             }
@@ -711,37 +767,30 @@ namespace XREngine.Rendering.Vulkan
                 PInheritanceInfo = &inheritanceInfo,
             };
 
-            if (batch.Ops[chain.SourceStartIndex] is not MeshDrawOp firstDraw)
-                throw new InvalidOperationException("Scheduled mesh packet does not begin with a mesh draw.");
-            if (!batch.HasPlannerState[chainIndex])
-                throw new InvalidOperationException("Scheduled mesh packet has no prepared resource-plan snapshot.");
-
-            ResourcePlannerRuntimeState plannerState = batch.PlannerStates[chainIndex];
-            plannerState.FrameOpResourcePlannerSwitchingState =
-                worker?.PlannerSwitchingState ?? batch.SerialPlannerSwitchingState;
-            using var pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(firstDraw.Context.PipelineInstance);
-            using var plannerScope = EnterThreadResourcePlannerRuntimeStateScope(in plannerState);
-
             // Graphics pipeline materialization and descriptor transitions are owned by the
-            // render thread. Workers consume the immutable planner snapshot captured after
-            // that preparation and never publish planner mutations.
+            // render thread. Workers consume only immutable prepared draw state and have
+            // no planner scope to inspect or publish.
 
             if (Api.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
                 throw new InvalidOperationException("Failed to begin Vulkan worker mesh command-chain secondary command buffer.");
 
             ResetCommandBufferBindState(secondary);
+            MarkCommandChainSecondaryRecording(chain, secondary);
             for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
             {
-                int opIndex = chain.SourceStartIndex + drawIndex;
-                if (batch.Ops[opIndex] is not MeshDrawOp drawOp)
-                    throw new InvalidOperationException($"Scheduled mesh packet contains non-mesh op at source index {opIndex}.");
+                ref readonly VkPreparedMeshDraw preparedDraw =
+                    ref GetPreparedCommandChainDraw(
+                        batch,
+                        chainIndex,
+                        drawIndex);
+                int opIndex = preparedDraw.SourceOpIndex;
 
-                Viewport viewport = drawOp.Draw.Viewport;
-                Rect2D scissor = drawOp.Draw.Scissor;
-                uint viewportScissorCount = drawOp.Draw.ViewportScissorCount;
+                Viewport viewport = preparedDraw.Viewport;
+                Rect2D scissor = preparedDraw.Scissor;
+                uint viewportScissorCount = preparedDraw.ViewportScissorCount;
                 if (viewportScissorCount > 1 &&
-                    drawOp.Draw.IndexedViewports is { } indexedViewports &&
-                    drawOp.Draw.IndexedScissors is { } indexedScissors &&
+                    preparedDraw.IndexedViewports is { } indexedViewports &&
+                    preparedDraw.IndexedScissors is { } indexedScissors &&
                     indexedViewports.Length >= (int)viewportScissorCount &&
                     indexedScissors.Length >= (int)viewportScissorCount)
                 {
@@ -752,29 +801,18 @@ namespace XREngine.Rendering.Vulkan
                     SetViewportScissorTracked(secondary, viewport, scissor);
                 }
 
-                int uniformSlot = batch.UniformSlots[opIndex - batch.StartIndex];
-                bool recorded = drawOp.Draw.Renderer.RecordDraw(
+                int uniformSlot = preparedDraw.UniformSlot;
+                bool recorded = VkMeshRenderer.RecordPreparedMeshDrawState(
                     secondary,
-                    drawOp.Draw,
-                    batch.RenderPass,
-                    batch.DynamicRendering,
-                    batch.DynamicRenderingFormats,
-                    batch.PassIndex,
-                    drawOp.Context.PassMetadata,
-                    batch.DepthStencilReadOnly,
-                    drawOp.Context.PipelineInstance?.DebugName ?? "<no pipeline>",
-                    batch.TargetName,
-                    uniformSlot,
-                    batch.FrameSlot);
+                    preparedDraw.RecordingState);
                 if (!recorded)
                 {
                     chain.State = CommandChainState.NotReady;
                     chain.DirtyReason |= CommandChainDirtyReason.PipelineGeneration;
                     throw new InvalidOperationException(
                         $"A prewarmed Vulkan command-chain draw became unavailable during secondary recording. " +
-                        $"sourceIndex={opIndex} mesh='{drawOp.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' " +
-                        $"material='{(drawOp.Draw.MaterialOverride ?? drawOp.Draw.Renderer.MeshRenderer.Material)?.Name ?? "<unnamed material>"}' " +
-                        $"reason={drawOp.Draw.Renderer.DescribeReusableCommandBufferFrameDataBlocker(drawOp.Draw, uniformSlot)}");
+                        $"sourceIndex={opIndex} mesh='{preparedDraw.DiagnosticMeshName}' " +
+                        $"uniformSlot={uniformSlot} preparedStateGeneration={preparedDraw.RecordingState.FrameDataGeneration}.");
                 }
             }
 
@@ -790,12 +828,14 @@ namespace XREngine.Rendering.Vulkan
             chain.FrameDataRefreshTouchedDescriptors = false;
             StoreCommandChainSecondaryInheritance(
                 chain,
-                batch.DynamicRendering,
-                batch.RenderPass,
-                batch.Framebuffer,
-                batch.DynamicRenderingFormats,
-                batch.DepthStencilReadOnly,
-                batch.Samples);
+                inheritance.DynamicRendering,
+                inheritance.RenderPass,
+                inheritance.Framebuffer,
+                inheritance.DynamicRenderingFormats,
+                inheritance.DepthStencilReadOnly,
+                inheritance.Samples,
+                inheritance.LocalReadSignature,
+                inheritance.RenderingFlags);
             MarkCommandChainSecondaryCommandBufferRecorded(chain);
         }
 
@@ -806,9 +846,24 @@ namespace XREngine.Rendering.Vulkan
             FrameOp[] ops,
             int startIndex,
             VulkanSecondaryRecordingBucket bucket,
+            int resolvedPassIndex,
+            bool renderScopeActive,
+            bool primaryQueryActive,
             string label)
         {
-            if (!_enableSecondaryCommandBuffers || bucket.Count <= 0)
+            VulkanSecondaryRecordingContract contract =
+                EvaluateSecondaryRecordingContract(
+                    ops,
+                    startIndex,
+                    bucket,
+                    resolvedPassIndex,
+                    renderScopeActive,
+                    primaryQueryActive);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanSecondaryRecordingEligibility(
+                contract.Family,
+                contract.Eligibility,
+                Math.Max(1, bucket.Count));
+            if (!contract.IsEligible)
                 return false;
 
             if (CommandChainsEnabledForCurrentRecording)
@@ -821,6 +876,7 @@ namespace XREngine.Rendering.Vulkan
                     startIndex,
                     bucket.Count,
                     executedCommandChainSecondaryHandles,
+                    contract.QueryInheritance,
                     (relativeIndex, secondary) =>
                     {
                         int opIndex = startIndex + relativeIndex;
@@ -838,6 +894,7 @@ namespace XREngine.Rendering.Vulkan
                     primaryCommandBuffer,
                     label,
                     imageIndex,
+                    contract.QueryInheritance,
                     secondary => RecordFrameOpInSecondary(secondary, imageIndex, runOp, opIndex));
             }
 
@@ -852,6 +909,7 @@ namespace XREngine.Rendering.Vulkan
             int startIndex,
             int count,
             HashSet<nint> executedCommandChainSecondaryHandles,
+            VulkanQuerySecondaryInheritanceContract queryInheritance,
             Action<int, CommandBuffer> recorder)
         {
             if (count <= 0)
@@ -913,9 +971,13 @@ namespace XREngine.Rendering.Vulkan
                             RenderPass = default,
                             Subpass = 0,
                             Framebuffer = default,
-                            OcclusionQueryEnable = Vk.False,
-                            QueryFlags = QueryControlFlags.None,
-                            PipelineStatistics = QueryPipelineStatisticFlags.None
+                            OcclusionQueryEnable =
+                                queryInheritance.OcclusionQueryEnable
+                                    ? Vk.True
+                                    : Vk.False,
+                            QueryFlags = queryInheritance.QueryFlags,
+                            PipelineStatistics =
+                                queryInheritance.PipelineStatistics
                         };
 
                         beginInfo.PInheritanceInfo = &inheritanceInfo;
@@ -924,6 +986,7 @@ namespace XREngine.Rendering.Vulkan
                             throw new Exception("Failed to begin Vulkan primary-owned secondary command buffer.");
 
                         ResetCommandBufferBindState(secondary);
+                        MarkCommandChainSecondaryRecording(chain, secondary);
                         recorder(relativeIndex, secondary);
 
                         if (EndCommandBufferTracked(secondary) != Result.Success)
@@ -995,28 +1058,40 @@ namespace XREngine.Rendering.Vulkan
             using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(runOp.Context);
             switch (runOp)
             {
-                case BlitOp blitOp:
-                    RecordBlitOp(secondaryCommandBuffer, imageIndex, blitOp);
-                    break;
-                case IndirectDrawOp indirectDrawOp:
-                    RecordIndirectDrawOp(secondaryCommandBuffer, indirectDrawOp);
-                    break;
-                case MeshTaskDispatchIndirectCountOp meshTaskDispatchOp:
-                    RecordMeshTaskDispatchIndirectCountOp(secondaryCommandBuffer, meshTaskDispatchOp);
-                    break;
                 case ComputeDispatchOp computeDispatchOp:
                     RecordComputeDispatchOp(secondaryCommandBuffer, imageIndex, computeDispatchOp, opIndex);
                     break;
-                case MemoryBarrierOp memoryBarrierOp:
-                    EmitMemoryBarrierMask(secondaryCommandBuffer, memoryBarrierOp.Mask);
+                case BufferCopyOp bufferCopyOp:
+                    RecordBufferCopyOp(secondaryCommandBuffer, bufferCopyOp);
                     break;
-                case PublishFramebufferForSamplingOp publishOp:
-                    RecordPublishFramebufferForSamplingOp(secondaryCommandBuffer, publishOp);
+                case QueryOp
+                {
+                    Operation: ERenderQueryOperation.CopyResults,
+                } queryOp:
+                    if (queryOp.Query.CopyResults(
+                            secondaryCommandBuffer,
+                            queryOp.ResultDestination,
+                            queryOp.ResultDestinationOffset,
+                            queryOp.ResultStride,
+                            queryOp.IncludeAvailability) !=
+                        ERenderQueryReadStatus.Ready)
+                    {
+                        throw new InvalidOperationException(
+                            "A prevalidated Vulkan query result copy became invalid during secondary recording.");
+                    }
                     break;
+                default:
+                    throw new InvalidOperationException(
+                        $"Frame operation '{runOp.GetType().Name}' is not supported by the non-graphics secondary recorder.");
             }
         }
 
-        private void ExecuteSecondaryCommandBuffer(CommandBuffer primaryCommandBuffer, string label, uint imageIndex, Action<CommandBuffer> recorder)
+        private void ExecuteSecondaryCommandBuffer(
+            CommandBuffer primaryCommandBuffer,
+            string label,
+            uint imageIndex,
+            in VulkanQuerySecondaryInheritanceContract queryInheritance,
+            Action<CommandBuffer> recorder)
         {
             bool primaryLabelActive = CmdBeginLabel(primaryCommandBuffer, label);
             CommandBuffer secondary = default;
@@ -1062,9 +1137,13 @@ namespace XREngine.Rendering.Vulkan
                     RenderPass = default,
                     Subpass = 0,
                     Framebuffer = default,
-                    OcclusionQueryEnable = Vk.False,
-                    QueryFlags = QueryControlFlags.None,
-                    PipelineStatistics = QueryPipelineStatisticFlags.None
+                    OcclusionQueryEnable =
+                        queryInheritance.OcclusionQueryEnable
+                            ? Vk.True
+                            : Vk.False,
+                    QueryFlags = queryInheritance.QueryFlags,
+                    PipelineStatistics =
+                        queryInheritance.PipelineStatistics
                 };
 
                 beginInfo.PInheritanceInfo = &inheritanceInfo;

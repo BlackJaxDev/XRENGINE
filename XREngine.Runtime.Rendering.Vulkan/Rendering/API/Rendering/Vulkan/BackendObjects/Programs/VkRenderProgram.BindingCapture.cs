@@ -1,4 +1,5 @@
 using System.Threading;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -42,20 +43,59 @@ internal unsafe partial class VkRenderProgram
         internal BindingCaptureState? Parent;
         internal BindingCaptureState? NextFree;
         internal Dictionary<string, ProgramUniformValue> Uniforms = new(StringComparer.Ordinal);
+        internal Dictionary<string, VulkanRuntimeUniformPublication>
+            RuntimeUniformPublications = new(StringComparer.Ordinal);
+        internal HashSet<string> MutableLegacyUniformNames =
+            new(StringComparer.Ordinal);
         internal Dictionary<uint, XRTexture> SamplersByUnit = [];
         internal Dictionary<uint, string> SamplerNamesByUnit = [];
         internal Dictionary<string, XRTexture> SamplersByName = new(StringComparer.Ordinal);
         internal Dictionary<uint, ProgramImageBinding> ImagesByUnit = [];
         internal Dictionary<uint, XRDataBuffer> BuffersByBinding { get; } = [];
+        internal int TypedPublicationDepth;
+        internal EVulkanBindingFrequency TypedPublicationFrequency;
+        internal ulong TypedPublicationGeneration;
+        internal int MutableLegacyPublicationDepth;
 
         internal void Clear()
         {
             Uniforms.Clear();
+            RuntimeUniformPublications.Clear();
+            MutableLegacyUniformNames.Clear();
             SamplersByUnit.Clear();
             SamplerNamesByUnit.Clear();
             SamplersByName.Clear();
             ImagesByUnit.Clear();
             BuffersByBinding.Clear();
+        }
+
+        internal void RecordUniform(string name)
+        {
+            if (TypedPublicationDepth == 0)
+            {
+                RuntimeUniformPublications.Remove(name);
+                if (MutableLegacyPublicationDepth != 0)
+                    MutableLegacyUniformNames.Add(name);
+                else
+                    MutableLegacyUniformNames.Remove(name);
+                return;
+            }
+
+            MutableLegacyUniformNames.Remove(name);
+            RuntimeUniformPublications[name] =
+                new VulkanRuntimeUniformPublication(
+                    TypedPublicationFrequency,
+                    TypedPublicationGeneration);
+        }
+
+        internal void RejectTypedResourceWrite(string resourceKind)
+        {
+            if (TypedPublicationDepth == 0)
+                return;
+
+            throw new InvalidOperationException(
+                $"Typed binding publishers may only publish numeric uniforms; " +
+                $"{resourceKind} resources require the legacy descriptor path.");
         }
 
         internal void SetSampler(string name, XRTexture texture, uint unit)
@@ -147,5 +187,106 @@ internal unsafe partial class VkRenderProgram
 
         state = null;
         return false;
+    }
+
+    internal TypedBindingPublicationScope BeginTypedBindingPublication(
+        ERenderBindingFrequency frequency,
+        ulong generation)
+        => new(this, frequency, generation);
+
+    /// <summary>
+    /// Marks numeric writes from an untyped callback so immutable snapshots can
+    /// distinguish callback-owned UBO values from ordinary material and engine
+    /// bindings. Descriptor-only callbacks leave this set empty.
+    /// </summary>
+    internal MutableLegacyBindingPublicationScope
+        BeginMutableLegacyBindingPublication()
+        => new(this);
+
+    internal readonly ref struct MutableLegacyBindingPublicationScope
+    {
+        private readonly BindingCaptureState? _capture;
+
+        internal MutableLegacyBindingPublicationScope(VkRenderProgram owner)
+        {
+            if (owner.TryGetActiveBindingCaptureState(
+                    out BindingCaptureState capture))
+            {
+                _capture = capture;
+                _capture.MutableLegacyPublicationDepth++;
+            }
+            else
+                _capture = null;
+        }
+
+        public void Dispose()
+        {
+            if (_capture is not null)
+                _capture.MutableLegacyPublicationDepth--;
+        }
+    }
+
+    internal readonly ref struct TypedBindingPublicationScope
+    {
+        private readonly BindingCaptureState _capture;
+        private readonly EVulkanBindingFrequency _previousFrequency;
+        private readonly ulong _previousGeneration;
+
+        internal TypedBindingPublicationScope(
+            VkRenderProgram owner,
+            ERenderBindingFrequency frequency,
+            ulong generation)
+        {
+            if (frequency is <= ERenderBindingFrequency.Unknown or
+                >= ERenderBindingFrequency.Count)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(frequency),
+                    frequency,
+                    "Typed binding publishers must declare a concrete frequency.");
+            }
+            if (generation == 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(generation),
+                    "Typed binding publishers must declare a non-zero content generation.");
+            }
+            if (!owner.TryGetActiveBindingCaptureState(out _capture))
+            {
+                throw new InvalidOperationException(
+                    "Typed binding publishers may only run inside a private Vulkan binding capture.");
+            }
+
+            _previousFrequency = _capture.TypedPublicationFrequency;
+            _previousGeneration = _capture.TypedPublicationGeneration;
+            _capture.TypedPublicationFrequency =
+                ToVulkanBindingFrequency(frequency);
+            _capture.TypedPublicationGeneration = generation;
+            _capture.TypedPublicationDepth++;
+        }
+
+        public void Dispose()
+        {
+            _capture.TypedPublicationDepth--;
+            _capture.TypedPublicationFrequency = _previousFrequency;
+            _capture.TypedPublicationGeneration = _previousGeneration;
+        }
+
+        private static EVulkanBindingFrequency ToVulkanBindingFrequency(
+            ERenderBindingFrequency frequency)
+            => frequency switch
+            {
+                ERenderBindingFrequency.Frame => EVulkanBindingFrequency.Frame,
+                ERenderBindingFrequency.View => EVulkanBindingFrequency.View,
+                ERenderBindingFrequency.Pass => EVulkanBindingFrequency.Pass,
+                ERenderBindingFrequency.Material => EVulkanBindingFrequency.Material,
+                ERenderBindingFrequency.Object => EVulkanBindingFrequency.Object,
+                ERenderBindingFrequency.Instance => EVulkanBindingFrequency.Instance,
+                ERenderBindingFrequency.RuntimeCallback => EVulkanBindingFrequency.RuntimeCallback,
+                _ => throw new ArgumentOutOfRangeException(
+                    nameof(frequency),
+                    frequency,
+                    "Typed binding publishers must declare a supported frequency."),
+            };
     }
 }

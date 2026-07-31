@@ -239,6 +239,8 @@ public static class XREngineEnvironmentVariables
     public const string VulkanFrameOpSignatureDiffLimit = "XRE_VULKAN_FRAMEOP_SIGNATURE_DIFF_LIMIT";
     public const string VulkanFrameOpSignatureDiff = "XRE_VULKAN_FRAMEOP_SIGNATURE_DIFF";
     public const string VulkanFrameDataReuseDiag = "XRE_VULKAN_FRAME_DATA_REUSE_DIAG";
+    public const string VulkanAutoUniformParity =
+        "XRE_VULKAN_AUTO_UNIFORM_PARITY";
     public const string VulkanDescriptorFingerprintDiag = "XRE_VULKAN_DESCRIPTOR_FINGERPRINT_DIAG";
     public const string VulkanMaterialBindingDiag = "XRE_VULKAN_MATERIAL_BINDING_DIAG";
     public const string VulkanRecordingDiag = "XRE_VULKAN_RECORDING_DIAG";
@@ -253,7 +255,11 @@ public static class XREngineEnvironmentVariables
     public const string VulkanCommandChainStabilityGuard = "XRE_VULKAN_COMMAND_CHAIN_STABILITY_GUARD";
     public const string VulkanCommandChainsAllowIndependentDesktop = "XRE_VULKAN_COMMAND_CHAINS_ALLOW_INDEPENDENT_DESKTOP";
     public const string VulkanCommandChainMeshSecondaryNoop = "XRE_VULKAN_COMMAND_CHAIN_MESH_SECONDARY_NOOP";
+    public const string VulkanCommandChainBenchmarkForceRerecord = "XRE_VULKAN_COMMAND_CHAIN_BENCHMARK_FORCE_RERECORD";
     public const string VulkanPrimaryCommandBufferReuse = "XRE_VULKAN_PRIMARY_COMMAND_BUFFER_REUSE";
+    public const string VulkanComputeSecondaryCommandBuffers = "XRE_VULKAN_COMPUTE_SECONDARY_COMMAND_BUFFERS";
+    public const string VulkanTransferSecondaryCommandBuffers = "XRE_VULKAN_TRANSFER_SECONDARY_COMMAND_BUFFERS";
+    public const string VulkanQuerySecondaryCommandBuffers = "XRE_VULKAN_QUERY_SECONDARY_COMMAND_BUFFERS";
     /// <summary>
     /// Overrides the Vulkan dynamic-uniform arena independently of the persisted robustness setting.
     /// Intended for explicit capture and regression isolation runs; accepts 0/1 and false/true forms.

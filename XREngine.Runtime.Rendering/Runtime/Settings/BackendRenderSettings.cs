@@ -493,7 +493,7 @@ public partial class VulkanSynchronizationSettings : XRBase
     private EVulkanQueueOverlapMode _queueOverlapMode = EVulkanQueueOverlapMode.Auto;
 
     [Category("Vulkan Synchronization")]
-    [Description("Selects Vulkan queue overlap policy for queue-family ownership transitions.")]
+    [Description("Selects prospective Vulkan frame-graph queue-overlap policy. Until native multi-queue frame-graph submission is implemented, the scheduler emits metadata only and executable ownership remains on the graphics queue.")]
     public EVulkanQueueOverlapMode QueueOverlapMode
     {
         get => _queueOverlapMode;

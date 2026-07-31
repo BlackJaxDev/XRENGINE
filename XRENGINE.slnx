@@ -2,6 +2,7 @@
   <Project Path="XREngine.Benchmarks/XREngine.Benchmarks.csproj" />
   <Project Path="XREngine.ControlPlane/XREngine.ControlPlane.csproj" />
   <Project Path="XREngine.Animation/XREngine.Animation.csproj" />
+  <Project Path="XREngine.AgentOrchestration/XREngine.AgentOrchestration.csproj" />
   <Project Path="XREngine.Audio/XREngine.Audio.csproj" />
   <Project Path="XREngine.Data/XREngine.Data.csproj" />
   <Project Path="XREngine.Editor/XREngine.Editor.csproj" />
@@ -25,4 +26,5 @@
   <Project Path="XREngine.UnitTests/XREngine.UnitTests.csproj" />
   <Project Path="XREngine.VRClient/XREngine.VRClient.csproj" />
   <Project Path="XREngine/XREngine.csproj" />
+  <Project Path="Tools/LocalAgentBroker/LocalAgentBroker.csproj" />
 </Solution>

@@ -26,6 +26,9 @@ internal sealed class VulkanOpenXrBackend
     internal readonly object PrimaryCommandBufferVariantsLock = new();
     internal readonly CommandPool[] EyeCommandPools = new CommandPool[EyeResourcePlannerStateCount];
     internal readonly object EyeCommandPoolsLock = new();
+    internal readonly VulkanOpenXrFrameDataRefreshRequestStorage[]
+        EyeFrameDataRefreshRequests =
+        [new(), new()];
     internal readonly List<VulkanImportedTexturePendingUpload>[] EyeRecordedTextureUploadsForSubmit = [new(), new()];
     internal readonly List<VulkanImportedTexturePendingUpload> RecordedTextureUploadsForSubmit = new();
     internal readonly VulkanOpenXrDepthTarget[] CachedDepthTargets = new VulkanOpenXrDepthTarget[EyeResourcePlannerStateCount];
@@ -36,7 +39,6 @@ internal sealed class VulkanOpenXrBackend
     internal int SynchronousResourceUploadBlockDepth;
     internal readonly object ResourcePlannerStatesLock = new();
     internal IDisposable? EyeRecordWorkerScheduler;
-    internal readonly object ParallelEyePrimaryRecordSharedStateLock = new();
 
     internal VulkanOpenXrThreadExecutionState CurrentThreadExecutionState =>
         _threadExecutionState.Value

@@ -236,6 +236,38 @@ public unsafe partial class VulkanRenderer
             return TryPushDescriptorHeapData(commandBuffer, 0, dataPtr, layout.PushByteCount, out reason);
     }
 
+    internal bool TryPushPreparedDescriptorHeapProgramData(
+        CommandBuffer commandBuffer,
+        VkRenderProgram program,
+        uint[]? dwords,
+        int dwordCount,
+        out string reason)
+    {
+        reason = string.Empty;
+        if (!ShouldBindDescriptorHeapState())
+            return true;
+
+        DescriptorHeapProgramLayout? layout = program.DescriptorHeapLayout;
+        if (layout is null || layout.PushByteCount == 0)
+            return true;
+        if (dwords is null ||
+            dwordCount < layout.PushDwordCount ||
+            dwords.Length < dwordCount)
+        {
+            reason =
+                $"prepared descriptor heap push payload is missing or has the wrong size for program '{program.Data?.Name ?? "UnnamedProgram"}'.";
+            return false;
+        }
+
+        fixed (uint* dataPtr = dwords)
+            return TryPushDescriptorHeapData(
+                commandBuffer,
+                0,
+                dataPtr,
+                layout.PushByteCount,
+                out reason);
+    }
+
     internal uint DescriptorHeapSampledImageStride
         => checked((uint)ResolveDescriptorHeapDescriptorStride(DescriptorType.SampledImage));
 

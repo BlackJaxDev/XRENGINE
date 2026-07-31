@@ -39,6 +39,37 @@ When the active model is Terra, treat these user instructions as routing command
 - A routing command does not authorize creating a new task, thread, branch, or worktree, committing, pushing, or performing external writes. Do not create those merely to simulate a model switch unless the user separately asks for them.
 - After a handoff, continue from the recorded state. Do not redo completed investigation, edits, or validation unless the evidence is stale or the receiving model identifies a concrete reason.
 
+### Local Agent Broker
+
+The optional `local-agent-broker` MCP server is a supported evidence-worker
+surface when it is configured. A broker worker is a separately billed public
+OpenAI API request; it is not an in-place model switch and must never be
+described as one.
+
+- Do not start a paid broker run merely because `recommend_agent_route`
+  recommends a tier. Start one only when the user explicitly asks to use the
+  broker/API worker or explicitly authorizes that routed worker.
+- Keep the current Codex agent as coordinator. Give the worker a compact
+  evidence packet and one bounded reasoning/editor objective; integrate and
+  validate its returned evidence locally.
+- Require the exact model ID authorized by the user:
+  `gpt-5.6-luna`, `gpt-5.6-terra`, or `gpt-5.6-sol`. Verify both
+  `requested_model` and `actual_model`; never accept silent substitution.
+- Target only an explicitly named editor session created with
+  `Tools/Manage-McpEditorSession.ps1`. Use read-only tools by default. Mutation
+  requires the user's task to authorize it, an exact broker tool allowlist, an
+  appropriate editor permission policy, and read-back or capture evidence.
+- Set narrow turn, tool-call, output-token, elapsed-time, and retry budgets.
+  Poll `get_agent_run` to a terminal status, cancel abandoned work, and report
+  API or editor failures instead of falling back to another model or session.
+- Prefer a supported native Codex handoff for routing the entire coding task.
+  Use the broker for a bounded analysis or editor-tool slice; it has no generic
+  shell, repository-write, Git, or process tools.
+- Setup and operational details are in
+  `docs/user-guide/ai/local-agent-broker.md`. If the broker is unavailable,
+  continue using the normal handoff packet rule above; do not improvise
+  credentials, endpoints, or process discovery.
+
 ## Platform And Constraints
 
 - Primary platform: Windows 10/11.

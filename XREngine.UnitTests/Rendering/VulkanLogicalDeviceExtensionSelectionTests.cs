@@ -55,4 +55,28 @@ public sealed class VulkanLogicalDeviceExtensionSelectionTests
             "VK_EXT_buffer_device_address",
         ]);
     }
+
+    [Test]
+    public void GranularOpenXrStreamlineFeatureChain_AcceptsRepresentedPromotedFeatures()
+    {
+        bool accepted = VulkanRenderer.TryUseGranularOpenXrStreamlineFeatureChain(
+            ["timelineSemaphore", "descriptorIndexing", "bufferDeviceAddress"],
+            ["dynamicRendering", "synchronization2", "maintenance4", "pipelineCreationCacheControl", "privateData"],
+            out string failureReason);
+
+        accepted.ShouldBeTrue(failureReason);
+        failureReason.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void GranularOpenXrStreamlineFeatureChain_RejectsUnrepresentedPromotedFeatures()
+    {
+        bool accepted = VulkanRenderer.TryUseGranularOpenXrStreamlineFeatureChain(
+            ["shaderFloat16"],
+            [],
+            out string failureReason);
+
+        accepted.ShouldBeFalse();
+        failureReason.ShouldContain("shaderFloat16");
+    }
 }

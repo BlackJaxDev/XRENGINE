@@ -23,7 +23,8 @@ public sealed class UnityPoiyomiProDowngradeTests
         _previousShaderServices = RuntimeShaderServices.Current;
         _previousRenderingServices = RuntimeRenderingHostServices.Current;
         RuntimeShaderServices.Current = new UnityAvatarImportTestShaderServices();
-        RuntimeRenderingHostServices.Current = RuntimeRenderingBootstrap.CreateEngineHostServices();
+        RuntimeRenderingHostServices.Current = RuntimeRenderingBootstrap.CreateEngineHostServices(
+            registerRendererBackends: true);
     }
 
     [TearDown]
@@ -129,13 +130,29 @@ public sealed class UnityPoiyomiProDowngradeTests
         material.Parameter<ShaderFloat>("_BlurStrength").ShouldBeNull();
         result.Diagnostics.Count(static diagnostic =>
                 diagnostic.Code == MaterialConversionDiagnosticCodes.ProFeatureDiscarded)
-            .ShouldBe(3);
+            .ShouldBe(
+                4,
+                string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         result.Diagnostics.Select(static diagnostic => diagnostic.Message)
             .ShouldContain(static message => message.Contains("Grab Pass", StringComparison.Ordinal));
         result.Diagnostics.Select(static diagnostic => diagnostic.Message)
             .ShouldContain(static message => message.Contains("Refraction", StringComparison.Ordinal));
         result.Diagnostics.Select(static diagnostic => diagnostic.Message)
             .ShouldContain(static message => message.Contains("Blur", StringComparison.Ordinal));
+        result.Diagnostics.Select(static diagnostic => diagnostic.Message)
+            .ShouldContain(static message =>
+                message.Contains("common Toon surface", StringComparison.Ordinal));
+        material.IsUberFeatureEnabled("poiyomi-surface", defaultEnabled: true).ShouldBeFalse();
+        material.IsUberFeatureEnabled("detail-textures", defaultEnabled: true).ShouldBeFalse();
+        material.IsUberFeatureEnabled("dissolve", defaultEnabled: true).ShouldBeFalse();
+        material.IsUberFeatureEnabled("glitter", defaultEnabled: true).ShouldBeFalse();
+        material.IsUberFeatureEnabled("poiyomi-special-effects", defaultEnabled: true).ShouldBeFalse();
+        material.IsUberFeatureEnabled("poiyomi-vertex-effects", defaultEnabled: true).ShouldBeFalse();
+        material.IsUberFeatureEnabled("outline", defaultEnabled: true).ShouldBeFalse();
+        material.PassSet.TryGetPass(EMaterialPassIdentity.Outline, out MaterialPassDefinition outlinePass)
+            .ShouldBeTrue();
+        outlinePass.Enabled.ShouldBeFalse();
+        material.OutlinePassVariant.ShouldBeNull();
         result.ConversionReport.GeneratedFeatures.ShouldNotContain(static feature =>
             feature.Contains("grab", StringComparison.OrdinalIgnoreCase) ||
             feature.Contains("refract", StringComparison.OrdinalIgnoreCase) ||

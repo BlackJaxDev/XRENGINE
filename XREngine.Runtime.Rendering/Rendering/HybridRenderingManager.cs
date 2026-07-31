@@ -866,7 +866,8 @@ namespace XREngine.Rendering
             XRRenderProgram? graphicsProgram,
             XRCamera? camera,
             bool allowDrawCountReadback,
-            Matrix4x4 modelMatrix)
+            Matrix4x4 modelMatrix,
+            bool producerCompleteStableRange = false)
         {
             using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.DispatchRenderIndirect");
             using var timing = BeginTiming("DispatchRenderIndirect");
@@ -998,7 +999,17 @@ namespace XREngine.Rendering
                     LogBufferBind("ParameterBuffer", "Parameter");
                     using (RuntimeEngine.Profiler.Start("GpuIndirect.BindParameterBuffer"))
                         renderer.BindParameterBuffer(parameterBuffer!);
-                    
+                }
+
+                using IndirectDrawSecondaryRecordingScope secondaryRecordingScope =
+                    BeginProducerCompleteIndirectSecondaryRecording(
+                        renderer,
+                        indirectDrawBuffer,
+                        useCount ? parameterBuffer : null,
+                        producerCompleteStableRange);
+
+                if (useCount)
+                {
                     GpuDebug(LogCategory.Sync, "Issuing memory barrier (ClientMappedBuffer | Command)");
                     using (RuntimeEngine.Profiler.Start("GpuIndirect.Draw.MemoryBarrier"))
                         renderer.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
@@ -1043,6 +1054,27 @@ namespace XREngine.Rendering
             }
             
             LogDispatchEnd("RenderIndirect", true);
+        }
+
+        private static IndirectDrawSecondaryRecordingScope
+            BeginProducerCompleteIndirectSecondaryRecording(
+                AbstractRenderer renderer,
+                XRDataBuffer indirectBuffer,
+                XRDataBuffer? parameterBuffer,
+                bool producerCompleteStableRange)
+        {
+            if (!producerCompleteStableRange ||
+                renderer is not
+                    IIndirectDrawSecondaryRecordingBackendCapability capability ||
+                !capability.TryBeginProducerCompleteIndirectStream(
+                    indirectBuffer,
+                    parameterBuffer,
+                    out IndirectDrawSecondaryRecordingToken token))
+            {
+                return default;
+            }
+
+            return new(capability, token);
         }
 
         private static int _oneShotDumpBudget = 3; // dump for first 3 frames
@@ -1788,7 +1820,8 @@ namespace XREngine.Rendering
                     renderProgram,
                     camera,
                     allowDrawCountReadback: false,
-                    modelMatrix);
+                    modelMatrix,
+                    producerCompleteStableRange: true);
 
                 if (logGpu)
                     GpuDebug("=== RenderTraditional END (CPU path) ===");

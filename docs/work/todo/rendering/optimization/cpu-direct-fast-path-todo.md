@@ -11,10 +11,11 @@ This remains the backend-neutral technical child for CPU-direct constants,
 dirty-range uploads, persistent mapped arenas, state sorting/caching, and
 warmup. It does not independently own Vulkan measurement or primary reuse:
 
-- baselines, trustworthy counters, and regression gates are owned by
-  [01 - Vulkan Performance Truth And Regression Gates](01-vulkan-performance-truth-and-regression-gates-todo.md);
-- Vulkan primary reuse and invalidation are owned by
-  [02 - Vulkan Primary Reuse Correctness](02-vulkan-primary-reuse-correctness-todo.md);
+- baselines, trustworthy counters, and regression gates were completed by
+  workstream 01 and are recorded in the
+  [Vulkan framerate root-cause investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md);
+- Vulkan primary reuse and invalidation were completed by workstream 02 in the
+  same [investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md);
 - backend-ready collect-side preparation is owned by
   [04 - Next-Frame Preparation And Collect-Visible Handoff](04-next-frame-preparation-and-collect-visible-handoff-todo.md).
 
@@ -32,8 +33,9 @@ Design source:
 
 Related todos (overlap guard):
 
-- [Vulkan Primary Reuse Correctness](02-vulkan-primary-reuse-correctness-todo.md)
-  owns primary state and invalidation; do not duplicate it here.
+- Completed Vulkan primary reuse owns primary state and invalidation; do not
+  duplicate it here. See the
+  [recorded evidence](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md).
 - [Next-Frame Preparation And Collect-Visible Handoff](04-next-frame-preparation-and-collect-visible-handoff-todo.md)
   owns backend-ready command handoff and preparation placement.
 - [Default Pipeline GPU Hotspots](default-pipeline-gpu-hotspots-todo.md) is a

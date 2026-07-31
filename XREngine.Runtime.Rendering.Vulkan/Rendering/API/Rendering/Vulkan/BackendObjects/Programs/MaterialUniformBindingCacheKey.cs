@@ -4,9 +4,10 @@ using XREngine.Rendering;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Identifies immutable numeric material bindings that can outlive a render
-/// frame. Render-scope values, callbacks, and descriptor resources are
-/// intentionally excluded: they have different ownership and frequency.
+/// Identifies immutable numeric bindings owned by one material revision.
+/// Render-scope values, callbacks, descriptor resources, and render-program
+/// identity are intentionally excluded because the captured name/value payload
+/// is material-owned and reusable by every compatible program.
 /// </summary>
 internal readonly struct MaterialUniformBindingCacheKey : IEquatable<MaterialUniformBindingCacheKey>
 {
@@ -15,16 +16,14 @@ internal readonly struct MaterialUniformBindingCacheKey : IEquatable<MaterialUni
     private readonly ulong _materialValueVersion;
     private readonly long _materialShaderRevision;
     private readonly long _materialUberRevision;
-    private readonly ulong _programLinkGeneration;
 
-    internal MaterialUniformBindingCacheKey(XRMaterial material, ulong programLinkGeneration)
+    internal MaterialUniformBindingCacheKey(XRMaterial material)
     {
         _material = material;
         _materialLayoutVersion = material.BindingLayoutVersion;
         _materialValueVersion = material.BindingValueVersion;
         _materialShaderRevision = material.ShaderStateRevision;
         _materialUberRevision = material.UberStateRevision;
-        _programLinkGeneration = programLinkGeneration;
     }
 
     public bool Equals(MaterialUniformBindingCacheKey other)
@@ -32,8 +31,7 @@ internal readonly struct MaterialUniformBindingCacheKey : IEquatable<MaterialUni
            _materialLayoutVersion == other._materialLayoutVersion &&
            _materialValueVersion == other._materialValueVersion &&
            _materialShaderRevision == other._materialShaderRevision &&
-           _materialUberRevision == other._materialUberRevision &&
-           _programLinkGeneration == other._programLinkGeneration;
+           _materialUberRevision == other._materialUberRevision;
 
     public override bool Equals(object? obj)
         => obj is MaterialUniformBindingCacheKey other && Equals(other);
@@ -46,7 +44,6 @@ internal readonly struct MaterialUniformBindingCacheKey : IEquatable<MaterialUni
         hash.Add(_materialValueVersion);
         hash.Add(_materialShaderRevision);
         hash.Add(_materialUberRevision);
-        hash.Add(_programLinkGeneration);
         return hash.ToHashCode();
     }
 }

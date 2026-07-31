@@ -22,6 +22,13 @@ internal unsafe partial class VkRenderProgram
 {
     public bool Link(bool allowAsyncShaderCompile = false)
     {
+        lock (_linkLock)
+            return LinkAfterAcquiringInterfaceLock(allowAsyncShaderCompile);
+    }
+
+    private bool LinkAfterAcquiringInterfaceLock(
+        bool allowAsyncShaderCompile)
+    {
         if (Renderer.IsDeviceLost)
             return false;
 

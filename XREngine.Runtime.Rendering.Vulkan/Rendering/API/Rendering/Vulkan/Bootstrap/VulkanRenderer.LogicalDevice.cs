@@ -1370,6 +1370,8 @@ public unsafe partial class VulkanRenderer
         bool drawIndirectCountExtensionEnabled = extensionsArray.Contains("VK_KHR_draw_indirect_count");
         bool descriptorIndexingExtensionEnabled = extensionsArray.Contains("VK_EXT_descriptor_indexing");
         bool descriptorIndexingRequestedByProfile = VulkanFeatureProfile.EnableDescriptorIndexing;
+        bool descriptorIndexingRequiredByStreamline =
+            _streamlineRequiredFeatures12.Contains("descriptorIndexing", StringComparer.Ordinal);
         QueryDescriptorIndexingCapabilities();
         bool synchronization2ExtensionEnabled = extensionsArray.Contains("VK_KHR_synchronization2");
         QuerySynchronization2Capabilities();
@@ -1380,7 +1382,7 @@ public unsafe partial class VulkanRenderer
             _supportsDescriptorBindingUpdateAfterBind;
 
         bool enableDescriptorIndexing = descriptorIndexingExtensionEnabled &&
-            descriptorIndexingRequestedByProfile &&
+            (descriptorIndexingRequestedByProfile || descriptorIndexingRequiredByStreamline) &&
             descriptorIndexingCapabilityReady;
 
         bool nvMemoryDecompressionExtensionEnabled = extensionsArray.Contains("VK_NV_memory_decompression");
@@ -1415,9 +1417,14 @@ public unsafe partial class VulkanRenderer
         bool bufferDeviceAddressRequestedBySceneDatabase =
             VulkanFeatureProfile.ActiveGeometryFetchMode == EVulkanGeometryFetchMode.BufferDeviceAddressPrototype ||
             VulkanFeatureProfile.EnableBindlessMaterialTable;
+        bool bufferDeviceAddressRequiredByStreamline =
+            _streamlineRequiredFeatures12.Contains("bufferDeviceAddress", StringComparer.Ordinal);
         bool enableBufferDeviceAddress =
             bufferDeviceAddressFeatureSupported &&
-            (enableNvCopyMemoryIndirect || bufferDeviceAddressRequestedBySceneDatabase || bufferDeviceAddressExtensionEnabled);
+            (enableNvCopyMemoryIndirect ||
+             bufferDeviceAddressRequestedBySceneDatabase ||
+             bufferDeviceAddressExtensionEnabled ||
+             bufferDeviceAddressRequiredByStreamline);
 
         bool dynamicRenderingExtensionEnabled = extensionsArray.Contains("VK_KHR_dynamic_rendering");
         QueryDynamicRenderingCapabilities(
@@ -1988,11 +1995,27 @@ public unsafe partial class VulkanRenderer
         };
 
         // Keep promoted feature structs separate. Mixing VkPhysicalDeviceVulkan12/13Features
-        // with their promoted per-feature structs is invalid. Streamline reports feature names
-        // in the aggregate 1.2/1.3 structs, so consolidate existing engine features into those
-        // aggregate structs whenever Streamline requires one of them.
-        bool useVulkan12FeatureEnable = _streamlineRequiredFeatures12.Length > 0;
-        bool useVulkan13FeatureEnable = _streamlineRequiredFeatures13.Length > 0;
+        // with their promoted per-feature structs is invalid. A normal Vulkan device path can
+        // consolidate Streamline requirements into the aggregate structs. OpenXR runtimes may
+        // prepend their own promoted feature structs, so that path must remain granular.
+        bool hasStreamlineVulkan12Features = _streamlineRequiredFeatures12.Length > 0;
+        bool hasStreamlineVulkan13Features = _streamlineRequiredFeatures13.Length > 0;
+        bool useGranularOpenXrStreamlineFeatureChain =
+            _openXrVulkanEnable2Context is not null &&
+            (hasStreamlineVulkan12Features || hasStreamlineVulkan13Features);
+        if (useGranularOpenXrStreamlineFeatureChain &&
+            !TryUseGranularOpenXrStreamlineFeatureChain(
+                _streamlineRequiredFeatures12,
+                _streamlineRequiredFeatures13,
+                out string granularFeatureFailure))
+        {
+            throw new InvalidOperationException(granularFeatureFailure);
+        }
+
+        bool useVulkan12FeatureEnable =
+            hasStreamlineVulkan12Features && !useGranularOpenXrStreamlineFeatureChain;
+        bool useVulkan13FeatureEnable =
+            hasStreamlineVulkan13Features && !useGranularOpenXrStreamlineFeatureChain;
         if (useVulkan12FeatureEnable || useVulkan13FeatureEnable)
         {
             PhysicalDeviceVulkan12Features streamlineSupportedFeatures12 = new()

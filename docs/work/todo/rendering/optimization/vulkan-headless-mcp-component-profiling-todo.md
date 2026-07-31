@@ -8,8 +8,9 @@ Sequence relationship:
 
 - This is a profiling-infrastructure workstream, not workstream 09 of the
   ordered Vulkan 01-08 optimization sequence.
-- It extends the measurement contract established by
-  [01 - Vulkan Performance Truth And Regression Gates](01-vulkan-performance-truth-and-regression-gates-todo.md).
+- It extends the measurement contract established by completed workstream 01
+  and recorded in the
+  [Vulkan framerate root-cause investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md).
 - It must not redefine accepted whole-frame budgets, profile modes, or
   promotion rules without updating workstream 01 and recapturing affected
   baselines.

@@ -31,6 +31,59 @@ internal readonly record struct CommandRecordingDependencySignature(
     ulong DataPublicationGeneration,
     ulong VolatileSuffixGeneration)
 {
+    internal VulkanCommandIdentityComponents CaptureIdentityComponents()
+    {
+        FrameOpSignatureHasher resourceGenerations = new();
+        resourceGenerations.Add(PipelineGeneration);
+        resourceGenerations.Add(PipelineLayoutGeneration);
+        resourceGenerations.Add(BufferAllocationGeneration);
+        resourceGenerations.Add(ImageAllocationGeneration);
+        resourceGenerations.Add(ImageViewGeneration);
+        resourceGenerations.Add(SamplerAllocationGeneration);
+        resourceGenerations.Add(DescriptorLayoutGeneration);
+        resourceGenerations.Add(DescriptorSetGeneration);
+
+        FrameOpSignatureHasher renderScopeInheritance = new();
+        renderScopeInheritance.Add(OutputPassAttachment);
+        renderScopeInheritance.Add(RenderArea);
+        renderScopeInheritance.Add(ViewMask);
+        renderScopeInheritance.Add(DynamicRenderingInheritance);
+
+        FrameOpSignatureHasher queueAssumptions = new();
+        queueAssumptions.Add(QueueFamily);
+        queueAssumptions.Add(ExternalTargetVariant);
+        queueAssumptions.Add(FrameSlotVariant);
+
+        FrameOpSignatureHasher primaryOnly = new();
+        primaryOnly.Add(OutputPassAttachment);
+        primaryOnly.Add(RenderArea);
+        primaryOnly.Add(ViewMask);
+        primaryOnly.Add(ResourcePlanGeneration);
+        primaryOnly.Add(ExternalTargetVariant);
+
+        FrameOpSignatureHasher secondaryOnly = new();
+        secondaryOnly.Add(PipelineGeneration);
+        secondaryOnly.Add(PipelineLayoutGeneration);
+        secondaryOnly.Add(MeshBindingIdentity);
+        secondaryOnly.Add(IndexBufferBindingIdentity);
+        secondaryOnly.Add(VertexBufferBindingIdentity);
+        secondaryOnly.Add(DescriptorPublicationGeneration);
+
+        FrameOpSignatureHasher dataContent = new();
+        dataContent.Add(DataPublicationGeneration);
+        dataContent.Add(VolatileSuffixGeneration);
+
+        return new VulkanCommandIdentityComponents(
+            OrderedNodes: 0,
+            resourceGenerations.ToHash(),
+            renderScopeInheritance.ToHash(),
+            queueAssumptions.ToHash(),
+            NestedArtifacts: 0,
+            primaryOnly.ToHash(),
+            secondaryOnly.ToHash(),
+            dataContent.ToHash());
+    }
+
     public CommandRecordingDependencyMismatch Compare(in CommandRecordingDependencySignature current)
         => Compare(
             current,

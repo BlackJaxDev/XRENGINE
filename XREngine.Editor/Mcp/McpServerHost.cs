@@ -1031,7 +1031,12 @@ namespace XREngine.Editor.Mcp
             {
                 name = tool.Name,
                 description = tool.Description,
-                inputSchema = tool.InputSchema
+                inputSchema = tool.InputSchema,
+                annotations = new
+                {
+                    readOnlyHint = tool.PermissionLevel == McpPermissionLevel.ReadOnly,
+                    destructiveHint = tool.PermissionLevel == McpPermissionLevel.Destructive
+                }
             });
 
             return new { tools };

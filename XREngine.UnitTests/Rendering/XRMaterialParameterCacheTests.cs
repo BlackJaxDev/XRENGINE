@@ -54,6 +54,26 @@ public sealed class XRMaterialParameterCacheTests
     }
 
     [Test]
+    public void AssigningEqualParameterValue_DoesNotDirtyMaterialBindings()
+    {
+        var parameter = new ShaderFloat(1.0f, "Value");
+        var material = new XRMaterial([parameter]);
+        ulong initialVersion = material.BindingValueVersion;
+        int valueChangedCount = 0;
+        parameter.ValueChanged += _ => valueChangedCount++;
+
+        parameter.Value = 1.0f;
+
+        material.BindingValueVersion.ShouldBe(initialVersion);
+        valueChangedCount.ShouldBe(0);
+
+        parameter.Value = 2.0f;
+
+        material.BindingValueVersion.ShouldBeGreaterThan(initialVersion);
+        valueChangedCount.ShouldBe(1);
+    }
+
+    [Test]
     public void ShaderVarArrayYaml_UsesExplicitElementTypeDiscriminators()
     {
         const string yaml =

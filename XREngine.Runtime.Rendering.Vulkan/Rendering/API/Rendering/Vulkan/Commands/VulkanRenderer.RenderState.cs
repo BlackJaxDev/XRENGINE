@@ -257,10 +257,10 @@ namespace XREngine.Rendering.Vulkan
             }
 
             if (!shadowState.IsShadowPass)
-            {
-                material.OnSettingUniforms(program);
-                RuntimeEngine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(program);
-            }
+                ApplyMutableLegacyMaterialBindings(
+                    material,
+                    program,
+                    backendProgram);
         }
 
         /// <summary>
@@ -359,8 +359,31 @@ namespace XREngine.Rendering.Vulkan
                 program.Uniform(EEngineUniform.FramebufferTextureYDirection.ToStringFast(), (int)RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeGraphicsApiKind.Vulkan));
             }
 
+            ApplyMutableLegacyMaterialBindings(
+                material,
+                program,
+                backendProgram);
+        }
+
+        private static void ApplyMutableLegacyMaterialBindings(
+            XRMaterial material,
+            XRRenderProgram program,
+            VkRenderProgram? backendProgram)
+        {
+            if (backendProgram is null)
+            {
+                material.OnSettingUniforms(program);
+                RuntimeEngine.Rendering.State.RenderingPipelineState
+                    ?.ApplyScopedProgramBindings(program);
+                return;
+            }
+
+            using VkRenderProgram.MutableLegacyBindingPublicationScope
+                publication =
+                    backendProgram.BeginMutableLegacyBindingPublication();
             material.OnSettingUniforms(program);
-            RuntimeEngine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(program);
+            RuntimeEngine.Rendering.State.RenderingPipelineState
+                ?.ApplyScopedProgramBindings(program);
         }
 
         private MaterialShadowBindingPlan GetOrCreateVulkanShadowBindingPlan(XRRenderProgram program, XRMaterial sourceMaterial)

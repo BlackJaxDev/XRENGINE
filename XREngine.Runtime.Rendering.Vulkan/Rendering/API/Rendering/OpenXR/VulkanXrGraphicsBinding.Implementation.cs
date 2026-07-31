@@ -1957,7 +1957,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         Debug.VulkanEvery(
             $"OpenXR.Vulkan.ViewRenderMode.ParallelCommandBufferRecording.{GetHashCode()}",
             TimeSpan.FromSeconds(2),
-            "[OpenXR] VR.ViewRenderMode=ParallelCommandBufferRecording selected; using the explicit worker-backed eye path with serialized shared Vulkan layout-state recording.");
+            "[OpenXR] VR.ViewRenderMode=ParallelCommandBufferRecording selected; using the explicit worker-backed eye path with concurrent native Vulkan recording and command-buffer-local image state.");
 
         using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.RenderSwapchains"))
             return TryRenderVulkanEyeBatchToSwapchains(

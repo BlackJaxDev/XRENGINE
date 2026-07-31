@@ -87,7 +87,7 @@ internal sealed class VulkanResourceLifetimeTracker
                 }
             }
 
-            ulong generation = unchecked((ulong)Interlocked.Increment(ref ResourceGeneration));
+            ulong generation = VulkanGeneration.IncrementNonZero(ref ResourceGeneration);
             ResourceLifetimes[key] = new VulkanRenderer.VulkanResourceLifetimeRecord
             {
                 Key = key,
@@ -109,7 +109,7 @@ internal sealed class VulkanResourceLifetimeTracker
         if (ResourceLifetimes.TryGetValue(key, out VulkanRenderer.VulkanResourceLifetimeRecord? record))
             return record;
 
-        ulong generation = unchecked((ulong)Interlocked.Increment(ref ResourceGeneration));
+        ulong generation = VulkanGeneration.IncrementNonZero(ref ResourceGeneration);
         record = new VulkanRenderer.VulkanResourceLifetimeRecord
         {
             Key = key,

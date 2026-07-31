@@ -221,6 +221,34 @@ public sealed class FontGlyphSetSerializationTests
         }
     }
 
+    [Test]
+    public void DiscardUnusedDistanceFieldAtlasMipmaps_RetainsOnlyAuthoritativeBaseLevel()
+    {
+        var baseMipmap = new Mipmap2D(
+            299u,
+            348u,
+            EPixelInternalFormat.Rgba8,
+            EPixelFormat.Rgba,
+            EPixelType.UnsignedByte,
+            allocateData: false);
+        var staleCeilHalvedMipmap = new Mipmap2D(
+            150u,
+            174u,
+            EPixelInternalFormat.Rgba8,
+            EPixelFormat.Rgba,
+            EPixelType.UnsignedByte,
+            allocateData: false);
+        var atlas = new XRTexture2D
+        {
+            Mipmaps = [baseMipmap, staleCeilHalvedMipmap],
+        };
+
+        FontGlyphSet.DiscardUnusedDistanceFieldAtlasMipmaps(atlas).ShouldBeTrue();
+        atlas.Mipmaps.Length.ShouldBe(1);
+        atlas.Mipmaps[0].ShouldBeSameAs(baseMipmap);
+        FontGlyphSet.DiscardUnusedDistanceFieldAtlasMipmaps(atlas).ShouldBeFalse();
+    }
+
     private static FontGlyphSet CreateFontWithEmbeddedAtlas(string glyph = "A")
     {
         string tempRoot = Path.Combine(Path.GetTempPath(), "FontGlyphSetSerializationTests", Guid.NewGuid().ToString("N"));

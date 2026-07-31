@@ -280,13 +280,13 @@ namespace XREngine.Rendering.Shaders.Generator
             && Mesh.BlendshapeQuantizationMetadata is not null;
         private bool UseExplicitRowVectorSkinningConvention => Mesh.SkinningShaderConvention == ESkinningShaderConvention.ExplicitRowMajorRowVector;
 
-        private const int ComputeInterleavedBinding = 9;
-        private const int ComputePositionBinding = 11;
-        private const int ComputeNormalBinding = 12;
-        private const int ComputeTangentBinding = 15;
-        private const int PrecombinedBlendshapePositionBinding = 13;
-        private const int PrecombinedBlendshapeNormalBinding = 14;
-        private const int PrecombinedBlendshapeTangentBinding = 15;
+        private const int ComputeInterleavedBinding = (int)MeshDeformationBindingLayout.ComputeInterleaved;
+        private const int ComputePositionBinding = (int)MeshDeformationBindingLayout.ComputePosition;
+        private const int ComputeNormalBinding = (int)MeshDeformationBindingLayout.ComputeNormal;
+        private const int ComputeTangentBinding = (int)MeshDeformationBindingLayout.ComputeTangent;
+        private const int PrecombinedBlendshapePositionBinding = (int)MeshDeformationBindingLayout.PrecombinedBlendshapePosition;
+        private const int PrecombinedBlendshapeNormalBinding = (int)MeshDeformationBindingLayout.PrecombinedBlendshapeNormal;
+        private const int PrecombinedBlendshapeTangentBinding = (int)MeshDeformationBindingLayout.PrecombinedBlendshapeTangent;
 
         private const string ComputeInterleavedBufferName = "SkinnedInterleaved";
         private const string ComputePositionBufferName = "SkinnedPositions";

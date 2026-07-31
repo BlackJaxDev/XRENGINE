@@ -365,9 +365,10 @@ namespace XREngine.Rendering.Vulkan
             hash.Add(indirect.ByteOffset);
             hash.Add(indirect.CountByteOffset);
             hash.Add(indirect.UseCount);
+            hash.Add((int)indirect.SecondaryRecordingContract.Eligibility);
             hash.Add(indirect.BindlessMaterialTextures?.Program.GetHashCode() ?? 0);
             hash.Add(indirect.BindlessMaterialTextures?.Consumer, StringComparer.Ordinal);
-            AddSignaturePart(parts, opIndex, opType, "indirect", hash, $"draws={indirect.DrawCount} stride={indirect.Stride} byteOffset={indirect.ByteOffset} countOffset={indirect.CountByteOffset} useCount={indirect.UseCount} indirectBuffer=0x{indirect.IndirectBuffer.BufferHandle?.Handle ?? 0UL:X} parameterBuffer=0x{indirect.ParameterBuffer?.BufferHandle?.Handle ?? 0UL:X} bindlessMaterialTextures={indirect.BindlessMaterialTextures.HasValue}");
+            AddSignaturePart(parts, opIndex, opType, "indirect", hash, $"draws={indirect.DrawCount} stride={indirect.Stride} byteOffset={indirect.ByteOffset} countOffset={indirect.CountByteOffset} useCount={indirect.UseCount} secondaryEligibility={indirect.SecondaryRecordingContract.Eligibility} indirectBuffer=0x{indirect.IndirectBuffer.BufferHandle?.Handle ?? 0UL:X} parameterBuffer=0x{indirect.ParameterBuffer?.BufferHandle?.Handle ?? 0UL:X} bindlessMaterialTextures={indirect.BindlessMaterialTextures.HasValue}");
         }
 
         private static void AddMeshTaskSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, MeshTaskDispatchIndirectCountOp meshTask)

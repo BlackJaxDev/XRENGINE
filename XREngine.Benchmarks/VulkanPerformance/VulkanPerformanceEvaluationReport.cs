@@ -12,6 +12,9 @@ public sealed class VulkanPerformanceEvaluationReport
     public string Status { get; init; } = string.Empty;
     public string PromotionStatus { get; init; } = string.Empty;
     public string Preset { get; init; } = string.Empty;
+    public string ProfileMode { get; init; } = string.Empty;
+    public bool CleanComparisonSuitable { get; init; }
+    public string ExpectedObserverOverhead { get; init; } = string.Empty;
     public bool PromotionEligible { get; init; }
     public string SourceCommit { get; init; } = string.Empty;
     public bool DirtyWorktree { get; init; }

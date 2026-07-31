@@ -32,9 +32,47 @@ public sealed class VulkanPerformanceContract
         if (contract.SchemaVersion != 1)
             throw new InvalidDataException(
                 $"Unsupported Vulkan performance contract schema {contract.SchemaVersion}.");
-        if (contract.Presets.Count == 0 || contract.Cohorts.Count == 0)
+        if (contract.ProfileModes.Count == 0 ||
+            contract.Presets.Count == 0 ||
+            contract.Cohorts.Count == 0)
             throw new InvalidDataException(
-                "The Vulkan performance contract must define presets and cohorts.");
+                "The Vulkan performance contract must define profile modes, presets, and cohorts.");
+
+        string[] requiredProfileModes =
+        [
+            "Diagnostics",
+            "DevelopmentProfile",
+            "CleanProfile",
+            "ReleaseBenchmark",
+        ];
+        for (int i = 0; i < requiredProfileModes.Length; i++)
+        {
+            if (!contract.ProfileModes.ContainsKey(requiredProfileModes[i]))
+            {
+                throw new InvalidDataException(
+                    $"The Vulkan performance contract is missing required profile mode '{requiredProfileModes[i]}'.");
+            }
+        }
+
+        foreach ((string name, VulkanPerformanceProfileDefinition profile) in
+                 contract.ProfileModes)
+        {
+            if (profile.MaximumLogVerbosity is not
+                ("None" or "Minimal" or "Normal" or "Verbose"))
+            {
+                throw new InvalidDataException(
+                    $"Profile mode '{name}' has unsupported maximum log verbosity '{profile.MaximumLogVerbosity}'.");
+            }
+        }
+        foreach ((string name, VulkanPerformancePresetDefinition preset) in
+                 contract.Presets)
+        {
+            if (!contract.ProfileModes.ContainsKey(preset.ProfileMode))
+            {
+                throw new InvalidDataException(
+                    $"Preset '{name}' references unknown profile mode '{preset.ProfileMode}'.");
+            }
+        }
 
         return contract;
     }

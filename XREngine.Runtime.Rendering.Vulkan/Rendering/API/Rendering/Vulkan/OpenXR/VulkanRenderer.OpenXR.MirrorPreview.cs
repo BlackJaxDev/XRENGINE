@@ -680,7 +680,18 @@ public unsafe partial class VulkanRenderer
                 _lastReusableFrameDataRefreshFailureReason = null;
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.MirrorPrimary.RefreshFrameData"))
                 {
-                    if (!TryRefreshReusableCommandBufferFrameData(recordImageIndex, ops))
+                    CommandBufferRecordingScratch frameDataScratch =
+                        _commandBufferRecordingScratch.Value!;
+                    if (!TryRefreshReusableCommandBufferFrameData(
+                            recordImageIndex,
+                            frameDataScratch
+                                .PrimaryReusableFrameDataRefreshRequests,
+                            frameDataScratch
+                                .PrimaryReusableFrameDataOwnerWorkRequests,
+                            frameDataScratch
+                                .PrimaryReusableFrameDataRefreshBatchInfo,
+                            variant.PrimaryFrameDataRefreshState,
+                            dynamicUi: false))
                         return false;
                 }
 

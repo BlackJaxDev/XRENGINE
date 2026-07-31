@@ -10,8 +10,9 @@ create; execution moved to workstream 01)
 
 This document is retained as historical design input. Its named profile modes,
 manifest fields, clean desktop/OpenXR launch requirements, warmup policy, and
-diagnostic-overhead requirements have moved to
-[01 - Vulkan Performance Truth And Regression Gates](01-vulkan-performance-truth-and-regression-gates-todo.md).
+diagnostic-overhead requirements moved to completed workstream 01 and are
+recorded in the
+[Vulkan framerate root-cause investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md).
 
 Do not complete or promote this tracker independently. New measurement-contract
 work belongs in workstream 01. Keep this document for the July 1 evidence and

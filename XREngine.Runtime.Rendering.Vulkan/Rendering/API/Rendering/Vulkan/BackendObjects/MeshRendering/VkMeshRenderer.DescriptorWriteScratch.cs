@@ -16,6 +16,7 @@ internal unsafe partial class VkMeshRenderer
 		public readonly List<(int writeIndex, int imageIndex, DescriptorBindingInfo binding, uint descriptorCount)> ImageMap = [];
 		public readonly List<(int writeIndex, int texelIndex, DescriptorBindingInfo binding, uint descriptorCount)> TexelMap = [];
 		public readonly List<(DescriptorWriteKey key, ulong signature)> Signatures = [];
+		public readonly List<WriteDescriptorSet> TemplateWrites = [];
 
 		public void Clear()
 		{
@@ -27,6 +28,7 @@ internal unsafe partial class VkMeshRenderer
 			ImageMap.Clear();
 			TexelMap.Clear();
 			Signatures.Clear();
+			TemplateWrites.Clear();
 		}
 	}
 }

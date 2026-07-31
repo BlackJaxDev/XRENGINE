@@ -14,6 +14,7 @@ public sealed class VulkanPerformanceEvaluator
     private readonly VulkanPerformanceEvaluationReport? _baseline;
     private readonly List<VulkanPerformanceIssue> _issues = [];
     private readonly HashSet<string> _issueKeys = new(StringComparer.Ordinal);
+    private VulkanPerformanceProfileDefinition _profileDefinition = new();
 
     public VulkanPerformanceEvaluator(
         VulkanPerformanceContract contract,
@@ -38,6 +39,18 @@ public sealed class VulkanPerformanceEvaluator
             preset = new VulkanPerformancePresetDefinition();
         }
 
+        if (!_contract.ProfileModes.TryGetValue(
+                preset.ProfileMode,
+                out VulkanPerformanceProfileDefinition? profileDefinition))
+        {
+            AddIssue(
+                "UnknownProfileDefinition",
+                string.Empty,
+                $"Profile mode '{preset.ProfileMode}' is not present in the contract.");
+            profileDefinition = new VulkanPerformanceProfileDefinition();
+        }
+        _profileDefinition = profileDefinition;
+
         if (_run.PromotionEligible != preset.PromotionEligible)
         {
             AddIssue(
@@ -53,6 +66,15 @@ public sealed class VulkanPerformanceEvaluator
                 "ProfileModeMismatch",
                 string.Empty,
                 $"Run profile mode '{_run.ProfileMode}' does not match preset '{_run.Preset}' mode '{preset.ProfileMode}'.");
+        }
+        if (profileDefinition.PromotionEligible != preset.PromotionEligible)
+        {
+            AddIssue(
+                "ProfilePromotionPolicyMismatch",
+                string.Empty,
+                $"Profile mode '{preset.ProfileMode}' promotion eligibility " +
+                $"{profileDefinition.PromotionEligible} does not match preset " +
+                $"'{_run.Preset}' ({preset.PromotionEligible}).");
         }
 
         if (preset.PromotionEligible && _baseline is null && !acceptingBaseline)
@@ -133,6 +155,13 @@ public sealed class VulkanPerformanceEvaluator
             Status = status,
             PromotionStatus = promotionStatus,
             Preset = _run.Preset,
+            ProfileMode = preset.ProfileMode,
+            CleanComparisonSuitable =
+                profileDefinition.CleanComparisonSuitable &&
+                !_issues.Any(
+                    static issue => IsProfileContractIssue(issue.Code)),
+            ExpectedObserverOverhead =
+                profileDefinition.ExpectedOverhead,
             PromotionEligible = preset.PromotionEligible,
             SourceCommit = _run.SourceCommit,
             DirtyWorktree = _run.DirtyWorktree,
@@ -534,18 +563,47 @@ public sealed class VulkanPerformanceEvaluator
                 $"Requested strategy '{cohort.Strategy}' resolved to '{effectiveStrategy}'.");
         }
 
-        if (GetBoolean(sample, "gpu_timestamps_dense_mode"))
+        if (!_profileDefinition.DenseGpuTimestampsAllowed &&
+            GetBoolean(sample, "gpu_timestamps_dense_mode"))
+        {
             AddIssue(
                 "IntrusiveGpuTimestamps",
                 cohort.Id,
-                "Dense GPU timestamps were enabled during a comparison capture.");
-        if (GetBoolean(sample, "validation_layers_enabled") ||
-            GetBoolean(sample, "debug_output_enabled"))
+                $"Dense GPU timestamps are prohibited by profile mode '{preset.ProfileMode}'.");
+        }
+        if (!_profileDefinition.ValidationAllowed &&
+            (GetBoolean(sample, "validation_layers_enabled") ||
+             GetBoolean(sample, "debug_output_enabled")))
         {
             AddIssue(
                 "IntrusiveValidationOrDebugOutput",
                 cohort.Id,
-                "Validation layers or synchronous debug output were enabled during a comparison capture.");
+                $"Validation layers or synchronous debug output are prohibited by profile mode '{preset.ProfileMode}'.");
+        }
+        if (!_profileDefinition.CommandLabelsAllowed &&
+            GetBoolean(sample, "vulkan_command_buffer_labels_enabled"))
+        {
+            AddIssue(
+                "IntrusiveCommandLabels",
+                cohort.Id,
+                $"Vulkan command-buffer labels are prohibited by profile mode '{preset.ProfileMode}'.");
+        }
+        if (!_profileDefinition.P3LoggingAllowed &&
+            GetBooleanFlag(sample, "p3_logging_enabled", "p3_logging"))
+        {
+            AddIssue(
+                "IntrusiveP3Logging",
+                cohort.Id,
+                $"P3 diagnostic logging is prohibited by profile mode '{preset.ProfileMode}'.");
+        }
+        if (_profileDefinition.CleanComparisonSuitable &&
+            GetBoolean(sample, "diagnostic_trace_flags_enabled"))
+        {
+            AddIssue(
+                "IntrusiveDiagnosticTraceFlags",
+                cohort.Id,
+                $"Diagnostic trace flags '{GetString(sample, "active_diagnostic_trace_flags")}' " +
+                $"are prohibited by profile mode '{preset.ProfileMode}'.");
         }
 
         string profileMode = GetString(sample, "profile_mode");
@@ -557,6 +615,66 @@ public sealed class VulkanPerformanceEvaluator
                 "FrameProfileModeMismatch",
                 cohort.Id,
                 $"Frame profile mode '{profileMode}' does not match required mode '{preset.ProfileMode}'.");
+        }
+        if (_profileDefinition.CleanComparisonSuitable &&
+            !GetBoolean(sample, "profile_comparison_suitable"))
+        {
+            AddIssue(
+                "ProfileNotCleanComparisonSuitable",
+                cohort.Id,
+                $"Profile mode '{preset.ProfileMode}' reported intrusive or non-warm capture state.");
+        }
+        if (GetBoolean(sample, "profile_promotion_eligible") !=
+            _profileDefinition.PromotionEligible)
+        {
+            AddIssue(
+                "FramePromotionPolicyMismatch",
+                cohort.Id,
+                $"Frame promotion eligibility does not match profile mode '{preset.ProfileMode}'.");
+        }
+        if (!_profileDefinition.ImGuiAllowed &&
+            (!GetString(sample, "editor_ui_state").Equals(
+                 "Disabled",
+                 StringComparison.OrdinalIgnoreCase) ||
+             !GetString(sample, "profiler_ui_state").Equals(
+                 "Disabled",
+                 StringComparison.OrdinalIgnoreCase)))
+        {
+            AddIssue(
+                "IntrusiveEditorUi",
+                cohort.Id,
+                $"Editor or profiler UI remained enabled in profile mode '{preset.ProfileMode}'.");
+        }
+        if (!_profileDefinition.DynamicTextAllowed &&
+            (GetBoolean(sample, "dynamic_text_overlay_enabled") ||
+             GetBoolean(sample, "debug_overlay_enabled")))
+        {
+            AddIssue(
+                "IntrusiveDebugOverlay",
+                cohort.Id,
+                $"Dynamic text or debug overlays remained enabled in profile mode '{preset.ProfileMode}'.");
+        }
+        if (GetVerbosityRank(GetString(sample, "log_verbosity")) >
+            GetVerbosityRank(_profileDefinition.MaximumLogVerbosity))
+        {
+            AddIssue(
+                "IntrusiveLogVerbosity",
+                cohort.Id,
+                $"Log verbosity '{GetString(sample, "log_verbosity")}' exceeds profile mode " +
+                $"'{preset.ProfileMode}' maximum '{_profileDefinition.MaximumLogVerbosity}'.");
+        }
+        if (_profileDefinition.CleanComparisonSuitable &&
+            (!GetString(sample, "shader_cache_state").Equals(
+                 "Warm",
+                 StringComparison.OrdinalIgnoreCase) ||
+             !GetString(sample, "texture_cache_state").Equals(
+                 "Warm",
+                 StringComparison.OrdinalIgnoreCase)))
+        {
+            AddIssue(
+                "ColdCacheState",
+                cohort.Id,
+                $"Profile mode '{preset.ProfileMode}' requires warm shader and texture caches.");
         }
 
         string foveationMode = GetString(sample, "vr_foveation_mode");
@@ -629,7 +747,7 @@ public sealed class VulkanPerformanceEvaluator
 
         ValidateCpuStageReconciliation(cohort, sample);
         ValidateCommandBufferTruth(cohort, sample);
-        ValidateCleanOverlayWork(cohort, preset, sample);
+        ValidateOverlayWork(cohort, preset, sample);
     }
 
     private void ValidateCpuStageReconciliation(
@@ -709,17 +827,13 @@ public sealed class VulkanPerformanceEvaluator
 
     }
 
-    private void ValidateCleanOverlayWork(
+    private void ValidateOverlayWork(
         VulkanPerformanceCohort cohort,
         VulkanPerformancePresetDefinition preset,
         JsonElement sample)
     {
-        if (!preset.ProfileMode.Equals(
-                "CleanProfile",
-                StringComparison.OrdinalIgnoreCase) &&
-            !preset.ProfileMode.Equals(
-                "ReleaseBenchmark",
-                StringComparison.OrdinalIgnoreCase))
+        if (_profileDefinition.ImGuiAllowed &&
+            _profileDefinition.DynamicTextAllowed)
         {
             return;
         }
@@ -737,11 +851,22 @@ public sealed class VulkanPerformanceEvaluator
                 continue;
             if (GetInt32(output, "command_count") == 0)
                 continue;
+            if (kind == "ImGuiOverlay" &&
+                _profileDefinition.ImGuiAllowed)
+            {
+                continue;
+            }
+            if (kind == "DynamicTextOverlay" &&
+                _profileDefinition.DynamicTextAllowed)
+            {
+                continue;
+            }
 
             AddIssue(
                 "IntrusiveOverlayWork",
                 cohort.Id,
-                $"Clean profile recorded {GetInt32(output, "command_count")} commands for {kind}.");
+                $"Profile mode '{preset.ProfileMode}' recorded " +
+                $"{GetInt32(output, "command_count")} commands for {kind}.");
         }
     }
 
@@ -876,6 +1001,56 @@ public sealed class VulkanPerformanceEvaluator
             ["vr_mode"] = cohort.VrMode,
             ["foveation_mode"] = cohort.FoveationMode,
             ["profile_mode"] = preset.ProfileMode,
+            ["profile_suitability"] =
+                GetString(sample, "profile_suitability"),
+            ["profile_comparison_suitable"] =
+                GetString(sample, "profile_comparison_suitable"),
+            ["profile_intrusive"] =
+                GetString(sample, "profile_intrusive"),
+            ["validation_layers"] =
+                GetString(sample, "validation_layers_enabled"),
+            ["debug_output"] =
+                GetString(sample, "debug_output_enabled"),
+            ["command_buffer_labels"] =
+                GetString(sample, "vulkan_command_buffer_labels_enabled"),
+            ["gpu_timestamp_dense"] =
+                GetString(sample, "gpu_timestamps_dense_mode"),
+            ["p3_logging"] =
+                GetString(sample, "p3_logging_enabled"),
+            ["diagnostic_trace_flags"] =
+                GetString(sample, "active_diagnostic_trace_flags"),
+            ["log_verbosity"] =
+                GetString(sample, "log_verbosity"),
+            ["profiler_ui_state"] =
+                GetString(sample, "profiler_ui_state"),
+            ["editor_ui_state"] =
+                GetString(sample, "editor_ui_state"),
+            ["dynamic_text_overlay"] =
+                GetString(sample, "dynamic_text_overlay_enabled"),
+            ["debug_overlay"] =
+                GetString(sample, "debug_overlay_enabled"),
+            ["shader_cache_state"] =
+                GetString(sample, "shader_cache_state"),
+            ["texture_cache_state"] =
+                GetString(sample, "texture_cache_state"),
+            ["xr_runtime"] =
+                GetString(sample, "xr_runtime"),
+            ["anti_aliasing_mode"] =
+                GetString(sample, "anti_aliasing_mode"),
+            ["msaa_sample_count"] =
+                GetString(sample, "msaa_sample_count"),
+            ["tsr_render_scale"] =
+                GetString(sample, "tsr_render_scale"),
+            ["ambient_occlusion_enabled"] =
+                GetString(sample, "ambient_occlusion_enabled"),
+            ["ambient_occlusion_mode"] =
+                GetString(sample, "ambient_occlusion_mode"),
+            ["auto_exposure_enabled"] =
+                GetString(sample, "auto_exposure_enabled"),
+            ["bloom_enabled"] =
+                GetString(sample, "bloom_enabled"),
+            ["motion_vectors_requested"] =
+                GetString(sample, "motion_vectors_requested"),
             ["gpu_name"] = _run.GpuName,
             ["gpu_driver"] = _run.GpuDriver,
             ["operating_system"] = _run.OperatingSystem,
@@ -911,9 +1086,109 @@ public sealed class VulkanPerformanceEvaluator
                 GetString(run, "DebugOutputEnabled");
             identity["gpu_timestamp_dense"] =
                 GetString(run, "GpuTimestampDenseMode");
+            ValidateManifestProfileContract(
+                cohort,
+                preset,
+                run);
         }
 
         return identity;
+    }
+
+    private void ValidateManifestProfileContract(
+        VulkanPerformanceCohort cohort,
+        VulkanPerformancePresetDefinition preset,
+        JsonElement run)
+    {
+        string mode = GetString(run, "ProfileMode");
+        if (!mode.Equals(
+                preset.ProfileMode,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            AddIssue(
+                "ManifestProfileModeMismatch",
+                cohort.Id,
+                $"Capture manifest profile mode '{mode}' does not match required mode '{preset.ProfileMode}'.");
+        }
+        if (_profileDefinition.CleanComparisonSuitable &&
+            !GetBoolean(run, "ProfileComparisonSuitable"))
+        {
+            AddIssue(
+                "ManifestNotCleanComparisonSuitable",
+                cohort.Id,
+                $"Capture manifest reports that profile mode '{preset.ProfileMode}' is not clean-comparison suitable.");
+        }
+        if (GetBoolean(run, "ProfilePromotionEligible") !=
+            _profileDefinition.PromotionEligible)
+        {
+            AddIssue(
+                "ManifestPromotionPolicyMismatch",
+                cohort.Id,
+                $"Capture manifest promotion eligibility does not match profile mode '{preset.ProfileMode}'.");
+        }
+        if (!_profileDefinition.CommandLabelsAllowed &&
+            GetBoolean(run, "VulkanCommandBufferLabelsEnabled"))
+        {
+            AddIssue(
+                "ManifestIntrusiveCommandLabels",
+                cohort.Id,
+                "Capture manifest reports Vulkan command-buffer labels enabled.");
+        }
+        if (!_profileDefinition.P3LoggingAllowed &&
+            GetBoolean(run, "P3LoggingEnabled"))
+        {
+            AddIssue(
+                "ManifestIntrusiveP3Logging",
+                cohort.Id,
+                "Capture manifest reports P3 diagnostic logging enabled.");
+        }
+        if (_profileDefinition.CleanComparisonSuitable &&
+            GetBoolean(run, "DiagnosticTraceFlagsEnabled"))
+        {
+            AddIssue(
+                "ManifestIntrusiveDiagnosticTraceFlags",
+                cohort.Id,
+                $"Capture manifest reports diagnostic trace flags " +
+                $"'{GetString(run, "ActiveDiagnosticTraceFlags")}' enabled.");
+        }
+        if (!_profileDefinition.ImGuiAllowed &&
+            (!GetString(run, "EditorUiState").Equals(
+                 "Disabled",
+                 StringComparison.OrdinalIgnoreCase) ||
+             !GetString(run, "ProfilerUiState").Equals(
+                 "Disabled",
+                 StringComparison.OrdinalIgnoreCase)))
+        {
+            AddIssue(
+                "ManifestIntrusiveEditorUi",
+                cohort.Id,
+                "Capture manifest reports editor or profiler UI enabled.");
+        }
+        if (!_profileDefinition.DynamicTextAllowed &&
+            (GetBoolean(run, "DynamicTextOverlayEnabled") ||
+             GetBoolean(run, "DebugOverlayEnabled")))
+        {
+            AddIssue(
+                "ManifestIntrusiveDebugOverlay",
+                cohort.Id,
+                "Capture manifest reports dynamic text or debug overlays enabled.");
+        }
+        if (GetVerbosityRank(GetString(run, "LogVerbosity")) >
+            GetVerbosityRank(_profileDefinition.MaximumLogVerbosity))
+        {
+            AddIssue(
+                "ManifestIntrusiveLogVerbosity",
+                cohort.Id,
+                $"Capture manifest log verbosity '{GetString(run, "LogVerbosity")}' exceeds " +
+                $"profile maximum '{_profileDefinition.MaximumLogVerbosity}'.");
+        }
+        if (string.IsNullOrWhiteSpace(GetString(run, "LogSessionPath")))
+        {
+            AddIssue(
+                "MissingLogSessionPath",
+                cohort.Id,
+                "Capture manifest does not include the exact log session path.");
+        }
     }
 
     private static string BuildTargetExtentIdentity(JsonElement sample)
@@ -1066,6 +1341,7 @@ public sealed class VulkanPerformanceEvaluator
         {
             SampleCount = sortedValues.Count,
             P50 = Percentile(sortedValues, 0.50),
+            P90 = Percentile(sortedValues, 0.90),
             P95 = Percentile(sortedValues, 0.95),
             P99 = Percentile(sortedValues, 0.99),
             Maximum = sortedValues[^1],
@@ -1181,6 +1457,62 @@ public sealed class VulkanPerformanceEvaluator
         return bool.TryParse(GetString(element, name), out bool parsed) &&
             parsed;
     }
+
+    private static bool GetBooleanFlag(
+        JsonElement element,
+        string booleanName,
+        string legacyStringName)
+    {
+        if (element.TryGetProperty(booleanName, out _))
+            return GetBoolean(element, booleanName);
+
+        string value = GetString(element, legacyStringName);
+        return value is "1" ||
+            value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("on", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int GetVerbosityRank(string value)
+        => value.ToLowerInvariant() switch
+        {
+            "none" => 0,
+            "minimal" => 1,
+            "normal" => 2,
+            "verbose" => 3,
+            _ => int.MaxValue,
+        };
+
+    private static bool IsProfileContractIssue(string code)
+        => code is
+            "UnknownPreset" or
+            "UnknownProfileDefinition" or
+            "PromotionEligibilityMismatch" or
+            "ProfileModeMismatch" or
+            "ProfilePromotionPolicyMismatch" or
+            "IntrusiveGpuTimestamps" or
+            "IntrusiveValidationOrDebugOutput" or
+            "IntrusiveCommandLabels" or
+            "IntrusiveP3Logging" or
+            "IntrusiveDiagnosticTraceFlags" or
+            "FrameProfileModeMismatch" or
+            "ProfileNotCleanComparisonSuitable" or
+            "FramePromotionPolicyMismatch" or
+            "IntrusiveEditorUi" or
+            "IntrusiveDebugOverlay" or
+            "IntrusiveLogVerbosity" or
+            "ColdCacheState" or
+            "IntrusiveOverlayWork" or
+            "ManifestProfileModeMismatch" or
+            "ManifestNotCleanComparisonSuitable" or
+            "ManifestPromotionPolicyMismatch" or
+            "ManifestIntrusiveCommandLabels" or
+            "ManifestIntrusiveP3Logging" or
+            "ManifestIntrusiveDiagnosticTraceFlags" or
+            "ManifestIntrusiveEditorUi" or
+            "ManifestIntrusiveDebugOverlay" or
+            "ManifestIntrusiveLogVerbosity" or
+            "MissingLogSessionPath";
 
     private static int GetInt32(JsonElement element, string name)
     {

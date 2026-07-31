@@ -2,7 +2,7 @@
 
 Created: 2026-07-30
 
-Status: Planned
+Status: Completed 2026-07-30
 
 ## Goal
 
@@ -212,19 +212,19 @@ an arbitrary unvalidated API string.
 
 ## P0 - Freeze Boundaries And Acceptance Tests
 
-- [ ] Record the current assistant behavior with deterministic tests before
+- [x] Record the current assistant behavior with deterministic tests before
       moving code: SSE text, function argument deltas, multiple calls, malformed
       events, provider error events, images, round limits, and cancellation.
-- [ ] Confirm project names, target frameworks, dependency direction, and
+- [x] Confirm project names, target frameworks, dependency direction, and
       whether the reusable library can remain BCL-only.
-- [ ] Inventory which current methods are orchestration, provider transport,
+- [x] Inventory which current methods are orchestration, provider transport,
       MCP transport, local tool implementation, prompt construction, and UI.
-- [ ] Define the stable request/result/error/event schemas and JSON
+- [x] Define the stable request/result/error/event schemas and JSON
       serialization contract.
-- [ ] Define the explicit routing and mutation-authorization contract.
-- [ ] Decide whether version 1 uses `store: false` and document the required
+- [x] Define the explicit routing and mutation-authorization contract.
+- [x] Decide whether version 1 uses `store: false` and document the required
       continuation/reasoning-item handling.
-- [ ] Write a threat model covering API-key exposure, prompt injection, hostile
+- [x] Write a threat model covering API-key exposure, prompt injection, hostile
       tool descriptions/results, path traversal, arbitrary endpoints, duplicate
       mutations, cost exhaustion, and orphaned runs.
 
@@ -236,19 +236,19 @@ Exit criteria:
 
 ## P1 - Extract The Reusable Tool Loop
 
-- [ ] Move Responses payload creation, SSE parsing, output-item handling,
+- [x] Move Responses payload creation, SSE parsing, output-item handling,
       function-call aggregation, `call_id` preservation, and round control into
       `XREngine.AgentOrchestration`.
-- [ ] Replace direct `ChatMessage` mutation with `IAgentRunObserver` events.
-- [ ] Extract MCP `tools/list`, schema conversion, `tools/call`, auth, timeout,
+- [x] Replace direct `ChatMessage` mutation with `IAgentRunObserver` events.
+- [x] Extract MCP `tools/list`, schema conversion, `tools/call`, auth, timeout,
       and protocol-error handling behind `IAgentToolProvider`.
-- [ ] Keep viewport presentation, tool-call segments, camera auto-focus, and
+- [x] Keep viewport presentation, tool-call segments, camera auto-focus, and
       ImGui status updates in an editor observer/adapter.
-- [ ] Make maximum rounds, tool calls, result bytes, elapsed time, and output
+- [x] Make maximum rounds, tool calls, result bytes, elapsed time, and output
       tokens request budgets instead of embedded constants.
-- [ ] Preserve multimodal tool results without forcing every consumer to load
+- [x] Preserve multimodal tool results without forcing every consumer to load
       an entire capture into memory.
-- [ ] Keep the current editor assistant behavior working through the extracted
+- [x] Keep the current editor assistant behavior working through the extracted
       library before adding the broker host.
 
 Exit criteria:
@@ -259,20 +259,20 @@ Exit criteria:
 
 ## P2 - Add The Local Broker Host
 
-- [ ] Add the console host and implement MCP stdio framing without writing
+- [x] Add the console host and implement MCP stdio framing without writing
       logs or banners to stdout.
-- [ ] Add `recommend_agent_route`, `start_agent_run`, `get_agent_run`,
+- [x] Add `recommend_agent_route`, `start_agent_run`, `get_agent_run`,
       `cancel_agent_run`, and `list_agent_runs`.
-- [ ] Implement a bounded in-memory run registry with cancellation and
+- [x] Implement a bounded in-memory run registry with cancellation and
       retention limits.
-- [ ] Validate exact model IDs and return both requested and actual models.
-- [ ] Resolve and preflight named editor sessions from their manifests.
-- [ ] Add per-session read/write coordination and broker-side tool filtering.
-- [ ] Place optional traces under one
+- [x] Validate exact model IDs and return both requested and actual models.
+- [x] Resolve and preflight named editor sessions from their manifests.
+- [x] Add per-session read/write coordination and broker-side tool filtering.
+- [x] Place optional traces under one
       `Build/_AgentValidation/<run>/` directory with redaction enabled.
-- [ ] Add a PowerShell launcher that resolves the repository root without
+- [x] Add a PowerShell launcher that resolves the repository root without
       depending on Git ownership checks.
-- [ ] Add an optional project `.codex/config.toml` entry only after a direct MCP
+- [x] Add an optional project `.codex/config.toml` entry only after a direct MCP
       initialize/list-tools smoke test passes on Windows.
 
 Exit criteria:
@@ -283,37 +283,37 @@ Exit criteria:
 
 ## P3 - Validate Routing And Editor Use
 
-- [ ] Use fake Responses and MCP servers for all deterministic CI tests.
-- [ ] Prove Terra, Luna, and Sol requests preserve the caller's exact selection
+- [x] Use fake Responses and MCP servers for all deterministic CI tests.
+- [x] Prove Terra, Luna, and Sol requests preserve the caller's exact selection
       and reject an unavailable or unapproved model without substitution.
-- [ ] Prove a worker can list editor tools, inspect a named session, and return
+- [x] Prove a worker can list editor tools, inspect a named session, and return
       evidence through a read-only run.
-- [ ] Prove a mutation-authorized worker performs one bounded editor change,
+- [x] Prove a mutation-authorized worker performs one bounded editor change,
       reads it back, and captures visual evidence when applicable.
-- [ ] Prove two read-only runs may overlap while two mutating runs targeting the
+- [x] Prove two read-only runs may overlap while two mutating runs targeting the
       same session cannot.
-- [ ] Prove malformed tool arguments, duplicate call IDs, timeouts, retries,
+- [x] Prove malformed tool arguments, duplicate call IDs, timeouts, retries,
       cancellation races, oversized outputs, and editor shutdown are terminal
       or recoverable according to the documented contract.
-- [ ] Add an opt-in live API smoke test guarded by `OPENAI_API_KEY`; never run it
+- [x] Add an opt-in live API smoke test guarded by `OPENAI_API_KEY`; never run it
       in ordinary CI or without a strict token/tool/time budget.
-- [ ] Compare the broker against direct in-editor execution for result quality,
+- [x] Compare the broker against direct in-editor execution for result quality,
       latency, token use, tool-call count, and failure clarity.
 
 ## P4 - Documentation And Operational Handoff
 
-- [ ] Add a user guide for configuring the API key, starting the broker,
+- [x] Add a user guide for configuring the API key, starting the broker,
       selecting a model explicitly, choosing a named editor session, polling,
       cancelling, and understanding API charges.
-- [ ] Add a developer guide for the extraction boundaries, protocol schemas,
+- [x] Add a developer guide for the extraction boundaries, protocol schemas,
       routing rules, tool security, traces, and test fixtures.
-- [ ] Update the MCP server guide to distinguish the editor MCP server, the
+- [x] Update the MCP server guide to distinguish the editor MCP server, the
       broker MCP server, and the broker's internal MCP client.
-- [ ] Update `AGENTS.md` only if the broker becomes a supported routing surface;
+- [x] Update `AGENTS.md` only if the broker becomes a supported routing surface;
       state clearly that an API worker is not an in-place Codex model switch.
-- [ ] Document setup and the Windows launcher in the canonical bootstrap/task
+- [x] Document setup and the Windows launcher in the canonical bootstrap/task
       workflow.
-- [ ] If any NuGet package is proposed, obtain dependency approval first, verify
+- [x] If any NuGet package is proposed, obtain dependency approval first, verify
       commercial/community-license compatibility, run
       `Tools/Generate-Dependencies.ps1`, and review the generated dependency and
       license files.
@@ -333,3 +333,25 @@ Exit criteria:
   test is documented and budgeted.
 - Targeted library, broker, Editor, and unit-test builds pass with zero new
   warnings.
+
+## Completion Notes
+
+- Implemented `XREngine.AgentOrchestration` and `Tools/LocalAgentBroker` as
+  .NET 10 BCL-only projects; no dependency or license inventory changed.
+- The ImGui OpenAI Responses path now uses the shared transport, SSE parser,
+  contracts, observer events, and bounded tool loop.
+- Deterministic fake-provider/editor tests cover all three exact model IDs,
+  streaming and malformed events, function calls/call IDs, mutation evidence,
+  visual capture evidence, policies, retries, timeouts, truncation,
+  cancellation, named-session identity, run polling, and read/write leases.
+- The Windows publish plus stdio initialize/list-tools smoke test passed. The
+  billed live API smoke remains explicit and was not run during implementation.
+- Direct in-editor and broker execution now share the same orchestration
+  implementation. Deterministic comparison shows equivalent parsed output,
+  usage, tool evidence, and failure categories; broker-only overhead is named
+  session preflight, enqueue/polling, and lease coordination.
+- The orchestration/broker builds and targeted tests pass with no new compiler
+  warnings. The touched Editor assembly also builds against existing project
+  references; a full dependency rebuild at closeout was blocked by the
+  unrelated dirty-worktree Vulkan `Debug.Assert` compile error recorded in the
+  handoff.

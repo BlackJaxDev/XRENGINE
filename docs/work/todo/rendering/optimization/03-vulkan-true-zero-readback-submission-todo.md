@@ -4,7 +4,8 @@ Last Updated: 2026-07-29
 Owner: Rendering / Vulkan / GPU-Driven Submission
 Status: Implementation Complete; Acceptance Deferred To 01-08 Closeout
 Sequence: 03 of 08
-Predecessor: [02 - Vulkan Primary Reuse Correctness](02-vulkan-primary-reuse-correctness-todo.md)
+Predecessor: Workstream 02 complete; see the
+[Vulkan framerate root-cause investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md)
 Blocks: [04 - Next-Frame Preparation And Collect-Visible Handoff](04-next-frame-preparation-and-collect-visible-handoff-todo.md)
 
 Primary evidence:

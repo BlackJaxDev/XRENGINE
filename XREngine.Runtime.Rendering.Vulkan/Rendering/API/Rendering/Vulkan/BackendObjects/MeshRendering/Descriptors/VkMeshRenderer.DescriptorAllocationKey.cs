@@ -11,7 +11,7 @@ internal unsafe partial class VkMeshRenderer
         int MaterialIdentity,
         ulong MaterialBindingLayoutVersion,
         int ViewFamilyIdentity,
-        int DrawUniformSlot,
+        int DescriptorOwnerSlot,
         ulong BindingIdentityFingerprint,
         ulong ImmutableResourceFingerprint);
 }
