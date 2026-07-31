@@ -372,6 +372,7 @@ Build/CommonAssets/Fonts/*/*.png
 Build/Editor/*
 Build/Engine/*
 Build/Tools/
+Build/AgentTools/
 Build/Dependencies/CoACD/
 Build/Dependencies/FFmpeg/**
 !Build/Dependencies/FFmpeg/README.md

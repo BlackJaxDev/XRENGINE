@@ -66,7 +66,11 @@ internal static class VulkanShaderCompiler
         string OriginalSource,
         string OptimizedSource,
         string RewrittenSource,
-        AutoUniformBlockInfo? AutoUniformBlock);
+        IReadOnlyList<AutoUniformBlockInfo> AutoUniformBlocks)
+    {
+        internal AutoUniformBlockInfo? AutoUniformBlock
+            => AutoUniformBlocks.Count == 0 ? null : AutoUniformBlocks[0];
+    }
 
     public static unsafe byte[] Compile(
         XRShader shader,
@@ -116,7 +120,12 @@ internal static class VulkanShaderCompiler
         rewrittenSource = RemoveVulkanMultiviewNumViewsLayout(rewrittenSource);
         if (RequiresExtMultiviewDirective(rewrittenSource))
             rewrittenSource = EnsureExtMultiviewDirective(rewrittenSource);
-        return new PreparedSource(entryPoint, shader.Source?.Text ?? string.Empty, source, rewrittenSource, rewrite.BlockInfo);
+        return new PreparedSource(
+            entryPoint,
+            shader.Source?.Text ?? string.Empty,
+            source,
+            rewrittenSource,
+            rewrite.BlockInfos);
     }
 
     public static unsafe byte[] CompilePrepared(XRShader shader, PreparedSource prepared)

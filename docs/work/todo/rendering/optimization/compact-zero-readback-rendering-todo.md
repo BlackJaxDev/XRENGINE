@@ -18,9 +18,9 @@ delayed diagnostics.
 
 Do not promote this child independently. Do not begin Phase 4 while executing
 workstream 03; it remains blocked until workstream 07 opens. The other
-applicable phase evidence is consumed by workstream 03 after
-[02 - Vulkan Primary Reuse Correctness](02-vulkan-primary-reuse-correctness-todo.md)
-is complete.
+applicable phase evidence is consumed by workstream 03 after completed
+workstream 02; its primary-reuse evidence is recorded in the
+[Vulkan framerate root-cause investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md).
 
 Design source:
 

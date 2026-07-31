@@ -308,7 +308,7 @@ public unsafe partial class VulkanRenderer
             SType = StructureType.ImageMemoryBarrier,
             SrcAccessMask = 0,
             DstAccessMask = AccessFlags.ShaderReadBit,
-            OldLayout = ImageLayout.ShaderReadOnlyOptimal,
+            OldLayout = ImageLayout.TransferDstOptimal,
             NewLayout = ImageLayout.ShaderReadOnlyOptimal,
             SrcQueueFamilyIndex = submitted.TransferQueueFamily,
             DstQueueFamilyIndex = submitted.GraphicsQueueFamily,

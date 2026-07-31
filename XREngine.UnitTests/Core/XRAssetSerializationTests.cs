@@ -190,6 +190,7 @@ Curve:
             Identity = EMaterialPassIdentity.Base,
             Order = 0,
             RenderPass = 0,
+            Enabled = false,
         };
 
         string yaml = AssetManager.Serializer.Serialize(original);
@@ -199,9 +200,11 @@ Curve:
         yaml.ShouldContain("Identity: Base");
         yaml.ShouldContain("Order: 0");
         yaml.ShouldContain("RenderPass: 0");
+        yaml.ShouldContain("Enabled: false");
         clone.Identity.ShouldBe(EMaterialPassIdentity.Base);
         clone.Order.ShouldBe(0);
         clone.RenderPass.ShouldBe(0);
+        clone.Enabled.ShouldBeFalse();
     }
 
     [Test]

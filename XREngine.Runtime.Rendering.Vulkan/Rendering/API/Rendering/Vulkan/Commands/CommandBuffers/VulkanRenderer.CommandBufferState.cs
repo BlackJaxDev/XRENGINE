@@ -45,6 +45,30 @@ namespace XREngine.Rendering.Vulkan
         private readonly object _ownedCommandChainSecondaryPoolsLock = new();
         private readonly Dictionary<ulong, OwnedCommandChainSecondaryPool> _ownedCommandChainSecondaryPools = new();
         private bool _enableSecondaryCommandBuffers = true;
+        private bool _enableComputeSecondaryCommandBuffers = true;
+        private bool _enableTransferSecondaryCommandBuffers = true;
+        private bool _enableQuerySecondaryCommandBuffers = true;
+        private static bool? ComputeSecondaryCommandBuffersOverride
+            => XREnvironment.GetBooleanOverride(
+                XREngineEnvironmentVariables
+                    .VulkanComputeSecondaryCommandBuffers);
+        private static bool? TransferSecondaryCommandBuffersOverride
+            => XREnvironment.GetBooleanOverride(
+                XREngineEnvironmentVariables
+                    .VulkanTransferSecondaryCommandBuffers);
+        private static bool? QuerySecondaryCommandBuffersOverride
+            => XREnvironment.GetBooleanOverride(
+                XREngineEnvironmentVariables
+                    .VulkanQuerySecondaryCommandBuffers);
+        internal bool ComputeSecondaryCommandBuffersEnabled
+            => _enableComputeSecondaryCommandBuffers &&
+               (ComputeSecondaryCommandBuffersOverride ?? true);
+        internal bool TransferSecondaryCommandBuffersEnabled
+            => _enableTransferSecondaryCommandBuffers &&
+               (TransferSecondaryCommandBuffersOverride ?? true);
+        internal bool QuerySecondaryCommandBuffersEnabled
+            => _enableQuerySecondaryCommandBuffers &&
+               (QuerySecondaryCommandBuffersOverride ?? true);
         private static int FrameOpSignatureDiffLogLimit => ReadFrameOpSignatureDiffLogLimit();
         private static bool FrameOpSignatureDiffDiagnosticsEnabled
             => XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanFrameOpSignatureDiff);
@@ -1175,7 +1199,7 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 FreeVulkanCommandBufferTracked(entry.Pool, ref secondary, "CommandBuffers.DeferredSecondary");
-                RemoveCommandBufferBindState(secondary);
+                RemoveCommandBufferBindState(entry.CommandBuffer);
                 UntrackOwnedCommandChainSecondaryCommandBuffer(entry.Pool, entry.CommandBuffer);
                 DestroyPendingOwnedCommandChainSecondaryPoolIfEmpty(entry.Pool);
             }
@@ -1188,17 +1212,42 @@ namespace XREngine.Rendering.Vulkan
             if (commandBuffer.Handle == 0 || pool.Handle == 0)
                 return;
 
+            DeferSecondaryCommandBufferFree(
+                imageIndex,
+                new DeferredSecondaryCommandBuffer(pool, commandBuffer));
+        }
+
+        private void DeferRecordedCommandArtifactRetirement(
+            uint imageIndex,
+            in VulkanRecordedCommandArtifactRetirement retirement)
+        {
+            if (!retirement.IsValid)
+                return;
+
+            RuntimeEngine.Rendering.Stats.Vulkan
+                .RecordVulkanRecordedCommandArtifactRetirement();
+            DeferSecondaryCommandBufferFree(
+                imageIndex,
+                new DeferredSecondaryCommandBuffer(retirement));
+        }
+
+        private void DeferSecondaryCommandBufferFree(
+            uint imageIndex,
+            in DeferredSecondaryCommandBuffer deferred)
+        {
+            CommandPool pool = deferred.Pool;
+            CommandBuffer commandBuffer = deferred.CommandBuffer;
             if (_deferredSecondaryCommandBuffers is null || imageIndex >= _deferredSecondaryCommandBuffers.Length)
             {
                 FreeVulkanCommandBufferTracked(pool, ref commandBuffer, "CommandBuffers.OwnedSecondary");
-                RemoveCommandBufferBindState(commandBuffer);
-                UntrackOwnedCommandChainSecondaryCommandBuffer(pool, commandBuffer);
+                RemoveCommandBufferBindState(deferred.CommandBuffer);
+                UntrackOwnedCommandChainSecondaryCommandBuffer(pool, deferred.CommandBuffer);
                 DestroyPendingOwnedCommandChainSecondaryPoolIfEmpty(pool);
                 return;
             }
 
             _deferredSecondaryCommandBuffers[imageIndex] ??= [];
-            _deferredSecondaryCommandBuffers[imageIndex]!.Add(new DeferredSecondaryCommandBuffer(pool, commandBuffer));
+            _deferredSecondaryCommandBuffers[imageIndex]!.Add(deferred);
         }
 
         /// <summary>

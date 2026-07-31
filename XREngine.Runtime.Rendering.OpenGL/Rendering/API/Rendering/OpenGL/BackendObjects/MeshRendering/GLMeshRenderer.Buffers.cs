@@ -13,13 +13,13 @@ namespace XREngine.Rendering.OpenGL
         public partial class GLMeshRenderer
         {
             private const uint MaxTrackedVertexAttribs = 16u;
-            private const uint ComputeInterleavedBinding = 9u;
-            private const uint ComputePositionBinding = 11u;
-            private const uint ComputeNormalBinding = 12u;
-            private const uint ComputeTangentBinding = 15u;
-            private const uint PrecombinedBlendshapePositionBinding = 13u;
-            private const uint PrecombinedBlendshapeNormalBinding = 14u;
-            private const uint PrecombinedBlendshapeTangentBinding = 15u;
+            private const uint ComputeInterleavedBinding = MeshDeformationBindingLayout.ComputeInterleaved;
+            private const uint ComputePositionBinding = MeshDeformationBindingLayout.ComputePosition;
+            private const uint ComputeNormalBinding = MeshDeformationBindingLayout.ComputeNormal;
+            private const uint ComputeTangentBinding = MeshDeformationBindingLayout.ComputeTangent;
+            private const uint PrecombinedBlendshapePositionBinding = MeshDeformationBindingLayout.PrecombinedBlendshapePosition;
+            private const uint PrecombinedBlendshapeNormalBinding = MeshDeformationBindingLayout.PrecombinedBlendshapeNormal;
+            private const uint PrecombinedBlendshapeTangentBinding = MeshDeformationBindingLayout.PrecombinedBlendshapeTangent;
 
             /// <summary>
             /// Swap triangle index buffer and mark bindings dirty.
@@ -489,7 +489,7 @@ namespace XREngine.Rendering.OpenGL
                 Api.BindBufferBase(GLEnum.ShaderStorageBuffer, ComputeNormalBinding, 0);
                 Api.BindBufferBase(GLEnum.ShaderStorageBuffer, ComputeTangentBinding, 0);
 
-                Dbg("Bound skinned interleaved buffer as SSBO at binding 9 for compute pre-pass", "Buffers");
+                Dbg($"Bound skinned interleaved buffer as SSBO at binding {ComputeInterleavedBinding} for compute pre-pass", "Buffers");
             }
 
             private void ResetVertexArrayBindings()

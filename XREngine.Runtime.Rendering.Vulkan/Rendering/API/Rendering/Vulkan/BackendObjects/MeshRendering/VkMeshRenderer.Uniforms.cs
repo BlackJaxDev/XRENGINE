@@ -7,6 +7,7 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -134,13 +135,25 @@ internal unsafe partial class VkMeshRenderer
 		bool useFrameArena = Renderer.MeshFrameDataArenaEnabled;
 		if (_autoUniformBuffers.TryGetValue(name, out AutoUniformBuffer[]? existing))
 		{
-			bool valid = AutoUniformBuffersValid(existing, bufferCount, size) &&
+			bool frequencyOwnedArena =
+				useFrameArena &&
+				_program is not null &&
+				_program.TryGetAutoUniformBlock(
+					name,
+					out AutoUniformBlockInfo existingBlock) &&
+				existingBlock.Frequency != EVulkanBindingFrequency.Unknown;
+			bool valid = AutoUniformBuffersValid(
+					existing,
+					bufferCount,
+					size,
+					requireMappedPointers: !frequencyOwnedArena) &&
 				(!useFrameArena || !existing[0].OwnsBuffer);
 			if (valid)
 				return true;
 
 			DestroyAutoUniformBufferArray(existing);
 			_autoUniformBuffers.Remove(name);
+			_autoUniformOwnerSlotTables.Remove(name);
 			_publishedAutoUniformMaterialWritePlans.Remove(name);
 		}
 
@@ -199,6 +212,44 @@ internal unsafe partial class VkMeshRenderer
 	private bool TryCreateAutoUniformArenaViews(string name, uint size, out AutoUniformBuffer[] buffers)
 	{
 		buffers = new AutoUniformBuffer[UniformBufferArrayLength];
+		if (_program is not null &&
+			_program.TryGetAutoUniformBlock(
+				name,
+				out AutoUniformBlockInfo frequencyBlock) &&
+			frequencyBlock.Frequency != EVulkanBindingFrequency.Unknown)
+		{
+			for (int frame = 0; frame < UniformBufferFrameCount; frame++)
+			{
+				if (!Renderer.TryGetMeshFrameDataArenaRange(
+						frame,
+						offset: 0,
+						size,
+						out var buffer,
+						out var memory,
+						out _))
+				{
+					return false;
+				}
+
+				for (int drawSlot = 0;
+					 drawSlot < UniformBufferSlotCount;
+					 drawSlot++)
+				{
+					int index =
+						frame * UniformBufferSlotCount + drawSlot;
+					buffers[index] = new AutoUniformBuffer(
+						buffer,
+						memory,
+						size,
+						mappedPtr: null,
+						offset: 0,
+						ownsBuffer: false);
+				}
+			}
+
+			return true;
+		}
+
 		for (int drawSlot = 0; drawSlot < UniformBufferSlotCount; drawSlot++)
 		{
 			if (!Renderer.TryReserveMeshFrameDataRange(this, name, isAutoUniform: true, drawSlot, size, out ulong offset))
@@ -251,14 +302,20 @@ internal unsafe partial class VkMeshRenderer
 		return true;
 	}
 
-	private static bool AutoUniformBuffersValid(AutoUniformBuffer[] buffers, int expectedCount, uint requiredSize)
+	private static bool AutoUniformBuffersValid(
+		AutoUniformBuffer[] buffers,
+		int expectedCount,
+		uint requiredSize,
+		bool requireMappedPointers)
 	{
 		if (buffers.Length != expectedCount)
 			return false;
 
 		for (int i = 0; i < buffers.Length; i++)
 		{
-			if (buffers[i].Buffer.Handle == 0 || buffers[i].MappedPtr == null || buffers[i].Size < requiredSize)
+			if (buffers[i].Buffer.Handle == 0 ||
+				(requireMappedPointers && buffers[i].MappedPtr == null) ||
+				buffers[i].Size < requiredSize)
 				return false;
 		}
 
@@ -330,7 +387,13 @@ internal unsafe partial class VkMeshRenderer
 	/// Writes auto-uniform block data into all active auto UBOs for the current frame.
 	/// Auto uniforms are populated from engine state, program overrides, and material parameters.
 	/// </summary>
-	private void UpdateAutoUniformBuffersForDraw(int frameIndex, int drawUniformSlot, XRMaterial material, in PendingMeshDraw draw)
+	private void UpdateAutoUniformBuffersForDraw(
+		int frameIndex,
+		int drawUniformSlot,
+		XRMaterial material,
+		in PendingMeshDraw draw,
+		EVulkanBindingFrequencyMask frequencyMask =
+			EVulkanBindingFrequencyMask.All)
 	{
 		if (_program is null || _autoUniformBuffers.Count == 0)
 		{
@@ -344,15 +407,64 @@ internal unsafe partial class VkMeshRenderer
 		{
 			string name = pair.Key;
 			AutoUniformBlockInfo block = pair.Value;
+			if (!IncludesBindingFrequency(
+					frequencyMask,
+					block.Frequency))
+				continue;
 			if (!_autoUniformBuffers.TryGetValue(name, out AutoUniformBuffer[]? buffers) || buffers.Length == 0)
 				continue;
 
-			int idx = ResolveUniformBufferIndex(frameIndex, drawUniformSlot, buffers.Length);
+			int idx = ResolveFrequencyOwnedAutoUniformBufferIndex(
+				block,
+				frameIndex,
+				drawUniformSlot,
+				material,
+				draw,
+				buffers.Length,
+				out ulong ownerIdentity);
+			VulkanFrequencyAutoUniformReservation? frequencyReservation = null;
+			if (block.Frequency != EVulkanBindingFrequency.Unknown &&
+				Renderer.MeshFrameDataArenaEnabled)
+			{
+				if (!Renderer.TryGetOrReserveFrequencyAutoUniformRange(
+						_program,
+						block,
+						ownerIdentity,
+						out frequencyReservation) ||
+					!Renderer.TryGetMeshFrameDataArenaRange(
+						frameIndex,
+						frequencyReservation.Offset,
+						block.Size,
+						out var sharedBuffer,
+						out var sharedMemory,
+						out void* sharedMappedPtr))
+				{
+					RuntimeEngine.Rendering.Stats.Vulkan
+						.RecordVulkanDynamicUniformExhaustion();
+					continue;
+				}
+
+				buffers[idx] = new AutoUniformBuffer(
+					sharedBuffer,
+					sharedMemory,
+					block.Size,
+					sharedMappedPtr,
+					frequencyReservation.Offset,
+					ownsBuffer: false);
+			}
 			AutoUniformBuffer buffer = buffers[idx];
 			if (buffer.Buffer.Handle == 0)
 				continue;
 
-			TryWriteAutoUniformBlock(block, buffer, idx, buffers.Length, material, draw);
+			TryWriteAutoUniformBlock(
+				block,
+				buffer,
+				idx,
+				buffers.Length,
+				frameIndex,
+				material,
+				draw,
+				frequencyReservation);
 		}
 	}
 
@@ -365,66 +477,295 @@ internal unsafe partial class VkMeshRenderer
 		AutoUniformBuffer buffer,
 		int bufferIndex,
 		int bufferCount,
+		int frameIndex,
 		XRMaterial material,
-		in PendingMeshDraw draw)
+		in PendingMeshDraw draw,
+		VulkanFrequencyAutoUniformReservation? frequencyReservation)
 	{
 		if (buffer.MappedPtr == null)
 			return false;
 
 		Span<byte> data = new(buffer.MappedPtr, (int)buffer.Size);
-		if (draw.ProgramBindingSnapshot is { AllowsMaterialBindingFastPath: true } bindingSnapshot &&
-			TryGetAutoUniformMaterialWritePlan(block, buffer.Size, material, bindingSnapshot, out AutoUniformMaterialWritePlan? plan) &&
+		EVulkanAutoUniformFallbackReason fallbackReason =
+			EVulkanAutoUniformFallbackReason.BindingSnapshotIneligible;
+		bool materialOwned =
+			block.Frequency is EVulkanBindingFrequency.Unknown or
+				EVulkanBindingFrequency.Material;
+		ComputeDispatchSnapshot? bindingSnapshot =
+			draw.ProgramBindingSnapshot;
+		bool bindingSnapshotEligible =
+			IsMaterialBindingSnapshotEligible(
+				materialOwned,
+				draw.ShadowUniformState.IsShadowPass,
+				bindingSnapshot);
+		if (bindingSnapshotEligible &&
+			TryGetAutoUniformMaterialWritePlan(
+				block,
+				buffer.Size,
+				material,
+				bindingSnapshot,
+				out AutoUniformMaterialWritePlan? plan,
+				out fallbackReason) &&
 			plan is not null)
 		{
 			int staticBytesCopied = 0;
-			if (!_publishedAutoUniformMaterialWritePlans.TryGetValue(
-					block.InstanceName,
-					out AutoUniformMaterialWritePlan?[]? publishedPlans) ||
-				publishedPlans.Length != bufferCount)
+			VulkanAutoUniformPublicationState[] publicationStates;
+			int publicationStateIndex;
+			if (frequencyReservation is not null)
 			{
-				publishedPlans = new AutoUniformMaterialWritePlan?[bufferCount];
-				_publishedAutoUniformMaterialWritePlans[block.InstanceName] = publishedPlans;
+				publicationStates =
+					frequencyReservation.PublicationStates;
+				publicationStateIndex = Math.Clamp(
+					frameIndex,
+					0,
+					publicationStates.Length - 1);
+			}
+			else
+			{
+				if (!_publishedAutoUniformMaterialWritePlans.TryGetValue(
+						block.InstanceName,
+						out publicationStates!) ||
+					publicationStates.Length != bufferCount)
+				{
+					publicationStates =
+						new VulkanAutoUniformPublicationState[bufferCount];
+					_publishedAutoUniformMaterialWritePlans[
+						block.InstanceName] = publicationStates;
+				}
+				publicationStateIndex = bufferIndex;
 			}
 
-			if (!ReferenceEquals(publishedPlans[bufferIndex], plan))
+			ref VulkanAutoUniformPublicationState publicationState =
+				ref publicationStates[publicationStateIndex];
+			bool hasMaterialOwnedStorage =
+				block.Frequency is EVulkanBindingFrequency.Unknown or
+					EVulkanBindingFrequency.Material;
+			if (!publicationState.IsPlanPublished(plan))
 			{
-				plan.StaticBytes.AsSpan().CopyTo(data);
-				publishedPlans[bufferIndex] = plan;
-				staticBytesCopied = plan.StaticBytes.Length;
+				if (hasMaterialOwnedStorage)
+				{
+					plan.StaticBytes.AsSpan().CopyTo(data);
+					staticBytesCopied = plan.StaticBytes.Length;
+				}
+				publicationState.PublishPlan(plan);
+			}
+			if (hasMaterialOwnedStorage)
+			{
+				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAutoUniformFrequencyPublication(
+					(int)EVulkanBindingFrequency.Material,
+					published: staticBytesCopied > 0,
+					staticBytesCopied);
 			}
 
-			AutoUniformMember[] dynamicMembers = plan.DynamicMembers;
 			int dynamicBytesCleared = 0;
-			for (int memberIndex = 0; memberIndex < dynamicMembers.Length; memberIndex++)
+			int dynamicOperationsWritten = 0;
+			for (EVulkanBindingFrequency frequency =
+					EVulkanBindingFrequency.Frame;
+				 frequency < EVulkanBindingFrequency.Count;
+				 frequency++)
 			{
-				AutoUniformMember member = dynamicMembers[memberIndex];
-				data.Slice((int)member.Offset, (int)member.Size).Clear();
-				dynamicBytesCleared += (int)member.Size;
-				TryWriteAutoUniformMember(data, member, material, draw);
+				VulkanAutoUniformFrequencyPlan frequencyPlan =
+					plan.GetFrequencyPlan(frequency);
+				ReadOnlySpan<VulkanAutoUniformBindingOperation> operations =
+					frequencyPlan.Operations;
+				if (operations.IsEmpty)
+					continue;
+
+				ulong generation = ComputeAutoUniformFrequencyGeneration(
+					frequency,
+					plan,
+					draw);
+				ReadOnlySpan<VulkanAutoUniformDirtyRange> dirtyRanges =
+					frequencyPlan.DirtyRanges;
+				if (!publicationState.TryBeginFrequencyPublication(
+						frequency,
+						generation,
+						dirtyRanges,
+						buffer.Size))
+				{
+					RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAutoUniformFrequencyPublication(
+						(int)frequency,
+						published: false,
+						publishedBytes: 0);
+					continue;
+				}
+
+				int publishedBytes = 0;
+				for (int rangeIndex = 0;
+					 rangeIndex <
+						publicationState.PendingDirtyRangeCount;
+					 rangeIndex++)
+				{
+					VulkanAutoUniformDirtyRange dirtyRange =
+						publicationState.GetPendingDirtyRange(
+							rangeIndex);
+					data.Slice(
+						checked((int)dirtyRange.Offset),
+						checked((int)dirtyRange.Size)).Clear();
+					dynamicBytesCleared += checked((int)dirtyRange.Size);
+					publishedBytes += checked((int)dirtyRange.Size);
+				}
+
+				for (int operationIndex = 0;
+					 operationIndex < operations.Length;
+					 operationIndex++)
+				{
+					VulkanAutoUniformBindingOperation operation =
+						operations[operationIndex];
+					if (!TryWriteAutoUniformOperation(
+							data,
+							operation,
+							material,
+							draw,
+							out EVulkanAutoUniformFallbackReason operationFallbackReason))
+					{
+						WarnAutoUniformFallback(
+							block,
+							operationFallbackReason,
+							operation.Member.Name);
+						publicationState.Invalidate();
+						RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAutoUniformFallbackReason(
+							operationFallbackReason);
+						return WriteLegacyAutoUniformBlock(
+							data,
+							block,
+							buffer.Size,
+							material,
+							draw);
+					}
+					dynamicOperationsWritten++;
+				}
+
+				publicationState.CompleteFrequencyPublication(
+					frequency,
+					generation);
+				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAutoUniformFrequencyPublication(
+					(int)frequency,
+					published: true,
+					publishedBytes);
 			}
+			if (!ValidateAutoUniformPayloadParity(
+					data,
+					block,
+					buffer.Size,
+					plan,
+					material,
+					draw,
+					ref publicationState))
+			{
+				return true;
+			}
+
 			RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAutoUniformFastWrite(
 				staticBytesCopied,
 				dynamicBytesCleared,
-				dynamicMembers.Length);
+				dynamicOperationsWritten);
 
 			return true;
 		}
 
+		RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAutoUniformFallbackReason(
+			fallbackReason);
+		return WriteLegacyAutoUniformBlock(data, block, buffer.Size, material, draw);
+	}
+
+	private bool ValidateAutoUniformPayloadParity(
+		Span<byte> packed,
+		AutoUniformBlockInfo block,
+		uint bufferSize,
+		AutoUniformMaterialWritePlan plan,
+		XRMaterial material,
+		in PendingMeshDraw draw,
+		ref VulkanAutoUniformPublicationState publicationState)
+	{
+		if (!XREnvironment.IsEnabled(
+				XREngineEnvironmentVariables.VulkanAutoUniformParity))
+		{
+			return true;
+		}
+
+		byte[] rented = ArrayPool<byte>.Shared.Rent(
+			checked((int)bufferSize));
+		try
+		{
+			Span<byte> legacy = rented.AsSpan(0, checked((int)bufferSize));
+			legacy.Clear();
+			WriteLegacyAutoUniformBlockData(
+				legacy,
+				block,
+				bufferSize,
+				material,
+				draw);
+			if (!VulkanAutoUniformParityValidator.TryFindMismatch(
+					legacy,
+					packed,
+					plan.Schema,
+					out VulkanAutoUniformParityMismatch mismatch))
+			{
+				return true;
+			}
+
+			Debug.VulkanWarning(
+				"[Vulkan.AutoUniformParity] mesh='{0}' program='{1}' " +
+				"block='{2}' frequency={3} entry='{4}' offset={5} " +
+				"legacy=0x{6:X2} packed=0x{7:X2}. " +
+				"Using authoritative legacy bytes.",
+				Mesh?.Name ?? "<unnamed>",
+				_program?.Data?.Name ?? "<unavailable>",
+				block.InstanceName,
+				mismatch.Frequency,
+				mismatch.SchemaEntry,
+				mismatch.ByteOffset,
+				mismatch.LegacyValue,
+				mismatch.PackedValue);
+			legacy.CopyTo(packed);
+			publicationState.Invalidate();
+			RuntimeEngine.Rendering.Stats.Vulkan
+				.RecordVulkanAutoUniformFallbackReason(
+					EVulkanAutoUniformFallbackReason.BindingSchemaMismatch);
+			RuntimeEngine.Rendering.Stats.Vulkan
+				.RecordVulkanAutoUniformLegacyWrite(
+					checked((int)bufferSize),
+					block.Members.Count);
+			return false;
+		}
+		finally
+		{
+			ArrayPool<byte>.Shared.Return(rented);
+		}
+	}
+
+	private bool WriteLegacyAutoUniformBlock(
+		Span<byte> data,
+		AutoUniformBlockInfo block,
+		uint bufferSize,
+		XRMaterial material,
+		in PendingMeshDraw draw)
+	{
 		data.Clear();
 		RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAutoUniformLegacyWrite(
-			(int)buffer.Size,
+			(int)bufferSize,
 			block.Members.Count);
+		WriteLegacyAutoUniformBlockData(data, block, bufferSize, material, draw);
+		return true;
+	}
 
+	private void WriteLegacyAutoUniformBlockData(
+		Span<byte> data,
+		AutoUniformBlockInfo block,
+		uint bufferSize,
+		XRMaterial material,
+		in PendingMeshDraw draw)
+	{
 		for (int memberIndex = 0; memberIndex < block.Members.Count; memberIndex++)
 		{
 			AutoUniformMember member = block.Members[memberIndex];
-			if (member.Offset + member.Size > buffer.Size)
+			if (member.Offset > bufferSize ||
+				member.Size > bufferSize - member.Offset)
 				continue;
 
 			TryWriteAutoUniformMember(data, member, material, draw);
 		}
-
-		return true;
 	}
 
 	/// <summary>
@@ -437,27 +778,101 @@ internal unsafe partial class VkMeshRenderer
 		AutoUniformBlockInfo block,
 		uint bufferSize,
 		XRMaterial material,
-		ComputeDispatchSnapshot bindingSnapshot,
-		out AutoUniformMaterialWritePlan? plan)
+		ComputeDispatchSnapshot? bindingSnapshot,
+		out AutoUniformMaterialWritePlan? plan,
+		out EVulkanAutoUniformFallbackReason fallbackReason)
 	{
 		plan = null;
-		if (_program is null || bufferSize == 0 || bufferSize > int.MaxValue)
-			return false;
-
-		string blockName = block.InstanceName;
-		if (!_autoUniformMaterialWritePlans.TryGetValue(blockName, out Dictionary<XRMaterial, AutoUniformMaterialWritePlan>? plans))
+		if (_program is null)
 		{
-			plans = [];
-			_autoUniformMaterialWritePlans.Add(blockName, plans);
+			fallbackReason = EVulkanAutoUniformFallbackReason.ProgramUnavailable;
+			return false;
 		}
 
+		if (bufferSize == 0 || bufferSize > int.MaxValue)
+		{
+			fallbackReason = EVulkanAutoUniformFallbackReason.InvalidBufferSize;
+			return false;
+		}
+
+		if (_program.BindingSchema is not { } programSchema ||
+			!programSchema.TryGetAutoUniformBlock(
+				block.InstanceName,
+				out VulkanAutoUniformBindingSchema schema))
+		{
+			fallbackReason = EVulkanAutoUniformFallbackReason.BindingSchemaUnavailable;
+			return false;
+		}
+
+		if (!schema.IsFastPathEligible)
+		{
+			fallbackReason = schema.FallbackKind;
+			WarnAutoUniformFallback(
+				block,
+				fallbackReason,
+				schema.FallbackReason);
+			return false;
+		}
+
+		if (!ReferenceEquals(schema.Block, block) ||
+			schema.Block.Size != bufferSize)
+		{
+			fallbackReason = EVulkanAutoUniformFallbackReason.BindingSchemaMismatch;
+			return false;
+		}
+
+		fallbackReason = EVulkanAutoUniformFallbackReason.None;
+		string blockName = block.InstanceName;
 		ulong linkGeneration = _program.LinkGeneration;
-		if (plans.TryGetValue(material, out AutoUniformMaterialWritePlan? cached) &&
-			ReferenceEquals(cached.Block, block) &&
-			cached.ProgramLinkGeneration == linkGeneration &&
-			cached.MaterialLayoutVersion == material.BindingLayoutVersion &&
-			cached.MaterialValueVersion == material.BindingValueVersion &&
-			cached.RuntimeUniformNameSignature == bindingSnapshot.RuntimeUniformNameSignature &&
+		bool materialOwned =
+			block.Frequency is EVulkanBindingFrequency.Unknown or
+				EVulkanBindingFrequency.Material;
+		ulong runtimeUniformNameSignature =
+			materialOwned
+				? bindingSnapshot?.RuntimeUniformNameSignature ?? 0UL
+				: 0UL;
+		ulong runtimeUniformPublicationLayoutSignature =
+			materialOwned
+				? bindingSnapshot
+					?.RuntimeUniformPublicationLayoutSignature ?? 0UL
+				: 0UL;
+		ulong publicationLayoutSignature =
+			schema.PublicationLayoutSignature;
+		AutoUniformMaterialWritePlanCacheKey materialPlanKey = new(
+			publicationLayoutSignature,
+			material,
+			runtimeUniformNameSignature,
+			runtimeUniformPublicationLayoutSignature);
+		VkMaterial? materialPlanOwner = materialOwned
+			? Renderer.GetOrCreateAPIRenderObject(
+				material,
+				generateNow: true) as VkMaterial
+			: null;
+		bool planCacheHit = materialPlanOwner is not null
+			? materialPlanOwner.TryGetAutoUniformMaterialWritePlan(
+				materialPlanKey,
+				out AutoUniformMaterialWritePlan? cached)
+			: _program.TryGetAutoUniformMaterialWritePlan(
+				blockName,
+				publicationLayoutSignature,
+				material,
+				runtimeUniformNameSignature,
+				runtimeUniformPublicationLayoutSignature,
+				materialOwned,
+				out cached);
+		if (planCacheHit &&
+			cached is not null &&
+			cached.PublicationLayoutSignature ==
+				publicationLayoutSignature &&
+			(!materialOwned ||
+			 (cached.MaterialLayoutVersion ==
+					material.BindingLayoutVersion &&
+			  cached.MaterialValueVersion ==
+					material.BindingValueVersion)) &&
+			cached.RuntimeUniformNameSignature ==
+				runtimeUniformNameSignature &&
+			cached.RuntimeUniformPublicationLayoutSignature ==
+				runtimeUniformPublicationLayoutSignature &&
 			cached.StaticBytes.Length == (int)bufferSize)
 		{
 			RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAutoUniformPlanLookup(hit: true);
@@ -465,71 +880,578 @@ internal unsafe partial class VkMeshRenderer
 			return true;
 		}
 		RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAutoUniformPlanLookup(hit: false);
+		if (XREnvironment.IsEnabled(
+				XREngineEnvironmentVariables.VulkanFrameDataReuseDiag))
+		{
+			Debug.VulkanEvery(
+				$"Vulkan.AutoUniformPlanCacheMiss.{material.ID}.{blockName}",
+				TimeSpan.FromSeconds(1),
+				"[Vulkan.AutoUniformPlanCacheMiss] material='{0}' id={1} " +
+				"block='{2}' program={3}/{4} layout={5} value={6} " +
+				"runtimeNames=0x{7:X16} runtimeLayout=0x{8:X16}.",
+				material.Name ?? "<unnamed>",
+				material.ID,
+				blockName,
+				_program.BindingId,
+				linkGeneration,
+				material.BindingLayoutVersion,
+				material.BindingValueVersion,
+				runtimeUniformNameSignature,
+				runtimeUniformPublicationLayoutSignature);
+		}
 
 		byte[] staticBytes = new byte[(int)bufferSize];
-		List<AutoUniformMember> dynamicMembers = [];
-		for (int memberIndex = 0; memberIndex < block.Members.Count; memberIndex++)
+		List<VulkanAutoUniformBindingOperation> dynamicOperations = [];
+		VulkanAutoUniformBindingOperation[] operations = schema.Operations;
+		for (int operationIndex = 0; operationIndex < operations.Length; operationIndex++)
 		{
-			AutoUniformMember member = block.Members[memberIndex];
-			if (member.Offset + member.Size > bufferSize)
-				continue;
+			VulkanAutoUniformBindingOperation operation = operations[operationIndex];
+			bool hasRuntimeOverride =
+				operation.SourceKind ==
+					EVulkanAutoUniformSourceKind.MaterialOrRuntime &&
+				bindingSnapshot?.HasRuntimeUniform(
+					operation.Member.Name) == true;
+			if (operation.SourceKind ==
+					EVulkanAutoUniformSourceKind.MaterialOrRuntime &&
+				!hasRuntimeOverride)
+			{
+				AutoUniformMember member = operation.Member;
+				ShaderVar? materialParameter =
+					material.Parameter<ShaderVar>(member.Name);
+				bool hasDeclaredDefault =
+					VulkanAutoUniformBindingSchema.HasExplicitDefault(
+						member);
+				if (materialParameter is null && !hasDeclaredDefault)
+				{
+					// Loose GLSL uniforms default to zero. Preserve that
+					// contract after rewriting them into a UBO instead of
+					// treating an omitted optional material parameter as a
+					// per-draw runtime dependency.
+					continue;
+				}
 
-			if (!TryWriteStaticMaterialAutoUniform(staticBytes, member, material, bindingSnapshot))
-				dynamicMembers.Add(member);
+				if (TryWriteStaticMaterialAutoUniform(
+						staticBytes,
+						member,
+						material))
+				{
+					continue;
+				}
+
+				fallbackReason =
+					EVulkanAutoUniformFallbackReason
+						.TypedMaterialOrRuntimeWriteFailed;
+				return false;
+			}
+
+			if (hasRuntimeOverride)
+			{
+				EVulkanBindingFrequency runtimeFrequency =
+					ResolveRuntimeOverrideFrequency(
+						block.Frequency,
+						bindingSnapshot!,
+						operation.Member.Name);
+				if (block.Frequency != EVulkanBindingFrequency.Unknown &&
+					runtimeFrequency != block.Frequency)
+				{
+					fallbackReason =
+						EVulkanAutoUniformFallbackReason.BindingSchemaMismatch;
+					return false;
+				}
+				dynamicOperations.Add(operation with
+				{
+					Frequency = runtimeFrequency,
+				});
+			}
+			else
+			{
+				dynamicOperations.Add(operation);
+			}
 		}
 
 		plan = new AutoUniformMaterialWritePlan(
-			block,
-			linkGeneration,
+			schema,
 			material.BindingLayoutVersion,
 			material.BindingValueVersion,
-			bindingSnapshot.RuntimeUniformNameSignature,
+			runtimeUniformNameSignature,
+			runtimeUniformPublicationLayoutSignature,
 			staticBytes,
-			[.. dynamicMembers]);
-		plans[material] = plan;
+			[.. dynamicOperations]);
+		if (materialPlanOwner is not null)
+		{
+			materialPlanOwner.CacheAutoUniformMaterialWritePlan(
+				materialPlanKey,
+				plan);
+		}
+		else
+		{
+			_program.CacheAutoUniformMaterialWritePlan(
+				blockName,
+				publicationLayoutSignature,
+				material,
+				runtimeUniformNameSignature,
+				runtimeUniformPublicationLayoutSignature,
+				materialOwned,
+				plan);
+		}
 		return true;
+	}
+
+	internal static bool IsMaterialBindingSnapshotEligible(
+		bool materialOwned,
+		bool shadowPass,
+		ComputeDispatchSnapshot? snapshot)
+		=> !materialOwned ||
+		   (!shadowPass &&
+			(snapshot is null ||
+			 snapshot.AllowsMaterialBindingFastPath));
+
+	internal static EVulkanBindingFrequency ResolveRuntimeOverrideFrequency(
+		EVulkanBindingFrequency blockFrequency,
+		ComputeDispatchSnapshot snapshot,
+		string uniformName)
+	{
+		if (snapshot.TryGetRuntimeUniformPublication(
+				uniformName,
+				out VulkanRuntimeUniformPublication publication))
+		{
+			return publication.Frequency;
+		}
+
+		return snapshot.IsMutableLegacyUniform(uniformName) &&
+			   blockFrequency != EVulkanBindingFrequency.Unknown
+			? blockFrequency
+			: EVulkanBindingFrequency.RuntimeCallback;
+	}
+
+	private void WarnAutoUniformFallback(
+		AutoUniformBlockInfo block,
+		EVulkanAutoUniformFallbackReason reason,
+		string? detail)
+	{
+		if (!_autoUniformWarnings.Add(
+				(block.InstanceName, reason, detail)))
+		{
+			return;
+		}
+
+		Debug.VulkanWarning(
+			"[Vulkan.AutoUniformFallback] mesh='{0}' program='{1}' block='{2}' " +
+			"frequency={3} reason={4} detail='{5}'.",
+			Mesh?.Name ?? "<unnamed>",
+			_program?.Data?.Name ?? "<unavailable>",
+			block.InstanceName,
+			block.Frequency,
+			reason,
+			detail ?? string.Empty);
+	}
+
+	private int ResolveFrequencyOwnedAutoUniformBufferIndex(
+		AutoUniformBlockInfo block,
+		int frameIndex,
+		int drawUniformSlot,
+		XRMaterial material,
+		in PendingMeshDraw draw,
+		int bufferCount,
+		out ulong ownerIdentity)
+	{
+		ownerIdentity = 0;
+		if (block.Frequency == EVulkanBindingFrequency.Unknown ||
+			Renderer.IsDescriptorHeapDrawBindingActive)
+		{
+			return ResolveUniformBufferIndex(
+				frameIndex,
+				drawUniformSlot,
+				bufferCount);
+		}
+
+		VulkanAutoUniformOwnerSlotTable table =
+			GetOrCreateAutoUniformOwnerSlotTable(block.InstanceName);
+		ownerIdentity = ComputeAutoUniformOwnerIdentity(
+			block.Frequency,
+			material,
+			draw);
+		int ownerSlot = table.ResolveAndPublish(
+			frameIndex,
+			drawUniformSlot,
+			ownerIdentity);
+		return ResolveUniformBufferIndex(
+			frameIndex,
+			ownerSlot,
+			bufferCount);
+	}
+
+	private int ResolvePublishedAutoUniformBufferIndex(
+		AutoUniformBlockInfo block,
+		int frameIndex,
+		int drawUniformSlot,
+		int bufferCount)
+	{
+		if (block.Frequency == EVulkanBindingFrequency.Unknown ||
+			Renderer.IsDescriptorHeapDrawBindingActive ||
+			!_autoUniformOwnerSlotTables.TryGetValue(
+				block.InstanceName,
+				out VulkanAutoUniformOwnerSlotTable? table) ||
+			table.FrameCount != UniformBufferFrameCount ||
+			table.DrawSlotCapacity != UniformBufferSlotCount)
+		{
+			return ResolveUniformBufferIndex(
+				frameIndex,
+				drawUniformSlot,
+				bufferCount);
+		}
+
+		int ownerSlot = table.ResolvePublished(
+			frameIndex,
+			drawUniformSlot);
+		return ResolveUniformBufferIndex(
+			frameIndex,
+			ownerSlot,
+			bufferCount);
+	}
+
+	private VulkanAutoUniformOwnerSlotTable GetOrCreateAutoUniformOwnerSlotTable(
+		string blockName)
+	{
+		if (_autoUniformOwnerSlotTables.TryGetValue(
+				blockName,
+				out VulkanAutoUniformOwnerSlotTable? table) &&
+			table.FrameCount == UniformBufferFrameCount &&
+			table.DrawSlotCapacity == UniformBufferSlotCount)
+		{
+			return table;
+		}
+
+		table = new VulkanAutoUniformOwnerSlotTable(
+			UniformBufferFrameCount,
+			UniformBufferSlotCount);
+		_autoUniformOwnerSlotTables[blockName] = table;
+		return table;
+	}
+
+	private ulong ComputeAutoUniformOwnerIdentity(
+		EVulkanBindingFrequency frequency,
+		XRMaterial material,
+		in PendingMeshDraw draw)
+	{
+		FrameOpSignatureHasher hash = new();
+		hash.Add((byte)frequency);
+		switch (frequency)
+		{
+			case EVulkanBindingFrequency.Frame:
+				hash.Add(1u);
+				break;
+			case EVulkanBindingFrequency.View:
+				hash.Add(
+					draw.Camera is null
+						? 0
+						: RuntimeHelpers.GetHashCode(draw.Camera));
+				hash.Add(
+					draw.StereoRightEyeCamera is null
+						? 0
+						: RuntimeHelpers.GetHashCode(
+							draw.StereoRightEyeCamera));
+				hash.Add(draw.IsStereoPass);
+				hash.Add(draw.UseUnjitteredProjection);
+				break;
+			case EVulkanBindingFrequency.Pass:
+				hash.Add(draw.RenderAreaWidth);
+				hash.Add(draw.RenderAreaHeight);
+				if (draw.RenderAreaWidth <= 0 ||
+					draw.RenderAreaHeight <= 0)
+				{
+					hash.Add(draw.Viewport.Width);
+					hash.Add(MathF.Abs(draw.Viewport.Height));
+				}
+				hash.Add(unchecked(
+					(uint)draw.ShadowUniformState.GetHashCode()));
+				break;
+			case EVulkanBindingFrequency.Material:
+				hash.Add(RuntimeHelpers.GetHashCode(material));
+				hash.Add(
+					draw.ProgramBindingSnapshot
+						?.RuntimeUniformNameSignature ?? 0UL);
+				hash.Add(
+					draw.ProgramBindingSnapshot
+						?.RuntimeUniformPublicationLayoutSignature ?? 0UL);
+				break;
+			case EVulkanBindingFrequency.Object:
+				hash.Add(RuntimeHelpers.GetHashCode(MeshRenderer));
+				break;
+			case EVulkanBindingFrequency.Instance:
+				hash.Add(RuntimeHelpers.GetHashCode(MeshRenderer));
+				hash.Add(draw.Instances);
+				break;
+			case EVulkanBindingFrequency.RuntimeCallback:
+				hash.Add(
+					draw.ProgramBindingSnapshot is null
+						? 0
+						: RuntimeHelpers.GetHashCode(
+							draw.ProgramBindingSnapshot));
+				hash.Add(RuntimeHelpers.GetHashCode(material));
+				break;
+			default:
+				return 0;
+		}
+
+		return hash.ToHash();
+	}
+
+	internal bool TryGetReusableAutoUniformOwner(
+		EVulkanBindingFrequency frequency,
+		XRMaterial material,
+		in PendingMeshDraw draw,
+		out ulong ownerIdentity,
+		out ulong publicationLayoutSignature,
+		out ulong contentGeneration)
+	{
+		publicationLayoutSignature =
+			_program?.BindingSchema
+				?.GetFrequencyPublicationLayoutSignature(frequency) ?? 0UL;
+		ownerIdentity = ComputeAutoUniformOwnerIdentity(
+			frequency,
+			material,
+			draw);
+		if (ownerIdentity == 0 || publicationLayoutSignature == 0)
+		{
+			contentGeneration = 0;
+			return false;
+		}
+
+		ulong materialGeneration =
+			frequency == EVulkanBindingFrequency.Material
+				? ComputeMaterialPublicationGeneration(
+					material.BindingLayoutVersion,
+					material.BindingValueVersion,
+					draw.ProgramBindingSnapshot
+						?.RuntimeUniformNameSignature ?? 0UL,
+					draw.ProgramBindingSnapshot
+						?.MutableLegacyUniformValueSignature ?? 0UL)
+				: 0UL;
+		contentGeneration =
+			draw.AutoUniformPublication.GetGeneration(
+				frequency,
+				materialGeneration);
+		return true;
+	}
+
+	private ulong ComputeAutoUniformFrequencyGeneration(
+		EVulkanBindingFrequency frequency,
+		AutoUniformMaterialWritePlan plan,
+		in PendingMeshDraw draw)
+	{
+		ulong materialGeneration = 0;
+		if (frequency == EVulkanBindingFrequency.Material)
+		{
+			materialGeneration = ComputeMaterialPublicationGeneration(
+				plan.MaterialLayoutVersion,
+				plan.MaterialValueVersion,
+				plan.RuntimeUniformNameSignature,
+				draw.ProgramBindingSnapshot
+					?.MutableLegacyUniformValueSignature ?? 0UL);
+		}
+
+		ulong contentGeneration =
+			draw.AutoUniformPublication.GetGeneration(
+			frequency,
+			materialGeneration);
+		XRMaterial? material =
+			draw.MaterialOverride ?? MeshRenderer.Material;
+		if (material is null)
+			return contentGeneration;
+
+		ulong ownerIdentity = ComputeAutoUniformOwnerIdentity(
+			frequency,
+			material,
+			draw);
+		if (ownerIdentity == 0)
+			return contentGeneration;
+
+		FrameOpSignatureHasher hash = new();
+		hash.Add(ownerIdentity);
+		hash.Add(contentGeneration);
+		return hash.ToHash();
+	}
+
+	internal static ulong ComputeMaterialPublicationGeneration(
+		ulong materialLayoutVersion,
+		ulong materialValueVersion,
+		ulong runtimeUniformNameSignature,
+		ulong mutableLegacyUniformValueSignature)
+	{
+		FrameOpSignatureHasher materialHash = new();
+		materialHash.Add(materialLayoutVersion);
+		materialHash.Add(materialValueVersion);
+		materialHash.Add(runtimeUniformNameSignature);
+		materialHash.Add(mutableLegacyUniformValueSignature);
+		return materialHash.ToHash();
 	}
 
 	private bool TryWriteStaticMaterialAutoUniform(
 		Span<byte> data,
 		AutoUniformMember member,
-		XRMaterial material,
-		ComputeDispatchSnapshot bindingSnapshot)
+		XRMaterial material)
 	{
-		if (member.StructMembers is { Count: > 0 } ||
-			IsRenderScopeAutoUniform(member.Name) ||
-			bindingSnapshot.HasRuntimeUniform(member.Name))
+		ShaderVar? parameter = material.Parameter<ShaderVar>(member.Name);
+		if (parameter is not null)
 		{
-			return false;
+			return member.IsArray
+				? TryWriteAutoUniformArray(data, member, parameter)
+				: TryWriteMaterialUniformValue(data, member, parameter);
 		}
 
-		ShaderVar? parameter = material.Parameter<ShaderVar>(member.Name);
-		if (parameter is null)
-			return false;
+		if (member.IsArray && member.DefaultArrayValues is { Count: > 0 })
+			return TryWriteAutoUniformArrayDefaults(data, member);
 
-		return member.IsArray
-			? TryWriteAutoUniformArray(data, member, parameter)
-			: TryWriteMaterialUniformValue(data, member, parameter);
+		return member.DefaultValue is { } defaultValue &&
+			TryWriteAutoUniformValue(data, member, defaultValue.Value, defaultValue.Type);
 	}
 
-	private static bool IsRenderScopeAutoUniform(string name)
+	private bool TryWriteAutoUniformOperation(
+		Span<byte> data,
+		in VulkanAutoUniformBindingOperation operation,
+		XRMaterial material,
+		in PendingMeshDraw draw,
+		out EVulkanAutoUniformFallbackReason fallbackReason)
 	{
-		if (name is "CurrViewProjection" or "PrevViewProjection" or
-			"CurrViewProjectionStereo" or "PrevViewProjectionStereo")
+		RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAutoUniformTypedOperation();
+		AutoUniformMember member = operation.Member;
+		switch (operation.SourceKind)
+		{
+			case EVulkanAutoUniformSourceKind.Engine:
+				if (!TryResolveEngineUniformValue(
+						operation.EngineUniform,
+						draw,
+						out EngineUniformValue engineValue,
+						out EShaderVarType engineType))
+				{
+					fallbackReason =
+						EVulkanAutoUniformFallbackReason.TypedEngineSourceUnavailable;
+					return false;
+				}
+
+				bool wroteEngineValue = TryWriteAutoUniformValue(
+					data,
+					member,
+					in engineValue,
+					engineType);
+				fallbackReason = wroteEngineValue
+					? EVulkanAutoUniformFallbackReason.None
+					: EVulkanAutoUniformFallbackReason.TypedEngineWriteFailed;
+				return wroteEngineValue;
+
+			case EVulkanAutoUniformSourceKind.TemporalViewProjection:
+				bool wroteTemporalValue = TryWriteTemporalViewProjectionUniform(
+					data,
+					member,
+					operation.TemporalSource,
+					draw);
+				fallbackReason = wroteTemporalValue
+					? EVulkanAutoUniformFallbackReason.None
+					: EVulkanAutoUniformFallbackReason.TypedTemporalWriteFailed;
+				return wroteTemporalValue;
+
+			case EVulkanAutoUniformSourceKind.MeshState:
+				if (!TryResolveMeshStateUniformValue(
+						operation.SpecialSource,
+						draw,
+						out EngineUniformValue meshValue,
+						out EShaderVarType meshType))
+				{
+					fallbackReason =
+						EVulkanAutoUniformFallbackReason.TypedMeshStateSourceUnavailable;
+					return false;
+				}
+
+				bool wroteMeshValue = TryWriteAutoUniformValue(
+					data,
+					member,
+					in meshValue,
+					meshType);
+				fallbackReason = wroteMeshValue
+					? EVulkanAutoUniformFallbackReason.None
+					: EVulkanAutoUniformFallbackReason.TypedMeshStateWriteFailed;
+				return wroteMeshValue;
+
+			case EVulkanAutoUniformSourceKind.MaterialOrRuntime:
+				bool wroteMaterialOrRuntimeValue = TryWriteMaterialOrRuntimeAutoUniform(
+					data,
+					member,
+					material,
+					draw.ProgramBindingSnapshot);
+				fallbackReason = wroteMaterialOrRuntimeValue
+					? EVulkanAutoUniformFallbackReason.None
+					: EVulkanAutoUniformFallbackReason.TypedMaterialOrRuntimeWriteFailed;
+				return wroteMaterialOrRuntimeValue;
+
+			case EVulkanAutoUniformSourceKind.StructSnapshot:
+				bool wroteStructSnapshot =
+					TryWriteStructUniformValue(
+						data,
+						member,
+						member.Name,
+						member.Offset,
+						draw.ProgramBindingSnapshot);
+				fallbackReason = wroteStructSnapshot
+					? EVulkanAutoUniformFallbackReason.None
+					: EVulkanAutoUniformFallbackReason.StructSnapshotRequired;
+				return wroteStructSnapshot;
+
+			default:
+				fallbackReason = operation.FallbackKind;
+				return false;
+		}
+	}
+
+	private static bool IncludesBindingFrequency(
+		EVulkanBindingFrequencyMask mask,
+		EVulkanBindingFrequency frequency)
+	{
+		if (mask == EVulkanBindingFrequencyMask.All)
+			return true;
+		if (frequency is <= EVulkanBindingFrequency.Unknown or
+			>= EVulkanBindingFrequency.Count)
+			return false;
+
+		EVulkanBindingFrequencyMask frequencyBit =
+			(EVulkanBindingFrequencyMask)(
+				1 << ((int)frequency - 1));
+		return (mask & frequencyBit) != 0;
+	}
+
+	private bool TryWriteMaterialOrRuntimeAutoUniform(
+		Span<byte> data,
+		AutoUniformMember member,
+		XRMaterial material,
+		ComputeDispatchSnapshot? snapshot)
+	{
+		if (_program is not null &&
+			_program.TryGetUniformValue(snapshot, member.Name, out ProgramUniformValue programValue))
+		{
+			return member.IsArray
+				? TryWriteProgramUniformArray(data, member, member.Name, snapshot)
+				: TryWriteProgramUniformValue(data, member, programValue);
+		}
+
+		if (member.IsArray &&
+			TryWriteIndexedProgramUniformArray(data, member, member.Name, snapshot))
 		{
 			return true;
 		}
 
-		string normalized = NormalizeEngineUniformName(name);
-		return Enum.TryParse(normalized, ignoreCase: false, out EEngineUniform _) ||
-			normalized is
-				TransformIdUniformName or
-				SkinPaletteBaseUniformName or
-				SkinPaletteCountUniformName or
-				SkinningInfluenceCapUniformName or
-				BlendshapeActiveCountUniformName or
-				BlendshapeWeightThresholdUniformName or
-				UsePrecombinedBlendshapeDeltasUniformName;
+		ShaderVar? parameter = material.Parameter<ShaderVar>(member.Name);
+		if (parameter is not null)
+		{
+			return member.IsArray
+				? TryWriteAutoUniformArray(data, member, parameter)
+				: TryWriteMaterialUniformValue(data, member, parameter);
+		}
+
+		if (member.IsArray && member.DefaultArrayValues is { Count: > 0 })
+			return TryWriteAutoUniformArrayDefaults(data, member);
+
+		return member.DefaultValue is { } defaultValue &&
+			TryWriteAutoUniformValue(data, member, defaultValue.Value, defaultValue.Type);
 	}
 
 	/// <summary>
@@ -538,6 +1460,7 @@ internal unsafe partial class VkMeshRenderer
 	/// </summary>
 	private bool TryWriteAutoUniformMember(Span<byte> data, AutoUniformMember member, XRMaterial material, in PendingMeshDraw draw)
 	{
+		RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAutoUniformReflectedNameLookup();
 		if (member.StructMembers is { Count: > 0 })
 			return TryWriteStructUniformValue(data, member, member.Name, member.Offset, draw.ProgramBindingSnapshot);
 
@@ -650,33 +1573,55 @@ internal unsafe partial class VkMeshRenderer
 		in PendingMeshDraw draw,
 		out bool wrote)
 	{
-		wrote = false;
-		switch (member.Name)
+		EVulkanTemporalUniformSource source = member.Name switch
 		{
-			case "CurrViewProjection":
-				wrote = TryWriteTemporalMatrix(data, member, draw.ViewProjectionMatrixUnjittered);
-				return true;
-			case "PrevViewProjection":
-				wrote = TryWriteTemporalMatrix(data, member, draw.PreviousViewProjectionMatrixUnjittered);
-				return true;
-			case "CurrViewProjectionStereo":
-				wrote = TryWriteTemporalStereoViewProjectionUniform(
+			"CurrViewProjection" => EVulkanTemporalUniformSource.CurrentViewProjection,
+			"PrevViewProjection" => EVulkanTemporalUniformSource.PreviousViewProjection,
+			"CurrViewProjectionStereo" => EVulkanTemporalUniformSource.CurrentStereoViewProjection,
+			"PrevViewProjectionStereo" => EVulkanTemporalUniformSource.PreviousStereoViewProjection,
+			_ => EVulkanTemporalUniformSource.None,
+		};
+		if (source == EVulkanTemporalUniformSource.None)
+		{
+			wrote = false;
+			return false;
+		}
+
+		wrote = TryWriteTemporalViewProjectionUniform(data, member, source, draw);
+		return true;
+	}
+
+	private bool TryWriteTemporalViewProjectionUniform(
+		Span<byte> data,
+		AutoUniformMember member,
+		EVulkanTemporalUniformSource source,
+		in PendingMeshDraw draw)
+		=> source switch
+		{
+			EVulkanTemporalUniformSource.CurrentViewProjection =>
+				TryWriteTemporalMatrix(
+					data,
+					member,
+					draw.ViewProjectionMatrixUnjittered),
+			EVulkanTemporalUniformSource.PreviousViewProjection =>
+				TryWriteTemporalMatrix(
+					data,
+					member,
+					draw.PreviousViewProjectionMatrixUnjittered),
+			EVulkanTemporalUniformSource.CurrentStereoViewProjection =>
+				TryWriteTemporalStereoViewProjectionUniform(
 					data,
 					member,
 					draw.ViewProjectionMatrixUnjittered,
-					draw.RightEyeViewProjectionMatrixUnjittered);
-				return true;
-			case "PrevViewProjectionStereo":
-				wrote = TryWriteTemporalStereoViewProjectionUniform(
+					draw.RightEyeViewProjectionMatrixUnjittered),
+			EVulkanTemporalUniformSource.PreviousStereoViewProjection =>
+				TryWriteTemporalStereoViewProjectionUniform(
 					data,
 					member,
 					draw.PreviousViewProjectionMatrixUnjittered,
-					draw.PreviousRightEyeViewProjectionMatrixUnjittered);
-				return true;
-			default:
-				return false;
-		}
-	}
+					draw.PreviousRightEyeViewProjectionMatrixUnjittered),
+			_ => false,
+		};
 
 	private bool TryWriteTemporalStereoViewProjectionUniform(
 		Span<byte> data,
@@ -846,7 +1791,10 @@ internal unsafe partial class VkMeshRenderer
 				wroteAny |= TryWriteAutoUniformValue(data, absoluteField, defaultValue.Value, defaultValue.Type);
 		}
 
-		return wroteAny;
+		// Missing fields keep their zero-initialized UBO bytes, matching loose
+		// GLSL struct-uniform defaults. A valid reflected struct is publishable
+		// even when the current callback overrides no fields.
+		return true;
 	}
 
 	private bool TryWriteStructUniformArray(
@@ -869,7 +1817,7 @@ internal unsafe partial class VkMeshRenderer
 			wroteAny |= TryWriteStructUniformValue(data, element, elementName, elementOffset, snapshot);
 		}
 
-		return wroteAny;
+		return true;
 	}
 
     private bool TryWriteProgramUniformArray(
@@ -1224,208 +2172,279 @@ internal unsafe partial class VkMeshRenderer
 	/// Engine-owned values come from the draw snapshot; UI bounds may still come
 	/// from program-level overrides because they are authored per program.
 	/// </summary>
-	private bool TryResolveEngineUniformValue(string name, in PendingMeshDraw draw, out EngineUniformValue value, out EShaderVarType type)
+	private bool TryResolveEngineUniformValue(
+		string name,
+		in PendingMeshDraw draw,
+		out EngineUniformValue value,
+		out EShaderVarType type)
+	{
+		string normalized = NormalizeEngineUniformName(name);
+		if (TryResolveMeshStateSource(
+				normalized,
+				out EVulkanAutoUniformSpecialSource meshSource))
+		{
+			return TryResolveMeshStateUniformValue(
+				meshSource,
+				draw,
+				out value,
+				out type);
+		}
+
+		if (Enum.TryParse(
+				normalized,
+				ignoreCase: false,
+				out EEngineUniform uniform))
+		{
+			return TryResolveEngineUniformValue(
+				uniform,
+				draw,
+				out value,
+				out type);
+		}
+
+		value = default;
+		type = EShaderVarType._float;
+		return false;
+	}
+
+	private static bool TryResolveMeshStateSource(
+		string name,
+		out EVulkanAutoUniformSpecialSource source)
+	{
+		source = name switch
+		{
+			TransformIdUniformName => EVulkanAutoUniformSpecialSource.TransformId,
+			SkinPaletteBaseUniformName => EVulkanAutoUniformSpecialSource.SkinPaletteBase,
+			SkinPaletteCountUniformName => EVulkanAutoUniformSpecialSource.SkinPaletteCount,
+			SkinningInfluenceCapUniformName => EVulkanAutoUniformSpecialSource.SkinningInfluenceCap,
+			BlendshapeActiveCountUniformName => EVulkanAutoUniformSpecialSource.BlendshapeActiveCount,
+			BlendshapeWeightThresholdUniformName => EVulkanAutoUniformSpecialSource.BlendshapeWeightThreshold,
+			UsePrecombinedBlendshapeDeltasUniformName => EVulkanAutoUniformSpecialSource.UsePrecombinedBlendshapeDeltas,
+			_ => EVulkanAutoUniformSpecialSource.None,
+		};
+		return source != EVulkanAutoUniformSpecialSource.None;
+	}
+
+	private bool TryResolveMeshStateUniformValue(
+		EVulkanAutoUniformSpecialSource source,
+		in PendingMeshDraw draw,
+		out EngineUniformValue value,
+		out EShaderVarType type)
 	{
 		value = default;
 		type = EShaderVarType._float;
-		string normalized = NormalizeEngineUniformName(name);
-
-		switch (normalized)
+		switch (source)
 		{
-			case nameof(EEngineUniform.UpdateDelta):
-				Renderer.EnsureMaterialUniformFrameTime();
-				value = Renderer._materialUniformUpdateDeltaLive;
-				type = EShaderVarType._float;
-				return true;
-			case nameof(EEngineUniform.RenderTime):
-				Renderer.EnsureMaterialUniformFrameTime();
-				value = Renderer._materialUniformSecondsLive;
-				type = EShaderVarType._float;
-				return true;
-			case nameof(EEngineUniform.EngineTime):
-				Renderer.EnsureMaterialUniformFrameTime();
-				value = Renderer._materialUniformSecondsLive;
-				type = EShaderVarType._float;
-				return true;
-			case nameof(EEngineUniform.DeltaTime):
-				Renderer.EnsureMaterialUniformFrameTime();
-				value = Renderer._materialUniformDeltaSecondsLive;
-				type = EShaderVarType._float;
-				return true;
-			case TransformIdUniformName:
+			case EVulkanAutoUniformSpecialSource.TransformId:
 				value = draw.TransformId;
 				type = EShaderVarType._uint;
 				return true;
-			case SkinPaletteBaseUniformName:
-				value = MeshRenderer.ActiveSkinPaletteBase;
+			case EVulkanAutoUniformSpecialSource.SkinPaletteBase:
+				value = draw.AutoUniformPublication.SkinPaletteBase;
 				type = EShaderVarType._uint;
 				return true;
-			case SkinPaletteCountUniformName:
-				value = MeshRenderer.ActiveSkinPaletteCount;
+			case EVulkanAutoUniformSpecialSource.SkinPaletteCount:
+				value = draw.AutoUniformPublication.SkinPaletteCount;
 				type = EShaderVarType._uint;
 				return true;
-			case SkinningInfluenceCapUniformName:
-				value = MeshRenderer.ActiveSkinningInfluenceCap;
+			case EVulkanAutoUniformSpecialSource.SkinningInfluenceCap:
+				value = draw.AutoUniformPublication.SkinningInfluenceCap;
 				type = EShaderVarType._int;
 				return true;
-			case BlendshapeActiveCountUniformName:
-				value = MeshRenderer.ActiveBlendshapeCount;
+			case EVulkanAutoUniformSpecialSource.BlendshapeActiveCount:
+				value = draw.AutoUniformPublication.BlendshapeActiveCount;
 				type = EShaderVarType._int;
 				return true;
-			case BlendshapeWeightThresholdUniformName:
-				value = MeshRenderer.BlendshapeActiveWeightThreshold;
+			case EVulkanAutoUniformSpecialSource.BlendshapeWeightThreshold:
+				value = draw.AutoUniformPublication.BlendshapeWeightThreshold;
 				type = EShaderVarType._float;
 				return true;
-			case UsePrecombinedBlendshapeDeltasUniformName:
-				value = RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass
-					&& !RuntimeEngine.Rendering.State.IsVulkan
-					&& MeshRenderer.HasValidPrecombinedBlendshapeDeltas
+			case EVulkanAutoUniformSpecialSource.UsePrecombinedBlendshapeDeltas:
+				value = RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass &&
+					!RuntimeEngine.Rendering.State.IsVulkan &&
+					draw.AutoUniformPublication.HasValidPrecombinedBlendshapeDeltas
 						? 1
 						: 0;
 				type = EShaderVarType._int;
 				return true;
-			case nameof(EEngineUniform.ModelMatrix):
+			default:
+				return false;
+		}
+	}
+
+	private bool TryResolveEngineUniformValue(
+		EEngineUniform uniform,
+		in PendingMeshDraw draw,
+		out EngineUniformValue value,
+		out EShaderVarType type)
+	{
+		value = default;
+		type = EShaderVarType._float;
+
+		switch (uniform)
+		{
+			case EEngineUniform.UpdateDelta:
+				Renderer.EnsureMaterialUniformFrameTime();
+				value = Renderer._materialUniformUpdateDeltaLive;
+				type = EShaderVarType._float;
+				return true;
+			case EEngineUniform.RenderTime:
+				Renderer.EnsureMaterialUniformFrameTime();
+				value = Renderer._materialUniformSecondsLive;
+				type = EShaderVarType._float;
+				return true;
+			case EEngineUniform.EngineTime:
+				Renderer.EnsureMaterialUniformFrameTime();
+				value = Renderer._materialUniformSecondsLive;
+				type = EShaderVarType._float;
+				return true;
+			case EEngineUniform.DeltaTime:
+				Renderer.EnsureMaterialUniformFrameTime();
+				value = Renderer._materialUniformDeltaSecondsLive;
+				type = EShaderVarType._float;
+				return true;
+			case EEngineUniform.ModelMatrix:
 				value = draw.ModelMatrix;
 				type = EShaderVarType._mat4;
 				return true;
-			case nameof(EEngineUniform.PrevModelMatrix):
+			case EEngineUniform.PrevModelMatrix:
 				value = draw.PreviousModelMatrix;
 				type = EShaderVarType._mat4;
 				return true;
-			case nameof(EEngineUniform.RootInvModelMatrix):
+			case EEngineUniform.RootInvModelMatrix:
 				Matrix4x4.Invert(draw.ModelMatrix, out Matrix4x4 inverseModel);
 				value = inverseModel;
 				type = EShaderVarType._mat4;
 				return true;
-			case nameof(EEngineUniform.ViewMatrix):
-			case nameof(EEngineUniform.LeftEyeViewMatrix):
+			case EEngineUniform.ViewMatrix:
+			case EEngineUniform.LeftEyeViewMatrix:
 				value = draw.ViewMatrix;
 				type = EShaderVarType._mat4;
 				return true;
-			case nameof(EEngineUniform.PrevViewMatrix):
-			case nameof(EEngineUniform.PrevLeftEyeViewMatrix):
+			case EEngineUniform.PrevViewMatrix:
+			case EEngineUniform.PrevLeftEyeViewMatrix:
 				value = draw.PreviousViewMatrix;
 				type = EShaderVarType._mat4;
 				return true;
-			case nameof(EEngineUniform.RightEyeViewMatrix):
+			case EEngineUniform.RightEyeViewMatrix:
 				value = draw.RightEyeViewMatrix;
 				type = EShaderVarType._mat4;
 				return true;
-			case nameof(EEngineUniform.PrevRightEyeViewMatrix):
+			case EEngineUniform.PrevRightEyeViewMatrix:
 				value = draw.PreviousRightEyeViewMatrix;
 				type = EShaderVarType._mat4;
 				return true;
-			case nameof(EEngineUniform.InverseViewMatrix):
+			case EEngineUniform.InverseViewMatrix:
 				value = draw.InverseViewMatrix;
 				type = EShaderVarType._mat4;
 				return true;
-			case nameof(EEngineUniform.InverseProjMatrix):
+			case EEngineUniform.InverseProjMatrix:
 				value = draw.InverseProjectionMatrix;
 				type = EShaderVarType._mat4;
 				return true;
-			case nameof(EEngineUniform.ViewProjectionMatrix):
+			case EEngineUniform.ViewProjectionMatrix:
 				value = draw.ViewProjectionMatrix;
 				type = EShaderVarType._mat4;
 				return true;
-			case nameof(EEngineUniform.ProjMatrix):
+			case EEngineUniform.ProjMatrix:
 				value = draw.ProjectionMatrix;
 				type = EShaderVarType._mat4;
 				return true;
-			case nameof(EEngineUniform.PrevProjMatrix):
-			case nameof(EEngineUniform.PrevLeftEyeProjMatrix):
+			case EEngineUniform.PrevProjMatrix:
+			case EEngineUniform.PrevLeftEyeProjMatrix:
 				value = draw.PreviousProjectionMatrix;
 				type = EShaderVarType._mat4;
 				return true;
-			case nameof(EEngineUniform.PrevRightEyeProjMatrix):
+			case EEngineUniform.PrevRightEyeProjMatrix:
 				value = draw.PreviousRightEyeProjectionMatrix;
 				type = EShaderVarType._mat4;
 				return true;
-			case nameof(EEngineUniform.LeftEyeViewProjectionMatrix):
+			case EEngineUniform.LeftEyeViewProjectionMatrix:
 				value = draw.ViewProjectionMatrix;
 				type = EShaderVarType._mat4;
 				return true;
-			case nameof(EEngineUniform.LeftEyeInverseViewMatrix):
+			case EEngineUniform.LeftEyeInverseViewMatrix:
 				value = draw.InverseViewMatrix;
 				type = EShaderVarType._mat4;
 				return true;
-			case nameof(EEngineUniform.LeftEyeInverseProjMatrix):
+			case EEngineUniform.LeftEyeInverseProjMatrix:
 				value = draw.InverseProjectionMatrix;
 				type = EShaderVarType._mat4;
 				return true;
-			case nameof(EEngineUniform.RightEyeInverseViewMatrix):
+			case EEngineUniform.RightEyeInverseViewMatrix:
 				value = draw.RightEyeInverseViewMatrix;
 				type = EShaderVarType._mat4;
 				return true;
-			case nameof(EEngineUniform.RightEyeInverseProjMatrix):
+			case EEngineUniform.RightEyeInverseProjMatrix:
 				value = draw.RightEyeInverseProjectionMatrix;
 				type = EShaderVarType._mat4;
 				return true;
-			case nameof(EEngineUniform.RightEyeViewProjectionMatrix):
+			case EEngineUniform.RightEyeViewProjectionMatrix:
 				value = draw.RightEyeViewProjectionMatrix;
 				type = EShaderVarType._mat4;
 				return true;
-			case nameof(EEngineUniform.LeftEyeProjMatrix):
+			case EEngineUniform.LeftEyeProjMatrix:
 				value = draw.ProjectionMatrix;
 				type = EShaderVarType._mat4;
 				return true;
-			case nameof(EEngineUniform.RightEyeProjMatrix):
+			case EEngineUniform.RightEyeProjMatrix:
 				value = draw.RightEyeProjectionMatrix;
 				type = EShaderVarType._mat4;
 				return true;
-			case nameof(EEngineUniform.CameraPosition):
+			case EEngineUniform.CameraPosition:
 				value = ToVector4(draw.CameraPosition);
 				type = EShaderVarType._vec4;
 				return true;
-			case nameof(EEngineUniform.CameraForward):
+			case EEngineUniform.CameraForward:
 				value = ToVector4(draw.CameraForward);
 				type = EShaderVarType._vec4;
 				return true;
-			case nameof(EEngineUniform.CameraUp):
+			case EEngineUniform.CameraUp:
 				value = ToVector4(draw.CameraUp);
 				type = EShaderVarType._vec4;
 				return true;
-			case nameof(EEngineUniform.CameraRight):
+			case EEngineUniform.CameraRight:
 				value = ToVector4(draw.CameraRight);
 				type = EShaderVarType._vec4;
 				return true;
-			case nameof(EEngineUniform.CameraNearZ):
-				value = draw.Camera?.NearZ ?? 0f;
+			case EEngineUniform.CameraNearZ:
+				value = draw.AutoUniformPublication.CameraNearZ;
 				type = EShaderVarType._float;
 				return true;
-			case nameof(EEngineUniform.CameraFarZ):
-				value = draw.Camera?.FarZ ?? 0f;
+			case EEngineUniform.CameraFarZ:
+				value = draw.AutoUniformPublication.CameraFarZ;
 				type = EShaderVarType._float;
 				return true;
-			case nameof(EEngineUniform.CameraFovX):
-				value = draw.Camera?.Parameters is XRPerspectiveCameraParameters persp ? persp.HorizontalFieldOfView : 0f;
+			case EEngineUniform.CameraFovX:
+				value = draw.AutoUniformPublication.CameraFovX;
 				type = EShaderVarType._float;
 				return true;
-			case nameof(EEngineUniform.CameraFovY):
-				value = draw.Camera?.Parameters is XRPerspectiveCameraParameters perspY ? perspY.VerticalFieldOfView : 0f;
+			case EEngineUniform.CameraFovY:
+				value = draw.AutoUniformPublication.CameraFovY;
 				type = EShaderVarType._float;
 				return true;
-			case nameof(EEngineUniform.CameraAspect):
-				value = draw.Camera?.Parameters is XRPerspectiveCameraParameters perspA ? perspA.AspectRatio : 0f;
+			case EEngineUniform.CameraAspect:
+				value = draw.AutoUniformPublication.CameraAspect;
 				type = EShaderVarType._float;
 				return true;
-			case nameof(EEngineUniform.DepthMode):
-				value = (int)(draw.Camera?.DepthMode ?? XRCamera.EDepthMode.Normal);
+			case EEngineUniform.DepthMode:
+				value = (int)draw.AutoUniformPublication.CameraDepthMode;
 				type = EShaderVarType._int;
 				return true;
-			case nameof(EEngineUniform.ClipSpaceYDirection):
+			case EEngineUniform.ClipSpaceYDirection:
 				value = (int)RuntimeEngine.Rendering.Settings.ClipSpaceYDirection;
 				type = EShaderVarType._int;
 				return true;
-			case nameof(EEngineUniform.ClipDepthRange):
+			case EEngineUniform.ClipDepthRange:
 				value = (int)RuntimeEngine.Rendering.EffectiveClipDepthRange;
 				type = EShaderVarType._int;
 				return true;
-			case nameof(EEngineUniform.FramebufferTextureYDirection):
+			case EEngineUniform.FramebufferTextureYDirection:
 				value = (int)RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeGraphicsApiKind.Vulkan);
 				type = EShaderVarType._int;
 				return true;
-			case nameof(EEngineUniform.ScreenWidth):
-			case nameof(EEngineUniform.ScreenHeight):
+			case EEngineUniform.ScreenWidth:
+			case EEngineUniform.ScreenHeight:
 				// Resolve from the render-area snapshotted at enqueue time. Reading the live
 				// RuntimeEngine.Rendering.State.RenderArea here (deferred record time) yields
 				// 0 because the pipeline render-region stack has already been popped, which
@@ -1444,22 +2463,22 @@ internal unsafe partial class VkMeshRenderer
 					screenW = area.Width;
 					screenH = area.Height;
 				}
-				value = normalized.Equals(nameof(EEngineUniform.ScreenWidth), StringComparison.Ordinal) ? screenW : screenH;
+				value = uniform == EEngineUniform.ScreenWidth ? screenW : screenH;
 				type = EShaderVarType._float;
 				return true;
-			case nameof(EEngineUniform.ScreenOrigin):
+			case EEngineUniform.ScreenOrigin:
 				value = new Vector2(0f, 0f);
 				type = EShaderVarType._vec2;
 				return true;
-			case nameof(EEngineUniform.BillboardMode):
+			case EEngineUniform.BillboardMode:
 				value = (int)draw.BillboardMode;
 				type = EShaderVarType._int;
 				return true;
-			case nameof(EEngineUniform.VRMode):
+			case EEngineUniform.VRMode:
 				value = draw.IsStereoPass ? 1 : 0;
 				type = EShaderVarType._int;
 				return true;
-            case nameof(EEngineUniform.UIXYWH):
+            case EEngineUniform.UIXYWH:
                 if (_program is not null &&
                     _program.TryGetUniformValue(
                         draw.ProgramBindingSnapshot,
@@ -1473,14 +2492,14 @@ internal unsafe partial class VkMeshRenderer
 				value = Vector4.Zero;
 				type = EShaderVarType._vec4;
 				return true;
-			case nameof(EEngineUniform.UIWidth):
-			case nameof(EEngineUniform.UIHeight):
-			case nameof(EEngineUniform.UIX):
-            case nameof(EEngineUniform.UIY):
+			case EEngineUniform.UIWidth:
+			case EEngineUniform.UIHeight:
+			case EEngineUniform.UIX:
+            case EEngineUniform.UIY:
                 if (_program is not null &&
                     _program.TryGetUniformValue(
                         draw.ProgramBindingSnapshot,
-                        normalized,
+                        uniform.ToStringFast(),
                         out ProgramUniformValue uiScalar))
 				{
 					value = EngineUniformValue.FromProgramValue(in uiScalar);
@@ -1495,12 +2514,12 @@ internal unsafe partial class VkMeshRenderer
 					uiBounds.HasInlineValue && uiBounds.Type == EShaderVarType._vec4)
 				{
 					Vector4 b = uiBounds.Vector4;
-					value = normalized switch
+					value = uniform switch
 					{
-						nameof(EEngineUniform.UIX) => b.X,
-						nameof(EEngineUniform.UIY) => b.Y,
-						nameof(EEngineUniform.UIWidth) => b.Z,
-						nameof(EEngineUniform.UIHeight) => b.W,
+						EEngineUniform.UIX => b.X,
+						EEngineUniform.UIY => b.Y,
+						EEngineUniform.UIWidth => b.Z,
+						EEngineUniform.UIHeight => b.W,
 						_ => 0f
 					};
 					type = EShaderVarType._float;
@@ -1524,6 +2543,7 @@ internal unsafe partial class VkMeshRenderer
 	/// </summary>
 	private bool TryWriteAutoUniformValue(Span<byte> data, AutoUniformMember member, object value, EShaderVarType valueType)
 	{
+		RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAutoUniformGenericConversion();
 		if (member.EngineType is null)
 			return false;
 

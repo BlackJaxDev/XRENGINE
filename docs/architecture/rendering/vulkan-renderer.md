@@ -451,11 +451,16 @@ Additional diagnostic flags are:
 |---|---|
 | `XRE_VULKAN_COMMAND_CHAINS_SINGLE_THREAD=1` | Forces deterministic single-thread chain processing for bisection. |
 | `XRE_VULKAN_DISABLE_PARALLEL_CHAIN_RECORDING=1` | Keeps command-chain lowering enabled while disabling worker dispatch. |
-| `XRE_VULKAN_PARALLEL_PACKET_BUILD=1` | Retained compatibility flag. Packet lowering is currently deterministic and sequential; Vulkan recording concurrency belongs to the persistent command-chain workers. |
 | `XRE_VULKAN_COMMAND_CHAIN_VALIDATE=1` | Enables expensive schedule, view-specialization, queue-schedule, and signature checks. |
 | `XRE_VULKAN_COMMAND_CHAIN_TRACE=1` | Emits throttled first-dirty-reason and schedule diagnostics. |
 | `XRE_VULKAN_COMMAND_CHAIN_MESH_SECONDARY_NOOP=1` | Diagnostic mode that records secondary mesh chains without draw payloads. |
+| `XRE_VULKAN_COMMAND_CHAIN_BENCHMARK_FORCE_RERECORD=1` | Benchmark-only mode that forces every scheduled mesh-chain secondary to rerecord each frame. Use only for controlled serial/parallel dirty-recording comparisons. |
 | `XRE_VULKAN_COMMAND_CHAIN_MULTI_QUEUE=1` | Builds and validates queue-schedule sidecar metadata; execution still falls back to the graphics queue. |
+
+Packet lowering is deterministic and sequential. The obsolete
+`XRE_VULKAN_PARALLEL_PACKET_BUILD` compatibility flag is no longer recognized;
+parallel native recording is controlled by the command-chain worker settings
+above.
 
 Command-chain recording keeps the render graph as the source of ordering truth:
 
@@ -519,7 +524,7 @@ owned pools are destroyed; pools are retained when a bounded join times out.
 
 VR and shadow passes use explicit command-chain view specialization. VR eye chains use left/right eye indices, with a multiview sentinel reserved for single-pass stereo. Shadow chains include light identity, cascade/face identity, target identity, and shadow atlas/fallback state in their structural signatures so atlas repacks or stale-tile fallback modes dirty only the affected chains.
 
-Optional multi-queue scheduling is metadata-only in this phase. The queue scheduler classifies graphics, secondary graphics, compute, and transfer eligibility, validates dependency/timeline data in validation mode, then emits a graphics fallback node for actual execution.
+Optional multi-queue scheduling is metadata-only in this phase. The queue scheduler classifies graphics, secondary graphics, compute, and transfer eligibility, validates dependency/timeline data in validation mode, then emits a graphics fallback node for actual execution. Requested overlap modes never publish executable non-graphics queue-family ownership transitions: frame-graph commands are encoded into and submitted through one graphics primary, so an apparent acquire on compute or transfer would have no matching native source-queue release. Executable ownership stays graphics-only until a multi-queue executor owns the paired command buffers, semaphore edges, and ordered submissions. Transfer-queue texture uploads remain a separate explicitly submitted path and retain their existing ownership contract.
 
 Mutable GPU-driven indirect/count streams remain on the Vulkan primary command
 buffer because replay through cached secondaries has not completed cross-vendor

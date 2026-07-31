@@ -53,7 +53,7 @@ public sealed class VulkanCoreHardeningPhase5Tests
         string recording = SliceBetween(
             synchronization,
             "private void RecordImageAccess(",
-            "private void ClearTrackedImageLayouts(");
+            "internal void ClearTrackedImageLayouts(");
         string submit = SliceBetween(
             synchronization,
             "private Result SubmitToQueueTracked(",
@@ -63,7 +63,7 @@ public sealed class VulkanCoreHardeningPhase5Tests
         recording.ShouldContain("RecordImageAspectState(recorded");
         recording.ShouldNotContain("_trackedImageSubresourceStates[");
         submit.ShouldContain("if (result == Result.Success)");
-        submit.ShouldContain("PublishRecordedImageLayouts(ref submitInfo, lifetimeSubmission)");
+        submit.ShouldContain("PublishRecordedImageLayouts(");
         submit.IndexOf("if (result == Result.Success)", StringComparison.Ordinal)
             .ShouldBeLessThan(submit.IndexOf("PublishRecordedImageLayouts", StringComparison.Ordinal));
     }
@@ -102,6 +102,177 @@ public sealed class VulkanCoreHardeningPhase5Tests
     }
 
     [Test]
+    public void QueueOwnershipRequirement_ClassifiesAndPairsReleaseAcquire()
+    {
+        ImageSubresourceRange range = new()
+        {
+            AspectMask = ImageAspectFlags.ColorBit,
+            BaseMipLevel = 2,
+            LevelCount = 2,
+            BaseArrayLayer = 1,
+            LayerCount = 3,
+        };
+        VulkanQueueOwnershipTransferRequirement release = new(
+            ImageHandle: 19,
+            range,
+            ImageLayout.TransferDstOptimal,
+            ImageLayout.ShaderReadOnlyOptimal,
+            SourceQueueFamilyIndex: 4,
+            DestinationQueueFamilyIndex: 7,
+            PipelineStageFlags2.TransferBit,
+            AccessFlags2.TransferWriteBit,
+            PipelineStageFlags2.BottomOfPipeBit,
+            AccessFlags2.None,
+            ResourceGeneration: 11);
+        VulkanQueueOwnershipTransferRequirement acquire = release with
+        {
+            SourceStageMask = PipelineStageFlags2.TopOfPipeBit,
+            SourceAccessMask = AccessFlags2.None,
+            DestinationStageMask =
+                PipelineStageFlags2.FragmentShaderBit,
+            DestinationAccessMask = AccessFlags2.ShaderReadBit,
+        };
+
+        release.ResolveRole(4)
+            .ShouldBe(EVulkanQueueOwnershipTransferRole.Release);
+        acquire.ResolveRole(7)
+            .ShouldBe(EVulkanQueueOwnershipTransferRole.Acquire);
+        acquire.ResolveRole(9)
+            .ShouldBe(EVulkanQueueOwnershipTransferRole.Invalid);
+        release.Contains(
+            19,
+            mipLevel: 3,
+            arrayLayer: 3,
+            ImageAspectFlags.ColorBit).ShouldBeTrue();
+        release.IsPairedWith(
+            in acquire,
+            imageHandle: 19,
+            mipLevel: 2,
+            arrayLayer: 1,
+            ImageAspectFlags.ColorBit).ShouldBeTrue();
+        release.IsPairedWith(
+            acquire with
+            {
+                OldLayout = ImageLayout.ShaderReadOnlyOptimal,
+            },
+            imageHandle: 19,
+            mipLevel: 2,
+            arrayLayer: 1,
+            ImageAspectFlags.ColorBit).ShouldBeFalse();
+    }
+
+    [Test]
+    public void QueueOwnershipRequirement_CoversExactMipLayerAndSplitAspects()
+    {
+        VulkanQueueOwnershipTransferRequirement requirement = new(
+            ImageHandle: 0xF00DUL,
+            new ImageSubresourceRange
+            {
+                AspectMask =
+                    ImageAspectFlags.DepthBit |
+                    ImageAspectFlags.StencilBit,
+                BaseMipLevel = 2,
+                LevelCount = 3,
+                BaseArrayLayer = 4,
+                LayerCount = 2,
+            },
+            ImageLayout.Undefined,
+            ImageLayout.DepthStencilAttachmentOptimal,
+            SourceQueueFamilyIndex: 1,
+            DestinationQueueFamilyIndex: 2,
+            PipelineStageFlags2.TopOfPipeBit,
+            AccessFlags2.None,
+            PipelineStageFlags2.EarlyFragmentTestsBit,
+            AccessFlags2.DepthStencilAttachmentWriteBit,
+            ResourceGeneration: 9);
+
+        requirement.Contains(
+            0xF00DUL,
+            mipLevel: 2,
+            arrayLayer: 4,
+            ImageAspectFlags.DepthBit).ShouldBeTrue();
+        requirement.Contains(
+            0xF00DUL,
+            mipLevel: 4,
+            arrayLayer: 5,
+            ImageAspectFlags.StencilBit).ShouldBeTrue();
+        requirement.Contains(
+            0xF00DUL,
+            mipLevel: 5,
+            arrayLayer: 5,
+            ImageAspectFlags.DepthBit).ShouldBeFalse();
+        requirement.Contains(
+            0xF00DUL,
+            mipLevel: 4,
+            arrayLayer: 6,
+            ImageAspectFlags.StencilBit).ShouldBeFalse();
+        requirement.Contains(
+            0xF00DUL,
+            mipLevel: 2,
+            arrayLayer: 4,
+            ImageAspectFlags.ColorBit).ShouldBeFalse();
+    }
+
+    [Test]
+    public void QueueSemaphoreRequirement_RequiresTimelineValueAndWaitScope()
+    {
+        VulkanQueueSemaphoreRequirement requirement = new(
+            SemaphoreHandle: 23,
+            Value: 41,
+            PipelineStageFlags2.FragmentShaderBit |
+                PipelineStageFlags2.ComputeShaderBit,
+            SourceQueueFamilyIndex: 4,
+            DestinationQueueFamilyIndex: 7);
+
+        requirement.IsSatisfiedBy(
+            semaphoreHandle: 23,
+            value: 41,
+            PipelineStageFlags2.FragmentShaderBit |
+                PipelineStageFlags2.ComputeShaderBit).ShouldBeTrue();
+        requirement.IsSatisfiedBy(
+            semaphoreHandle: 23,
+            value: 42,
+            PipelineStageFlags2.AllCommandsBit).ShouldBeTrue();
+        requirement.IsSatisfiedBy(
+            semaphoreHandle: 23,
+            value: 40,
+            PipelineStageFlags2.AllCommandsBit).ShouldBeFalse();
+        requirement.IsSatisfiedBy(
+            semaphoreHandle: 23,
+            value: 41,
+            PipelineStageFlags2.FragmentShaderBit).ShouldBeFalse();
+    }
+
+    [Test]
+    public void QueueOwnershipJournal_PublishesReleasePendingUntilValidatedAcquire()
+    {
+        string synchronization = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+        string tracking = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
+        string upload = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Uploads/VulkanRenderer.TextureUploadTransfer.cs");
+
+        tracking.ShouldContain("QueueOwnershipTransfers");
+        synchronization.ShouldContain(
+            "VulkanPendingQueueOwnershipRelease?");
+        synchronization.ShouldContain(
+            "ValidateQueueOwnershipTransferRequirements(");
+        synchronization.ShouldContain(
+            "SubmissionSatisfiesQueueSemaphoreRequirement(");
+        synchronization.ShouldContain(
+            "completedGraphicsSequence");
+        synchronization.ShouldContain(
+            "state.PendingQueueOwnershipRelease = null");
+        synchronization.ShouldContain(
+            "QueueFamilyIndex =");
+        upload.ShouldContain(
+            "OldLayout = ImageLayout.TransferDstOptimal");
+        upload.ShouldContain(
+            "NewLayout = ImageLayout.ShaderReadOnlyOptimal");
+    }
+
+    [Test]
     public void DescriptorBinding_ValidatesExactViewRangeAgainstRecordedLayout()
     {
         string lifetime = ReadWorkspaceFile(
@@ -122,7 +293,7 @@ public sealed class VulkanCoreHardeningPhase5Tests
         string blit = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Blit.cs");
         string texture = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.Mipmaps.cs");
         string mipmaps = SliceBetween(
             texture,
             "protected void GenerateMipmapsWithBlit()",

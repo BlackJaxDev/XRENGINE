@@ -6,18 +6,26 @@ internal sealed class CommandChain(CommandChainKey key)
 {
     public CommandChainKey Key { get; } = key;
     public CommandChainState State { get; set; }
-    public CommandBuffer SecondaryCommandBuffer { get; set; }
-    public CommandPool SecondaryCommandPool { get; set; }
-    public bool OwnsSecondaryCommandPool { get; set; }
-    public bool SecondaryCommandBufferExecutable { get; set; }
-    public ulong SecondaryCommandBufferGeneration { get; set; }
-    public bool HasSecondaryInheritance { get; set; }
-    public bool SecondaryInheritanceDynamicRendering { get; set; }
-    public RenderPass SecondaryInheritanceRenderPass { get; set; }
-    public Framebuffer SecondaryInheritanceFramebuffer { get; set; }
-    public DynamicRenderingFormatSignature SecondaryInheritanceDynamicRenderingFormats { get; set; }
-    public bool SecondaryInheritanceDepthStencilReadOnly { get; set; }
-    public SampleCountFlags SecondaryInheritanceSamples { get; set; }
+    public VulkanRecordedCommandArtifact RecordedArtifact { get; } =
+        new(CommandBufferLevel.Secondary, key.FrameSlot);
+    public CommandBuffer SecondaryCommandBuffer => RecordedArtifact.NativeBuffer;
+    public CommandPool SecondaryCommandPool => RecordedArtifact.OwnerPool;
+    public bool OwnsSecondaryCommandPool => RecordedArtifact.OwnsPool;
+    public bool SecondaryCommandBufferExecutable => RecordedArtifact.IsExecutable;
+    public ulong SecondaryCommandBufferGeneration => RecordedArtifact.Generation;
+    public bool HasSecondaryInheritance => RecordedArtifact.HasInheritance;
+    public bool SecondaryInheritanceDynamicRendering =>
+        RecordedArtifact.Inheritance.DynamicRendering;
+    public RenderPass SecondaryInheritanceRenderPass =>
+        RecordedArtifact.Inheritance.RenderPass;
+    public Framebuffer SecondaryInheritanceFramebuffer =>
+        RecordedArtifact.Inheritance.Framebuffer;
+    public DynamicRenderingFormatSignature SecondaryInheritanceDynamicRenderingFormats =>
+        RecordedArtifact.Inheritance.DynamicRenderingFormats;
+    public bool SecondaryInheritanceDepthStencilReadOnly =>
+        RecordedArtifact.Inheritance.DepthStencilReadOnly;
+    public SampleCountFlags SecondaryInheritanceSamples =>
+        RecordedArtifact.Inheritance.Samples;
     public ulong StructuralSignature { get; set; }
     public ulong FrameDataSignature { get; set; }
     public ulong ResourcePlanRevision { get; set; }
@@ -39,4 +47,5 @@ internal sealed class CommandChain(CommandChainKey key)
     public ulong LastUsedScheduleGeneration { get; set; }
     public bool ScheduledPacket { get; set; }
     public CommandChainDirtyReason DirtyReason { get; set; }
+    public EVulkanCommandChainWorkerEligibility WorkerEligibility { get; set; }
 }

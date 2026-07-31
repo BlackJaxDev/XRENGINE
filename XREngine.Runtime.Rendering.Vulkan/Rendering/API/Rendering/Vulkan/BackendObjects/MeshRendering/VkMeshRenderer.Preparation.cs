@@ -143,6 +143,7 @@ internal unsafe partial class VkMeshRenderer
 		XRMaterial material,
 		VkRenderProgram preparedProgram,
 		string? preparedProgramIdentity,
+		ulong preparedProgramLinkGeneration,
 		ComputeDispatchSnapshot? programBindingSnapshot,
 		int drawUniformSlot,
 		out string reason)
@@ -171,7 +172,11 @@ internal unsafe partial class VkMeshRenderer
 		if (MeshRenderer.HasRenderDataPreparation)
 			MeshRenderer.OnPreparingRenderData();
 
-		if (!ActivateCapturedProgram(material, preparedProgram, preparedProgramIdentity))
+		if (!ActivateCapturedProgram(
+				material,
+				preparedProgram,
+				preparedProgramIdentity,
+				preparedProgramLinkGeneration))
 			return SetPrepareResult(false, "ProgramsPending", "The captured Vulkan program is being relinked.", out reason);
 
 		EnsureRuntimeDeformationBuffersCurrent();
@@ -216,6 +221,7 @@ internal unsafe partial class VkMeshRenderer
 		XRMaterial material,
 		VkRenderProgram preparedProgram,
 		string? preparedProgramIdentity,
+		ulong preparedProgramLinkGeneration,
 		ComputeDispatchSnapshot? programBindingSnapshot,
 		int drawUniformSlot,
 		out string reason)
@@ -244,7 +250,11 @@ internal unsafe partial class VkMeshRenderer
 		if (MeshRenderer.HasRenderDataPreparation)
 			MeshRenderer.OnPreparingRenderData();
 
-		if (!ActivateCapturedProgram(material, preparedProgram, preparedProgramIdentity))
+		if (!ActivateCapturedProgram(
+				material,
+				preparedProgram,
+				preparedProgramIdentity,
+				preparedProgramLinkGeneration))
 			return SetPrepareResult(false, "ProgramsPending", "The captured Vulkan program is being relinked.", out reason);
 
 		EnsureRuntimeDeformationBuffersCurrent();
@@ -277,10 +287,24 @@ internal unsafe partial class VkMeshRenderer
 		return SetPrepareResult(true, "Ready", BuildPrepareSuccessDetail("Reused"), out reason);
 	}
 
-	private bool ActivateCapturedProgram(XRMaterial material, VkRenderProgram preparedProgram, string? preparedProgramIdentity)
+	private bool ActivateCapturedProgram(
+		XRMaterial material,
+		VkRenderProgram preparedProgram,
+		string? preparedProgramIdentity,
+		ulong preparedProgramLinkGeneration)
 	{
+		if (preparedProgram.LinkGeneration != preparedProgramLinkGeneration)
+		{
+			Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
+			return false;
+		}
+
 		string? identity = preparedProgramIdentity ?? preparedProgram.Data?.Name;
-		if (!ReferenceEquals(_program, preparedProgram) ||
+		bool replacingProgram =
+			_program is not null &&
+			!ReferenceEquals(_program, preparedProgram);
+		if (replacingProgram ||
+			_program is null ||
 			!string.Equals(_activeProgramIdentity, identity, StringComparison.Ordinal))
 		{
 			_pipelineDirty = true;
@@ -301,22 +325,46 @@ internal unsafe partial class VkMeshRenderer
 		_program.Generate();
 		if (!_program.Link(MeshRenderer?.GenerateAsync ?? false))
 			return false;
+		if (_program.LinkGeneration != preparedProgramLinkGeneration)
+		{
+			Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
+			return false;
+		}
 
-		ObserveActiveProgramLinkGeneration(_program);
+		ObserveActiveProgramLinkGeneration(_program, replacingProgram);
 		return true;
 	}
 
 	/// <summary>
 	/// Invalidates every mesh-local object whose compatibility depends on a
-	/// program interface when that interface is rebuilt in place.
+	/// program interface when that interface is rebuilt in place or its backend
+	/// wrapper is replaced.
 	/// </summary>
-	private void ObserveActiveProgramLinkGeneration(VkRenderProgram program)
+	private void ObserveActiveProgramLinkGeneration(
+		VkRenderProgram program,
+		bool replacingProgram = false)
 	{
 		ulong linkGeneration = program.LinkGeneration;
-		if (_activeProgramLinkGeneration == linkGeneration)
+		if (!replacingProgram &&
+			_activeProgramLinkGeneration == linkGeneration)
 			return;
 
+		bool replacingLinkedInterface =
+			replacingProgram ||
+			_activeProgramLinkGeneration != 0;
 		_activeProgramLinkGeneration = linkGeneration;
+		if (replacingLinkedInterface)
+		{
+			// Pipeline keys and prepared records carry the link generation, but
+			// mesh-local descriptor/payload tables also retain reflected block
+			// identities. Drop only this renderer's interface-dependent state so
+			// a relink cannot reuse stale bindings or grow one payload set per
+			// historical shader interface.
+			_pipelines.Clear();
+			ReleaseDescriptorAllocation();
+			DestroyEngineUniformBuffers();
+			DestroyAutoUniformBuffers();
+		}
 		_pipelineDirty = true;
 		_descriptorDirty = true;
 		_vertexInputStateDirty = true;

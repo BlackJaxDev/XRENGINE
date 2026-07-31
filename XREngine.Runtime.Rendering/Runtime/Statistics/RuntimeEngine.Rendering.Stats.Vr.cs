@@ -24,6 +24,13 @@ namespace XREngine
                     private static long _vrRightWorkerBuildTimeTicks;
                     private static long _lastFrameVrLeftWorkerBuildTimeTicks;
                     private static long _lastFrameVrRightWorkerBuildTimeTicks;
+                    private static long _vrOpenXrEyePrimaryRecordSpanTicks;
+                    private static long _vrOpenXrEyePrimaryRecordOverlapTicks;
+                    private static long _lastFrameVrOpenXrEyePrimaryRecordSpanTicks;
+                    private static long _lastFrameVrOpenXrEyePrimaryRecordOverlapTicks;
+                    private static long _vrProcessOpenXrEyePrimaryRecordSamples;
+                    private static long _vrProcessOpenXrEyePrimaryRecordSpanTicks;
+                    private static long _vrProcessOpenXrEyePrimaryRecordOverlapTicks;
                     private static long _vrRenderSubmitTimeTicks;
                     private static long _lastFrameVrRenderSubmitTimeTicks;
                     private static long _vrXrWaitFrameBlockTimeTicks;
@@ -69,6 +76,25 @@ namespace XREngine
                     public static int VrRightEyeVisible => _lastFrameVrRightEyeVisible;
                     public static double VrLeftWorkerBuildTimeMs => TimeSpan.FromTicks(_lastFrameVrLeftWorkerBuildTimeTicks).TotalMilliseconds;
                     public static double VrRightWorkerBuildTimeMs => TimeSpan.FromTicks(_lastFrameVrRightWorkerBuildTimeTicks).TotalMilliseconds;
+                    public static double VrOpenXrEyePrimaryRecordSpanMs =>
+                        TimeSpan.FromTicks(_lastFrameVrOpenXrEyePrimaryRecordSpanTicks).TotalMilliseconds;
+                    public static double VrOpenXrEyePrimaryRecordOverlapMs =>
+                        TimeSpan.FromTicks(_lastFrameVrOpenXrEyePrimaryRecordOverlapTicks).TotalMilliseconds;
+                    public static double VrOpenXrEyePrimaryRecordOverlapRatio =>
+                        _lastFrameVrOpenXrEyePrimaryRecordSpanTicks > 0
+                            ? _lastFrameVrOpenXrEyePrimaryRecordOverlapTicks /
+                                (double)_lastFrameVrOpenXrEyePrimaryRecordSpanTicks
+                            : 0.0;
+                    public static long VrProcessOpenXrEyePrimaryRecordSamples =>
+                        Volatile.Read(ref _vrProcessOpenXrEyePrimaryRecordSamples);
+                    public static double VrProcessOpenXrEyePrimaryRecordSpanMs =>
+                        TimeSpan.FromTicks(
+                            Volatile.Read(ref _vrProcessOpenXrEyePrimaryRecordSpanTicks))
+                            .TotalMilliseconds;
+                    public static double VrProcessOpenXrEyePrimaryRecordOverlapMs =>
+                        TimeSpan.FromTicks(
+                            Volatile.Read(ref _vrProcessOpenXrEyePrimaryRecordOverlapTicks))
+                            .TotalMilliseconds;
                     public static double VrRenderSubmitTimeMs => TimeSpan.FromTicks(_lastFrameVrRenderSubmitTimeTicks).TotalMilliseconds;
                     public static double VrXrWaitFrameBlockTimeMs => TimeSpan.FromTicks(_lastFrameVrXrWaitFrameBlockTimeTicks).TotalMilliseconds;
                     public static double VrXrEndFrameSubmitTimeMs => TimeSpan.FromTicks(_lastFrameVrXrEndFrameSubmitTimeTicks).TotalMilliseconds;
@@ -136,6 +162,12 @@ namespace XREngine
                         _lastFrameVrRightEyeVisible = Interlocked.Exchange(ref _vrRightEyeVisible, 0);
                         _lastFrameVrLeftWorkerBuildTimeTicks = Interlocked.Exchange(ref _vrLeftWorkerBuildTimeTicks, 0);
                         _lastFrameVrRightWorkerBuildTimeTicks = Interlocked.Exchange(ref _vrRightWorkerBuildTimeTicks, 0);
+                        _lastFrameVrOpenXrEyePrimaryRecordSpanTicks = Interlocked.Exchange(
+                            ref _vrOpenXrEyePrimaryRecordSpanTicks,
+                            0);
+                        _lastFrameVrOpenXrEyePrimaryRecordOverlapTicks = Interlocked.Exchange(
+                            ref _vrOpenXrEyePrimaryRecordOverlapTicks,
+                            0);
                         _lastFrameVrRenderSubmitTimeTicks = Interlocked.Exchange(ref _vrRenderSubmitTimeTicks, 0);
                         _lastFrameVrXrWaitFrameBlockTimeTicks = Interlocked.Exchange(ref _vrXrWaitFrameBlockTimeTicks, 0);
                         _lastFrameVrXrEndFrameSubmitTimeTicks = Interlocked.Exchange(ref _vrXrEndFrameSubmitTimeTicks, 0);
@@ -161,6 +193,8 @@ namespace XREngine
                         Interlocked.Exchange(ref _vrRightEyeVisible, 0);
                         Interlocked.Exchange(ref _vrLeftWorkerBuildTimeTicks, 0);
                         Interlocked.Exchange(ref _vrRightWorkerBuildTimeTicks, 0);
+                        Interlocked.Exchange(ref _vrOpenXrEyePrimaryRecordSpanTicks, 0);
+                        Interlocked.Exchange(ref _vrOpenXrEyePrimaryRecordOverlapTicks, 0);
                         Interlocked.Exchange(ref _vrRenderSubmitTimeTicks, 0);
                         Interlocked.Exchange(ref _vrXrWaitFrameBlockTimeTicks, 0);
                         Interlocked.Exchange(ref _vrXrEndFrameSubmitTimeTicks, 0);
@@ -186,6 +220,8 @@ namespace XREngine
                         _lastFrameVrRightEyeVisible = 0;
                         _lastFrameVrLeftWorkerBuildTimeTicks = 0;
                         _lastFrameVrRightWorkerBuildTimeTicks = 0;
+                        _lastFrameVrOpenXrEyePrimaryRecordSpanTicks = 0;
+                        _lastFrameVrOpenXrEyePrimaryRecordOverlapTicks = 0;
                         _lastFrameVrRenderSubmitTimeTicks = 0;
                         _lastFrameVrXrWaitFrameBlockTimeTicks = 0;
                         _lastFrameVrXrEndFrameSubmitTimeTicks = 0;
@@ -270,6 +306,30 @@ namespace XREngine
                         MarkFrameScopedStatsActive();
                         Interlocked.Exchange(ref _vrLeftWorkerBuildTimeTicks, leftBuildTime.Ticks);
                         Interlocked.Exchange(ref _vrRightWorkerBuildTimeTicks, rightBuildTime.Ticks);
+                    }
+
+                    /// <summary>
+                    /// Records the wall-clock span and true native recording
+                    /// overlap of the two persistent OpenXR eye workers.
+                    /// </summary>
+                    public static void RecordVrOpenXrEyePrimaryRecordTiming(
+                        TimeSpan span,
+                        TimeSpan overlap)
+                    {
+                        if (!EnableTracking || span <= TimeSpan.Zero)
+                            return;
+
+                        long overlapTicks = Math.Clamp(overlap.Ticks, 0, span.Ticks);
+                        MarkFrameScopedStatsActive();
+                        Interlocked.Exchange(ref _vrOpenXrEyePrimaryRecordSpanTicks, span.Ticks);
+                        Interlocked.Exchange(
+                            ref _vrOpenXrEyePrimaryRecordOverlapTicks,
+                            overlapTicks);
+                        Interlocked.Increment(ref _vrProcessOpenXrEyePrimaryRecordSamples);
+                        Interlocked.Add(ref _vrProcessOpenXrEyePrimaryRecordSpanTicks, span.Ticks);
+                        Interlocked.Add(
+                            ref _vrProcessOpenXrEyePrimaryRecordOverlapTicks,
+                            overlapTicks);
                     }
 
                     public static void RecordVrRenderSubmitTime(TimeSpan submitTime)

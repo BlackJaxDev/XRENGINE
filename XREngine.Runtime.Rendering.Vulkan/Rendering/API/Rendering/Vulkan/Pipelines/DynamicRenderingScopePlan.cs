@@ -59,6 +59,9 @@ internal readonly ref struct DynamicRenderingScopePlan
         FormatSignature = formatSignature;
         SampleCount = sampleCount;
         LocalRead = localRead;
+        LocalReadSignature =
+            DynamicRenderingLocalReadSignature.Create(in localRead);
+        InheritanceRenderingFlags = 0;
     }
 
     public Rect2D RenderArea { get; }
@@ -74,4 +77,6 @@ internal readonly ref struct DynamicRenderingScopePlan
     public DynamicRenderingFormatSignature SemanticSignature => FormatSignature;
     public SampleCountFlags SampleCount { get; }
     public DynamicRenderingLocalReadPlan LocalRead { get; }
+    public DynamicRenderingLocalReadSignature LocalReadSignature { get; }
+    public RenderingFlags InheritanceRenderingFlags { get; }
 }

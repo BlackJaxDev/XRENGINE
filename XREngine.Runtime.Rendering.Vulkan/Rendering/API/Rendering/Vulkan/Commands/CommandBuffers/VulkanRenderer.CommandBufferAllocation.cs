@@ -293,6 +293,7 @@ namespace XREngine.Rendering.Vulkan
             evicted.RecordedImageLayoutEndState = null;
             evicted.CommandChainScheduleSignature = ulong.MaxValue;
             evicted.CommandChainPrimaryGroupSignature = ulong.MaxValue;
+            evicted.CommandChainPrimaryIdentityComponents = default;
             evicted.CommandChainPrimarySkeletonSignature = ulong.MaxValue;
             evicted.CommandChainPrimaryGroupCount = -1;
             evicted.PlannerRevision = ulong.MaxValue;
@@ -447,6 +448,8 @@ namespace XREngine.Rendering.Vulkan
             ReadOnlySpan<ulong> dependentCommandBuffers,
             string reason)
         {
+            using VulkanCpuStageScope dirtyPropagationStage =
+                new(EVulkanCpuStage.CommandDirtyPropagation);
             if (dependentCommandBuffers.IsEmpty)
                 return default;
 
@@ -523,7 +526,9 @@ namespace XREngine.Rendering.Vulkan
                             continue;
 
                         chain.State = CommandChainState.Unrecorded;
-                        chain.SecondaryCommandBufferExecutable = false;
+                        MarkCommandChainSecondaryCommandBufferInvalid(
+                            chain,
+                            EVulkanRecordedCommandArtifactInvalidationReason.DependencyChanged);
                         chain.DirtyReason = CommandChainDirtyReason.ResourcePlan;
                         exactChainsDirtied++;
                     }

@@ -65,21 +65,27 @@ public unsafe partial class VulkanRenderer
                         _workerIndex,
                         _prepared,
                         out OpenXrRecordedEyeCommandBuffer recorded);
+                    long end = Stopwatch.GetTimestamp();
                     _result = new OpenXrEyeRecordWorkerResult(
                         success,
                         recorded,
                         threadId,
-                        Stopwatch.GetElapsedTime(start),
-                        null);
+                        Stopwatch.GetElapsedTime(start, end),
+                        null,
+                        start,
+                        end);
                 }
                 catch (Exception ex)
                 {
+                    long end = Stopwatch.GetTimestamp();
                     _result = new OpenXrEyeRecordWorkerResult(
                         false,
                         default,
                         threadId,
-                        Stopwatch.GetElapsedTime(start),
-                        ex.Message);
+                        Stopwatch.GetElapsedTime(start, end),
+                        ex.Message,
+                        start,
+                        end);
                 }
                 finally
                 {

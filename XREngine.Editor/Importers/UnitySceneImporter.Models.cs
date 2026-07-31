@@ -30,32 +30,7 @@ internal static partial class UnitySceneImporter
         }
 
         Dictionary<string, XRMaterial> externalMaterials = ImportExternalMaterialRemaps(metadata, state);
-        var options = new ModelImportOptions
-        {
-            // Unity's generated hierarchy/fileID correspondence is currently validated against
-            // the mature Assimp FBX path. The native FBX path retains a much larger sparse
-            // morph/skin working set for production avatar files and is not yet a safe choice
-            // for editor-side Unity prefab composition.
-            FbxBackend = FbxImportBackend.Assimp,
-            ScaleConversion = metadata.GlobalScale,
-            ZUp = false,
-            FbxPivotPolicy = metadata.BakeAxisConversion
-                ? XREngine.Fbx.FbxPivotImportPolicy.BakeIntoLocalTransform
-                : XREngine.Fbx.FbxPivotImportPolicy.PreservePivotSemantics,
-            CollapseGeneratedFbxHelperNodes = !metadata.PreserveHierarchy,
-            // Assimp's graph optimizer removes empty FBX grouping nodes such as
-            // "Meshes/Tops". Unity retains those nodes even when
-            // ModelImporter.preserveHierarchy is disabled, and includes them in
-            // generation-2 GameObject/Transform/renderer fileIDs.
-            OptimizeGraph = false,
-            OptimizeMeshes = false,
-            ProcessMeshesAsynchronously = false,
-            GenerateMeshRenderersAsync = false,
-            MaterialRemap = externalMaterials.ToDictionary(
-                static pair => pair.Key,
-                static pair => (XRMaterial?)pair.Value,
-                StringComparer.Ordinal),
-        };
+        ModelImportOptions options = CreateUnityModelImportOptions(metadata, externalMaterials);
 
         using var importer = new ModelImporter(modelPath, onCompleted: null, materialFactory: null)
         {
@@ -127,6 +102,43 @@ internal static partial class UnitySceneImporter
             modelPath);
         return hierarchy;
     }
+
+    internal static ModelImportOptions CreateUnityModelImportOptions(
+        UnityModelImporterDocument metadata,
+        IReadOnlyDictionary<string, XRMaterial> externalMaterials)
+        => new()
+        {
+            // Unity's generated hierarchy/fileID correspondence is currently validated against
+            // the mature Assimp FBX path. The native FBX path retains a much larger sparse
+            // morph/skin working set for production avatar files and is not yet a safe choice
+            // for editor-side Unity prefab composition.
+            FbxBackend = FbxImportBackend.Assimp,
+            ScaleConversion = metadata.GlobalScale,
+            ZUp = false,
+            // Unity-authored assets face +Z while XRENGINE faces -Z. Assimp applies this
+            // reflection coherently to vertices, hierarchy transforms, and inverse bind
+            // matrices. Reverse winding in the same import step so reflected triangles
+            // remain front-facing. Unity YAML transforms are converted separately because
+            // they do not pass through the model importer.
+            MakeLeftHanded = true,
+            FlipWindingOrder = true,
+            FbxPivotPolicy = metadata.BakeAxisConversion
+                ? XREngine.Fbx.FbxPivotImportPolicy.BakeIntoLocalTransform
+                : XREngine.Fbx.FbxPivotImportPolicy.PreservePivotSemantics,
+            CollapseGeneratedFbxHelperNodes = !metadata.PreserveHierarchy,
+            // Assimp's graph optimizer removes empty FBX grouping nodes such as
+            // "Meshes/Tops". Unity retains those nodes even when
+            // ModelImporter.preserveHierarchy is disabled, and includes them in
+            // generation-2 GameObject/Transform/renderer fileIDs.
+            OptimizeGraph = false,
+            OptimizeMeshes = false,
+            ProcessMeshesAsynchronously = false,
+            GenerateMeshRenderersAsync = false,
+            MaterialRemap = externalMaterials.ToDictionary(
+                static pair => pair.Key,
+                static pair => (XRMaterial?)pair.Value,
+                StringComparer.Ordinal),
+        };
 
     private static Dictionary<string, XRMaterial> ImportExternalMaterialRemaps(
         UnityModelImporterDocument metadata,

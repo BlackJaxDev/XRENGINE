@@ -55,7 +55,7 @@ internal sealed partial class SkinningPrepassDispatcher
                     true,
                     false)
                 {
-                    BindingIndexOverride = 9u,
+                    BindingIndexOverride = MeshDeformationBindingLayout.ComputeInterleaved,
                     Usage = EBufferUsage.DynamicDraw,
                     DisposeOnPush = false
                 };
@@ -71,7 +71,7 @@ internal sealed partial class SkinningPrepassDispatcher
                     true,
                     false)
                 {
-                    BindingIndexOverride = 11u,
+                    BindingIndexOverride = MeshDeformationBindingLayout.ComputePosition,
                     Usage = EBufferUsage.DynamicDraw,
                     DisposeOnPush = false
                 };
@@ -87,7 +87,7 @@ internal sealed partial class SkinningPrepassDispatcher
                         true,
                         false)
                     {
-                        BindingIndexOverride = 12u,
+                        BindingIndexOverride = MeshDeformationBindingLayout.ComputeNormal,
                         Usage = EBufferUsage.DynamicDraw,
                         DisposeOnPush = false
                     };
@@ -104,7 +104,7 @@ internal sealed partial class SkinningPrepassDispatcher
                         true,
                         false)
                     {
-                        BindingIndexOverride = 15u,
+                        BindingIndexOverride = MeshDeformationBindingLayout.ComputeTangent,
                         Usage = EBufferUsage.DynamicDraw,
                         DisposeOnPush = false
                     };

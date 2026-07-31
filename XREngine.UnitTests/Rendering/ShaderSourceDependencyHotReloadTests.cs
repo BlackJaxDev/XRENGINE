@@ -6,6 +6,7 @@ using XREngine.Rendering;
 namespace XREngine.UnitTests.Rendering;
 
 [TestFixture]
+[NonParallelizable]
 public sealed class ShaderSourceDependencyHotReloadTests
 {
     [SetUp]

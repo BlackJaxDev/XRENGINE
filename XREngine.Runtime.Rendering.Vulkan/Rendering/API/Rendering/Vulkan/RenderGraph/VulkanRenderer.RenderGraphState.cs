@@ -44,6 +44,7 @@ public unsafe partial class VulkanRenderer
         public XRFrameBuffer? BoundDrawFrameBuffer;
         public XRFrameBuffer? BoundReadFrameBuffer;
         public EReadBufferMode ReadBufferMode;
+        public bool PreparedCommandChainEncodingActive;
     }
 
     private sealed class VulkanCommandThreadWorkspace : IDisposable
@@ -728,6 +729,12 @@ public unsafe partial class VulkanRenderer
 
     private void StoreThreadResourcePlannerRuntimeState(in ResourcePlannerRuntimeState state)
     {
+        if (CommandThreadContext.PreparedCommandChainEncodingActive)
+        {
+            throw new InvalidOperationException(
+                "Prepared Vulkan command-chain encoding cannot publish resource-planner state.");
+        }
+
         ResourcePlannerRuntimeState next = state;
         next.FrameOpResourcePlannerSwitchingState =
             CommandThreadContext.FrameOpResourcePlannerSwitchingState ??
@@ -776,7 +783,15 @@ public unsafe partial class VulkanRenderer
 
     private ThreadResourcePlannerRuntimeStateScope EnterThreadResourcePlannerRuntimeStateScope(
         in ResourcePlannerRuntimeState state)
-        => new(this, state);
+    {
+        if (CommandThreadContext.PreparedCommandChainEncodingActive)
+        {
+            throw new InvalidOperationException(
+                "Prepared Vulkan command-chain encoding cannot enter a resource-planner scope.");
+        }
+
+        return new(this, state);
+    }
 
     private readonly struct ThreadFrameOpResourcePlannerSwitchingStateScope : IDisposable
     {

@@ -72,6 +72,8 @@ public unsafe partial class VulkanRenderer
     private EVulkanSynchronizationBackend _activeSynchronizationBackend = EVulkanSynchronizationBackend.Legacy;
     private readonly object _vulkanImageLayoutLock = new();
     private readonly Dictionary<VulkanTrackedImageSubresource, VulkanImageSubresourceState> _trackedImageSubresourceStates = new();
+    private readonly Dictionary<ulong, (ulong ResourceGeneration, EVulkanExternalImageOwnership Ownership)>
+        _externalImageOwnershipByHandle = new();
     private readonly Dictionary<ulong, VulkanRecordedImageLayoutState> _recordedImageLayoutsByCommandBuffer = new();
     private readonly VulkanQueueOperationRecord[] _vulkanQueueOperationHistory = new VulkanQueueOperationRecord[VulkanQueueOperationHistoryCapacity];
     private long _vulkanQueueOperationSerial;
@@ -105,7 +107,9 @@ public unsafe partial class VulkanRenderer
         uint QueueFamilyIndex,
         ImageLayout ExpectedDescriptorLayout,
         ulong Serial,
-        ulong ResourceGeneration)
+        ulong ResourceGeneration,
+        EVulkanExternalImageOwnership ExternalOwnership =
+            EVulkanExternalImageOwnership.EngineOwned)
     {
         public static VulkanImageAccessState Undefined => new(
             ImageLayout.Undefined,
@@ -114,13 +118,15 @@ public unsafe partial class VulkanRenderer
             Vk.QueueFamilyIgnored,
             ImageLayout.Undefined,
             0,
-            0);
+            0,
+            EVulkanExternalImageOwnership.EngineOwned);
     }
 
     private sealed class VulkanImageSubresourceState
     {
         public VulkanImageAccessState Submitted = VulkanImageAccessState.Undefined;
         public VulkanImageAccessState Completed = VulkanImageAccessState.Undefined;
+        public VulkanPendingQueueOwnershipRelease? PendingQueueOwnershipRelease;
         public ulong GraphicsSequence;
         public ulong TransferSequence;
         public ulong OtherSequence;
@@ -132,6 +138,7 @@ public unsafe partial class VulkanRenderer
         public readonly Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> SecondaryDescriptorRequirements = new(8);
         public readonly Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> Subresources = new(32);
         public readonly List<KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState>> TouchedSubresources = new(32);
+        public readonly List<VulkanQueueOwnershipTransferRequirement> QueueOwnershipTransfers = new(4);
         public bool EntryStateIncomplete;
         public VulkanImageEntryStateMismatch EntryStateFailure;
         public ulong RecordingGeneration;
@@ -146,6 +153,7 @@ public unsafe partial class VulkanRenderer
     }
 
     private readonly Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> _submissionImageStateScratch = new(64);
+    private readonly List<VulkanQueueSemaphoreRequirement> _submissionQueueSemaphoreRequirements = new(8);
 
     internal readonly record struct VulkanQueueOperationRecord(
         ulong Serial,
@@ -454,7 +462,10 @@ public unsafe partial class VulkanRenderer
         {
             using VulkanCpuStageScope imageStateStage =
                 new(EVulkanCpuStage.SubmissionImageStateValidation);
-            imageStateValid = ValidateOrderedCommandBufferImageStateContracts(ref submitInfo, out imageStateFailure);
+            imageStateValid = ValidateOrderedCommandBufferImageStateContracts(
+                queue,
+                ref submitInfo,
+                out imageStateFailure);
         }
 
         if (!imageStateValid)
@@ -558,7 +569,10 @@ public unsafe partial class VulkanRenderer
                 {
                     VulkanLifetimeSubmission lifetimeSubmission =
                         RecordSuccessfulVulkanSubmissionLifetime(queue, ref submitInfo, fence, diagnosticContext);
-                    PublishRecordedImageLayouts(ref submitInfo, lifetimeSubmission);
+                    PublishRecordedImageLayouts(
+                        queue,
+                        ref submitInfo,
+                        lifetimeSubmission);
                     AdvanceCompletedImageLayouts();
                 }
             }
@@ -861,6 +875,7 @@ public unsafe partial class VulkanRenderer
                 imageBarriers);
             RecordImageBarrierLayouts(
                 commandBuffer,
+                srcStageMask,
                 dstStageMask,
                 imageBarrierCount,
                 imageBarriers);
@@ -977,6 +992,7 @@ public unsafe partial class VulkanRenderer
 
         RecordImageBarrierLayouts(
             commandBuffer,
+            srcStageMask,
             dstStageMask,
             imageBarrierCount,
             imageBarriers);
@@ -984,6 +1000,7 @@ public unsafe partial class VulkanRenderer
 
     private void RecordImageBarrierLayouts(
         CommandBuffer commandBuffer,
+        PipelineStageFlags srcStageMask,
         PipelineStageFlags dstStageMask,
         uint imageBarrierCount,
         ImageMemoryBarrier* imageBarriers)
@@ -994,6 +1011,11 @@ public unsafe partial class VulkanRenderer
         for (uint i = 0; i < imageBarrierCount; i++)
         {
             ref ImageMemoryBarrier barrier = ref imageBarriers[i];
+            RecordQueueOwnershipTransferRequirement(
+                commandBuffer,
+                in barrier,
+                srcStageMask,
+                dstStageMask);
             RecordImageAccess(
                 commandBuffer,
                 barrier.Image,
@@ -1002,6 +1024,62 @@ public unsafe partial class VulkanRenderer
                 dstStageMask,
                 barrier.DstAccessMask,
                 barrier.DstQueueFamilyIndex);
+        }
+    }
+
+    private void RecordQueueOwnershipTransferRequirement(
+        CommandBuffer commandBuffer,
+        in ImageMemoryBarrier barrier,
+        PipelineStageFlags srcStageMask,
+        PipelineStageFlags dstStageMask)
+    {
+        if (commandBuffer.Handle == 0 ||
+            barrier.Image.Handle == 0 ||
+            barrier.SrcQueueFamilyIndex == Vk.QueueFamilyIgnored ||
+            barrier.DstQueueFamilyIndex == Vk.QueueFamilyIgnored ||
+            barrier.SrcQueueFamilyIndex == barrier.DstQueueFamilyIndex)
+        {
+            return;
+        }
+
+        VulkanQueueOwnershipTransferRequirement requirement = new(
+            barrier.Image.Handle,
+            barrier.SubresourceRange,
+            barrier.OldLayout,
+            barrier.NewLayout,
+            barrier.SrcQueueFamilyIndex,
+            barrier.DstQueueFamilyIndex,
+            NormalizePipelineStages2(srcStageMask),
+            NormalizeAccessFlags2(barrier.SrcAccessMask),
+            NormalizePipelineStages2(dstStageMask),
+            NormalizeAccessFlags2(barrier.DstAccessMask),
+            GetCurrentVulkanResourceGeneration(
+                ObjectType.Image,
+                barrier.Image.Handle));
+        if (TryRecordQueueOwnershipTransferRequirement(
+                commandBuffer,
+                in requirement))
+        {
+            return;
+        }
+
+        ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+        lock (_vulkanImageLayoutLock)
+        {
+            if (!_recordedImageLayoutsByCommandBuffer.TryGetValue(
+                    commandBufferHandle,
+                    out VulkanRecordedImageLayoutState? recorded))
+            {
+                recorded = new VulkanRecordedImageLayoutState
+                {
+                    RecordingGeneration =
+                        ResolveCommandBufferRecordingGeneration(commandBuffer),
+                };
+                _recordedImageLayoutsByCommandBuffer[commandBufferHandle] =
+                    recorded;
+            }
+
+            recorded.QueueOwnershipTransfers.Add(requirement);
         }
     }
 
@@ -1099,8 +1177,13 @@ public unsafe partial class VulkanRenderer
         CommandBuffer commandBuffer,
         VulkanCommandBufferTrackingBatch batch)
     {
-        if (commandBuffer.Handle == 0 || batch.PublishedImageDeltaCount >= batch.ImageAccessDeltas.Count)
+        if (commandBuffer.Handle == 0 ||
+            (batch.PublishedImageDeltaCount >= batch.ImageAccessDeltas.Count &&
+             batch.PublishedQueueOwnershipTransferCount >=
+                 batch.QueueOwnershipTransfers.Count))
+        {
             return false;
+        }
 
         ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
         bool contended = !Monitor.TryEnter(_vulkanImageLayoutLock);
@@ -1144,6 +1227,15 @@ public unsafe partial class VulkanRenderer
                 }
             }
 
+            for (int transferIndex =
+                     batch.PublishedQueueOwnershipTransferCount;
+                 transferIndex < batch.QueueOwnershipTransfers.Count;
+                 transferIndex++)
+            {
+                recorded.QueueOwnershipTransfers.Add(
+                    batch.QueueOwnershipTransfers[transferIndex]);
+            }
+
             recorded.RefreshTouchedSubresources();
         }
         finally
@@ -1152,6 +1244,8 @@ public unsafe partial class VulkanRenderer
         }
 
         batch.PublishedImageDeltaCount = batch.ImageAccessDeltas.Count;
+        batch.PublishedQueueOwnershipTransferCount =
+            batch.QueueOwnershipTransfers.Count;
         return contended;
     }
 
@@ -1164,6 +1258,7 @@ public unsafe partial class VulkanRenderer
         lock (_vulkanImageLayoutLock)
         {
             RemoveImageKeys(_trackedImageSubresourceStates, imageHandle);
+            _externalImageOwnershipByHandle.Remove(imageHandle);
             foreach (VulkanRecordedImageLayoutState recorded in _recordedImageLayoutsByCommandBuffer.Values)
             {
                 RemoveImageKeys(recorded.EntrySubresources, imageHandle);
@@ -1179,6 +1274,7 @@ public unsafe partial class VulkanRenderer
         {
             int count = _trackedImageSubresourceStates.Count;
             _trackedImageSubresourceStates.Clear();
+            _externalImageOwnershipByHandle.Clear();
             _recordedImageLayoutsByCommandBuffer.Clear();
             return count;
         }
@@ -1267,6 +1363,11 @@ public unsafe partial class VulkanRenderer
         }
 
         ulong serial = unchecked((ulong)Interlocked.Increment(ref _vulkanImageLayoutTransitionSerial));
+        EVulkanExternalImageOwnership externalOwnership =
+            ResolveRecordedExternalImageOwnership_NoLock(
+                recorded,
+                key,
+                resourceGeneration);
         VulkanImageAccessState layoutState = ResolveRecordedVulkanImageAccessState(
             layout,
             trackedAspect,
@@ -1274,8 +1375,199 @@ public unsafe partial class VulkanRenderer
             accessMask,
             resolvedQueueFamily,
             serial,
-            resourceGeneration);
+            resourceGeneration) with
+        {
+            ExternalOwnership = externalOwnership,
+        };
         recorded.Subresources[key] = layoutState;
+    }
+
+    private EVulkanExternalImageOwnership ResolveRecordedExternalImageOwnership_NoLock(
+        VulkanRecordedImageLayoutState recorded,
+        VulkanTrackedImageSubresource key,
+        ulong resourceGeneration)
+    {
+        if (recorded.Subresources.TryGetValue(
+                key,
+                out VulkanImageAccessState recordedState))
+        {
+            return recordedState.ExternalOwnership;
+        }
+
+        if (_trackedImageSubresourceStates.TryGetValue(
+                key,
+                out VulkanImageSubresourceState? submittedState))
+        {
+            return submittedState.Submitted.ExternalOwnership;
+        }
+
+        return _externalImageOwnershipByHandle.TryGetValue(
+                key.ImageHandle,
+                out var externalState) &&
+            (externalState.ResourceGeneration == 0 ||
+             resourceGeneration == 0 ||
+             externalState.ResourceGeneration == resourceGeneration)
+                ? externalState.Ownership
+                : EVulkanExternalImageOwnership.EngineOwned;
+    }
+
+    private EVulkanExternalImageOwnership ResolveTrackedExternalImageOwnership(
+        Image image,
+        ImageSubresourceRange range,
+        ulong resourceGeneration)
+    {
+        ImageAspectFlags aspect =
+            (range.AspectMask & ImageAspectFlags.ColorBit) != 0
+                ? ImageAspectFlags.ColorBit
+                : (range.AspectMask & ImageAspectFlags.DepthBit) != 0
+                    ? ImageAspectFlags.DepthBit
+                    : ImageAspectFlags.StencilBit;
+        VulkanTrackedImageSubresource key = new(
+            image.Handle,
+            range.BaseMipLevel,
+            range.BaseArrayLayer,
+            aspect);
+        lock (_vulkanImageLayoutLock)
+        {
+            if (_trackedImageSubresourceStates.TryGetValue(
+                    key,
+                    out VulkanImageSubresourceState? state))
+            {
+                return state.Submitted.ExternalOwnership;
+            }
+
+            return _externalImageOwnershipByHandle.TryGetValue(
+                    image.Handle,
+                    out var externalState) &&
+                (externalState.ResourceGeneration == 0 ||
+                 resourceGeneration == 0 ||
+                 externalState.ResourceGeneration == resourceGeneration)
+                    ? externalState.Ownership
+                    : EVulkanExternalImageOwnership.EngineOwned;
+        }
+    }
+
+    private void PublishOpenXrExternalImageAcquireState(
+        Image image,
+        ImageSubresourceRange range)
+    {
+        if (image.Handle == 0)
+            throw new InvalidOperationException(
+                "An OpenXR acquire cannot publish a null Vulkan image.");
+
+        ulong resourceGeneration = GetCurrentVulkanResourceGeneration(
+            ObjectType.Image,
+            image.Handle);
+        lock (_vulkanImageLayoutLock)
+        {
+            _externalImageOwnershipByHandle[image.Handle] = (
+                resourceGeneration,
+                EVulkanExternalImageOwnership.OpenXrRuntimeAcquired);
+
+            VisitTrackedImageSubresources(
+                image.Handle,
+                range,
+                static (state, ownership) =>
+                {
+                    state.Submitted = state.Submitted with
+                    {
+                        ExternalOwnership = ownership,
+                    };
+                    state.Completed = state.Completed with
+                    {
+                        ExternalOwnership = ownership,
+                    };
+                },
+                EVulkanExternalImageOwnership.OpenXrRuntimeAcquired);
+        }
+    }
+
+    private void RecordOpenXrExternalImageReleasePending(
+        CommandBuffer commandBuffer,
+        Image image,
+        ImageSubresourceRange range)
+    {
+        if (TryRecordExternalImageOwnershipDelta(
+                commandBuffer,
+                image,
+                range,
+                EVulkanExternalImageOwnership.OpenXrRuntimeReleasePending))
+        {
+            return;
+        }
+
+        // A partial frame can legitimately record only engine-owned offscreen
+        // work. The runtime image then has no new access delta, but its immutable
+        // entry state is still the correct basis for the ordered ownership
+        // publication. Seed that unchanged state into the local journal instead
+        // of treating the absence of a new barrier as a recording failure.
+        if (TryGetRecordedImageAccessState(
+                commandBuffer,
+                image,
+                range,
+                out VulkanImageAccessState entryState) &&
+            entryState.Layout != ImageLayout.Undefined)
+        {
+            RecordImageAccess(
+                commandBuffer,
+                image,
+                range,
+                entryState.Layout,
+                (PipelineStageFlags)(ulong)entryState.StageMask,
+                (AccessFlags)(ulong)entryState.AccessMask,
+                entryState.QueueFamilyIndex);
+            if (TryRecordExternalImageOwnershipDelta(
+                    commandBuffer,
+                    image,
+                    range,
+                    EVulkanExternalImageOwnership.OpenXrRuntimeReleasePending))
+            {
+                return;
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"OpenXR command buffer 0x{commandBuffer.Handle:X} did not record or inherit a final " +
+            $"state for runtime-owned image 0x{image.Handle:X}.");
+    }
+
+    private void VisitTrackedImageSubresources(
+        ulong imageHandle,
+        ImageSubresourceRange range,
+        Action<VulkanImageSubresourceState, EVulkanExternalImageOwnership> visitor,
+        EVulkanExternalImageOwnership ownership)
+    {
+        uint levelCount = Math.Max(range.LevelCount, 1u);
+        uint layerCount = Math.Max(range.LayerCount, 1u);
+        for (uint mipOffset = 0; mipOffset < levelCount; mipOffset++)
+        {
+            uint mip = range.BaseMipLevel + mipOffset;
+            for (uint layerOffset = 0; layerOffset < layerCount; layerOffset++)
+            {
+                uint layer = range.BaseArrayLayer + layerOffset;
+                VisitAspect(ImageAspectFlags.ColorBit);
+                VisitAspect(ImageAspectFlags.DepthBit);
+                VisitAspect(ImageAspectFlags.StencilBit);
+
+                void VisitAspect(ImageAspectFlags aspect)
+                {
+                    if ((range.AspectMask & aspect) == 0)
+                        return;
+
+                    VulkanTrackedImageSubresource key = new(
+                        imageHandle,
+                        mip,
+                        layer,
+                        aspect);
+                    if (_trackedImageSubresourceStates.TryGetValue(
+                            key,
+                            out VulkanImageSubresourceState? state))
+                    {
+                        visitor(state, ownership);
+                    }
+                }
+            }
+        }
     }
 
     private bool TryGetTrackedImageLayout(Image image, ImageSubresourceRange range, out ImageLayout layout)
@@ -1516,6 +1808,7 @@ public unsafe partial class VulkanRenderer
             recorded.EntrySubresources.Clear();
             recorded.SecondaryDescriptorRequirements.Clear();
             recorded.TouchedSubresources.Clear();
+            recorded.QueueOwnershipTransfers.Clear();
             recorded.EntryStateIncomplete = false;
             recorded.EntryStateFailure = default;
             recorded.RecordingGeneration = ResolveCommandBufferRecordingGeneration(commandBuffer);
@@ -1553,6 +1846,7 @@ public unsafe partial class VulkanRenderer
 
             recorded.EntrySubresources.Clear();
             recorded.SecondaryDescriptorRequirements.Clear();
+            recorded.QueueOwnershipTransfers.Clear();
             recorded.EntryStateIncomplete = predecessorState.EntryStateIncomplete;
             recorded.EntryStateFailure = predecessorState.EntryStateFailure;
             foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> pair in predecessorState.TouchedSubresources)
@@ -1561,12 +1855,29 @@ public unsafe partial class VulkanRenderer
     }
 
     private bool ValidateOrderedCommandBufferImageStateContracts(
+        Queue queue,
         ref SubmitInfo submitInfo,
         out string failureReason)
     {
         failureReason = string.Empty;
+        _submissionQueueSemaphoreRequirements.Clear();
         if (submitInfo.CommandBufferCount == 0 || submitInfo.PCommandBuffers is null)
             return true;
+
+        uint submissionQueueFamilyIndex =
+            ResolveVulkanQueueFamilyIndex(queue);
+        ulong completedGraphicsSequence;
+        ulong completedTransferSequence;
+        ulong completedOtherSequence;
+        lock (_resourceLifetimeTracker.SyncRoot)
+        {
+            completedGraphicsSequence =
+                _resourceLifetimeTracker.CompletedGraphicsSequence;
+            completedTransferSequence =
+                _resourceLifetimeTracker.CompletedTransferSequence;
+            completedOtherSequence =
+                _resourceLifetimeTracker.CompletedOtherSequence;
+        }
 
         lock (_vulkanImageLayoutLock)
         {
@@ -1605,6 +1916,24 @@ public unsafe partial class VulkanRenderer
                     }
 
                     VulkanImageAccessState expected = pair.Value;
+                    if (_trackedImageSubresourceStates.TryGetValue(
+                            pair.Key,
+                            out VulkanImageSubresourceState? trackedState) &&
+                        trackedState.PendingQueueOwnershipRelease is
+                            VulkanPendingQueueOwnershipRelease pendingRelease &&
+                        !HasPairedQueueOwnershipAcquire(
+                            recorded,
+                            pair.Key,
+                            submissionQueueFamilyIndex,
+                            in pendingRelease))
+                    {
+                        failureReason =
+                            $"commandBuffer[{commandIndex}]=0x{handle:X} accesses image=0x{pair.Key.ImageHandle:X} " +
+                            $"mip={pair.Key.MipLevel} layer={pair.Key.ArrayLayer} aspect={pair.Key.Aspect} while queue ownership " +
+                            $"release {pendingRelease.Requirement.SourceQueueFamilyIndex}->{pendingRelease.Requirement.DestinationQueueFamilyIndex} is pending without a paired acquire";
+                        return false;
+                    }
+
                     EVulkanPrimaryEntryStateMismatch mismatch =
                         VulkanImageEntryStateContract.Compare(actual, expected);
                     if (mismatch != EVulkanPrimaryEntryStateMismatch.None)
@@ -1626,12 +1955,335 @@ public unsafe partial class VulkanRenderer
                     }
                 }
 
+                if (!ValidateQueueOwnershipTransferRequirements(
+                        recorded,
+                        submissionQueueFamilyIndex,
+                         ref submitInfo,
+                         commandIndex,
+                         handle,
+                         completedGraphicsSequence,
+                         completedTransferSequence,
+                         completedOtherSequence,
+                         out failureReason))
+                {
+                    return false;
+                }
+
                 foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> pair in recorded.TouchedSubresources)
                     _submissionImageStateScratch[pair.Key] = pair.Value;
             }
         }
 
         return true;
+    }
+
+    private bool ValidateQueueOwnershipTransferRequirements(
+        VulkanRecordedImageLayoutState recorded,
+        uint submissionQueueFamilyIndex,
+        ref SubmitInfo submitInfo,
+        int commandIndex,
+        ulong commandBufferHandle,
+        ulong completedGraphicsSequence,
+        ulong completedTransferSequence,
+        ulong completedOtherSequence,
+        out string failureReason)
+    {
+        failureReason = string.Empty;
+        for (int transferIndex = 0;
+             transferIndex < recorded.QueueOwnershipTransfers.Count;
+             transferIndex++)
+        {
+            VulkanQueueOwnershipTransferRequirement requirement =
+                recorded.QueueOwnershipTransfers[transferIndex];
+            EVulkanQueueOwnershipTransferRole role =
+                requirement.ResolveRole(submissionQueueFamilyIndex);
+            if (role == EVulkanQueueOwnershipTransferRole.Invalid)
+            {
+                failureReason =
+                    $"commandBuffer[{commandIndex}]=0x{commandBufferHandle:X} records queue ownership " +
+                    $"{requirement.SourceQueueFamilyIndex}->{requirement.DestinationQueueFamilyIndex}, but submits to queue family {submissionQueueFamilyIndex}";
+                return false;
+            }
+
+            uint levelCount = Math.Max(requirement.Range.LevelCount, 1u);
+            uint layerCount = Math.Max(requirement.Range.LayerCount, 1u);
+            for (uint mipOffset = 0; mipOffset < levelCount; mipOffset++)
+            {
+                uint mipLevel =
+                    requirement.Range.BaseMipLevel + mipOffset;
+                for (uint layerOffset = 0;
+                     layerOffset < layerCount;
+                     layerOffset++)
+                {
+                    uint arrayLayer =
+                        requirement.Range.BaseArrayLayer + layerOffset;
+                    if (!ValidateQueueOwnershipTransferAspect(
+                            in requirement,
+                            role,
+                            mipLevel,
+                             arrayLayer,
+                             ImageAspectFlags.ColorBit,
+                             ref submitInfo,
+                             completedGraphicsSequence,
+                             completedTransferSequence,
+                             completedOtherSequence,
+                             out failureReason) ||
+                        !ValidateQueueOwnershipTransferAspect(
+                            in requirement,
+                            role,
+                            mipLevel,
+                             arrayLayer,
+                             ImageAspectFlags.DepthBit,
+                             ref submitInfo,
+                             completedGraphicsSequence,
+                             completedTransferSequence,
+                             completedOtherSequence,
+                             out failureReason) ||
+                        !ValidateQueueOwnershipTransferAspect(
+                            in requirement,
+                            role,
+                            mipLevel,
+                             arrayLayer,
+                             ImageAspectFlags.StencilBit,
+                             ref submitInfo,
+                             completedGraphicsSequence,
+                             completedTransferSequence,
+                             completedOtherSequence,
+                             out failureReason))
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private bool ValidateQueueOwnershipTransferAspect(
+        in VulkanQueueOwnershipTransferRequirement requirement,
+        EVulkanQueueOwnershipTransferRole role,
+        uint mipLevel,
+        uint arrayLayer,
+        ImageAspectFlags aspect,
+        ref SubmitInfo submitInfo,
+        ulong completedGraphicsSequence,
+        ulong completedTransferSequence,
+        ulong completedOtherSequence,
+        out string failureReason)
+    {
+        failureReason = string.Empty;
+        if ((requirement.Range.AspectMask & aspect) == 0)
+            return true;
+
+        VulkanTrackedImageSubresource key = new(
+            requirement.ImageHandle,
+            mipLevel,
+            arrayLayer,
+            aspect);
+        _trackedImageSubresourceStates.TryGetValue(
+            key,
+            out VulkanImageSubresourceState? trackedState);
+
+        if (role == EVulkanQueueOwnershipTransferRole.Release)
+        {
+            if (trackedState?.PendingQueueOwnershipRelease is not null)
+            {
+                failureReason =
+                    $"image=0x{key.ImageHandle:X} mip={mipLevel} layer={arrayLayer} aspect={aspect} already has a pending queue-ownership release";
+                return false;
+            }
+
+            if (trackedState is not null &&
+                trackedState.Submitted.QueueFamilyIndex !=
+                    Vk.QueueFamilyIgnored &&
+                trackedState.Submitted.QueueFamilyIndex !=
+                    requirement.SourceQueueFamilyIndex)
+            {
+                failureReason =
+                    $"queue-ownership release for image=0x{key.ImageHandle:X} expects source family {requirement.SourceQueueFamilyIndex}, " +
+                    $"but submitted ownership is {trackedState.Submitted.QueueFamilyIndex}";
+                return false;
+            }
+
+            return true;
+        }
+
+        if (trackedState?.PendingQueueOwnershipRelease is not
+            VulkanPendingQueueOwnershipRelease pendingRelease)
+        {
+            failureReason =
+                $"queue-ownership acquire for image=0x{key.ImageHandle:X} mip={mipLevel} layer={arrayLayer} aspect={aspect} " +
+                $"has no submitted release from family {requirement.SourceQueueFamilyIndex}";
+            return false;
+        }
+        if (!pendingRelease.Requirement.IsPairedWith(
+                in requirement,
+                key.ImageHandle,
+                key.MipLevel,
+                key.ArrayLayer,
+                key.Aspect))
+        {
+            failureReason =
+                $"queue-ownership acquire for image=0x{key.ImageHandle:X} does not match its submitted release; " +
+                $"release={pendingRelease.Requirement.SourceQueueFamilyIndex}->{pendingRelease.Requirement.DestinationQueueFamilyIndex} " +
+                $"{pendingRelease.Requirement.OldLayout}->{pendingRelease.Requirement.NewLayout}, " +
+                $"acquire={requirement.SourceQueueFamilyIndex}->{requirement.DestinationQueueFamilyIndex} " +
+                $"{requirement.OldLayout}->{requirement.NewLayout}";
+            return false;
+        }
+
+        VulkanLifetimeSubmission releaseSubmission =
+            pendingRelease.Submission;
+        if (IsVulkanSubmissionCompleted(
+                in releaseSubmission,
+                completedGraphicsSequence,
+                completedTransferSequence,
+                completedOtherSequence))
+            return true;
+
+        VulkanQueueSemaphoreRequirement semaphoreRequirement = new(
+            releaseSubmission.TimelineSemaphoreHandle,
+            releaseSubmission.TimelineValue,
+            requirement.DestinationStageMask,
+            requirement.SourceQueueFamilyIndex,
+            requirement.DestinationQueueFamilyIndex);
+        if (!semaphoreRequirement.IsValid)
+        {
+            failureReason =
+                $"queue-ownership acquire for image=0x{key.ImageHandle:X} depends on an incomplete source submission that published no timeline semaphore";
+            return false;
+        }
+
+        if (!_submissionQueueSemaphoreRequirements.Contains(
+                semaphoreRequirement))
+        {
+            _submissionQueueSemaphoreRequirements.Add(
+                semaphoreRequirement);
+        }
+        if (SubmissionSatisfiesQueueSemaphoreRequirement(
+                ref submitInfo,
+                in semaphoreRequirement))
+        {
+            return true;
+        }
+
+        failureReason =
+            $"queue-ownership acquire for image=0x{key.ImageHandle:X} requires timeline semaphore " +
+            $"0x{semaphoreRequirement.SemaphoreHandle:X} value {semaphoreRequirement.Value} at stages {semaphoreRequirement.WaitStageMask}";
+        return false;
+    }
+
+    private static bool IsVulkanSubmissionCompleted(
+        in VulkanLifetimeSubmission submission,
+        ulong completedGraphicsSequence,
+        ulong completedTransferSequence,
+        ulong completedOtherSequence)
+    {
+        if (submission.QueueSequence == 0ul)
+            return false;
+
+        return submission.QueueDomain switch
+        {
+            EVulkanLifetimeQueueDomain.Graphics =>
+                submission.QueueSequence <= completedGraphicsSequence,
+            EVulkanLifetimeQueueDomain.Transfer =>
+                submission.QueueSequence <= completedTransferSequence,
+            _ => submission.QueueSequence <= completedOtherSequence,
+        };
+    }
+
+    private static bool HasPairedQueueOwnershipAcquire(
+        VulkanRecordedImageLayoutState recorded,
+        VulkanTrackedImageSubresource key,
+        uint submissionQueueFamilyIndex,
+        in VulkanPendingQueueOwnershipRelease pendingRelease)
+    {
+        for (int transferIndex = 0;
+             transferIndex < recorded.QueueOwnershipTransfers.Count;
+             transferIndex++)
+        {
+            VulkanQueueOwnershipTransferRequirement requirement =
+                recorded.QueueOwnershipTransfers[transferIndex];
+            if (requirement.ResolveRole(submissionQueueFamilyIndex) ==
+                    EVulkanQueueOwnershipTransferRole.Acquire &&
+                pendingRelease.Requirement.IsPairedWith(
+                    in requirement,
+                    key.ImageHandle,
+                    key.MipLevel,
+                    key.ArrayLayer,
+                    key.Aspect))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool SubmissionSatisfiesQueueSemaphoreRequirement(
+        ref SubmitInfo submitInfo,
+        in VulkanQueueSemaphoreRequirement requirement)
+    {
+        TimelineSemaphoreSubmitInfo* timelineInfo =
+            FindTimelineSemaphoreSubmitInfo(submitInfo.PNext);
+        if (timelineInfo is null ||
+            timelineInfo->PWaitSemaphoreValues is null ||
+            submitInfo.PWaitSemaphores is null ||
+            submitInfo.PWaitDstStageMask is null)
+        {
+            return false;
+        }
+
+        uint waitValueCount =
+            timelineInfo->WaitSemaphoreValueCount;
+        for (uint waitIndex = 0;
+             waitIndex < submitInfo.WaitSemaphoreCount &&
+             waitIndex < waitValueCount;
+             waitIndex++)
+        {
+            if (requirement.IsSatisfiedBy(
+                    submitInfo.PWaitSemaphores[waitIndex].Handle,
+                    timelineInfo->PWaitSemaphoreValues[waitIndex],
+                    NormalizePipelineStages2(
+                        submitInfo.PWaitDstStageMask[waitIndex])))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private uint ResolveVulkanQueueFamilyIndex(Queue queue)
+    {
+        QueueFamilyIndices families = FamilyQueueIndices;
+        if (queue.Handle == graphicsQueue.Handle ||
+            queue.Handle == secondaryGraphicsQueue.Handle)
+        {
+            return families.GraphicsFamilyIndex ??
+                   Vk.QueueFamilyIgnored;
+        }
+        if (queue.Handle == computeQueue.Handle)
+        {
+            return families.ComputeFamilyIndex ??
+                   families.GraphicsFamilyIndex ??
+                   Vk.QueueFamilyIgnored;
+        }
+        if (queue.Handle == transferQueue.Handle)
+        {
+            return families.TransferFamilyIndex ??
+                   families.GraphicsFamilyIndex ??
+                   Vk.QueueFamilyIgnored;
+        }
+        if (queue.Handle == presentQueue.Handle)
+        {
+            return families.PresentFamilyIndex ??
+                   families.GraphicsFamilyIndex ??
+                   Vk.QueueFamilyIgnored;
+        }
+
+        return Vk.QueueFamilyIgnored;
     }
 
     private void ReleaseRecordedImageLayoutState(CommandBuffer commandBuffer)
@@ -1757,6 +2409,8 @@ public unsafe partial class VulkanRenderer
 
                 foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> pair in secondaryState.TouchedSubresources)
                     primaryState.Subresources[pair.Key] = pair.Value;
+                primaryState.QueueOwnershipTransfers.AddRange(
+                    secondaryState.QueueOwnershipTransfers);
             }
 
 
@@ -1901,13 +2555,53 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    private static bool TryResolveQueueOwnershipTransfer(
+        VulkanRecordedImageLayoutState recorded,
+        VulkanTrackedImageSubresource key,
+        uint submissionQueueFamilyIndex,
+        out VulkanQueueOwnershipTransferRequirement requirement,
+        out EVulkanQueueOwnershipTransferRole role)
+    {
+        for (int transferIndex =
+                 recorded.QueueOwnershipTransfers.Count - 1;
+             transferIndex >= 0;
+             transferIndex--)
+        {
+            VulkanQueueOwnershipTransferRequirement candidate =
+                recorded.QueueOwnershipTransfers[transferIndex];
+            EVulkanQueueOwnershipTransferRole candidateRole =
+                candidate.ResolveRole(submissionQueueFamilyIndex);
+            if (candidateRole ==
+                    EVulkanQueueOwnershipTransferRole.Invalid ||
+                !candidate.Contains(
+                    key.ImageHandle,
+                    key.MipLevel,
+                    key.ArrayLayer,
+                    key.Aspect))
+            {
+                continue;
+            }
+
+            requirement = candidate;
+            role = candidateRole;
+            return true;
+        }
+
+        requirement = default;
+        role = EVulkanQueueOwnershipTransferRole.Invalid;
+        return false;
+    }
+
     private void PublishRecordedImageLayouts(
+        Queue queue,
         ref SubmitInfo submitInfo,
         in VulkanLifetimeSubmission submission)
     {
         if (submitInfo.CommandBufferCount == 0 || submitInfo.PCommandBuffers is null)
             return;
 
+        uint submissionQueueFamilyIndex =
+            ResolveVulkanQueueFamilyIndex(queue);
         lock (_vulkanImageLayoutLock)
         {
             for (int commandIndex = 0; commandIndex < submitInfo.CommandBufferCount; commandIndex++)
@@ -1939,7 +2633,44 @@ public unsafe partial class VulkanRenderer
                         _trackedImageSubresourceStates[pair.Key] = state;
                     }
 
-                    state.Submitted = pair.Value;
+                    VulkanImageAccessState publishedState = pair.Value;
+                    if (TryResolveQueueOwnershipTransfer(
+                            recorded,
+                            pair.Key,
+                            submissionQueueFamilyIndex,
+                            out VulkanQueueOwnershipTransferRequirement
+                                ownershipRequirement,
+                            out EVulkanQueueOwnershipTransferRole
+                                ownershipRole))
+                    {
+                        if (ownershipRole ==
+                            EVulkanQueueOwnershipTransferRole.Release)
+                        {
+                            publishedState = publishedState with
+                            {
+                                QueueFamilyIndex =
+                                    ownershipRequirement
+                                        .SourceQueueFamilyIndex,
+                            };
+                            state.PendingQueueOwnershipRelease =
+                                new VulkanPendingQueueOwnershipRelease(
+                                    ownershipRequirement,
+                                    submission);
+                        }
+                        else
+                        {
+                            state.PendingQueueOwnershipRelease = null;
+                        }
+                    }
+
+                    state.Submitted = publishedState;
+                    if (publishedState.ExternalOwnership !=
+                        EVulkanExternalImageOwnership.EngineOwned)
+                    {
+                        _externalImageOwnershipByHandle[pair.Key.ImageHandle] = (
+                            publishedState.ResourceGeneration,
+                            publishedState.ExternalOwnership);
+                    }
                     switch (submission.QueueDomain)
                     {
                         case EVulkanLifetimeQueueDomain.Graphics:
@@ -2259,5 +2990,6 @@ public unsafe partial class VulkanRenderer
         hash.Add((ulong)state.AccessMask);
         hash.Add(state.QueueFamilyIndex);
         hash.Add((int)state.ExpectedDescriptorLayout);
+        hash.Add((byte)state.ExternalOwnership);
     }
 }

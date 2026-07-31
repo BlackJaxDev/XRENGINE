@@ -943,6 +943,7 @@ public partial class GLTexture2D
         if (TryValidateTexSubImageUpload(mipLevel, xOffset, yOffset, width, height, operation, logFailure: false))
             return true;
 
+        bool recreationCanRepairUpload = CanImmutableStorageRecreationRepairUpload(mipLevel);
         if (!allowImmutableRecreate
             || Data.Resizable
             || Data.SparseTextureStreamingEnabled
@@ -950,7 +951,19 @@ public partial class GLTexture2D
             || !RuntimeEngine.IsRenderThread)
         {
             TryValidateTexSubImageUpload(mipLevel, xOffset, yOffset, width, height, operation, logFailure: true);
-            Invalidate();
+            if (recreationCanRepairUpload)
+                Invalidate();
+            return false;
+        }
+
+        if (!recreationCanRepairUpload)
+        {
+            TryValidateTexSubImageUpload(mipLevel, xOffset, yOffset, width, height, operation, logFailure: true);
+            Debug.OpenGLWarning(
+                $"[GLTexture2D] Skipping immutable storage recreation for '{GetDescribingName()}' because it cannot repair " +
+                $"the invalid {operation} request: mip={mipLevel} uploadRect={xOffset},{yOffset} {width}x{height} " +
+                $"allocatedDims={_allocatedWidth}x{_allocatedHeight} allocatedLevels={_allocatedLevels}. " +
+                "The source mip dimensions must follow floor-halving from the base level.");
             return false;
         }
 
@@ -969,8 +982,26 @@ public partial class GLTexture2D
         if (TryValidateTexSubImageUpload(mipLevel, xOffset, yOffset, width, height, operation, logFailure: true))
             return true;
 
-        Invalidate();
+        // Reallocating the same immutable geometry again cannot make this upload valid.
+        // Leave the valid levels usable and wait for a real texture-data change instead
+        // of invalidating on every bind and entering an unbounded allocation loop.
         return false;
+    }
+
+    private bool CanImmutableStorageRecreationRepairUpload(int mipLevel)
+    {
+        if (!StorageSet)
+            return true;
+
+        uint currentWidth = Data.Width;
+        uint currentHeight = Data.Height;
+        if (_allocatedWidth != currentWidth || _allocatedHeight != currentHeight)
+            return true;
+
+        int requiredLevels = Data.SparseTextureStreamingEnabled
+            ? Math.Max(1, Data.SparseTextureStreamingLogicalMipCount)
+            : Math.Max(1, Mipmaps?.Length ?? 0);
+        return mipLevel >= _allocatedLevels && requiredLevels > _allocatedLevels;
     }
 
     private bool TryValidateTexSubImageUpload(

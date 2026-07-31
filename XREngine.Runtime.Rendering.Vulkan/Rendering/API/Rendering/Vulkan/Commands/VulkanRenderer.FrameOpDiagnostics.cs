@@ -452,6 +452,34 @@ namespace XREngine.Rendering.Vulkan
                 ops.Length - filtered.Length);
             return filtered;
         }
+
+        private static void RecordVisibleMeshDrawCohort(
+            FrameOp[] operations,
+            HashSet<object> visibleMaterialIdentities)
+        {
+            if (!RuntimeEngine.Rendering.Stats.EnableTracking)
+                return;
+
+            visibleMaterialIdentities.Clear();
+            int visibleDrawCount = 0;
+            for (int index = 0; index < operations.Length; index++)
+            {
+                if (operations[index] is not MeshDrawOp meshDraw)
+                    continue;
+
+                visibleDrawCount++;
+                object? material =
+                    meshDraw.Draw.MaterialOverride ??
+                    meshDraw.Draw.Renderer.MeshRenderer.Material;
+                if (material is not null)
+                    visibleMaterialIdentities.Add(material);
+            }
+
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanVisibleMeshDrawCohort(
+                visibleDrawCount,
+                visibleMaterialIdentities.Count);
+        }
+
         private void SplitDynamicUiBatchTextFrameOps(
             FrameOp[] ops,
             out FrameOp[] staticOps,

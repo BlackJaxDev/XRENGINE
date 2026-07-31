@@ -193,7 +193,8 @@ public sealed class XRMaterialAndShaderVulkanParityContractTests
 
         vkProgramSource.ShouldContain("vkShader.ShaderInvalidated += OnShaderInvalidated;");
         vkProgramSource.ShouldContain("vkShader.ShaderInvalidated -= OnShaderInvalidated;");
-        vkProgramSource.ShouldContain("InvokeOnMainThread(() => OnShaderInvalidated(shader)");
+        vkProgramSource.ShouldContain("Scheduling.EnqueueFrameSwapTask(");
+        vkProgramSource.ShouldContain("() => OnShaderInvalidated(shader)");
         vkProgramSource.ShouldContain("shader.CompileStatus.FailureReason");
         vkProgramSource.ShouldContain("!shader.IsGenerated || !shader.IsCompiled");
 

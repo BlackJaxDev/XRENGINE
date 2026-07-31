@@ -29,6 +29,7 @@ param(
     [switch]$FailOnSteadyStateCommandBufferChurn,
     [switch]$UseEligiblePrimaryReuseRatio,
     [switch]$FailOnSteadyStateCommandBufferAllocations,
+    [switch]$FailOnSteadyStateBindingFallback,
     [double]$MinSteadyStateCommandBufferCleanReuseRatio = 0,
     [long]$MaxSteadyStateRecordCommandBufferAllocatedBytes = 0,
     [int]$StabilityWindowSec = 5,
@@ -54,6 +55,7 @@ param(
     [string]$VulkanCommandChains = 'Configured',
     [ValidateSet('Configured', 'Enabled', 'Disabled')]
     [string]$VulkanParallelCommandChainRecording = 'Configured',
+    [switch]$VulkanCommandChainBenchmarkForceRerecord,
     [ValidateSet('Configured', 'Enabled', 'Disabled')]
     [string]$VulkanParallelSecondaryRecording = 'Configured',
     [ValidateSet('Configured', 'Disabled', 'CpuQueryAsync', 'CpuSoftwareOcclusion', 'GpuHiZ')]
@@ -922,6 +924,7 @@ function Measure-Variant {
         'XRE_VULKAN_PRIMARY_COMMAND_BUFFER_REUSE',
         'XRE_VULKAN_COMMAND_CHAINS',
         'XRE_VULKAN_DISABLE_PARALLEL_CHAIN_RECORDING',
+        'XRE_VULKAN_COMMAND_CHAIN_BENCHMARK_FORCE_RERECORD',
         'XRE_VULKAN_DISABLE_PARALLEL_SECONDARY_RECORDING',
         'XRE_VULKAN_VALIDATION',
         'XRE_VULKAN_DIAGNOSTIC_PRESET',
@@ -1034,6 +1037,11 @@ function Measure-Variant {
             Set-BenchmarkEnvValue 'XRE_VULKAN_DISABLE_PARALLEL_CHAIN_RECORDING' '1' -Boolean
         } else {
             Clear-EnvValue 'XRE_VULKAN_DISABLE_PARALLEL_CHAIN_RECORDING'
+        }
+        if ($VulkanCommandChainBenchmarkForceRerecord) {
+            Set-BenchmarkEnvValue 'XRE_VULKAN_COMMAND_CHAIN_BENCHMARK_FORCE_RERECORD' '1' -Boolean
+        } else {
+            Clear-EnvValue 'XRE_VULKAN_COMMAND_CHAIN_BENCHMARK_FORCE_RERECORD'
         }
         if ($VulkanParallelSecondaryRecording -eq 'Disabled') {
             Set-BenchmarkEnvValue 'XRE_VULKAN_DISABLE_PARALLEL_SECONDARY_RECORDING' '1' -Boolean
@@ -1346,7 +1354,13 @@ function Measure-Variant {
     $vkCommandChainsRecorded = Get-NumericStats -Samples $samples -Property 'vulkan_command_chains_recorded'
     $vkCommandChainsReused = Get-NumericStats -Samples $samples -Property 'vulkan_command_chains_reused'
     $vkIndirectParallelSecondaryRecordOpsTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_indirect_parallel_secondary_record_ops'
+    $vkCommandChainWorkerQueuedChains = Get-NumericStats -Samples $samples -Property 'vulkan_command_chain_worker_queued_chains'
+    $vkCommandChainWorkersStarted = Get-NumericStats -Samples $samples -Property 'vulkan_command_chain_workers_started'
+    $vkCommandChainPeakConcurrentWorkers = Get-NumericStats -Samples $samples -Property 'vulkan_command_chain_peak_concurrent_workers'
     $vkCommandChainWorkerRecord = Get-NumericStats -Samples $samples -Property 'vulkan_command_chain_worker_record_ms' -PositiveOnly
+    $vkCommandChainWorkerActiveSpan = Get-NumericStats -Samples $samples -Property 'vulkan_command_chain_worker_active_span_ms' -PositiveOnly
+    $vkCommandChainWorkerOverlap = Get-NumericStats -Samples $samples -Property 'vulkan_command_chain_worker_overlap_ms' -PositiveOnly
+    $vkCommandChainWorkerMerge = Get-NumericStats -Samples $samples -Property 'vulkan_command_chain_worker_merge_ms' -PositiveOnly
     $vkRenderThreadWaitForChainWorkers = Get-NumericStats -Samples $samples -Property 'vulkan_render_thread_wait_for_chain_workers_ms' -PositiveOnly
     $vkResourcePlanReplacementsTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_retired_resource_plan_replacements'
     $vkResourcePlanImagesTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_retired_resource_plan_images'
@@ -1368,6 +1382,39 @@ function Measure-Variant {
     $vkCommandBufferRecordsTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_command_buffer_record_count'
     $vkCommandBufferCleanReuseTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_command_buffer_clean_reuse_count'
     $vkCommandBufferForcedDirtyTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_command_buffer_forced_dirty_count'
+    $vkAutoUniformFallbackDrawsTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_auto_uniform_legacy_fallback_draws'
+    $vkAutoUniformFallbackReasonNames = @(
+        'binding_snapshot_ineligible',
+        'program_unavailable',
+        'invalid_buffer_size',
+        'binding_schema_unavailable',
+        'binding_schema_mismatch',
+        'invalid_member_name',
+        'unsupported_shader_type',
+        'invalid_destination_range',
+        'invalid_array_layout',
+        'struct_snapshot_required',
+        'engine_source_type_mismatch',
+        'mesh_state_source_type_mismatch',
+        'typed_engine_source_unavailable',
+        'typed_engine_write_failed',
+        'typed_temporal_write_failed',
+        'typed_mesh_state_source_unavailable',
+        'typed_mesh_state_write_failed',
+        'typed_material_or_runtime_write_failed'
+    )
+    $vkAutoUniformFallbackReasonTotals = [ordered]@{}
+    foreach ($reasonName in $vkAutoUniformFallbackReasonNames) {
+        $reasonTotal = Sum-NumericProperty `
+            -Samples $samples `
+            -Property "vulkan_auto_uniform_fallback_$reasonName"
+        $vkAutoUniformFallbackReasonTotals[$reasonName] = $reasonTotal
+    }
+    $vkAutoUniformFallbackReasonSummary = @(
+        $vkAutoUniformFallbackReasonTotals.GetEnumerator() |
+            Where-Object { [double]$_.Value -gt 0.0 } |
+            ForEach-Object { "$($_.Key)=$($_.Value)" }
+    ) -join ','
     $vkExactVariantsDirtiedTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_exact_variants_dirtied'
     $vkExactCommandChainsDirtiedTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_exact_command_chains_dirtied'
     $vkUnrelatedVariantsPreservedTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_unrelated_variants_preserved'
@@ -1521,6 +1568,9 @@ function Measure-Variant {
     if ($FailOnSteadyStateCommandBufferAllocations -and $vkGateRecordCommandBufferAllocatedBytesTotal -gt $MaxSteadyStateRecordCommandBufferAllocatedBytes) {
         $noteParts.Add("steady-state command-buffer allocation failure gateBytes=$vkGateRecordCommandBufferAllocatedBytesTotal rawBytes=$vkRecordCommandBufferAllocatedBytesTotal eligibleBytes=$vkEligiblePrimaryRecordAllocatedBytesTotal ineligibleBytes=$vkIneligiblePrimaryRecordAllocatedBytesTotal threshold=$MaxSteadyStateRecordCommandBufferAllocatedBytes") | Out-Null
     }
+    if ($FailOnSteadyStateBindingFallback -and $vkAutoUniformFallbackDrawsTotal -gt 0) {
+        $noteParts.Add("steady-state binding fallback failure draws=$vkAutoUniformFallbackDrawsTotal reasons=$vkAutoUniformFallbackReasonSummary") | Out-Null
+    }
     if ($workloadIdentityHashes.Count -ne 1) {
         $noteParts.Add("capture workload identity changed or missing: identities=$($workloadIdentityHashes -join ',')") | Out-Null
     }
@@ -1558,6 +1608,7 @@ function Measure-Variant {
         VulkanPrimaryReuse = $VulkanPrimaryReuse
         VulkanCommandChains = $VulkanCommandChains
         VulkanParallelCommandChainRecording = $VulkanParallelCommandChainRecording
+        VulkanCommandChainBenchmarkForceRerecord = [bool]$VulkanCommandChainBenchmarkForceRerecord
         VulkanParallelSecondaryRecording = $VulkanParallelSecondaryRecording
         VulkanValidation = [bool]$VulkanValidation
         VulkanDiagnosticPreset = $VulkanDiagnosticPreset
@@ -1590,24 +1641,30 @@ function Measure-Variant {
         CaptureEndUtc = $captureEndUtc.ToString('O')
         RenderAvgMs = $render.Avg
         RenderP50Ms = $render.P50
+        RenderP90Ms = $render.P90
         RenderP95Ms = $render.P95
         RenderP99Ms = $render.P99
         RenderWorstMs = $render.Max
         RenderOutsideVulkanP50Ms = $renderOutsideVulkan.P50
+        RenderOutsideVulkanP90Ms = $renderOutsideVulkan.P90
         RenderOutsideVulkanP95Ms = $renderOutsideVulkan.P95
         RenderOutsideVulkanP99Ms = $renderOutsideVulkan.P99
         UpdateP50Ms = $update.P50
+        UpdateP90Ms = $update.P90
         UpdateP95Ms = $update.P95
         UpdateP99Ms = $update.P99
         UpdateWorstMs = $update.Max
         CollectVisibleP50Ms = $collect.P50
+        CollectVisibleP90Ms = $collect.P90
         CollectVisibleP95Ms = $collect.P95
         CollectVisibleP99Ms = $collect.P99
         CollectVisibleWorstMs = $collect.Max
         CollectWaitForRenderP50Ms = $collectWaitForRender.P50
+        CollectWaitForRenderP90Ms = $collectWaitForRender.P90
         CollectWaitForRenderP95Ms = $collectWaitForRender.P95
         CollectWaitForRenderWorstMs = $collectWaitForRender.Max
         RenderWaitForCollectP50Ms = $renderWaitForCollect.P50
+        RenderWaitForCollectP90Ms = $renderWaitForCollect.P90
         RenderWaitForCollectP95Ms = $renderWaitForCollect.P95
         RenderWaitForCollectWorstMs = $renderWaitForCollect.Max
         CollectGenerationAgeMaxFrames = $collectGenerationAgeMax
@@ -1615,15 +1672,18 @@ function Measure-Variant {
         GpuSamples = $gpu.Count
         GpuReadySamples = $gpuReadyCount
         GpuP50Ms = $gpu.P50
+        GpuP90Ms = $gpu.P90
         GpuP95Ms = $gpu.P95
         GpuP99Ms = $gpu.P99
         GpuWorstMs = $gpu.Max
         VulkanGpuCommandBufferP50Ms = $vulkanGpuCommandBuffer.P50
+        VulkanGpuCommandBufferP90Ms = $vulkanGpuCommandBuffer.P90
         VulkanGpuCommandBufferP95Ms = $vulkanGpuCommandBuffer.P95
         VulkanGpuCommandBufferP99Ms = $vulkanGpuCommandBuffer.P99
         VulkanGpuCommandBufferWorstMs = $vulkanGpuCommandBuffer.Max
         RenderMinusGpuP95Ms = $gap.P95
         VulkanFrameP50Ms = $vkFrame.P50
+        VulkanFrameP90Ms = $vkFrame.P90
         VulkanFrameP95Ms = $vkFrame.P95
         VulkanFrameMaxMs = $vkFrame.Max
         VulkanWaitFrameSlotP50Ms = $vkWaitFrameSlot.P50
@@ -1691,6 +1751,9 @@ function Measure-Variant {
         VulkanCommandBufferRecordsTotal = $vkCommandBufferRecordsTotal
         VulkanCommandBufferCleanReuseTotal = $vkCommandBufferCleanReuseTotal
         VulkanCommandBufferForcedDirtyTotal = $vkCommandBufferForcedDirtyTotal
+        VulkanAutoUniformFallbackDrawsTotal = $vkAutoUniformFallbackDrawsTotal
+        VulkanAutoUniformFallbackReasonTotals = [pscustomobject]$vkAutoUniformFallbackReasonTotals
+        VulkanAutoUniformFallbackReasonSummary = $vkAutoUniformFallbackReasonSummary
         VulkanCommandBufferCleanReuseRatio = $vkCommandBufferCleanReuseRatio
         VulkanEligiblePrimaryCommandBufferRecordsTotal = $vkEligiblePrimaryRecordsTotal
         VulkanIneligiblePrimaryCommandBufferRecordsTotal = $vkIneligiblePrimaryRecordsTotal
@@ -1722,6 +1785,11 @@ function Measure-Variant {
         VulkanCommandChainsFrameDataRefreshedTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_command_chains_frame_data_refreshed'
         VulkanVolatileCommandChainsRecordedTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_volatile_command_chains_recorded'
         VulkanIndirectParallelSecondaryRecordOpsTotal = $vkIndirectParallelSecondaryRecordOpsTotal
+        VulkanCommandChainWorkerQueuedChainsP50 = $vkCommandChainWorkerQueuedChains.P50
+        VulkanCommandChainWorkerQueuedChainsTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_command_chain_worker_queued_chains'
+        VulkanCommandChainWorkersStartedP50 = $vkCommandChainWorkersStarted.P50
+        VulkanCommandChainWorkersStartedTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_command_chain_workers_started'
+        VulkanCommandChainPeakConcurrentWorkersMax = $vkCommandChainPeakConcurrentWorkers.Max
         VulkanPrimaryCommandBuffersReusedTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_primary_command_buffers_reused'
         VulkanPrimaryCommandBuffersRecordedTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_primary_command_buffers_recorded'
         VulkanVisibilityPacketsTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_visibility_packet_count'
@@ -1737,6 +1805,12 @@ function Measure-Variant {
         AllVulkanConsumedDrawsTotal = Sum-NumericProperty -Samples $allSamples -Property 'vulkan_consumed_draws'
         VulkanCommandChainWorkerRecordP50Ms = $vkCommandChainWorkerRecord.P50
         VulkanCommandChainWorkerRecordP95Ms = $vkCommandChainWorkerRecord.P95
+        VulkanCommandChainWorkerActiveSpanP50Ms = $vkCommandChainWorkerActiveSpan.P50
+        VulkanCommandChainWorkerActiveSpanP95Ms = $vkCommandChainWorkerActiveSpan.P95
+        VulkanCommandChainWorkerOverlapP50Ms = $vkCommandChainWorkerOverlap.P50
+        VulkanCommandChainWorkerOverlapP95Ms = $vkCommandChainWorkerOverlap.P95
+        VulkanCommandChainWorkerMergeP50Ms = $vkCommandChainWorkerMerge.P50
+        VulkanCommandChainWorkerMergeP95Ms = $vkCommandChainWorkerMerge.P95
         VulkanRenderThreadWaitForChainWorkersP50Ms = $vkRenderThreadWaitForChainWorkers.P50
         VulkanRenderThreadWaitForChainWorkersP95Ms = $vkRenderThreadWaitForChainWorkers.P95
         VulkanResourcePlanReplacementsTotal = $vkResourcePlanReplacementsTotal
@@ -1894,6 +1968,7 @@ $results | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $summaryJson -Enco
     "OcclusionCullingMode: $OcclusionCullingMode"
     "VulkanCommandChains: $VulkanCommandChains"
     "VulkanParallelCommandChainRecording: $VulkanParallelCommandChainRecording"
+    "VulkanCommandChainBenchmarkForceRerecord: $([bool]$VulkanCommandChainBenchmarkForceRerecord)"
     "VulkanParallelSecondaryRecording: $VulkanParallelSecondaryRecording"
     "VulkanDiagnosticPreset: $VulkanDiagnosticPreset"
     "VulkanCommandBufferLabels: $([bool]$VulkanCommandBufferLabels)"
@@ -1905,6 +1980,7 @@ $results | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $summaryJson -Enco
     "GpuTimestampDense: $([bool]$GpuTimestampDense)"
     "WarmupSec: $WarmupSec"
     "StabilityGate: enabled=$(-not [bool]$NoStabilityGate) windowSec=$StabilityWindowSec timeoutSec=$StabilityTimeoutSec"
+    "BindingFallbackGate: enabled=$([bool]$FailOnSteadyStateBindingFallback)"
     "CaptureSec: $CaptureSec"
     "Phases: startup=process launch to first sample; warmup=$WarmupSec sec minimum; stability=measured quiet window; steady-state capture=$CaptureSec sec."
     "Repetitions: $Repetitions"
@@ -1981,6 +2057,19 @@ if ($FailOnSteadyStateCommandBufferAllocations) {
             "$($_.Strategy) r$($_.Repetition): gateBytes=$($_.VulkanGateRecordCommandBufferAllocatedBytesTotal) rawBytes=$($_.VulkanRecordCommandBufferAllocatedBytesTotal) eligibleBytes=$($_.VulkanEligiblePrimaryRecordAllocatedBytesTotal) ineligibleBytes=$($_.VulkanIneligiblePrimaryRecordAllocatedBytesTotal) threshold=$MaxSteadyStateRecordCommandBufferAllocatedBytes"
         }
         throw "Steady-state Vulkan command-buffer allocations exceeded threshold: $($details -join '; ')"
+    }
+}
+
+if ($FailOnSteadyStateBindingFallback) {
+    $bindingFallbackFailures = @($results | Where-Object {
+        [double]$_.VulkanAutoUniformFallbackDrawsTotal -gt 0.0
+    })
+
+    if ($bindingFallbackFailures.Count -gt 0) {
+        $details = $bindingFallbackFailures | ForEach-Object {
+            "$($_.Strategy) r$($_.Repetition): fallbackDraws=$($_.VulkanAutoUniformFallbackDrawsTotal) reasons=$($_.VulkanAutoUniformFallbackReasonSummary)"
+        }
+        throw "Steady-state Vulkan binding fallback detected: $($details -join '; ')"
     }
 }
 

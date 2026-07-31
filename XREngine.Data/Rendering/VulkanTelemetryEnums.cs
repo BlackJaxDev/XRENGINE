@@ -42,6 +42,11 @@ public enum EVulkanCpuStage
     FrameDataDescriptorValidation,
     FrameDataEngineUniformUpload,
     FrameDataAutoUniformUpload,
+    PreparedDrawConstruction,
+    SecondaryMerge,
+    CommandDependencyComparison,
+    CommandDirtyPropagation,
+    CommandCacheScanning,
     Count,
 }
 

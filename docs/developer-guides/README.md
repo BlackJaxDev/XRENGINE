@@ -9,6 +9,7 @@ These docs are intentionally closer to the code than the user guide. They should
 ## Main Areas
 
 - [AI and MCP](ai/mcp-server.md)
+- [Local Agent Broker](ai/local-agent-broker.md)
 - [Animation](animation/animation-api.md)
 - [Assets](assets/model-import.md)
 - [Audio](audio/openal-streaming-audio.md)

@@ -235,8 +235,10 @@ Complete Phase 5.2 before Phase 6. The target data flow is:
 The current desktop framerate investigation is executed through the following
 strictly serial workstreams:
 
-1. [Performance truth and regression gates](optimization/01-vulkan-performance-truth-and-regression-gates-todo.md)
-2. [Primary reuse correctness](optimization/02-vulkan-primary-reuse-correctness-todo.md)
+1. Performance truth and regression gates - complete; see the
+   [Vulkan framerate root-cause investigation](../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md).
+2. Primary reuse correctness - complete; see the same
+   [investigation](../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md).
 3. [True GPU-driven zero-readback submission](optimization/03-vulkan-true-zero-readback-submission-todo.md)
 4. [Next-frame preparation and collect-visible handoff](optimization/04-next-frame-preparation-and-collect-visible-handoff-todo.md)
 5. [Command-recording worker architecture](optimization/05-vulkan-command-recording-worker-architecture-todo.md)
@@ -273,11 +275,11 @@ This phase owns output-neutral scheduling, stable identity, command reuse,
 targeted invalidation, local tracking, asynchronous retirement, the canonical
 logical-view contract, frame-scoped visibility integration, graph dataflow, and
 the multi-output performance contract. Related ownership remains with the
-[desktop frame-loop decomposition todo](vulkan-desktop-frame-loop-decomposition-todo.md),
+[desktop frame-loop decomposition todo](../COMPLETED/vulkan-desktop-frame-loop-decomposition-todo.md),
 [dynamic-rendering migration todo](vulkan-dynamic-rendering-migration-todo.md),
 the [GPU-driven occlusion TODO](gpu/gpu-driven-occlusion-culling-architecture-todo.md),
 the [VR rendering performance contract](optimization/vr-rendering-performance-contract-todo.md),
-the [primary-reuse workstream](optimization/02-vulkan-primary-reuse-correctness-todo.md),
+the [completed primary-reuse evidence](../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md),
 and the [worker-recording workstream](optimization/05-vulkan-command-recording-worker-architecture-todo.md).
 Those efforts must consume this same frame-view/output/plan contract and must
 not introduce a desktop-only scheduler, a second attachment identity model, or

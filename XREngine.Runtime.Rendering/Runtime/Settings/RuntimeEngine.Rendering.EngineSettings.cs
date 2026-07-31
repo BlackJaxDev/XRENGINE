@@ -1432,11 +1432,13 @@ public static partial class RuntimeEngine
                 }
 
                 /// <summary>
-                /// Selects Vulkan queue overlap policy for queue-family ownership transitions.
-                /// Auto resolves from active profile and runtime metrics.
+                /// Selects prospective Vulkan frame-graph queue-overlap policy.
+                /// Auto resolves requested scheduling metadata from active profile and
+                /// runtime metrics. Executable ownership remains on the graphics queue
+                /// until native multi-queue frame-graph submission is implemented.
                 /// </summary>
                 [Category("Vulkan")]
-                [Description("Selects Vulkan queue overlap policy for queue-family ownership transitions. Auto resolves from active profile and runtime metrics.")]
+                [Description("Selects prospective Vulkan frame-graph queue-overlap policy. Auto resolves scheduling metadata from active profile and runtime metrics; executable ownership remains on graphics until native multi-queue submission is implemented.")]
                 public EVulkanQueueOverlapMode VulkanQueueOverlapMode
                 {
                     get => Vulkan.Synchronization.QueueOverlapMode;

@@ -9,6 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\XREngine.AgentOrchestration\XREngine.AgentOrchestration.csproj" />
     <PackageReference Include="Magick.NET-Q16-HDRI-AnyCPU" Version="14.14.0" />
     <PackageReference Include="Meshoptimizer.NET" Version="1.0.7" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.3.0" />
@@ -40,6 +41,7 @@
     <ProjectReference Include="..\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulkan.csproj" />
     <ProjectReference Include="..\XRENGINE\XREngine.csproj" />
     <ProjectReference Include="..\XREngine.Editor\XREngine.Editor.csproj" />
+    <ProjectReference Include="..\Tools\LocalAgentBroker\LocalAgentBroker.csproj" />
   </ItemGroup>
 
   <ItemGroup>

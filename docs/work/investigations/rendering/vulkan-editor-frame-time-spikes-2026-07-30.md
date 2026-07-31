@@ -707,3 +707,312 @@ desktop gate or the requirement that steady CPU cost be almost nonexistent.
 The next implementation checkpoint should begin with the primary re-record
 causes, then rerun static, moving-object, camera-only, and single-material-change
 cohorts with validation enabled and the new binding counters captured.
+
+## 2026-07-31 Canonical Zero-Fallback Cutover
+
+The remaining Unit Testing World legacy auto-uniform blocks were traced with
+one-time exact fallback diagnostics. Two reflected material structs
+(`DirLight` and `VignetteStruct`) were rejected as unsupported shader types, and
+one optional Poiyomi material flag failed because the material intentionally
+omitted the loose uniform. These were schema/write-contract gaps rather than
+shader-specific incompatibilities.
+
+The linked schema now compiles reflected struct trees into material-owned
+snapshot operations. Their captured leaf fields write directly into the
+frequency-owned payload, while an absent optional loose uniform with no authored
+default keeps GLSL's zero-initialized value. Non-shadow callback snapshots stay
+eligible for the material fast path; their mutable values participate in the
+material-owner content generation so a value change republishes the payload
+without changing the stable batch signature.
+
+Validation evidence:
+
+- `XREngine.Runtime.Rendering.Vulkan.csproj` built with zero compiler errors.
+- The focused schema, mutable-generation, callback-provenance, material
+  eligibility, retained-refresh, and canonical-Gate contracts passed 6/6.
+- Six consecutive live StandardValidation samples in the isolated
+  `cmd-record-arch-opt` session each reported:
+  - clean primary reuse `1`, command records `0`;
+  - fast binding snapshots `18`, legacy snapshots `0`;
+  - typed fast-path blocks `51`, legacy fallback blocks `0`;
+  - schema fallback operations, reflected member scans/name lookups, legacy
+    full-block bytes, descriptor validation/writes, and descriptor owner misses
+    all `0`;
+  - static-primary data-refresh draw visits `0`; the independently dynamic
+    ImGui overlay visit remained `1`;
+  - Vulkan validation errors `0`.
+- The corresponding log is
+  `Build/_AgentValidation/mcp-sessions/cmd-record-arch-opt/logs/XREngine.Editor_debug/windows_x64/xrengine_2026-07-31_03-47-40_pid6008/log_vulkan.log`.
+  It contains zero `[Vulkan.AutoUniformFallback]` records, validation errors,
+  and synchronization hazards.
+- The inspected viewport capture is
+  `Build/_AgentValidation/mcp-sessions/cmd-record-arch-opt/mcp-captures/zero-fallback-final/Screenshot_20260731_034919_290_5251ed3aa63149719ddb19f52f1c0b79.png`.
+  The scene remains very dark as before, but both physics-test geometry groups
+  and differentiated surfaces remain intact.
+
+Canonical `Invoke-VulkanPerf.ps1 -Preset Gate` captures now enable
+`FailOnSteadyStateBindingFallback`. The measurement harness aggregates the
+fallback draw total and all typed fallback reasons into each retained summary
+and fails the run if any steady-state sample enters the legacy auto-uniform
+path. This closes the silent-fallback acceptance hole; the broader mutation,
+dual-path parity, allocation, and Release performance matrices remain open.
+
+## 2026-07-31 Shared-Material Dirty-Owner Cohort
+
+A dedicated StandardValidation Unit Testing World cohort rendered 64 UnitBoxes
+with one shared material. Two correctness issues were removed before measuring
+the cohort:
+
+- `ShaderVar<T>.Value` no longer raises `ValueChanged` when `SetField(...)`
+  reports an equal assignment. This removed false material-version churn from
+  repeatedly assigned UI parameters.
+- Reusable-frame cohort signatures now contain only structural identities.
+  Material/view/object content generations remain owner-publication inputs and
+  no longer rebuild the complete retained batch when one owner changes.
+
+Compatible physical auto-uniform blocks now publish a semantic layout
+signature. The Vulkan material owns plans keyed by that signature and its
+material/runtime revisions, while global frequency reservations and reusable
+owner work use the same compatibility identity. This permits renderer-local
+programs with equivalent blocks to share one material plan and one backing
+range without allowing incompatible layouts to alias.
+
+After camera placement exposed 83 visible mesh draws, three consecutive
+baseline samples reported zero material payload misses/packs, plan misses,
+material publications, reusable-frame draw visits, command records, legacy
+fallback draws, and validation errors. Every frame cleanly reused the primary.
+
+Changing the shared `BaseColor` from red to green produced exactly one dirty
+frame:
+
+- one material payload miss and one payload pack;
+- six packed uniforms, one parameter emission, and six dictionary writes;
+- two plan misses and two material publications (the two distinct compatible
+  physical material blocks), totaling 176 published bytes;
+- zero reusable-frame draw visits;
+- clean primary reuse with zero command-buffer records;
+- zero legacy fallback draws and zero validation errors.
+
+The next five sampled frames returned all payload-pack, plan-miss, publication,
+and draw-visit counters to zero. The green-to-red restoration produced the same
+single-frame counts and retained primary reuse. The inspected Vulkan viewport
+captures show all shared UnitBoxes changing to green and then back to red:
+
+- `Build/_AgentValidation/mcp-sessions/cmd-record-arch-opt/mcp-captures/Screenshot_20260731_044354_802_a077c2203cc646d4a963214e4338ea46.png`;
+- `Build/_AgentValidation/mcp-sessions/cmd-record-arch-opt/mcp-captures/Screenshot_20260731_044741_652_41603292d4f74671a4829a88b2f44d73.png`.
+
+The focused equal-assignment, publication compatibility, reservation-key,
+material-plan-key, and reusable-cohort-signature contracts pass 5/5. The
+remaining frame/view/pass/object mutation cohorts and Release allocation and
+performance gates remain open.
+
+## 2026-07-31 Camera And Object Dirty-Owner Cohorts
+
+Camera motion initially published one 36-byte material block per required
+in-flight slot. Gated diagnostics identified the unnamed GTAO generation
+material: loose `Radius`, `Bias`, and related gather uniforms defaulted to the
+material frequency even though the legacy callback sourced them from the
+active camera's AO settings.
+
+The Vulkan shader rewriter now recognizes a trailing
+`// XRENGINE_FREQUENCY(<domain>)` annotation on loose numeric uniforms, rejects
+invalid domains explicitly, and uses the declared owner when forming physical
+auto-uniform blocks. The shader artifact-cache schema advanced to version 4.
+Both GTAO generation shaders declare their ten gather settings as `View`.
+
+The GTAO generation framebuffer no longer installs a mutable legacy uniform
+callback. Its fullscreen mesh owns a typed `View` publisher that emits only
+the AO settings values. `AmbientOcclusionSettings.BindingGeneration` advances
+monotonically for actual top-level and nested-mode changes, so static-camera
+settings edits remain visible without assigning camera matrices, viewport
+values, or GTAO settings to the wrong owner.
+
+Focused shader-rewrite, GTAO defaults/generation, and visibility-bitmask tests
+passed 27/27. The Vulkan renderer project built with zero compiler errors.
+
+The live StandardValidation cohort rendered 83 visible mesh draws with one
+material shared by 64 UnitBoxes. A clean baseline published four frame blocks
+(28 bytes) for the normal time sources and zero view, pass, material, object,
+or instance blocks. Moving the editor camera produced two required-slot
+samples with:
+
+- five view publications totaling 1,272 bytes;
+- zero pass, material, object, and instance publications;
+- zero material payload packs, reusable-frame draw visits, command-buffer
+  records, chain records, legacy fallback draws, and validation errors;
+- one clean primary reuse and zero primary records.
+
+The following samples returned view publications to zero. A second camera move
+repeated the same view-only result while retaining every command artifact.
+
+Moving `UnitBox 1` from local X `-6.25` to `-6.0` produced exactly two
+required-slot samples with one 68-byte object publication. View, pass,
+material, and instance publications remained zero; the four 28-byte frame
+publications stayed at their independent time-source baseline. Material
+payload packs, full-draw refresh visits, command and chain records, legacy
+fallback draws, and validation errors all remained zero. Subsequent samples
+returned object publication to zero.
+
+The validation log for this cohort is
+`Build/_AgentValidation/mcp-sessions/cmd-record-arch-opt/logs/XREngine.Editor_debug/windows_x64/xrengine_2026-07-31_05-11-34_pid45492/log_vulkan.log`.
+The remaining pass/instance mutation, allocation, Release-performance, and
+secondary-family expansion cohorts remain open.
+
+## 2026-07-31 Complete Dynamic-Rendering Secondary Inheritance
+
+The secondary artifact contract previously froze attachment formats, samples,
+view mask/layers, and depth-read-only state, but omitted dynamic-rendering
+local-read mappings and rendering flags. A cache hit could therefore fail to
+distinguish two otherwise identical scopes with different
+attachment-location/input-index mappings.
+
+`DynamicRenderingLocalReadSignature` now takes an allocation-free value
+snapshot of both color mappings plus optional depth/stencil input indices.
+Scheduled, serial-fallback, indirect, and worker secondary recording all
+rehydrate the frozen mappings into `VkCommandBufferInheritanceInfo` `pNext`
+storage and carry the inherited rendering flags. Cache/artifact identity hashes
+the exact mapping values deterministically, and primary-scope matching compares
+the full value snapshot before executing a secondary. The primary-only
+`CONTENTS_SECONDARY_COMMAND_BUFFERS` bit is added only when beginning the
+primary rendering scope.
+
+The two focused identity/recording contracts pass 2/2. The broader
+source-contract fixtures remain independently red because many assertions
+still target pre-split monolithic source files; this change does not hide that
+suite drift.
+
+The isolated StandardValidation session was rebuilt from the new source and
+rendered the 64-UnitBox shared-material cohort. Its clean sample reported:
+
+- 82 chains scheduled, zero recorded, and 82 reused;
+- one primary command buffer reused and zero primaries recorded;
+- 82 executable secondaries retained;
+- zero worker/fallback failures and zero Vulkan validation messages.
+
+The inspected Vulkan viewport capture is
+`Build/_AgentValidation/mcp-sessions/cmd-record-arch-opt/mcp-captures/Screenshot_20260731_052855_120_989d53b20178406894b8b4a0070c94f2.png`.
+The corresponding validation log is
+`Build/_AgentValidation/mcp-sessions/cmd-record-arch-opt/logs/XREngine.Editor_debug/windows_x64/xrengine_2026-07-31_05-28-30_pid41120/log_vulkan.log`.
+
+## 2026-07-31 Producer-Complete Indirect Secondary Admission
+
+The indirect secondary path previously had only a coarse global safety gate.
+It could not distinguish a CPU-produced immutable argument stream from a
+same-frame GPU-written zero-readback stream, so widening the gate would also
+have widened the mutable path.
+
+The runtime now exposes an allocation-free
+`IIndirectDrawSecondaryRecordingBackendCapability` scope. The Vulkan
+implementation accepts the scope only for the currently bound, ready,
+upload-complete indirect and optional count buffers. Enqueued `IndirectDrawOp`
+values freeze an `EVulkanIndirectSecondaryEligibility` result plus the exact
+buffer identities. Before secondary recording the renderer rechecks producer
+completion, buffer identity, draw count, stride alignment, offset arithmetic,
+and uploaded/allocated bounds. Every rejection keeps the established primary
+encoder and publishes its exact typed reason.
+
+Only the CPU-built `GpuIndirectInstrumented` diagnostic reference path opts in.
+GPU-produced zero-readback calls retain the default `MutableCurrentFrame`
+contract and cannot enter a secondary. The initial implementation records
+qualifying secondaries serially; it does not claim worker parallelism or a
+measured benefit.
+
+Validation:
+
+- Vulkan and editor builds completed with zero compiler errors.
+- `IndirectDrawSecondaryRecordingScope_IsAValueTypeToAvoidPerDrawAllocation`,
+  `GpuIndirectCommandChains_KeepMutableArgumentStreamsOnPrimary`, and
+  `ProducerCompleteIndirectSecondaryEligibility_HasTypedTelemetryAndPrimaryFallback`
+  pass 3/3.
+- A rebuilt isolated editor selected `GpuIndirectInstrumented` with
+  `XRE_FORCE_CPU_INDIRECT_BUILD=1` and reported zero Vulkan validation
+  messages/errors. The active cached physics workload did not produce an
+  indirect re-record during the retained profile window, so the Phase 8
+  representative-hardware benefit criterion remains open.
+
+## 2026-07-31 Compute And Transfer Secondary Admission
+
+The generic secondary bucket path had an unreachable compute branch and no
+buffer-copy branch: its scheduler only produced blit/indirect buckets. It also
+had no family-specific queue, barrier-plan, or resource-state result, so
+widening the scheduler directly would have made primary fallback opaque.
+
+The scheduler now produces only contiguous compatible compute-dispatch and
+buffer-copy buckets. A typed allocation-free contract independently gates
+compute and transfer. The executing primary closes rendering and emits its
+compiled per-pass barriers/queue-ownership transfers before calling the
+secondary. Eligibility then rechecks the graphics command-pool queue family,
+known pass, compute workgroups/prepared state, or the copy's exact buffer
+handles, transfer usage, allocated ranges, and same-buffer non-overlap.
+`CmdExecuteCommandsTracked` merges secondary resource and image-layout
+dependencies back into the primary. Every rejection is counted and executes
+the existing primary encoder.
+
+Validation:
+
+- Vulkan and editor builds completed with zero compiler errors.
+- Five focused contract tests passed, covering the two scheduler families,
+  typed value contract, independent controls, queue/barrier/resource gates,
+  telemetry, primary fallback, and graphics-family transfer capability.
+- In the isolated `cmd-record-arch-opt` session, disabling primary reuse
+  exposed 37 frame operations including one compute dispatch. The compute
+  family reported `Eligible=1`, the frame recorded one primary, and the Vulkan
+  profiler reported zero validation messages.
+- Repeating that run with core and synchronization validation enabled produced
+  the same `Eligible=1` compute result and no `VUID`, validation error/warning,
+  or synchronization hazard in
+  `Build/_AgentValidation/mcp-sessions/cmd-record-arch-opt/logs/XREngine.Editor_debug/windows_x64/xrengine_2026-07-31_06-15-46_pid45484/`.
+- Camera-separated captures
+  `Screenshot_20260731_061225_900_542f0d442769488b8feff797c3ab231b.png`
+  and
+  `Screenshot_20260731_061226_936_76544355a86745c3bbddedb90cfbfd1f.png`
+  changed with the editor camera and showed live Physics Testing World
+  rendering.
+
+The workload emitted no `BufferCopyOp`, so transfer validation under a live
+copy and the representative-hardware performance-benefit criterion remain
+open. The implementation records serial secondaries and makes no asynchronous
+multi-queue or worker-overlap claim.
+
+## 2026-07-31 Query Secondary Admission
+
+Query work is the final serial secondary family. The scheduler now classifies
+all query frame operations so every attempted scope has telemetry, but only an
+ordered `CopyResults` operation may enter a query secondary. Query-pool resets
+stay in the primary preamble. Begin/end pairs, timestamps, and specialized
+property writes retain their existing primary encoder because the prepared
+query epoch is command-buffer-owned.
+
+`VulkanQuerySecondaryInheritanceContract` explicitly carries the primary-active
+state, enabled `inheritedQueries` feature, `occlusionQueryEnable`, query flags,
+and pipeline-statistics flags. The admitted contract requires no active primary
+query and disabled/empty inherited query state. Result-copy admission also
+requires a preceding matching begin/end, timestamp, or property producer plus
+the same destination and stride validity used by `VkRenderQuery.CopyResults`.
+Every rejection records a typed reason and falls through to the original
+primary path.
+
+Validation:
+
+- Vulkan and editor builds completed with zero compiler errors.
+- Five focused tests passed for typed family scheduling, allocation-free
+  inheritance, exact query ordering/reset/pair policy, telemetry, fallback, and
+  queue capability.
+- A validation-plus-synchronization-validation profile used
+  `CpuQueryAsync`, disabled primary reuse, and swept the editor camera through
+  three positions. It captured 128 frames with live query brackets. Each query
+  frame reported `QueryPairPrimaryOwned` with eight begin/end operations, while
+  `cpu_query_submitted_total` was nonzero.
+- The 1,743-frame capture contains zero Vulkan validation errors. The retained
+  profile is
+  `Build/_AgentValidation/mcp-sessions/cmd-record-arch-opt/logs/XREngine.Editor_debug/windows_x64/xrengine_2026-07-31_06-35-58_pid286492/profiler-render-stats.ndjson`.
+- Camera-separated viewport captures
+  `Screenshot_20260731_063434_880_cc88cfeef5da41c0bb3d0d9045003c39.png`
+  and
+  `Screenshot_20260731_063501_297_2ad4b5829fda45ec971e759aae5a684b.png`
+  changed with the camera and showed live Physics Testing World rendering.
+
+This cohort exercised the primary-owned query-pair fallback, not an eligible
+GPU result-copy operation. Live transfer-copy and query-result-copy coverage,
+plus representative-hardware benefit measurements for each family, remain
+open.

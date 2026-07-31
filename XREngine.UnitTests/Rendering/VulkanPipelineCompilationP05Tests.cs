@@ -52,7 +52,7 @@ public sealed class VulkanPipelineCompilationP05Tests
         changed.Value.ShouldNotBe(first.Value);
 
         string program = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.Compute.cs");
         int graphicsStart = program.IndexOf("public ulong ComputeGraphicsPipelineFingerprint()", StringComparison.Ordinal);
         int artifactStart = program.IndexOf("private string ComputeProgramArtifactFingerprint()", graphicsStart, StringComparison.Ordinal);
         string persistedFingerprints = program[graphicsStart..artifactStart];
@@ -109,7 +109,7 @@ public sealed class VulkanPipelineCompilationP05Tests
         string shader = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkShader.cs");
         string program = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.Layouts.cs");
         string request = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/Classes/VkMeshRenderer.GraphicsPipelineBuildRequest.cs");
         string pipeline = ReadWorkspaceFile(
@@ -138,7 +138,7 @@ public sealed class VulkanPipelineCompilationP05Tests
         preparation.ShouldContain(
             "if (!_program.Link(MeshRenderer?.GenerateAsync ?? false))");
         preparation.ShouldContain(
-            "ObserveActiveProgramLinkGeneration(_program);");
+            "ObserveActiveProgramLinkGeneration(_program, replacingProgram);");
         pipeline.ShouldContain(
             "_program.LinkGeneration,");
         recording.ShouldContain(
@@ -146,15 +146,15 @@ public sealed class VulkanPipelineCompilationP05Tests
 
         int shaderBarrier = shader.IndexOf(
             "private void Invalidate()", StringComparison.Ordinal);
-        int shaderRenderThreadDispatch = shader.IndexOf(
-            "RuntimeEngine.InvokeOnMainThread(Invalidate", shaderBarrier, StringComparison.Ordinal);
+        int shaderFrameSwapDispatch = shader.IndexOf(
+            "Scheduling.EnqueueFrameSwapTask(", shaderBarrier, StringComparison.Ordinal);
         int shaderInvalidationBarrier = shader.IndexOf(
             "ExecuteWithVulkanPipelineCompilationQuiesced", shaderBarrier, StringComparison.Ordinal);
         int shaderInvalidationEvent = shader.IndexOf(
             "ShaderInvalidated?.Invoke(this)", shaderInvalidationBarrier, StringComparison.Ordinal);
         shaderBarrier.ShouldBeGreaterThanOrEqualTo(0);
-        shaderRenderThreadDispatch.ShouldBeGreaterThan(shaderBarrier);
-        shaderInvalidationBarrier.ShouldBeGreaterThan(shaderRenderThreadDispatch);
+        shaderFrameSwapDispatch.ShouldBeGreaterThan(shaderBarrier);
+        shaderInvalidationBarrier.ShouldBeGreaterThan(shaderFrameSwapDispatch);
         shaderInvalidationBarrier.ShouldBeGreaterThan(shaderBarrier);
         shaderInvalidationEvent.ShouldBeGreaterThan(shaderInvalidationBarrier);
 
@@ -199,15 +199,15 @@ public sealed class VulkanPipelineCompilationP05Tests
     [Test]
     public void SharedPipelineLibraries_ReserveBeforeEnteringTheDriver()
     {
-        string cache = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanGraphicsPipelineLibraryCache.cs");
+        string manager = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineManager.cs");
         string pipeline = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
 
-        cache.ShouldContain("_sharedGraphicsPipelineLibraryCreations.Add(key)");
-        cache.ShouldContain("TryGetOrReserveSharedGraphicsPipelineLibrary");
-        cache.ShouldContain("CompleteSharedGraphicsPipelineLibraryCreation");
-        cache.ShouldContain("CancelSharedGraphicsPipelineLibraryCreation");
+        manager.ShouldContain("_sharedGraphicsPipelineLibraryCreations.Add(key)");
+        manager.ShouldContain("TryGetOrReserveSharedGraphicsPipelineLibrary");
+        manager.ShouldContain("CompleteSharedGraphicsPipelineLibraryCreation");
+        manager.ShouldContain("CancelSharedGraphicsPipelineLibraryCreation");
 
         int reserve = pipeline.IndexOf(
             "TryGetOrReserveSharedGraphicsPipelineLibrary(", StringComparison.Ordinal);
@@ -229,7 +229,8 @@ public sealed class VulkanPipelineCompilationP05Tests
 
         int begin = method.IndexOf("Api.BeginCommandBuffer(secondary", StringComparison.Ordinal);
         begin.ShouldBeGreaterThanOrEqualTo(0);
-        method.ShouldContain("materialization is deliberately owned by the render thread before");
+        method.ShouldContain("Graphics pipeline materialization and descriptor transitions are owned by the");
+        method.ShouldContain("render thread. Workers consume only immutable prepared draw state");
         method.ShouldNotContain("TryPrewarmGraphicsPipelinesForRecording");
         method.ShouldContain("chain.State = CommandChainState.NotReady;");
         method.ShouldContain("chain.DirtyReason |= CommandChainDirtyReason.PipelineGeneration;");
@@ -250,7 +251,7 @@ public sealed class VulkanPipelineCompilationP05Tests
         int primaryMethodEnd = primarySource.IndexOf("internal static bool ShouldRefreshUnwrittenSwapchainForPresent", primaryMethodStart, StringComparison.Ordinal);
         string primaryMethod = primarySource[primaryMethodStart..primaryMethodEnd];
         int primaryPrewarm = primaryMethod.IndexOf("TryPrewarmGraphicsPipelinesForRecording", StringComparison.Ordinal);
-        int primaryBegin = primaryMethod.IndexOf("Api!.BeginCommandBuffer(commandBuffer", StringComparison.Ordinal);
+        int primaryBegin = primaryMethod.IndexOf("_commandRecorder.Begin(Api!, commandBuffer);", StringComparison.Ordinal);
         primaryPrewarm.ShouldBeGreaterThanOrEqualTo(0);
         primaryBegin.ShouldBeGreaterThan(primaryPrewarm);
         primaryMethod.ShouldContain("Graphics pipeline prewarm deferred before vkBeginCommandBuffer");

@@ -11,6 +11,7 @@ using XREngine.Core.Files;
 using XREngine;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Materials;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Shaders.Generator;
 using XREngine.Scene.Transforms;
@@ -814,7 +815,8 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
             string source = new DefaultVertexShaderGenerator(mesh).Generate();
 
             source.ShouldContain("uniform int usePrecombinedBlendshapeDeltas;");
-            source.ShouldContain("PrecombinedBlendshapePositionDeltasBuffer");
+            source.ShouldContain(
+                $"layout(std430, binding = {MeshDeformationBindingLayout.PrecombinedBlendshapePosition}) buffer PrecombinedBlendshapePositionDeltasBuffer");
             source.ShouldContain("if (usePrecombinedBlendshapeDeltas != 0)");
             source.ShouldContain("basePosition += PrecombinedBlendshapePositionDeltas[gl_VertexID].xyz;");
             source.ShouldContain("else");
@@ -851,9 +853,14 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
 
             string source = new DefaultVertexShaderGenerator(mesh).Generate();
 
-            source.ShouldContain("SkinnedPositionsInput");
+            source.ShouldContain(
+                $"layout(std430, binding = {MeshDeformationBindingLayout.ComputePosition}) buffer SkinnedPositionsInput");
             source.ShouldNotContain("BlendshapeDeltasBuffer");
             source.ShouldNotContain("BlendshapeCount);");
+            MeshDeformationBindingLayout.ComputePosition.ShouldBeGreaterThan(AdvancedGlobalResourceBindings.TextureDescriptors);
+            MeshDeformationBindingLayout.ComputePosition.ShouldNotBe(MaterialBindingLayouts.MaterialTableSsboBinding);
+            MeshDeformationBindingLayout.ComputeNormal.ShouldNotBe(12u);
+            MeshDeformationBindingLayout.ComputeTangent.ShouldNotBe(15u);
         }
         finally
         {

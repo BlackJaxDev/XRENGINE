@@ -45,6 +45,8 @@ call :AddTool "Agent" "Tools\Invoke-CodeReviewGraph.ps1 build" "Rebuild the code
 call :AddTool "Agent" "Tools\Invoke-CodeReviewGraph.ps1 update" "Incrementally update the code-review graph"
 call :AddTool "Agent" "Tools\Invoke-CodeReviewGraph.ps1 status" "Show code-review graph status"
 call :AddTool "Agent" "Tools\Invoke-CodeReviewGraph.ps1 visualize" "Generate the interactive code-review graph"
+call :AddTool "Agent" "Tools\Setup-LocalAgentBroker.ps1" "Build and smoke-test the local OpenAI agent broker"
+call :AddTool "Agent" "Tools\Test-LocalAgentBrokerMcp.ps1" "Run the broker MCP initialize/list-tools smoke test"
 call :AddSep
 call :AddTool "Docs" "Tools\Start-DocFxServer.bat" "Build and serve DocFX docs locally on port 8080"
 call :AddTool "Docs" "Tools\Invoke-GameProject.bat" "Helper for game-project workflows (compile/build/run/publish)"
@@ -258,6 +260,14 @@ if "!BOOT_WITH_AGENT_TOOLS!"=="1" (
     powershell -NoProfile -ExecutionPolicy Bypass -File "Tools\Setup-CodeReviewGraph.ps1" -InstallPrerequisites
     if !ERRORLEVEL! NEQ 0 (
         echo  WARNING: code-review-graph setup reported errors.
+        set "BOOT_FAIL=1"
+    )
+    echo.
+    echo  [3B/7] Building and smoke-testing the local agent broker...
+    echo  ------------------------------------------------------------
+    powershell -NoProfile -ExecutionPolicy Bypass -File "Tools\Setup-LocalAgentBroker.ps1"
+    if !ERRORLEVEL! NEQ 0 (
+        echo  WARNING: local agent broker setup reported errors.
         set "BOOT_FAIL=1"
     )
     echo.

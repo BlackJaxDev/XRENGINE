@@ -194,62 +194,89 @@ No `MirrorNode` or mirror component was present. The default Unit Testing World
 can create one when `Mirror` is true, but the mirror renderer is currently
 broken and is intentionally outside this validation.
 
-The earlier `Body`/`Face`-only captures are useful skinning and fresh-frame
-evidence, but they are not complete-avatar acceptance evidence. Their paths are
-`mcp-captures/Screenshot_20260730_010436_853_de190ccce7024d73a11025a45e2854a0.png`
-and
-`mcp-captures/Screenshot_20260730_010523_132_a1b72b4ad8954be8b7dded2f46fe6250.png`.
+The unchanged private source was reimported after the final specialization
+change. Its pre- and post-validation identity remained:
 
-The follow-up inspection kept the prefab's authored active renderer set intact.
-Of 52 model components, 22 are effectively active and match the Unity outfit:
-body, face, horns, ears, tail, jewelry, glove, shorts, thigh-highs, shoes,
-underwear, tank/zip-up, and the authored active hair branches. The active
-silhouette is visible against the temporary neutral validation backdrop in
-`mcp-captures/Screenshot_20260730_095012_951_cddd01eb77fd4129bd9f3ece73499c65.png`.
-That capture is still not accepted: exposure/material output leaves major
-body, face, and hair regions blown out or flat compared with the supplied Unity
-reference.
+- length: 164,122 bytes;
+- last-write UTC: `2026-01-29T09:03:38.8537663Z`; and
+- SHA-256:
+  `EA63E9F3859F64C2B07D0976CEDB3B2842873CF2163E6104A79ADF4EC2824E8F`.
+
+The accepted OpenGL captures use bloom disabled and manual exposure `0.5`.
+This removes the default low bloom threshold as a confounding factor without
+changing the imported material. The static flying camera was placed on engine
+negative Z and looked toward positive Z for the front view. This is the
+exact-once mapping of Unity positive-Z-forward content to XRENGINE
+negative-Z-forward content; no compensating avatar rotation was added.
+
+Accepted complete-avatar evidence is under
+`Build/_AgentValidation/20260729-unity-avatar-import/mcp-captures/opengl-final-coherent/`:
+
+- front:
+  `Screenshot_20260731_023624_551_c03b7aa8ab6f41e580598158720e1c67.png`;
+- front-right oblique:
+  `Screenshot_20260731_023642_814_d68e4a7a59cf4729a2f7ac8a5e8e3bb6.png`;
+- rear:
+  `Screenshot_20260731_023700_336_aed315fcaede48ae9dbc6fe78791f7ac.png`.
+
+These images show the authored active set with textured skin, face, outfit,
+thigh-highs, shoes, hair, tail, and accessories. Camera-relative silhouettes
+change as expected, so the result is live rendering rather than a stale
+readback. An isolated Body capture at
+`mcp-captures/opengl-body-final-coherent/Screenshot_20260731_023722_201_fe5e92a9432d4394ae42e7fb3a862edb.png`
+shows the complete correctly skinned/textured torso, arms, hands, legs, and
+feet. The apparent gaps in the dressed avatar are authored masking, including
+Body blendshape index 1 at weight 100, rather than missing imported geometry.
 
 Dependency and runtime inspection found no unexplained required visual loss.
 The main-avatar manifest has 128 required visual texture references, represented
-by 112 distinct imported source textures after deduplication. Live streaming
-tracked 77 material texture bindings with zero failures, and representative
+by 112 distinct imported source textures after deduplication. Representative
 body, hair, tank, shorts, socks, and accessory slots resolve to their expected
-Unity files. Logs also show the compact pending material binding real
-`_MainTex` textures. The remaining failure is therefore in material
-specialization/output and visual acceptance, not missing imported mesh or
-texture records.
+Unity files. The fresh generated closure contained 350 files before it was
+deleted through the asset API at the end of validation.
 
-The compact textured pending-Uber shader now links in approximately 12-14 ms,
-instead of the previous 30-52 second large fallback, and makes the complete
-silhouette inspectable while final variants compile. Final Pro-authored
-variants remained approximately 324-360 KiB and 8,500-9,200 lines, however,
-and took approximately 85-100 seconds each to link. The editor reached roughly
-16 GiB while compiling them, so the named session was stopped.
-
-The cause was unconditional `UseRuntimeUberPropertyBindings()` during lossy
+The earlier specialization failure was caused by unconditional
+`UseRuntimeUberPropertyBindings()` during lossy
 Pro import. It converted all implicitly authored constants into uniforms and
 prevented constant folding from pruning inactive Pro branches. The importer now
 leaves implicit Pro-downgrade values static while preserving explicit
 runtime-mutability declarations. Authored static changes continue to rebuild
-the material variant. The normal test project builds with this change and the
-focused Pro-downgrade/Uber contract selection passes 43/43. The avatar has not
-yet been reimported and rendered with this final specialization change, so no
-visual or memory acceptance is claimed.
+the material variant. A new regression proves dormant emission and matcap
+textures cannot enable those features when Poiyomi explicitly authors their
+feature toggles as zero. The focused Unity model/Poiyomi/Pro selection passes
+9/9. The generated `MAT_BODY 2` material therefore keeps both emission and
+matcap disabled, matching the source. A raw Body HDR capture had maximum RGB
+`0.7534` and no non-finite pixels, which rules out the reported whole-model
+emission; the earlier glow was post-process bloom.
 
-Vulkan was then launched from the same isolated build with the Vulkan profile.
-`get_render_capabilities` confirmed Vulkan, no mirror node existed, and the
-ordinary native prefab drag/drop completed. Enabling continuous rendering for
-the capture made the editor unresponsive; it reached about 5.05 GiB working set
-and 7.34 GiB private bytes before the exact named session was stopped. There was
-no managed exception in stdout. Vulkan backend initialization and prefab
-placement therefore pass, but Vulkan frame rendering/capture does not.
+The supplied Unity image is a useful representative comparison, but it is not
+the raw prefab's authored default state. It shows a runtime-selected loose
+black/cyan hair variant, while the raw prefab keeps multiple hair branches,
+including the braid, active. XRENGINE does not execute the unsupported
+VRCFury/menu toggle behavior that selects that runtime outfit state. The
+remaining material differences are also expected from the documented lossy
+Poiyomi Pro-to-supported-Uber conversion: Pro-only grab-pass, layered,
+special-effect, and exact outline/matcap behavior is diagnosed and dropped.
+The supported base textures, colors, alpha modes, normal inputs, and explicit
+emission state are visibly usable in the accepted OpenGL images.
 
-An earlier normal test-project compile was independently blocked by concurrent
-Vulkan/frame-package API work. The latest focused invocation built the normal
-test project successfully, so that transient 41-error blocker is no longer a
-current limitation. The complete test suite was not rerun after the final
-specialization change.
+The narrow Vulkan check then used the same native prefab closure, static camera,
+no locomotion, and no mirror. `get_render_capabilities` and texture residency
+confirmed Vulkan, native prefab placement succeeded, 56 tracked textures
+settled with zero pending transitions, and MCP returned an
+`R16G16B16A16Sfloat` GPU readback. The resulting image at
+`mcp-captures/vulkan-final-coherent/Screenshot_20260731_024123_428_6f3123baf2264b9e97463c4807f86b3b.png`
+is vertically inverted by the current Vulkan screenshot-readback path and only
+shows the Body/opaque subset. This is a backend/readback limitation, not an
+import-closure failure, because the same ordinary prefab renders completely in
+OpenGL.
+
+`rdc doctor` passed for RenderDoc 1.44 and the registered Vulkan layer. A
+bounded RenderDoc launch confirmed Vulkan, but attaching reported an empty
+capture API and its preflight MCP image was black; `capture-trigger` produced
+no `.rdc`. The exact launched editor process was stopped. This records the
+current RenderDoc/Vulkan integration limitation without weakening the accepted
+OpenGL importer path or introducing a mirror.
 
 ## Remaining Risks
 
@@ -258,19 +285,13 @@ specialization change.
 - Poiyomi Pro conversion is intentionally lossy and is not a Pro parity path.
 - Optional stale expression/menu references remain behavior-incomplete by
   design but do not reduce visual completion.
-- Reimport the unchanged private source with the final static Pro-downgrade
-  specialization change. Measure representative generated shader source sizes
-  and stop the named session if memory again approaches the validation bound.
-- Obtain accepted complete-avatar OpenGL front and oblique captures with a
-  static flying camera and neutral backdrop. Keep every authored active mesh
-  branch enabled, and compare the visible textures/materials with the supplied
-  Unity reference.
-- Vulkan frame rendering/capture hangs after successful backend startup and
-  prefab placement. Debug this against the current Vulkan renderer without a
-  mirror node or locomotion and without weakening the OpenGL path. Run
-  `rdc doctor`, capture, export and visually inspect the final/suspicious render
-  target, then close the RenderDoc session.
-- The repository has pinned CC0 Unity Poiyomi reference images, but a live
-  XRENGINE capture of that exact representative scene/camera matrix has not yet
-  been produced. Do not treat the private avatar screenshot as a like-for-like
-  Unity comparison.
+- Vulkan screenshot readback still needs a vertical-origin fix, and the
+  forward/masked avatar passes need backend-specific renderer investigation.
+  This is separate from the completed Unity-prefab import path.
+- RenderDoc 1.44 currently launches the Vulkan editor but does not expose the
+  active API to `rdc-cli` for capture. Resolve that renderer/tool integration
+  before relying on Vulkan GPU captures for avatar-material diagnosis.
+- A true like-for-like Unity comparison would require the same camera,
+  lighting, post processing, and VRCFury runtime-selected outfit state. The
+  private screenshot should remain a representative, not pixel-parity,
+  reference.

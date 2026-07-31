@@ -2,6 +2,7 @@ using NUnit.Framework;
 using Shouldly;
 using System.Numerics;
 using XREngine.Rendering;
+using XREngine.Rendering.Resources;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -25,6 +26,46 @@ public sealed class RvcRenderingContractTests
         resolution.IsRvcActive.ShouldBeFalse();
         resolution.FallbackReason.ShouldBe(ERvcFallbackReason.None);
         resolution.Diagnostic.ShouldContain("oracle");
+    }
+
+    [TestCase(1u, false)]
+    [TestCase(2u, true)]
+    [TestCase(4u, true)]
+    public void ResourceLayout_PerViewTextureShapeMatchesProfile(
+        uint viewCount,
+        bool stereo)
+    {
+        RvcRenderPipeline pipeline = new(stereo, ERvcPipelineMode.Off);
+        RenderPipelineResourceProfile profile = new(
+            DisplayWidth: 1920u,
+            DisplayHeight: 1080u,
+            InternalWidth: 1440u,
+            InternalHeight: 1440u,
+            OutputHDR: false,
+            AntiAliasingMode: EAntiAliasingMode.None,
+            MsaaSampleCount: 1u,
+            Stereo: stereo,
+            ViewCount: viewCount);
+
+        RenderPipelineResourceLayout layout =
+            pipeline.BuildResourceLayout(profile);
+        TextureSpec depth = layout.ResourcesByName[
+                RvcFrameGraphContract.PerViewDepthArray]
+            .ShouldBeOfType<TextureSpec>();
+
+        depth.Layers.ShouldBe(viewCount);
+        depth.StereoCompatible.ShouldBe(stereo);
+        XRTexture2DArray actual =
+            depth.Factory!().ShouldBeOfType<XRTexture2DArray>();
+        actual.Depth.ShouldBe(viewCount);
+
+        TextureSpec hzb = layout.ResourcesByName[
+                RvcFrameGraphContract.PerViewHzbDepthArray]
+            .ShouldBeOfType<TextureSpec>();
+        XRTexture2DArray actualHzb =
+            hzb.Factory!().ShouldBeOfType<XRTexture2DArray>();
+        actualHzb.Depth.ShouldBe(viewCount);
+        actualHzb.Mipmaps!.Length.ShouldBe(8);
     }
 
     [Test]

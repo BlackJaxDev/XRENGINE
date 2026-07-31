@@ -309,13 +309,14 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
         ulong stride,
         bool includeAvailability = true)
     {
-        if (!_allocation.IsValid || destination.Handle == 0)
+        if (!CanCopyResults(
+                destination,
+                destinationOffset,
+                stride,
+                includeAvailability))
+        {
             return ERenderQueryReadStatus.InvalidState;
-
-        ulong minimumStride = _plan.ResultLayout.ValuesPerQuery * sizeof(ulong) +
-            (includeAvailability ? sizeof(ulong) : 0u);
-        if (stride < minimumStride || (destinationOffset & 7ul) != 0ul || (stride & 7ul) != 0ul)
-            return ERenderQueryReadStatus.InvalidState;
+        }
 
         QueryResultFlags flags = QueryResultFlags.Result64Bit;
         if (includeAvailability)
@@ -332,6 +333,28 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
             flags);
         RenderQueryTelemetry.RecordCopiedBytes(checked((long)(_plan.ResultLayout.NativeStrideBytes * _plan.ResultLayout.QueryCount)));
         return ERenderQueryReadStatus.Ready;
+    }
+
+    /// <summary>
+    /// Validates every query-owned argument needed to record a result copy.
+    /// This lets secondary-command admission retain the original primary path
+    /// instead of discovering an invalid copy after secondary recording starts.
+    /// </summary>
+    internal bool CanCopyResults(
+        Silk.NET.Vulkan.Buffer destination,
+        ulong destinationOffset,
+        ulong stride,
+        bool includeAvailability)
+    {
+        if (!_allocation.IsValid || destination.Handle == 0)
+            return false;
+
+        ulong minimumStride =
+            _plan.ResultLayout.ValuesPerQuery * sizeof(ulong) +
+            (includeAvailability ? sizeof(ulong) : 0u);
+        return stride >= minimumStride &&
+               (destinationOffset & 7ul) == 0ul &&
+               (stride & 7ul) == 0ul;
     }
 
     public RenderQueryReadResult TryReadRaw(

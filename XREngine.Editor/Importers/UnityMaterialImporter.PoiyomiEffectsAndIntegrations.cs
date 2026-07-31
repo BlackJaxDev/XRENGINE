@@ -16,8 +16,11 @@ public static partial class UnityMaterialImporter
         ICollection<MaterialConversionDiagnostic> diagnostics,
         List<string> warnings)
     {
-        bool outlines = HasAnyPositive(document, "_EnableOutlines", "_OutlinesEnabled", "_UseOutline") ||
-                        HasExternalTexture(document, "_OutlineMask", "_OutlineTexture");
+        bool outlines = PoiyomiFeatureStateResolver.IsEnabled(
+            document,
+            HasExternalTexture(document, "_OutlineMask", "_OutlineTexture"),
+            ["_EnableOutlines", "_OutlinesEnabled", "_UseOutline"],
+            ["POI_OUTLINE"]);
         bool specialEffects = HasSpecialEffects(document);
         bool vertexEffects = HasVertexEffects(document);
         bool audioLink = document.TryGetPositive("_EnableAudioLink") ||

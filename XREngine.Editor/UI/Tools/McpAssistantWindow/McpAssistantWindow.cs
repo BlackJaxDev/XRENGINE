@@ -53,6 +53,11 @@ public sealed partial class McpAssistantWindow
     /// </summary>
     private static readonly (string Prefix, int Tokens)[] KnownModelContextWindows =
     [
+        ("gpt-5.6-sol",       1_050_000),   // 128K max output
+        ("gpt-5.6-terra",     1_050_000),   // 128K max output
+        ("gpt-5.6-luna",      1_050_000),   // 128K max output
+        ("gpt-5.6",           1_050_000),   // Sol alias
+
         // ── OpenAI — GPT-5.x family (400K context) ──────────────────────
         ("gpt-5.3-codex",       400_000),   // 128K max output
         ("gpt-5.2-codex",       400_000),   // 128K max output

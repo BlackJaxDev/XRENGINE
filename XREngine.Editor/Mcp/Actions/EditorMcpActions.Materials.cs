@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Threading.Tasks;
 using XREngine.Components;
+using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -24,10 +25,11 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Lists all shader uniforms on a material, including their names, types, and current values.
         /// The material can be targeted by its asset GUID directly, or by specifying a component
-        /// on a scene node that exposes a <c>Material</c> property.
+        /// on a scene node that exposes a <c>Material</c> property, or by selecting a
+        /// submesh/LOD material slot on a <see cref="ModelComponent"/>.
         /// </summary>
         [XRMcp(Name = "get_material_uniforms", Permission = McpPermissionLevel.ReadOnly)]
-        [Description("List all shader uniforms (Parameters) on a material, including names, types, and current values. Target the material by asset ID or via a component's Material property.")]
+        [Description("List all shader uniforms (Parameters) on a material, including names, types, and current values. Target by asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot.")]
         public static Task<McpToolResponse> GetMaterialUniformsAsync(
             McpToolContext context,
             [McpName("material_id"), Description("GUID of the material asset. If omitted, the material is resolved from the component.")]
@@ -39,9 +41,13 @@ namespace XREngine.Editor.Mcp
             [McpName("component_name"), Description("Optional component instance name on the node.")]
             string? componentName = null,
             [McpName("component_type"), Description("Optional component type name on the node.")]
-            string? componentType = null)
+            string? componentType = null,
+            [McpName("submesh_index"), Description("Zero-based ModelComponent source submesh index. Used only when the selected component is a ModelComponent.")]
+            int submeshIndex = 0,
+            [McpName("lod_index"), Description("Zero-based LOD index within the selected ModelComponent source submesh.")]
+            int lodIndex = 0)
         {
-            if (!TryResolveMaterial(context, materialId, nodeId, componentId, componentName, componentType, out var material, out var error))
+            if (!TryResolveMaterial(context, materialId, nodeId, componentId, componentName, componentType, submeshIndex, lodIndex, out var material, out var error))
                 return Task.FromResult(new McpToolResponse(error!, isError: true));
 
             var uniforms = material!.Parameters.Select((p, i) => new
@@ -67,10 +73,11 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Sets a shader uniform value on a material by uniform name.
         /// Supports float, int, uint, vec2, vec3, vec4, and mat4 uniforms.
-        /// The material can be targeted by asset GUID or via a component's Material property.
+        /// The material can be targeted by asset GUID, via a component's Material property,
+        /// or through a <see cref="ModelComponent"/> submesh/LOD material slot.
         /// </summary>
         [XRMcp(Name = "set_material_uniform", Permission = McpPermissionLevel.Mutate, PermissionReason = "Modifies a material's shader uniform value.")]
-        [Description("Set a shader uniform value on a material by uniform name. Supports float, int, uint, vec2 ({X,Y}), vec3 ({X,Y,Z}), vec4 ({X,Y,Z,W}). Target by material asset ID or via a component's Material property.")]
+        [Description("Set a shader uniform value on a material by uniform name. Supports float, int, uint, vec2 ({X,Y}), vec3 ({X,Y,Z}), vec4 ({X,Y,Z,W}). Target by material asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot.")]
         public static Task<McpToolResponse> SetMaterialUniformAsync(
             McpToolContext context,
             [McpName("uniform_name"), Description("Name of the shader uniform to set (e.g. 'BaseColor', 'Roughness', 'Metallic').")]
@@ -86,9 +93,13 @@ namespace XREngine.Editor.Mcp
             [McpName("component_name"), Description("Optional component instance name on the node.")]
             string? componentName = null,
             [McpName("component_type"), Description("Optional component type name on the node.")]
-            string? componentType = null)
+            string? componentType = null,
+            [McpName("submesh_index"), Description("Zero-based ModelComponent source submesh index. Used only when the selected component is a ModelComponent.")]
+            int submeshIndex = 0,
+            [McpName("lod_index"), Description("Zero-based LOD index within the selected ModelComponent source submesh.")]
+            int lodIndex = 0)
         {
-            if (!TryResolveMaterial(context, materialId, nodeId, componentId, componentName, componentType, out var material, out var error))
+            if (!TryResolveMaterial(context, materialId, nodeId, componentId, componentName, componentType, submeshIndex, lodIndex, out var material, out var error))
                 return Task.FromResult(new McpToolResponse(error!, isError: true));
 
             // Find the uniform by name
@@ -130,7 +141,7 @@ namespace XREngine.Editor.Mcp
         /// Sets multiple shader uniform values on a material in a single call.
         /// </summary>
         [XRMcp(Name = "set_material_uniforms", Permission = McpPermissionLevel.Mutate, PermissionReason = "Modifies material shader uniform values.")]
-        [Description("Set multiple shader uniforms on a material in one call. Pass a map of uniform_name -> value.")]
+        [Description("Set multiple shader uniforms on a material in one call. Pass a map of uniform_name -> value and target by material asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot.")]
         public static Task<McpToolResponse> SetMaterialUniformsAsync(
             McpToolContext context,
             [McpName("uniforms"), Description("Object map of uniform names to values, e.g. {\"BaseColor\":{\"X\":1,\"Y\":0,\"Z\":0}, \"Roughness\":0.5, \"Metallic\":1.0}.")]
@@ -144,9 +155,13 @@ namespace XREngine.Editor.Mcp
             [McpName("component_name"), Description("Optional component instance name on the node.")]
             string? componentName = null,
             [McpName("component_type"), Description("Optional component type name on the node.")]
-            string? componentType = null)
+            string? componentType = null,
+            [McpName("submesh_index"), Description("Zero-based ModelComponent source submesh index. Used only when the selected component is a ModelComponent.")]
+            int submeshIndex = 0,
+            [McpName("lod_index"), Description("Zero-based LOD index within the selected ModelComponent source submesh.")]
+            int lodIndex = 0)
         {
-            if (!TryResolveMaterial(context, materialId, nodeId, componentId, componentName, componentType, out var material, out var error))
+            if (!TryResolveMaterial(context, materialId, nodeId, componentId, componentName, componentType, submeshIndex, lodIndex, out var material, out var error))
                 return Task.FromResult(new McpToolResponse(error!, isError: true));
 
             var results = new List<object>();
@@ -206,6 +221,8 @@ namespace XREngine.Editor.Mcp
             string? componentId,
             string? componentName,
             string? componentType,
+            int submeshIndex,
+            int lodIndex,
             out XRMaterialBase? material,
             out string? error)
         {
@@ -267,25 +284,93 @@ namespace XREngine.Editor.Mcp
                 candidates = node!.Components;
             }
 
-            // Search for a Material property via reflection on each candidate component
+            // Search direct component properties and ModelComponent source material slots.
             foreach (var comp in candidates)
             {
-                var matProp = comp.GetType().GetProperty("Material",
-                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
+                if (TryResolveMaterialFromComponent(comp, submeshIndex, lodIndex, out material, out var componentError))
+                    return true;
 
-                if (matProp is not null && matProp.CanRead && typeof(XRMaterialBase).IsAssignableFrom(matProp.PropertyType))
-                {
-                    var matValue = matProp.GetValue(comp) as XRMaterialBase;
-                    if (matValue is not null)
-                    {
-                        material = matValue;
-                        return true;
-                    }
-                }
+                error = componentError;
             }
 
-            error = $"No material found on node '{node!.Name}'. Ensure the node has a component with a 'Material' property, or provide a direct material_id.";
+            error ??= $"No material found on node '{node!.Name}'. Ensure the node has a component with a 'Material' property or a ModelComponent material slot, or provide a direct material_id.";
             return false;
+        }
+
+        /// <summary>
+        /// Resolves a material exposed directly by a component or through an authored
+        /// <see cref="ModelComponent"/> source submesh/LOD slot.
+        /// </summary>
+        internal static bool TryResolveMaterialFromComponent(
+            XRComponent component,
+            int submeshIndex,
+            int lodIndex,
+            out XRMaterialBase? material,
+            out string? error)
+        {
+            material = null;
+            error = null;
+
+            var matProp = component.GetType().GetProperty(
+                "Material",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
+
+            if (matProp is not null
+                && matProp.CanRead
+                && typeof(XRMaterialBase).IsAssignableFrom(matProp.PropertyType)
+                && matProp.GetValue(component) is XRMaterialBase directMaterial)
+            {
+                material = directMaterial;
+                return true;
+            }
+
+            if (component is not ModelComponent modelComponent)
+            {
+                error = $"Component '{component.Name}' ({component.GetType().Name}) does not expose a readable material.";
+                return false;
+            }
+
+            if (submeshIndex < 0)
+            {
+                error = $"submesh_index must be non-negative; received {submeshIndex}.";
+                return false;
+            }
+
+            if (lodIndex < 0)
+            {
+                error = $"lod_index must be non-negative; received {lodIndex}.";
+                return false;
+            }
+
+            var model = modelComponent.Model;
+            if (model is null)
+            {
+                error = $"ModelComponent '{component.Name}' does not have a source model.";
+                return false;
+            }
+
+            if (submeshIndex >= model.Meshes.Count)
+            {
+                error = $"submesh_index {submeshIndex} is out of range for ModelComponent '{component.Name}' ({model.Meshes.Count} source submesh(es)).";
+                return false;
+            }
+
+            var submesh = model.Meshes[submeshIndex];
+            if (lodIndex >= submesh.LODs.Count)
+            {
+                error = $"lod_index {lodIndex} is out of range for ModelComponent '{component.Name}' submesh {submeshIndex} ({submesh.LODs.Count} LOD(s)).";
+                return false;
+            }
+
+            var lod = submesh.LODs.ElementAt(lodIndex);
+            if (lod.Material is null)
+            {
+                error = $"ModelComponent '{component.Name}' submesh {submeshIndex}, LOD {lodIndex} does not have a material.";
+                return false;
+            }
+
+            material = lod.Material;
+            return true;
         }
 
         /// <summary>

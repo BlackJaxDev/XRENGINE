@@ -155,8 +155,12 @@ public unsafe partial class VulkanRenderer
 
     private readonly object _meshFrameDataReservationLock = new();
     private readonly Dictionary<MeshFrameDataReservationKey, MeshFrameDataReservation> _meshFrameDataReservations = new();
+    private readonly Dictionary<
+        VulkanFrequencyAutoUniformReservationKey,
+        VulkanFrequencyAutoUniformReservation> _frequencyAutoUniformReservations = [];
     private ulong _meshFrameDataReservedBytes;
     private long _meshFrameDataReservationGeneration;
+    private int _meshFrameDataArenaActive;
 
     private readonly record struct MeshFrameDataReservationKey(
         VkMeshRenderer Owner,
@@ -172,7 +176,10 @@ public unsafe partial class VulkanRenderer
     /// same offset in every frame slot, so descriptor sets point at one stable arena buffer
     /// while draw-specific data is selected with a dynamic offset.
     /// </summary>
-    private const ulong DynamicUniformRingBufferCapacity = 32 * 1024 * 1024;
+    internal const ulong DynamicUniformRingBufferCapacity =
+        32 * 1024 * 1024;
+    internal const int MaxDynamicUniformFrameSlots = 8;
+    internal const int MaxMeshFrameDataReservations = 131_072;
     private static bool? DynamicUniformBufferEnabledOverride
         => XREnvironment.GetBooleanOverride(
             XREngineEnvironmentVariables.VulkanDynamicUniformBuffer);
@@ -191,7 +198,8 @@ public unsafe partial class VulkanRenderer
         get
         {
             lock (_meshFrameDataReservationLock)
-                return _meshFrameDataReservations.Count;
+                return _meshFrameDataReservations.Count +
+                    _frequencyAutoUniformReservations.Count;
         }
     }
 
@@ -205,7 +213,10 @@ public unsafe partial class VulkanRenderer
     }
 
     internal ulong MeshFrameDataReservationGeneration
-        => unchecked((ulong)Math.Max(Volatile.Read(ref _meshFrameDataReservationGeneration), 0L));
+        => Volatile.Read(ref _meshFrameDataArenaActive) == 0
+            ? 0UL
+            : unchecked((ulong)Volatile.Read(
+                ref _meshFrameDataReservationGeneration));
 
     internal bool TryReserveMeshFrameDataRange(
         VkMeshRenderer owner,
@@ -222,11 +233,20 @@ public unsafe partial class VulkanRenderer
         MeshFrameDataReservationKey key = new(owner, name, isAutoUniform, drawSlot);
         lock (_meshFrameDataReservationLock)
         {
-            if (_meshFrameDataReservations.TryGetValue(key, out MeshFrameDataReservation existing) &&
-                existing.Size >= size)
+            bool hasExisting = _meshFrameDataReservations.TryGetValue(
+                key,
+                out MeshFrameDataReservation existing);
+            if (hasExisting && existing.Size >= size)
             {
                 offset = existing.Offset;
                 return true;
+            }
+            if (!hasExisting &&
+                !CanAddMeshFrameDataReservation_NoLock())
+            {
+                RuntimeEngine.Rendering.Stats.Vulkan
+                    .RecordVulkanDynamicUniformExhaustion();
+                return false;
             }
 
             uint alignment = _dynamicUniformRingBuffers[0]?.Alignment ?? 1u;
@@ -239,11 +259,116 @@ public unsafe partial class VulkanRenderer
 
             ulong generation = MeshFrameDataReservationGeneration;
             if (generation == 0)
-                generation = unchecked((ulong)Interlocked.Increment(ref _meshFrameDataReservationGeneration));
+                return false;
             _meshFrameDataReservations[key] = new MeshFrameDataReservation(aligned, size, generation);
             _meshFrameDataReservedBytes = aligned + size;
             offset = aligned;
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDynamicUniformAllocation(size);
+            PublishMeshFrameDataArenaGauges();
+            return true;
+        }
+    }
+
+    internal bool TryGetOrReserveFrequencyAutoUniformRange(
+        VkRenderProgram program,
+        AutoUniformBlockInfo block,
+        ulong ownerIdentity,
+        out VulkanFrequencyAutoUniformReservation reservation)
+    {
+        reservation = null!;
+        if (!MeshFrameDataArenaEnabled ||
+            block.Frequency == EVulkanBindingFrequency.Unknown ||
+            ownerIdentity == 0 ||
+            block.Size == 0)
+        {
+            return false;
+        }
+
+        ulong publicationLayoutSignature;
+        if (program.BindingSchema?.TryGetAutoUniformBlock(
+                block.InstanceName,
+                out VulkanAutoUniformBindingSchema? schema) == true)
+        {
+            publicationLayoutSignature =
+                schema.PublicationLayoutSignature;
+        }
+        else
+        {
+            // Legacy/fallback blocks cannot safely alias across linked
+            // programs because they do not publish a compiled value schema.
+            FrameOpSignatureHasher fallbackLayout = new();
+            fallbackLayout.Add(program.BindingId);
+            fallbackLayout.Add(program.LinkGeneration);
+            fallbackLayout.Add(block.Set);
+            fallbackLayout.Add(block.Binding);
+            fallbackLayout.Add(block.Size);
+            publicationLayoutSignature = fallbackLayout.ToHash();
+        }
+
+        VulkanFrequencyAutoUniformReservationKey key = new(
+            publicationLayoutSignature,
+            block.Frequency,
+            ownerIdentity);
+        lock (_meshFrameDataReservationLock)
+        {
+            if (_frequencyAutoUniformReservations.TryGetValue(
+                    key,
+                    out VulkanFrequencyAutoUniformReservation? existing))
+            {
+                if (existing.Size < block.Size)
+                {
+                    RuntimeEngine.Rendering.Stats.Vulkan
+                        .RecordVulkanDynamicUniformExhaustion();
+                    return false;
+                }
+
+                if (existing.PublicationStates.Length ==
+                    _dynamicUniformRingBuffers.Length)
+                {
+                    reservation = existing;
+                    return true;
+                }
+
+                reservation = new VulkanFrequencyAutoUniformReservation(
+                    existing.Key,
+                    existing.Offset,
+                    existing.Size,
+                    existing.RecordingVisibleGeneration,
+                    _dynamicUniformRingBuffers.Length);
+                _frequencyAutoUniformReservations[key] = reservation;
+                return true;
+            }
+            if (!CanAddMeshFrameDataReservation_NoLock())
+            {
+                RuntimeEngine.Rendering.Stats.Vulkan
+                    .RecordVulkanDynamicUniformExhaustion();
+                return false;
+            }
+
+            uint alignment = _dynamicUniformRingBuffers[0]?.Alignment ?? 1u;
+            ulong aligned = AlignUp(_meshFrameDataReservedBytes, alignment);
+            if (aligned > DynamicUniformRingBufferCapacity ||
+                block.Size > DynamicUniformRingBufferCapacity - aligned)
+            {
+                RuntimeEngine.Rendering.Stats.Vulkan
+                    .RecordVulkanDynamicUniformExhaustion();
+                return false;
+            }
+
+            ulong generation = MeshFrameDataReservationGeneration;
+            if (generation == 0)
+                return false;
+
+            reservation = new VulkanFrequencyAutoUniformReservation(
+                key,
+                aligned,
+                block.Size,
+                generation,
+                _dynamicUniformRingBuffers.Length);
+            _frequencyAutoUniformReservations.Add(key, reservation);
+            _meshFrameDataReservedBytes = aligned + block.Size;
+            RuntimeEngine.Rendering.Stats.Vulkan
+                .RecordVulkanDynamicUniformAllocation(block.Size);
             PublishMeshFrameDataArenaGauges();
             return true;
         }
@@ -432,11 +557,14 @@ public unsafe partial class VulkanRenderer
 
         int count = swapChainImages?.Length ?? 0;
         if (count == 0) return;
+        ValidateDynamicUniformFrameSlotCount(count);
 
         _dynamicUniformRingBuffers = new VulkanDynamicUniformRingBuffer[count];
         for (int i = 0; i < count; i++)
             _dynamicUniformRingBuffers[i] = new VulkanDynamicUniformRingBuffer(this, DynamicUniformRingBufferCapacity);
-        Interlocked.Increment(ref _meshFrameDataReservationGeneration);
+        VulkanGeneration.IncrementNonZero(
+            ref _meshFrameDataReservationGeneration);
+        Volatile.Write(ref _meshFrameDataArenaActive, 1);
         PublishMeshFrameDataArenaGauges();
 
         Debug.Vulkan($"[Vulkan] Dynamic uniform ring buffers initialized: {count} x {DynamicUniformRingBufferCapacity / 1024} KB, alignment={_dynamicUniformRingBuffers[0]?.Alignment}");
@@ -449,6 +577,7 @@ public unsafe partial class VulkanRenderer
         {
             return;
         }
+        ValidateDynamicUniformFrameSlotCount(count);
 
         int oldLength = _dynamicUniformRingBuffers.Length;
         Array.Resize(ref _dynamicUniformRingBuffers, count);
@@ -462,6 +591,10 @@ public unsafe partial class VulkanRenderer
 
     private void DestroyDynamicUniformRingBuffers()
     {
+        // Make the current generation unavailable before destroying its
+        // storage. Keep the counter monotonic so a recreated arena can never
+        // make a stale prepared handle valid again.
+        Volatile.Write(ref _meshFrameDataArenaActive, 0);
         for (int i = 0; i < _dynamicUniformRingBuffers.Length; i++)
         {
             _dynamicUniformRingBuffers[i]?.Destroy();
@@ -471,8 +604,8 @@ public unsafe partial class VulkanRenderer
         lock (_meshFrameDataReservationLock)
         {
             _meshFrameDataReservations.Clear();
+            _frequencyAutoUniformReservations.Clear();
             _meshFrameDataReservedBytes = 0;
-            Interlocked.Exchange(ref _meshFrameDataReservationGeneration, 0);
         }
         _frameWideMeshFrameDataManifest.Reset();
         Volatile.Write(ref _observedMeshFrameDataManifestGeneration, 0);
@@ -491,6 +624,23 @@ public unsafe partial class VulkanRenderer
 
     private static ulong AlignUp(ulong value, uint alignment)
         => (value + alignment - 1) & ~((ulong)alignment - 1);
+
+    private bool CanAddMeshFrameDataReservation_NoLock()
+        => _meshFrameDataReservations.Count +
+            _frequencyAutoUniformReservations.Count <
+            MaxMeshFrameDataReservations;
+
+    internal static void ValidateDynamicUniformFrameSlotCount(int count)
+    {
+        if ((uint)count <= MaxDynamicUniformFrameSlots)
+            return;
+
+        RuntimeEngine.Rendering.Stats.Vulkan
+            .RecordVulkanDynamicUniformExhaustion();
+        throw new InvalidOperationException(
+            $"Vulkan frame-data arena requested {count} frame slots; " +
+            $"the explicit limit is {MaxDynamicUniformFrameSlots}.");
+    }
 
     private void PublishMeshFrameDataArenaGauges()
     {

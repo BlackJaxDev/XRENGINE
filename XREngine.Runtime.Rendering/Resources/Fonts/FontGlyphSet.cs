@@ -1721,7 +1721,9 @@ namespace XREngine.Rendering
                 ? ESizedInternalFormat.Rgba8
                 : ESizedInternalFormat.Rgb8;
 
-            bool changed = atlas.SizedInternalFormat != expectedFormat
+            bool discardedUnusedMipmaps = DiscardUnusedDistanceFieldAtlasMipmaps(atlas);
+            bool changed = discardedUnusedMipmaps
+                || atlas.SizedInternalFormat != expectedFormat
                 || atlas.MinFilter != ETexMinFilter.Linear
                 || atlas.MagFilter != ETexMagFilter.Linear
                 || atlas.AutoGenerateMipmaps
@@ -1741,6 +1743,20 @@ namespace XREngine.Rendering
                     FontDiagnosticsLogName,
                     $"Distance-field atlas texture normalized: path='{diagnosticPath ?? "<null>"}', type={atlasType}, size={atlas.Width}x{atlas.Height}, mips={atlas.Mipmaps?.Length ?? 0}, min={atlas.MinFilter}, autoMip={atlas.AutoGenerateMipmaps}, largest={atlas.LargestMipmapLevel}, smallest={atlas.SmallestAllowedMipmapLevel}");
             }
+        }
+
+        internal static bool DiscardUnusedDistanceFieldAtlasMipmaps(XRTexture2D atlas)
+        {
+            Mipmap2D[] mipmaps = atlas.Mipmaps;
+            if (mipmaps.Length <= 1)
+                return false;
+
+            // Distance-field atlases use linear, non-mipmapped sampling. Cached atlases
+            // created by older importers may contain ceil-halved secondary levels, which
+            // are illegal for immutable GL storage with odd base dimensions. Retain the
+            // authoritative base image only.
+            atlas.Mipmaps = [mipmaps[0]];
+            return true;
         }
 
         private static bool TryGetLayoutResourceIssue(FontGlyphSet font, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? issue)

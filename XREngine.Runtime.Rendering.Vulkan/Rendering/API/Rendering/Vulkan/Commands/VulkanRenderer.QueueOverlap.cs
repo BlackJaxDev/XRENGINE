@@ -61,20 +61,31 @@ public unsafe partial class VulkanRenderer
         bool advanceAdaptivePolicy = frameId == 0 || _lastQueueOverlapPolicyFrameId != frameId;
         if (advanceAdaptivePolicy && frameId != 0)
             _lastQueueOverlapPolicyFrameId = frameId;
-        EVulkanQueueOverlapMode overlapMode = ResolveQueueOverlapMode(
+        EVulkanQueueOverlapMode requestedOverlapMode = ResolveQueueOverlapMode(
             profile,
             metrics,
             advanceAdaptivePolicy,
             out promotedMode,
             out demotedMode);
 
+        // Frame-graph commands are still encoded into and submitted through one
+        // graphics primary. Queue-schedule sidecars describe future work, but
+        // they do not yet own native compute/transfer submissions. Publishing
+        // distinct owner families here would therefore emit an acquire without
+        // a source-queue release. Keep the executable barrier plan graphics-only
+        // until the multi-queue executor supplies the paired command buffers,
+        // semaphore edges, and ordered submissions.
+        bool supportsFrameGraphMultiQueueSubmission =
+            SupportsFrameGraphMultiQueueSubmission;
         bool useComputeOwnership =
-            overlapMode is EVulkanQueueOverlapMode.GraphicsCompute or EVulkanQueueOverlapMode.GraphicsComputeTransfer &&
+            supportsFrameGraphMultiQueueSubmission &&
+            requestedOverlapMode is EVulkanQueueOverlapMode.GraphicsCompute or EVulkanQueueOverlapMode.GraphicsComputeTransfer &&
             candidateComputeFamily != graphicsFamily &&
             metrics.ComputePassCount >= 2;
 
         bool useTransferOwnership =
-            overlapMode == EVulkanQueueOverlapMode.GraphicsComputeTransfer &&
+            supportsFrameGraphMultiQueueSubmission &&
+            requestedOverlapMode == EVulkanQueueOverlapMode.GraphicsComputeTransfer &&
             candidateTransferFamily != graphicsFamily &&
             candidateTransferFamily != candidateComputeFamily &&
             metrics.TransferUsageCount >= 4;
@@ -86,19 +97,23 @@ public unsafe partial class VulkanRenderer
             metrics.OverlapCandidatePassCount,
             metrics.TransferCost,
             metrics.FrameDelta,
-            promotedMode,
-            demotedMode);
+            supportsFrameGraphMultiQueueSubmission && promotedMode,
+            supportsFrameGraphMultiQueueSubmission && demotedMode);
 
-        _lastResolvedQueueOverlapMode = overlapMode;
+        _lastResolvedQueueOverlapMode = supportsFrameGraphMultiQueueSubmission
+            ? requestedOverlapMode
+            : EVulkanQueueOverlapMode.GraphicsOnly;
 
         if (VulkanFrameDiagnosticsTraceEnabled)
         {
             Debug.VulkanEvery(
                 "Vulkan.QueueOwnership.Policy",
                 TimeSpan.FromSeconds(2),
-                "Queue ownership policy: profile={0} mode={1} gfx={2} compute={3} transfer={4} useCompute={5} useTransfer={6} computePasses={7} overlapCandidates={8} transferUsages={9} transferCost={10} qTransfers={11} stageFlushes={12} frameDeltaMs={13:F3}",
+                "Queue ownership policy: profile={0} requestedMode={1} executableMode={2} frameGraphMultiQueue={3} gfx={4} compute={5} transfer={6} useCompute={7} useTransfer={8} computePasses={9} overlapCandidates={10} transferUsages={11} transferCost={12} qTransfers={13} stageFlushes={14} frameDeltaMs={15:F3}",
                 profile,
-                overlapMode,
+                requestedOverlapMode,
+                _lastResolvedQueueOverlapMode,
+                supportsFrameGraphMultiQueueSubmission,
                 graphicsFamily,
                 computeFamily,
                 transferFamily,
@@ -118,6 +133,13 @@ public unsafe partial class VulkanRenderer
             computeFamily,
             transferFamily);
     }
+
+    /// <summary>
+    /// Gets whether the frame graph owns executable native submissions on
+    /// non-graphics queues. Queue-schedule metadata alone does not satisfy this
+    /// contract.
+    /// </summary>
+    private static bool SupportsFrameGraphMultiQueueSubmission => false;
 
     private readonly record struct QueueOwnershipConfigCacheEntry(
         IReadOnlyCollection<RenderPassMetadata>? PassMetadata,

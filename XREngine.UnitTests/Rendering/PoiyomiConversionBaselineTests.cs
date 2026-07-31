@@ -28,7 +28,8 @@ public sealed class PoiyomiConversionBaselineTests
         _previousServices = RuntimeShaderServices.Current;
         _previousRenderingServices = RuntimeRenderingHostServices.Current;
         RuntimeShaderServices.Current = new FileBackedRuntimeShaderServices();
-        RuntimeRenderingHostServices.Current = RuntimeRenderingBootstrap.CreateEngineHostServices();
+        RuntimeRenderingHostServices.Current = RuntimeRenderingBootstrap.CreateEngineHostServices(
+            registerRendererBackends: true);
     }
 
     [TearDown]
@@ -195,6 +196,23 @@ public sealed class PoiyomiConversionBaselineTests
 
         AssertTexturePath(material, "_EmissionMap", emission.Path);
         material.IsUberFeatureEnabled("emission", defaultEnabled: true).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Importer_ExplicitlyDisabledOutlineIgnoresDormantAssignedTextures()
+    {
+        (string projectRoot, string materialPath) = CreateProject("baseline-outline-disabled");
+        (string Property, string Guid, string Path) main = CreateTexture(projectRoot, "_MainTex", 33);
+        (string Property, string Guid, string Path) outline = CreateTexture(projectRoot, "_OutlineTexture", 34);
+        WriteMaterial(
+            materialPath,
+            [main, outline],
+            floats: [("_EnableOutlines", 0.0f)]);
+
+        XRMaterial material = UnityMaterialImporter.ImportWithReport(materialPath, projectRoot).Material.ShouldNotBeNull();
+
+        material.IsUberFeatureEnabled("outline", defaultEnabled: true).ShouldBeFalse();
+        material.OutlinePassVariant.ShouldBeNull();
     }
 
     [Test]

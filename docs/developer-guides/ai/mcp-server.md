@@ -4,6 +4,12 @@ This document describes the MCP server implementation in XREngine Editor, which 
 
 For enabling the server, configuring editor preferences, and connecting VS Code or the in-editor assistant, start with the [MCP Server And Assistant user guide](../../user-guide/ai/mcp-server.md). This page is the protocol, tool surface, and contributor implementation reference.
 
+Do not confuse this HTTP editor server with the
+[Local Agent Broker](local-agent-broker.md). The broker is a separate stdio MCP
+server exposed to Codex. For each worker it becomes an HTTP MCP client of one
+named, loopback editor session; it never makes the editor a public remote-MCP
+endpoint.
+
 ## Overview
 
 The XREngine MCP Server exposes the editor's functionality via HTTP, allowing external tools (such as AI coding assistants) to:
@@ -543,7 +549,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `get_game_settings` | Read the current game startup settings (networking, windows, timing, build, etc.). |
 | `get_job_manager_state` | Get job manager queues, workers, and queue capacity. |
 | `get_loaded_game_types` | List all types loaded from the game DLL plugin: components, menu items, and all exported types grouped by assembly. |
-| `get_material_uniforms` | List all shader uniforms (Parameters) on a material, including names, types, and current values. Target the material by asset ID or via a component's Material property. |
+| `get_material_uniforms` | List all shader uniforms (Parameters) on a material, including names, types, and current values. Target by asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot. |
 | `get_method_info` | Get detailed method signature including parameters, return type, generic constraints, and attributes. |
 | `get_node_world_transform` | Get a scene node's world transform (translation, rotation, scale). |
 | `get_object_properties` | Read all property values from any XRBase-derived instance by GUID. |
@@ -634,8 +640,8 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `set_editor_preference` | Set an editor preference by property name or dotted path (writes to the global default). |
 | `set_game_setting` | Set a game startup setting by property name. |
 | `set_layer` | Set the layer for a scene node. |
-| `set_material_uniform` | Set a shader uniform value on a material by uniform name. Supports float, int, uint, vec2 ({X,Y}), vec3 ({X,Y,Z}), vec4 ({X,Y,Z,W}). Target by material asset ID or via a component's Material property. |
-| `set_material_uniforms` | Set multiple shader uniforms on a material in one call. Pass a map of uniform_name -> value. |
+| `set_material_uniform` | Set a shader uniform value on a material by uniform name. Supports float, int, uint, vec2 ({X,Y}), vec3 ({X,Y,Z}), vec4 ({X,Y,Z,W}). Target by material asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot. |
+| `set_material_uniforms` | Set multiple shader uniforms on a material in one call. Pass a map of uniform_name -> value and target by material asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot. |
 | `set_node_active` | Set whether a scene node is active in the hierarchy. |
 | `set_node_active_recursive` | Set active state on a node and its children. |
 | `set_node_transform` | Set a scene node transform (translation, rotation, scale). |

@@ -369,13 +369,14 @@ internal sealed class VulkanFrameOperationScheduler
         int runPassIndex = int.MinValue;
         int runTargetIdentity = int.MinValue;
         int runSchedulingIdentity = int.MinValue;
+        EVulkanSecondaryCommandFamily runFamily = default;
         Type? runType = null;
         FrameOpContext runContext = default;
 
         for (int i = 0; i < ops.Length; i++)
         {
             FrameOp op = ops[i];
-            if (!IsSecondaryBucketEligible(op))
+            if (!TryResolveSecondaryCommandFamily(op, out EVulkanSecondaryCommandFamily family))
             {
                 // Ineligible ops break the current run.
                 FinalizeRun(i);
@@ -393,6 +394,7 @@ internal sealed class VulkanFrameOperationScheduler
                 runPassIndex = passIndex;
                 runTargetIdentity = targetIdentity;
                 runSchedulingIdentity = schedulingIdentity;
+                runFamily = family;
                 runType = opType;
                 runContext = op.Context;
                 continue;
@@ -404,6 +406,7 @@ internal sealed class VulkanFrameOperationScheduler
                 runPassIndex == passIndex &&
                 runTargetIdentity == targetIdentity &&
                 runSchedulingIdentity == schedulingIdentity &&
+                runFamily == family &&
                 FrameOpContextCompatibility.AreRecordingCompatible(runContext, op.Context);
 
             if (!sameBucket)
@@ -414,6 +417,7 @@ internal sealed class VulkanFrameOperationScheduler
                 runPassIndex = passIndex;
                 runTargetIdentity = targetIdentity;
                 runSchedulingIdentity = schedulingIdentity;
+                runFamily = family;
                 runType = opType;
                 runContext = op.Context;
             }
@@ -435,6 +439,7 @@ internal sealed class VulkanFrameOperationScheduler
                     runPassIndex,
                     runTargetIdentity,
                     runSchedulingIdentity,
+                    runFamily,
                     runType,
                     runContext));
             }
@@ -443,6 +448,7 @@ internal sealed class VulkanFrameOperationScheduler
             runPassIndex = int.MinValue;
             runTargetIdentity = int.MinValue;
             runSchedulingIdentity = int.MinValue;
+            runFamily = default;
             runType = null;
             runContext = default;
         }
@@ -451,8 +457,26 @@ internal sealed class VulkanFrameOperationScheduler
     /// <summary>
     /// Determines whether an op type participates in secondary command recording buckets.
     /// </summary>
-    private static bool IsSecondaryBucketEligible(FrameOp op)
-        => op is BlitOp or IndirectDrawOp;
+    private static bool TryResolveSecondaryCommandFamily(
+        FrameOp op,
+        out EVulkanSecondaryCommandFamily family)
+    {
+        switch (op)
+        {
+            case ComputeDispatchOp:
+                family = EVulkanSecondaryCommandFamily.Compute;
+                return true;
+            case BufferCopyOp:
+                family = EVulkanSecondaryCommandFamily.Transfer;
+                return true;
+            case QueryOp:
+                family = EVulkanSecondaryCommandFamily.Query;
+                return true;
+            default:
+                family = default;
+                return false;
+        }
+    }
 
     private static int ResolveFrameOpTargetIdentity(FrameOp op)
         => op.Target?.GetHashCode() ?? 0;

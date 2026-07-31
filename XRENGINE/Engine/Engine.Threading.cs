@@ -34,6 +34,7 @@ namespace XREngine
         private static readonly long[] _lastRenderThreadJobDurationMicrosByKind = new long[Enum.GetValues<RenderThreadJobKind>().Length];
         private static readonly long[] _lastRenderThreadJobQueueDelayMicrosByKind = new long[Enum.GetValues<RenderThreadJobKind>().Length];
         private static readonly long[] _lastRenderThreadJobOverBudgetMicrosByKind = new long[Enum.GetValues<RenderThreadJobKind>().Length];
+        private static int _frameSwapThreadId;
 
         #region Public Properties - Threading
 
@@ -74,6 +75,17 @@ namespace XREngine
         public static int UpdateThreadId { get; private set; }
 
         /// <summary>
+        /// Gets whether the current thread owns the collect-visible/render
+        /// publication barrier.
+        /// </summary>
+        public static bool IsFrameSwapThread
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => Environment.CurrentManagedThreadId ==
+                Volatile.Read(ref _frameSwapThreadId);
+        }
+
+        /// <summary>
         /// Gets whether the current thread is the physics thread.
         /// </summary>
         /// <remarks>
@@ -102,6 +114,11 @@ namespace XREngine
         /// </summary>
         internal static void SetUpdateThreadId(int threadId)
             => UpdateThreadId = threadId;
+
+        internal static void SetFrameSwapThread(bool active)
+            => Volatile.Write(
+                ref _frameSwapThreadId,
+                active ? Environment.CurrentManagedThreadId : 0);
 
         internal static bool IsDispatchingRenderFrame => Volatile.Read(ref _isDispatchingRenderFrame) != 0;
 

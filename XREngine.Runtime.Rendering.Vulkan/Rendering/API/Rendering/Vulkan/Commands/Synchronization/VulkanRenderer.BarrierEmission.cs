@@ -1542,6 +1542,58 @@ namespace XREngine.Rendering.Vulkan
             return true;
         }
 
+        /// <summary>
+        /// Rehydrates a frozen local-read mapping into caller-owned stack
+        /// storage for secondary-command-buffer inheritance.
+        /// </summary>
+        private bool TryAppendDynamicRenderingLocalReadInheritancePNext(
+            in DynamicRenderingLocalReadSignature signature,
+            uint colorAttachmentCount,
+            ref void* pNext,
+            RenderingAttachmentLocationInfo* attachmentLocationInfo,
+            RenderingInputAttachmentIndexInfo* inputAttachmentIndexInfo,
+            uint* colorAttachmentLocations,
+            uint* colorInputAttachmentIndices,
+            uint* depthInputAttachmentIndex,
+            uint* stencilInputAttachmentIndex)
+        {
+            if (!signature.Enabled)
+                return false;
+
+            Span<uint> attachmentLocations =
+                signature.ColorAttachmentLocationCount > 0
+                    ? new Span<uint>(
+                        colorAttachmentLocations,
+                        signature.ColorAttachmentLocationCount)
+                    : [];
+            Span<uint> inputIndices =
+                signature.ColorInputAttachmentIndexCount > 0
+                    ? new Span<uint>(
+                        colorInputAttachmentIndices,
+                        signature.ColorInputAttachmentIndexCount)
+                    : [];
+            signature.CopyColorAttachmentLocations(
+                attachmentLocations);
+            signature.CopyColorInputAttachmentIndices(
+                inputIndices);
+
+            DynamicRenderingLocalReadPlan localRead = new(
+                attachmentLocations,
+                inputIndices,
+                signature.DepthInputAttachmentIndex,
+                signature.StencilInputAttachmentIndex);
+            return TryAppendDynamicRenderingLocalReadPNext(
+                in localRead,
+                colorAttachmentCount,
+                ref pNext,
+                attachmentLocationInfo,
+                inputAttachmentIndexInfo,
+                colorAttachmentLocations,
+                colorInputAttachmentIndices,
+                depthInputAttachmentIndex,
+                stencilInputAttachmentIndex);
+        }
+
         /// Pipeline stages must not be zero; fall back to AllCommandsBit as safety net.
         /// The planner should produce non-zero masks; this guards against edge cases.
         private static PipelineStageFlags NormalizePipelineStages(PipelineStageFlags stageMask)

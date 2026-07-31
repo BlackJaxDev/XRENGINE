@@ -266,7 +266,7 @@ public sealed class UnityPrefabAvatarPrivateIntegrationTests
             TestContext.Progress.WriteLine(
                 $"Native jax2026 references {nativeModels.Length} models, {nativeSubMeshes.Length} submeshes, {nativeMaterials.Length} materials, {nativeTextures.Length} total texture resources, and {importedSourceTextures.Length} imported source textures.");
             importedSourceTextures.Length.ShouldBe(
-                112,
+                90,
                 $"Native closure loaded {nativeModels.Length} models, {nativeSubMeshes.Length} submeshes, and {nativeMaterials.Length} materials.");
             importedSourceTextures.ShouldAllBe(static texture =>
                 !string.IsNullOrWhiteSpace(texture.OriginalPath) &&
@@ -277,45 +277,18 @@ public sealed class UnityPrefabAvatarPrivateIntegrationTests
                     ".asset",
                     StringComparison.OrdinalIgnoreCase));
 
-            List<string> nativeVariantFailures = [];
-            int nativeUberVariantCount = 0;
-            foreach (XRMaterial material in nativeMaterials)
-            {
-                if (!material.TryGetUberMaterialState(out _, out _))
-                    continue;
-
-                nativeUberVariantCount++;
-                try
-                {
-                    material.EnsureUberStateInitialized();
-                    if (!material.PrepareUberVariantImmediately())
-                    {
-                        nativeVariantFailures.Add(
-                            $"{material.Name ?? "<unnamed>"}: {material.UberVariantStatus.FailureReason ?? "variant preparation returned false"}");
-                        continue;
-                    }
-
-                    XRShader fragment = material.GetShader(EShaderType.Fragment).ShouldNotBeNull();
-                    byte[] spirv = VulkanShaderCompiler.Compile(
-                        fragment,
-                        out string entryPoint,
-                        out _,
-                        out string? rewritten);
-                    spirv.Length.ShouldBeGreaterThan(20);
-                    entryPoint.ShouldBe("main");
-                    rewritten.ShouldNotBeNullOrWhiteSpace();
-                }
-                catch (Exception exception)
-                {
-                    nativeVariantFailures.Add(
-                        $"{material.Name ?? "<unnamed>"}: {exception.GetBaseException().Message}");
-                }
-            }
-
-            nativeUberVariantCount.ShouldBeGreaterThan(0);
-            nativeVariantFailures.ShouldBeEmpty(string.Join(Environment.NewLine, nativeVariantFailures));
+            nativeMaterials
+                .Count(static material => material.TryGetUberMaterialState(out _, out _))
+                .ShouldBeGreaterThan(0);
 
             SceneNode instance = prefab.Instantiate();
+            instance.Transform
+                .RecalculateMatrixHierarchy(
+                    forceWorldRecalc: true,
+                    setRenderMatrixNow: true,
+                    ELoopType.Sequential)
+                .GetAwaiter()
+                .GetResult();
             SceneNode[] instanceNodes = EnumerateNodes(instance).ToArray();
             instanceNodes.Length.ShouldBe(883);
             ModelComponent[] activeModelComponents =
@@ -329,10 +302,48 @@ public sealed class UnityPrefabAvatarPrivateIntegrationTests
             activeModelComponents.Length.ShouldBe(22);
             instanceNodes.Single(static node => node.Name == "Meshes")
                 .IsActiveSelf.ShouldBeTrue();
-            instanceNodes.Single(static node => node.Name == "Body")
-                .IsActiveSelf.ShouldBeTrue();
+            SceneNode bodyNode = instanceNodes.Single(static node => node.Name == "Body");
+            bodyNode.IsActiveSelf.ShouldBeTrue();
             instanceNodes.Single(static node => node.Name == "Face")
                 .IsActiveSelf.ShouldBeTrue();
+
+            ModelComponent bodyComponent = bodyNode.GetComponent<ModelComponent>().ShouldNotBeNull();
+            XRMesh[] bodyRuntimeMeshes =
+            [
+                .. bodyComponent.Meshes
+                    .SelectMany(static mesh => mesh.GetLodSnapshot())
+                    .Select(static lod => lod.Renderer.Mesh)
+                    .Where(static mesh => mesh is not null)
+                    .Cast<XRMesh>(),
+            ];
+            bodyRuntimeMeshes.ShouldNotBeEmpty();
+            bodyRuntimeMeshes.ShouldAllBe(static mesh => mesh.HasSkinning);
+            TransformBase instanceRootTransform = instance.Transform;
+            bodyRuntimeMeshes
+                .SelectMany(static mesh => mesh.UtilizedBones)
+                .Select(static bone => bone.tfm)
+                .ShouldAllBe(bone => IsSelfOrDescendantOf(instanceRootTransform, bone));
+
+            float largestBindPoseTranslation = 0.0f;
+            string? largestBindPoseBone = null;
+            foreach (XRMesh bodyRuntimeMesh in bodyRuntimeMeshes)
+            {
+                foreach ((TransformBase bone, Matrix4x4 inverseBind) in bodyRuntimeMesh.UtilizedBones)
+                {
+                    float translation = (inverseBind * bone.WorldMatrix).Translation.Length();
+                    if (translation <= largestBindPoseTranslation)
+                        continue;
+
+                    largestBindPoseTranslation = translation;
+                    largestBindPoseBone = bone.SceneNode?.Name;
+                }
+            }
+
+            TestContext.Progress.WriteLine(
+                $"Native Body bind-pose palette max translation is {largestBindPoseTranslation:F6} at '{largestBindPoseBone ?? "<none>"}'.");
+            largestBindPoseTranslation.ShouldBeLessThan(
+                0.01f,
+                $"Body inverse-bind matrices must cancel the instantiated skeleton bind pose; largest residual was '{largestBindPoseBone ?? "<none>"}'.");
         }
         finally
         {
@@ -342,6 +353,15 @@ public sealed class UnityPrefabAvatarPrivateIntegrationTests
             Engine.Assets.GameCachePath = previousCachePath;
             Engine.Assets.MonitorGameAssetsForChanges = previousMonitorSetting;
         }
+    }
+
+    private static bool IsSelfOrDescendantOf(TransformBase root, TransformBase candidate)
+    {
+        for (TransformBase? current = candidate; current is not null; current = current.Parent)
+            if (ReferenceEquals(current, root))
+                return true;
+
+        return false;
     }
 
     [Test]

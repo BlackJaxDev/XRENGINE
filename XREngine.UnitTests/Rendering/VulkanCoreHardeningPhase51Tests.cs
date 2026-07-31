@@ -10,7 +10,7 @@ public sealed class VulkanCoreHardeningPhase51Tests
     public void UnknownPassInitialization_UsesExactRecordedSubresources()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Synchronization/VulkanRenderer.BarrierEmission.cs");
         string method = SliceBetween(
             source,
             "private void EmitInitialImageAspectBarriers(",
@@ -30,7 +30,7 @@ public sealed class VulkanCoreHardeningPhase51Tests
         string synchronization = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
         string imgui = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.Rendering.cs");
         string dynamicText = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
 
@@ -74,6 +74,8 @@ public sealed class VulkanCoreHardeningPhase51Tests
             "private void ValidateRecordedImageBarrierOldLayout(",
             "private void RecordImageAccess(");
 
+        barrier.ShouldContain(
+            "barrier.OldLayout == ImageLayout.Undefined");
         barrier.ShouldContain("preserving the caller contract");
         barrier.ShouldNotContain("barrier.OldLayout = recordedOldLayout");
         synchronization.ShouldNotContain("imageBarriers[i].OldLayout = recordedOldLayout");
@@ -87,7 +89,7 @@ public sealed class VulkanCoreHardeningPhase51Tests
         string lifetime = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
         string imgui = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.Rendering.cs");
 
         descriptorLayouts.ShouldNotContain("TryTransitionDedicatedImageLayout");
         lifetime.ShouldContain("ReflectedImageBindings");

@@ -1,5 +1,57 @@
 # Vulkan Stable Packets And Descriptor Publication - 2026-07-16
 
+## 2026-07-31 Command-Recording Optimization Wrap-Up
+
+### Problem
+
+Clean Release Vulkan shader reload reproducibly terminates the editor while a
+desktop primary command buffer is recording a non-indexed mesh draw. The same
+reload path survives with Vulkan validation enabled, so validation timing masks
+the defect and a validation-clean run is not sufficient acceptance evidence.
+
+### Findings And Attempted Solutions
+
+- Crash dumps for editor PIDs 42632, 290928, 40820, and 292620 all report
+  `System.ExecutionEngineException` at `Silk.NET.Vulkan.Vk.CmdDraw`, reached
+  through `VkMeshRenderer.RecordDrawNoLock` and
+  `VulkanRenderer.RecordCommandBufferLifecycle`.
+- Shader dependency notifications formerly invalidated Vulkan programs on the
+  render thread while workstream-04 could already be producing the next frame
+  package. Invalidation now publishes as one batch at the collect/render
+  frame-swap barrier, and `VkRenderProgram` link/interface mutation is
+  serialized.
+- Mesh enqueue now captures program selection and binding state as one
+  renderer-local publication transaction. `PendingMeshDraw` also carries the
+  captured program link generation, and consumers reject a stale generation
+  before relinking or recording.
+- These changes pass the focused shader, binding, stable-packet, and pipeline
+  selection (143/143), but the newest clean Release reload still crashed after
+  invalidating 61 shaders. The attempted solutions therefore improve the
+  publication contract but do not close the defect.
+
+### Evidence
+
+- Dumps:
+  `C:/Users/dnedd/AppData/Local/CrashDumps/XREngine.Editor.exe.42632.dmp`,
+  `XREngine.Editor.exe.290928.dmp`, `XREngine.Editor.exe.40820.dmp`, and
+  `XREngine.Editor.exe.292620.dmp` in the same directory.
+- Focused test result:
+  `Build/_AgentValidation/mcp-sessions/cmd-record-arch-opt/reports/shader-link-generation-publication.trx`.
+- The named `cmd-record-arch-opt` editor session is stopped.
+
+### Next Isolation Step
+
+Capture the first failing clean Release reload under RenderDoc or API-level draw
+tracing and freeze the exact pipeline, pipeline-layout, descriptor-set, vertex
+buffer, render-scope, and command-buffer identities immediately before the
+failing `vkCmdDraw`. Compare those handles with their retirement tickets and
+the preceding successful frame. The repeated stack proves that scheduling the
+managed invalidation alone is insufficient; the next pass should identify the
+specific native handle or command-buffer lifecycle transition that becomes
+invalid rather than add another broad synchronization layer.
+
+User verification: not yet reported.
+
 ## Problem
 
 Desktop Vulkan recording keyed large primary variants on the complete visible
@@ -27,8 +79,11 @@ like command structure changes.
 - Packet prewarm happens before `vkBeginCommandBuffer`; a pending graphics
   pipeline leaves the packet `NotReady` with a pipeline-generation dirty reason
   instead of beginning and abandoning an invalid partial secondary.
-- Fresh non-cached mesh secondaries use `ONE_TIME_SUBMIT`; reusable frame-slot
-  packet secondaries no longer request simultaneous use.
+- Fresh non-cached mesh secondaries use `ONE_TIME_SUBMIT`. A later exact
+  artifact-lifetime audit restored `SIMULTANEOUS_USE` for reusable frame-slot
+  packets because recorded primaries may retain the same secondary generation
+  across more than one pending execution. Removing it again requires a
+  single-pending ownership proof and measured benefit.
 - Resource changes are explicitly classified as frame data, compatible content
   publication, binding identity, or structural layout. Compatible descriptor
   generation changes retain the secondary and refresh the stable per-frame
@@ -219,3 +274,127 @@ Revised conclusion: the immediate zero-readback/command-chain device-loss risk
 is contained by an explicit strategy-wide quarantine. P0 remains open for
 missing-Sponza visual parity, repeated Standard/SyncValidation cohorts, external
 marker proof, and the required performance/motion/resize/hot-reload matrix.
+
+## 2026-07-30 OpenXR concurrent-recording closeout
+
+- Removed the renderer-wide OpenXR eye-primary recording lock. Persistent left
+  and right workers now record directly into their separately owned primary
+  command buffers, and mutable upload discovery uses thread-local collections.
+- Worker completion records native start/end timestamps and thread identity.
+  The clean Monado synchronization-validation cohort under
+  `Build/_AgentValidation/mcp-sessions/cmd-record-arch-opt/phase6-monado-sync-validation-final/`
+  submitted five stereo frames. All five paired recordings overlapped on
+  distinct threads; overlap/span samples were 71.050/80.750 ms,
+  48.634/57.270 ms, 38.195/52.427 ms, 61.019/62.844 ms, and
+  34.780/331.838 ms.
+- The run reported zero Vulkan VUIDs, synchronization hazards, submission
+  failures, or teardown failures. A preceding fresh-session cohort submitted
+  thirteen frames while cycling every per-eye runtime swapchain image, also
+  without image-journal failures.
+- Submission publication is success-gated, generation-checked, and ordered
+  `[left, right]`; failed recordings are abandoned and swapchain image
+  recreation clears exact recorded and submitted subresource state. The focused
+  logical-device, OpenXR, per-view resource-shape, and image-lifecycle contract
+  selection passes 30/30.
+- Monado's Vulkan-device path prepends the granular timeline-semaphore feature
+  struct. OpenXR device creation now represents the Streamline-compatible
+  Vulkan 1.2/1.3 subset with granular feature structs so aggregate and granular
+  feature declarations are never mixed in one `pNext` chain. Unsupported future
+  aggregate-only Streamline requirements fail explicitly.
+- The OpenXR dynamic UI text-secondary path now defers before resetting its
+  cached secondary when pipeline prewarm is incomplete and abandons any failed
+  recording. This removed the unrecorded-secondary validation failure found by
+  the synchronization-validation cohort.
+
+Phase 6 of the command-recording architecture tracker is complete. The next
+active slice is physical frequency-owned payload storage and descriptor
+ownership; the broader P0 performance/visual acceptance matrix remains open.
+
+## 2026-07-31 Frequency-owned descriptor publication
+
+- Descriptor allocations now separate topology generation, stable resource
+  content generation, and exact per-frame-source slot signatures. Each
+  in-flight descriptor slot publishes the owner generations it contains.
+- A stable owner lookup key resolves allocations independently of transient
+  draw occurrence. Material numeric parameter edits advance
+  `BindingValueVersion`; texture/resource edits advance the separate
+  `BindingResourceVersion`.
+- Full binding/resource fingerprints remain the exact slow-path correctness
+  backstop. When the resolved fingerprint matches, the current owner generation
+  is published so subsequent stable frames remain on the bounded generation
+  check.
+- Five consecutive validation-enabled samples from the isolated
+  `cmd-record-arch-opt` Vulkan session each visited 25 reusable frame-data draw
+  operations but reported zero descriptor records validated, zero descriptor
+  records written, and zero descriptor owner-lookup, owner-generation, or
+  frame-source-generation misses. The samples also reported zero Vulkan
+  validation errors.
+- The final viewport capture was visually inspected and contains the expected
+  physics-test geometry:
+  `Build/_AgentValidation/mcp-sessions/cmd-record-arch-opt/mcp-captures/descriptor-owner-generation-final/Screenshot_20260731_021152_323_7ca1b1a4527d4673ba93eddceb2563f5.png`.
+- The focused schema/publication/owner-generation selection passes 9/9. The
+  existing Magick.NET advisory warnings are unrelated. The broader class run is
+  not claimed clean because 15 source-contract tests still read stale
+  pre-partial-file paths or tokens.
+
+This closes stable descriptor proof and native write suppression. The next
+active bottleneck is the remaining reusable-frame refresh loop itself: it still
+visits every draw even when all material/object owners are unchanged.
+
+## 2026-07-31 Prepared reusable-frame refresh requests
+
+- Reservation-manifest construction now freezes reusable refresh work into
+  immutable requests containing the exact planner key, source range, draw slot,
+  and mesh/compute payload. The reuse consumer no longer walks the original
+  operation array or reconstructs draw-slot and planner identities.
+- Desktop arrays remain in retained recorder-thread scratch. OpenXR publishes a
+  separate generation-checked array per eye; a worker read lease prevents the
+  producer from replacing the array during concurrent primary reuse.
+- Both retained stores clear retired reference-bearing entries when counts
+  shrink, preventing bounded capacity reuse from extending mesh/program
+  lifetimes accidentally.
+- The focused binding-schema, descriptor-generation, frequency-publication,
+  prepared-refresh, and OpenXR lease selection passes 11/11. The two
+  prepared-refresh lifecycle tests also pass independently. Magick.NET advisory
+  warnings remain unrelated.
+
+This was the phase-boundary prerequisite for owner-filtered publication.
+
+## 2026-07-31 Frequency-owner reusable refresh
+
+- The producer now derives one retained work request for each distinct
+  program/block-frequency/owner/content-generation tuple. The consumer
+  refreshes those frame, view, pass, material, object, instance, or callback
+  owners and the previously discovered conservative fallback indices rather
+  than walking every prepared draw.
+- Each primary or dynamic-UI batch retains an exact stable signature and its
+  fallback indices. Signature disagreement performs one full refresh and
+  replaces the retained state; an exact match enters the owner-only path.
+- Mutable legacy renderer, material, scoped, and shadow callback writes now
+  carry capture provenance. Their name topology participates in the stable
+  batch signature, while their current values are published by frequency-owner
+  work. Typed writes remove the mutable marker. Tests verify that unrelated
+  values do not alter the selected callback-value signature and selected value
+  changes do.
+- The last static-scene blocker was the zero-filled
+  `__FallbackDescriptorBuffer`. Owner eligibility now permits only that known
+  unresolved-descriptor fallback engine UBO because its full-publication bytes
+  are always zero and its exact descriptor generation is separately signed.
+  Other unclassified engine UBOs still force the conservative draw path.
+- Six consecutive StandardValidation samples from the isolated
+  `cmd-record-arch-opt` session each reported clean primary reuse, zero command
+  recording, zero primary prepared-frame-data draw visits, one dynamic-UI visit,
+  zero descriptor records validated or written, zero owner lookup/generation/
+  frame-source misses, and zero Vulkan validation errors. No owner-only blocker
+  or command-recording failure was present in
+  `Build/_AgentValidation/mcp-sessions/cmd-record-arch-opt/logs/XREngine.Editor_debug/windows_x64/xrengine_2026-07-31_03-26-59_pid292400/log_vulkan.log`.
+- The final capture was visually inspected. The expected physics-test geometry
+  and lighting differentiation are present without corruption:
+  `Build/_AgentValidation/mcp-sessions/cmd-record-arch-opt/mcp-captures/frequency-owner-final/Screenshot_20260731_032755_290_983d835be2324defbe77a50c8ed9159a.png`.
+- The focused owner-publication, mutable-callback provenance, retained-state,
+  and OpenXR lease selection passes 4/4. The existing Magick.NET package
+  advisories remain unrelated.
+
+This closes the Phase 1.3 bounded stable-publication and zero-static-draw-visit
+acceptance items. The dynamic-UI count is deliberately separate because the
+canonical UI text changes independently of the static scene.

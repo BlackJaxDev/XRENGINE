@@ -7,6 +7,7 @@ public sealed class VulkanPerformanceMetricStatistics
 {
     public int SampleCount { get; init; }
     public double P50 { get; init; }
+    public double P90 { get; init; }
     public double P95 { get; init; }
     public double P99 { get; init; }
     public double Maximum { get; init; }

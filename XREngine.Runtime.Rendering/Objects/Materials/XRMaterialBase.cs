@@ -39,6 +39,14 @@ namespace XREngine.Rendering
         public bool HasSettingUniformsHandlers
             => SettingUniforms is not null;
 
+        /// <summary>
+        /// Typed, generation-owned numeric binding publishers eligible for
+        /// immutable backend capture and frequency-scoped reuse.
+        /// </summary>
+        [Browsable(false)]
+        [YamlIgnore]
+        public RenderBindingPublisherCollection BindingPublishers { get; } = new();
+
         public event Action<XRMaterialBase, XRRenderProgram>? SettingShadowUniforms;
         public void OnSettingShadowUniforms(XRRenderProgram program)
             => SettingShadowUniforms?.Invoke(this, program);
@@ -61,6 +69,17 @@ namespace XREngine.Rendering
         [YamlIgnore]
         public ulong BindingValueVersion
             => _bindingValueVersion;
+
+        private ulong _bindingResourceVersion = 1;
+        /// <summary>
+        /// Monotonic revision for descriptor resources owned by this material.
+        /// Numeric parameter mutations advance <see cref="BindingValueVersion"/>
+        /// without invalidating descriptor publication.
+        /// </summary>
+        [Browsable(false)]
+        [YamlIgnore]
+        public ulong BindingResourceVersion
+            => _bindingResourceVersion;
 
         public XRMaterialBase()
             => AttachTextureListHandlers(_textures);
@@ -207,6 +226,7 @@ namespace XREngine.Rendering
         {
             IncrementBindingLayoutVersion();
             IncrementBindingValueVersion();
+            IncrementBindingResourceVersion();
         }
 
         private void IncrementBindingLayoutVersion()
@@ -250,6 +270,18 @@ namespace XREngine.Rendering
             }
         }
 
+        private void IncrementBindingResourceVersion()
+        {
+            unchecked
+            {
+                ulong next = _bindingResourceVersion + 1;
+                SetField(
+                    ref _bindingResourceVersion,
+                    next == 0 ? 1 : next,
+                    nameof(BindingResourceVersion));
+            }
+        }
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
@@ -267,6 +299,7 @@ namespace XREngine.Rendering
                     AttachTextureListHandlers(field as EventList<XRTexture?>);
                     IncrementBindingLayoutVersion();
                     IncrementBindingValueVersion();
+                    IncrementBindingResourceVersion();
                     break;
             }
         }

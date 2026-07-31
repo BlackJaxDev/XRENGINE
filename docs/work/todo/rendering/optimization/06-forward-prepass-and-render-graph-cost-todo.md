@@ -1,8 +1,8 @@
 # 06 - Forward+ Prepass And Render-Graph Cost TODO
 
-Last Updated: 2026-07-28
+Last Updated: 2026-07-30
 Owner: Rendering / Default Pipeline
-Status: Blocked By Workstream 05
+Status: Ready For Implementation; Workstream 05 Acceptance Deferred
 Sequence: 06 of 08
 Predecessor: [05 - Vulkan Command Recording Worker Architecture](05-vulkan-command-recording-worker-architecture-todo.md)
 Blocks: [07 - Occlusion Systems Performance](07-occlusion-systems-performance-todo.md)
@@ -44,11 +44,12 @@ is a separate future opaque render path.
 
 ## Sequential Execution Contract
 
-- Do not start this workstream until workstream 05 is marked `Complete`.
+- Workstream 05 is `Implementation Complete; Acceptance Deferred`, so this
+  workstream is ready under the owner-authorized shared-closeout sequence.
 - Use the corrected CPU submission and recording architecture so render-graph
   measurements are not dominated by known CPU bookkeeping defects.
-- Do not start workstream 07 until every exit-gate item here is checked,
-  evidence is recorded, and this status is `Complete`.
+- Workstream 07 may begin only after this implementation is complete and this
+  status is `Implementation Complete; Acceptance Deferred` or `Complete`.
 
 ## Goal
 

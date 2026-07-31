@@ -4,6 +4,12 @@
 
 The editor MCP server lets AI assistants and external tools inspect and modify the active XRENGINE editor world through HTTP JSON-RPC. Use this page to enable and operate it. For protocol and implementation details, see [MCP Server Implementation](../../developer-guides/ai/mcp-server.md).
 
+This is distinct from the optional [Local Agent Broker](local-agent-broker.md):
+the editor is an HTTP MCP server exposing scene tools, while the broker is a
+stdio MCP server that starts explicitly selected OpenAI API workers and acts as
+an internal MCP client of one named editor session. Neither should expose the
+editor endpoint publicly.
+
 ## Enable The Server
 
 Open **Global Editor Preferences** and find the **MCP Server** category.

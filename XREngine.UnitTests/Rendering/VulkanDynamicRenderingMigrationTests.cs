@@ -3,6 +3,8 @@ using System.IO;
 using System.Text.RegularExpressions;
 using NUnit.Framework;
 using Shouldly;
+using Silk.NET.Vulkan;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -90,6 +92,83 @@ public sealed class VulkanDynamicRenderingMigrationTests
         modeSource.ShouldNotContain("colorFormats.ToArray()");
         modeSource.ShouldNotContain("new Format[colorCount]");
         modeSource.ShouldNotContain("Format[]? _colorFormats");
+    }
+
+    [Test]
+    public void SecondaryInheritanceIdentity_IncludesFlagsAndLocalReadMappings()
+    {
+        uint[] attachmentLocations = [1u, 0u];
+        uint[] inputAttachmentIndices = [0u, 1u];
+        DynamicRenderingLocalReadPlan localReadPlan = new(
+            attachmentLocations,
+            inputAttachmentIndices,
+            depthInputAttachmentIndex: 3u);
+        DynamicRenderingLocalReadSignature localReadSignature =
+            DynamicRenderingLocalReadSignature.Create(
+                in localReadPlan);
+
+        localReadSignature.Enabled.ShouldBeTrue();
+        localReadSignature.ColorAttachmentLocationCount.ShouldBe(2);
+        localReadSignature.ColorInputAttachmentIndexCount.ShouldBe(2);
+        uint[] copiedLocations = new uint[2];
+        uint[] copiedInputIndices = new uint[2];
+        localReadSignature.CopyColorAttachmentLocations(
+            copiedLocations);
+        localReadSignature.CopyColorInputAttachmentIndices(
+            copiedInputIndices);
+        copiedLocations.ShouldBe(attachmentLocations);
+        copiedInputIndices.ShouldBe(inputAttachmentIndices);
+
+        VulkanRecordedCommandInheritance baseline = new(
+            DynamicRendering: true,
+            default,
+            default,
+            default,
+            DepthStencilReadOnly: false,
+            SampleCountFlags.Count1Bit,
+            localReadSignature,
+            RenderingFlags: 0);
+        VulkanRecordedCommandInheritance changedFlags =
+            baseline with
+            {
+                RenderingFlags = (RenderingFlags)2u,
+            };
+        DynamicRenderingLocalReadPlan changedLocalReadPlan = new(
+            attachmentLocations,
+            [1u, 0u],
+            depthInputAttachmentIndex: 3u);
+        VulkanRecordedCommandInheritance changedLocalRead =
+            baseline with
+            {
+                LocalReadSignature =
+                    DynamicRenderingLocalReadSignature.Create(
+                        in changedLocalReadPlan),
+            };
+
+        changedFlags.ComputeIdentity()
+            .ShouldNotBe(baseline.ComputeIdentity());
+        changedLocalRead.ComputeIdentity()
+            .ShouldNotBe(baseline.ComputeIdentity());
+    }
+
+    [Test]
+    public void SecondaryRecording_RehydratesAndValidatesCompleteDynamicInheritance()
+    {
+        string commandBuffers = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string secondaryBuffers = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
+
+        commandBuffers.ShouldContain(
+            "TryAppendDynamicRenderingLocalReadInheritancePNext(");
+        commandBuffers.ShouldContain(
+            "renderScope.LocalReadSignature.Equals(");
+        commandBuffers.ShouldContain(
+            "renderScope.InheritanceRenderingFlags !=");
+        secondaryBuffers.ShouldContain(
+            "Flags = inheritance.RenderingFlags");
+        secondaryBuffers.ShouldContain(
+            "in localReadSignature");
     }
 
     [Test]

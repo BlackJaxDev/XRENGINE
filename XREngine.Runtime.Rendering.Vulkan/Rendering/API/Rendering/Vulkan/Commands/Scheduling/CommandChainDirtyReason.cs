@@ -12,4 +12,5 @@ internal enum CommandChainDirtyReason
     FrameDataRefreshFailed = 1 << 5,
     VolatileCommand = 1 << 6,
     SecondaryCommandBufferInvalid = 1 << 7,
+    BenchmarkForced = 1 << 8,
 }

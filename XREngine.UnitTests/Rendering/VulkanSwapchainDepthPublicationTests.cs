@@ -73,8 +73,8 @@ public sealed class VulkanSwapchainDepthPublicationTests
         swapchain.ShouldContain("ClearTrackedImageLayouts(swapChainImages[i]);");
 
         lifetime.ShouldContain("DetachExternalVulkanResourceLifetimeForHandleReuse(");
-        lifetime.ShouldContain("_vulkanResourceLifetimes.Remove(key);");
-        lifetime.ShouldContain("_vulkanPublishedResourceGenerations.TryRemove(key, out _);");
+        lifetime.ShouldContain("_resourceLifetimeTracker.ResourceLifetimes.Remove(key);");
+        lifetime.ShouldContain("_resourceLifetimeTracker.PublishedResourceGenerations.TryRemove(key, out _);");
         lifetime.ShouldContain("resource.Generation != expectedGeneration");
         retirement.ShouldContain("ulong[] ImageLifetimeGenerations");
         retirement.ShouldContain("CompleteDetachedExternalVulkanResourceDestruction(");

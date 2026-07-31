@@ -10,10 +10,12 @@ Execution: Current worktree only; do not create or switch branches for this effo
 This broad tracker is retained for its original evidence and design rationale,
 but it no longer has independent completion authority:
 
-- measurement, attribution, allocations, and actual-encoding counters belong to
-  [01 - Vulkan Performance Truth And Regression Gates](01-vulkan-performance-truth-and-regression-gates-todo.md);
+- measurement, attribution, allocations, and actual-encoding counters were
+  established by completed workstream 01 and are recorded in the
+  [Vulkan framerate root-cause investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md);
 - primary dependency, image-state, invalidation, and stable-range reuse belong
-  to [02 - Vulkan Primary Reuse Correctness](02-vulkan-primary-reuse-correctness-todo.md);
+  to completed workstream 02 in the same
+  [investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md);
 - immutable pre-resolved planning and render-thread work removal belong to
   [04 - Next-Frame Preparation And Collect-Visible Handoff](04-next-frame-preparation-and-collect-visible-handoff-todo.md);
 - production secondary recording workers belong to

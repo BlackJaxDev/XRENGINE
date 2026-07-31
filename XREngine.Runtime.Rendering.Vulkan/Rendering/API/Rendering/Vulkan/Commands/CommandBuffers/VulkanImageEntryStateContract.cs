@@ -39,6 +39,9 @@ internal static class VulkanImageEntryStateContract
             return EVulkanPrimaryEntryStateMismatch.QueueFamily;
         }
 
+        if (actual.ExternalOwnership != expected.ExternalOwnership)
+            return EVulkanPrimaryEntryStateMismatch.ExternalOwnership;
+
         // A recorded source dependency may be broader than the state that is
         // actually present. It must never be narrower, or a producer stage or
         // access can escape the encoded barrier.

@@ -69,7 +69,11 @@ internal sealed partial class SkinningPrepassDispatcher
             long expectedBytes = (long)mesh.VertexCount * 4L * sizeof(float);
 
             int maxSampleVerts = gpuBytes > 0 ? (int)(gpuBytes / (4 * sizeof(float))) : 0;
-            int sample = Math.Min(Math.Min(mesh.VertexCount, 512), maxSampleVerts);
+            // This method only runs behind the explicit compute-skinning diagnostic flag.
+            // Read the whole output after the seed pass so corruption in a later submesh/vertex
+            // range cannot hide behind an otherwise-sane prefix sample.
+            int sampleLimit = _seedInputsSettled ? mesh.VertexCount : Math.Min(mesh.VertexCount, 512);
+            int sample = Math.Min(sampleLimit, maxSampleVerts);
             if (sample <= 0)
             {
                 st.LoggedCount++;

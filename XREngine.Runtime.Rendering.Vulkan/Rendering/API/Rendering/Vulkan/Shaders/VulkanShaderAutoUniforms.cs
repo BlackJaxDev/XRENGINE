@@ -35,7 +35,7 @@ internal static partial class VulkanShaderAutoUniforms
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly Regex UniformStatementRegex = new(
-        @"^\s*(?:layout\s*\([^)]*\)\s*)?uniform\s+(?<statement>[^;]+);",
+        @"^\s*(?:layout\s*\([^)]*\)\s*)?uniform\s+(?<statement>[^;]+);[ \t]*(?://[ \t]*XRENGINE_FREQUENCY[ \t]*\([ \t]*(?<frequency>[A-Za-z_][A-Za-z0-9_]*)[ \t]*\))?",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase | RegexOptions.Multiline);
 
     private static readonly Regex ArrayRegex = new(@"\[(?<size>[A-Za-z_][A-Za-z0-9_]*|\d+u?)\]", RegexOptions.Compiled);
@@ -146,7 +146,9 @@ internal static partial class VulkanShaderAutoUniforms
     public static AutoUniformRewriteResult Rewrite(string source, EShaderType shaderType, bool useVulkanClipDepthRemap)
     {
         if (string.IsNullOrWhiteSpace(source))
-            return new AutoUniformRewriteResult(source, null);
+            return new AutoUniformRewriteResult(
+                source,
+                Array.Empty<AutoUniformBlockInfo>());
 
         source = ApplyVulkanSourceFixups(source, shaderType, useVulkanClipDepthRemap);
 
@@ -156,13 +158,15 @@ internal static partial class VulkanShaderAutoUniforms
         {
             string rewrittenEarly = RewriteOpaqueUniformBindings(source, shaderType);
             rewrittenEarly = HoistOpaqueUniforms(rewrittenEarly);
-            return new AutoUniformRewriteResult(rewrittenEarly, null);
+            return new AutoUniformRewriteResult(
+                rewrittenEarly,
+                Array.Empty<AutoUniformBlockInfo>());
         }
 
         Dictionary<string, uint> integralConstants = ParseIntegralConstants(source);
         Dictionary<string, GlslStructDefinition> structDefinitions = ParseStructDefinitions(source, integralConstants);
 
-        List<(string GlslType, string Name, bool IsArray, uint ArrayLength, AutoUniformDefaultValue? DefaultValue, IReadOnlyList<AutoUniformDefaultValue>? DefaultArrayValues)> members = new();
+        List<(string GlslType, string Name, bool IsArray, uint ArrayLength, AutoUniformDefaultValue? DefaultValue, IReadOnlyList<AutoUniformDefaultValue>? DefaultArrayValues, EVulkanBindingFrequency? ExplicitFrequency)> members = new();
         HashSet<string> memberNames = new(StringComparer.Ordinal);
         StringBuilder output = new(source.Length + 256);
 
@@ -177,7 +181,9 @@ internal static partial class VulkanShaderAutoUniforms
                 continue; // uniform block
 
             bool canRewriteStatement = false;
-            var statementMembers = new List<(string GlslType, string Name, bool IsArray, uint ArrayLength, AutoUniformDefaultValue? DefaultValue, IReadOnlyList<AutoUniformDefaultValue>? DefaultArrayValues)>();
+            var statementMembers = new List<(string GlslType, string Name, bool IsArray, uint ArrayLength, AutoUniformDefaultValue? DefaultValue, IReadOnlyList<AutoUniformDefaultValue>? DefaultArrayValues, EVulkanBindingFrequency? ExplicitFrequency)>();
+            EVulkanBindingFrequency? explicitFrequency =
+                ParseExplicitFrequencyAnnotation(match);
 
             if (!TryExtractTypeAndDeclarators(statement, out string glslType, out string declarators))
                 continue;
@@ -205,7 +211,14 @@ internal static partial class VulkanShaderAutoUniforms
                         defaultValue = parsed;
                 }
 
-                statementMembers.Add((glslType, name, isArray, arrayLength, defaultValue, defaultArrayValues));
+                statementMembers.Add((
+                    glslType,
+                    name,
+                    isArray,
+                    arrayLength,
+                    defaultValue,
+                    defaultArrayValues,
+                    explicitFrequency));
             }
 
             if (!allDeclaratorsParsed)
@@ -234,45 +247,156 @@ internal static partial class VulkanShaderAutoUniforms
         rewritten = HoistOpaqueUniforms(rewritten);
 
         if (members.Count == 0)
-            return new AutoUniformRewriteResult(rewritten, null);
-
-        string blockName = GetAutoUniformBlockName(shaderType);
-        string instanceName = $"{blockName}_Instance";
-
-        if (!TryComputeBlockLayout(members, structDefinitions, out var layoutMembers, out uint blockSize))
-            return new AutoUniformRewriteResult(source, null);
-
-        uint binding = FindAvailableAutoUniformBinding(rewritten, shaderType);
-
-        foreach (var member in layoutMembers)
-        {
-            rewritten = Regex.Replace(
+            return new AutoUniformRewriteResult(
                 rewritten,
-                $@"(?<!\.)\b{Regex.Escape(member.Name)}\b",
-                $"{instanceName}.{member.Name}");
+                Array.Empty<AutoUniformBlockInfo>());
+
+        int frequencyCount = (int)EVulkanBindingFrequency.Count;
+        List<(string GlslType, string Name, bool IsArray, uint ArrayLength, AutoUniformDefaultValue? DefaultValue, IReadOnlyList<AutoUniformDefaultValue>? DefaultArrayValues)>[] membersByFrequency =
+            new List<(string, string, bool, uint, AutoUniformDefaultValue?, IReadOnlyList<AutoUniformDefaultValue>?)>[frequencyCount];
+        for (int memberIndex = 0; memberIndex < members.Count; memberIndex++)
+        {
+            var member = members[memberIndex];
+            EVulkanBindingFrequency frequency =
+                member.ExplicitFrequency ??
+                VulkanAutoUniformBindingSchema.ResolveDeclaredFrequency(
+                    member.Name);
+            int frequencyIndex = (int)frequency;
+            membersByFrequency[frequencyIndex] ??= [];
+            membersByFrequency[frequencyIndex]!.Add((
+                member.GlslType,
+                member.Name,
+                member.IsArray,
+                member.ArrayLength,
+                member.DefaultValue,
+                member.DefaultArrayValues));
+        }
+
+        int populatedFrequencyCount = 0;
+        for (EVulkanBindingFrequency frequency =
+                EVulkanBindingFrequency.Frame;
+             frequency < EVulkanBindingFrequency.Count;
+             frequency++)
+        {
+            if (membersByFrequency[(int)frequency] is { Count: > 0 })
+                populatedFrequencyCount++;
+        }
+
+        uint[] bindings = FindAvailableAutoUniformBindings(
+            rewritten,
+            shaderType,
+            populatedFrequencyCount);
+        List<AutoUniformBlockInfo> blockInfos =
+            new(populatedFrequencyCount);
+        List<AutoUniformMember> allLayoutMembers = new(members.Count);
+        List<string> blocks = new(populatedFrequencyCount);
+        string blockNamePrefix = GetAutoUniformBlockName(shaderType);
+        int bindingIndex = 0;
+
+        for (EVulkanBindingFrequency frequency =
+                EVulkanBindingFrequency.Frame;
+             frequency < EVulkanBindingFrequency.Count;
+             frequency++)
+        {
+            List<(string GlslType, string Name, bool IsArray, uint ArrayLength, AutoUniformDefaultValue? DefaultValue, IReadOnlyList<AutoUniformDefaultValue>? DefaultArrayValues)>? frequencyMembers =
+                membersByFrequency[(int)frequency];
+            if (frequencyMembers is not { Count: > 0 })
+                continue;
+
+            if (!TryComputeBlockLayout(
+                    frequencyMembers,
+                    structDefinitions,
+                    out List<AutoUniformMember> layoutMembers,
+                    out uint blockSize))
+            {
+                return new AutoUniformRewriteResult(
+                    source,
+                    Array.Empty<AutoUniformBlockInfo>());
+            }
+
+            string frequencyName = frequency.ToString();
+            string blockName = $"{blockNamePrefix}_{frequencyName}";
+            string instanceName = $"{blockName}_Instance";
+            uint binding = bindings[bindingIndex++];
+
+            for (int memberIndex = 0;
+                 memberIndex < layoutMembers.Count;
+                 memberIndex++)
+            {
+                AutoUniformMember member = layoutMembers[memberIndex];
+                rewritten = Regex.Replace(
+                    rewritten,
+                    $@"(?<!\.)\b{Regex.Escape(member.Name)}\b",
+                    $"{instanceName}.{member.Name}");
+            }
+
+            allLayoutMembers.AddRange(layoutMembers);
+            blocks.Add(
+                BuildUniformBlock(
+                    blockName,
+                    instanceName,
+                    binding,
+                    layoutMembers));
+            blockInfos.Add(
+                new AutoUniformBlockInfo(
+                    blockName,
+                    instanceName,
+                    VulkanRenderer.DescriptorSetGlobals,
+                    binding,
+                    blockSize,
+                    layoutMembers,
+                    shaderType,
+                    frequency));
         }
 
         int insertionIndex = FindAutoUniformInsertionIndex(rewritten);
-        List<string> movedStructDeclarations = MoveRequiredStructDeclarationsBeforeInsertion(ref rewritten, layoutMembers, insertionIndex);
+        List<string> movedStructDeclarations =
+            MoveRequiredStructDeclarationsBeforeInsertion(
+                ref rewritten,
+                allLayoutMembers,
+                insertionIndex);
         insertionIndex = FindAutoUniformInsertionIndex(rewritten);
 
-        string block = BuildUniformBlock(blockName, instanceName, binding, layoutMembers);
+        string blockContent = string.Join(
+            Environment.NewLine,
+            blocks);
         string insertionContent = movedStructDeclarations.Count == 0
-            ? block
-            : string.Join(Environment.NewLine + Environment.NewLine, movedStructDeclarations) + Environment.NewLine + Environment.NewLine + block;
+            ? blockContent
+            : string.Join(
+                Environment.NewLine + Environment.NewLine,
+                movedStructDeclarations) +
+                Environment.NewLine +
+                Environment.NewLine +
+                blockContent;
 
-        rewritten = InsertAtPreferredLocation(rewritten, insertionContent, insertionIndex);
+        rewritten = InsertAtPreferredLocation(
+            rewritten,
+            insertionContent,
+            insertionIndex);
+        return new AutoUniformRewriteResult(rewritten, blockInfos);
+    }
 
-        AutoUniformBlockInfo blockInfo = new(
-            blockName,
-            instanceName,
-            0,
-            binding,
-            blockSize,
-            layoutMembers,
-            shaderType);
+    private static EVulkanBindingFrequency? ParseExplicitFrequencyAnnotation(
+        Match uniformStatement)
+    {
+        Group frequencyGroup = uniformStatement.Groups["frequency"];
+        if (!frequencyGroup.Success)
+            return null;
 
-        return new AutoUniformRewriteResult(rewritten, blockInfo);
+        string frequencyName = frequencyGroup.Value;
+        if (Enum.TryParse(
+                frequencyName,
+                ignoreCase: true,
+                out EVulkanBindingFrequency frequency) &&
+            frequency > EVulkanBindingFrequency.Unknown &&
+            frequency < EVulkanBindingFrequency.Count)
+        {
+            return frequency;
+        }
+
+        throw new InvalidOperationException(
+            $"Unsupported XRENGINE_FREQUENCY annotation '{frequencyName}'. " +
+            "Expected Frame, View, Pass, Material, Object, Instance, or RuntimeCallback.");
     }
 
 }

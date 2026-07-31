@@ -132,6 +132,58 @@ internal unsafe partial class VkMeshRenderer
 		return mask;
 	}
 
+	/// <summary>
+	/// Returns whether one descriptor allocation can serve every logical draw
+	/// slot. Dynamic UBO offsets carry the owner-specific byte location, while
+	/// image and texel identities remain protected by the allocation's resource
+	/// fingerprint. Fixed or storage buffers retain exact draw-slot ownership.
+	/// </summary>
+	internal static bool AreDescriptorBindingsDrawSlotInvariant(
+		IReadOnlyList<DescriptorBindingInfo> bindings,
+		bool usesSharedMaterialTier,
+		bool descriptorHeapDrawBindingActive)
+	{
+		if (descriptorHeapDrawBindingActive)
+			return false;
+
+		for (int bindingIndex = 0;
+			 bindingIndex < bindings.Count;
+			 bindingIndex++)
+		{
+			DescriptorBindingInfo binding = bindings[bindingIndex];
+			if (usesSharedMaterialTier &&
+				binding.Set == VulkanRenderer.DescriptorSetMaterial)
+			{
+				continue;
+			}
+
+			switch (binding.DescriptorType)
+			{
+				case DescriptorType.UniformBufferDynamic:
+					if (VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(
+							binding) != 1)
+					{
+						return false;
+					}
+					break;
+
+				case DescriptorType.CombinedImageSampler:
+				case DescriptorType.Sampler:
+				case DescriptorType.SampledImage:
+				case DescriptorType.StorageImage:
+				case DescriptorType.InputAttachment:
+				case DescriptorType.UniformTexelBuffer:
+				case DescriptorType.StorageTexelBuffer:
+					break;
+
+				default:
+					return false;
+			}
+		}
+
+		return true;
+	}
+
 	private static string GetDescriptorBindingClass(DescriptorType descriptorType)
 		=> descriptorType switch
 		{
@@ -189,8 +241,9 @@ internal unsafe partial class VkMeshRenderer
 		List<(int writeIndex, int texelIndex, DescriptorBindingInfo binding, uint descriptorCount)> texelMap = scratch.TexelMap;
 		List<(DescriptorWriteKey key, ulong signature)> signatures = scratch.Signatures;
 
-		foreach (DescriptorBindingInfo binding in bindings)
+		for (int bindingIndex = 0; bindingIndex < bindings.Count; bindingIndex++)
 		{
+			DescriptorBindingInfo binding = bindings[bindingIndex];
 			if (allocation?.UsesSharedMaterialTier == true && binding.Set == VulkanRenderer.DescriptorSetMaterial)
 				continue;
 			if (binding.Set >= frameSets.Length)
@@ -334,15 +387,19 @@ internal unsafe partial class VkMeshRenderer
 			}
 		}
 
-		DescriptorBufferInfo[] bufferArray = bufferInfos.Count == 0 ? [] : [.. bufferInfos];
-		DescriptorImageInfo[] imageArray = imageInfos.Count == 0 ? [] : [.. imageInfos];
-		BufferView[] texelArray = texelBufferViews.Count == 0 ? [] : [.. texelBufferViews];
-		WriteDescriptorSet[] writeArray = writes.Count == 0 ? [] : [.. writes];
+		Span<DescriptorBufferInfo> bufferSpan =
+			CollectionsMarshal.AsSpan(bufferInfos);
+		Span<DescriptorImageInfo> imageSpan =
+			CollectionsMarshal.AsSpan(imageInfos);
+		Span<BufferView> texelSpan =
+			CollectionsMarshal.AsSpan(texelBufferViews);
+		Span<WriteDescriptorSet> writeSpan =
+			CollectionsMarshal.AsSpan(writes);
 
-		fixed (DescriptorBufferInfo* bufferPtr = bufferArray)
-		fixed (DescriptorImageInfo* imagePtr = imageArray)
-		fixed (BufferView* texelPtr = texelArray)
-		fixed (WriteDescriptorSet* writePtr = writeArray)
+		fixed (DescriptorBufferInfo* bufferPtr = bufferSpan)
+		fixed (DescriptorImageInfo* imagePtr = imageSpan)
+		fixed (BufferView* texelPtr = texelSpan)
+		fixed (WriteDescriptorSet* writePtr = writeSpan)
 		{
 			foreach (var (writeIndex, bufferIndex, _, _) in bufferMap)
 				writePtr[writeIndex].PBufferInfo = bufferPtr + bufferIndex;
@@ -353,9 +410,9 @@ internal unsafe partial class VkMeshRenderer
 			foreach (var (writeIndex, texelIndex, _, _) in texelMap)
 				writePtr[writeIndex].PTexelBufferView = texelPtr + texelIndex;
 
-			if (writeArray.Length > 0)
+			if (writeSpan.Length > 0)
 			{
-				if (!ValidateDescriptorWrites(writePtr, writeArray.Length))
+				if (!ValidateDescriptorWrites(writePtr, writeSpan.Length))
 					return false;
 
 				if (Renderer.IsDescriptorHeapDrawBindingActive)
@@ -422,8 +479,11 @@ internal unsafe partial class VkMeshRenderer
 					}
 				}
 
-				if (!TryUpdateDescriptorSetsWithTemplates(frameSets, writeArray) &&
-					!Renderer.TryUpdateDescriptorSetsTracked((uint)writeArray.Length, writePtr, out string updateFailureReason))
+				if (!TryUpdateDescriptorSetsWithTemplates(
+						frameSets,
+						writeSpan,
+						scratch.TemplateWrites) &&
+					!Renderer.TryUpdateDescriptorSetsTracked((uint)writeSpan.Length, writePtr, out string updateFailureReason))
 				{
 					Debug.VulkanWarningEvery(
 						$"Vulkan.MeshRenderer.DescriptorGenerationRace.{GetHashCode()}",
@@ -435,7 +495,7 @@ internal unsafe partial class VkMeshRenderer
 				if (recordDescriptorTableGeneration)
 					Renderer.RecordVulkanDescriptorTableGeneration("MeshRendererDescriptorSets.Update");
 				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorRecordsWritten(
-					writeArray.Length);
+					writeSpan.Length);
 
 				if (allocation is not null)
 					for (int signatureIndex = 0; signatureIndex < signatures.Count; signatureIndex++)
@@ -654,7 +714,10 @@ internal unsafe partial class VkMeshRenderer
 		return false;
 	}
 
-	private bool TryUpdateDescriptorSetsWithTemplates(DescriptorSet[] frameSets, WriteDescriptorSet[] writeArray)
+	private bool TryUpdateDescriptorSetsWithTemplates(
+		DescriptorSet[] frameSets,
+		ReadOnlySpan<WriteDescriptorSet> writes,
+		List<WriteDescriptorSet> setWrites)
 	{
 		if (RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.DescriptorUpdateBackend != EVulkanDescriptorUpdateBackend.Template)
 			return false;
@@ -664,11 +727,11 @@ internal unsafe partial class VkMeshRenderer
 
 		for (int setIndex = 0; setIndex < frameSets.Length; setIndex++)
 		{
-			List<WriteDescriptorSet> setWrites = [];
-			for (int i = 0; i < writeArray.Length; i++)
+			setWrites.Clear();
+			for (int i = 0; i < writes.Length; i++)
 			{
-				if (writeArray[i].DstSet.Handle == frameSets[setIndex].Handle)
-					setWrites.Add(writeArray[i]);
+				if (writes[i].DstSet.Handle == frameSets[setIndex].Handle)
+					setWrites.Add(writes[i]);
 			}
 
 			if (setWrites.Count == 0)

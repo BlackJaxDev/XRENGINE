@@ -13,7 +13,9 @@ internal sealed record IndirectDrawOp(
     nuint CountByteOffset,
     bool UseCount,
     VulkanBindlessMaterialDescriptorBinding? BindlessMaterialTextures,
-    FrameOpContext Context) : FrameOp(PassIndex, Target, Context)
+    FrameOpContext Context,
+    VulkanIndirectSecondaryRecordingContract SecondaryRecordingContract =
+        default) : FrameOp(PassIndex, Target, Context)
 {
     public VkDataBuffer IndirectBuffer { get; private set; } = IndirectBuffer;
     public VkDataBuffer? ParameterBuffer { get; private set; } = ParameterBuffer;
@@ -25,6 +27,7 @@ internal sealed record IndirectDrawOp(
     public nuint CountByteOffset { get; private set; } = CountByteOffset;
     public bool UseCount { get; private set; } = UseCount;
     public VulkanBindlessMaterialDescriptorBinding? BindlessMaterialTextures { get; private set; } = BindlessMaterialTextures;
+    public VulkanIndirectSecondaryRecordingContract SecondaryRecordingContract { get; private set; } = SecondaryRecordingContract;
 
     internal static IndirectDrawOp Rent(
         int passIndex,
@@ -39,7 +42,9 @@ internal sealed record IndirectDrawOp(
         nuint countByteOffset,
         bool useCount,
         VulkanBindlessMaterialDescriptorBinding? bindlessMaterialTextures,
-        in FrameOpContext context)
+        in FrameOpContext context,
+        in VulkanIndirectSecondaryRecordingContract secondaryRecordingContract =
+            default)
     {
         bool frameOwned = TryRentForCurrentFrame(out IndirectDrawOp? reusable);
         if (reusable is null)
@@ -57,7 +62,8 @@ internal sealed record IndirectDrawOp(
                 countByteOffset,
                 useCount,
                 bindlessMaterialTextures,
-                context);
+                context,
+                secondaryRecordingContract);
             return frameOwned ? RetainForCurrentFrame(created) : created;
         }
 
@@ -74,7 +80,8 @@ internal sealed record IndirectDrawOp(
             countByteOffset,
             useCount,
             bindlessMaterialTextures,
-            context);
+            context,
+            secondaryRecordingContract);
         return reusable;
     }
 
@@ -91,7 +98,8 @@ internal sealed record IndirectDrawOp(
         nuint countByteOffset,
         bool useCount,
         VulkanBindlessMaterialDescriptorBinding? bindlessMaterialTextures,
-        in FrameOpContext context)
+        in FrameOpContext context,
+        in VulkanIndirectSecondaryRecordingContract secondaryRecordingContract)
     {
         PassIndex = passIndex;
         Target = target;
@@ -106,5 +114,6 @@ internal sealed record IndirectDrawOp(
         UseCount = useCount;
         BindlessMaterialTextures = bindlessMaterialTextures;
         Context = context;
+        SecondaryRecordingContract = secondaryRecordingContract;
     }
 }

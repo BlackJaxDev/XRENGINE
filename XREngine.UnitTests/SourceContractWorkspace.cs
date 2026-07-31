@@ -29,7 +29,42 @@ internal static class SourceContractWorkspace
             return NormalizeLineEndings(File.ReadAllText(exactPath));
 
         if (IsVulkanCSharpSourcePath(relativePath))
+        {
+            string requestedFileName = Path.GetFileName(relativePath);
+            SourceFile[] movedFileMatches =
+            [
+                .. GetVulkanSourceFiles().Where(file =>
+                {
+                    string candidate = Path.GetFileName(file.RelativePath);
+                    return string.Equals(
+                            candidate,
+                            requestedFileName,
+                            StringComparison.OrdinalIgnoreCase) ||
+                        candidate.EndsWith(
+                            $".{requestedFileName}",
+                            StringComparison.OrdinalIgnoreCase);
+                }),
+            ];
+            if (movedFileMatches.Length == 1)
+                return movedFileMatches[0].Source;
+
             return ReadPartialType(relativePath);
+        }
+
+        string fullPath = ResolveFile(relativePath);
+        return NormalizeLineEndings(File.ReadAllText(fullPath));
+    }
+
+    /// <summary>
+    /// Reads exactly one workspace file without expanding a partial-type
+    /// family. Use this for negative or method-local assertions where unrelated
+    /// partial files would create false positives.
+    /// </summary>
+    public static string ReadExactFile(string relativePath)
+    {
+        string exactPath = Path.GetFullPath(Path.Combine(RepositoryRoot, relativePath));
+        if (File.Exists(exactPath))
+            return NormalizeLineEndings(File.ReadAllText(exactPath));
 
         string fullPath = ResolveFile(relativePath);
         return NormalizeLineEndings(File.ReadAllText(fullPath));

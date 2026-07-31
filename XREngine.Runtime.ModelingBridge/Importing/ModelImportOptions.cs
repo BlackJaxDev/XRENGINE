@@ -156,6 +156,27 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     }
 
     /// <summary>
+    /// Reflects imported geometry and hierarchy transforms across the Z axis.
+    /// Use this when converting a +Z-forward right-handed source into XRENGINE's
+    /// -Z-forward left-handed coordinate system.
+    /// </summary>
+    public bool MakeLeftHanded
+    {
+        get => GetFlag(PostProcessSteps.MakeLeftHanded);
+        set => SetFlag(PostProcessSteps.MakeLeftHanded, value);
+    }
+
+    /// <summary>
+    /// Reverses primitive winding. Handedness reflections should normally enable
+    /// this together with <see cref="MakeLeftHanded"/> to preserve front faces.
+    /// </summary>
+    public bool FlipWindingOrder
+    {
+        get => GetFlag(PostProcessSteps.FlipWindingOrder);
+        set => SetFlag(PostProcessSteps.FlipWindingOrder, value);
+    }
+
+    /// <summary>
     /// Selects how .fbx files are imported. Auto uses the native importer by default,
     /// while Assimp preserves the older compatibility path. Legacy YAML may still spell
     /// this value as AssimpLegacy.

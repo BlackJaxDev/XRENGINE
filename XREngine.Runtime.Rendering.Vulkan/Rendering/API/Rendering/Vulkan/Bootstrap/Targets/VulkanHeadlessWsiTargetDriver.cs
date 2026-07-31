@@ -181,7 +181,7 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
                 api.ResetFences(device, 1, in fence),
                 "reset headless WSI frame fence");
             ThrowIfDeviceFailure(
-                api.ResetCommandPool(device, slot.CommandPool, 0),
+                ResetCommandPoolTracked(api, device, slot.CommandPool),
                 "reset headless WSI command pool");
             CommandBufferBeginInfo begin = new()
             {
@@ -254,6 +254,7 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
         Vk api = renderer.VulkanApi;
         Device device = renderer.Device;
         _ = api.ResetCommandPool(device, slot.CommandPool, 0);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResetCommandPoolCall();
 
         PipelineStageFlags waitStage = lease.SubmissionWaitStage;
         Semaphore waitSemaphore = lease.SubmissionWaitSemaphore;
@@ -487,7 +488,14 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
                 Level = CommandBufferLevel.Primary,
                 CommandBufferCount = 1,
             };
-            ThrowIfDeviceFailure(api.AllocateCommandBuffers(device, in allocate, out CommandBuffer commandBuffer), "allocate headless WSI command buffer");
+            Result allocateCommandBufferResult =
+                api.AllocateCommandBuffers(device, in allocate, out CommandBuffer commandBuffer);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAllocateCommandBuffersCall(
+                allocate.CommandBufferCount,
+                allocateCommandBufferResult == Result.Success);
+            ThrowIfDeviceFailure(
+                allocateCommandBufferResult,
+                "allocate headless WSI command buffer");
             FenceCreateInfo fenceInfo = new() { SType = StructureType.FenceCreateInfo, Flags = FenceCreateFlags.SignaledBit };
             ThrowIfDeviceFailure(api.CreateFence(device, in fenceInfo, null, out fence), "create headless WSI frame fence");
             SemaphoreCreateInfo semaphoreInfo = new() { SType = StructureType.SemaphoreCreateInfo };
@@ -655,6 +663,16 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
     private VulkanRenderer RequireRenderer()
         => _renderer
             ?? throw new InvalidOperationException("The headless WSI target generation is not initialized.");
+
+    private static Result ResetCommandPoolTracked(
+        Vk api,
+        Device device,
+        CommandPool commandPool)
+    {
+        Result result = api.ResetCommandPool(device, commandPool, 0);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResetCommandPoolCall();
+        return result;
+    }
 
     private int ResolveSlotIndex(in VulkanFrameTargetLease lease)
     {

@@ -459,6 +459,13 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
                 FrameWaitSwapchainImageMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameWaitSwapchainImageMs,
                 FrameResetDynamicUniformRingMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameResetDynamicUniformRingMs,
                 RecordCommandBufferAllocatedBytes = RuntimeEngine.Rendering.Stats.Vulkan.VulkanRecordCommandBufferAllocatedBytes,
+                ResetCommandBufferCalls = RuntimeEngine.Rendering.Stats.Vulkan.VulkanResetCommandBufferCalls,
+                ResetCommandPoolCalls = RuntimeEngine.Rendering.Stats.Vulkan.VulkanResetCommandPoolCalls,
+                AllocateCommandBufferCalls = RuntimeEngine.Rendering.Stats.Vulkan.VulkanAllocateCommandBufferCalls,
+                CommandBuffersAllocated = RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandBuffersAllocated,
+                ExecuteSecondaryCommandBufferCalls = RuntimeEngine.Rendering.Stats.Vulkan.VulkanExecuteSecondaryCommandBufferCalls,
+                SecondaryCommandBuffersInvoked = RuntimeEngine.Rendering.Stats.Vulkan.VulkanSecondaryCommandBuffersInvoked,
+                PreparedMeshDrawCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPreparedMeshDraws,
                 FrameOpTotalCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameOpTotalCount,
                 FrameOpClearCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameOpClearCount,
                 FrameOpMeshDrawCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameOpMeshDrawCount,
@@ -495,6 +502,35 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
                 FrameDataDrawsVisited = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameDataDrawsVisited,
                 DescriptorRecordsValidated = RuntimeEngine.Rendering.Stats.Vulkan.VulkanDescriptorRecordsValidated,
                 DescriptorRecordsWritten = RuntimeEngine.Rendering.Stats.Vulkan.VulkanDescriptorRecordsWritten,
+                BindingSchemasCompiled = RuntimeEngine.Rendering.Stats.Vulkan.VulkanBindingSchemasCompiled,
+                BindingSchemaValueOperations = RuntimeEngine.Rendering.Stats.Vulkan.VulkanBindingSchemaValueOperations,
+                BindingSchemaDescriptorEntries = RuntimeEngine.Rendering.Stats.Vulkan.VulkanBindingSchemaDescriptorEntries,
+                BindingSchemaFallbackOperations = RuntimeEngine.Rendering.Stats.Vulkan.VulkanBindingSchemaFallbackOperations,
+                AutoUniformTypedOperationsExecuted = RuntimeEngine.Rendering.Stats.Vulkan.VulkanAutoUniformTypedOperationsExecuted,
+                AutoUniformReflectedNameLookups = RuntimeEngine.Rendering.Stats.Vulkan.VulkanAutoUniformReflectedNameLookups,
+                AutoUniformGenericConversions = RuntimeEngine.Rendering.Stats.Vulkan.VulkanAutoUniformGenericConversions,
+                AutoUniformFallbackReasonCounts =
+                [
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.None),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.BindingSnapshotIneligible),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.ProgramUnavailable),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.InvalidBufferSize),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.BindingSchemaUnavailable),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.BindingSchemaMismatch),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.InvalidMemberName),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.UnsupportedShaderType),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.InvalidDestinationRange),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.InvalidArrayLayout),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.StructSnapshotRequired),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.EngineSourceTypeMismatch),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.MeshStateSourceTypeMismatch),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.TypedEngineSourceUnavailable),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.TypedEngineWriteFailed),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.TypedTemporalWriteFailed),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.TypedMeshStateSourceUnavailable),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.TypedMeshStateWriteFailed),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.TypedMaterialOrRuntimeWriteFailed),
+                ],
                 CommandBufferCleanReuseCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandBufferCleanReuseCount,
                 CommandBufferRecordCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandBufferRecordCount,
                 CommandBufferForcedDirtyCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandBufferForcedDirtyCount,
@@ -512,6 +548,38 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
                 VisibilityPacketCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanVisibilityPacketCount,
                 RenderPacketCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanRenderPacketCount,
                 SecondaryCommandBufferCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanSecondaryCommandBufferCount,
+                LastCommandChainWorkerEligibility = RuntimeEngine.Rendering.Stats.Vulkan.VulkanLastCommandChainWorkerEligibility,
+                CommandChainWorkerEligibilityCounts =
+                [
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.NotEvaluated),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.Eligible),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.TooLittleIndependentWork),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.MutableRendererConflict),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.UnsupportedOperation),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.UnsupportedInheritance),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.PrimaryOwnedIndirectStream),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.WorkerQuarantined),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.ResourcePreparationFailed),
+                ],
+                LastIndirectSecondaryEligibility = RuntimeEngine.Rendering.Stats.Vulkan.VulkanLastIndirectSecondaryEligibility,
+                IndirectSecondaryEligibilityCounts =
+                [
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.NotEvaluated),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.EligibleProducerComplete),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.MutableCurrentFrame),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.ProducerIncomplete),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.BufferIdentityChanged),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.InvalidRange),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.CommandChainsDisabled),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.UnsupportedInheritance),
+                    RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.ResourcePreparationFailed),
+                ],
+                LastComputeSecondaryEligibility = RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanLastSecondaryRecordingEligibility(EVulkanSecondaryCommandFamily.Compute),
+                ComputeSecondaryEligibilityCounts = CollectSecondaryRecordingEligibilityCounts(EVulkanSecondaryCommandFamily.Compute),
+                LastTransferSecondaryEligibility = RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanLastSecondaryRecordingEligibility(EVulkanSecondaryCommandFamily.Transfer),
+                TransferSecondaryEligibilityCounts = CollectSecondaryRecordingEligibilityCounts(EVulkanSecondaryCommandFamily.Transfer),
+                LastQuerySecondaryEligibility = RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanLastSecondaryRecordingEligibility(EVulkanSecondaryCommandFamily.Query),
+                QuerySecondaryEligibilityCounts = CollectSecondaryRecordingEligibilityCounts(EVulkanSecondaryCommandFamily.Query),
                 CommandChainWorkerRecordMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandChainWorkerRecordMs,
                 RenderThreadWaitForChainWorkersMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanRenderThreadWaitForChainWorkersMs,
                 FirstCommandChainStructuralDirtyReason = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFirstCommandChainStructuralDirtyReason,
@@ -961,6 +1029,24 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
             QueueSlotsAvailable = jobs.QueueSlotsAvailable,
             Priorities = priorities,
         };
+    }
+
+    private static long[] CollectSecondaryRecordingEligibilityCounts(
+        EVulkanSecondaryCommandFamily family)
+    {
+        long[] counts =
+            new long[(int)EVulkanSecondaryRecordingEligibility.Count];
+        for (int reasonIndex = 0;
+             reasonIndex < counts.Length;
+             reasonIndex++)
+        {
+            counts[reasonIndex] = RuntimeEngine.Rendering.Stats.Vulkan
+                .GetVulkanSecondaryRecordingEligibilityCount(
+                    family,
+                    (EVulkanSecondaryRecordingEligibility)reasonIndex);
+        }
+
+        return counts;
     }
 
     private static MainThreadInvokesPacket? CollectMainThreadInvokes()

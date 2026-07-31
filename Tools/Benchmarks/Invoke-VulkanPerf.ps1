@@ -247,7 +247,8 @@ $environmentNames = @(
     'XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR',
     'XRE_UNIT_TEST_ALLOW_DESKTOP_EDITING_IN_VR',
     'XRE_GPU_DRIVEN_VALIDATION_CAPACITY_MULTIPLIER',
-    'XRE_GPU_DRIVEN_VALIDATION_CAPACITY_FLOOR'
+    'XRE_GPU_DRIVEN_VALIDATION_CAPACITY_FLOOR',
+    'XRE_GPU_DRIVER'
 )
 $previousEnvironment = @{}
 foreach ($name in $environmentNames) {
@@ -297,6 +298,7 @@ try {
         New-Item -ItemType Directory -Path $cohortOutput -Force | Out-Null
 
         [Environment]::SetEnvironmentVariable('XRE_UNIT_TEST_WORLD_SETTINGS_PATH', $settingsPath, 'Process')
+        [Environment]::SetEnvironmentVariable('XRE_GPU_DRIVER', $gpuDriver, 'Process')
         [Environment]::SetEnvironmentVariable('XRE_UNIT_TEST_RENDER_API', 'Vulkan', 'Process')
         [Environment]::SetEnvironmentVariable('XRE_UNIT_TEST_VR_FOVEATION_MODE', [string]$cohort.foveationMode, 'Process')
         [Environment]::SetEnvironmentVariable('XRE_UNIT_TEST_VR_FOVEATION_QUALITY_PRESET', 'Balanced', 'Process')
@@ -350,12 +352,25 @@ try {
             DisableMcpDiagnostics = $true
             UnitTestVrMode = [string]$cohort.vrMode
             VulkanRenderTargetMode = 'DynamicRendering'
-            VulkanPrimaryReuse = 'Enabled'
+            VulkanPrimaryReuse = $(if ([string]::IsNullOrWhiteSpace(
+                    [string]$cohort.vulkanPrimaryReuse)) {
+                'Enabled'
+            } else {
+                [string]$cohort.vulkanPrimaryReuse
+            })
             VulkanCommandChains = 'Enabled'
-            VulkanParallelCommandChainRecording = 'Enabled'
+            VulkanParallelCommandChainRecording = $(if ([string]::IsNullOrWhiteSpace(
+                    [string]$cohort.vulkanParallelCommandChainRecording)) {
+                'Enabled'
+            } else {
+                [string]$cohort.vulkanParallelCommandChainRecording
+            })
             VulkanParallelSecondaryRecording = 'Enabled'
             OcclusionCullingMode = 'Disabled'
             VulkanDiagnosticPreset = 'Off'
+        }
+        if ([bool]$cohort.forceCommandChainRerecord) {
+            $measureArguments.VulkanCommandChainBenchmarkForceRerecord = $true
         }
         if ([int]$cohort.minimumGpuSceneCommandCount -gt 0) {
             $measureArguments.MinSteadyStateGpuSceneCommandCount =
@@ -366,6 +381,9 @@ try {
             $measureArguments.UseEligiblePrimaryReuseRatio = $true
             $measureArguments.MinSteadyStateCommandBufferCleanReuseRatio =
                 [double]$cohort.minimumPrimaryReuseRatio
+        }
+        if ($Preset -eq 'Gate') {
+            $measureArguments.FailOnSteadyStateBindingFallback = $true
         }
 
         try {

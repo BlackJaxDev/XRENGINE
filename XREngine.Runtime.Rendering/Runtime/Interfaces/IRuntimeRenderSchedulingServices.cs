@@ -23,6 +23,12 @@ namespace XREngine.Rendering;
 public interface IRuntimeRenderSchedulingServices
 {
     /// <summary>
+    /// Gets whether the current thread is executing the collect-visible/render
+    /// publication barrier, where neither side may consume mutable frame state.
+    /// </summary>
+    bool IsFrameSwapThread => true;
+
+    /// <summary>
     /// Subscribes a callback to the host pre-update frame event.
     /// </summary>
     void SubscribePreUpdateFrame(Action callback) { }
@@ -119,6 +125,12 @@ public interface IRuntimeRenderSchedulingServices
     /// Invokes work on the host render thread and returns its result.
     /// </summary>
     T InvokeRenderThreadTask<T>(Func<T> task, string reason, RenderThreadJobKind renderThreadKind = RenderThreadJobKind.Unknown);
+
+    /// <summary>
+    /// Queues work at the collect-visible/render publication barrier.
+    /// </summary>
+    void EnqueueFrameSwapTask(Action task, string reason)
+        => task();
 
     /// <summary>
     /// Queues work for execution on the host application/update thread. Use this for

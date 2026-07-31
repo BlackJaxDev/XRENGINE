@@ -300,6 +300,13 @@ public sealed partial class VulkanFrameLoopTelemetryData
     public double FrameWaitSwapchainImageMs { get; set; }
     public double FrameResetDynamicUniformRingMs { get; set; }
     public long RecordCommandBufferAllocatedBytes { get; set; }
+    public long ResetCommandBufferCalls { get; set; }
+    public long ResetCommandPoolCalls { get; set; }
+    public long AllocateCommandBufferCalls { get; set; }
+    public long CommandBuffersAllocated { get; set; }
+    public long ExecuteSecondaryCommandBufferCalls { get; set; }
+    public long SecondaryCommandBuffersInvoked { get; set; }
+    public long PreparedMeshDrawCount { get; set; }
     public int FrameOpTotalCount { get; set; }
     public int FrameOpClearCount { get; set; }
     public int FrameOpMeshDrawCount { get; set; }
@@ -337,6 +344,14 @@ public sealed partial class VulkanFrameLoopTelemetryData
     public long FrameDataDrawsVisited { get; set; }
     public long DescriptorRecordsValidated { get; set; }
     public long DescriptorRecordsWritten { get; set; }
+    public long BindingSchemasCompiled { get; set; }
+    public long BindingSchemaValueOperations { get; set; }
+    public long BindingSchemaDescriptorEntries { get; set; }
+    public long BindingSchemaFallbackOperations { get; set; }
+    public long AutoUniformTypedOperationsExecuted { get; set; }
+    public long AutoUniformReflectedNameLookups { get; set; }
+    public long AutoUniformGenericConversions { get; set; }
+    public long[] AutoUniformFallbackReasonCounts { get; set; } = [];
 
     public int CommandBufferCleanReuseCount { get; set; }
     public int CommandBufferRecordCount { get; set; }
@@ -364,6 +379,16 @@ public sealed partial class VulkanFrameLoopTelemetryData
     public int CommandChainWorkerConflicts { get; set; }
     public int CommandChainWorkerFailures { get; set; }
     public int CommandChainWorkerWaitTimeouts { get; set; }
+    public EVulkanCommandChainWorkerEligibility LastCommandChainWorkerEligibility { get; set; }
+    public long[] CommandChainWorkerEligibilityCounts { get; set; } = [];
+    public EVulkanIndirectSecondaryEligibility LastIndirectSecondaryEligibility { get; set; }
+    public long[] IndirectSecondaryEligibilityCounts { get; set; } = [];
+    public EVulkanSecondaryRecordingEligibility LastComputeSecondaryEligibility { get; set; }
+    public long[] ComputeSecondaryEligibilityCounts { get; set; } = [];
+    public EVulkanSecondaryRecordingEligibility LastTransferSecondaryEligibility { get; set; }
+    public long[] TransferSecondaryEligibilityCounts { get; set; } = [];
+    public EVulkanSecondaryRecordingEligibility LastQuerySecondaryEligibility { get; set; }
+    public long[] QuerySecondaryEligibilityCounts { get; set; } = [];
     public int CommandChainPeakConcurrentWorkers { get; set; }
     public double CommandChainWorkerQueueDelayMs { get; set; }
     public double CommandChainWorkerRecordMs { get; set; }

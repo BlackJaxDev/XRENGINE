@@ -9,6 +9,39 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class VulkanCommandRecordingDependencyTests
 {
     [Test]
+    public void SharedIdentityComponents_KeepPrimaryAndSecondaryDependenciesSeparate()
+    {
+        CommandRecordingDependencySignature baseline = CreateSignature();
+        VulkanCommandIdentityComponents baselineComponents =
+            baseline.CaptureIdentityComponents();
+
+        VulkanCommandIdentityComponents primaryChange =
+            (baseline with { RenderArea = baseline.RenderArea + 1 })
+            .CaptureIdentityComponents();
+        primaryChange.PrimaryOnly.ShouldNotBe(
+            baselineComponents.PrimaryOnly);
+        primaryChange.SecondaryOnly.ShouldBe(
+            baselineComponents.SecondaryOnly);
+
+        VulkanCommandIdentityComponents secondaryChange =
+            (baseline with
+            {
+                MeshBindingIdentity =
+                    baseline.MeshBindingIdentity + 1,
+            }).CaptureIdentityComponents();
+        secondaryChange.PrimaryOnly.ShouldBe(
+            baselineComponents.PrimaryOnly);
+        secondaryChange.SecondaryOnly.ShouldNotBe(
+            baselineComponents.SecondaryOnly);
+
+        VulkanCommandIdentityComponents queueChange =
+            (baseline with { QueueFamily = baseline.QueueFamily + 1 })
+            .CaptureIdentityComponents();
+        baselineComponents.Compare(queueChange).Component.ShouldBe(
+            EVulkanCommandIdentityComponent.QueueAssumptions);
+    }
+
+    [Test]
     public void StructuralMismatch_RejectsReuseAndReportsFirstField()
     {
         CommandRecordingDependencySignature recorded = CreateSignature();
@@ -32,6 +65,40 @@ public sealed class VulkanCommandRecordingDependencyTests
         mismatch.Field.ShouldBe(CommandRecordingDependencyField.DescriptorSetGeneration);
         mismatch.InvalidationClass.ShouldBe(CommandRecordingInvalidationClass.BindingIdentity);
         mismatch.RequiresRecording.ShouldBeTrue();
+    }
+
+    [Test]
+    public void ExplicitOwnedGenerationFields_ClassifyEveryRecordingDependency()
+    {
+        CommandRecordingDependencySignature recorded = CreateSignature();
+        (CommandRecordingDependencySignature Current, CommandRecordingDependencyField Field)[] changes =
+        [
+            (recorded with { OutputPassAttachment = recorded.OutputPassAttachment + 1 }, CommandRecordingDependencyField.OutputPassAttachment),
+            (recorded with { RenderArea = recorded.RenderArea + 1 }, CommandRecordingDependencyField.RenderArea),
+            (recorded with { ViewMask = recorded.ViewMask + 1 }, CommandRecordingDependencyField.ViewMask),
+            (recorded with { QueueFamily = recorded.QueueFamily + 1 }, CommandRecordingDependencyField.QueueFamily),
+            (recorded with { DynamicRenderingInheritance = recorded.DynamicRenderingInheritance + 1 }, CommandRecordingDependencyField.DynamicRenderingInheritance),
+            (recorded with { PipelineGeneration = recorded.PipelineGeneration + 1 }, CommandRecordingDependencyField.PipelineGeneration),
+            (recorded with { PipelineLayoutGeneration = recorded.PipelineLayoutGeneration + 1 }, CommandRecordingDependencyField.PipelineLayoutGeneration),
+            (recorded with { MeshBindingIdentity = recorded.MeshBindingIdentity + 1 }, CommandRecordingDependencyField.MeshBindingIdentity),
+            (recorded with { IndexBufferBindingIdentity = recorded.IndexBufferBindingIdentity + 1 }, CommandRecordingDependencyField.IndexBufferBindingIdentity),
+            (recorded with { VertexBufferBindingIdentity = recorded.VertexBufferBindingIdentity + 1 }, CommandRecordingDependencyField.VertexBufferBindingIdentity),
+            (recorded with { BufferAllocationGeneration = recorded.BufferAllocationGeneration + 1 }, CommandRecordingDependencyField.BufferAllocationGeneration),
+            (recorded with { ImageAllocationGeneration = recorded.ImageAllocationGeneration + 1 }, CommandRecordingDependencyField.ImageAllocationGeneration),
+            (recorded with { ImageViewGeneration = recorded.ImageViewGeneration + 1 }, CommandRecordingDependencyField.ImageViewGeneration),
+            (recorded with { SamplerAllocationGeneration = recorded.SamplerAllocationGeneration + 1 }, CommandRecordingDependencyField.SamplerAllocationGeneration),
+            (recorded with { DescriptorLayoutGeneration = recorded.DescriptorLayoutGeneration + 1 }, CommandRecordingDependencyField.DescriptorLayoutGeneration),
+            (recorded with { DescriptorSetGeneration = recorded.DescriptorSetGeneration + 1 }, CommandRecordingDependencyField.DescriptorSetGeneration),
+            (recorded with { ResourcePlanGeneration = recorded.ResourcePlanGeneration + 1 }, CommandRecordingDependencyField.ResourcePlanGeneration),
+            (recorded with { ExternalTargetVariant = recorded.ExternalTargetVariant + 1 }, CommandRecordingDependencyField.ExternalTargetVariant),
+            (recorded with { FrameSlotVariant = recorded.FrameSlotVariant + 1 }, CommandRecordingDependencyField.FrameSlotVariant),
+            (recorded with { DescriptorPublicationGeneration = recorded.DescriptorPublicationGeneration + 1 }, CommandRecordingDependencyField.DescriptorPublicationGeneration),
+            (recorded with { DataPublicationGeneration = recorded.DataPublicationGeneration + 1 }, CommandRecordingDependencyField.DataPublicationGeneration),
+            (recorded with { VolatileSuffixGeneration = recorded.VolatileSuffixGeneration + 1 }, CommandRecordingDependencyField.VolatileSuffixGeneration),
+        ];
+
+        for (int index = 0; index < changes.Length; index++)
+            recorded.Compare(changes[index].Current).Field.ShouldBe(changes[index].Field);
     }
 
     [Test]
@@ -312,6 +379,28 @@ public sealed class VulkanCommandRecordingDependencyTests
     }
 
     [Test]
+    public void RecordedPrimary_PublishesPostRecordingSecondaryArtifactIdentity()
+    {
+        string recording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        int recordingEnd = recording.IndexOf(
+            "_commandRecorder.ExitRecordingScope();",
+            StringComparison.Ordinal);
+        int recompute = recording.IndexOf(
+            "commandChainPrimaryIdentityComponents =",
+            recordingEnd,
+            StringComparison.Ordinal);
+        int publish = recording.IndexOf(
+            "variant.CommandChainPrimaryGroupSignature =",
+            recompute,
+            StringComparison.Ordinal);
+
+        recordingEnd.ShouldBeGreaterThanOrEqualTo(0);
+        recompute.ShouldBeGreaterThan(recordingEnd);
+        publish.ShouldBeGreaterThan(recompute);
+    }
+
+    [Test]
     public void PrimaryVariantCache_PreservesCleanRotatingOutputAttachments()
     {
         CommandRecordingDependencyMismatch attachmentMismatch = new(
@@ -387,8 +476,6 @@ public sealed class VulkanCommandRecordingDependencyTests
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string lowering = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
-        string frameOps = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
         string manifest = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineVariantManifest.cs");
 
@@ -396,7 +483,6 @@ public sealed class VulkanCommandRecordingDependencyTests
         lowering.ShouldContain("hash.Add(draw.Draw.PreparedProgram?.BindingId ?? 0u);");
         lowering.ShouldContain("MixSignature(descriptorSetSignature, preparedProgram.BindingId)");
         lowering.ShouldContain("? unchecked((int)preparedProgram.BindingId)");
-        frameOps.ShouldContain("hash.Add(draw.PreparedProgram?.BindingId ?? 0u);");
         manifest.ShouldContain("hash.Add(draw.PreparedProgram?.BindingId ?? 0u);");
     }
 
@@ -419,8 +505,10 @@ public sealed class VulkanCommandRecordingDependencyTests
             "IsCommandBufferVariantImageLayoutStateDirty(");
 
         fastReuse.ShouldNotContain("variant.RecordedGenerations.CameraPose != currentGenerations.CameraPose");
-        cameraPoseDirtyCheck.ShouldContain("variant.RecordedGenerations.CameraPose != currentGenerations.CameraPose");
-        cameraPoseDirtyCheck.ShouldContain("!usingCommandChains");
+        cameraPoseDirtyCheck.ShouldContain("_commandScheduler.HasCameraGenerationChanged(");
+        string scheduler = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanCommandScheduler.cs");
+        scheduler.ShouldContain("=> !usesCommandChains && recordedGeneration != currentGeneration;");
     }
 
     [Test]
@@ -458,8 +546,8 @@ public sealed class VulkanCommandRecordingDependencyTests
     [Test]
     public void CommandChainsAndSchedules_StoreTheSharedDependencySignature()
     {
-        string chains = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanCommandChains.cs");
+        string chains = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "CommandRecordingDependencySignature DependencySignature");
         string lowering = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
 
@@ -537,14 +625,20 @@ public sealed class VulkanCommandRecordingDependencyTests
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
 
 		descriptors.ShouldContain("ComputeDispatchSnapshot? bindingSnapshot = null");
-		descriptors.ShouldContain("resourcesCapturedByFrameSignature &&\n\t\t\t\tbindingSnapshot is null &&");
-		descriptors.ShouldContain("usesSharedMaterialTier,\n\t\t\t\tbindingSnapshot);");
-        descriptors.ShouldContain("resourceFingerprint,\n\t\t\t\tbindingSnapshot,");
-        descriptors.ShouldContain("out int imageStart,\n\t\t\tComputeDispatchSnapshot? bindingSnapshot = null)");
-        descriptors.ShouldContain("i,\n\t\t\t\t\t\tbindingSnapshot))");
+		descriptors.ShouldContain("if (refreshFrameIndex is { } validatedFrameIndex &&");
+		descriptors.ShouldContain("TryActivatePublishedDescriptorOwnerGeneration(");
+		descriptors.ShouldContain("if (resourcesCapturedByFrameSignature || refreshFrameIndex.HasValue)");
+        descriptors.ShouldContain("ulong resourceFingerprint,");
+        descriptors.ShouldContain("ComputeDispatchSnapshot? bindingSnapshot,");
+        descriptors.ShouldContain("out int imageStart,");
+        descriptors.ShouldContain("ComputeDispatchSnapshot? bindingSnapshot = null)");
+        descriptors.ShouldContain("out DescriptorImageInfo info,");
+        descriptors.ShouldContain("bindingSnapshot))");
         drawing.ShouldContain("EnsureDescriptorSets(material, drawUniformSlot, imageIndex, draw.ProgramBindingSnapshot)");
         drawing.ShouldContain("EnsureDescriptorSets(material, drawUniformSlot, frameIndex, draw.ProgramBindingSnapshot)");
-        drawing.ShouldContain("frameIndex,\n\t\t\t\tdraw.ProgramBindingSnapshot,\n\t\t\t\tout string descriptorReason)");
+        drawing.ShouldContain("capturedDescriptorResources,");
+        drawing.ShouldContain("draw.ProgramBindingSnapshot,");
+        drawing.ShouldContain("out string descriptorReason);");
     }
 
     [TestCase(0UL, 1UL, 256UL)]
@@ -584,7 +678,7 @@ public sealed class VulkanCommandRecordingDependencyTests
             VolatileSuffixGeneration: 18UL);
 
     private static string ReadWorkspaceFile(string relativePath)
-        => SourceContractWorkspace.ReadFile(relativePath);
+        => SourceContractWorkspace.ReadPartialType(relativePath);
 
     private static string Slice(string source, string startMarker, string endMarker)
     {

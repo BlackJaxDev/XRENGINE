@@ -41,6 +41,7 @@ namespace XREngine.Rendering.Vulkan
             public VulkanImageLayoutStateSnapshot? RecordedImageLayoutEndState { get; set; }
             public ulong CommandChainScheduleSignature { get; set; } = ulong.MaxValue;
             public ulong CommandChainPrimaryGroupSignature { get; set; } = ulong.MaxValue;
+            public VulkanCommandIdentityComponents CommandChainPrimaryIdentityComponents { get; set; }
             public ulong CommandChainPrimarySkeletonSignature { get; set; } = ulong.MaxValue;
             public int CommandChainPrimaryGroupCount { get; set; } = -1;
             public ulong PlannerRevision { get; set; } = ulong.MaxValue;
@@ -50,6 +51,10 @@ namespace XREngine.Rendering.Vulkan
             public int GpuProfilerQueryCount { get; set; }
             public ulong LastUsedFrameId { get; set; }
             public FrameOpSignatureDebugPart[]? SignatureDebugParts { get; set; }
+            public VulkanReusableFrameDataRefreshState
+                PrimaryFrameDataRefreshState { get; } = new();
+            public VulkanReusableFrameDataRefreshState
+                DynamicUiFrameDataRefreshState { get; } = new();
         }
 
     }

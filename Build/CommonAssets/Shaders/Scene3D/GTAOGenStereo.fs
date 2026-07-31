@@ -14,16 +14,16 @@ layout(location = 0) in vec3 FragPos;
 uniform sampler2DArray Normal;
 uniform sampler2DArray DepthView;
 
-uniform float Radius = 2.2f;
-uniform float Bias = 0.06f;
-uniform float Power = 1.35f; // Unused in gather - applied post-denoise in DeferredLightCombine
-uniform int SliceCount = 3;
-uniform int StepsPerSlice = 4;
-uniform float FalloffStartRatio = 0.4f;
-uniform float ThicknessHeuristic = 1.0f;
-uniform bool UseInputNormals = true;
-uniform bool UseVisibilityBitmask = true;
-uniform float VisibilityBitmaskThickness = 0.12f;
+uniform float Radius = 2.2f; // XRENGINE_FREQUENCY(View)
+uniform float Bias = 0.06f; // XRENGINE_FREQUENCY(View)
+uniform float Power = 1.35f; // XRENGINE_FREQUENCY(View)
+uniform int SliceCount = 3; // XRENGINE_FREQUENCY(View)
+uniform int StepsPerSlice = 4; // XRENGINE_FREQUENCY(View)
+uniform float FalloffStartRatio = 0.4f; // XRENGINE_FREQUENCY(View)
+uniform float ThicknessHeuristic = 1.0f; // XRENGINE_FREQUENCY(View)
+uniform bool UseInputNormals = true; // XRENGINE_FREQUENCY(View)
+uniform bool UseVisibilityBitmask = true; // XRENGINE_FREQUENCY(View)
+uniform float VisibilityBitmaskThickness = 0.12f; // XRENGINE_FREQUENCY(View)
 
 uniform mat4 LeftEyeInverseViewMatrix;
 uniform mat4 RightEyeInverseViewMatrix;

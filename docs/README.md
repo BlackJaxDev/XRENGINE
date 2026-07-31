@@ -34,6 +34,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Continuous Integration And Releases](developer-guides/ci-cd.md)
 - [MCP Server Implementation](developer-guides/ai/mcp-server.md)
 - [MCP Assistant](developer-guides/ai/mcp-assistant.md)
+- [Local Agent Broker Implementation](developer-guides/ai/local-agent-broker.md)
 - [Animation API](developer-guides/animation/animation-api.md)
 - [Model Import](developer-guides/assets/model-import.md)
 - [Native FBX Import And Export](developer-guides/assets/native-fbx-import-export.md)
@@ -63,6 +64,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 
 - [Engine](user-guide/engine.md)
 - [MCP Server And Assistant](user-guide/ai/mcp-server.md)
+- [Local Agent Broker](user-guide/ai/local-agent-broker.md)
 - [Scene System](user-guide/scene.md)
 - [Component System](user-guide/components.md)
 - [Transforms](user-guide/transforms.md)

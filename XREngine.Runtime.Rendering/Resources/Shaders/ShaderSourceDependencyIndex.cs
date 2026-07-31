@@ -123,18 +123,20 @@ internal static class ShaderSourceDependencyIndex
             shaders = [.. unique];
         }
 
-        int invalidated = PublishInvalidationsOnRenderThread(shaders, reason);
+        int invalidated = PublishInvalidationsAtFrameSwap(shaders, reason);
         Interlocked.Add(ref _notificationsPublished, invalidated);
         return invalidated;
     }
 
-    internal static int ProcessFileChangeImmediately(in ShaderSourceFileChange change)
+    internal static int ProcessFileChangeImmediately(
+        in ShaderSourceFileChange change,
+        bool publishAtFrameSwap = false)
     {
-        int invalidated = InvalidatePath(change.Path);
+        int invalidated = InvalidatePath(change.Path, publishAtFrameSwap);
         if (!string.IsNullOrWhiteSpace(change.PreviousPath) &&
             !string.Equals(change.Path, change.PreviousPath, StringComparison.OrdinalIgnoreCase))
         {
-            invalidated += InvalidatePath(change.PreviousPath);
+            invalidated += InvalidatePath(change.PreviousPath, publishAtFrameSwap);
         }
 
         Interlocked.Add(ref _notificationsPublished, invalidated);
@@ -180,7 +182,7 @@ internal static class ShaderSourceDependencyIndex
                 return;
             }
 
-            ProcessFileChangeImmediately(pending.Change);
+            ProcessFileChangeImmediately(pending.Change, publishAtFrameSwap: true);
         }
         catch (OperationCanceledException)
         {
@@ -226,7 +228,7 @@ internal static class ShaderSourceDependencyIndex
         }
     }
 
-    private static int InvalidatePath(string? path)
+    private static int InvalidatePath(string? path, bool publishAtFrameSwap)
     {
         string normalizedPath = NormalizePath(path);
         if (normalizedPath.Length == 0)
@@ -252,15 +254,21 @@ internal static class ShaderSourceDependencyIndex
             shaders = [.. unique];
         }
 
-        return PublishInvalidationsOnRenderThread(shaders, normalizedPath);
+        return publishAtFrameSwap
+            ? PublishInvalidationsAtFrameSwap(shaders, normalizedPath)
+            : PublishInvalidations(shaders, normalizedPath);
     }
 
     /// <summary>
-    /// Publishes one dependency-change batch at a render-thread safe point.
+    /// Publishes one dependency-change batch at the collect-visible/render swap
+    /// point.
     /// Keeping the whole batch in one job prevents a frame from relinking and
-    /// recording against only part of a multi-stage program's invalidation set.
+    /// recording against only part of a multi-stage program's invalidation set,
+    /// and prevents invalidation from racing the producer for the next package.
     /// </summary>
-    private static int PublishInvalidationsOnRenderThread(XRShader[] shaders, string reason)
+    private static int PublishInvalidationsAtFrameSwap(
+        XRShader[] shaders,
+        string reason)
     {
         if (shaders.Length == 0)
             return 0;
@@ -268,9 +276,15 @@ internal static class ShaderSourceDependencyIndex
         if (!RuntimeRenderingHostServices.HasConcreteHost)
             return PublishInvalidations(shaders, reason);
 
-        return RuntimeRenderingHostServices.Scheduling.InvokeRenderThreadTask(
+        IRuntimeRenderSchedulingServices scheduling =
+            RuntimeRenderingHostServices.Scheduling;
+        if (scheduling.IsFrameSwapThread)
+            return PublishInvalidations(shaders, reason);
+
+        scheduling.EnqueueFrameSwapTask(
             () => PublishInvalidations(shaders, reason),
             $"ShaderSourceDependencyIndex.Publish[{reason}]");
+        return shaders.Length;
     }
 
     private static int PublishInvalidations(XRShader[] shaders, string reason)

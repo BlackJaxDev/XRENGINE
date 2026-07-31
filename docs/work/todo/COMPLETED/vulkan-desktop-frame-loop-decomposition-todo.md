@@ -14,9 +14,10 @@ Execution ownership:
 
 - This tracker owns structural frame-lifecycle correctness and its remaining
   runtime validation.
-- [Workstream 01](optimization/01-vulkan-performance-truth-and-regression-gates-todo.md)
-  owns current performance measurement and attribution.
-- [Workstream 04](optimization/04-next-frame-preparation-and-collect-visible-handoff-todo.md)
+- Completed workstream 01 owns current performance measurement and
+  attribution; see the
+  [Vulkan framerate root-cause investigation](../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md).
+- [Workstream 04](../rendering/optimization/04-next-frame-preparation-and-collect-visible-handoff-todo.md)
   owns changes to the collect/render prepared-frame handoff.
 - The numbered workstreams must preserve this tracker's acquire, image
   ownership, recovery, retirement, submission, and device-loss invariants.
@@ -39,10 +40,10 @@ Related documentation and work:
 - [Rendering Code Map](../../../architecture/rendering/code-map.md)
 - [OpenXR VR Rendering](../../../architecture/rendering/openxr-vr-rendering.md)
 - [Vulkan Upscale Bridge](../../../developer-guides/rendering/vulkan-upscale-bridge.md)
-- [Vulkan Core Hardening And Device-Loss TODO](vulkan-core-hardening-and-device-loss-todo.md)
-- [Vulkan Dynamic Rendering Migration TODO](vulkan-dynamic-rendering-migration-todo.md)
-- [Vulkan Primary Reuse Correctness TODO](optimization/02-vulkan-primary-reuse-correctness-todo.md)
-- [OpenXR Vulkan Submit Fence Wait TODO](vr/openxr-vulkan-submit-fence-wait-todo.md)
+- [Vulkan Core Hardening And Device-Loss TODO](../rendering/vulkan-core-hardening-and-device-loss-todo.md)
+- [Vulkan Dynamic Rendering Migration TODO](../rendering/vulkan-dynamic-rendering-migration-todo.md)
+- [Completed Vulkan primary-reuse evidence](../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md)
+- [OpenXR Vulkan Submit Fence Wait TODO](../rendering/vr/openxr-vulkan-submit-fence-wait-todo.md)
 - [Vulkan Frame Loop Performance TODO](../COMPLETED/vulkan-frame-loop-performance-todo.md)
 - [Backend Renderer Folder Organization TODO](../COMPLETED/backend-renderer-folder-organization-todo.md)
 - [Vulkan Parallel Command Chain Refactor Design](../../design/rendering/vulkan-parallel-command-chain-refactor-design.md)

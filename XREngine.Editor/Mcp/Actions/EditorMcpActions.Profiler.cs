@@ -219,6 +219,12 @@ namespace XREngine.Editor.Mcp
                         right_eye_visible = VrStats.VrRightEyeVisible,
                         left_worker_build_ms = JsonFinite(VrStats.VrLeftWorkerBuildTimeMs),
                         right_worker_build_ms = JsonFinite(VrStats.VrRightWorkerBuildTimeMs),
+                        openxr_eye_primary_record_span_ms = JsonFinite(VrStats.VrOpenXrEyePrimaryRecordSpanMs),
+                        openxr_eye_primary_record_overlap_ms = JsonFinite(VrStats.VrOpenXrEyePrimaryRecordOverlapMs),
+                        openxr_eye_primary_record_overlap_ratio = JsonFinite(VrStats.VrOpenXrEyePrimaryRecordOverlapRatio),
+                        process_openxr_eye_primary_record_samples = VrStats.VrProcessOpenXrEyePrimaryRecordSamples,
+                        process_openxr_eye_primary_record_span_ms = JsonFinite(VrStats.VrProcessOpenXrEyePrimaryRecordSpanMs),
+                        process_openxr_eye_primary_record_overlap_ms = JsonFinite(VrStats.VrProcessOpenXrEyePrimaryRecordOverlapMs),
                         render_submit_ms = JsonFinite(VrStats.VrRenderSubmitTimeMs),
                         xr_wait_frame_block_ms = JsonFinite(VrStats.VrXrWaitFrameBlockTimeMs),
                         xr_end_frame_submit_ms = JsonFinite(VrStats.VrXrEndFrameSubmitTimeMs),
@@ -289,6 +295,11 @@ namespace XREngine.Editor.Mcp
                             frame_data_descriptor_validation = VulkanCpuStage(EVulkanCpuStage.FrameDataDescriptorValidation),
                             frame_data_engine_uniform_upload = VulkanCpuStage(EVulkanCpuStage.FrameDataEngineUniformUpload),
                             frame_data_auto_uniform_upload = VulkanCpuStage(EVulkanCpuStage.FrameDataAutoUniformUpload),
+                            prepared_draw_construction = VulkanCpuStage(EVulkanCpuStage.PreparedDrawConstruction),
+                            secondary_merge = VulkanCpuStage(EVulkanCpuStage.SecondaryMerge),
+                            command_dependency_comparison = VulkanCpuStage(EVulkanCpuStage.CommandDependencyComparison),
+                            command_dirty_propagation = VulkanCpuStage(EVulkanCpuStage.CommandDirtyPropagation),
+                            command_cache_scanning = VulkanCpuStage(EVulkanCpuStage.CommandCacheScanning),
                         },
                         command_buffer_cache = new
                         {
@@ -306,6 +317,25 @@ namespace XREngine.Editor.Mcp
                             decision_swapchain_slot = VulkanStats.VulkanCommandBufferDecisionSwapchainSlot,
                             dirty_summary = VulkanStats.VulkanCommandBufferDirtySummary,
                             record_allocated_bytes = VulkanStats.VulkanRecordCommandBufferAllocatedBytes,
+                            reset_command_buffer_calls = VulkanStats.VulkanResetCommandBufferCalls,
+                            reset_command_pool_calls = VulkanStats.VulkanResetCommandPoolCalls,
+                            allocate_command_buffer_calls = VulkanStats.VulkanAllocateCommandBufferCalls,
+                            command_buffers_allocated = VulkanStats.VulkanCommandBuffersAllocated,
+                            execute_secondary_command_buffer_calls = VulkanStats.VulkanExecuteSecondaryCommandBufferCalls,
+                            secondary_command_buffers_invoked = VulkanStats.VulkanSecondaryCommandBuffersInvoked,
+                            process_reset_command_buffer_calls = VulkanStats.VulkanProcessResetCommandBufferCalls,
+                            process_reset_command_pool_calls = VulkanStats.VulkanProcessResetCommandPoolCalls,
+                            process_allocate_command_buffer_calls = VulkanStats.VulkanProcessAllocateCommandBufferCalls,
+                            process_command_buffers_allocated = VulkanStats.VulkanProcessCommandBuffersAllocated,
+                            process_execute_secondary_command_buffer_calls = VulkanStats.VulkanProcessExecuteSecondaryCommandBufferCalls,
+                            process_secondary_command_buffers_invoked = VulkanStats.VulkanProcessSecondaryCommandBuffersInvoked,
+                            process_worker_secondary_command_buffer_reset_calls = VulkanStats.VulkanProcessWorkerSecondaryCommandBufferResetCalls,
+                            process_worker_secondary_command_buffer_allocations = VulkanStats.VulkanProcessWorkerSecondaryCommandBufferAllocations,
+                            process_worker_secondary_replacement_allocations = VulkanStats.VulkanProcessWorkerSecondaryReplacementAllocations,
+                            visible_mesh_draws = VulkanStats.VulkanVisibleMeshDraws,
+                            unique_visible_materials = VulkanStats.VulkanUniqueVisibleMaterials,
+                            prepared_mesh_draws = VulkanStats.VulkanPreparedMeshDraws,
+                            recorded_command_artifact_retirements = VulkanStats.VulkanRecordedCommandArtifactRetirements,
                         },
                         binding_data = new
                         {
@@ -331,8 +361,53 @@ namespace XREngine.Editor.Mcp
                             auto_uniform_fast_path_draws = VulkanStats.VulkanAutoUniformFastPathDraws,
                             auto_uniform_legacy_fallback_draws = VulkanStats.VulkanAutoUniformLegacyFallbackDraws,
                             frame_data_draws_visited = VulkanStats.VulkanFrameDataDrawsVisited,
+                            prepared_primary_frame_data_draws_visited =
+                                VulkanStats.VulkanPreparedPrimaryFrameDataDrawsVisited,
+                            prepared_dynamic_ui_frame_data_draws_visited =
+                                VulkanStats.VulkanPreparedDynamicUiFrameDataDrawsVisited,
                             descriptor_records_validated = VulkanStats.VulkanDescriptorRecordsValidated,
                             descriptor_records_written = VulkanStats.VulkanDescriptorRecordsWritten,
+                            descriptor_owner_lookup_misses = VulkanStats.VulkanDescriptorOwnerLookupMisses,
+                            descriptor_owner_generation_misses = VulkanStats.VulkanDescriptorOwnerGenerationMisses,
+                            descriptor_frame_source_generation_misses = VulkanStats.VulkanDescriptorFrameSourceGenerationMisses,
+                            binding_schemas_compiled = VulkanStats.VulkanBindingSchemasCompiled,
+                            binding_schema_value_operations = VulkanStats.VulkanBindingSchemaValueOperations,
+                            binding_schema_descriptor_entries = VulkanStats.VulkanBindingSchemaDescriptorEntries,
+                            binding_schema_fallback_operations = VulkanStats.VulkanBindingSchemaFallbackOperations,
+                            auto_uniform_typed_operations_executed = VulkanStats.VulkanAutoUniformTypedOperationsExecuted,
+                            auto_uniform_reflected_name_lookups = VulkanStats.VulkanAutoUniformReflectedNameLookups,
+                            auto_uniform_generic_conversions = VulkanStats.VulkanAutoUniformGenericConversions,
+                            auto_uniform_frequency_publication = new
+                            {
+                                frame = VulkanFrequencyPublication(VulkanStats.VulkanBindingFrequencyFrameIndex),
+                                view = VulkanFrequencyPublication(VulkanStats.VulkanBindingFrequencyViewIndex),
+                                pass = VulkanFrequencyPublication(VulkanStats.VulkanBindingFrequencyPassIndex),
+                                material = VulkanFrequencyPublication(VulkanStats.VulkanBindingFrequencyMaterialIndex),
+                                @object = VulkanFrequencyPublication(VulkanStats.VulkanBindingFrequencyObjectIndex),
+                                instance = VulkanFrequencyPublication(VulkanStats.VulkanBindingFrequencyInstanceIndex),
+                                runtime_callback = VulkanFrequencyPublication(VulkanStats.VulkanBindingFrequencyRuntimeCallbackIndex),
+                            },
+                            auto_uniform_fallback_reasons = new
+                            {
+                                binding_snapshot_ineligible = VulkanStats.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.BindingSnapshotIneligible),
+                                program_unavailable = VulkanStats.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.ProgramUnavailable),
+                                invalid_buffer_size = VulkanStats.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.InvalidBufferSize),
+                                binding_schema_unavailable = VulkanStats.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.BindingSchemaUnavailable),
+                                binding_schema_mismatch = VulkanStats.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.BindingSchemaMismatch),
+                                invalid_member_name = VulkanStats.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.InvalidMemberName),
+                                unsupported_shader_type = VulkanStats.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.UnsupportedShaderType),
+                                invalid_destination_range = VulkanStats.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.InvalidDestinationRange),
+                                invalid_array_layout = VulkanStats.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.InvalidArrayLayout),
+                                struct_snapshot_required = VulkanStats.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.StructSnapshotRequired),
+                                engine_source_type_mismatch = VulkanStats.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.EngineSourceTypeMismatch),
+                                mesh_state_source_type_mismatch = VulkanStats.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.MeshStateSourceTypeMismatch),
+                                typed_engine_source_unavailable = VulkanStats.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.TypedEngineSourceUnavailable),
+                                typed_engine_write_failed = VulkanStats.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.TypedEngineWriteFailed),
+                                typed_temporal_write_failed = VulkanStats.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.TypedTemporalWriteFailed),
+                                typed_mesh_state_source_unavailable = VulkanStats.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.TypedMeshStateSourceUnavailable),
+                                typed_mesh_state_write_failed = VulkanStats.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.TypedMeshStateWriteFailed),
+                                typed_material_or_runtime_write_failed = VulkanStats.GetVulkanAutoUniformFallbackReasonCount(EVulkanAutoUniformFallbackReason.TypedMaterialOrRuntimeWriteFailed),
+                            },
                         },
                         command_chains = new
                         {
@@ -354,6 +429,36 @@ namespace XREngine.Editor.Mcp
                             worker_conflicts = VulkanStats.VulkanCommandChainWorkerConflicts,
                             worker_failures = VulkanStats.VulkanCommandChainWorkerFailures,
                             worker_wait_timeouts = VulkanStats.VulkanCommandChainWorkerWaitTimeouts,
+                            worker_eligibility = VulkanStats.VulkanLastCommandChainWorkerEligibility.ToString(),
+                            worker_eligibility_counts = new
+                            {
+                                eligible = VulkanStats.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.Eligible),
+                                too_little_independent_work = VulkanStats.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.TooLittleIndependentWork),
+                                mutable_renderer_conflict = VulkanStats.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.MutableRendererConflict),
+                                unsupported_operation = VulkanStats.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.UnsupportedOperation),
+                                unsupported_inheritance = VulkanStats.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.UnsupportedInheritance),
+                                primary_owned_indirect_stream = VulkanStats.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.PrimaryOwnedIndirectStream),
+                                worker_quarantined = VulkanStats.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.WorkerQuarantined),
+                                resource_preparation_failed = VulkanStats.GetVulkanCommandChainWorkerEligibilityCount(EVulkanCommandChainWorkerEligibility.ResourcePreparationFailed),
+                            },
+                            indirect_secondary_eligibility = VulkanStats.VulkanLastIndirectSecondaryEligibility.ToString(),
+                            indirect_secondary_eligibility_counts = new
+                            {
+                                eligible_producer_complete = VulkanStats.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.EligibleProducerComplete),
+                                mutable_current_frame = VulkanStats.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.MutableCurrentFrame),
+                                producer_incomplete = VulkanStats.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.ProducerIncomplete),
+                                buffer_identity_changed = VulkanStats.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.BufferIdentityChanged),
+                                invalid_range = VulkanStats.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.InvalidRange),
+                                command_chains_disabled = VulkanStats.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.CommandChainsDisabled),
+                                unsupported_inheritance = VulkanStats.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.UnsupportedInheritance),
+                                resource_preparation_failed = VulkanStats.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.ResourcePreparationFailed),
+                            },
+                            compute_secondary_eligibility = VulkanStats.GetVulkanLastSecondaryRecordingEligibility(EVulkanSecondaryCommandFamily.Compute).ToString(),
+                            compute_secondary_eligibility_counts = CreateSecondaryRecordingEligibilityCounts(EVulkanSecondaryCommandFamily.Compute),
+                            transfer_secondary_eligibility = VulkanStats.GetVulkanLastSecondaryRecordingEligibility(EVulkanSecondaryCommandFamily.Transfer).ToString(),
+                            transfer_secondary_eligibility_counts = CreateSecondaryRecordingEligibilityCounts(EVulkanSecondaryCommandFamily.Transfer),
+                            query_secondary_eligibility = VulkanStats.GetVulkanLastSecondaryRecordingEligibility(EVulkanSecondaryCommandFamily.Query).ToString(),
+                            query_secondary_eligibility_counts = CreateSecondaryRecordingEligibilityCounts(EVulkanSecondaryCommandFamily.Query),
                             peak_concurrent_workers = VulkanStats.VulkanCommandChainPeakConcurrentWorkers,
                             worker_queue_delay_ms = VulkanStats.VulkanCommandChainWorkerQueueDelayMs,
                             chain_worker_record_ms = VulkanStats.VulkanCommandChainWorkerRecordMs,
@@ -623,6 +728,71 @@ namespace XREngine.Editor.Mcp
                 elapsed_ms = VulkanStats.VulkanCpuStageMs(stage),
                 allocated_bytes = VulkanStats.VulkanCpuStageAllocatedBytes(stage),
                 allocation_high_water_bytes = VulkanStats.VulkanCpuStageAllocationHighWaterBytes(stage),
+                process_invocation_count = VulkanStats.VulkanCpuStageInvocationCount(stage),
+                process_elapsed_ms = VulkanStats.VulkanCpuStageCumulativeMs(stage),
+                process_peak_ms = VulkanStats.VulkanCpuStagePeakMs(stage),
+            };
+
+        private static object VulkanFrequencyPublication(int frequency)
+            => new
+            {
+                publications =
+                    VulkanStats.GetVulkanAutoUniformFrequencyPublicationCount(
+                        frequency),
+                reuses =
+                    VulkanStats.GetVulkanAutoUniformFrequencyReuseCount(
+                        frequency),
+                published_bytes =
+                    VulkanStats.GetVulkanAutoUniformFrequencyPublishedBytes(
+                        frequency),
+            };
+
+        private static object CreateSecondaryRecordingEligibilityCounts(
+            EVulkanSecondaryCommandFamily family)
+            => new
+            {
+                eligible = VulkanStats.GetVulkanSecondaryRecordingEligibilityCount(
+                    family,
+                    EVulkanSecondaryRecordingEligibility.Eligible),
+                family_disabled = VulkanStats.GetVulkanSecondaryRecordingEligibilityCount(
+                    family,
+                    EVulkanSecondaryRecordingEligibility.FamilyDisabled),
+                secondary_command_buffers_disabled = VulkanStats.GetVulkanSecondaryRecordingEligibilityCount(
+                    family,
+                    EVulkanSecondaryRecordingEligibility.SecondaryCommandBuffersDisabled),
+                empty_range = VulkanStats.GetVulkanSecondaryRecordingEligibilityCount(
+                    family,
+                    EVulkanSecondaryRecordingEligibility.EmptyRange),
+                queue_family_unsupported = VulkanStats.GetVulkanSecondaryRecordingEligibilityCount(
+                    family,
+                    EVulkanSecondaryRecordingEligibility.QueueFamilyUnsupported),
+                active_render_scope = VulkanStats.GetVulkanSecondaryRecordingEligibilityCount(
+                    family,
+                    EVulkanSecondaryRecordingEligibility.ActiveRenderScope),
+                query_inheritance_unsupported = VulkanStats.GetVulkanSecondaryRecordingEligibilityCount(
+                    family,
+                    EVulkanSecondaryRecordingEligibility.QueryInheritanceUnsupported),
+                barrier_plan_unavailable = VulkanStats.GetVulkanSecondaryRecordingEligibilityCount(
+                    family,
+                    EVulkanSecondaryRecordingEligibility.BarrierPlanUnavailable),
+                query_reset_primary_owned = VulkanStats.GetVulkanSecondaryRecordingEligibilityCount(
+                    family,
+                    EVulkanSecondaryRecordingEligibility.QueryResetPrimaryOwned),
+                query_pair_primary_owned = VulkanStats.GetVulkanSecondaryRecordingEligibilityCount(
+                    family,
+                    EVulkanSecondaryRecordingEligibility.QueryPairPrimaryOwned),
+                query_timestamp_primary_owned = VulkanStats.GetVulkanSecondaryRecordingEligibilityCount(
+                    family,
+                    EVulkanSecondaryRecordingEligibility.QueryTimestampPrimaryOwned),
+                query_properties_primary_owned = VulkanStats.GetVulkanSecondaryRecordingEligibilityCount(
+                    family,
+                    EVulkanSecondaryRecordingEligibility.QueryPropertiesPrimaryOwned),
+                query_result_ordering_unavailable = VulkanStats.GetVulkanSecondaryRecordingEligibilityCount(
+                    family,
+                    EVulkanSecondaryRecordingEligibility.QueryResultOrderingUnavailable),
+                invalid_operation_state = VulkanStats.GetVulkanSecondaryRecordingEligibilityCount(
+                    family,
+                    EVulkanSecondaryRecordingEligibility.InvalidOperationState),
             };
 
         private static double? JsonFinite(double value)

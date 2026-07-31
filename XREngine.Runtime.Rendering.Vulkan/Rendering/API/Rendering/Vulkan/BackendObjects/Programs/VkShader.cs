@@ -18,7 +18,7 @@ internal sealed unsafe class VkShader(VulkanRenderer api, XRShader data) : VkObj
         private readonly List<DescriptorBindingInfo> _descriptorBindings = new();
         private string _entryPoint = "main";
         private PipelineShaderStageCreateInfo _shaderStageCreateInfo;
-        private AutoUniformBlockInfo? _autoUniformBlock;
+        private AutoUniformBlockInfo[] _autoUniformBlocks = [];
         private string? _rewrittenSource;
         private Dictionary<string, uint>? _vertexInputLocations;
         private int _compiledShaderConfigVersion = -1;
@@ -51,7 +51,10 @@ internal sealed unsafe class VkShader(VulkanRenderer api, XRShader data) : VkObj
         public PipelineShaderStageCreateInfo ShaderStageCreateInfo => _shaderStageCreateInfo;
         public IReadOnlyList<DescriptorBindingInfo> DescriptorBindings => _descriptorBindings;
         public ShaderStageFlags StageFlags { get; private set; }
-        public AutoUniformBlockInfo? AutoUniformBlock => _autoUniformBlock;
+        public AutoUniformBlockInfo? AutoUniformBlock
+            => _autoUniformBlocks.Length == 0 ? null : _autoUniformBlocks[0];
+        public IReadOnlyList<AutoUniformBlockInfo> AutoUniformBlocks
+            => _autoUniformBlocks;
         public bool IsCompiled { get; private set; }
         public bool IsCompilePending { get; private set; }
         public ShaderCompileStatus CompileStatus { get; private set; } = ShaderCompileStatus.Empty;
@@ -252,7 +255,7 @@ internal sealed unsafe class VkShader(VulkanRenderer api, XRShader data) : VkObj
                 shaderConfigVersion,
                 usesVulkanClipDepthRemap,
                 prepared.RewrittenSource,
-                prepared.AutoUniformBlock,
+                prepared.AutoUniformBlocks,
                 stageFlags,
                 transformFeedbackPlanIdentity,
                 out VulkanShaderArtifact cachedArtifact))
@@ -283,7 +286,9 @@ internal sealed unsafe class VkShader(VulkanRenderer api, XRShader data) : VkObj
                 vertexInputLocations,
                 stageFlags,
                 shaderConfigVersion,
-                usesVulkanClipDepthRemap);
+                usesVulkanClipDepthRemap,
+                FrequencyOwnedAutoUniformBlocks:
+                    prepared.AutoUniformBlocks);
             artifact = artifact with { TransformFeedbackPlanIdentity = transformFeedbackPlanIdentity };
 
             VulkanShaderArtifactCache.QueueWrite(artifact);
@@ -294,7 +299,7 @@ internal sealed unsafe class VkShader(VulkanRenderer api, XRShader data) : VkObj
         private void ApplyCompiledArtifact(VulkanShaderArtifact artifact)
         {
             _entryPoint = artifact.EntryPoint;
-            _autoUniformBlock = artifact.AutoUniformBlock;
+            _autoUniformBlocks = [.. artifact.AutoUniformBlocks];
             _rewrittenSource = artifact.RewrittenSource;
             StageFlags = artifact.StageFlags;
             _descriptorBindings.Clear();
@@ -446,7 +451,7 @@ internal sealed unsafe class VkShader(VulkanRenderer api, XRShader data) : VkObj
             builder.AppendLine($"[Vulkan] Shader diagnostics: reason='{reason}'");
             builder.AppendLine($"[Vulkan]   Stage={Data.Type} Entry='{_entryPoint}' Shader='{Data.Name ?? "UnnamedShader"}'");
             builder.AppendLine($"[Vulkan]   File='{Data.Source?.FilePath ?? Data.FilePath ?? "<embedded>"}' SourceLines={CountLines(Data.Source?.Text)} RewrittenLines={CountLines(source)}");
-            builder.AppendLine($"[Vulkan]   AutoUniformBlock={DescribeAutoUniformBlock(_autoUniformBlock)}");
+            builder.AppendLine($"[Vulkan]   AutoUniformBlock={DescribeAutoUniformBlock(AutoUniformBlock)}");
             AppendSourcePreview(builder, source, 160);
 
             Debug.WriteAuxiliaryLog("vulkan-shader-diagnostics.log", builder.ToString().TrimEnd());
@@ -474,7 +479,7 @@ internal sealed unsafe class VkShader(VulkanRenderer api, XRShader data) : VkObj
                 builder.AppendLine($"[Vulkan]   Shader='{Data.Name ?? "UnnamedShader"}' Stage={Data.Type} ArtifactIdentity={artifactIdentity ?? "<none>"}");
                 builder.AppendLine($"[Vulkan]   File='{Data.Source?.FilePath ?? Data.FilePath ?? "<embedded>"}'");
                 builder.AppendLine($"[Vulkan]   Failure={exception.Message}");
-                builder.AppendLine($"[Vulkan]   AutoUniformBlock={DescribeAutoUniformBlock(_autoUniformBlock)}");
+                builder.AppendLine($"[Vulkan]   AutoUniformBlock={DescribeAutoUniformBlock(AutoUniformBlock)}");
                 AppendSourcePreview(builder, rewrittenSource ?? _rewrittenSource ?? Data.Source?.Text ?? string.Empty, 220);
 
                 File.WriteAllText(path, builder.ToString().TrimEnd(), Encoding.UTF8);
@@ -663,11 +668,17 @@ internal sealed unsafe class VkShader(VulkanRenderer api, XRShader data) : VkObj
         private void Invalidate()
         {
             // Source dependency notifications can originate on the MCP/file-watcher
-            // thread. Keep module teardown and the owning-program invalidation in one
-            // render-thread transaction so a recorder cannot observe a still-linked
-            // program after one of its shader modules has already been destroyed.
-            if (RuntimeEngine.InvokeOnMainThread(Invalidate, "VkShader.Invalidate"))
+            // thread. Keep module teardown and owning-program invalidation at the
+            // collect-visible/render publication barrier so neither command recording
+            // nor next-frame package production can observe a partial interface.
+            if (RuntimeRenderingHostServices.HasConcreteHost &&
+                !RuntimeRenderingHostServices.Scheduling.IsFrameSwapThread)
+            {
+                RuntimeRenderingHostServices.Scheduling.EnqueueFrameSwapTask(
+                    Invalidate,
+                    "VkShader.Invalidate");
                 return;
+            }
 
             Renderer.ExecuteWithVulkanPipelineCompilationQuiesced(
                 InvalidateAfterPipelineCompileDrain,
@@ -681,7 +692,7 @@ internal sealed unsafe class VkShader(VulkanRenderer api, XRShader data) : VkObj
                 _asyncCompileTask = null;
             _descriptorBindings.Clear();
             _entryPoint = "main";
-            _autoUniformBlock = null;
+            _autoUniformBlocks = [];
             _rewrittenSource = null;
             _compiledShaderConfigVersion = -1;
             _compiledUsesVulkanClipDepthRemap = false;

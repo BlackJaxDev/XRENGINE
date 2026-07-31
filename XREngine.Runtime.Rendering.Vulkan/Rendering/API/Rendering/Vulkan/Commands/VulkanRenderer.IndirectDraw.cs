@@ -161,12 +161,14 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
+            ulong programLinkGeneration = preparedProgram.LinkGeneration;
             ComputeDispatchSnapshot bindingSnapshot = preparedProgram.CaptureComputeSnapshot();
             string programIdentity = state.Program.Name ?? preparedProgram.GetHashCode().ToString();
             if (!_boundMeshRendererForIndirect.TryCreatePreparedIndirectDrawSnapshot(
                     state.Material,
                     preparedProgram,
                     programIdentity,
+                    programLinkGeneration,
                     bindingSnapshot,
                     state.ModelMatrix,
                     ResolveCurrentFrameOpDrawTarget(),
@@ -249,7 +251,15 @@ namespace XREngine.Rendering.Vulkan
                 0,
                 useCount: false,
                 CaptureGlobalMaterialTextureDescriptorBindingForNextFrameOp(),
-                context));
+                context,
+                CaptureIndirectSecondaryRecordingContract(
+                    _boundIndirectBuffer,
+                    null,
+                    drawCount,
+                    stride,
+                    byteOffset,
+                    0,
+                    useCount: false)));
 
         }
 
@@ -300,7 +310,15 @@ namespace XREngine.Rendering.Vulkan
                 countByteOffset,
                 useCount: true,
                 CaptureGlobalMaterialTextureDescriptorBindingForNextFrameOp(),
-                context));
+                context,
+                CaptureIndirectSecondaryRecordingContract(
+                    _boundIndirectBuffer,
+                    _boundParameterBuffer,
+                    maxDrawCount,
+                    stride,
+                    byteOffset,
+                    countByteOffset,
+                    useCount: true)));
 
         }
 

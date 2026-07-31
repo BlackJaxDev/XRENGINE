@@ -9,4 +9,5 @@ internal sealed record AutoUniformBlockInfo(
     uint Binding,
     uint Size,
     IReadOnlyList<AutoUniformMember> Members,
-    EShaderType ShaderType);
+    EShaderType ShaderType,
+    EVulkanBindingFrequency Frequency = EVulkanBindingFrequency.Unknown);

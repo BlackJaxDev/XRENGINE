@@ -8,8 +8,8 @@ Branch: `rendering-profiler-benchmarking`
 
 This pre-v2 inventory is historical evidence, not a current completion
 checklist. Current Vulkan measurement definitions and regression gates are
-owned by
-[01 - Vulkan Performance Truth And Regression Gates](01-vulkan-performance-truth-and-regression-gates-todo.md).
+owned by the completed workstream-01 contract recorded in the
+[Vulkan framerate root-cause investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md).
 The broader OpenGL, asset-attribution, shader-cache, texture-streaming, VR, and
 environment-validation gaps remain useful audit inputs until a current tracker
 or implementation evidence explicitly closes them.

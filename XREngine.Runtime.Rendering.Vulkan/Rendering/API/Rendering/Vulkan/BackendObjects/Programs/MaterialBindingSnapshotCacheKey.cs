@@ -22,6 +22,7 @@ internal readonly struct MaterialBindingSnapshotCacheKey : IEquatable<MaterialBi
     private readonly long _materialUberRevision;
     private readonly ulong _programLinkGeneration;
     private readonly ulong _scopedBindingRevision;
+    private readonly ulong _typedBindingPublisherSignature;
     private readonly int _passIndex;
     private readonly int _renderAreaX;
     private readonly int _renderAreaY;
@@ -39,6 +40,7 @@ internal readonly struct MaterialBindingSnapshotCacheKey : IEquatable<MaterialBi
         XRFrameBuffer? target,
         ulong programLinkGeneration,
         ulong scopedBindingRevision,
+        ulong typedBindingPublisherSignature,
         int passIndex,
         int renderAreaX,
         int renderAreaY,
@@ -59,6 +61,7 @@ internal readonly struct MaterialBindingSnapshotCacheKey : IEquatable<MaterialBi
         _materialUberRevision = material.UberStateRevision;
         _programLinkGeneration = programLinkGeneration;
         _scopedBindingRevision = scopedBindingRevision;
+        _typedBindingPublisherSignature = typedBindingPublisherSignature;
         _passIndex = passIndex;
         _renderAreaX = renderAreaX;
         _renderAreaY = renderAreaY;
@@ -81,6 +84,8 @@ internal readonly struct MaterialBindingSnapshotCacheKey : IEquatable<MaterialBi
            _materialUberRevision == other._materialUberRevision &&
            _programLinkGeneration == other._programLinkGeneration &&
            _scopedBindingRevision == other._scopedBindingRevision &&
+           _typedBindingPublisherSignature ==
+               other._typedBindingPublisherSignature &&
            _passIndex == other._passIndex &&
            _renderAreaX == other._renderAreaX &&
            _renderAreaY == other._renderAreaY &&
@@ -107,6 +112,7 @@ internal readonly struct MaterialBindingSnapshotCacheKey : IEquatable<MaterialBi
         hash.Add(_materialUberRevision);
         hash.Add(_programLinkGeneration);
         hash.Add(_scopedBindingRevision);
+        hash.Add(_typedBindingPublisherSignature);
         hash.Add(_passIndex);
         hash.Add(_renderAreaX);
         hash.Add(_renderAreaY);

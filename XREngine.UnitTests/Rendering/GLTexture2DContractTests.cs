@@ -98,9 +98,11 @@ public sealed class GLTexture2DContractTests
         source.ShouldContain("TryPrepareTexSubImageUpload");
         source.ShouldContain("TryValidateTexSubImageUpload");
         source.ShouldContain("TryGetAllocatedMipDimensions");
+        source.ShouldContain("CanImmutableStorageRecreationRepairUpload");
         source.ShouldContain("uploadRect=");
         source.ShouldContain("allocatedMipDims=");
         source.ShouldContain("Recreating immutable storage");
+        source.ShouldContain("Skipping immutable storage recreation");
     }
 
     [Test]

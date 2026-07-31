@@ -80,8 +80,15 @@ internal readonly record struct PendingMeshDraw(
     LayeredShadowUniformState ShadowUniformState,
     VkRenderProgram? PreparedProgram,
     string? PreparedProgramIdentity,
+    ulong PreparedProgramLinkGeneration,
     ComputeDispatchSnapshot? ProgramBindingSnapshot)
 {
+    internal VulkanAutoUniformPublicationSnapshot AutoUniformPublication
+    {
+        get;
+        init;
+    }
+
     /// <summary>
     /// Captures the stable CPU-direct dynamic record written into the completed frame slot.
     /// Binding identity remains in the immutable recording snapshot; these values may change

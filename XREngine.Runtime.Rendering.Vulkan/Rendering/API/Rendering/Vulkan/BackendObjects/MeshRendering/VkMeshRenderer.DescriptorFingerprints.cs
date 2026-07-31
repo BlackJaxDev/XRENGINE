@@ -82,7 +82,7 @@ internal unsafe partial class VkMeshRenderer
 	private ulong ComputeDescriptorBindingIdentityFingerprint(
 		XRMaterial material,
 		IReadOnlyList<DescriptorBindingInfo> bindings,
-		int drawUniformSlot,
+		int descriptorOwnerSlot,
 		bool usesSharedMaterialTier)
 	{
 		// Vulkan handles are deliberately excluded. Replacing the backing image,
@@ -90,7 +90,7 @@ internal unsafe partial class VkMeshRenderer
 		// publication, not a new descriptor-set identity. The per-slot resource
 		// fingerprint below decides when the completed slot must be rewritten.
 		FrameOpSignatureHasher hash = new();
-		hash.Add(drawUniformSlot);
+		hash.Add(descriptorOwnerSlot);
 		for (int bindingIndex = 0; bindingIndex < bindings.Count; bindingIndex++)
 		{
 			DescriptorBindingInfo binding = bindings[bindingIndex];
@@ -148,7 +148,8 @@ internal unsafe partial class VkMeshRenderer
 		IReadOnlyList<DescriptorBindingInfo> bindings,
 		int drawUniformSlot,
 		bool usesSharedMaterialTier,
-		ComputeDispatchSnapshot? bindingSnapshot = null)
+		ComputeDispatchSnapshot? bindingSnapshot = null,
+		bool includeFrameSourceDescriptors = true)
 	{
 		FrameOpSignatureHasher hash = new();
 		hash.Add(frameCount);
@@ -190,6 +191,16 @@ internal unsafe partial class VkMeshRenderer
 				case DescriptorType.SampledImage:
 				case DescriptorType.StorageImage:
 				case DescriptorType.InputAttachment:
+					if (!includeFrameSourceDescriptors &&
+						IsFrameSourceSamplerBinding(
+							material,
+							binding,
+							bindingSnapshot))
+					{
+						hash.Add(VulkanRenderer.FrameSourceMutableDescriptorSignature);
+						break;
+					}
+
 					for (int arrayIndex = 0; arrayIndex < descriptorCount; arrayIndex++)
 					{
 						bool resolved = TryResolveImage(
@@ -594,7 +605,10 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		if (refreshed)
+		{
+			allocation?.PublishOwnerGeneration(descriptorSlotIndex);
 			reason = "refreshed frame-source sampler descriptors";
+		}
 		return true;
 	}
 

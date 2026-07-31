@@ -45,6 +45,40 @@ public sealed class AmbientOcclusionGtaoDefaultsTests
         settings.GTAOUseNormalWeightedBlur.ShouldBeTrue();
     }
 
+    [Test]
+    public void AmbientOcclusionSettings_BindingGenerationTracksOnlyValueChanges()
+    {
+        AmbientOcclusionSettings settings = new();
+        ulong initialGeneration = settings.BindingGeneration;
+
+        settings.Radius = settings.Radius;
+        settings.GroundTruth.SliceCount =
+            settings.GroundTruth.SliceCount;
+        settings.BindingGeneration.ShouldBe(initialGeneration);
+
+        settings.Radius += 0.1f;
+        ulong radiusGeneration = settings.BindingGeneration;
+        radiusGeneration.ShouldBeGreaterThan(initialGeneration);
+
+        settings.GroundTruth.SliceCount++;
+        settings.BindingGeneration.ShouldBeGreaterThan(radiusGeneration);
+    }
+
+    [Test]
+    public void GtaoGenerationPass_UsesViewOwnedTypedBindingPublisher()
+    {
+        string source = ReadWorkspaceFile(
+                "XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/AO/VPRC_GTAOPass.cs")
+            .Replace("\r\n", "\n");
+
+        source.ShouldContain(
+            "public ERenderBindingFrequency Frequency\n                => ERenderBindingFrequency.View;");
+        source.ShouldContain(
+            "genFbo.FullScreenMesh.BindingPublishers.Add(");
+        source.ShouldNotContain(
+            "genFbo.SettingUniforms += GTAOGen_SetUniforms;");
+    }
+
     [TestCase("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.PostProcessing.cs")]
     [TestCase("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.PostProcessing.cs")]
     public void GtaoSchemaDefaults_UseCentralizedRuntimeConstants(string relativePath)

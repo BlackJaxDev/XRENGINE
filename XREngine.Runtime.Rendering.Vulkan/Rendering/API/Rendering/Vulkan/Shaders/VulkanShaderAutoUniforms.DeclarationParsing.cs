@@ -205,6 +205,30 @@ internal static partial class VulkanShaderAutoUniforms
         return builder.ToString();
     }
 
+    private static uint[] FindAvailableAutoUniformBindings(
+        string source,
+        EShaderType shaderType,
+        int count)
+    {
+        if (count <= 0)
+            return [];
+
+        HashSet<uint> usedBindings = CollectLayoutBindings(source);
+        uint candidate = GetAutoUniformBindingBase(shaderType);
+        uint[] bindings = new uint[count];
+        for (int index = 0; index < count; index++)
+        {
+            while (usedBindings.Contains(candidate))
+                candidate++;
+
+            bindings[index] = candidate;
+            usedBindings.Add(candidate);
+            candidate++;
+        }
+
+        return bindings;
+    }
+
     private static string InsertAfterVersion(string source, string block)
     {
         using StringReader reader = new(source);

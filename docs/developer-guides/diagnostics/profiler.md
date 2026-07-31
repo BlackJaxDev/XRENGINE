@@ -247,10 +247,10 @@ at least one sample has been written. Harness summaries are written under
 `summary.json`, `summary.txt`, and `run-logdirs.txt`; by default the harness keeps
 only the latest three summary runs, configurable with `-RetainedRunCount`.
 
-### Render Stats Capture Schema v4
+### Render Stats Capture Schema v5
 
 `profiler-capture-manifest.json` now records
-`xrengine.profile_capture.render_stats.v4` with `schema_version = 4`. The
+`xrengine.profile_capture.render_stats.v5` with `schema_version = 5`. The
 manifest makes benchmark context explicit: build configuration, world mode,
 forced and effective mesh submission strategy, zero-readback material draw path,
 render backend, GPU/vendor, scene, camera, lights, viewport, render scale,
@@ -261,6 +261,13 @@ environment overrides detected at launch. Schema v4 also records Vulkan render-
 target mode, primary-command reuse and OBS-hook policies, ImGui skip state, the
 actual assembly build configuration, scene/settings hashes, and a structured
 output/view-family inventory with target extents and cadence/budget policy.
+Schema v5 adds the named-profile suitability result, promotion eligibility,
+command-label/P3 logging state, profiler/editor UI state, dynamic/debug overlay
+state, active Vulkan diagnostic-trace flags, log verbosity and exact log-session
+path, XR runtime, output anti-aliasing identity, and active AO, exposure, MSAA,
+TSR, bloom, motion-blur, and motion-vector settings. Clean captures are
+therefore self-describing and are rejected when an intrusive observer or cold
+shader/texture cache remains.
 
 Each `profiler-render-stats.ndjson` sample includes the old frame timing fields
 plus renderer-state churn counters: indirect-count and multi-draw calls, shader
@@ -385,6 +392,12 @@ writes a run manifest, and evaluates the result through
 # Short, one-cohort feedback; always reported as non-promotable.
 pwsh Tools/Benchmarks/Invoke-VulkanPerf.ps1 -Preset Quick
 
+# Explicit clean desktop and OpenXR quick profiles.
+pwsh Tools/Benchmarks/Invoke-VulkanPerf.ps1 `
+  -Preset Quick -Cohorts desktop-deferred-static
+pwsh Tools/Benchmarks/Invoke-VulkanPerf.ps1 `
+  -Preset Quick -Cohorts rvc-deferred-foveation-off
+
 # Three warm desktop repetitions per selected Deferred/Uber cohort.
 pwsh Tools/Benchmarks/Invoke-VulkanPerf.ps1 `
   -Preset Compare `
@@ -420,6 +433,15 @@ The four profile modes have distinct intent:
 | `CleanProfile` | Validation, dense timestamps, command labels, and P3 logging prohibited | ImGui and dynamic diagnostic overlays skipped | Quick feedback; non-promotable |
 | `ReleaseBenchmark` | Same non-intrusive restrictions as CleanProfile | ImGui and dynamic diagnostic overlays skipped | Compare/Gate promotion evidence |
 
+The matching VS Code tasks are `Benchmark-Vulkan-Clean-Desktop` and
+`Benchmark-Vulkan-Clean-OpenXR`. At engine startup, the resolved mode emits one
+`[PerformanceProfile]` line stating its suitability and promotion status; an
+unspecified mode resolves to `DevelopmentProfile`. Clean modes also apply
+process-local normal-verbosity, validation-off, command-label-off, P3-off, GPU
+indirect diagnostic-logging-off, Vulkan diagnostic-trace-off, and ImGui-off
+overrides before renderer creation without changing persisted user or game
+settings.
+
 Warmup covers shader/pipeline and texture residency. Capture begins only after
 the existing stability window reports a stable workload and no streaming or
 resource-retirement churn. Cold-start and streaming-churn studies remain
@@ -435,11 +457,12 @@ pwsh Tools/Benchmarks/Measure-VulkanProfileOverhead.ps1 `
   -Cohort desktop-deferred-static
 ```
 
-The report records p50/p95/p99/worst and the p95 absolute/percentage delta for
-each mode. Diagnostic and DevelopmentProfile captures deliberately enable
-validation, command labels, and dense timestamps; CleanProfile and
-ReleaseBenchmark force those observers off. The overhead comparison disables
-MCP in every mode because MCP is not part of the profile-mode contract.
+The report records the mode, clean-comparison classification, expected observer
+overhead, p50/p90/p95/p99/worst, and the p95 absolute/percentage delta for each
+mode. Diagnostic and DevelopmentProfile captures deliberately enable validation,
+command labels, and dense timestamps; CleanProfile and ReleaseBenchmark force
+those observers off. The overhead comparison disables MCP in every mode because
+MCP is not part of the profile-mode contract.
 
 The evaluator itself has GPU-free fixtures:
 

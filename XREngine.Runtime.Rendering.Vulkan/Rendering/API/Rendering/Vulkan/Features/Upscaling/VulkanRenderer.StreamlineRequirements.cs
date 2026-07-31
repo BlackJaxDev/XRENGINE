@@ -227,6 +227,54 @@ public unsafe partial class VulkanRenderer
             || _streamlineQueueRequirements.ComputeQueues > 0
             || _streamlineQueueRequirements.OpticalFlowQueues > 0;
 
+    /// <summary>
+    /// Determines whether Streamline's aggregate Vulkan feature requirements can be expressed
+    /// through the granular feature structs used by the OpenXR device-creation path.
+    /// </summary>
+    /// <remarks>
+    /// OpenXR runtimes may prepend promoted feature structs before forwarding the request to
+    /// <c>vkCreateDevice</c>. Publishing <c>VkPhysicalDeviceVulkan12Features</c> or
+    /// <c>VkPhysicalDeviceVulkan13Features</c> at the same time can therefore produce an invalid
+    /// chain even when the application's own chain contains no duplicate structs.
+    /// </remarks>
+    internal static bool TryUseGranularOpenXrStreamlineFeatureChain(
+        IReadOnlyList<string> vulkan12Features,
+        IReadOnlyList<string> vulkan13Features,
+        out string failureReason)
+    {
+        for (int i = 0; i < vulkan12Features.Count; ++i)
+        {
+            string featureName = vulkan12Features[i];
+            if (string.IsNullOrWhiteSpace(featureName) ||
+                featureName is "timelineSemaphore" or "descriptorIndexing" or "bufferDeviceAddress")
+            {
+                continue;
+            }
+
+            failureReason =
+                $"Streamline-required Vulkan 1.2 feature '{featureName}' has no granular OpenXR device-chain representation.";
+            return false;
+        }
+
+        for (int i = 0; i < vulkan13Features.Count; ++i)
+        {
+            string featureName = vulkan13Features[i];
+            if (string.IsNullOrWhiteSpace(featureName) ||
+                featureName is "dynamicRendering" or "synchronization2" or "maintenance4" or
+                    "pipelineCreationCacheControl" or "privateData")
+            {
+                continue;
+            }
+
+            failureReason =
+                $"Streamline-required Vulkan 1.3 feature '{featureName}' has no granular OpenXR device-chain representation.";
+            return false;
+        }
+
+        failureReason = string.Empty;
+        return true;
+    }
+
     private void PopulateStreamlineRequiredFeatures<TFeatures>(
         ref TFeatures requestedFeatures,
         in TFeatures supportedFeatures,

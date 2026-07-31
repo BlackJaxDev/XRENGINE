@@ -22,16 +22,16 @@ The bootstrap flow in `ExecTool.bat` currently does these steps:
 6. launches the DocFX server
 7. launches the editor
 
-Passing `--with-agent-tools` also sets up the optional code-review graph after
-submodules are built. The standard bootstrap does not install or run agent
-tooling.
+Passing `--with-agent-tools` also sets up the optional code-review graph and
+publishes/smoke-tests the local OpenAI agent broker after submodules are built.
+The standard bootstrap does not install or run agent tooling.
 
 If all you want is the standard working repo setup, this is the right place to start.
 
-## Optional code-review graph and Codex integration
+## Optional agent tools and Codex integration
 
-Use the agent-tooling bootstrap when this checkout will be used with Codex or
-the code-review-graph CLI:
+Use the agent-tooling bootstrap when this checkout will be used with Codex, the
+code-review-graph CLI, or the local agent broker:
 
 ```powershell
 ExecTool --bootstrap --with-agent-tools
@@ -47,17 +47,20 @@ The opt-in step:
 4. verifies that the C# Tree-sitter parser loads in Python isolated mode
 5. builds `.code-review-graph/graph.db` on a fresh checkout, or updates an
    existing graph
+6. publishes the BCL-only local agent broker under
+   `Build/AgentTools/LocalAgentBroker`
+7. performs an MCP initialize/list-tools smoke test with no API request
 
-The environment and graph are checkout-local and ignored by Git. The graph can
-consume roughly 500 MB for the current repository and the first full build can
-take several minutes.
+The environments and generated outputs are checkout-local and ignored by Git.
+The graph can consume roughly 500 MB for the current repository and the first
+full build can take several minutes.
 
 Codex reads the checked-in `.codex/config.toml` and `.codex/hooks.json` only
 after the repository is trusted. Restart Codex after first-time setup. The MCP
 wrapper reports a clear setup error if Codex is started before the isolated
 environment exists; it never falls back to a global Python installation.
 
-To set up only this tool without running the full engine bootstrap:
+To set up only the graph without running the full engine bootstrap:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Setup-CodeReviewGraph.ps1 -InstallPrerequisites
@@ -75,6 +78,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Invoke-CodeReviewGraph
 Use `-ForceRecreateEnvironment` on `Setup-CodeReviewGraph.ps1` to replace only
 the isolated virtual environment, and `-ForceRebuild` to rebuild the graph from
 scratch.
+
+To set up only the local agent broker:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Setup-LocalAgentBroker.ps1
+```
+
+The broker requires an independently billed `OPENAI_API_KEY` only when a worker
+is started; setup and the MCP smoke test do not call the API. See the
+[Local Agent Broker guide](../ai/local-agent-broker.md) before enabling paid
+worker runs.
 
 ## What it does not cover
 
@@ -107,7 +121,7 @@ ExecTool --bootstrap
 This is the recommended path for most contributors.
 
 Add `--with-agent-tools` when the checkout should also host the optional Codex
-code-review graph.
+code-review graph and local agent broker.
 
 ### Option 2: Manual setup
 

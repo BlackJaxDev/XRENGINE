@@ -506,9 +506,6 @@ namespace XREngine.Rendering.OpenGL
                 BindSSBOs(mat!);
                 BindSSBOs(vtx!);
 
-                BindSkinnedVertexBuffers(vtx!);
-                BindPrecombinedBlendshapeBuffers();
-
                 MeshRenderer.PushBoneMatricesToGPU();
                 MeshRenderer.PushBlendshapeWeightsToGPU();
 
@@ -535,6 +532,13 @@ namespace XREngine.Rendering.OpenGL
                 SetDirectionalCascadeLayeredVertexUniforms(vtx!, bindingMaterial.Data);
                 SetPointLightLayeredVertexUniforms(vtx!, bindingMaterial.Data);
                 material.FinalizeUniformBindings(mat);
+
+                // Renderer-local deformation streams share context-global SSBO binding points with
+                // every other graphics-stage resource. Bind them after all material, lighting, and
+                // extension callbacks so the draw cannot inherit another skinned renderer's output.
+                BindSkinnedVertexBuffers(vtx!);
+                BindPrecombinedBlendshapeBuffers();
+                LogDeformationBindingDiagnostic(vtx!);
                 GLRenderProgram materialProgram = mat!;
                 Renderer.SetDrawDebugContext(
                     materialProgram.Data.Name,

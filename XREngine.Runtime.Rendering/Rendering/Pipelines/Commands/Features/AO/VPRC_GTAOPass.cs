@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -56,6 +57,53 @@ namespace XREngine.Rendering.Pipelines.Commands
             public XRTexture? RmseTexture;
             public XRTexture? TransformIdTexture;
             public XRTexture? DepthStencilTexture;
+        }
+
+        /// <summary>
+        /// Publishes GTAO gather settings as view-owned data while keeping
+        /// settings replacement and nested value changes generation-visible.
+        /// </summary>
+        private sealed class GTAOViewBindingPublisher(
+            VPRC_GTAOPass owner) : IRenderBindingPublisher
+        {
+            private readonly object _generationSync = new();
+            private AmbientOcclusionSettings? _lastSettings;
+            private ulong _lastSettingsGeneration;
+            private long _generation = 1;
+
+            public ERenderBindingFrequency Frequency
+                => ERenderBindingFrequency.View;
+
+            public ulong Generation
+            {
+                get
+                {
+                    AmbientOcclusionSettings? settings =
+                        owner.GetCurrentSettings();
+                    ulong settingsGeneration =
+                        settings?.BindingGeneration ?? 1;
+
+                    lock (_generationSync)
+                    {
+                        if (ReferenceEquals(settings, _lastSettings) &&
+                            settingsGeneration == _lastSettingsGeneration)
+                        {
+                            return unchecked((ulong)_generation);
+                        }
+
+                        _lastSettings = settings;
+                        _lastSettingsGeneration = settingsGeneration;
+                        if (Interlocked.Increment(ref _generation) == 0)
+                            Interlocked.CompareExchange(ref _generation, 1, 0);
+                        return unchecked((ulong)_generation);
+                    }
+                }
+            }
+
+            public void PublishUniforms(
+                XRRenderProgram vertexProgram,
+                XRRenderProgram materialProgram)
+                => owner.GTAOGenSettings_SetUniforms(materialProgram);
         }
 
         private static readonly ConditionalWeakTable<XRRenderPipelineInstance, InstanceState> _instanceStates = new();
@@ -244,7 +292,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 Name = GenerationFBOName
             };
-            genFbo.SettingUniforms += GTAOGen_SetUniforms;
+            genFbo.FullScreenMesh.BindingPublishers.Add(
+                new GTAOViewBindingPublisher(this));
             return genFbo;
         }
 
@@ -285,23 +334,20 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
         }
 
-        private void GTAOGen_SetUniforms(XRRenderProgram program)
+        private void GTAOGenSettings_SetUniforms(XRRenderProgram program)
         {
-            var camera = GetCurrentCamera();
-            if (camera is null)
+            AmbientOcclusionSettings? settings = GetCurrentSettings();
+            if (settings is not null)
+            {
+                settings.SetUniforms(
+                    program,
+                    AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion);
                 return;
+            }
 
-            camera.SetUniforms(program);
-
-            if (IsStereoPassActive())
-                GetRightEyeCamera()?.SetUniforms(program, false);
-
-            camera.SetAmbientOcclusionUniforms(
-                program,
-                AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion,
-                ResolveSettingsPipeline());
-
-            SetScreenUniforms(program);
+            program.Uniform("Radius", AmbientOcclusionSettings.DefaultRadius);
+            program.Uniform("Bias", AmbientOcclusionSettings.DefaultBias);
+            program.Uniform("Power", AmbientOcclusionSettings.DefaultPower);
         }
 
         private void GTAOHorizontalBlur_SetUniforms(XRRenderProgram program)
@@ -368,24 +414,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)width);
             program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Vector2.Zero);
-        }
-
-        private bool IsStereoPassActive()
-        {
-            var instance = ActivePipelineInstance;
-            var renderState = RuntimeEngine.Rendering.State.ActiveRenderCommandExecutionState;
-            return instance?.RenderState.StereoPass == true ||
-                   renderState?.StereoPass == true ||
-                   RuntimeEngine.Rendering.State.IsStereoPass;
-        }
-
-        private XRCamera? GetRightEyeCamera()
-        {
-            var instance = ActivePipelineInstance;
-            var renderState = RuntimeEngine.Rendering.State.ActiveRenderCommandExecutionState;
-            return instance?.RenderState.StereoRightEyeCamera
-                ?? (renderState?.StereoRightEyeCamera as XRCamera)
-                ?? RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera;
         }
 
         private XRCamera? GetCurrentCamera()

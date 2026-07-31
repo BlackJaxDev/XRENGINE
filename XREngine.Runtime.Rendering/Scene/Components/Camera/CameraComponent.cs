@@ -4,6 +4,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Input;
 using XREngine.Rendering;
+using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.UI;
 using YamlDotNet.Serialization;
 
@@ -55,6 +56,51 @@ namespace XREngine.Components
         private readonly Lazy<XRCamera> _camera;
         private XRCameraParameters? _cameraParameters;
         public XRCamera Camera => _camera.Value;
+
+        /// <summary>
+        /// Uses a fixed artist exposure for this camera. This is useful for
+        /// deterministic captures where scene-adaptive exposure would obscure
+        /// the source material values.
+        /// </summary>
+        /// <param name="exposure">Linear exposure multiplier applied by color grading.</param>
+        /// <returns><see langword="true"/> when the active pipeline exposes color-grading settings.</returns>
+        public bool SetManualExposure(float exposure)
+        {
+            PostProcessStageState? colorStage = Camera.GetPostProcessStageState<ColorGradingSettings>();
+            if (colorStage is null)
+                return false;
+
+            colorStage.SetValue(nameof(ColorGradingSettings.ExposureMode), ColorGradingSettings.ExposureControlMode.Artist);
+            colorStage.SetValue(nameof(ColorGradingSettings.AutoExposure), false);
+            colorStage.SetValue(nameof(ColorGradingSettings.Exposure), exposure);
+
+            if (colorStage.TryGetBacking(out ColorGradingSettings? colorGrading) && colorGrading is not null)
+            {
+                colorGrading.ExposureMode = ColorGradingSettings.ExposureControlMode.Artist;
+                colorGrading.AutoExposure = false;
+                colorGrading.Exposure = exposure;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Enables or disables bloom for deterministic material inspection.
+        /// </summary>
+        /// <param name="enabled">Whether bloom contributes to the camera's post-process output.</param>
+        /// <returns><see langword="true"/> when the active pipeline exposes bloom settings.</returns>
+        public bool SetBloomEnabled(bool enabled)
+        {
+            PostProcessStageState? bloomStage = Camera.GetPostProcessStageState<BloomSettings>();
+            if (bloomStage is null)
+                return false;
+
+            bloomStage.SetValue(nameof(BloomSettings.Enabled), enabled);
+            if (bloomStage.TryGetBacking(out BloomSettings? bloom) && bloom is not null)
+                bloom.Enabled = enabled;
+
+            return true;
+        }
 
         [Browsable(false)]
         public XRCameraParameters CameraParameters

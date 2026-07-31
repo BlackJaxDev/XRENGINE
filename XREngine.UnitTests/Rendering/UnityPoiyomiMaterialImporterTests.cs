@@ -205,6 +205,60 @@ Material:
     }
 
     [Test]
+    public void ImportWithReport_PoiyomiToon93_ExplicitDisabledFeaturesIgnoreDormantTextures()
+    {
+        string projectRoot = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"poiyomi-dormant-project-{Guid.NewGuid():N}");
+        string assetsRoot = Path.Combine(projectRoot, "Assets");
+        string shaderPath = Path.Combine(assetsRoot, "_PoiyomiShaders", "Shaders", "9.3", "Toon", "Poiyomi Toon.shader");
+        string materialPath = Path.Combine(assetsRoot, "Materials", "DormantFeatures.mat");
+        CreateUnityAsset(projectRoot, "Assets/Textures/body_emission.png", "44444444444444444444444444444444");
+        CreateUnityAsset(projectRoot, "Assets/Textures/body_matcap.png", "55555555555555555555555555555555");
+
+        Directory.CreateDirectory(Path.GetDirectoryName(shaderPath)!);
+        File.WriteAllText(shaderPath, "Shader \".poiyomi/Poiyomi Toon\" { // Poiyomi 9.3.64 }\n");
+        WriteUnityMeta(shaderPath, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+
+        Directory.CreateDirectory(Path.GetDirectoryName(materialPath)!);
+        File.WriteAllText(materialPath, """
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!21 &2100000
+Material:
+  serializedVersion: 8
+  m_Name: DormantFeatures
+  m_Shader: {fileID: 4800000, guid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, type: 3}
+  m_CustomRenderQueue: -1
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs:
+    - _EmissionMap:
+        m_Texture: {fileID: 2800000, guid: 44444444444444444444444444444444, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _Matcap:
+        m_Texture: {fileID: 2800000, guid: 55555555555555555555555555555555, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    m_Floats:
+    - _EnableEmission: 0
+    - _EmissionStrength: 4
+    - _MatcapEnable: 0
+    - _MatcapIntensity: 1
+    - _MatcapReplace: 1
+    m_Colors:
+    - _Color: {r: 1, g: 1, b: 1, a: 1}
+    - _EmissionColor: {r: 1, g: 1, b: 1, a: 1}
+""");
+
+        XRMaterial material = UnityMaterialImporter.ImportWithReport(materialPath, projectRoot).Material.ShouldNotBeNull();
+
+        AssertUberFeatureDisabled(material, "emission");
+        AssertUberFeatureDisabled(material, "matcap");
+        material.Parameter<ShaderFloat>("_EmissionStrength")?.Value.ShouldBe(4.0f, 0.0001f);
+        material.Parameter<ShaderFloat>("_MatcapReplace")?.Value.ShouldBe(1.0f, 0.0001f);
+    }
+
+    [Test]
     public void ImportWithReport_LilToonCutout_MapsMaterialToUberShader()
     {
         string projectRoot = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"liltoon-project-{Guid.NewGuid():N}");

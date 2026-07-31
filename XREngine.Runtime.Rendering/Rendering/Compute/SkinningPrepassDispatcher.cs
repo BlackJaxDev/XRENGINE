@@ -365,6 +365,8 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
 
             if (activeProgram is null)
                 return;
+            if (!EnsureProgramReadyForDispatch(activeProgram))
+                return;
 
             // Per-renderer resources own transient output buffers and the reuse/residency state
             // that decides whether a dispatch is necessary this frame.
@@ -888,6 +890,26 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
 
         _shader ??= ShaderHelper.LoadEngineShader(ShaderPath, EShaderType.Compute);
         _program = _shader is null ? null : new XRRenderProgram(true, false, _shader);
+    }
+
+    /// <summary>
+    /// Ensures the backend program exists and has finished linking before output buffers are exposed
+    /// to the draw path. A newly-created <see cref="XRRenderProgram"/> may have requested linking
+    /// before an API wrapper subscribed to that request; dispatching it is then a no-op while the
+    /// caller would otherwise mark uninitialized output buffers valid.
+    /// </summary>
+    private static bool EnsureProgramReadyForDispatch(XRRenderProgram program)
+    {
+        if (program.IsLinked)
+            return true;
+
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        if (renderer is null)
+            return false;
+
+        renderer.GetOrCreateAPIRenderObject(program, generateNow: true);
+        program.Link();
+        return program.IsLinked;
     }
 
     private void EnsureInterleavedProgram()

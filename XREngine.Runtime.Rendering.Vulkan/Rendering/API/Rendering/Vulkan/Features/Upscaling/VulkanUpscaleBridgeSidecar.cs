@@ -299,7 +299,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
 
         Fence submitFence = slot.SubmitFence;
         _api.ResetFences(_device, 1, in submitFence);
-        _api.ResetCommandBuffer(slot.CommandBuffer, 0);
+        ResetCommandBufferTracked(slot.CommandBuffer);
 
         CommandBufferBeginInfo beginInfo = new()
         {
@@ -348,7 +348,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
 
         Fence submitFence = slot.SubmitFence;
         _api.ResetFences(_device, 1, in submitFence);
-        _api.ResetCommandBuffer(slot.CommandBuffer, 0);
+        ResetCommandBufferTracked(slot.CommandBuffer);
 
         CommandBufferBeginInfo beginInfo = new()
         {
@@ -463,7 +463,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
 
         Fence submitFence = slot.SubmitFence;
         _api.ResetFences(_device, 1, in submitFence);
-        _api.ResetCommandBuffer(slot.CommandBuffer, 0);
+        ResetCommandBufferTracked(slot.CommandBuffer);
 
         CommandBufferBeginInfo beginInfo = new()
         {
@@ -1489,10 +1489,22 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             CommandBufferCount = 1,
         };
 
-        if (_api.AllocateCommandBuffers(_device, in allocateInfo, out CommandBuffer commandBuffer) != Result.Success)
+        Result result =
+            _api.AllocateCommandBuffers(_device, in allocateInfo, out CommandBuffer commandBuffer);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAllocateCommandBuffersCall(
+            allocateInfo.CommandBufferCount,
+            result == Result.Success);
+        if (result != Result.Success)
             throw new InvalidOperationException("Failed to allocate a Vulkan bridge handoff command buffer.");
 
         return commandBuffer;
+    }
+
+    private Result ResetCommandBufferTracked(CommandBuffer commandBuffer)
+    {
+        Result result = _api.ResetCommandBuffer(commandBuffer, 0);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResetCommandBufferCall();
+        return result;
     }
 
     /// <summary>

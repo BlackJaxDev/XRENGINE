@@ -7,6 +7,7 @@ using System.IO;
 using System.Numerics;
 using XREngine.Components;
 using XREngine;
+using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Diagnostics;
 using XREngine.Rendering;
@@ -189,6 +190,19 @@ namespace XREngine.Scene.Prefabs
         {
             ArgumentNullException.ThrowIfNull(root);
 
+            // Runtime mesh construction snapshots the skeleton's current world/render matrices
+            // into its initial skin palette. YAML restores local transforms before the hierarchy
+            // has run its first matrix pass, so publishing components first seeds skinned meshes
+            // from stale identity/intermediate matrices. This is especially visible in
+            // render-on-demand worlds, where no later frame is guaranteed to repair the palette.
+            root.Transform
+                .RecalculateMatrixHierarchy(
+                    forceWorldRecalc: true,
+                    setRenderMatrixNow: true,
+                    childRecalcType: ELoopType.Sequential)
+                .GetAwaiter()
+                .GetResult();
+
             foreach (SceneNode node in EnumerateHierarchy(root))
                 foreach (XREngine.Components.XRComponent component in node.Components)
                     component.NotifyOwningSceneNodePostDeserialize();
@@ -329,6 +343,13 @@ namespace XREngine.Scene.Prefabs
 
         private static SceneNode CloneHierarchyBounded(SceneNode template)
         {
+            SceneNode clone = CloneHierarchyBoundedCore(template);
+            NotifyYamlHierarchyDeserialized(clone);
+            return clone;
+        }
+
+        private static SceneNode CloneHierarchyBoundedCore(SceneNode template)
+        {
             TransformBase clonedTransform = CloneTransformBounded(template.Transform);
             SceneNode clone = new(template.Name ?? SceneNode.DefaultName, clonedTransform)
             {
@@ -350,11 +371,10 @@ namespace XREngine.Scene.Prefabs
 
             foreach (SceneNode child in EnumerateChildren(template))
             {
-                SceneNode childClone = CloneHierarchyBounded(child);
+                SceneNode childClone = CloneHierarchyBoundedCore(child);
                 childClone.Parent = clone;
             }
 
-            NotifyYamlHierarchyDeserialized(clone);
             return clone;
         }
 
