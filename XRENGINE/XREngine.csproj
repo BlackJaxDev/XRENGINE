@@ -20,8 +20,7 @@
 
   <ItemGroup Condition="'$(DesignTimeBuild)' != 'true'">
     <Compile Include="$(GeneratedAotFactoryRegistrations)" />
-    <AotFactoryRegistrationInput Include="$(MSBuildProjectDirectory)\**\*.cs;$(AotFactoryRegistrationCoreRoot)\**\*.cs;$(AotFactoryRegistrationInputIntegrationRoot)\**\*.cs;$(AotFactoryRegistrationRenderingRoot)\**\*.cs"
-                                 Exclude="$(MSBuildProjectDirectory)\bin\**;$(MSBuildProjectDirectory)\obj\**;$(AotFactoryRegistrationCoreRoot)\bin\**;$(AotFactoryRegistrationCoreRoot)\obj\**;$(AotFactoryRegistrationInputIntegrationRoot)\bin\**;$(AotFactoryRegistrationInputIntegrationRoot)\obj\**;$(AotFactoryRegistrationRenderingRoot)\bin\**;$(AotFactoryRegistrationRenderingRoot)\obj\**;**\*.g.cs" />
+    <AotFactoryRegistrationInput Include="$(MSBuildProjectDirectory)\**\*.cs;$(AotFactoryRegistrationCoreRoot)\**\*.cs;$(AotFactoryRegistrationInputIntegrationRoot)\**\*.cs;$(AotFactoryRegistrationRenderingRoot)\**\*.cs" Exclude="$(MSBuildProjectDirectory)\bin\**;$(MSBuildProjectDirectory)\obj\**;$(AotFactoryRegistrationCoreRoot)\bin\**;$(AotFactoryRegistrationCoreRoot)\obj\**;$(AotFactoryRegistrationInputIntegrationRoot)\bin\**;$(AotFactoryRegistrationInputIntegrationRoot)\obj\**;$(AotFactoryRegistrationRenderingRoot)\bin\**;$(AotFactoryRegistrationRenderingRoot)\obj\**;**\*.g.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -29,17 +28,11 @@
     <InternalsVisibleTo Include="XREngine.Runtime.Bootstrap" />
   </ItemGroup>
 
-  <Target Name="InvalidateMissingAotFactoryRegistrationOutput"
-          BeforeTargets="GenerateAotFactoryRegistrations"
-          Condition="'$(DesignTimeBuild)' != 'true' and !Exists('$(GeneratedAotFactoryRegistrations)') and Exists('$(AotFactoryRegistrationStamp)')">
+  <Target Name="InvalidateMissingAotFactoryRegistrationOutput" BeforeTargets="GenerateAotFactoryRegistrations" Condition="'$(DesignTimeBuild)' != 'true' and !Exists('$(GeneratedAotFactoryRegistrations)') and Exists('$(AotFactoryRegistrationStamp)')">
     <Delete Files="$(AotFactoryRegistrationStamp)" />
   </Target>
 
-  <Target Name="GenerateAotFactoryRegistrations"
-          BeforeTargets="CoreCompile"
-          Inputs="$(AotFactoryRegistrationGenerator);$(MSBuildProjectFullPath);@(AotFactoryRegistrationInput)"
-          Outputs="$(AotFactoryRegistrationStamp)"
-          Condition="'$(DesignTimeBuild)' != 'true' and Exists('$(AotFactoryRegistrationGenerator)')">
+  <Target Name="GenerateAotFactoryRegistrations" BeforeTargets="CoreCompile" Inputs="$(AotFactoryRegistrationGenerator);$(MSBuildProjectFullPath);@(AotFactoryRegistrationInput)" Outputs="$(AotFactoryRegistrationStamp)" Condition="'$(DesignTimeBuild)' != 'true' and Exists('$(AotFactoryRegistrationGenerator)')">
     <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(GeneratedAotFactoryRegistrations)'))" />
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(AotFactoryRegistrationGenerator)&quot; -ProjectDir &quot;$(MSBuildProjectDirectory)&quot; -OutputFile &quot;$(GeneratedAotFactoryRegistrations)&quot;" />
     <Touch Files="$(AotFactoryRegistrationStamp)" AlwaysCreate="true" ForceTouch="true" />
@@ -92,26 +85,26 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="AssimpNetter" Version="6.0.2.1" />
-    <PackageReference Include="JoltPhysicsSharp" Version="2.20.1" />
+    <PackageReference Include="AssimpNetter" Version="6.0.5" />
+    <PackageReference Include="JoltPhysicsSharp" Version="2.22.0" />
     <PackageReference Include="LZMA-SDK" Version="22.1.1" />
     <PackageReference Include="MagicPhysX" Version="1.0.0" />
     <PackageReference Include="MemoryPack" Version="1.21.4" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="SharpFont.Dependencies" Version="2.6.0" />
-    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.0" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.10" />
     <PackageReference Include="Silk.NET.Core" Version="2.23.0" />
     <PackageReference Include="Silk.NET.DirectStorage" Version="2.23.0" />
     <PackageReference Include="Silk.NET.DirectStorage.Native" Version="1.3.0" />
     <PackageReference Include="Silk.NET.Input" Version="2.23.0" />
-    <PackageReference Include="System.IO.Hashing" Version="10.0.3" />
+    <PackageReference Include="System.IO.Hashing" Version="10.0.10" />
     <PackageReference Include="Silk.NET.Windowing" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Windowing.Common" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Windowing.Extensions" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Windowing.Glfw" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Windowing.Sdl" Version="2.23.0" />
-    <PackageReference Include="Vecc.YamlDotNet.Analyzers.StaticGenerator" Version="16.3.0" />
-    <PackageReference Include="YamlDotNet" Version="16.3.0" />
+    <PackageReference Include="Vecc.YamlDotNet.Analyzers.StaticGenerator" Version="18.1.0" />
+    <PackageReference Include="YamlDotNet" Version="18.1.0" />
   </ItemGroup>
 
   <ItemGroup>

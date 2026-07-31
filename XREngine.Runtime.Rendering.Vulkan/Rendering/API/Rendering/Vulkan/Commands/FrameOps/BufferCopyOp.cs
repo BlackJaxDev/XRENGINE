@@ -13,4 +13,8 @@ internal sealed record BufferCopyOp(
     ulong DestinationOffset,
     ulong ByteCount,
     string Label,
-    FrameOpContext Context) : FrameOp(PassIndex, null, Context);
+    FrameOpContext Context) 
+    : FrameOp(PassIndex, null, Context)
+{
+    public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.BufferCopy;
+}

@@ -25,18 +25,14 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill.vert"
-                      LogicalName="XREngine.Rendering.UI.Ultralight.Shaders.shader_fill.vert" />
-    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill.frag"
-                      LogicalName="XREngine.Rendering.UI.Ultralight.Shaders.shader_fill.frag" />
-    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill_path.vert"
-                      LogicalName="XREngine.Rendering.UI.Ultralight.Shaders.shader_fill_path.vert" />
-    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill_path.frag"
-                      LogicalName="XREngine.Rendering.UI.Ultralight.Shaders.shader_fill_path.frag" />
+    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill.vert" LogicalName="XREngine.Rendering.UI.Ultralight.Shaders.shader_fill.vert" />
+    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill.frag" LogicalName="XREngine.Rendering.UI.Ultralight.Shaders.shader_fill.frag" />
+    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill_path.vert" LogicalName="XREngine.Rendering.UI.Ultralight.Shaders.shader_fill_path.vert" />
+    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill_path.frag" LogicalName="XREngine.Rendering.UI.Ultralight.Shaders.shader_fill_path.frag" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="ImGui.NET" Version="1.90.8.1" />
+    <PackageReference Include="ImGui.NET" Version="1.91.6.1" />
     <PackageReference Include="Silk.NET.Core" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Input" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Input.Glfw" Version="2.23.0" />

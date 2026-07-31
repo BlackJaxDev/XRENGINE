@@ -220,7 +220,9 @@ internal partial class Program
         {
             smokeRun.Install();
             WriteBootstrapTrace("Calling Engine.Run.");
-            Engine.Run(startupSettings, gameState);
+            // The editor owns the Edit -> Play transition. Standalone Engine.Run startup
+            // would otherwise begin every world immediately and suppress the editor UI.
+            Engine.Run(startupSettings, gameState, beginPlayingAllWorlds: false);
             WriteBootstrapTrace("Engine.Run returned normally.");
         }
         catch (Exception ex)

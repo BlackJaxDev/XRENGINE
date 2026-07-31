@@ -7,13 +7,15 @@ internal sealed record ComputeDispatchOp(
     uint GroupsY,
     uint GroupsZ,
     ComputeDispatchSnapshot Snapshot,
-    FrameOpContext Context) : FrameOp(PassIndex, null, Context)
+    FrameOpContext Context) 
+    : FrameOp(PassIndex, null, Context)
 {
     public VkRenderProgram Program { get; private set; } = Program;
     public uint GroupsX { get; private set; } = GroupsX;
     public uint GroupsY { get; private set; } = GroupsY;
     public uint GroupsZ { get; private set; } = GroupsZ;
     public ComputeDispatchSnapshot Snapshot { get; private set; } = Snapshot;
+    public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.ComputeDispatch;
 
     internal static ComputeDispatchOp Rent(
         int passIndex,

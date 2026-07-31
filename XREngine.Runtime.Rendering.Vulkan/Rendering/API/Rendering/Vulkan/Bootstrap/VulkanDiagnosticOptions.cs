@@ -1,4 +1,5 @@
 using System.Text;
+using XREngine.Extensions;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -32,24 +33,47 @@ internal readonly record struct VulkanDiagnosticOptions
     public bool RequestNvDiagnosticsConfig => HasFlag(EVulkanDiagnosticFlags.NvDiagnosticsConfig);
     public bool RenderDocFriendly => HasFlag(EVulkanDiagnosticFlags.RenderDocFriendly);
 
+    /// <summary>
+    /// Determines whether the specified Vulkan diagnostic flag is set in the current options.
+    /// This method is used to check if a specific diagnostic feature is enabled based on the combined flags from the preset and any overrides.
+    /// </summary>
+    /// <param name="flag">The Vulkan diagnostic flag to check.</param>
+    /// <returns>True if the specified flag is set; otherwise, false.</returns>
     private bool HasFlag(EVulkanDiagnosticFlags flag)
         => (Flags & flag) != 0;
+
+    /// <summary>
+    /// Indicates whether any of the advanced validation features (synchronization validation, GPU-assisted validation, or best practices) are enabled.
+    /// This property is useful for determining if the renderer is operating in a mode that may introduce additional overhead or require special handling due to the enabled validation features.
+    /// </summary>
     public bool HasValidationFeatures =>
         EnableSynchronizationValidation ||
         EnableGpuAssistedValidation ||
         EnableBestPractices;
 
+    /// <summary>
+    /// Resolves the effective Vulkan diagnostic options based on the current runtime settings and environment variables.
+    /// </summary>
+    /// <returns>The resolved VulkanDiagnosticOptions instance.</returns>
     public static VulkanDiagnosticOptions Resolve()
     {
+        // Determine the effective preset and flags based on runtime settings and environment variables.
         EVulkanDiagnosticPreset preset = RuntimeEngine.EffectiveSettings.VulkanDiagnosticPreset;
+
+        // Combine the preset flags with any additional flags specified in the runtime settings.
         EVulkanDiagnosticFlags flags = FlagsForPreset(preset) | RuntimeEngine.EffectiveSettings.VulkanDiagnosticFlags;
 
+        // Build a summary of the sources that contributed to the final diagnostic options, 
+        // including environment variable overrides and any adjustments made based on the preset and flags.
         StringBuilder sources = new();
         sources.Append("settings preset=").Append(preset).Append(" flags=").Append(RuntimeEngine.EffectiveSettings.VulkanDiagnosticFlags);
 
+        // Apply any environment variable overrides that may affect the preset and flags, allowing for dynamic adjustments to the diagnostic options at runtime.
         ApplyPresetEnvOverride(ref preset, ref flags, sources);
         ApplyFlagsEnvOverride(ref flags, sources);
 
+        // Apply boolean environment variable overrides for specific diagnostic features, 
+        // allowing for fine-grained control over the enabled validation and debugging features.
         ApplyBooleanEnvOverride(
             global::XREngine.XREngineEnvironmentVariables.VulkanValidation,
             EVulkanDiagnosticFlags.StandardValidation | EVulkanDiagnosticFlags.DebugUtils,
@@ -271,18 +295,35 @@ internal readonly record struct VulkanDiagnosticOptions
             .Append(raw.Trim());
     }
 
+    /// <summary>
+    /// Applies a boolean environment variable override for a specific Vulkan diagnostic flag.
+    /// If the environment variable is set to a recognized "true" value, the specified flag is enabled; 
+    /// if set to a recognized "false" value, the flag is disabled.
+    /// The sources StringBuilder is updated to reflect the applied override for diagnostic reporting purposes.
+    /// </summary>
+    /// <param name="variableName">The name of the environment variable to check for an override.</param>
+    /// <param name="flag">The specific Vulkan diagnostic flag to override.</param>
+    /// <param name="flags">The current set of Vulkan diagnostic flags, which will be modified based on the environment variable.</param>
+    /// <param name="sources">A StringBuilder to record the sources of the applied overrides for diagnostic reporting.</param>
     private static void ApplyBooleanEnvOverride(
         string variableName,
         EVulkanDiagnosticFlags flag,
         ref EVulkanDiagnosticFlags flags,
         StringBuilder sources)
     {
+        // Check for the presence of the specified environment variable and retrieve its value.
         string? raw = Environment.GetEnvironmentVariable(variableName);
         if (string.IsNullOrWhiteSpace(raw))
             return;
 
+        // Determine whether the environment variable indicates that the flag should be enabled or disabled.
         bool enabled = !IsFalseToken(raw);
-        flags = enabled ? flags | flag : flags & ~flag;
+
+        // Update the flags to enable or disable the specified diagnostic feature based on the environment variable's value.
+        enabled.SetFlag(ref flags, flag);
+
+        // Update the sources StringBuilder to include information about the applied override,
+        // indicating whether the feature was turned "on" or "off".
         sources.Append("; ")
             .Append(variableName)
             .Append('=')

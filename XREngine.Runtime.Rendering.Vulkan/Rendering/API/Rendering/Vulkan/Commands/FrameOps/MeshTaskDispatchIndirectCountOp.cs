@@ -9,4 +9,8 @@ internal sealed record MeshTaskDispatchIndirectCountOp(
     nuint ByteOffset,
     nuint CountByteOffset,
     VulkanBindlessMaterialDescriptorBinding? BindlessMaterialTextures,
-    FrameOpContext Context) : FrameOp(PassIndex, null, Context);
+    FrameOpContext Context) 
+    : FrameOp(PassIndex, null, Context)
+{
+    public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount;
+}

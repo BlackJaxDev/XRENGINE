@@ -6,14 +6,24 @@ using System.Text;
 using System.Collections.Generic;
 
 namespace XREngine.Rendering.Vulkan;
+
 public unsafe partial class VulkanRenderer
 {
+    /// <summary>
+    /// The maximum number of structured Vulkan validation messages to store in the summary.
+    /// If the number of unique validation messages exceeds this limit, additional messages will be counted but not stored in the summary.
+    /// This limit is set to prevent excessive memory usage and to keep the summary manageable.
+    /// </summary>
     private const int MaxStructuredVulkanValidationMessages = 128;
 
     private ExtDebugUtils? debugUtils;
     private DebugUtilsMessengerEXT debugMessenger;
     private RendererNativeCallbackBridge.VulkanDebugRegistration? _vulkanDebugRegistration;
 
+    /// <summary>
+    /// Indicates whether validation layers are enabled for the Vulkan renderer.
+    /// This property can be overridden by setting the _validationLayersEnabledOverride field.
+    /// </summary>
     private readonly VulkanDiagnosticOptions _diagnosticOptions = VulkanDiagnosticOptions.Resolve();
     private bool? _validationLayersEnabledOverride;
     private readonly object _vulkanValidationSummaryLock = new();
@@ -64,6 +74,11 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Ends the current debug label region in the specified command buffer, if debug labels are supported and enabled.
+    /// If debug labels are not supported or enabled, this method does nothing.
+    /// </summary>
+    /// <param name="commandBuffer">The command buffer in which to end the debug label region.</param>
     private void CmdEndLabel(CommandBuffer commandBuffer)
     {
         if (!SupportsDebugUtilsLabels)
@@ -72,6 +87,13 @@ public unsafe partial class VulkanRenderer
         debugUtils!.CmdEndDebugUtilsLabel(commandBuffer);
     }
 
+    /// <summary>
+    /// Sets a debug name for a Vulkan object, if debug utils are supported and enabled.
+    /// If debug utils are not supported or enabled, this method does nothing.
+    /// </summary>
+    /// <param name="objectType">The type of the Vulkan object.</param>
+    /// <param name="objectHandle">The handle of the Vulkan object.</param>
+    /// <param name="name">The debug name to assign to the Vulkan object.</param>
     internal void SetDebugObjectName(ObjectType objectType, ulong objectHandle, string name)
     {
         if (!SupportsDebugUtils || device.Handle == 0 || objectHandle == 0 || string.IsNullOrWhiteSpace(name))
@@ -96,14 +118,27 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Sets a debug name for a Vulkan descriptor set, if debug utils are supported and enabled.
+    /// If debug utils are not supported or enabled, this method does nothing.
+    /// </summary>
+    /// <param name="descriptorSet">The Vulkan descriptor set to name.</param>
+    /// <param name="name">The debug name to assign to the descriptor set.</param>
     internal void SetDebugDescriptorSetName(DescriptorSet descriptorSet, string name)
         => SetDebugObjectName(ObjectType.DescriptorSet, descriptorSet.Handle, name);
 
+    /// <summary>
+    /// Sets debug names for an array of Vulkan descriptor sets, if debug utils are supported and enabled.
+    /// If debug utils are not supported or enabled, this method does nothing.
+    /// </summary>
+    /// <param name="sets">The array of Vulkan descriptor sets to name.</param>
+    /// <param name="prefix">The prefix to use for the debug names of the descriptor sets.</param>
     internal void SetDebugDescriptorSetNames(DescriptorSet[]? sets, string prefix)
     {
         if (sets is null || sets.Length == 0)
             return;
 
+        // Set debug names for each descriptor set in the array, appending the index to the prefix for uniqueness.
         for (int i = 0; i < sets.Length; i++)
             SetDebugDescriptorSetName(sets[i], $"{prefix}[{i}]");
     }
@@ -113,6 +148,10 @@ public unsafe partial class VulkanRenderer
         "VK_LAYER_KHRONOS_validation"
     ];
 
+    /// <summary>
+    /// Destroys the Vulkan debug messenger and releases any associated resources, if validation layers are enabled and debug utils are supported.
+    /// If validation layers are not enabled or debug utils are not supported, this method does nothing.
+    /// </summary>
     private void DestroyValidationLayers()
     {
         if (EnableValidationLayers && debugUtils is not null)

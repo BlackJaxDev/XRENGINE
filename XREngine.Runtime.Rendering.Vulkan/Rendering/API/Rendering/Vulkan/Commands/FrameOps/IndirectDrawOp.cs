@@ -14,8 +14,8 @@ internal sealed record IndirectDrawOp(
     bool UseCount,
     VulkanBindlessMaterialDescriptorBinding? BindlessMaterialTextures,
     FrameOpContext Context,
-    VulkanIndirectSecondaryRecordingContract SecondaryRecordingContract =
-        default) : FrameOp(PassIndex, Target, Context)
+    VulkanIndirectSecondaryRecordingContract SecondaryRecordingContract = default) 
+    : FrameOp(PassIndex, Target, Context)
 {
     public VkDataBuffer IndirectBuffer { get; private set; } = IndirectBuffer;
     public VkDataBuffer? ParameterBuffer { get; private set; } = ParameterBuffer;
@@ -28,6 +28,7 @@ internal sealed record IndirectDrawOp(
     public bool UseCount { get; private set; } = UseCount;
     public VulkanBindlessMaterialDescriptorBinding? BindlessMaterialTextures { get; private set; } = BindlessMaterialTextures;
     public VulkanIndirectSecondaryRecordingContract SecondaryRecordingContract { get; private set; } = SecondaryRecordingContract;
+    public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.IndirectDraw;
 
     internal static IndirectDrawOp Rent(
         int passIndex,

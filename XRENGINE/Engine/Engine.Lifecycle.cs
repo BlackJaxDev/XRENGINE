@@ -29,6 +29,22 @@ namespace XREngine
         /// </code>
         /// </example>
         public static void Run(GameStartupSettings startupSettings, GameState state)
+            => Run(startupSettings, state, beginPlayingAllWorlds: true);
+
+        /// <summary>
+        /// Runs the engine and selects whether initialized worlds start in standalone play or
+        /// in the editor lifecycle.
+        /// </summary>
+        /// <param name="startupSettings">Configuration for the game including windows, worlds, and networking.</param>
+        /// <param name="state">The initial game state object.</param>
+        /// <param name="beginPlayingAllWorlds">
+        /// If <c>true</c>, all worlds begin standalone play during initialization. If <c>false</c>,
+        /// all worlds enter the non-simulating editor lifecycle before the game loop starts.
+        /// </param>
+        public static void Run(
+            GameStartupSettings startupSettings,
+            GameState state,
+            bool beginPlayingAllWorlds)
         {
             if (!RuntimeRenderingHostServices.HasConcreteHost)
             {
@@ -37,9 +53,12 @@ namespace XREngine
                     "rendering bootstrap before Engine.Run.");
             }
 
-            bool initialized = Initialize(startupSettings, state);
+            bool initialized = Initialize(startupSettings, state, beginPlayingAllWorlds);
             if (initialized)
             {
+                if (!beginPlayingAllWorlds)
+                    BeginEditAllWorlds();
+
                 RunGameLoop();
                 BlockForRendering();
             }
@@ -285,6 +304,15 @@ namespace XREngine
             // Standalone startup must enter the engine play state before each world reaches
             // EPlayState.Playing. XRWorldInstance uses that state to keep physics enabled.
             => PlayMode.BeginStandalonePlay();
+
+        /// <summary>
+        /// Starts all world instances in the active, non-simulating editor lifecycle.
+        /// </summary>
+        public static void BeginEditAllWorlds()
+        {
+            foreach (var world in XRWorldInstance.WorldInstances.Values)
+                world.BeginEditMode().GetAwaiter().GetResult();
+        }
 
         /// <summary>
         /// Stops play for all world instances.

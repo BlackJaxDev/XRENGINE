@@ -17,8 +17,10 @@ internal sealed record BlitOp(
     bool DepthBit,
     bool StencilBit,
     bool LinearFilter,
-    FrameOpContext Context) : FrameOp(PassIndex, OutFbo, Context)
+    FrameOpContext Context) 
+    : FrameOp(PassIndex, OutFbo, Context)
 {
     public XRFrameBuffer? InFbo { get; internal set; } = InFbo;
     public XRFrameBuffer? OutFbo { get; internal set; } = OutFbo;
+    public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.Blit;
 }

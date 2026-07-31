@@ -13,4 +13,8 @@ internal sealed record TransformFeedbackOp(
     uint VertexStride,
     uint InstanceCount,
     uint FirstInstance,
-    FrameOpContext Context) : FrameOp(PassIndex, Target, Context);
+    FrameOpContext Context) 
+    : FrameOp(PassIndex, Target, Context)
+{
+    public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.TransformFeedback;
+}

@@ -9,6 +9,16 @@ namespace XREngine.UnitTests.Editor;
 public sealed class EditorPlayModeLifecycleContractTests
 {
     [Test]
+    public void EditorStartup_BeginsInEditModeBeforeOptionalConfiguredPlay()
+    {
+        string source = ReadWorkspaceFile("XREngine.Editor/Program.cs");
+
+        source.ShouldContain("Engine.Run(startupSettings, gameState, beginPlayingAllWorlds: false);");
+        source.ShouldContain("if (!EditorUnitTests.Toggles.StartInPlayModeWithoutTransitions)");
+        source.ShouldContain("Engine.PlayMode.ForcePlayWithoutTransitions = true;");
+    }
+
+    [Test]
     public void ExitPlayMode_RestartsWorldsBeforePublishingEditState()
     {
         string source = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Engine.PlayMode.cs");

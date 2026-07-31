@@ -678,6 +678,7 @@ public static partial class EditorUnitTests
                 tfm.Height = null;
 
                 var dearImGuiComponent = dearImGuiNode.AddComponent<DearImGuiComponent>();
+                EditorImGuiUI.Initialize();
                 dearImGuiComponent?.Draw += EditorImGuiUI.RenderEditor;
                 imGuiStopwatch.Stop();
                 Debug.Rendering("[StartupUI] DearImGui node ready in {0:F1} ms.", imGuiStopwatch.Elapsed.TotalMilliseconds);

@@ -12,7 +12,8 @@ internal sealed record ClearOp(
     float Depth,
     uint Stencil,
     Rect2D Rect,
-    FrameOpContext Context) : FrameOp(PassIndex, Target, Context)
+    FrameOpContext Context) 
+    : FrameOp(PassIndex, Target, Context)
 {
     public bool ClearColor { get; private set; } = ClearColor;
     public bool ClearDepth { get; private set; } = ClearDepth;
@@ -21,6 +22,7 @@ internal sealed record ClearOp(
     public float Depth { get; private set; } = Depth;
     public uint Stencil { get; private set; } = Stencil;
     public Rect2D Rect { get; private set; } = Rect;
+    public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.Clear;
 
     internal static ClearOp Rent(
         int passIndex,

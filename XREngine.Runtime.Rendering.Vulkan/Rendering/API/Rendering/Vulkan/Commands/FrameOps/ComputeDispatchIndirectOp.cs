@@ -11,4 +11,8 @@ internal sealed record ComputeDispatchIndirectOp(
     Buffer ArgumentBuffer,
     ulong ArgumentOffset,
     string Label,
-    FrameOpContext Context) : FrameOp(PassIndex, null, Context);
+    FrameOpContext Context) 
+    : FrameOp(PassIndex, null, Context)
+{
+    public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect;
+}
