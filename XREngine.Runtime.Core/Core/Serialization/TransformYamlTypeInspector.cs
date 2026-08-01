@@ -57,6 +57,12 @@ public sealed class TransformYamlTypeInspector(ITypeInspector inner, bool applyR
     public string GetEnumValue(object value)
         => _inner.GetEnumValue(value);
 
+    public bool HasParseMethod(Type type)
+        => _inner.HasParseMethod(type);
+
+    public object? Parse(string value, Type expectedType)
+        => _inner.Parse(value, expectedType);
+
     private IPropertyDescriptor Wrap(IPropertyDescriptor descriptor, bool interceptSerializedId)
     {
         YamlTransformReferenceAttribute? referenceAttribute = descriptor.GetCustomAttribute<YamlTransformReferenceAttribute>();

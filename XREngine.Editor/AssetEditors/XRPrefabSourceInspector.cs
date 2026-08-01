@@ -139,12 +139,12 @@ public sealed class XRPrefabSourceInspector : IXRAssetInspector
             ? $"Hierarchy ({CountVisibleNodes(prefab.RootNode!, state.SearchText)}/{CountNodes(prefab.RootNode!)} visible)"
             : $"Hierarchy ({CountNodes(prefab.RootNode!)} nodes)";
         ImGui.SeparatorText(hierarchyLabel);
-        if (ImGui.BeginChild("PrefabHierarchyTree", new Vector2(-1.0f, treeHeight), ImGuiChildFlags.Border))
+        if (ImGui.BeginChild("PrefabHierarchyTree", new Vector2(-1.0f, treeHeight), ImGuiChildFlags.Borders))
             DrawHierarchyNode(prefab, prefab.RootNode!, state, depth: 0);
         ImGui.EndChild();
 
         ImGui.SeparatorText("Node Inspector");
-        if (ImGui.BeginChild("PrefabHierarchyInspector", Vector2.Zero, ImGuiChildFlags.Border))
+        if (ImGui.BeginChild("PrefabHierarchyInspector", Vector2.Zero, ImGuiChildFlags.Borders))
         {
             if (state.SelectedNode is null)
             {

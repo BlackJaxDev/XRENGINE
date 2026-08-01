@@ -315,7 +315,7 @@ public static partial class EditorImGuiUI
         float contentWidth = availWidth - treeWidth - ImGui.GetStyle().ItemSpacing.X;
 
         // Left pane — file tree.
-        if (ImGui.BeginChild("ArchiveTreePane", new Vector2(treeWidth, -1.0f), ImGuiChildFlags.Border | ImGuiChildFlags.ResizeX))
+        if (ImGui.BeginChild("ArchiveTreePane", new Vector2(treeWidth, -1.0f), ImGuiChildFlags.Borders | ImGuiChildFlags.ResizeX))
         {
             if (_archiveInspectorRoot is not null)
                 DrawArchiveInspectorTreeNode(_archiveInspectorRoot, isRoot: true);
@@ -325,7 +325,7 @@ public static partial class EditorImGuiUI
         ImGui.SameLine();
 
         // Right pane — selected entry details / content preview.
-        if (ImGui.BeginChild("ArchiveContentPane", new Vector2(contentWidth, -1.0f), ImGuiChildFlags.Border))
+        if (ImGui.BeginChild("ArchiveContentPane", new Vector2(contentWidth, -1.0f), ImGuiChildFlags.Borders))
         {
             DrawArchiveInspectorSelectedContent();
         }

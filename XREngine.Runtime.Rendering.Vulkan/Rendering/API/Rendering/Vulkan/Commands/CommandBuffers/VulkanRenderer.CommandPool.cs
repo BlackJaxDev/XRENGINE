@@ -12,6 +12,32 @@ namespace XREngine.Rendering.Vulkan
         private readonly Dictionary<int, CommandPool> _threadCommandPools = new();
         private readonly Dictionary<int, CommandPool> _threadTransferCommandPools = new();
 
+        private Result AllocateCommandBuffersHostSynchronized(
+            ref CommandBufferAllocateInfo allocateInfo,
+            CommandBuffer* commandBuffers)
+        {
+            lock (_commandPoolsLock)
+                return Api!.AllocateCommandBuffers(device, ref allocateInfo, commandBuffers);
+        }
+
+        private void FreeCommandBuffersHostSynchronized(
+            CommandPool pool,
+            uint commandBufferCount,
+            CommandBuffer* commandBuffers)
+        {
+            lock (_commandPoolsLock)
+                Api!.FreeCommandBuffers(device, pool, commandBufferCount, commandBuffers);
+        }
+
+        private void DestroyCommandPoolHostSynchronized(CommandPool pool)
+        {
+            if (pool.Handle == 0)
+                return;
+
+            lock (_commandPoolsLock)
+                Api!.DestroyCommandPool(device, pool, null);
+        }
+
         private void DestroyCommandPool()
         {
             DestroyCommandChainRecordingWorkers();
@@ -24,7 +50,7 @@ namespace XREngine.Rendering.Vulkan
                     if (pool.Handle == 0 || !destroyed.Add(pool.Handle))
                         continue;
 
-                    Api!.DestroyCommandPool(device, pool, null);
+                    DestroyCommandPoolHostSynchronized(pool);
                 }
 
                 foreach (CommandPool pool in _threadTransferCommandPools.Values)
@@ -32,7 +58,7 @@ namespace XREngine.Rendering.Vulkan
                     if (pool.Handle == 0 || !destroyed.Add(pool.Handle))
                         continue;
 
-                    Api!.DestroyCommandPool(device, pool, null);
+                    DestroyCommandPoolHostSynchronized(pool);
                 }
 
                 _threadCommandPools.Clear();
@@ -83,7 +109,7 @@ namespace XREngine.Rendering.Vulkan
                 if (_threadCommandPools.TryGetValue(threadId, out CommandPool existing) && existing.Handle != 0)
                 {
                     // Another thread raced to create for this id; keep existing and dispose duplicate.
-                    Api!.DestroyCommandPool(device, created, null);
+                    DestroyCommandPoolHostSynchronized(created);
                     return existing;
                 }
 
@@ -115,7 +141,7 @@ namespace XREngine.Rendering.Vulkan
                 if (_threadTransferCommandPools.TryGetValue(threadId, out CommandPool existing) && existing.Handle != 0)
                 {
                     if (transferFamily != graphicsFamily && created.Handle != existing.Handle)
-                        Api!.DestroyCommandPool(device, created, null);
+                        DestroyCommandPoolHostSynchronized(created);
                     return existing;
                 }
 

@@ -134,6 +134,55 @@ public sealed class VulkanCoreHardeningPhase4Tests
     }
 
     [Test]
+    public void CommandPoolHostOperations_AreExternallySynchronized()
+    {
+        string commandPools = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandPool.cs");
+        string lifetime = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+        string retirement = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
+
+        commandPools.ShouldContain("private Result AllocateCommandBuffersHostSynchronized(");
+        commandPools.ShouldContain("private void FreeCommandBuffersHostSynchronized(");
+        commandPools.ShouldContain("private void DestroyCommandPoolHostSynchronized(CommandPool pool)");
+        commandPools.ShouldContain("lock (_commandPoolsLock)");
+        lifetime.ShouldContain("AllocateCommandBuffersHostSynchronized(ref allocateInfo, commandBuffers)");
+        lifetime.ShouldContain("FreeCommandBuffersHostSynchronized(commandPool, 1, &commandBuffer)");
+        retirement.ShouldContain("FreeCommandBuffersHostSynchronized(entry.CommandPool, 1, &commandBuffer)");
+    }
+
+    [Test]
+    public void CommandBufferRetirement_WaitsForCpuRecordingAndQueueOwnership()
+    {
+        string lifetime = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+        string retirement = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
+
+        lifetime.ShouldContain("private bool IsVulkanCommandBufferRetirementReady(");
+        lifetime.ShouldContain("batch.IsRecording || batch.QueuedSubmissionCount != 0");
+        lifetime.ShouldContain("lifetime.QueuedSubmissionCount != 0");
+        lifetime.ShouldContain("if (!IsVulkanCommandBufferRetirementReady(commandBuffer, ticket))");
+        retirement.ShouldContain("IsVulkanCommandBufferRetirementReady(\n                            candidate.CommandBuffer,");
+    }
+
+    [Test]
+    public void WorkerCommandPools_WaitForDeferredCommandBufferRetirement()
+    {
+        string lowering = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string workers = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainWorkers.cs");
+
+        lowering.ShouldContain("TrackOwnedCommandChainSecondaryCommandBuffer(workerPool, secondary);");
+        lowering.ShouldContain("TrackOwnedCommandChainSecondaryCommandBuffer(workerPool, replacement);");
+        workers.ShouldContain("MarkOwnedCommandChainSecondaryPoolPendingDestroy(pool);");
+        workers.ShouldContain("worker.Arena.ClearAfterPoolRetirement();");
+        workers.ShouldNotContain("DestroyCommandPoolHostSynchronized(pool);");
+    }
+
+    [Test]
     public void CompletionTracking_CoversTimelineFenceQueueAndDeviceIdlePaths()
     {
         string lifetime = ReadWorkspaceFile(

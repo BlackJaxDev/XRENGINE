@@ -96,7 +96,7 @@ public static class McpPermissionPromptUI
             string summary = request.ArgumentsSummary;
             if (summary.Length > 300)
             {
-                ImGui.BeginChild("##args_scroll", new Vector2(-1, 80), ImGuiChildFlags.Border);
+                ImGui.BeginChild("##args_scroll", new Vector2(-1, 80), ImGuiChildFlags.Borders);
                 ImGui.TextWrapped(summary);
                 ImGui.EndChild();
             }

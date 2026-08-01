@@ -230,7 +230,7 @@ public sealed class GPUParticleEmitterComponentEditor : IXRComponentEditor
         var modules = emitter.Modules;
 
         // Module list
-        ImGui.BeginChild("ModuleList", new Vector2(0, 200), ImGuiChildFlags.Border);
+        ImGui.BeginChild("ModuleList", new Vector2(0, 200), ImGuiChildFlags.Borders);
 
         for (int i = 0; i < modules.Count; i++)
         {

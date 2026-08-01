@@ -420,7 +420,7 @@ public static class ImGuiFileBrowser
         float sidebarWidth = 150f;
         float contentHeight = ImGui.GetContentRegionAvail().Y - 70f;
 
-        if (ImGui.BeginChild("Sidebar", new Vector2(sidebarWidth, contentHeight), ImGuiChildFlags.Border))
+        if (ImGui.BeginChild("Sidebar", new Vector2(sidebarWidth, contentHeight), ImGuiChildFlags.Borders))
         {
             DrawDrivesSidebar(state);
         }
@@ -428,7 +428,7 @@ public static class ImGuiFileBrowser
 
         ImGui.SameLine();
 
-        if (ImGui.BeginChild("FileList", new Vector2(-1, contentHeight), ImGuiChildFlags.Border))
+        if (ImGui.BeginChild("FileList", new Vector2(-1, contentHeight), ImGuiChildFlags.Borders))
         {
             DrawFileList(state);
         }

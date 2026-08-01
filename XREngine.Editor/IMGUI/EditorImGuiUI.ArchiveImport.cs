@@ -133,7 +133,7 @@ public static partial class EditorImGuiUI
 
             ImGui.Separator();
             ImGui.Text("Select files to import:");
-            ImGui.BeginChild("ArchiveTree", new Vector2(640, 360), ImGuiChildFlags.Border, ImGuiWindowFlags.None);
+            ImGui.BeginChild("ArchiveTree", new Vector2(640, 360), ImGuiChildFlags.Borders, ImGuiWindowFlags.None);
             if (state.Root is null || state.Root.Children.Count == 0)
             {
                 ImGui.TextWrapped("Archive contains no importable files.");

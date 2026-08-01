@@ -105,12 +105,12 @@ internal sealed class VulkanWorkerSecondaryCommandArena(int workerIndex)
             AdvanceGeneration();
     }
 
-    internal void ClearAfterPoolDestruction()
+    internal void ClearAfterPoolRetirement()
     {
         if (IsRecording)
         {
             throw new InvalidOperationException(
-                $"Worker arena {WorkerIndex} cannot destroy pools while recording.");
+                $"Worker arena {WorkerIndex} cannot retire pools while recording.");
         }
 
         for (int frameSlot = 0; frameSlot < _artifactsByFrameSlot.Length; frameSlot++)
@@ -119,7 +119,7 @@ internal sealed class VulkanWorkerSecondaryCommandArena(int workerIndex)
             {
                 throw new InvalidOperationException(
                     $"Worker arena {WorkerIndex} frame slot {frameSlot} still owns " +
-                    $"{_artifactsByFrameSlot[frameSlot].Count} recorded artifact(s) during pool destruction.");
+                    $"{_artifactsByFrameSlot[frameSlot].Count} recorded artifact(s) during pool retirement.");
             }
         }
 

@@ -1,19 +1,4 @@
-using System.Runtime.CompilerServices;
-using XREngine.Rendering.Vulkan.RenderGraph;
-using System;
-using System.Buffers;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 using Silk.NET.Vulkan;
-using XREngine.Data.Colors;
-using XREngine.Data.Rendering;
-using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {

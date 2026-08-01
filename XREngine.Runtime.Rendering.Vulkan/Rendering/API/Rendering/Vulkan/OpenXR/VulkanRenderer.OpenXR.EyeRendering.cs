@@ -675,7 +675,7 @@ public unsafe partial class VulkanRenderer
                 if (pool.Handle == 0)
                     continue;
 
-                Api!.DestroyCommandPool(device, pool, null);
+                DestroyCommandPoolHostSynchronized(pool);
                 _openXrBackend.EyeCommandPools[i] = default;
             }
         }

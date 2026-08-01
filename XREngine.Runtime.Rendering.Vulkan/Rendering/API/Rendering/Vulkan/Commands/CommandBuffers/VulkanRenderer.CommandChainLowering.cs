@@ -1522,7 +1522,7 @@ public unsafe partial class VulkanRenderer
         if (allocateResult != Result.Success || secondary.Handle == 0)
         {
             if (pool.Handle != 0)
-                Api!.DestroyCommandPool(device, pool, null);
+                DestroyCommandPoolHostSynchronized(pool);
 
             secondary = default;
             return false;
@@ -1637,6 +1637,7 @@ public unsafe partial class VulkanRenderer
                 workerPool,
                 ownsPool: false,
                 workerArena);
+            TrackOwnedCommandChainSecondaryCommandBuffer(workerPool, secondary);
             RegisterCommandBufferImageIndex(secondary, imageIndex);
             SetDebugObjectName(
                 ObjectType.CommandBuffer,
@@ -1678,6 +1679,7 @@ public unsafe partial class VulkanRenderer
             workerPool,
             ownsPool: false,
             workerArena);
+        TrackOwnedCommandChainSecondaryCommandBuffer(workerPool, replacement);
         secondary = replacement;
         return true;
     }

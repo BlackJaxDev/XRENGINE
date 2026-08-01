@@ -924,7 +924,7 @@ public static partial class EditorImGuiUI
             if (assetCount > 0)
             {
                 ImGui.Spacing();
-                if (ImGui.BeginChild("##DeepDuplicateAssets", new Vector2(560.0f, 220.0f), ImGuiChildFlags.Border))
+                if (ImGui.BeginChild("##DeepDuplicateAssets", new Vector2(560.0f, 220.0f), ImGuiChildFlags.Borders))
                 {
                     foreach (var asset in assets)
                     {

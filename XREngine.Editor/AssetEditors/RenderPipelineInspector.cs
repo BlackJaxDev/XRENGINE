@@ -2072,7 +2072,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
     {
         public ImGuiChildScope(string id, Vector2 size)
         {
-            ImGui.BeginChild(id, size, ImGuiChildFlags.Border);
+            ImGui.BeginChild(id, size, ImGuiChildFlags.Borders);
         }
 
         public void Dispose()

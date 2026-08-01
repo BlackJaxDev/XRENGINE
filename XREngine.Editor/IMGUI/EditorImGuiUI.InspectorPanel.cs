@@ -181,7 +181,7 @@ public static partial class EditorImGuiUI
                 const float componentListHeight = 360.0f;
                 Type? requestedComponent = null;
 
-                if (ImGui.BeginChild("ComponentList", new Vector2(0, componentListHeight), ImGuiChildFlags.Border, ImGuiWindowFlags.HorizontalScrollbar))
+                if (ImGui.BeginChild("ComponentList", new Vector2(0, componentListHeight), ImGuiChildFlags.Borders, ImGuiWindowFlags.HorizontalScrollbar))
                 {
                     if (filteredTypes.Count == 0)
                     {
@@ -357,7 +357,7 @@ public static partial class EditorImGuiUI
             }
             else
             {
-                ImGui.BeginChild("InspectorContent", Vector2.Zero, ImGuiChildFlags.Border);
+                ImGui.BeginChild("InspectorContent", Vector2.Zero, ImGuiChildFlags.Borders);
 
                 bool allowSceneInspector = false;
 
@@ -1254,12 +1254,12 @@ public static partial class EditorImGuiUI
                 ? $"Hierarchy ({visibleCount}/{preview.NodeCount} visible)"
                 : $"Hierarchy ({preview.NodeCount} nodes)";
             ImGui.SeparatorText(hierarchyLabel);
-            if (ImGui.BeginChild("PrefabHierarchyTree", new Vector2(-1.0f, treeHeight), ImGuiChildFlags.Border))
+            if (ImGui.BeginChild("PrefabHierarchyTree", new Vector2(-1.0f, treeHeight), ImGuiChildFlags.Borders))
                 DrawPrefabHierarchyLoadingNode(preview.RootNode, state, depth: 0);
             ImGui.EndChild();
 
             ImGui.SeparatorText("Node Inspector");
-            if (ImGui.BeginChild("PrefabHierarchyInspector", Vector2.Zero, ImGuiChildFlags.Border))
+            if (ImGui.BeginChild("PrefabHierarchyInspector", Vector2.Zero, ImGuiChildFlags.Borders))
                 DrawPrefabPreviewNodeInspector(loadState, selectedNode);
             ImGui.EndChild();
         }
@@ -1653,7 +1653,7 @@ public static partial class EditorImGuiUI
             var entries = EnsureTransformTypeEntries();
             int matchCount = 0;
 
-            if (ImGui.BeginChild("TransformTypeList", new Vector2(0f, 260f), ImGuiChildFlags.Border))
+            if (ImGui.BeginChild("TransformTypeList", new Vector2(0f, 260f), ImGuiChildFlags.Borders))
             {
                 foreach (var entry in entries)
                 {

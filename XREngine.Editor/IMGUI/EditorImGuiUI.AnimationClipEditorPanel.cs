@@ -69,7 +69,7 @@ public static partial class EditorImGuiUI
         Vector2 available = ImGui.GetContentRegionAvail();
         float leftWidth = MathF.Min(MathF.Max(300.0f, available.X * 0.28f), 440.0f);
 
-        if (ImGui.BeginChild("AnimationClipEditorMemberTree", new Vector2(leftWidth, 0.0f), ImGuiChildFlags.Border | ImGuiChildFlags.ResizeX))
+        if (ImGui.BeginChild("AnimationClipEditorMemberTree", new Vector2(leftWidth, 0.0f), ImGuiChildFlags.Borders | ImGuiChildFlags.ResizeX))
         {
             DrawAnimationClipEditorMemberSidebar(clip, state, visibleRows);
         }
@@ -77,7 +77,7 @@ public static partial class EditorImGuiUI
 
         ImGui.SameLine();
 
-        if (ImGui.BeginChild("AnimationClipEditorContent", Vector2.Zero, ImGuiChildFlags.Border))
+        if (ImGui.BeginChild("AnimationClipEditorContent", Vector2.Zero, ImGuiChildFlags.Borders))
         {
             DrawAnimationClipEditorContent(clip, state, visibleRows);
         }
@@ -277,7 +277,7 @@ public static partial class EditorImGuiUI
         string filter = state.CandidateSearch.Trim();
         int visibleCount = 0;
 
-        if (!ImGui.BeginChild("AnimationClipPathCandidates", new Vector2(0.0f, 190.0f), ImGuiChildFlags.Border))
+        if (!ImGui.BeginChild("AnimationClipPathCandidates", new Vector2(0.0f, 190.0f), ImGuiChildFlags.Borders))
             return;
 
         for (int index = 0; index < candidates.Count; index++)
@@ -983,7 +983,7 @@ public static partial class EditorImGuiUI
         float detailsHeight = 320.0f;
         float topHeight = MathF.Max(200.0f, ImGui.GetContentRegionAvail().Y - detailsHeight - spacing);
 
-        if (ImGui.BeginChild("AnimationClipEditorCanvas", new Vector2(-1.0f, topHeight), ImGuiChildFlags.Border))
+        if (ImGui.BeginChild("AnimationClipEditorCanvas", new Vector2(-1.0f, topHeight), ImGuiChildFlags.Borders))
         {
             if (state.ViewMode == AnimationClipEditorViewMode.Lanes)
                 DrawAnimationClipLaneTimeline(clip, state, visibleRows);
@@ -994,7 +994,7 @@ public static partial class EditorImGuiUI
 
         ImGui.Dummy(new Vector2(0.0f, spacing));
 
-        if (ImGui.BeginChild("AnimationClipEditorDetails", Vector2.Zero, ImGuiChildFlags.Border))
+        if (ImGui.BeginChild("AnimationClipEditorDetails", Vector2.Zero, ImGuiChildFlags.Borders))
         {
             DrawAnimationClipSelectionDetails(clip, state, selectedMember, selectedPath);
         }

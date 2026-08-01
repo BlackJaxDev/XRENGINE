@@ -66,7 +66,7 @@ public sealed partial class XRMaterialInspector
         if (ImGui.BeginChild(
             $"PoiyomiAuthoringTree##{schema.Fingerprint}",
             new Vector2(0.0f, childHeight),
-            ImGuiChildFlags.Border))
+            ImGuiChildFlags.Borders))
         {
             unsafe
             {

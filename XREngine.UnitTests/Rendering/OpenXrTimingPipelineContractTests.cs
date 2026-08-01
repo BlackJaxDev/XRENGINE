@@ -258,7 +258,7 @@ public sealed class OpenXrTimingPipelineContractTests
             vulkanCommandBufferState,
             "private void DestroyTrackedCommandChainSecondaryPools",
             "private void DiscardDeferredSecondaryCommandBuffersForPool");
-        trackedSecondaryPoolTeardown.ShouldContain("Api!.DestroyCommandPool(device, pool, null);");
+        trackedSecondaryPoolTeardown.ShouldContain("DestroyCommandPoolHostSynchronized(pool);");
         trackedSecondaryPoolTeardown.ShouldNotContain("!_deviceLost && pool.Handle != 0");
         string commandChainCache = SliceMethod(
             vulkanCommandChainLowering,
@@ -289,7 +289,7 @@ public sealed class OpenXrTimingPipelineContractTests
         commandChainSecondaryTeardown.ShouldNotContain("ownsPool && pool.Handle != 0 && !_deviceLost");
         string commandChainWorkerPoolTeardown = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainWorkers.cs");
-        commandChainWorkerPoolTeardown.ShouldContain("Api!.DestroyCommandPool(device, pool, null);");
+        commandChainWorkerPoolTeardown.ShouldContain("DestroyCommandPoolHostSynchronized(pool);");
         commandChainWorkerPoolTeardown.ShouldNotContain("!_deviceLost");
         vkDataBuffer.ShouldContain("Renderer.MarkCommandBuffersDirty(\"VkDataBufferRecreated\");");
         vkDataBuffer.ShouldContain("Renderer.MarkOpenXrPrimaryCommandBufferVariantsDirty();");

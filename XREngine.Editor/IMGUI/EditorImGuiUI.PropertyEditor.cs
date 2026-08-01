@@ -2670,7 +2670,7 @@ public static partial class EditorImGuiUI
 
             var filteredList = filtered.ToList();
 
-            if (ImGui.BeginChild("##PropertyTypeList", new Vector2(0f, 280f), ImGuiChildFlags.Border))
+            if (ImGui.BeginChild("##PropertyTypeList", new Vector2(0f, 280f), ImGuiChildFlags.Borders))
             {
                 if (filteredList.Count == 0)
                 {
@@ -3059,7 +3059,7 @@ public static partial class EditorImGuiUI
 
             var filteredList = filtered.ToList();
 
-            if (ImGui.BeginChild("##CollectionTypeList", new Vector2(0f, 240f), ImGuiChildFlags.Border))
+            if (ImGui.BeginChild("##CollectionTypeList", new Vector2(0f, 240f), ImGuiChildFlags.Borders))
             {
                 if (filteredList.Count == 0)
                 {

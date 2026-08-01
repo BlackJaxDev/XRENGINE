@@ -8,12 +8,13 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal static class VulkanImGuiClipboard
 {
-    internal static void InstallCallbacks(ImGuiIOPtr io)
+    internal static unsafe void InstallCallbacks()
     {
         if (!OperatingSystem.IsWindows())
             return;
 
-        io.GetClipboardTextFn = RendererNativeCallbackBridge.GetClipboardTextCallbackPointer;
-        io.SetClipboardTextFn = RendererNativeCallbackBridge.SetClipboardTextCallbackPointer;
+        ImGuiPlatformIOPtr platformIO = ImGuiNative.igGetPlatformIO();
+        platformIO.Platform_GetClipboardTextFn = RendererNativeCallbackBridge.GetClipboardTextCallbackPointer;
+        platformIO.Platform_SetClipboardTextFn = RendererNativeCallbackBridge.SetClipboardTextCallbackPointer;
     }
 }

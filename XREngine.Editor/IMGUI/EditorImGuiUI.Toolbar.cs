@@ -62,8 +62,8 @@ public static partial class EditorImGuiUI
             float playButtonsWidth = GetPlayControlsEstimatedWidth();
             float currentX = ImGui.GetCursorPosX();
 
-            float contentMinX = ImGui.GetWindowContentRegionMin().X;
-            float contentMaxX = ImGui.GetWindowContentRegionMax().X;
+            float contentMinX = ImGui.GetStyle().WindowPadding.X;
+            float contentMaxX = currentX + ImGui.GetContentRegionAvail().X;
             float contentWidth = MathF.Max(0f, contentMaxX - contentMinX);
             float desiredX = contentMinX + (contentWidth - playButtonsWidth) * 0.5f;
 

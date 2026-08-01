@@ -37,7 +37,7 @@ public sealed partial class McpAssistantWindow
             available = 80f;
 
         ImGui.PushStyleColor(ImGuiCol.ChildBg, ColorChatBg);
-        ImGui.BeginChild("##ChatLog", new Vector2(-1f, available), ImGuiChildFlags.Border);
+        ImGui.BeginChild("##ChatLog", new Vector2(-1f, available), ImGuiChildFlags.Borders);
 
         if (_history.Count == 0)
         {

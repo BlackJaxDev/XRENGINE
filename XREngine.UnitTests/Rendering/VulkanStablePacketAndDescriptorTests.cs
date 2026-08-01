@@ -1364,7 +1364,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
 
         artifact.MarkRetired();
         arena.GetArtifactCount(frameSlot: 1).ShouldBe(0);
-        Should.NotThrow(arena.ClearAfterPoolDestruction);
+        Should.NotThrow(arena.ClearAfterPoolRetirement);
         arena.FrameSlotCount.ShouldBe(0);
     }
 
@@ -1433,11 +1433,11 @@ public sealed class VulkanStablePacketAndDescriptorTests
             Should.Throw<InvalidOperationException>(
                 () => VulkanWorkerSecondaryCommandArena.EnterRecording(arena));
             Should.Throw<InvalidOperationException>(
-                arena.ClearAfterPoolDestruction);
+                arena.ClearAfterPoolRetirement);
         }
 
         arena.IsRecording.ShouldBeFalse();
-        Should.NotThrow(arena.ClearAfterPoolDestruction);
+        Should.NotThrow(arena.ClearAfterPoolRetirement);
     }
 
     [Test]

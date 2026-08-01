@@ -305,7 +305,7 @@ internal static class ImGuiAssetUtilities
         Vector2 listSize = new(0.0f, 260.0f);
         AssetCandidate<TAsset>? hoveredCandidate = null;
         AssetCandidate<TAsset>? selectedCandidate = null;
-        if (ImGui.BeginChild("AssetPickerList", listSize, ImGuiChildFlags.Border))
+        if (ImGui.BeginChild("AssetPickerList", listSize, ImGuiChildFlags.Borders))
         {
             if (candidateCount == 0)
             {
