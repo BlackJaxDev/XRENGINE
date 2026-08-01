@@ -133,13 +133,13 @@ public sealed class ShaderCrossCompilerWindow
 
         float availableHeight = ImGui.GetContentRegionAvail().Y;
 
-        ImGui.BeginChild("SourcePanel", new Vector2(480, availableHeight), ImGuiChildFlags.Border | ImGuiChildFlags.ResizeX);
+        ImGui.BeginChild("SourcePanel", new Vector2(480, availableHeight), ImGuiChildFlags.Borders | ImGuiChildFlags.ResizeX);
         DrawSourcePanel();
         ImGui.EndChild();
 
         ImGui.SameLine();
 
-        ImGui.BeginChild("OutputPanel", Vector2.Zero, ImGuiChildFlags.Border);
+        ImGui.BeginChild("OutputPanel", Vector2.Zero, ImGuiChildFlags.Borders);
         DrawOutputPanel();
         ImGui.EndChild();
     }

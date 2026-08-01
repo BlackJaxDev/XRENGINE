@@ -695,10 +695,10 @@ public unsafe partial class VulkanRenderer
             {
                 CommandPool pool = worker.Arena.GetPool(frameSlot);
                 if (pool.Handle != 0)
-                    Api!.DestroyCommandPool(device, pool, null);
+                    MarkOwnedCommandChainSecondaryPoolPendingDestroy(pool);
             }
 
-            worker.Arena.ClearAfterPoolDestruction();
+            worker.Arena.ClearAfterPoolRetirement();
         }
     }
 }

@@ -49,6 +49,12 @@ internal sealed class YamlDefaultTypeInspector(ITypeInspector inner, bool applyD
     public string GetEnumValue(object value)
         => _inner.GetEnumValue(value);
 
+    public bool HasParseMethod(Type type)
+        => _inner.HasParseMethod(type);
+
+    public object? Parse(string value, Type expectedType)
+        => _inner.Parse(value, expectedType);
+
     private IPropertyDescriptor Wrap(IPropertyDescriptor descriptor)
     {
         YamlDefaultTypeAttribute? attribute = descriptor.GetCustomAttribute<YamlDefaultTypeAttribute>();

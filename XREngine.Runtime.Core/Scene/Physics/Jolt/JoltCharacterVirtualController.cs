@@ -771,7 +771,7 @@ namespace XREngine.Scene.Physics.Jolt
 
             for (int index = 0; index < contactCount; index++)
             {
-                CharacterVirtual.Contact c = _character.GetActiveContact(index);
+                CharacterContact c = _character.GetActiveContact(index);
                 if (!c.HadCollision || c.IsSensorB)
                     continue;
                 

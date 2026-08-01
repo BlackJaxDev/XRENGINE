@@ -220,7 +220,7 @@ public sealed class GPULandscapeComponentEditor : IXRComponentEditor
         var layers = landscape.Layers;
 
         // Layer list
-        ImGui.BeginChild("LayerList", new Vector2(0, 150), ImGuiChildFlags.Border);
+        ImGui.BeginChild("LayerList", new Vector2(0, 150), ImGuiChildFlags.Borders);
 
         for (int i = 0; i < layers.Count; i++)
         {
@@ -363,7 +363,7 @@ public sealed class GPULandscapeComponentEditor : IXRComponentEditor
         var modules = landscape.Modules;
 
         // Module list
-        ImGui.BeginChild("ModuleList", new Vector2(0, 150), ImGuiChildFlags.Border);
+        ImGui.BeginChild("ModuleList", new Vector2(0, 150), ImGuiChildFlags.Borders);
 
         for (int i = 0; i < modules.Count; i++)
         {

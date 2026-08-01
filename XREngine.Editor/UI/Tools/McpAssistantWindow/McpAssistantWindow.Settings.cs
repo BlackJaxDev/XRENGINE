@@ -61,7 +61,8 @@ public sealed partial class McpAssistantWindow
 
         // Right-aligned status indicator in menu bar.
         float statusWidth = ImGui.CalcTextSize(_status).X + 20f;
-        ImGui.SetCursorPosX(ImGui.GetWindowContentRegionMax().X - statusWidth);
+        float statusX = ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - statusWidth;
+        ImGui.SetCursorPosX(statusX);
         ImGui.TextColored(_statusColor, _status);
 
         ImGui.EndMenuBar();
@@ -266,7 +267,7 @@ public sealed partial class McpAssistantWindow
             return;
         }
 
-        ImGui.BeginChild("##McpUsageHistory", new Vector2(-1f, 150f), ImGuiChildFlags.Border);
+        ImGui.BeginChild("##McpUsageHistory", new Vector2(-1f, 150f), ImGuiChildFlags.Borders);
 
         for (int i = _mcpUsageHistory.Count - 1; i >= 0; i--)
         {

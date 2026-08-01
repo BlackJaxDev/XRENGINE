@@ -87,19 +87,19 @@ public static partial class EditorImGuiUI
         float sidebarWidth = 300f;
         float inspectorHeight = 170f;
 
-        ImGui.BeginChild("ShaderGraphSidebar", new Vector2(sidebarWidth, -inspectorHeight - ImGui.GetStyle().ItemSpacing.Y), ImGuiChildFlags.Border | ImGuiChildFlags.ResizeX);
+        ImGui.BeginChild("ShaderGraphSidebar", new Vector2(sidebarWidth, -inspectorHeight - ImGui.GetStyle().ItemSpacing.Y), ImGuiChildFlags.Borders | ImGuiChildFlags.ResizeX);
         DrawShaderGraphSidebar();
         ImGui.EndChild();
 
         ImGui.SameLine();
 
-        ImGui.BeginChild("ShaderGraphCanvasRegion", new Vector2(0, -inspectorHeight - ImGui.GetStyle().ItemSpacing.Y), ImGuiChildFlags.Border);
+        ImGui.BeginChild("ShaderGraphCanvasRegion", new Vector2(0, -inspectorHeight - ImGui.GetStyle().ItemSpacing.Y), ImGuiChildFlags.Borders);
         DrawShaderGraphCanvas();
         ImGui.EndChild();
 
         ImGui.Separator();
         ImGui.Text("Node Inspector");
-        ImGui.BeginChild("ShaderGraphInspector", new Vector2(0, inspectorHeight), ImGuiChildFlags.Border);
+        ImGui.BeginChild("ShaderGraphInspector", new Vector2(0, inspectorHeight), ImGuiChildFlags.Borders);
         DrawShaderGraphInspector();
         ImGui.EndChild();
 

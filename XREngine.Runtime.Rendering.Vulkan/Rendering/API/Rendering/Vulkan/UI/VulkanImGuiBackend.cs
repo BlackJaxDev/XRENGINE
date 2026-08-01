@@ -40,7 +40,7 @@ internal unsafe sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDispos
         // silently ignored because no docking handler is registered.
         io.ConfigFlags |= ImGuiConfigFlags.DockingEnable;
 
-        VulkanImGuiClipboard.InstallCallbacks(io);
+        VulkanImGuiClipboard.InstallCallbacks();
         _input.TryAttachInputHandlers();
     }
 

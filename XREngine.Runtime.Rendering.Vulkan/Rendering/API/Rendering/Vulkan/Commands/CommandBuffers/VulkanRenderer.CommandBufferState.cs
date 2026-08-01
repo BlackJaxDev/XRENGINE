@@ -969,7 +969,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             if (destroyNow)
-                Api!.DestroyCommandPool(device, pool, null);
+                DestroyCommandPoolHostSynchronized(pool);
         }
 
         private void DestroyPendingOwnedCommandChainSecondaryPoolIfEmpty(CommandPool pool)
@@ -990,7 +990,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             if (destroyNow)
-                Api!.DestroyCommandPool(device, pool, null);
+                DestroyCommandPoolHostSynchronized(pool);
         }
 
         private void ClearTrackedCommandChainSecondaryPools()
@@ -1025,7 +1025,7 @@ namespace XREngine.Rendering.Vulkan
                 DiscardDeferredSecondaryCommandBuffersForPool(pool);
                 if (pool.Handle != 0)
                 {
-                    Api!.DestroyCommandPool(device, pool, null);
+                    DestroyCommandPoolHostSynchronized(pool);
                     destroyedPoolCount++;
                 }
             }

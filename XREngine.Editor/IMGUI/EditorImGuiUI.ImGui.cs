@@ -996,7 +996,7 @@ public static partial class EditorImGuiUI
                 ImGui.Separator();
 
                 var listSize = new Vector2(520, MathF.Min(300, 22 + (_closePromptAssets.Count * 22)));
-                if (ImGui.BeginChild("##UnsavedList", listSize, ImGuiChildFlags.Border))
+                if (ImGui.BeginChild("##UnsavedList", listSize, ImGuiChildFlags.Borders))
                 {
                     foreach (var asset in _closePromptAssets)
                     {
@@ -1539,13 +1539,13 @@ public static partial class EditorImGuiUI
 
             var style = ImGui.GetStyle();
             Vector2 textSize = ImGui.CalcTextSize(label);
-            Vector2 regionMin = ImGui.GetWindowContentRegionMin();
-            Vector2 regionMax = ImGui.GetWindowContentRegionMax();
-            float regionWidth = regionMax.X - regionMin.X;
+            float regionMinX = style.WindowPadding.X;
+            float regionMaxX = ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X;
+            float regionWidth = regionMaxX - regionMinX;
 
-            float centeredX = regionMin.X + (regionWidth - textSize.X) * 0.5f;
-            float minX = regionMin.X + style.WindowPadding.X;
-            float maxX = regionMax.X - style.WindowPadding.X - textSize.X;
+            float centeredX = regionMinX + (regionWidth - textSize.X) * 0.5f;
+            float minX = regionMinX + style.WindowPadding.X;
+            float maxX = regionMaxX - style.WindowPadding.X - textSize.X;
             if (centeredX < minX)
                 centeredX = minX;
             else if (centeredX > maxX)
@@ -1953,9 +1953,9 @@ public static partial class EditorImGuiUI
             colors[(int)ImGuiCol.ResizeGripActive] = accentActive;
             colors[(int)ImGuiCol.Tab] = midBg;
             colors[(int)ImGuiCol.TabHovered] = hoverBg;
-            colors[(int)ImGuiCol.TabActive] = activeBg;
-            colors[(int)ImGuiCol.TabUnfocused] = new Vector4(midBg.X, midBg.Y, midBg.Z, 0.90f);
-            colors[(int)ImGuiCol.TabUnfocusedActive] = hoverBg;
+            colors[(int)ImGuiCol.TabSelected] = activeBg;
+            colors[(int)ImGuiCol.TabDimmed] = new Vector4(midBg.X, midBg.Y, midBg.Z, 0.90f);
+            colors[(int)ImGuiCol.TabDimmedSelected] = hoverBg;
             colors[(int)ImGuiCol.DockingPreview] = new Vector4(accent.X, accent.Y, accent.Z, 0.35f);
             colors[(int)ImGuiCol.DockingEmptyBg] = new Vector4(0.08f, 0.08f, 0.09f, 1.00f);
             colors[(int)ImGuiCol.PlotLines] = accent;
@@ -1967,7 +1967,7 @@ public static partial class EditorImGuiUI
             colors[(int)ImGuiCol.TableBorderLight] = new Vector4(0.16f, 0.18f, 0.21f, 1.00f);
             colors[(int)ImGuiCol.TextSelectedBg] = new Vector4(accent.X, accent.Y, accent.Z, 0.35f);
             colors[(int)ImGuiCol.DragDropTarget] = new Vector4(accent.X, accent.Y, accent.Z, 0.90f);
-            colors[(int)ImGuiCol.NavHighlight] = accent;
+            colors[(int)ImGuiCol.NavCursor] = accent;
             colors[(int)ImGuiCol.NavWindowingHighlight] = new Vector4(accent.X, accent.Y, accent.Z, 0.70f);
             colors[(int)ImGuiCol.NavWindowingDimBg] = new Vector4(0.05f, 0.05f, 0.05f, 0.60f);
             colors[(int)ImGuiCol.ModalWindowDimBg] = new Vector4(0.05f, 0.05f, 0.05f, 0.45f);

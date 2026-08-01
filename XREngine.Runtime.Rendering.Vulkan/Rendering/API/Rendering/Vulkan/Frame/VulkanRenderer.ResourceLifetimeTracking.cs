@@ -820,7 +820,7 @@ public unsafe partial class VulkanRenderer
         CommandBuffer* commandBuffers,
         string owner = "CommandBuffer.Allocation")
     {
-        Result result = Api!.AllocateCommandBuffers(device, ref allocateInfo, commandBuffers);
+        Result result = AllocateCommandBuffersHostSynchronized(ref allocateInfo, commandBuffers);
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAllocateCommandBuffersCall(
             allocateInfo.CommandBufferCount,
             result == Result.Success);
@@ -882,14 +882,14 @@ public unsafe partial class VulkanRenderer
                 ObjectType.CommandBuffer,
                 handle,
                 owner);
-            if (!IsVulkanRetirementReady(ticket))
+            if (!IsVulkanCommandBufferRetirementReady(commandBuffer, ticket))
             {
                 RetireCommandBuffer(commandPool, commandBuffer);
                 commandBuffers[i] = default;
                 continue;
             }
 
-            Api!.FreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+            FreeCommandBuffersHostSynchronized(commandPool, 1, &commandBuffer);
             RemoveCommandBufferBindState(commandBuffers[i]);
             CompleteVulkanResourceDestruction(ObjectType.CommandBuffer, handle);
             commandBuffers[i] = default;
@@ -3064,6 +3064,48 @@ public unsafe partial class VulkanRenderer
 
     private bool IsVulkanRetirementReady(in VulkanRetirementTicket ticket)
         => _resourceLifetimeTracker.IsRetirementReady(ticket);
+
+    /// <summary>
+    /// Command buffers have CPU-side recording and queue-gateway owners that are
+    /// not represented by GPU completion pins. Pending retirement prevents a new
+    /// recording from starting, so once these owners are clear the native free
+    /// cannot race another recording acquisition.
+    /// </summary>
+    private bool IsVulkanCommandBufferRetirementReady(
+        CommandBuffer commandBuffer,
+        in VulkanRetirementTicket ticket)
+    {
+        ulong handle = unchecked((ulong)commandBuffer.Handle);
+        if (handle == 0)
+            return false;
+
+        lock (_resourceLifetimeTracker.SyncRoot)
+        {
+            if (_resourceLifetimeTracker.ForcedRetirementDrainDepth > 0)
+                return true;
+
+            if (_commandBufferTrackingBatches.TryGetValue(
+                    handle,
+                    out VulkanCommandBufferTrackingBatch? batch))
+            {
+                lock (batch)
+                {
+                    if (batch.IsRecording || batch.QueuedSubmissionCount != 0)
+                        return false;
+                }
+            }
+
+            if (_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(
+                    handle,
+                    out VulkanCommandBufferLifetimeRecord? lifetime) &&
+                lifetime.QueuedSubmissionCount != 0)
+            {
+                return false;
+            }
+
+            return IsVulkanRetirementReady_NoLock(ticket);
+        }
+    }
 
     private bool TryBeginDestroyVulkanResourceGeneration(
         ObjectType type,

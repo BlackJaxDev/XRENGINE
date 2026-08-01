@@ -262,7 +262,7 @@ public static partial class EditorImGuiUI
     private static void DrawExternalFileImportDialogContents(ExternalFileImportDialogState state)
     {
         ImGui.TextUnformatted(state.SourceIsFolder ? "Folder:" : "Files:");
-        ImGui.BeginChild("ExternalImportSources", new Vector2(640, state.SourceIsFolder ? 56 : 132), ImGuiChildFlags.Border, ImGuiWindowFlags.None);
+        ImGui.BeginChild("ExternalImportSources", new Vector2(640, state.SourceIsFolder ? 56 : 132), ImGuiChildFlags.Borders, ImGuiWindowFlags.None);
         foreach (string source in state.SourcePaths)
             ImGui.TextWrapped(source);
         ImGui.EndChild();

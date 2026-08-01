@@ -94,7 +94,7 @@ public static partial class EditorImGuiUI
 
             bool selectionFoundThisFrame = false;
 
-            if (ImGui.BeginChild("MissingAssetList", new Vector2(-1.0f, listHeight), ImGuiChildFlags.Border))
+            if (ImGui.BeginChild("MissingAssetList", new Vector2(-1.0f, listHeight), ImGuiChildFlags.Borders))
             {
                 if (ImGui.BeginTable("ProfilerMissingAssetTable", 6, tableFlags, new Vector2(-1.0f, -1.0f)))
                 {
@@ -191,7 +191,7 @@ public static partial class EditorImGuiUI
             if (hasSelectedInfo && editorHeight > 0.0f)
             {
                 ImGui.Dummy(new Vector2(0.0f, spacing));
-                if (ImGui.BeginChild("MissingAssetEditor", new Vector2(-1.0f, editorHeight), ImGuiChildFlags.Border))
+                if (ImGui.BeginChild("MissingAssetEditor", new Vector2(-1.0f, editorHeight), ImGuiChildFlags.Borders))
                 {
                     DrawMissingAssetReplacementEditor(selectedInfo);
                     ImGui.EndChild();

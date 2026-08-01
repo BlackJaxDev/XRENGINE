@@ -269,13 +269,13 @@ public static partial class EditorImGuiUI
         Vector2 available = ImGui.GetContentRegionAvail();
         float leftWidth = MathF.Max(420f, available.X * 0.68f);
 
-        ImGui.BeginChild("##RenderPipelineCommandTimeline", new Vector2(leftWidth, 0), ImGuiChildFlags.Border);
+        ImGui.BeginChild("##RenderPipelineCommandTimeline", new Vector2(leftWidth, 0), ImGuiChildFlags.Borders);
         DrawRenderPipelineCommandTimelineCanvas(root, state);
         ImGui.EndChild();
 
         ImGui.SameLine();
 
-        ImGui.BeginChild("##RenderPipelineCommandTimelineInspector", Vector2.Zero, ImGuiChildFlags.Border);
+        ImGui.BeginChild("##RenderPipelineCommandTimelineInspector", Vector2.Zero, ImGuiChildFlags.Borders);
         DrawRenderPipelineCommandSelectionInspector(root, state);
         ImGui.EndChild();
     }
@@ -876,7 +876,7 @@ public static partial class EditorImGuiUI
             if (step.ResumeOrderExclusive > step.OrderIndex + 1)
             {
                 Vector2 resumeMax = TimelineWorldToScreen(canvasPos, view, new Vector2(laneHeaderWidth + (step.ResumeOrderExclusive * orderStep) - 24f, (step.LaneIndex * laneHeight) + stepYOffset + stepHeight - 6f));
-                drawList.AddRectFilled(min + new Vector2((stepWidth + 6f) * view.Zoom, 18f * view.Zoom), resumeMax, ImGui.GetColorU32(ImGuiCol.TabUnfocused), 6f * view.Zoom);
+                drawList.AddRectFilled(min + new Vector2((stepWidth + 6f) * view.Zoom, 18f * view.Zoom), resumeMax, ImGui.GetColorU32(ImGuiCol.TabDimmed), 6f * view.Zoom);
             }
 
             drawList.AddRectFilled(min, max, step.BranchLabels.Length > 0 ? branchBlockColor : blockColor, rounding * view.Zoom);
@@ -1159,7 +1159,7 @@ public static partial class EditorImGuiUI
         ImGui.BeginChild(
             "##RenderPipelineCommandGraphCanvas",
             new Vector2(0, 0),
-            ImGuiChildFlags.Border,
+            ImGuiChildFlags.Borders,
             ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
 
         var drawList = ImGui.GetWindowDrawList();
@@ -1362,7 +1362,7 @@ public static partial class EditorImGuiUI
         ImGui.BeginChild(
             "##RenderPipelineGraphCanvas",
             new Vector2(0, 0),
-            ImGuiChildFlags.Border,
+            ImGuiChildFlags.Borders,
             ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
 
         var drawList = ImGui.GetWindowDrawList();

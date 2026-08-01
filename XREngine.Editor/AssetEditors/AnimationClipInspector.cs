@@ -10,7 +10,7 @@ using XREngine.Core.Files;
 
 namespace XREngine.Editor.AssetEditors;
 
-public sealed class AnimationClipInspector : IXRAssetInspector
+public sealed partial class AnimationClipInspector : IXRAssetInspector
 {
     private readonly ConditionalWeakTable<AnimationClip, EditorState> _stateCache = new();
 
@@ -109,35 +109,25 @@ public sealed class AnimationClipInspector : IXRAssetInspector
         Vector2 available = ImGui.GetContentRegionAvail();
         float panelHeight = Math.Max(280.0f, available.Y);
 
-        if (ImGui.BeginChild("AnimationClipMemberTree", new Vector2(360.0f, panelHeight), ImGuiChildFlags.Border | ImGuiChildFlags.ResizeX))
+        if (ImGui.BeginChild("AnimationClipMemberTree", new Vector2(360.0f, panelHeight), ImGuiChildFlags.Borders | ImGuiChildFlags.ResizeX))
         {
             if (clip.RootMember is null)
-            {
                 ImGui.TextDisabled("No members available.");
-            }
             else
-            {
                 DrawMemberTreeNode(clip.RootMember, state, "0", clip.RootMember.MemberName);
-            }
         }
         ImGui.EndChild();
 
         ImGui.SameLine();
 
-        if (ImGui.BeginChild("AnimationClipMemberDetails", Vector2.Zero, ImGuiChildFlags.Border))
+        if (ImGui.BeginChild("AnimationClipMemberDetails", Vector2.Zero, ImGuiChildFlags.Borders))
         {
             if (clip.RootMember is null)
-            {
                 ImGui.TextDisabled("Select or import animation members to inspect them here.");
-            }
             else if (TryFindSelectedMember(clip.RootMember, state.SelectedMemberId, "0", clip.RootMember.MemberName, out var selectedMember, out var displayPath))
-            {
                 DrawSelectedMemberDetails(selectedMember, displayPath, visitedObjects);
-            }
             else
-            {
                 ImGui.TextDisabled("Select a member from the tree to inspect its properties.");
-            }
         }
         ImGui.EndChild();
     }
@@ -203,13 +193,9 @@ public sealed class AnimationClipInspector : IXRAssetInspector
 
         ImGui.Separator();
         if (member.Animation is null)
-        {
             ImGui.TextDisabled("No animation asset is attached to this member.");
-        }
         else
-        {
             EditorImGuiUI.DrawRuntimeObjectInspector("Attached Animation", member.Animation, visitedObjects, defaultOpen: true);
-        }
     }
 
     private static void DrawMethodArgumentSummary(AnimationMember member)
@@ -373,17 +359,5 @@ public sealed class AnimationClipInspector : IXRAssetInspector
         }
 
         return stats;
-    }
-
-    private sealed class EditorState
-    {
-        public string? SelectedMemberId;
-    }
-
-    private struct MemberStats
-    {
-        public int TotalCount;
-        public int AnimatedCount;
-        public int MethodCount;
     }
 }

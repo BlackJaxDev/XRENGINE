@@ -464,7 +464,9 @@ namespace XREngine.Rendering.Vulkan
                 for (int i = 0; i < list.Count && ready.Count < capacity;)
                 {
                     RetiredCommandBuffer candidate = list[i];
-                    if (!IsVulkanRetirementReady(candidate.Ticket))
+                    if (!IsVulkanCommandBufferRetirementReady(
+                            candidate.CommandBuffer,
+                            candidate.Ticket))
                     {
                         i++;
                         continue;
@@ -488,7 +490,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 RetiredCommandBuffer entry = retired[i];
                 CommandBuffer commandBuffer = entry.CommandBuffer;
-                Api!.FreeCommandBuffers(device, entry.CommandPool, 1, &commandBuffer);
+                FreeCommandBuffersHostSynchronized(entry.CommandPool, 1, &commandBuffer);
                 RemoveCommandBufferBindState(entry.CommandBuffer);
                 UntrackOwnedCommandChainSecondaryCommandBuffer(entry.CommandPool, entry.CommandBuffer);
                 DestroyPendingOwnedCommandChainSecondaryPoolIfEmpty(entry.CommandPool);

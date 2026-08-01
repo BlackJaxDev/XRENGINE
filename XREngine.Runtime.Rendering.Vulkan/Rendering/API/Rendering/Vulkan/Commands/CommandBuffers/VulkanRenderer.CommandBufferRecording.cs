@@ -2996,27 +2996,6 @@ namespace XREngine.Rendering.Vulkan
                imageIndex < _swapchainImageEverPresented.Length &&
                _swapchainImageEverPresented[imageIndex];
 
-        private readonly record struct SwapchainRecordingTarget(
-            Image Image,
-            ImageView ImageView,
-            Format ImageFormat,
-            Extent2D Extent,
-            Image DepthImage,
-            ImageView DepthView,
-            Format DepthFormat,
-            ImageAspectFlags DepthAspect,
-            ImageLayout InitialColorLayout,
-            bool ImageEverPresentedAtRecordStart)
-        {
-            public bool IsValid =>
-                Image.Handle != 0 &&
-                ImageView.Handle != 0 &&
-                Extent.Width != 0 &&
-                Extent.Height != 0 &&
-                DepthImage.Handle != 0 &&
-                DepthView.Handle != 0;
-        }
-
         private ImageLayout ResolveTrackedSwapchainTargetColorLayout(Image image)
         {
             if (image.Handle == 0)

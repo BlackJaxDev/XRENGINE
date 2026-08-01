@@ -72,7 +72,7 @@
     <PackageReference Include="Silk.NET.Windowing.Glfw" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Windowing.Sdl" Version="2.23.0" />
     <PackageReference Include="Silk.NET.XInput" Version="2.23.0" />
-    <PackageReference Include="SixLabors.ImageSharp" Version="4.0.0" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
     <PackageReference Include="SkiaSharp" Version="4.151.0" />
     <PackageReference Include="Svg.Skia" Version="5.1.1" />
     <PackageReference Include="System.Management" Version="10.0.10" />

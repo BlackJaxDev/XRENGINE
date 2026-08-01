@@ -359,13 +359,13 @@ public sealed class ShaderEditorWindow
         float availableHeight = ImGui.GetContentRegionAvail().Y;
         float leftWidth = MathF.Max(520f, ImGui.GetContentRegionAvail().X * 0.54f);
 
-        ImGui.BeginChild("ShaderEditorSourcePane", new Vector2(leftWidth, availableHeight), ImGuiChildFlags.Border);
+        ImGui.BeginChild("ShaderEditorSourcePane", new Vector2(leftWidth, availableHeight), ImGuiChildFlags.Borders);
         DrawSourceEditor();
         ImGui.EndChild();
 
         ImGui.SameLine();
 
-        ImGui.BeginChild("ShaderEditorRightPane", Vector2.Zero, ImGuiChildFlags.Border);
+        ImGui.BeginChild("ShaderEditorRightPane", Vector2.Zero, ImGuiChildFlags.Borders);
         DrawRightPane();
         ImGui.EndChild();
     }
@@ -764,7 +764,7 @@ public sealed class ShaderEditorWindow
 
         ImGui.Separator();
         ImGui.TextUnformatted("Animated patterns");
-        ImGui.BeginChild("ShaderEditorVariantPatterns", new Vector2(0f, 78f), ImGuiChildFlags.Border);
+        ImGui.BeginChild("ShaderEditorVariantPatterns", new Vector2(0f, 78f), ImGuiChildFlags.Borders);
         foreach (string pattern in _lockingTool.GetAnimatedPatterns())
         {
             ImGui.PushID(pattern);
@@ -1639,7 +1639,7 @@ public sealed class ShaderEditorWindow
 
         string[] lines = source.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
         float lineHeight = ImGui.GetTextLineHeightWithSpacing();
-        ImGui.BeginChild("ShaderEditorAnnotatedSource", Vector2.Zero, ImGuiChildFlags.Border, ImGuiWindowFlags.HorizontalScrollbar);
+        ImGui.BeginChild("ShaderEditorAnnotatedSource", Vector2.Zero, ImGuiChildFlags.Borders, ImGuiWindowFlags.HorizontalScrollbar);
         ImDrawListPtr drawList = ImGui.GetWindowDrawList();
 
         for (int lineIndex = 0; lineIndex < lines.Length; lineIndex++)

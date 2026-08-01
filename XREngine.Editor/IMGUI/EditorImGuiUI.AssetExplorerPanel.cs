@@ -234,7 +234,7 @@ public static partial class EditorImGuiUI
             Vector2 contentRegion = ImGui.GetContentRegionAvail();
             float directoryPaneWidth = Math.Clamp(contentRegion.X * 0.32f, 220.0f, 360.0f);
 
-            if (ImGui.BeginChild($"{state.Id}DirectoryPane", new Vector2(directoryPaneWidth, 0f), ImGuiChildFlags.Border))
+            if (ImGui.BeginChild($"{state.Id}DirectoryPane", new Vector2(directoryPaneWidth, 0f), ImGuiChildFlags.Borders))
             {
                 DrawAssetExplorerDirectoryTree(state, state.RootPath);
             }
@@ -242,7 +242,7 @@ public static partial class EditorImGuiUI
 
             ImGui.SameLine();
 
-            if (ImGui.BeginChild($"{state.Id}FilePane", Vector2.Zero, ImGuiChildFlags.Border))
+            if (ImGui.BeginChild($"{state.Id}FilePane", Vector2.Zero, ImGuiChildFlags.Borders))
             {
                 DrawAssetExplorerFileList(state);
             }
