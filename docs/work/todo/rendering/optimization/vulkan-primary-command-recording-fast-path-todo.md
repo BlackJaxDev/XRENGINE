@@ -1,8 +1,8 @@
 # Vulkan Primary Command Recording Fast Path TODO
 
-Last Updated: 2026-07-28
+Last Updated: 2026-08-01
 Owner: Rendering / Vulkan
-Status: Superseded By Workstreams 01, 02, 04, And 05
+Status: Archived Umbrella; superseded by the workstream 03-05 validation ledger
 Execution: Current worktree only; do not create or switch branches for this effort.
 
 ## Canonical Ownership
@@ -16,15 +16,31 @@ but it no longer has independent completion authority:
 - primary dependency, image-state, invalidation, and stable-range reuse belong
   to completed workstream 02 in the same
   [investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md);
-- immutable pre-resolved planning and render-thread work removal belong to
-  [04 - Next-Frame Preparation And Collect-Visible Handoff](04-next-frame-preparation-and-collect-visible-handoff-todo.md);
-- production secondary recording workers belong to
-  [05 - Vulkan Command Recording Worker Architecture](05-vulkan-command-recording-worker-architecture-todo.md).
+- immutable pre-resolved planning, the remaining producer-side cutover, and
+  their acceptance gates belong to the
+  [workstream 03-05 validation ledger](../../../testing/rendering/03-05-optimization-validation-todo.md);
+- production secondary recording workers are implemented, while overlap,
+  performance, and lifecycle acceptance remain in that same ledger.
 
 Backend-neutral upload arenas, constant publication, state sorting, and warmup
 remain in [CPU Direct Fast Path](cpu-direct-fast-path-todo.md). Do not mark this
 legacy umbrella complete independently; migrate newly discovered live work to
 its canonical owner.
+
+## Current Disposition
+
+The phase checklist below is the original historical execution plan. Its
+unchecked boxes are not a current backlog and must not be executed or marked
+complete independently. The canonical workstream 03-05 ledger preserves every
+remaining implementation, correctness, allocation, desktop/VR, and performance
+gate.
+
+The compile-time reuse quarantine described by the original issue no longer
+exists: `VulkanPrimaryCommandBufferReuseSafe` is `true`, and normal-policy
+reuse is guarded by the immutable dependency, image-state, frame-data, and
+artifact contracts. Live regressions discovered on 2026-08-01 are tracked in
+the [Vulkan editor frame-time investigation](../../../investigations/rendering/vulkan-editor-frame-time-spikes-2026-07-30.md#2026-08-01-directional-light-and-late-overlay-instability),
+not reopened here.
 
 Evidence source:
 
@@ -70,13 +86,12 @@ emission, descriptor/pipeline binding, draw recording, and texture upload ops.
 The current profiler label is too broad to identify which of those sub-costs is
 responsible in steady state.
 
-The current source also keeps primary reuse behind
+When this document was authored, source kept primary reuse behind
 `VulkanPrimaryCommandBufferReuseSafe = false` because mutable descriptor and
-GPU-publication generations are not complete in the variant key. Static
-`CpuDirect` frames therefore force fresh primaries, while GPU-driven frames may
-also force fresh recording merely because their GPU-resident outputs are marked
-mutable. Removing that quarantine safely is a Phase 5.2A deliverable, not an
-optional tuning experiment.
+GPU-publication generations were incomplete in the variant key. That historical
+statement is no longer true. Reuse is enabled behind the completed correctness
+contracts; the remaining >=99% cohort, mutation, allocation, parity, and
+desktop/VR promotion gates live in the canonical validation ledger.
 
 ## Why This Matters
 
@@ -126,7 +141,13 @@ visibility buffers, or XR frame pacing will not show their real benefit.
   material state, or swapchain generation changed, report the reason and fall
   back to uncached recording for that frame.
 
-## Phase 0 - Instrument The Broad Scope
+## Historical Execution Plan
+
+The following phases are retained only to explain the original decomposition
+and evidence. Do not treat their checkbox state as current implementation
+status.
+
+### Phase 0 - Instrument The Broad Scope
 
 - [ ] Execute and report this supporting work through the canonical Phase 5.2
   promotion gates; do not create a separate branch or independent acceptance
@@ -146,7 +167,7 @@ Acceptance criteria:
   or debug/profiler overhead.
 - [ ] The added counters do not allocate in the recording hot path.
 
-## Phase 1 - Remove Hot-Path Waste
+### Phase 1 - Remove Hot-Path Waste
 
 - [ ] Audit command recording for allocations and convert obvious offenders to
   spans, pooled lists, cached delegates, precomputed strings, or struct
@@ -172,7 +193,7 @@ Acceptance criteria:
 - [ ] After warmup, required pipeline compilation, exact-size dynamic-buffer
   recreation, and pipeline-caused whole-frame deferral are zero.
 
-## Phase 2 - Cache Stable Command Ranges
+### Phase 2 - Cache Stable Command Ranges
 
 - [ ] Identify frame-op ranges that are stable across frames: static opaque
   geometry, skybox, full-screen fixed post passes, and stable shadow passes.
@@ -208,7 +229,7 @@ Acceptance criteria:
   preserve compatible cached ranges; every actual miss identifies the changed
   dependency field.
 
-## Phase 3 - Validate Desktop And VR
+### Phase 3 - Validate Desktop And VR
 
 - [ ] Validate desktop mono, desktop mirror while VR is active, OpenXR
   true-single-pass stereo, and any OpenVR path available locally.

@@ -14,6 +14,7 @@ internal unsafe partial class VkMeshRenderer
         ulong ProgramLinkGeneration,
         ulong VertexLayoutHash,
         ulong DescriptorLayoutHash,
+        ulong PipelineLayoutHandle,
         ulong PassMetadataHash,
         ulong FeatureProfileHash,
         SampleCountFlags RasterizationSamples,
@@ -48,6 +49,7 @@ internal unsafe partial class VkMeshRenderer
                VertexLayoutHash == other.VertexLayoutHash &&
                DescriptorLayoutHash == other.DescriptorLayoutHash &&
                PassMetadataHash == other.PassMetadataHash &&
+               PipelineLayoutHandle == other.PipelineLayoutHandle &&
                FeatureProfileHash == other.FeatureProfileHash &&
                RasterizationSamples == other.RasterizationSamples &&
                DepthTestEnabled == other.DepthTestEnabled &&
@@ -85,6 +87,7 @@ internal unsafe partial class VkMeshRenderer
             hash.Add(PassMetadataHash);
             hash.Add(FeatureProfileHash);
             hash.Add(RasterizationSamples);
+            hash.Add(PipelineLayoutHandle);
             hash.Add(DepthTestEnabled);
             hash.Add(DepthWriteEnabled);
             hash.Add(DepthCompareOp);

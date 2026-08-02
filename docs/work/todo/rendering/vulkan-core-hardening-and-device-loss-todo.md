@@ -239,9 +239,9 @@ strictly serial workstreams:
    [Vulkan framerate root-cause investigation](../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md).
 2. Primary reuse correctness - complete; see the same
    [investigation](../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md).
-3. [True GPU-driven zero-readback submission](optimization/03-vulkan-true-zero-readback-submission-todo.md)
-4. [Next-frame preparation and collect-visible handoff](optimization/04-next-frame-preparation-and-collect-visible-handoff-todo.md)
-5. [Command-recording worker architecture](optimization/05-vulkan-command-recording-worker-architecture-todo.md)
+3. [True GPU-driven zero-readback submission](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-03-validation)
+4. [Next-frame preparation and collect-visible handoff](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-04-completion-and-validation)
+5. [Command-recording worker architecture](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-05-validation)
 6. [Forward+ prepass and render-graph cost](optimization/06-forward-prepass-and-render-graph-cost-todo.md)
 7. [Occlusion systems performance](optimization/07-occlusion-systems-performance-todo.md)
 8. [Tail latency: shadows, streaming, and jobs](optimization/08-render-tail-latency-shadows-streaming-jobs-todo.md)
@@ -280,7 +280,7 @@ the multi-output performance contract. Related ownership remains with the
 the [GPU-driven occlusion TODO](gpu/gpu-driven-occlusion-culling-architecture-todo.md),
 the [VR rendering performance contract](optimization/vr-rendering-performance-contract-todo.md),
 the [completed primary-reuse evidence](../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md),
-and the [worker-recording workstream](optimization/05-vulkan-command-recording-worker-architecture-todo.md).
+and the [worker-recording workstream](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-05-validation).
 Those efforts must consume this same frame-view/output/plan contract and must
 not introduce a desktop-only scheduler, a second attachment identity model, or
 another independently constructed runtime view set.

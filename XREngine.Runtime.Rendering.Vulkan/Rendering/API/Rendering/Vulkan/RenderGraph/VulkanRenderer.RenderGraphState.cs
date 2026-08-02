@@ -619,6 +619,7 @@ public unsafe partial class VulkanRenderer
             new(VulkanFrameOpPlannerStateKeyComparer.Instance);
         public ulong UsageSerial;
         public bool SwitchingActive;
+        public bool MergedPlanActive;
         public bool RecordingScopeActive;
         public bool HasActiveKey;
         public VulkanFrameOpPlannerStateKey ActiveKey;
@@ -998,14 +999,20 @@ public unsafe partial class VulkanRenderer
     {
         private readonly VulkanRenderer _renderer;
         private readonly FrameOpResourcePlannerSwitchingState? _switchingState;
+        private readonly FrameOp[]? _operations;
         private readonly ResourcePlannerRuntimeState _previousState;
+        private readonly VulkanFrameOpPlannerStateKey _initialKey;
+        private readonly bool _usesSingleKeyState;
         private readonly bool _active;
 
         public FrameOpResourcePlannerPreparationScope(VulkanRenderer renderer, FrameOp[] ops)
         {
             _renderer = renderer;
             _switchingState = null;
+            _operations = null;
             _previousState = default;
+            _initialKey = default;
+            _usesSingleKeyState = false;
             _active = false;
 
             if (!renderer.IsDeviceOperational ||
@@ -1029,20 +1036,35 @@ public unsafe partial class VulkanRenderer
 
             FrameOpResourcePlannerSwitchingState switchingState = renderer.ActiveFrameOpResourcePlannerSwitchingState;
             _switchingState = switchingState;
+            _operations = ops;
             _previousState = renderer.CaptureResourcePlannerRuntimeState();
             _active = true;
 
-            ResourcePlannerRuntimeState state = switchingState.HasPreparationState
-                ? switchingState.PreparationState
-                : ResourcePlannerRuntimeState.CreateEmpty();
+            bool usesSingleKeyState = TryGetSingleFrameOpPlannerStateKey(ops, out VulkanFrameOpPlannerStateKey initialKey);
+            switchingState.MergedPlanActive = !usesSingleKeyState;
+            _usesSingleKeyState = usesSingleKeyState;
+            _initialKey = initialKey;
+            ResourcePlannerRuntimeState keyedState = default;
+            bool hasCachedState = usesSingleKeyState &&
+                switchingState.States.TryGetValue(initialKey, out keyedState) &&
+                IsFrameOpPlannerAllocatorExclusivelyOwnedByKey(switchingState, initialKey, keyedState.ResourceAllocator) &&
+                IsReusableFrameOpResourcePlannerState(keyedState);
+            ResourcePlannerRuntimeState state = usesSingleKeyState
+                ? hasCachedState
+                    ? keyedState
+                    : ResourcePlannerRuntimeState.CreateEmpty()
+                : switchingState.HasPreparationState
+                    ? switchingState.PreparationState
+                    : ResourcePlannerRuntimeState.CreateEmpty();
 
             if (VulkanFrameDiagnosticsTraceEnabled)
             {
                 Debug.VulkanEvery(
                     $"Vulkan.ResourcePlanner.PreparationState.{renderer.GetHashCode()}",
                     TimeSpan.FromSeconds(1),
-                    "[VulkanResourcePlanner] Restoring merged preparation state cached={0} owner={1} revision={2} signature=0x{3:X16}.",
-                    switchingState.HasPreparationState,
+                    "[VulkanResourcePlanner] Restoring {0} preparation state cached={1} owner={2} revision={3} signature=0x{4:X16}.",
+                    usesSingleKeyState ? "single-context" : "merged",
+                    usesSingleKeyState ? hasCachedState : switchingState.HasPreparationState,
                     state.AllocatorOwnershipId,
                     state.ResourcePlannerRevision,
                     state.ResourcePlannerSignature);
@@ -1056,6 +1078,8 @@ public unsafe partial class VulkanRenderer
             if (!_active || _switchingState is null)
                 return;
 
+
+            _switchingState.MergedPlanActive = false;
             if (!_renderer.IsDeviceOperational)
             {
                 ResourcePlannerRuntimeState terminalRestoreState =
@@ -1082,6 +1106,24 @@ public unsafe partial class VulkanRenderer
                 return default;
 
             ResourcePlannerRuntimeState state = _renderer.CaptureResourcePlannerRuntimeState();
+            if (_usesSingleKeyState &&
+                _operations is not null &&
+                TryGetSingleFrameOpPlannerStateKey(_operations, out VulkanFrameOpPlannerStateKey currentKey))
+            {
+                if (!_initialKey.Equals(currentKey) &&
+                    _switchingState.States.TryGetValue(_initialKey, out ResourcePlannerRuntimeState initialState) &&
+                    ReferenceEquals(initialState.ResourceAllocator, state.ResourceAllocator))
+                {
+                    _switchingState.States.Remove(_initialKey);
+                    _switchingState.LastUsedSerials.Remove(_initialKey);
+                    _switchingState.ActiveKeys.Remove(_initialKey);
+                }
+
+                _switchingState.States[currentKey] = state;
+                _renderer.MarkFrameOpResourcePlannerStateUsed(_switchingState, currentKey);
+                return state;
+            }
+
             _switchingState.PreparationState = state;
             _switchingState.HasPreparationState = true;
 

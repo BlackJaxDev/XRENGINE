@@ -393,6 +393,22 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             usage |= ImageUsageFlags.DepthStencilAttachmentBit;
         }
 
+        uint* uploadQueueFamilies = stackalloc uint[2];
+        uint uploadQueueFamilyCount = 0;
+        if (Renderer.HasDedicatedTextureUploadTransferQueue)
+        {
+            VulkanRenderer.QueueFamilyIndices families = Renderer.FamilyQueueIndices;
+            uint? graphicsFamily = families.GraphicsFamilyIndex;
+            uint? transferFamily = families.TransferFamilyIndex;
+            if (graphicsFamily.HasValue &&
+                transferFamily.HasValue &&
+                graphicsFamily.Value != transferFamily.Value)
+            {
+                uploadQueueFamilies[0] = graphicsFamily.Value;
+                uploadQueueFamilies[1] = transferFamily.Value;
+                uploadQueueFamilyCount = 2;
+            }
+        }
         ImageCreateInfo imageInfo = new()
         {
             SType = StructureType.ImageCreateInfo,
@@ -406,7 +422,9 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             InitialLayout = ImageLayout.Undefined,
             Usage = usage,
             Samples = SampleCountFlags.Count1Bit,
-            SharingMode = SharingMode.Exclusive,
+            SharingMode = uploadQueueFamilyCount > 1 ? SharingMode.Concurrent : SharingMode.Exclusive,
+            QueueFamilyIndexCount = uploadQueueFamilyCount,
+            PQueueFamilyIndices = uploadQueueFamilyCount > 0 ? uploadQueueFamilies : null,
         };
 
         Result createResult = Renderer.CreateVulkanImageTracked(ref imageInfo, out image, "VkImageBackedTexture.ImportedUpload");

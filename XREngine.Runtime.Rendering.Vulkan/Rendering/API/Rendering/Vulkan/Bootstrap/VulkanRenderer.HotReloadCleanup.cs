@@ -29,5 +29,6 @@ public unsafe partial class VulkanRenderer
         _commandBufferRecordingScratch.Dispose();
         _resourceLifetimeTracker.ChangedDescriptorSetsScratch.Dispose();
         _resourceLifetimeTracker.DescriptorReferencesScratch.Dispose();
+        _resourceLifetimeTracker.DescriptorPinnedReferencesScratch.Dispose();
     }
 }

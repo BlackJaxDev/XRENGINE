@@ -99,7 +99,7 @@ internal unsafe class VkRenderProgramPipeline(VulkanRenderer renderer, XRRenderP
             pipelineInfo.PStages = stagesPtr;
             pipelineInfo.Layout = _pipelineLayout;
 
-            Result result = Api!.CreateGraphicsPipelines(Device, pipelineCache, 1, ref pipelineInfo, null, out Pipeline pipeline);
+            Result result = Renderer.CreateGraphicsPipelinesSynchronized(pipelineCache, ref pipelineInfo, out Pipeline pipeline);
             if (result != Result.Success)
                 throw new InvalidOperationException($"Failed to create graphics pipeline ({result}).");
 
@@ -122,7 +122,7 @@ internal unsafe class VkRenderProgramPipeline(VulkanRenderer renderer, XRRenderP
         pipelineInfo.Stage = computeStage;
         pipelineInfo.Layout = _pipelineLayout;
 
-        Result result = Api!.CreateComputePipelines(Device, pipelineCache, 1, ref pipelineInfo, null, out Pipeline pipeline);
+        Result result = Renderer.CreateComputePipelinesSynchronized(pipelineCache, ref pipelineInfo, out Pipeline pipeline);
         if (result != Result.Success)
             throw new InvalidOperationException($"Failed to create compute pipeline ({result}).");
 

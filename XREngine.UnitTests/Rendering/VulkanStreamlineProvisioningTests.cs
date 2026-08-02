@@ -56,6 +56,36 @@ public sealed class VulkanStreamlineProvisioningTests
         swapchainSource.ShouldContain("_streamlineFrameGenerationProvisioned = false;");
     }
 
+    [Test]
+    public void OptionalStreamlineQueues_DegradeBeforeExplicitRequestsFail()
+    {
+        string logicalDeviceSource = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
+
+        logicalDeviceSource.ShouldContain("bool CanProvisionStreamlineQueues(out string failureReason)");
+        logicalDeviceSource.ShouldContain("while (!CanProvisionStreamlineQueues(out string streamlineQueueFailure))");
+        logicalDeviceSource.ShouldContain(
+            "if (_streamlineFrameGenerationProvisioned && !frameGenerationExplicitlyRequested)");
+        logicalDeviceSource.ShouldContain(
+            "ResolveStreamlineVulkanRequirements(_streamlineDlssProvisioned, includeFrameGeneration: false);");
+        logicalDeviceSource.ShouldContain(
+            "if (_streamlineDlssProvisioned && !dlssExplicitlyRequested)");
+        logicalDeviceSource.ShouldContain(
+            "ResolveStreamlineVulkanRequirements(includeDlss: false, includeFrameGeneration: false);");
+
+        int optionalFrameGenerationFallback = logicalDeviceSource.IndexOf(
+            "if (_streamlineFrameGenerationProvisioned && !frameGenerationExplicitlyRequested)",
+            StringComparison.Ordinal);
+        int optionalDlssFallback = logicalDeviceSource.IndexOf(
+            "if (_streamlineDlssProvisioned && !dlssExplicitlyRequested)",
+            StringComparison.Ordinal);
+        int strictFailure = logicalDeviceSource.IndexOf(
+            "throw new NotSupportedException(streamlineQueueFailure);",
+            StringComparison.Ordinal);
+        optionalFrameGenerationFallback.ShouldBeLessThan(optionalDlssFallback);
+        optionalDlssFallback.ShouldBeLessThan(strictFailure);
+    }
+
     private static string ReadWorkspaceFile(string relativePath)
         => SourceContractWorkspace.ReadFile(relativePath);
 }

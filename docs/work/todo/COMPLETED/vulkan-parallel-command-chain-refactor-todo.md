@@ -11,7 +11,7 @@ Design Doc: `docs/work/design/rendering/vulkan-parallel-command-chain-refactor-d
 This document records the completed packet/chain migration and its historical
 validation. It does not claim that production worker recording is enabled,
 lock-free, or measurably parallel. That work is owned by
-[05 - Vulkan Command Recording Worker Architecture](../rendering/optimization/05-vulkan-command-recording-worker-architecture-todo.md).
+[workstream 05 validation](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-05-validation).
 
 The successor must preserve this tracker's primary-owned secondary lifetime,
 chain-key ownership, dynamic-rendering inheritance, signature, volatility,

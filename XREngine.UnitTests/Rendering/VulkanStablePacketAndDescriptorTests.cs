@@ -3350,7 +3350,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         string allocation = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/Classes/VkMeshRenderer.DescriptorAllocation.cs");
         string key = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/Structs/VkMeshRenderer.DescriptorWriteKey.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Descriptors/VkMeshRenderer.DescriptorWriteKey.cs");
 
         allocation.ShouldContain("Dictionary<DescriptorWriteKey, ulong> DescriptorWriteSignatures");
         key.ShouldContain("ulong DescriptorSetHandle");
@@ -3660,7 +3660,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         string vulkanMeshPipeline = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
         string generatedProgramState = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/Structs/VkMeshRenderer.GeneratedProgramState.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Programs/VkMeshRenderer.GeneratedProgramState.cs");
         string meshRendererBase = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/XRMeshRenderer.cs");
         string engine = ReadWorkspaceFile(

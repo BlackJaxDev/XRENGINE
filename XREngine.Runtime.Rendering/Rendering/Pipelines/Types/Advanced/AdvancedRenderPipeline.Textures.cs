@@ -562,6 +562,7 @@ public partial class AdvancedRenderPipeline
     private XRTexture CreateLightingAccumTexture()
         => CreateLightingTexture(LightingAccumTextureName, LightingAccumTextureName);
 
+
     private XRTexture CreateLightingTexture(string textureName, string samplerName)
     {
         // Deferred HDR lighting/output. R11fG11fB10f is true 32-bit storage

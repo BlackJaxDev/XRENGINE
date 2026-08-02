@@ -89,8 +89,8 @@
 
 - name: Runtime
   items:
-    - name: Load Balancer
-      href: runtime/load-balancer.md
+    - name: Control Plane
+      href: runtime/control-plane.md
 
 - name: UI
   href: ui/README.md

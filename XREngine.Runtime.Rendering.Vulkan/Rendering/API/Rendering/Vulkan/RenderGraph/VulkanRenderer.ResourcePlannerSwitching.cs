@@ -155,23 +155,21 @@ public unsafe partial class VulkanRenderer
             frameOpsSignature == 0 ||
             !switchingState.HasPreparedPlan ||
             switchingState.PreparedFrameOpsSignature != frameOpsSignature ||
-            !switchingState.HasPreparationState ||
-            switchingState.ActiveKeys.Count == 0)
+            !TryGetPreparedFrameOpResourcePlannerState(switchingState, out ResourcePlannerRuntimeState preparedState))
         {
             InvalidatePreparedFrameOpResourcePlan(switchingState);
             return false;
         }
 
-        ResourcePlannerRuntimeState preparationState = switchingState.PreparationState;
-        if (!IsReusableFrameOpResourcePlannerState(preparationState) ||
-            !preparationState.HasResourcePlannerFastPathKey ||
-            preparationState.ResourcePlannerSignature == ulong.MaxValue)
+        if (!IsReusableFrameOpResourcePlannerState(preparedState) ||
+            !preparedState.HasResourcePlannerFastPathKey ||
+            preparedState.ResourcePlannerSignature == ulong.MaxValue)
         {
             InvalidatePreparedFrameOpResourcePlan(switchingState);
             return false;
         }
 
-        ResourcePlannerFastPathKey fastPathKey = preparationState.ResourcePlannerFastPathKey;
+        ResourcePlannerFastPathKey fastPathKey = preparedState.ResourcePlannerFastPathKey;
         int currentRegistryRevision = fastPathKey.Registry?.DescriptorRevision ?? 0;
         int currentPassMetadataRevision = ComputePassMetadataRevisionStamp(fastPathKey.ActivePassMetadata);
         VulkanBarrierPlanner.QueueOwnershipConfig currentQueueOwnership =
@@ -197,14 +195,14 @@ public unsafe partial class VulkanRenderer
 
         ResetActiveFrameOpResourcePlannerState(switchingState);
         switchingState.RecordingScopeActive = false;
-        switchingState.SwitchingActive = switchingState.ActiveKeys.Count > 1;
+        switchingState.SwitchingActive = false;
         foreach (VulkanFrameOpPlannerStateKey key in switchingState.ActiveKeys)
             MarkFrameOpResourcePlannerStateUsed(switchingState, key);
 
         plannerRevision = switchingState.PreparedPlanRevision;
         RecordPhysicalPlanCacheTelemetry(
             hit: true,
-            preparationState.CompiledRenderGraph.Plan.Generation);
+            preparedState.CompiledRenderGraph.Plan.Generation);
         AssertFrameOpPlannerAllocatorOwnership(switchingState);
         return true;
     }
@@ -217,9 +215,8 @@ public unsafe partial class VulkanRenderer
         if (!IsDeviceOperational ||
             !FrameOpResourcePlannerSwitchingEnabled ||
             frameOpsSignature == 0 ||
-            !switchingState.HasPreparationState ||
-            switchingState.ActiveKeys.Count == 0 ||
-            !IsReusableFrameOpResourcePlannerState(switchingState.PreparationState))
+            !TryGetPreparedFrameOpResourcePlannerState(switchingState, out ResourcePlannerRuntimeState preparedState) ||
+            !IsReusableFrameOpResourcePlannerState(preparedState))
         {
             InvalidatePreparedFrameOpResourcePlan(switchingState);
             return;
@@ -237,6 +234,29 @@ public unsafe partial class VulkanRenderer
            state.ResourceAllocator.OwnershipId == state.AllocatorOwnershipId &&
            state.BarrierPlanner is not null &&
            state.CompiledRenderGraph is not null;
+
+    private static bool TryGetPreparedFrameOpResourcePlannerState(
+        FrameOpResourcePlannerSwitchingState switchingState,
+        out ResourcePlannerRuntimeState state)
+    {
+        if (switchingState.ActiveKeys.Count == 0)
+        {
+            state = switchingState.PreparationState;
+            return switchingState.HasPreparationState;
+        }
+
+        if (switchingState.ActiveKeys.Count != 1)
+        {
+            state = default;
+            return false;
+        }
+
+        foreach (VulkanFrameOpPlannerStateKey key in switchingState.ActiveKeys)
+            return switchingState.States.TryGetValue(key, out state);
+
+        state = default;
+        return false;
+    }
 
     private static void InvalidatePreparedFrameOpResourcePlan(
         FrameOpResourcePlannerSwitchingState switchingState)
@@ -278,112 +298,44 @@ public unsafe partial class VulkanRenderer
             return ResourcePlannerRevision;
         }
 
-        if (keys.Count > MaxFrameOpResourcePlannerSwitchingStates)
+        if (keys.Count > 1)
         {
-            Debug.VulkanWarningEvery(
-                $"Vulkan.ResourcePlanner.FrameOpContextStateCap.{GetHashCode()}",
+            Debug.VulkanEvery(
+                $"Vulkan.ResourcePlanner.MergedPhysicalPlan.{GetHashCode()}",
                 TimeSpan.FromSeconds(1),
-                "[VulkanResourcePlanner] Collapsing {0} frame-op planner contexts into the merged planner to avoid duplicating physical render resources. Cap={1} Revision={2}",
+                "[VulkanResourcePlanner] Recording {0} frame-op contexts against one merged physical allocation plan. Revision={1}",
                 keys.Count,
-                MaxFrameOpResourcePlannerSwitchingStates,
                 ResourcePlannerRevision);
-            DestroyFrameOpResourcePlannerStates();
             keys.Clear();
-            return ResourcePlannerRevision;
-        }
-
-        ResourcePlannerRuntimeState previousState = CaptureResourcePlannerRuntimeState();
-        try
-        {
-            ResetActiveFrameOpResourcePlannerState(switchingState);
-            for (int i = 0; i < keys.Count; i++)
-            {
-                VulkanFrameOpPlannerStateKey key = keys[i];
-                bool cached =
-                    switchingState.States.TryGetValue(key, out ResourcePlannerRuntimeState existingState) &&
-                    IsFrameOpPlannerAllocatorExclusivelyOwnedByKey(
-                        switchingState,
-                        key,
-                        existingState.ResourceAllocator);
-                ResourcePlannerRuntimeState state = cached
-                    ? existingState
-                    : ResourcePlannerRuntimeState.CreateEmpty();
-
-                if (VulkanFrameDiagnosticsTraceEnabled)
-                {
-                    Debug.VulkanEvery(
-                        $"Vulkan.ResourcePlanner.KeyedStatePrepare.{key.GetHashCode()}",
-                        TimeSpan.FromSeconds(1),
-                        "[VulkanResourcePlanner] Preparing keyed state registry=0x{0:X8} generation={1} cached={2} owner={3} revision={4} signature=0x{5:X16}.",
-                        key.ResourceRegistrySignature,
-                        key.ResourceGeneration,
-                        cached,
-                        state.AllocatorOwnershipId,
-                        state.ResourcePlannerRevision,
-                        state.ResourcePlannerSignature);
-                }
-
-                ResetActiveFrameOpResourcePlannerState(switchingState);
-                RestoreResourcePlannerRuntimeState(state);
-                FrameOpContext keyContext = PrepareResourcePlannerForFrameOps(ops, key, frameOpsSignature);
-                ResourcePlannerRuntimeState preparedState = CaptureResourcePlannerRuntimeState();
-                preparedState.LastActiveFrameOpContext = keyContext;
-                switchingState.States[key] = preparedState;
-                switchingState.ActiveKeys.Add(key);
-                MarkFrameOpResourcePlannerStateUsed(switchingState, key);
-            }
-        }
-        finally
-        {
-            ResetActiveFrameOpResourcePlannerState(switchingState);
-            RestoreResourcePlannerRuntimeState(previousState);
-        }
-
-        keys.Clear();
-        switchingState.SwitchingActive = switchingState.ActiveKeys.Count > 1;
-        if (!switchingState.SwitchingActive)
-        {
             PruneFrameOpResourcePlannerStatesToCapacity(switchingState);
             return ResourcePlannerRevision;
         }
 
+        VulkanFrameOpPlannerStateKey key = keys[0];
+        ResourcePlannerRuntimeState preparedState = CaptureResourcePlannerRuntimeState();
+        preparedState.LastActiveFrameOpContext = SelectPrimaryPlannerContext(ops, key);
+        switchingState.States[key] = preparedState;
+        switchingState.ActiveKeys.Add(key);
+        MarkFrameOpResourcePlannerStateUsed(switchingState, key);
+        keys.Clear();
+        switchingState.SwitchingActive = false;
         PruneFrameOpResourcePlannerStatesToCapacity(switchingState);
         AssertFrameOpPlannerAllocatorOwnership(switchingState);
 
-        ulong signature = ComputeActiveFrameOpResourcePlannerStatesSignature();
         if (VulkanFrameDiagnosticsTraceEnabled)
         {
             Debug.VulkanEvery(
-                $"Vulkan.ResourcePlanner.FrameOpContextStates.{GetHashCode()}",
+                $"Vulkan.ResourcePlanner.SingleFrameOpContextState.{key.GetHashCode()}",
                 TimeSpan.FromSeconds(1),
-                "[VulkanResourcePlanner] Prepared {0} frame-op context resource planner states. Signature=0x{1:X16}.",
-                switchingState.ActiveKeys.Count,
-                signature);
-        }
-        return signature;
-    }
-
-    private FrameOpContext PrepareResourcePlannerForFrameOps(
-        FrameOp[] ops,
-        in VulkanFrameOpPlannerStateKey key,
-        ulong frameOpsSignature = 0)
-    {
-        FrameOpContext plannerContext = SelectPrimaryPlannerContext(ops, key);
-        RenderResourceRegistry? mergedRegistry = BuildMergedFrameOpRegistry(ops, plannerContext, frameOpsSignature);
-        if (mergedRegistry is not null)
-        {
-            plannerContext = RefreshFrameOpContextRecordingFingerprint(plannerContext with
-            {
-                ResourceRegistry = mergedRegistry,
-                DescriptorGeneration = ResolveFrameOpContextDescriptorGeneration(mergedRegistry),
-                ResourceRegistrySignatureSnapshot = ComputeResourceRegistrySignature(mergedRegistry),
-            });
+                "[VulkanResourcePlanner] Prepared single-context state registry=0x{0:X8} generation={1} owner={2} revision={3} signature=0x{4:X16}.",
+                key.ResourceRegistrySignature,
+                key.ResourceGeneration,
+                preparedState.AllocatorOwnershipId,
+                preparedState.ResourcePlannerRevision,
+                preparedState.ResourcePlannerSignature);
         }
 
-        plannerContext = RefreshPlannerExtentsFromLiveContext(plannerContext, ops, filterByPlannerKey: true, plannerKey: key);
-        UpdateResourcePlannerFromContext(plannerContext);
-
-        return plannerContext;
+        return preparedState.ResourcePlannerRevision;
     }
 
     private static void ResetActiveFrameOpResourcePlannerState(FrameOpResourcePlannerSwitchingState switchingState)
@@ -614,6 +566,37 @@ public unsafe partial class VulkanRenderer
             return compare;
         });
     }
+
+    private static bool TryGetSingleFrameOpPlannerStateKey(
+        FrameOp[] ops,
+        out VulkanFrameOpPlannerStateKey key)
+    {
+        key = default;
+        bool found = false;
+        for (int i = 0; i < ops.Length; i++)
+        {
+            FrameOpContext context = ops[i].Context;
+            if (!FrameOpContextHasPlannerResources(context))
+                continue;
+
+            VulkanFrameOpPlannerStateKey candidate = BuildFrameOpPlannerStateKey(context);
+            if (!found)
+            {
+                key = candidate;
+                found = true;
+                continue;
+            }
+
+            if (!candidate.Equals(key))
+            {
+                key = default;
+                return false;
+            }
+        }
+
+        return found;
+    }
+
 
     private ulong ComputeActiveFrameOpResourcePlannerStatesSignature()
     {

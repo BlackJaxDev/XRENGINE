@@ -236,15 +236,16 @@ public sealed class VulkanP02TelemetryTests
     [Test]
     public void PrimaryReuseMiss_ReusesPreparedCommandChainFastSignatureDuringLowering()
     {
-        string recordingSource = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string recordingSource = SourceContractWorkspace.ReadVulkanRendererSource();
         string loweringSource = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
 
         recordingSource.ShouldContain(
-            "out preparedCommandChainFastScheduleSignature");
+            "out state.PreparedCommandChainFastScheduleSignature");
         recordingSource.ShouldContain(
-            "hasPreparedCommandChainFastScheduleSignature");
+            "out state.HasPreparedCommandChainFastScheduleSignature");
+        recordingSource.ShouldContain(
+            "? state.PreparedCommandChainFastScheduleSignature");
         loweringSource.ShouldContain(
             "ulong? preparedFastScheduleSignature = null");
         loweringSource.ShouldContain(
@@ -267,16 +268,15 @@ public sealed class VulkanP02TelemetryTests
     [Test]
     public void NormalRecordingPath_UsesNumericDecisionReasonsWithoutFormattingDiagnosticStrings()
     {
-        string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string source = SourceContractWorkspace.ReadVulkanRendererSource();
         string lowering = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
 
         source.ShouldContain("string? dirtyReason = VulkanFrameDiagnosticsTraceEnabled");
         source.ShouldContain("EVulkanCommandBufferDecisionReason.DescriptorGeneration");
-        source.ShouldContain("structuralSignature: currentGenerations.Structural");
-        source.ShouldContain("descriptorGeneration: currentGenerations.Descriptor");
-        source.ShouldContain("swapchainSlot: commandBufferImageSlot");
+        source.ShouldContain("state.CurrentGenerations.Structural");
+        source.ShouldContain("state.CurrentGenerations.Descriptor");
+        source.ShouldContain("swapchainSlot: state.CommandBufferImageSlot");
         lowering.ShouldContain("if (traceCommandChains || CommandChainValidationEnabled)\n                    firstStructuralDirtyReason ??= DescribeCommandChainDirtyReason");
     }
 

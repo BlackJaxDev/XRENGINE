@@ -19,8 +19,8 @@ internal static class SourceContractWorkspace
     internal readonly record struct SourceFile(string RelativePath, string Source);
 
     /// <summary>
-    /// Reads one workspace file. If a refactor moved the file, a unique
-    /// filename match is accepted so path-only changes do not break a contract.
+    /// Reads one workspace file. A unique filename match is accepted so file
+    /// moves, including moves across rendering projects, do not break a contract.
     /// </summary>
     public static string ReadFile(string relativePath)
     {
@@ -47,6 +47,12 @@ internal static class SourceContractWorkspace
             ];
             if (movedFileMatches.Length == 1)
                 return movedFileMatches[0].Source;
+
+            if (movedFileMatches.Length == 0)
+            {
+                string movedAcrossProject = ResolveFile(relativePath);
+                return NormalizeLineEndings(File.ReadAllText(movedAcrossProject));
+            }
 
             return ReadPartialType(relativePath);
         }

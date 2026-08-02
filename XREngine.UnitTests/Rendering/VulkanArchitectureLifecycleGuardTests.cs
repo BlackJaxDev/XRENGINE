@@ -32,6 +32,23 @@ public sealed class VulkanArchitectureLifecycleGuardTests
     }
 
     [Test]
+    public void PipelineManager_NativePipelineLayoutsHaveDistinctCacheIdentities()
+    {
+        VulkanPipelineManager manager = new();
+        VkMeshRenderer.PipelineKey firstKey = default;
+        firstKey = firstKey with { PipelineLayoutHandle = 101 };
+        VkMeshRenderer.PipelineKey secondKey = firstKey with { PipelineLayoutHandle = 202 };
+
+        manager.StoreSharedGraphicsPipeline(firstKey, new Pipeline(7));
+
+        firstKey.ShouldNotBe(secondKey);
+        manager.TryGetSharedGraphicsPipeline(firstKey, out Pipeline pipeline).ShouldBeTrue();
+        pipeline.Handle.ShouldBe(7UL);
+        manager.TryGetSharedGraphicsPipeline(secondKey, out _).ShouldBeFalse();
+    }
+
+
+    [Test]
     public void PipelineManager_DeviceLifetimeDrainRemovesAllCachedHandlesAndReservations()
     {
         VulkanPipelineManager manager = new();

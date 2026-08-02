@@ -54,5 +54,6 @@ High-level notes on how the engine stages work, render, and synchronize data acr
 - [Rendering Runtime Overview](rendering/runtime-overview.md)
 - [Job System](../developer-guides/runtime/job-system.md)
 - [Networking Overview](networking/overview.md)
+- [Control Plane Runtime Architecture](runtime/control-plane.md)
 - [Networking Developer Guide](../developer-guides/networking/networking.md)
 - [Editor Undo System](editor/undo-system.md)

@@ -1,8 +1,8 @@
 # Engine Rendering Optimization Roadmap
 
-Last Updated: 2026-07-30
+Last Updated: 2026-08-01
 Owner: Rendering
-Status: Active; Workstream 04 Reopened, Workstream 06 Ready
+Status: Active; Workstreams 03-05 Pre-06 Gate Open, Workstream 06 Blocked
 
 ## Purpose
 
@@ -30,18 +30,17 @@ Canonical contracts:
 | --- | --- | --- |
 | 01 | Complete | Measurement, attribution, manifests, and automated gates are recorded in the [framerate investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md). |
 | 02 | Complete | Primary state, invalidation, and stable reuse are recorded in the same [investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md). |
-| 03 | Implementation complete; acceptance deferred | Run the scaling, parity, overflow, mutation, allocation, and crossover gates in the [shared closeout](../../../testing/rendering/01-08-optimization-acceptance-closeout.md). Source: [zero-readback submission](03-vulkan-true-zero-readback-submission-todo.md). |
-| 04 | Implementation reopened | Finish the frequency-separated binding/data package and dirty-owner-driven publication through the [next-frame handoff](04-next-frame-preparation-and-collect-visible-handoff-todo.md) and active [command-execution architecture tracker](vulkan-command-recording-architecture-optimization-todo.md). |
-| 05 | Implementation complete; acceptance deferred | Prove real worker overlap, zero allocation, parity, and lifecycle safety in the shared closeout. Source: [worker architecture](05-vulkan-command-recording-worker-architecture-todo.md). |
-| 06 | Ready for implementation | Remove unjustified prepasses, copies, replays, barriers, and disabled-feature GPU work. Source: [Forward+ and render-graph cost](06-forward-prepass-and-render-graph-cost-todo.md). |
+| 03 | Implementation complete; pre-06 validation open | Run scaling, parity, overflow, mutation, allocation, crossover, and desktop/RVC acceptance in the [combined 03-05 gate](../../../testing/rendering/03-05-optimization-validation-todo.md#workstream-03-validation). |
+| 04 | Implementation closure and validation open | Finish producer-side binding/data preparation and legacy cutover, then pass publication, parity, lifetime, latency, and overlap acceptance in the [combined 03-05 gate](../../../testing/rendering/03-05-optimization-validation-todo.md#workstream-04-completion-and-validation). |
+| 05 | Implementation complete; pre-06 validation open | Prove real worker overlap, zero allocation, parity, fallback truth, and lifecycle safety in the [combined 03-05 gate](../../../testing/rendering/03-05-optimization-validation-todo.md#workstream-05-validation). |
+| 06 | Blocked by the 03-05 gate | Remove unjustified prepasses, copies, replays, barriers, and disabled-feature GPU work after the [combined gate](../../../testing/rendering/03-05-optimization-validation-todo.md) is complete. Source: [Forward+ and render-graph cost](06-forward-prepass-and-render-graph-cost-todo.md). |
 | 07 | Blocked by 06 | Measure and retain, gate, or retire CPU software, CPU query, and GPU Hi-Z occlusion modes. Source: [occlusion systems](07-occlusion-systems-performance-todo.md). |
 | 08 | Blocked by 07 | Bound shadows, streaming publication, queue waits, render-thread jobs, and final tail latency. Source: [render tail latency](08-render-tail-latency-shadows-streaming-jobs-todo.md). |
 
-Workstream 06 may proceed under the owner-authorized
-`Implementation Complete; Acceptance Deferred` sequencing rule. The reopened
-workstream-04 binding/data handoff must still close before final acceptance.
-Targeted tests, narrow builds, and implementation smokes remain mandatory
-during each workstream.
+The earlier `Implementation Complete; Acceptance Deferred` exception for this
+boundary is retired. Workstream 06 may proceed only after the combined 03-05
+gate is marked `Complete`. Targeted tests, narrow builds, and implementation
+smokes remain mandatory during each workstream.
 
 ## Active Vulkan Command-Execution Architecture Work
 
@@ -51,17 +50,15 @@ and data handoff and the follow-on stable command-execution architecture. It
 extends workstream 05's completed worker mechanics; it does not replace or
 reorder numbered workstreams 06-08.
 
-- [x] Land the first binding/data-publication slice: retained material payloads,
-  compiled auto-uniform templates and dynamic patches, stable-buffer
-  publication checks, fallback counters, and full-signature correctness
-  backstops.
-- [ ] Complete Phase 1 acceptance for compiled binding schemas,
-  frequency-owned payloads, dirty-owner publication, stable descriptor
-  topology, constrained legacy fallback, and dual-path cutover.
-- [ ] Complete Phases 2-9: immutable prepared draws, typed primary plans,
-  recorded-artifact and worker-arena ownership, measured dependency
-  versioning, command-buffer-local image state and OpenXR unlock, typed
-  eligibility expansion, and final acceptance.
+- [x] Implement linked binding schemas, frequency-owned payloads, prepared mesh
+  state, typed primary plans, recorded artifacts, worker arenas,
+  command-buffer-local image journals, typed eligibility, and the initial
+  secondary-family expansion.
+- [ ] Close the remaining Phase-1 producer-boundary, bounded-storage,
+  equivalence, and legacy-cutover items through Phase 0 of the
+  [combined 03-05 gate](../../../testing/rendering/03-05-optimization-validation-todo.md#phase-0---close-workstream-04-implementation).
+- [ ] Run the remaining architecture acceptance and hardware matrix through the
+  workstream-04 and workstream-05 sections of that same gate.
 
 ## Checked Off
 
@@ -89,10 +86,8 @@ above.
 
 ## Remaining Numbered Work
 
-- [ ] Finish workstream 04: publish compiled, frequency-separated
-  frame/view/pass/material/object binding data so stable consumption performs
-  no live-material traversal, program-dictionary emission, binding-snapshot
-  copy, reflected template scan, or full visible-draw descriptor refresh.
+- [ ] Complete the [workstreams 03-05 validation gate](../../../testing/rendering/03-05-optimization-validation-todo.md),
+  including workstream-04 implementation closure, and unblock workstream 06.
 - [ ] Implement workstream 06 and justify every remaining geometry replay,
   copy, transition, barrier, and optional full-resolution producer with
   RenderDoc and matched timing evidence.
@@ -100,9 +95,9 @@ above.
   production, opt-in, diagnostic-only, or retired disposition.
 - [ ] Implement workstream 08, attribute every tail spike, and meet the final
   desktop and RVC budgets without hidden fallback or current-frame readback.
-- [ ] Run the [01-08 Acceptance Closeout](../../../testing/rendering/01-08-optimization-acceptance-closeout.md),
-  including deferred workstream-03 and workstream-05 acceptance, after the
-  implementation revision is frozen.
+- [ ] Run the [01-08 Acceptance Closeout](../../../testing/rendering/01-08-optimization-acceptance-closeout.md)
+  after workstreams 06-08 are implementation complete, consuming the accepted
+  03-05 manifests as the pre-06 baseline.
 - [ ] Synchronize final evidence and status into this roadmap and the
   [Vulkan Core Hardening And Device-Loss TODO](../vulkan-core-hardening-and-device-loss-todo.md).
 

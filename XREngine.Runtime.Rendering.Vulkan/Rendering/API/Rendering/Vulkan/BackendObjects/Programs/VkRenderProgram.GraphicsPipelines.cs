@@ -131,7 +131,7 @@ internal unsafe partial class VkRenderProgram
                             stagesPtr[i].PNext = mappingInfos + i;
                         }
 
-                        result = Api!.CreateGraphicsPipelines(Device, pipelineCache, 1, ref pipelineInfo, null, out Pipeline mappedHeapPipeline);
+                        result = Renderer.CreateGraphicsPipelinesSynchronized(pipelineCache, ref pipelineInfo, out Pipeline mappedHeapPipeline);
                         for (int i = 0; i < stages.Length; i++)
                             stagesPtr[i].PNext = originalStagePNext[i];
 
@@ -149,7 +149,7 @@ internal unsafe partial class VkRenderProgram
                     }
                 }
 
-                result = Api!.CreateGraphicsPipelines(Device, pipelineCache, 1, ref pipelineInfo, null, out Pipeline heapPipeline);
+                result = Renderer.CreateGraphicsPipelinesSynchronized(pipelineCache, ref pipelineInfo, out Pipeline heapPipeline);
                 pipelineInfo.PNext = originalPipelinePNext;
 
                 if (result != Result.Success)
@@ -163,7 +163,7 @@ internal unsafe partial class VkRenderProgram
                 return heapPipeline;
             }
 
-            result = Api!.CreateGraphicsPipelines(Device, pipelineCache, 1, ref pipelineInfo, null, out Pipeline pipeline);
+            result = Renderer.CreateGraphicsPipelinesSynchronized(pipelineCache, ref pipelineInfo, out Pipeline pipeline);
             if (result != Result.Success)
             {
                 WriteShaderDiagnostics($"vkCreateGraphicsPipelines failed result={result}");

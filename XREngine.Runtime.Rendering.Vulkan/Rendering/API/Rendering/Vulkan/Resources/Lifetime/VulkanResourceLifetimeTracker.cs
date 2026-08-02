@@ -41,6 +41,7 @@ internal sealed class VulkanResourceLifetimeTracker
     internal List<VulkanLifetimeSubmission> LifetimeSubmissions { get; } = new(16);
     internal ThreadLocal<HashSet<ulong>> ChangedDescriptorSetsScratch { get; } = new(static () => []);
     internal ThreadLocal<HashSet<VulkanRenderer.VulkanResourceLifetimeKey>> DescriptorReferencesScratch { get; } = new(static () => []);
+    internal ThreadLocal<HashSet<VulkanRenderer.VulkanResourceLifetimeKey>> DescriptorPinnedReferencesScratch { get; } = new(static () => []);
 
     internal long ResourceGeneration;
     internal long RetirementSerial;
@@ -80,7 +81,10 @@ internal sealed class VulkanResourceLifetimeTracker
                 if ((existing.State & VulkanRenderer.EVulkanResourceLifetimeState.Destroyed) == 0)
                 {
                     existing.Owner = owner;
-                    PublishedResourceGenerations[key] = existing.Generation;
+                    // TryAdd preserves a zero-valued retirement admission fence. Re-registering
+                    // an already-live handle must not reopen recording while retirement is
+                    // publishing command-buffer dependencies for that generation.
+                    PublishedResourceGenerations.TryAdd(key, existing.Generation);
                     if (externallyOwned)
                         existing.State |= VulkanRenderer.EVulkanResourceLifetimeState.External;
                     return;
@@ -120,6 +124,23 @@ internal sealed class VulkanResourceLifetimeTracker
         ResourceLifetimes[key] = record;
         PublishedResourceGenerations[key] = generation;
         return record;
+    }
+
+    /// <summary>
+    /// Closes lock-free command-recording admission for one resource generation before
+    /// retirement scans local dependency batches. A zero published generation directs
+    /// new recorders through the synchronized lifetime path, where they either publish
+    /// a dependency before retirement commits or observe the pending-retirement state.
+    /// </summary>
+    internal void FenceResourceRecordingAdmission(
+        VulkanRenderer.VulkanResourceLifetimeKey key,
+        string owner)
+    {
+        lock (SyncRoot)
+        {
+            _ = GetOrRegisterResourceNoLock(key, owner);
+            PublishedResourceGenerations[key] = 0;
+        }
     }
 
     internal VulkanRenderer.VulkanRetirementTicket CaptureRetirementWatermark()

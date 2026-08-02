@@ -271,6 +271,63 @@ public sealed class VulkanCoreHardeningPhase5Tests
         upload.ShouldContain(
             "NewLayout = ImageLayout.ShaderReadOnlyOptimal");
     }
+    [Test]
+    public void ImportedTextureTransferQueue_UsesConcurrentSharingAndDescriptorLifetimePins()
+    {
+        string uploadImage = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.ImportedUpload.cs");
+        string uploadTransfer = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Uploads/VulkanRenderer.TextureUploadTransfer.cs");
+        string lifetime = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+
+        uploadImage.ShouldContain("SharingMode.Concurrent");
+        uploadImage.ShouldContain("QueueFamilyIndexCount = uploadQueueFamilyCount");
+        uploadTransfer.ShouldNotContain("SrcQueueFamilyIndex = transferFamily");
+        uploadTransfer.ShouldNotContain("DstQueueFamilyIndex = graphicsFamily");
+        uploadTransfer.ShouldContain("OldLayout = ImageLayout.ShaderReadOnlyOptimal");
+        lifetime.ShouldContain("AddVulkanDescriptorPinnedReferenceClosure_NoLock");
+        lifetime.ShouldContain("resource.Pins.AddDescriptorReference()");
+        lifetime.ShouldContain("ReleaseVulkanDescriptorSetGenerationPins_NoLock(state)");
+    }
+
+    [Test]
+    public void ResourceRetirement_FencesLocalRecordingAdmissionBeforeDependencyPublication()
+    {
+        string tracker = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Lifetime/VulkanResourceLifetimeTracker.cs");
+        string lifetime = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+
+        tracker.ShouldContain("FenceResourceRecordingAdmission");
+        tracker.ShouldContain("PublishedResourceGenerations[key] = 0");
+        lifetime.ShouldContain("ulong expectedGeneration = _resourceLifetimeTracker.GetPublishedGeneration(key)");
+        lifetime.ShouldContain("ulong observedGeneration = _resourceLifetimeTracker.GetPublishedGeneration(key)");
+        lifetime.ShouldContain("FenceResourceRecordingAdmission(key, owner);");
+        lifetime.IndexOf("FenceResourceRecordingAdmission(key, owner);", StringComparison.Ordinal)
+            .ShouldBeLessThan(lifetime.IndexOf("PublishCommandBufferTrackingDependenciesBeforeResourceRetirement(key);", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void PipelineCacheHostAccess_IsExternallySynchronizedPerCache()
+    {
+        string cache = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCache.cs");
+        string programGraphics = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.GraphicsPipelines.cs");
+        string programCompute = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.Compute.cs");
+
+        cache.ShouldContain("private readonly Lock _pipelineCacheHostAccessLock = new();");
+        cache.ShouldContain("private readonly Lock _backgroundPipelineCacheHostAccessLock = new();");
+        cache.ShouldContain("lock (_pipelineCacheHostAccessLock)\n            lock (_backgroundPipelineCacheHostAccessLock)");
+        cache.ShouldContain("CreateGraphicsPipelinesSynchronized");
+        cache.ShouldContain("CreateComputePipelinesSynchronized");
+        cache.ShouldContain("lock (GetVulkanPipelineCacheHostAccessLock(pipelineCache))");
+        programGraphics.ShouldNotContain("Api!.CreateGraphicsPipelines(");
+        programCompute.ShouldNotContain("Api!.CreateComputePipelines(");
+    }
+
 
     [Test]
     public void DescriptorBinding_ValidatesExactViewRangeAgainstRecordedLayout()
@@ -290,8 +347,10 @@ public sealed class VulkanCoreHardeningPhase5Tests
     [Test]
     public void TransferReadbackAndMipmapGeneration_RestoreSampledLayouts()
     {
-        string blit = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Blit.cs");
+        string readbackLayouts = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Readback/VulkanRenderer.ReadbackLayouts.cs");
+        string pixelReadback = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Readback/VulkanRenderer.PixelReadback.cs");
         string texture = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.Mipmaps.cs");
         string mipmaps = SliceBetween(
@@ -299,8 +358,8 @@ public sealed class VulkanCoreHardeningPhase5Tests
             "protected void GenerateMipmapsWithBlit()",
             "private ImageBlit CreateMipBlit");
 
-        blit.ShouldContain("ResolvePostTransferReadLayout");
-        blit.ShouldContain("ImageLayout.TransferSrcOptimal,\n                    postTransferLayout");
+        readbackLayouts.ShouldContain("ResolvePostTransferReadLayout");
+        pixelReadback.ShouldContain("ImageLayout.TransferSrcOptimal,\n                    postTransferLayout");
         mipmaps.ShouldContain("barrier.NewLayout = ImageLayout.ShaderReadOnlyOptimal");
         mipmaps.ShouldContain("barrier.SubresourceRange.BaseMipLevel = ResolvedMipLevels - 1");
         mipmaps.ShouldContain("_currentImageLayout = ImageLayout.ShaderReadOnlyOptimal");
@@ -332,6 +391,7 @@ public sealed class VulkanCoreHardeningPhase5Tests
         synchronize.ShouldBeGreaterThan(baseFinalize);
         generateIbl.ShouldBeGreaterThan(synchronize);
     }
+
 
     private static string SliceBetween(string source, string startToken, string endToken)
     {

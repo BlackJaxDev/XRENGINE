@@ -1,16 +1,16 @@
 # Vulkan Command Recording Worker Architecture Progress
 
-Last Updated: 2026-07-30
+Last Updated: 2026-08-01
 Owner: Rendering / Vulkan Command Buffers
-Status: Implementation Complete; Acceptance Deferred
+Status: Implementation Complete; Pre-06 Validation Open
 
 Owning work item:
 
-- [05 - Vulkan Command Recording Worker Architecture](../../todo/rendering/optimization/05-vulkan-command-recording-worker-architecture-todo.md)
+- [Workstream 05 validation](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-05-validation)
 
-Deferred acceptance:
+Pre-06 validation:
 
-- [Vulkan Optimization Workstreams 01-08 Acceptance Closeout](../../testing/rendering/01-08-optimization-acceptance-closeout.md)
+- [Vulkan Optimization Workstreams 03-05 Validation](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-05-validation)
 
 ## Implemented Architecture
 

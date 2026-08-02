@@ -1,13 +1,13 @@
 # Vulkan Editor Steady-Frame CPU Cost Investigation (2026-07-30)
 
-Last Updated: 2026-07-30
+Last Updated: 2026-08-01
 Owner: Rendering / Vulkan
-Status: Root cause identified; first migration slice implemented; full acceptance remains open
+Status: Binding and live-instability root causes fixed; full acceptance remains open
 
 Related plans:
 
-- [04 - Next-Frame Preparation And Collect-Visible Handoff](../../todo/rendering/optimization/04-next-frame-preparation-and-collect-visible-handoff-todo.md)
-- [05 - Vulkan Command Recording Worker Architecture](../../todo/rendering/optimization/05-vulkan-command-recording-worker-architecture-todo.md)
+- [Workstream 04 completion and validation](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-04-completion-and-validation)
+- [Workstream 05 validation](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-05-validation)
 - [Vulkan Command Recording Architecture Optimization](../../todo/rendering/optimization/vulkan-command-recording-architecture-optimization-todo.md)
 - [CPU Direct Fast Path](../../todo/rendering/optimization/cpu-direct-fast-path-todo.md)
 - [01-08 Optimization Acceptance Closeout](../../testing/rendering/01-08-optimization-acceptance-closeout.md)
@@ -1016,3 +1016,101 @@ This cohort exercised the primary-owned query-pair fallback, not an eligible
 GPU result-copy operation. Live transfer-copy and query-result-copy coverage,
 plus representative-hardware benefit measurements for each family, remain
 open.
+
+## 2026-08-01 Directional-Light And Late-Overlay Instability
+
+The reported directional-light slowdown, flicker, intermittent ImGui loss, and
+freeze on light re-enable had two independent Vulkan lifetime defects plus one
+remaining cold-start cost.
+
+### Native Pipeline-Layout Cache Collision
+
+The first real directional-light fullscreen draw crashed in
+`VkMeshRenderer.RecordDrawNoLock` after a shader-program wrapper was relinked.
+The new program owned a different native `VkPipelineLayout`, but the
+renderer-level graphics-pipeline cache could reuse a pipeline created against
+the old layout. Its key contained structural descriptor identity and the
+program's per-wrapper link generation, but not the native pipeline-layout
+identity; a replacement wrapper could therefore collide with its predecessor.
+
+`VkMeshRenderer.PipelineKey` now includes `PipelineLayoutHandle`, and every
+graphics-pipeline request supplies `_program.PipelineLayout.Handle`. Persistent
+prewarm identity remains structural and stable; only the live native pipeline
+cache is separated by the handle it was actually created with.
+
+Standard-validation and GPU-assisted runs crossed the former crash boundary.
+The replacement layout produced a new pipeline handle, the first directional
+draw completed, and no validation or device-loss error was emitted.
+
+### Per-Frame Dynamic-UI Secondary Copy-On-Write
+
+The late dynamic-text overlay forced its secondary to rerecord before resetting
+the previous overlay primary. That primary still owned a recorded reference to
+the secondary, so mutability protection correctly selected copy-on-write on
+every frame. The retired replacements could not drain until the unrelated scene
+primary rerecorded.
+
+In the failing run, command-buffer resources rose from 767 to 1,607 in 24
+seconds and process working set approached 3 GiB. The log emitted one
+`Replaced immutable dynamic UI secondary` message per frame. This explains
+the progressive slowdown, presentation instability, and disappearing ImGui
+reported after the renderer had been left running.
+
+`TryRecordDynamicUiBatchTextOverlayCommandBuffer` now resets the overlay
+primary, releases its tracked secondary reference, and drains deferred
+secondaries before forcing the dynamic-text secondary rerecord. Reset failure
+is checked and reported rather than ignored.
+
+The rebuilt `cmd-record-overlay-reuse` session reported:
+
+- zero copy-on-write replacement messages;
+- command-buffer count stable at 143 after initial warmup;
+- a one-time rise to 202 while three directional-light off/on cycles populated
+  shadow variants, followed by a flat count;
+- resource retirement queue depth stable at 123 and no growth in the live
+  resource count during the retained steady window;
+- zero `VUID`, device-loss, access-violation, fatal, or `VK_ERROR` messages;
+- the light active after the final cycle and 89 frames advanced over the final
+  two-second liveness probe.
+
+The retained log is
+`Build/_AgentValidation/mcp-sessions/cmd-record-overlay-reuse/logs/XREngine.Editor_debug/windows_x64/xrengine_2026-08-01_22-38-16_pid29952/log_vulkan.log`.
+
+### Follow-Up Correction And Current Status
+
+The apparent top-band/full-window mismatch in the first OS capture was a
+capture bug, not a swapchain crop. The capture process was DPI-unaware and
+allocated a 1536x864 logical client image for a 1920x1080 physical client at
+125% display scaling. A per-monitor-DPI-aware `PrintWindow` capture reports a
+1938x1127 physical window and a 1920x1080 client, matching the swapchain. It
+shows the scene and ImGui covering the full window.
+
+The earlier directional-light timing also included
+`XRE_VK_TRACE_DRAW=1`. That diagnostic logs every shadow draw and made primary
+recording appear to cost roughly 75-102 ms per lit frame. A fully rebuilt
+isolated session with draw tracing disabled and standard validation enabled
+kept the active-light path on `ReusedClean`: zero primary records, zero dirty
+summary, zero validation errors, and roughly 5.6-7.0 ms in scene command-buffer
+reuse/record handling. The renderer remained responsive after disabling and
+re-enabling the light.
+
+The previous `-NoBuild` restart retained stale isolated artifacts and produced
+a Bloom mip-2 `PrimaryFrameState` rejection that is not present in the fully
+rebuilt session. Targeted state-publication instrumentation did not observe a
+shader-read-to-color regression in the rebuilt runtime and was removed after
+validation.
+
+Visual evidence after the final off/on cycle:
+
+- `Build/_AgentValidation/20260801-vulkan-command-recording-finish/mcp-captures/ViewportSequence_20260802_072407_092_f3cdb03180f4446694463687d18a2acf/manifest.json`
+  contains eight consecutive 1920x1080 Vulkan readbacks with one content hash,
+  zero changed pixels, zero dropped frames, and zero failed frames.
+- `Build/_AgentValidation/20260801-vulkan-command-recording-finish/mcp-captures/FullWindow_DpiAware_afterLightToggle.png`
+  shows the full scene plus ImGui in the 1920x1080 physical client.
+- The final Vulkan log scan contains no `VUID`, `VK_ERROR`, device loss,
+  access violation, fatal error, dynamic-UI copy-on-write replacement, or
+  image-state-publication regression.
+
+Cold shadow-pipeline materialization can still cause a bounded first-use
+latency spike for previously unseen mesh-layout variants. It is now separate
+from the fixed lifetime/caching faults and did not freeze the rebuilt runtime.

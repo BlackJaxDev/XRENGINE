@@ -332,7 +332,7 @@ public sealed class VulkanCoreHardeningPhase4Tests
             string source = ReadWorkspaceFile(file);
             int nativeCreates = Regex.Matches(
                 source,
-                @"(?:Api!?\.Create(?:Graphics|Compute)Pipelines|Renderer\.CreateGraphicsPipelineWithCachePolicy)\(",
+                @"(?:Api!?\.Create(?:Graphics|Compute)Pipelines|Renderer\.Create(?:Graphics|Compute)PipelinesSynchronized|Renderer\.CreateGraphicsPipelineWithCachePolicy)\(",
                 RegexOptions.CultureInvariant).Count;
             int registrations = Regex.Matches(
                 source,
