@@ -25,10 +25,19 @@ Material:
     - _Cull: 0
     - _EnableEmission: 1
     - _EmissionStrength: 2
+    - _ColorThemeIndex: 1
+    - _EmissionColorThemeIndex: 2
+    - _GlobalThemeHue0: 0.079
+    - _GlobalThemeSaturation0: -0.811
+    - _GlobalThemeValue0: -0.968
+    - _GlobalThemeHue1: 0.525
+    - _GlobalThemeSaturation1: 0.106
+    - _GlobalThemeValue1: 0.636
     - _GrabPass: 1
     - _RefractionEnabled: 1
     - _BlurStrength: 0.5
     m_Colors:
     - _Color: {r: 0.8, g: 0.4, b: 0.2, a: 0.65}
     - _EmissionColor: {r: 0.2, g: 0.4, b: 1, a: 1}
-
+    - _GlobalThemeColor0: {r: 1, g: 0, b: 0, a: 1}
+    - _GlobalThemeColor1: {r: 1, g: 0, b: 0, a: 1}

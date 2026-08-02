@@ -128,6 +128,53 @@ public class SceneNodePrefabTests
     }
 
     [Test]
+    public void CloneHierarchy_RebuildsBindMatricesFromSerializedLocalPose()
+    {
+        SceneNode root = new("ReflectedRoot");
+        var rootTransform = (Transform)root.Transform;
+        rootTransform.Scale = new Vector3(1.0f, 1.0f, -1.0f);
+        rootTransform.Rotation = Quaternion.CreateFromYawPitchRoll(0.2f, -0.1f, 0.05f);
+
+        SceneNode bone = new("Bone")
+        {
+            Parent = root,
+        };
+        var boneTransform = (Transform)bone.Transform;
+        boneTransform.Translation = new Vector3(0.25f, 1.5f, -0.75f);
+        boneTransform.Rotation = Quaternion.CreateFromYawPitchRoll(-0.15f, 0.3f, 0.1f);
+
+        rootTransform.SaveBindState();
+        boneTransform.SaveBindState();
+        Matrix4x4 expectedBindMatrix = boneTransform.BindMatrix;
+        Assert.That(
+            Matrix4x4.Invert(expectedBindMatrix, out Matrix4x4 expectedInverseBindMatrix),
+            Is.True);
+
+        SceneNode clone = SceneNodePrefabUtility.CloneHierarchy(root);
+        SceneNode? clonedBoneNode = clone.FindDescendantByName("Bone");
+        Assert.That(clonedBoneNode, Is.Not.Null);
+        TransformBase clonedBone = clonedBoneNode!.Transform;
+        Matrix4x4 bindResidual = expectedInverseBindMatrix * clonedBone.BindMatrix;
+
+        Assert.That(Vector3.Distance(
+                Vector3.Transform(Vector3.Zero, clonedBone.BindMatrix),
+                Vector3.Transform(Vector3.Zero, expectedBindMatrix)),
+            Is.LessThan(0.00001f));
+        Assert.That(Vector3.Distance(
+                Vector3.Transform(Vector3.UnitX, bindResidual),
+                Vector3.UnitX),
+            Is.LessThan(0.00001f));
+        Assert.That(Vector3.Distance(
+                Vector3.Transform(Vector3.UnitY, bindResidual),
+                Vector3.UnitY),
+            Is.LessThan(0.00001f));
+        Assert.That(Vector3.Distance(
+                Vector3.Transform(Vector3.UnitZ, bindResidual),
+                Vector3.UnitZ),
+            Is.LessThan(0.00001f));
+    }
+
+    [Test]
     public void ApplyOverrides_PublishedAot_UsesRegisteredHandlers()
     {
         Guid prefabId = Guid.NewGuid();

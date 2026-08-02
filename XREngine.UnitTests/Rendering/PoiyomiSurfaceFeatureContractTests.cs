@@ -30,6 +30,8 @@ public sealed class PoiyomiSurfaceFeatureContractTests
         string source = ReadShader("UberShader.frag");
 
         source.ShouldContain("poiSampleMainTexture(mesh)");
+        source.ShouldContain("poiResolveThemeColor(_ColorThemeIndex, _Color.rgb)");
+        source.ShouldContain("poiResolveThemeColor(_EmissionColorThemeIndex, _EmissionColor.rgb)");
         source.ShouldContain("poiApplyDecals(fragData, mesh)");
         source.ShouldContain("poiApplyColorMask(");
         source.ShouldContain("poiApplyPbrParity(");
@@ -37,6 +39,15 @@ public sealed class PoiyomiSurfaceFeatureContractTests
         source.ShouldContain("poiApplyDepthRim(mesh)");
         source.ShouldContain("poiApplyEmissionSlots(fragData, mesh)");
         source.ShouldContain("poiApplyFlipbookArray(fragData, mesh)");
+    }
+
+    [Test]
+    public void GlobalTheme_ValueAdjustmentMatchesPoiyomiClamping()
+    {
+        string source = ReadShader("poiyomi_surface_features.glsl");
+
+        source.ShouldContain("hsv.z = saturate(hsv.z + adjustment.z);");
+        source.ShouldNotContain("hsv.z = max(0.0, hsv.z + adjustment.z);");
     }
 
     [Test]

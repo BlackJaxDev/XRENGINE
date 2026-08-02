@@ -178,6 +178,7 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
 
         source.ShouldContain("switch (_LightingDirectionMode)");
         source.ShouldContain("switch (_LightingColorMode)");
+        source.ShouldContain("if (_LightingIgnoreAmbientColor > 0.0 && _LightingMode != 0)");
         source.ShouldContain("light.indirectColor = mix(light.indirectColor, neutralAmbient, saturate(_LightingIgnoreAmbientColor));");
         source.ShouldContain("vec3 shadowColor = _LightingShadowColor;");
         source.ShouldContain("if (_LightingWrappedNormalization > 0.5)");
@@ -237,7 +238,12 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         source.ShouldContain("float engineShadow = saturate(shadowMapFactor * materialShadowMask);");
         source.ShouldContain("float combinedShadow = saturate(shadow * engineShadow);");
         source.ShouldContain("float directVisibility = mix(1.0, engineShadow, _ShadowStrength);");
-        source.ShouldContain("vec3 result = baseColor * finalLight * directVisibility * shadowTint + light.indirectColor;");
+        source.ShouldContain("result = baseColor * finalLight * directVisibility * shadowTint + light.indirectColor;");
+        source.ShouldContain("vec3 rampedLightMap = mix(");
+        source.ShouldContain("saturate(_ShadowStrength * materialShadowMask));");
+        source.ShouldContain("vec3 rampShadowColor = _LightingShadowColor * mix(");
+        source.ShouldContain("float rampEngineVisibility = mix(1.0, saturate(shadowMapFactor), _ShadowStrength);");
+        source.ShouldContain("result = mix(rampEngineShadowColor, textureRampComposition, rampEngineVisibility);");
         source.ShouldContain("finalLight = mix(light.color * shadowColor, light.color, shadow);");
         source.ShouldContain("finalLight = light.color * shadow;");
         source.ShouldNotContain("finalLight = mix(shadowColor * light.indirectColor, light.color, shadow);");

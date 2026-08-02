@@ -34,6 +34,7 @@ public partial class OpenGLRenderer
     private OpenGLImGuiBackend? _imguiBackend;
     private OpenGLImGuiMultiViewportController? _imguiMultiViewportController;
     private int _imguiFontValidationCountdown;
+    private int _imguiFontAtlasRebuildRequested;
 
     private const int ImGuiFontValidationIntervalFrames = 120;
 
@@ -118,20 +119,40 @@ public partial class OpenGLRenderer
         if (input is null)
             return null;
 
-        controller = new ImGuiController(Api, XRWindow.Window, input);
+        OpenGLImGuiMultiViewportController? multiViewport = null;
+        try
+        {
+            controller = new ImGuiController(Api, XRWindow.Window, input, () =>
+            {
+                // Silk invokes this callback before it creates the font device
+                // texture and before its constructor's first NewFrame(). Dear
+                // ImGui requires docking, viewports, platform callbacks, DPI,
+                // and font-atlas configuration to be complete by that boundary.
+                var io = ImGui.GetIO();
+                io.ConfigFlags |= ImGuiConfigFlags.DockingEnable;
+                ImGuiControllerUtilities.TryUseDefaultEditorFont(io, 18.0f);
+
+                multiViewport = OpenGLImGuiMultiViewportController.TryCreate(this);
+                multiViewport?.Install();
+            });
+        }
+        catch
+        {
+            multiViewport?.Dispose();
+            throw;
+        }
+
         ImGuiContextTracker.Register(controller.Context);
+        multiViewport?.AttachController(controller);
 
-        // Enable docking immediately so DockContextInitialize runs on the next
-        // NewFrame() call.  The controller's constructor already called NewFrame()
-        // once (before we could set this flag), so the initial INI load missed the
-        // [Docking][Data] section.  The editor's first render frame will trigger a
-        // one-time INI reload to pick up the saved dock layout.
-        ImGui.GetIO().ConfigFlags |= ImGuiConfigFlags.DockingEnable;
+        // Silk starts an implicit ImGui frame in its constructor. Complete
+        // that frame and its platform-window phase before the renderer starts
+        // frame 2; otherwise Dear ImGui correctly reports that the required
+        // UpdatePlatformWindows call was skipped between frames.
+        controller.Render();
+        multiViewport?.RenderPlatformWindows();
 
-        _imguiMultiViewportController = OpenGLImGuiMultiViewportController.TryCreate(this, controller);
-        _imguiMultiViewportController?.Install();
-
-        ImGuiControllerUtilities.TryUseDefaultEditorFont(controller);
+        _imguiMultiViewportController = multiViewport;
 
         _imguiController = controller;
         _imguiBackend = null;
@@ -150,18 +171,12 @@ public partial class OpenGLRenderer
     }
 
     public void ForceRebuildImGuiFontAtlas()
-    {
-        var controller = GetImGuiController();
-        if (controller is null)
-            return;
-
-        _imguiFontValidationCountdown = 0;
-        ImGuiControllerUtilities.TryUseDefaultEditorFont(controller, 18.0f, forceReload: true);
-    }
+        => Interlocked.Exchange(ref _imguiFontAtlasRebuildRequested, 1);
 
     private void EnsureImGuiFontAtlasValid(ImGuiController controller)
     {
-        if (_imguiFontValidationCountdown > 0)
+        bool rebuildRequested = Interlocked.Exchange(ref _imguiFontAtlasRebuildRequested, 0) != 0;
+        if (!rebuildRequested && _imguiFontValidationCountdown > 0)
         {
             _imguiFontValidationCountdown--;
             return;
@@ -172,6 +187,14 @@ public partial class OpenGLRenderer
         try
         {
             controller.MakeCurrent();
+
+            if (rebuildRequested)
+            {
+                Debug.Textures("Rebuilding queued ImGui font atlas at a frame boundary.");
+                ImGuiControllerUtilities.TryUseDefaultEditorFont(controller, 18.0f, forceReload: true);
+                return;
+            }
+
             var io = ImGui.GetIO();
             nint texIdPtr = io.Fonts.TexID;
             uint texId = (uint)(nuint)texIdPtr;

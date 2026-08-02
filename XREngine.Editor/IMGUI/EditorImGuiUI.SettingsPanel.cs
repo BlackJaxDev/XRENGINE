@@ -41,16 +41,16 @@ public static partial class EditorImGuiUI
 
         private static void RebuildImGuiFontAtlasForOpenGlWindows()
         {
-            int rebuilt = 0;
+            int queued = 0;
             foreach (IRenderTexturePreviewBackendCapability capability
                      in EditorRendererCapabilityResolver.Enumerate<IRenderTexturePreviewBackendCapability>())
                 if (capability.RebuildFontAtlas())
-                    rebuilt++;
+                    queued++;
 
-            if (rebuilt == 0)
+            if (queued == 0)
                 Debug.TexturesWarning("No OpenGL renderer windows were available to rebuild ImGui font atlas.");
             else
-                Debug.Textures($"Rebuilt ImGui font atlas for {rebuilt} OpenGL renderer window(s).");
+                Debug.Textures($"Queued ImGui font atlas rebuild for {queued} OpenGL renderer window(s).");
         }
 
         private static void DrawEditorPreferencesOverridesPanel()

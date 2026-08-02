@@ -540,11 +540,48 @@ namespace XREngine.Rendering.OpenGL
                 if (_asyncCompileLinkPending)
                 {
                     var compileQueue = Renderer.ProgramCompileLinkQueue;
-                    if (compileQueue is not null && TryGetBuildBindingId(out uint pendingId2) && compileQueue.TryGetResult(pendingId2, out var compileResult))
+                    if (compileQueue is not null && TryGetBuildBindingId(out uint pendingId2) && compileQueue.TryGetReadyResult(pendingId2, Api, out var compileResult))
                     {
                         _asyncCompileLinkPending = false;
                         if (compileResult.Status == GLProgramCompileLinkQueue.CompileStatus.Success)
                         {
+                            if (!TryRehydrateSharedContextProgramOnRenderContext(
+                                pendingId2,
+                                compileResult.ProgramBinary,
+                                out double binaryLoadMilliseconds,
+                                out string? binaryLoadFailure))
+                            {
+                                string failure = binaryLoadFailure ?? "Worker-linked program binary could not be loaded on the render context.";
+                                CompleteUberBackendTracking(false, failure, compileResult.CompileMilliseconds, compileResult.LinkMilliseconds);
+                                Debug.OpenGLWarning($"Shared-context source handoff failed for hash {Hash}: {failure}");
+                                PublishBackendStatus(
+                                    EShaderProgramBackendStage.Failed,
+                                    "SharedContextSource",
+                                    "render-context program binary handoff failed",
+                                    failure,
+                                    compileResult.CompileMilliseconds,
+                                    compileResult.LinkMilliseconds);
+                                LogRenderingProgramBuildEvent(
+                                    "SOURCE_QUEUE_BINARY_HANDOFF_FAILED",
+                                    "SharedContextSource",
+                                    failure,
+                                    _activeBuildFingerprint,
+                                    pendingId2,
+                                    _preparedCompileInputs);
+                                RuntimeEngine.Rendering.Stats.RecordShaderVariant(failed: true);
+                                CompleteBuildTelemetry(
+                                    false,
+                                    compileResult.CompileMilliseconds,
+                                    compileResult.LinkMilliseconds,
+                                    binaryLoadMilliseconds: binaryLoadMilliseconds,
+                                    failureReason: failure);
+                                MarkHashFailed(failure);
+                                InFlightCompilations.TryRemove(Hash, out _);
+                                _asyncCompileDuplicateHashWaitPending = false;
+                                MarkBuildFailed();
+                                return IsLinked;
+                            }
+
                             CompleteUberBackendTracking(true, compileMilliseconds: compileResult.CompileMilliseconds, linkMilliseconds: compileResult.LinkMilliseconds);
                             if (ShouldLogRenderingShaderLinkVerbose())
                                 Debug.OpenGL($"[ShaderCache] READY hash={Hash}, shared-context compileMs={compileResult.CompileMilliseconds:F2}, linkMs={compileResult.LinkMilliseconds:F2}.");
@@ -561,7 +598,7 @@ namespace XREngine.Rendering.OpenGL
                             PublishBackendStatus(
                                 EShaderProgramBackendStage.Ready,
                                 "SharedContextSource",
-                                "source compile/link completed on shared context",
+                                "source compile/link completed on shared context and binary was loaded on the render context",
                                 compileMilliseconds: compileResult.CompileMilliseconds,
                                 linkMilliseconds: compileResult.LinkMilliseconds);
                             LogRenderingProgramBuildEvent(
@@ -576,6 +613,7 @@ namespace XREngine.Rendering.OpenGL
                                 true,
                                 compileResult.CompileMilliseconds,
                                 compileResult.LinkMilliseconds,
+                                binaryLoadMilliseconds: binaryLoadMilliseconds,
                                 reflectionMilliseconds: reflectionMilliseconds);
                             SynchronousSourceRetryHashes.TryRemove(Hash, out _);
                             DriverParallelSourceTimeouts.TryRemove(Hash, out _);
@@ -1165,7 +1203,13 @@ namespace XREngine.Rendering.OpenGL
                         if (TryResolveUberVariantHash(inputs, out ulong queuedVariantHash))
                             BeginUberBackendCompileTracking(queuedVariantHash);
 
-                        bool setBinaryRetrievableHint = ShouldSetProgramBinaryRetrievableHintForSourceBuild();
+                        // A worker-linked GL program is not consumed directly. The worker
+                        // captures its binary and the render context reloads that binary into
+                        // the target program before the handle becomes drawable. Besides
+                        // providing an explicit ownership boundary, this avoids driver crashes
+                        // observed when a separable program linked in a shared context was used
+                        // immediately by the render context.
+                        const bool setBinaryRetrievableHint = true;
                         if (!compileQueue.TryEnqueueCompileAndLink(
                             bindingId,
                             inputs,

@@ -22,7 +22,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!_installed || _disposed)
                     return;
 
-                _controller.MakeCurrent();
+                MakeCurrent();
                 var io = ImGui.GetIO();
                 if ((io.ConfigFlags & ImGuiConfigFlags.ViewportsEnable) == 0)
                     return;
@@ -112,7 +112,8 @@ namespace XREngine.Rendering.OpenGL
                         return;
 
                     using var clipScope = _renderer.PushUiClipSpacePolicy();
-                    RenderImDrawData!(_controller, drawData);
+                    if (_controller is { } controller)
+                        RenderImDrawData!(controller, drawData);
                 }
                 catch (Exception ex)
                 {

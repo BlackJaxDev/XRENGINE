@@ -263,7 +263,8 @@ namespace XREngine.Rendering.OpenGL
                 string? ErrorLog,
                 double CompileMilliseconds,
                 double LinkMilliseconds,
-                ProgramBinarySnapshot? ProgramBinary = null);
+                ProgramBinarySnapshot? ProgramBinary = null,
+                nint HandoffFence = 0);
 
             private enum CompletionPollResult : byte
             {
@@ -825,9 +826,27 @@ namespace XREngine.Rendering.OpenGL
                                     "worker=source-link-delete-shader");
                             }
 
-                            // Completion and link-status queries above prove the link is done.
-                            // Flush submits shared-context object state without forcing a
-                            // driver-wide idle on the render context.
+                            nint handoffFence = 0;
+                            if (linkStatus != 0)
+                            {
+                                MeasureRenderingWorkerGlCall(
+                                    "glFenceSync",
+                                    programId,
+                                    0,
+                                    null,
+                                    () => handoffFence = gl.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u),
+                                    "worker=source-link-handoff-fence");
+                                if (handoffFence == 0)
+                                {
+                                    linkStatus = 0;
+                                    linkError = "glFenceSync returned an invalid handle for the shared-context program handoff.";
+                                }
+                            }
+
+                            // A completion query proves that linking finished on this context,
+                            // but it does not make the modified shared program immediately safe
+                            // to consume from another context. Submit a fence after every linked
+                            // program mutation; the render context polls it before adoption.
                             MeasureRenderingWorkerGlCall(
                                 "glFlush",
                                 programId,
@@ -850,7 +869,9 @@ namespace XREngine.Rendering.OpenGL
                                     linkError,
                                     compileMillisecondsCompleted,
                                     linkMilliseconds,
-                                    programBinary));
+                                    programBinary,
+                                    handoffFence),
+                                gl);
                             if (linkStatus != 0)
                                 Interlocked.Increment(ref _completedCount);
                             else
@@ -1195,9 +1216,25 @@ namespace XREngine.Rendering.OpenGL
                         "worker=deferred-source-link-delete-shader");
                 }
 
-                // Completion and link-status queries above prove the link is done.
-                // Flush submits shared-context object state without forcing a
-                // driver-wide idle on the render context.
+                nint handoffFence = 0;
+                if (linkStatus != 0)
+                {
+                    MeasureRenderingWorkerGlCall(
+                        "glFenceSync",
+                        state.ProgramId,
+                        0,
+                        null,
+                        () => handoffFence = gl.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u),
+                        "worker=deferred-source-link-handoff-fence");
+                    if (handoffFence == 0)
+                    {
+                        linkStatus = 0;
+                        linkError = "glFenceSync returned an invalid handle for the deferred shared-context program handoff.";
+                    }
+                }
+
+                // Publish the linked program only after the consumer context observes this
+                // fence as signaled. glFlush submits the fence without forcing glFinish.
                 MeasureRenderingWorkerGlCall(
                     "glFlush",
                     state.ProgramId,
@@ -1224,7 +1261,9 @@ namespace XREngine.Rendering.OpenGL
                         linkError,
                         state.CompileMilliseconds,
                         linkMilliseconds,
-                        programBinary));
+                        programBinary,
+                        handoffFence),
+                    gl);
                 if (linkStatus != 0)
                     Interlocked.Increment(ref _completedCount);
                 else
@@ -1254,14 +1293,15 @@ namespace XREngine.Rendering.OpenGL
             /// already completed, the result is consumed immediately; otherwise the worker
             /// drops the result when it finishes so the in-flight slot is released.
             /// </summary>
-            public bool CancelCompileAndLink(uint programId)
+            public bool CancelCompileAndLink(uint programId, GL consumerContext)
             {
                 if (programId == 0 || !_inFlightProgramIds.ContainsKey(programId))
                     return false;
 
                 _cancelledProgramIds[programId] = 0;
-                if (_completed.TryRemove(programId, out _))
+                if (_completed.TryRemove(programId, out CompileResult completedResult))
                 {
+                    DeleteHandoffFence(consumerContext, completedResult.HandoffFence);
                     _cancelledProgramIds.TryRemove(programId, out _);
                     CompleteCancelledCompile(programId);
                 }
@@ -1275,29 +1315,61 @@ namespace XREngine.Rendering.OpenGL
             public bool HasResult(uint programId)
                 => programId != 0 && _completed.ContainsKey(programId);
 
-            private void PublishCompletedResult(uint programId, CompileResult result)
+            private void PublishCompletedResult(uint programId, CompileResult result, GL? workerContext = null)
             {
                 _completed[programId] = result;
                 if (_cancelledProgramIds.TryRemove(programId, out _))
                 {
-                    _completed.TryRemove(programId, out _);
+                    if (_completed.TryRemove(programId, out CompileResult cancelledResult) && workerContext is not null)
+                        DeleteHandoffFence(workerContext, cancelledResult.HandoffFence);
                     CompleteCancelledCompile(programId);
                 }
             }
 
             /// <summary>
-            /// Checks whether an async compile+link has completed for the given program.
-            /// The result is consumed (removed) on retrieval, freeing an in-flight slot.
+            /// Checks whether an async compile+link and its cross-context visibility fence
+            /// have completed for the given program. The fence poll never blocks the render
+            /// thread. A ready result is consumed and frees its in-flight slot.
             /// </summary>
-            public bool TryGetResult(uint programId, out CompileResult result)
+            public bool TryGetReadyResult(uint programId, GL consumerContext, out CompileResult result)
             {
-                if (_completed.TryRemove(programId, out result))
+                result = default;
+                if (!_completed.TryGetValue(programId, out CompileResult pendingResult))
+                    return false;
+
+                GLEnum waitResult = GLEnum.AlreadySignaled;
+                if (pendingResult.HandoffFence != 0)
                 {
-                    _cancelledProgramIds.TryRemove(programId, out _);
-                    ReleaseInFlightSlot(programId);
-                    return true;
+                    waitResult = consumerContext.ClientWaitSync(pendingResult.HandoffFence, 0u, 0u);
+                    if (waitResult != GLEnum.AlreadySignaled &&
+                        waitResult != GLEnum.ConditionSatisfied &&
+                        waitResult != GLEnum.WaitFailed)
+                    {
+                        return false;
+                    }
                 }
-                return false;
+
+                if (!_completed.TryRemove(programId, out result))
+                    return false;
+
+                DeleteHandoffFence(consumerContext, result.HandoffFence);
+                result = waitResult == GLEnum.WaitFailed
+                    ? new CompileResult(
+                        CompileStatus.LinkFailed,
+                        "glClientWaitSync failed while finalizing a shared-context program handoff.",
+                        result.CompileMilliseconds,
+                        result.LinkMilliseconds)
+                    : result with { HandoffFence = 0 };
+
+                _cancelledProgramIds.TryRemove(programId, out _);
+                ReleaseInFlightSlot(programId);
+                return true;
+            }
+
+            private static void DeleteHandoffFence(GL context, nint handoffFence)
+            {
+                if (handoffFence != 0)
+                    context.DeleteSync(handoffFence);
             }
 
             private void CompleteCancelledCompile(uint programId)

@@ -46,6 +46,11 @@ public static partial class UnityMaterialImporter
             return true;
         }
 
+        return HasTheme(document);
+    }
+
+    private static bool HasTheme(UnityMaterialDocument document)
+    {
         foreach ((string name, float value) in document.Floats)
         {
             if (value > 0.0001f &&
@@ -148,6 +153,8 @@ public static partial class UnityMaterialImporter
 
     private static void BindCompositeSurfaceParameters(XRMaterial material, UnityMaterialDocument document)
     {
+        BindGlobalThemeParameters(material, document);
+
         for (int slot = 0; slot < 4; ++slot)
         {
             string suffix = slot == 0 ? string.Empty : slot.ToString();
@@ -226,6 +233,21 @@ public static partial class UnityMaterialImporter
                 GetFloat(document, "_Rim2Sharpness", 1.0f),
                 GetFloat(document, "_Rim2HideInShadow"),
                 GetFloat(document, "_Rim2Intensity", 1.0f)));
+    }
+
+    private static void BindGlobalThemeParameters(XRMaterial material, UnityMaterialDocument document)
+    {
+        for (int theme = 0; theme < 4; ++theme)
+        {
+            MapVector4(document, material, $"_GlobalThemeColor{theme}", $"_GlobalThemeColor{theme}");
+            SetVector3(
+                material,
+                $"_GlobalThemeAdjust{theme}",
+                new Vector3(
+                    GetFloat(document, $"_GlobalThemeHue{theme}"),
+                    GetFloat(document, $"_GlobalThemeSaturation{theme}"),
+                    GetFloat(document, $"_GlobalThemeValue{theme}")));
+        }
     }
 
     private static int ResolveMatcapBlendMode(UnityMaterialDocument document, string prefix)

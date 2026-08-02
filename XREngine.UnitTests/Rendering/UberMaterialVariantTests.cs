@@ -92,9 +92,38 @@ public sealed class UberMaterialVariantTests
 
         material.Parameters.Count(parameter => parameter.Name == "_Mode").ShouldBe(1);
         material.Parameter<ShaderInt>("_Mode").ShouldNotBeNull().Value.ShouldBe(7);
-        material.Parameter<ShaderVector2>("_Grid").ShouldNotBeNull().Value.ShouldBe(Vector2.One);
+        material.Parameter<ShaderVector2>("_Grid").ShouldNotBeNull().Value.ShouldBe(new Vector2(0.0f, 1.0f));
         material.Parameter<ShaderVector4>("_Bounds").ShouldNotBeNull().Value
             .ShouldBe(new Vector4(0.25f, 0.5f, 0.75f, 1.0f));
+    }
+
+    [Test]
+    public void EnsureUberStateInitialized_PreservesExistingZeroValuesAndDefaultsOnlyMissingParameters()
+    {
+        XRMaterial material = CreateUberMaterial(
+            """
+            #version 450 core
+            //@property(name="_AuthoredZero", display="Authored Zero", mode=static, default="1.0")
+            uniform float _AuthoredZero;
+            //@property(name="_AuthoredZeroVector", display="Authored Zero Vector", mode=static, default="vec4(1.0)")
+            uniform vec4 _AuthoredZeroVector;
+            //@property(name="_MissingValue", display="Missing Value", mode=static, default="0.75")
+            uniform float _MissingValue;
+            """,
+            new ShaderFloat(0.0f, "_AuthoredZero"),
+            new ShaderVector4(Vector4.Zero, "_AuthoredZeroVector"));
+
+        material.TryGetUberMaterialState(out _, out ShaderUiManifest manifest).ShouldBeTrue();
+        manifest.Properties.Single(property => property.Name == "_MissingValue")
+            .DefaultLiteral.ShouldBe("0.75");
+
+        material.EnsureUberStateInitialized();
+        material.Parameter<ShaderFloat>("_MissingValue").ShouldNotBeNull().Value.ShouldBe(0.75f);
+        material.EnsureUberStateInitialized();
+
+        material.Parameter<ShaderFloat>("_AuthoredZero").ShouldNotBeNull().Value.ShouldBe(0.0f);
+        material.Parameter<ShaderVector4>("_AuthoredZeroVector").ShouldNotBeNull().Value.ShouldBe(Vector4.Zero);
+        material.Parameter<ShaderFloat>("_MissingValue").ShouldNotBeNull().Value.ShouldBe(0.75f);
     }
 
     [Test]

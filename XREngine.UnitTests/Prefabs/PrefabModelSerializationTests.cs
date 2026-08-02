@@ -167,6 +167,7 @@ public sealed class PrefabModelSerializationTests
 
         renderer.Mesh.ShouldNotBeNull().UtilizedBones.ShouldHaveSingleItem().tfm
             .ShouldBeSameAs(cloneBoneNode.Transform);
+        cloneBoneNode.Transform.BindMatrix.ShouldBe(Matrix4x4.Identity);
         bufferedPalette.HasValue.ShouldBeTrue();
         Vector3.Distance(
                 bufferedPalette.GetValueOrDefault().ToRowVectorMatrix().Translation,

@@ -24,6 +24,7 @@ namespace XREngine.Rendering.OpenGL
                 mainViewport.PlatformHandleRaw = _mainWindow.Handle;
                 Vector2D<int> clientPosition = GetClientScreenPosition(_mainWindow);
                 mainViewport.Pos = new Vector2(clientPosition.X, clientPosition.Y);
+                mainViewport.DpiScale = GetWindowDpiScale(_mainWindow);
             }
 
             private bool TryGetMousePosition(out Vector2 position, out uint viewportId)
@@ -178,7 +179,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void PushMousePosition(uint viewportId, IWindow window, Vector2 localPosition)
             {
-                _controller.MakeCurrent();
+                MakeCurrent();
                 var io = ImGui.GetIO();
                 Vector2D<int> clientPosition = GetClientScreenPosition(window);
                 io.AddMousePosEvent(clientPosition.X + localPosition.X, clientPosition.Y + localPosition.Y);
@@ -190,7 +191,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!TryTranslateMouseButton(button, out int imGuiButton))
                     return;
 
-                _controller.MakeCurrent();
+                MakeCurrent();
                 var io = ImGui.GetIO();
                 io.AddMouseButtonEvent(imGuiButton, down);
                 io.AddMouseViewportEvent(viewportId);
@@ -198,7 +199,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void PushMouseWheel(uint viewportId, ScrollWheel wheel)
             {
-                _controller.MakeCurrent();
+                MakeCurrent();
                 var io = ImGui.GetIO();
                 io.AddMouseWheelEvent(wheel.X, wheel.Y);
                 io.AddMouseViewportEvent(viewportId);
@@ -206,7 +207,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void PushKey(IKeyboard keyboard, Key key, int scancode, bool down)
             {
-                _controller.MakeCurrent();
+                MakeCurrent();
                 var io = ImGui.GetIO();
                 ImGuiKey imGuiKey = TranslateKey(key);
                 io.AddKeyEvent(imGuiKey, down);
@@ -219,7 +220,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void PushChar(char value)
             {
-                _controller.MakeCurrent();
+                MakeCurrent();
                 ImGui.GetIO().AddInputCharacter(value);
             }
 

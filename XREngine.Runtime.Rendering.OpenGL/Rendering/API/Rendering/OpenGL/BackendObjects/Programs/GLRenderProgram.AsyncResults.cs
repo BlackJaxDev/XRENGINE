@@ -681,7 +681,7 @@ namespace XREngine.Rendering.OpenGL
                 if (_asyncBinaryUploadPending)
                     Renderer.ProgramBinaryUploadQueue?.CancelUpload(programId);
                 if (_asyncCompileLinkPending)
-                    Renderer.ProgramCompileLinkQueue?.CancelCompileAndLink(programId);
+                    Renderer.ProgramCompileLinkQueue?.CancelCompileAndLink(programId, Api);
                 foreach (GLShader shader in _shaderCache.Values)
                     shader.Destroy();
                 return true;
@@ -698,7 +698,7 @@ namespace XREngine.Rendering.OpenGL
                     Renderer.ProgramBinaryUploadQueue?.CancelUpload(pendingBinaryProgramId);
 
                 if (_asyncCompileLinkPending && TryGetBindingId(out uint pendingSourceProgramId))
-                    Renderer.ProgramCompileLinkQueue?.CancelCompileAndLink(pendingSourceProgramId);
+                    Renderer.ProgramCompileLinkQueue?.CancelCompileAndLink(pendingSourceProgramId, Api);
 
                 if (TryGetBindingId(out _))
                     OrphanForDeferredDelete();

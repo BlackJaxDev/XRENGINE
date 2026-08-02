@@ -144,7 +144,7 @@ vec3 poiResolveThemeColor(int themeIndex, vec3 authoredColor)
     vec3 hsv = rgbToHsv(theme.rgb);
     hsv.x = fract(hsv.x + adjustment.x);
     hsv.y = saturate(hsv.y + adjustment.y);
-    hsv.z = max(0.0, hsv.z + adjustment.z);
+    hsv.z = saturate(hsv.z + adjustment.z);
     return hsvToRgb(hsv);
 #endif
 }

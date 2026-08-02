@@ -218,9 +218,14 @@ public sealed class GLMeshRendererLifecycleContractTests
         queueSource.ShouldContain("SharedContextAbandonedLinkMarker");
         queueSource.ShouldContain("setBinaryRetrievableHint");
         queueSource.ShouldContain("worker=source-link-binary-retrievable-hint");
+        queueSource.ShouldContain("worker=source-link-handoff-fence");
+        queueSource.ShouldContain("worker=deferred-source-link-handoff-fence");
         queueSource.ShouldContain("worker=source-link-handoff-flush");
         queueSource.ShouldContain("worker=deferred-source-link-handoff-flush");
-        queueSource.ShouldNotContain("glFinish");
+        queueSource.ShouldContain("TryGetReadyResult");
+        queueSource.ShouldContain("consumerContext.ClientWaitSync");
+        queueSource.ShouldContain("DeleteHandoffFence");
+        queueSource.ShouldNotContain("() => gl.Finish()");
     }
 
     [Test]
@@ -235,6 +240,9 @@ public sealed class GLMeshRendererLifecycleContractTests
         queueSource.ShouldContain("worker=source-link-binary-cache-capture");
         queueSource.ShouldContain("worker=deferred-source-link-binary-cache-capture");
         linkSource.ShouldContain("CacheBinary(pendingId2, compileResult.ProgramBinary);");
+        linkSource.ShouldContain("TryRehydrateSharedContextProgramOnRenderContext(");
+        linkSource.ShouldContain("phase=shared-context-render-handoff");
+        linkSource.ShouldContain("const bool setBinaryRetrievableHint = true;");
         binaryCacheSource.ShouldContain("QueueBinaryShaderCacheWrite");
         binaryCacheSource.ShouldContain("captured linked program binary on shared worker");
     }

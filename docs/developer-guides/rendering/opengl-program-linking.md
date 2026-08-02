@@ -208,6 +208,14 @@ render thread before enqueue. This preserves binary-cache generation while
 avoiding a startup freeze when the driver serializes `glProgramParameteri`
 against another context's compiler/linker work.
 
+After a source link completes, the worker inserts a
+`GL_SYNC_GPU_COMMANDS_COMPLETE` fence and flushes the worker context. The render
+context polls that fence with a zero-timeout `glClientWaitSync` and does not
+adopt, reflect, or draw with the shared program until the fence is signaled.
+This establishes cross-context visibility without blocking the render thread or
+forcing a driver-wide `glFinish`. A failed fence creation or wait leaves the
+fallback material active and reports the source build as failed.
+
 Shader compile completion polling still uses the longer hard-abandon window
 (180 s by default, configurable with `XRE_SHARED_CONTEXT_LINK_TIMEOUT_MS`)
 because large cold compiles can legitimately take longer than a few seconds.

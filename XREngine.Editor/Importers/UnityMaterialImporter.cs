@@ -409,6 +409,10 @@ public static partial class UnityMaterialImporter
         ICollection<MaterialConversionDiagnostic> diagnostics,
         ICollection<string> warnings)
     {
+        bool preserveMasksAndThemes = material.IsUberFeatureEnabled(
+            "poiyomi-masks-themes",
+            defaultEnabled: false);
+
         string[] excludedFeatures =
         [
             "outline",
@@ -432,6 +436,16 @@ public static partial class UnityMaterialImporter
 
         foreach (string feature in excludedFeatures)
             material.SetUberFeatureEnabled(feature, false);
+
+        // Global theme colors and their HSV adjustments are part of the
+        // supported Toon surface, not a Pro-only effect. Preserve this small
+        // adapter when the source actually uses it; the dependency keeps the
+        // common surface helpers available without enabling other Pro modules.
+        if (preserveMasksAndThemes)
+        {
+            material.SetUberFeatureEnabled("poiyomi-surface", true);
+            material.SetUberFeatureEnabled("poiyomi-masks-themes", true);
+        }
 
         MaterialPassSet sourcePassSet = material.PassSet;
         material.PassSet = sourcePassSet with
@@ -579,6 +593,12 @@ public static partial class UnityMaterialImporter
     {
         MapVector4(document, material, "_Color", "_Color");
         SetInt(material, "_ColorThemeIndex", PoiyomiEnumMapper.Identity(document, "_ColorThemeIndex", 0, 0, 12, diagnostics));
+        if (HasTheme(document))
+        {
+            material.SetUberFeatureEnabled("poiyomi-surface", true);
+            material.SetUberFeatureEnabled("poiyomi-masks-themes", true);
+        }
+        BindGlobalThemeParameters(material, document);
         MapFloat(document, material, "_BumpScale", "_BumpScale");
 
         SetInt(material, "_MainAlphaMaskMode", PoiyomiEnumMapper.AlphaMaskMode(document, diagnostics));
@@ -621,6 +641,7 @@ public static partial class UnityMaterialImporter
         MapFloat(document, material, "_LightingShadowMaskStrengthR", "_LightingShadowMaskStrengthR");
 
         MapVector4(document, material, "_EmissionColor", "_EmissionColor");
+        SetInt(material, "_EmissionColorThemeIndex", PoiyomiEnumMapper.Identity(document, "_EmissionColorThemeIndex", 0, 0, 12, diagnostics));
         MapFloat(document, material, "_EmissionStrength", "_EmissionStrength");
         MapVector2(document, material, "_EmissionScrollingSpeed", "_EmissionScrollingSpeed", "_EmissionMapPan");
         MapFloat(document, material, "_EmissionScrollingVertexColor", "_EmissionScrollingVertexColor");
@@ -642,10 +663,10 @@ public static partial class UnityMaterialImporter
         MapFloat(document, material, "_RimWidth", "_RimWidth");
         MapFloat(document, material, "_RimSharpness", "_RimSharpness");
         MapFloat(document, material, "_RimLightColorBias", "_RimLightColorBias", "_RimBiasIntensity");
-        MapFloat(document, material, "_RimEmission", "_RimEmission");
+        MapFloat(document, material, "_RimEmission", "_RimStrength", "_RimEmission");
         MapFloat(document, material, "_RimHideInShadow", "_RimHideInShadow");
         SetInt(material, "_RimStyle", PoiyomiEnumMapper.RimStyle(document, diagnostics));
-        MapFloat(document, material, "_RimBlendStrength", "_RimBlendStrength", "_RimStrength", "_RimMainStrength");
+        MapFloat(document, material, "_RimBlendStrength", "_RimBlendStrength", "_RimMainStrength");
         SetInt(material, "_RimBlendMode", PoiyomiEnumMapper.RimBlendMode(document, diagnostics));
         SetInt(material, "_RimMaskChannel", PoiyomiEnumMapper.TextureChannel(document, "_RimMaskChannel", 0, diagnostics));
 
@@ -933,10 +954,11 @@ public static partial class UnityMaterialImporter
                 ["_ShadingEnabled"],
                 ["VIGNETTE_MASKED"]));
 
-        material.SetUberFeatureEnabled("alpha-masks",
-            alphaSource is not null ||
-            document.TryGetPositive("_MainAlphaMaskMode") ||
-            document.TryGetPositive("_AlphaMaskBlendStrength"));
+        // Poiyomi commonly serializes non-zero alpha-mask controls even when
+        // the material has no alpha-mask texture. Unity samples the shader's
+        // default white texture in that case, so enabling an engine feature
+        // (and a needless sampler/variant) changes no authored behavior.
+        material.SetUberFeatureEnabled("alpha-masks", alphaSource is not null);
 
         material.SetUberFeatureEnabled("color-adjustments",
             PoiyomiFeatureStateResolver.IsEnabled(

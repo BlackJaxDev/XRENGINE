@@ -75,6 +75,16 @@ internal static class ImGuiControllerUtilities
             if (context == 0)
                 return false;
 
+            // Silk's ImGuiController constructor starts an ImGui frame. Font
+            // atlas mutation during that frame trips Dear ImGui's native
+            // `!Locked` assertion. Startup configuration belongs in Silk's IO
+            // callback; runtime rebuilds must be queued for a frame boundary.
+            if (GetFrameBegun(controller))
+            {
+                Debug.TexturesWarning("Deferred ImGui font-atlas mutation because an ImGui frame is active.");
+                return false;
+            }
+
             lock (_fontLoadedContexts)
             {
                 if (forceReload)
@@ -157,7 +167,10 @@ internal static class ImGuiControllerUtilities
             {
                 ref bool frameBegun = ref GetFrameBegun(controller);
                 if (frameBegun)
+                {
                     ImGui.Render();
+                    frameBegun = false;
+                }
 
                 SetPerFrameImGuiData(controller, deltaSeconds);
                 queueInputBeforeNewFrame();

@@ -20,5 +20,6 @@ public sealed class UnityModelImporterDocument
     public int MaterialName { get; init; }
     public int MaterialSearch { get; init; }
     public int MaterialLocation { get; init; }
+    public IReadOnlyList<UnityModelSkeletonTransform> SkeletonTransforms { get; init; } = [];
     public IReadOnlyList<UnityExternalMaterialRemap> ExternalMaterialRemaps { get; init; } = [];
 }

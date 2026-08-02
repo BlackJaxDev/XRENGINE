@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Numerics;
 using YamlDotNet.RepresentationModel;
 
 namespace XREngine.Scene.Importers;
@@ -46,8 +47,37 @@ public static class UnityModelImporterDocumentParser
             MaterialName = GetInt(materials, "materialName") ?? 0,
             MaterialSearch = GetInt(materials, "materialSearch") ?? 0,
             MaterialLocation = GetInt(materials, "materialLocation") ?? 0,
+            SkeletonTransforms = ParseSkeletonTransforms(GetNode(importer, "humanDescription")),
             ExternalMaterialRemaps = ParseExternalObjects(GetNode(importer, "externalObjects")),
         };
+    }
+
+    private static IReadOnlyList<UnityModelSkeletonTransform> ParseSkeletonTransforms(YamlNode? node)
+    {
+        if (node is not YamlMappingNode humanDescription ||
+            GetNode(humanDescription, "skeleton") is not YamlSequenceNode sequence)
+        {
+            return [];
+        }
+
+        var transforms = new List<UnityModelSkeletonTransform>(sequence.Children.Count);
+        foreach (YamlMappingNode entry in sequence.Children.OfType<YamlMappingNode>())
+        {
+            string name = GetString(entry, "name") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
+
+            transforms.Add(new UnityModelSkeletonTransform
+            {
+                Name = name,
+                ParentName = GetString(entry, "parentName") ?? string.Empty,
+                Position = GetVector3(entry, "position", Vector3.Zero),
+                Rotation = GetQuaternion(entry, "rotation", Quaternion.Identity),
+                Scale = GetVector3(entry, "scale", Vector3.One),
+            });
+        }
+
+        return transforms;
     }
 
     private static IReadOnlyList<UnityExternalMaterialRemap> ParseExternalObjects(YamlNode? node)
@@ -111,4 +141,30 @@ public static class UnityModelImporterDocumentParser
         => float.TryParse(GetString(mapping, key), NumberStyles.Float, CultureInfo.InvariantCulture, out float value)
             ? value
             : null;
+
+    private static Vector3 GetVector3(YamlMappingNode mapping, string key, Vector3 fallback)
+    {
+        if (GetNode(mapping, key) is not YamlMappingNode vector)
+            return fallback;
+
+        return new Vector3(
+            GetFloat(vector, "x") ?? fallback.X,
+            GetFloat(vector, "y") ?? fallback.Y,
+            GetFloat(vector, "z") ?? fallback.Z);
+    }
+
+    private static Quaternion GetQuaternion(YamlMappingNode mapping, string key, Quaternion fallback)
+    {
+        if (GetNode(mapping, key) is not YamlMappingNode quaternion)
+            return fallback;
+
+        var value = new Quaternion(
+            GetFloat(quaternion, "x") ?? fallback.X,
+            GetFloat(quaternion, "y") ?? fallback.Y,
+            GetFloat(quaternion, "z") ?? fallback.Z,
+            GetFloat(quaternion, "w") ?? fallback.W);
+        return value.LengthSquared() > 0.000001f
+            ? Quaternion.Normalize(value)
+            : Quaternion.Identity;
+    }
 }
