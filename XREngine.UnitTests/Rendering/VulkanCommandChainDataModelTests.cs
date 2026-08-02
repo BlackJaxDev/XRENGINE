@@ -424,9 +424,10 @@ public sealed class VulkanCommandChainDataModelTests
         string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
 
         commandBufferSource.ShouldContain("OpenXrEyeRenderTargetContext? openXrTargetContext = null");
-        commandBufferSource.ShouldContain("IsRenderingExternalSwapchainTarget && openXrTargetContext is null");
-        commandBufferSource.ShouldContain(": ResolveSwapchainRecordingTarget(imageIndex, openXrTargetContext);");
-        commandBufferSource.ShouldContain("CreateSwapchainDynamicRenderingFormatSignature(swapchainTarget.ImageFormat, swapchainTarget.DepthFormat)");
+        commandBufferSource.ShouldContain("IsRenderingExternalSwapchainTarget &&");
+        commandBufferSource.ShouldContain("recordingState.OpenXrTargetContext is null");
+        commandBufferSource.ShouldContain("recordingState.OpenXrTargetContext);");
+        commandBufferSource.ShouldContain("CreateSwapchainDynamicRenderingFormatSignature(recordingState.SwapchainTarget.ImageFormat, recordingState.SwapchainTarget.DepthFormat)");
         commandBufferSource.ShouldContain("openXrTarget.Image");
         commandBufferSource.ShouldContain("openXrTarget.ImageView");
         commandBufferSource.ShouldContain("openXrTarget.DepthImage");
@@ -444,7 +445,7 @@ public sealed class VulkanCommandChainDataModelTests
         blitSource.ShouldContain("ResolveSwapchainBlitImage(swapchainImageIndex, wantColor, wantDepth, wantStencil, in swapchainTarget)");
         blitSource.ShouldContain("recordingTarget.Image");
         blitSource.ShouldContain("recordingTarget.DepthImage");
-        commandBufferSource.ShouldContain("RecordBlitOp(commandBuffer, imageIndex, blit, in swapchainTarget);");
+        commandBufferSource.ShouldContain("RecordBlitOp(recordingState.CommandBuffer, recordingState.ImageIndex, blit, in recordingState.SwapchainTarget);");
         commandBufferSource.ShouldContain("TryResolveBlitImage(op.OutFbo, imageIndex, EReadBufferMode.ColorAttachment0, wantColor: true, wantDepth: false, wantStencil: false, out var colorDestination, isSource: false, in swapchainTarget)");
     }
 
@@ -729,7 +730,7 @@ public sealed class VulkanCommandChainDataModelTests
     public void DescriptorImageInfoAndAllocationKeys_AreScopedToActivePhysicalPlannerContext()
     {
         string textureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
-        string descriptorKeySource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/Structs/VkMeshRenderer.DescriptorAllocationKey.cs");
+        string descriptorKeySource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Descriptors/VkMeshRenderer.DescriptorAllocationKey.cs");
         string descriptorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs");
 
         textureSource.ShouldContain("public DescriptorImageInfo CreateImageInfo()");
@@ -1784,6 +1785,23 @@ public sealed class VulkanCommandChainDataModelTests
         slots.ShouldAllBe(chain => chain.DescriptorGeneration == baseline.DescriptorSnapshot.DescriptorGeneration);
         slots.Select(static chain => chain.Key.FrameSlot).ShouldBe([0, 1, 2]);
     }
+    [Test]
+    public void DescriptorGenerationPin_DelaysRetirementUntilDescriptorPublicationReleasesIt()
+    {
+        VulkanRenderer.VulkanResourceLifetimeRecord referencedImage =
+            CreateLifetimeRecord(ObjectType.Image, 0x992, 74, "DescriptorPinnedImage");
+
+        referencedImage.Pins.AddDescriptorReference();
+
+        referencedImage.Pins.HasDescriptorReferences.ShouldBeTrue();
+        referencedImage.Pins.IsRetirementReady(0, 0, 0).ShouldBeFalse();
+
+        referencedImage.Pins.ReleaseDescriptorReference();
+
+        referencedImage.Pins.HasDescriptorReferences.ShouldBeFalse();
+        referencedImage.Pins.IsRetirementReady(0, 0, 0).ShouldBeTrue();
+    }
+
 
     [Test]
     public void TryRefreshReusableCommandChainFrameData_RejectsStaticAndStructurallyDirtyPackets()

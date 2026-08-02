@@ -246,6 +246,45 @@ public class VulkanPrimaryReuseStateContractTests
     }
 
     [Test]
+    public void DynamicUiOverlay_ReleasesPreviousSecondaryReferenceBeforeRerecording()
+    {
+        string source = SourceContractWorkspace.ReadPartialType(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
+        int methodStart = source.IndexOf(
+            "private bool TryRecordDynamicUiBatchTextOverlayCommandBuffer(",
+            StringComparison.Ordinal);
+        int methodEnd = source.IndexOf(
+            "private void RecordDynamicUiBatchTextStreamlineUi(",
+            methodStart,
+            StringComparison.Ordinal);
+        methodStart.ShouldBeGreaterThanOrEqualTo(0);
+        methodEnd.ShouldBeGreaterThan(methodStart);
+
+        string method = source[methodStart..methodEnd];
+        int resetPrimary = method.IndexOf(
+            "ResetVulkanCommandBufferTracked(commandBuffer)",
+            StringComparison.Ordinal);
+        int releasePrimaryReferences = method.IndexOf(
+            "ResetCommandBufferBindState(commandBuffer)",
+            StringComparison.Ordinal);
+        int releaseDeferredSecondaries = method.IndexOf(
+            "ReleaseDeferredSecondaryCommandBuffers(imageIndex)",
+            StringComparison.Ordinal);
+        int rerecordSecondary = method.IndexOf(
+            "RecordDynamicUiBatchTextSecondaryCommandBuffer(",
+            StringComparison.Ordinal);
+
+        resetPrimary.ShouldBeGreaterThanOrEqualTo(0);
+        releasePrimaryReferences.ShouldBeGreaterThan(resetPrimary);
+        releaseDeferredSecondaries.ShouldBeGreaterThan(releasePrimaryReferences);
+        rerecordSecondary.ShouldBeGreaterThan(releaseDeferredSecondaries);
+        method.LastIndexOf(
+            "ResetCommandBufferBindState(commandBuffer)",
+            StringComparison.Ordinal).ShouldBe(releasePrimaryReferences);
+    }
+
+
+    [Test]
     public void DescriptorLayoutContract_IsNotIncidental()
     {
         VulkanImageEntryStateContract.Compare(

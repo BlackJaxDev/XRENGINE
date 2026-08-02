@@ -6,6 +6,7 @@ using Silk.NET.Vulkan.Extensions.NV;
 using System.Text;
 using System.Runtime.CompilerServices;
 using XREngine.Rendering.API.Rendering.OpenXR;
+using XREngine.Rendering.DLSS;
 
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
@@ -1072,6 +1073,71 @@ public unsafe partial class VulkanRenderer
         RequireEngineQueues(requestedQueueCounts, computeFamily, 1);
         RequireEngineQueues(requestedQueueCounts, transferFamily, 1);
 
+
+        bool dlssExplicitlyRequested = RuntimeEngine.EffectiveSettings.EnableNvidiaDlss ||
+            RuntimeEngine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Dlaa;
+        bool frameGenerationExplicitlyRequested = NvidiaDlssManager.IsFrameGenerationRequested;
+
+        bool CanProvisionStreamlineQueues(out string failureReason)
+        {
+            Dictionary<uint, uint> candidateQueueCounts = new(requestedQueueCounts);
+            try
+            {
+                AppendRequiredQueues(
+                    candidateQueueCounts,
+                    queueFamilies,
+                    graphicsFamily,
+                    _streamlineQueueRequirements.GraphicsQueues,
+                    "graphics");
+                AppendRequiredQueues(
+                    candidateQueueCounts,
+                    queueFamilies,
+                    computeFamily,
+                    _streamlineQueueRequirements.ComputeQueues,
+                    "compute");
+                if (_streamlineQueueRequirements.OpticalFlowQueues > 0)
+                {
+                    uint opticalFlowFamily = FindOpticalFlowQueueFamily(queueFamilies);
+                    AppendRequiredQueues(
+                        candidateQueueCounts,
+                        queueFamilies,
+                        opticalFlowFamily,
+                        _streamlineQueueRequirements.OpticalFlowQueues,
+                        "optical-flow");
+                }
+
+                failureReason = string.Empty;
+                return true;
+            }
+            catch (NotSupportedException ex)
+            {
+                failureReason = ex.Message;
+                return false;
+            }
+        }
+
+        while (!CanProvisionStreamlineQueues(out string streamlineQueueFailure))
+        {
+            if (_streamlineFrameGenerationProvisioned && !frameGenerationExplicitlyRequested)
+            {
+                Debug.RenderingWarning(
+                    "[Vulkan] Optional DLSS-G runtime-toggle provisioning disabled because the selected device cannot satisfy its queue requirements. Restart the renderer on a compatible device to enable the live toggle. Reason={0}",
+                    streamlineQueueFailure);
+                ResolveStreamlineVulkanRequirements(_streamlineDlssProvisioned, includeFrameGeneration: false);
+                continue;
+            }
+
+            if (_streamlineDlssProvisioned && !dlssExplicitlyRequested)
+            {
+                Debug.RenderingWarning(
+                    "[Vulkan] Optional DLSS runtime-toggle provisioning disabled because the selected device cannot satisfy its queue requirements. Restart the renderer on a compatible device to enable the live toggle. Reason={0}",
+                    streamlineQueueFailure);
+                ResolveStreamlineVulkanRequirements(includeDlss: false, includeFrameGeneration: false);
+                continue;
+            }
+
+            throw new NotSupportedException(streamlineQueueFailure);
+        }
         _streamlineGraphicsQueueFamily = graphicsFamily;
         _streamlineComputeQueueFamily = computeFamily;
         _streamlineOpticalFlowQueueFamily = 0;

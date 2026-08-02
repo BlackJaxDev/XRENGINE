@@ -2,6 +2,13 @@
 
 `XREngine.ControlPlane` is a small local-dev control-plane DLL for tests, editor tooling, launchers, and future service wrappers. It keeps room/instance orchestration outside the realtime engine while producing the same realtime handoff payload that `Engine.InitializeNetworking` already consumes.
 
+Start with the
+[Control Plane Runtime Architecture](../../architecture/runtime/control-plane.md)
+for the control-plane/data-plane boundary, complete instance lifecycle,
+editor-to-editor workflow, dedicated-server/client launch example,
+multi-instance port rules, and production service responsibilities. This page
+is the shorter code-facing reference.
+
 ## Responsibilities
 
 - Register local hosts and track basic capacity.
@@ -12,7 +19,11 @@
 - Generate client `XRE_REALTIME_JOIN_PAYLOAD` environment variables.
 - Build and verify local world package manifests for test delivery flows.
 
-The DLL is intentionally not an HTTP service. A future directory service can wrap these contracts, but the engine-side realtime worker should still receive only endpoint, session, token, protocol, and world identity data.
+The DLL is intentionally not an HTTP service or process supervisor. A future
+directory service can wrap these contracts, but the engine-side realtime
+worker should still receive only endpoint, session, token, protocol, and world
+identity data. The caller must launch/monitor the process represented by a
+`ServerLaunchPlan` and must terminate it separately from `StopInstance`.
 
 ## Basic Usage
 

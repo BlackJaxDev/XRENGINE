@@ -11,7 +11,7 @@ This document remains the technical implementation child for active-list
 compaction, overflow, Hi-Z, barrier batching, indirect-count submission, and
 delayed diagnostics.
 
-- [03 - True GPU-Driven Zero-Readback Submission](03-vulkan-true-zero-readback-submission-todo.md)
+- [Workstream 03 validation](../../../testing/rendering/03-05-optimization-validation-todo.md#workstream-03-validation)
   owns Phases 0-3 and 5-7 plus the production zero-readback completion gate.
 - [07 - Occlusion Systems Performance](07-occlusion-systems-performance-todo.md)
   owns Phase 4, Hi-Z effectiveness, and any production promotion decision.

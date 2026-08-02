@@ -13,7 +13,7 @@ This remains the focused technical child for material rows, runtime binding-rung
 selection, texture arrays, bindless lifetime, sparse/virtual texture
 interfaces, coarse buckets, and dirty updates. The production zero-readback
 sequence and promotion decision are owned by
-[03 - True GPU-Driven Zero-Readback Submission](03-vulkan-true-zero-readback-submission-todo.md).
+[workstream 03 validation](../../../testing/rendering/03-05-optimization-validation-todo.md#workstream-03-validation).
 
 Workstream 03 may consume a bounded supported rung without requiring every
 future sparse/virtual-texturing phase to be complete, but any production coarse

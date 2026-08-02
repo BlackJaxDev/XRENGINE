@@ -5,7 +5,7 @@ Status: Canonical GPU-Driven Architecture Roadmap; Vulkan Performance Promotion 
 
 Execution ownership:
 
-- [Workstream 03](../optimization/03-vulkan-true-zero-readback-submission-todo.md)
+- [Workstream 03](../../../testing/rendering/03-05-optimization-validation-todo.md#workstream-03-validation)
   owns the ordered Vulkan zero-readback submission gate.
 - [Workstream 07](../optimization/07-occlusion-systems-performance-todo.md)
   owns occlusion effectiveness and production promotion.

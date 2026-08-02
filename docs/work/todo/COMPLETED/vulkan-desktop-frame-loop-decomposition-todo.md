@@ -17,7 +17,7 @@ Execution ownership:
 - Completed workstream 01 owns current performance measurement and
   attribution; see the
   [Vulkan framerate root-cause investigation](../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md).
-- [Workstream 04](../rendering/optimization/04-next-frame-preparation-and-collect-visible-handoff-todo.md)
+- [Workstream 04](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-04-completion-and-validation)
   owns changes to the collect/render prepared-frame handoff.
 - The numbered workstreams must preserve this tracker's acquire, image
   ownership, recovery, retirement, submission, and device-loss invariants.

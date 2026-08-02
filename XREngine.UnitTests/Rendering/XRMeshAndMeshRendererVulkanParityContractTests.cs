@@ -154,27 +154,31 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
     [Test]
     public void VulkanGraphicsPipelines_AreSharedAcrossEquivalentMeshRenderers()
     {
-        string pipelineKeySource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/Structs/VkMeshRenderer.PipelineKey.cs");
-        string compileKeySource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/Structs/VkMeshRenderer.GraphicsPipelineCompileKey.cs");
+        string pipelineKeySource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Pipelines/VkMeshRenderer.PipelineKey.cs");
+        string compileKeySource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Pipelines/VkMeshRenderer.GraphicsPipelineCompileKey.cs");
         string meshPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
         string cacheSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanGraphicsPipelineCache.cs");
+        string managerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineManager.cs");
         string queueSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCompileQueue.cs");
         string initializationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
 
         pipelineKeySource.ShouldContain("ulong DescriptorLayoutHash");
+        pipelineKeySource.ShouldContain("ulong PipelineLayoutHandle");
         pipelineKeySource.ShouldNotContain("MaterialLayoutHash");
 
         compileKeySource.ShouldContain("PipelineKey Pipeline");
         compileKeySource.ShouldNotContain("OwnerIdentity");
 
-        meshPipelineSource.ShouldContain("Renderer.TryGetSharedGraphicsPipeline(key, out pipeline)");
+        meshPipelineSource.ShouldContain("BackendContext.Pipelines.TryGetSharedGraphicsPipeline(key, out pipeline)");
+        meshPipelineSource.ShouldContain("_program.PipelineLayout.Handle");
         meshPipelineSource.ShouldContain("Renderer.StoreOrRetireSharedGraphicsPipeline(key, asyncResult.Pipeline)");
         meshPipelineSource.ShouldContain("Renderer.StoreOrRetireSharedGraphicsPipeline(key, pipeline)");
         meshPipelineSource.ShouldContain("Final graphics pipeline handles are owned by the renderer-level shared cache");
         meshPipelineSource.ShouldNotContain("Renderer.RetirePipeline(pipe)");
 
-        cacheSource.ShouldContain("private readonly Dictionary<VkMeshRenderer.PipelineKey, Pipeline> _sharedGraphicsPipelines");
-        cacheSource.ShouldContain("internal bool TryGetSharedGraphicsPipeline");
+        managerSource.ShouldContain("private readonly Dictionary<VkMeshRenderer.PipelineKey, Pipeline> _sharedGraphicsPipelines");
+        managerSource.ShouldContain("internal bool TryGetSharedGraphicsPipeline");
+        managerSource.ShouldContain("internal Pipeline StoreSharedGraphicsPipeline");
         cacheSource.ShouldContain("internal Pipeline StoreOrRetireSharedGraphicsPipeline");
         cacheSource.ShouldContain("RetirePipeline(pipeline)");
         cacheSource.ShouldContain("private void DestroySharedGraphicsPipelines()");

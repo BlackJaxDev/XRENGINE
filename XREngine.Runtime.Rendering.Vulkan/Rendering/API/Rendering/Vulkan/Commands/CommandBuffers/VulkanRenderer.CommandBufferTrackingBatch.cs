@@ -5,10 +5,6 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private readonly record struct VulkanImageAccessRangeDelta(
-        ulong ImageHandle,
-        ImageSubresourceRange Range,
-        VulkanImageAccessState State);
 
     internal sealed class VulkanCommandBufferImageAccessIndex(int initialCapacity = 32)
     {

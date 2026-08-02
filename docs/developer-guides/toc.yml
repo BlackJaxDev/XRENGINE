@@ -7,6 +7,8 @@
       href: ai/mcp-server.md
     - name: MCP Assistant
       href: ai/mcp-assistant.md
+    - name: Local Agent Broker
+      href: ai/local-agent-broker.md
 
 - name: Assets
   items:

@@ -1,22 +1,28 @@
 # Vulkan Command Recording Architecture Optimization TODO
 
-Last Updated: 2026-07-31
+Last Updated: 2026-08-01
 Owner: Rendering / Vulkan Command Buffers
-Status: In Progress; Linked Binding Schema, Prepared Mesh Encoder, And Typed Worker Eligibility Implemented; Full Acceptance Open
+Status: In Progress; Pre-06 Implementation Detail; Acceptance Owned By The Combined 03-05 Gate
 
 Current architecture:
 
 - [Vulkan Primary And Secondary Command Recording](../../../../architecture/rendering/vulkan-command-recording.md)
 - [Vulkan Primary Command-Buffer Reuse](../../../../architecture/rendering/vulkan-primary-command-buffer-reuse.md)
 
-Predecessor:
+Implemented predecessor:
 
-- [05 - Vulkan Command Recording Worker Architecture](05-vulkan-command-recording-worker-architecture-todo.md)
-  implemented persistent workers, per-worker/per-frame-slot command pools,
+- [Vulkan Command Recording Worker Architecture Progress](../../../progress/rendering/vulkan-command-recording-worker-architecture-2026-07-30.md)
+  records persistent workers, per-worker/per-frame-slot command pools,
   immutable planner snapshots, deterministic merge, bounded waits, and worker
-  quarantine. This TODO must extend that implementation rather than recreate it.
+  quarantine. This TODO extends that implementation rather than recreating it.
 
-Related acceptance tracker:
+Owning pre-06 completion and acceptance gate:
+
+- [Vulkan Optimization Workstreams 03-05 Validation](../../../testing/rendering/03-05-optimization-validation-todo.md)
+  owns remaining workstream-04 implementation closure, workstream-03/05
+  acceptance, and the decision to unblock workstream 06.
+
+Related final closeout:
 
 - [01-08 Optimization Acceptance Closeout](../../../testing/rendering/01-08-optimization-acceptance-closeout.md)
 
@@ -1249,6 +1255,10 @@ Acceptance criteria:
 - [ ] Each family demonstrates a measured benefit on representative hardware.
 
 ## Phase 9 - Acceptance And Cutover
+
+The combined 03-05 gate owns execution status for every pre-06 item below.
+Map evidence there and do not unblock workstream 06 from this subordinate
+architecture tracker alone.
 
 - [ ] Binding-schema classification, std140/layout, array/struct, default-value,
   and shader-reload tests pass.

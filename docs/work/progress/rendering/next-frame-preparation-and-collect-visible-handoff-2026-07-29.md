@@ -1,7 +1,7 @@
 # Next-Frame Preparation And Collect-Visible Handoff
 
-Last Updated: 2026-07-29
-Status: Implementation Complete; Acceptance Deferred
+Last Updated: 2026-08-01
+Status: Package Foundation Complete; Binding/Data Handoff Reopened
 Owner: Rendering / Frame Scheduling / Vulkan
 
 ## Result
@@ -13,8 +13,8 @@ the package in bounded time before executing the pipeline. Published package
 passes are the authoritative render-command lookup source, and Vulkan uses the
 package's pass metadata as its resource-planning input.
 
-The long-form performance and stress matrix is retained in the
-[01-08 Acceptance Closeout](../../testing/rendering/01-08-optimization-acceptance-closeout.md).
+The missing producer-side binding/data handoff and its validation are retained
+in the [combined workstreams 03-05 gate](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-04-completion-and-validation).
 
 ## Render-Thread Work Classification
 
@@ -157,9 +157,25 @@ profiler statistics.
   (`EDesktopFramePhase`, `OpenXrViewResourcePlannerContextKey`, and nint
   `ShouldBe` calls).
 
-## Deferred Acceptance
+## Remaining Completion And Validation
 
 Canonical allocation captures, overlap comparison, static/moving visual
 parity, streaming/mutation/resize/pause/resume/failed-submit/shutdown stress,
-latency comparison, Vulkan validation, and desktop/RVC cohorts are deferred
-without waiver to the 01-08 closeout.
+latency comparison, Vulkan validation, and desktop/RVC cohorts remain open
+without waiver in the combined workstreams 03-05 gate.
+
+## 2026-08-01 Rejected producer binding-input handoff attempt
+
+An attempted final handoff added renderer-neutral material/mesh revisions and
+typed publisher snapshots to `BackendReadyMeshSelection`, then scoped Vulkan
+mesh preparation to the published selection. The focused Release selection
+passed 16/16 tests, including the existing zero-allocation package loop.
+
+Live validation rejected the change. Two launches of
+`cmd-record-finish-fix2` failed deterministically with native `0xC0000005`
+access violations at `vkCmdDraw`/`vkCmdDrawIndexed`. Disabling command-chain
+scheduling did not change the failure. A context-disabled bisect still crashed,
+which isolated the regression to the added producer data-model/capture slice or
+the timing it introduced rather than the selection scope itself. The entire
+attempt and its tests were rolled back; no crashing partial implementation is
+retained. The producer binding-input checklist item remains open.

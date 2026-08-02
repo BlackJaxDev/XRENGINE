@@ -470,6 +470,31 @@ namespace XREngine.Rendering.Vulkan
             out CommandBuffer overlayCommandBuffer)
         {
             overlayCommandBuffer = default;
+
+            if (_dynamicUiBatchTextOverlayCommandBuffers is null ||
+                imageIndex >= _dynamicUiBatchTextOverlayCommandBuffers.Length)
+            {
+                return false;
+            }
+
+            bool useDynamicRendering = UseDynamicRenderingRenderTargets &&
+                swapChainImageViews is not null &&
+                imageIndex < swapChainImageViews.Length;
+            if (!useDynamicRendering)
+                return false;
+
+            // The previous overlay primary owns the recorded reference that makes
+            // its dynamic-text secondary immutable. Release that reference before
+            // trying to reset the secondary; otherwise every frame takes the
+            // copy-on-write path and leaks one replacement until the scene primary
+            // happens to be re-recorded.
+            CommandBuffer commandBuffer = _dynamicUiBatchTextOverlayCommandBuffers[imageIndex];
+            Result resetResult = ResetVulkanCommandBufferTracked(commandBuffer);
+            if (resetResult != Result.Success)
+                throw new InvalidOperationException(
+                    $"Failed to reset dynamic UI text overlay command buffer: {resetResult}.");
+            ResetCommandBufferBindState(commandBuffer);
+            ReleaseDeferredSecondaryCommandBuffers(imageIndex);
             if (dynamicUiBatchTextVariant is not null)
             {
                 if (dynamicUiBatchTextOps.Length == 0 ||
@@ -489,21 +514,10 @@ namespace XREngine.Rendering.Vulkan
             }
 
             if (dynamicUiBatchTextOpCount <= 0 ||
-                secondaryCommandBuffer.Handle == 0 ||
-                _dynamicUiBatchTextOverlayCommandBuffers is null ||
-                imageIndex >= _dynamicUiBatchTextOverlayCommandBuffers.Length)
+                secondaryCommandBuffer.Handle == 0)
             {
                 return false;
             }
-
-            bool useDynamicRendering = UseDynamicRenderingRenderTargets &&
-                swapChainImageViews is not null &&
-                imageIndex < swapChainImageViews.Length;
-            if (!useDynamicRendering)
-                return false;
-
-            CommandBuffer commandBuffer = _dynamicUiBatchTextOverlayCommandBuffers[imageIndex];
-            ResetVulkanCommandBufferTracked(commandBuffer);
 
             CommandBufferBeginInfo beginInfo = new()
             {
@@ -514,7 +528,6 @@ namespace XREngine.Rendering.Vulkan
             if (Api.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
                 throw new InvalidOperationException("Failed to begin dynamic UI text overlay command buffer.");
 
-            ResetCommandBufferBindState(commandBuffer);
             SeedRecordedImageLayoutState(commandBuffer, predecessorCommandBuffer);
             TransitionSecondaryDescriptorImagesForExecution(commandBuffer, secondaryCommandBuffer);
             CmdBeginLabel(commandBuffer, "DynamicUIBatchTextOverlay");

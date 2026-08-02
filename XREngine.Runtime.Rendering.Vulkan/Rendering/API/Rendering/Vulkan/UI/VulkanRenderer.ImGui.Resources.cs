@@ -693,10 +693,6 @@ public unsafe partial class VulkanRenderer
                     SType = StructureType.PipelineRenderingCreateInfo,
                     ColorAttachmentCount = kDynRenderColorSlots,
                     PColorAttachmentFormats = colorFormats,
-                    DepthAttachmentFormat = _swapchainDepthFormat,
-                    StencilAttachmentFormat = _swapchainDepthFormat is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint
-                        ? _swapchainDepthFormat
-                        : Format.Undefined,
                 };
 
                 pipelineInfo.PNext = &renderingInfo;

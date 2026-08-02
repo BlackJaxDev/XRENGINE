@@ -173,15 +173,6 @@ public unsafe partial class VulkanRenderer
                 StoreOp = AttachmentStoreOp.Store,
             };
 
-            RenderingAttachmentInfo depthAttachment = new()
-            {
-                SType = StructureType.RenderingAttachmentInfo,
-                ImageView = _swapchainDepthView,
-                ImageLayout = ImageLayout.DepthStencilAttachmentOptimal,
-                LoadOp = AttachmentLoadOp.DontCare,
-                StoreOp = AttachmentStoreOp.DontCare,
-            };
-
             RenderingInfo renderingInfo = new()
             {
                 SType = StructureType.RenderingInfo,
@@ -193,7 +184,6 @@ public unsafe partial class VulkanRenderer
                 LayerCount = 1,
                 ColorAttachmentCount = 1,
                 PColorAttachments = &colorAttachment,
-                PDepthAttachment = _swapchainDepthView.Handle != 0 ? &depthAttachment : null,
             };
 
             CmdBeginDynamicRendering(commandBuffer, &renderingInfo);

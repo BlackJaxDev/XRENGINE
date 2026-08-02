@@ -276,9 +276,9 @@ public sealed partial class VulkanSourceArchitectureGuardrailTests
     public void ComputeResources_ArePreparedBeforeTheRecordingGuard()
     {
         string scheduling = SourceContractWorkspace.ReadFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferLifecycle.Recording.cs");
         int preparation = scheduling.IndexOf(
-            "TryPrepareComputeFrameOpsForRecording(imageIndex, ops",
+            "TryPrepareComputeFrameOpsForRecording(",
             StringComparison.Ordinal);
         int recordingGuard = scheduling.IndexOf(
             "_commandRecorder.EnterRecordingScope();",

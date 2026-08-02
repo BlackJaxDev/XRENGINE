@@ -398,3 +398,45 @@ This was the phase-boundary prerequisite for owner-filtered publication.
 This closes the Phase 1.3 bounded stable-publication and zero-static-draw-visit
 acceptance items. The dynamic-UI count is deliberately separate because the
 canonical UI text changes independently of the static scene.
+
+## 2026-08-01 Directional-light freeze and viewport flicker
+
+The reported directional-light toggle freeze was a rejected-frame failure,
+not simply shadow-rendering cost. The isolated `cmd-record-finish-baseline`
+session recorded four image-state submission rejections: an imported texture
+was referenced by graphics work while an exclusive transfer-queue ownership
+release from family 5 to family 0 remained pending. It also recorded two
+resource-lifetime rejections because retired
+`VkImageBackedTexture.ImportedUploadView` generations remained referenced by
+per-material `Material.DescriptorSet.Frame0/Frame2` descriptor sets. The
+submission guard correctly withheld those unsafe frames, which presented as
+scene and ImGui flicker and could look like a complete renderer freeze.
+Directional-light shadow passes increased the affected descriptor/pass work
+and made the fault substantially easier to trigger.
+
+Imported images now use concurrent graphics/transfer queue-family sharing when
+a dedicated transfer family is selected. Their transfer completion barrier and
+the later graphics visibility barrier therefore use ignored queue-family
+indices instead of an unmatched exclusive ownership release/acquire pair.
+Descriptor-set publication now pins the exact referenced resource generations,
+including backing images and buffers, until that descriptor set publishes a
+replacement snapshot or is removed. Retirement readiness includes those pins,
+and descriptor-set cleanup releases them.
+
+Agent validation after both fixes used the isolated `cmd-record-finish-fix1`
+Release session with the RenderDoc-friendly diagnostic preset. Three additional
+directional-light off/on cycles completed while the scene command count changed
+from 216 to 232 and back as expected. The final renderer sample reported zero
+submission rejections, zero Vulkan validation messages, zero dropped frames,
+and no pending retired resources. A ten-frame 5 fps capture completed without
+drops; every frame had the same SHA-256 digest and no black pixels. The viewport
+and internal target were both 1920x1080, and the inspected capture filled the
+whole target rather than only its upper-left corner. The retained contact sheet
+is
+`Build/_AgentValidation/20260801-vulkan-command-recording-finish/mcp-captures/ViewportSequence_20260801_233025_667_b544cf23f942496da465cf627d06c06a/contact-sheet.png`.
+
+The scene-target capture does not include the ImGui overlay itself, so the
+absence of visible ImGui flicker is supported by its per-frame render counters
+rather than a compositor-inclusive image. The user-reported top-left rendering
+was not reproduced after the synchronization/lifetime fixes. This is an
+agent-validated fix awaiting user confirmation in their normal editor session.

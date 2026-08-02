@@ -928,30 +928,17 @@ public unsafe partial class VulkanRenderer
 
             for (int i = 0; i < imageBarrierCount; i++)
             {
-                VulkanImageAccessState sourceState;
-                if (imageBarriers[i].OldLayout == ImageLayout.Undefined ||
-                    !TryGetRecordedImageAccessState(
-                        commandBuffer,
-                        imageBarriers[i].Image,
-                        imageBarriers[i].SubresourceRange,
-                        out sourceState))
-                {
-                    sourceState = ResolveVulkanImageAccessState(
-                        imageBarriers[i].OldLayout,
-                        imageBarriers[i].SubresourceRange.AspectMask,
-                        imageBarriers[i].SrcQueueFamilyIndex);
-                }
-                VulkanImageAccessState destinationState = ResolveVulkanImageAccessState(
-                    imageBarriers[i].NewLayout,
-                    imageBarriers[i].SubresourceRange.AspectMask,
-                    imageBarriers[i].DstQueueFamilyIndex);
                 imageBarrierArray[i] = new ImageMemoryBarrier2
                 {
                     SType = StructureType.ImageMemoryBarrier2,
-                    SrcStageMask = sourceState.StageMask | srcStages2,
-                    SrcAccessMask = sourceState.AccessMask | NormalizeAccessFlags2(imageBarriers[i].SrcAccessMask),
-                    DstStageMask = destinationState.StageMask | dstStages2,
-                    DstAccessMask = destinationState.AccessMask | NormalizeAccessFlags2(imageBarriers[i].DstAccessMask),
+                    // Preserve the explicit barrier contract. Inferring stages from the
+                    // image layout can introduce stages unsupported by the command
+                    // buffer's queue family (for example shader stages on a transfer-only
+                    // queue) and strengthen access masks beyond the caller's intent.
+                    SrcStageMask = srcStages2,
+                    SrcAccessMask = NormalizeAccessFlags2(imageBarriers[i].SrcAccessMask),
+                    DstStageMask = dstStages2,
+                    DstAccessMask = NormalizeAccessFlags2(imageBarriers[i].DstAccessMask),
                     OldLayout = imageBarriers[i].OldLayout,
                     NewLayout = imageBarriers[i].NewLayout,
                     SrcQueueFamilyIndex = imageBarriers[i].SrcQueueFamilyIndex,

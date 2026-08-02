@@ -85,7 +85,7 @@ public unsafe partial class VulkanRenderer
             }
 
             ResetCommandBufferBindState(commandBuffer);
-            RecordImportedTextureTransferUpload(commandBuffer, upload, transferFamily, graphicsFamily);
+            RecordImportedTextureTransferUpload(commandBuffer, upload);
 
             Result endResult = Api!.EndCommandBuffer(commandBuffer);
             if (endResult != Result.Success)
@@ -213,9 +213,7 @@ public unsafe partial class VulkanRenderer
 
     private void RecordImportedTextureTransferUpload(
         CommandBuffer commandBuffer,
-        VulkanImportedTexturePendingUpload upload,
-        uint transferFamily,
-        uint graphicsFamily)
+        VulkanImportedTexturePendingUpload upload)
     {
         ImageSubresourceRange range = new()
         {
@@ -271,8 +269,8 @@ public unsafe partial class VulkanRenderer
             DstAccessMask = 0,
             OldLayout = ImageLayout.TransferDstOptimal,
             NewLayout = ImageLayout.ShaderReadOnlyOptimal,
-            SrcQueueFamilyIndex = transferFamily,
-            DstQueueFamilyIndex = graphicsFamily,
+            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
             Image = upload.Image,
             SubresourceRange = range,
         };
@@ -308,10 +306,10 @@ public unsafe partial class VulkanRenderer
             SType = StructureType.ImageMemoryBarrier,
             SrcAccessMask = 0,
             DstAccessMask = AccessFlags.ShaderReadBit,
-            OldLayout = ImageLayout.TransferDstOptimal,
+            OldLayout = ImageLayout.ShaderReadOnlyOptimal,
             NewLayout = ImageLayout.ShaderReadOnlyOptimal,
-            SrcQueueFamilyIndex = submitted.TransferQueueFamily,
-            DstQueueFamilyIndex = submitted.GraphicsQueueFamily,
+            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
             Image = upload.Image,
             SubresourceRange = range,
         };

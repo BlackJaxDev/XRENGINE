@@ -58,11 +58,13 @@ public sealed class VulkanDescriptorLifetimePressureTests
     public void MeshDescriptorsUseStructuralSharedSlabsAndFrameOnlySlots()
     {
         string key = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/Structs/VkMeshRenderer.DescriptorAllocationKey.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Descriptors/VkMeshRenderer.DescriptorAllocationKey.cs");
         string descriptors = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs");
+        string descriptorFingerprints = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.DescriptorFingerprints.cs");
         string program = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.Layouts.cs");
         string slabs = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/MeshDescriptorPoolSlabs.cs");
         string sharedAllocations = ReadWorkspaceFile(
@@ -84,7 +86,7 @@ public sealed class VulkanDescriptorLifetimePressureTests
         descriptors.ShouldContain("candidate.ResourceFingerprint != resourceFingerprint");
         descriptors.ShouldContain("DescriptorSlotResourceFingerprintMatches(allocation, descriptorSlotIndex, resourceFingerprint)");
         descriptors.ShouldNotContain("_descriptorDirty && DescriptorSlotResourceFingerprintMatches");
-        descriptors.ShouldContain("AddTextureDescriptorResourceFingerprint(ref hash, texture);");
+        descriptorFingerprints.ShouldContain("AddTextureDescriptorResourceFingerprint(ref hash, texture);");
         descriptors.ShouldContain("ViewFamilyIdentity = viewFamilyIdentity");
         descriptors.ShouldNotContain("ProgramIdentity = programIdentity");
         descriptors.ShouldContain("ReferenceEquals(allocation.Program, _program)");

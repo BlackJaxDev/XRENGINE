@@ -704,6 +704,7 @@ internal unsafe partial class VkMeshRenderer
 			_program.LinkGeneration,
 			vertexLayoutHash,
 			descriptorLayoutHash,
+			_program.PipelineLayout.Handle,
 			passMetadataHash,
 			featureProfileHash,
 			effectiveDraw.RasterizationSamples,

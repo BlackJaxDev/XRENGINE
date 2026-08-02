@@ -656,6 +656,7 @@ public unsafe partial class VulkanRenderer
             _previousState = renderer.CaptureResourcePlannerRuntimeState();
             _active = renderer.IsDeviceOperational &&
                 FrameOpResourcePlannerSwitchingEnabled &&
+                !renderer.ActiveFrameOpResourcePlannerSwitchingState.MergedPlanActive &&
                 FrameOpContextHasPlannerResources(context);
 
             if (!_active)
@@ -765,6 +766,16 @@ public unsafe partial class VulkanRenderer
                         : ResourcePlannerRuntimeState.CreateEmpty()
                     : _previousState;
             _renderer.RestoreResourcePlannerRuntimeState(restoreState);
+            if (_active &&
+                !ReferenceEquals(currentState.ResourceAllocator, restoreState.ResourceAllocator) &&
+                _context.ResourceRegistry is not null)
+            {
+                // Descriptor and attachment wrappers are shared even though planner
+                // allocators are scoped. Force the next command-buffer preparation
+                // for this registry to rebind wrappers to its restored allocator.
+                _renderer._openXrBackend.ResourceRegistryWrapperRefreshStamps.Remove(
+                    _context.ResourceRegistry);
+            }
         }
     }
 

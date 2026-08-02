@@ -41,34 +41,72 @@ When the active model is Terra, treat these user instructions as routing command
 
 ### Local Agent Broker
 
-The optional `local-agent-broker` MCP server is a supported evidence-worker
-surface when it is configured. A broker worker is a separately billed public
-OpenAI API request; it is not an in-place model switch and must never be
-described as one.
+The optional `local-agent-broker` MCP server is a supported, checkout-local
+evidence-worker surface. Each worker is a separate, independently billed public
+OpenAI Responses API request. It does not change the model running the current
+Codex task and must never be described as an in-place switch or native handoff.
 
-- Do not start a paid broker run merely because `recommend_agent_route`
-  recommends a tier. Start one only when the user explicitly asks to use the
-  broker/API worker or explicitly authorizes that routed worker.
-- Keep the current Codex agent as coordinator. Give the worker a compact
-  evidence packet and one bounded reasoning/editor objective; integrate and
-  validate its returned evidence locally.
-- Require the exact model ID authorized by the user:
-  `gpt-5.6-luna`, `gpt-5.6-terra`, or `gpt-5.6-sol`. Verify both
-  `requested_model` and `actual_model`; never accept silent substitution.
-- Target only an explicitly named editor session created with
-  `Tools/Manage-McpEditorSession.ps1`. Use read-only tools by default. Mutation
-  requires the user's task to authorize it, an exact broker tool allowlist, an
-  appropriate editor permission policy, and read-back or capture evidence.
-- Set narrow turn, tool-call, output-token, elapsed-time, and retry budgets.
-  Poll `get_agent_run` to a terminal status, cancel abandoned work, and report
-  API or editor failures instead of falling back to another model or session.
-- Prefer a supported native Codex handoff for routing the entire coding task.
-  Use the broker for a bounded analysis or editor-tool slice; it has no generic
-  shell, repository-write, Git, or process tools.
-- Setup and operational details are in
-  `docs/user-guide/ai/local-agent-broker.md`. If the broker is unavailable,
-  continue using the normal handoff packet rule above; do not improvise
-  credentials, endpoints, or process discovery.
+#### Preconditions For A Broker Run
+
+Do not call `start_agent_run` unless all of these conditions are true:
+
+- The current user request explicitly asks to use the local broker/API worker or
+  explicitly authorizes a worker after route advice. A
+  `recommend_agent_route` result is advisory and never authorizes API spend.
+- The user has authorized one exact supported model ID: `gpt-5.6-luna`,
+  `gpt-5.6-terra`, or `gpt-5.6-sol`. If the exact tier is not authorized,
+  stop and ask; do not choose a paid tier silently.
+- The five broker tools are callable in the current session. If they are
+  missing, follow `docs/user-guide/ai/local-agent-broker.md` for setup,
+  project trust, and restart requirements. Do not simulate a broker run.
+- The operator has configured the API key in the environment inherited by
+  Codex and the API project has billing/quota plus access to the exact model.
+  Never ask the user to paste the key into chat, print or echo it, inspect its
+  value, put it in MCP arguments, or persist it.
+- The run targets one exact named editor session created with
+  `Tools/Manage-McpEditorSession.ps1`. The broker accepts only that session's
+  manifest and loopback endpoint; it never discovers or manages processes.
+- The objective is one bounded reasoning/editor slice with explicit success
+  criteria, constraints, tool policy, and narrow turn, tool-call,
+  tool-result-byte, output-token, elapsed-time, retry, and concurrency budgets.
+
+Every broker run requires an editor session name, even when no editor tool call
+is expected.
+
+#### Required Coordinator Workflow
+
+1. Keep the current Codex agent as coordinator. Prefer a supported native Codex
+   handoff for routing an entire coding task; use the broker for a bounded
+   analysis or editor-tool slice.
+2. Build a compact evidence packet containing only the objective, success
+   criteria, constraints, relevant files/symbols, current diff, commands and
+   observed results, failed hypotheses, unresolved questions, and next
+   decision. Do not send unrelated repository data or secrets.
+3. Use read-only editor access by default. A non-empty allowlist should name
+   only the tools needed for the objective.
+4. Mutation requires all of: explicit task authority, an `AllowMutate` named
+   session, `allow_mutation: true`, an exact non-empty mutating-tool allowlist,
+   and a later read-back, query, inspection, validation, or capture. Destructive
+   access additionally requires explicit destructive authority.
+5. Call `start_agent_run` once, retain its run ID, and poll
+   `get_agent_run` until `completed`, `failed`, or `cancelled`. Cancel
+   queued/running work that is abandoned or no longer useful.
+6. Verify both `requested_model` and `actual_model`. Treat any mismatch as a
+   terminal failure. Never retry with another model, session, or route without
+   new user authority.
+7. Integrate the returned evidence into the local investigation and perform the
+   relevant local read-back, capture, build, or test. The worker has no generic
+   shell, repository-write, Git, or process tool, so its answer is evidence, not
+   repository validation.
+8. Report API, policy, editor, timeout, budget, or model-access failures
+   directly. Do not improvise credentials/endpoints, discover processes, or
+   silently fall back.
+9. Stop only a named editor session that this workflow started, and only after
+   all runs using it are terminal.
+
+Setup, cost, requirements, prompts, tool fields, and troubleshooting are in
+`docs/user-guide/ai/local-agent-broker.md`. Implementation and security
+details are in `docs/developer-guides/ai/local-agent-broker.md`.
 
 ## Platform And Constraints
 
@@ -279,6 +317,12 @@ For Vulkan or OpenGL rendering issues, use RenderDoc when MCP screenshots and lo
 5. Keep capture output under the current run root's `renderdoc/` folder, close RenderDoc/`rdc` sessions when done, and record durable findings alongside the MCP/log observations.
 
 ## Testing Policy
+
+Do not write, add, or modify any tests while debugging a feature regression or
+implementing a new integration that still requires feature validation. First
+complete and validate the feature through the relevant live/runtime path. Test
+work for that regression or integration may begin only after the user
+explicitly clears it.
 
 Do not create or run unnecessary test methods while a feature is still being implemented or when only writing a new todo document. First make the feature work correctly through the narrowest relevant build or run-path validation; then add and run the appropriate tests after the implementation is functionally sound. This sequencing does not waive final validation or tests needed to reproduce and diagnose an active defect.
 

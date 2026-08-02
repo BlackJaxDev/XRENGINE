@@ -639,9 +639,9 @@ public sealed class VulkanDynamicRenderingMigrationTests
     [Test]
     public void DynamicPipelines_AreKeyedByAttachmentFormatSignatureWithoutRenderPassHandles()
     {
-        string pipelineKey = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/Structs/VkMeshRenderer.PipelineKey.cs");
+        string pipelineKey = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Pipelines/VkMeshRenderer.PipelineKey.cs");
         string meshPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
-        string prewarm = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelinePrewarmDatabase.cs");
+        string prewarm = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanRenderer.PipelinePrewarmDatabase.cs");
         string modeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanRenderTargetMode.cs");
 
         pipelineKey.ShouldContain("DynamicRenderingFormatSignature DynamicRenderingFormats");
@@ -672,7 +672,7 @@ public sealed class VulkanDynamicRenderingMigrationTests
     [Test]
     public void GraphicsPipelineLibraryKeys_AreSubsetScopedAndPendingLinksAreNotLoggedAsFailures()
     {
-        string graphicsLibraryKey = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/Structs/VkMeshRenderer.GraphicsPipelineLibraryKey.cs");
+        string graphicsLibraryKey = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Pipelines/VkMeshRenderer.GraphicsPipelineLibraryKey.cs");
         string meshPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
 
         graphicsLibraryKey.ShouldContain("internal readonly record struct GraphicsPipelineLibraryKey(");

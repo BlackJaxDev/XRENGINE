@@ -10,7 +10,7 @@ Target Branch: none; implemented on current branch per user request on 2026-07-0
 The completed attribution and bounded late-policy work in Phases 0-1 remains
 historical implementation evidence. Backend-ready immutable next-frame
 preparation is now owned by
-[04 - Next-Frame Preparation And Collect-Visible Handoff](../rendering/optimization/04-next-frame-preparation-and-collect-visible-handoff-todo.md).
+[workstream 04 completion and validation](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-04-completion-and-validation).
 
 The open Phase 2 below is deferred into the successor when it concerns package
 construction or handoff, and into the occlusion performance workstream when a

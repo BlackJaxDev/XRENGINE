@@ -61,7 +61,7 @@ internal unsafe partial class VkRenderProgram
                         Mappings = mappingPtr,
                     };
                     pipelineInfo.Stage.PNext = &mappingInfo;
-                    result = Api!.CreateComputePipelines(Device, pipelineCache, 1, ref pipelineInfo, null, out Pipeline mappedHeapPipeline);
+                    result = Renderer.CreateComputePipelinesSynchronized(pipelineCache, ref pipelineInfo, out Pipeline mappedHeapPipeline);
                     pipelineInfo.Stage.PNext = originalStagePNext;
                     pipelineInfo.PNext = originalPipelinePNext;
                     if (result != Result.Success)
@@ -73,7 +73,7 @@ internal unsafe partial class VkRenderProgram
                 }
             }
 
-            result = Api!.CreateComputePipelines(Device, pipelineCache, 1, ref pipelineInfo, null, out Pipeline heapPipeline);
+            result = Renderer.CreateComputePipelinesSynchronized(pipelineCache, ref pipelineInfo, out Pipeline heapPipeline);
             pipelineInfo.PNext = originalPipelinePNext;
             if (result != Result.Success)
                 throw new InvalidOperationException($"Failed to create compute pipeline ({result}).");
@@ -83,7 +83,7 @@ internal unsafe partial class VkRenderProgram
             return heapPipeline;
         }
 
-        result = Api!.CreateComputePipelines(Device, pipelineCache, 1, ref pipelineInfo, null, out Pipeline pipeline);
+        result = Renderer.CreateComputePipelinesSynchronized(pipelineCache, ref pipelineInfo, out Pipeline pipeline);
         if (result != Result.Success)
             throw new InvalidOperationException($"Failed to create compute pipeline ({result}).");
 

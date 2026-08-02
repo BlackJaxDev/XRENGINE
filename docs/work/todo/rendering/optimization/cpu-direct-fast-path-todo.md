@@ -17,7 +17,7 @@ warmup. It does not independently own Vulkan measurement or primary reuse:
 - Vulkan primary reuse and invalidation were completed by workstream 02 in the
   same [investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md);
 - backend-ready collect-side preparation is owned by
-  [04 - Next-Frame Preparation And Collect-Visible Handoff](04-next-frame-preparation-and-collect-visible-handoff-todo.md).
+  [workstream 04 completion and validation](../../../testing/rendering/03-05-optimization-validation-todo.md#workstream-04-completion-and-validation).
 
 Complete this child through the canonical workstream and Phase 5.2A gates, not
 as a separate promotion claim.
@@ -36,7 +36,7 @@ Related todos (overlap guard):
 - Completed Vulkan primary reuse owns primary state and invalidation; do not
   duplicate it here. See the
   [recorded evidence](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md).
-- [Next-Frame Preparation And Collect-Visible Handoff](04-next-frame-preparation-and-collect-visible-handoff-todo.md)
+- [Workstream 04 completion and validation](../../../testing/rendering/03-05-optimization-validation-todo.md#workstream-04-completion-and-validation)
   owns backend-ready command handoff and preparation placement.
 - [Default Pipeline GPU Hotspots](default-pipeline-gpu-hotspots-todo.md) is a
   child of workstream 06 and owns shader/quality pass cost; this TODO covers
