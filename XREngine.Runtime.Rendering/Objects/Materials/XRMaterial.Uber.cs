@@ -296,23 +296,18 @@ public partial class XRMaterial
 
             // Unity stores many enum/toggle properties as floats and legacy YAML
             // could infer vec3 for aliased vec4 values. Seed a replacement from
-            // the manifest default, then overlay authored components when the
-            // legacy value is non-default.
+            // the manifest default, then overlay every authored component. Zero
+            // is a valid authored value and must never be treated as "missing."
             ApplyUberDefaultLiteral(resolvedParameter, property.DefaultLiteral);
-            if (firstNamedParameter is not null &&
-                !IsShaderParameterAtLanguageDefault(firstNamedParameter))
-            {
+            if (firstNamedParameter is not null)
                 CopyCompatibleUberParameterValue(firstNamedParameter, resolvedParameter);
-            }
         }
 
-        bool parametersChanged = NormalizeUberParameter(
+        return NormalizeUberParameter(
             property.Name,
             resolvedParameter,
             current,
             namedParameterCount);
-        bool defaultChanged = TryApplyUberDefaultLiteral(resolvedParameter, property);
-        return parametersChanged || defaultChanged;
     }
 
     private bool NormalizeUberParameter(
@@ -383,11 +378,22 @@ public partial class XRMaterial
         switch (destination)
         {
             case ShaderVector2 shaderVector2:
-                shaderVector2.SetValue(new Vector2(vector.X, vector.Y));
+            {
+                Vector2 current = shaderVector2.Value;
+                shaderVector2.SetValue(new Vector2(
+                    vector.X,
+                    componentCount >= 2 ? vector.Y : current.Y));
                 break;
+            }
             case ShaderVector3 shaderVector3:
-                shaderVector3.SetValue(new Vector3(vector.X, vector.Y, vector.Z));
+            {
+                Vector3 current = shaderVector3.Value;
+                shaderVector3.SetValue(new Vector3(
+                    vector.X,
+                    componentCount >= 2 ? vector.Y : current.Y,
+                    componentCount >= 3 ? vector.Z : current.Z));
                 break;
+            }
             case ShaderVector4 shaderVector4:
             {
                 Vector4 current = shaderVector4.Value;
@@ -457,38 +463,6 @@ public partial class XRMaterial
                 componentCount = 0;
                 return false;
         }
-    }
-
-    private bool TryApplyUberDefaultLiteral(ShaderVar parameter, ShaderUiProperty property)
-    {
-        if (string.IsNullOrWhiteSpace(property.DefaultLiteral))
-            return false;
-
-        UberMaterialPropertyState? authoredProperty = UberAuthoredState.GetProperty(property.Name);
-        if (!string.IsNullOrWhiteSpace(authoredProperty?.StaticLiteral))
-            return false;
-
-        if (!IsShaderParameterAtLanguageDefault(parameter))
-            return false;
-
-        object previousValue = parameter.GenericValue;
-        ApplyUberDefaultLiteral(parameter, property.DefaultLiteral);
-        return !Equals(previousValue, parameter.GenericValue);
-    }
-
-    private static bool IsShaderParameterAtLanguageDefault(ShaderVar parameter)
-    {
-        return parameter switch
-        {
-            ShaderBool shaderBool => !shaderBool.Value,
-            ShaderInt shaderInt => shaderInt.Value == 0,
-            ShaderUInt shaderUInt => shaderUInt.Value == 0u,
-            ShaderFloat shaderFloat => shaderFloat.Value == 0.0f,
-            ShaderVector2 shaderVector2 => shaderVector2.Value == Vector2.Zero,
-            ShaderVector3 shaderVector3 => shaderVector3.Value == Vector3.Zero,
-            ShaderVector4 shaderVector4 => shaderVector4.Value == Vector4.Zero,
-            _ => false,
-        };
     }
 
     private bool EnsureStylizedLightingModeDefault()

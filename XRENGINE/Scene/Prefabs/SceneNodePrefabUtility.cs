@@ -203,6 +203,13 @@ namespace XREngine.Scene.Prefabs
                 .GetAwaiter()
                 .GetResult();
 
+            // Bind matrices are runtime-only and intentionally omitted from YAML. Rebuild them
+            // parent-first from the serialized local pose before ModelComponent creates runtime
+            // meshes; otherwise externalized skinned prefabs rebind correct inverse-bind matrices
+            // to identity bind matrices and visibly distort after cloning/instantiation.
+            foreach (SceneNode node in EnumerateHierarchy(root))
+                node.Transform.SaveBindState();
+
             foreach (SceneNode node in EnumerateHierarchy(root))
                 foreach (XREngine.Components.XRComponent component in node.Components)
                     component.NotifyOwningSceneNodePostDeserialize();

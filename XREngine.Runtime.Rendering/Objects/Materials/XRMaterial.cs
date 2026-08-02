@@ -1420,30 +1420,59 @@ namespace XREngine.Rendering
             if (!anySourceParsed)
                 return;
 
-            // Build lookup of existing parameters for fast merge
+            bool isUberMaterial = IsUberShaderMaterial();
+            Dictionary<string, ShaderUiProperty>? uberProperties = null;
+            if (isUberMaterial && GetShader(EShaderType.Fragment) is XRShader uberFragmentShader)
+            {
+                uberProperties = new Dictionary<string, ShaderUiProperty>(StringComparer.Ordinal);
+                foreach (ShaderUiProperty property in uberFragmentShader.GetUiManifest().Properties)
+                    uberProperties.TryAdd(property.Name, property);
+            }
+
+            // Build lookups of existing parameters for fast merge. Prefer an
+            // exact type match when duplicate legacy entries share a name.
             var existingByName = new Dictionary<string, ShaderVar>(StringComparer.Ordinal);
+            var exactExistingByName = new Dictionary<string, ShaderVar>(StringComparer.Ordinal);
             if (Parameters is not null)
                 foreach (var p in Parameters)
                     if (p is not null && !string.IsNullOrEmpty(p.Name))
+                    {
                         existingByName.TryAdd(p.Name, p);
+                        if (discoveredUniforms.TryGetValue(p.Name, out EShaderVarType expectedType) &&
+                            p.TypeName == expectedType)
+                        {
+                            exactExistingByName.TryAdd(p.Name, p);
+                        }
+                    }
 
-            // Merge: keep matching existing vars (preserving values), create defaults for new, drop stale
+            // Merge: keep matching existing vars (preserving values), create
+            // defaults for new, and drop stale entries. Uber shader defaults
+            // belong at parameter creation time so a later initialization pass
+            // never has to guess whether an existing zero was authored.
             var merged = new List<ShaderVar>(discoveredUniforms.Count);
             foreach (var (name, type) in discoveredUniforms)
             {
-                if (existingByName.TryGetValue(name, out ShaderVar? existing) && existing.TypeName == type)
+                if (exactExistingByName.TryGetValue(name, out ShaderVar? exactExisting))
                 {
-                    merged.Add(existing);
+                    merged.Add(exactExisting);
                 }
                 else
                 {
                     ShaderVar? newVar = ShaderVar.CreateForType(type, name);
                     if (newVar is not null)
+                    {
+                        if (uberProperties?.TryGetValue(name, out ShaderUiProperty? property) == true)
+                            ApplyUberDefaultLiteral(newVar, property.DefaultLiteral);
+
+                        if (existingByName.TryGetValue(name, out ShaderVar? legacyExisting))
+                            CopyCompatibleUberParameterValue(legacyExisting, newVar);
+
                         merged.Add(newVar);
+                    }
                 }
             }
 
-            if (IsUberShaderMaterial())
+            if (isUberMaterial)
             {
                 HashSet<string> mergedNames = new(merged.Select(static x => x.Name), StringComparer.Ordinal);
                 foreach (ShaderVar existing in existingByName.Values)

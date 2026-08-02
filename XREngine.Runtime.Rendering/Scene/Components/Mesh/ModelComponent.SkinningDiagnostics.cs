@@ -35,6 +35,8 @@ public partial class ModelComponent
                 if (mesh is null)
                     continue;
 
+                SkinningBindPoseAuditResult bindAudit = mesh.CalculateBindPoseAudit();
+
                 int detachedBoneCount = 0;
                 float maximumExpectedTranslation = 0.0f;
                 float maximumBufferedTranslation = 0.0f;
@@ -114,7 +116,45 @@ public partial class ModelComponent
                     .Append(" paletteMaxDiff=")
                     .Append(maximumPaletteDifference.ToString("F6"))
                     .Append('@')
-                    .Append(maximumDifferenceBone ?? "<none>");
+                    .Append(maximumDifferenceBone ?? "<none>")
+                    .Append(" bindBoneMaxDiff=")
+                    .Append(bindAudit.MaximumBoneIdentityError.ToString("F6"))
+                    .Append('@')
+                    .Append(bindAudit.MaximumBoneIdentityErrorBoneName ?? "<none>")
+                    .Append(" bindVertexMaxD=")
+                    .Append(bindAudit.MaximumVertexBindDisplacement.ToString("F6"))
+                    .Append('@')
+                    .Append(bindAudit.MaximumVertexBindDisplacementIndex)
+                    .Append(" influenceSource=")
+                    .Append(bindAudit.UsedPackedInfluenceBuffers ? "packed" : "authoring")
+                    .Append(" weighted=")
+                    .Append(bindAudit.WeightedVertexCount)
+                    .Append(" unweighted=")
+                    .Append(bindAudit.UnweightedVertexCount)
+                    .Append(" weightSum=")
+                    .Append(bindAudit.MinimumWeightSum.ToString("F6"))
+                    .Append("..")
+                    .Append(bindAudit.MaximumWeightSum.ToString("F6"))
+                    .Append(" weightMaxError=")
+                    .Append(bindAudit.MaximumWeightSumError.ToString("F6"))
+                    .Append('@')
+                    .Append(bindAudit.MaximumWeightSumErrorVertexIndex)
+                    .Append(" missingPaletteBones=")
+                    .Append(bindAudit.MissingPaletteBoneCount)
+                    .Append(" invalidInfluences=")
+                    .Append(bindAudit.InvalidInfluenceCount)
+                    .Append(" nonFiniteVertices=")
+                    .Append(bindAudit.NonFiniteVertexCount)
+                    .Append(" nonFiniteMatrices=")
+                    .Append(bindAudit.NonFiniteMatrixCount)
+                    .Append(" inverseBindMaxDiff=")
+                    .Append(bindAudit.MaximumInfluenceInverseBindDifference.ToString("F6"))
+                    .Append('@')
+                    .Append(bindAudit.MaximumInfluenceInverseBindDifferenceVertexIndex)
+                    .Append(" sourceBounds=")
+                    .Append(FormatBounds(bindAudit.SourceBoundsMinimum, bindAudit.SourceBoundsMaximum))
+                    .Append(" bindBounds=")
+                    .Append(FormatBounds(bindAudit.BindBoundsMinimum, bindAudit.BindBoundsMaximum));
             }
         }
 
@@ -139,6 +179,9 @@ public partial class ModelComponent
 
         return false;
     }
+
+    private static string FormatBounds(in Vector3 minimum, in Vector3 maximum)
+        => $"({minimum.X:F3},{minimum.Y:F3},{minimum.Z:F3})..({maximum.X:F3},{maximum.Y:F3},{maximum.Z:F3})";
 
     private static float MaximumElementDifference(in Matrix4x4 left, in Matrix4x4 right)
     {

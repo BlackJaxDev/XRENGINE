@@ -64,6 +64,7 @@ internal static partial class UnitySceneImporter
             throw new UnityVisualImportException($"Model importer returned no hierarchy for '{modelPath}'.");
 
         root = CollapseAssimpSyntheticRoot(root, modelPath, metadata.PreserveHierarchy);
+        ApplyUnityImportedSkeletonBindPose(root, metadata, state);
         if (metadata.SortHierarchyByName)
             SortHierarchyByName(root);
 

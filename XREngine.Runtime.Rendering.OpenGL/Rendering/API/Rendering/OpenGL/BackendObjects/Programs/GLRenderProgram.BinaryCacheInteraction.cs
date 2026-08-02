@@ -251,6 +251,62 @@ namespace XREngine.Rendering.OpenGL
             }
 
             /// <summary>
+            /// Establishes render-context ownership of a program produced by the shared
+            /// compile context. The expensive source compile/link remains off-thread, while
+            /// the small program-binary load is performed by the context that will draw with
+            /// the program.
+            /// </summary>
+            private bool TryRehydrateSharedContextProgramOnRenderContext(
+                uint programId,
+                GLProgramCompileLinkQueue.ProgramBinarySnapshot? capturedBinary,
+                out double binaryLoadMilliseconds,
+                out string? failureReason)
+            {
+                binaryLoadMilliseconds = 0.0;
+                if (capturedBinary is not { } snapshot ||
+                    snapshot.Length == 0 ||
+                    snapshot.Binary.Length == 0 ||
+                    snapshot.Length > (uint)snapshot.Binary.Length ||
+                    snapshot.Format == GLEnum.None)
+                {
+                    failureReason = "Shared-context source build did not return a valid program binary for render-context handoff.";
+                    return false;
+                }
+
+                long binaryStart = Stopwatch.GetTimestamp();
+                fixed (byte* ptr = snapshot.Binary)
+                {
+                    long programBinaryStart = Stopwatch.GetTimestamp();
+                    Api.ProgramBinary(programId, snapshot.Format, ptr, snapshot.Length);
+                    if (ShouldLogRenderingShaderLinkVerbose())
+                    {
+                        double programBinaryMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - programBinaryStart);
+                        LogRenderingProgramGlCall(
+                            "glProgramBinary",
+                            programId,
+                            programBinaryMilliseconds,
+                            $"binaryBytes={snapshot.Length} binaryFormat={snapshot.Format} phase=shared-context-render-handoff");
+                    }
+                }
+                binaryLoadMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - binaryStart);
+
+                GLEnum error = GLEnum.NoError;
+                MeasureRenderingProgramGlCall(
+                    "glGetError",
+                    programId,
+                    () => error = Api.GetError(),
+                    "phase=shared-context-render-handoff-error-check");
+                if (error != GLEnum.NoError)
+                {
+                    failureReason = $"glProgramBinary failed during shared-context render handoff: {error}.";
+                    return false;
+                }
+
+                string cacheKey = _activeBuildFingerprint ?? BuildBinaryCacheKey(Hash);
+                return TryValidateProgramBinaryLoad(programId, cacheKey, snapshot.Format, out failureReason);
+            }
+
+            /// <summary>
             /// Resets async link state and destroys any attached shader objects.
             /// </summary>
             private void DetachShaders(uint programId, ReadOnlySpan<uint> attachedShaderIds)

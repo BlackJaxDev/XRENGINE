@@ -29,7 +29,8 @@ namespace XREngine.Rendering.OpenGL
                 => XREnvironment.IsEnabled(XREngineEnvironmentVariables.ImGuiViewportDisposeNative);
 
             private readonly OpenGLRenderer _renderer;
-            private readonly ImGuiController _controller;
+            private ImGuiController? _controller;
+            private readonly nint _context;
             private readonly IWindow _mainWindow;
             private readonly Dictionary<uint, PlatformWindow> _platformWindows = [];
             private readonly List<PendingPlatformWindowDisposal> _pendingPlatformWindowDisposals = [];
@@ -73,11 +74,10 @@ namespace XREngine.Rendering.OpenGL
             private int _monitorCapacity;
             private IDisposable? _callbackRegistration;
 
-
-            private OpenGLImGuiMultiViewportController(OpenGLRenderer renderer, ImGuiController controller)
+            private OpenGLImGuiMultiViewportController(OpenGLRenderer renderer, nint context)
             {
                 _renderer = renderer;
-                _controller = controller;
+                _context = context;
                 _mainWindow = renderer.XRWindow.Window;
 
                 _platformCreateWindowPtr = RendererImGuiViewportCallbackBridge.PlatformCreateWindow;
@@ -107,7 +107,7 @@ namespace XREngine.Rendering.OpenGL
             /// <summary>
             /// Create and initialize a controller only when all required ImGui hooks are available.
             /// </summary>
-            public static OpenGLImGuiMultiViewportController? TryCreate(OpenGLRenderer renderer, ImGuiController controller)
+            public static OpenGLImGuiMultiViewportController? TryCreate(OpenGLRenderer renderer)
             {
                 if (RenderImDrawData is null)
                 {
@@ -121,7 +121,33 @@ namespace XREngine.Rendering.OpenGL
                     return null;
                 }
 
-                return new OpenGLImGuiMultiViewportController(renderer, controller);
+                nint context = ImGui.GetCurrentContext();
+                if (context == nint.Zero)
+                {
+                    Debug.RenderingWarning("ImGui multi-viewports disabled: no current ImGui context was available during controller configuration.");
+                    return null;
+                }
+
+                return new OpenGLImGuiMultiViewportController(renderer, context);
+            }
+
+            /// <summary>
+            /// Attaches the Silk controller after its constructor finishes the first ImGui frame.
+            /// </summary>
+            public void AttachController(ImGuiController controller)
+            {
+                if (controller.Context != _context)
+                    throw new InvalidOperationException("Cannot attach an ImGui controller for a different context.");
+
+                _controller = controller;
+            }
+
+            private void MakeCurrent()
+            {
+                if (_controller is { } controller)
+                    controller.MakeCurrent();
+                else
+                    ImGui.SetCurrentContext(_context);
             }
 
             /// <summary>
@@ -132,9 +158,9 @@ namespace XREngine.Rendering.OpenGL
                 if (_installed || _disposed)
                     return;
 
-                _controller.MakeCurrent();
+                MakeCurrent();
                 _callbackRegistration = RendererImGuiViewportCallbackBridge.Register(
-                    _controller.Context,
+                    _context,
                     this);
                 var io = ImGui.GetIO();
                 var platformIO = ImGui.GetPlatformIO();
@@ -165,15 +191,46 @@ namespace XREngine.Rendering.OpenGL
                 EnsureMainViewportPlatformData();
                 UpdatePlatformMonitors();
                 AttachMainInput();
+                LogInitialViewportState();
 
                 io.BackendFlags |=
                     ImGuiBackendFlags.PlatformHasViewports |
                     ImGuiBackendFlags.RendererHasViewports |
                     ImGuiBackendFlags.HasMouseHoveredViewport;
                 io.ConfigFlags |= ImGuiConfigFlags.ViewportsEnable;
+                PrepareImplicitWindowForNewFrame();
                 _installed = true;
 
                 Debug.Rendering("OpenGL ImGui multi-viewports enabled.");
+            }
+
+            /// <summary>
+            /// Keeps Dear ImGui's hidden fallback window on the application-owned main viewport.
+            /// </summary>
+            /// <remarks>
+            /// NewFrame begins an implicit Debug##Default window before application UI runs and
+            /// parks it at an off-screen sentinel while hidden. With multiple physical monitors,
+            /// allowing that internal window to own a platform viewport leaves it without a
+            /// monitor or DPI. SetNextWindowViewport is consumed by that implicit Begin call and
+            /// does not affect the first application window drawn later in the frame.
+            /// </remarks>
+            private static void PrepareImplicitWindowForNewFrame()
+                => ImGui.SetNextWindowViewport(ImGui.GetMainViewport().ID);
+
+            private void LogInitialViewportState()
+            {
+                ImGuiViewportPtr mainViewport = ImGui.GetMainViewport();
+                var platformIO = ImGui.GetPlatformIO();
+                var monitors = (MutableImVector*)&platformIO.NativePtr->Monitors;
+                Debug.Rendering(
+                    $"[ImGuiMultiViewport] Initial main viewport: pos={mainViewport.Pos}, size={mainViewport.Size}, dpi={mainViewport.DpiScale}, platformCreated={mainViewport.PlatformWindowCreated}; monitors={monitors->Size}.");
+
+                for (int i = 0; i < _monitorScratch.Count; i++)
+                {
+                    ImGuiPlatformMonitor monitor = _monitorScratch[i];
+                    Debug.Rendering(
+                        $"[ImGuiMultiViewport] Monitor {i}: mainPos={monitor.MainPos}, mainSize={monitor.MainSize}, workPos={monitor.WorkPos}, workSize={monitor.WorkSize}, dpi={monitor.DpiScale}.");
+                }
             }
 
             /// <summary>
@@ -186,7 +243,8 @@ namespace XREngine.Rendering.OpenGL
 
                 try
                 {
-                    _controller.MakeCurrent();
+                    MakeCurrent();
+                    PrepareImplicitWindowForNewFrame();
                     AttachMainInput();
                     EnsureMainViewportPlatformData();
 
@@ -216,7 +274,7 @@ namespace XREngine.Rendering.OpenGL
 
                 try
                 {
-                    _controller.MakeCurrent();
+                    MakeCurrent();
                     AttachMainInput();
                     EnsureMainViewportPlatformData();
 
@@ -252,9 +310,9 @@ namespace XREngine.Rendering.OpenGL
 
                 try
                 {
-                    _controller.MakeCurrent();
+                    MakeCurrent();
 
-                    if (_installed && ImGuiContextTracker.IsAlive(_controller.Context))
+                    if (_installed && ImGuiContextTracker.IsAlive(_context))
                         ImGui.DestroyPlatformWindows();
 
                     ClearPlatformMonitors();
@@ -733,14 +791,7 @@ namespace XREngine.Rendering.OpenGL
                 try
                 {
                     IWindow window = GetWindow(new ImGuiViewportPtr(nativeViewport));
-                    Vector2D<int> size = window.Size;
-                    Vector2D<int> framebufferSize = window.FramebufferSize;
-                    if (size.X <= 0 || size.Y <= 0)
-                        return 1.0f;
-
-                    float x = framebufferSize.X / (float)size.X;
-                    float y = framebufferSize.Y / (float)size.Y;
-                    return MathF.Max(MathF.Max(x, y), 1.0f);
+                    return GetWindowDpiScale(window);
                 }
                 catch (Exception ex)
                 {
@@ -749,8 +800,31 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
+            private static float GetWindowDpiScale(IWindow window)
+            {
+                Vector2D<int> size = window.Size;
+                Vector2D<int> framebufferSize = window.FramebufferSize;
+                if (size.X <= 0 || size.Y <= 0)
+                    return 1.0f;
+
+                float x = framebufferSize.X / (float)size.X;
+                float y = framebufferSize.Y / (float)size.Y;
+                float scale = MathF.Max(x, y);
+                return float.IsFinite(scale) && scale > 0.0f && scale < 99.0f
+                    ? scale
+                    : 1.0f;
+            }
+
             private void PlatformOnChangedViewport(ImGuiViewport* nativeViewport)
             {
+                var viewport = new ImGuiViewportPtr(nativeViewport);
+                if (float.IsFinite(viewport.DpiScale) && viewport.DpiScale > 0.0f && viewport.DpiScale < 99.0f)
+                    return;
+
+                var platformIO = ImGui.GetPlatformIO();
+                var monitors = (MutableImVector*)&platformIO.NativePtr->Monitors;
+                Debug.RenderingWarning(
+                    $"[ImGuiMultiViewport] Invalid viewport DPI selected: id=0x{viewport.ID:X8}, flags={viewport.Flags}, pos={viewport.Pos}, size={viewport.Size}, dpi={viewport.DpiScale}, monitors={monitors->Size}.");
             }
 
 

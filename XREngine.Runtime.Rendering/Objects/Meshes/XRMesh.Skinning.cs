@@ -258,6 +258,18 @@ public partial class XRMesh
             if (ReferenceEquals(sourceBone, resolvedBone))
                 continue;
 
+            // The scene hierarchy is cloned through YAML, where bind matrices are runtime-only.
+            // Preserve the authoritative bind state carried by the mesh payload before a renderer
+            // evaluates the rebound bone. The current local pose can legitimately differ from bind
+            // (for example an authored 1.2x secondary-bone scale), so recomputing bind from local TRS
+            // would bake that deformation into the bind pose and distort the skinned mesh.
+            resolvedBone.BindMatrix = sourceBone.BindMatrix;
+            resolvedBone.InverseBindMatrix = Matrix4x4.Invert(
+                sourceBone.BindMatrix,
+                out Matrix4x4 inverseResolvedBind)
+                    ? inverseResolvedBind
+                    : Matrix4x4.Identity;
+
             changed = true;
             remap ??= new Dictionary<TransformBase, TransformBase>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
             remap[sourceBone] = resolvedBone;
@@ -278,6 +290,56 @@ public partial class XRMesh
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Replaces this mesh's inverse-bind matrices with the current bind state of its existing
+    /// bone hierarchy without changing bone ordering or packed influence data.
+    /// </summary>
+    /// <remarks>
+    /// Unity's ModelImporter metadata can provide a more authoritative imported skeleton pose
+    /// than Assimp's FBX node decomposition. Once that pose has been applied and saved on the
+    /// hierarchy, this method keeps the mesh palette and retained CPU vertex weights in the same
+    /// coordinate frame.
+    /// </remarks>
+    public void RebaseSkinningBindPoseToCurrentHierarchy()
+    {
+        if (!HasSkinning)
+            return;
+
+        var inverseBinds = new Dictionary<TransformBase, Matrix4x4>(
+            UtilizedBones.Length,
+            System.Collections.Generic.ReferenceEqualityComparer.Instance);
+        var rebasedBones = new (TransformBase tfm, Matrix4x4 invBindWorldMtx)[UtilizedBones.Length];
+        for (int boneIndex = 0; boneIndex < UtilizedBones.Length; boneIndex++)
+        {
+            TransformBase bone = UtilizedBones[boneIndex].tfm;
+            Matrix4x4 inverseBind = bone.InverseBindMatrix;
+            inverseBinds[bone] = inverseBind;
+            rebasedBones[boneIndex] = (bone, inverseBind);
+        }
+
+        UtilizedBones = rebasedBones;
+        if (Vertices is not { Length: > 0 })
+            return;
+
+        for (int vertexIndex = 0; vertexIndex < Vertices.Length; vertexIndex++)
+        {
+            Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? weights = Vertices[vertexIndex].Weights;
+            if (weights is null || weights.Count == 0)
+                continue;
+
+            TransformBase[] bones = [.. weights.Keys];
+            for (int boneIndex = 0; boneIndex < bones.Length; boneIndex++)
+            {
+                TransformBase bone = bones[boneIndex];
+                (float weight, _) = weights[bone];
+                Matrix4x4 inverseBind = inverseBinds.TryGetValue(bone, out Matrix4x4 utilizedInverseBind)
+                    ? utilizedInverseBind
+                    : bone.InverseBindMatrix;
+                weights[bone] = (weight, inverseBind);
+            }
+        }
     }
 
     private static TransformBase ResolveSerializedBoneReference(TransformBase searchRoot, TransformBase sourceBone)

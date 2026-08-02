@@ -642,7 +642,7 @@ THIS IS NOT VALID GLSL;";
             compileQueue.InFlightCount.ShouldBe(1);
 
             GLProgramCompileLinkQueue.CompileResult result = default;
-            SpinWait.SpinUntil(() => compileQueue.TryGetResult(program, out result),
+            SpinWait.SpinUntil(() => compileQueue.TryGetReadyResult(program, gl, out result),
                 TimeSpan.FromSeconds(15));
 
             result.Status.ShouldBe(GLProgramCompileLinkQueue.CompileStatus.Success);
@@ -684,7 +684,7 @@ THIS IS NOT VALID GLSL;";
             compileQueue.EnqueueCompileAndLink(program, inputs);
 
             GLProgramCompileLinkQueue.CompileResult result = default;
-            SpinWait.SpinUntil(() => compileQueue.TryGetResult(program, out result),
+            SpinWait.SpinUntil(() => compileQueue.TryGetReadyResult(program, gl, out result),
                 TimeSpan.FromSeconds(15));
 
             result.Status.ShouldBe(GLProgramCompileLinkQueue.CompileStatus.CompileFailed);
@@ -721,7 +721,7 @@ THIS IS NOT VALID GLSL;";
             compileQueue.EnqueueCompileAndLink(program, inputs);
 
             GLProgramCompileLinkQueue.CompileResult result = default;
-            SpinWait.SpinUntil(() => compileQueue.TryGetResult(program, out result),
+            SpinWait.SpinUntil(() => compileQueue.TryGetReadyResult(program, gl, out result),
                 TimeSpan.FromSeconds(15));
 
             // Some drivers may tolerate this; the important thing is it should NOT succeed.
@@ -759,7 +759,7 @@ THIS IS NOT VALID GLSL;";
             compileQueue.EnqueueCompileAndLink(program, inputs);
 
             GLProgramCompileLinkQueue.CompileResult result = default;
-            SpinWait.SpinUntil(() => compileQueue.TryGetResult(program, out result),
+            SpinWait.SpinUntil(() => compileQueue.TryGetReadyResult(program, gl, out result),
                 TimeSpan.FromSeconds(15));
 
             result.Status.ShouldBe(GLProgramCompileLinkQueue.CompileStatus.CompileFailed);
@@ -789,7 +789,7 @@ THIS IS NOT VALID GLSL;";
             compileQueue.EnqueueCompileAndLink(program, []);
 
             GLProgramCompileLinkQueue.CompileResult result = default;
-            SpinWait.SpinUntil(() => compileQueue.TryGetResult(program, out result),
+            SpinWait.SpinUntil(() => compileQueue.TryGetReadyResult(program, gl, out result),
                 TimeSpan.FromSeconds(15));
 
             result.Status.ShouldBe(GLProgramCompileLinkQueue.CompileStatus.LinkFailed);
@@ -836,8 +836,8 @@ THIS IS NOT VALID GLSL;";
 
             SpinWait.SpinUntil(() =>
             {
-                compileQueue.TryGetResult(p1, out _);
-                compileQueue.TryGetResult(p2, out _);
+                compileQueue.TryGetReadyResult(p1, gl, out _);
+                compileQueue.TryGetReadyResult(p2, gl, out _);
                 return compileQueue.InFlightCount == 0;
             }, TimeSpan.FromSeconds(15));
 
@@ -900,7 +900,7 @@ THIS IS NOT VALID GLSL;";
             SpinWait.SpinUntil(() =>
             {
                 foreach (uint p in programs)
-                    compileQueue.TryGetResult(p, out _);
+                    compileQueue.TryGetReadyResult(p, gl, out _);
                 return compileQueue.InFlightCount == 0;
             }, TimeSpan.FromSeconds(15));
 
@@ -965,8 +965,8 @@ THIS IS NOT VALID GLSL;";
             blocker.Set();
             SpinWait.SpinUntil(() =>
             {
-                compileQueue.TryGetResult(largeProgram, out _);
-                compileQueue.TryGetResult(smallProgram, out _);
+                compileQueue.TryGetReadyResult(largeProgram, gl, out _);
+                compileQueue.TryGetReadyResult(smallProgram, gl, out _);
                 return compileQueue.InFlightCount == 0;
             }, TimeSpan.FromSeconds(15));
 
@@ -1010,11 +1010,11 @@ THIS IS NOT VALID GLSL;";
 
             stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(100),
                 "Enqueue should stay fast even when the worker thread is stalled.");
-            compileQueue.TryGetResult(program, out _).ShouldBeFalse(
+            compileQueue.TryGetReadyResult(program, gl, out _).ShouldBeFalse(
                 "Result should remain pending while the worker thread is blocked.");
 
             blocker.Set();
-            SpinWait.SpinUntil(() => compileQueue.TryGetResult(program, out _), TimeSpan.FromSeconds(15))
+            SpinWait.SpinUntil(() => compileQueue.TryGetReadyResult(program, gl, out _), TimeSpan.FromSeconds(15))
                 .ShouldBeTrue("Compile/link should complete after the worker thread resumes.");
 
             gl.DeleteProgram(program);
@@ -1049,7 +1049,7 @@ void main() { }";
             compileQueue.TryEnqueueCompileAndLink(program, inputs, out string? rejectReason).ShouldBeTrue(rejectReason);
 
             GLProgramCompileLinkQueue.CompileResult result = default;
-            SpinWait.SpinUntil(() => compileQueue.TryGetResult(program, out result), TimeSpan.FromSeconds(15))
+            SpinWait.SpinUntil(() => compileQueue.TryGetReadyResult(program, gl, out result), TimeSpan.FromSeconds(15))
                 .ShouldBeTrue("Single-stage compute programs should compile/link on the shared-context worker.");
             result.Status.ShouldBe(GLProgramCompileLinkQueue.CompileStatus.Success);
             compileQueue.InFlightCount.ShouldBe(0);
@@ -1079,10 +1079,10 @@ void main() { }";
                 new(TrivialFragmentSource, ShaderType.FragmentShader),
             });
 
-            SpinWait.SpinUntil(() => compileQueue.TryGetResult(p, out _),
+            SpinWait.SpinUntil(() => compileQueue.TryGetReadyResult(p, gl, out _),
                 TimeSpan.FromSeconds(15));
 
-            compileQueue.TryGetResult(p, out _).ShouldBeFalse(
+            compileQueue.TryGetReadyResult(p, gl, out _).ShouldBeFalse(
                 "Result should be consumed on first retrieval.");
 
             gl.DeleteProgram(p);
@@ -1123,7 +1123,7 @@ void main() { }";
             compileQueue.EnqueueCompileAndLink(srcProgram, inputs);
 
             GLProgramCompileLinkQueue.CompileResult compResult = default;
-            SpinWait.SpinUntil(() => compileQueue.TryGetResult(srcProgram, out compResult),
+            SpinWait.SpinUntil(() => compileQueue.TryGetReadyResult(srcProgram, gl, out compResult),
                 TimeSpan.FromSeconds(15));
             compResult.Status.ShouldBe(GLProgramCompileLinkQueue.CompileStatus.Success);
 
@@ -1265,7 +1265,7 @@ void main() { }";
                 {
                     if (results[i].Status == default && programs[i] != 0)
                     {
-                        if (!compileQueue.TryGetResult(programs[i], out results[i]))
+                        if (!compileQueue.TryGetReadyResult(programs[i], gl, out results[i]))
                             allDone = false;
                     }
                 }
@@ -1316,7 +1316,7 @@ void main() { }";
             });
 
             GLProgramCompileLinkQueue.CompileResult compResult = default;
-            SpinWait.SpinUntil(() => compileQueue.TryGetResult(srcProgram, out compResult),
+            SpinWait.SpinUntil(() => compileQueue.TryGetReadyResult(srcProgram, gl, out compResult),
                 TimeSpan.FromSeconds(15));
             compResult.Status.ShouldBe(GLProgramCompileLinkQueue.CompileStatus.Success);
 
@@ -1357,7 +1357,7 @@ void main() { }";
             SpinWait.SpinUntil(() =>
             {
                 if (compResult2.Status == default)
-                    compileQueue.TryGetResult(compProgram, out compResult2);
+                    compileQueue.TryGetReadyResult(compProgram, gl, out compResult2);
                 if (upResult.Status == default)
                     uploadQueue.TryGetResult(uploadProgram, out upResult);
                 return compResult2.Status != default && upResult.Status != default;

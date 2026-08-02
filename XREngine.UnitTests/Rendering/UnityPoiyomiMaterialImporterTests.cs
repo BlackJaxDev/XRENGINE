@@ -132,6 +132,9 @@ Material:
     - _MatcapIntensity: 0.6
     - _EnableRimLighting: 1
     - _RimWidth: 0.33
+    - _RimSharpness: 0
+    - _RimStrength: 0.7
+    - _RimBlendStrength: 0.25
     - _GlitterEnable: 1
     - _SubsurfaceScattering: 1
     - _EnableDissolve: 1
@@ -177,6 +180,9 @@ Material:
         material.Parameter<ShaderInt>("_MainAlphaMaskMode")?.Value.ShouldBe(2);
         material.Parameter<ShaderFloat>("_EmissionStrength")?.Value.ShouldBe(2.5f, 0.0001f);
         material.Parameter<ShaderFloat>("_RimWidth")?.Value.ShouldBe(0.33f, 0.0001f);
+        material.Parameter<ShaderFloat>("_RimSharpness")?.Value.ShouldBe(0.0f, 0.0001f);
+        material.Parameter<ShaderFloat>("_RimEmission")?.Value.ShouldBe(0.7f, 0.0001f);
+        material.Parameter<ShaderFloat>("_RimBlendStrength")?.Value.ShouldBe(0.25f, 0.0001f);
 
         material.TransparencyMode.ShouldBe(ETransparencyMode.Masked);
         material.RenderPass.ShouldBe((int)EDefaultRenderPass.MaskedForward);
@@ -240,6 +246,8 @@ Material:
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     m_Floats:
+    - _MainAlphaMaskMode: 2
+    - _AlphaMaskBlendStrength: 1
     - _EnableEmission: 0
     - _EmissionStrength: 4
     - _MatcapEnable: 0
@@ -254,6 +262,7 @@ Material:
 
         AssertUberFeatureDisabled(material, "emission");
         AssertUberFeatureDisabled(material, "matcap");
+        AssertUberFeatureDisabled(material, "alpha-masks");
         material.Parameter<ShaderFloat>("_EmissionStrength")?.Value.ShouldBe(4.0f, 0.0001f);
         material.Parameter<ShaderFloat>("_MatcapReplace")?.Value.ShouldBe(1.0f, 0.0001f);
     }

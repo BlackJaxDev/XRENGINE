@@ -868,8 +868,11 @@ ToonLight createToonLight(ToonMesh mesh, vec3 normal, vec3 lightDirection, vec3 
     light.lightMap = saturate(light.nDotL);
     return light;
 #else
-    // Stylized path: optional hemisphere ambient tint + ramp-driven remap.
-    if (_LightingIgnoreAmbientColor > 0.0) {
+    // Texture-ramp mode uses this value as a shadow-source blend, matching
+    // Poiyomi's "Ignore Indirect Shadow Color" control. Other stylized modes
+    // retain the older neutral-ambient remap until their native compositions
+    // consume that control directly.
+    if (_LightingIgnoreAmbientColor > 0.0 && _LightingMode != 0) {
         vec3 neutralAmbient = vec3(luminance(light.indirectColor));
         light.indirectColor = mix(light.indirectColor, neutralAmbient, saturate(_LightingIgnoreAmbientColor));
     }
@@ -965,6 +968,9 @@ vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3
 #else
     vec3 finalLight;
     float shadow = 1.0;
+    float materialShadowMask = sampleLightingShadowMask(mesh);
+    bool usesTextureRampComposition = false;
+    vec3 textureRampComposition = vec3(0.0);
     
     // Each case builds `shadow` (in [0,1]) and `finalLight`, which are then
     // composed together after the switch.
@@ -976,8 +982,27 @@ vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3
             rampCoord = transformUV(rampCoord, _ToonRamp_ST);
             rampCoord = panUV(rampCoord, _ToonRampPan, u_Time);
             vec3 rampColor = texture(_ToonRamp, rampCoord).rgb;
-            shadow = luminance(rampColor);
-            finalLight = light.color * rampColor;
+
+            // Poiyomi's texture ramp is a component-wise lit/shadow blend,
+            // not merely a tint on direct light. XRENGINE's indirectColor is
+            // already surface-colored, so compose in final-color space to
+            // avoid multiplying the albedo into ambient a second time.
+            vec3 rampedLightMap = mix(
+                vec3(1.0),
+                rampColor,
+                saturate(_ShadowStrength * materialShadowMask));
+            vec3 rampShadowColor = _LightingShadowColor * mix(
+                light.indirectColor,
+                baseColor * rampedLightMap * light.color,
+                saturate(_LightingIgnoreAmbientColor));
+
+            textureRampComposition = mix(
+                rampShadowColor,
+                baseColor * light.color,
+                rampedLightMap);
+            usesTextureRampComposition = true;
+            shadow = luminance(rampedLightMap);
+            finalLight = light.color * rampedLightMap;
             break;
         }
         
@@ -1098,7 +1123,6 @@ vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3
         }
     }
 
-    float materialShadowMask = sampleLightingShadowMask(mesh);
     float engineShadow = saturate(shadowMapFactor * materialShadowMask);
     float combinedShadow = saturate(shadow * engineShadow);
 
@@ -1110,8 +1134,17 @@ vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3
     vec3 shadowTint = mix(_LightingShadowColor, vec3(1.0), tintVisibility);
 
     // Compose direct lighting separately from ambient/IBL so AO and texture
-    // color remain visible even outside direct-light cones.
-    vec3 result = baseColor * finalLight * directVisibility * shadowTint + light.indirectColor;
+    // color remain visible even outside direct-light cones. Texture-ramp mode
+    // already incorporated that ambient term according to Poiyomi's blend;
+    // only add it directly for the remaining native stylized modes.
+    vec3 result;
+    if (usesTextureRampComposition) {
+        float rampEngineVisibility = mix(1.0, saturate(shadowMapFactor), _ShadowStrength);
+        vec3 rampEngineShadowColor = _LightingShadowColor * light.indirectColor;
+        result = mix(rampEngineShadowColor, textureRampComposition, rampEngineVisibility);
+    } else {
+        result = baseColor * finalLight * directVisibility * shadowTint + light.indirectColor;
+    }
 
     // Optional hard ceiling on lit brightness to keep highlights readable
     // under strong lights.
@@ -1304,7 +1337,8 @@ vec3 calculateEmission(ToonMesh mesh) {
     }
     
     vec4 emissionTex = texture(_EmissionMap, emissionUV);
-    vec3 emission = emissionTex.rgb * _EmissionColor.rgb * _EmissionStrength;
+    vec3 emissionColor = poiResolveThemeColor(_EmissionColorThemeIndex, _EmissionColor.rgb);
+    vec3 emission = emissionTex.rgb * emissionColor * _EmissionStrength;
     
     return emission;
 #endif

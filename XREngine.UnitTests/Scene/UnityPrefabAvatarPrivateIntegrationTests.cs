@@ -8,6 +8,7 @@ using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Files;
 using XREngine.Data;
+using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
@@ -164,6 +165,10 @@ public sealed class UnityPrefabAvatarPrivateIntegrationTests
         descriptor.VisemeBlendShapeNames.Count.ShouldBe(15);
 
         AssertAuthoredPrefabFidelity(fixturePath, root, manifest);
+        AssertCompleteSkinningAndOrientation(
+            root,
+            components.OfType<ModelComponent>(),
+            "Direct Unity conversion");
 
         var afterInfo = new FileInfo(fixturePath);
         afterInfo.Length.ShouldBe(beforeLength);
@@ -192,8 +197,8 @@ public sealed class UnityPrefabAvatarPrivateIntegrationTests
                 "Externalized private Unity avatar metadata is unavailable. Set XRE_UNITY_AVATAR_NATIVE_METADATA to the metadata root paired with XRE_UNITY_AVATAR_NATIVE_ASSET.");
         }
 
-        string gameAssetsPath = Directory.GetParent(
-            Path.GetDirectoryName(Path.GetFullPath(nativeAssetPath))!)!.FullName;
+        string gameAssetsPath = Path.GetDirectoryName(
+            Path.GetFullPath(nativeAssetPath))!;
         string gameCachePath = Path.Combine(
             Path.GetDirectoryName(gameAssetsPath)!,
             ".test-cache");
@@ -318,32 +323,10 @@ public sealed class UnityPrefabAvatarPrivateIntegrationTests
             ];
             bodyRuntimeMeshes.ShouldNotBeEmpty();
             bodyRuntimeMeshes.ShouldAllBe(static mesh => mesh.HasSkinning);
-            TransformBase instanceRootTransform = instance.Transform;
-            bodyRuntimeMeshes
-                .SelectMany(static mesh => mesh.UtilizedBones)
-                .Select(static bone => bone.tfm)
-                .ShouldAllBe(bone => IsSelfOrDescendantOf(instanceRootTransform, bone));
-
-            float largestBindPoseTranslation = 0.0f;
-            string? largestBindPoseBone = null;
-            foreach (XRMesh bodyRuntimeMesh in bodyRuntimeMeshes)
-            {
-                foreach ((TransformBase bone, Matrix4x4 inverseBind) in bodyRuntimeMesh.UtilizedBones)
-                {
-                    float translation = (inverseBind * bone.WorldMatrix).Translation.Length();
-                    if (translation <= largestBindPoseTranslation)
-                        continue;
-
-                    largestBindPoseTranslation = translation;
-                    largestBindPoseBone = bone.SceneNode?.Name;
-                }
-            }
-
-            TestContext.Progress.WriteLine(
-                $"Native Body bind-pose palette max translation is {largestBindPoseTranslation:F6} at '{largestBindPoseBone ?? "<none>"}'.");
-            largestBindPoseTranslation.ShouldBeLessThan(
-                0.01f,
-                $"Body inverse-bind matrices must cancel the instantiated skeleton bind pose; largest residual was '{largestBindPoseBone ?? "<none>"}'.");
+            AssertCompleteSkinningAndOrientation(
+                instance,
+                instanceNodes.SelectMany(static node => node.GetComponents<ModelComponent>()),
+                "Externalized native prefab reload");
         }
         finally
         {
@@ -362,6 +345,307 @@ public sealed class UnityPrefabAvatarPrivateIntegrationTests
                 return true;
 
         return false;
+    }
+
+    private static void AssertCompleteSkinningAndOrientation(
+        SceneNode avatarRoot,
+        IEnumerable<ModelComponent> modelComponents,
+        string context)
+    {
+        avatarRoot.Transform
+            .RecalculateMatrixHierarchy(
+                forceWorldRecalc: true,
+                setRenderMatrixNow: true,
+                ELoopType.Sequential)
+            .GetAwaiter()
+            .GetResult();
+
+        ModelComponent[] components = [.. modelComponents];
+        int sourceLodCount = 0;
+        int runtimeLodCount = 0;
+        List<XRMesh> runtimeMeshes = [];
+        foreach (ModelComponent component in components)
+        {
+            Model model = component.Model.ShouldNotBeNull(
+                $"{context}: model component '{component.SceneNode?.Name}' must retain its model asset.");
+            component.Meshes.Count.ShouldBe(
+                model.Meshes.Count,
+                $"{context}: runtime renderer count must match the source submesh count on '{component.SceneNode?.Name}'.");
+
+            sourceLodCount += model.Meshes.Sum(static subMesh =>
+                subMesh.LODs.Count(static lod => lod.Mesh is not null));
+            foreach (RenderableMesh renderable in component.Meshes)
+            {
+                RenderableMesh.RenderableLOD[] lods = renderable.GetLodSnapshot();
+                runtimeLodCount += lods.Count(static lod => lod.Renderer.Mesh is not null);
+                runtimeMeshes.AddRange(
+                    lods
+                        .Select(static lod => lod.Renderer.Mesh)
+                        .Where(static mesh => mesh is not null)
+                        .Cast<XRMesh>());
+            }
+        }
+
+        runtimeLodCount.ShouldBe(
+            sourceLodCount,
+            $"{context}: every imported model LOD must have a runtime mesh renderer.");
+        XRMesh[] distinctMeshes = [.. runtimeMeshes.DistinctBy(static mesh => mesh.ID)];
+        XRMesh[] skinnedMeshes = [.. distinctMeshes.Where(static mesh => mesh.HasSkinning)];
+        skinnedMeshes.ShouldNotBeEmpty($"{context}: the avatar must contain skinned meshes.");
+
+        (long alignedFaces, long opposedFaces, string worstMesh, float worstAlignedRatio) =
+            AuditTriangleWindingAgainstNormals(distinctMeshes);
+        TestContext.Progress.WriteLine(
+            $"{context} normal/winding audit: alignedFaces={alignedFaces}, opposedFaces={opposedFaces}, " +
+            $"worstMesh='{worstMesh}', worstAlignedRatio={worstAlignedRatio:F6}.");
+
+        TransformBase rootTransform = avatarRoot.Transform;
+        long totalVertices = 0;
+        float maximumBoneIdentityError = 0.0f;
+        float maximumVertexBindDisplacement = 0.0f;
+        float maximumWeightSumError = 0.0f;
+        foreach (XRMesh mesh in skinnedMeshes)
+        {
+            mesh.UtilizedBones
+                .Select(static bone => bone.tfm)
+                .ShouldAllBe(
+                    bone => IsSelfOrDescendantOf(rootTransform, bone),
+                    $"{context}: mesh '{mesh.Name}' must bind only to bones in this avatar instance.");
+
+            SkinningBindPoseAuditResult audit = mesh.CalculateBindPoseAudit();
+            totalVertices += audit.VertexCount;
+            maximumBoneIdentityError = MathF.Max(
+                maximumBoneIdentityError,
+                audit.MaximumBoneIdentityError);
+            maximumVertexBindDisplacement = MathF.Max(
+                maximumVertexBindDisplacement,
+                audit.MaximumVertexBindDisplacement);
+            maximumWeightSumError = MathF.Max(
+                maximumWeightSumError,
+                audit.MaximumWeightSumError);
+
+            audit.VertexCount.ShouldBe(mesh.VertexCount);
+            audit.NonFiniteVertexCount.ShouldBe(
+                0,
+                $"{context}: mesh '{mesh.Name}' contains non-finite source or bind-pose positions.");
+            audit.NonFiniteMatrixCount.ShouldBe(
+                0,
+                $"{context}: mesh '{mesh.Name}' contains non-finite bind matrices.");
+            audit.InvalidInfluenceCount.ShouldBe(
+                0,
+                $"{context}: mesh '{mesh.Name}' contains invalid skin weights.");
+            audit.MissingPaletteBoneCount.ShouldBe(
+                0,
+                $"{context}: mesh '{mesh.Name}' has vertex weights that are absent from its runtime palette.");
+            audit.UnweightedVertexCount.ShouldBe(
+                0,
+                $"{context}: every vertex in skinned mesh '{mesh.Name}' must have at least one influence.");
+            audit.MaximumWeightSumError.ShouldBeLessThan(
+                0.002f,
+                $"{context}: mesh '{mesh.Name}' has non-normalized weights at vertex {audit.MaximumWeightSumErrorVertexIndex}.");
+            audit.MaximumInfluenceInverseBindDifference.ShouldBeLessThan(
+                0.00001f,
+                $"{context}: mesh '{mesh.Name}' disagrees between vertex and palette inverse-bind matrices at vertex {audit.MaximumInfluenceInverseBindDifferenceVertexIndex}.");
+            audit.MaximumBoneIdentityError.ShouldBeLessThan(
+                0.002f,
+                $"{context}: mesh '{mesh.Name}' bind palette does not cancel to identity at bone '{audit.MaximumBoneIdentityErrorBoneName ?? "<none>"}'.");
+            audit.MaximumVertexBindDisplacement.ShouldBeLessThan(
+                0.002f,
+                $"{context}: mesh '{mesh.Name}' moves vertex {audit.MaximumVertexBindDisplacementIndex} while reconstructed at bind pose.");
+        }
+
+        SceneNode hips = FindNodeByPath(avatarRoot, "Armature", "Hips");
+        SceneNode head = FindNodeByPath(avatarRoot, "Armature", "Hips", "Spine", "Chest", "Neck", "Head");
+        SceneNode leftFoot = FindNodeByPath(avatarRoot, "Armature", "Hips", "Leg_L", "Knee_L", "Foot_L");
+        SceneNode rightFoot = FindNodeByPath(avatarRoot, "Armature", "Hips", "Leg_R", "Knee_R", "Foot_R");
+        SceneNode leftToe = FindNodeByPath(avatarRoot, "Armature", "Hips", "Leg_L", "Knee_L", "Foot_L", "Toe_L");
+        SceneNode rightToe = FindNodeByPath(avatarRoot, "Armature", "Hips", "Leg_R", "Knee_R", "Foot_R", "Toe_R");
+
+        Vector3 hipsPosition = hips.Transform.BindMatrix.Translation;
+        Vector3 headPosition = head.Transform.BindMatrix.Translation;
+        Vector3 feetPosition = (leftFoot.Transform.BindMatrix.Translation + rightFoot.Transform.BindMatrix.Translation) * 0.5f;
+        Vector3 toesPosition = (leftToe.Transform.BindMatrix.Translation + rightToe.Transform.BindMatrix.Translation) * 0.5f;
+        headPosition.Y.ShouldBeGreaterThan(
+            hipsPosition.Y + 0.25f,
+            $"{context}: the converted avatar must be upright with its head above its hips.");
+        feetPosition.Y.ShouldBeLessThan(
+            hipsPosition.Y - 0.25f,
+            $"{context}: the converted avatar must be upright with its feet below its hips.");
+        toesPosition.Z.ShouldBeLessThan(
+            feetPosition.Z - 0.01f,
+            $"{context}: Unity +Z-forward must be reflected exactly once to XRENGINE -Z-forward.");
+
+        TestContext.Progress.WriteLine(
+            $"{context} skin audit: components={components.Length}, lods={runtimeLodCount}, distinctMeshes={distinctMeshes.Length}, skinnedMeshes={skinnedMeshes.Length}, vertices={totalVertices}, maxBoneIdentityError={maximumBoneIdentityError:F8}, maxVertexBindDisplacement={maximumVertexBindDisplacement:F8}, maxWeightSumError={maximumWeightSumError:F8}.");
+        TestContext.Progress.WriteLine(
+            $"{context} bind orientation: hips={hipsPosition}, head={headPosition}, feet={feetPosition}, toes={toesPosition}; forwardDeltaZ={(toesPosition.Z - feetPosition.Z):F6}.");
+    }
+
+    private static (long AlignedFaces, long OpposedFaces, string WorstMesh, float WorstAlignedRatio)
+        AuditTriangleWindingAgainstNormals(IEnumerable<XRMesh> meshes)
+    {
+        long alignedFaces = 0;
+        long opposedFaces = 0;
+        string worstMesh = "<none>";
+        float worstAlignedRatio = 1.0f;
+
+        foreach (XRMesh mesh in meshes)
+        {
+            if (!mesh.HasNormals || mesh.Triangles is not { Count: > 0 } triangles)
+                continue;
+
+            long meshAlignedFaces = 0;
+            long meshOpposedFaces = 0;
+            foreach (IndexTriangle triangle in triangles)
+            {
+                if (triangle.Point0 < 0 || triangle.Point1 < 0 || triangle.Point2 < 0)
+                    continue;
+
+                Vector3 p0 = mesh.GetPosition((uint)triangle.Point0);
+                Vector3 p1 = mesh.GetPosition((uint)triangle.Point1);
+                Vector3 p2 = mesh.GetPosition((uint)triangle.Point2);
+                Vector3 faceNormal = Vector3.Cross(p1 - p0, p2 - p0);
+                Vector3 vertexNormal =
+                    mesh.GetNormal((uint)triangle.Point0) +
+                    mesh.GetNormal((uint)triangle.Point1) +
+                    mesh.GetNormal((uint)triangle.Point2);
+                if (faceNormal.LengthSquared() <= 1.0e-12f || vertexNormal.LengthSquared() <= 1.0e-12f)
+                    continue;
+
+                if (Vector3.Dot(faceNormal, vertexNormal) >= 0.0f)
+                    meshAlignedFaces++;
+                else
+                    meshOpposedFaces++;
+            }
+
+            alignedFaces += meshAlignedFaces;
+            opposedFaces += meshOpposedFaces;
+            long classifiedFaces = meshAlignedFaces + meshOpposedFaces;
+            if (classifiedFaces == 0)
+                continue;
+
+            float alignedRatio = (float)meshAlignedFaces / classifiedFaces;
+            if (alignedRatio >= worstAlignedRatio)
+                continue;
+
+            worstAlignedRatio = alignedRatio;
+            worstMesh = mesh.Name ?? mesh.ID.ToString();
+        }
+
+        return (alignedFaces, opposedFaces, worstMesh, worstAlignedRatio);
+    }
+
+    private static SceneNode FindNodeByPath(SceneNode root, params string[] path)
+    {
+        SceneNode current = root;
+        foreach (string segment in path)
+        {
+            current = current.Transform.Children
+                .Select(static transform => transform.SceneNode)
+                .Where(static node => node is not null)
+                .Cast<SceneNode>()
+                .Single(node => string.Equals(node.Name, segment, StringComparison.Ordinal));
+        }
+
+        return current;
+    }
+
+    [Test]
+    [Category("PrivateIntegration")]
+    public void Jax2026_HairSourceMaterialMapsPoiyomiRimWithoutDefaultSubstitution()
+    {
+        string fixturePath = Environment.GetEnvironmentVariable("XRE_UNITY_AVATAR_FIXTURE")
+            ?? DefaultPrivateFixturePath;
+        if (!File.Exists(fixturePath))
+        {
+            Assert.Ignore(
+                "Private Unity avatar corpus is unavailable. Set XRE_UNITY_AVATAR_FIXTURE to jax2026.prefab to run this opt-in integration test.");
+        }
+
+        string projectRoot = UnityProjectLocator.Locate(fixturePath).ProjectRoot;
+        string sourceMaterialPath = Path.Combine(projectRoot, "Assets", "1 Hair 2.mat");
+        File.Exists(sourceMaterialPath).ShouldBeTrue();
+
+        UnityMaterialImportResult result = UnityMaterialImporter.ImportWithReport(
+            sourceMaterialPath,
+            projectRoot);
+        XRMaterial material = result.Material.ShouldNotBeNull();
+        result.SourceDocument.ShouldNotBeNull()
+            .TryGetFloat("_RimSharpness", out float sourceRimSharpness)
+            .ShouldBeTrue();
+
+        float convertedRimSharpness = material.Parameter<ShaderFloat>("_RimSharpness")
+            .ShouldNotBeNull().Value;
+        float convertedRimEmission = material.Parameter<ShaderFloat>("_RimEmission")
+            .ShouldNotBeNull().Value;
+        float convertedRimWidth = material.Parameter<ShaderFloat>("_RimWidth")
+            .ShouldNotBeNull().Value;
+
+        sourceRimSharpness.ShouldBe(0.0f);
+        convertedRimSharpness.ShouldBe(0.0f);
+        convertedRimEmission.ShouldBe(0.0f);
+        convertedRimWidth.ShouldBe(0.154f, 0.0001f);
+        TestContext.Progress.WriteLine(
+            $"Hair source rim: sharpness={convertedRimSharpness}, emission={convertedRimEmission}, width={convertedRimWidth}.");
+    }
+
+    [Test]
+    [Category("PrivateIntegration")]
+    public void Jax2026_HairThemeVariantRetainsAnimatedThemeUniforms()
+    {
+        string? nativeAssetPath =
+            Environment.GetEnvironmentVariable("XRE_UNITY_AVATAR_NATIVE_ASSET");
+        if (string.IsNullOrWhiteSpace(nativeAssetPath) || !File.Exists(nativeAssetPath))
+        {
+            Assert.Ignore(
+                "Externalized private Unity avatar output is unavailable. Set XRE_UNITY_AVATAR_NATIVE_ASSET to the generated jax2026.asset to run this opt-in integration test.");
+        }
+
+        string materialPath = Path.Combine(
+            Path.GetDirectoryName(nativeAssetPath)!,
+            "jax2026",
+            "Materials",
+            "1 Hair 2.asset");
+        if (!File.Exists(materialPath))
+            Assert.Fail($"Representative native avatar material is missing: {materialPath}");
+
+        XRMaterial material = Engine.Assets
+            .Load<XRMaterial>(materialPath, bypassJobThread: true)
+            .ShouldNotBeNull();
+        material.PrepareUberVariantImmediately()
+            .ShouldBeTrue(material.UberVariantStatus.FailureReason);
+
+        material.ActiveUberVariant.EnabledFeatures.ShouldContain("poiyomi-masks-themes");
+        material.ActiveUberVariant.AnimatedProperties.ShouldContain("_GlobalThemeColor0");
+        material.ActiveUberVariant.AnimatedProperties.ShouldContain("_GlobalThemeAdjust0");
+        material.ActiveUberVariant.StaticProperties.ShouldContain("_ColorThemeIndex=1");
+        material.ActiveUberVariant.StaticProperties.ShouldContain("_EmissionColorThemeIndex=2");
+
+        XRShader fragment = material.GetShader(EShaderType.Fragment).ShouldNotBeNull();
+        string source = fragment.Source.ShouldNotBeNull().Text.ShouldNotBeNull();
+        source.ShouldContain("uniform vec4 _GlobalThemeColor0;");
+        source.ShouldContain("uniform vec3 _GlobalThemeAdjust0;");
+        source.ShouldContain("theme = _GlobalThemeColor0;");
+        source.ShouldNotContain("#define XRENGINE_UBER_DISABLE_POIYOMI_MASKS_THEMES 1");
+
+        string textureSummary = string.Join(
+            ", ",
+            material.Textures.Select(
+                (texture, index) => $"{index}:{texture?.Name ?? "<null>"}->{texture?.SamplerName ?? "<indexed>"}"));
+        XRTexture mainTexture = material.Textures
+            .FirstOrDefault(texture => string.Equals(texture?.SamplerName, "_MainTex", StringComparison.Ordinal))
+            .ShouldNotBeNull($"Reloaded Hair texture bindings: {textureSummary}");
+        XRTexture emissionTexture = material.Textures
+            .FirstOrDefault(texture => string.Equals(texture?.SamplerName, "_EmissionMap", StringComparison.Ordinal))
+            .ShouldNotBeNull($"Reloaded Hair texture bindings: {textureSummary}");
+
+        TestContext.Progress.WriteLine(
+            $"Hair theme variant 0x{material.ActiveUberVariant.VariantHash:x16}: " +
+            $"sourceBytes={source.Length}, sourceLines={source.Count(static character => character == '\n') + 1}, " +
+            $"animated={material.ActiveUberVariant.AnimatedProperties.Length}, static={material.ActiveUberVariant.StaticProperties.Length}.");
+        TestContext.Progress.WriteLine(
+            $"Hair textures: {textureSummary}; " +
+            $"main={mainTexture.ID}, emission={emissionTexture.ID}.");
     }
 
     [Test]

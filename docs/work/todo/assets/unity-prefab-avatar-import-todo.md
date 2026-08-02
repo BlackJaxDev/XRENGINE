@@ -392,7 +392,8 @@ Acceptance criteria:
   nodes.
 - [x] Apply removed GameObjects/components after correspondence is established.
 - [x] Preserve root parenting and nested-prefab insert order.
-- [x] Ensure Unity-to-XRENGINE coordinate conversion is applied exactly once.
+- [ ] Ensure Unity-to-XRENGINE coordinate conversion is applied exactly once,
+  including numerical orientation/bounds evidence from the private avatar.
 
 Acceptance criteria:
 
@@ -614,15 +615,15 @@ Acceptance criteria:
 - [x] Import the private avatar through the same path when locally available.
 - [x] Place the resulting prefab by drag/drop and verify it uses ordinary
   `XRPrefabSource` instantiation.
-- [x] Inspect the generated hierarchy, node/component counts, skeleton, mesh
+- [ ] Inspect the generated hierarchy, node/component counts, skeleton, mesh
   bindings, blendshapes, and material slots through MCP.
-- [x] Capture the complete textured avatar from multiple camera positions and
+- [ ] Capture the complete textured avatar from multiple camera positions and
   inspect the images. The latest neutral-background image proves the full active
   silhouette is present, but its blown-out/flat materials are not acceptance
   evidence.
 - [x] Verify that camera-relative visual changes prove live rendering rather
   than stale capture data.
-- [x] Compare a representative Unity reference against the XRENGINE downgrade,
+- [ ] Compare a representative Unity reference against the XRENGINE downgrade,
   accepting documented loss of Pro-only effects.
 - [x] Review named-session logs for YAML/model import errors, missing assets,
   shader compilation failures, and material downgrade diagnostics.
@@ -649,8 +650,10 @@ Acceptance criteria:
 - [x] Existing Unity scene and Poiyomi Toon tests remain green.
 - [x] New fixtures cover every previously untested blocker found in the private
   avatar.
-- [x] Editor screenshots show a correctly placed, skinned, textured avatar.
-- [x] Any visual difference caused by dropped Pro-only features is expected and
+- [ ] Editor screenshots show a correctly placed, distortion-free skinned,
+  textured avatar, supported by a bind-pose/skinning audit rather than visual
+  inference alone.
+- [ ] Any visual difference caused by dropped Pro-only features is expected and
   present in the downgrade report.
 
 ## Definition Of Done
@@ -662,7 +665,7 @@ Acceptance criteria:
 - [x] Binary model PrefabInstances never enter the YAML parser.
 - [x] Stripped records map overrides/additions to imported model objects without
   creating phantom nodes.
-- [x] FBX hierarchy, skeleton, skinning, meshes, blendshapes, material remaps,
+- [ ] FBX hierarchy, skeleton, skinning, meshes, blendshapes, material remaps,
   and prefab overrides are present in the generated prefab.
 - [x] The generated asset is an ordinary `XRPrefabSource` and places in the
   scene exactly like an imported FBX prefab source.

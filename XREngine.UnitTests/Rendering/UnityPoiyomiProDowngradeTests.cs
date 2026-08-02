@@ -117,6 +117,12 @@ public sealed class UnityPoiyomiProDowngradeTests
             .ShouldBe(new System.Numerics.Vector4(2.0f, 3.0f, 0.25f, 0.5f));
         material.Parameter<ShaderFloat>("_EmissionStrength").ShouldNotBeNull().Value
             .ShouldBe(2.0f, 0.0001f);
+        material.Parameter<ShaderInt>("_ColorThemeIndex").ShouldNotBeNull().Value.ShouldBe(1);
+        material.Parameter<ShaderInt>("_EmissionColorThemeIndex").ShouldNotBeNull().Value.ShouldBe(2);
+        material.Parameter<ShaderVector3>("_GlobalThemeAdjust0").ShouldNotBeNull().Value
+            .ShouldBe(new System.Numerics.Vector3(0.079f, -0.811f, -0.968f));
+        material.Parameter<ShaderVector3>("_GlobalThemeAdjust1").ShouldNotBeNull().Value
+            .ShouldBe(new System.Numerics.Vector3(0.525f, 0.106f, 0.636f));
         material.UberAuthoredState.GetFeature("emission")
             .ShouldNotBeNull().Enabled.ShouldBeTrue();
         material.TransparencyMode.ShouldBe(ETransparencyMode.PremultipliedAlpha);
@@ -142,7 +148,9 @@ public sealed class UnityPoiyomiProDowngradeTests
         result.Diagnostics.Select(static diagnostic => diagnostic.Message)
             .ShouldContain(static message =>
                 message.Contains("common Toon surface", StringComparison.Ordinal));
-        material.IsUberFeatureEnabled("poiyomi-surface", defaultEnabled: true).ShouldBeFalse();
+        material.IsUberFeatureEnabled("poiyomi-surface", defaultEnabled: false).ShouldBeTrue();
+        material.IsUberFeatureEnabled("poiyomi-masks-themes", defaultEnabled: false).ShouldBeTrue();
+        material.IsUberFeatureEnabled("poiyomi-emission-slots", defaultEnabled: true).ShouldBeFalse();
         material.IsUberFeatureEnabled("detail-textures", defaultEnabled: true).ShouldBeFalse();
         material.IsUberFeatureEnabled("dissolve", defaultEnabled: true).ShouldBeFalse();
         material.IsUberFeatureEnabled("glitter", defaultEnabled: true).ShouldBeFalse();
