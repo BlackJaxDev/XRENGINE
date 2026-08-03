@@ -7,7 +7,58 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
     public int PassIndex { get; internal set; } = PassIndex;
     public XRFrameBuffer? Target { get; internal set; } = Target;
     public FrameOpContext Context { get; internal set; } = Context;
-    public virtual EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.Unsupported;
+    public abstract EVulkanPrimaryPlanNodeKind Kind { get; }
+
+    /// <summary>
+    /// Gets whether this operation participates in the normal context and pass
+    /// preparation performed by the primary command recorder.
+    /// </summary>
+    internal virtual bool RequiresPrimaryRecordingContext => true;
+
+    /// <summary>
+    /// Routes this operation to its strongly typed primary-command handler.
+    /// </summary>
+    internal abstract int RecordPrimary(
+        VulkanRenderer renderer,
+        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
+        in VulkanPrimaryOperationRecordingInfo recordingInfo);
+
+    /// <summary>
+    /// Executes a planned secondary bucket shared by operations that support
+    /// secondary-range recording.
+    /// </summary>
+    protected static bool TryRecordSecondaryBucket(
+        VulkanRenderer renderer,
+        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
+        in VulkanPrimaryOperationRecordingInfo recordingInfo,
+        string label,
+        out int lastOperationIndex)
+    {
+        lastOperationIndex = recordingInfo.OperationIndex;
+        if (!recordingInfo.ExecutesSecondaryRange ||
+            !VulkanRenderer.TryGetSecondaryBucketForStart(
+                recordingState.SecondaryBuckets,
+                recordingState.SecondaryBucketByStart,
+                recordingInfo.OperationIndex,
+                out VulkanSecondaryRecordingBucket bucket) ||
+            !renderer.TryRecordSecondaryBucket(
+                primaryCommandBuffer: recordingState.CommandBuffer,
+                recordingState.FrameDataImageIndex,
+                recordingState.ExecutedCommandChainSecondaryHandles,
+                recordingState.Ops,
+                recordingInfo.OperationIndex,
+                bucket,
+                recordingInfo.PassIndex,
+                recordingState.RenderScope.IsActive,
+                recordingState.ActiveInlineQuery is not null,
+                label))
+        {
+            return false;
+        }
+
+        lastOperationIndex = recordingInfo.OperationIndex + bucket.Count - 1;
+        return true;
+    }
 
     /// <summary>
     /// Rents an operation whose lifetime is bounded by the current render frame.

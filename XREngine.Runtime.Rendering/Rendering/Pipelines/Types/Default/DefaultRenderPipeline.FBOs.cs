@@ -77,7 +77,10 @@ public partial class DefaultRenderPipeline
             }
         };
         var PostProcessFBO = new XRQuadFrameBuffer(postProcessMat, deriveRenderTargetsFromMaterial: false);
-        PostProcessFBO.SettingUniforms += PostProcessFBO_SettingUniforms;
+        PostProcessFBO.FullScreenMesh.BindingPublishers.Add(
+            new PostProcessBindingPublisher(
+                this,
+                EPostProcessBindingPublication.Composite));
         return PostProcessFBO;
     }
 
@@ -114,7 +117,10 @@ public partial class DefaultRenderPipeline
         {
             Name = FinalPostProcessFBOName
         };
-        fbo.SettingUniforms += FinalPostProcessFBO_SettingUniforms;
+        fbo.FullScreenMesh.BindingPublishers.Add(
+            new PostProcessBindingPublisher(
+                this,
+                EPostProcessBindingPublication.Final));
         return fbo;
     }
 
@@ -1520,11 +1526,8 @@ public partial class DefaultRenderPipeline
             $"shader={DescribeShader(lightCombineShader)} " +
             $"blend=Disabled deriveTargetsFromMaterial=false textures=[{DescribeTextureList(lightCombineTextures)}]");
 
-        // Wire probe/AO binding through the material's SettingUniforms so that probe sampler
-        // locations are registered in _boundSamplerLocations BEFORE BindFallbackSamplers runs.
-        // (XRQuadFrameBuffer.SettingUniforms fires after BindFallbackSamplers, which would
-        //  override layout(binding=) probe samplers with fallback textures.)
-        lightCombineMat.SettingUniforms += (_, program) => ApplyLightCombineProgramBindings(program);
+        lightCombineMat.BindingPublishers.Add(
+            new LightCombineBindingPublisher(this));
 
         var lightCombineFBO = new XRQuadFrameBuffer(lightCombineMat, useTriangle: true, deriveRenderTargetsFromMaterial: false) { Name = LightCombineFBOName };
 
@@ -1790,8 +1793,8 @@ public partial class DefaultRenderPipeline
             $"msaaShader={DescribeShader(msaaShader)} " +
             $"textures=[{DescribeTextureList(textures)}]");
 
-        // Wire through material SettingUniforms (same reason as non-MSAA path above).
-        mat.SettingUniforms += (_, program) => ApplyLightCombineProgramBindings(program);
+        mat.BindingPublishers.Add(
+            new LightCombineBindingPublisher(this));
 
         var fbo = new XRQuadFrameBuffer(mat, true, false) { Name = MsaaLightCombineFBOName };
         return fbo;

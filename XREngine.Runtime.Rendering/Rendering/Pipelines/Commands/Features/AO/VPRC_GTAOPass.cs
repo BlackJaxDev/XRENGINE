@@ -59,20 +59,37 @@ namespace XREngine.Rendering.Pipelines.Commands
             public XRTexture? DepthStencilTexture;
         }
 
+        private enum EGtaoBindingPublication
+        {
+            Generate,
+            HorizontalBlur,
+            VerticalBlur,
+        }
+
         /// <summary>
-        /// Publishes GTAO gather settings as view-owned data while keeping
-        /// settings replacement and nested value changes generation-visible.
+        /// Publishes GTAO numeric inputs with an explicit generation. Texture
+        /// inputs remain material-owned, so stable passes can reuse detached
+        /// Vulkan binding artifacts without replaying mutable callbacks.
         /// </summary>
-        private sealed class GTAOViewBindingPublisher(
-            VPRC_GTAOPass owner) : IRenderBindingPublisher
+        private sealed class GTAOBindingPublisher(
+            VPRC_GTAOPass owner,
+            EGtaoBindingPublication publication) : IRenderBindingPublisher
         {
             private readonly object _generationSync = new();
             private AmbientOcclusionSettings? _lastSettings;
             private ulong _lastSettingsGeneration;
+            private int _lastDepthMode = int.MinValue;
+            private int _lastRenderWidth = int.MinValue;
+            private int _lastRenderHeight = int.MinValue;
+            private int _lastAoWidth = int.MinValue;
+            private int _lastAoHeight = int.MinValue;
+            private int _lastResolutionDivisor = int.MinValue;
             private long _generation = 1;
 
             public ERenderBindingFrequency Frequency
-                => ERenderBindingFrequency.View;
+                => publication == EGtaoBindingPublication.Generate
+                    ? ERenderBindingFrequency.View
+                    : ERenderBindingFrequency.Pass;
 
             public ulong Generation
             {
@@ -82,17 +99,48 @@ namespace XREngine.Rendering.Pipelines.Commands
                         owner.GetCurrentSettings();
                     ulong settingsGeneration =
                         settings?.BindingGeneration ?? 1;
+                    int depthMode = publication == EGtaoBindingPublication.Generate
+                        ? int.MinValue
+                        : (int?)owner.GetCurrentCamera()?.DepthMode ?? int.MinValue;
+                    ResolveActiveRenderSize(
+                        RuntimeEngine.Rendering.State.CurrentRenderingPipeline,
+                        out int renderWidth,
+                        out int renderHeight);
+                    int aoWidth = int.MinValue;
+                    int aoHeight = int.MinValue;
+                    int resolutionDivisor = int.MinValue;
+                    if (publication != EGtaoBindingPublication.Generate &&
+                        RuntimeEngine.Rendering.State.CurrentRenderingPipeline
+                            is { } instance)
+                    {
+                        InstanceState state = owner.GetInstanceState(instance);
+                        aoWidth = state.LastWidth;
+                        aoHeight = state.LastHeight;
+                        resolutionDivisor = state.LastResolutionDivisor;
+                    }
 
                     lock (_generationSync)
                     {
                         if (ReferenceEquals(settings, _lastSettings) &&
-                            settingsGeneration == _lastSettingsGeneration)
+                            settingsGeneration == _lastSettingsGeneration &&
+                            depthMode == _lastDepthMode &&
+                            renderWidth == _lastRenderWidth &&
+                            renderHeight == _lastRenderHeight &&
+                            aoWidth == _lastAoWidth &&
+                            aoHeight == _lastAoHeight &&
+                            resolutionDivisor == _lastResolutionDivisor)
                         {
                             return unchecked((ulong)_generation);
                         }
 
                         _lastSettings = settings;
                         _lastSettingsGeneration = settingsGeneration;
+                        _lastDepthMode = depthMode;
+                        _lastRenderWidth = renderWidth;
+                        _lastRenderHeight = renderHeight;
+                        _lastAoWidth = aoWidth;
+                        _lastAoHeight = aoHeight;
+                        _lastResolutionDivisor = resolutionDivisor;
                         if (Interlocked.Increment(ref _generation) == 0)
                             Interlocked.CompareExchange(ref _generation, 1, 0);
                         return unchecked((ulong)_generation);
@@ -103,7 +151,20 @@ namespace XREngine.Rendering.Pipelines.Commands
             public void PublishUniforms(
                 XRRenderProgram vertexProgram,
                 XRRenderProgram materialProgram)
-                => owner.GTAOGenSettings_SetUniforms(materialProgram);
+            {
+                switch (publication)
+                {
+                    case EGtaoBindingPublication.Generate:
+                        owner.GTAOGenSettings_SetUniforms(materialProgram);
+                        break;
+                    case EGtaoBindingPublication.HorizontalBlur:
+                        owner.GTAOHorizontalBlur_SetUniforms(materialProgram);
+                        break;
+                    case EGtaoBindingPublication.VerticalBlur:
+                        owner.GTAOVerticalBlur_SetUniforms(materialProgram);
+                        break;
+                }
+            }
         }
 
         private static readonly ConditionalWeakTable<XRRenderPipelineInstance, InstanceState> _instanceStates = new();
@@ -257,7 +318,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 {
                     Name = BlurFBOName
                 };
-                frameBuffer.SettingUniforms += GTAOHorizontalBlur_SetUniforms;
+                frameBuffer.FullScreenMesh.BindingPublishers.Add(
+                    new GTAOBindingPublisher(
+                        this,
+                        EGtaoBindingPublication.HorizontalBlur));
                 return frameBuffer;
             }
 
@@ -272,7 +336,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 {
                     Name = BlurIntermediateFBOName
                 };
-                frameBuffer.SettingUniforms += GTAOVerticalBlur_SetUniforms;
+                frameBuffer.FullScreenMesh.BindingPublishers.Add(
+                    new GTAOBindingPublisher(
+                        this,
+                        EGtaoBindingPublication.VerticalBlur));
                 return frameBuffer;
             }
 
@@ -293,7 +360,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                 Name = GenerationFBOName
             };
             genFbo.FullScreenMesh.BindingPublishers.Add(
-                new GTAOViewBindingPublisher(this));
+                new GTAOBindingPublisher(
+                    this,
+                    EGtaoBindingPublication.Generate));
             return genFbo;
         }
 

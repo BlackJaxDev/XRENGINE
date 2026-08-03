@@ -1,3 +1,5 @@
+using XREngine.Rendering.Models.Materials;
+
 namespace XREngine.Rendering.Vulkan;
 
 internal sealed class ComputeDispatchSnapshot
@@ -71,6 +73,8 @@ internal sealed class ComputeDispatchSnapshot
     internal ulong ExactSamplerResourceSignature { get; private set; }
     internal ulong RuntimeUniformNameSignature { get; private set; }
     internal ulong RuntimeUniformValueSignature { get; private set; }
+    internal ulong PersistentEngineUniformSignature { get; private set; }
+    internal ulong PersistentEngineResourceSignature { get; private set; }
     internal ulong MutableLegacyUniformNameSignature { get; private set; }
     internal ulong MutableLegacyUniformValueSignature { get; private set; }
     internal ulong RuntimeUniformPublicationLayoutSignature { get; private set; }
@@ -130,6 +134,8 @@ internal sealed class ComputeDispatchSnapshot
         ExactSamplerResourceSignature = 0;
         RuntimeUniformNameSignature = 0;
         RuntimeUniformValueSignature = 0;
+        PersistentEngineUniformSignature = 0;
+        PersistentEngineResourceSignature = 0;
         MutableLegacyUniformNameSignature = 0;
         MutableLegacyUniformValueSignature = 0;
         RuntimeUniformPublicationLayoutSignature = 0;
@@ -174,6 +180,8 @@ internal sealed class ComputeDispatchSnapshot
         ExactSamplerResourceSignature = 0;
         RuntimeUniformNameSignature = 0;
         RuntimeUniformValueSignature = 0;
+        PersistentEngineUniformSignature = 0;
+        PersistentEngineResourceSignature = 0;
         MutableLegacyUniformNameSignature = 0;
         MutableLegacyUniformValueSignature = 0;
         RuntimeUniformPublicationLayoutSignature = 0;
@@ -187,6 +195,52 @@ internal sealed class ComputeDispatchSnapshot
 
     internal void SetMaterialUniformBindings(MaterialUniformBindingPayload? payload)
         => _materialUniformBindings = payload;
+
+    /// <summary>
+    /// Creates an owning cross-frame artifact containing only generation-owned
+    /// typed values and material sampler references. Frame/view/pass engine
+    /// values are deliberately omitted because <see cref="PendingMeshDraw"/>
+    /// owns their current values.
+    /// </summary>
+    internal ComputeDispatchSnapshot CreatePersistentProgramBindingArtifact(
+        EUniformRequirements retainedEngineRequirements)
+    {
+        Dictionary<string, ProgramUniformValue> retainedUniforms =
+            new(Uniforms.Count, StringComparer.Ordinal);
+        foreach ((string name, ProgramUniformValue value) in Uniforms)
+        {
+            bool typed = RuntimeUniformPublications.ContainsKey(name);
+            EUniformRequirements requirement =
+                UniformRequirementsDetection.GetRequirement(name);
+            if (typed || (requirement & retainedEngineRequirements) != 0)
+                retainedUniforms[name] = value;
+        }
+
+        ComputeDispatchSnapshot artifact = new(
+            retainedUniforms,
+            new Dictionary<uint, XRTexture>(Samplers),
+            new Dictionary<uint, string>(SamplerNamesByUnit),
+            new Dictionary<string, XRTexture>(
+                SamplersByName,
+                StringComparer.Ordinal),
+            new Dictionary<uint, ProgramImageBinding>(Images),
+            new Dictionary<uint, VulkanComputeBufferBinding>(Buffers),
+            new Dictionary<string, VulkanComputeBufferBinding>(
+                BuffersByName,
+                StringComparer.Ordinal));
+        artifact.RuntimeUniformPublications.EnsureCapacity(
+            RuntimeUniformPublications.Count);
+        foreach ((string name, VulkanRuntimeUniformPublication publication) in
+                 RuntimeUniformPublications)
+        {
+            artifact.RuntimeUniformPublications[name] = publication;
+        }
+
+        artifact.SetMaterialUniformBindings(MaterialUniformBindings);
+        artifact.EnableMaterialBindingFastPath();
+        artifact.PublishBindingLayoutSignatures();
+        return artifact;
+    }
 
     internal bool HasRuntimeUniform(string name)
         => Uniforms.ContainsKey(name);
@@ -249,6 +303,19 @@ internal sealed class ComputeDispatchSnapshot
         RuntimeUniformNameSignature = HashUniformNames(Uniforms);
         RuntimeUniformValueSignature =
             VulkanRenderer.HashUniformBindings(Uniforms);
+        PersistentEngineUniformSignature =
+            VulkanRenderer.HashUniformBindings(
+                Uniforms,
+                EUniformRequirements.Lights |
+                EUniformRequirements.AmbientOcclusion);
+        FrameOpSignatureHasher persistentEngineResources = new();
+        persistentEngineResources.Add(ExactSamplerResourceSignature);
+        persistentEngineResources.Add(
+            VulkanRenderer.HashImageBindings(Images));
+        persistentEngineResources.Add(
+            VulkanRenderer.HashBufferBindings(Buffers));
+        PersistentEngineResourceSignature =
+            persistentEngineResources.ToHash();
         MutableLegacyUniformNameSignature =
             HashUniformNames(MutableLegacyUniformNames);
         MutableLegacyUniformValueSignature =

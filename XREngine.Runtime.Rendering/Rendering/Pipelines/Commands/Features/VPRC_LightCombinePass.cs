@@ -118,6 +118,75 @@ namespace XREngine.Rendering.Pipelines.Commands
             public readonly Vector4[] PointShadowAtlasDepthParams = new Vector4[PointLightComponent.ShadowFaceCount];
         }
 
+        private readonly record struct LightBindingState(
+            LightComponent? Light,
+            ulong LightGeneration,
+            XRCamera? Camera,
+            ulong CascadeContentRevision,
+            ulong CascadeRenderedContentRevision,
+            DirectionalLightComponent.DirectionalCascadeStaleAgeBindingState
+                CascadeStaleAges,
+            Lights3DCollection? Lights,
+            ulong ShadowAtlasGeneration,
+            XRMaterialFrameBuffer? ShadowMap,
+            XRTexture2DArray? CascadeReceiverTexture,
+            XRTexture2DArray DummyShadowMapArray,
+            XRTexture2D DummyShadowMap,
+            int DeferredDebugMode,
+            float DirectionalShadowAtlasMaxStaleFrames,
+            bool ViewportPrefersDirectionalCascades,
+            int PipelineResourceGeneration);
+
+        /// <summary>
+        /// Owns the complete numeric and descriptor publication for one
+        /// deferred-light draw. The state comparison is exact; no hash-only
+        /// identity is used to authorize cross-frame reuse.
+        /// </summary>
+        private sealed class DeferredLightBindingPublisher(
+            VPRC_LightCombinePass owner) : IRenderResourceBindingPublisher
+        {
+            private readonly object _generationSync = new();
+            private LightBindingState _lastState;
+            private bool _hasLastState;
+            private ulong _generation = 1;
+
+            public ERenderBindingFrequency Frequency
+                => ERenderBindingFrequency.Object;
+
+            public ulong Generation
+            {
+                get
+                {
+                    LightBindingState state = owner.CaptureLightBindingState();
+                    lock (_generationSync)
+                    {
+                        if (_hasLastState && state == _lastState)
+                            return _generation;
+
+                        _lastState = state;
+                        _hasLastState = true;
+                        unchecked { _generation++; }
+                        if (_generation == 0)
+                            _generation = 1;
+                        return _generation;
+                    }
+                }
+            }
+
+            public ulong ResourceGeneration => Generation;
+
+            public void PublishUniforms(
+                XRRenderProgram vertexProgram,
+                XRRenderProgram materialProgram)
+            {
+            }
+
+            public void PublishResources(
+                XRRenderProgram vertexProgram,
+                XRRenderProgram materialProgram)
+                => owner.BindCurrentLightUniforms(materialProgram);
+        }
+
         private LightRendererCache? _activeRendererCache;
 
         public XRMeshRenderer? PointLightRenderer => _activeRendererCache?.PointLightRenderer;
@@ -397,11 +466,56 @@ namespace XREngine.Rendering.Pipelines.Commands
                 : ECullMode.Front;
         }
 
-        private void LightManager_SettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
-            => BindCurrentLightUniforms(materialProgram);
+        private LightBindingState CaptureLightBindingState()
+        {
+            LightComponent? light = _currentLightComponent;
+            XRCamera? camera = ResolveActiveRenderingCamera();
+            ulong cascadeContentRevision = 0;
+            ulong cascadeRenderedContentRevision = 0;
+            DirectionalLightComponent.DirectionalCascadeStaleAgeBindingState
+                cascadeStaleAges = default;
+            XRTexture2DArray? cascadeReceiverTexture = null;
+            bool viewportPrefersDirectionalCascades = false;
+            if (light is DirectionalLightComponent directionalLight)
+            {
+                directionalLight.GetCascadeBindingRevisions(
+                    camera,
+                    out cascadeContentRevision,
+                    out cascadeRenderedContentRevision);
+                cascadeStaleAges = directionalLight
+                    .CaptureCascadeStaleAgeBindingState(camera);
+                cascadeReceiverTexture = directionalLight
+                    .GetSampleableCascadedShadowReceiverTexture(camera);
+                viewportPrefersDirectionalCascades =
+                    ActiveViewportPrefersCascadedDirectionalShadows(camera);
+            }
 
-        private void MsaaLightManager_SettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
-            => BindCurrentLightUniforms(materialProgram);
+            Lights3DCollection? lights = light is null
+                ? null
+                : ResolveLightsForLight(light);
+            int deferredDebugMode = RenderDiagnosticsFlags.DeferredDebugView;
+            return new LightBindingState(
+                light,
+                light?.BindingGeneration ?? 0UL,
+                camera,
+                cascadeContentRevision,
+                cascadeRenderedContentRevision,
+                cascadeStaleAges,
+                lights,
+                lights?.ShadowAtlas.PublishedFrameData.Generation ?? 0UL,
+                light?.ShadowMap,
+                cascadeReceiverTexture,
+                DummyShadowMapArray,
+                DummyShadowMap,
+                deferredDebugMode >= 0 && deferredDebugMode <= 18
+                    ? deferredDebugMode
+                    : 0,
+                RuntimeEngine.Rendering.Settings
+                    .MaxDirectionalCascadeAtlasStaleFrames,
+                viewportPrefersDirectionalCascades,
+                RuntimeEngine.Rendering.State.CurrentRenderingPipeline
+                    ?.ResourceGeneration ?? 0);
+        }
 
         private void BindCurrentLightUniforms(XRRenderProgram materialProgram)
         {
@@ -1018,7 +1132,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 CaptureUniformsOnRender = true,
             };
             PrepareRenderPipelineLightRenderer(cache.PointLightRenderer);
-            cache.PointLightRenderer.SettingUniforms += LightManager_SettingUniforms;
+            AddDeferredLightBindingPublisher(cache.PointLightRenderer);
 
             cache.SpotLightRenderer = new XRMeshRenderer(spotLightMesh, spotLightMat)
             {
@@ -1026,10 +1140,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 CaptureUniformsOnRender = true,
             };
             PrepareRenderPipelineLightRenderer(cache.SpotLightRenderer);
-            cache.SpotLightRenderer.SettingUniforms += LightManager_SettingUniforms;
+            AddDeferredLightBindingPublisher(cache.SpotLightRenderer);
 
             cache.DirectionalLightRenderer = CreateFullscreenDirectionalLightRenderer(dirLightMat);
-            cache.DirectionalLightRenderer.SettingUniforms += LightManager_SettingUniforms;
+            AddDeferredLightBindingPublisher(cache.DirectionalLightRenderer);
 
             // Invalidate MSAA renderers since the simple phase depends on the resolved GBuffer.
             cache.MsaaSimplePointLightRenderer = null;
@@ -1144,7 +1258,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 CaptureUniformsOnRender = true,
             };
             PrepareRenderPipelineLightRenderer(cache.MsaaSimplePointLightRenderer);
-            cache.MsaaSimplePointLightRenderer.SettingUniforms += LightManager_SettingUniforms;
+            AddDeferredLightBindingPublisher(cache.MsaaSimplePointLightRenderer);
 
             cache.MsaaSimpleSpotLightRenderer = new XRMeshRenderer(spotMesh, simpleSpotMat)
             {
@@ -1152,10 +1266,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 CaptureUniformsOnRender = true,
             };
             PrepareRenderPipelineLightRenderer(cache.MsaaSimpleSpotLightRenderer);
-            cache.MsaaSimpleSpotLightRenderer.SettingUniforms += LightManager_SettingUniforms;
+            AddDeferredLightBindingPublisher(cache.MsaaSimpleSpotLightRenderer);
 
             cache.MsaaSimpleDirectionalLightRenderer = CreateFullscreenDirectionalLightRenderer(simpleDirMat);
-            cache.MsaaSimpleDirectionalLightRenderer.SettingUniforms += LightManager_SettingUniforms;
+            AddDeferredLightBindingPublisher(cache.MsaaSimpleDirectionalLightRenderer);
 
             cache.MsaaComplexPointLightRenderer = new XRMeshRenderer(pointMesh, msaaPointMat)
             {
@@ -1163,7 +1277,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 CaptureUniformsOnRender = true,
             };
             PrepareRenderPipelineLightRenderer(cache.MsaaComplexPointLightRenderer);
-            cache.MsaaComplexPointLightRenderer.SettingUniforms += MsaaLightManager_SettingUniforms;
+            AddDeferredLightBindingPublisher(cache.MsaaComplexPointLightRenderer);
 
             cache.MsaaComplexSpotLightRenderer = new XRMeshRenderer(spotMesh, msaaSpotMat)
             {
@@ -1171,11 +1285,15 @@ namespace XREngine.Rendering.Pipelines.Commands
                 CaptureUniformsOnRender = true,
             };
             PrepareRenderPipelineLightRenderer(cache.MsaaComplexSpotLightRenderer);
-            cache.MsaaComplexSpotLightRenderer.SettingUniforms += MsaaLightManager_SettingUniforms;
+            AddDeferredLightBindingPublisher(cache.MsaaComplexSpotLightRenderer);
 
             cache.MsaaComplexDirectionalLightRenderer = CreateFullscreenDirectionalLightRenderer(msaaDirMat);
-            cache.MsaaComplexDirectionalLightRenderer.SettingUniforms += MsaaLightManager_SettingUniforms;
+            AddDeferredLightBindingPublisher(cache.MsaaComplexDirectionalLightRenderer);
         }
+
+        private void AddDeferredLightBindingPublisher(XRMeshRenderer renderer)
+            => renderer.BindingPublishers.Add(
+                new DeferredLightBindingPublisher(this));
 
         private static XRMaterial CreateFullscreenDirectionalLightMaterial(XRTexture?[] lightRefs, XRShader fragmentShader, RenderingParameters renderOptions)
         {

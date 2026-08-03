@@ -4,11 +4,7 @@ param()
 $ErrorActionPreference = "Stop"
 
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$brokerDll = Join-Path $repoRoot "Build\AgentTools\LocalAgentBroker\XREngine.LocalAgentBroker.dll"
 $launcherPath = Join-Path $PSScriptRoot "Invoke-LocalAgentBroker.ps1"
-if (-not (Test-Path -LiteralPath $brokerDll -PathType Leaf)) {
-    throw "Broker output is missing. Run Tools\Setup-LocalAgentBroker.ps1 first."
-}
 
 try {
     $requests = @(

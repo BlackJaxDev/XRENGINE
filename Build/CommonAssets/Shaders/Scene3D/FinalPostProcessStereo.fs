@@ -12,14 +12,14 @@ uniform float ScreenWidth;
 uniform float ScreenHeight;
 uniform vec2 ScreenOrigin;
 
-uniform int LensDistortionMode;
-uniform float LensDistortionIntensity;
-uniform vec2 LensDistortionCenter;
-uniform float PaniniDistance;
-uniform float PaniniCrop;
-uniform vec2 PaniniViewExtents;
-uniform vec3 BrownConradyRadial;
-uniform vec2 BrownConradyTangential;
+uniform int LensDistortionMode; // XRENGINE_FREQUENCY(View)
+uniform float LensDistortionIntensity; // XRENGINE_FREQUENCY(View)
+uniform vec2 LensDistortionCenter; // XRENGINE_FREQUENCY(View)
+uniform float PaniniDistance; // XRENGINE_FREQUENCY(View)
+uniform float PaniniCrop; // XRENGINE_FREQUENCY(View)
+uniform vec2 PaniniViewExtents; // XRENGINE_FREQUENCY(View)
+uniform vec3 BrownConradyRadial; // XRENGINE_FREQUENCY(View)
+uniform vec2 BrownConradyTangential; // XRENGINE_FREQUENCY(View)
 
 vec2 ApplyLensDistortion(vec2 uv, float intensity, vec2 center)
 {

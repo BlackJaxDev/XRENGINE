@@ -14,6 +14,8 @@ uniform int DepthMode;
 #pragma snippet "ShadowSampling"
 #pragma snippet "PBRFunctions"
 #pragma snippet "DepthUtils"
+// XRENGINE_FREQUENCY_OVERRIDE(ShadowMapEncoding, Object)
+// XRENGINE_FREQUENCY_OVERRIDE(ShadowDepthMode, Object)
 const int MAX_CASCADES = 8;
 const int XRENGINE_SHADOW_FALLBACK_LIT = 1;
 const int XRENGINE_SHADOW_FALLBACK_CONTACT_ONLY = 2;
@@ -42,16 +44,16 @@ layout(binding = 3) uniform sampler2D DepthView; //Depth
 uniform sampler2D ShadowMap; //Directional Shadow Map
 uniform sampler2DArray ShadowMapArray; //Directional Cascaded Shadow Map
 layout(binding = 9) uniform sampler2DArray DirectionalShadowAtlas;
-uniform bool UseCascadedDirectionalShadows = false;
-uniform bool LightHasShadowMap = true;
-uniform bool EnableCascadedShadows = true;
-uniform bool DebugCascadeColors = false;
-uniform bool DirectionalShadowAtlasEnabled = false;
-uniform ivec4 DirectionalShadowAtlasPacked0[MAX_CASCADES]; // enabled, page, fallback, record index
-uniform vec4 DirectionalShadowAtlasUvScaleBias[MAX_CASCADES];
-uniform vec4 DirectionalShadowAtlasDepthParams[MAX_CASCADES]; // near, far, local texel size, requested/allocated scale
-uniform float DirectionalShadowAtlasMaxStaleFrames = 32.0f;
-uniform int DeferredDebugMode = 0;
+uniform bool UseCascadedDirectionalShadows = false; // XRENGINE_FREQUENCY(Object)
+uniform bool LightHasShadowMap = true; // XRENGINE_FREQUENCY(Object)
+uniform bool EnableCascadedShadows = true; // XRENGINE_FREQUENCY(Object)
+uniform bool DebugCascadeColors = false; // XRENGINE_FREQUENCY(Object)
+uniform bool DirectionalShadowAtlasEnabled = false; // XRENGINE_FREQUENCY(Object)
+uniform ivec4 DirectionalShadowAtlasPacked0[MAX_CASCADES]; // XRENGINE_FREQUENCY(Object) enabled, page, fallback, record index
+uniform vec4 DirectionalShadowAtlasUvScaleBias[MAX_CASCADES]; // XRENGINE_FREQUENCY(Object)
+uniform vec4 DirectionalShadowAtlasDepthParams[MAX_CASCADES]; // XRENGINE_FREQUENCY(Object) near, far, local texel size, requested/allocated scale
+uniform float DirectionalShadowAtlasMaxStaleFrames = 32.0f; // XRENGINE_FREQUENCY(Object)
+uniform int DeferredDebugMode = 0; // XRENGINE_FREQUENCY(Object)
 
 // Distinct debug colors per cascade index
 const vec3 CascadeDebugColorTable[MAX_CASCADES] = vec3[](
@@ -85,32 +87,32 @@ uniform mat4 RightEyeProjMatrix;
 uniform mat4 LeftEyeViewProjectionMatrix;
 uniform mat4 RightEyeViewProjectionMatrix;
 #endif
-uniform float ShadowBase = 0.035f;
-uniform float ShadowMult = 1.221f;
-uniform float ShadowBiasMin = 0.00001f;
-uniform float ShadowBiasMax = 0.004f;
-uniform vec4 ShadowBiasParams = vec4(1.0f, 2.0f, 1.0f, 0.0f); // depth texels, slope texels, normal texels, reserved
-uniform vec4 ShadowBiasProjectionParams = vec4(0.0f, 0.0f, 0.0f, 0.0f); // constant depth bias, normal offset, world texel size, depth range
-uniform int ShadowSamples = 8;
-uniform int ShadowBlockerSamples = 8;
-uniform int ShadowFilterSamples = 8;
-uniform int ShadowVogelTapCount = 5;
-uniform float ShadowFilterRadius = 0.0012f;
-uniform float ShadowBlockerSearchRadius = 0.01f;
-uniform float ShadowMinPenumbra = 0.001f;
-uniform float ShadowMaxPenumbra = 0.015f;
-uniform int SoftShadowMode = 2;
-uniform float LightSourceRadius = 1.2f;
-uniform bool EnableContactShadows = true;
-uniform float ContactShadowDistance = 1.0f;
-uniform int ContactShadowSamples = 16;
-uniform float ContactShadowThickness = 2.0f;
-uniform float ContactShadowFadeStart = 10.0f;
-uniform float ContactShadowFadeEnd = 40.0f;
-uniform float ContactShadowNormalOffset = 0.0f;
-uniform float ContactShadowJitterStrength = 1.0f;
-uniform vec4 ShadowMomentParams0 = vec4(0.00002f, 0.2f, 5.0f, 5.0f); // min variance, light bleed reduction, positive exponent, negative exponent
-uniform vec4 ShadowMomentFilterParams = vec4(0.0f, 0.0f, 0.0f, 0.0f); // blur radius texels, blur passes, use mipmaps, mip bias
+uniform float ShadowBase = 0.035f; // XRENGINE_FREQUENCY(Object)
+uniform float ShadowMult = 1.221f; // XRENGINE_FREQUENCY(Object)
+uniform float ShadowBiasMin = 0.00001f; // XRENGINE_FREQUENCY(Object)
+uniform float ShadowBiasMax = 0.004f; // XRENGINE_FREQUENCY(Object)
+uniform vec4 ShadowBiasParams = vec4(1.0f, 2.0f, 1.0f, 0.0f); // XRENGINE_FREQUENCY(Object) depth texels, slope texels, normal texels, reserved
+uniform vec4 ShadowBiasProjectionParams = vec4(0.0f, 0.0f, 0.0f, 0.0f); // XRENGINE_FREQUENCY(Object) constant depth bias, normal offset, world texel size, depth range
+uniform int ShadowSamples = 8; // XRENGINE_FREQUENCY(Object)
+uniform int ShadowBlockerSamples = 8; // XRENGINE_FREQUENCY(Object)
+uniform int ShadowFilterSamples = 8; // XRENGINE_FREQUENCY(Object)
+uniform int ShadowVogelTapCount = 5; // XRENGINE_FREQUENCY(Object)
+uniform float ShadowFilterRadius = 0.0012f; // XRENGINE_FREQUENCY(Object)
+uniform float ShadowBlockerSearchRadius = 0.01f; // XRENGINE_FREQUENCY(Object)
+uniform float ShadowMinPenumbra = 0.001f; // XRENGINE_FREQUENCY(Object)
+uniform float ShadowMaxPenumbra = 0.015f; // XRENGINE_FREQUENCY(Object)
+uniform int SoftShadowMode = 2; // XRENGINE_FREQUENCY(Object)
+uniform float LightSourceRadius = 1.2f; // XRENGINE_FREQUENCY(Object)
+uniform bool EnableContactShadows = true; // XRENGINE_FREQUENCY(Object)
+uniform float ContactShadowDistance = 1.0f; // XRENGINE_FREQUENCY(Object)
+uniform int ContactShadowSamples = 16; // XRENGINE_FREQUENCY(Object)
+uniform float ContactShadowThickness = 2.0f; // XRENGINE_FREQUENCY(Object)
+uniform float ContactShadowFadeStart = 10.0f; // XRENGINE_FREQUENCY(Object)
+uniform float ContactShadowFadeEnd = 40.0f; // XRENGINE_FREQUENCY(Object)
+uniform float ContactShadowNormalOffset = 0.0f; // XRENGINE_FREQUENCY(Object)
+uniform float ContactShadowJitterStrength = 1.0f; // XRENGINE_FREQUENCY(Object)
+uniform vec4 ShadowMomentParams0 = vec4(0.00002f, 0.2f, 5.0f, 5.0f); // XRENGINE_FREQUENCY(Object) min variance, light bleed reduction, positive exponent, negative exponent
+uniform vec4 ShadowMomentFilterParams = vec4(0.0f, 0.0f, 0.0f, 0.0f); // XRENGINE_FREQUENCY(Object) blur radius texels, blur passes, use mipmaps, mip bias
 
 struct DirLight
 {
@@ -135,7 +137,7 @@ struct DirLight
 	float RenderedCascadeStaleAge[MAX_CASCADES];
 	int CascadeCount;
 };
-uniform DirLight LightData;
+uniform DirLight LightData; // XRENGINE_FREQUENCY(Object)
 
 int XRENGINE_ResolveContactShadowSampleCount(int requestedSamples, float viewDepth, float contactDistance);
 #ifdef XRENGINE_MSAA_DEFERRED

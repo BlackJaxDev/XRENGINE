@@ -30,7 +30,7 @@ namespace XREngine.Rendering.Vulkan
         /// Emits a <c>vkCmdPipelineBarrier</c> for the given <see cref="EMemoryBarrierMask"/>.
         /// Used both for global pending barriers and per-pass barriers.
         /// </summary>
-        private void EmitMemoryBarrierMask(CommandBuffer commandBuffer, EMemoryBarrierMask mask)
+        internal void EmitMemoryBarrierMask(CommandBuffer commandBuffer, EMemoryBarrierMask mask)
         {
             if (mask == EMemoryBarrierMask.None)
                 return;

@@ -17,5 +17,7 @@ public sealed record AgentModelTurnResult
 
     public AgentTokenUsage Usage { get; init; } = new();
 
+    public AgentProviderAttemptDiagnostic ProviderAttempt { get; init; } = new();
+
     public string ContinuationJson { get; init; } = "[]";
 }

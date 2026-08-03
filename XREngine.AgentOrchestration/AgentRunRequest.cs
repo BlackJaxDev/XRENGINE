@@ -29,6 +29,11 @@ public sealed record AgentRunRequest
 
     public bool RequireToolUse { get; init; }
 
+    /// <summary>
+    /// Uses Responses API background execution and polling for each provider turn.
+    /// </summary>
+    public bool UseBackgroundMode { get; init; }
+
     public string SystemInstructions { get; init; } = string.Empty;
 
     public string? InitialImageDataUri { get; init; }

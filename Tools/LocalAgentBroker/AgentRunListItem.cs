@@ -20,4 +20,10 @@ public sealed record AgentRunListItem
     public string ActualModel { get; init; } = string.Empty;
 
     public string EditorSession { get; init; } = string.Empty;
+
+    public bool UseBackgroundMode { get; init; }
+
+    public int AttemptCount { get; init; }
+
+    public int RetryCount { get; init; }
 }

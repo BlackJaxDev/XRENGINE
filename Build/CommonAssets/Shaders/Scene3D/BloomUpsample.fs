@@ -14,8 +14,8 @@ layout(location = 0) in vec3 FragPos;
 uniform sampler2D SourceTexture;
 
 uniform int SourceLOD;    // Mip level to read from (lower-res, being upsampled)
-uniform float Radius;     // Scale factor for the tent filter kernel
-uniform float Scatter = 0.919; // Energy attenuation per upsample level (0=tight, 1=wide)
+uniform float Radius; // XRENGINE_FREQUENCY(Pass)
+uniform float Scatter = 0.919; // XRENGINE_FREQUENCY(Pass)
 uniform float ScreenWidth;
 uniform float ScreenHeight;
 uniform vec2 ScreenOrigin;

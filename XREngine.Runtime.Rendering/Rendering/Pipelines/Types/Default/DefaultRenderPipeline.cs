@@ -2653,6 +2653,23 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
 
     private void ApplyLightCombineProgramBindings(XRRenderProgram program)
     {
+        ApplyLightCombineNumericBindings(program);
+        BindPbrLightingResources(program, deferredProbeBufferBindings: true);
+
+        if (DeferredLightingDiagnostics.Enabled &&
+            Debug.ShouldLogEvery($"DeferredLighting.LightCombineUniforms.{GetHashCode()}.{program.GetHashCode()}", TimeSpan.FromSeconds(1)))
+        {
+            XRRenderProgramDescriptor descriptor = program.ProgramDescriptor;
+            DeferredLightingDiagnostics.Write(
+                "[DefaultRenderPipeline] LightCombineFBO_SettingUniforms " +
+                $"program='{program.Name ?? "<unnamed>"}' " +
+                $"debugMode={ResolveDeferredDebugMode()} useAo={ShouldUseAmbientOcclusion()} " +
+                $"descriptorStable='{descriptor.StableKey}' shaderIdentity='{descriptor.ShaderIdentityKey}' stages='{descriptor.StageTopology}' shaders={descriptor.ShaderCount}");
+        }
+    }
+
+    private void ApplyLightCombineNumericBindings(XRRenderProgram program)
+    {
         int deferredDebugMode = ResolveDeferredDebugMode();
         program.Uniform("DeferredDebugMode", deferredDebugMode);
         program.Uniform("GlobalAmbient", ResolveGlobalAmbient());
@@ -2678,19 +2695,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         program.Uniform("AmbientOcclusionPower", aoPower);
         program.Uniform("AmbientOcclusionMultiBounce", multiBounce);
         program.Uniform("SpecularOcclusionEnabled", specularOcclusion);
-
-        BindPbrLightingResources(program, deferredProbeBufferBindings: true);
-
-        if (DeferredLightingDiagnostics.Enabled &&
-            Debug.ShouldLogEvery($"DeferredLighting.LightCombineUniforms.{GetHashCode()}.{program.GetHashCode()}", TimeSpan.FromSeconds(1)))
-        {
-            XRRenderProgramDescriptor descriptor = program.ProgramDescriptor;
-            DeferredLightingDiagnostics.Write(
-                "[DefaultRenderPipeline] LightCombineFBO_SettingUniforms " +
-                $"program='{program.Name ?? "<unnamed>"}' " +
-                $"debugMode={deferredDebugMode} useAo={useAo} aoPower={aoPower} multiBounce={multiBounce} specularOcclusion={specularOcclusion} " +
-                $"descriptorStable='{descriptor.StableKey}' shaderIdentity='{descriptor.ShaderIdentityKey}' stages='{descriptor.StageTopology}' shaders={descriptor.ShaderCount}");
-        }
     }
 
     public bool BindPbrLightingResources(XRRenderProgram program, bool deferredProbeBufferBindings = false)

@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -13,6 +14,75 @@ namespace XREngine.Rendering.Pipelines.Commands;
 [RenderPipelineScriptCommand]
 public sealed class VPRC_RenderToWindow : ViewportRenderCommand
 {
+    /// <summary>
+    /// Publishes presentation state with exact source-resource ownership so an
+    /// unchanged backbuffer copy can reuse its immutable Vulkan artifact.
+    /// </summary>
+    private sealed class PresentBindingPublisher(
+        VPRC_RenderToWindow owner) : IRenderResourceBindingPublisher
+    {
+        private readonly object _generationSync = new();
+        private XRTexture? _lastSourceTexture;
+        private bool _lastFlipSourceYOnVulkan;
+        private int _lastPipelineResourceGeneration = int.MinValue;
+        private long _generation = 1;
+
+        public ERenderBindingFrequency Frequency
+            => ERenderBindingFrequency.Pass;
+
+        public ulong Generation
+        {
+            get
+            {
+                XRTexture? sourceTexture = owner.ResolvePresentSourceTexture();
+                bool flipSourceYOnVulkan = owner.FlipSourceYOnVulkan;
+                int pipelineResourceGeneration =
+                    RuntimeEngine.Rendering.State.CurrentRenderingPipeline
+                        ?.ResourceGeneration ?? 0;
+
+                lock (_generationSync)
+                {
+                    if (ReferenceEquals(sourceTexture, _lastSourceTexture) &&
+                        flipSourceYOnVulkan == _lastFlipSourceYOnVulkan &&
+                        pipelineResourceGeneration == _lastPipelineResourceGeneration)
+                    {
+                        return unchecked((ulong)_generation);
+                    }
+
+                    _lastSourceTexture = sourceTexture;
+                    _lastFlipSourceYOnVulkan = flipSourceYOnVulkan;
+                    _lastPipelineResourceGeneration = pipelineResourceGeneration;
+                    if (Interlocked.Increment(ref _generation) == 0)
+                        Interlocked.CompareExchange(ref _generation, 1, 0);
+                    return unchecked((ulong)_generation);
+                }
+            }
+        }
+
+        public ulong ResourceGeneration => Generation;
+
+        public void PublishUniforms(
+            XRRenderProgram vertexProgram,
+            XRRenderProgram materialProgram)
+            => materialProgram.Uniform(
+                "FlipSourceYOnVulkan",
+                owner.FlipSourceYOnVulkan);
+
+        public void PublishResources(
+            XRRenderProgram vertexProgram,
+            XRRenderProgram materialProgram)
+        {
+            XRTexture? sourceTexture = owner.ResolvePresentSourceTexture();
+            if (sourceTexture is null)
+            {
+                materialProgram.SuppressFallbackSamplerWarning("SourceTexture");
+                return;
+            }
+
+            materialProgram.Sampler("SourceTexture", sourceTexture, 0);
+        }
+    }
+
     private const string PresentShaderCode = """
 #version 450
 
@@ -20,7 +90,7 @@ layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
 uniform sampler2D SourceTexture;
-uniform bool FlipSourceYOnVulkan;
+uniform bool FlipSourceYOnVulkan; // XRENGINE_FREQUENCY(Pass)
 
 vec2 ResolvePresentTextureUv(vec2 clipXY)
 {
@@ -51,7 +121,7 @@ layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
 uniform sampler2DArray SourceTexture;
-uniform bool FlipSourceYOnVulkan;
+uniform bool FlipSourceYOnVulkan; // XRENGINE_FREQUENCY(Pass)
 
 vec2 ResolvePresentTextureUv(vec2 clipXY)
 {
@@ -101,14 +171,14 @@ void main()
         _material ??= CreatePresentMaterial(PresentShaderCode);
 
         _quad = new XRQuadFrameBuffer(_material);
-        _quad.SettingUniforms += Present_SettingUniforms;
+        _quad.FullScreenMesh.BindingPublishers.Add(
+            new PresentBindingPublisher(this));
     }
 
     internal override void ReleaseContainerResources(XRRenderPipelineInstance instance)
     {
         if (_quad is not null)
         {
-            _quad.SettingUniforms -= Present_SettingUniforms;
             _quad.Destroy();
             _quad = null;
         }
@@ -118,7 +188,6 @@ void main()
 
         if (_stereoQuad is not null)
         {
-            _stereoQuad.SettingUniforms -= Present_SettingUniforms;
             _stereoQuad.Destroy();
             _stereoQuad = null;
         }
@@ -467,28 +536,28 @@ void main()
 
         _stereoMaterial ??= CreatePresentMaterial(StereoPresentShaderCode);
         _stereoQuad = new XRQuadFrameBuffer(_stereoMaterial);
-        _stereoQuad.SettingUniforms += Present_SettingUniforms;
+        _stereoQuad.FullScreenMesh.BindingPublishers.Add(
+            new PresentBindingPublisher(this));
         return _stereoQuad;
     }
 
     private static bool IsStereoArrayTexture(XRTexture texture)
         => texture is XRTexture2DArray or XRTexture2DArrayView;
 
-    private void Present_SettingUniforms(XRRenderProgram program)
+    private XRTexture? ResolvePresentSourceTexture()
     {
         XRTexture? sourceTexture = _resolvedSourceTexture;
-        if (sourceTexture is null)
-        {
-            XRRenderPipelineInstance instance = ActivePipelineInstance;
-            if (!VPRCSourceTextureHelpers.TryResolveColorTexture(instance, SourceTextureName, SourceFBOName, out sourceTexture, out _)
-                || sourceTexture is null)
-            {
-                program.SuppressFallbackSamplerWarning("SourceTexture");
-                return;
-            }
-        }
+        if (sourceTexture is not null)
+            return sourceTexture;
 
-        program.Sampler("SourceTexture", sourceTexture, 0);
-        program.Uniform("FlipSourceYOnVulkan", FlipSourceYOnVulkan);
+        XRRenderPipelineInstance instance = ActivePipelineInstance;
+        return VPRCSourceTextureHelpers.TryResolveColorTexture(
+            instance,
+            SourceTextureName,
+            SourceFBOName,
+            out sourceTexture,
+            out _)
+            ? sourceTexture
+            : null;
     }
 }

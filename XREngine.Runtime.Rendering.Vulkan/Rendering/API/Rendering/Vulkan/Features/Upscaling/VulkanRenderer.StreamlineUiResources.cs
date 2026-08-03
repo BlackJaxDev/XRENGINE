@@ -171,7 +171,7 @@ public unsafe partial class VulkanRenderer
     /// Clears the DLSS-G UI surface for the acquired image before any late UI overlays.
     /// This guarantees a valid transparent resource even for frames with no UI draws.
     /// </summary>
-    private bool TryPrepareStreamlineUiImage(
+    internal bool TryPrepareStreamlineUiImage(
         CommandBuffer commandBuffer,
         uint imageIndex,
         out VulkanStreamlineImage image)
@@ -252,8 +252,8 @@ public unsafe partial class VulkanRenderer
         ImageMemoryBarrier barrier = new()
         {
             SType = StructureType.ImageMemoryBarrier,
-            SrcAccessMask = ResolveStreamlineAccessMask(oldLayout),
-            DstAccessMask = ResolveStreamlineAccessMask(newLayout),
+            SrcAccessMask = DlssFrameOp.ResolveAccessMask(oldLayout),
+            DstAccessMask = DlssFrameOp.ResolveAccessMask(newLayout),
             OldLayout = oldLayout,
             NewLayout = newLayout,
             SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
@@ -271,8 +271,8 @@ public unsafe partial class VulkanRenderer
 
         CmdPipelineBarrierTracked(
             commandBuffer,
-            ResolveStreamlinePipelineStage(oldLayout),
-            ResolveStreamlinePipelineStage(newLayout),
+            DlssFrameOp.ResolvePipelineStage(oldLayout),
+            DlssFrameOp.ResolvePipelineStage(newLayout),
             DependencyFlags.None,
             0,
             null,

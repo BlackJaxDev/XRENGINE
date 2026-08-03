@@ -18,4 +18,6 @@ public sealed record AgentRunEvent
     public AgentToolEvidence? ToolEvidence { get; init; }
 
     public AgentTokenUsage? Usage { get; init; }
+
+    public AgentProviderAttemptDiagnostic? ProviderAttempt { get; init; }
 }

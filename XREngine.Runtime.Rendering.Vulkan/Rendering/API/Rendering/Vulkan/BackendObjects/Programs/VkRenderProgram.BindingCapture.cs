@@ -53,6 +53,7 @@ internal unsafe partial class VkRenderProgram
         internal Dictionary<uint, ProgramImageBinding> ImagesByUnit = [];
         internal Dictionary<uint, XRDataBuffer> BuffersByBinding { get; } = [];
         internal int TypedPublicationDepth;
+        internal int TypedResourcePublicationDepth;
         internal EVulkanBindingFrequency TypedPublicationFrequency;
         internal ulong TypedPublicationGeneration;
         internal int MutableLegacyPublicationDepth;
@@ -90,7 +91,8 @@ internal unsafe partial class VkRenderProgram
 
         internal void RejectTypedResourceWrite(string resourceKind)
         {
-            if (TypedPublicationDepth == 0)
+            if (TypedPublicationDepth == 0 ||
+                TypedResourcePublicationDepth != 0)
                 return;
 
             throw new InvalidOperationException(
@@ -195,6 +197,16 @@ internal unsafe partial class VkRenderProgram
         => new(this, frequency, generation);
 
     /// <summary>
+    /// Publishes descriptor resources under an exact owner frequency and
+    /// generation while retaining typed ownership for any tightly coupled
+    /// numeric metadata emitted by the resource publisher.
+    /// </summary>
+    internal TypedBindingPublicationScope BeginTypedResourceBindingPublication(
+        ERenderBindingFrequency frequency,
+        ulong generation)
+        => new(this, frequency, generation, allowResourceWrites: true);
+
+    /// <summary>
     /// Marks numeric writes from an untyped callback so immutable snapshots can
     /// distinguish callback-owned UBO values from ordinary material and engine
     /// bindings. Descriptor-only callbacks leave this set empty.
@@ -231,11 +243,13 @@ internal unsafe partial class VkRenderProgram
         private readonly BindingCaptureState _capture;
         private readonly EVulkanBindingFrequency _previousFrequency;
         private readonly ulong _previousGeneration;
+        private readonly bool _allowsResourceWrites;
 
         internal TypedBindingPublicationScope(
             VkRenderProgram owner,
             ERenderBindingFrequency frequency,
-            ulong generation)
+            ulong generation,
+            bool allowResourceWrites = false)
         {
             if (frequency is <= ERenderBindingFrequency.Unknown or
                 >= ERenderBindingFrequency.Count)
@@ -263,10 +277,15 @@ internal unsafe partial class VkRenderProgram
                 ToVulkanBindingFrequency(frequency);
             _capture.TypedPublicationGeneration = generation;
             _capture.TypedPublicationDepth++;
+            _allowsResourceWrites = allowResourceWrites;
+            if (_allowsResourceWrites)
+                _capture.TypedResourcePublicationDepth++;
         }
 
         public void Dispose()
         {
+            if (_allowsResourceWrites)
+                _capture.TypedResourcePublicationDepth--;
             _capture.TypedPublicationDepth--;
             _capture.TypedPublicationFrequency = _previousFrequency;
             _capture.TypedPublicationGeneration = _previousGeneration;

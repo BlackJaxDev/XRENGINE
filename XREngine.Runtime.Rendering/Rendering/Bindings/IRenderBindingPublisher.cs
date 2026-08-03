@@ -9,8 +9,8 @@ namespace XREngine.Rendering;
 /// <remarks>
 /// Implementations must advance <see cref="Generation"/> whenever any emitted
 /// value changes. Fast-path publishers must use typed <c>Uniform</c> overloads
-/// only; descriptor resources remain on the explicit legacy path until they
-/// have a frequency-owned descriptor publication contract.
+/// only. Publishers that also own descriptor resources implement
+/// <see cref="IRenderResourceBindingPublisher"/>.
 /// </remarks>
 public interface IRenderBindingPublisher
 {
