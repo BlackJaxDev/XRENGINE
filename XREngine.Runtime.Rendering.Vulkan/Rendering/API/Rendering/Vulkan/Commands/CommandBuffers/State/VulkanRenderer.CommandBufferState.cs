@@ -269,6 +269,24 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
+        /// <summary>
+        /// Invalidates primary-command-buffer state after executing secondary command buffers.
+        /// Vulkan leaves almost all primary state undefined at this boundary, so retaining cached
+        /// bindings could suppress commands that must be emitted again before later work.
+        /// </summary>
+        private void InvalidatePrimaryBindStateAfterSecondaryExecution(CommandBuffer primary)
+        {
+            ulong key = unchecked((ulong)primary.Handle);
+            lock (_commandBindStateLock)
+            {
+                _commandBindStates.TryGetValue(key, out CommandBufferBindState previousState);
+                _commandBindStates[key] = new CommandBufferBindState
+                {
+                    RecordingGeneration = previousState.RecordingGeneration,
+                };
+            }
+        }
+
         private void RegisterCommandBufferImageIndex(CommandBuffer commandBuffer, uint imageIndex)
         {
             if (commandBuffer.Handle == 0)

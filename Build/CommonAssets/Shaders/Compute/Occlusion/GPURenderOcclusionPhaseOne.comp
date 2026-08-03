@@ -1,0 +1,209 @@
+#version 460 core
+
+// Early phase of two-pass occlusion culling. Commands that were visible after
+// the prior frame's late Hi-Z test are compacted and rendered as occluders.
+// Identity mismatches are treated as visible so new/recycled commands cannot
+// disappear before they have contributed depth once.
+
+layout(local_size_x = 256) in;
+
+const int COMMAND_FLOATS = 20;
+const int HOT_UINTS = 20;
+
+layout(std430, binding = 0) readonly buffer InputCommandsBuffer { float inCommands[]; };
+layout(std430, binding = 1) writeonly buffer OutputCommandsBuffer { float outCommands[]; };
+
+layout(std430, binding = 2) readonly buffer InCountBuffer
+{
+    uint InCount;
+    uint InInstanceCount;
+    uint InOverflow;
+};
+
+layout(std430, binding = 3) buffer OutCountBuffer
+{
+    uint OutCount;
+    uint OutInstanceCount;
+    uint OutOverflow;
+};
+
+layout(std430, binding = 4) buffer OverflowFlagBuffer { uint OcclusionOverflowFlag; };
+
+// Two uints per DrawID: { RenderIdentityID + 1, visible }.
+layout(std430, binding = 6) readonly buffer VisibilityHistoryBuffer { uint VisibilityHistory[]; };
+layout(std430, binding = 9) readonly buffer InputHotCommandsBuffer { uint inHotCommands[]; };
+layout(std430, binding = 10) writeonly buffer OutputHotCommandsBuffer { uint outHotCommands[]; };
+
+struct GPUViewDescriptor
+{
+    uint ViewId;
+    uint ParentViewId;
+    uint Flags;
+    uint RenderPassMaskLo;
+    uint RenderPassMaskHi;
+    uint OutputLayer;
+    uint ViewRectX;
+    uint ViewRectY;
+    uint ViewRectW;
+    uint ViewRectH;
+    uint VisibleOffset;
+    uint VisibleCapacity;
+    vec4 FoveationA;
+    vec4 FoveationB;
+};
+
+struct GPUViewConstants
+{
+    mat4 View;
+    mat4 Projection;
+    mat4 ViewProjection;
+    mat4 PrevViewProjection;
+    vec4 CameraPositionAndNear;
+    vec4 CameraForwardAndFar;
+};
+
+layout(std430, binding = 11) readonly buffer ViewDescriptorBuffer { GPUViewDescriptor ViewDescriptors[]; };
+layout(std430, binding = 12) readonly buffer ViewConstantsBuffer { GPUViewConstants ViewConstants[]; };
+layout(std430, binding = 13) readonly buffer CommandViewMaskBuffer { uvec2 CommandViewMasks[]; };
+layout(std430, binding = 14) buffer PerViewVisibleIndicesBuffer { uint PerViewVisibleIndices[]; };
+layout(std430, binding = 15) buffer PerViewDrawCountBuffer { uint PerViewDrawCounts[]; };
+
+uniform int MaxOutputCommands;
+uniform int UseHotCommands;
+uniform int ActiveViewCount;
+uniform int CurrentRenderPass;
+
+#define FLAG_TRANSPARENT (1u << 0u)
+
+uint LoadLane(int base, int hotBase, int commandLane, int hotLane)
+{
+    return UseHotCommands != 0
+        ? inHotCommands[hotBase + hotLane]
+        : floatBitsToUint(inCommands[base + commandLane]);
+}
+
+bool WasPreviouslyVisible(uint drawId, uint renderIdentityId)
+{
+    uint recordBase = drawId * 2u;
+    if (recordBase + 1u >= uint(VisibilityHistory.length()))
+        return true;
+
+    uint identityKey = renderIdentityId + 1u;
+    if (identityKey == 0u || VisibilityHistory[recordBase] != identityKey)
+        return true;
+
+    return VisibilityHistory[recordBase + 1u] != 0u;
+}
+
+bool ViewMaskContains(uvec2 mask, uint viewId)
+{
+    if (viewId < 32u)
+        return (mask.x & (1u << viewId)) != 0u;
+
+    uint hi = viewId - 32u;
+    return hi < 32u && (mask.y & (1u << hi)) != 0u;
+}
+
+bool ViewPassMatches(uint viewId)
+{
+    if (viewId >= uint(ActiveViewCount) || viewId >= ViewDescriptors.length())
+        return false;
+
+    GPUViewDescriptor descriptor = ViewDescriptors[viewId];
+    if (CurrentRenderPass < 0)
+        return true;
+
+    if (CurrentRenderPass < 32)
+        return (descriptor.RenderPassMaskLo & (1u << uint(CurrentRenderPass))) != 0u;
+
+    uint hi = uint(CurrentRenderPass - 32);
+    return hi >= 32u || (descriptor.RenderPassMaskHi & (1u << hi)) != 0u;
+}
+
+void AppendPerView(uint sourceCommandIndex, uint outputCommandIndex, vec3 commandCenter, uint commandFlags)
+{
+    if (ActiveViewCount <= 0 || sourceCommandIndex >= CommandViewMasks.length())
+        return;
+
+    uvec2 mask = CommandViewMasks[sourceCommandIndex];
+    uint maxViews = min(uint(ActiveViewCount), min(64u, uint(PerViewDrawCounts.length())));
+    for (uint viewId = 0u; viewId < maxViews; ++viewId)
+    {
+        if (!ViewMaskContains(mask, viewId) || !ViewPassMatches(viewId))
+            continue;
+
+        GPUViewDescriptor descriptor = ViewDescriptors[viewId];
+        bool foveated = (descriptor.Flags & (1u << 3u)) != 0u;
+        if (foveated)
+        {
+            vec3 cameraPosition = ViewConstants[viewId].CameraPositionAndNear.xyz;
+            vec3 toCenter = commandCenter - cameraPosition;
+            float distanceSq = dot(toCenter, toCenter);
+            float fullResNearDistance = descriptor.FoveationB.w;
+            if (fullResNearDistance > 0.0 && distanceSq <= fullResNearDistance * fullResNearDistance)
+                continue;
+            if ((commandFlags & FLAG_TRANSPARENT) != 0u)
+                continue;
+        }
+
+        uint local = atomicAdd(PerViewDrawCounts[viewId], 1u);
+        if (local < descriptor.VisibleCapacity)
+        {
+            uint destination = descriptor.VisibleOffset + local;
+            if (destination < PerViewVisibleIndices.length())
+                PerViewVisibleIndices[destination] = outputCommandIndex;
+        }
+    }
+}
+
+void main()
+{
+    uint candidateIndex = gl_GlobalInvocationID.x;
+    if (candidateIndex >= InCount)
+        return;
+
+    int base = int(candidateIndex) * COMMAND_FLOATS;
+    int hotBase = int(candidateIndex) * HOT_UINTS;
+    if (base + COMMAND_FLOATS > inCommands.length())
+        return;
+    if (UseHotCommands != 0 && hotBase + HOT_UINTS > inHotCommands.length())
+        return;
+
+    uint instanceCount = LoadLane(base, hotBase, 7, 7);
+    if (instanceCount == 0u)
+        return;
+
+    uint drawId = LoadLane(base, hotBase, 19, 14);
+    uint renderIdentityId = LoadLane(base, hotBase, 9, 12);
+    if (!WasPreviouslyVisible(drawId, renderIdentityId))
+        return;
+
+    uint outputIndex = atomicAdd(OutCount, 1u);
+    if (outputIndex >= uint(MaxOutputCommands))
+    {
+        atomicAdd(OcclusionOverflowFlag, 1u);
+        OutOverflow = 1u;
+        return;
+    }
+
+    int outputBase = int(outputIndex) * COMMAND_FLOATS;
+    for (int lane = 0; lane < COMMAND_FLOATS; ++lane)
+        outCommands[outputBase + lane] = inCommands[base + lane];
+
+    if (UseHotCommands != 0)
+    {
+        int outputHotBase = int(outputIndex) * HOT_UINTS;
+        for (int lane = 0; lane < HOT_UINTS; ++lane)
+            outHotCommands[outputHotBase + lane] = inHotCommands[hotBase + lane];
+    }
+
+    vec3 center = UseHotCommands != 0
+        ? vec3(
+            uintBitsToFloat(inHotCommands[hotBase + 0]),
+            uintBitsToFloat(inHotCommands[hotBase + 1]),
+            uintBitsToFloat(inHotCommands[hotBase + 2]))
+        : vec3(inCommands[base + 0], inCommands[base + 1], inCommands[base + 2]);
+    uint flags = LoadLane(base, hotBase, 13, 10);
+    AppendPerView(drawId, outputIndex, center, flags);
+    atomicAdd(OutInstanceCount, instanceCount);
+}

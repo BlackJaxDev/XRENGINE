@@ -501,7 +501,9 @@ namespace XREngine
 
             try
             {
-                placeholder.Mipmaps = [new Mipmap2D(new MagickImage(XRTexture2D.FillerImage))];
+                using MagickImage filler = (MagickImage)XRTexture2D.FillerImage.Clone();
+                placeholder.Mipmaps = [new Mipmap2D(filler)];
+                placeholder.SizedInternalFormat = ESizedInternalFormat.Rgba8;
             }
             catch (Exception ex)
             {

@@ -103,6 +103,14 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         private bool _supportsDescriptorBindingStorageImageUpdateAfterBind;
         /// <summary>
+        /// Indicates whether variable descriptor counts are supported.
+        /// </summary>
+        private bool _supportsDescriptorBindingVariableDescriptorCount;
+        /// <summary>
+        /// Indicates whether shaders can non-uniformly index sampled-image descriptor arrays.
+        /// </summary>
+        private bool _supportsShaderSampledImageArrayNonUniformIndexing;
+        /// <summary>
         /// Indicates whether the external memory Win32 feature is supported.
         /// </summary>
         private bool _supportsExternalMemoryWin32;

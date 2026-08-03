@@ -1,8 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
 using SkiaSharp;
 using Svg.Skia;
 using XREngine.Data.Rendering;
@@ -141,10 +139,8 @@ public static partial class EditorImGuiUI
             canvas.DrawPicture(picture, in matrix);
             canvas.Flush();
 
-            var pixelSpan = bitmap.GetPixelSpan();
-            using Image<Rgba32> image = Image.LoadPixelData<Rgba32>(MemoryMarshal.AsBytes(pixelSpan), size, size);
-
-            XRTexture2D texture = new(image)
+            ReadOnlySpan<byte> rgbaPixels = MemoryMarshal.AsBytes(bitmap.GetPixelSpan());
+            XRTexture2D texture = new((uint)size, (uint)size, rgbaPixels)
             {
                 Name = Path.GetFileNameWithoutExtension(svgPath),
                 FilePath = svgPath,

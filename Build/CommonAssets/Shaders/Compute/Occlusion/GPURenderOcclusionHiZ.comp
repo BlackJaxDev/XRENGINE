@@ -39,8 +39,44 @@ struct BoundsGpu
 };
 
 layout(std430, binding = 5) readonly buffer BoundsBuffer { BoundsGpu Bounds[]; };
+// Two uints per DrawID: { RenderIdentityID + 1, visible }.
+layout(std430, binding = 6) buffer VisibilityHistoryBuffer { uint VisibilityHistory[]; };
 layout(std430, binding = 9) readonly buffer InputHotCommandsBuffer { uint inHotCommands[]; };
 layout(std430, binding = 10) writeonly buffer OutputHotCommandsBuffer { uint outHotCommands[]; };
+
+struct GPUViewDescriptor
+{
+    uint ViewId;
+    uint ParentViewId;
+    uint Flags;
+    uint RenderPassMaskLo;
+    uint RenderPassMaskHi;
+    uint OutputLayer;
+    uint ViewRectX;
+    uint ViewRectY;
+    uint ViewRectW;
+    uint ViewRectH;
+    uint VisibleOffset;
+    uint VisibleCapacity;
+    vec4 FoveationA;
+    vec4 FoveationB;
+};
+
+struct GPUViewConstants
+{
+    mat4 View;
+    mat4 Projection;
+    mat4 ViewProjection;
+    mat4 PrevViewProjection;
+    vec4 CameraPositionAndNear;
+    vec4 CameraForwardAndFar;
+};
+
+layout(std430, binding = 11) readonly buffer ViewDescriptorBuffer { GPUViewDescriptor ViewDescriptors[]; };
+layout(std430, binding = 12) readonly buffer ViewConstantsBuffer { GPUViewConstants ViewConstants[]; };
+layout(std430, binding = 13) readonly buffer CommandViewMaskBuffer { uvec2 CommandViewMasks[]; };
+layout(std430, binding = 14) buffer PerViewVisibleIndicesBuffer { uint PerViewVisibleIndices[]; };
+layout(std430, binding = 15) buffer PerViewDrawCountBuffer { uint PerViewDrawCounts[]; };
 
 // Optional stats buffer (shared layout)
 layout(std430, binding = 8) buffer StatsBuffer {
@@ -71,11 +107,110 @@ uniform int HiZMaxMip;
 uniform uint IsReversedDepth; // 1 if camera uses reversed Z
 uniform int MaxOutputCommands;
 uniform int UseHotCommands;
+uniform int TwoPassPhase; // 0 = legacy refine, 2 = late two-pass visibility update
+uniform int ActiveViewCount;
+uniform int CurrentRenderPass;
 
 const int COMMAND_FLOATS = 20;
 const int HOT_UINTS = 20;
 const int HIZ_TARGET_TEXEL_SPAN = 6;
 const int HIZ_MAX_SAMPLE_TEXELS = 8;
+
+#define FLAG_TRANSPARENT (1u << 0u)
+
+uint LoadCommandUInt(int base, int hotBase, int commandLane, int hotLane)
+{
+    return UseHotCommands != 0
+        ? inHotCommands[hotBase + hotLane]
+        : floatBitsToUint(inCommands[base + commandLane]);
+}
+
+bool LoadPreviousVisibility(uint drawId, uint renderIdentityId, out uint recordBase)
+{
+    recordBase = drawId * 2u;
+    if (recordBase + 1u >= uint(VisibilityHistory.length()))
+        return true;
+
+    uint identityKey = renderIdentityId + 1u;
+    if (identityKey == 0u || VisibilityHistory[recordBase] != identityKey)
+        return true;
+
+    return VisibilityHistory[recordBase + 1u] != 0u;
+}
+
+void StoreCurrentVisibility(uint recordBase, uint renderIdentityId, bool visible)
+{
+    if (recordBase + 1u >= uint(VisibilityHistory.length()))
+        return;
+
+    uint identityKey = renderIdentityId + 1u;
+    if (identityKey == 0u)
+        return;
+
+    VisibilityHistory[recordBase] = identityKey;
+    VisibilityHistory[recordBase + 1u] = visible ? 1u : 0u;
+}
+
+bool ViewMaskContains(uvec2 mask, uint viewId)
+{
+    if (viewId < 32u)
+        return (mask.x & (1u << viewId)) != 0u;
+
+    uint hi = viewId - 32u;
+    return hi < 32u && (mask.y & (1u << hi)) != 0u;
+}
+
+bool ViewPassMatches(uint viewId)
+{
+    if (viewId >= uint(ActiveViewCount) || viewId >= ViewDescriptors.length())
+        return false;
+
+    GPUViewDescriptor descriptor = ViewDescriptors[viewId];
+    if (CurrentRenderPass < 0)
+        return true;
+
+    if (CurrentRenderPass < 32)
+        return (descriptor.RenderPassMaskLo & (1u << uint(CurrentRenderPass))) != 0u;
+
+    uint hi = uint(CurrentRenderPass - 32);
+    return hi >= 32u || (descriptor.RenderPassMaskHi & (1u << hi)) != 0u;
+}
+
+void AppendPerView(uint sourceCommandIndex, uint outputCommandIndex, vec3 commandCenter, uint commandFlags)
+{
+    if (ActiveViewCount <= 0 || sourceCommandIndex >= CommandViewMasks.length())
+        return;
+
+    uvec2 mask = CommandViewMasks[sourceCommandIndex];
+    uint maxViews = min(uint(ActiveViewCount), min(64u, uint(PerViewDrawCounts.length())));
+    for (uint viewId = 0u; viewId < maxViews; ++viewId)
+    {
+        if (!ViewMaskContains(mask, viewId) || !ViewPassMatches(viewId))
+            continue;
+
+        GPUViewDescriptor descriptor = ViewDescriptors[viewId];
+        bool foveated = (descriptor.Flags & (1u << 3u)) != 0u;
+        if (foveated)
+        {
+            vec3 cameraPosition = ViewConstants[viewId].CameraPositionAndNear.xyz;
+            vec3 toCenter = commandCenter - cameraPosition;
+            float distanceSq = dot(toCenter, toCenter);
+            float fullResNearDistance = descriptor.FoveationB.w;
+            if (fullResNearDistance > 0.0 && distanceSq <= fullResNearDistance * fullResNearDistance)
+                continue;
+            if ((commandFlags & FLAG_TRANSPARENT) != 0u)
+                continue;
+        }
+
+        uint local = atomicAdd(PerViewDrawCounts[viewId], 1u);
+        if (local < descriptor.VisibleCapacity)
+        {
+            uint destination = descriptor.VisibleOffset + local;
+            if (destination < PerViewVisibleIndices.length())
+                PerViewVisibleIndices[destination] = outputCommandIndex;
+        }
+    }
+}
 
 uint LoadBoundsId(int base, int hotBase)
 {
@@ -315,6 +450,13 @@ void main()
     if (!IsValidCommand(base))
         return;
 
+    uint drawId = LoadCommandUInt(base, hotBase, 19, 14);
+    uint renderIdentityId = LoadCommandUInt(base, hotBase, 9, 12);
+    uint visibilityRecordBase = 0u;
+    bool previouslyVisible = true;
+    if (TwoPassPhase == 2)
+        previouslyVisible = LoadPreviousVisibility(drawId, renderIdentityId, visibilityRecordBase);
+
     vec3 center;
     float radius;
     if (UseHotCommands != 0)
@@ -333,7 +475,16 @@ void main()
     bool occluded = TryLoadAabb(base, hotBase, aabbMin, aabbMax)
         ? HiZOccludedAabb(aabbMin, aabbMax)
         : HiZOccluded(center, radius);
+
+    if (TwoPassPhase == 2)
+        StoreCurrentVisibility(visibilityRecordBase, renderIdentityId, !occluded);
+
     if (occluded)
+        return;
+
+    // A command emitted in phase one is already present in the frame. Phase two
+    // still tested it to update next frame's visibility, but must not draw it twice.
+    if (TwoPassPhase == 2 && previouslyVisible)
         return;
 
     uint outIndex = atomicAdd(OutCount, 1u);
@@ -358,5 +509,7 @@ void main()
     uint instanceCount = UseHotCommands != 0
         ? inHotCommands[hotBase + 7]
         : floatBitsToUint(inCommands[base + 7]);
+    uint flags = LoadCommandUInt(base, hotBase, 13, 10);
+    AppendPerView(drawId, outIndex, center, flags);
     atomicAdd(OutInstanceCount, instanceCount);
 }

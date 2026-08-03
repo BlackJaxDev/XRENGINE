@@ -4,8 +4,6 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using SkiaSharp;
 using Svg.Skia;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
 using XREngine.Data.Rendering;
 using XREngine.Diagnostics;
 using XREngine.Rendering;
@@ -243,10 +241,8 @@ public class UISvgComponent : UIMaterialComponent
         canvas.DrawPicture(picture, in matrix);
         canvas.Flush();
 
-        var pixelSpan = bitmap.GetPixelSpan();
-        using Image<Rgba32> image = Image.LoadPixelData<Rgba32>(MemoryMarshal.AsBytes(pixelSpan), targetSize.Width, targetSize.Height);
-
-        XRTexture2D texture = new(image)
+        ReadOnlySpan<byte> rgbaPixels = MemoryMarshal.AsBytes(bitmap.GetPixelSpan());
+        XRTexture2D texture = new((uint)targetSize.Width, (uint)targetSize.Height, rgbaPixels)
         {
             Name = Path.GetFileNameWithoutExtension(path),
             FilePath = path,

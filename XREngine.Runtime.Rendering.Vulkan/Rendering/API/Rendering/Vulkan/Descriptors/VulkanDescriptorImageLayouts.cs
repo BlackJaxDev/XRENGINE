@@ -75,14 +75,14 @@ public unsafe partial class VulkanRenderer
     }
 
     /// <summary>
-    /// Uses an exact tracked read layout when one is known, preserves General only for an explicit
-    /// storage-and-sampling contract, and otherwise uses the aspect-appropriate requested layout.
+    /// Uses General for an explicit storage-and-sampling contract, otherwise preserves an exact
+    /// tracked read layout when one is known, and falls back to the aspect-appropriate requested layout.
     /// </summary>
     internal static ImageLayout ResolveTrackedSampledDescriptorLayout(
         ImageUsageFlags usage,
         ImageLayout trackedLayout,
         ImageLayout requestedLayout)
-        => trackedLayout == ImageLayout.General && UsesGeneralSampledDescriptorLayout(usage)
+        => UsesGeneralSampledDescriptorLayout(usage)
             ? ImageLayout.General
             : trackedLayout is
                 ImageLayout.ShaderReadOnlyOptimal or

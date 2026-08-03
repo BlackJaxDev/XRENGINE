@@ -235,10 +235,20 @@ namespace XREngine.Rendering.Vulkan
                 _commandScheduler.RequiresFreshPrimary(
                     state.HasStaticFrameOperations,
                     VulkanPrimaryCommandBufferReuseEnabled);
+            bool scheduleRequiresFreshPrimary =
+                state.CommandChainSchedule?.RequiresFreshPrimary == true;
 
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.RecordCommandBuffer.DirtyEvaluation"))
             {
+                if (!state.Dirty && scheduleRequiresFreshPrimary)
+                {
+                    state.Dirty = true;
+                    state.PrimaryFrameStateDirty = true;
+                    state.PrimaryFrameStateDirtyReason =
+                        "command-chain-inline-publication";
+                }
+
                 if (!state.Dirty && frameOperationsRequireFreshPrimary)
                 {
                     state.Dirty = true;
@@ -294,7 +304,8 @@ namespace XREngine.Rendering.Vulkan
                 // refresh their per-draw camera data through reusable secondary ranges.
                 if (!state.Dirty &&
                     _commandScheduler.HasCameraGenerationChanged(
-                        state.UsingCommandChains,
+                        state.UsingCommandChains &&
+                            state.AllCommandChainGroupsUseSecondaryBuffers,
                         variant.RecordedGenerations.CameraPose,
                         state.CurrentGenerations.CameraPose))
                 {

@@ -1,0 +1,6 @@
+﻿License text could not be resolved locally for NuGet package 'BenchmarkDotNet' (0.15.8).
+
+Resolved license: MIT
+RepositoryUrl: https://github.com/dotnet/BenchmarkDotNet
+ProjectUrl: https://github.com/dotnet/BenchmarkDotNet
+

@@ -25,35 +25,47 @@ namespace XREngine.Scene.Physics.Physx
         }
         public PhysxHeightField(string imagePath)
         {
-            MagickImage image = new(imagePath);
+            using MagickImage image = new(imagePath);
             uint width = image.Width;
             uint height = image.Height;
-            var samples = stackalloc PxHeightFieldSample[(int)(width * height)];
+            long sampleCount = checked((long)width * height);
+            if (sampleCount > int.MaxValue)
+                throw new NotSupportedException("PhysX heightfields cannot contain more than 2,147,483,647 samples.");
 
-            var values = image.GetPixels().GetValues() ?? throw new Exception("Image does not contain pixel values.");
-            if (values.Length != width * height)
-                throw new Exception("Image size does not match heightfield size.");
+            using IPixelCollection<float> pixels = image.GetPixels()
+                ?? throw new InvalidDataException("Image does not contain pixel values.");
+            ushort[] values = pixels.ToShortArray("I")
+                ?? throw new InvalidDataException("ImageMagick returned no heightfield samples.");
+            if (values.Length != sampleCount)
+                throw new InvalidDataException("Image size does not match heightfield sample count.");
 
-            Parallel.For(0, values.Length, index =>
+            PxHeightFieldSample[] samples = GC.AllocateUninitializedArray<PxHeightFieldSample>(values.Length);
+            for (int index = 0; index < values.Length; index++)
             {
-                PxHeightFieldSample* sample = &samples[index];
-                sample->height = (short)values[index];
+                ref PxHeightFieldSample sample = ref samples[index];
+                sample.height = unchecked((short)(values[index] - 32768));
                 if (index % 2 != 0)
-                    sample->SetTessFlagMut();
+                    sample.SetTessFlagMut();
                 else
-                    sample->ClearTessFlagMut();
-            });
+                    sample.ClearTessFlagMut();
+            }
 
             PxHeightFieldDesc desc = PxHeightFieldDesc_new();
             desc.nbColumns = width;
             desc.nbRows = height;
-            desc.samples.data = samples;
             desc.samples.stride = (uint)sizeof(PxHeightFieldSample);
             desc.format = PxHeightFieldFormat.S16Tm;
             //desc.convexEdgeThreshold = 3.0f;
             //desc.flags = PxHeightFieldFlags.NoBoundaryEdges;
 
-            HeightFieldPtr = phys_PxCreateHeightField(&desc, PhysxScene.PhysicsPtr->GetPhysicsInsertionCallbackMut());
+            fixed (PxHeightFieldSample* samplePtr = samples)
+            {
+                desc.samples.data = samplePtr;
+                HeightFieldPtr = phys_PxCreateHeightField(&desc, PhysxScene.PhysicsPtr->GetPhysicsInsertionCallbackMut());
+            }
+
+            if (HeightFieldPtr is null)
+                throw new InvalidOperationException($"PhysX failed to create a heightfield from '{imagePath}'.");
         }
 
         public uint SaveCells(DataSource data)

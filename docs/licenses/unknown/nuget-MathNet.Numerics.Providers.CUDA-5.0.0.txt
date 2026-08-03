@@ -1,0 +1,6 @@
+﻿License text could not be resolved locally for NuGet package 'MathNet.Numerics.Providers.CUDA' (5.0.0).
+
+Resolved license: MIT
+RepositoryUrl: https://github.com/mathnet/mathnet-numerics
+ProjectUrl: https://numerics.mathdotnet.com/
+

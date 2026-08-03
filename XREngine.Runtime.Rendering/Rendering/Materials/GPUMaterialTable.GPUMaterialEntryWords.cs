@@ -8,7 +8,7 @@ public partial class GPUMaterialTable
         [StructLayout(LayoutKind.Sequential)]
         private struct GPUMaterialEntryWords
         {
-            public const int WordCount = 12;
+            public const int WordCount = 13;
 
             public uint AlbedoHandleIndex;
             public uint NormalHandleIndex;
@@ -22,6 +22,7 @@ public partial class GPUMaterialTable
             public uint Metallic;
             public uint Specular;
             public uint Emission;
+            public uint AlphaCutoff;
         }
     }
 }

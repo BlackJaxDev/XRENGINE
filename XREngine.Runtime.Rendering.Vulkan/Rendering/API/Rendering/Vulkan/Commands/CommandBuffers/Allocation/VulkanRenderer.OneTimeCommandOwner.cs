@@ -9,6 +9,5 @@ namespace XREngine.Rendering.Vulkan
             public CommandPool Pool { get; } = pool;
             public bool UseTransferQueue { get; } = useTransferQueue;
         }
-
     }
 }

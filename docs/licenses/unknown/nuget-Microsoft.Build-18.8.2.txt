@@ -1,0 +1,6 @@
+﻿License text could not be resolved locally for NuGet package 'Microsoft.Build' (18.8.2).
+
+Resolved license: MIT
+RepositoryUrl: https://github.com/dotnet/msbuild
+ProjectUrl: http://go.microsoft.com/fwlink/?LinkId=624683
+

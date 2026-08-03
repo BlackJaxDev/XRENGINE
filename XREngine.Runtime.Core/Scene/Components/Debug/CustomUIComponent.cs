@@ -109,6 +109,22 @@ public sealed class CustomUIComponent : XRComponent
         _fields.Add(field);
         return field;
     }
+
+    /// <summary>
+    /// Adds a collapsible group that projects another programmable control set into this
+    /// component without copying its getter/setter delegates.
+    /// </summary>
+    public CustomUIGroupField AddGroupField(
+        string label,
+        IReadOnlyList<CustomUIField> fields,
+        Func<bool>? isVisible = null,
+        bool defaultOpen = true,
+        string? helpText = null)
+    {
+        var field = new CustomUIGroupField(label, fields, isVisible, defaultOpen, helpText);
+        _fields.Add(field);
+        return field;
+    }
 }
 
 public abstract class CustomUIField(string label, string? helpText = null)

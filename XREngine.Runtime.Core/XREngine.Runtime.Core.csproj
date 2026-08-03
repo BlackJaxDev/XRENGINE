@@ -30,6 +30,7 @@
     <PackageReference Include="JoltPhysicsSharp" Version="2.22.0" />
     <PackageReference Include="MagicPhysX" Version="1.0.0" />
     <PackageReference Include="Jitter2" Version="2.8.9" />
+    <PackageReference Include="Magick.NET-Q16-HDRI-x64" Version="14.16.0" />
     <PackageReference Include="MemoryPack" Version="1.21.4" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="YamlDotNet" Version="18.1.0" />

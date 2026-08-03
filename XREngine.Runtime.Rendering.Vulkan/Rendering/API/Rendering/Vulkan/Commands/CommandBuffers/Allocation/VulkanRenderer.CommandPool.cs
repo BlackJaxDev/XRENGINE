@@ -46,20 +46,12 @@ namespace XREngine.Rendering.Vulkan
             {
                 HashSet<ulong> destroyed = [];
                 foreach (CommandPool pool in _threadCommandPools.Values)
-                {
-                    if (pool.Handle == 0 || !destroyed.Add(pool.Handle))
-                        continue;
-
-                    DestroyCommandPoolHostSynchronized(pool);
-                }
+                    if (pool.Handle != 0 && destroyed.Add(pool.Handle))
+                        DestroyCommandPoolHostSynchronized(pool);
 
                 foreach (CommandPool pool in _threadTransferCommandPools.Values)
-                {
-                    if (pool.Handle == 0 || !destroyed.Add(pool.Handle))
-                        continue;
-
-                    DestroyCommandPoolHostSynchronized(pool);
-                }
+                    if (pool.Handle != 0 && destroyed.Add(pool.Handle))
+                        DestroyCommandPoolHostSynchronized(pool);
 
                 _threadCommandPools.Clear();
                 _threadTransferCommandPools.Clear();
