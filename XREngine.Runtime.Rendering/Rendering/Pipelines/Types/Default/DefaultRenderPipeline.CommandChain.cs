@@ -694,7 +694,7 @@ public partial class DefaultRenderPipeline
         {
             c.Add<VPRC_DepthTest>().Enable = true;
             c.Add<VPRC_DepthWrite>().Allow = false;
-            c.Add<VPRC_RenderMotionVectorsPass>().SetOptions(false,
+            c.Add<VPRC_RenderMotionVectorsPass>().SetOptions(GPURenderDispatch,
                 new[]
                 {
                     (int)EDefaultRenderPass.OpaqueDeferred,

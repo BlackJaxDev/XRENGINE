@@ -39,6 +39,8 @@ public sealed partial class XRRenderPipelineInstance
             static state => ((RenderingState)state!).PopProgramBindings();
         private static readonly Action<object?> PopUseDepthNormalMaterialVariantsAction =
             static state => ((RenderingState)state!).PopUseDepthNormalMaterialVariants();
+        private static readonly Action<object?> PopUseMotionVectorMaterialVariantAction =
+            static state => ((RenderingState)state!).PopUseMotionVectorMaterialVariant();
         private static readonly Action<object?> PopUnjitteredProjectionAction =
             static state => ((RenderingState)state!).PopUnjitteredProjection();
         private static readonly Action<object?> PopForceShaderPipelinesAction =
@@ -856,6 +858,27 @@ public sealed partial class XRRenderPipelineInstance
             {
                 _useDepthNormalMaterialVariantsDepth = 0;
                 UseDepthNormalMaterialVariants = false;
+            }
+        }
+
+        /// <summary>
+        /// Selects the GPU-resident material-table velocity fragment variant.
+        /// </summary>
+        public bool UseMotionVectorMaterialVariant { get; private set; }
+        private int _useMotionVectorMaterialVariantDepth;
+        public StateObject PushUseMotionVectorMaterialVariant()
+        {
+            _useMotionVectorMaterialVariantDepth++;
+            UseMotionVectorMaterialVariant = true;
+            return StateObject.New(PopUseMotionVectorMaterialVariantAction, this);
+        }
+        private void PopUseMotionVectorMaterialVariant()
+        {
+            _useMotionVectorMaterialVariantDepth--;
+            if (_useMotionVectorMaterialVariantDepth <= 0)
+            {
+                _useMotionVectorMaterialVariantDepth = 0;
+                UseMotionVectorMaterialVariant = false;
             }
         }
 

@@ -1,8 +1,6 @@
 using ImageMagick;
 using MemoryPack;
 using SharpFont;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
 using SkiaSharp;
 using System.Buffers;
 using System.Numerics;
@@ -458,7 +456,7 @@ namespace XREngine.Rendering
             ETexMagFilter magFilter,
             bool autoGenerateMipmaps)
         {
-            using Image<Rgba32> atlasImage = Image.Load<Rgba32>(atlasPath);
+            using MagickImage atlasImage = new(atlasPath);
             var atlasTexture = new XRTexture2D(atlasImage)
             {
                 FilePath = atlasPath,
@@ -486,12 +484,12 @@ namespace XREngine.Rendering
 
         private static XRTexture2D CreateBitmapAtlasTexture(string atlasPath)
         {
-            using Image<Rgba32> atlasImage = Image.Load<Rgba32>(atlasPath);
+            using MagickImage atlasImage = new(atlasPath);
             byte[] coverage = ExtractAlphaCoverage(atlasImage);
 
             var atlasTexture = new XRTexture2D(
-                (uint)atlasImage.Width,
-                (uint)atlasImage.Height,
+                atlasImage.Width,
+                atlasImage.Height,
                 EPixelInternalFormat.R8,
                 EPixelFormat.Red,
                 EPixelType.UnsignedByte,
@@ -508,23 +506,18 @@ namespace XREngine.Rendering
                 SizedInternalFormat = ESizedInternalFormat.R8,
             };
 
-            atlasTexture.Mipmaps = CreateBitmapCoverageMipmaps(coverage, atlasImage.Width, atlasImage.Height, preferCompressedYaml: true);
+            atlasTexture.Mipmaps = CreateBitmapCoverageMipmaps(coverage, checked((int)atlasImage.Width), checked((int)atlasImage.Height), preferCompressedYaml: true);
             atlasTexture.SmallestAllowedMipmapLevel = Math.Max(0, atlasTexture.Mipmaps.Length - 1);
 
             return atlasTexture;
         }
 
-        private static byte[] ExtractAlphaCoverage(Image<Rgba32> atlasImage)
+        private static byte[] ExtractAlphaCoverage(MagickImage atlasImage)
         {
-            byte[] coverage = new byte[atlasImage.Width * atlasImage.Height];
-
-            for (int y = 0; y < atlasImage.Height; y++)
-            {
-                for (int x = 0; x < atlasImage.Width; x++)
-                    coverage[x + (y * atlasImage.Width)] = atlasImage[x, y].A;
-            }
-
-            return coverage;
+            using IPixelCollection<float> pixels = atlasImage.GetPixels()
+                ?? throw new InvalidOperationException("ImageMagick could not expose the font atlas pixels.");
+            return pixels.ToByteArray("A")
+                ?? throw new InvalidDataException("ImageMagick returned no font atlas alpha data.");
         }
 
         private static bool TryGetBounds(JsonElement element, string propertyName, out float left, out float top, out float right, out float bottom, bool topDown)
@@ -688,7 +681,7 @@ namespace XREngine.Rendering
                 using (SKCanvas canvas = new(bitmap))
                 {
                     canvas.Clear(SKColors.Transparent);
-                    canvas.DrawText(character, x, y, font, paint);
+                    canvas.DrawText(character, x, y, SKTextAlign.Left, font, paint);
                 }
 
                 glyphBitmaps.Add(bitmap);
@@ -736,7 +729,7 @@ namespace XREngine.Rendering
                     int x = (col * glyphCellWidth) + BitmapAtlasPadding;
                     int y = (row * glyphCellHeight) + BitmapAtlasPadding;
 
-                    atlasCanvas.DrawBitmap(glyphBitmaps[i], x, y);
+                    atlasCanvas.DrawBitmap(glyphBitmaps[i], x, y, SKSamplingOptions.Default, null);
                     glyphInfos[i].info.Position = new Vector2(x, y);
                 }
             }

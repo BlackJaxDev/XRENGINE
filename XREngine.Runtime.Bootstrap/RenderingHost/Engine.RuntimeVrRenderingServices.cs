@@ -3,6 +3,7 @@ using OpenVR.NET;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using OpenVR.NET.Devices;
@@ -635,21 +636,16 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
             if (!comp.ModelName.EndsWith(".obj", StringComparison.OrdinalIgnoreCase))
                 return null;
 
-            XRMesh mesh = new();
-            XRMaterial mat = new();
-
             List<Vertex> vertices = [];
             List<ushort> triangleIndices = [];
-            List<XRTexture2D> textures = [];
-
-            SubMesh? subMesh = null;
+            List<Task<XRTexture2D?>> textureLoads = [];
 
             void OnError(EVRRenderModelError error, ComponentModel.Context context)
             {
             }
 
             void AddTexture(ComponentModel.Texture texture)
-                => textures.Add(new XRTexture2D(texture.LoadImage(true)));
+                => textureLoads.Add(LoadTextureAsync(texture));
 
             void AddTriangle(short index0, short index1, short index2)
             {
@@ -661,29 +657,59 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
             void AddVertex(Vector3 position, Vector3 normal, Vector2 uv)
                 => vertices.Add(new Vertex(position, normal, uv));
 
-            void End(ComponentModel.ComponentType type)
-            {
-                if (vertices.Count == 0 || triangleIndices.Count == 0)
-                    return;
-
-                if (triangleIndices.Max() >= vertices.Count)
-                {
-                    Debug.VRWarning("Invalid triangle index detected in model component.");
-                    return;
-                }
-
-                mesh = new XRMesh(vertices, triangleIndices);
-                mat = textures.Count > 0
-                    ? XRMaterial.CreateLitTextureMaterial(textures[0])
-                    : XRMaterial.CreateLitColorMaterial(ColorF4.Magenta);
-                subMesh = new SubMesh(new SubMeshLOD(mat, mesh, 0.0f));
-            }
-
             bool Begin(ComponentModel.ComponentType type)
                 => true;
 
-            await comp.LoadAsync(Begin, End, AddVertex, AddTriangle, AddTexture, OnError);
-            return subMesh;
+            await comp.LoadAsync(Begin, null, AddVertex, AddTriangle, AddTexture, OnError);
+
+            List<XRTexture2D> textures = [];
+            foreach (Task<XRTexture2D?> textureLoad in textureLoads)
+            {
+                XRTexture2D? texture = await textureLoad;
+                if (texture is not null)
+                    textures.Add(texture);
+            }
+
+            if (vertices.Count == 0 || triangleIndices.Count == 0)
+                return null;
+
+            if (triangleIndices.Max() >= vertices.Count)
+            {
+                Debug.VRWarning("Invalid triangle index detected in model component.");
+                return null;
+            }
+
+            XRMesh mesh = new(vertices, triangleIndices);
+            XRMaterial material = textures.Count > 0
+                ? XRMaterial.CreateLitTextureMaterial(textures[0])
+                : XRMaterial.CreateLitColorMaterial(ColorF4.Magenta);
+            return new SubMesh(new SubMeshLOD(material, mesh, 0.0f));
+        }
+
+        private static async Task<XRTexture2D?> LoadTextureAsync(ComponentModel.Texture texture)
+        {
+            try
+            {
+                (int width, int height, IntPtr data) = await texture.LoadParams();
+                if (width <= 0 || height <= 0 || data == IntPtr.Zero)
+                    return null;
+
+                int rowByteCount = checked(width * 4);
+                byte[] rgbaPixels = new byte[checked(rowByteCount * height)];
+                for (int sourceY = 0; sourceY < height; sourceY++)
+                {
+                    IntPtr sourceRow = IntPtr.Add(data, sourceY * rowByteCount);
+                    int destinationOffset = (height - sourceY - 1) * rowByteCount;
+                    Marshal.Copy(sourceRow, rgbaPixels, destinationOffset, rowByteCount);
+                }
+
+                return new XRTexture2D((uint)width, (uint)height, rgbaPixels);
+            }
+            catch (Exception ex)
+            {
+                Debug.VRWarning($"Failed to load OpenVR render-model texture {texture.ID}: {ex.Message}");
+                return null;
+            }
         }
     }
 }

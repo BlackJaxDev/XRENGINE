@@ -1,0 +1,6 @@
+﻿License text could not be resolved locally for NuGet package 'NAudio.Sdl2' (2.2.6).
+
+Resolved license: MIT
+RepositoryUrl: https://github.com/alextnull/NAudio
+ProjectUrl: https://github.com/alextnull/NAudio
+

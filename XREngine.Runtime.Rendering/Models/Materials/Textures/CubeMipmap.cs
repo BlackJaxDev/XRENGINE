@@ -43,6 +43,9 @@ namespace XREngine.Rendering.Models.Materials.Textures
             uint outHeight = inWidth * 3 / 4;
 
             using MagickImage imgOut = new(MagickColors.Black, outWidth, outHeight);
+            imgOut.Format = equirectangularBmp.Format;
+            imgOut.ColorSpace = equirectangularBmp.ColorSpace;
+            imgOut.Depth = equirectangularBmp.Depth;
             ConvertBack(equirectangularBmp, imgOut);
             return SetCrossCubeMap(imgOut);
 
@@ -59,10 +62,14 @@ namespace XREngine.Rendering.Models.Materials.Textures
             uint edge = inWidth / 4;
             Console.WriteLine("Edge length in pixels: {0}", edge);
 
-            var inPixels = imgIn.GetPixels();
-            var outPixels = imgOut.GetPixels();
+            using IPixelCollection<float> inPixels = imgIn.GetPixels()
+                ?? throw new InvalidOperationException("ImageMagick could not expose the equirectangular source pixels.");
+            using IPixelCollection<float> outPixels = imgOut.GetPixels()
+                ?? throw new InvalidOperationException("ImageMagick could not expose the cubemap destination pixels.");
 
-            double maxValue = (double)Quantum.Max;
+            float[] outputPixel = new float[3];
+            double maxValue = Quantum.Max;
+            bool preserveHdrRange = imgIn.Format is MagickFormat.Exr or MagickFormat.Hdr or MagickFormat.Pfm;
 
             for (uint i = 0; i < outWidth; i++)
             {
@@ -71,17 +78,10 @@ namespace XREngine.Rendering.Models.Materials.Textures
                     Console.WriteLine("Processing {0} of {1}", i, outWidth);
                 }
                 uint face = i / edge;
-                IEnumerable<int> rng;
-                if (face == 2)
-                {
-                    rng = Enumerable.Range(0, (int)edge * 3);
-                }
-                else
-                {
-                    rng = Enumerable.Range((int)edge, (int)edge);
-                }
+                int startRow = face == 2 ? 0 : (int)edge;
+                int endRow = face == 2 ? (int)edge * 3 : (int)edge * 2;
 
-                foreach (int j in rng)
+                for (int j = startRow; j < endRow; j++)
                 {
                     int face2;
                     if (j < edge)
@@ -97,10 +97,7 @@ namespace XREngine.Rendering.Models.Materials.Textures
                         face2 = (int)face;
                     }
 
-                    var xyz = OutImgToXYZ((int)i, j, face2, (int)edge);
-                    double x = xyz.Item1;
-                    double y = xyz.Item2;
-                    double z = xyz.Item3;
+                    OutImgToXYZ((int)i, j, face2, (int)edge, out double x, out double y, out double z);
                     double theta = Math.Atan2(y, x); // -pi to pi
                     double r = Hypot(x, y);
                     double phi = Math.Atan2(z, r); // -pi/2 to pi/2
@@ -138,25 +135,21 @@ namespace XREngine.Rendering.Models.Materials.Textures
                     double blue = A.GetChannel(2) * (1 - mu) * (1 - nu) + B.GetChannel(2) * mu * (1 - nu)
                                 + C.GetChannel(2) * (1 - mu) * nu + D.GetChannel(2) * mu * nu;
 
-                    // Scale to maxValue
-                    int ri = (int)Math.Round(red);
-                    int gi = (int)Math.Round(green);
-                    int bi = (int)Math.Round(blue);
-                    ri = Clip(ri, 0, (int)maxValue);
-                    gi = Clip(gi, 0, (int)maxValue);
-                    bi = Clip(bi, 0, (int)maxValue);
-
-                    outPixels.SetPixel((int)i, j, new float[] { (ushort)ri, (ushort)gi, (ushort)bi });
+                    outputPixel[0] = (float)(preserveHdrRange ? red : Math.Clamp(red, 0.0, maxValue));
+                    outputPixel[1] = (float)(preserveHdrRange ? green : Math.Clamp(green, 0.0, maxValue));
+                    outputPixel[2] = (float)(preserveHdrRange ? blue : Math.Clamp(blue, 0.0, maxValue));
+                    outPixels.SetPixel((int)i, j, outputPixel);
                 }
             }
-            outPixels.Dispose();
         }
 
-        static Tuple<double, double, double> OutImgToXYZ(int i, int j, int face, int edge)
+        static void OutImgToXYZ(int i, int j, int face, int edge, out double x, out double y, out double z)
         {
             double a = 2.0 * (double)i / edge;
             double b = 2.0 * (double)j / edge;
-            double x = 0, y = 0, z = 0;
+            x = 0;
+            y = 0;
+            z = 0;
 
             switch (face)
             {
@@ -192,7 +185,6 @@ namespace XREngine.Rendering.Models.Materials.Textures
                     break;
             }
 
-            return Tuple.Create(x, y, z);
         }
 
         static int Clip(int x, int min, int max)
@@ -255,12 +247,14 @@ namespace XREngine.Rendering.Models.Materials.Textures
             else
                 return false;
 
-            Sides = [.. crops.Select(x =>
+            Mipmap2D[] sides = new Mipmap2D[crops.Length];
+            for (int i = 0; i < crops.Length; i++)
             {
-                var clone = cubeCrossBmp.Clone();
-                clone.Crop(x);
-                return new Mipmap2D((MagickImage)clone);
-            })];
+                using MagickImage clone = (MagickImage)cubeCrossBmp.Clone();
+                clone.Crop(crops[i]);
+                sides[i] = new Mipmap2D(clone);
+            }
+            Sides = sides;
 
             return true;
         }
@@ -278,7 +272,10 @@ namespace XREngine.Rendering.Models.Materials.Textures
         }
         
         public void SetSides(uint dim, MagickColor? color = null)
-            => Sides.Fill(i => new Mipmap2D(new MagickImage(color ??= new MagickColor(0, 0, 0, 0), dim, dim)));
+        {
+            using MagickImage image = new(color ?? new MagickColor(0, 0, 0, 0), dim, dim);
+            SetSides(image);
+        }
 
         public void SetSides(uint dim, EPixelInternalFormat internalFormat, EPixelFormat format, EPixelType type, bool allocateData)
             => Sides.Fill(i => new Mipmap2D(dim, dim, internalFormat, format, type, allocateData));

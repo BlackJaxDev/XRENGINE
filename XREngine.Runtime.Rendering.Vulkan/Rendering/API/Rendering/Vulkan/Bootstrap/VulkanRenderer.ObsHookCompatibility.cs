@@ -202,10 +202,8 @@ public unsafe partial class VulkanRenderer
             return $"{ObsRequiredDeviceExtension} is available but was not enabled.";
 
         if (!sharedTextureImportSupported)
-        {
             return "D3D11 texture KMT import for OBS shared textures is unsupported " +
                 $"(vkGetPhysicalDeviceImageFormatProperties2={sharedTextureImportResult}, externalMemoryFeatures={sharedTextureImportFeatures}).";
-        }
 
         return $"{ObsHookLayerName} is not likely active for this process.";
     }
@@ -236,29 +234,25 @@ public unsafe partial class VulkanRenderer
     private static bool LoaderDisableEnvMentionsObsHook()
     {
         string? raw = Environment.GetEnvironmentVariable(VulkanLoaderLayersDisableEnvVar);
-        if (string.IsNullOrWhiteSpace(raw))
-            return false;
-
-        return raw.Contains(ObsHookLayerName, StringComparison.OrdinalIgnoreCase) ||
-            raw.Contains("OBS", StringComparison.OrdinalIgnoreCase) ||
-            raw.Contains("~all~", StringComparison.OrdinalIgnoreCase) ||
-            raw.Contains("~implicit~", StringComparison.OrdinalIgnoreCase);
+        return string.IsNullOrWhiteSpace(raw)
+            ? false
+            : raw.Contains(ObsHookLayerName, StringComparison.OrdinalIgnoreCase) ||
+              raw.Contains("OBS", StringComparison.OrdinalIgnoreCase) ||
+              raw.Contains("~all~", StringComparison.OrdinalIgnoreCase) ||
+              raw.Contains("~implicit~", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsEnvironmentFlagEnabled(string name)
     {
         string? raw = Environment.GetEnvironmentVariable(name);
-        return !string.IsNullOrWhiteSpace(raw) &&
-            !StringEqualsAny(raw.Trim(), "0", "false", "off", "no");
+        return !string.IsNullOrWhiteSpace(raw) && !StringEqualsAny(raw.Trim(), "0", "false", "off", "no");
     }
 
     private static bool StringEqualsAny(string value, params string[] candidates)
     {
         for (int i = 0; i < candidates.Length; i++)
-        {
             if (string.Equals(value, candidates[i], StringComparison.OrdinalIgnoreCase))
                 return true;
-        }
 
         return false;
     }

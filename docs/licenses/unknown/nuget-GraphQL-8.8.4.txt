@@ -1,0 +1,6 @@
+﻿License text could not be resolved locally for NuGet package 'GraphQL' (8.8.4).
+
+Resolved license: MIT
+RepositoryUrl: https://github.com/graphql-dotnet/graphql-dotnet
+ProjectUrl: 
+

@@ -15,10 +15,15 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private static ulong ComputeScheduleStructuralSignature(ReadOnlySpan<RenderPassChainGroup> groups)
+    private static ulong ComputeScheduleStructuralSignature(
+        ReadOnlySpan<RenderPassChainGroup> groups,
+        bool requiresFreshPrimary,
+        int inlineFrameOpCount)
     {
         FrameOpSignatureHasher hash = new();
         hash.Add(groups.Length);
+        hash.Add(requiresFreshPrimary);
+        hash.Add(inlineFrameOpCount);
         for (int i = 0; i < groups.Length; i++)
         {
             RenderPassChainGroup group = groups[i];
@@ -51,6 +56,9 @@ public unsafe partial class VulkanRenderer
 
     internal static bool UsesOnlySecondaryCommandBufferGroups(CommandChainSchedule schedule)
     {
+        if (schedule.RequiresFreshPrimary || schedule.InlineFrameOpCount != 0)
+            return false;
+
         ReadOnlySpan<RenderPassChainGroup> groups = schedule.Groups.Span;
         if (groups.Length == 0)
             return false;
@@ -153,6 +161,9 @@ public unsafe partial class VulkanRenderer
         FrameOpSignatureHasher nestedArtifacts = new();
         FrameOpSignatureHasher primaryOnly = new();
         ReadOnlySpan<RenderPassChainGroup> groups = schedule.Groups.Span;
+        orderedNodes.Add(schedule.InlineFrameOpCount);
+        primaryOnly.Add(schedule.RequiresFreshPrimary);
+        primaryOnly.Add(schedule.InlineFrameOpCount);
         orderedNodes.Add(groups.Length);
         renderScopeInheritance.Add(groups.Length);
         nestedArtifacts.Add(groups.Length);

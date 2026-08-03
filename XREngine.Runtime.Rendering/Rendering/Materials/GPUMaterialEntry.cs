@@ -13,5 +13,6 @@ namespace XREngine.Rendering.Materials
         public uint Flags;
         public Vector4 BaseColorOpacity;
         public Vector4 RMSE;
+        public float AlphaCutoff;
     }
 }

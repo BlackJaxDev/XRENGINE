@@ -222,7 +222,7 @@ internal sealed class ImportedTextureStreamingManager
                 ITextureResidencyBackend readyBackend;
                 lock (record.Sync)
                 {
-                    record.Format = ESizedInternalFormat.Rgba8;
+                    record.Format = residentData.SizedInternalFormat;
                     record.SourceWidth = residentData.SourceWidth;
                     record.SourceHeight = residentData.SourceHeight;
                     record.ResidentMaxDimension = residentData.ResidentMaxDimension;
@@ -240,7 +240,7 @@ internal sealed class ImportedTextureStreamingManager
                     residentData.SourceWidth,
                     residentData.SourceHeight,
                     residentData.ResidentMaxDimension,
-                    ESizedInternalFormat.Rgba8,
+                    residentData.SizedInternalFormat,
                     sparseNumLevels: 0,
                     SparseTextureStreamingPageSelection.Full);
                 TextureRuntimeDiagnostics.LogImportPreviewReady(
@@ -1493,7 +1493,7 @@ internal sealed class ImportedTextureStreamingManager
                     if (!ReferenceEquals(record.PendingLoadCts, cts))
                         return;
 
-                    record.Format = ESizedInternalFormat.Rgba8;
+                    record.Format = residentData.SizedInternalFormat;
                     record.SourceWidth = residentData.SourceWidth;
                     record.SourceHeight = residentData.SourceHeight;
                     record.Backend = ResolveBackendForTexture(residentData.SourceWidth, residentData.SourceHeight, record.Format);

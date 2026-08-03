@@ -3,7 +3,6 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using MemoryPack;
-using SixLabors.ImageSharp.PixelFormats;
 using XREngine.Data.Core;
 using YamlDotNet.Serialization;
 
@@ -54,6 +53,13 @@ namespace XREngine.Data
             Length = (uint)data.Length;
             Address = Marshal.AllocHGlobal(data.Length);
             Marshal.Copy(data, 0, Address, data.Length);
+        }
+        public unsafe DataSource(ReadOnlySpan<byte> data)
+        {
+            External = false;
+            Length = (uint)data.Length;
+            Address = Marshal.AllocHGlobal(data.Length);
+            data.CopyTo(new Span<byte>((void*)Address, data.Length));
         }
         public DataSource(byte[] data, int offset, int length)
         {

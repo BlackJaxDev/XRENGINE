@@ -261,6 +261,12 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     }
 
     /// <summary>
+    /// Regenerates commands that snapshot the resolved mesh-submission strategy.
+    /// </summary>
+    internal void RebuildForMeshSubmissionStrategyChange()
+        => RebuildCommandChain();
+
+    /// <summary>
     /// Allows derived pipelines to describe the resources they require via the resource layout builder.
     /// </summary>
     /// <param name="builder">The resource layout builder used to describe the resources.</param>

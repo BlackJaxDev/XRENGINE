@@ -1,6 +1,7 @@
 using ImageMagick;
 using MemoryPack;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 
@@ -40,27 +41,7 @@ namespace XREngine.Rendering
         /// <param name="type"></param>
         /// <returns></returns>
         public static MagickImage NewImage(uint width, uint height, EPixelFormat format, EPixelType type)
-        {
-            byte[] data = AllocateBytes(width, height, format, type);
-            MagickReadSettings settings = new()
-            {
-                Width = width,
-                Height = height,
-                FillColor = HasAlpha(format) ? MagickColor.FromRgba(0, 0, 0, 1) : MagickColor.FromRgb(0, 0, 0),
-                Format = GetMagickFormat(format),
-                ColorSpace = IsSigned(type) ? ColorSpace.sRGB : ColorSpace.RGB,
-                Depth = type switch
-                {
-                    EPixelType.Byte => 8,
-                    EPixelType.Short => 16,
-                    EPixelType.Int => 32,
-                    EPixelType.Float => 32,
-                    EPixelType.HalfFloat => 16,
-                    _ => 8,
-                },
-            };
-            return new(data, settings);
-        }
+            => NewImage(width, height, format, type, AllocateBytes(width, height, format, type));
         /// <summary>
         /// Creates a new image with the specified dimensions, format, type and data.
         /// Allocate the data array parameter with AllocateBytes.
@@ -73,24 +54,26 @@ namespace XREngine.Rendering
         /// <returns></returns>
         public static MagickImage NewImage(uint width, uint height, EPixelFormat format, EPixelType type, byte[] data)
         {
-            MagickReadSettings settings = new()
+            ArgumentNullException.ThrowIfNull(data);
+            int expectedLength = GetCheckedByteLength(width, height, 1u, format, type);
+            if (data.Length != expectedLength)
+                throw new ArgumentException($"Expected {expectedLength} bytes but received {data.Length}.", nameof(data));
+
+            string mapping = GetMagickPixelMapping(format);
+            if (type == EPixelType.HalfFloat)
             {
-                Width = width,
-                Height = height,
-                FillColor = HasAlpha(format) ? MagickColor.FromRgba(0, 0, 0, 255) : MagickColor.FromRgb(0, 0, 0),
-                Format = GetMagickFormat(format),
-                ColorSpace = IsSigned(type) ? ColorSpace.sRGB : ColorSpace.RGB,
-                Depth = type switch
-                {
-                    EPixelType.Byte => 8,
-                    EPixelType.Short => 16,
-                    EPixelType.Int => 32,
-                    EPixelType.Float => 32,
-                    EPixelType.HalfFloat => 16,
-                    _ => 8,
-                },
-            };
-            return new(data, settings);
+                ReadOnlySpan<Half> source = MemoryMarshal.Cast<byte, Half>(data);
+                float[] values = GC.AllocateUninitializedArray<float>(source.Length);
+                for (int i = 0; i < source.Length; i++)
+                    values[i] = (float)source[i] * Quantum.Max;
+
+                MagickImage halfFloatImage = new();
+                halfFloatImage.ReadPixels(values, new PixelReadSettings(width, height, StorageType.Quantum, mapping));
+                return halfFloatImage;
+            }
+
+            StorageType storageType = GetMagickStorageType(type);
+            return new MagickImage(data, new PixelReadSettings(width, height, storageType, mapping));
         }
         /// <summary>
         /// Allocates and populates a new image with the specified dimensions, format, type and data.
@@ -104,32 +87,27 @@ namespace XREngine.Rendering
         public static MagickImage NewImage(uint width, uint height, EPixelFormat format, EPixelType type, Action<byte[]> dataFactory)
         {
             byte[] data = AllocateBytes(width, height, format, type);
-            MagickReadSettings settings = new()
-            {
-                Width = width,
-                Height = height,
-                FillColor = HasAlpha(format) ? MagickColor.FromRgba(0, 0, 0, 255) : MagickColor.FromRgb(0, 0, 0),
-                Format = GetMagickFormat(format),
-                ColorSpace = IsSigned(type) ? ColorSpace.sRGB : ColorSpace.RGB,
-                Depth = type switch
-                {
-                    EPixelType.Byte => 8,
-                    EPixelType.Short => 16,
-                    EPixelType.Int => 32,
-                    EPixelType.Float => 32,
-                    EPixelType.HalfFloat => 16,
-                    _ => 8,
-                },
-            };
             dataFactory(data);
-            return new(data, settings);
+            return NewImage(width, height, format, type, data);
         }
 
         public static byte[] AllocateBytes(uint width, uint height, EPixelFormat format, EPixelType type)
             => AllocateBytes(width, height, 1u, format, type);
 
         public static byte[] AllocateBytes(uint width, uint height, uint depth, EPixelFormat format, EPixelType type)
-            => new byte[width * height * depth * ComponentSize(type) * GetComponentCount(format)];
+            => new byte[GetCheckedByteLength(width, height, depth, format, type)];
+
+        private static int GetCheckedByteLength(uint width, uint height, uint depth, EPixelFormat format, EPixelType type)
+        {
+            uint bytesPerPixel = IsPackedPixelType(type)
+                ? ComponentSize(type)
+                : checked(ComponentSize(type) * (uint)GetComponentCount(format));
+            long byteLength = checked((long)width * height * depth * bytesPerPixel);
+            if (byteLength > int.MaxValue)
+                throw new NotSupportedException("Image data cannot exceed 2 GB.");
+
+            return (int)byteLength;
+        }
 
         public static void GetFormat(
             MagickImage bmp,
@@ -143,21 +121,15 @@ namespace XREngine.Rendering
             //GL_ALPHA, GL_LUMINANCE, GL_LUMINANCE_ALPHA, GL_RGB, GL_RGBA
             //bool hasAlpha = bmp.HasAlpha;
             uint channels = bmp.ChannelCount;
-            bool signed = bmp.Settings.ColorSpace == ColorSpace.sRGB;
-            uint depth = bmp.Depth; //8 is s/byte, 16 is u/short, 32 is float
+            uint depth = bmp.Depth;
             pixelType = bmp.Format switch
             {
-                //MagickFormat.Hdr or MagickFormat.Exr => depth switch
-                //{
-                //    16 => EPixelType.HalfFloat,
-                //    32 => EPixelType.Float,
-                //    _ => throw new NotSupportedException($"Unsupported pixel depth: {depth}"),
-                //},
+                MagickFormat.Hdr or MagickFormat.Exr or MagickFormat.Pfm => EPixelType.Float,
                 _ => depth switch
                 {
-                    1 => signed ? EPixelType.Byte : EPixelType.UnsignedByte,
-                    8 => signed ? EPixelType.Byte : EPixelType.UnsignedByte,
-                    16 => signed ? EPixelType.Short : EPixelType.UnsignedShort,
+                    1 => EPixelType.UnsignedByte,
+                    8 => EPixelType.UnsignedByte,
+                    16 => EPixelType.UnsignedShort,
                     32 => EPixelType.Float,
                     _ => throw new NotSupportedException($"Unsupported pixel depth: {depth}"),
                 },
@@ -200,6 +172,9 @@ namespace XREngine.Rendering
             {
                 EPixelFormat.Rgba or
                 EPixelFormat.Bgra or
+                EPixelFormat.RgbaInteger or
+                EPixelFormat.BgraInteger or
+                EPixelFormat.LuminanceAlpha or
                 EPixelFormat.Alpha => true,
                 _ => false,
             };
@@ -207,12 +182,63 @@ namespace XREngine.Rendering
         public static uint ComponentSize(EPixelType type)
             => type switch
             {
-                EPixelType.Byte => 1u,
-                EPixelType.Short => 2u,
-                EPixelType.Int => 4u,
-                EPixelType.Float => 4u,
+                EPixelType.Byte or EPixelType.UnsignedByte => 1u,
+                EPixelType.Short or EPixelType.UnsignedShort => 2u,
+                EPixelType.Int or EPixelType.UnsignedInt or EPixelType.Float => 4u,
                 EPixelType.HalfFloat => 2u,
-                _ => 1u,
+                EPixelType.UnsignedByte332 or EPixelType.UnsignedByte233Reversed => 1u,
+                EPixelType.UnsignedShort4444 or
+                    EPixelType.UnsignedShort5551 or
+                    EPixelType.UnsignedShort565 or
+                    EPixelType.UnsignedShort565Reversed or
+                    EPixelType.UnsignedShort4444Reversed or
+                    EPixelType.UnsignedShort1555Reversed => 2u,
+                EPixelType.UnsignedInt8888 or
+                    EPixelType.UnsignedInt1010102 or
+                    EPixelType.UnsignedInt8888Reversed or
+                    EPixelType.UnsignedInt2101010Reversed or
+                    EPixelType.UnsignedInt248 or
+                    EPixelType.UnsignedInt10F11F11FRev or
+                    EPixelType.UnsignedInt5999Rev => 4u,
+                EPixelType.Float32UnsignedInt248Rev => 8u,
+                _ => throw new ArgumentOutOfRangeException(nameof(type), type, "Unsupported pixel type."),
+            };
+
+        private static bool IsPackedPixelType(EPixelType type)
+            => type >= EPixelType.UnsignedByte332;
+
+        private static StorageType GetMagickStorageType(EPixelType type)
+            => type switch
+            {
+                EPixelType.UnsignedByte => StorageType.Char,
+                EPixelType.UnsignedShort => StorageType.Short,
+                EPixelType.UnsignedInt => StorageType.Int32,
+                EPixelType.Float => StorageType.Float,
+                EPixelType.Byte or EPixelType.Short or EPixelType.Int =>
+                    throw new NotSupportedException($"ImageMagick raw-pixel conversion does not support signed {type} data."),
+                _ => throw new NotSupportedException($"ImageMagick raw-pixel conversion does not support {type} data."),
+            };
+
+        private static string GetMagickPixelMapping(EPixelFormat format)
+            => format switch
+            {
+                EPixelFormat.Rgba or EPixelFormat.RgbaInteger => "RGBA",
+                EPixelFormat.Bgra or EPixelFormat.BgraInteger => "BGRA",
+                EPixelFormat.Rgb or EPixelFormat.RgbInteger => "RGB",
+                EPixelFormat.Bgr or EPixelFormat.BgrInteger => "BGR",
+                EPixelFormat.Rg or EPixelFormat.RgInteger => "RG",
+                EPixelFormat.Red or EPixelFormat.RedInteger => "R",
+                EPixelFormat.Green or EPixelFormat.GreenInteger => "G",
+                EPixelFormat.Blue or EPixelFormat.BlueInteger => "B",
+                EPixelFormat.Alpha or EPixelFormat.AlphaInteger => "A",
+                EPixelFormat.Luminance => "I",
+                EPixelFormat.LuminanceAlpha => "IA",
+                EPixelFormat.DepthComponent or
+                    EPixelFormat.StencilIndex or
+                    EPixelFormat.ColorIndex or
+                    EPixelFormat.UnsignedShort or
+                    EPixelFormat.UnsignedInt => "I",
+                _ => throw new NotSupportedException($"ImageMagick raw-pixel conversion does not support {format} data."),
             };
 
         public static MagickFormat GetMagickFormat(EPixelFormat fmt)
@@ -232,13 +258,20 @@ namespace XREngine.Rendering
         public static int GetComponentCount(EPixelFormat fmt)
             => fmt switch
             {
-                EPixelFormat.Rgba or EPixelFormat.Bgra => 4,
-                EPixelFormat.Rgb or EPixelFormat.Bgr => 3,
-                EPixelFormat.Red or EPixelFormat.Green or EPixelFormat.Blue or EPixelFormat.Alpha => 1,
-                EPixelFormat.DepthComponent => 1,
-                EPixelFormat.StencilIndex => 1,
+                EPixelFormat.Rgba or EPixelFormat.Bgra or
+                EPixelFormat.RgbaInteger or EPixelFormat.BgraInteger => 4,
+                EPixelFormat.Rgb or EPixelFormat.Bgr or
+                EPixelFormat.RgbInteger or EPixelFormat.BgrInteger => 3,
+                EPixelFormat.Rg or EPixelFormat.RgInteger or
+                EPixelFormat.LuminanceAlpha or EPixelFormat.DepthStencil => 2,
+                EPixelFormat.UnsignedShort or EPixelFormat.UnsignedInt or
+                EPixelFormat.ColorIndex or EPixelFormat.StencilIndex or
+                EPixelFormat.DepthComponent or EPixelFormat.Red or
+                EPixelFormat.Green or EPixelFormat.Blue or EPixelFormat.Alpha or
+                EPixelFormat.RedInteger or EPixelFormat.GreenInteger or
+                EPixelFormat.BlueInteger or EPixelFormat.AlphaInteger or
                 EPixelFormat.Luminance => 1,
-                _ => 4,
+                _ => throw new ArgumentOutOfRangeException(nameof(fmt), fmt, "Unsupported pixel format."),
             };
 
         public delegate void DelAttachToFBO(XRFrameBuffer target, EFrameBufferAttachment attachment, int mipLevel);

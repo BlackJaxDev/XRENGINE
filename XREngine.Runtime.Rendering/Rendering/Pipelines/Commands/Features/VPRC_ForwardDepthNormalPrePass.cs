@@ -64,9 +64,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             // dynamically-created materials without bindless registration) MUST set
             // RenderOptions.ExcludeFromGpuIndirect = true so the filtered CPU fallback picks
             // them up; otherwise they will fault the GPU side of this dispatch.
-            EMeshSubmissionStrategy strategy = _gpuDispatch
-                ? RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(true)
-                : EMeshSubmissionStrategy.CpuDirect;
+            EMeshSubmissionStrategy strategy =
+                RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(_gpuDispatch);
             EMeshSubmissionStrategy prepassStrategy = ResolveDepthNormalSubmissionStrategy(strategy);
             bool useGpuRenderPath = prepassStrategy != EMeshSubmissionStrategy.CpuDirect;
             foreach (int pass in _renderPasses)
@@ -75,9 +74,12 @@ namespace XREngine.Rendering.Pipelines.Commands
                 {
                     // Auxiliary geometry passes must not execute callback commands: debug callbacks
                     // populate the late overlay and otherwise run once per auxiliary replay.
-                    commands.RenderCPUFiltered(
-                        pass,
-                        static command => command is IRenderCommandMesh mesh && IsGpuPathCpuFallbackMesh(mesh));
+                    if (!prepassStrategy.IsGpuZeroReadbackStrategy())
+                    {
+                        commands.RenderCPUFiltered(
+                            pass,
+                            static command => command is IRenderCommandMesh mesh && IsGpuPathCpuFallbackMesh(mesh));
+                    }
                     commands.RenderGPU(pass, prepassStrategy);
                 }
                 else

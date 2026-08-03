@@ -101,6 +101,8 @@ namespace XREngine.Rendering.Commands
 
             if (lodCount > 1)
                 flags |= (uint)GPUIndirectRenderFlags.LODEnabled;
+            if (command.ForceCpuRendering || material.RenderOptions?.ExcludeFromGpuIndirect == true)
+                flags |= (uint)GPUIndirectRenderFlags.CpuFallbackOnly;
 
             gpuCommand.Flags = flags;
             return gpuCommand;
@@ -123,22 +125,7 @@ namespace XREngine.Rendering.Commands
             {
                 if (!_commandIndicesPerMeshCommand.TryGetValue(meshCmd, out var indices) || indices.Count == 0)
                 {
-                    var missingMaterial = meshCmd.MaterialOverride ?? meshCmd.Mesh?.Material;
-                    if (meshCmd.ForceCpuRendering || missingMaterial?.RenderOptions?.ExcludeFromGpuIndirect == true)
-                        return false;
-
                     Add(renderInfo);
-                    return true;
-                }
-
-                // If this command is now excluded from GPU indirect, remove its indices.
-                var topMaterial = meshCmd.MaterialOverride ?? meshCmd.Mesh?.Material;
-                if (meshCmd.ForceCpuRendering || topMaterial?.RenderOptions?.ExcludeFromGpuIndirect == true)
-                {
-                    if (_commandUpdateErrorLogBudget > 0 && Interlocked.Decrement(ref _commandUpdateErrorLogBudget) >= 0)
-                        Debug.MeshesWarning($"[GPUScene] CPU fallback/ExcludeFromGpuIndirect became true; removing mesh command. Renderable={ResolveOwnerLabel(renderInfo.Owner)}");
-
-                    RemoveMeshCommandIndices(meshCmd, indices);
                     return true;
                 }
 
@@ -239,6 +226,8 @@ namespace XREngine.Rendering.Commands
                     }
                     if (lodCount > 1)
                         flags |= (uint)GPUIndirectRenderFlags.LODEnabled;
+                    if (meshCmd.ForceCpuRendering || material.RenderOptions?.ExcludeFromGpuIndirect == true)
+                        flags |= (uint)GPUIndirectRenderFlags.CpuFallbackOnly;
                     updated.Flags = flags;
                     UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(index, GPUTransparencyMetadata.FromMaterial(material));
 

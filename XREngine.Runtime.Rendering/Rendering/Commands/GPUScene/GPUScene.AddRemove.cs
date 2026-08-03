@@ -62,14 +62,6 @@ namespace XREngine.Rendering.Commands
                         continue; // Only mesh commands supported
                     }
 
-                    // Skip commands that opt out of GPU indirect dispatch (e.g., skybox, fullscreen effects)
-                    var material = meshCmd.MaterialOverride ?? meshCmd.Mesh?.Material;
-                    if (meshCmd.ForceCpuRendering || material?.RenderOptions?.ExcludeFromGpuIndirect == true)
-                    {
-                        SceneLog($"Skipping mesh command due to CPU fallback/ExcludeFromGpuIndirect flag. Renderable={ResolveOwnerLabel(renderInfo.Owner)}");
-                        continue;
-                    }
-
                     var subMeshes = meshCmd.Mesh?.GetMeshes();
                     if (subMeshes is null || subMeshes.Length == 0)
                     {

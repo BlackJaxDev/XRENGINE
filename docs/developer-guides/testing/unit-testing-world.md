@@ -155,6 +155,20 @@ When `ProceduralSky` is enabled, the skybox can drive the unit-test directional 
 
 Use `DynamicPointLightCount` and `DynamicSpotLightCount` to spawn smooth animated debug lights with random colors. `DynamicLightSeed` keeps the generated colors and motion repeatable. `DynamicLightsCastShadows` is enabled by default; when `DynamicLightsForceShadowAtlas` is also enabled, the bootstrap turns on the matching point and spot shadow atlas paths before adding the generated lights.
 
+### Test occlusion-culling modes
+
+Set `WorldKind` to `MathIntersections`, select the world root, and open **Math
+Intersections Test Controls**. The root can activate deterministic rigs for CPU
+asynchronous hardware queries, CPU software rasterization, and GPU Hi-Z with
+zero-readback GPU-BVH submission. Activating a rig also expands that test's
+controls and live diagnostics directly in the root UI; selecting the child test
+node exposes the same fields.
+
+The three root toggles are mutually exclusive and temporarily apply the mode's
+renderer settings. Turning the active test off restores the prior settings. See
+[Math Intersections Occlusion Tests](../../work/testing/rendering/math-intersections-occlusion-tests.md)
+for scene layout, pass criteria, and current qualification status.
+
 ### Compare continuous rendering and idle reuse
 
 Set `EditorCameraRenderOnDemand` to `true` to make the unit-test editor camera render the 3D scene only when input, camera motion, screenshots, or camera animations invalidate the view. Idle frames reuse the previous camera result, so this is useful for separating swap/present cadence from full scene rendering cost. Leave it `false` when measuring continuous scene render FPS.

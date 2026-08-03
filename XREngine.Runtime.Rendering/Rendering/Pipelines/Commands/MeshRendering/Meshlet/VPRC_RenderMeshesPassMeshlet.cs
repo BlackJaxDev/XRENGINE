@@ -19,7 +19,10 @@ internal static class VPRC_RenderMeshesPassMeshlet
         // Meshlet dispatch owns only GPU-eligible meshes. Preserve the same mixed-submission
         // contract as the traditional GPU path so explicitly excluded meshes and non-mesh
         // callbacks are not silently dropped when mesh shaders are available.
-        commands.RenderCPUNonMeshAndExcluded(command.RenderPass);
+        if (meshSubmissionStrategy.IsGpuZeroReadbackStrategy())
+            commands.RenderCPUNonMeshOnly(command.RenderPass);
+        else
+            commands.RenderCPUNonMeshAndExcluded(command.RenderPass);
 
         // A pass containing only CPU-owned commands legitimately has no GPU pass.
         if (!commands.TryGetGpuPass(command.RenderPass, out var gpuPass))
@@ -48,6 +51,7 @@ internal static class VPRC_RenderMeshesPassMeshlet
         EMeshSubmissionStrategy strategy,
         GPURenderPassCollection gpuPass)
         => strategy.IsAnyMeshletStrategy()
+           && !strategy.IsGpuZeroReadbackStrategy()
            && IsActiveRendererOpenGL()
            && gpuPass.ZeroReadbackProgramPendingThisFrame;
 

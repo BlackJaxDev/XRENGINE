@@ -35,7 +35,7 @@ internal static partial class VulkanShaderAutoUniforms
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly Regex UniformStatementRegex = new(
-        @"^\s*(?:layout\s*\([^)]*\)\s*)?uniform\s+(?<statement>[^;]+);[ \t]*(?://[ \t]*XRENGINE_FREQUENCY[ \t]*\([ \t]*(?<frequency>[A-Za-z_][A-Za-z0-9_]*)[ \t]*\))?",
+        @"^\s*(?:layout\s*\([^)]*\)\s*)?uniform\s+(?<statement>[^;]+);[ \t]*(?://[ \t]*XRENGINE_FREQUENCY[ \t]*\([ \t]*(?<frequency>[A-Za-z_][A-Za-z0-9_]*)[ \t]*\)[^\r\n]*)?",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase | RegexOptions.Multiline);
 
     private static readonly Regex FrequencyOverrideRegex = new(

@@ -40,6 +40,11 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
     private readonly List<BenchmarkRootMotionGroup> _benchmarkRootMotionGroups = [];
     private readonly RenderInfo3D _renderInfo;
     private CustomUIComponent? _customUi;
+    private MathIntersectionsWorldTestEntry? _configuredOcclusionEntry;
+    private bool _hasOcclusionSettingsBaseline;
+    private EOcclusionCullingMode _baselineOcclusionMode;
+    private EMeshSubmissionStrategy? _baselineMeshSubmissionStrategy;
+    private bool _baselineCpuSocDebugForceVisible;
     private FontGlyphSet? _titleLabelFont;
     private FontGlyphSet? _detailLabelFont;
     private SceneNode? _benchmarkRoot;
@@ -110,12 +115,14 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
             RebuildUi();
         }
 
+        ReconcileOcclusionTestConfiguration();
         Relayout();
     }
 
     protected override void OnComponentDeactivated()
     {
         StopBenchmark(destroyInstances: true, updateStatus: false, cancelled: true);
+        RestoreOcclusionTestConfiguration();
         UnregisterTick(ETickGroup.Late, ETickOrder.Logic, UpdateBenchmark);
         _customUi?.ClearFields();
         _customUi = null;
@@ -139,6 +146,21 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
                 () => capturedEntry.RootNode.IsActiveSelf,
                 value => SetTestEnabled(capturedEntry, value),
                 $"Toggle the {capturedEntry.DisplayName} math intersection test.");
+
+            foreach (CustomUIComponent testUi in capturedEntry.RootNode.GetComponents<CustomUIComponent>())
+            {
+                if (testUi.Fields.Count == 0)
+                    continue;
+
+                string groupLabel = string.IsNullOrWhiteSpace(testUi.Name)
+                    ? $"{capturedEntry.DisplayName} Properties"
+                    : testUi.Name;
+                _customUi.AddGroupField(
+                    groupLabel,
+                    testUi.Fields,
+                    () => capturedEntry.RootNode.IsActiveSelf,
+                    helpText: $"Controls projected from the active {capturedEntry.DisplayName} test node.");
+            }
         }
 
         _customUi.AddFloatField(
@@ -177,8 +199,94 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
 
     private void SetTestEnabled(MathIntersectionsWorldTestEntry entry, bool enabled)
     {
+        if (enabled && HasOcclusionTestComponent(entry))
+        {
+            foreach (MathIntersectionsWorldTestEntry other in _tests)
+            {
+                if (!ReferenceEquals(other, entry) &&
+                    other.RootNode.IsActiveSelf &&
+                    HasOcclusionTestComponent(other))
+                    other.RootNode.IsActiveSelf = false;
+            }
+        }
+
         entry.RootNode.IsActiveSelf = enabled;
+        ReconcileOcclusionTestConfiguration();
         Relayout();
+    }
+
+    private static bool HasOcclusionTestComponent(MathIntersectionsWorldTestEntry entry)
+        => entry.RootNode.GetComponent<MathOcclusionCullingTestComponent>() is not null;
+
+    private void ReconcileOcclusionTestConfiguration()
+    {
+        MathIntersectionsWorldTestEntry? desiredEntry = ResolveActiveOcclusionTestEntry();
+        if (desiredEntry?.RootNode.GetComponent<MathOcclusionCullingTestComponent>() is not { } desiredTest)
+        {
+            RestoreOcclusionTestConfiguration();
+            return;
+        }
+
+        if (!_hasOcclusionSettingsBaseline)
+            CaptureOcclusionSettingsBaseline();
+
+        _configuredOcclusionEntry = desiredEntry;
+        var settings = RuntimeEngine.Rendering.Settings;
+        if (settings.GpuOcclusionCullingMode != desiredTest.RequestedMode)
+            settings.GpuOcclusionCullingMode = desiredTest.RequestedMode;
+        if (settings.ForceMeshSubmissionStrategy != desiredTest.RequestedSubmissionStrategy)
+            settings.ForceMeshSubmissionStrategy = desiredTest.RequestedSubmissionStrategy;
+        if (desiredTest.RequestedMode == EOcclusionCullingMode.CpuSoftwareOcclusion &&
+            settings.CpuSocDebugForceVisible)
+            settings.CpuSocDebugForceVisible = false;
+    }
+
+    private MathIntersectionsWorldTestEntry? ResolveActiveOcclusionTestEntry()
+    {
+        if (_benchmarkRunning &&
+            _benchmarkEntry is { } benchmarkEntry &&
+            HasOcclusionTestComponent(benchmarkEntry))
+            return benchmarkEntry;
+
+        MathIntersectionsWorldTestEntry? firstActive = null;
+        foreach (MathIntersectionsWorldTestEntry entry in _tests)
+        {
+            if (!entry.RootNode.IsActiveSelf || !HasOcclusionTestComponent(entry))
+                continue;
+
+            if (ReferenceEquals(entry, _configuredOcclusionEntry))
+                return entry;
+
+            firstActive ??= entry;
+        }
+
+        return firstActive;
+    }
+
+    private void CaptureOcclusionSettingsBaseline()
+    {
+        var settings = RuntimeEngine.Rendering.Settings;
+        _baselineOcclusionMode = settings.GpuOcclusionCullingMode;
+        _baselineMeshSubmissionStrategy = settings.ForceMeshSubmissionStrategy;
+        _baselineCpuSocDebugForceVisible = settings.CpuSocDebugForceVisible;
+        _hasOcclusionSettingsBaseline = true;
+    }
+
+    private void RestoreOcclusionTestConfiguration()
+    {
+        _configuredOcclusionEntry = null;
+        if (!_hasOcclusionSettingsBaseline)
+            return;
+
+        var settings = RuntimeEngine.Rendering.Settings;
+        if (settings.ForceMeshSubmissionStrategy != _baselineMeshSubmissionStrategy)
+            settings.ForceMeshSubmissionStrategy = _baselineMeshSubmissionStrategy;
+        if (settings.GpuOcclusionCullingMode != _baselineOcclusionMode)
+            settings.GpuOcclusionCullingMode = _baselineOcclusionMode;
+        if (settings.CpuSocDebugForceVisible != _baselineCpuSocDebugForceVisible)
+            settings.CpuSocDebugForceVisible = _baselineCpuSocDebugForceVisible;
+
+        _hasOcclusionSettingsBaseline = false;
     }
 
     private void SetBenchmarkRunToggle(bool enabled, bool includeDebugDisplays)
@@ -265,6 +373,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
     private void UpdateBenchmark()
     {
         ProcessPendingBenchmarkTeardown();
+        ReconcileOcclusionTestConfiguration();
 
         if (!_benchmarkRunning || _benchmarkRunController is null)
             return;

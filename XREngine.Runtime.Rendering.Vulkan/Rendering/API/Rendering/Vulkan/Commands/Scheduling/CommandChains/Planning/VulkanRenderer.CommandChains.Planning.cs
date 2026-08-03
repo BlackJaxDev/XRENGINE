@@ -39,31 +39,12 @@ public unsafe partial class VulkanRenderer
         if (!commandChainsEnabledForTarget)
             return null;
 
-        // A zero-readback publication spans multiple command-buffer segments, so
-        // inspecting only this segment's ops is insufficient: a static segment can
-        // otherwise execute cached secondaries while another segment publishes the
-        // indirect/count streams. Quarantine command chains for the resolved
-        // zero-readback strategy as a whole until publication generations are part
-        // of every chain key and submission dependency.
-        if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy())
-            return null;
-
-        // The GPU-zero-readback frame contains compute producers and indirect
-        // consumers whose publication lifetime is scoped to the freshly recorded
-        // primary. Mixing those operations with persistent command-chain
-        // secondaries reproducibly triggers a Windows GPU watchdog reset on the
-        // Sponza workload, even when the indirect draw itself remains inline.
-        // Keep the complete frame inline until command-chain keys encode the
-        // mutable publication generations. GPU culling and indirect-count draws
-        // remain enabled; only secondary command-buffer reuse is quarantined.
-        if (HasMutableGpuDrivenFrameOps(staticOps) || HasMutableGpuDrivenFrameOps(volatileOps))
-        {
-            Debug.VulkanEvery(
-                $"Vulkan.CommandChains.MutableGpuFrameInline.{GetHashCode()}",
-                TimeSpan.FromSeconds(5),
-                "[Vulkan.CommandChains] Recording mutable GPU-driven frame ops inline until command-chain publication generations are tracked.");
-            return null;
-        }
+        // Mutable GPU publications remain inline in a freshly recorded primary.
+        // Stable mesh-draw ranges on either side are still lowered to reusable
+        // secondaries, producing the production mixed primary/secondary schedule.
+        bool requiresFreshPrimary =
+            HasMutableGpuDrivenFrameOps(staticOps) ||
+            HasMutableGpuDrivenFrameOps(volatileOps);
 
         // Dynamic overlays are not expected to contain query brackets. Keep the
         // conservative all-inline fallback if one appears there because overlay
@@ -174,7 +155,10 @@ public unsafe partial class VulkanRenderer
 
             stats = new CommandChainLoweringStats(0, 0, 0, 0, 0, 0, 0, 0, null, null, null);
             CommandChainSchedule emptySchedule = RentCommandChainSchedule(imageIndex);
-            emptySchedule.Reset(0, resourcePlanRevision, ReadOnlySpan<RenderPassChainGroup>.Empty);
+            emptySchedule.Reset(
+                0,
+                resourcePlanRevision,
+                ReadOnlySpan<RenderPassChainGroup>.Empty);
             CacheCommandChainSchedule(imageIndex, fastScheduleSignature, emptySchedule);
             ObserveCommandChainScheduleForStabilityGuard(imageIndex, resourcePlanRevision, in stats);
             return emptySchedule;
@@ -355,8 +339,22 @@ public unsafe partial class VulkanRenderer
         TrimScheduledCommandChainCache(cache);
 
         ReadOnlySpan<RenderPassChainGroup> groupSpan = CollectionsMarshal.AsSpan(groups);
-        ulong scheduleSignature = ComputeScheduleStructuralSignature(groupSpan);
-        schedule.Reset(scheduleSignature, resourcePlanRevision, groupSpan);
+        int scheduledFrameOpCount = 0;
+        for (int packetIndex = 0; packetIndex < packets.Count; packetIndex++)
+            scheduledFrameOpCount += packets[packetIndex].SourceCount;
+        int inlineFrameOpCount = Math.Max(
+            0,
+            staticOps.Length + volatileOps.Length - scheduledFrameOpCount);
+        ulong scheduleSignature = ComputeScheduleStructuralSignature(
+            groupSpan,
+            requiresFreshPrimary,
+            inlineFrameOpCount);
+        schedule.Reset(
+            scheduleSignature,
+            resourcePlanRevision,
+            groupSpan,
+            requiresFreshPrimary,
+            inlineFrameOpCount);
         int visibilityPacketCount = CountDistinctViewKeys(packets);
         RenderPacket lastPacket = packets[^1];
         CommandRecordingDependencySignature scheduleDependencySignature =

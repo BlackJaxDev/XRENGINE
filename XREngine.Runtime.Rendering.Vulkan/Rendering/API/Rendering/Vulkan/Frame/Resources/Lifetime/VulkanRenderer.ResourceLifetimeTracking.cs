@@ -594,6 +594,7 @@ public unsafe partial class VulkanRenderer
         MergeVulkanSecondaryCommandBufferDependencies(primary, secondaries);
         MergeRecordedImageLayoutStates(primary, secondaries);
         Api!.CmdExecuteCommands(primary, commandBufferCount, secondaryCommandBuffers);
+        InvalidatePrimaryBindStateAfterSecondaryExecution(primary);
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanExecuteSecondaryCommandBuffers(
             commandBufferCount);
     }

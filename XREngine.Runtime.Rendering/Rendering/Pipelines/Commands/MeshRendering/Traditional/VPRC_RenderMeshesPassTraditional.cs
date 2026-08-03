@@ -40,7 +40,12 @@ internal static class VPRC_RenderMeshesPassTraditional
         // the GPU is authoritative for mesh visibility.
         RenderCommandCollection commands = activeInstance.ActiveMeshRenderCommands;
         using (RuntimeEngine.Profiler.Start("VPRC_RenderMeshesPassTraditional.RenderGPU.NonMeshPrefilter", ProfilerScopeKind.AlwaysOnHotPathLoop))
-            commands.RenderCPUNonMeshAndExcluded(command.RenderPass);
+        {
+            if (meshSubmissionStrategy.IsGpuZeroReadbackStrategy())
+                commands.RenderCPUNonMeshOnly(command.RenderPass);
+            else
+                commands.RenderCPUNonMeshAndExcluded(command.RenderPass);
+        }
 
         using (RuntimeEngine.Profiler.Start("VPRC_RenderMeshesPassTraditional.RenderGPU.Dispatch", ProfilerScopeKind.AlwaysOnHotPathLoop))
             commands.RenderGPU(command.RenderPass, meshSubmissionStrategy);
@@ -50,14 +55,6 @@ internal static class VPRC_RenderMeshesPassTraditional
             if (gpuPass.GpuProgramsPendingThisFrame)
                 return;
 
-            if (ShouldUseOpenGLZeroReadbackProgramWarmupFallback(meshSubmissionStrategy, gpuPass))
-            {
-                RuntimeEngine.Rendering.Stats.GpuFallback.RecordGpuCpuFallback(1, 0);
-                WarnZeroReadbackProgramWarmupFallback(command.RenderPass, gpuPass.ZeroReadbackProgramPendingCountThisFrame);
-                commands.RenderCPUMeshOnly(command.RenderPass);
-                return;
-            }
-
             if (gpuPass.VisibleCommandCount != 0)
                 return;
 
@@ -66,17 +63,17 @@ internal static class VPRC_RenderMeshesPassTraditional
             // empty result or that the upper-bound publication is still crossing a frame boundary;
             // neither is evidence of a fallback attempt. Explicit scatter/program/submission
             // failures report their own forbidden-fallback event at the point of failure.
-            if (meshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+            if (meshSubmissionStrategy.IsGpuZeroReadbackStrategy())
                 return;
 
             // An empty render pass is not a fallback event. Only apply the
             // safety-net policy when this pass actually contains meshes the
             // GPU submission path was expected to consume.
-            if (!commands.HasGpuEligibleMeshCommands(command.RenderPass))
+            if (!commands.HasGpuEligibleMeshCommands(command.RenderPass, meshSubmissionStrategy))
                 return;
 
-            bool shaderWarmupFallback = ShouldUseOpenGLShaderWarmupFallback(meshSubmissionStrategy);
-            bool allowCpuSafetyNet = shaderWarmupFallback || IsExplicitCpuFallbackAllowed(meshSubmissionStrategy);
+            bool shaderWarmupFallback = false;
+            bool allowCpuSafetyNet = IsExplicitCpuFallbackAllowed(meshSubmissionStrategy);
 
             if (allowCpuSafetyNet)
             {
@@ -123,6 +120,9 @@ internal static class VPRC_RenderMeshesPassTraditional
 
     private static bool IsExplicitCpuFallbackAllowed(EMeshSubmissionStrategy strategy)
     {
+        if (strategy.IsGpuZeroReadbackStrategy())
+            return false;
+
         bool fallbackRequested = (RuntimeEngine.EditorPreferences?.Debug?.AllowGpuCpuFallback == true)
             || (RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging && RuntimeEngine.EffectiveSettings.EnableGpuIndirectCpuFallback);
 
@@ -132,30 +132,10 @@ internal static class VPRC_RenderMeshesPassTraditional
         if (!IsActiveRendererVulkan())
             return true;
 
-        if (strategy.IsGpuZeroReadbackStrategy())
-        {
-            string? explicitSafetyNet = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanAllowCpuMeshSafetyNet);
-            return string.Equals(explicitSafetyNet, "1", StringComparison.OrdinalIgnoreCase);
-        }
-
         return !VulkanFeatureProfile.EnforceStrictNoFallbacks
             && (!VulkanFeatureProfile.IsActive ||
                 VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics);
     }
-
-    private static bool ShouldUseOpenGLShaderWarmupFallback(EMeshSubmissionStrategy strategy)
-        => strategy.IsGpuZeroReadbackStrategy()
-           && IsActiveRendererOpenGL()
-           && AbstractRenderer.Current is IRuntimeRendererHost renderer
-           && renderer.TryGetBackendCapability<IRendererStartupWarmupBackendCapability>(out var warmup)
-           && warmup?.HasPendingAsyncPrograms == true;
-
-    private static bool ShouldUseOpenGLZeroReadbackProgramWarmupFallback(
-        EMeshSubmissionStrategy strategy,
-        GPURenderPassCollection gpuPass)
-        => strategy.IsGpuZeroReadbackStrategy()
-           && IsActiveRendererOpenGL()
-           && gpuPass.ZeroReadbackProgramPendingThisFrame;
 
     private static bool IsActiveRendererOpenGL()
         => AbstractRenderer.Current?.BackendId == RendererBackendId.OpenGL
@@ -199,12 +179,4 @@ internal static class VPRC_RenderMeshesPassTraditional
             $"[GPU-PIPELINE] Render pass {renderPass} produced zero visible GPU commands; CPU mesh safety-net fallback is running because {reason}.");
     }
 
-    private static void WarnZeroReadbackProgramWarmupFallback(int renderPass, int pendingProgramCount)
-    {
-        if (Interlocked.Decrement(ref _cpuSafetyNetLogBudget) < 0)
-            return;
-
-        XREngine.Debug.LogWarning(
-            $"[GPU-PIPELINE] Render pass {renderPass} deferred zero-readback GPU draws because {pendingProgramCount} OpenGL program(s) are still warming asynchronously; CPU mesh safety-net fallback is running for this frame.");
-    }
 }

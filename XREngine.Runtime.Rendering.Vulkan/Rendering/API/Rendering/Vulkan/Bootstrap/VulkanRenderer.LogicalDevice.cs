@@ -127,6 +127,8 @@ public unsafe partial class VulkanRenderer
         _supportsDescriptorBindingPartiallyBound = false;
         _supportsDescriptorBindingUpdateAfterBind = false;
         _supportsDescriptorBindingStorageImageUpdateAfterBind = false;
+        _supportsDescriptorBindingVariableDescriptorCount = false;
+        _supportsShaderSampledImageArrayNonUniformIndexing = false;
 
         PhysicalDeviceDescriptorIndexingFeatures descriptorIndexingFeatures = new()
         {
@@ -145,6 +147,8 @@ public unsafe partial class VulkanRenderer
         _supportsRuntimeDescriptorArray = descriptorIndexingFeatures.RuntimeDescriptorArray;
         _supportsDescriptorBindingPartiallyBound = descriptorIndexingFeatures.DescriptorBindingPartiallyBound;
         _supportsDescriptorBindingStorageImageUpdateAfterBind = descriptorIndexingFeatures.DescriptorBindingStorageImageUpdateAfterBind;
+        _supportsDescriptorBindingVariableDescriptorCount = descriptorIndexingFeatures.DescriptorBindingVariableDescriptorCount;
+        _supportsShaderSampledImageArrayNonUniformIndexing = descriptorIndexingFeatures.ShaderSampledImageArrayNonUniformIndexing;
         _supportsDescriptorBindingUpdateAfterBind = descriptorIndexingFeatures.DescriptorBindingSampledImageUpdateAfterBind ||
             descriptorIndexingFeatures.DescriptorBindingStorageImageUpdateAfterBind ||
             descriptorIndexingFeatures.DescriptorBindingStorageBufferUpdateAfterBind ||
@@ -1445,6 +1449,8 @@ public unsafe partial class VulkanRenderer
         bool descriptorIndexingCapabilityReady =
             _supportsRuntimeDescriptorArray &&
             _supportsDescriptorBindingPartiallyBound &&
+            _supportsDescriptorBindingVariableDescriptorCount &&
+            _supportsShaderSampledImageArrayNonUniformIndexing &&
             _supportsDescriptorBindingUpdateAfterBind;
 
         bool enableDescriptorIndexing = descriptorIndexingExtensionEnabled &&
@@ -1808,6 +1814,8 @@ public unsafe partial class VulkanRenderer
             DescriptorBindingStorageImageUpdateAfterBind = enableDescriptorIndexing && _supportsDescriptorBindingStorageImageUpdateAfterBind,
             DescriptorBindingStorageBufferUpdateAfterBind = enableDescriptorIndexing,
             DescriptorBindingUniformBufferUpdateAfterBind = enableDescriptorIndexing,
+            DescriptorBindingVariableDescriptorCount = enableDescriptorIndexing,
+            ShaderSampledImageArrayNonUniformIndexing = enableDescriptorIndexing,
         };
 
         PhysicalDeviceMemoryDecompressionFeaturesNV memoryDecompressionFeatureEnable = new()
@@ -1879,6 +1887,8 @@ public unsafe partial class VulkanRenderer
             DescriptorBindingStorageImageUpdateAfterBind = enableDescriptorIndexing && _supportsDescriptorBindingStorageImageUpdateAfterBind,
             DescriptorBindingStorageBufferUpdateAfterBind = enableDescriptorIndexing,
             DescriptorBindingUniformBufferUpdateAfterBind = enableDescriptorIndexing,
+            DescriptorBindingVariableDescriptorCount = enableDescriptorIndexing,
+            ShaderSampledImageArrayNonUniformIndexing = enableDescriptorIndexing,
             TimelineSemaphore = enableTimelineSemaphoreFeature,
             BufferDeviceAddress = enableBufferDeviceAddress,
             ShaderOutputViewportIndex = enableShaderOutputViewportIndexFeature,
@@ -2404,10 +2414,12 @@ public unsafe partial class VulkanRenderer
         if (descriptorIndexingExtensionEnabled && !enableDescriptorIndexing)
         {
             Debug.VulkanWarning(
-                "[Vulkan] Descriptor indexing extension present but disabled (requested={0}, runtimeArray={1}, partiallyBound={2}, updateAfterBind={3}).",
+                "[Vulkan] Descriptor indexing extension present but disabled (requested={0}, runtimeArray={1}, partiallyBound={2}, variableCount={3}, sampledImageNonUniformIndexing={4}, updateAfterBind={5}).",
                 descriptorIndexingRequestedByProfile,
                 _supportsRuntimeDescriptorArray,
                 _supportsDescriptorBindingPartiallyBound,
+                _supportsDescriptorBindingVariableDescriptorCount,
+                _supportsShaderSampledImageArrayNonUniformIndexing,
                 _supportsDescriptorBindingUpdateAfterBind);
         }
             else if (enableDescriptorIndexing && !_supportsDescriptorBindingStorageImageUpdateAfterBind)

@@ -451,7 +451,7 @@ namespace XREngine.Rendering.Commands
             return VulkanFeatureProfile.ResolveOcclusionCullingMode(RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode);
         }
 
-        private void ApplyOcclusionCulling(GPUScene scene, XRCamera? camera)
+        private void ApplyOcclusionCulling(GPUScene scene, XRCamera? camera, bool deferGpuHiZ)
         {
             HiZStageStats.Record("Entry", 0.0);
             Stopwatch occlusionStopwatch = Stopwatch.StartNew();
@@ -488,6 +488,13 @@ namespace XREngine.Rendering.Commands
             if (candidates == 0u)
             {
                 HiZStageStats.Record("Exit.NoCandidates", 0.0);
+                RecordOcclusionTiming();
+                return;
+            }
+
+            if (deferGpuHiZ && mode == EOcclusionCullingMode.GpuHiZ)
+            {
+                HiZStageStats.Record("GpuHiZ.DeferredForTwoPass", 0.0);
                 RecordOcclusionTiming();
                 return;
             }
@@ -688,7 +695,11 @@ namespace XREngine.Rendering.Commands
             bool cacheOncePerFrame = RuntimeEngine.Rendering.Settings.CacheGpuHiZOcclusionOncePerFrame;
             bool invalidateTemporalHiZ = ShouldInvalidateGpuHiZTemporalState(scene, camera);
             uint temporalInvalidations = invalidateTemporalHiZ ? 1u : 0u;
-            RuntimeEngine.Rendering.Stats.RecordGpuDrivenHiZMode(depthInput.History ? "two-phase-history-depth" : "two-phase-current-depth");
+            // This is the current single-refine implementation. Do not label it two-phase:
+            // persistent previous-frame visibility plus distinct phase-1/phase-2 indirect
+            // draws have not been introduced yet.
+            RuntimeEngine.Rendering.Stats.RecordGpuDrivenHiZMode(
+                depthInput.History ? "single-phase-history-depth" : "single-phase-current-depth");
             if (cacheOncePerFrame)
             {
                 var shared = _hiZSharedCache.GetValue(pipeline, static _ => new HiZSharedState());
@@ -804,7 +815,10 @@ namespace XREngine.Rendering.Commands
                 uint visibleAfter = VisibleCommandCount;
                 occluded = candidates > visibleAfter ? (candidates - visibleAfter) : 0u;
             }
-            RuntimeEngine.Rendering.Stats.RecordGpuDrivenHiZPhase(twoPhase: true, phaseOneDraws: candidates, phaseTwoDraws: readbackAvailable ? Math.Max(0u, VisibleCommandCount) : 0L);
+            RuntimeEngine.Rendering.Stats.RecordGpuDrivenHiZPhase(
+                twoPhase: false,
+                phaseOneDraws: readbackAvailable ? Math.Max(0u, VisibleCommandCount) : candidates,
+                phaseTwoDraws: 0L);
             RecordOcclusionFrameStats(candidates, occluded, 0u, temporalInvalidations);
             XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordGpuPass(
                 (int)candidates, (int)occluded, readbackAvailable);
@@ -1070,6 +1084,7 @@ namespace XREngine.Rendering.Commands
                 VWrap = ETexWrapMode.ClampToEdge,
                 AutoGenerateMipmaps = false,
                 Resizable = false,
+                RequiresStorageUsage = true,
             };
 
             // Ensure GPU object is created.
@@ -1123,6 +1138,7 @@ namespace XREngine.Rendering.Commands
                 VWrap = ETexWrapMode.ClampToEdge,
                 AutoGenerateMipmaps = false,
                 Resizable = false,
+                RequiresStorageUsage = true,
             };
 
             shared.Pyramid.PushData();
@@ -1185,6 +1201,9 @@ namespace XREngine.Rendering.Commands
             _hiZOcclusionProgram.Uniform("HiZMaxMip", _hiZMaxMip);
             _hiZOcclusionProgram.Uniform("IsReversedDepth", reversed);
             _hiZOcclusionProgram.Uniform("MaxOutputCommands", (int)CulledSceneToRenderBuffer!.ElementCount);
+            _hiZOcclusionProgram.Uniform("TwoPassPhase", 0);
+            _hiZOcclusionProgram.Uniform("ActiveViewCount", (int)_activeViewCount);
+            _hiZOcclusionProgram.Uniform("CurrentRenderPass", RenderPass);
 
             bool requireHotCommands = IsHotCommandLayoutRequired();
             bool useHotCommands = _culledHotCommandsValid &&
@@ -1207,13 +1226,34 @@ namespace XREngine.Rendering.Commands
             BindStorageBuffer(_hiZOcclusionProgram, _cullCountScratchBuffer!, 3);
             _hiZOcclusionProgram.BindBuffer(_occlusionOverflowFlagBuffer!, 4);
             scene.BoundsBuffer.BindTo(_hiZOcclusionProgram, 5);
+            if (_twoPassVisibilityBuffer is not null)
+                _twoPassVisibilityBuffer.BindTo(_hiZOcclusionProgram, 6);
             if (useHotCommands)
             {
                 _hiZOcclusionProgram.BindBuffer(_culledHotCommandBuffer!, 9);
                 _hiZOcclusionProgram.BindBuffer(_occlusionCulledHotBuffer!, 10);
             }
+            else
+            {
+                // The descriptor layout still declares the optional hot streams.
+                // Bind the layout-compatible cold streams while UseHotCommands is
+                // zero so Vulkan can publish a complete descriptor set; the shader
+                // does not access these aliases on the cold-command branch.
+                _hiZOcclusionProgram.BindBuffer(CulledSceneToRenderBuffer!, 9);
+                _hiZOcclusionProgram.BindBuffer(_occlusionCulledBuffer!, 10);
+            }
             if (_statsBuffer is not null)
                 _hiZOcclusionProgram.BindBuffer(_statsBuffer, 8);
+            BindViewSetBuffers(_hiZOcclusionProgram);
+
+            if (_perViewDrawCountBuffer is not null &&
+                !ClearUIntBufferOnGpu(
+                    _perViewDrawCountBuffer,
+                    Math.Max(_activeViewCount, 1u),
+                    EMemoryBarrierMask.ShaderStorage))
+            {
+                ResetPerViewDrawCounts(_activeViewCount);
+            }
 
             // Dispatch sizing.
             //

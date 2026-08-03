@@ -1628,6 +1628,26 @@ namespace XREngine.Rendering.Commands
         }
 
         /// <summary>
+        /// Executes callback and other non-mesh commands without issuing any
+        /// CPU-owned mesh draws. Strict zero-readback passes use this path because
+        /// every supported mesh remains resident in the GPU scene.
+        /// </summary>
+        public void RenderCPUNonMeshOnly(int renderPass)
+        {
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+
+            if (!TryGetPublishedPassCommandsNoLock(renderPass, out ICollection<RenderCommand> list))
+                return;
+
+            for (int commandIndex = 0; commandIndex < list.Count; commandIndex++)
+            {
+                RenderCommand cmd = GetCommandAt(list, commandIndex);
+                if (cmd is not IRenderCommandMesh)
+                    RenderWithGpuScope(cmd, renderPass);
+            }
+        }
+
+        /// <summary>
         /// Renders only commands in the specified pass that satisfy the given predicate.
         /// </summary>
         public void RenderCPUFiltered(int renderPass, Predicate<RenderCommand> filter)
@@ -1829,7 +1849,7 @@ namespace XREngine.Rendering.Commands
             if (!_gpuPasses.TryGetValue(renderPass, out GPURenderPassCollection? gpuPass))
                 return;
 
-            if (!HasGpuEligibleMeshCommands(renderPass))
+            if (!HasGpuEligibleMeshCommands(renderPass, meshSubmissionStrategy))
                 return;
             
             IRuntimeRenderCommandExecutionState? renderState = RuntimeRenderingHostServices.FrameTiming.ActiveRenderCommandExecutionState;
@@ -1934,11 +1954,24 @@ namespace XREngine.Rendering.Commands
         }
 
         public bool HasGpuEligibleMeshCommands(int renderPass)
+            => HasGpuEligibleMeshCommands(
+                renderPass,
+                EMeshSubmissionStrategy.GpuIndirectInstrumented);
+
+        public bool HasGpuEligibleMeshCommands(
+            int renderPass,
+            EMeshSubmissionStrategy meshSubmissionStrategy)
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
             if (!TryGetPublishedPassNoLock(renderPass, out BackendReadyRenderPass pass) ||
                 pass.MeshCommandCount == 0)
                 return false;
+
+            // Strict zero-readback owns every otherwise supported mesh. Commands
+            // marked CPU-preferred remain GPU-resident and are enabled by the
+            // pass culling mask instead of being submitted directly by the CPU.
+            if (meshSubmissionStrategy.IsGpuZeroReadbackStrategy())
+                return true;
 
             ReadOnlySpan<BackendReadyMeshSelection> selections =
                 _renderingBackendReadyPackage.MeshSelections;
