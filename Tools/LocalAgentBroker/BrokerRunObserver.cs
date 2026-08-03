@@ -18,6 +18,15 @@ internal sealed class BrokerRunObserver(BrokerRunRecord record) : IAgentRunObser
         {
             record.AddToolEvidence(runEvent.ToolEvidence);
         }
+        else if (runEvent.Kind == AgentRunEventKind.Diagnostic
+            && runEvent.ProviderAttempt is not null)
+        {
+            record.AddProviderAttempt(runEvent.ProviderAttempt);
+        }
+        else if (runEvent.Kind == AgentRunEventKind.Retry)
+        {
+            record.RecordRetry();
+        }
         return ValueTask.CompletedTask;
     }
 }

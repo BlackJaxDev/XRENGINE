@@ -112,7 +112,6 @@ namespace XREngine.Components.Scene.Mesh
                     var renderer = lod.NewRenderer();
                     renderer.Mesh = CreateRuntimeMesh(lod.Mesh, referenceSearchRoot);
                     renderer.SourceSubMeshAsset = mesh;
-                    renderer.SettingUniforms += SettingUniforms;
                     void UpdateReferences(object? s, IXRPropertyChangedEventArgs e)
                     {
                         if (e.PropertyName == nameof(SubMeshLOD.Mesh))
@@ -222,11 +221,6 @@ namespace XREngine.Components.Scene.Mesh
         {
             lock (_lodsLock)
                 return _currentLOD?.Value?.Renderer ?? LODs.First?.Value?.Renderer;
-        }
-
-        private void SettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
-        {
-            // Reserved for mesh-level uniforms; renderer and material paths currently bind their own state.
         }
 
         private bool BeforeAdd(RenderInfo info, RenderCommandCollection passes, IRuntimeRenderCamera? camera)

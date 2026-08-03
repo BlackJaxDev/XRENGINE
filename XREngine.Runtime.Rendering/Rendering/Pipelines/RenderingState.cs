@@ -698,6 +698,17 @@ public sealed partial class XRRenderPipelineInstance
         public ulong ScopedBindingRevision
             => _scopedBindingRevision;
 
+        /// <summary>
+        /// Gets whether an action/resource layer is currently active. Backends
+        /// without a generation contract must keep these scopes on their
+        /// conservative per-draw binding path.
+        /// </summary>
+        public bool HasActiveScopedBindings
+            => _textureBindings.Count != 0 ||
+                _bufferBindings.Count != 0 ||
+                _shaderGlobals.Count != 0 ||
+                _programBindings.Count != 0;
+
         private void IncrementScopedBindingRevision()
         {
             unchecked

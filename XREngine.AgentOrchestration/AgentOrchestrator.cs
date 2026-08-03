@@ -36,6 +36,14 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
         using var elapsedBudget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         elapsedBudget.CancelAfter(TimeSpan.FromSeconds(request.Budget.MaxElapsedSeconds));
         CancellationToken runToken = elapsedBudget.Token;
+        var finalText = new StringBuilder();
+        var outputItems = new List<AgentOutputItem>();
+        var evidence = new List<AgentToolEvidence>();
+        var providerAttempts = new List<AgentProviderAttemptDiagnostic>();
+        AgentTokenUsage usage = new();
+        string actualModel = string.Empty;
+        int toolCallCount = 0;
+        int turnCount = 0;
 
         try
         {
@@ -53,14 +61,7 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
                 : request.Objective;
             string? continuation = null;
             IReadOnlyList<AgentModelToolOutput> toolOutputs = [];
-            var finalText = new StringBuilder();
-            var outputItems = new List<AgentOutputItem>();
-            var evidence = new List<AgentToolEvidence>();
             var seenCallIds = new HashSet<string>(StringComparer.Ordinal);
-            AgentTokenUsage usage = new();
-            string actualModel = string.Empty;
-            int toolCallCount = 0;
-            int turnCount = 0;
             int lastMutationEvidenceIndex = -1;
             int lastVerificationEvidenceIndex = -1;
 
@@ -82,7 +83,9 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
                         evidence,
                         turnCount,
                         toolCallCount,
-                        finalText.ToString());
+                        finalText.ToString(),
+                        providerAttempts: providerAttempts,
+                        retryCount: CountRetries(providerAttempts));
                 }
 
                 turnCount++;
@@ -101,6 +104,7 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
                     },
                     observer,
                     request.Budget.MaxRetries,
+                    providerAttempts,
                     runToken);
 
                 actualModel = turnResult.ActualModel;
@@ -121,7 +125,9 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
                         evidence,
                         turnCount,
                         toolCallCount,
-                        finalText.ToString());
+                        finalText.ToString(),
+                        providerAttempts: providerAttempts,
+                        retryCount: CountRetries(providerAttempts));
                 }
 
                 if (!IsRequestedModel(request.RequestedModel, actualModel))
@@ -136,7 +142,9 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
                         usage,
                         evidence,
                         turnCount,
-                        toolCallCount);
+                        toolCallCount,
+                        providerAttempts: providerAttempts,
+                        retryCount: CountRetries(providerAttempts));
                 }
 
                 if (!string.IsNullOrEmpty(turnResult.OutputText))
@@ -163,7 +171,9 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
                         evidence,
                         turnCount,
                         toolCallCount,
-                        finalText.ToString());
+                        finalText.ToString(),
+                        providerAttempts: providerAttempts,
+                        retryCount: CountRetries(providerAttempts));
                 }
 
                 if (toolCallCount + turnResult.ToolCalls.Count > request.Budget.MaxToolCalls)
@@ -179,7 +189,9 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
                         evidence,
                         turnCount,
                         toolCallCount,
-                        finalText.ToString());
+                        finalText.ToString(),
+                        providerAttempts: providerAttempts,
+                        retryCount: CountRetries(providerAttempts));
                 }
 
                 List<AgentModelToolOutput> nextOutputs = [];
@@ -198,7 +210,9 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
                             evidence,
                             turnCount,
                             toolCallCount,
-                            finalText.ToString());
+                            finalText.ToString(),
+                            providerAttempts: providerAttempts,
+                            retryCount: CountRetries(providerAttempts));
                     }
 
                     if (!toolsByName.TryGetValue(call.Name, out AgentToolDefinition? definition))
@@ -214,7 +228,9 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
                             evidence,
                             turnCount,
                             toolCallCount,
-                            finalText.ToString());
+                            finalText.ToString(),
+                            providerAttempts: providerAttempts,
+                            retryCount: CountRetries(providerAttempts));
                     }
 
                     toolCallCount++;
@@ -289,7 +305,9 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
                     evidence,
                     turnCount,
                     toolCallCount,
-                    finalText.ToString());
+                    finalText.ToString(),
+                    providerAttempts: providerAttempts,
+                    retryCount: CountRetries(providerAttempts));
             }
 
             if (turnCount >= request.Budget.MaxTurns && toolOutputs.Count > 0)
@@ -305,7 +323,9 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
                     evidence,
                     turnCount,
                     toolCallCount,
-                    finalText.ToString());
+                    finalText.ToString(),
+                    providerAttempts: providerAttempts,
+                    retryCount: CountRetries(providerAttempts));
             }
 
             return new AgentRunResult
@@ -320,31 +340,53 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
                 Usage = usage,
                 ToolCallCount = toolCallCount,
                 TurnCount = turnCount,
+                RetryCount = CountRetries(providerAttempts),
+                ProviderAttempts = providerAttempts.ToArray(),
                 ElapsedMilliseconds = stopwatch.ElapsedMilliseconds,
             };
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception)
         {
+            if (exception is AgentModelOperationCanceledException providerCancellation)
+                AddOrReplaceProviderAttempt(providerAttempts, providerCancellation.ProviderAttempt);
             bool callerCancelled = cancellationToken.IsCancellationRequested;
+            actualModel = LatestActualModel(actualModel, providerAttempts);
             return FailureResult(
                 runId,
                 request,
                 stopwatch,
                 callerCancelled ? AgentFailureCategory.Cancelled : AgentFailureCategory.BudgetExceeded,
                 callerCancelled ? "The run was cancelled." : "The run exceeded its elapsed-time budget.",
-                status: callerCancelled ? AgentRunStatus.Cancelled : AgentRunStatus.Failed);
+                actualModel,
+                usage,
+                evidence,
+                turnCount,
+                toolCallCount,
+                finalText.ToString(),
+                status: callerCancelled ? AgentRunStatus.Cancelled : AgentRunStatus.Failed,
+                providerAttempts: providerAttempts,
+                retryCount: CountRetries(providerAttempts));
         }
         catch (AgentModelException exception)
         {
+            actualModel = LatestActualModel(actualModel, providerAttempts);
             return FailureResult(
                 runId,
                 request,
                 stopwatch,
                 exception.Category,
                 exception.Message,
+                actualModel,
+                usage,
+                evidence,
+                turnCount,
+                toolCallCount,
+                finalText.ToString(),
                 providerStatus: exception.ProviderStatus,
                 retryable: exception.Retryable,
-                diagnosticDetail: exception.DiagnosticDetail);
+                diagnosticDetail: exception.DiagnosticDetail,
+                providerAttempts: providerAttempts,
+                retryCount: CountRetries(providerAttempts));
         }
         catch (AgentToolProviderException exception)
         {
@@ -354,7 +396,15 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
                 stopwatch,
                 exception.Category,
                 exception.Message,
-                diagnosticDetail: exception.DiagnosticDetail);
+                actualModel,
+                usage,
+                evidence,
+                turnCount,
+                toolCallCount,
+                finalText.ToString(),
+                diagnosticDetail: exception.DiagnosticDetail,
+                providerAttempts: providerAttempts,
+                retryCount: CountRetries(providerAttempts));
         }
         catch (Exception exception)
         {
@@ -364,7 +414,15 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
                 stopwatch,
                 AgentFailureCategory.Internal,
                 "The agent run failed unexpectedly.",
-                diagnosticDetail: exception.Message);
+                actualModel,
+                usage,
+                evidence,
+                turnCount,
+                toolCallCount,
+                finalText.ToString(),
+                diagnosticDetail: exception.Message,
+                providerAttempts: providerAttempts,
+                retryCount: CountRetries(providerAttempts));
         }
     }
 
@@ -372,16 +430,56 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
         AgentModelTurnRequest request,
         IAgentRunObserver observer,
         int maxRetries,
+        List<AgentProviderAttemptDiagnostic> providerAttempts,
         CancellationToken cancellationToken)
     {
         for (int attempt = 0; ; attempt++)
         {
             try
             {
-                return await _modelClient.CreateResponseAsync(request, observer, cancellationToken);
+                AgentModelTurnResult result = await _modelClient.CreateResponseAsync(
+                    request with { AttemptNumber = attempt + 1 },
+                    observer,
+                    cancellationToken);
+                AgentProviderAttemptDiagnostic diagnostic = NormalizeAttemptDiagnostic(
+                    result.ProviderAttempt,
+                    request,
+                    attempt + 1,
+                    retried: false,
+                    fallbackOutcome: "completed");
+                providerAttempts.Add(diagnostic);
+                await observer.OnEventAsync(
+                    new AgentRunEvent
+                    {
+                        Kind = AgentRunEventKind.Diagnostic,
+                        Message = $"Provider turn {request.TurnIndex + 1} attempt {attempt + 1} completed.",
+                        ProviderAttempt = diagnostic,
+                    },
+                    cancellationToken);
+                return result with { ProviderAttempt = diagnostic };
             }
-            catch (AgentModelException exception) when (exception.Retryable && attempt < maxRetries)
+            catch (AgentModelException exception)
             {
+                bool willRetry = exception.Retryable && attempt < maxRetries;
+                AgentProviderAttemptDiagnostic diagnostic = NormalizeAttemptDiagnostic(
+                    exception.ProviderAttempt,
+                    request,
+                    attempt + 1,
+                    willRetry,
+                    fallbackOutcome: "provider_error",
+                    exception);
+                providerAttempts.Add(diagnostic);
+                await observer.OnEventAsync(
+                    new AgentRunEvent
+                    {
+                        Kind = AgentRunEventKind.Diagnostic,
+                        Message = $"Provider turn {request.TurnIndex + 1} attempt {attempt + 1} failed with {exception.Category}.",
+                        ProviderAttempt = diagnostic,
+                    },
+                    cancellationToken);
+                if (!willRetry)
+                    throw;
+
                 TimeSpan delay = exception.RetryAfter
                     ?? TimeSpan.FromMilliseconds(Math.Min(8_000, 400 * Math.Pow(2, attempt))
                         + Random.Shared.Next(50, 251));
@@ -389,12 +487,69 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
                     new AgentRunEvent
                     {
                         Kind = AgentRunEventKind.Retry,
-                        Message = $"Retrying provider request after {delay.TotalMilliseconds:0} ms.",
+                        Message = $"Retrying provider turn {request.TurnIndex + 1} after attempt {attempt + 1}/{maxRetries + 1} and {delay.TotalMilliseconds:0} ms.",
+                        ProviderAttempt = diagnostic,
                     },
                     cancellationToken);
                 await Task.Delay(delay, cancellationToken);
             }
         }
+    }
+
+    private static AgentProviderAttemptDiagnostic NormalizeAttemptDiagnostic(
+        AgentProviderAttemptDiagnostic? diagnostic,
+        AgentModelTurnRequest request,
+        int attemptNumber,
+        bool retried,
+        string fallbackOutcome,
+        AgentModelException? exception = null)
+    {
+        diagnostic ??= new AgentProviderAttemptDiagnostic();
+        return diagnostic with
+        {
+            TurnNumber = request.TurnIndex + 1,
+            AttemptNumber = attemptNumber,
+            UsedBackgroundMode = request.Run.UseBackgroundMode,
+            Outcome = string.IsNullOrWhiteSpace(diagnostic.Outcome)
+                ? fallbackOutcome
+                : diagnostic.Outcome,
+            FailureCategory = diagnostic.FailureCategory ?? exception?.Category,
+            ProviderStatus = diagnostic.ProviderStatus ?? exception?.ProviderStatus,
+            Retryable = diagnostic.Retryable || exception?.Retryable == true,
+            Retried = retried,
+        };
+    }
+
+    private static int CountRetries(IReadOnlyList<AgentProviderAttemptDiagnostic> attempts)
+        => attempts.Count(static attempt => attempt.Retried);
+
+    private static void AddOrReplaceProviderAttempt(
+        List<AgentProviderAttemptDiagnostic> attempts,
+        AgentProviderAttemptDiagnostic diagnostic)
+    {
+        int existingIndex = attempts.FindIndex(candidate =>
+            candidate.TurnNumber == diagnostic.TurnNumber
+            && candidate.AttemptNumber == diagnostic.AttemptNumber);
+        if (existingIndex >= 0)
+            attempts[existingIndex] = diagnostic;
+        else
+            attempts.Add(diagnostic);
+    }
+
+    private static string LatestActualModel(
+        string currentActualModel,
+        IReadOnlyList<AgentProviderAttemptDiagnostic> attempts)
+    {
+        if (!string.IsNullOrWhiteSpace(currentActualModel))
+            return currentActualModel;
+
+        for (int index = attempts.Count - 1; index >= 0; index--)
+        {
+            if (!string.IsNullOrWhiteSpace(attempts[index].ActualModel))
+                return attempts[index].ActualModel;
+        }
+
+        return string.Empty;
     }
 
     private static AgentToolResult BoundToolResult(AgentToolResult result, int maximumBytes)
@@ -472,7 +627,9 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
         AgentRunStatus status = AgentRunStatus.Failed,
         int? providerStatus = null,
         bool retryable = false,
-        string diagnosticDetail = "")
+        string diagnosticDetail = "",
+        IReadOnlyList<AgentProviderAttemptDiagnostic>? providerAttempts = null,
+        int retryCount = 0)
         => new()
         {
             RunId = runId,
@@ -484,6 +641,8 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
             Usage = usage ?? new AgentTokenUsage(),
             ToolCallCount = toolCallCount,
             TurnCount = turnCount,
+            RetryCount = retryCount,
+            ProviderAttempts = providerAttempts ?? [],
             ElapsedMilliseconds = stopwatch.ElapsedMilliseconds,
             Failure = new AgentFailure
             {

@@ -177,7 +177,7 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private void RecordTransformFeedbackOp(CommandBuffer commandBuffer, TransformFeedbackOp op)
+        internal void RecordTransformFeedbackOp(CommandBuffer commandBuffer, TransformFeedbackOp op)
         {
             switch (op.Operation)
             {
@@ -274,7 +274,7 @@ namespace XREngine.Rendering.Vulkan
             return false;
         }
 
-        private void RecordMeshTaskDispatchIndirectCountOp(CommandBuffer commandBuffer, MeshTaskDispatchIndirectCountOp op)
+        internal void RecordMeshTaskDispatchIndirectCountOp(CommandBuffer commandBuffer, MeshTaskDispatchIndirectCountOp op)
         {
             if (!SupportsVulkanMeshTaskIndirectCount || _extMeshShader is null)
             {
@@ -371,7 +371,7 @@ namespace XREngine.Rendering.Vulkan
                 submittedDraws: op.MaxDrawCount);
         }
 
-        private void RecordComputeDispatchOp(CommandBuffer commandBuffer, uint imageIndex, ComputeDispatchOp op, int opIndex = -1)
+        internal void RecordComputeDispatchOp(CommandBuffer commandBuffer, uint imageIndex, ComputeDispatchOp op, int opIndex = -1)
         {
             if (!op.Program.Link())
                 throw new InvalidOperationException($"Compute program '{op.Program.Data.Name ?? "UnnamedProgram"}' became unavailable after enqueue.");

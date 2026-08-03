@@ -17,4 +17,19 @@ internal sealed record PublishFramebufferForSamplingOp(
     /// </summary>
     public XRFrameBuffer FrameBuffer { get; internal set; } = FrameBuffer;
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.PublishFramebufferForSampling;
+
+    internal override int RecordPrimary(
+        VulkanRenderer renderer,
+        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
+        in VulkanPrimaryOperationRecordingInfo recordingInfo)
+    {
+        renderer.CmdBeginLabel(
+            recordingState.CommandBuffer,
+            "PublishFramebufferForSampling");
+        renderer.RecordPublishFramebufferForSamplingOp(
+            recordingState.CommandBuffer,
+            this);
+        renderer.CmdEndLabel(recordingState.CommandBuffer);
+        return recordingInfo.OperationIndex;
+    }
 }

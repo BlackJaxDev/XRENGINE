@@ -117,7 +117,7 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private void RecordTextureUploadOp(CommandBuffer commandBuffer, VulkanImportedTexturePendingUpload upload)
+        internal void RecordTextureUploadOp(CommandBuffer commandBuffer, VulkanImportedTexturePendingUpload upload)
         {
             VulkanImportedTextureUploadRequest request = upload.Request;
             if (!upload.ShouldPublish())

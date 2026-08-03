@@ -101,6 +101,9 @@ internal sealed class AgentRunRegistry : IAsyncDisposable
                 RequestedModel = snapshot.RequestedModel,
                 ActualModel = snapshot.ActualModel,
                 EditorSession = snapshot.EditorSession,
+                UseBackgroundMode = snapshot.UseBackgroundMode,
+                AttemptCount = snapshot.ProviderAttempts.Count,
+                RetryCount = snapshot.RetryCount,
             })
             .ToArray();
     }

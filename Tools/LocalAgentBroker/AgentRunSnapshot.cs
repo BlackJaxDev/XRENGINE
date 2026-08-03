@@ -21,11 +21,17 @@ public sealed record AgentRunSnapshot
 
     public string EditorSession { get; init; } = string.Empty;
 
+    public bool UseBackgroundMode { get; init; }
+
     public string IncrementalText { get; init; } = string.Empty;
 
     public AgentTokenUsage Usage { get; init; } = new();
 
     public IReadOnlyList<AgentToolEvidence> ToolEvidence { get; init; } = [];
+
+    public int RetryCount { get; init; }
+
+    public IReadOnlyList<AgentProviderAttemptDiagnostic> ProviderAttempts { get; init; } = [];
 
     public AgentRunResult? Result { get; init; }
 }

@@ -1,8 +1,8 @@
 # Vulkan Optimization Workstreams 03-05 Validation TODO
 
-Last Updated: 2026-08-01
+Last Updated: 2026-08-03
 Owner: Rendering / Vulkan / Performance Validation
-Status: Blocked On Workstream 04 Implementation Closure
+Status: Blocked On Final Phase 0 Allocation Closure And The 03-05 Matrix
 Sequence: Consolidated completion and validation gate after workstream 05 and
 before workstream 06
 Predecessor: Workstream 02 is complete; see the
@@ -29,15 +29,22 @@ The three source TODOs were not all validation-only:
 | Workstream | Implementation state at consolidation | Remaining work |
 | --- | --- | --- |
 | 03 - true zero-readback submission | Complete for the bounded Vulkan material-table rung | Scaling, mutation, overflow, parity, primary-reuse, allocation, desktop/RVC, crossover, Vulkan-validation, and GPU-trace acceptance |
-| 04 - next-frame preparation and collect-visible handoff | Reopened and incomplete | Finish the producer-side binding/data handoff and legacy cutover, then validate publication scaling, allocation, parity, lifetime, latency, and overlap |
+| 04 - next-frame preparation and collect-visible handoff | Producer-complete binding handoff and legacy cutover are materially implemented for the representative path | Remove the final `3360` steady-frame mesh-draw preparation bytes, then validate publication scaling, mutation, parity, lifetime, latency, and overlap |
 | 05 - command-recording worker architecture | Complete for persistent worker mechanics | Prove real overlap and benefit, zero allocation, deterministic parity, fallback truth, and lifecycle safety |
 
 The checklist remains named a validation TODO because it is the pre-06
-acceptance gate. Phase 0 is nevertheless an implementation entry requirement:
-validation cannot promote an incomplete workstream-04 handoff.
+acceptance gate. A broker worker characterized the `3360` bytes as a
+validation-only optimization residual, but that recommendation does not
+override this repository's hot-path allocation rule or the Phase 0 zero-allocation
+exit criterion. The gate remains open for allocation closure and the required
+validation before workstream 06.
 
 ## Evidence And Supporting Trackers
 
+- [Vulkan Optimization 03-05 Validation Investigation](../../investigations/rendering/vulkan-optimization-03-05-validation-2026-08-02.md)
+  records the first live fail-fast pass, exact steady-frame counters, the
+  verified broker analysis, and the ordered workstream-04 implementation
+  slices that must close before the canonical matrix.
 - [Vulkan Framerate Root-Cause Investigation](../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md)
   owns the workstream-03 implementation and acceptance evidence.
 - [Next-Frame Preparation And Collect-Visible Handoff Progress](../../progress/rendering/next-frame-preparation-and-collect-visible-handoff-2026-07-29.md)
@@ -57,6 +64,118 @@ validation cannot promote an incomplete workstream-04 handoff.
 - [01-08 Acceptance Closeout](01-08-optimization-acceptance-closeout.md)
   consumes the accepted 03-05 baseline later; it no longer owns or defers the
   work listed here.
+
+## 2026-08-02 Live Fail-Fast Execution
+
+The first isolated Vulkan execution deliberately stopped before Phase 1. It
+proved that paying for the canonical matrix now would be invalid:
+
+| Workstream | Narrow live result | Gate effect |
+| --- | --- | --- |
+| 03 | The static CPU-direct scene primary cleanly reused (`1` reuse, `0` records; all `121` chains reused), with bounded package age and zero live Vulkan validation errors. GPU-driven rendering was disabled. | Static reuse smoke only; zero-readback acceptance remains unproven. |
+| 04 | The fast material payload path was active, but an unchanged frame still captured `120` binding snapshots/`4412` entries and allocated `1664` bytes in binding preparation, `576` bytes in material binding, and `1088` bytes in snapshot copy. | Phase 0 fails at the producer-complete binding handoff. |
+| 05 | The stable frame reused every chain, so no worker was correctly queued or evaluated. Historical counters show workers ran during startup, not that dirty work overlapped. | Dirty-worker concurrency and benefit remain unproven. |
+
+`FrameOpPreparation` also allocated `28064` bytes per steady frame. Keep it as
+the immediately following bounded correction after the binding ownership
+slice; neither defect is waived. Exact evidence, artifact paths, broker run
+identity, and post-change counters are in the linked investigation.
+
+## 2026-08-02 Implementation And Validation Continuation
+
+The producer-artifact slice is now materially implemented, but its Phase 0
+exit criteria are not yet met. On the warmed `validation-03-05-final` Vulkan
+session, an unchanged frame reported `119` persistent artifact reuses and only
+`5` explicit callback fallbacks, down from `120` snapshots on the original
+baseline. The remaining fallbacks are named and conservative:
+
+- directional deferred lighting;
+- deferred light combine;
+- dynamic procedural skybox;
+- bloom source copy; and
+- final presentation source copy.
+
+Generation-owned publishers now cover pipeline variables, GTAO and its blur
+passes, bloom downsample/upsample passes, FXAA, post-process settings, and the
+final numeric post-process pass. The forward-lighting ownership catalog now
+also includes its complete packed and array shadow state, so those values are
+retained and participate in the persistent lighting signature instead of
+appearing as unowned uniforms.
+
+This reduced stable snapshot work to `5` captures and `267` entries and
+eliminated stable material-binding allocation (`576` to `0` bytes). It did not
+close the gate: representative stable allocation remained `1920` bytes in
+mesh-draw binding preparation, `768` bytes in snapshot copy, and `28064` bytes
+in frame-op preparation. Twelve reflected auto-uniform schema mismatches also
+remain on the conservative path. The descriptor-aliasing callbacks must not be
+declared reusable until a generation-owned descriptor-resource publication
+contract exists.
+
+The same continuation found and fixed a dynamic-UI command-buffer ownership
+defect during async pipeline warmup. A deferred secondary previously returned
+after marking its overlay primary as recording; the next frame rejected reset
+and forced swapchain recovery. Tracking now begins only when native recording
+will begin and is abandoned on every exceptional exit. Fresh session
+`validation-03-05-lifecycle` reached frame `1275` with clean primary reuse,
+`119` artifact reuses, zero Vulkan messages, and no matching render exception,
+recording-state error, recovery, or VUID in its post-stop logs.
+
+Two camera-separated Vulkan readbacks were visually inspected from the final
+artifact build. They show distinct live views with non-black Sponza geometry
+and editor overlays. This closes the narrow camera-separated smoke deficiency,
+not the canonical parity/stress matrix. Workstream 06 remains blocked.
+
+## Final Implementation Continuation And Shadow Closeout
+
+The remaining five descriptor/publisher callbacks were migrated to explicit
+generation-owned publication, the legacy qualifying path was removed, frame-op
+planning storage was bounded, primary command planning was extended across the
+renderer/OpenXR logical slots, and auto-uniform frequency metadata was made
+explicit for the directional deferred-light path.
+
+On the warmed `validation-03-05-broker-closeout` Vulkan session, the current
+representative frame reported:
+
+- `129` persistent program-binding artifact reuses, zero builds, and zero
+  fallbacks;
+- zero binding snapshots, snapshot entries, legacy binding snapshots, and
+  snapshot-copy bytes;
+- `204` auto-uniform fast-path draws, zero legacy fallback draws, zero reflected
+  member scans/lookups, and zero block/frequency/parity schema mismatches;
+- zero frame-op preparation, frame-data refresh, primary recording, secondary
+  recording, submission, and command-cache allocation; and
+- zero Vulkan validation messages/errors.
+
+The warmed frame still attributed `3360` bytes to `MeshDrawPreparation`:
+`1624` in resource preparation, `1520` in binding preparation (`128` publisher
+state, `1264` artifact eligibility, and `128` artifact lookup), and `216`
+outside those nested scopes. This remains a Phase 0 implementation defect under
+the repository rule that warmed per-frame hot-path allocations are bugs. The
+broker's narrower lifetime-correctness classification is retained as evidence,
+not accepted as a waiver of the zero-allocation gate.
+
+The closeout also found and fixed directional-shadow flicker/displacement in
+the grouped `InstancedLayered` path. Mutable cascade/cubemap matrices had been
+included in pass-frequency owner identity, moving the dynamic UBO reservation
+while reusable secondary command buffers retained the previous offset. Owner
+identity now contains only stable shadow-pass identity; mutable matrices remain
+in pass content generation. A camera round trip that previously changed about
+`94.6%` of pixels now returns within `190 / 2,073,600` pixels (`0.0092%`), with
+the difference confined to transient editor overlays. The audit confirms four
+grouped cascades and no sequential fallback. The linked investigation contains
+the exact captures, logs, RenderDoc evidence, and source-level explanation.
+
+The repaired broker was republished as an immutable deployment and passed its
+MCP smoke test. After the requested Codex restart, the bounded broker review
+`c21386c827144a9cbed4146ab178e8d2` completed with
+`requested_model == actual_model == gpt-5.6-luna` and one read-only
+`get_render_profiler_stats` call. It classified the `3360` bytes as
+validation-only residue for lifetime correctness and confirmed the named shadow
+owner-identity change is structurally correct. The coordinator's bounded source
+audit found no other mutable shadow content in an owner-identity path, but the
+`3360` bytes still fail the repository's Phase 0 hot-path allocation rule. The
+workstream-06 gate therefore remains blocked pending allocation closure and a
+rerun of the existing matrix.
 
 ## Implemented Baseline To Preserve
 
@@ -182,7 +301,7 @@ Phase 0 exit criteria:
   command-artifact, worker, primary-reuse, image-journal, and lifecycle tests.
 - [ ] Resolve any stale or unrelated test failure that prevents the focused
   selection from executing, or record it as an explicit external blocker.
-- [ ] Run a narrow Vulkan smoke before paying for the canonical matrix; require
+- [x] Run a narrow Vulkan smoke before paying for the canonical matrix; require
   live camera-separated output, zero validation messages, no forbidden
   fallback, and internally consistent CPU-stage accounting.
 
@@ -367,4 +486,3 @@ Workstream 05 exit criteria:
   final disposition.
 - [ ] This document is marked `Complete` and workstream 06 is changed from
   `Blocked` to `Ready For Implementation`.
-

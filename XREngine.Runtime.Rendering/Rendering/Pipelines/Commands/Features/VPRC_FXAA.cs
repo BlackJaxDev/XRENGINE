@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using System.Threading;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
 
@@ -11,6 +12,53 @@ namespace XREngine.Rendering.Pipelines.Commands;
 [RenderPipelineScriptCommand]
 public sealed class VPRC_FXAA : ViewportRenderCommand
 {
+    private sealed class FxaaBindingPublisher(
+        VPRC_FXAA owner) : IRenderBindingPublisher
+    {
+        private readonly object _generationSync = new();
+        private XRTexture? _lastSource;
+        private Vector2 _lastTexelStep = new(float.NaN);
+        private long _generation = 1;
+
+        public ERenderBindingFrequency Frequency
+            => ERenderBindingFrequency.Pass;
+
+        public ulong Generation
+        {
+            get
+            {
+                XRTexture? source = owner._material?.Textures.Count > 0
+                    ? owner._material.Textures[0]
+                    : null;
+                XRRenderPipelineInstance? instance =
+                    RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+                Vector2 texelStep = source is not null && instance is not null
+                    ? owner.ResolveTexelStep(instance, source)
+                    : Vector2.Zero;
+
+                lock (_generationSync)
+                {
+                    if (ReferenceEquals(source, _lastSource) &&
+                        texelStep == _lastTexelStep)
+                    {
+                        return unchecked((ulong)_generation);
+                    }
+
+                    _lastSource = source;
+                    _lastTexelStep = texelStep;
+                    if (Interlocked.Increment(ref _generation) == 0)
+                        Interlocked.CompareExchange(ref _generation, 1, 0);
+                    return unchecked((ulong)_generation);
+                }
+            }
+        }
+
+        public void PublishUniforms(
+            XRRenderProgram vertexProgram,
+            XRRenderProgram materialProgram)
+            => owner.Fxaa_SettingUniforms(materialProgram);
+    }
+
     private XRMaterial? _material;
     private XRQuadFrameBuffer? _quad;
 
@@ -46,14 +94,14 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
         };
 
         _quad = new XRQuadFrameBuffer(_material);
-        _quad.SettingUniforms += Fxaa_SettingUniforms;
+        _quad.FullScreenMesh.BindingPublishers.Add(
+            new FxaaBindingPublisher(this));
     }
 
     internal override void ReleaseContainerResources(XRRenderPipelineInstance instance)
     {
         if (_quad is not null)
         {
-            _quad.SettingUniforms -= Fxaa_SettingUniforms;
             _quad.Destroy();
             _quad = null;
         }
@@ -167,8 +215,6 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
         if (!VPRCSourceTextureHelpers.TryResolveColorTexture(instance, SourceTextureName, SourceFBOName, out XRTexture? sourceTexture, out _)
             || sourceTexture is null)
             return;
-
-        program.Sampler("Texture0", sourceTexture, 0);
 
         Vector2 texelStep = ResolveTexelStep(instance, sourceTexture);
         program.Uniform("FxaaTexelStep", texelStep);

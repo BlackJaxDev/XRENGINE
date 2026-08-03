@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Numerics;
+using System.Threading;
 using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering;
@@ -12,14 +13,24 @@ public sealed partial class XRRenderPipelineInstance
     /// </summary>
     public sealed class PipelineVariableStore
     {
-        public Dictionary<string, bool> BoolVariables { get; } = new(StringComparer.OrdinalIgnoreCase);
-        public Dictionary<string, int> IntVariables { get; } = new(StringComparer.OrdinalIgnoreCase);
-        public Dictionary<string, uint> UIntVariables { get; } = new(StringComparer.OrdinalIgnoreCase);
-        public Dictionary<string, float> FloatVariables { get; } = new(StringComparer.OrdinalIgnoreCase);
-        public Dictionary<string, Vector2> Vector2Variables { get; } = new(StringComparer.OrdinalIgnoreCase);
-        public Dictionary<string, Vector3> Vector3Variables { get; } = new(StringComparer.OrdinalIgnoreCase);
-        public Dictionary<string, Vector4> Vector4Variables { get; } = new(StringComparer.OrdinalIgnoreCase);
-        public Dictionary<string, Matrix4x4> Matrix4Variables { get; } = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, bool> _boolVariables = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, int> _intVariables = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, uint> _uintVariables = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, float> _floatVariables = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Vector2> _vector2Variables = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Vector3> _vector3Variables = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Vector4> _vector4Variables = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Matrix4x4> _matrix4Variables = new(StringComparer.OrdinalIgnoreCase);
+        private long _uniformContentGeneration = 1;
+
+        public IReadOnlyDictionary<string, bool> BoolVariables => _boolVariables;
+        public IReadOnlyDictionary<string, int> IntVariables => _intVariables;
+        public IReadOnlyDictionary<string, uint> UIntVariables => _uintVariables;
+        public IReadOnlyDictionary<string, float> FloatVariables => _floatVariables;
+        public IReadOnlyDictionary<string, Vector2> Vector2Variables => _vector2Variables;
+        public IReadOnlyDictionary<string, Vector3> Vector3Variables => _vector3Variables;
+        public IReadOnlyDictionary<string, Vector4> Vector4Variables => _vector4Variables;
+        public IReadOnlyDictionary<string, Matrix4x4> Matrix4Variables => _matrix4Variables;
         public Dictionary<string, string> StringVariables { get; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, XRTexture> TextureVariables { get; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, XRFrameBuffer> FrameBufferVariables { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -27,24 +38,52 @@ public sealed partial class XRRenderPipelineInstance
         public Dictionary<string, XRRenderBuffer> RenderBufferVariables { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
+        /// Gets whether applying this store can emit an unversioned numeric
+        /// program binding. Resource lookup dictionaries are excluded because
+        /// <see cref="Apply(XRRenderProgram)"/> does not publish them.
+        /// </summary>
+        public bool HasUniformValues
+            => _boolVariables.Count != 0 ||
+                _intVariables.Count != 0 ||
+                _uintVariables.Count != 0 ||
+                _floatVariables.Count != 0 ||
+                _vector2Variables.Count != 0 ||
+                _vector3Variables.Count != 0 ||
+                _vector4Variables.Count != 0 ||
+                _matrix4Variables.Count != 0;
+
+        /// <summary>
+        /// Monotonic generation for numeric values emitted by
+        /// <see cref="Apply(XRRenderProgram)"/>. Same-value writes do not advance it.
+        /// </summary>
+        public ulong UniformContentGeneration
+            => unchecked((ulong)Volatile.Read(ref _uniformContentGeneration));
+
+        private void IncrementUniformContentGeneration()
+            => Interlocked.Increment(ref _uniformContentGeneration);
+
+        /// <summary>
         /// Clears all stored variables from the variable store, 
         /// effectively resetting it to an empty state.
         /// </summary>
         public void Clear()
         {
-            BoolVariables.Clear();
-            IntVariables.Clear();
-            UIntVariables.Clear();
-            FloatVariables.Clear();
-            Vector2Variables.Clear();
-            Vector3Variables.Clear();
-            Vector4Variables.Clear();
-            Matrix4Variables.Clear();
+            bool removedUniforms = HasUniformValues;
+            _boolVariables.Clear();
+            _intVariables.Clear();
+            _uintVariables.Clear();
+            _floatVariables.Clear();
+            _vector2Variables.Clear();
+            _vector3Variables.Clear();
+            _vector4Variables.Clear();
+            _matrix4Variables.Clear();
             StringVariables.Clear();
             TextureVariables.Clear();
             FrameBufferVariables.Clear();
             BufferVariables.Clear();
             RenderBufferVariables.Clear();
+            if (removedUniforms)
+                IncrementUniformContentGeneration();
         }
 
         /// <summary>
@@ -54,19 +93,22 @@ public sealed partial class XRRenderPipelineInstance
         /// <param name="name">The name of the variable to remove from the store.</param>
         public void Remove(string name)
         {
-            BoolVariables.Remove(name);
-            IntVariables.Remove(name);
-            UIntVariables.Remove(name);
-            FloatVariables.Remove(name);
-            Vector2Variables.Remove(name);
-            Vector3Variables.Remove(name);
-            Vector4Variables.Remove(name);
-            Matrix4Variables.Remove(name);
+            bool removedUniform =
+                _boolVariables.Remove(name) |
+                _intVariables.Remove(name) |
+                _uintVariables.Remove(name) |
+                _floatVariables.Remove(name) |
+                _vector2Variables.Remove(name) |
+                _vector3Variables.Remove(name) |
+                _vector4Variables.Remove(name) |
+                _matrix4Variables.Remove(name);
             StringVariables.Remove(name);
             TextureVariables.Remove(name);
             FrameBufferVariables.Remove(name);
             BufferVariables.Remove(name);
             RenderBufferVariables.Remove(name);
+            if (removedUniform)
+                IncrementUniformContentGeneration();
         }
 
         /// <summary>
@@ -78,8 +120,14 @@ public sealed partial class XRRenderPipelineInstance
         /// <param name="value">The boolean value to set for the variable.</param>
         public void Set(string name, bool value)
         {
+            if (_boolVariables.TryGetValue(name, out bool current) &&
+                current == value)
+            {
+                return;
+            }
             Remove(name);
-            BoolVariables[name] = value;
+            _boolVariables[name] = value;
+            IncrementUniformContentGeneration();
         }
 
         /// <summary>
@@ -91,8 +139,14 @@ public sealed partial class XRRenderPipelineInstance
         /// <param name="value">The integer value to set for the variable.</param>
         public void Set(string name, int value)
         {
+            if (_intVariables.TryGetValue(name, out int current) &&
+                current == value)
+            {
+                return;
+            }
             Remove(name);
-            IntVariables[name] = value;
+            _intVariables[name] = value;
+            IncrementUniformContentGeneration();
         }
 
         /// <summary>
@@ -104,8 +158,14 @@ public sealed partial class XRRenderPipelineInstance
         /// <param name="value">The unsigned integer value to set for the variable.</param>
         public void Set(string name, uint value)
         {
+            if (_uintVariables.TryGetValue(name, out uint current) &&
+                current == value)
+            {
+                return;
+            }
             Remove(name);
-            UIntVariables[name] = value;
+            _uintVariables[name] = value;
+            IncrementUniformContentGeneration();
         }
 
         /// <summary>
@@ -117,8 +177,14 @@ public sealed partial class XRRenderPipelineInstance
         /// <param name="value">The float value to set for the variable.</param>
         public void Set(string name, float value)
         {
+            if (_floatVariables.TryGetValue(name, out float current) &&
+                current.Equals(value))
+            {
+                return;
+            }
             Remove(name);
-            FloatVariables[name] = value;
+            _floatVariables[name] = value;
+            IncrementUniformContentGeneration();
         }
 
         /// <summary>
@@ -130,8 +196,14 @@ public sealed partial class XRRenderPipelineInstance
         /// <param name="value">The Vector2 value to set for the variable.</param>
         public void Set(string name, Vector2 value)
         {
+            if (_vector2Variables.TryGetValue(name, out Vector2 current) &&
+                current == value)
+            {
+                return;
+            }
             Remove(name);
-            Vector2Variables[name] = value;
+            _vector2Variables[name] = value;
+            IncrementUniformContentGeneration();
         }
 
         /// <summary>
@@ -143,8 +215,14 @@ public sealed partial class XRRenderPipelineInstance
         /// <param name="value">The Vector3 value to set for the variable.</param>
         public void Set(string name, Vector3 value)
         {
+            if (_vector3Variables.TryGetValue(name, out Vector3 current) &&
+                current == value)
+            {
+                return;
+            }
             Remove(name);
-            Vector3Variables[name] = value;
+            _vector3Variables[name] = value;
+            IncrementUniformContentGeneration();
         }
 
         /// <summary>
@@ -156,8 +234,14 @@ public sealed partial class XRRenderPipelineInstance
         /// <param name="value">The Vector4 value to set for the variable.</param>
         public void Set(string name, Vector4 value)
         {
+            if (_vector4Variables.TryGetValue(name, out Vector4 current) &&
+                current == value)
+            {
+                return;
+            }
             Remove(name);
-            Vector4Variables[name] = value;
+            _vector4Variables[name] = value;
+            IncrementUniformContentGeneration();
         }
 
         /// <summary>
@@ -169,8 +253,16 @@ public sealed partial class XRRenderPipelineInstance
         /// <param name="value">The Matrix4x4 value to set for the variable.</param>
         public void Set(string name, Matrix4x4 value)
         {
+            if (_matrix4Variables.TryGetValue(
+                    name,
+                    out Matrix4x4 current) &&
+                current == value)
+            {
+                return;
+            }
             Remove(name);
-            Matrix4Variables[name] = value;
+            _matrix4Variables[name] = value;
+            IncrementUniformContentGeneration();
         }
 
         /// <summary>
@@ -248,7 +340,7 @@ public sealed partial class XRRenderPipelineInstance
         /// <param name="value">When this method returns, contains the boolean value associated with the specified name, if the name is found; otherwise, the default value of bool.</param>
         /// <returns>True if the variable exists; otherwise, false.</returns>
         public bool TryGet(string name, out bool value)
-            => BoolVariables.TryGetValue(name, out value);
+            => _boolVariables.TryGetValue(name, out value);
 
         /// <summary>
         /// Attempts to retrieve an integer variable by name from the variable store.
@@ -260,7 +352,7 @@ public sealed partial class XRRenderPipelineInstance
         /// <param name="value">When this method returns, contains the integer value associated with the specified name, if the name is found; otherwise, the default value of int.</param>
         /// <returns>True if the variable exists; otherwise, false.</returns>
         public bool TryGet(string name, out int value)
-            => IntVariables.TryGetValue(name, out value);
+            => _intVariables.TryGetValue(name, out value);
 
         /// <summary>
         /// Attempts to retrieve an unsigned integer variable by name from the variable store.
@@ -272,7 +364,7 @@ public sealed partial class XRRenderPipelineInstance
         /// <param name="value">When this method returns, contains the unsigned integer value associated with the specified name, if the name is found; otherwise, the default value of uint.</param>
         /// <returns>True if the variable exists; otherwise, false.</returns>
         public bool TryGet(string name, out uint value)
-            => UIntVariables.TryGetValue(name, out value);
+            => _uintVariables.TryGetValue(name, out value);
 
         /// <summary>
         /// Attempts to retrieve a float variable by name from the variable store.
@@ -284,7 +376,7 @@ public sealed partial class XRRenderPipelineInstance
         /// <param name="value">When this method returns, contains the float value associated with the specified name, if the name is found; otherwise, the default value of float.</param>
         /// <returns>True if the variable exists; otherwise, false.</returns>
         public bool TryGet(string name, out float value)
-            => FloatVariables.TryGetValue(name, out value);
+            => _floatVariables.TryGetValue(name, out value);
 
         /// <summary>
         /// Attempts to retrieve a Vector2 variable by name from the variable store.
@@ -296,7 +388,7 @@ public sealed partial class XRRenderPipelineInstance
         /// <param name="value">When this method returns, contains the Vector2 value associated with the specified name, if the name is found; otherwise, the default value of Vector2.</param>
         /// <returns>True if the variable exists; otherwise, false.</returns>
         public bool TryGet(string name, out Vector2 value)
-            => Vector2Variables.TryGetValue(name, out value);
+            => _vector2Variables.TryGetValue(name, out value);
 
         /// <summary>
         /// Attempts to retrieve a Vector3 variable by name from the variable store.
@@ -308,7 +400,7 @@ public sealed partial class XRRenderPipelineInstance
         /// <param name="value">When this method returns, contains the Vector3 value associated with the specified name, if the name is found; otherwise, the default value of Vector3.</param>
         /// <returns>True if the variable exists; otherwise, false.</returns>
         public bool TryGet(string name, out Vector3 value)
-            => Vector3Variables.TryGetValue(name, out value);
+            => _vector3Variables.TryGetValue(name, out value);
 
         /// <summary>
         /// Attempts to retrieve a Vector4 variable by name from the variable store.
@@ -320,7 +412,7 @@ public sealed partial class XRRenderPipelineInstance
         /// <param name="value">When this method returns, contains the Vector4 value associated with the specified name, if the name is found; otherwise, the default value of Vector4.</param>
         /// <returns>True if the variable exists; otherwise, false.</returns>
         public bool TryGet(string name, out Vector4 value)
-            => Vector4Variables.TryGetValue(name, out value);
+            => _vector4Variables.TryGetValue(name, out value);
 
         /// <summary>
         /// Attempts to retrieve a Matrix4x4 variable by name from the variable store. 
@@ -332,7 +424,7 @@ public sealed partial class XRRenderPipelineInstance
         /// <param name="value">When this method returns, contains the Matrix4x4 value associated with the specified name, if the name is found; otherwise, the default value of Matrix4x4.</param>
         /// <returns>True if the variable exists; otherwise, false.</returns>
         public bool TryGet(string name, out Matrix4x4 value)
-            => Matrix4Variables.TryGetValue(name, out value);
+            => _matrix4Variables.TryGetValue(name, out value);
 
         /// <summary>
         /// Attempts to retrieve a string variable by name from the variable store.
@@ -354,21 +446,21 @@ public sealed partial class XRRenderPipelineInstance
         /// </summary>
         public void Apply(XRRenderProgram program)
         {
-            foreach (var pair in BoolVariables)
+            foreach (var pair in _boolVariables)
                 program.Uniform(pair.Key, pair.Value);
-            foreach (var pair in IntVariables)
+            foreach (var pair in _intVariables)
                 program.Uniform(pair.Key, pair.Value);
-            foreach (var pair in UIntVariables)
+            foreach (var pair in _uintVariables)
                 program.Uniform(pair.Key, pair.Value);
-            foreach (var pair in FloatVariables)
+            foreach (var pair in _floatVariables)
                 program.Uniform(pair.Key, pair.Value);
-            foreach (var pair in Vector2Variables)
+            foreach (var pair in _vector2Variables)
                 program.Uniform(pair.Key, pair.Value);
-            foreach (var pair in Vector3Variables)
+            foreach (var pair in _vector3Variables)
                 program.Uniform(pair.Key, pair.Value);
-            foreach (var pair in Vector4Variables)
+            foreach (var pair in _vector4Variables)
                 program.Uniform(pair.Key, pair.Value);
-            foreach (var pair in Matrix4Variables)
+            foreach (var pair in _matrix4Variables)
                 program.Uniform(pair.Key, pair.Value);
         }
 

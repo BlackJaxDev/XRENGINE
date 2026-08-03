@@ -11,36 +11,36 @@ uniform sampler2DArray HDRSceneTex; //HDR scene color
 uniform sampler2DArray BloomBlurTexture; //Bloom
 uniform sampler2DArray DepthView; //Depth
 uniform usampler2DArray StencilView; //Stencil
-uniform vec3 HoverOutlineColor = vec3(1.0f, 1.0f, 0.0f);
-uniform vec3 SelectionOutlineColor = vec3(0.0f, 1.0f, 0.0f);
+uniform vec3 HoverOutlineColor = vec3(1.0f, 1.0f, 0.0f); // XRENGINE_FREQUENCY(View)
+uniform vec3 SelectionOutlineColor = vec3(0.0f, 1.0f, 0.0f); // XRENGINE_FREQUENCY(View)
 
 // 1x1 R32F texture containing the current exposure value (GPU-driven auto exposure)
 uniform sampler2D AutoExposureTex;
-uniform bool UseGpuAutoExposure;
+uniform bool UseGpuAutoExposure; // XRENGINE_FREQUENCY(View)
 
-uniform float ChromaticAberrationIntensity;
+uniform float ChromaticAberrationIntensity; // XRENGINE_FREQUENCY(View)
 
 // Bloom combine controls
-uniform float BloomStrength = 0.5805;
-uniform int BloomStartMip = 1;
-uniform int BloomEndMip = 4;
-uniform float BloomLodWeights[5] = float[](0.0, 1.0, 0.649, 0.397, 0.102);
-uniform bool DebugBloomOnly = false;
+uniform float BloomStrength = 0.5805; // XRENGINE_FREQUENCY(View)
+uniform int BloomStartMip = 1; // XRENGINE_FREQUENCY(View)
+uniform int BloomEndMip = 4; // XRENGINE_FREQUENCY(View)
+uniform float BloomLodWeights[5] = float[](0.0, 1.0, 0.649, 0.397, 0.102); // XRENGINE_FREQUENCY(View)
+uniform bool DebugBloomOnly = false; // XRENGINE_FREQUENCY(View)
 uniform float ScreenWidth;
 uniform float ScreenHeight;
 uniform vec2 ScreenOrigin;
 
 // Lens distortion mode: 0=None, 1=Radial, 2=RadialAutoFromFOV, 3=Panini, 4=BrownConrady
-uniform int LensDistortionMode;
-uniform float LensDistortionIntensity;
-uniform vec2 LensDistortionCenter;
-uniform float PaniniDistance;
-uniform float PaniniCrop;
-uniform vec2 PaniniViewExtents; // tan(fov/2) * aspect, tan(fov/2)
+uniform int LensDistortionMode; // XRENGINE_FREQUENCY(View)
+uniform float LensDistortionIntensity; // XRENGINE_FREQUENCY(View)
+uniform vec2 LensDistortionCenter; // XRENGINE_FREQUENCY(View)
+uniform float PaniniDistance; // XRENGINE_FREQUENCY(View)
+uniform float PaniniCrop; // XRENGINE_FREQUENCY(View)
+uniform vec2 PaniniViewExtents; // XRENGINE_FREQUENCY(View)
 
 // Brown-Conrady coefficients
-uniform vec3 BrownConradyRadial;     // k1,k2,k3
-uniform vec2 BrownConradyTangential; // p1,p2
+uniform vec3 BrownConradyRadial; // XRENGINE_FREQUENCY(View)
+uniform vec2 BrownConradyTangential; // XRENGINE_FREQUENCY(View)
 
 struct ColorGradeStruct
 {
@@ -54,7 +54,7 @@ struct ColorGradeStruct
     float Saturation;
     float Brightness;
 };
-uniform ColorGradeStruct ColorGrade;
+uniform ColorGradeStruct ColorGrade; // XRENGINE_FREQUENCY(View)
 
 struct VignetteStruct
 {
@@ -62,13 +62,13 @@ struct VignetteStruct
     float Intensity;
     float Power;
 };
-uniform VignetteStruct Vignette;
+uniform VignetteStruct Vignette; // XRENGINE_FREQUENCY(View)
 
 // Tonemapping selector and shared tonemap operators
 #include "../Snippets/ToneMapping.glsl"
 
-uniform int TonemapType = XRENGINE_TONEMAP_MOBIUS;
-uniform float MobiusTransition = 0.6;
+uniform int TonemapType = XRENGINE_TONEMAP_MOBIUS; // XRENGINE_FREQUENCY(View)
+uniform float MobiusTransition = 0.6; // XRENGINE_FREQUENCY(View)
 
 vec3 RGBtoHSV(vec3 c)
 {

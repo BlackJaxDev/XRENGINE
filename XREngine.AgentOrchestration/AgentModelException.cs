@@ -12,6 +12,7 @@ public sealed class AgentModelException : Exception
         int? providerStatus = null,
         TimeSpan? retryAfter = null,
         string? diagnosticDetail = null,
+        AgentProviderAttemptDiagnostic? providerAttempt = null,
         Exception? innerException = null)
         : base(message, innerException)
     {
@@ -20,6 +21,7 @@ public sealed class AgentModelException : Exception
         ProviderStatus = providerStatus;
         RetryAfter = retryAfter;
         DiagnosticDetail = diagnosticDetail ?? string.Empty;
+        ProviderAttempt = providerAttempt;
     }
 
     public AgentFailureCategory Category { get; }
@@ -31,4 +33,17 @@ public sealed class AgentModelException : Exception
     public TimeSpan? RetryAfter { get; }
 
     public string DiagnosticDetail { get; }
+
+    public AgentProviderAttemptDiagnostic? ProviderAttempt { get; }
+
+    public AgentModelException WithProviderAttempt(AgentProviderAttemptDiagnostic providerAttempt)
+        => new(
+            Category,
+            Message,
+            Retryable,
+            ProviderStatus,
+            RetryAfter,
+            DiagnosticDetail,
+            providerAttempt,
+            this);
 }

@@ -20,12 +20,43 @@ public unsafe partial class VulkanRenderer
         XRRenderProgram programData,
         VkRenderProgram backendProgram)
     {
-        ulong frameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
-        if (frameId == 0)
+        ComputeDispatchSnapshot? snapshot =
+            GetForwardLightingBindingSnapshot(
+                lights,
+                programData,
+                backendProgram);
+        if (snapshot is null)
         {
             lights.SetForwardLightingUniforms(programData);
             return;
         }
+
+        backendProgram.MergeBindingSnapshot(snapshot);
+    }
+
+    /// <summary>
+    /// Returns the immutable frame/view/pass lighting publication used to key
+    /// persistent material binding artifacts. The publication is assembled at
+    /// most once for an exact scope and is never exposed as mutable state.
+    /// </summary>
+    internal ComputeDispatchSnapshot?
+        GetForwardLightingBindingSnapshotForArtifact(
+            Lights3DCollection lights,
+            XRRenderProgram programData,
+            VkRenderProgram backendProgram)
+        => GetForwardLightingBindingSnapshot(
+            lights,
+            programData,
+            backendProgram);
+
+    private ComputeDispatchSnapshot? GetForwardLightingBindingSnapshot(
+        Lights3DCollection lights,
+        XRRenderProgram programData,
+        VkRenderProgram backendProgram)
+    {
+        ulong frameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
+        if (frameId == 0)
+            return null;
 
         XRRenderPipelineInstance.RenderingState? renderingState =
             RuntimeEngine.Rendering.State.RenderingPipelineState;
@@ -57,7 +88,7 @@ public unsafe partial class VulkanRenderer
             snapshot = PublishForwardLightingBindingSnapshot(frameId, key, snapshot);
         }
 
-        backendProgram.MergeBindingSnapshot(snapshot!);
+        return snapshot;
     }
 
     private bool TryGetForwardLightingBindingSnapshot(

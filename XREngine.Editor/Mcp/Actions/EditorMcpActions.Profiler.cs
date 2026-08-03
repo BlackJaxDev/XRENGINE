@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using XREngine;
 using XREngine.Data.Core;
+using XREngine.Rendering;
 using XREngine.Rendering.Occlusion;
 using GpuDrivenStats = XREngine.RuntimeEngine.Rendering.Stats.GpuDriven;
 using GpuPipelineStats = XREngine.RuntimeEngine.Rendering.Stats.GpuPipelineProfiler;
@@ -300,6 +301,16 @@ namespace XREngine.Editor.Mcp
                             command_dependency_comparison = VulkanCpuStage(EVulkanCpuStage.CommandDependencyComparison),
                             command_dirty_propagation = VulkanCpuStage(EVulkanCpuStage.CommandDirtyPropagation),
                             command_cache_scanning = VulkanCpuStage(EVulkanCpuStage.CommandCacheScanning),
+                            frame_op_drain = VulkanCpuStage(EVulkanCpuStage.FrameOpDrain),
+                            frame_op_scheduling = VulkanCpuStage(EVulkanCpuStage.FrameOpScheduling),
+                            frame_op_sort = VulkanCpuStage(EVulkanCpuStage.FrameOpSort),
+                            frame_op_cohort = VulkanCpuStage(EVulkanCpuStage.FrameOpCohort),
+                            frame_op_split = VulkanCpuStage(EVulkanCpuStage.FrameOpSplit),
+                            frame_op_signature = VulkanCpuStage(EVulkanCpuStage.FrameOpSignature),
+                            frame_op_plan = VulkanCpuStage(EVulkanCpuStage.FrameOpPlan),
+                            mesh_draw_publisher_state = VulkanCpuStage(EVulkanCpuStage.MeshDrawPublisherState),
+                            mesh_draw_artifact_eligibility = VulkanCpuStage(EVulkanCpuStage.MeshDrawArtifactEligibility),
+                            mesh_draw_artifact_lookup = VulkanCpuStage(EVulkanCpuStage.MeshDrawArtifactLookup),
                         },
                         command_buffer_cache = new
                         {
@@ -347,6 +358,40 @@ namespace XREngine.Editor.Mcp
                             material_dictionary_writes = VulkanStats.VulkanMaterialDictionaryWrites,
                             frame_material_snapshot_cache_hits = VulkanStats.VulkanFrameMaterialSnapshotCacheHits,
                             frame_material_snapshot_cache_misses = VulkanStats.VulkanFrameMaterialSnapshotCacheMisses,
+                            program_binding_artifact_builds = VulkanStats.VulkanProgramBindingArtifactBuilds,
+                            program_binding_artifact_reuses = VulkanStats.VulkanProgramBindingArtifactReuses,
+                            program_binding_artifact_fallbacks = VulkanStats.VulkanProgramBindingArtifactFallbacks,
+                            program_binding_allocation_breakdown_bytes = new
+                            {
+                                setup = VulkanStats.GetVulkanProgramBindingAllocationBytes(EVulkanProgramBindingAllocationSegment.Setup),
+                                publisher_scope = VulkanStats.GetVulkanProgramBindingAllocationBytes(EVulkanProgramBindingAllocationSegment.PublisherScope),
+                                eligibility_gap = VulkanStats.GetVulkanProgramBindingAllocationBytes(EVulkanProgramBindingAllocationSegment.EligibilityGap),
+                                eligibility_scope = VulkanStats.GetVulkanProgramBindingAllocationBytes(EVulkanProgramBindingAllocationSegment.EligibilityScope),
+                                artifact_key_and_generation = VulkanStats.GetVulkanProgramBindingAllocationBytes(EVulkanProgramBindingAllocationSegment.ArtifactKeyAndGeneration),
+                                lookup_scope = VulkanStats.GetVulkanProgramBindingAllocationBytes(EVulkanProgramBindingAllocationSegment.LookupScope),
+                                reuse_publication = VulkanStats.GetVulkanProgramBindingAllocationBytes(EVulkanProgramBindingAllocationSegment.ReusePublication),
+                            },
+                            program_binding_artifact_fallback_reasons = new
+                            {
+                                shadow_pass = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonCount(EVulkanProgramBindingArtifactFallbackReason.ShadowPass),
+                                renderer_callback = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonCount(EVulkanProgramBindingArtifactFallbackReason.RendererCallback),
+                                material_callback = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonCount(EVulkanProgramBindingArtifactFallbackReason.MaterialCallback),
+                                active_scoped_bindings = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonCount(EVulkanProgramBindingArtifactFallbackReason.ActiveScopedBindings),
+                                pipeline_variables = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonCount(EVulkanProgramBindingArtifactFallbackReason.PipelineVariables),
+                                unsupported_engine_requirements = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonCount(EVulkanProgramBindingArtifactFallbackReason.UnsupportedEngineRequirements),
+                                missing_lighting_owner = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonCount(EVulkanProgramBindingArtifactFallbackReason.MissingLightingOwner),
+                                lighting_publication_unavailable = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonCount(EVulkanProgramBindingArtifactFallbackReason.LightingPublicationUnavailable),
+                                ambient_occlusion_only = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonCount(EVulkanProgramBindingArtifactFallbackReason.AmbientOcclusionOnly),
+                                mutable_legacy_uniform = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonCount(EVulkanProgramBindingArtifactFallbackReason.MutableLegacyUniform),
+                                unowned_descriptor_resource = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonCount(EVulkanProgramBindingArtifactFallbackReason.UnownedDescriptorResource),
+                                unowned_uniform = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonCount(EVulkanProgramBindingArtifactFallbackReason.UnownedUniform),
+                                incomplete_runtime_uniform_publication = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonCount(EVulkanProgramBindingArtifactFallbackReason.IncompleteRuntimeUniformPublication),
+                                artifact_content_unsupported = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonCount(EVulkanProgramBindingArtifactFallbackReason.ArtifactContentUnsupported),
+                                invalid_publisher_state = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonCount(EVulkanProgramBindingArtifactFallbackReason.InvalidPublisherState),
+                                publisher_changed_during_publication = VulkanStats.GetVulkanProgramBindingArtifactFallbackReasonCount(EVulkanProgramBindingArtifactFallbackReason.PublisherChangedDuringPublication),
+                            },
+                            program_binding_artifact_fallback_samples =
+                                GetVulkanProgramBindingArtifactFallbackSamples(),
                             binding_snapshots_captured = VulkanStats.VulkanBindingSnapshotsCaptured,
                             binding_snapshot_entries = VulkanStats.VulkanBindingSnapshotEntries,
                             fast_path_binding_snapshots = VulkanStats.VulkanFastPathBindingSnapshots,
@@ -360,6 +405,14 @@ namespace XREngine.Editor.Mcp
                             auto_uniform_legacy_full_block_bytes = VulkanStats.VulkanAutoUniformLegacyFullBlockBytes,
                             auto_uniform_fast_path_draws = VulkanStats.VulkanAutoUniformFastPathDraws,
                             auto_uniform_legacy_fallback_draws = VulkanStats.VulkanAutoUniformLegacyFallbackDraws,
+                            auto_uniform_schema_mismatch_sites = new
+                            {
+                                block_identity_or_size = VulkanStats.GetVulkanAutoUniformSchemaMismatchSiteCount(EVulkanAutoUniformSchemaMismatchSite.BlockIdentityOrSize),
+                                frequency = VulkanStats.GetVulkanAutoUniformSchemaMismatchSiteCount(EVulkanAutoUniformSchemaMismatchSite.Frequency),
+                                parity = VulkanStats.GetVulkanAutoUniformSchemaMismatchSiteCount(EVulkanAutoUniformSchemaMismatchSite.Parity),
+                            },
+                            auto_uniform_schema_mismatch_samples =
+                                GetVulkanAutoUniformSchemaMismatchSamples(),
                             frame_data_draws_visited = VulkanStats.VulkanFrameDataDrawsVisited,
                             prepared_primary_frame_data_draws_visited =
                                 VulkanStats.VulkanPreparedPrimaryFrameDataDrawsVisited,
@@ -728,6 +781,8 @@ namespace XREngine.Editor.Mcp
                 elapsed_ms = VulkanStats.VulkanCpuStageMs(stage),
                 allocated_bytes = VulkanStats.VulkanCpuStageAllocatedBytes(stage),
                 allocation_high_water_bytes = VulkanStats.VulkanCpuStageAllocationHighWaterBytes(stage),
+                boundary_allocated_bytes = VulkanStats.VulkanCpuStageBoundaryAllocatedBytes(stage),
+                boundary_allocation_high_water_bytes = VulkanStats.VulkanCpuStageBoundaryAllocationHighWaterBytes(stage),
                 process_invocation_count = VulkanStats.VulkanCpuStageInvocationCount(stage),
                 process_elapsed_ms = VulkanStats.VulkanCpuStageCumulativeMs(stage),
                 process_peak_ms = VulkanStats.VulkanCpuStagePeakMs(stage),
@@ -746,6 +801,61 @@ namespace XREngine.Editor.Mcp
                     VulkanStats.GetVulkanAutoUniformFrequencyPublishedBytes(
                         frequency),
             };
+
+        private static object[] GetVulkanProgramBindingArtifactFallbackSamples()
+        {
+            int count = VulkanStats.VulkanProgramBindingArtifactFallbackSampleCount;
+            object[] samples = new object[count];
+
+            for (int index = 0; index < count; index++)
+            {
+                VulkanProgramBindingArtifactFallbackSample sample =
+                    VulkanStats.GetVulkanProgramBindingArtifactFallbackSample(index);
+                samples[index] = new
+                {
+                    reason = sample.Reason.ToString(),
+                    mesh_name = sample.MeshName,
+                    material_name = sample.MaterialName,
+                    program_name = sample.ProgramName,
+                    detail = sample.Detail,
+                };
+            }
+
+            return samples;
+        }
+
+        private static object[] GetVulkanAutoUniformSchemaMismatchSamples()
+        {
+            int count = VulkanStats.VulkanAutoUniformSchemaMismatchSampleCount;
+            object[] samples = new object[count];
+
+            for (int index = 0; index < count; index++)
+            {
+                VulkanAutoUniformSchemaMismatchSample sample =
+                    VulkanStats.GetVulkanAutoUniformSchemaMismatchSample(index);
+                samples[index] = new
+                {
+                    site = sample.Site.ToString(),
+                    program_name = sample.ProgramName,
+                    block_name = sample.BlockName,
+                    entry_name = sample.EntryName,
+                    program_link_generation = sample.ProgramLinkGeneration,
+                    set = sample.Set,
+                    binding = sample.Binding,
+                    schema_size = sample.SchemaSize,
+                    current_size = sample.CurrentSize,
+                    buffer_size = sample.BufferSize,
+                    same_block_reference = sample.SameBlockReference,
+                    reflected_frequency = sample.ReflectedFrequency,
+                    runtime_frequency = sample.RuntimeFrequency,
+                    byte_offset = sample.ByteOffset,
+                    legacy_value = sample.LegacyValue,
+                    packed_value = sample.PackedValue,
+                };
+            }
+
+            return samples;
+        }
 
         private static object CreateSecondaryRecordingEligibilityCounts(
             EVulkanSecondaryCommandFamily family)

@@ -970,6 +970,12 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
         if (_program is not { Data: { } programData } program)
             return null;
 
+        bool measureAllocationBreakdown =
+            RuntimeEngine.Rendering.Stats.EnableTracking;
+        long allocationStart = measureAllocationBreakdown
+            ? GC.GetAllocatedBytesForCurrentThread()
+            : 0;
+
         // Vulkan command recording may run after collection or on a worker.
         // Mutable renderer/material callbacks therefore require the same
         // immutable enqueue-time boundary as explicit capture users. The flag
@@ -985,17 +991,144 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
         if (!captureUniforms && !mayNeedDescriptorResourceSnapshot)
             return null;
 
-        IRenderBindingPublisher[] materialBindingPublishers =
-            material.BindingPublishers.CaptureSnapshot();
-        IRenderBindingPublisher[] meshBindingPublishers =
-            MeshRenderer.BindingPublishers.CaptureSnapshot();
-        ulong typedBindingPublisherSignature =
-            ComputeTypedBindingPublisherSignature(
+        IRenderBindingPublisher[] materialBindingPublishers;
+        IRenderBindingPublisher[] meshBindingPublishers;
+        bool publisherStateValid;
+        ulong typedBindingPublisherSignature;
+        string? publisherStateFailureDetail;
+        bool hasGenerationOwnedPublisherResources;
+        long publisherScopeStart = measureAllocationBreakdown
+            ? GC.GetAllocatedBytesForCurrentThread()
+            : 0;
+        using (VulkanRenderer.VulkanCpuStageScope publisherStateStage =
+               new(EVulkanCpuStage.MeshDrawPublisherState))
+        {
+            materialBindingPublishers =
+                material.BindingPublishers.CaptureSnapshot();
+            meshBindingPublishers =
+                MeshRenderer.BindingPublishers.CaptureSnapshot();
+            publisherStateValid = TryComputeTypedBindingPublisherSignature(
                 materialBindingPublishers,
-                meshBindingPublishers);
+                meshBindingPublishers,
+                out typedBindingPublisherSignature,
+                out publisherStateFailureDetail);
+            hasGenerationOwnedPublisherResources =
+                HasResourceBindingPublisher(materialBindingPublishers) ||
+                HasResourceBindingPublisher(meshBindingPublishers);
+        }
+        long publisherScopeEnd = measureAllocationBreakdown
+            ? GC.GetAllocatedBytesForCurrentThread()
+            : 0;
         bool useMaterialPayloadFastPath =
             !shadowUniformState.IsShadowPass;
+        EUniformRequirements engineRequirements = EUniformRequirements.None;
+        ComputeDispatchSnapshot? engineBindingSnapshot = null;
+        EVulkanProgramBindingArtifactFallbackReason artifactFallbackReason =
+            EVulkanProgramBindingArtifactFallbackReason.None;
+        bool usePersistentProgramBindingArtifact = false;
+        long eligibilityScopeStart = measureAllocationBreakdown
+            ? GC.GetAllocatedBytesForCurrentThread()
+            : 0;
+        using (VulkanRenderer.VulkanCpuStageScope eligibilityStage =
+               new(EVulkanCpuStage.MeshDrawArtifactEligibility))
+        {
+            if (!useMaterialPayloadFastPath)
+            {
+                artifactFallbackReason =
+                    EVulkanProgramBindingArtifactFallbackReason.ShadowPass;
+            }
+            else if (!publisherStateValid)
+            {
+                artifactFallbackReason =
+                    EVulkanProgramBindingArtifactFallbackReason
+                        .InvalidPublisherState;
+            }
+            else
+            {
+                usePersistentProgramBindingArtifact =
+                    CanUsePersistentProgramBindingArtifact(
+                        material,
+                        programData,
+                        shadowUniformState,
+                        materialBindingPublishers,
+                        meshBindingPublishers,
+                        out engineRequirements,
+                        out engineBindingSnapshot,
+                        out artifactFallbackReason);
+            }
+        }
+        long eligibilityScopeEnd = measureAllocationBreakdown
+            ? GC.GetAllocatedBytesForCurrentThread()
+            : 0;
+        PersistentProgramBindingArtifactSlotKey persistentArtifactSlot =
+            new(material, MeshRenderer);
+        PersistentProgramBindingArtifactGeneration persistentArtifactGeneration =
+            default;
+        ComputeDispatchSnapshot? reusedPersistentArtifact = null;
+        if (usePersistentProgramBindingArtifact)
+        {
+            persistentArtifactGeneration =
+                CreatePersistentProgramBindingArtifactGeneration(
+                    material,
+                    program,
+                    typedBindingPublisherSignature,
+                    engineRequirements,
+                    engineBindingSnapshot);
+            long artifactKeyAndGenerationEnd = measureAllocationBreakdown
+                ? GC.GetAllocatedBytesForCurrentThread()
+                : 0;
+            long lookupScopeStart = artifactKeyAndGenerationEnd;
+            bool artifactFound;
+            using (VulkanRenderer.VulkanCpuStageScope lookupStage =
+                   new(EVulkanCpuStage.MeshDrawArtifactLookup))
+            {
+                artifactFound =
+                    program.TryGetPersistentProgramBindingArtifact(
+                        persistentArtifactSlot,
+                        persistentArtifactGeneration,
+                        materialBindingPublishers,
+                        meshBindingPublishers,
+                        out reusedPersistentArtifact);
+            }
+            long lookupScopeEnd = measureAllocationBreakdown
+                ? GC.GetAllocatedBytesForCurrentThread()
+                : 0;
+            if (artifactFound)
+            {
+                RuntimeEngine.Rendering.Stats.Vulkan
+                    .RecordVulkanProgramBindingArtifactReuse();
+                long reusePublicationEnd = measureAllocationBreakdown
+                    ? GC.GetAllocatedBytesForCurrentThread()
+                    : 0;
+                if (measureAllocationBreakdown)
+                {
+                    RuntimeEngine.Rendering.Stats.Vulkan
+                        .RecordVulkanProgramBindingAllocationBreakdown(
+                            publisherScopeStart - allocationStart,
+                            publisherScopeEnd - publisherScopeStart,
+                            eligibilityScopeStart - publisherScopeEnd,
+                            eligibilityScopeEnd - eligibilityScopeStart,
+                            artifactKeyAndGenerationEnd -
+                                eligibilityScopeEnd,
+                            lookupScopeEnd - lookupScopeStart,
+                            reusePublicationEnd - lookupScopeEnd);
+                }
+                return reusedPersistentArtifact;
+            }
+        }
+        else
+        {
+            RuntimeEngine.Rendering.Stats.Vulkan
+                .RecordVulkanProgramBindingArtifactFallback(
+                    artifactFallbackReason,
+                    MeshRenderer.Mesh?.Name,
+                    material.Name,
+                    programData.Name,
+                    publisherStateFailureDetail);
+        }
+
         bool shareSnapshot =
+            publisherStateValid &&
             useMaterialPayloadFastPath &&
             !captureUniforms &&
             !MeshRenderer.HasSettingUniformsHandlers &&
@@ -1124,23 +1257,71 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
                         programData,
                         programData);
                 else
-                    RuntimeEngine.Rendering.State.RenderingPipelineState
-                        ?.ApplyScopedProgramBindings(programData);
+                {
+                    XRRenderPipelineInstance.RenderingState? renderingState =
+                        RuntimeEngine.Rendering.State.RenderingPipelineState;
+                    XRRenderPipelineInstance? pipeline =
+                        RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+                    if (renderingState?.HasActiveScopedBindings != true &&
+                        pipeline?.Variables.HasUniformValues == true)
+                    {
+                        using VkRenderProgram.TypedBindingPublicationScope
+                            pipelineVariables =
+                                program.BeginTypedBindingPublication(
+                                    ERenderBindingFrequency.Pass,
+                                    pipeline.Variables
+                                        .UniformContentGeneration);
+                        pipeline.Variables.Apply(programData);
+                    }
+                    else
+                    {
+                        renderingState?.ApplyScopedProgramBindings(
+                            programData);
+                    }
+                }
                 MeshRenderMaterialResolver.ApplyShadowUniforms(
                     programData,
                     material,
                     shadowUniformState);
             }
-            PublishTypedBindingPublishers(
+            bool materialPublishersStable = PublishTypedBindingPublishers(
                 program,
                 programData,
                 materialBindingPublishers);
-            PublishTypedBindingPublishers(
+            bool meshPublishersStable = PublishTypedBindingPublishers(
                 program,
                 programData,
                 meshBindingPublishers);
+            bool typedPublishersStable =
+                materialPublishersStable && meshPublishersStable;
+            if (!typedPublishersStable)
+            {
+                if (usePersistentProgramBindingArtifact)
+                {
+                    RuntimeEngine.Rendering.Stats.Vulkan
+                        .RecordVulkanProgramBindingArtifactFallback(
+                            EVulkanProgramBindingArtifactFallbackReason
+                                .PublisherChangedDuringPublication,
+                            MeshRenderer.Mesh?.Name,
+                            material.Name,
+                            programData.Name);
+                }
+                usePersistentProgramBindingArtifact = false;
+                shareSnapshot = false;
+            }
             if (!captureUniforms && !program.HasBoundDescriptorResources())
             {
+                if (usePersistentProgramBindingArtifact)
+                {
+                    program.CachePersistentProgramBindingArtifact(
+                        persistentArtifactSlot,
+                        persistentArtifactGeneration,
+                        materialBindingPublishers,
+                        meshBindingPublishers,
+                        artifact: null);
+                    RuntimeEngine.Rendering.Stats.Vulkan
+                        .RecordVulkanProgramBindingArtifactBuild();
+                }
                 if (shareSnapshot)
                     program.CacheFrameMaterialBindingSnapshot(snapshotCacheKey, null);
                 return null;
@@ -1163,6 +1344,51 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
                 snapshot.Images.Count +
                 snapshot.Buffers.Count,
                 fastPath: useMaterialPayloadFastPath);
+            if (usePersistentProgramBindingArtifact)
+            {
+                if (TryCreatePersistentProgramBindingArtifact(
+                         material,
+                         snapshot,
+                         engineRequirements,
+                         hasGenerationOwnedPublisherResources,
+                         out ComputeDispatchSnapshot persistentArtifact,
+                         out EVulkanProgramBindingArtifactFallbackReason
+                             contentFallbackReason,
+                         out string? contentFallbackDetail))
+                {
+                    program.CachePersistentProgramBindingArtifact(
+                        persistentArtifactSlot,
+                        persistentArtifactGeneration,
+                        materialBindingPublishers,
+                        meshBindingPublishers,
+                        persistentArtifact);
+                    RuntimeEngine.Rendering.Stats.Vulkan
+                        .RecordVulkanProgramBindingArtifactBuild();
+                    if (shareSnapshot)
+                    {
+                        program.CacheFrameMaterialBindingSnapshot(
+                            snapshotCacheKey,
+                            persistentArtifact);
+                    }
+                    LogGizmoBindingSnapshot(
+                        material,
+                        persistentArtifact,
+                        "persistent-artifact");
+                    return persistentArtifact;
+                }
+
+                RuntimeEngine.Rendering.Stats.Vulkan
+                    .RecordVulkanProgramBindingArtifactFallback(
+                        contentFallbackReason ==
+                            EVulkanProgramBindingArtifactFallbackReason.None
+                                ? EVulkanProgramBindingArtifactFallbackReason
+                                    .ArtifactContentUnsupported
+                                : contentFallbackReason,
+                        MeshRenderer.Mesh?.Name,
+                        material.Name,
+                        programData.Name,
+                        contentFallbackDetail);
+            }
             if (shareSnapshot)
                 program.CacheFrameMaterialBindingSnapshot(snapshotCacheKey, snapshot);
             LogGizmoBindingSnapshot(material, snapshot, "capture");
@@ -1174,26 +1400,38 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
         }
     }
 
-    private static ulong ComputeTypedBindingPublisherSignature(
+    private static bool TryComputeTypedBindingPublisherSignature(
         IRenderBindingPublisher[] materialPublishers,
-        IRenderBindingPublisher[] meshPublishers)
+        IRenderBindingPublisher[] meshPublishers,
+        out ulong signature,
+        out string? failureDetail)
     {
         FrameOpSignatureHasher hash = new();
-        AddPublishersToSignature(
+        if (!TryAddPublishersToSignature(
             ref hash,
             materialPublishers,
-            ownerKind: 1);
-        AddPublishersToSignature(
+            ownerKind: 1,
+            out failureDetail) ||
+            !TryAddPublishersToSignature(
             ref hash,
             meshPublishers,
-            ownerKind: 2);
-        return hash.ToHash();
+            ownerKind: 2,
+            out failureDetail))
+        {
+            signature = 0UL;
+            return false;
+        }
+
+        signature = hash.ToHash();
+        failureDetail = null;
+        return true;
     }
 
-    private static void AddPublishersToSignature(
+    private static bool TryAddPublishersToSignature(
         ref FrameOpSignatureHasher hash,
         IRenderBindingPublisher[] publishers,
-        byte ownerKind)
+        byte ownerKind,
+        out string? failureDetail)
     {
         hash.Add(ownerKind);
         hash.Add(publishers.Length);
@@ -1205,46 +1443,141 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
             if (frequency is <= ERenderBindingFrequency.Unknown or
                 >= ERenderBindingFrequency.Count)
             {
-                throw new InvalidOperationException(
+                failureDetail =
                     $"Typed binding publisher '{publisher.GetType().FullName}' " +
-                    $"declared invalid frequency '{frequency}'.");
+                    $"declared invalid frequency '{frequency}'.";
+                return false;
             }
             if (generation == 0)
             {
-                throw new InvalidOperationException(
+                failureDetail =
                     $"Typed binding publisher '{publisher.GetType().FullName}' " +
-                    "declared generation zero.");
+                    "declared generation zero.";
+                return false;
             }
 
             hash.Add(RuntimeHelpers.GetHashCode(publisher));
             hash.Add((byte)frequency);
             hash.Add(generation);
+            if (publisher is
+                IPersistentProgramBindingRequirementOwner requirementOwner)
+            {
+                EUniformRequirements ownedRequirement =
+                    requirementOwner.OwnedPersistentArtifactRequirement;
+                if (ownedRequirement == EUniformRequirements.None ||
+                    !IsSingleRequirement(ownedRequirement))
+                {
+                    failureDetail =
+                        $"Persistent binding requirement owner " +
+                        $"'{publisher.GetType().FullName}' declared invalid " +
+                        $"requirement '{ownedRequirement}'.";
+                    return false;
+                }
+
+                hash.Add(true);
+                hash.Add((int)ownedRequirement);
+            }
+            else
+            {
+                hash.Add(false);
+            }
+            if (publisher is IRenderResourceBindingPublisher
+                resourcePublisher)
+            {
+                ulong resourceGeneration =
+                    resourcePublisher.ResourceGeneration;
+                if (resourceGeneration == 0)
+                {
+                    failureDetail =
+                        $"Resource binding publisher " +
+                        $"'{publisher.GetType().FullName}' declared " +
+                        "resource generation zero.";
+                    return false;
+                }
+
+                hash.Add(true);
+                hash.Add(resourceGeneration);
+            }
+            else
+            {
+                hash.Add(false);
+            }
         }
+
+        failureDetail = null;
+        return true;
     }
 
-    private static void PublishTypedBindingPublishers(
+    private static bool IsSingleRequirement(EUniformRequirements requirement)
+    {
+        uint value = unchecked((uint)requirement);
+        return (value & (value - 1U)) == 0U;
+    }
+
+    private static bool HasResourceBindingPublisher(
+        IRenderBindingPublisher[] publishers)
+    {
+        for (int index = 0; index < publishers.Length; index++)
+            if (publishers[index] is IRenderResourceBindingPublisher)
+                return true;
+        return false;
+    }
+
+    private static bool PublishTypedBindingPublishers(
         VkRenderProgram backendProgram,
         XRRenderProgram program,
         IRenderBindingPublisher[] publishers)
     {
+        bool stable = true;
         for (int index = 0; index < publishers.Length; index++)
         {
             IRenderBindingPublisher publisher = publishers[index];
             ERenderBindingFrequency frequency = publisher.Frequency;
             ulong generation = publisher.Generation;
-            using VkRenderProgram.TypedBindingPublicationScope publication =
+            IRenderResourceBindingPublisher? resourcePublisher =
+                publisher as IRenderResourceBindingPublisher;
+            ulong resourceGeneration =
+                resourcePublisher?.ResourceGeneration ?? 0UL;
+            if (frequency is <= ERenderBindingFrequency.Unknown or
+                >= ERenderBindingFrequency.Count ||
+                generation == 0 ||
+                (resourcePublisher is not null && resourceGeneration == 0))
+            {
+                using VkRenderProgram.MutableLegacyBindingPublicationScope
+                    legacyPublication =
+                        backendProgram.BeginMutableLegacyBindingPublication();
+                publisher.PublishUniforms(program, program);
+                resourcePublisher?.PublishResources(program, program);
+                stable = false;
+                continue;
+            }
+
+            using (VkRenderProgram.TypedBindingPublicationScope publication =
                 backendProgram.BeginTypedBindingPublication(
                     frequency,
-                    generation);
-            publisher.PublishUniforms(program, program);
-            if (publisher.Frequency != frequency ||
-                publisher.Generation != generation)
+                    generation))
             {
-                throw new InvalidOperationException(
-                    $"Typed binding publisher '{publisher.GetType().FullName}' " +
-                    "changed its frequency or generation while publishing.");
+                publisher.PublishUniforms(program, program);
+            }
+            if (resourcePublisher is not null)
+            {
+                using VkRenderProgram.TypedBindingPublicationScope
+                    resourcePublication =
+                        backendProgram.BeginTypedResourceBindingPublication(
+                            frequency,
+                            resourceGeneration);
+                resourcePublisher.PublishResources(program, program);
+            }
+            if (publisher.Frequency != frequency ||
+                publisher.Generation != generation ||
+                (resourcePublisher is not null &&
+                 resourcePublisher.ResourceGeneration != resourceGeneration))
+            {
+                stable = false;
             }
         }
+
+        return stable;
     }
 
     private void LogGizmoBindingSnapshot(XRMaterial material, ComputeDispatchSnapshot snapshot, string phase)

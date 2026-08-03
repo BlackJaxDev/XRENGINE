@@ -220,6 +220,20 @@ namespace XREngine.Components.Lights
             float ReceiverOffset,
             Matrix4x4 WorldToLightSpaceMatrix);
 
+        /// <summary>
+        /// Exact shader-visible stale ages for the fixed directional cascade
+        /// array. Keeping this value-typed avoids a per-draw allocation.
+        /// </summary>
+        internal readonly record struct DirectionalCascadeStaleAgeBindingState(
+            float Cascade0,
+            float Cascade1,
+            float Cascade2,
+            float Cascade3,
+            float Cascade4,
+            float Cascade5,
+            float Cascade6,
+            float Cascade7);
+
         private const int MaxCascadeRenderCount = 8;
         private const int MaxCascadeSourceFrustumCount = 8;
         private const float CascadeBoundsPadding = 0.05f;
@@ -270,6 +284,69 @@ namespace XREngine.Components.Lights
             => IsHmdEyeCameraForDirectionalCascades(camera)
                 ? ShadowRequestSource.Hmd
                 : ShadowRequestSource.Desktop;
+
+        /// <summary>
+        /// Captures the exact cascade revisions consumed by deferred-light
+        /// binding publication for the specified view.
+        /// </summary>
+        internal void GetCascadeBindingRevisions(
+            XRCamera? camera,
+            out ulong contentRevision,
+            out ulong renderedContentRevision)
+        {
+            ShadowRequestSource source = GetCascadeSourceForCamera(camera);
+            lock (_cascadeDataLock)
+            {
+                DirectionalCascadeSourceState state =
+                    GetCascadeSourceState(source);
+                contentRevision = state.ContentRevision;
+                renderedContentRevision =
+                    state.LegacyRenderedContentRevision;
+            }
+        }
+
+        internal DirectionalCascadeStaleAgeBindingState
+            CaptureCascadeStaleAgeBindingState(XRCamera? camera)
+        {
+            if (!CanRenderDirectionalCascadesForCurrentBackend())
+                return new(-1.0f, -1.0f, -1.0f, -1.0f,
+                    -1.0f, -1.0f, -1.0f, -1.0f);
+
+            ShadowRequestSource source = GetCascadeSourceForCamera(camera);
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            lock (_cascadeDataLock)
+            {
+                DirectionalCascadeSourceState state =
+                    GetCascadeSourceState(source);
+                return new(
+                    ResolvePublishedCascadeStaleAge(state, 0, frameId),
+                    ResolvePublishedCascadeStaleAge(state, 1, frameId),
+                    ResolvePublishedCascadeStaleAge(state, 2, frameId),
+                    ResolvePublishedCascadeStaleAge(state, 3, frameId),
+                    ResolvePublishedCascadeStaleAge(state, 4, frameId),
+                    ResolvePublishedCascadeStaleAge(state, 5, frameId),
+                    ResolvePublishedCascadeStaleAge(state, 6, frameId),
+                    ResolvePublishedCascadeStaleAge(state, 7, frameId));
+            }
+        }
+
+        private static float ResolvePublishedCascadeStaleAge(
+            DirectionalCascadeSourceState state,
+            int cascadeIndex,
+            ulong frameId)
+        {
+            if ((uint)cascadeIndex >= (uint)state.Slices.Count)
+                return -1.0f;
+
+            DirectionalCascadeAtlasSlot atlasSlot =
+                state.AtlasSlots[cascadeIndex];
+            return atlasSlot.HasCascadeUniformData &&
+                IsDirectionalAtlasSlotSampleable(atlasSlot)
+                ? ResolveRenderedCascadeStaleAge(
+                    frameId,
+                    atlasSlot.LastRenderedFrame)
+                : -1.0f;
+        }
 
         private ShadowRequestSource ResolveCascadeSourceForCamera(XRCamera? camera)
         {

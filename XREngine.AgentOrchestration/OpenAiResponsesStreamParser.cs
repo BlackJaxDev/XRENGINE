@@ -20,7 +20,21 @@ public sealed class OpenAiResponsesStreamParser
 
     public int MalformedEventCount { get; private set; }
 
+    public int ProviderEventCount { get; private set; }
+
+    public string LastProviderEventType { get; private set; } = string.Empty;
+
+    public long? LastSequenceNumber { get; private set; }
+
+    public bool IsTerminal { get; private set; }
+
     public bool IsCompleted { get; private set; }
+
+    public string TerminalStatus { get; private set; } = string.Empty;
+
+    public string IncompleteReason { get; private set; } = string.Empty;
+
+    public string TerminalErrorMessage { get; private set; } = string.Empty;
 
     public string Text => _text.ToString();
 
@@ -37,9 +51,11 @@ public sealed class OpenAiResponsesStreamParser
             using JsonDocument document = JsonDocument.Parse(data);
             JsonElement root = document.RootElement;
             string eventType = TryGetString(root, "type") ?? string.Empty;
+            ProviderEventCount++;
+            LastProviderEventType = BoundEventType(eventType);
+            LastSequenceNumber = TryGetInt64(root, "sequence_number") ?? LastSequenceNumber;
 
-            if (string.Equals(eventType, "error", StringComparison.OrdinalIgnoreCase)
-                || eventType.Contains("failed", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(eventType, "error", StringComparison.OrdinalIgnoreCase))
             {
                 string message = ExtractErrorMessage(root) ?? "The Responses API stream reported a failure.";
                 throw new AgentModelException(AgentFailureCategory.ProviderError, message);
@@ -77,11 +93,10 @@ public sealed class OpenAiResponsesStreamParser
             if (string.Equals(eventType, "response.function_call_arguments.done", StringComparison.OrdinalIgnoreCase))
                 CaptureCompletedArguments(root);
 
-            if ((string.Equals(eventType, "response.completed", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(eventType, "response.done", StringComparison.OrdinalIgnoreCase))
+            if (IsTerminalEvent(eventType)
                 && root.TryGetProperty("response", out JsonElement response))
             {
-                CaptureCompletedResponse(response);
+                CaptureTerminalResponse(response, eventType);
             }
 
             return !string.IsNullOrEmpty(textDelta);
@@ -95,6 +110,9 @@ public sealed class OpenAiResponsesStreamParser
 
     public AgentModelTurnResult BuildResult(string existingInputJson)
     {
+        if (!IsCompleted)
+            throw CreateTerminalException();
+
         JsonArray input = JsonNode.Parse(existingInputJson) as JsonArray
             ?? throw new AgentModelException(
                 AgentFailureCategory.Internal,
@@ -160,15 +178,56 @@ public sealed class OpenAiResponsesStreamParser
     {
         using JsonDocument document = JsonDocument.Parse(body);
         JsonElement root = document.RootElement;
-        if (root.TryGetProperty("error", out JsonElement error))
+        if (root.TryGetProperty("error", out JsonElement error)
+            && error.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined)
         {
-            string message = TryGetString(error, "message") ?? "The Responses API returned an error.";
+            string message = error.ValueKind == JsonValueKind.Object
+                ? TryGetString(error, "message") ?? "The Responses API returned an error."
+                : "The Responses API returned an error.";
             throw new AgentModelException(AgentFailureCategory.ProviderError, message);
         }
 
         var parser = new OpenAiResponsesStreamParser();
-        parser.CaptureCompletedResponse(root);
+        parser.CaptureTerminalResponse(root, "response." + (TryGetString(root, "status") ?? "completed"));
+        if (!parser.IsCompleted)
+            throw parser.CreateTerminalException();
         return parser.BuildResult(existingInputJson);
+    }
+
+    public AgentModelException CreateTerminalException()
+    {
+        if (IsCompleted)
+        {
+            return new AgentModelException(
+                AgentFailureCategory.Internal,
+                "A completed Responses API result was incorrectly treated as a failure.");
+        }
+
+        string status = string.IsNullOrWhiteSpace(TerminalStatus) ? "unknown" : TerminalStatus;
+        if (string.Equals(status, "cancelled", StringComparison.OrdinalIgnoreCase))
+        {
+            return new AgentModelException(
+                AgentFailureCategory.Cancelled,
+                "The Responses API response was cancelled.");
+        }
+
+        if (string.Equals(status, "incomplete", StringComparison.OrdinalIgnoreCase))
+        {
+            bool outputBudgetReached = IncompleteReason.Contains(
+                "max_output_tokens",
+                StringComparison.OrdinalIgnoreCase);
+            string reason = string.IsNullOrWhiteSpace(IncompleteReason)
+                ? "unspecified reason"
+                : IncompleteReason;
+            return new AgentModelException(
+                outputBudgetReached ? AgentFailureCategory.BudgetExceeded : AgentFailureCategory.ProviderError,
+                $"The Responses API response was incomplete: {reason}.");
+        }
+
+        string message = string.IsNullOrWhiteSpace(TerminalErrorMessage)
+            ? $"The Responses API response reached terminal status '{status}'."
+            : TerminalErrorMessage;
+        return new AgentModelException(AgentFailureCategory.ProviderError, message);
     }
 
     public static string ExtractResponseText(string body)
@@ -184,12 +243,16 @@ public sealed class OpenAiResponsesStreamParser
         }
     }
 
-    private void CaptureCompletedResponse(JsonElement response)
+    private void CaptureTerminalResponse(JsonElement response, string eventType)
     {
         _completedResponseJson = response.GetRawText();
         CaptureResponseIdentity(response);
         Usage = ExtractUsage(response);
-        IsCompleted = true;
+        TerminalStatus = TryGetString(response, "status") ?? StatusFromEventType(eventType);
+        IncompleteReason = ExtractIncompleteReason(response) ?? string.Empty;
+        TerminalErrorMessage = ExtractErrorMessage(response) ?? string.Empty;
+        IsTerminal = true;
+        IsCompleted = string.Equals(TerminalStatus, "completed", StringComparison.OrdinalIgnoreCase);
     }
 
     private void CaptureResponseIdentity(JsonElement response)
@@ -442,6 +505,32 @@ public sealed class OpenAiResponsesStreamParser
 
         return TryGetString(root, "message");
     }
+
+    private static string? ExtractIncompleteReason(JsonElement response)
+        => response.TryGetProperty("incomplete_details", out JsonElement details)
+            && details.ValueKind == JsonValueKind.Object
+                ? TryGetString(details, "reason")
+                : null;
+
+    private static bool IsTerminalEvent(string eventType)
+        => string.Equals(eventType, "response.completed", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(eventType, "response.done", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(eventType, "response.incomplete", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(eventType, "response.failed", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(eventType, "response.cancelled", StringComparison.OrdinalIgnoreCase);
+
+    private static string StatusFromEventType(string eventType)
+        => eventType.ToLowerInvariant() switch
+        {
+            "response.completed" or "response.done" => "completed",
+            "response.incomplete" => "incomplete",
+            "response.failed" => "failed",
+            "response.cancelled" => "cancelled",
+            _ => "unknown",
+        };
+
+    private static string BoundEventType(string eventType)
+        => eventType.Length <= 128 ? eventType : eventType[..128];
 
     private static string? TryGetString(JsonElement element, string propertyName)
         => element.ValueKind == JsonValueKind.Object

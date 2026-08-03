@@ -46,6 +46,13 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
     private int _frameBindingSnapshotPoolCursor;
     private readonly Dictionary<MaterialBindingSnapshotCacheKey, ComputeDispatchSnapshot?> _frameMaterialBindingSnapshots = [];
     private ulong _frameMaterialBindingSnapshotCacheFrame;
+    private readonly object _persistentProgramBindingArtifactSync = new();
+    private readonly Dictionary<
+        PersistentProgramBindingArtifactSlotKey,
+        (PersistentProgramBindingArtifactGeneration Generation,
+         RenderBindingPublisherGenerationSnapshot PublisherGenerations,
+         ComputeDispatchSnapshot? Artifact)>
+        _persistentProgramBindingArtifacts = [];
     private readonly Dictionary<string, Dictionary<AutoUniformMaterialWritePlanCacheKey, AutoUniformMaterialWritePlan>> _autoUniformMaterialWritePlans =
         new(StringComparer.Ordinal);
     private readonly Dictionary<string, AutoUniformMaterialWritePlan> _frequencyOwnedAutoUniformWritePlans =

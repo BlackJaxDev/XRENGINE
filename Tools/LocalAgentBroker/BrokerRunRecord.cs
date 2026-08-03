@@ -11,10 +11,12 @@ internal sealed class BrokerRunRecord
     private readonly object _sync = new();
     private readonly StringBuilder _incrementalText = new();
     private readonly List<AgentToolEvidence> _toolEvidence = [];
+    private readonly List<AgentProviderAttemptDiagnostic> _providerAttempts = [];
     private AgentRunStatus _status = AgentRunStatus.Queued;
     private AgentTokenUsage _usage = new();
     private AgentRunResult? _result;
     private string _actualModel = string.Empty;
+    private int _retryCount;
     private DateTimeOffset _updatedUtc;
 
     public BrokerRunRecord(string runId, AgentRunRequest request)
@@ -69,16 +71,49 @@ internal sealed class BrokerRunRecord
         }
     }
 
+    public void AddProviderAttempt(AgentProviderAttemptDiagnostic diagnostic)
+    {
+        lock (_sync)
+        {
+            int existingIndex = _providerAttempts.FindIndex(candidate =>
+                candidate.TurnNumber == diagnostic.TurnNumber
+                && candidate.AttemptNumber == diagnostic.AttemptNumber);
+            if (existingIndex >= 0)
+                _providerAttempts[existingIndex] = diagnostic;
+            else
+                _providerAttempts.Add(diagnostic);
+            if (!string.IsNullOrWhiteSpace(diagnostic.ActualModel))
+                _actualModel = diagnostic.ActualModel;
+            _updatedUtc = DateTimeOffset.UtcNow;
+        }
+    }
+
+    public void RecordRetry()
+    {
+        lock (_sync)
+        {
+            _retryCount++;
+            _updatedUtc = DateTimeOffset.UtcNow;
+        }
+    }
+
     public void SetResult(AgentRunResult result)
     {
         lock (_sync)
         {
             _result = result;
             _status = result.Status;
-            _actualModel = result.ActualModel;
+            if (!string.IsNullOrWhiteSpace(result.ActualModel))
+                _actualModel = result.ActualModel;
             _usage = result.Usage;
             _toolEvidence.Clear();
             _toolEvidence.AddRange(result.ToolEvidence);
+            if (result.ProviderAttempts.Count > 0)
+            {
+                _providerAttempts.Clear();
+                _providerAttempts.AddRange(result.ProviderAttempts);
+            }
+            _retryCount = Math.Max(_retryCount, result.RetryCount);
             if (_incrementalText.Length == 0 && !string.IsNullOrEmpty(result.FinalText))
                 _incrementalText.Append(result.FinalText);
             _updatedUtc = DateTimeOffset.UtcNow;
@@ -98,9 +133,12 @@ internal sealed class BrokerRunRecord
                 RequestedModel = Request.RequestedModel,
                 ActualModel = _actualModel,
                 EditorSession = Request.EditorSession,
+                UseBackgroundMode = Request.UseBackgroundMode,
                 IncrementalText = _incrementalText.ToString(),
                 Usage = _usage,
                 ToolEvidence = _toolEvidence.ToArray(),
+                RetryCount = _retryCount,
+                ProviderAttempts = _providerAttempts.ToArray(),
                 Result = _result,
             };
         }

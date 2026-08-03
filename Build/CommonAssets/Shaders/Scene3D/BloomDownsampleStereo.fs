@@ -9,13 +9,13 @@ layout(location = 0) in vec3 FragPos;
 uniform sampler2DArray SourceTexture;
 
 uniform int SourceLOD;
-uniform bool UseThreshold;
-uniform float BloomThreshold;
-uniform float BloomSoftKnee;
-uniform float BloomIntensity;
-uniform vec3 Luminance = vec3(0.299, 0.587, 0.114);
-uniform bool UseKarisAverage;
-uniform bool DebugSolidOutput;
+uniform bool UseThreshold; // XRENGINE_FREQUENCY(Pass)
+uniform float BloomThreshold; // XRENGINE_FREQUENCY(Pass)
+uniform float BloomSoftKnee; // XRENGINE_FREQUENCY(Pass)
+uniform float BloomIntensity; // XRENGINE_FREQUENCY(Pass)
+uniform vec3 Luminance = vec3(0.299, 0.587, 0.114); // XRENGINE_FREQUENCY(Pass)
+uniform bool UseKarisAverage; // XRENGINE_FREQUENCY(Pass)
+uniform bool DebugSolidOutput; // XRENGINE_FREQUENCY(Pass)
 uniform float ScreenWidth;
 uniform float ScreenHeight;
 uniform vec2 ScreenOrigin;
