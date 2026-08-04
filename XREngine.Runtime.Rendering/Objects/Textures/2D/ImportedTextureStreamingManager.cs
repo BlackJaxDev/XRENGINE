@@ -40,9 +40,9 @@ internal sealed class ImportedTextureStreamingManager
     private const string VulkanPreviewFreezeReason = "explicit Vulkan imported-texture preview freeze requested";
 
     /// <summary>
-    /// If a pending transition has been stuck for this many frames with no active
-    /// decodes on either backend, force-clear it so the next Evaluate cycle can
-    /// re-queue a fresh transition.
+    /// If a pending transition has been stuck for this many frames after all
+    /// texture decode and upload work has gone idle, force-clear it so the next
+    /// Evaluate cycle can re-queue a fresh transition.
     /// </summary>
     private const int StuckPendingTransitionFrameThreshold = 300;
 
@@ -793,13 +793,13 @@ internal sealed class ImportedTextureStreamingManager
         for (int i = 0; i < snapshots.Count; i++)
             currentManagedBytes += snapshots[i].CurrentCommittedBytes;
 
-        // Recovery pass: detect and force-clear stuck pending transitions.
-        // A pending transition is "stuck" when its async load / upload should have
-        // completed but ClearPendingTransition was never called (e.g., a callback
-        // dropped after decode/upload work finished). Visible or recently bound
-        // textures get per-record recovery even while unrelated uploads are still
-        // active, otherwise one stale upload backlog can pin everything at preview
-        // resolution indefinitely.
+        // Recovery pass: detect and force-clear stuck pending transitions. The
+        // manager cannot distinguish a record whose callback was dropped from a
+        // legitimate decode waiting behind other texture work. Never cancel a
+        // pending record while either backend still reports queued/active work;
+        // doing so makes high-frame-rate scenes repeatedly cancel valid jobs before
+        // they reach the decode gate and prevents large material sets from ever
+        // converging beyond their placeholder textures.
         bool anyDecodeActive = _tieredBackend.ActiveDecodeCount > 0
             || _tieredBackend.QueuedDecodeCount > 0
             || _sparseBackend.ActiveDecodeCount > 0
@@ -819,10 +819,7 @@ internal sealed class ImportedTextureStreamingManager
             if (framesSincePending < StuckPendingTransitionFrameThreshold)
                 continue;
 
-            bool importantNow = snapshot.LastVisibleFrameId == frameId
-                || IsRecentlyBound(snapshot, frameId)
-                || snapshot.PendingMaxDimension > snapshot.ResidentMaxDimension;
-            if (!globalStuckRecoveryAllowed && !importantNow)
+            if (!globalStuckRecoveryAllowed)
                 continue;
 
             Debug.TexturesWarning(

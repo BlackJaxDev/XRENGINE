@@ -435,7 +435,6 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
 internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
 {
     private const int MaxConcurrentStreamingDecodes = 2;
-    private const int MaxQueuedDecodeBacklog = 8;
     private const int MaxSharedUploadsInFlight = 1;
     private const int MaxSparseTransitionSchedulesPerFrame = 1;
     private static readonly uint[] ResidentCandidates =
@@ -621,12 +620,11 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                     return;
                 }
 
-                if (Volatile.Read(ref s_queuedDecodeCount) > MaxQueuedDecodeBacklog)
-                {
-                    ReportCanceled("decode backlog limit");
-                    return;
-                }
-
+                // The manager owns at most one pending transition per tracked
+                // texture. Let the priority semaphore provide backpressure instead
+                // of rejecting work after it has been queued: rejection caused the
+                // same visible texture to be resubmitted every frame and could
+                // starve an avatar's entire material set indefinitely.
                 await DecodeGate.WaitAsync(priority, cancellationToken).ConfigureAwait(false);
                 Interlocked.Decrement(ref s_queuedDecodeCount);
                 Interlocked.Increment(ref s_activeDecodeCount);

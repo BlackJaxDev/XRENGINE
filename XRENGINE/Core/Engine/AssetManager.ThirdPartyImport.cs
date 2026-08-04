@@ -1,6 +1,7 @@
 using XREngine.Extensions;
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
@@ -31,6 +32,9 @@ namespace XREngine
 
     public partial class AssetManager
     {
+        private readonly ConcurrentDictionary<string, byte> _activeThirdPartyImportTargets =
+            new(StringComparer.OrdinalIgnoreCase);
+
         private static Dictionary<string, Type> CreateThirdPartyExtensionMap()
         {
             var map = new Dictionary<string, Type>(StringComparer.OrdinalIgnoreCase);
@@ -376,25 +380,38 @@ namespace XREngine
 
             targetPath = Path.GetFullPath(targetPath);
             ValidateExternalImportDestination(targetPath);
-            using var backup = new ThirdPartyImportBackup(targetPath);
+            if (!_activeThirdPartyImportTargets.TryAdd(targetPath, 0))
+            {
+                throw new InvalidOperationException(
+                    $"An import targeting '{targetPath}' is already in progress.");
+            }
+
             try
             {
-                bool imported = ImportThirdPartyToNativeAssetCore(
-                    sourcePath,
-                    forceOverwrite,
-                    progress,
-                    targetPath,
-                    suppliedImportOptions);
-                if (imported)
-                    backup.Commit();
-                else
+                using var backup = new ThirdPartyImportBackup(targetPath);
+                try
+                {
+                    bool imported = ImportThirdPartyToNativeAssetCore(
+                        sourcePath,
+                        forceOverwrite,
+                        progress,
+                        targetPath,
+                        suppliedImportOptions);
+                    if (imported)
+                        backup.Commit();
+                    else
+                        backup.Rollback();
+                    return imported;
+                }
+                catch
+                {
                     backup.Rollback();
-                return imported;
+                    throw;
+                }
             }
-            catch
+            finally
             {
-                backup.Rollback();
-                throw;
+                _activeThirdPartyImportTargets.TryRemove(targetPath, out _);
             }
         }
 

@@ -29,6 +29,26 @@ internal sealed class AssetManagerRenderAssetSerializationServices : IRenderAsse
         [NotNullWhen(true)] out string? assetPath)
         => Engine.Assets.TryResolveAssetPathById(assetId, referenceAssetPath, out assetPath);
 
+    public bool TryCreatePortableAssetReference(
+        string assetPath,
+        [NotNullWhen(true)] out string? reference)
+    {
+        if (AssetReferencePath.TryCreate(
+            Engine.Assets.GameAssetsPath,
+            assetPath,
+            AssetReferencePath.GamePrefix,
+            out reference))
+        {
+            return true;
+        }
+
+        return AssetReferencePath.TryCreate(
+            Engine.Assets.EngineAssetsPath,
+            assetPath,
+            AssetReferencePath.EnginePrefix,
+            out reference);
+    }
+
     public XRAsset? LoadImmediate(string assetPath, Type assetType)
         => Engine.Assets.LoadImmediate(assetPath, assetType);
 

@@ -19,6 +19,10 @@ public interface IRenderAssetSerializationServices
         string? referenceAssetPath,
         [NotNullWhen(true)] out string? assetPath);
 
+    bool TryCreatePortableAssetReference(
+        string assetPath,
+        [NotNullWhen(true)] out string? reference);
+
     XRAsset? LoadImmediate(string assetPath, Type assetType);
 
     bool TryHandleScalarAsset(

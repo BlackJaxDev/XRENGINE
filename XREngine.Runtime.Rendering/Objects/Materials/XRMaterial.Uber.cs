@@ -560,6 +560,7 @@ public partial class XRMaterial
             return new ColorF4(0.5f, 0.5f, 1.0f, 1.0f);
 
         if (string.Equals(samplerName, "_PBRMetallicMaps", StringComparison.Ordinal) ||
+            string.Equals(samplerName, "_PoiColorMaskTexture", StringComparison.Ordinal) ||
             string.Equals(samplerName, "_DissolveDetailNoise", StringComparison.Ordinal))
             return new ColorF4(0.0f, 0.0f, 0.0f, 1.0f);
 
