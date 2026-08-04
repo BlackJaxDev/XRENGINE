@@ -89,10 +89,13 @@ public sealed class VPRC_RenderFullOverdrawPass : ViewportRenderCommand
             using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(renderGraphPass);
             if (useGpuRenderPath)
             {
-                commands.RenderCPUFiltered(
-                    pass,
-                    static command => command is IRenderCommandMesh mesh && IsGpuPathCpuFallbackMesh(mesh),
-                    respectCpuQueryOcclusion: true);
+                if (!overdrawStrategy.IsGpuZeroReadbackStrategy())
+                {
+                    commands.RenderCPUFiltered(
+                        pass,
+                        static command => command is IRenderCommandMesh mesh && IsGpuPathCpuFallbackMesh(mesh),
+                        respectCpuQueryOcclusion: true);
+                }
 
                 commands.RenderGPU(pass, overdrawStrategy);
             }

@@ -201,6 +201,7 @@ namespace XREngine.Rendering.Commands
             // Phase 3: Hi-Z occlusion pyramid + refinement
             _hiZInitProgram = CreateDeferredComputeProgram("Compute/Occlusion/GPURenderHiZInit.comp", "GPURenderHiZInit");
             _hiZGenProgram = CreateDeferredComputeProgram("Compute/Occlusion/HiZGen.comp", "HiZGen");
+            _hiZPhaseOneProgram = CreateDeferredComputeProgram("Compute/Occlusion/GPURenderOcclusionPhaseOne.comp", "GPURenderOcclusionPhaseOne");
             _hiZOcclusionProgram = CreateDeferredComputeProgram("Compute/Occlusion/GPURenderOcclusionHiZ.comp", "GPURenderOcclusionHiZ");
             _copyCount3Program = CreateDeferredComputeProgram("Compute/Indirect/GPURenderCopyCount3.comp", "GPURenderCopyCount3");
 
@@ -223,6 +224,7 @@ namespace XREngine.Rendering.Commands
                 _bvhFrustumCullProgram,
                 _hiZInitProgram,
                 _hiZGenProgram,
+                _hiZPhaseOneProgram,
                 _hiZOcclusionProgram,
                 _copyCount3Program,
             ];
@@ -478,6 +480,14 @@ namespace XREngine.Rendering.Commands
                 _culledSceneToRenderBuffer = MakeCulledSceneToRenderBuffer(capacity);
             }
 
+            if (_twoPassPhaseOneCommandBuffer is null || _twoPassPhaseOneCommandBuffer.ElementCount != capacity)
+            {
+                _twoPassPhaseOneCommandBuffer?.Destroy();
+                _twoPassPhaseOneCommandBuffer = MakeCulledSceneToRenderBuffer(
+                    capacity,
+                    "TwoPassPhaseOneCommands");
+            }
+
             if (IsHotCommandLayoutEnabled())
             {
                 if (_sourceHotCommandBuffer is null || _sourceHotCommandBuffer.ElementCount != capacity)
@@ -497,12 +507,20 @@ namespace XREngine.Rendering.Commands
                     _occlusionCulledHotBuffer?.Destroy();
                     _occlusionCulledHotBuffer = MakeHotCommandBuffer("OcclusionCulledHotCommands", capacity);
                 }
+
+                if (_twoPassPhaseOneHotCommandBuffer is null || _twoPassPhaseOneHotCommandBuffer.ElementCount != capacity)
+                {
+                    _twoPassPhaseOneHotCommandBuffer?.Destroy();
+                    _twoPassPhaseOneHotCommandBuffer = MakeHotCommandBuffer("TwoPassPhaseOneHotCommands", capacity);
+                }
             }
 
             // Track remap needs per-buffer
             EnsureIndirectDrawBuffer(MaxIndirectDrawCapacity);
             _culledCountNeedsMap = EnsureParameterBuffer(ref _culledCountBuffer, "CulledCount", GPUScene.VisibleCountComponents);
             _culledCountNeedsMap |= EnsureParameterBuffer(ref _cullCountScratchBuffer, "CulledCountScratch", GPUScene.VisibleCountComponents);
+            _ = EnsureParameterBuffer(ref _twoPassCandidateCountBuffer, "TwoPassCandidateCount", GPUScene.VisibleCountComponents);
+            _ = EnsureParameterBuffer(ref _twoPassPhaseOneCountBuffer, "TwoPassPhaseOneCount", GPUScene.VisibleCountComponents);
             _drawCountNeedsMap = EnsureParameterBuffer(ref _drawCountBuffer, "DrawCount");
             _cullingOverflowNeedsMap = EnsureFlagBuffer(ref _cullingOverflowFlagBuffer, "CullingOverflowFlag");
             _indirectOverflowNeedsMap = EnsureFlagBuffer(ref _indirectOverflowFlagBuffer, "IndirectOverflowFlag");
@@ -559,6 +577,18 @@ namespace XREngine.Rendering.Commands
                     RangeFlags = EBufferMapRangeFlags.Read,
                 };
                 _occlusionCulledBuffer.Generate();
+            }
+
+            uint visibilityWordCount = checked(Math.Max(capacity, 1u) * 2u);
+            if (_twoPassVisibilityBuffer is null || _twoPassVisibilityBuffer.ElementCount != visibilityWordCount)
+            {
+                _twoPassVisibilityBuffer?.Destroy();
+                _twoPassVisibilityBuffer = CreateUIntBuffer(
+                    "TwoPassOcclusionVisibility",
+                    visibilityWordCount,
+                    bindingIndex: 6,
+                    resizable: false);
+                ZeroUIntRange(_twoPassVisibilityBuffer, 0u, visibilityWordCount);
             }
 
             // Aggregate whether any buffer mapping is pending
@@ -1055,14 +1085,54 @@ namespace XREngine.Rendering.Commands
                 _materialSlotLookupBuffer.Resize(lookupCount);
             }
 
-            if (_materialTierDrawCountBuffer is null ||
-                _materialTierDrawCountBuffer.Target != EBufferTarget.DrawIndirectBuffer ||
-                _materialTierDrawCountBuffer.ComponentType != EComponentType.UInt ||
-                _materialTierDrawCountBuffer.ComponentCount != 1u)
+            EnsureMaterialTierDrawCountBuffer(
+                ref _materialTierDrawCountBuffer,
+                "MaterialTierDrawCounts",
+                bucketCount);
+            EnsureMaterialTierDrawCountBuffer(
+                ref _twoPassPhaseOneMaterialTierDrawCountBuffer,
+                "TwoPassPhaseOneMaterialTierDrawCounts",
+                bucketCount);
+
+            // One command for the selected LOD and, during a transition, one
+            // for the previous LOD. Production material-table submission owns
+            // only three fixed tier ranges rather than materialCapacity*tiers.
+            uint maxDrawsPerBucket = Math.Max(capacity * 2u, 1u);
+            ulong totalIndirectCommands = (ulong)maxDrawsPerBucket * bucketCount;
+            uint boundedIndirectCommands = (uint)Math.Min(totalIndirectCommands, int.MaxValue);
+            EnsureMaterialTierIndirectDrawBuffer(
+                ref _materialTierIndirectDrawBuffer,
+                "MaterialTierIndirectDraws",
+                boundedIndirectCommands);
+            EnsureMaterialTierIndirectDrawBuffer(
+                ref _twoPassPhaseOneMaterialTierIndirectDrawBuffer,
+                "TwoPassPhaseOneMaterialTierIndirectDraws",
+                boundedIndirectCommands);
+
+            _materialTierBucketCount = bucketCount;
+            _maxDrawsPerMaterialTier = maxDrawsPerBucket;
+            P3Diagnostics.RecordMaterialScatterSizing(
+                _materialSlotLookupBuffer.ElementCount,
+                slotCount,
+                bucketCount,
+                maxDrawsPerBucket);
+            if (RequiresActiveMaterialBucketList(ZeroReadbackMaterialDrawPath))
+                EnsureActiveMaterialBucketBuffers(bucketCount);
+        }
+
+        private static void EnsureMaterialTierDrawCountBuffer(
+            ref XRDataBuffer? buffer,
+            string name,
+            uint bucketCount)
+        {
+            if (buffer is null ||
+                buffer.Target != EBufferTarget.DrawIndirectBuffer ||
+                buffer.ComponentType != EComponentType.UInt ||
+                buffer.ComponentCount != 1u)
             {
-                _materialTierDrawCountBuffer?.Destroy();
-                _materialTierDrawCountBuffer = new XRDataBuffer(
-                    "MaterialTierDrawCounts",
+                buffer?.Destroy();
+                buffer = new XRDataBuffer(
+                    name,
                     EBufferTarget.DrawIndirectBuffer,
                     bucketCount,
                     EComponentType.UInt,
@@ -1075,29 +1145,29 @@ namespace XREngine.Rendering.Commands
                     Resizable = true,
                     BindingIndexOverride = (uint)GPUBatchingBindings.MaterialScatterDrawCounts
                 };
-                _materialTierDrawCountBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage;
-                _materialTierDrawCountBuffer.Generate();
+                buffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage;
+                buffer.Generate();
             }
-            else if (_materialTierDrawCountBuffer.ElementCount < bucketCount)
+            else if (buffer.ElementCount < bucketCount)
             {
-                _materialTierDrawCountBuffer.Resize(bucketCount);
+                buffer.Resize(bucketCount);
             }
+        }
 
-            // One command for the selected LOD and, during a transition, one
-            // for the previous LOD. Production material-table submission owns
-            // only three fixed tier ranges rather than materialCapacity*tiers.
-            uint maxDrawsPerBucket = Math.Max(capacity * 2u, 1u);
-            ulong totalIndirectCommands = (ulong)maxDrawsPerBucket * bucketCount;
-            uint boundedIndirectCommands = (uint)Math.Min(totalIndirectCommands, int.MaxValue);
-            if (_materialTierIndirectDrawBuffer is null ||
-                _materialTierIndirectDrawBuffer.ComponentType != EComponentType.UInt ||
-                _materialTierIndirectDrawBuffer.ComponentCount != _indirectCommandComponentCount)
+        private void EnsureMaterialTierIndirectDrawBuffer(
+            ref XRDataBuffer? buffer,
+            string name,
+            uint indirectCommandCount)
+        {
+            if (buffer is null ||
+                buffer.ComponentType != EComponentType.UInt ||
+                buffer.ComponentCount != _indirectCommandComponentCount)
             {
-                _materialTierIndirectDrawBuffer?.Destroy();
-                _materialTierIndirectDrawBuffer = new XRDataBuffer(
-                    "MaterialTierIndirectDraws",
+                buffer?.Destroy();
+                buffer = new XRDataBuffer(
+                    name,
                     EBufferTarget.DrawIndirectBuffer,
-                    boundedIndirectCommands,
+                    indirectCommandCount,
                     EComponentType.UInt,
                     _indirectCommandComponentCount,
                     false,
@@ -1108,23 +1178,13 @@ namespace XREngine.Rendering.Commands
                     Resizable = true,
                     BindingIndexOverride = (uint)GPUBatchingBindings.MaterialScatterIndirectDraws
                 };
-                _materialTierIndirectDrawBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage;
-                _materialTierIndirectDrawBuffer.Generate();
+                buffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage;
+                buffer.Generate();
             }
-            else if (_materialTierIndirectDrawBuffer.ElementCount < boundedIndirectCommands)
+            else if (buffer.ElementCount < indirectCommandCount)
             {
-                _materialTierIndirectDrawBuffer.Resize(boundedIndirectCommands);
+                buffer.Resize(indirectCommandCount);
             }
-
-            _materialTierBucketCount = bucketCount;
-            _maxDrawsPerMaterialTier = maxDrawsPerBucket;
-            P3Diagnostics.RecordMaterialScatterSizing(
-                _materialSlotLookupBuffer.ElementCount,
-                slotCount,
-                bucketCount,
-                maxDrawsPerBucket);
-            if (RequiresActiveMaterialBucketList(ZeroReadbackMaterialDrawPath))
-                EnsureActiveMaterialBucketBuffers(bucketCount);
         }
 
         private void EnsureActiveMaterialBucketBuffers(uint bucketCount)

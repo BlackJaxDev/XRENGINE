@@ -11,13 +11,13 @@ uniform sampler2DArray GTAOInputTexture;
 uniform sampler2DArray DepthView;
 uniform sampler2DArray Normal;
 
-uniform vec2 BlurDirection = vec2(1.0f, 0.0f);
-uniform int DenoiseRadius = 5;
-uniform float DenoiseSharpness = 10.0f;
-uniform bool DenoiseEnabled = true;
-uniform bool UseInputNormals = true;
-uniform bool UseNormalWeightedBlur = true;
-uniform vec2 TexelSize = vec2(0.0f); // Set from C#; when zero, falls back to input texture size
+uniform vec2 BlurDirection = vec2(1.0f, 0.0f); // XRENGINE_FREQUENCY(Pass)
+uniform int DenoiseRadius = 5; // XRENGINE_FREQUENCY(Pass)
+uniform float DenoiseSharpness = 10.0f; // XRENGINE_FREQUENCY(Pass)
+uniform bool DenoiseEnabled = true; // XRENGINE_FREQUENCY(Pass)
+uniform bool UseInputNormals = true; // XRENGINE_FREQUENCY(Pass)
+uniform bool UseNormalWeightedBlur = true; // XRENGINE_FREQUENCY(Pass)
+uniform vec2 TexelSize = vec2(0.0f); // XRENGINE_FREQUENCY(Pass)
 
 float ComputeDenoiseEdgeFade(vec2 uv)
 {

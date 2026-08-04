@@ -21,13 +21,13 @@ not make an OpenAI API request. Starting a worker requires every item below.
 | Requirement | How to satisfy or verify it |
 |---|---|
 | Supported checkout | Use Windows 10/11 with this XRENGINE checkout and the .NET 10 SDK. |
-| Published broker | Run `Tools/Setup-LocalAgentBroker.ps1`; verify `Build/AgentTools/LocalAgentBroker/XREngine.LocalAgentBroker.dll` exists. |
+| Published broker | Run `Tools/Setup-LocalAgentBroker.ps1`; verify `Build/AgentTools/LocalAgentBroker.current` names a versioned deployment containing `XREngine.LocalAgentBroker.dll`. |
 | Trusted project configuration | Trust the repository in Codex. Project-scoped `.codex/config.toml` MCP configuration is loaded only for trusted projects. Restart Codex after setup or configuration changes. |
-| API project | Use an OpenAI API project with billing/quota and access to the exact requested model. API service is managed and billed separately from ChatGPT subscriptions. |
-| API key | Put the project key in the environment variable inherited by Codex, normally `OPENAI_API_KEY`. Never put the value in the repository, MCP arguments, a prompt, logs, or command-line arguments. |
+| API project | Use an OpenAI API project with billing/quota and access to the exact selected model. API service is managed and billed separately from ChatGPT subscriptions. |
+| API key | Put the project key in the process environment or, on Windows, the user environment, normally as `OPENAI_API_KEY`. Never put the value in the repository, MCP arguments, a prompt, logs, or command-line arguments. |
 | Broker tools | Confirm the `local-agent-broker` MCP server exposes `recommend_agent_route`, `start_agent_run`, `get_agent_run`, `cancel_agent_run`, and `list_agent_runs`. |
 | Named editor session | Start one exact session with `Tools/Manage-McpEditorSession.ps1`. Its manifest and loopback MCP endpoint must be live for the whole run. |
-| Explicit authority | The user must explicitly authorize a broker/API worker, the exact model, the objective, and any mutation. A routing recommendation alone is not authorization. |
+| Explicit authority | The user must explicitly authorize broker/API use, the objective, and any mutation. The coordinator selects the lowest-cost suitable model automatically unless the user pins a model or tier ceiling. A routing recommendation alone is not authorization. |
 | Bounded request | Set narrow turn, tool-call, output-token, elapsed-time, retry, and tool-result limits appropriate to the task. |
 
 The supported exact model IDs are:
@@ -45,11 +45,13 @@ substitutes another tier.
 The fixed MCP surface contains five orchestration tools:
 
 - `recommend_agent_route` classifies an objective under the repository routing
-  policy. It is local and advisory; it never launches or switches a model.
+  policy. It is local and advisory; it never launches or switches a model. Once
+  broker API spend is authorized, the coordinator uses its exact result
+  automatically unless the user pinned a model.
 - `start_agent_run` validates a request, starts the paid worker asynchronously,
   and returns a run ID promptly.
-- `get_agent_run` returns incremental text/evidence/usage and the terminal
-  result for one run.
+- `get_agent_run` returns incremental text/evidence/usage, retry count, bounded
+  provider-attempt diagnostics, and the terminal result for one run.
 - `cancel_agent_run` cooperatively cancels a queued or running worker and its
   pending editor tool call.
 - `list_agent_runs` returns bounded metadata for active and recently retained
@@ -66,9 +68,15 @@ From the repository root, publish and smoke-test the broker:
 powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Setup-LocalAgentBroker.ps1
 ```
 
-This publishes the BCL-only app under
-`Build/AgentTools/LocalAgentBroker` and performs an MCP
-initialize/list-tools test. It does not contact the OpenAI API.
+This publishes the BCL-only app to an immutable directory under
+`Build/AgentTools/LocalAgentBroker-<timestamp>`, atomically updates
+`Build/AgentTools/LocalAgentBroker.current`, and performs an MCP
+initialize/list-tools test. Versioned deployment avoids overwriting DLLs held
+by a broker process that is already running. It does not contact the OpenAI API.
+An already-running Codex task remains attached to its existing stdio process;
+restart that task or Codex after setup before expecting it to use the new
+deployment. Killing the child process alone closes the old transport and does
+not hot-rebind it.
 
 Alternatively, the opt-in agent-tool bootstrap includes the same setup:
 
@@ -82,8 +90,12 @@ the Windows user environment as `OPENAI_API_KEY`. OpenAI recommends keeping
 keys out of source and using an environment variable or secret manager; see
 [API key safety](https://help.openai.com/en/articles/5112595).
 
-Set the variable before starting Codex so the MCP process inherits it. A
-ChatGPT or Codex sign-in is not a replacement for API credentials, and
+The launcher checks its inherited process environment first. On Windows, when
+that value is absent, it reads the same variable name from the user environment
+and injects it into only the broker child process. This means a newly configured
+user-scoped key does not need to be copied into chat, arguments, or repository
+state. Other operating systems require the MCP process to inherit the variable.
+A ChatGPT or Codex sign-in is not a replacement for API credentials, and
 [API billing is separate](https://help.openai.com/en/articles/8156019).
 
 Trust this repository and restart Codex. The checked-in
@@ -138,46 +150,54 @@ session name. Do not edit `session.json` by hand.
 
 ### 2. Ask Codex To Use The Broker Explicitly
 
-A good request names the model, session, objective, authority, evidence, and
-limits:
+A good request authorizes broker use and names the session, objective,
+authority, evidence, and limits. Model selection is automatic by default:
 
-> Use the local agent broker with `gpt-5.6-sol` against editor session
-> `broker-read` for a read-only analysis of the shadow artifact. Keep the run
-> under 3 turns, 6 tool calls, 2,000 output tokens, and 120 seconds. Poll it to
-> completion, verify the requested and actual model, and integrate the evidence
-> locally. Do not modify files or the scene.
+> Use the local agent broker against editor session `broker-read` for a
+> read-only analysis of the shadow artifact. Select the lowest-cost suitable
+> tier automatically. Keep the run under 3 turns, 6 tool calls, 2,000 output
+> tokens, and 120 seconds. Poll it to completion, verify the selected and actual
+> model, and integrate the evidence locally. Do not modify files or the scene.
+
+The user may still pin an exact model or tier ceiling when desired.
 
 For mutation, name every permitted editor tool and the required verification:
 
-> Start a `gpt-5.6-terra` broker worker against `broker-edit`. Allow
-> mutation only through `set_transform`; allow verification through
-> `get_transform` and `capture_viewport_screenshot`. Require read-back or
-> capture evidence. Do not use any other mutating or destructive tool.
+> Start a broker worker against `broker-edit` and select the tier
+> automatically. Allow mutation only through `set_transform`; allow
+> verification through `get_transform` and `capture_viewport_screenshot`.
+> Require read-back or capture evidence. Do not use any other mutating or
+> destructive tool.
 
-Do not say only "use the best model" or "escalate." The broker requires one
-exact model ID and never treats route advice as authority to spend API funds.
+The request must explicitly authorize broker/API use; saying only "use the
+best model" or "escalate" does not authorize API spend. After authorization,
+the coordinator supplies the exact model ID selected by the routing policy.
 
 ### 3. Let The Coordinator Drive The Run To A Terminal State
 
 Codex should:
 
-1. Confirm explicit authorization, exact model, exact named session, scope, and
+1. Confirm explicit broker/API authorization, exact named session, scope, and
    mutation boundary.
-2. Optionally call `recommend_agent_route`; do not infer launch authority from
-   its result.
+2. Partition the task into a bounded slice. Unless the user pinned a model, call
+   `recommend_agent_route` and use its exact result as `requested_model`.
 3. Build a compact evidence packet with relevant files/symbols, current diff,
    commands/results, failed hypotheses, unresolved questions, and the next
    decision.
-4. Call `start_agent_run` with the exact model and narrow budgets.
-5. Retain the returned run ID and poll `get_agent_run` until status is
+4. Call `start_agent_run` with the selected exact model and narrow budgets.
+5. Keep `use_background_mode` false unless the user or an applicable project
+   policy accepts temporary provider storage for a long-running slice. When
+   enabled, poll normally; the broker polls the provider response separately.
+6. Retain the returned run ID and poll `get_agent_run` until status is
    `completed`, `failed`, or `cancelled`.
-6. Cancel a run that is abandoned or no longer useful.
-7. Verify both `requested_model` and `actual_model`. Treat a mismatch as a
-   terminal failure; never submit a replacement tier without new authority.
-8. Integrate the returned evidence and validate conclusions or mutations
+7. Cancel a run that is abandoned or no longer useful.
+8. Verify both `requested_model` and `actual_model`. Treat a mismatch as a
+   terminal failure for that run and never accept silent substitution.
+9. Integrate the returned evidence and validate conclusions or mutations
    locally. The worker cannot run repository shell/Git commands.
-9. Report provider, editor, budget, or policy failures plainly. Do not silently
-   fall back to another model, session, or execution route.
+10. Route later mechanical slices back down to Terra or Luna when appropriate.
+   Report provider, editor, budget, or policy failures plainly; do not change
+   tiers merely to bypass a model-access failure.
 
 Read-only runs may overlap. A mutating run takes an exclusive lease on its
 named editor session and excludes readers until the mutation lease ends.
@@ -196,8 +216,9 @@ owns.
 ## Start Request Contract
 
 A caller using the MCP tools directly must provide `objective`,
-`requested_model`, and `editor_session`. The other fields make the run
-safer and more reproducible:
+`requested_model`, and `editor_session`. When the user did not pin a tier, the
+coordinator fills `requested_model` from `recommend_agent_route`. The other
+fields make the run safer and more reproducible:
 
 ```json
 {
@@ -212,6 +233,7 @@ safer and more reproducible:
   ],
   "requested_model": "gpt-5.6-sol",
   "reasoning_effort": "high",
+  "use_background_mode": false,
   "editor_session": "broker-read",
   "evidence_packet": {
     "relevant_files_and_symbols": [
@@ -262,6 +284,18 @@ non-empty, the call must also be listed there. Mutation additionally requires:
 Destructive authorization also requires mutation authorization. Unknown or
 unannotated editor tools are classified conservatively.
 
+`use_background_mode` defaults to `false`. When set to `true`, each provider
+turn is created asynchronously and polled until `completed`, `failed`,
+`incomplete`, or `cancelled`. Use it for long reasoning runs where one
+uninterrupted stream is unreliable. Cancellation calls the provider cancellation
+endpoint after a response ID exists. The terminal snapshot reports each safe
+attempt's turn/attempt number, response ID, actual model, event/poll count, last
+event type, terminal status, incomplete reason, elapsed time, retry disposition,
+and whether provider cancellation was accepted. It never includes prompts,
+response text, headers, credentials, or raw request bodies in those diagnostics.
+`budget.max_output_tokens` must be between 16 and 128,000; values below the live
+Responses API minimum are rejected before any paid request starts.
+
 ## Cost, Data, And Security
 
 Each worker is billed to the API project associated with the configured key,
@@ -273,9 +307,15 @@ Requests and editor evidence selected for the run leave the machine for OpenAI
 processing. The editor MCP endpoint remains loopback-only. Responses use
 `store: false`; continuations replay prior output items, correlated tool
 results, and encrypted reasoning items required by the Responses API flow.
+Background mode still sends `store: false`, but OpenAI temporarily stores the
+response for roughly ten minutes so it can be polled; it is therefore not Zero
+Data Retention compatible. See
+[OpenAI background mode](https://developers.openai.com/api/docs/guides/background).
 
-The API key value is read only from the broker process environment. It is not
-accepted in tool arguments, persisted, echoed, or included in metadata traces.
+The API key value is read first from the broker process environment and, only on
+Windows when absent there, from the configured user-scoped environment
+variable. It is not accepted in tool arguments, persisted, echoed, or included
+in metadata traces.
 If a key may have leaked, rotate it before another run.
 
 Tracing is off by default. `metadata` traces contain run/model IDs, budgets,
@@ -284,7 +324,8 @@ arguments/results, API keys, and authorization headers.
 
 ## Process Configuration
 
-Set these variables before starting Codex so the broker process inherits them:
+Set these variables before starting Codex. Windows user-scoped API-key values
+are also resolved on demand by the launcher and broker:
 
 | Environment variable | Default | Allowed values |
 |---|---:|---|
@@ -305,14 +346,20 @@ named by `XRE_LOCAL_AGENT_BROKER_EDITOR_AUTH_ENV`.
   `Tools/Setup-LocalAgentBroker.ps1`, trust the repository, restart Codex, and
   inspect the MCP server list. The project server is optional
   (`required = false`), so Codex can start even when the broker cannot.
+- **Broker transport closed after republishing or stopping the old process:**
+  restart the Codex task/app. Stdio MCP transports are process-bound; an
+  already-running task cannot attach the replacement deployment in place.
 - **Published DLL is missing:** verify
-  `Build/AgentTools/LocalAgentBroker/XREngine.LocalAgentBroker.dll`, then rerun
-  setup.
+  `Build/AgentTools/LocalAgentBroker.current` contains a valid versioned
+  deployment name and that deployment contains `XREngine.LocalAgentBroker.dll`,
+  then rerun setup.
 - **Protocol smoke test fails:** run
   `powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Test-LocalAgentBrokerMcp.ps1`.
   This test does not make a paid API request.
-- **API key is not set:** set the configured key variable in the environment
-  inherited by Codex, then restart Codex. Do not paste the key into chat.
+- **API key is not set:** on Windows, set the configured variable in the user or
+  process environment; on other systems ensure Codex inherits it. Restart Codex
+  only when changing broker setup/configuration or when an older broker process
+  is already loaded. Do not paste the key into chat.
 - **Quota, billing, or model access fails:** check the API project and exact
   model. Retry with another tier only after explicit authorization.
 - **Session manifest is missing or stale:** use
@@ -328,6 +375,9 @@ named by `XRE_LOCAL_AGENT_BROKER_EDITOR_AUTH_ENV`.
   capture. A successful mutating call alone is not a successful run.
 - **Run remains queued/running:** poll the retained run ID within its elapsed
   budget; cancel it if the result is no longer needed.
+- **A long stream ends before completion:** after accepting the temporary
+  storage/ZDR tradeoff, rerun the newly bounded slice with
+  `use_background_mode: true`; do not silently enable it for unrelated runs.
 - **Requested and actual model differ:** treat the run as failed and report it.
   Never accept silent substitution.
 

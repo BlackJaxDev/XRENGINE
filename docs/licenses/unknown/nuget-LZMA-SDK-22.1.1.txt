@@ -1,0 +1,6 @@
+﻿License text could not be resolved locally for NuGet package 'LZMA-SDK' (22.1.1).
+
+Resolved license: MIT
+RepositoryUrl: 
+ProjectUrl: https://github.com/monemihir/LZMA-SDK
+

@@ -29,7 +29,9 @@ Optimize for the lowest cost per successfully validated task, not the lowest cos
 - Use GPT-5.6 Sol only for the difficult or high-risk reasoning slice: cross-subsystem architecture, unclear root causes after evidence-driven investigation, complex concurrency or GPU/rendering failures, sophisticated algorithms, security or data-loss risk, and final review of consequential changes. Once that slice is resolved, move routine implementation and verification back to Terra or Luna.
 - Give an expensive model a compact evidence packet instead of the repository's entire history. Include only the objective, success criteria, constraints, relevant files and symbols, current diff, commands and results, failed hypotheses, unresolved questions, and next decision.
 - For repeated workloads, compare the current reasoning effort with one level lower on representative tasks. Keep the cheaper setting only when the same validation passes. Reserve high, xhigh, max, or pro-style execution for measured quality gains; never use them merely because a task is large.
-- A model may recommend moving up or down a tier, but it must not silently switch tiers. The user controls the switch.
+- The user controls native or in-place model switches for the current Codex
+  task. This does not prohibit automatic tier selection for a separately
+  billed broker worker after the user explicitly authorizes broker/API use.
 
 When the active model is Terra, treat these user instructions as routing commands:
 
@@ -51,16 +53,20 @@ Codex task and must never be described as an in-place switch or native handoff.
 Do not call `start_agent_run` unless all of these conditions are true:
 
 - The current user request explicitly asks to use the local broker/API worker or
-  explicitly authorizes a worker after route advice. A
-  `recommend_agent_route` result is advisory and never authorizes API spend.
-- The user has authorized one exact supported model ID: `gpt-5.6-luna`,
-  `gpt-5.6-terra`, or `gpt-5.6-sol`. If the exact tier is not authorized,
-  stop and ask; do not choose a paid tier silently.
+  explicitly authorizes broker API spend after route advice. A
+  `recommend_agent_route` result alone never authorizes API spend.
+- Once broker/API use is authorized for the task, the coordinator automatically
+  selects the exact supported model ID for each bounded slice unless the user
+  pins a model or tier ceiling. Use `recommend_agent_route` plus the routing
+  policy above, and pass its exact `gpt-5.6-luna`, `gpt-5.6-terra`, or
+  `gpt-5.6-sol` result to `start_agent_run`. Do not stop merely to ask the user
+  which tier to use.
 - The five broker tools are callable in the current session. If they are
   missing, follow `docs/user-guide/ai/local-agent-broker.md` for setup,
   project trust, and restart requirements. Do not simulate a broker run.
 - The operator has configured the API key in the environment inherited by
-  Codex and the API project has billing/quota plus access to the exact model.
+  Codex or, on Windows, the configured user-scoped environment variable, and
+  the API project has billing/quota plus access to the selected exact model.
   Never ask the user to paste the key into chat, print or echo it, inspect its
   value, put it in MCP arguments, or persist it.
 - The run targets one exact named editor session created with
@@ -78,31 +84,48 @@ is expected.
 1. Keep the current Codex agent as coordinator. Prefer a supported native Codex
    handoff for routing an entire coding task; use the broker for a bounded
    analysis or editor-tool slice.
-2. Build a compact evidence packet containing only the objective, success
+2. Partition the authorized broker work into coherent bounded slices and route
+   each slice to the lowest-cost tier likely to validate successfully: Luna for
+   deterministic inventory, evidence extraction, and classification; Terra for
+   ordinary scoped analysis and integration; Sol for unresolved architecture,
+   GPU/concurrency root cause, or consequential final review. After an
+   expensive reasoning slice resolves the ambiguity, route later mechanical
+   slices back down instead of retaining the expensive tier.
+3. Unless the user pinned a model, call `recommend_agent_route` for the current
+   slice and use its exact result as `requested_model`. The recommendation is
+   automatic tier selection within the user's existing broker authorization;
+   it is not authorization to spend when broker use was never authorized.
+4. Build a compact evidence packet containing only the objective, success
    criteria, constraints, relevant files/symbols, current diff, commands and
    observed results, failed hypotheses, unresolved questions, and next
    decision. Do not send unrelated repository data or secrets.
-3. Use read-only editor access by default. A non-empty allowlist should name
+5. Keep `use_background_mode` disabled by default. Enable it only for a
+   long-running slice after the user or an applicable project policy accepts
+   the provider's temporary response storage and non-ZDR behavior. When
+   enabled, retain provider attempt diagnostics and cancellation acceptance.
+6. Use read-only editor access by default. A non-empty allowlist should name
    only the tools needed for the objective.
-4. Mutation requires all of: explicit task authority, an `AllowMutate` named
+7. Mutation requires all of: explicit task authority, an `AllowMutate` named
    session, `allow_mutation: true`, an exact non-empty mutating-tool allowlist,
    and a later read-back, query, inspection, validation, or capture. Destructive
    access additionally requires explicit destructive authority.
-5. Call `start_agent_run` once, retain its run ID, and poll
+8. Call `start_agent_run` once per slice, retain its run ID, and poll
    `get_agent_run` until `completed`, `failed`, or `cancelled`. Cancel
    queued/running work that is abandoned or no longer useful.
-6. Verify both `requested_model` and `actual_model`. Treat any mismatch as a
-   terminal failure. Never retry with another model, session, or route without
-   new user authority.
-7. Integrate the returned evidence into the local investigation and perform the
+9. Verify both `requested_model` and `actual_model`. Treat any mismatch as a
+   terminal failure for that run. Do not accept silent substitution. A later
+   run may use another automatically recommended tier only for a newly bounded
+   or materially reclassified slice within the same authorized task; do not
+   change tiers merely to bypass provider/model-access failure.
+10. Integrate the returned evidence into the local investigation and perform the
    relevant local read-back, capture, build, or test. The worker has no generic
    shell, repository-write, Git, or process tool, so its answer is evidence, not
    repository validation.
-8. Report API, policy, editor, timeout, budget, or model-access failures
-   directly. Do not improvise credentials/endpoints, discover processes, or
-   silently fall back.
-9. Stop only a named editor session that this workflow started, and only after
-   all runs using it are terminal.
+11. Report API, policy, editor, timeout, budget, or model-access failures
+    directly. Do not improvise credentials/endpoints, discover processes, or
+    silently fall back.
+12. Stop only a named editor session that this workflow started, and only after
+    all runs using it are terminal.
 
 Setup, cost, requirements, prompts, tool fields, and troubleshooting are in
 `docs/user-guide/ai/local-agent-broker.md`. Implementation and security

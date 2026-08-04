@@ -529,6 +529,14 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 OnSettingUniforms(vtx!, mat!);
+                PublishTypedBindingPublishers(
+                    bindingMaterial.Data.BindingPublishers,
+                    vtx!.Data,
+                    mat!.Data);
+                PublishTypedBindingPublishers(
+                    MeshRenderer.BindingPublishers,
+                    vtx!.Data,
+                    mat!.Data);
                 SetDirectionalCascadeLayeredVertexUniforms(vtx!, bindingMaterial.Data);
                 SetPointLightLayeredVertexUniforms(vtx!, bindingMaterial.Data);
                 material.FinalizeUniformBindings(mat);
@@ -1045,6 +1053,27 @@ namespace XREngine.Rendering.OpenGL
             /// <param name="materialProgram"></param>
             private void OnSettingUniforms(GLRenderProgram vertexProgram, GLRenderProgram materialProgram)
                 => MeshRenderer.OnSettingUniforms(vertexProgram.Data, materialProgram.Data);
+
+            private static void PublishTypedBindingPublishers(
+                RenderBindingPublisherCollection publisherCollection,
+                XRRenderProgram vertexProgram,
+                XRRenderProgram materialProgram)
+            {
+                IRenderBindingPublisher[] publishers =
+                    publisherCollection.CaptureSnapshot();
+                for (int index = 0; index < publishers.Length; index++)
+                {
+                    IRenderBindingPublisher publisher = publishers[index];
+                    publisher.PublishUniforms(vertexProgram, materialProgram);
+                    if (publisher is IRenderResourceBindingPublisher
+                        resourcePublisher)
+                    {
+                        resourcePublisher.PublishResources(
+                            vertexProgram,
+                            materialProgram);
+                    }
+                }
+            }
         }
     }
 }

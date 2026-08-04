@@ -6,6 +6,7 @@ namespace XREngine.Rendering;
 
 /// <summary>
 /// Captures backend render resources for tooling without exposing a concrete renderer.
+/// Callback ownership of each <see cref="MagickImage"/> transfers to the callback; callback implementations must dispose it.
 /// </summary>
 public interface IRenderCaptureBackendCapability
 {

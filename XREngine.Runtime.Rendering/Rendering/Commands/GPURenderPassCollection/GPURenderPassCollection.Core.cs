@@ -509,10 +509,12 @@ namespace XREngine.Rendering.Commands
         //public bool UseSoA { get; set; } = false;  // Experimental Structure-of-Arrays path
         //public bool UseHiZ { get; set; } = false;  // HiZ acceleration (requires UseSoA)
 
-        private static XRDataBuffer MakeCulledSceneToRenderBuffer(uint capacity)
+        private static XRDataBuffer MakeCulledSceneToRenderBuffer(
+            uint capacity,
+            string name = "CulledCommandsBuffer")
         {
             XRDataBuffer buffer = new(
-                $"CulledCommandsBuffer",
+                name,
                 EBufferTarget.ShaderStorageBuffer,
                 capacity,
                 EComponentType.Float,
@@ -610,6 +612,7 @@ namespace XREngine.Rendering.Commands
         private XRRenderProgram? _hiZInitProgram;
         private XRRenderProgram? _hiZGenProgram;
         private XRRenderProgram? _hiZOcclusionProgram;
+        private XRRenderProgram? _hiZPhaseOneProgram;
         private XRRenderProgram? _copyCount3Program;
         private XRTexture2D? _hiZDepthPyramid;
         private XRTexture2D? _hiZDepthPyramidOwned;
@@ -618,6 +621,20 @@ namespace XREngine.Rendering.Commands
         // Occlusion stage needs an input count that survives writing the final visible count.
         // We keep cull output counts in a scratch parameter buffer, then write final counts into _culledCountBuffer.
         private XRDataBuffer? _cullCountScratchBuffer;
+
+        // Two-pass Hi-Z keeps the full frustum/BVH candidate count alive while the
+        // ordinary count buffers are reused to build the early and late draw lists.
+        private XRDataBuffer? _twoPassCandidateCountBuffer;
+        private XRDataBuffer? _twoPassPhaseOneCountBuffer;
+        private XRDataBuffer? _twoPassPhaseOneCommandBuffer;
+        private XRDataBuffer? _twoPassPhaseOneHotCommandBuffer;
+        private XRDataBuffer? _twoPassPhaseOneMaterialTierIndirectDrawBuffer;
+        private XRDataBuffer? _twoPassPhaseOneMaterialTierDrawCountBuffer;
+
+        // Persistent { RenderIdentityID + 1, visible } records indexed by DrawID.
+        // A zero identity key is invalid, making a newly allocated/cleared record
+        // conservatively visible in the early pass.
+        private XRDataBuffer<uint>? _twoPassVisibilityBuffer;
 
         // Ping-pong output for occlusion refine (input is the current culled buffer; output becomes the new culled buffer).
         private XRDataBuffer? _occlusionCulledBuffer;

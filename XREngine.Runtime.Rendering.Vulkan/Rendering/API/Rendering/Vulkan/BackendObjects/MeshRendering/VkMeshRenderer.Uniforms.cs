@@ -705,6 +705,17 @@ internal unsafe partial class VkMeshRenderer
 				return true;
 			}
 
+			RecordAutoUniformSchemaMismatch(
+				EVulkanAutoUniformSchemaMismatchSite.Parity,
+				block,
+				bufferSize,
+				plan.Schema,
+				mismatch.SchemaEntry,
+				mismatch.Frequency,
+				mismatch.ByteOffset,
+				mismatch.LegacyValue,
+				mismatch.PackedValue);
+
 			Debug.VulkanWarning(
 				"[Vulkan.AutoUniformParity] mesh='{0}' program='{1}' " +
 				"block='{2}' frequency={3} entry='{4}' offset={5} " +
@@ -817,6 +828,13 @@ internal unsafe partial class VkMeshRenderer
 		if (!ReferenceEquals(schema.Block, block) ||
 			schema.Block.Size != bufferSize)
 		{
+			RecordAutoUniformSchemaMismatch(
+				EVulkanAutoUniformSchemaMismatchSite.BlockIdentityOrSize,
+				block,
+				bufferSize,
+				schema,
+				entryName: null,
+				block.Frequency);
 			fallbackReason = EVulkanAutoUniformFallbackReason.BindingSchemaMismatch;
 			return false;
 		}
@@ -954,6 +972,13 @@ internal unsafe partial class VkMeshRenderer
 				if (block.Frequency != EVulkanBindingFrequency.Unknown &&
 					runtimeFrequency != block.Frequency)
 				{
+					RecordAutoUniformSchemaMismatch(
+						EVulkanAutoUniformSchemaMismatchSite.Frequency,
+						block,
+						bufferSize,
+						schema,
+						operation.Member.Name,
+						runtimeFrequency);
 					fallbackReason =
 						EVulkanAutoUniformFallbackReason.BindingSchemaMismatch;
 					return false;
@@ -995,6 +1020,39 @@ internal unsafe partial class VkMeshRenderer
 				plan);
 		}
 		return true;
+	}
+
+	private void RecordAutoUniformSchemaMismatch(
+		EVulkanAutoUniformSchemaMismatchSite site,
+		AutoUniformBlockInfo block,
+		uint bufferSize,
+		VulkanAutoUniformBindingSchema schema,
+		string? entryName,
+		EVulkanBindingFrequency runtimeFrequency,
+		int byteOffset = -1,
+		byte legacyValue = 0,
+		byte packedValue = 0)
+	{
+		AutoUniformBlockInfo schemaBlock = schema.Block;
+		VulkanAutoUniformSchemaMismatchSample sample = new(
+			site,
+			_program?.Data?.Name,
+			block.InstanceName,
+			entryName,
+			schema.ProgramLinkGeneration,
+			block.Set,
+			block.Binding,
+			schemaBlock.Size,
+			block.Size,
+			bufferSize,
+			ReferenceEquals(schemaBlock, block),
+			(int)schemaBlock.Frequency,
+			(int)runtimeFrequency,
+			byteOffset,
+			legacyValue,
+			packedValue);
+		RuntimeEngine.Rendering.Stats.Vulkan
+			.RecordVulkanAutoUniformSchemaMismatch(sample);
 	}
 
 	internal static bool IsMaterialBindingSnapshotEligible(
@@ -1163,8 +1221,7 @@ internal unsafe partial class VkMeshRenderer
 					hash.Add(draw.Viewport.Width);
 					hash.Add(MathF.Abs(draw.Viewport.Height));
 				}
-				hash.Add(unchecked(
-					(uint)draw.ShadowUniformState.GetHashCode()));
+				AddShadowPassOwnerIdentity(ref hash, draw);
 				break;
 			case EVulkanBindingFrequency.Material:
 				hash.Add(RuntimeHelpers.GetHashCode(material));
@@ -1195,6 +1252,42 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		return hash.ToHash();
+	}
+
+	/// <summary>
+	/// Adds only the stable identity of a shadow pass to its frequency-owned
+	/// uniform reservation. Cascade and cubemap matrices are mutable pass
+	/// content and already participate in <see cref="VulkanAutoUniformPublicationSnapshot.PassGeneration"/>.
+	/// Including those values here moved the arena reservation whenever a shadow
+	/// camera moved, while cached secondary command buffers retained the previous
+	/// dynamic offset.
+	/// </summary>
+	private static void AddShadowPassOwnerIdentity(
+		ref FrameOpSignatureHasher hash,
+		in PendingMeshDraw draw)
+	{
+		LayeredShadowUniformState shadowState = draw.ShadowUniformState;
+		hash.Add(shadowState.IsShadowPass);
+		if (!shadowState.IsShadowPass)
+			return;
+
+		hash.Add(
+			draw.Camera is null
+				? 0
+				: RuntimeHelpers.GetHashCode(draw.Camera));
+		hash.Add(shadowState.DirectionalCascadeInstancedLayeredShadowPass);
+		hash.Add(shadowState.DirectionalCascadeShadowLayerCount);
+		hash.Add(shadowState.PointLightInstancedLayeredShadowPass);
+		hash.Add(shadowState.PointLightShadowFaceCount);
+		for (int index = 0;
+			 index < shadowState.PointLightShadowFaceCount;
+			 index++)
+		{
+			shadowState.TryGetPointLightShadowFaceIndex(
+				index,
+				out int faceIndex);
+			hash.Add(faceIndex);
+		}
 	}
 
 	internal bool TryGetReusableAutoUniformOwner(

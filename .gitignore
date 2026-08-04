@@ -67,6 +67,10 @@ project.lock.json
 project.fragment.lock.json
 artifacts/
 
+# Source-owned Vulkan recorded-command artifact model.
+!XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Artifacts/
+!XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Artifacts/**
+
 # ASP.NET Scaffolding
 ScaffoldingReadMe.txt
 
@@ -428,6 +432,8 @@ Screenshots/
 Build/TempValidation/
 Build/Dependencies/MsdfAtlasGen/
 Cache/
+!XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Scheduling/CommandChains/Cache/
+!XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Scheduling/CommandChains/Cache/**
 XREngine.Gltf/runtimes/
 XREngine.Runtime.Rendering/runtimes/
 _verify_temp/

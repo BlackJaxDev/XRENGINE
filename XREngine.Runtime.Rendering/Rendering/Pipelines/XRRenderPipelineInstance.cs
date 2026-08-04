@@ -330,6 +330,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             {
                 void ProcessImage(MagickImage image, int layer, int channelIndex)
                 {
+                    using MagickImage ownedImage = image;
                     string name = tex.Name ?? tex.GetDescribingName();
                     if (whd.Z > 1)
                         name += $" [Layer {layer + 1}]";
@@ -338,8 +339,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     string fileName = $"{name}.png";
                     string filePath = Path.Combine(exportDirPath, fileName);
                     Utility.EnsureDirPathExists(exportDirPath);
-                    image.Flip();
-                    image.Write(filePath);
+                    ownedImage.Flip();
+                    ownedImage.Write(filePath);
                 }
 
                 _ = capture.TryCaptureTexture(tex, region, ProcessImage, 0, i);
@@ -368,6 +369,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             {
                 void ProcessImage(MagickImage image, int index)
                 {
+                    using MagickImage ownedImage = image;
                     string name = $"{fbo.GetDescribingName()}_{Attachment}";
                     if (index > 0)
                         name += $"_img{index + 1}";
@@ -378,8 +380,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     string fileName = $"{name}.png";
                     string filePath = Path.Combine(exportDirPath, fileName);
                     Utility.EnsureDirPathExists(exportDirPath);
-                    image.Flip();
-                    image.Write(filePath);
+                    ownedImage.Flip();
+                    ownedImage.Write(filePath);
                 }
 
                 switch (Target)

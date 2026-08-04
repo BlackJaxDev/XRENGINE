@@ -9,6 +9,9 @@
 uniform int DepthMode;
 #endif
 
+// XRENGINE_FREQUENCY_OVERRIDE(ShadowMapEncoding, Object)
+// XRENGINE_FREQUENCY_OVERRIDE(ShadowDepthMode, Object)
+
 #pragma snippet "NormalEncoding"
 #pragma snippet "LightAttenuation"
 #pragma snippet "ShadowSampling"
@@ -57,41 +60,41 @@ uniform mat4 RightEyeProjMatrix;
 uniform mat4 LeftEyeViewProjectionMatrix;
 uniform mat4 RightEyeViewProjectionMatrix;
 #endif
-uniform float ShadowBase = 0.2f;
-uniform float ShadowMult = 1.0f;
-uniform float ShadowBiasMin = 0.0001f;
-uniform float ShadowBiasMax = 0.07f;
-uniform vec4 ShadowBiasParams = vec4(1.0f, 2.0f, 1.0f, 0.0f); // depth texels, slope texels, normal texels, reserved
-uniform bool LightHasShadowMap = true; // Added
-uniform bool SpotShadowAtlasEnabled = false;
-uniform int SpotShadowAtlasRecordIndex = -1;
-uniform int SpotShadowAtlasPageIndex = 0;
-uniform int SpotShadowAtlasFallbackMode = 1;
-uniform vec4 SpotShadowAtlasUvScaleBias = vec4(1.0f, 1.0f, 0.0f, 0.0f);
-uniform vec4 SpotShadowAtlasDepthParams = vec4(0.1f, 1.0f, 0.0f, 1.0f); // near, far, local texel size, requested/allocated scale
-uniform int ShadowSamples = 8;
-uniform int ShadowBlockerSamples = 8;
-uniform int ShadowFilterSamples = 8;
-uniform int ShadowVogelTapCount = 5;
-uniform float ShadowFilterRadius = 0.0012f;
-uniform float ShadowBlockerSearchRadius = 0.1f;
-uniform float ShadowMinPenumbra = 0.0002f;
-uniform float ShadowMaxPenumbra = 0.05f;
-uniform int SoftShadowMode = 2;
-uniform float LightSourceRadius = 0.1f;
-uniform bool EnableContactShadows = true;
-uniform float ContactShadowDistance = 0.1f;
-uniform int ContactShadowSamples = 16;
-uniform float ContactShadowThickness = 1.0f;
-uniform float ContactShadowFadeStart = 10.0f;
-uniform float ContactShadowFadeEnd = 40.0f;
-uniform float ContactShadowNormalOffset = 0.036f;
-uniform float ContactShadowJitterStrength = 1.0f;
-uniform vec4 ShadowMomentParams0 = vec4(0.00002f, 0.2f, 5.0f, 5.0f); // min variance, light bleed reduction, positive exponent, negative exponent
-uniform vec4 ShadowMomentDepthParams = vec4(0.1f, 1.0f, 0.0f, 0.0f); // near, far, mip bias, use mipmaps
-uniform vec4 ShadowMomentFilterParams = vec4(0.0f, 0.0f, 0.0f, 0.0f); // blur radius texels, blur passes, use mipmaps, reserved
+uniform float ShadowBase = 0.2f; // XRENGINE_FREQUENCY(Object)
+uniform float ShadowMult = 1.0f; // XRENGINE_FREQUENCY(Object)
+uniform float ShadowBiasMin = 0.0001f; // XRENGINE_FREQUENCY(Object)
+uniform float ShadowBiasMax = 0.07f; // XRENGINE_FREQUENCY(Object)
+uniform vec4 ShadowBiasParams = vec4(1.0f, 2.0f, 1.0f, 0.0f); // XRENGINE_FREQUENCY(Object)
+uniform bool LightHasShadowMap = true; // XRENGINE_FREQUENCY(Object)
+uniform bool SpotShadowAtlasEnabled = false; // XRENGINE_FREQUENCY(Object)
+uniform int SpotShadowAtlasRecordIndex = -1; // XRENGINE_FREQUENCY(Object)
+uniform int SpotShadowAtlasPageIndex = 0; // XRENGINE_FREQUENCY(Object)
+uniform int SpotShadowAtlasFallbackMode = 1; // XRENGINE_FREQUENCY(Object)
+uniform vec4 SpotShadowAtlasUvScaleBias = vec4(1.0f, 1.0f, 0.0f, 0.0f); // XRENGINE_FREQUENCY(Object)
+uniform vec4 SpotShadowAtlasDepthParams = vec4(0.1f, 1.0f, 0.0f, 1.0f); // XRENGINE_FREQUENCY(Object)
+uniform int ShadowSamples = 8; // XRENGINE_FREQUENCY(Object)
+uniform int ShadowBlockerSamples = 8; // XRENGINE_FREQUENCY(Object)
+uniform int ShadowFilterSamples = 8; // XRENGINE_FREQUENCY(Object)
+uniform int ShadowVogelTapCount = 5; // XRENGINE_FREQUENCY(Object)
+uniform float ShadowFilterRadius = 0.0012f; // XRENGINE_FREQUENCY(Object)
+uniform float ShadowBlockerSearchRadius = 0.1f; // XRENGINE_FREQUENCY(Object)
+uniform float ShadowMinPenumbra = 0.0002f; // XRENGINE_FREQUENCY(Object)
+uniform float ShadowMaxPenumbra = 0.05f; // XRENGINE_FREQUENCY(Object)
+uniform int SoftShadowMode = 2; // XRENGINE_FREQUENCY(Object)
+uniform float LightSourceRadius = 0.1f; // XRENGINE_FREQUENCY(Object)
+uniform bool EnableContactShadows = true; // XRENGINE_FREQUENCY(Object)
+uniform float ContactShadowDistance = 0.1f; // XRENGINE_FREQUENCY(Object)
+uniform int ContactShadowSamples = 16; // XRENGINE_FREQUENCY(Object)
+uniform float ContactShadowThickness = 1.0f; // XRENGINE_FREQUENCY(Object)
+uniform float ContactShadowFadeStart = 10.0f; // XRENGINE_FREQUENCY(Object)
+uniform float ContactShadowFadeEnd = 40.0f; // XRENGINE_FREQUENCY(Object)
+uniform float ContactShadowNormalOffset = 0.036f; // XRENGINE_FREQUENCY(Object)
+uniform float ContactShadowJitterStrength = 1.0f; // XRENGINE_FREQUENCY(Object)
+uniform vec4 ShadowMomentParams0 = vec4(0.00002f, 0.2f, 5.0f, 5.0f); // XRENGINE_FREQUENCY(Object)
+uniform vec4 ShadowMomentDepthParams = vec4(0.1f, 1.0f, 0.0f, 0.0f); // XRENGINE_FREQUENCY(Object)
+uniform vec4 ShadowMomentFilterParams = vec4(0.0f, 0.0f, 0.0f, 0.0f); // XRENGINE_FREQUENCY(Object)
 // Debug: 0=normal, 1=shadow-only (white=lit), 2=margin heatmap (green=lit, red=shadow)
-uniform int ShadowDebugMode = 0;
+uniform int ShadowDebugMode = 0; // XRENGINE_FREQUENCY(Object)
 
 struct SpotLight
 {
@@ -110,7 +113,7 @@ struct SpotLight
     float InnerCutoff;
     float OuterCutoff;
 };
-uniform SpotLight LightData;
+uniform SpotLight LightData; // XRENGINE_FREQUENCY(Object)
 
 int XRENGINE_ResolveContactShadowSampleCount(int requestedSamples, float viewDepth, float contactDistance);
 #ifdef XRENGINE_MSAA_DEFERRED

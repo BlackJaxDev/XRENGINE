@@ -13,7 +13,24 @@ namespace XREngine.Rendering
         /// <summary>
         /// Use to set uniforms to the program containing the fragment shader.
         /// </summary>
-        public event DelSetUniforms? SettingUniforms;
+        private DelSetUniforms? _settingUniforms;
+
+        public event DelSetUniforms? SettingUniforms
+        {
+            add
+            {
+                bool attachForwarder = _settingUniforms is null;
+                _settingUniforms += value;
+                if (attachForwarder && _settingUniforms is not null)
+                    FullScreenMesh.SettingUniforms += SetUniforms;
+            }
+            remove
+            {
+                _settingUniforms -= value;
+                if (_settingUniforms is null)
+                    FullScreenMesh.SettingUniforms -= SetUniforms;
+            }
+        }
 
         public XRMeshRenderer FullScreenMesh { get; }
 
@@ -76,8 +93,6 @@ namespace XREngine.Rendering
             FullScreenMesh.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
             FullScreenMesh.SetShaderPipelinesAllowedForAllVersions(false);
             FullScreenMesh.EnsureRenderPipelineVersionsCreated();
-            FullScreenMesh.SettingUniforms += SetUniforms;
-
             string diagName = $"FullscreenQuad:{mat.Name ?? "Material"}";
 
             // Force simple program linking for fullscreen blits; shader pipelines may skip rendering
@@ -109,7 +124,7 @@ namespace XREngine.Rendering
             : this(material, useTriangle, deriveRenderTargetsFromMaterial) => SetRenderTargets(targets);
 
         private void SetUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
-            => SettingUniforms?.Invoke(materialProgram);
+            => _settingUniforms?.Invoke(materialProgram);
 
         // Fullscreen blits must keep their screen-space vertex shader during stereo passes.
         // The Vulkan draw is still captured as stereo by render state, so multiview broadcasts

@@ -73,6 +73,9 @@ public sealed class CustomUIComponentEditor : IXRComponentEditor
             case CustomUIButtonField buttonField:
                 DrawButtonField(buttonField);
                 break;
+            case CustomUIGroupField groupField:
+                DrawGroupField(groupField);
+                break;
             default:
                 ImGui.TextDisabled($"Unsupported control type: {field.GetType().Name}");
                 break;
@@ -149,6 +152,29 @@ public sealed class CustomUIComponentEditor : IXRComponentEditor
             field.Invoke();
 
         DrawTooltip(field);
+    }
+
+    private static void DrawGroupField(CustomUIGroupField field)
+    {
+        if (!field.IsVisible())
+            return;
+
+        ImGui.PushID(field.GetHashCode());
+        ImGuiTreeNodeFlags flags = field.DefaultOpen
+            ? ImGuiTreeNodeFlags.DefaultOpen
+            : ImGuiTreeNodeFlags.None;
+        bool expanded = ImGui.CollapsingHeader(field.Label, flags);
+        DrawTooltip(field);
+
+        if (expanded)
+        {
+            ImGui.Indent();
+            foreach (CustomUIField childField in field.Fields)
+                DrawField(childField);
+            ImGui.Unindent();
+        }
+
+        ImGui.PopID();
     }
 
     private static void DrawTooltip(CustomUIField field)

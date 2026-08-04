@@ -1,0 +1,6 @@
+﻿License text could not be resolved locally for NuGet package 'ImGui.NET' (1.91.6.1).
+
+Resolved license: (unknown)
+RepositoryUrl: 
+ProjectUrl: https://github.com/mellinoe/imgui.net
+

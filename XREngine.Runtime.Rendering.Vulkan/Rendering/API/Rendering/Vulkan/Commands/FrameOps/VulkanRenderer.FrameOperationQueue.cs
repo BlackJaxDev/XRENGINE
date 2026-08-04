@@ -997,6 +997,40 @@ public unsafe partial class VulkanRenderer
         return FinishUnorderedHash(count, xor, sum);
     }
 
+    /// <summary>
+    /// Hashes only engine-owned uniforms in the requested frequency groups.
+    /// Camera, time, viewport, and clip-space values remain draw-owned and can
+    /// therefore be excluded from persistent program-binding artifacts.
+    /// </summary>
+    internal static ulong HashUniformBindings(
+        Dictionary<string, ProgramUniformValue> uniforms,
+        EUniformRequirements selectedRequirements)
+    {
+        ulong xor = 0;
+        ulong sum = 0;
+        int count = 0;
+        foreach ((string name, ProgramUniformValue value) in uniforms)
+        {
+            EUniformRequirements requirement =
+                UniformRequirementsDetection.GetRequirement(name);
+            if ((requirement & selectedRequirements) == 0)
+                continue;
+
+            HashCode item = new();
+            item.Add(name, StringComparer.Ordinal);
+            item.Add((int)value.Type);
+            item.Add(value.IsArray);
+            HashUniformValue(ref item, value);
+            AddUnorderedItemHash(
+                ref xor,
+                ref sum,
+                unchecked((ulong)item.ToHashCode()));
+            count++;
+        }
+
+        return FinishUnorderedHash(count, xor, sum);
+    }
+
     internal static ulong HashSamplerUnitBindings(
         Dictionary<uint, XRTexture> samplers,
         Dictionary<uint, string> samplerNamesByUnit,
@@ -1042,7 +1076,7 @@ public unsafe partial class VulkanRenderer
         return FinishUnorderedHash(samplers.Count, xor, sum);
     }
 
-    private static ulong HashImageBindings(Dictionary<uint, ProgramImageBinding> images)
+    internal static ulong HashImageBindings(Dictionary<uint, ProgramImageBinding> images)
     {
         ulong xor = 0;
         ulong sum = 0;
@@ -1106,7 +1140,7 @@ public unsafe partial class VulkanRenderer
         return hash.ToHash();
     }
 
-    private static ulong HashBufferBindings(Dictionary<uint, VulkanComputeBufferBinding> buffers)
+    internal static ulong HashBufferBindings(Dictionary<uint, VulkanComputeBufferBinding> buffers)
     {
         ulong xor = 0;
         ulong sum = 0;

@@ -5,6 +5,7 @@ using XREngine.Rendering.RenderGraph;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Threading;
 using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -22,6 +23,144 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_BloomPass : ViewportRenderCommand
     {
+        private enum EBloomBindingPublication
+        {
+            Copy,
+            FirstDownsample,
+            Downsample,
+            Upsample,
+        }
+
+        /// <summary>
+        /// Publishes the inputs for one bloom pass. Source mip views stay
+        /// material-owned, while the copy source is published explicitly with
+        /// an exact resource generation.
+        /// </summary>
+        private sealed class BloomBindingPublisher(
+            VPRC_BloomPass owner,
+            EBloomBindingPublication publication) : IRenderResourceBindingPublisher
+        {
+            private readonly object _generationSync = new();
+            private BloomSettings? _lastSettings;
+            private ulong _lastSettingsGeneration;
+            private int _lastAreaX = int.MinValue;
+            private int _lastAreaY = int.MinValue;
+            private int _lastAreaWidth = int.MinValue;
+            private int _lastAreaHeight = int.MinValue;
+            private Vector3 _lastLuminance = new(float.NaN);
+            private bool _lastDebugSolidOutput;
+            private XRTexture? _lastCopySourceTexture;
+            private int _lastPipelineResourceGeneration = int.MinValue;
+            private long _generation = 1;
+
+            public ERenderBindingFrequency Frequency
+                => ERenderBindingFrequency.Pass;
+
+            public ulong Generation
+            {
+                get
+                {
+                    XRRenderPipelineInstance? instance =
+                        RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+                    BloomSettings? settings = instance is null
+                        ? null
+                        : ResolveBloomSettings(instance);
+                    ulong settingsGeneration =
+                        settings?.BindingGeneration ?? 1;
+                    var area = instance?.RenderState.CurrentRenderRegion ??
+                        RuntimeEngine.Rendering.State.RenderArea;
+                    if (area.Width <= 0 || area.Height <= 0)
+                        area = RuntimeEngine.Rendering.State.RenderArea;
+                    Vector3 luminance =
+                        RuntimeEngine.Rendering.Settings.DefaultLuminance;
+                    bool debugSolidOutput = BloomDebugSolidOutput;
+                    XRTexture? copySourceTexture = publication == EBloomBindingPublication.Copy
+                        ? owner._bloomCopySourceTexture
+                        : null;
+                    int pipelineResourceGeneration =
+                        instance?.ResourceGeneration ?? 0;
+
+                    lock (_generationSync)
+                    {
+                        if (ReferenceEquals(settings, _lastSettings) &&
+                            settingsGeneration == _lastSettingsGeneration &&
+                            area.X == _lastAreaX &&
+                            area.Y == _lastAreaY &&
+                            area.Width == _lastAreaWidth &&
+                            area.Height == _lastAreaHeight &&
+                            luminance == _lastLuminance &&
+                            debugSolidOutput == _lastDebugSolidOutput &&
+                            ReferenceEquals(copySourceTexture, _lastCopySourceTexture) &&
+                            pipelineResourceGeneration == _lastPipelineResourceGeneration)
+                        {
+                            return unchecked((ulong)_generation);
+                        }
+
+                        _lastSettings = settings;
+                        _lastSettingsGeneration = settingsGeneration;
+                        _lastAreaX = area.X;
+                        _lastAreaY = area.Y;
+                        _lastAreaWidth = area.Width;
+                        _lastAreaHeight = area.Height;
+                        _lastLuminance = luminance;
+                        _lastDebugSolidOutput = debugSolidOutput;
+                        _lastCopySourceTexture = copySourceTexture;
+                        _lastPipelineResourceGeneration = pipelineResourceGeneration;
+                        if (Interlocked.Increment(ref _generation) == 0)
+                            Interlocked.CompareExchange(ref _generation, 1, 0);
+                        return unchecked((ulong)_generation);
+                    }
+                }
+            }
+
+            public ulong ResourceGeneration => Generation;
+
+            public void PublishUniforms(
+                XRRenderProgram vertexProgram,
+                XRRenderProgram materialProgram)
+            {
+                switch (publication)
+                {
+                    case EBloomBindingPublication.Copy:
+                        SetBloomViewportUniforms(
+                            materialProgram,
+                            RuntimeEngine.Rendering.State
+                                .CurrentRenderingPipeline);
+                        break;
+                    case EBloomBindingPublication.FirstDownsample:
+                        owner.DownsampleLevel1_SettingUniforms(materialProgram);
+                        break;
+                    case EBloomBindingPublication.Downsample:
+                        owner.DownsampleLevelN_SettingUniforms(materialProgram);
+                        break;
+                    case EBloomBindingPublication.Upsample:
+                        owner.UpsampleFbo_SettingUniforms(materialProgram);
+                        break;
+                }
+            }
+
+            public void PublishResources(
+                XRRenderProgram vertexProgram,
+                XRRenderProgram materialProgram)
+            {
+                if (publication != EBloomBindingPublication.Copy)
+                    return;
+
+                XRTexture? sourceTexture = owner._bloomCopySourceTexture;
+                if (sourceTexture is null)
+                {
+                    materialProgram.SuppressFallbackSamplerWarning(
+                        BloomSourceSamplerName);
+                    return;
+                }
+
+                materialProgram.Sampler(
+                    BloomSourceSamplerName,
+                    sourceTexture,
+                    0);
+            }
+        }
+
         private static void LogGuardFailure(string location, string reason)
             => Debug.RenderingEvery(
                 $"ResilienceGuard.Bloom.{location}",
@@ -142,8 +281,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         private uint _lastWidth = 0u;
         private uint _lastHeight = 0u;
         private int _activeBloomMaxMip = 0;
-        private XRTexture? _bloomSourceViewTexture;
         private XRTexture? _bloomCopySourceTexture;
+        private XRTexture? _bloomSourceViewTexture;
         private readonly Dictionary<int, XRTexture> _bloomSourceMipViews = [];
 
         private const int BloomMaxMipmapLevel = 4;
@@ -340,26 +479,28 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             int targetMip;
             XRMaterial material;
-            DelSetUniforms uniformCallback;
+            EBloomBindingPublication bindingPublication;
             if (name == BloomMip0FBOName)
             {
                 targetMip = 0;
                 XRTexture sourceTexture = ResolveBloomCopySourceTexture(instance);
                 _bloomCopySourceTexture = sourceTexture;
                 material = CreateCopyMaterial(sourceTexture, Path.Combine(SceneShaderPath, GetCopyShaderName()));
-                uniformCallback = BloomCopy_SettingUniforms;
+                bindingPublication = EBloomBindingPublication.Copy;
             }
             else if (name is BloomDS1FBOName or BloomDS2FBOName or BloomDS3FBOName or BloomDS4FBOName)
             {
                 targetMip = name == BloomDS1FBOName ? 1 : name == BloomDS2FBOName ? 2 : name == BloomDS3FBOName ? 3 : 4;
                 material = CreateDownsampleMaterial(outputTexture, targetMip - 1, Path.Combine(SceneShaderPath, GetDownsampleShaderName()));
-                uniformCallback = targetMip == 1 ? DownsampleLevel1_SettingUniforms : DownsampleLevelN_SettingUniforms;
+                bindingPublication = targetMip == 1
+                    ? EBloomBindingPublication.FirstDownsample
+                    : EBloomBindingPublication.Downsample;
             }
             else if (name is BloomUS1FBOName or BloomUS2FBOName or BloomUS3FBOName)
             {
                 targetMip = name == BloomUS1FBOName ? 1 : name == BloomUS2FBOName ? 2 : 3;
                 material = CreateUpsampleMaterial(outputTexture, targetMip + 1, Path.Combine(SceneShaderPath, GetUpsampleShaderName()));
-                uniformCallback = UpsampleFbo_SettingUniforms;
+                bindingPublication = EBloomBindingPublication.Upsample;
             }
             else
             {
@@ -368,7 +509,8 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             var frameBuffer = new XRQuadFrameBuffer(material) { Name = name };
             frameBuffer.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, targetMip, -1));
-            frameBuffer.SettingUniforms += uniformCallback;
+            frameBuffer.FullScreenMesh.BindingPublishers.Add(
+                new BloomBindingPublisher(this, bindingPublication));
             ValidateBloomWriteFboContract(frameBuffer, outputTexture, targetMip);
             return frameBuffer;
         }
@@ -470,8 +612,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                     LogGuardFailure(nameof(Execute), "Bloom copy material source is stale; declared resources must be rebuilt.");
                     return;
                 }
-
                 _bloomCopySourceTexture = inputTexture;
+
                 BoundingRectangle copyRegion = ResolveBloomMipRegion(_lastWidth, _lastHeight, 0);
                 ValidateBloomRenderRegion(mip0, copyRegion, 0);
                 int copyPassIndex = ResolvePassIndex(BloomCopyPassName);
@@ -954,13 +1096,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             // SourceLOD stays at zero because each material samples through a one-mip view.
             program.Uniform("Radius", 1.0f);
             program.Uniform("Scatter", 0.7f);
-        }
-
-        private void BloomCopy_SettingUniforms(XRRenderProgram program)
-        {
-            SetBloomViewportUniforms(program, ActivePipelineInstance);
-            if (_bloomCopySourceTexture is not null)
-                program.Sampler(BloomSourceSamplerName, _bloomCopySourceTexture, 0);
         }
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)

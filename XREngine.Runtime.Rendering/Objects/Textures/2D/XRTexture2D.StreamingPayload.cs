@@ -176,7 +176,9 @@ public partial class XRTexture2D
             AlphaAsTransparency = true,
             AutoGenerateMipmaps = false,
             Resizable = false,
-            SizedInternalFormat = ESizedInternalFormat.Rgba8,
+            SizedInternalFormat = mipmaps is { Length: > 0 }
+                ? DeriveESizedInternalFormat(mipmaps[0].InternalFormat)
+                : ESizedInternalFormat.Rgba8,
             Mipmaps = mipmaps
         };
 
@@ -274,6 +276,9 @@ public partial class XRTexture2D
         return mipmaps is { Length: > 0 } &&
             mipmaps[0] is not null &&
             mipmaps[0].HasData() &&
+            mipmaps[0].InternalFormat == EPixelInternalFormat.Rgba8 &&
+            mipmaps[0].PixelFormat == EPixelFormat.Rgba &&
+            mipmaps[0].PixelType == EPixelType.UnsignedByte &&
             sourceTexture.Width > 0u &&
             sourceTexture.Height > 0u &&
             !sourceTexture.MultiSample;

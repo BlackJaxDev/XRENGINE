@@ -284,6 +284,9 @@ function Write-LicenseTextFile([string]$relativePathFromDocsLicenses, [string]$t
 
     # Remove a few problematic control characters that can sneak into extracted texts.
     $text = [regex]::Replace($text, "[\x00\f\v]", "")
+    $text = $text.Replace([string][char]0xFEFF, '')
+    $utf8BomMojibake = [string]::Concat([char]0x00EF, [char]0x00BB, [char]0x00BF)
+    $text = $text.Replace($utf8BomMojibake, '')
 
     Ensure-Directory -path $licensesDir
     $dst = Join-Path $licensesDir ($relativePathFromDocsLicenses -replace '/', '\\')
@@ -591,7 +594,15 @@ function Resolve-NuGetLicenseFileText([string]$id, [string]$version, $meta) {
             if (Test-Path -LiteralPath $p) {
                 try {
                     $txt = Get-Content -Raw -LiteralPath $p
-                    if ($txt -and -not (Test-IsPlaceholderLicenseText -text $txt)) { return $txt }
+                    # Large NOTICE bundles can legitimately include upstream boilerplate templates
+                    # alongside binding licenses and attributions. Require substantive license text
+                    # before bypassing the placeholder check so a bare template is never accepted.
+                    $isSubstantiveNoticeBundle = (
+                        $cand.StartsWith('NOTICE', [System.StringComparison]::OrdinalIgnoreCase) -and
+                        $txt.Length -ge 4096 -and
+                        $txt -match '(?i)(apache license|permission is hereby granted|third[- ]party notices)'
+                    )
+                    if ($txt -and ($isSubstantiveNoticeBundle -or -not (Test-IsPlaceholderLicenseText -text $txt))) { return $txt }
                 } catch {
                 }
             }

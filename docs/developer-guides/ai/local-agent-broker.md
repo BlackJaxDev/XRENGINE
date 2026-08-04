@@ -22,7 +22,8 @@ references only that project. No NuGet package was added for this feature.
 
 `AgentRunRequest` carries the objective, success criteria, constraints, exact
 requested model, reasoning effort, compact evidence packet, named editor
-session, tool policy, and budget. Its evidence packet has these stable fields:
+session, tool policy, budget, and the explicit `UseBackgroundMode` transport
+choice. Its evidence packet has these stable fields:
 
 - relevant files and symbols;
 - current-diff summary;
@@ -33,7 +34,8 @@ session, tool policy, and budget. Its evidence packet has these stable fields:
 
 `AgentRunResult` reports the run ID/status, requested and actual models, final
 text and multimodal output items, tool evidence, token usage, turn/tool counts,
-elapsed time, and a structured `AgentFailure`.
+elapsed time, retry count, bounded provider-attempt diagnostics, and a
+structured `AgentFailure`.
 
 The observer stream reports status, text delta, tool-started/tool-completed,
 usage, retry, and diagnostic events. No observer references UI types.
@@ -42,8 +44,11 @@ usage, retry, and diagnostic events. No observer references UI types.
 
 `OpenAiResponsesModelClient` calls only
 `https://api.openai.com/v1/responses`, reads its bearer key through an
-in-memory delegate, streams SSE, and sends `store: false`. Payloads preserve the
-caller's exact model and output-token limit.
+in-memory delegate, and sends `store: false`. The default path streams SSE.
+The explicit background path sends `background: true`, creates without
+streaming, polls `GET /v1/responses/{id}` while queued/in-progress, and calls
+`POST /v1/responses/{id}/cancel` on cooperative cancellation. Payloads preserve
+the caller's exact model and output-token limit.
 
 `OpenAiResponsesStreamParser` handles:
 
@@ -52,16 +57,28 @@ caller's exact model and output-token limit.
 - stable `call_id` correlation;
 - usage, response ID, and actual model;
 - generated-image output;
-- provider failure/error events; and
+- provider failure/error events;
+- `response.incomplete`, including `incomplete_details.reason`; and
 - continuation output items, including encrypted reasoning content.
+
+An incomplete response caused by `max_output_tokens` is classified as
+`BudgetExceeded`; other incomplete states remain provider errors. The minimum
+accepted run output budget is 16 tokens, matching the live Responses API
+contract. A JSON response containing `"error": null` is not an error.
 
 For a continuation, the next input is the previous `response.output` plus one
 `function_call_output` for each completed call. The orchestrator rejects empty
 or duplicate call IDs. `max_turns`, `max_tool_calls`,
 `max_tool_result_bytes`, `max_output_tokens`, elapsed time, and retry count are
 run-wide request budgets; request text is also capped at 262,144 characters.
-Only retryable provider transport/rate-limit failures use
-exponential backoff with jitter; local mutations are never retried.
+Only retryable provider transport/rate-limit failures use exponential backoff
+with jitter; local mutations are never retried. Each attempt records only safe
+metadata: turn/attempt, background flag, outcome, response ID, actual model,
+event/poll and malformed-event counts, last event/sequence, terminal status,
+incomplete reason, elapsed time, failure/status, retry disposition, and
+provider-cancellation acceptance. Prompts, response bodies, headers, and
+credentials are excluded. Background poll transport failures resume polling
+the same response instead of creating a duplicate response.
 
 ## Stdio MCP Surface
 
@@ -80,6 +97,8 @@ The fixed broker tool catalog is:
 before the API work begins. The bounded registry owns the background task,
 cooperative cancellation, global concurrency, time retention, and terminal
 snapshot. `get_agent_run` is the authoritative incremental/terminal view.
+The snapshot and nested terminal result both retain provider attempts, retry
+count, and the earliest observed actual model, including cancellation paths.
 
 The supported exact model IDs are `gpt-5.6-luna`, `gpt-5.6-terra`, and
 `gpt-5.6-sol`. Route advice implements the repository policy but has no launch
@@ -121,7 +140,7 @@ when truncated.
 
 | Threat | Control |
 |---|---|
-| API-key exposure | Key name may be configured, but the value is read only from the process environment; it is never accepted in MCP arguments, persisted, echoed, or traced. Errors exclude request headers. |
+| API-key exposure | Key name may be configured. The value is read from process scope first and, on Windows only when absent, from user scope. It is never accepted in MCP arguments, persisted, echoed, or traced. Errors exclude request headers. |
 | Prompt/tool injection | Workers receive an explicit system safety contract. Broker-side tool policy remains authoritative regardless of model instructions or hostile tool descriptions/results. |
 | Path traversal | Session names use a strict grammar and the resolved manifest must remain under the repository's session root. |
 | Arbitrary endpoint | Only the named session manifest is accepted; endpoints must be loopback and exact identity is preflighted. |
@@ -130,18 +149,27 @@ when truncated.
 | Cost exhaustion | Exact model authorization, per-run turn/tool/token/time/retry budgets, bounded concurrency/retention, cancellation, usage reporting, and external API project limits. |
 | Orphaned run | The registry links every run to explicit cancellation and broker shutdown. The caller polls to terminal state and cancels abandoned work. |
 | Secret/content leakage through traces | Tracing is off by default and metadata-only when enabled; prompts and tool payloads are excluded. |
+| Background-response retention | Background mode is opt-in and disclosed in the MCP schema/user guide. It uses temporary provider storage for polling and is not ZDR compatible even with `store: false`. |
 | Editor process damage | The broker never starts/stops/finds processes. The named session manager owns lifecycle and PID validation. |
 
 ## Configuration
 
 The checked-in `.codex/config.toml` resolves
 `Tools/Invoke-LocalAgentBroker.ps1` by walking upward from the current
-directory. The launcher resolves the repository root from its own location and
-executes the previously published DLL without writing a build banner to the
-stdio protocol.
+directory. The launcher resolves the repository root from its own location,
+reads `Build/AgentTools/LocalAgentBroker.current`, and executes that immutable
+versioned deployment without writing a build banner to the stdio protocol.
+`Setup-LocalAgentBroker.ps1` publishes a fresh version before atomically moving
+the pointer, so a loaded MCP process never blocks the update. A legacy fixed
+directory remains a fallback only when no pointer exists.
+The pointer affects only future launches. Existing Codex tasks retain their
+current stdio process and pipes; stopping that process closes the transport and
+requires a task/app restart rather than hot-rebinding the new deployment.
 
 `BrokerConfiguration` accepts only repository root and environment-variable
-names on the command line. Process-level bounds come from:
+names on the command line. API-key lookup uses process scope first and a
+Windows user-scope fallback without copying the value into arguments or durable
+state. Process-level bounds come from:
 
 - `XRE_LOCAL_AGENT_BROKER_API_KEY_ENV`
 - `XRE_LOCAL_AGENT_BROKER_EDITOR_AUTH_ENV`
@@ -171,7 +199,8 @@ dotnet test XREngine.UnitTests/XREngine.UnitTests.csproj `
   -p:XREngineUseExistingNativeBridges=true
 ```
 
-Publish and validate that stdio has no banners and advertises all five tools:
+Publish and validate that stdio has no banners, resolves the current versioned
+deployment, and advertises all five tools:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Setup-LocalAgentBroker.ps1
@@ -183,6 +212,12 @@ The opt-in live API test requires both `OPENAI_API_KEY` and
 turn/token/time limits. It is explicit and excluded from ordinary CI. Before a
 release, re-check OpenAI model availability, service terms, and usage policies;
 do not encode volatile pricing in this repository.
+
+For release validation, also exercise a user-scoped key with the child process
+variable removed, one successful `use_background_mode` tool turn, a deliberately
+bounded `response.incomplete`, and cancellation after the provider response ID
+appears. Verify exact requested/actual model identity and matching attempt
+metadata in both the broker snapshot and nested terminal result.
 
 ### Direct-versus-broker comparison
 

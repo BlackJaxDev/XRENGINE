@@ -35,9 +35,16 @@ public static class AdvancedVisibilitySynchronizationContract
         new(
             EAdvancedVisibilitySynchronizationBoundary.EarlyRasterToDepthPyramid,
             new RenderGraphSyncState(
+                RenderGraphStageMask.DrawIndirect |
+                RenderGraphStageMask.VertexInput |
+                RenderGraphStageMask.VertexShader |
                 RenderGraphStageMask.ColorAttachmentOutput |
                 RenderGraphStageMask.EarlyFragmentTests |
                 RenderGraphStageMask.LateFragmentTests,
+                RenderGraphAccessMask.IndirectCommandRead |
+                RenderGraphAccessMask.VertexAttributeRead |
+                RenderGraphAccessMask.IndexRead |
+                RenderGraphAccessMask.ShaderRead |
                 RenderGraphAccessMask.ColorAttachmentWrite |
                 RenderGraphAccessMask.DepthStencilWrite,
                 RenderGraphImageLayout.DepthStencilAttachment),
@@ -47,6 +54,10 @@ public static class AdvancedVisibilitySynchronizationContract
                 RenderGraphAccessMask.ShaderWrite,
                 RenderGraphImageLayout.General),
             EMemoryBarrierMask.Framebuffer |
+            EMemoryBarrierMask.Command |
+            EMemoryBarrierMask.VertexAttribArray |
+            EMemoryBarrierMask.ElementArray |
+            EMemoryBarrierMask.ShaderStorage |
             EMemoryBarrierMask.TextureFetch |
             EMemoryBarrierMask.ShaderImageAccess),
         new(

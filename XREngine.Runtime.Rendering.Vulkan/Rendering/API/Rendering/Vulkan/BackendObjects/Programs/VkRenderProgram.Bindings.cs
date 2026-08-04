@@ -296,6 +296,67 @@ internal unsafe partial class VkRenderProgram
         _frameMaterialBindingSnapshots[key] = snapshot;
     }
 
+    /// <summary>
+    /// Resolves a detached cross-frame artifact only when every owner generation
+    /// still matches the slot's last publication.
+    /// </summary>
+    internal bool TryGetPersistentProgramBindingArtifact(
+        in PersistentProgramBindingArtifactSlotKey slot,
+        in PersistentProgramBindingArtifactGeneration generation,
+        IRenderBindingPublisher[] materialPublishers,
+        IRenderBindingPublisher[] meshPublishers,
+        out ComputeDispatchSnapshot? artifact)
+    {
+        lock (_persistentProgramBindingArtifactSync)
+        {
+            if (_persistentProgramBindingArtifacts.TryGetValue(
+                    slot,
+                    out var entry) &&
+                entry.Generation == generation &&
+                entry.PublisherGenerations.Matches(
+                    materialPublishers,
+                    meshPublishers))
+            {
+                artifact = entry.Artifact;
+                return true;
+            }
+        }
+
+        artifact = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Publishes one bounded owner slot. Revisions replace their prior artifact
+    /// rather than retaining one cache entry per material edit.
+    /// </summary>
+    internal void CachePersistentProgramBindingArtifact(
+        in PersistentProgramBindingArtifactSlotKey slot,
+        in PersistentProgramBindingArtifactGeneration generation,
+        IRenderBindingPublisher[] materialPublishers,
+        IRenderBindingPublisher[] meshPublishers,
+        ComputeDispatchSnapshot? artifact)
+    {
+        const int maximumPersistentArtifactSlots = 2048;
+        lock (_persistentProgramBindingArtifactSync)
+        {
+            if (_persistentProgramBindingArtifacts.Count >=
+                    maximumPersistentArtifactSlots &&
+                !_persistentProgramBindingArtifacts.ContainsKey(slot))
+            {
+                _persistentProgramBindingArtifacts.Clear();
+            }
+
+            _persistentProgramBindingArtifacts[slot] =
+                (
+                    generation,
+                    RenderBindingPublisherGenerationSnapshot.Capture(
+                        materialPublishers,
+                        meshPublishers),
+                    artifact);
+        }
+    }
+
     internal bool TryGetAutoUniformMaterialWritePlan(
         string blockName,
         ulong publicationLayoutSignature,

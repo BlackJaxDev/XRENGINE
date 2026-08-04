@@ -22,7 +22,7 @@ namespace XREngine.Rendering.Vulkan
             return RecordBlitOp(commandBuffer, imageIndex, op, in swapchainTarget);
         }
 
-        private bool RecordBlitOp(
+        internal bool RecordBlitOp(
             CommandBuffer commandBuffer,
             uint imageIndex,
             BlitOp op,

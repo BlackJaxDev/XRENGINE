@@ -352,6 +352,7 @@ namespace XREngine.Rendering.Materials
                 "basecoloropacity" => type == "vec4",
                 "basecolor" => type is "vec3" or "vec4",
                 "opacity" => type == "float",
+                "alphacutoff" => type == "float",
                 "roughnessmetallicspecularemission" => type == "vec4",
                 "roughness" or "metallic" or "specular" or "emission" or "normalstrength" => type == "float",
                 _ => true,
@@ -438,7 +439,8 @@ namespace XREngine.Rendering.Materials
                 !TryWriteUInt(layout, destination, "RMHandleIndex", entry.RMHandleIndex, out error) ||
                 !TryWriteUInt(layout, destination, "Flags", entry.Flags, out error) ||
                 !TryWriteVector4(layout, destination, "BaseColorOpacity", entry.BaseColorOpacity, out error) ||
-                !TryWriteVector4(layout, destination, "RMSE", entry.RMSE, out error))
+                !TryWriteVector4(layout, destination, "RMSE", entry.RMSE, out error) ||
+                !TryWriteFloat(layout, destination, "AlphaCutoff", entry.AlphaCutoff, out error))
             {
                 return false;
             }
@@ -459,6 +461,15 @@ namespace XREngine.Rendering.Materials
                 return false;
 
             destination[(int)member.WordOffset] = value;
+            return true;
+        }
+
+        private static bool TryWriteFloat(MaterialBindingLayout layout, Span<uint> destination, string memberName, float value, out string error)
+        {
+            if (!TryGetMember(layout, memberName, "float", out MaterialBindingPackedMember member, out error))
+                return false;
+
+            destination[(int)member.WordOffset] = BitConverter.SingleToUInt32Bits(value);
             return true;
         }
 
@@ -593,6 +604,7 @@ namespace XREngine.Rendering.Materials
             [
                 new("BaseColorOpacity", "vec4", "baseColorOpacity", "vec4(1.0, 1.0, 1.0, 1.0)"),
                 new("RMSE", "vec4", "roughnessMetallicSpecularEmission", "vec4(1.0, 0.0, 1.0, 0.0)"),
+                new("AlphaCutoff", "float", "alphaCutoff", "0.5"),
             ],
             [
                 new("Albedo", "albedo", "2D"),
@@ -610,12 +622,32 @@ namespace XREngine.Rendering.Materials
             [
                 new("BaseColorOpacity", "vec4", "baseColorOpacity", "vec4(1.0, 1.0, 1.0, 1.0)"),
                 new("RMSE", "vec4", "roughnessMetallicSpecularEmission", "vec4(1.0, 0.0, 1.0, 0.0)"),
+                new("AlphaCutoff", "float", "alphaCutoff", "0.5"),
             ],
             [
                 new("Albedo", "albedo", "2D"),
                 new("Normal", "normal", "2D"),
                 new("RM", "metallicRoughness", "2D"),
-            ]);
+            ],
+            supportsGeneratedMaterialTableDispatch: true);
+
+        public static MaterialBindingLayout MaskedForward { get; } = new(
+            "MaskedForward",
+            (int)EDefaultRenderPass.MaskedForward,
+            [
+                new("Color", 0, "vec4"),
+            ],
+            [
+                new("BaseColorOpacity", "vec4", "baseColorOpacity", "vec4(1.0, 1.0, 1.0, 1.0)"),
+                new("RMSE", "vec4", "roughnessMetallicSpecularEmission", "vec4(1.0, 0.0, 1.0, 0.0)"),
+                new("AlphaCutoff", "float", "alphaCutoff", "0.5"),
+            ],
+            [
+                new("Albedo", "albedo", "2D"),
+                new("Normal", "normal", "2D"),
+                new("RM", "metallicRoughness", "2D"),
+            ],
+            supportsGeneratedMaterialTableDispatch: true);
 
         public static bool TryGetDefaultForRenderPass(int renderPass, out MaterialBindingLayout layout)
         {
@@ -628,6 +660,12 @@ namespace XREngine.Rendering.Materials
             if (renderPass == ForwardOpaque.RenderPass)
             {
                 layout = ForwardOpaque;
+                return true;
+            }
+
+            if (renderPass == MaskedForward.RenderPass)
+            {
+                layout = MaskedForward;
                 return true;
             }
 

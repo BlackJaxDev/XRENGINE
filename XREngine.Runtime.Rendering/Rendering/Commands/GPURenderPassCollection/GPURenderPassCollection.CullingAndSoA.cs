@@ -25,6 +25,11 @@ namespace XREngine.Rendering.Commands
         private GpuBvhSelectorCalibration _gpuBvhSelectorCalibration = new();
         private float _gpuBvhEstimatedVisibleRatio = 0.5f;
 
+        private uint ResolveDisabledFlagsMask()
+            => MeshSubmissionStrategy.IsGpuZeroReadbackStrategy()
+                ? 0u
+                : (uint)GPUIndirectRenderFlags.CpuFallbackOnly;
+
         /// <summary>
         /// Measured backend/view/visibility crossover table used by GPU BVH
         /// selection. Missing buckets remain on flat GPU culling.
@@ -514,7 +519,7 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        public void Cull(GPUScene gpuCommands, XRCamera? camera)
+        public void Cull(GPUScene gpuCommands, XRCamera? camera, bool deferGpuHiZ = false)
         {
             using var timing = BeginTiming("GPURenderPassCollection.Cull");
             Stopwatch cullStopwatch = Stopwatch.StartNew();
@@ -584,7 +589,7 @@ namespace XREngine.Rendering.Commands
                 FrustumCull(gpuCommands, camera, numCommands);
             }
 
-            ApplyOcclusionCulling(gpuCommands, camera);
+            ApplyOcclusionCulling(gpuCommands, camera, deferGpuHiZ);
 
             bool sanitizerOk = true;
             if (VisibleCommandCount > 0 && !IsCpuReadbackCountDisabledForPass())
@@ -822,7 +827,7 @@ namespace XREngine.Rendering.Commands
             _cullingComputeShader.Uniform("CurrentRenderPass", RenderPass);
             _cullingComputeShader.Uniform("InputCommandCount", (int)inputCount);
             _cullingComputeShader.Uniform("MaxCulledCommands", (int)capacity);
-            _cullingComputeShader.Uniform("DisabledFlagsMask", 0u);
+            _cullingComputeShader.Uniform("DisabledFlagsMask", ResolveDisabledFlagsMask());
             _cullingComputeShader.Uniform("CameraPosition", camera.Transform?.RenderTranslation ?? System.Numerics.Vector3.Zero);
             _cullingComputeShader.Uniform("ActiveViewCount", (int)activeViewCount);
 
@@ -1135,7 +1140,7 @@ namespace XREngine.Rendering.Commands
             _bvhFrustumCullProgram.Uniform("CurrentRenderPass", RenderPass);
             _bvhFrustumCullProgram.Uniform("InputCommandCount", (int)inputCount);
             _bvhFrustumCullProgram.Uniform("MaxCulledCommands", (int)capacity);
-            _bvhFrustumCullProgram.Uniform("DisabledFlagsMask", 0u);
+            _bvhFrustumCullProgram.Uniform("DisabledFlagsMask", ResolveDisabledFlagsMask());
             _bvhFrustumCullProgram.Uniform("CameraPosition", camera.Transform?.RenderTranslation ?? Vector3.Zero);
             _bvhFrustumCullProgram.Uniform("StatsEnabled", _statsBuffer is not null ? 1u : 0u);
             _bvhFrustumCullProgram.Uniform("OverflowDebugEnabled", 0u);
@@ -2184,7 +2189,7 @@ namespace XREngine.Rendering.Commands
             shader.Uniform("MaxRenderDistance", camera.FarZ * camera.FarZ);
             shader.Uniform("CameraLayerMask", unchecked((uint)camera.CullingMask.Value));
             shader.Uniform("CurrentRenderPass", RenderPass);
-            shader.Uniform("DisabledFlagsMask", 0u);
+            shader.Uniform("DisabledFlagsMask", ResolveDisabledFlagsMask());
             shader.Uniform("InputCommandCount", (int)count);
 
             var planes = camera.WorldFrustum().Planes.Select(x => x.AsVector4()).ToArray();

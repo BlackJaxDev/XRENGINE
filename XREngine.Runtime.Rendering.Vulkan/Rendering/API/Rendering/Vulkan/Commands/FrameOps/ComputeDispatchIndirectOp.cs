@@ -15,4 +15,18 @@ internal sealed record ComputeDispatchIndirectOp(
     : FrameOp(PassIndex, null, Context)
 {
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect;
+
+    internal override int RecordPrimary(
+        VulkanRenderer renderer,
+        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
+        in VulkanPrimaryOperationRecordingInfo recordingInfo)
+    {
+        renderer.CmdBeginLabel(recordingState.CommandBuffer, Label);
+        renderer.RecordComputeDispatchIndirectOp(
+            recordingState.CommandBuffer,
+            recordingState.FrameDataImageIndex,
+            this);
+        renderer.CmdEndLabel(recordingState.CommandBuffer);
+        return recordingInfo.OperationIndex;
+    }
 }

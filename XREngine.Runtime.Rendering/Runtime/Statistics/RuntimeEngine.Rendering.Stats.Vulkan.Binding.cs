@@ -18,6 +18,8 @@ public static partial class RuntimeEngine
                 public const int VulkanBindingFrequencyInstanceIndex = 6;
                 public const int VulkanBindingFrequencyRuntimeCallbackIndex = 7;
                 private const int VulkanBindingFrequencyCount = 8;
+                private const int VulkanProgramBindingArtifactFallbackSampleCapacity = 32;
+                private const int VulkanAutoUniformSchemaMismatchSampleCapacity = 16;
                 private static long _vulkanMaterialPayloadCacheHits;
                 private static long _vulkanMaterialPayloadCacheMisses;
                 private static long _vulkanMaterialPayloadsPacked;
@@ -26,6 +28,9 @@ public static partial class RuntimeEngine
                 private static long _vulkanMaterialDictionaryWrites;
                 private static long _vulkanFrameMaterialSnapshotCacheHits;
                 private static long _vulkanFrameMaterialSnapshotCacheMisses;
+                private static long _vulkanProgramBindingArtifactBuilds;
+                private static long _vulkanProgramBindingArtifactReuses;
+                private static long _vulkanProgramBindingArtifactFallbacks;
                 private static long _vulkanBindingSnapshotsCaptured;
                 private static long _vulkanBindingSnapshotEntries;
                 private static long _vulkanFastPathBindingSnapshots;
@@ -75,6 +80,19 @@ public static partial class RuntimeEngine
                 private static long _vulkanRecordedCommandArtifactRetirements;
                 private static readonly long[] _vulkanAutoUniformFallbackReasonCounts =
                     new long[(int)EVulkanAutoUniformFallbackReason.Count];
+                private static readonly long[]
+                    _vulkanProgramBindingAllocationBytes =
+                        new long[(int)
+                            EVulkanProgramBindingAllocationSegment.Count];
+                private static readonly long[]
+                    _vulkanAutoUniformSchemaMismatchSiteCounts =
+                        new long[(int)
+                            EVulkanAutoUniformSchemaMismatchSite.Count];
+                private static readonly VulkanAutoUniformSchemaMismatchSample[]
+                    _vulkanAutoUniformSchemaMismatchSamples =
+                        new VulkanAutoUniformSchemaMismatchSample[
+                            VulkanAutoUniformSchemaMismatchSampleCapacity];
+                private static int _vulkanAutoUniformSchemaMismatchSampleCount;
                 private static readonly long[] _vulkanAutoUniformFrequencyPublications =
                     new long[VulkanBindingFrequencyCount];
                 private static readonly long[] _vulkanAutoUniformFrequencyReuses =
@@ -83,6 +101,13 @@ public static partial class RuntimeEngine
                     new long[VulkanBindingFrequencyCount];
                 private static readonly long[] _vulkanCommandChainWorkerEligibilityCounts =
                     new long[(int)EVulkanCommandChainWorkerEligibility.Count];
+                private static readonly long[] _vulkanProgramBindingArtifactFallbackReasonCounts =
+                    new long[(int)EVulkanProgramBindingArtifactFallbackReason.Count];
+                private static readonly VulkanProgramBindingArtifactFallbackSample[]
+                    _vulkanProgramBindingArtifactFallbackSamples =
+                        new VulkanProgramBindingArtifactFallbackSample[
+                            VulkanProgramBindingArtifactFallbackSampleCapacity];
+                private static int _vulkanProgramBindingArtifactFallbackSampleCount;
                 private static int _vulkanLastCommandChainWorkerEligibility;
 
                 private static long _lastFrameVulkanMaterialPayloadCacheHits;
@@ -93,6 +118,9 @@ public static partial class RuntimeEngine
                 private static long _lastFrameVulkanMaterialDictionaryWrites;
                 private static long _lastFrameVulkanFrameMaterialSnapshotCacheHits;
                 private static long _lastFrameVulkanFrameMaterialSnapshotCacheMisses;
+                private static long _lastFrameVulkanProgramBindingArtifactBuilds;
+                private static long _lastFrameVulkanProgramBindingArtifactReuses;
+                private static long _lastFrameVulkanProgramBindingArtifactFallbacks;
                 private static long _lastFrameVulkanBindingSnapshotsCaptured;
                 private static long _lastFrameVulkanBindingSnapshotEntries;
                 private static long _lastFrameVulkanFastPathBindingSnapshots;
@@ -133,6 +161,20 @@ public static partial class RuntimeEngine
                 private static long _lastFrameVulkanRecordedCommandArtifactRetirements;
                 private static readonly long[] _lastFrameVulkanAutoUniformFallbackReasonCounts =
                     new long[(int)EVulkanAutoUniformFallbackReason.Count];
+                private static readonly long[]
+                    _lastFrameVulkanProgramBindingAllocationBytes =
+                        new long[(int)
+                            EVulkanProgramBindingAllocationSegment.Count];
+                private static readonly long[]
+                    _lastFrameVulkanAutoUniformSchemaMismatchSiteCounts =
+                        new long[(int)
+                            EVulkanAutoUniformSchemaMismatchSite.Count];
+                private static readonly VulkanAutoUniformSchemaMismatchSample[]
+                    _lastFrameVulkanAutoUniformSchemaMismatchSamples =
+                        new VulkanAutoUniformSchemaMismatchSample[
+                            VulkanAutoUniformSchemaMismatchSampleCapacity];
+                private static int
+                    _lastFrameVulkanAutoUniformSchemaMismatchSampleCount;
                 private static readonly long[] _lastFrameVulkanAutoUniformFrequencyPublications =
                     new long[VulkanBindingFrequencyCount];
                 private static readonly long[] _lastFrameVulkanAutoUniformFrequencyReuses =
@@ -141,6 +183,13 @@ public static partial class RuntimeEngine
                     new long[VulkanBindingFrequencyCount];
                 private static readonly long[] _lastFrameVulkanCommandChainWorkerEligibilityCounts =
                     new long[(int)EVulkanCommandChainWorkerEligibility.Count];
+                private static readonly long[] _lastFrameVulkanProgramBindingArtifactFallbackReasonCounts =
+                    new long[(int)EVulkanProgramBindingArtifactFallbackReason.Count];
+                private static readonly VulkanProgramBindingArtifactFallbackSample[]
+                    _lastFrameVulkanProgramBindingArtifactFallbackSamples =
+                        new VulkanProgramBindingArtifactFallbackSample[
+                            VulkanProgramBindingArtifactFallbackSampleCapacity];
+                private static int _lastFrameVulkanProgramBindingArtifactFallbackSampleCount;
                 private static int _lastFrameVulkanLastCommandChainWorkerEligibility;
 
                 public static long VulkanMaterialPayloadCacheHits => _lastFrameVulkanMaterialPayloadCacheHits;
@@ -151,6 +200,37 @@ public static partial class RuntimeEngine
                 public static long VulkanMaterialDictionaryWrites => _lastFrameVulkanMaterialDictionaryWrites;
                 public static long VulkanFrameMaterialSnapshotCacheHits => _lastFrameVulkanFrameMaterialSnapshotCacheHits;
                 public static long VulkanFrameMaterialSnapshotCacheMisses => _lastFrameVulkanFrameMaterialSnapshotCacheMisses;
+                public static long VulkanProgramBindingArtifactBuilds => _lastFrameVulkanProgramBindingArtifactBuilds;
+                public static long VulkanProgramBindingArtifactReuses => _lastFrameVulkanProgramBindingArtifactReuses;
+                public static long VulkanProgramBindingArtifactFallbacks => _lastFrameVulkanProgramBindingArtifactFallbacks;
+                public static long GetVulkanProgramBindingAllocationBytes(
+                    EVulkanProgramBindingAllocationSegment segment)
+                {
+                    int segmentIndex = (int)segment;
+                    return (uint)segmentIndex <
+                        (uint)_lastFrameVulkanProgramBindingAllocationBytes.Length
+                            ? Volatile.Read(
+                                ref _lastFrameVulkanProgramBindingAllocationBytes[
+                                    segmentIndex])
+                            : 0;
+                }
+                public static long GetVulkanProgramBindingArtifactFallbackReasonCount(
+                    EVulkanProgramBindingArtifactFallbackReason reason)
+                    => (uint)reason <
+                       (uint)EVulkanProgramBindingArtifactFallbackReason.Count
+                        ? Volatile.Read(
+                            ref _lastFrameVulkanProgramBindingArtifactFallbackReasonCounts[
+                                (int)reason])
+                        : 0;
+                public static int VulkanProgramBindingArtifactFallbackSampleCount
+                    => Volatile.Read(
+                        ref _lastFrameVulkanProgramBindingArtifactFallbackSampleCount);
+                public static VulkanProgramBindingArtifactFallbackSample
+                    GetVulkanProgramBindingArtifactFallbackSample(int index)
+                    => (uint)index <
+                       (uint)VulkanProgramBindingArtifactFallbackSampleCount
+                        ? _lastFrameVulkanProgramBindingArtifactFallbackSamples[index]
+                        : default;
                 public static long VulkanBindingSnapshotsCaptured => _lastFrameVulkanBindingSnapshotsCaptured;
                 public static long VulkanBindingSnapshotEntries => _lastFrameVulkanBindingSnapshotEntries;
                 public static long VulkanFastPathBindingSnapshots => _lastFrameVulkanFastPathBindingSnapshots;
@@ -297,6 +377,129 @@ public static partial class RuntimeEngine
                         Interlocked.Increment(ref _vulkanFrameMaterialSnapshotCacheHits);
                     else
                         Interlocked.Increment(ref _vulkanFrameMaterialSnapshotCacheMisses);
+                }
+
+                public static long GetVulkanAutoUniformSchemaMismatchSiteCount(
+                    EVulkanAutoUniformSchemaMismatchSite site)
+                {
+                    int siteIndex = (int)site;
+                    return (uint)siteIndex <
+                        (uint)_lastFrameVulkanAutoUniformSchemaMismatchSiteCounts
+                            .Length
+                            ? Volatile.Read(
+                                ref _lastFrameVulkanAutoUniformSchemaMismatchSiteCounts[
+                                    siteIndex])
+                            : 0;
+                }
+
+                public static int VulkanAutoUniformSchemaMismatchSampleCount
+                    => Volatile.Read(
+                        ref _lastFrameVulkanAutoUniformSchemaMismatchSampleCount);
+
+                public static VulkanAutoUniformSchemaMismatchSample
+                    GetVulkanAutoUniformSchemaMismatchSample(int index)
+                    => (uint)index <
+                       (uint)VulkanAutoUniformSchemaMismatchSampleCount
+                        ? _lastFrameVulkanAutoUniformSchemaMismatchSamples[index]
+                        : default;
+
+                public static void RecordVulkanProgramBindingArtifactBuild()
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Increment(ref _vulkanProgramBindingArtifactBuilds);
+                }
+
+                public static void RecordVulkanProgramBindingArtifactReuse()
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Increment(ref _vulkanProgramBindingArtifactReuses);
+                }
+
+                public static void RecordVulkanProgramBindingAllocationBreakdown(
+                    long setup,
+                    long publisherScope,
+                    long eligibilityGap,
+                    long eligibilityScope,
+                    long artifactKeyAndGeneration,
+                    long lookupScope,
+                    long reusePublication)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    AddProgramBindingAllocation(
+                        EVulkanProgramBindingAllocationSegment.Setup,
+                        setup);
+                    AddProgramBindingAllocation(
+                        EVulkanProgramBindingAllocationSegment.PublisherScope,
+                        publisherScope);
+                    AddProgramBindingAllocation(
+                        EVulkanProgramBindingAllocationSegment.EligibilityGap,
+                        eligibilityGap);
+                    AddProgramBindingAllocation(
+                        EVulkanProgramBindingAllocationSegment.EligibilityScope,
+                        eligibilityScope);
+                    AddProgramBindingAllocation(
+                        EVulkanProgramBindingAllocationSegment
+                            .ArtifactKeyAndGeneration,
+                        artifactKeyAndGeneration);
+                    AddProgramBindingAllocation(
+                        EVulkanProgramBindingAllocationSegment.LookupScope,
+                        lookupScope);
+                    AddProgramBindingAllocation(
+                        EVulkanProgramBindingAllocationSegment.ReusePublication,
+                        reusePublication);
+                }
+
+                private static void AddProgramBindingAllocation(
+                    EVulkanProgramBindingAllocationSegment segment,
+                    long bytes)
+                {
+                    if (bytes <= 0)
+                        return;
+
+                    Interlocked.Add(
+                        ref _vulkanProgramBindingAllocationBytes[(int)segment],
+                        bytes);
+                }
+
+                public static void RecordVulkanProgramBindingArtifactFallback(
+                    EVulkanProgramBindingArtifactFallbackReason reason,
+                    string? meshName,
+                    string? materialName,
+                    string? programName,
+                    string? detail = null)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Increment(ref _vulkanProgramBindingArtifactFallbacks);
+                    if (reason is >
+                            EVulkanProgramBindingArtifactFallbackReason.None and <
+                            EVulkanProgramBindingArtifactFallbackReason.Count)
+                    {
+                        Interlocked.Increment(
+                            ref _vulkanProgramBindingArtifactFallbackReasonCounts[
+                                (int)reason]);
+                    }
+
+                    int sampleIndex = Interlocked.Increment(
+                        ref _vulkanProgramBindingArtifactFallbackSampleCount) - 1;
+                    if ((uint)sampleIndex <
+                        VulkanProgramBindingArtifactFallbackSampleCapacity)
+                    {
+                        _vulkanProgramBindingArtifactFallbackSamples[sampleIndex] =
+                            new VulkanProgramBindingArtifactFallbackSample(
+                                reason,
+                                 meshName,
+                                 materialName,
+                                 programName,
+                                 detail);
+                    }
                 }
 
                 public static void RecordVulkanBindingSnapshotCaptured(int entryCount, bool fastPath)
@@ -561,6 +764,33 @@ public static partial class RuntimeEngine
                         ref _vulkanAutoUniformFallbackReasonCounts[reasonIndex]);
                 }
 
+                public static void RecordVulkanAutoUniformSchemaMismatch(
+                    in VulkanAutoUniformSchemaMismatchSample sample)
+                {
+                    int siteIndex = (int)sample.Site;
+                    if (!EnableTracking ||
+                        siteIndex <=
+                            (int)EVulkanAutoUniformSchemaMismatchSite.None ||
+                        (uint)siteIndex >=
+                            (uint)_vulkanAutoUniformSchemaMismatchSiteCounts
+                                .Length)
+                    {
+                        return;
+                    }
+
+                    Interlocked.Increment(
+                        ref _vulkanAutoUniformSchemaMismatchSiteCounts[
+                            siteIndex]);
+                    int sampleIndex = Interlocked.Increment(
+                        ref _vulkanAutoUniformSchemaMismatchSampleCount) - 1;
+                    if ((uint)sampleIndex <
+                        VulkanAutoUniformSchemaMismatchSampleCapacity)
+                    {
+                        _vulkanAutoUniformSchemaMismatchSamples[sampleIndex] =
+                            sample;
+                    }
+                }
+
                 public static void RecordVulkanAutoUniformFrequencyPublication(
                     int frequency,
                     bool published,
@@ -622,6 +852,50 @@ public static partial class RuntimeEngine
                     _lastFrameVulkanMaterialDictionaryWrites = Interlocked.Exchange(ref _vulkanMaterialDictionaryWrites, 0);
                     _lastFrameVulkanFrameMaterialSnapshotCacheHits = Interlocked.Exchange(ref _vulkanFrameMaterialSnapshotCacheHits, 0);
                     _lastFrameVulkanFrameMaterialSnapshotCacheMisses = Interlocked.Exchange(ref _vulkanFrameMaterialSnapshotCacheMisses, 0);
+                    _lastFrameVulkanProgramBindingArtifactBuilds = Interlocked.Exchange(ref _vulkanProgramBindingArtifactBuilds, 0);
+                    _lastFrameVulkanProgramBindingArtifactReuses = Interlocked.Exchange(ref _vulkanProgramBindingArtifactReuses, 0);
+                    _lastFrameVulkanProgramBindingArtifactFallbacks = Interlocked.Exchange(ref _vulkanProgramBindingArtifactFallbacks, 0);
+                    for (int segmentIndex = 0;
+                         segmentIndex <
+                            _vulkanProgramBindingAllocationBytes.Length;
+                         segmentIndex++)
+                    {
+                        _lastFrameVulkanProgramBindingAllocationBytes[
+                            segmentIndex] = Interlocked.Exchange(
+                                ref _vulkanProgramBindingAllocationBytes[
+                                    segmentIndex],
+                                0);
+                    }
+                    for (int reasonIndex = 0;
+                         reasonIndex <
+                         _vulkanProgramBindingArtifactFallbackReasonCounts.Length;
+                         reasonIndex++)
+                    {
+                        _lastFrameVulkanProgramBindingArtifactFallbackReasonCounts[
+                            reasonIndex] = Interlocked.Exchange(
+                                ref _vulkanProgramBindingArtifactFallbackReasonCounts[
+                                    reasonIndex],
+                                0);
+                    }
+                    int fallbackSampleCount = Math.Min(
+                        Interlocked.Exchange(
+                            ref _vulkanProgramBindingArtifactFallbackSampleCount,
+                            0),
+                        VulkanProgramBindingArtifactFallbackSampleCapacity);
+                    for (int sampleIndex = 0;
+                         sampleIndex < fallbackSampleCount;
+                         sampleIndex++)
+                    {
+                        _lastFrameVulkanProgramBindingArtifactFallbackSamples[
+                            sampleIndex] =
+                                _vulkanProgramBindingArtifactFallbackSamples[
+                                    sampleIndex];
+                        _vulkanProgramBindingArtifactFallbackSamples[
+                            sampleIndex] = default;
+                    }
+                    Volatile.Write(
+                        ref _lastFrameVulkanProgramBindingArtifactFallbackSampleCount,
+                        fallbackSampleCount);
                     _lastFrameVulkanBindingSnapshotsCaptured = Interlocked.Exchange(ref _vulkanBindingSnapshotsCaptured, 0);
                     _lastFrameVulkanBindingSnapshotEntries = Interlocked.Exchange(ref _vulkanBindingSnapshotEntries, 0);
                     _lastFrameVulkanFastPathBindingSnapshots = Interlocked.Exchange(ref _vulkanFastPathBindingSnapshots, 0);
@@ -675,6 +949,36 @@ public static partial class RuntimeEngine
                                 ref _vulkanAutoUniformFallbackReasonCounts[reasonIndex],
                                 0);
                     }
+                    for (int siteIndex = 0;
+                         siteIndex <
+                            _vulkanAutoUniformSchemaMismatchSiteCounts.Length;
+                         siteIndex++)
+                    {
+                        _lastFrameVulkanAutoUniformSchemaMismatchSiteCounts[
+                            siteIndex] = Interlocked.Exchange(
+                                ref _vulkanAutoUniformSchemaMismatchSiteCounts[
+                                    siteIndex],
+                                0);
+                    }
+                    int schemaMismatchSampleCount = Math.Min(
+                        Interlocked.Exchange(
+                            ref _vulkanAutoUniformSchemaMismatchSampleCount,
+                            0),
+                        VulkanAutoUniformSchemaMismatchSampleCapacity);
+                    for (int sampleIndex = 0;
+                         sampleIndex < schemaMismatchSampleCount;
+                         sampleIndex++)
+                    {
+                        _lastFrameVulkanAutoUniformSchemaMismatchSamples[
+                            sampleIndex] =
+                                _vulkanAutoUniformSchemaMismatchSamples[
+                                    sampleIndex];
+                        _vulkanAutoUniformSchemaMismatchSamples[sampleIndex] =
+                            default;
+                    }
+                    Volatile.Write(
+                        ref _lastFrameVulkanAutoUniformSchemaMismatchSampleCount,
+                        schemaMismatchSampleCount);
                     for (int frequencyIndex = 0;
                          frequencyIndex <
                             _vulkanAutoUniformFrequencyPublications.Length;

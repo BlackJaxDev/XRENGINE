@@ -520,6 +520,8 @@ public static partial class RuntimeEngine
 
         public static void ApplyMeshSubmissionStrategyToPipeline(object? pipeline, EMeshSubmissionStrategy strategy)
         {
+            if (pipeline is RenderPipeline renderPipeline)
+                renderPipeline.RebuildForMeshSubmissionStrategyChange();
         }
 
         /// <summary>

@@ -1,0 +1,6 @@
+﻿License text could not be resolved locally for NuGet package 'Newtonsoft.Json' (13.0.4).
+
+Resolved license: MIT
+RepositoryUrl: https://github.com/JamesNK/Newtonsoft.Json
+ProjectUrl: https://www.newtonsoft.com/json
+

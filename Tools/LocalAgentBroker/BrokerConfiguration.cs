@@ -63,7 +63,23 @@ internal sealed record BrokerConfiguration
     }
 
     public string ReadApiKey()
-        => Environment.GetEnvironmentVariable(ApiKeyEnvironmentVariable) ?? string.Empty;
+    {
+        string? inheritedValue = Environment.GetEnvironmentVariable(ApiKeyEnvironmentVariable);
+        if (!string.IsNullOrWhiteSpace(inheritedValue) || !OperatingSystem.IsWindows())
+            return inheritedValue ?? string.Empty;
+
+        try
+        {
+            return Environment.GetEnvironmentVariable(
+                ApiKeyEnvironmentVariable,
+                EnvironmentVariableTarget.User) ?? string.Empty;
+        }
+        catch (Exception exception) when (exception is PlatformNotSupportedException
+            or System.Security.SecurityException)
+        {
+            return string.Empty;
+        }
+    }
 
     public string? ReadEditorAuthToken()
         => EditorAuthTokenEnvironmentVariable is null

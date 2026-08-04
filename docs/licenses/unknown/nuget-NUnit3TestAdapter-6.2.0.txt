@@ -1,0 +1,6 @@
+﻿License text could not be resolved locally for NuGet package 'NUnit3TestAdapter' (6.2.0).
+
+Resolved license: MIT
+RepositoryUrl: https://github.com/nunit/nunit3-vs-adapter
+ProjectUrl: https://docs.nunit.org/articles/vs-test-adapter/Index.html
+

@@ -4,7 +4,7 @@ layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
 uniform sampler2D Texture0;
-uniform vec2 FxaaTexelStep;
+uniform vec2 FxaaTexelStep; // XRENGINE_FREQUENCY(Pass)
 
 const vec3 LumaWeights = vec3(0.299f, 0.587f, 0.114f);
 
