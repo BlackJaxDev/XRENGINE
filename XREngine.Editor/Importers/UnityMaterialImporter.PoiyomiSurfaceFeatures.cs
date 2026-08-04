@@ -26,6 +26,12 @@ public static partial class UnityMaterialImporter
         material.SetUberFeatureEnabled("poiyomi-flipbook-array", document.TryGetPositive("_EnableFlipbook"));
         material.EnsureUberStateInitialized();
 
+        // Poiyomi reserves _ColorMask for the render-target channel mask. It is
+        // normally an integer (15), not a color-mask texture. Keep the native
+        // texture extension inert unless a source shader actually authored a
+        // texture with that name; otherwise its white fallback replaces albedo.
+        SetFloat(material, "_PoiColorMaskEnabled", HasExternalTexture(document, "_ColorMask") ? 1.0f : 0.0f);
+
         BindExactSurfaceParameters(material, document);
         BindCompositeSurfaceParameters(material, document);
         BindSurfaceFeatureTextures(material, document, resolver, diagnostics, warnings);
@@ -281,7 +287,7 @@ public static partial class UnityMaterialImporter
             ("_MainTexDistortionMap", ["_MainTexDistortionMap"]),
             ("_MainTexDistortionMask", ["_MainTexDistortionMask"]),
             ("_BackFaceNormalMap", ["_BackFaceNormalMap"]),
-            ("_ColorMask", ["_ColorMask"]),
+            ("_PoiColorMaskTexture", ["_ColorMask"]),
             ("_GlobalMaskTexture0", ["_GlobalMaskTexture"]),
             ("_GlobalMaskTexture1", ["_GlobalMaskTexture1"]),
             ("_GlobalMaskTexture2", ["_GlobalMaskTexture2"]),

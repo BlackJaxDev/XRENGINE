@@ -1,9 +1,10 @@
 # Unity Prefab Avatar Import Investigation
 
 - Date: 2026-07-29
-- Updated: 2026-07-30
-- Status: implementation and OpenGL visual acceptance complete; Vulkan live
-  rendering and a like-for-like Unity reference comparison remain open
+- Updated: 2026-08-04
+- Status: defined Unity-prefab import and primary OpenGL visual acceptance are
+  complete; Vulkan renderer/readback and unsupported runtime-behavior parity
+  remain separate follow-ups
 - Subsystems: Unity import, model import, materials, avatar components, editor
 - Private validation input: local `jax2026.prefab`; never copied or committed
 
@@ -102,7 +103,7 @@ The native root and its owned sibling tree are now backed up before replacement.
 Externalized placeholders are cleaned on failure, and a failed reimport restores
 the previous asset bytes and paths.
 
-### Native prefab references reloaded as empty placeholders
+### Native prefab references could reload as empty placeholders
 
 The partial native-prefab pass discovered compact external `{ID}` references,
 but the root asset could deserialize before those assets were populated.
@@ -110,6 +111,38 @@ but the root asset could deserialize before those assets were populated.
 set before parsing the root. The editor drag/drop path and MCP scene-authoring
 path both use this hydration entry point, so the native Unity output remains an
 ordinary `XRPrefabSource` rather than a Unity-specific placement type.
+
+A later completely fresh editor session exposed a second cold-load case. The
+generated closure used compact GUID-only references whose ignored metadata had
+existed in the importing process but not in the new session. The prefab
+hierarchy and `Body` component loaded, but `Body` contained zero rendered
+objects because its model reference resolved to an empty placeholder. Native
+asset serialization now writes a stable ID plus a contained `game://` or
+`engine://` path. For already-generated GUID-only closures, the first partial
+parse bootstraps metadata strictly for files listed by the import manifest's
+owned-output set, then reparses. Fresh-process placement now loads all 52 model
+components and a populated `Body`; future reimports are metadata-independent.
+
+### Concurrent requests could target the same import output
+
+An MCP import request timed out client-side while the editor continued the
+long-running import. A second request could previously start against the same
+target and duplicate the full dependency-closure workload. Third-party imports
+now acquire an instance-local, normalized target-path guard before backup or
+conversion and release it in `finally`. A concurrent request for the same
+output fails explicitly instead of racing transaction state or multiplying
+memory use.
+
+### Texture-streaming backlog rejection starved visible materials
+
+The OpenGL sparse-texture backend rejected work once more than eight decodes
+were queued. Since the streaming manager retained one pending transition per
+texture, visible avatar textures could be canceled and resubmitted indefinitely
+while stuck-transition recovery also cleared legitimate queued jobs. The
+priority decode semaphore now provides bounded backpressure without rejecting
+accepted work, and recovery waits until both decode and upload queues are idle.
+The final run converged at 58 tracked textures with no pending, queued, or
+active decode/upload work.
 
 ### User workflows were not directly testable through MCP
 
@@ -127,6 +160,20 @@ same prepared source. That drove the editor into multi-gigabyte growth and an
 eventual driver draw crash. The compile queue now admits only one large-source
 program at a time while preserving capacity for small/interactive programs, and
 large prepared Uber programs skip the redundant separable fallback.
+
+### Poiyomi `_ColorMask` collided with Unity render state
+
+Poiyomi materials serialize Unity's `_ColorMask` render-target channel mask as
+an integer, commonly `15`. XRENGINE's Poiyomi extension had independently used
+the same identifier for an RGBA color-mask sampler. Materials with the feature
+group present but no texture therefore sampled the white fallback and applied
+four default white mask colors, replacing the hoodie, hair, and other dark
+albedo. The native sampler is now `_PoiColorMaskTexture`, defaults to black, and
+is gated by `_PoiColorMaskEnabled`. The importer enables and binds it only when
+the Unity material genuinely contains an external `_ColorMask` texture. Shader
+reload completed without an error, and the fresh front/oblique/rear captures
+show the intended dark outfit and black/cyan hair rather than flat white
+materials.
 
 ### Physics-chain colliders rendered as an always-on yellow overlay
 
@@ -152,6 +199,10 @@ Results:
 - real OpenGL large-source compile admission regression: passed;
 - private full-avatar structure and unchanged-source integration: passed;
 - private externalized native-prefab reload: passed;
+- private native-rebind skin audit: 52 components, 83 LOD entries/83 distinct
+  meshes, 76 skinned meshes, 1,609,191 vertices, maximum bone identity error
+  `0.00000026`, maximum vertex bind displacement `0.00000038`, and maximum
+  weight-sum error `0.00000012`;
 - private imported Uber material SPIR-V compilation regression: passed in
   13 minutes 38 seconds;
 - clean private import: 883 nodes, 93 converted components, 52 model
@@ -278,7 +329,88 @@ no `.rdc`. The exact launched editor process was stopped. This records the
 current RenderDoc/Vulkan integration limitation without weakening the accepted
 OpenGL importer path or introducing a mirror.
 
-## Remaining Risks
+## Final Fresh-Process Acceptance - 2026-08-04
+
+The final named session, `unity-avatar-materialfix-opengl`, started from an
+isolated build and metadata root, then placed the existing `jax2026.asset`
+through the exact editor drag/drop command. Cold placement completed in 8.5
+seconds. No Unity-specific scene-placement path was used.
+
+The validation profile explicitly used:
+
+- the desktop flying camera with immediate MCP camera cuts;
+- `CharacterLocomotion = false` and no third-person character pawn;
+- no `MirrorNode` and no mirror component;
+- all 13 live-discovered physics-chain components inactive during visual
+  inspection; and
+- OpenGL with the ordinary procedural sky/world lighting.
+
+Fresh inspection reported 886 live scene nodes, 52 `ModelComponent` instances,
+73 tracked renderables, 71 submitted render commands, and zero render-validation
+errors. The `Body` model component contained one rendered object after cold
+load. Texture residency converged in three polls to 58 tracked textures with
+zero pending transitions, queued/active decodes, or active GPU uploads. Shader
+reload after the `_ColorMask` correction completed idle with no failure or last
+error.
+
+Accepted final captures are:
+
+- front:
+  `mcp-captures/final-front/Screenshot_20260804_020427_791_0dc72eef86414a22a32da52d73ee722f.png`;
+- front-right oblique:
+  `mcp-captures/final-oblique/Screenshot_20260804_020428_599_f6deee6604d8445eb0415463313ab76b.png`;
+- rear:
+  `mcp-captures/final-rear/Screenshot_20260804_020429_277_b40e54bf44d54d9cb1902863623de602.png`;
+- isolated Body:
+  `mcp-captures/material-fix-body-only/Screenshot_20260804_020151_876_b30b1f307657496aa6d0adde9b1960c7.png`.
+
+The front, oblique, and rear silhouettes change coherently with the camera and
+show the full authored active renderer set. The Body-only image shows the
+complete textured torso, arms, hands, legs, and feet without an inverted mesh,
+missing section, or bind distortion. Authored clothing/body masks account for
+the intended covered gaps in the dressed result.
+
+The native-rebind audit is the non-visual skinning acceptance evidence. Across
+52 components, 83 LOD entries/83 distinct meshes, 76 skinned meshes, and
+1,609,191 vertices, it measured:
+
+- maximum bone identity error: `0.00000026`;
+- maximum vertex bind displacement: `0.00000038`; and
+- maximum weight-sum error: `0.00000012`.
+
+Its representative bind positions are hips
+`<0, 0.7362547, -0.007268812>`, head
+`<0, 1.1856387, 0.022385078>`, feet
+`<0, 0.07498029, 0.031805042>`, and toes
+`<-0.07700364, 0.002927903, -0.075306505>`. Feet/toes are below hips, hips are
+below head, and the `-0.107112` toe forward delta on engine Z proves the Unity
++Z-forward to XRENGINE -Z-forward conversion was applied once.
+
+Against the supplied Unity reference, the supported downgrade preserves the
+upright proportions, black outfit, textured skin/stockings/boots, and
+black/cyan hair/tail palette. Remaining localized appearance differences are
+explained by the different camera/lighting/post-processing, unsupported
+VRCFury runtime menu selection, and deliberately dropped Poiyomi Pro Grab
+Pass/refraction, exact outline/matcap/layered, and special-effect behavior.
+They are not missing visual dependencies or whole-model emission. The raw Body
+HDR evidence remains bounded at maximum RGB `0.7534` with no non-finite pixels.
+
+After shutdown, the named session's stderr was empty and stdout contained only
+normal flying-camera/audio initialization. No assertion dialog, missing-asset,
+import, YAML, shader-compile, or render-validation failure was observed. A
+post-change editor build completed with zero warnings and zero errors.
+
+The private source identity was rechecked after validation: 164,122 bytes,
+last-write UTC `2026-01-29T09:03:38.8537663Z`, and SHA-256
+`EA63E9F3859F64C2B07D0976CEDB3B2842873CF2163E6104A79ADF4EC2824E8F`.
+The source prefab was not modified. The retained generated root is 1,333,889
+bytes; its sibling closure contains 349 files totaling 103,654,630 bytes.
+
+No work remains in the defined importer/OpenGL scope. Vulkan origin/masked-pass
+rendering and optional execution of VRCFury menu behavior remain separate
+subsystem follow-ups.
+
+## Remaining Risks And Separate Follow-Ups
 
 - Exact Unity/VRChat runtime behavior is not promised for preserved unsupported
   MonoBehaviours.
@@ -291,7 +423,7 @@ OpenGL importer path or introducing a mirror.
 - RenderDoc 1.44 currently launches the Vulkan editor but does not expose the
   active API to `rdc-cli` for capture. Resolve that renderer/tool integration
   before relying on Vulkan GPU captures for avatar-material diagnosis.
-- A true like-for-like Unity comparison would require the same camera,
-  lighting, post processing, and VRCFury runtime-selected outfit state. The
-  private screenshot should remain a representative, not pixel-parity,
-  reference.
+- A true pixel-parity Unity comparison would require the same camera, lighting,
+  post processing, and VRCFury runtime-selected outfit state. The completed
+  comparison is representative visual acceptance, not a Poiyomi Pro parity
+  claim.

@@ -175,8 +175,10 @@ uniform float _GlobalMaskDistanceMin;
 //@property(name="_GlobalMaskDistanceMax", display="Global Mask Distance End", mode=static, default="25.0")
 uniform float _GlobalMaskDistanceMax;
 
-//@property(name="_ColorMask", display="RGBA Color Mask", slot=texture, semantic=mask)
-uniform sampler2D _ColorMask;
+//@property(name="_PoiColorMaskTexture", display="RGBA Color Mask", slot=texture, semantic=mask)
+uniform sampler2D _PoiColorMaskTexture;
+//@property(name="_PoiColorMaskEnabled", display="RGBA Color Mask Enabled", mode=static, default="0")
+uniform float _PoiColorMaskEnabled;
 //@property(name="_ColorMask_ST", display="Color Mask Transform", mode=static, default="vec4(1.0, 1.0, 0.0, 0.0)")
 uniform vec4 _ColorMask_ST;
 //@property(name="_ColorMaskUV", display="Color Mask UV", mode=static, default="0")

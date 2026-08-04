@@ -67,6 +67,19 @@ namespace XREngine
                 return null;
 
             using var t = Engine.Profiler.Start($"AssetManager.PreparePrefabPartialLoad {filePath}");
+            PrefabPartialLoadPlan? plan = DeserializePartialPrefab(filePath);
+            if (plan is null || !EnsureMissingOwnedOutputMetadata(plan.PartialPrefab))
+                return plan;
+
+            // Legacy generated prefabs contain compact ID-only references. The first pass
+            // exposes their owned-output manifest even when this process has no metadata
+            // cache yet. After bootstrapping only those known outputs, parse again so the
+            // collector records populated paths instead of unresolved placeholders.
+            return DeserializePartialPrefab(filePath);
+        }
+
+        private static PrefabPartialLoadPlan? DeserializePartialPrefab(string filePath)
+        {
             using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var reader = new StreamReader(fs);
             using var scope = AssetDeserializationContext.Push(filePath);
@@ -81,6 +94,111 @@ namespace XREngine
             partialPrefab.FilePath = filePath;
             partialPrefab.SourceAsset = partialPrefab;
             return new PrefabPartialLoadPlan(partialPrefab, collector.References);
+        }
+
+        private static bool EnsureMissingOwnedOutputMetadata(XRPrefabSource partialPrefab)
+        {
+            if (partialPrefab.UnityImportManifest?.OwnedOutputPaths is not { Count: > 0 } ownedOutputPaths)
+                return false;
+
+            bool createdMetadata = false;
+            int createdCount = 0;
+            foreach (string serializedPath in ownedOutputPaths)
+            {
+                if (!TryResolveOwnedOutputPath(serializedPath, out string? assetPath)
+                    || !string.Equals(Path.GetExtension(assetPath), $".{AssetExtension}", StringComparison.OrdinalIgnoreCase)
+                    || !Engine.Assets.TryGetMetadataPath(assetPath, out string metadataPath, out _)
+                    || File.Exists(metadataPath))
+                {
+                    continue;
+                }
+
+                Engine.Assets.EnsureMetadataForAssetPath(assetPath, isDirectory: false);
+                if (!File.Exists(metadataPath))
+                    continue;
+
+                createdMetadata = true;
+                createdCount++;
+            }
+
+            if (createdCount > 0)
+            {
+                Debug.Out(
+                    $"Bootstrapped metadata for {createdCount} owned prefab output(s) " +
+                    $"while loading '{partialPrefab.FilePath ?? partialPrefab.Name ?? partialPrefab.ID.ToString()}'.");
+            }
+
+            return createdMetadata;
+        }
+
+        private static bool TryResolveOwnedOutputPath(
+            string serializedPath,
+            [NotNullWhen(true)] out string? assetPath)
+        {
+            assetPath = null;
+            if (string.IsNullOrWhiteSpace(serializedPath)
+                || string.IsNullOrWhiteSpace(Engine.Assets.GameAssetsPath))
+            {
+                return false;
+            }
+
+            try
+            {
+                if (!Path.IsPathRooted(serializedPath))
+                {
+                    string portableReference = string.Concat(
+                        AssetReferencePath.GamePrefix,
+                        serializedPath.Replace('\\', '/'));
+                    if (AssetReferencePath.TryResolve(
+                        portableReference,
+                        Engine.Assets.GameAssetsPath,
+                        Engine.Assets.EngineAssetsPath,
+                        out string? relativeCandidate)
+                        && File.Exists(relativeCandidate))
+                    {
+                        assetPath = relativeCandidate;
+                        return true;
+                    }
+
+                    return false;
+                }
+
+                string absoluteCandidate = Path.GetFullPath(serializedPath);
+                if (File.Exists(absoluteCandidate)
+                    && AssetReferencePath.TryCreate(
+                        Engine.Assets.GameAssetsPath,
+                        absoluteCandidate,
+                        AssetReferencePath.GamePrefix,
+                        out _))
+                {
+                    assetPath = absoluteCandidate;
+                    return true;
+                }
+
+                string normalizedPath = serializedPath.Replace('\\', '/');
+                int assetsSegment = normalizedPath.LastIndexOf("/Assets/", StringComparison.OrdinalIgnoreCase);
+                if (assetsSegment < 0)
+                    return false;
+
+                string tail = normalizedPath[(assetsSegment + "/Assets/".Length)..];
+                string rebasedReference = string.Concat(AssetReferencePath.GamePrefix, tail);
+                if (!AssetReferencePath.TryResolve(
+                    rebasedReference,
+                    Engine.Assets.GameAssetsPath,
+                    Engine.Assets.EngineAssetsPath,
+                    out string? rebasedCandidate)
+                    || !File.Exists(rebasedCandidate))
+                {
+                    return false;
+                }
+
+                assetPath = rebasedCandidate;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         /// <summary>

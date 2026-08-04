@@ -450,6 +450,22 @@ namespace XREngine
 
             try
             {
+                if (AssetReferencePath.IsPortable(scalar))
+                {
+                    if (AssetReferencePath.TryResolve(
+                        scalar,
+                        Engine.Assets.GameAssetsPath,
+                        Engine.Assets.EngineAssetsPath,
+                        out string? portablePath)
+                        && File.Exists(portablePath))
+                    {
+                        resolvedPath = portablePath;
+                        return true;
+                    }
+
+                    return false;
+                }
+
                 // Absolute path.
                 if (Path.IsPathRooted(scalar))
                 {
@@ -644,13 +660,33 @@ namespace XREngine
                 return false;
             }
 
+            string? portableReference = null;
             if (!reader.TryConsume<MappingEnd>(out _))
             {
-                deferredParser = new PrefixReplayParser(consumedEvents, reader, suppressInitialIntercept: true);
-                return false;
+                if (!reader.TryConsume<Scalar>(out var pathKeyScalar))
+                {
+                    deferredParser = new PrefixReplayParser(consumedEvents, reader, suppressInitialIntercept: true);
+                    return false;
+                }
+
+                consumedEvents.Add(pathKeyScalar);
+                if (!string.Equals(pathKeyScalar.Value, "Path", StringComparison.OrdinalIgnoreCase)
+                    || !reader.TryConsume<Scalar>(out var pathValueScalar))
+                {
+                    deferredParser = new PrefixReplayParser(consumedEvents, reader, suppressInitialIntercept: true);
+                    return false;
+                }
+
+                consumedEvents.Add(pathValueScalar);
+                portableReference = pathValueScalar.Value;
+                if (!reader.TryConsume<MappingEnd>(out _))
+                {
+                    deferredParser = new PrefixReplayParser(consumedEvents, reader, suppressInitialIntercept: true);
+                    return false;
+                }
             }
 
-            value = ResolveExternalReference(guid, expectedType);
+            value = ResolveExternalReference(guid, expectedType, portableReference);
             if (value is null)
             {
                 // The reference target could not be resolved (asset DB does not have this ID and no
@@ -663,7 +699,7 @@ namespace XREngine
                 AssetDiagnostics.RecordMissingAsset(
                     guid.ToString(),
                     expectedType.Name,
-                    $"XRAssetDeserializer (nested {{ID: guid}}; file='{AssetDeserializationContext.CurrentFilePath ?? "<unknown>"}'; placeholder={(value is null ? "no" : "yes")})");
+                    $"XRAssetDeserializer (nested reference; file='{AssetDeserializationContext.CurrentFilePath ?? "<unknown>"}'; placeholder={(value is null ? "no" : "yes")})");
             }
             return true;
         }
@@ -719,16 +755,26 @@ namespace XREngine
             return concreteType is not null && expectedType.IsAssignableFrom(concreteType);
         }
 
-        private static XRAsset? ResolveExternalReference(Guid guid, Type expectedType)
+        private static XRAsset? ResolveExternalReference(Guid guid, Type expectedType, string? portableReference = null)
         {
             // First prefer already-loaded assets.
             if (Engine.Assets.TryGetAssetByID(guid, out var asset) && asset is not null)
                 return asset;
 
-            // Otherwise, resolve the backing file via metadata and load it.
-            string? referenceAssetPath = AssetDeserializationContext.CurrentFilePath;
-            if (!Engine.Assets.TryResolveAssetPathById(guid, referenceAssetPath, out var assetPath) || string.IsNullOrWhiteSpace(assetPath))
-                return null;
+            string? assetPath = null;
+            if (!string.IsNullOrWhiteSpace(portableReference))
+                TryResolveAssetPathFromScalar(portableReference, out assetPath);
+
+            // Legacy ID-only references still resolve through editor metadata.
+            if (string.IsNullOrWhiteSpace(assetPath))
+            {
+                string? referenceAssetPath = AssetDeserializationContext.CurrentFilePath;
+                if (!Engine.Assets.TryResolveAssetPathById(guid, referenceAssetPath, out assetPath)
+                    || string.IsNullOrWhiteSpace(assetPath))
+                {
+                    return null;
+                }
+            }
 
             if (!File.Exists(assetPath))
                 return null;

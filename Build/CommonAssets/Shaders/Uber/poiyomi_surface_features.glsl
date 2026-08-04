@@ -210,8 +210,11 @@ vec3 poiApplyColorMask(vec3 baseColor, ToonMesh mesh, inout vec3 emission, inout
 #ifdef XRENGINE_UBER_DISABLE_POIYOMI_MASKS_THEMES
     return baseColor;
 #else
+    if (_PoiColorMaskEnabled < 0.5)
+        return baseColor;
+
     vec2 uv = transformUV(getUV(_ColorMaskUV, mesh), _ColorMask_ST);
-    vec4 mask = texture(_ColorMask, uv);
+    vec4 mask = texture(_PoiColorMaskTexture, uv);
     vec4 colors[4] = vec4[4](_ColorMaskColor0, _ColorMaskColor1, _ColorMaskColor2, _ColorMaskColor3);
     for (int index = 0; index < 4; ++index)
     {
@@ -233,8 +236,11 @@ vec3 poiApplyColorMaskNormal(vec3 normal, ToonMesh mesh)
 #ifdef XRENGINE_UBER_DISABLE_POIYOMI_MASKS_THEMES
     return normal;
 #else
+    if (_PoiColorMaskEnabled < 0.5)
+        return normal;
+
     vec2 uv = transformUV(getUV(_ColorMaskUV, mesh), _ColorMask_ST);
-    vec4 mask = texture(_ColorMask, uv);
+    vec4 mask = texture(_PoiColorMaskTexture, uv);
     float correction = dot(mask, saturate(_ColorMaskNormalStrength));
     return normalize(mix(normal, mesh.vertexNormal, saturate(correction)));
 #endif

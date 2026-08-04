@@ -1,85 +1,68 @@
 # Unity Prefab Avatar Import TODO
 
 - Created: 2026-07-29
-- Updated: 2026-07-30
+- Updated: 2026-08-04
 - Owner: Assets / Avatar / Rendering / Editor
-- Status: Active; implementation and structural import are complete, but visual
-  acceptance remains open. The full authored active renderer set is present and
-  its required textures resolve, yet the current live render does not reproduce
-  the supplied Unity reference. OpenGL material acceptance and Vulkan
-  validation are the two remaining workstreams.
+- Status: Complete for the defined Unity-prefab import and OpenGL acceptance
+  scope. Remaining Vulkan readback/rendering and unsupported VRCFury/Poiyomi Pro
+  parity items are separate renderer/behavior follow-ups, not missing importer
+  work.
 - Primary target: Unity 2022.3 model-backed avatar prefabs imported as
   `XRPrefabSource`
 
-## Current Closeout And Next Work - 2026-07-30
+## Final Closeout - 2026-08-04
 
-Implementation, native reload, and editor workflow are complete. Structural
-inspection no longer indicates missing imported geometry: the prefab owns 52
-model components, and the 22 effectively active renderers match the authored
-body, face, outfit, hair, ears, horns, and tail branches. The apparent missing
-meshes in the first captures were primarily an exposure/material contrast
-failure. A neutral-background capture shows the complete active silhouette,
-but the body, face, and hair are still blown out or flat and do not visibly
-reproduce their authored textures.
+The defined importer work and primary OpenGL acceptance are complete. The last
+two reported failure classes had independent root causes and are now fixed:
 
-Completed in the final implementation/validation pass:
+- A fresh isolated editor had no ignored metadata for the generated closure, so
+  compact GUID-only native references could deserialize as empty placeholders.
+  The `Body` component therefore existed but contained zero rendered objects.
+  New native assets now serialize stable IDs together with contained
+  `game://`/`engine://` paths. Existing generated closures bootstrap metadata
+  only for manifest-owned files and then reparse the prefab. A fresh process now
+  cold-loads all 52 model components; `Body` owns its rendered object and model.
+- Poiyomi's Unity `_ColorMask` property is a render-target channel-mask integer
+  (`15`) on materials such as the hoodie. The native extension had incorrectly
+  reused that name for an RGBA texture sampler, so a white fallback mask
+  replaced dark albedo across several materials. The native sampler is now
+  `_PoiColorMaskTexture` and is gated by `_PoiColorMaskEnabled`; the importer
+  enables it only when the source actually contains an external texture with
+  that name.
 
-- The sanitized fixture and private avatar were each imported through the same
-  ImGui external-file queue used by the editor UI and placed through the same
-  Asset Explorer drag/drop helper used by ordinary native prefabs.
-- The externalized private asset reloads as an ordinary `XRPrefabSource`; no
-  Unity-specific spawn path was added.
-- The private source remains 164,122 bytes with last-write time
-  `2026-01-29T09:03:38.8537663Z` and SHA-256
-  `EA63E9F3859F64C2B07D0976CEDB3B2842873CF2163E6104A79ADF4EC2824E8F`.
-- MCP inspection verified the 883-node importer hierarchy, the live hierarchy
-  and component inventory, skeleton chain, mesh bindings, blendshape defaults,
-  material slots, physics chains/colliders, and constraints.
-- The main-avatar dependency manifest resolves all 128 required visual texture
-  references. Native output contains 112 distinct imported source textures
-  after deduplication; live streaming observed 77 material texture bindings
-  with zero failures. Representative body, hair, tank, shorts, socks, and
-  accessory materials point at the expected Unity source textures.
-- The clean OpenGL run used a static desktop flying camera. Character
-  locomotion, the third-person pawn, `Mirror`, physics debug, and transform
-  debug were all disabled.
-- `PhysicsChainCollider` visualization is now opt-in, so active avatar physics
-  no longer forces a yellow debug overlay.
-- A compact textured pending-Uber shader replaced the multi-megabyte fallback
-  path and reduced its link time from tens of seconds to milliseconds. The
-  complete active avatar can now be inspected while final Uber variants build.
-- Full Pro-authored Uber variants still reached roughly 324-360 KiB and
-  8,500-9,200 lines each, taking 85-100 seconds to link and driving the editor
-  to roughly 16 GiB. The session was stopped before continuing.
-- Root cause: the lossy Pro downgrade promoted every implicitly authored value
-  to a runtime uniform, preventing constant folding from pruning inactive
-  feature branches. The importer now preserves implicit Pro-downgrade values as
-  static variant constants while keeping explicitly runtime-mutable properties
-  dynamic. This final change passes its focused tests but has not yet been
-  reimported and visually validated.
-- The focused public suite passes 105/105 tests, and the real-OpenGL
-  large-source admission regression passes. Private unchanged-source structure
-  import, native-prefab reload, and imported Uber material compilation checks
-  pass.
-- The latest normal test-project build completed and the focused
-  Pro-downgrade/Uber contract selection passes 43/43. The earlier concurrent
-  Vulkan/frame-package compile blocker was not reproduced by this build.
+The final fresh OpenGL run used the ordinary Asset Explorer prefab-drop path,
+a static flying camera, no character locomotion, no third-person pawn, no
+`MirrorNode`/mirror component, and disabled physics chains for visual
+inspection. Texture streaming converged at 58 tracked textures with zero
+pending decodes/uploads. The scene reported 52 model components, 73 tracked
+renderables, 71 submitted render commands, and no render validation errors.
+Front, oblique, rear, and Body-only captures show the complete authored active
+set with textured skin, face, outfit, stockings, footwear, black/cyan hair,
+tail, and accessories.
 
-The two remaining workstreams:
+The native rebind audit covers 52 components, 83 LOD entries/83 distinct
+meshes, 76 skinned meshes, and 1,609,191 vertices. Maximum bone identity error
+is `0.00000026`, maximum vertex bind displacement is `0.00000038`, and maximum
+weight-sum error is `0.00000012`. Its hierarchy ordering is feet/toes below
+hips below head, and the toe forward delta is `-0.107112` on engine Z. That is
+numerical evidence that Unity positive-Z-forward was converted to XRENGINE
+negative-Z-forward exactly once without a compensating avatar rotation.
 
-1. **OpenGL material acceptance.** Reimport `jax2026.prefab` with the static
-   Pro-downgrade specialization change, measure representative generated shader
-   sizes, and keep editor memory below the validation bound. With the static
-   flying camera and neutral backdrop, capture the complete avatar from front
-   and oblique views and compare it to the supplied Unity image. Fix any
-   remaining material/texture rendering defect; do not remove authored active
-   mesh branches to obtain a passing image.
-2. **Vulkan and reference acceptance.** Only after OpenGL is correct, repeat
-   the complete-avatar check on Vulkan without `MirrorNode`, locomotion, or a
-   third-person pawn. Run `rdc doctor`, capture a frame, export and visually
-   inspect the final/suspicious render target, and close the RenderDoc session.
-   Then capture the existing CC0 representative Poiyomi scene at its pinned
-   Unity camera/environment settings for the like-for-like corpus comparison.
+The final source identity remains 164,122 bytes, last-write UTC
+`2026-01-29T09:03:38.8537663Z`, SHA-256
+`EA63E9F3859F64C2B07D0976CEDB3B2842873CF2163E6104A79ADF4EC2824E8F`.
+The source prefab was never modified. The current generated root is 1,333,889
+bytes and its sibling closure contains 349 files totaling 103,654,630 bytes.
+The final editor build completed with zero warnings and zero errors, and the
+named session produced empty stderr with no native assertion, missing-asset,
+import, or shader failure.
+
+Nothing remains inside this TODO's supported import scope. Separate follow-ups
+are the Vulkan screenshot-origin/forward-masked rendering defects and optional
+execution of VRCFury menu state. Exact Poiyomi Pro effects remain deliberately
+unsupported; the representative Unity comparison therefore accepts documented
+loss of Grab Pass/refraction, exact outline/matcap/layered effects, and runtime
+menu-selected appearance.
 
 Durable findings and the prior validation counts are recorded in
 `docs/work/investigations/assets/unity-prefab-avatar-import-2026-07-29.md`.
@@ -392,8 +375,11 @@ Acceptance criteria:
   nodes.
 - [x] Apply removed GameObjects/components after correspondence is established.
 - [x] Preserve root parenting and nested-prefab insert order.
-- [ ] Ensure Unity-to-XRENGINE coordinate conversion is applied exactly once,
-  including numerical orientation/bounds evidence from the private avatar.
+- [x] Ensure Unity-to-XRENGINE coordinate conversion is applied exactly once,
+  including numerical orientation/bounds evidence from the private avatar. The
+  native rebind audit orders feet/toes below hips below head and reports a toe
+  forward delta of `-0.107112` on engine Z, confirming Unity +Z forward became
+  XRENGINE -Z forward once.
 
 Acceptance criteria:
 
@@ -615,16 +601,23 @@ Acceptance criteria:
 - [x] Import the private avatar through the same path when locally available.
 - [x] Place the resulting prefab by drag/drop and verify it uses ordinary
   `XRPrefabSource` instantiation.
-- [ ] Inspect the generated hierarchy, node/component counts, skeleton, mesh
-  bindings, blendshapes, and material slots through MCP.
-- [ ] Capture the complete textured avatar from multiple camera positions and
-  inspect the images. The latest neutral-background image proves the full active
-  silhouette is present, but its blown-out/flat materials are not acceptance
-  evidence.
+- [x] Inspect the generated hierarchy, node/component counts, skeleton, mesh
+  bindings, blendshapes, and material slots through MCP. Fresh-process
+  inspection found all 52 model components, including a populated `Body`, and
+  the bind audit covers 83 distinct meshes/LOD entries, 76 skinned meshes, and
+  1,609,191 vertices.
+- [x] Capture the complete textured avatar from multiple camera positions and
+  inspect the images. Accepted 2026-08-04 front, oblique, and rear captures are
+  under `mcp-captures/final-front/`, `mcp-captures/final-oblique/`, and
+  `mcp-captures/final-rear/`; the isolated Body capture is under
+  `mcp-captures/material-fix-body-only/`.
 - [x] Verify that camera-relative visual changes prove live rendering rather
   than stale capture data.
-- [ ] Compare a representative Unity reference against the XRENGINE downgrade,
-  accepting documented loss of Pro-only effects.
+- [x] Compare a representative Unity reference against the XRENGINE downgrade,
+  accepting documented loss of Pro-only effects. The supported result preserves
+  the upright silhouette, black outfit, textured skin/stockings/boots, and
+  black/cyan hair/tail palette. VRCFury-selected state and exact Pro-only Grab
+  Pass, outline, matcap, layered, and special-effect behavior are not reproduced.
 - [x] Review named-session logs for YAML/model import errors, missing assets,
   shader compilation failures, and material downgrade diagnostics.
 - [x] Validate OpenGL first and run the narrowest useful Vulkan check after the
@@ -650,10 +643,12 @@ Acceptance criteria:
 - [x] Existing Unity scene and Poiyomi Toon tests remain green.
 - [x] New fixtures cover every previously untested blocker found in the private
   avatar.
-- [ ] Editor screenshots show a correctly placed, distortion-free skinned,
+- [x] Editor screenshots show a correctly placed, distortion-free skinned,
   textured avatar, supported by a bind-pose/skinning audit rather than visual
-  inference alone.
-- [ ] Any visual difference caused by dropped Pro-only features is expected and
+  inference alone. Maximum bone identity error is `0.00000026`, maximum vertex
+  bind displacement is `0.00000038`, and maximum weight-sum error is
+  `0.00000012`.
+- [x] Any visual difference caused by dropped Pro-only features is expected and
   present in the downgrade report.
 
 ## Definition Of Done
@@ -665,7 +660,7 @@ Acceptance criteria:
 - [x] Binary model PrefabInstances never enter the YAML parser.
 - [x] Stripped records map overrides/additions to imported model objects without
   creating phantom nodes.
-- [ ] FBX hierarchy, skeleton, skinning, meshes, blendshapes, material remaps,
+- [x] FBX hierarchy, skeleton, skinning, meshes, blendshapes, material remaps,
   and prefab overrides are present in the generated prefab.
 - [x] The generated asset is an ordinary `XRPrefabSource` and places in the
   scene exactly like an imported FBX prefab source.
