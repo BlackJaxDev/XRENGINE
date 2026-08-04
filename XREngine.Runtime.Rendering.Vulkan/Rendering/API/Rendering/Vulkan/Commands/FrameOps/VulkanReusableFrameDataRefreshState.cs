@@ -48,6 +48,20 @@ internal sealed class VulkanReusableFrameDataRefreshState
     internal void CommitFullRefresh()
         => _ownerOnlyRefreshPublished = true;
 
+    /// <summary>
+    /// Publishes a structurally new batch after its current requests proved
+    /// that every mutable mesh value has a frequency-owned arena range.
+    /// Unlike a full refresh, no fallback request indices are retained.
+    /// </summary>
+    internal void CommitDirectOwnerOnlyRefresh(
+        in VulkanReusableFrameDataRefreshBatchInfo batch)
+    {
+        _stableMeshSignature = batch.StableMeshSignature;
+        _meshRequestCount = batch.MeshRequestCount;
+        _ownerOnlyRefreshPublished = true;
+        _fallbackRequestCount = 0;
+    }
+
     internal void Invalidate()
     {
         _stableMeshSignature = 0;

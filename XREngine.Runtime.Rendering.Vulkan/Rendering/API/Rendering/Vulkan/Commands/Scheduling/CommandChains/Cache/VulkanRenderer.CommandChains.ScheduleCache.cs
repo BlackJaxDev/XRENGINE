@@ -72,18 +72,11 @@ public unsafe partial class VulkanRenderer
         }
 
         state.StableObservations++;
-        if (state.ConsecutiveRecordedWithoutReuse >= CommandChainZeroReuseBackoffThreshold)
-        {
-            state.ConsecutiveBypasses++;
-            if (state.ConsecutiveBypasses < CommandChainZeroReuseProbeInterval)
-            {
-                _commandChainStabilityGuardStates[imageIndex] = state;
-                reason = CommandChainStabilityBypassReason.RecentZeroReuse;
-                return true;
-            }
-
-            state.ConsecutiveBypasses = 0;
-        }
+        // Zero reuse means this schedule changed; it is not a correctness failure.
+        // The scheduler can still record changed chains while reusing any compatible
+        // ones. Falling back to a complete inline primary here turned one camera-
+        // motion miss into as many as 119 consecutive 130-220 ms frames.
+        state.ConsecutiveBypasses = 0;
 
         _commandChainStabilityGuardStates[imageIndex] = state;
         return false;
@@ -254,6 +247,11 @@ public unsafe partial class VulkanRenderer
             hash.Add(viewKey.CascadeIndex);
             hash.Add(ComputeFrameOpStructuralSignature(op, i, volatility));
             hash.Add(ResolvePipelineGeneration(op));
+            DescriptorBindingSnapshot descriptorSnapshot =
+                CreateDescriptorSnapshot(op);
+            hash.Add(descriptorSnapshot.DescriptorGeneration);
+            hash.Add(descriptorSnapshot.DescriptorSetSignature);
+            hash.Add(descriptorSnapshot.DescriptorSetCount);
         }
     }
 }

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Silk.NET.Vulkan;
+using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
@@ -477,7 +478,14 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
         }
     }
 
-    internal uint WriteClearAttachments(ClearAttachment* destination, bool clearColor, bool clearDepth, bool clearStencil)
+    internal uint WriteClearAttachments(
+        ClearAttachment* destination,
+        bool clearColor,
+        bool clearDepth,
+        bool clearStencil,
+        in ColorF4 clearColorValue,
+        float clearDepthValue,
+        uint clearStencilValue)
     {
         if (_attachmentSignature is null)
             return 0;
@@ -486,7 +494,6 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
 
         if (clearColor)
         {
-            var clearColorValue = Renderer.GetClearColorValue();
             uint colorIndexInSubpass = 0;
             for (int i = 0; i < _attachmentSignature.Length; i++)
             {
@@ -544,8 +551,8 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
                 {
                     DepthStencil = new ClearDepthStencilValue
                     {
-                        Depth = Renderer.GetClearDepthValue(),
-                        Stencil = Renderer.GetClearStencilValue()
+                        Depth = clearDepthValue,
+                        Stencil = clearStencilValue
                     }
                 }
             };

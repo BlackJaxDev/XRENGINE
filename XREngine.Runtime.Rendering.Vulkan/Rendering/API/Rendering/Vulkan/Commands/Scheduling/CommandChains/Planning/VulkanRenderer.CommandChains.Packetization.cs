@@ -323,8 +323,16 @@ public unsafe partial class VulkanRenderer
         Dictionary<ulong, int> structuralOccurrences)
     {
         ulong structuralSignature = packet.StructuralSignature;
-        structuralOccurrences.TryGetValue(structuralSignature, out int occurrence);
-        structuralOccurrences[structuralSignature] = occurrence + 1;
+        ulong descriptorBindingVariant =
+            ResolveCommandChainDescriptorBindingVariant(
+                packet.DescriptorSnapshot);
+        ulong occurrenceSignature = MixSignature(
+            structuralSignature,
+            descriptorBindingVariant);
+        structuralOccurrences.TryGetValue(
+            occurrenceSignature,
+            out int occurrence);
+        structuralOccurrences[occurrenceSignature] = occurrence + 1;
 
         unchecked
         {
@@ -337,6 +345,23 @@ public unsafe partial class VulkanRenderer
             int ordinal = HashCode.Combine(foldedStructuralSignature, occurrence);
             return ordinal == -1 ? int.MaxValue : ordinal;
         }
+    }
+
+    /// <summary>
+    /// Identifies the immutable descriptor-set variant baked into a secondary
+    /// command buffer. Captured frame-source resources use separate descriptor
+    /// allocations, so retaining one chain per exact allocation avoids both an
+    /// illegal same-handle descriptor rewrite and a full scene re-record when a
+    /// temporal or shadow resource variant becomes active again.
+    /// </summary>
+    private static ulong ResolveCommandChainDescriptorBindingVariant(
+        in DescriptorBindingSnapshot snapshot)
+    {
+        FrameOpSignatureHasher hash = new();
+        hash.Add(snapshot.DescriptorGeneration);
+        hash.Add(snapshot.DescriptorSetSignature);
+        hash.Add(snapshot.DescriptorSetCount);
+        return hash.ToHash();
     }
 
     private void ValidateParallelRenderPacketBuild(
@@ -379,6 +404,13 @@ public unsafe partial class VulkanRenderer
         if (dynamicOverlay || IsUiBatchTextDrawOp(op))
             return RenderPacketVolatility.DynamicCommand;
 
+        // Late debug geometry uses ordinary mesh draws whose vertex/frame data may
+        // change while their command topology remains cacheable. Keeping these two
+        // draws inline made every camera update re-record the entire mixed primary,
+        // and allowed their mutable state to contaminate unrelated render passes.
+        if (IsReusableLateDebugOverlayDraw(op))
+            return RenderPacketVolatility.FrameDataOnly;
+
         if (IsOverlayLikePass(op))
             return RenderPacketVolatility.DynamicCommand;
 
@@ -413,6 +445,13 @@ public unsafe partial class VulkanRenderer
             op is MeshDrawOp draw &&
             draw.Context.PipelineInstance?.Pipeline is not UserInterfaceRenderPipeline &&
             ClassifyRenderPacketVolatility(op, dynamicOverlay) == RenderPacketVolatility.FrameDataOnly;
+
+    private static bool IsReusableLateDebugOverlayDraw(FrameOp op)
+        => op is MeshDrawOp &&
+            string.Equals(
+                TryGetPassName(op),
+                "LateDebugOverlay",
+                StringComparison.Ordinal);
 
     private static bool IsOverlayLikePass(FrameOp op)
     {
@@ -646,6 +685,9 @@ public unsafe partial class VulkanRenderer
 
     private static DescriptorBindingSnapshot CreateMeshDrawDescriptorSnapshot(MeshDrawOp draw)
     {
+        if (draw.TryGetDescriptorBindingSnapshot(out DescriptorBindingSnapshot cached))
+            return cached;
+
         ulong descriptorGeneration = 0UL;
         ulong descriptorSetSignature = 0UL;
         int setCount = 0;
@@ -678,7 +720,13 @@ public unsafe partial class VulkanRenderer
         int recordedSetCount = draw.Draw.Renderer.GetRecordedDescriptorSetCount(draw.Draw.PreparedProgram);
         if (recordedSetCount > setCount)
             setCount = recordedSetCount;
-        return new DescriptorBindingSnapshot(descriptorGeneration, setCount, descriptorSetSignature);
+
+        DescriptorBindingSnapshot descriptorSnapshot = new(
+            descriptorGeneration,
+            setCount,
+            descriptorSetSignature);
+        draw.SetDescriptorBindingSnapshot(descriptorSnapshot);
+        return descriptorSnapshot;
     }
 
     private static DescriptorBindingSnapshot CreateComputeDispatchDescriptorSnapshot(ComputeDispatchOp compute)
@@ -749,20 +797,59 @@ public unsafe partial class VulkanRenderer
             ComputeFrameOpStructuralSignature(op, opIndex, RenderPacketVolatility.FrameDataOnly),
             ComputeFrameOpFrameDataSignature(op, opIndex));
 
-    private static ulong ComputeReusableComputeDescriptorBindingKey(ComputeDispatchOp op, int opIndex)
+    private static int ResolveCommandChainInlineOperationIndex(FrameOp[] ops, int sourceIndex)
+    {
+        int inlineOpIndex = 0;
+        int queryBracketDepth = 0;
+        int lastIndex = Math.Min(sourceIndex, ops.Length - 1);
+        for (int opIndex = 0; opIndex <= lastIndex; opIndex++)
+        {
+            FrameOp op = ops[opIndex];
+            bool isQuery = op is QueryOp;
+            bool secondaryOwned =
+                !isQuery &&
+                queryBracketDepth == 0 &&
+                IsSchedulableCommandChainFrameOp(op, dynamicOverlay: false);
+
+            if (opIndex == sourceIndex)
+                return inlineOpIndex;
+
+            if (!secondaryOwned)
+                inlineOpIndex++;
+
+            if (op is QueryOp queryOp)
+            {
+                if (queryOp.Operation == ERenderQueryOperation.Begin)
+                    queryBracketDepth++;
+                else if (queryOp.Operation == ERenderQueryOperation.End && queryBracketDepth > 0)
+                    queryBracketDepth--;
+            }
+        }
+
+        return Math.Max(sourceIndex, 0);
+    }
+
+    private static ulong ComputeReusableComputeDescriptorBindingKey(
+        ComputeDispatchOp op,
+        int descriptorBindingOrdinal)
     {
         FrameOpSignatureHasher hash = new();
         hash.Add(0x434F4D5055444553UL);
-        hash.Add(opIndex);
+        hash.Add(descriptorBindingOrdinal);
         hash.Add(op.PassIndex);
         hash.Add(ResolveCommandChainTargetIdentity(op));
         hash.Add(op.Context.PipelineIdentity);
         hash.Add(op.Context.ViewportIdentity);
-        hash.Add(op.Program.GetHashCode());
+        hash.Add(op.Program.BindingId);
+        hash.Add(op.Program.LinkGeneration);
         hash.Add(op.GroupsX);
         hash.Add(op.GroupsY);
         hash.Add(op.GroupsZ);
-        hash.Add(ComputeDispatchSnapshotDescriptorSetSignature(op.Snapshot));
+        // Snapshot resources are descriptor contents, not command topology. A
+        // stable per-dispatch set handle lets UPDATE_AFTER_BIND programs refresh
+        // rotating render targets without rebuilding the thin primary. Ordinary
+        // descriptor writes remain safe because exact dependency tracking dirties
+        // every command buffer that recorded a non-update-after-bind set.
         return hash.ToHash();
     }
 
@@ -882,4 +969,3 @@ public unsafe partial class VulkanRenderer
         return hash.ToHash();
     }
 }
-

@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace XREngine.Rendering;
 
 /// <summary>
@@ -56,7 +58,7 @@ public readonly record struct RendererHostContext
     public bool HasDesktopWindowServices => Target is IRendererDesktopWindowServices;
 
     /// <summary>Attempts to resolve desktop services without making window state nullable elsewhere.</summary>
-    public bool TryGetDesktopWindowHost(out IRuntimeRenderWindowHost? window)
+    public bool TryGetDesktopWindowHost([NotNullWhen(true)] out IRuntimeRenderWindowHost? window)
     {
         if (Target is IRendererDesktopWindowServices desktop)
         {

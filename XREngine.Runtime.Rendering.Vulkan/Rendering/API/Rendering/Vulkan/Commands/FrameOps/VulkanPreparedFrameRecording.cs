@@ -64,6 +64,36 @@ internal sealed class VulkanPreparedFrameRecording
         return index;
     }
 
+    /// <summary>
+    /// Reserves source-index-addressable draw slots without constructing
+    /// placeholder draw records. Reused command chains need their range to
+    /// remain addressable, but workers consume records only for dirty chains.
+    /// </summary>
+    internal int ReserveMeshDrawSlots(int count)
+    {
+        if (IsFrozen)
+            throw new InvalidOperationException(
+                "Prepared Vulkan frame recording is frozen.");
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+
+        int startIndex = _meshDrawCount;
+        EnsureMeshDrawCapacity(checked(_meshDrawCount + count));
+        _meshDrawCount += count;
+        return startIndex;
+    }
+
+    internal int SetMeshDraw(int index, in VkPreparedMeshDraw draw)
+    {
+        if (IsFrozen)
+            throw new InvalidOperationException(
+                "Prepared Vulkan frame recording is frozen.");
+        if ((uint)index >= (uint)_meshDrawCount)
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        _meshDraws[index] = draw;
+        return index;
+    }
+
     internal int AddCommandChain(in VulkanPreparedCommandChain commandChain)
     {
         if (IsFrozen)

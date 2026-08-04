@@ -139,9 +139,13 @@ internal unsafe partial class VkMeshRenderer
 
 	private bool ActivateGeneratedProgram(GeneratedProgramCacheEntry entry)
 	{
-		bool replacingProgram =
+		bool replacingSameInterface =
 			_program is not null &&
-			!ReferenceEquals(_program, entry.Program);
+			!ReferenceEquals(_program, entry.Program) &&
+			string.Equals(
+				_activeProgramIdentity,
+				entry.Identity,
+				StringComparison.Ordinal);
 		if (!string.Equals(_activeProgramIdentity, entry.Identity, StringComparison.Ordinal))
 		{
 			_activeProgramIdentity = entry.Identity;
@@ -155,7 +159,7 @@ internal unsafe partial class VkMeshRenderer
 		_program.Generate();
 		bool linked = _program.Link(MeshRenderer?.GenerateAsync ?? false);
 		if (linked)
-			ObserveActiveProgramLinkGeneration(_program, replacingProgram);
+			ObserveActiveProgramLinkGeneration(_program, replacingSameInterface);
 		if (!linked)
 		{
 			XRRenderProgram.ShaderProgramBackendStatus backend = _program.Data.ShaderMetadata.Backend;
@@ -1883,6 +1887,7 @@ internal unsafe partial class VkMeshRenderer
 
 		_programCache.Clear();
 		_programStateCache.Clear();
+		_observedProgramLinkGenerations.Clear();
 		_program = null;
 		_generatedProgram = null;
 		_activeProgramIdentity = null;

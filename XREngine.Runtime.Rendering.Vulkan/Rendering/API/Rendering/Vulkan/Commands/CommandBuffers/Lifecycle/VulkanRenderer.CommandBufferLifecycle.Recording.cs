@@ -178,12 +178,11 @@ namespace XREngine.Rendering.Vulkan
             {
                 using VulkanCpuStageScope cpuStage =
                     new(EVulkanCpuStage.PrimaryRecording);
-                bool primaryRecorded = false;
                 for (int recordingAttempt = 0;
                      recordingAttempt < _commandScheduler.RecordingAttemptLimit;
                      recordingAttempt++)
                 {
-                    primaryRecorded = TryRecordCommandBuffer(
+                    bool primaryRecorded = TryRecordCommandBuffer(
                         state.ImageIndex,
                         state.Variant.PrimaryCommandBuffer,
                         state.Variant.DynamicUiSecondaryCommandBuffer,
@@ -200,7 +199,45 @@ namespace XREngine.Rendering.Vulkan
                         out context.RecordingDeferredReason,
                         out state.QueryFrameOperationsRequireRerecord);
                     if (primaryRecorded)
-                        break;
+                    {
+                        bool primaryImageEntryValid =
+                            TryValidateRecordedPrimaryImageEntryDependencies(
+                                ref context,
+                                ref state);
+                        bool commandChainDependenciesValid =
+                            primaryImageEntryValid &&
+                            TryValidateRecordedCommandChainDependencies(
+                                ref context,
+                                ref state);
+                        if (primaryImageEntryValid &&
+                            commandChainDependenciesValid)
+                        {
+                            _lastEnsureCommandBufferRecordedPrimary = true;
+                            context.RecordingDeferredReason = string.Empty;
+                            return true;
+                        }
+
+                        if (recordingAttempt + 1 >=
+                            _commandScheduler.RecordingAttemptLimit)
+                        {
+                            break;
+                        }
+
+                        // Lazy material publication can update an ordinary
+                        // descriptor set while later command-chain groups are
+                        // still being prepared. Vulkan invalidates every older
+                        // secondary that recorded that set. Re-record those
+                        // exact chains and the thin primary now, after the
+                        // publication phase has settled, rather than dropping
+                        // the complete scene frame and visibly flashing the
+                        // rejected-frame recovery content.
+                        Debug.VulkanWarningEvery(
+                            $"Vulkan.Primary.RetryRecordedDependency.{GetHashCode()}",
+                            TimeSpan.FromSeconds(1),
+                            "[Vulkan] Retrying primary command recording because a recorded dependency changed during command encoding: {0}",
+                            context.RecordingDeferredReason);
+                        continue;
+                    }
 
                     if (!_commandScheduler.ShouldRetryRecording(
                             recordingAttempt,
@@ -227,9 +264,6 @@ namespace XREngine.Rendering.Vulkan
                             ObjectType.Image,
                             currentDepth?.Image.Handle ?? 0));
                 }
-
-                if (primaryRecorded)
-                    return true;
             }
 
             _lastEnsureCommandBufferRecordedPrimary = false;
@@ -275,9 +309,6 @@ namespace XREngine.Rendering.Vulkan
                     context.RecordingDeferredReason;
                 _commandBufferDirtyFlags![state.ImageIndex] = true;
                 _lastEnsureCommandBufferRecordedPrimary = false;
-                FailUnsubmittedSubmissionMarkers(
-                    state.FrameOperations,
-                    state.DynamicUiOperations);
                 return false;
             }
 
@@ -288,6 +319,31 @@ namespace XREngine.Rendering.Vulkan
             state.CommandChainPrimaryGroupSignature =
                 state.CommandChainPrimaryIdentityComponents.Combined;
             return true;
+        }
+
+        private bool TryValidateRecordedPrimaryImageEntryDependencies(
+            scoped ref VulkanCommandSchedulingContext<CommandBufferCacheVariant> context,
+            scoped ref CommandBufferLifecycleState state)
+        {
+            if (!TryGetRecordedImageEntryStateMismatch(
+                    state.Variant.PrimaryCommandBuffer,
+                    out VulkanImageEntryStateMismatch mismatch,
+                    includeIncompleteState: false))
+            {
+                return true;
+            }
+
+            context.RecordingDeferredReason =
+                $"Recorded primary command buffer requires unavailable submitted image state. " +
+                $"Kind={mismatch.Kind} Image=0x{mismatch.ImageHandle:X} " +
+                $"Mip={mismatch.MipLevel} Layer={mismatch.ArrayLayer} " +
+                $"Aspect={mismatch.Aspect} Expected={mismatch.Expected}.";
+            state.Variant.Dirty = true;
+            state.Variant.DirtyReason = context.RecordingDeferredReason;
+            _commandBufferDirtyFlags![state.ImageIndex] = true;
+            _lastEnsureCommandBufferRecordedPrimary = false;
+            RecordPrimaryImageEntryStateMismatch(mismatch);
+            return false;
         }
 
         private CommandBuffer PublishRecordedCommandBufferVariant(

@@ -6,6 +6,9 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
     : FrameOp(PassIndex, Target, Context)
 {
     private PendingMeshDraw _draw = Draw;
+    private DescriptorBindingSnapshot _descriptorBindingSnapshot;
+    private bool _hasDescriptorBindingSnapshot;
+
     public PendingMeshDraw Draw
     {
         get => _draw;
@@ -13,6 +16,26 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
     }
 
     internal ref readonly PendingMeshDraw DrawRef => ref _draw;
+
+    /// <summary>
+    /// Returns the immutable descriptor dependency captured while lowering this
+    /// frame operation. Packet compatibility and chain dependency evaluation both
+    /// consume the same value, so resolving every reflected binding more than once
+    /// cannot add correctness and scales poorly with visible draw count.
+    /// </summary>
+    internal bool TryGetDescriptorBindingSnapshot(
+        out DescriptorBindingSnapshot snapshot)
+    {
+        snapshot = _descriptorBindingSnapshot;
+        return _hasDescriptorBindingSnapshot;
+    }
+
+    internal void SetDescriptorBindingSnapshot(
+        in DescriptorBindingSnapshot snapshot)
+    {
+        _descriptorBindingSnapshot = snapshot;
+        _hasDescriptorBindingSnapshot = true;
+    }
 
     /// <summary>
     /// True when this draw was enqueued inside an occlusion QueryOp Begin/End bracket
@@ -165,5 +188,7 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
         Draw = draw;
         Context = context;
         PreserveSubmissionOrder = preserveSubmissionOrder;
+        _descriptorBindingSnapshot = default;
+        _hasDescriptorBindingSnapshot = false;
     }
 }

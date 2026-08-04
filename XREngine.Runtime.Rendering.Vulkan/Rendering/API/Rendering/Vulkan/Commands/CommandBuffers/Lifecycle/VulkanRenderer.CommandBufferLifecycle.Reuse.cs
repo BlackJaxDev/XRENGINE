@@ -175,10 +175,18 @@ namespace XREngine.Rendering.Vulkan
                     : state.CommandChainPrimaryIdentityComponents.Combined;
             state.CommandChainPrimaryGroupCount =
                 state.CommandChainSchedule?.Groups.Length ?? 0;
-            state.AllCommandChainGroupsUseSecondaryBuffers =
+            state.AllPreparedDrawBindingsUseSecondaryBuffers =
                 state.CommandChainSchedule is not null &&
-                UsesOnlySecondaryCommandBufferGroups(
-                    state.CommandChainSchedule);
+                AreAllPreparedDrawBindingsSecondaryOwned(
+                    state.CommandChainSchedule,
+                    state.FrameOperations);
+            if (state.CommandChainSchedule is not null)
+            {
+                state.CurrentDependencySignature =
+                    CaptureCommandChainPrimaryPreparedBindingDependencies(
+                        state.CurrentDependencySignature,
+                        state.FrameOperations);
+            }
             state.CommandChainPrimarySkeletonSignature =
                 state.CommandChainSchedule is null
                     ? ulong.MaxValue
@@ -199,7 +207,6 @@ namespace XREngine.Rendering.Vulkan
                 state.CommandChainPrimaryGroupCount,
                 state.PreserveSwapchainForOverlay,
                 state.CurrentDependencySignature,
-                state.AllCommandChainGroupsUseSecondaryBuffers,
                 state.FrameOperations);
             if (state.ImageForcedDirty)
             {
@@ -221,8 +228,7 @@ namespace XREngine.Rendering.Vulkan
             state.DependencyMismatch = state.UsingCommandChains
                 ? state.Variant.RecordedDependencySignature
                     .CompareCommandChainPrimary(
-                        state.CurrentDependencySignature,
-                        state.AllCommandChainGroupsUseSecondaryBuffers)
+                        state.CurrentDependencySignature)
                 : state.Variant.RecordedDependencySignature.Compare(
                     state.CurrentDependencySignature);
         }
@@ -300,12 +306,12 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 // An inline desktop primary owns the swapchain writer and must be
-                // re-recorded for output-camera transitions. Command-chain primaries
-                // refresh their per-draw camera data through reusable secondary ranges.
+                // re-recorded for output-camera transitions. A mixed command-chain
+                // primary can refresh inline and secondary per-draw camera data in
+                // place; its exact inline structure remains separately validated.
                 if (!state.Dirty &&
                     _commandScheduler.HasCameraGenerationChanged(
-                        state.UsingCommandChains &&
-                            state.AllCommandChainGroupsUseSecondaryBuffers,
+                        state.UsingCommandChains,
                         variant.RecordedGenerations.CameraPose,
                         state.CurrentGenerations.CameraPose))
                 {
@@ -402,6 +408,7 @@ namespace XREngine.Rendering.Vulkan
             scoped ref CommandBufferLifecycleState state)
         {
             bool refreshedReusableFrameData = true;
+            state.DynamicUiFrameDataNeedsRerecord = false;
             _lastReusableFrameDataRefreshFailureReason = null;
             using (VulkanCpuStageScope cpuStage =
                    new(EVulkanCpuStage.FrameDataRefresh))
@@ -420,13 +427,13 @@ namespace XREngine.Rendering.Vulkan
                         dynamicUi: false,
                         descriptorResourcesCapturedByFrameSignature:
                             state.UsingCommandChains &&
-                            state.AllCommandChainGroupsUseSecondaryBuffers);
+                            state.AllPreparedDrawBindingsUseSecondaryBuffers);
 
                 if (refreshedReusableFrameData &&
                     state.HasDynamicUiOperations)
                 {
-                    refreshedReusableFrameData =
-                        TryRefreshReusableCommandBufferFrameData(
+                    state.DynamicUiFrameDataNeedsRerecord =
+                        !TryRefreshReusableCommandBufferFrameData(
                             state.ImageIndex,
                             state.Scratch
                                 .DynamicUiReusableFrameDataRefreshRequests,
@@ -436,6 +443,14 @@ namespace XREngine.Rendering.Vulkan
                                 .DynamicUiReusableFrameDataRefreshBatchInfo,
                             state.Variant.DynamicUiFrameDataRefreshState,
                             dynamicUi: true);
+
+                    // The scene primary only executes the dynamic-text
+                    // secondary's stable handle. If that secondary cannot be
+                    // refreshed in place, rebuild the isolated secondary in the
+                    // next lifecycle phase instead of invalidating the scene and
+                    // shadow primary.
+                    if (state.DynamicUiFrameDataNeedsRerecord)
+                        _lastReusableFrameDataRefreshFailureReason = null;
                 }
             }
 
@@ -487,7 +502,9 @@ namespace XREngine.Rendering.Vulkan
                             state.ImageIndex,
                             state.Variant,
                             state.DynamicUiOperations,
-                            state.DynamicUiSignature);
+                            state.DynamicUiSignature,
+                            forceRecord:
+                                state.DynamicUiFrameDataNeedsRerecord);
                 }
             }
             else

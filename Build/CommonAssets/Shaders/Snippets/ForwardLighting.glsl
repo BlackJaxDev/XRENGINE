@@ -1136,6 +1136,23 @@ float XRENGINE_ApplyDirectionalStaleAtlasEdgeFade(float shadow, vec3 fragCoord, 
     return mix(1.0, shadow, smoothstep(0.0, fadeWidth, border));
 }
 
+bool XRENGINE_CanSampleRenderedCascade(int lightIndex, DirLight light, int cascadeIndex)
+{
+    if (DirectionalShadowAtlasEnabled[lightIndex] == 0)
+        return false;
+
+    int atlasRecordIndex = lightIndex * XRENGINE_MAX_CASCADES + cascadeIndex;
+    ivec4 atlasState = DirectionalShadowAtlasPacked0[atlasRecordIndex];
+    bool atlasPageValid = atlasState.x != 0 &&
+        atlasState.y >= 0 &&
+        atlasState.y < XRENGINE_GetDirectionalShadowAtlasLayerCount();
+    float renderedAge = light.RenderedCascadeStaleAge[cascadeIndex];
+    bool staleTileFallback = atlasState.z == XRENGINE_SHADOW_FALLBACK_STALE_TILE;
+    return atlasPageValid &&
+        renderedAge >= 0.0 &&
+        (!staleTileFallback || renderedAge <= DirectionalShadowAtlasMaxStaleFrames);
+}
+
 // Returns -1 outside the cascade so callers can fall back to lit/contact-only.
 float XRENGINE_ReadCascadeShadowMapDir(int lightIndex, DirLight light, vec3 fragPos, vec3 normal, float diffuseFactor, int cascadeIndex)
 {
@@ -1147,17 +1164,10 @@ float XRENGINE_ReadCascadeShadowMapDir(int lightIndex, DirLight light, vec3 frag
     int atlasRecordIndex = lightIndex * XRENGINE_MAX_CASCADES + cascadeIndex;
     ivec4 atlasState = ivec4(0, -1, XRENGINE_SHADOW_FALLBACK_LIT, -1);
     float atlasResolutionScale = 1.0;
-    bool atlasPageValid = false;
-    bool atlasSampleAllowed = false;
+    bool atlasSampleAllowed = XRENGINE_CanSampleRenderedCascade(lightIndex, light, cascadeIndex);
     if (DirectionalShadowAtlasEnabled[lightIndex] != 0)
     {
         atlasState = DirectionalShadowAtlasPacked0[atlasRecordIndex];
-        atlasPageValid = atlasState.x != 0 && atlasState.y >= 0 && atlasState.y < XRENGINE_GetDirectionalShadowAtlasLayerCount();
-        float renderedAge = light.RenderedCascadeStaleAge[cascadeIndex];
-        bool staleTileFallback = atlasState.z == XRENGINE_SHADOW_FALLBACK_STALE_TILE;
-        atlasSampleAllowed = atlasPageValid &&
-            renderedAge >= 0.0 &&
-            (!staleTileFallback || renderedAge <= DirectionalShadowAtlasMaxStaleFrames);
         if (atlasSampleAllowed)
             atlasResolutionScale = max(DirectionalShadowAtlasParams1[atlasRecordIndex].w, 1.0);
     }
@@ -1414,7 +1424,10 @@ float XRENGINE_ReadShadowMapDir(int lightIndex, DirLight light, vec3 fragPos, ve
 
         for (int i = 0; i < cascadeCount; ++i)
         {
-            float splitFar = light.CascadeSplits[i];
+            bool useRenderedCascade = XRENGINE_CanSampleRenderedCascade(lightIndex, light, i);
+            float splitFar = useRenderedCascade
+                ? light.RenderedCascadeSplits[i]
+                : light.CascadeSplits[i];
             bool isLast = (i == cascadeCount - 1);
 
             if (viewDepth <= splitFar || isLast)
@@ -1422,8 +1435,14 @@ float XRENGINE_ReadShadowMapDir(int lightIndex, DirLight light, vec3 fragPos, ve
                 float shadow0 = XRENGINE_ReadCascadeShadowMapDir(lightIndex, light, fragPos, normal, diffuseFactor, i);
                 if (shadow0 < 0.0) shadow0 = 1.0;
 
-                float blendWidth = light.CascadeBlendWidths[i];
-                if (blendWidth > 0.0 && viewDepth > splitFar - blendWidth)
+                float blendWidth = useRenderedCascade
+                    ? light.RenderedCascadeBlendWidths[i]
+                    : light.CascadeBlendWidths[i];
+                bool nextUsesRenderedCascade = !isLast &&
+                    XRENGINE_CanSampleRenderedCascade(lightIndex, light, i + 1);
+                if (blendWidth > 0.0 &&
+                    viewDepth > splitFar - blendWidth &&
+                    (isLast || nextUsesRenderedCascade == useRenderedCascade))
                 {
                     float t = clamp((viewDepth - (splitFar - blendWidth)) / blendWidth, 0.0, 1.0);
                     if (!isLast)

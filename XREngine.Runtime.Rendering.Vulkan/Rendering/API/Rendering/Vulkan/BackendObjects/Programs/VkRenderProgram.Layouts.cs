@@ -238,7 +238,7 @@ internal unsafe partial class VkRenderProgram
     {
         bool invalidatedPublishedInterface = IsLinked;
         DestroyComputeUniformBuffers();
-        _reusableComputeDescriptorRefreshKeys.Clear();
+        _reusableComputeDescriptorResourceSignatures.Clear();
 
         if (_computePipeline.Handle != 0)
         {

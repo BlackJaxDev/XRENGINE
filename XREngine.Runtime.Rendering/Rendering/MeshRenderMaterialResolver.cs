@@ -148,10 +148,12 @@ public static class MeshRenderMaterialResolver
                 material.OnSettingShadowUniforms(program);
                 selectedMaterialHandlerCalled = true;
             }
-            else
-            {
-                SetDirectionalCascadeLayeredUniforms(program, shadowState);
-            }
+
+            // Material handlers supply shadow encoding and alpha-test parameters, but the
+            // cascade matrices must come from the immutable state captured with this draw.
+            // Reading the light's live cascade state here can pair a reused command packet
+            // with matrices from a newer camera generation and make grouped cascades flicker.
+            SetDirectionalCascadeLayeredUniforms(program, shadowState);
         }
 
         if (IsPointLightInstancedMaterialKind(material.PointShadowMaterialKind) &&

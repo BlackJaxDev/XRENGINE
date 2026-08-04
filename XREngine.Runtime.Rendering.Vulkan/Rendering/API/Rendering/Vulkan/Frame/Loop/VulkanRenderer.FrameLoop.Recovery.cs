@@ -388,7 +388,13 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            int clearedLayoutCount = ClearAllTrackedImageLayouts();
+            // Recording deferral and pre-dispatch submission rejection do not
+            // execute the rejected command buffers. Submitted image state and
+            // reusable command-buffer journals therefore remain authoritative.
+            // Clearing either side would make the next valid primary require
+            // entry states that recovery had just erased, creating a permanent
+            // reject/recover loop.
+            const int clearedLayoutCount = 0;
             CommandPool abortCommandPool = default;
             CommandBuffer abortCommandBuffer = default;
             CommandBuffer recoveryOverlayCommandBuffer = default;

@@ -1584,7 +1584,7 @@ namespace XREngine.Scene
             return false;
         }
 
-        private static ulong BuildShadowContentHash(
+        private ulong BuildShadowContentHash(
             LightComponent light,
             EShadowProjectionType projectionType,
             int faceOrCascadeIndex,
@@ -1608,6 +1608,7 @@ namespace XREngine.Scene
             Add(ref hash, (uint)light.SoftShadowMode);
             AddFloat(ref hash, light.ShadowMinBias);
             AddFloat(ref hash, light.ShadowMaxBias);
+            Add(ref hash, World.VisualScene.ShadowCasterMembershipRevision);
             if (light is DirectionalLightComponent directionalLight)
             {
                 Add(

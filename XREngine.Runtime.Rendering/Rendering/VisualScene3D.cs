@@ -194,12 +194,22 @@ namespace XREngine.Scene
         private readonly HashSet<RenderInfo3D> _renderableSet = [];
         private readonly object _renderablesSync = new();
         private readonly ConcurrentQueue<(RenderInfo3D renderable, bool add)> _pendingRenderableOperations = new(); // staged until PreCollectVisible runs on the collect visible thread
+        private long _shadowCasterMembershipRevision;
         private bool IsGpuCulling => _isGpuDispatchActive;
         private readonly HashSet<RenderableMesh> _skinnedMeshes = new();
         private uint _lastGpuVisibleDraws;
         private uint _lastGpuVisibleInstances;
 
         public (uint Draws, uint Instances) LastGpuVisibility => (_lastGpuVisibleDraws, _lastGpuVisibleInstances);
+
+        /// <summary>
+        /// Changes whenever a shadow-casting renderable enters or leaves this scene.
+        /// Shadow caches use this revision so content loaded after an initial shadow pass
+        /// cannot leave a previously rendered empty map resident indefinitely.
+        /// </summary>
+        [YamlIgnore]
+        public ulong ShadowCasterMembershipRevision
+            => unchecked((ulong)System.Threading.Volatile.Read(ref _shadowCasterMembershipRevision));
 
         public override void RecordGpuVisibility(uint draws, uint instances)
         {
@@ -474,6 +484,9 @@ namespace XREngine.Scene
                             operation.renderable.SwapBuffersCallback += OnRenderableSwapBuffers;
                             TrackRenderable(operation.renderable);
 
+                            if (operation.renderable.CastsShadows)
+                                System.Threading.Interlocked.Increment(ref _shadowCasterMembershipRevision);
+
                             if (_isGpuDispatchActive || _isCpuGpuCommandMirrorActive)
                                 GPUCommands.Add(operation.renderable);
 
@@ -500,6 +513,9 @@ namespace XREngine.Scene
                             ActiveCpuRenderTree.Remove(operation.renderable);
 
                         _renderables.Remove(operation.renderable);
+                        if (operation.renderable.CastsShadows)
+                            System.Threading.Interlocked.Increment(ref _shadowCasterMembershipRevision);
+
                         ModelRenderDiagnostics.LogSceneRegistration(
                             this,
                             operation.renderable,

@@ -896,8 +896,15 @@ internal unsafe partial class VkRenderProgram
             return true;
 
         (uint ImageIndex, ulong BindingKey) refreshKey = (imageIndex, reusableDescriptorBindingKey);
-        if (_reusableComputeDescriptorRefreshKeys.Contains(refreshKey))
+        ulong resourceSignature = snapshot.PersistentEngineResourceSignature;
+        if (snapshot.HasPublishedBindingLayoutSignatures &&
+            _reusableComputeDescriptorResourceSignatures.TryGetValue(
+                refreshKey,
+                out ulong publishedResourceSignature) &&
+            publishedResourceSignature == resourceSignature)
+        {
             return true;
+        }
 
         Dictionary<DescriptorType, uint> poolSizeCounts = new();
         foreach (DescriptorBindingInfo binding in _programDescriptorBindings)
@@ -1006,7 +1013,9 @@ internal unsafe partial class VkRenderProgram
             bufferInfos.ToArray(),
             imageInfos.ToArray(),
             texelBufferViews.ToArray());
-        _reusableComputeDescriptorRefreshKeys.Add(refreshKey);
+        if (snapshot.HasPublishedBindingLayoutSignatures)
+            _reusableComputeDescriptorResourceSignatures[refreshKey] =
+                resourceSignature;
         return true;
     }
 

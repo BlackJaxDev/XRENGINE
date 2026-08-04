@@ -3193,6 +3193,26 @@ namespace XREngine.Rendering
             sb.AppendLine($"layout(std430, binding = {InstanceTransformSsboBinding}) readonly buffer TransformBuffer {{ float instanceWorld[]; }};");
         }
 
+        private static void AppendMaterialTableTransformLoader(
+            StringBuilder sb,
+            string functionName,
+            string transformBufferName)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"mat4 {functionName}(uint transformID)");
+            sb.AppendLine("{");
+            sb.AppendLine("    int base = int(transformID) * XRE_TRANSFORM_FLOATS;");
+            sb.AppendLine($"    if (base + 15 >= {transformBufferName}.length())");
+            sb.AppendLine("        return mat4(1.0);");
+            sb.AppendLine("    // CPU Matrix4x4 rows are intentionally reinterpreted as GLSL columns, matching uniform upload.");
+            sb.AppendLine($"    vec4 c0 = vec4({transformBufferName}[base+0],  {transformBufferName}[base+1],  {transformBufferName}[base+2],  {transformBufferName}[base+3]);");
+            sb.AppendLine($"    vec4 c1 = vec4({transformBufferName}[base+4],  {transformBufferName}[base+5],  {transformBufferName}[base+6],  {transformBufferName}[base+7]);");
+            sb.AppendLine($"    vec4 c2 = vec4({transformBufferName}[base+8],  {transformBufferName}[base+9],  {transformBufferName}[base+10], {transformBufferName}[base+11]);");
+            sb.AppendLine($"    vec4 c3 = vec4({transformBufferName}[base+12], {transformBufferName}[base+13], {transformBufferName}[base+14], {transformBufferName}[base+15]);");
+            sb.AppendLine("    return mat4(c0, c1, c2, c3);");
+            sb.AppendLine("}");
+        }
+
         private static void AppendTransformBufferReferenceGlsl(StringBuilder sb)
         {
             sb.AppendLine("layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer XRE_TransformBufferRef { float instanceWorld[]; };");

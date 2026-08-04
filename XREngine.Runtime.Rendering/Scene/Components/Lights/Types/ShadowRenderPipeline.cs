@@ -134,7 +134,10 @@ namespace XREngine.Components.Lights
                 shadowPipeline.IndexedClearRegions is not { } regions ||
                 shadowPipeline.IndexedClearRegionCount <= 0)
             {
-                RuntimeEngine.Rendering.State.ClearByBoundFBO();
+                // Shadow cameras use normal-Z projection even when the surrounding editor camera
+                // uses reversed Z. Preserve the shadow pass's explicit clear convention instead of
+                // resolving it from whichever camera happens to be active during deferred recording.
+                RuntimeEngine.Rendering.State.ClearByBoundFBO(depthClearValue: 1.0f);
                 return;
             }
 
@@ -149,7 +152,7 @@ namespace XREngine.Components.Lights
                 renderer?.SetRenderArea(region);
                 renderer?.SetCroppingEnabled(true);
                 renderer?.CropRenderArea(region);
-                RuntimeEngine.Rendering.State.ClearByBoundFBO();
+                RuntimeEngine.Rendering.State.ClearByBoundFBO(depthClearValue: 1.0f);
             }
 
             // Clearing uses scissor box 0, so the loop above temporarily overwrites viewport/scissor index 0.

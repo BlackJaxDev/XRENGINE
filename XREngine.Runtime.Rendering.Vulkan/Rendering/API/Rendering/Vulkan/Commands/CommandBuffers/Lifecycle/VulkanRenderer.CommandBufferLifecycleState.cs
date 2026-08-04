@@ -72,7 +72,7 @@ namespace XREngine.Rendering.Vulkan
             public VulkanCommandIdentityComponents CommandChainPrimaryIdentityComponents;
             public ulong CommandChainPrimaryGroupSignature;
             public int CommandChainPrimaryGroupCount;
-            public bool AllCommandChainGroupsUseSecondaryBuffers;
+            public bool AllPreparedDrawBindingsUseSecondaryBuffers;
             public ulong CommandChainPrimarySkeletonSignature;
             public CommandBufferCacheVariant Variant;
             public string? ForcedVariantDirtyReason;
@@ -81,6 +81,7 @@ namespace XREngine.Rendering.Vulkan
             public bool HasTextureUploadFrameOperations;
             public CommandRecordingDependencyMismatch DependencyMismatch;
             public bool DynamicUiSecondaryReady;
+            public bool DynamicUiFrameDataNeedsRerecord;
 
             public bool RecordedDynamicUiSecondaryReady;
             public int RecordedSwapchainWriteCount;

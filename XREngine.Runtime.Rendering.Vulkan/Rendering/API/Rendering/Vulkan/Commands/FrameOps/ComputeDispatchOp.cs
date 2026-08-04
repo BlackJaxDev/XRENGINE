@@ -15,7 +15,11 @@ internal sealed record ComputeDispatchOp(
     public uint GroupsY { get; private set; } = GroupsY;
     public uint GroupsZ { get; private set; } = GroupsZ;
     public ComputeDispatchSnapshot Snapshot { get; private set; } = Snapshot;
+    internal int ReusableDescriptorBindingOrdinal { get; private set; } = -1;
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.ComputeDispatch;
+
+    internal void SetReusableDescriptorBindingOrdinal(int ordinal)
+        => ReusableDescriptorBindingOrdinal = ordinal;
 
     internal override int RecordPrimary(
         VulkanRenderer renderer,
@@ -90,6 +94,7 @@ internal sealed record ComputeDispatchOp(
         GroupsY = groupsY;
         GroupsZ = groupsZ;
         Snapshot = snapshot;
+        ReusableDescriptorBindingOrdinal = -1;
         Context = context;
     }
 }

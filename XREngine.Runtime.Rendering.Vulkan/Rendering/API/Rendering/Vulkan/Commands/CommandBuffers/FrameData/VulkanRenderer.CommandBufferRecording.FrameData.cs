@@ -122,6 +122,7 @@ namespace XREngine.Rendering.Vulkan
                 VulkanMeshFrameDataRendererFamilyKey rendererFamily = 
                     new(renderer, family);
                 
+                // Update the renderer family draw slots and family strides based on the collected requirements.
                 rendererFamilyDrawSlots.TryGetValue(rendererFamily, out int count);
                 int requiredDrawSlots = count + 1;
                 rendererFamilyDrawSlots[rendererFamily] = requiredDrawSlots;
@@ -244,6 +245,7 @@ namespace XREngine.Rendering.Vulkan
             stableMeshHash.Add((int)streamKind);
             stableMeshHash.Add(MeshFrameDataReservationGeneration);
             int meshRequestCount = 0;
+            bool supportsDirectOwnerOnlyRefresh = true;
 
             for (int operationIndex = 0;
                  operationIndex < operations.Length;
@@ -304,7 +306,9 @@ namespace XREngine.Rendering.Vulkan
                                 computeDispatch.Snapshot,
                                 ComputeReusableComputeDescriptorBindingKey(
                                     computeDispatch,
-                                    operationIndex),
+                                    ResolveCommandChainInlineOperationIndex(
+                                        operations,
+                                        operationIndex)),
                                 computeDispatch.GroupsX,
                                 computeDispatch.GroupsY,
                                 computeDispatch.GroupsZ);
@@ -321,6 +325,11 @@ namespace XREngine.Rendering.Vulkan
                     EVulkanReusableFrameDataRefreshKind.IndirectMesh)
                 {
                     meshRequestCount++;
+                    supportsDirectOwnerOnlyRefresh &=
+                        request.MeshRenderer is not null &&
+                        request.MeshRenderer
+                            .SupportsOwnerOnlyReusableFrameDataRefresh(
+                                request.Draw);
                     stableMeshHash.Add(
                         ComputeReusableMeshStableDataSignature(request));
                     AddReusableFrequencyOwnerWorkRequests(
@@ -345,7 +354,8 @@ namespace XREngine.Rendering.Vulkan
                 dynamicUi,
                 new VulkanReusableFrameDataRefreshBatchInfo(
                     stableMeshHash.ToHash(),
-                    meshRequestCount));
+                    meshRequestCount,
+                    supportsDirectOwnerOnlyRefresh));
             scratch.ReusableMeshDrawSlotCapacityHint = Math.Max(
                 1,
                 slotsByRendererFamily.Count);
@@ -354,7 +364,8 @@ namespace XREngine.Rendering.Vulkan
         private static void AddReusableFrequencyOwnerWorkRequests(
             in VulkanReusableFrameDataRefreshRequest request,
             bool dynamicUi,
-            CommandBufferRecordingScratch scratch)
+            CommandBufferRecordingScratch scratch,
+            bool scheduledCommandChain = false)
         {
             if (request.MeshRenderer is not { } meshRenderer ||
                 request.Draw.PreparedProgram is not { } program ||
@@ -409,10 +420,19 @@ namespace XREngine.Rendering.Vulkan
                     request.Draw,
                     request.DrawUniformSlot,
                     frequencyMask);
-                scratch.TryAddReusableFrameDataOwnerWorkRequest(
-                    dynamicUi,
-                    ownerKey,
-                    ownerRequest);
+                if (scheduledCommandChain)
+                {
+                    scratch.TryAddScheduledCommandChainFrameDataOwnerWorkRequest(
+                        ownerKey,
+                        ownerRequest);
+                }
+                else
+                {
+                    scratch.TryAddReusableFrameDataOwnerWorkRequest(
+                        dynamicUi,
+                        ownerKey,
+                        ownerRequest);
+                }
             }
         }
 
