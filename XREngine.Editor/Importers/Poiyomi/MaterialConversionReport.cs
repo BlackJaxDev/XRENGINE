@@ -156,14 +156,14 @@ public static class MaterialConversionReportBuilder
         "flipbook",
         "dissolve",
         "parallax",
-        "poiyomi-surface",
-        "poiyomi-masks-themes",
-        "poiyomi-decals",
-        "poiyomi-emission-slots",
-        "poiyomi-flipbook-array",
-        "poiyomi-special-effects",
-        "poiyomi-vertex-effects",
-        "poiyomi-view-context",
+        "surface-extensions",
+        "global-masks-themes",
+        "layered-decals",
+        "layered-emission",
+        "texture-array-flipbook",
+        "extended-effects",
+        "vertex-effects",
+        "view-context",
     };
 
     private static readonly Dictionary<string, string> SemanticDifferences =
@@ -176,11 +176,11 @@ public static class MaterialConversionReportBuilder
             ["outline"] = "Rendered as an engine material pass sharing authored state.",
             ["subsurface"] = "Portable screen-independent approximation; Unity light macros are not retained.",
             ["glitter"] = "Portable deterministic noise implementation replaces Unity-specific derivatives.",
-            ["poiyomi-lighting-parity"] = "Poiyomi lighting semantics are mapped onto XRENGINE forward-plus lights.",
-            ["poiyomi-pbr-parity"] = "Poiyomi/Mochie controls feed XRENGINE's portable BRDF implementation.",
-            ["poiyomi-matcap-rim-slots"] = "Repeated slots share engine arrays and semantic bindings.",
-            ["poiyomi-audiolink"] = "Requires the registered runtime AudioLink adapter.",
-            ["poiyomi-environment-adapters"] = "Requires registered environment/LTCGI/light-volume adapters.",
+            ["advanced-stylized-lighting"] = "Poiyomi lighting semantics are mapped onto XRENGINE forward-plus lights.",
+            ["advanced-pbr"] = "Poiyomi/Mochie controls feed XRENGINE's portable BRDF implementation.",
+            ["layered-matcap-rim"] = "Repeated slots share engine arrays and semantic bindings.",
+            ["audiolink"] = "Requires the registered runtime AudioLink adapter.",
+            ["environment-lighting"] = "Requires registered environment/LTCGI/light-volume adapters.",
         };
 
     public static MaterialConversionReport Create(

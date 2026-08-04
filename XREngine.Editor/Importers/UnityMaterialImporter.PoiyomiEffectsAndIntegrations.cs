@@ -2,7 +2,7 @@ using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.Poiyomi;
+using XREngine.Rendering.Materials;
 using XREngine.Scene.Importers.Poiyomi;
 
 namespace XREngine.Scene.Importers;
@@ -29,11 +29,11 @@ public static partial class UnityMaterialImporter
         bool viewContext = HasAnyPositive(document, "_EnableMirrorOptions", "_MirrorTextureEnabled", "_CameraOptionsEnabled");
 
         material.SetUberFeatureEnabled("outline", outlines);
-        material.SetUberFeatureEnabled("poiyomi-special-effects", specialEffects);
-        material.SetUberFeatureEnabled("poiyomi-vertex-effects", vertexEffects);
-        material.SetUberFeatureEnabled("poiyomi-audiolink", audioLink && PoiyomiRuntimeAdapters.AudioLink is not null);
-        material.SetUberFeatureEnabled("poiyomi-environment-adapters", environment && PoiyomiRuntimeAdapters.Environment is not null);
-        material.SetUberFeatureEnabled("poiyomi-view-context", viewContext);
+        material.SetUberFeatureEnabled("extended-effects", specialEffects);
+        material.SetUberFeatureEnabled("vertex-effects", vertexEffects);
+        material.SetUberFeatureEnabled("audiolink", audioLink && UberMaterialRuntimeAdapters.AudioLink is not null);
+        material.SetUberFeatureEnabled("environment-lighting", environment && UberMaterialRuntimeAdapters.Environment is not null);
+        material.SetUberFeatureEnabled("view-context", viewContext);
         material.EnsureUberStateInitialized();
 
         MapOutlineAndDissolve(material, document);
@@ -44,7 +44,7 @@ public static partial class UnityMaterialImporter
         if (vertexEffects)
         {
             AttachPoiyomiVertexShaders(material);
-            PoiyomiVertexUniformBinding vertexBinding = new(material);
+            UberVertexEffectUniformBinding vertexBinding = new(material);
             material.SettingVertexUniforms += vertexBinding.Apply;
             material.RenderOptions ??= ModelImporter.CreateForwardPlusUberShaderRenderOptions();
             // GPU-indirect substitutes its own vertex program. Until its
@@ -53,16 +53,16 @@ public static partial class UnityMaterialImporter
             material.RenderOptions.ExcludeFromGpuIndirect = true;
         }
 
-        bool adaptersAvailable = PoiyomiRuntimeAdapters.ConfigureMaterial(
+        bool adaptersAvailable = UberMaterialRuntimeAdapters.ConfigureMaterial(
             material,
             audioLink,
             environment,
             viewContext);
         if (!adaptersAvailable)
         {
-            if (audioLink && PoiyomiRuntimeAdapters.AudioLink is null)
+            if (audioLink && UberMaterialRuntimeAdapters.AudioLink is null)
                 AddMissingAdapterDiagnostic(diagnostics, warnings, "AudioLink", "_EnableAudioLink");
-            if (environment && PoiyomiRuntimeAdapters.Environment is null)
+            if (environment && UberMaterialRuntimeAdapters.Environment is null)
                 AddMissingAdapterDiagnostic(diagnostics, warnings, "LTCGI/light-volume", "_LTCGIEnabled");
         }
     }
@@ -122,26 +122,26 @@ public static partial class UnityMaterialImporter
 
     private static void MapSpecialEffects(XRMaterial material, UnityMaterialDocument document)
     {
-        MapFloat(document, material, "_PoiUvDiscard", "_EnableUDIMDiscardOptions", "_UVTileDiscardEnabled");
-        MapVector2(document, material, "_PoiUvDiscardGrid", "_UDIMDiscardGrid", "_UVTileDiscardGrid");
-        MapVector2(document, material, "_PoiUvDiscardRange", "_UDIMDiscardRange", "_UVTileDiscardRange");
-        MapInt(document, material, "_PoiFaceDiscard", "_UDIMDiscardFace", "_FaceDiscard");
+        MapFloat(document, material, "_UvTileDiscard", "_EnableUDIMDiscardOptions", "_UVTileDiscardEnabled");
+        MapVector2(document, material, "_UvTileDiscardGrid", "_UDIMDiscardGrid", "_UVTileDiscardGrid");
+        MapVector2(document, material, "_UvTileDiscardRange", "_UDIMDiscardRange", "_UVTileDiscardRange");
+        MapInt(document, material, "_FaceDiscard", "_UDIMDiscardFace", "_FaceDiscard");
 
-        MapFloat(document, material, "_PoiPathing", "_PathingEnabled", "_EnablePathing");
-        MapVector4(document, material, "_PoiPathingParams", "_PathingParams");
-        MapVector4(document, material, "_PoiPathingColor", "_PathingColor");
-        MapFloat(document, material, "_PoiProximity", "_ProximityColorEnabled", "_ProximityEnabled");
-        MapVector4(document, material, "_PoiProximityParams", "_ProximityParams");
-        MapVector4(document, material, "_PoiProximityColor", "_ProximityColor");
-        MapFloat(document, material, "_PoiTouchGlow", "_DepthFXEnabled", "_TouchGlowEnabled");
-        MapVector4(document, material, "_PoiTouchGlowParams", "_TouchGlowParams", "_DepthFXParams");
-        MapVector4(document, material, "_PoiTouchGlowColor", "_TouchGlowColor", "_DepthFXColor");
-        MapFloat(document, material, "_PoiInternalParallax", "_InternalParallaxEnabled", "_ParallaxInternal");
-        MapVector4(document, material, "_PoiInternalParallaxParams", "_InternalParallaxParams");
-        MapInt(document, material, "_PoiProceduralMode", "_ProceduralMode", "_VideoEffectMode");
-        MapVector4(document, material, "_PoiProceduralParams", "_ProceduralParams");
-        MapVector4(document, material, "_PoiProceduralColor", "_ProceduralColor");
-        MapFloat(document, material, "_PoiVideoBlend", "_VideoBlend", "_VideoTextureStrength");
+        MapFloat(document, material, "_PathingStrength", "_PathingEnabled", "_EnablePathing");
+        MapVector4(document, material, "_PathingParams", "_PathingParams");
+        MapVector4(document, material, "_PathingColor", "_PathingColor");
+        MapFloat(document, material, "_ProximityStrength", "_ProximityColorEnabled", "_ProximityEnabled");
+        MapVector4(document, material, "_ProximityParams", "_ProximityParams");
+        MapVector4(document, material, "_ProximityColor", "_ProximityColor");
+        MapFloat(document, material, "_TouchGlowStrength", "_DepthFXEnabled", "_TouchGlowEnabled");
+        MapVector4(document, material, "_TouchGlowParams", "_TouchGlowParams", "_DepthFXParams");
+        MapVector4(document, material, "_TouchGlowColor", "_TouchGlowColor", "_DepthFXColor");
+        MapFloat(document, material, "_InternalParallaxStrength", "_InternalParallaxEnabled", "_ParallaxInternal");
+        MapVector4(document, material, "_InternalParallaxParams", "_InternalParallaxParams");
+        MapInt(document, material, "_ProceduralMode", "_ProceduralMode", "_VideoEffectMode");
+        MapVector4(document, material, "_ProceduralParams", "_ProceduralParams");
+        MapVector4(document, material, "_ProceduralColor", "_ProceduralColor");
+        MapFloat(document, material, "_VideoBlend", "_VideoBlend", "_VideoTextureStrength");
     }
 
     private static void MapVertexEffects(XRMaterial material, UnityMaterialDocument document)
@@ -149,7 +149,7 @@ public static partial class UnityMaterialImporter
         if (!HasVertexEffects(document))
             return;
 
-        SetFloat(material, "_PoiVertexEffectsEnabled", 1.0f);
+        SetFloat(material, "_VertexEffectsEnabled", 1.0f);
         MapVector3(document, material, "_VertexManipulationLocalTranslation", "_VertexManipulationLocalTranslation");
         MapVector3(document, material, "_VertexManipulationLocalRotation", "_VertexManipulationLocalRotation");
         MapVector3(document, material, "_VertexManipulationLocalRotationSpeed", "_VertexManipulationLocalRotationSpeed");
@@ -165,15 +165,15 @@ public static partial class UnityMaterialImporter
         MapFloat(document, material, "_VertexBarrelWidth", "_VertexBarrelWidth");
         MapFloat(document, material, "_VertexBarrelAlpha", "_VertexBarrelAlpha");
         MapFloat(document, material, "_VertexBarrelHeight", "_VertexBarrelHeight");
-        MapFloat(document, material, "_PoiLookAtWeight", "_LookAtEnabled", "_LookAtWeight");
-        MapVector3(document, material, "_PoiLookAtAxis", "_LookAtAxis", "_LookAtForwardVector");
-        MapVector4(document, material, "_PoiVertexGlitch", "_TextureGlitchParams", "_VertexGlitchParams");
-        MapVector4(document, material, "_PoiUzumore", "_UzumoreParams");
-        MapVector4(document, material, "_PoiNaturalEquation", "_NaturalEquationParams");
-        MapVector4(document, material, "_PoiDepthBulge", "_DepthBulgeParams");
-        MapVector4(document, material, "_PoiVertexColorPosition", "_VertexColorPosition");
-        MapVector4(document, material, "_PoiVertexColorNormal", "_VertexColorNormal");
-        MapVector4(document, material, "_PoiConservativeBounds", "_VertexBoundsExpansion", "_CullingBoundsHint");
+        MapFloat(document, material, "_VertexLookAtWeight", "_LookAtEnabled", "_LookAtWeight");
+        MapVector3(document, material, "_VertexLookAtAxis", "_LookAtAxis", "_LookAtForwardVector");
+        MapVector4(document, material, "_VertexGlitch", "_TextureGlitchParams", "_VertexGlitchParams");
+        MapVector4(document, material, "_VertexWave", "_UzumoreParams");
+        MapVector4(document, material, "_VertexEquation", "_NaturalEquationParams");
+        MapVector4(document, material, "_VertexDepthBulge", "_DepthBulgeParams");
+        MapVector4(document, material, "_VertexColorPositionOffset", "_VertexColorPosition");
+        MapVector4(document, material, "_VertexColorNormalOffset", "_VertexColorNormal");
+        MapVector4(document, material, "_VertexConservativeBounds", "_VertexBoundsExpansion", "_CullingBoundsHint");
     }
 
     private static void BindEffectTextures(
@@ -187,7 +187,7 @@ public static partial class UnityMaterialImporter
         [
             ("_OutlineTexture", ["_OutlineTexture", "_OutlineTex"]),
             ("_OutlineMask", ["_OutlineMask", "_OutlineWidthMask"]),
-            ("_PoiVideoTexture", ["_VideoTexture", "_VideoTex", "_CRTTexture"]),
+            ("_VideoTexture", ["_VideoTexture", "_VideoTex", "_CRTTexture"]),
         ];
 
         foreach ((string destination, string[] sources) in bindings)

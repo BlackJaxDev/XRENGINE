@@ -36,9 +36,8 @@ namespace XREngine.Rendering.Commands
             EnsureTransformCapacity(transformId + 1u);
             TransformGpu transform = new(worldMatrix);
             UpdatingTransformBuffer.SetDataRawAtIndex(transformId, transform);
-            UpdatingPrevTransformBuffer.SetDataRawAtIndex(transformId, transform);
             _transformDirtyRange.Mark(transformId);
-            _prevTransformDirtyRange.Mark(transformId);
+            _newTransformIdsAwaitingPublication.Add(transformId);
             return transformId;
         }
 
@@ -51,9 +50,7 @@ namespace XREngine.Rendering.Commands
             if (transformId < UpdatingTransformBuffer.ElementCount)
             {
                 UpdatingTransformBuffer.SetDataRawAtIndex(transformId, default(TransformGpu));
-                UpdatingPrevTransformBuffer.SetDataRawAtIndex(transformId, default(TransformGpu));
                 _transformDirtyRange.Mark(transformId);
-                _prevTransformDirtyRange.Mark(transformId);
             }
         }
 
@@ -175,9 +172,7 @@ namespace XREngine.Rendering.Commands
             if (previous.WorldMatrix.Equals(worldMatrix))
                 return false;
 
-            UpdatingPrevTransformBuffer.SetDataRawAtIndex(transformId, previous);
             UpdatingTransformBuffer.SetDataRawAtIndex(transformId, new TransformGpu(worldMatrix));
-            _prevTransformDirtyRange.Mark(transformId);
             _transformDirtyRange.Mark(transformId);
             return true;
         }

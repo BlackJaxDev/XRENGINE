@@ -896,7 +896,10 @@ internal unsafe partial class VkRenderProgram
             return true;
 
         (uint ImageIndex, ulong BindingKey) refreshKey = (imageIndex, reusableDescriptorBindingKey);
-        ulong resourceSignature = snapshot.PersistentEngineResourceSignature;
+        snapshot.ResolvePublishedResourceSignatures(
+            Renderer.ResolveMeshDescriptorViewFamilyIdentity(),
+            out _,
+            out ulong resourceSignature);
         if (snapshot.HasPublishedBindingLayoutSignatures &&
             _reusableComputeDescriptorResourceSignatures.TryGetValue(
                 refreshKey,

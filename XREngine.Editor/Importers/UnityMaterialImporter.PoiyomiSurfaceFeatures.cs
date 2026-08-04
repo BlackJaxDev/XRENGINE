@@ -16,21 +16,21 @@ public static partial class UnityMaterialImporter
         ICollection<MaterialConversionDiagnostic> diagnostics,
         List<string> warnings)
     {
-        material.SetUberFeatureEnabled("poiyomi-surface", true);
-        material.SetUberFeatureEnabled("poiyomi-masks-themes", HasMaskOrTheme(document));
-        material.SetUberFeatureEnabled("poiyomi-lighting-parity", true);
-        material.SetUberFeatureEnabled("poiyomi-pbr-parity", HasPbrFeatures(document));
-        material.SetUberFeatureEnabled("poiyomi-matcap-rim-slots", HasMatcapOrRim(document));
-        material.SetUberFeatureEnabled("poiyomi-decals", HasAnyPositive(document, "_DecalEnabled", "_DecalEnabled1", "_DecalEnabled2", "_DecalEnabled3"));
-        material.SetUberFeatureEnabled("poiyomi-emission-slots", HasAnyPositive(document, "_EnableEmission", "_EnableEmission1", "_EnableEmission2", "_EnableEmission3"));
-        material.SetUberFeatureEnabled("poiyomi-flipbook-array", document.TryGetPositive("_EnableFlipbook"));
+        material.SetUberFeatureEnabled("surface-extensions", true);
+        material.SetUberFeatureEnabled("global-masks-themes", HasMaskOrTheme(document));
+        material.SetUberFeatureEnabled("advanced-stylized-lighting", true);
+        material.SetUberFeatureEnabled("advanced-pbr", HasPbrFeatures(document));
+        material.SetUberFeatureEnabled("layered-matcap-rim", HasMatcapOrRim(document));
+        material.SetUberFeatureEnabled("layered-decals", HasAnyPositive(document, "_DecalEnabled", "_DecalEnabled1", "_DecalEnabled2", "_DecalEnabled3"));
+        material.SetUberFeatureEnabled("layered-emission", HasAnyPositive(document, "_EnableEmission", "_EnableEmission1", "_EnableEmission2", "_EnableEmission3"));
+        material.SetUberFeatureEnabled("texture-array-flipbook", document.TryGetPositive("_EnableFlipbook"));
         material.EnsureUberStateInitialized();
 
         // Poiyomi reserves _ColorMask for the render-target channel mask. It is
         // normally an integer (15), not a color-mask texture. Keep the native
         // texture extension inert unless a source shader actually authored a
         // texture with that name; otherwise its white fallback replaces albedo.
-        SetFloat(material, "_PoiColorMaskEnabled", HasExternalTexture(document, "_ColorMask") ? 1.0f : 0.0f);
+        SetFloat(material, "_ColorMaskEnabled", HasExternalTexture(document, "_ColorMask") ? 1.0f : 0.0f);
 
         BindExactSurfaceParameters(material, document);
         BindCompositeSurfaceParameters(material, document);
@@ -287,7 +287,7 @@ public static partial class UnityMaterialImporter
             ("_MainTexDistortionMap", ["_MainTexDistortionMap"]),
             ("_MainTexDistortionMask", ["_MainTexDistortionMask"]),
             ("_BackFaceNormalMap", ["_BackFaceNormalMap"]),
-            ("_PoiColorMaskTexture", ["_ColorMask"]),
+            ("_ColorMaskTexture", ["_ColorMask"]),
             ("_GlobalMaskTexture0", ["_GlobalMaskTexture"]),
             ("_GlobalMaskTexture1", ["_GlobalMaskTexture1"]),
             ("_GlobalMaskTexture2", ["_GlobalMaskTexture2"]),

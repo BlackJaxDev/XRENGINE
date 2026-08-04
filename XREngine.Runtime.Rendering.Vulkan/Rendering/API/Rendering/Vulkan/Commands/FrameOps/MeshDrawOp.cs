@@ -19,9 +19,9 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
 
     /// <summary>
     /// Returns the immutable descriptor dependency captured while lowering this
-    /// frame operation. Packet compatibility and chain dependency evaluation both
-    /// consume the same value, so resolving every reflected binding more than once
-    /// cannot add correctness and scales poorly with visible draw count.
+    /// frame operation. Mutable frame-source sampler snapshots deliberately bypass
+    /// this cache because their logical binding can acquire a new physical image,
+    /// view, or sampler while the retained draw operation remains unchanged.
     /// </summary>
     internal bool TryGetDescriptorBindingSnapshot(
         out DescriptorBindingSnapshot snapshot)

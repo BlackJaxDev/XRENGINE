@@ -50,8 +50,12 @@ namespace XREngine.Rendering.Vulkan
             bool hasMutableGpuDrivenFrameOperations =
                 state.HasStaticFrameOperations &&
                 HasMutableGpuDrivenFrameOps(state.FrameOperations);
+            bool hasMutableFrameSourceBindings =
+                state.HasStaticFrameOperations &&
+                HasMutableFrameSourceSamplerBindings(state.FrameOperations);
             if (!VulkanPrimaryCommandBufferReuseEnabled ||
                 hasMutableGpuDrivenFrameOperations ||
+                hasMutableFrameSourceBindings ||
                 state.ImageForcedDirty ||
                 state.GpuPipelineProfilingActive)
             {
@@ -101,6 +105,26 @@ namespace XREngine.Rendering.Vulkan
             context.CommandBufferDirtyGenerationAfterRecord =
                 SnapshotCommandBufferDirtyGeneration();
             return true;
+        }
+
+        /// <summary>
+        /// Mutable frame-source publications can select a different descriptor
+        /// command-chain variant after startup. They must pass through the common
+        /// schedule/variant dirty evaluation before a thin primary is reused; the
+        /// early clean-reuse shortcut publishes variant metadata and returns before
+        /// that validation phase.
+        /// </summary>
+        private static bool HasMutableFrameSourceSamplerBindings(FrameOp[] ops)
+        {
+            for (int index = 0; index < ops.Length; index++)
+                if (ops[index] is MeshDrawOp meshDraw &&
+                    meshDraw.Draw.ProgramBindingSnapshot is
+                        { HasMutableFrameSourceSamplerBindings: true })
+                {
+                    return true;
+                }
+
+            return false;
         }
 
         private void BuildCommandBufferCommandChainSchedule(

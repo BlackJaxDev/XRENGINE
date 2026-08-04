@@ -12,7 +12,7 @@ This focused tracker owns bounded editor-profiler processing, UI virtualization,
 overlay recording cost, and self-observation diagnostics. Benchmark profiles,
 capture manifests, stage definitions, and pass/fail performance evidence are
 owned by the completed workstream-01 contract recorded in the
-[Vulkan framerate root-cause investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md).
+[Vulkan framerate root-cause investigation](../../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md).
 
 This child may reduce observer overhead, but it cannot redefine workstream 01's
 benchmark contract or independently certify a performance result.

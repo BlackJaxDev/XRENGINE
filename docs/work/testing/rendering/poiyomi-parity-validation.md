@@ -48,7 +48,7 @@ harness through mouse, keyboard, drag/drop, clipboard, reset, animation,
 context-action, persistence, reimport, cancellation, localization, missing-glyph,
 DPI, narrow/wide, and scrolling cases.
 
-`PoiyomiShaderCompilationTests` compiles representative minimal, common,
+`UberShaderCompilationTests` compiles representative minimal, common,
 family-maximal, and global-maximal variants to SPIR-V; checks all semantic passes;
 checks desktop/OpenVR/OpenXR-compatible vertex paths; compares OpenGL and Vulkan
 resolved-source contracts; and covers all feature pairs deterministically.

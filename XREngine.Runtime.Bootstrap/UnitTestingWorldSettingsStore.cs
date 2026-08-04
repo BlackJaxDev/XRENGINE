@@ -1373,10 +1373,8 @@ public static class UnitTestingWorldSettingsStore
     private static string? TryAutoDetectOpenXrLoader()
     {
         foreach (string candidate in EnumerateOpenXrLoaderCandidates().Distinct(StringComparer.OrdinalIgnoreCase))
-        {
             if (File.Exists(candidate))
                 return candidate;
-        }
 
         return null;
     }

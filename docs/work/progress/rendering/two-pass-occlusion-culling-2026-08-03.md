@@ -160,6 +160,6 @@ Evidence is retained under:
 
 ## Related Records
 
-- `docs/work/investigations/rendering/math-intersections-occlusion-qualification-2026-08-03.md`
+- `docs/work/investigations/rendering/archive/math-intersections-occlusion-qualification-2026-08-03.md`
 - `docs/work/testing/rendering/math-intersections-occlusion-tests.md`
 - `docs/work/todo/rendering/gpu/gpu-driven-occlusion-culling-architecture-todo.md`

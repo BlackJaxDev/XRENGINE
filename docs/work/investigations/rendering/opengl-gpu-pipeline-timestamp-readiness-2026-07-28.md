@@ -1,5 +1,7 @@
 # OpenGL GPU Pipeline Timestamp Readiness Investigation
 
+Status: Open instrumentation defect; no rendering fix has been implemented
+
 ## Status
 
 Open instrumentation defect. No rendering source fix was attempted as part of

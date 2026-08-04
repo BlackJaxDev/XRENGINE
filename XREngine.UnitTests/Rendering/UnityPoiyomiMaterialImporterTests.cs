@@ -200,9 +200,9 @@ Material:
         AssertUberFeature(material, "subsurface");
         AssertUberFeature(material, "dissolve");
         AssertUberFeature(material, "parallax");
-        AssertUberFeatureDisabled(material, "poiyomi-masks-themes");
-        AssertUberFeatureDisabled(material, "poiyomi-pbr-parity");
-        AssertUberFeatureDisabled(material, "poiyomi-special-effects");
+        AssertUberFeatureDisabled(material, "global-masks-themes");
+        AssertUberFeatureDisabled(material, "advanced-pbr");
+        AssertUberFeatureDisabled(material, "extended-effects");
         AssertUberFeatureDisabled(material, "outline");
         material.UberAuthoredState.GetProperty("_Color").ShouldNotBeNull().Mode
             .ShouldBe(EShaderUiPropertyMode.Animated);

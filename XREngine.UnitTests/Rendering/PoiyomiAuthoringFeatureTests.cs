@@ -3,7 +3,7 @@ using NUnit.Framework;
 using Shouldly;
 using XREngine.Editor.MaterialAuthoring;
 using XREngine.Rendering;
-using XREngine.Rendering.Poiyomi;
+using XREngine.Rendering.Materials;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -51,7 +51,7 @@ public sealed class PoiyomiAuthoringFeatureTests
     public void PinnedModeActionGraph_MapsEveryCoupledRenderPresetField()
     {
         IRuntimeShaderServices? previous = RuntimeShaderServices.Current;
-        RuntimeShaderServices.Current = new PoiyomiRuntimeShaderServices();
+        RuntimeShaderServices.Current = new UberRuntimeShaderServices();
         try
         {
             ShaderAuthoringSchema schema = PoiyomiAuthoringSchemaCatalog.GetOrCreate(

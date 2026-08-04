@@ -64,7 +64,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             HasUploadedData = true;
             IsInvalidated = false;
         }
-        MarkDescriptorClean();
+        MarkDescriptorPublished();
         return CacheObject(this);
     }
 

@@ -12,10 +12,10 @@ but it no longer has independent completion authority:
 
 - measurement, attribution, allocations, and actual-encoding counters were
   established by completed workstream 01 and are recorded in the
-  [Vulkan framerate root-cause investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md);
+  [Vulkan framerate root-cause investigation](../../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md);
 - primary dependency, image-state, invalidation, and stable-range reuse belong
   to completed workstream 02 in the same
-  [investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md);
+  [investigation](../../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md);
 - immutable pre-resolved planning, the remaining producer-side cutover, and
   their acceptance gates belong to the
   [workstream 03-05 validation ledger](../../../testing/rendering/03-05-optimization-validation-todo.md);
@@ -39,7 +39,7 @@ The compile-time reuse quarantine described by the original issue no longer
 exists: `VulkanPrimaryCommandBufferReuseSafe` is `true`, and normal-policy
 reuse is guarded by the immutable dependency, image-state, frame-data, and
 artifact contracts. Live regressions discovered on 2026-08-01 are tracked in
-the [Vulkan editor frame-time investigation](../../../investigations/rendering/vulkan-editor-frame-time-spikes-2026-07-30.md#2026-08-01-directional-light-and-late-overlay-instability),
+the [Vulkan editor frame-time investigation](../../../investigations/rendering/archive/vulkan-editor-frame-time-spikes-2026-07-30.md#2026-08-01-directional-light-and-late-overlay-instability),
 not reopened here.
 
 Evidence source:

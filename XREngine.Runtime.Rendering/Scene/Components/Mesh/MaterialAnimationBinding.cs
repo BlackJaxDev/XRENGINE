@@ -178,7 +178,7 @@ public sealed class MaterialAnimationBinding
         if (manifest.PropertyLookup.ContainsKey(semantic))
             return true;
 
-        diagnostic = $"Unity material property '{sourceProperty}' is not present in the active Uber manifest. " +
+        diagnostic = $"Source material property '{sourceProperty}' is not present in the active Uber manifest. " +
                      "The locked suffix could not be decoded unambiguously.";
         return false;
     }
@@ -198,7 +198,7 @@ public sealed class MaterialAnimationBinding
 
     private static bool IsVertexBoundsProperty(string? semantic)
         => semantic is
-            "_PoiVertexEffectsEnabled" or
+            "_VertexEffectsEnabled" or
             "_VertexManipulationLocalTranslation" or
             "_VertexManipulationLocalRotation" or
             "_VertexManipulationLocalRotationSpeed" or
@@ -210,13 +210,13 @@ public sealed class MaterialAnimationBinding
             "_VertexBarrelMode" or
             "_VertexBarrelWidth" or
             "_VertexBarrelAlpha" or
-            "_PoiLookAtWeight" or
-            "_PoiVertexGlitch" or
-            "_PoiUzumore" or
-            "_PoiNaturalEquation" or
-            "_PoiDepthBulge" or
-            "_PoiVertexColorPosition" or
-            "_PoiConservativeBounds" or
+            "_VertexLookAtWeight" or
+            "_VertexGlitch" or
+            "_VertexWave" or
+            "_VertexEquation" or
+            "_VertexDepthBulge" or
+            "_VertexColorPositionOffset" or
+            "_VertexConservativeBounds" or
             "_OutlineWidth";
 
     private static bool IsSampler(XRMaterial material, string semantic)

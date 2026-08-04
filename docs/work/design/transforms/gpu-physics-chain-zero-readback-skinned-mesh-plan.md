@@ -43,7 +43,7 @@ Standalone chains now enter isolated dispatcher groups instead of maintaining
 an OpenGL-only synchronization implementation.
 
 Desktop Vulkan validation and RenderDoc evidence are recorded in
-[the physics-chain motion investigation](../../investigations/rendering/physics-chain-skinned-mesh-motion-2026-07-22.md).
+[the physics-chain motion investigation](../../investigations/rendering/archive/physics-chain-skinned-mesh-motion-2026-07-22.md).
 
 ## Current State
 

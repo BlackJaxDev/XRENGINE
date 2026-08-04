@@ -243,24 +243,22 @@ public unsafe partial class VulkanRenderer
                 descriptorsChanged = true;
             }
 
-            if (descriptorsChanged)
+            bool frameBufferDescriptorsChanged =
+                entry.FrameBufferDescriptorSignature !=
+                    frameBufferDescriptorSignature;
+            if (descriptorsChanged || frameBufferDescriptorsChanged)
             {
-                for (int sourceIndex = 0; sourceIndex < accumulatedSources.Length; sourceIndex++)
-                {
-                    RenderResourceRegistry source = accumulatedSources[sourceIndex].Registry;
-                    AddRegistryDescriptors(entry.MergedRegistry, source, overwrite: true);
-                }
-
-                // The current primary wins any same-name descriptor conflict while descriptors
-                // from conditional sources remain resident until the owner key changes.
-                if (primaryRegistry is not null)
-                    AddRegistryDescriptors(entry.MergedRegistry, primaryRegistry, overwrite: true);
-            }
-
-            if (entry.FrameBufferDescriptorSignature != frameBufferDescriptorSignature)
-            {
-                AddFrameOpFrameBufferDescriptors(entry.MergedRegistry, ops, overwrite: true);
-                entry.FrameBufferDescriptorSignature = frameBufferDescriptorSignature;
+                // Frame-op contexts retain the registry they were captured with.
+                // Mutating that object in place silently changes the physical plan
+                // beneath reusable command buffers without changing their captured
+                // registry identity. Rebuild instead so planner and command-chain
+                // generations observe one immutable descriptor publication.
+                entry.MergedRegistry = BuildMergedFrameOpRegistrySnapshot(
+                    primaryRegistry,
+                    accumulatedSources,
+                    ops);
+                entry.FrameBufferDescriptorSignature =
+                    frameBufferDescriptorSignature;
             }
 
             entry.LastUsedFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
@@ -270,6 +268,46 @@ public unsafe partial class VulkanRenderer
 
         mergedRegistry = null;
         return false;
+    }
+
+    private void AddFrameOpFrameBufferDescriptors(
+        RenderResourceRegistry destination,
+        FrameOp[] ops,
+        bool overwrite = false)
+    {
+        List<XRFrameBuffer> frameBuffers = CollectUniqueFrameOpFrameBuffers(ops);
+        AddFrameOpFrameBufferDescriptors(
+            destination,
+            frameBuffers,
+            overwrite);
+    }
+
+    private RenderResourceRegistry BuildMergedFrameOpRegistrySnapshot(
+        RenderResourceRegistry? primaryRegistry,
+        FrameOpRegistryCacheSource[] sources,
+        FrameOp[] ops)
+    {
+        RenderResourceRegistry merged = new();
+        if (primaryRegistry is not null)
+            AddRegistryDescriptors(merged, primaryRegistry, overwrite: true);
+
+        for (int sourceIndex = 0; sourceIndex < sources.Length; sourceIndex++)
+        {
+            RenderResourceRegistry source = sources[sourceIndex].Registry;
+            if (ReferenceEquals(source, primaryRegistry))
+                continue;
+
+            AddRegistryDescriptors(merged, source, overwrite: false);
+        }
+
+        // Framebuffer-derived descriptors fill gaps for resources that are not
+        // declared by a pipeline registry. They must never replace an owning
+        // registry's lifetime, size policy, or usage contract.
+        AddFrameOpFrameBufferDescriptors(
+            merged,
+            CollectUniqueFrameOpFrameBuffers(ops),
+            overwrite: false);
+        return merged;
     }
 
     private static int IndexOfFrameOpRegistryCacheSource(
@@ -441,12 +479,11 @@ public unsafe partial class VulkanRenderer
                 destination.RegisterBufferDescriptor(pair.Value.Descriptor);
     }
 
-    private void AddFrameOpFrameBufferDescriptors(
+    private static void AddFrameOpFrameBufferDescriptors(
         RenderResourceRegistry destination,
-        FrameOp[] ops,
+        List<XRFrameBuffer> frameBuffers,
         bool overwrite = false)
     {
-        List<XRFrameBuffer> frameBuffers = CollectUniqueFrameOpFrameBuffers(ops);
         for (int frameBufferIndex = 0; frameBufferIndex < frameBuffers.Count; frameBufferIndex++)
         {
             XRFrameBuffer frameBuffer = frameBuffers[frameBufferIndex];

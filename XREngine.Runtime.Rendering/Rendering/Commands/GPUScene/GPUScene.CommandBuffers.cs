@@ -185,8 +185,7 @@ namespace XREngine.Rendering.Commands
 
         private void CopyDirtyStableSoABuffersToRenderSnapshot()
         {
-            CopyDirtyRange(_updatingTransformBuffer, _allLoadedTransformBuffer, ref _transformDirtyRange);
-            CopyDirtyRange(_updatingPrevTransformBuffer, _allLoadedPrevTransformBuffer, ref _prevTransformDirtyRange);
+            PublishTransformSnapshots();
             CopyDirtyRange(_skinningPaletteBuffer, _skinningPaletteBuffer, ref _skinningPaletteDirtyRange);
             if (_materialStateDirtyRange.HasValue && _materialStateBuffer is not null)
             {
@@ -195,6 +194,72 @@ namespace XREngine.Rendering.Commands
                 _materialStateBuffer.CommitDirtyBytes(byteOffset, byteCount);
                 _materialStateDirtyRange.Clear();
             }
+        }
+
+        /// <summary>
+        /// Publishes a frame-coherent current/previous transform pair. Previous transforms
+        /// are copied from the last render snapshot before current transforms are replaced,
+        /// so multiple update-thread writes collapse to one rendered-frame motion delta.
+        /// The prior frame's dirty range is copied once more on the next quiet frame to
+        /// clear velocity for objects that stopped moving.
+        /// </summary>
+        private void PublishTransformSnapshots()
+        {
+            DirtyRange currentDirtyRange = _transformDirtyRange;
+            DirtyRange previousSnapshotRange = _previousPublishedTransformDirtyRange;
+            if (currentDirtyRange.HasValue)
+                previousSnapshotRange.Mark(
+                    currentDirtyRange.Min,
+                    currentDirtyRange.MaxExclusive - currentDirtyRange.Min);
+
+            if (previousSnapshotRange.HasValue)
+            {
+                CopyBufferRange(
+                    TransformBuffer,
+                    PrevTransformBuffer,
+                    previousSnapshotRange.Min,
+                    previousSnapshotRange.MaxExclusive - previousSnapshotRange.Min);
+            }
+
+            CopyDirtyRange(_updatingTransformBuffer, _allLoadedTransformBuffer, ref _transformDirtyRange);
+            InitializeNewTransformPreviousSnapshots();
+            _previousPublishedTransformDirtyRange = currentDirtyRange;
+        }
+
+        private void InitializeNewTransformPreviousSnapshots()
+        {
+            if (_newTransformIdsAwaitingPublication.Count == 0)
+                return;
+
+            // Allocation IDs are usually contiguous during scene publication. Sort and
+            // coalesce them so large scene loads do not schedule one upload per transform.
+            _newTransformIdsAwaitingPublication.Sort();
+            uint rangeStart = _newTransformIdsAwaitingPublication[0];
+            uint rangeEndExclusive = rangeStart + 1u;
+            for (int i = 1; i < _newTransformIdsAwaitingPublication.Count; ++i)
+            {
+                uint transformId = _newTransformIdsAwaitingPublication[i];
+                if (transformId <= rangeEndExclusive)
+                {
+                    rangeEndExclusive = Math.Max(rangeEndExclusive, transformId + 1u);
+                    continue;
+                }
+
+                CopyBufferRange(
+                    TransformBuffer,
+                    PrevTransformBuffer,
+                    rangeStart,
+                    rangeEndExclusive - rangeStart);
+                rangeStart = transformId;
+                rangeEndExclusive = transformId + 1u;
+            }
+
+            CopyBufferRange(
+                TransformBuffer,
+                PrevTransformBuffer,
+                rangeStart,
+                rangeEndExclusive - rangeStart);
+            _newTransformIdsAwaitingPublication.Clear();
         }
 
         /// <summary>
@@ -659,7 +724,6 @@ namespace XREngine.Rendering.Commands
         private XRDataBuffer? _allLoadedTransformBuffer;
         private XRDataBuffer? _updatingTransformBuffer;
         private XRDataBuffer? _allLoadedPrevTransformBuffer;
-        private XRDataBuffer? _updatingPrevTransformBuffer;
         private XRDataBuffer? _allLoadedBoundsBuffer;
         private XRDataBuffer? _updatingBoundsBuffer;
         private XRDataBuffer? _materialStateBuffer;
@@ -667,17 +731,17 @@ namespace XREngine.Rendering.Commands
 
         private DirtyRange _drawMetadataDirtyRange;
         private DirtyRange _transformDirtyRange;
-        private DirtyRange _prevTransformDirtyRange;
+        private DirtyRange _previousPublishedTransformDirtyRange;
         private DirtyRange _boundsDirtyRange;
         private DirtyRange _materialStateDirtyRange;
         private DirtyRange _skinningPaletteDirtyRange;
+        private readonly List<uint> _newTransformIdsAwaitingPublication = [];
 
         public XRDataBuffer DrawMetadataBuffer => _allLoadedDrawMetadataBuffer ??= MakeDrawMetadataBuffer("DrawMetadataBuffer");
         private XRDataBuffer UpdatingDrawMetadataBuffer => _updatingDrawMetadataBuffer ??= MakeDrawMetadataBuffer("UpdatingDrawMetadataBuffer");
         public XRDataBuffer TransformBuffer => _allLoadedTransformBuffer ??= MakeTransformBuffer("TransformBuffer");
         private XRDataBuffer UpdatingTransformBuffer => _updatingTransformBuffer ??= MakeTransformBuffer("UpdatingTransformBuffer");
         public XRDataBuffer PrevTransformBuffer => _allLoadedPrevTransformBuffer ??= MakeTransformBuffer("PrevTransformBuffer");
-        private XRDataBuffer UpdatingPrevTransformBuffer => _updatingPrevTransformBuffer ??= MakeTransformBuffer("UpdatingPrevTransformBuffer");
         public XRDataBuffer BoundsBuffer => _allLoadedBoundsBuffer ??= MakeBoundsBuffer("BoundsBuffer");
         private XRDataBuffer UpdatingBoundsBuffer => _updatingBoundsBuffer ??= MakeBoundsBuffer("UpdatingBoundsBuffer");
         public XRDataBuffer MaterialStateBuffer => _materialStateBuffer ??= MakeMaterialStateBuffer();
@@ -894,7 +958,6 @@ namespace XREngine.Rendering.Commands
         {
             EnsureBufferCapacity(UpdatingTransformBuffer, requiredCapacity);
             EnsureBufferCapacity(TransformBuffer, requiredCapacity);
-            EnsureBufferCapacity(UpdatingPrevTransformBuffer, requiredCapacity);
             EnsureBufferCapacity(PrevTransformBuffer, requiredCapacity);
         }
 

@@ -2281,6 +2281,15 @@ internal unsafe partial class VkMeshRenderer
 		if (draw.ProgramBindingSnapshot is { } bindingSnapshot &&
 			!bindingSnapshot.HasPublishedBindingLayoutSignatures)
 			return "prepared binding signatures are unpublished";
+		if (draw.ProgramBindingSnapshot?.HasMutableFrameSourceSamplerBindings == true)
+		{
+			// Owner-only refresh intentionally visits frequency-owned UBO work and
+			// skips the draw's descriptor publication. Frame sources such as the
+			// final-present SourceTexture can replace their physical image while the
+			// draw and its recorded secondary remain reusable, so they must retain a
+			// per-draw fallback that republishes the current descriptor for this slot.
+			return "mutable frame-source samplers require per-draw descriptor refresh";
+		}
 		if (_engineUniformBuffers.Count != 0)
 		{
 			foreach (string engineUniformName in

@@ -176,7 +176,7 @@ uniform int _LightingMode;          // 0: Ramp, 1: Multilayer, 2: Wrapped, 3: Sk
 
 // Light Data options
 uniform int _LightingColorMode;
-//@property(name="_LightingMapMode", display="Light Map Mode", mode=static, enum="0:Poiyomi|1:Normalized|2:Saturated|3:Shadow Only")
+//@property(name="_LightingMapMode", display="Light Map Mode", mode=static, enum="0:Half Lambert|1:Clamped Half Lambert|2:Lambert|3:Shadow Only")
 //@tooltip("Selects how NdotL is remapped into the light-map value used by stylized lighting modes.")
 uniform int _LightingMapMode;
 uniform int _LightingDirectionMode;
@@ -314,8 +314,8 @@ uniform vec4 _MatcapColor;
 uniform float _MatcapIntensity;
 //@property(name="_MatcapBorder", display="Matcap Border", mode=static, range=[0,1])
 uniform float _MatcapBorder;
-//@property(name="_MatcapUVMode", display="UV Mode", mode=static, enum="0:UTS|1:Top Pinch|2:Double Sided")
-uniform int _MatcapUVMode;          // 0: UTS, 1: Top Pinch, 2: Double Sided
+//@property(name="_MatcapUVMode", display="UV Mode", mode=static, enum="0:View Normal|1:Top Pinch|2:Double Sided")
+uniform int _MatcapUVMode;          // 0: View Normal, 1: Top Pinch, 2: Double Sided
 //@property(name="_MatcapReplace", display="Replace Lit Color", mode=static, range=[0,1], toggle=true)
 uniform float _MatcapReplace;
 //@property(name="_MatcapMultiply", display="Multiply Lit Color", mode=static, range=[0,1], toggle=true)
@@ -356,8 +356,8 @@ uniform float _RimLightColorBias;
 uniform float _RimEmission;
 //@property(name="_RimHideInShadow", display="Hide In Shadow", mode=static, range=[0,1], toggle=true, default="0.0")
 uniform float _RimHideInShadow;
-//@property(name="_RimStyle", display="Rim Style", mode=static, enum="0:Poiyomi|1:UTS2|2:LilToon", default="1")
-uniform int _RimStyle;              // 0: Poiyomi, 1: UTS2, 2: LilToon
+//@property(name="_RimStyle", display="Rim Style", mode=static, enum="0:Smooth|1:Exponential|2:Sharp", default="1")
+uniform int _RimStyle;              // 0: Smooth, 1: Exponential, 2: Sharp
 //@property(name="_RimBlendStrength", display="Blend Strength", mode=static, range=[0,1], default="1.0")
 uniform float _RimBlendStrength;
 //@property(name="_RimBlendMode", display="Blend Mode", mode=static, enum="0:Mix|1:Add|2:Multiply", default="1")
@@ -706,7 +706,7 @@ uniform float _ParallaxOffset;
 uniform float _ParallaxMapChannel;
 #endif
 
-#include "poiyomi_surface_uniforms.glsl"
-#include "poiyomi_effect_uniforms.glsl"
+#include "surface_extensions_uniforms.glsl"
+#include "extended_effect_uniforms.glsl"
 
 #endif // TOON_UNIFORMS_GLSL

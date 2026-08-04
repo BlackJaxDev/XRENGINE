@@ -78,7 +78,7 @@ vec3 blendDetail(vec3 base, vec3 detail, int blendMode, float intensity) {
             break;
             
         case DETAIL_BLEND_MIXED:
-            // Unity's detail map behavior (around 0.5 = no change)
+            // Neutral detail-map behavior (around 0.5 = no change).
             result = base * (detail * 2.0);
             break;
             

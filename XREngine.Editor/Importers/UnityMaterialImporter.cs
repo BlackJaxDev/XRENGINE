@@ -410,28 +410,28 @@ public static partial class UnityMaterialImporter
         ICollection<string> warnings)
     {
         bool preserveMasksAndThemes = material.IsUberFeatureEnabled(
-            "poiyomi-masks-themes",
+            "global-masks-themes",
             defaultEnabled: false);
 
         string[] excludedFeatures =
         [
             "outline",
-            "poiyomi-surface",
+            "surface-extensions",
             "detail-textures",
-            "poiyomi-masks-themes",
-            "poiyomi-lighting-parity",
-            "poiyomi-pbr-parity",
-            "poiyomi-matcap-rim-slots",
-            "poiyomi-decals",
-            "poiyomi-emission-slots",
-            "poiyomi-flipbook-array",
+            "global-masks-themes",
+            "advanced-stylized-lighting",
+            "advanced-pbr",
+            "layered-matcap-rim",
+            "layered-decals",
+            "layered-emission",
+            "texture-array-flipbook",
             "dissolve",
             "glitter",
-            "poiyomi-special-effects",
-            "poiyomi-vertex-effects",
-            "poiyomi-audiolink",
-            "poiyomi-environment-adapters",
-            "poiyomi-view-context",
+            "extended-effects",
+            "vertex-effects",
+            "audiolink",
+            "environment-lighting",
+            "view-context",
         ];
 
         foreach (string feature in excludedFeatures)
@@ -443,8 +443,8 @@ public static partial class UnityMaterialImporter
         // common surface helpers available without enabling other Pro modules.
         if (preserveMasksAndThemes)
         {
-            material.SetUberFeatureEnabled("poiyomi-surface", true);
-            material.SetUberFeatureEnabled("poiyomi-masks-themes", true);
+            material.SetUberFeatureEnabled("surface-extensions", true);
+            material.SetUberFeatureEnabled("global-masks-themes", true);
         }
 
         MaterialPassSet sourcePassSet = material.PassSet;
@@ -595,8 +595,8 @@ public static partial class UnityMaterialImporter
         SetInt(material, "_ColorThemeIndex", PoiyomiEnumMapper.Identity(document, "_ColorThemeIndex", 0, 0, 12, diagnostics));
         if (HasTheme(document))
         {
-            material.SetUberFeatureEnabled("poiyomi-surface", true);
-            material.SetUberFeatureEnabled("poiyomi-masks-themes", true);
+            material.SetUberFeatureEnabled("surface-extensions", true);
+            material.SetUberFeatureEnabled("global-masks-themes", true);
         }
         BindGlobalThemeParameters(material, document);
         MapFloat(document, material, "_BumpScale", "_BumpScale");

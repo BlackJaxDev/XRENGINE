@@ -1,8 +1,9 @@
 # Vulkan Command Recording Worker Architecture Progress
 
-Last Updated: 2026-08-01
+Last Updated: 2026-08-04
 Owner: Rendering / Vulkan Command Buffers
-Status: Implementation Complete; Pre-06 Validation Open
+Status: Closed as an implementation ledger on 2026-08-04; all deferred
+acceptance is owned by the linked workstream 03-05 validation gate
 
 Owning work item:
 
@@ -118,9 +119,10 @@ The live run is implementation smoke evidence only. Worker-overlap proof,
 serial-versus-parallel performance, allocation promotion, visual parity, and
 lifecycle stress are intentionally not claimed here.
 
-## Deferred Acceptance
+## Deferred acceptance in the canonical validation gate
 
-The shared closeout must still:
+This document owns no remaining execution work. The shared 03-05 closeout must
+still:
 
 - capture identical serial and persistent-worker baselines;
 - prove two or more concurrent worker intervals on large dirty cohorts;

@@ -488,14 +488,47 @@ internal unsafe partial class VkMeshRenderer
 	{
 		bool refreshed = false;
 		reason = "no frame-source sampler descriptors";
+		ulong exactSamplerResourceSignature =
+			snapshot?.ExactSamplerResourceSignature ?? 0UL;
+		if (snapshot is { HasPublishedBindingLayoutSignatures: true })
+		{
+			snapshot.ResolvePublishedResourceSignatures(
+				Renderer.ResolveMeshDescriptorViewFamilyIdentity(),
+				out exactSamplerResourceSignature,
+				out _);
+		}
 
-		if (allocation is not null &&
+		bool slotSignatureMatches = allocation is not null &&
 			snapshot is { HasPublishedBindingLayoutSignatures: true } &&
 			(uint)descriptorSlotIndex < (uint)allocation.SlotFrameSourceSamplerSignatures.Length &&
 			(uint)descriptorSlotIndex < (uint)allocation.SlotFrameSourceSamplerSignaturesValid.Length &&
 			allocation.SlotFrameSourceSamplerSignaturesValid[descriptorSlotIndex] &&
 			allocation.SlotFrameSourceSamplerSignatures[descriptorSlotIndex] ==
-				snapshot.ExactSamplerResourceSignature)
+				exactSamplerResourceSignature;
+		if (VulkanRenderer.DescriptorTraceEnabled &&
+			SnapshotContainsNamedSampler(snapshot, "SourceTexture"))
+		{
+			Debug.VulkanEvery(
+				$"Vulkan.Descriptor.SourceRefresh.{GetHashCode()}.{_program?.BindingId ?? 0}.{descriptorSlotIndex}",
+				TimeSpan.FromSeconds(1),
+				"[VulkanDescriptor] source-refresh program='{0}' slot={1} allocation={2} mutable={3} required={4} exact=0x{5:X16} recordedValid={6} recorded=0x{7:X16} slotMatch={8}.",
+				_program?.Data?.Name ?? "<null>",
+				descriptorSlotIndex,
+				allocation is not null,
+				snapshot?.HasMutableFrameSourceSamplerBindings == true,
+				snapshot?.IsSamplerReadyRequired("SourceTexture") == true,
+				exactSamplerResourceSignature,
+				allocation is not null &&
+				(uint)descriptorSlotIndex < (uint)allocation.SlotFrameSourceSamplerSignaturesValid.Length &&
+				allocation.SlotFrameSourceSamplerSignaturesValid[descriptorSlotIndex],
+				allocation is not null &&
+				(uint)descriptorSlotIndex < (uint)allocation.SlotFrameSourceSamplerSignatures.Length
+					? allocation.SlotFrameSourceSamplerSignatures[descriptorSlotIndex]
+					: 0UL,
+				slotSignatureMatches);
+		}
+
+		if (slotSignatureMatches)
 		{
 			reason = "frame-source sampler descriptors already match";
 			return true;
@@ -600,7 +633,7 @@ internal unsafe partial class VkMeshRenderer
 			(uint)descriptorSlotIndex < (uint)allocation.SlotFrameSourceSamplerSignaturesValid.Length)
 		{
 			allocation.SlotFrameSourceSamplerSignatures[descriptorSlotIndex] =
-				snapshot.ExactSamplerResourceSignature;
+				exactSamplerResourceSignature;
 			allocation.SlotFrameSourceSamplerSignaturesValid[descriptorSlotIndex] = true;
 		}
 
@@ -611,6 +644,11 @@ internal unsafe partial class VkMeshRenderer
 		}
 		return true;
 	}
+
+	private static bool SnapshotContainsNamedSampler(
+		ComputeDispatchSnapshot? snapshot,
+		string name)
+		=> snapshot?.SamplersByName.ContainsKey(name) == true;
 
 	private static bool FrameSourceDescriptorWriteMatches(
 		DescriptorAllocation? allocation,

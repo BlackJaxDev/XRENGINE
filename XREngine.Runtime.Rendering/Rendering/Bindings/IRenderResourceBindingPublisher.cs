@@ -14,6 +14,17 @@ namespace XREngine.Rendering;
 public interface IRenderResourceBindingPublisher : IRenderBindingPublisher
 {
     /// <summary>
+    /// Gets whether every descriptor resource published by this owner is
+    /// required for the draw to be valid.
+    /// </summary>
+    /// <remarks>
+    /// Backends must defer the draw while a required resource is unavailable;
+    /// substituting a placeholder would turn a transient readiness state into
+    /// reusable rendered content.
+    /// </remarks>
+    bool RequiresReadyDescriptorResources => false;
+
+    /// <summary>
     /// Gets a non-zero monotonic generation for all descriptor resources
     /// emitted by <see cref="PublishResources"/>.
     /// </summary>

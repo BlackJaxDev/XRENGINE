@@ -116,7 +116,7 @@ Key proof:
   transform, bounds, palette, active-work, and indirect-argument buffer
   contents; and
 - durable evidence and exact artifact paths:
-  [physics-chain motion investigation](../../investigations/rendering/physics-chain-skinned-mesh-motion-2026-07-22.md).
+  [physics-chain motion investigation](../../investigations/rendering/archive/physics-chain-skinned-mesh-motion-2026-07-22.md).
 
 Two startup readbacks in the final live run were explicitly failed when their
 whole frame recording was deferred during pipeline warmup; the count did not
@@ -144,7 +144,7 @@ authoritative evidence ledger.
 
 Related local documents:
 
-- [Physics-chain skinned-mesh motion investigation](../../investigations/rendering/physics-chain-skinned-mesh-motion-2026-07-22.md)
+- [Physics-chain skinned-mesh motion investigation](../../investigations/rendering/archive/physics-chain-skinned-mesh-motion-2026-07-22.md)
 - [GPU physics-chain zero-readback skinned-mesh plan](../../design/transforms/gpu-physics-chain-zero-readback-skinned-mesh-plan.md)
 - [Skinning GPU efficiency follow-ups](gpu/skinning-gpu-efficiency-followups-todo.md)
 - [Physics-chain correctness contract](../../testing/physics-chain-correctness-contract.md)

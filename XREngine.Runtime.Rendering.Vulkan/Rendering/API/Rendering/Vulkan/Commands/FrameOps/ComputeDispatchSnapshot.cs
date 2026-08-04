@@ -1,14 +1,27 @@
+using System.Runtime.CompilerServices;
+using System.Threading;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Vulkan;
 
 internal sealed class ComputeDispatchSnapshot
 {
+    private SpinLock _liveFrameSourceResourceSignatureLock;
+    private ulong _liveFrameSourceResourceSignatureFrameId;
+    private int _liveFrameSourceResourceSignaturePipelineIdentity;
+    private int _liveFrameSourceResourceSignatureScopeIdentity;
+    private ulong _liveFrameSourceExactSamplerResourceSignature;
+    private ulong _liveFrameSourcePersistentEngineResourceSignature;
+    private ulong _publishedImageResourceSignature;
+    private ulong _publishedBufferResourceSignature;
+
     public Dictionary<string, ProgramUniformValue> Uniforms { get; private set; }
     internal Dictionary<string, VulkanRuntimeUniformPublication>
         RuntimeUniformPublications { get; private set; } =
             new(StringComparer.Ordinal);
     internal HashSet<string> MutableLegacyUniformNames { get; private set; } =
+        new(StringComparer.Ordinal);
+    internal HashSet<string> RequiredSamplerNames { get; private set; } =
         new(StringComparer.Ordinal);
     public Dictionary<uint, XRTexture> Samplers { get; private set; }
     public Dictionary<uint, string> SamplerNamesByUnit { get; private set; }
@@ -69,12 +82,14 @@ internal sealed class ComputeDispatchSnapshot
     internal ulong SamplerNameBindingLayoutSignature { get; private set; }
     internal ulong ImageBindingLayoutSignature { get; private set; }
     internal ulong BufferBindingLayoutSignature { get; private set; }
+    internal ulong RequiredSamplerPolicySignature { get; private set; }
     internal ulong DescriptorSetLayoutSignature { get; private set; }
     internal ulong ExactSamplerResourceSignature { get; private set; }
     internal ulong RuntimeUniformNameSignature { get; private set; }
     internal ulong RuntimeUniformValueSignature { get; private set; }
     internal ulong PersistentEngineUniformSignature { get; private set; }
     internal ulong PersistentEngineResourceSignature { get; private set; }
+    internal bool HasMutableFrameSourceSamplerBindings { get; private set; }
     internal ulong MutableLegacyUniformNameSignature { get; private set; }
     internal ulong MutableLegacyUniformValueSignature { get; private set; }
     internal ulong RuntimeUniformPublicationLayoutSignature { get; private set; }
@@ -130,6 +145,7 @@ internal sealed class ComputeDispatchSnapshot
         SamplerNameBindingLayoutSignature = 0;
         ImageBindingLayoutSignature = 0;
         BufferBindingLayoutSignature = 0;
+        RequiredSamplerPolicySignature = 0;
         DescriptorSetLayoutSignature = 0;
         ExactSamplerResourceSignature = 0;
         RuntimeUniformNameSignature = 0;
@@ -154,6 +170,7 @@ internal sealed class ComputeDispatchSnapshot
         ref Dictionary<string, VulkanRuntimeUniformPublication>
             runtimeUniformPublications,
         ref HashSet<string> mutableLegacyUniformNames,
+        ref HashSet<string> requiredSamplerNames,
         ref Dictionary<uint, XRTexture> samplers,
         ref Dictionary<uint, string> samplerNamesByUnit,
         ref Dictionary<string, XRTexture> samplersByName,
@@ -165,6 +182,8 @@ internal sealed class ComputeDispatchSnapshot
             (runtimeUniformPublications, RuntimeUniformPublications);
         (MutableLegacyUniformNames, mutableLegacyUniformNames) =
             (mutableLegacyUniformNames, MutableLegacyUniformNames);
+        (RequiredSamplerNames, requiredSamplerNames) =
+            (requiredSamplerNames, RequiredSamplerNames);
         (Samplers, samplers) = (samplers, Samplers);
         (SamplerNamesByUnit, samplerNamesByUnit) = (samplerNamesByUnit, SamplerNamesByUnit);
         (SamplersByName, samplersByName) = (samplersByName, SamplersByName);
@@ -176,6 +195,7 @@ internal sealed class ComputeDispatchSnapshot
         SamplerNameBindingLayoutSignature = 0;
         ImageBindingLayoutSignature = 0;
         BufferBindingLayoutSignature = 0;
+        RequiredSamplerPolicySignature = 0;
         DescriptorSetLayoutSignature = 0;
         ExactSamplerResourceSignature = 0;
         RuntimeUniformNameSignature = 0;
@@ -235,6 +255,10 @@ internal sealed class ComputeDispatchSnapshot
         {
             artifact.RuntimeUniformPublications[name] = publication;
         }
+        artifact.RequiredSamplerNames.EnsureCapacity(
+            RequiredSamplerNames.Count);
+        foreach (string name in RequiredSamplerNames)
+            artifact.RequiredSamplerNames.Add(name);
 
         artifact.SetMaterialUniformBindings(MaterialUniformBindings);
         artifact.EnableMaterialBindingFastPath();
@@ -257,6 +281,10 @@ internal sealed class ComputeDispatchSnapshot
             string.Concat(name, "_VTX"));
     }
 
+    internal bool IsSamplerReadyRequired(string? name)
+        => !string.IsNullOrWhiteSpace(name) &&
+            RequiredSamplerNames.Contains(name);
+
     internal bool TryGetRuntimeUniformPublication(
         string name,
         out VulkanRuntimeUniformPublication publication)
@@ -266,6 +294,15 @@ internal sealed class ComputeDispatchSnapshot
     {
         AllowsMaterialBindingFastPath = false;
         _materialUniformBindings = null;
+        RequiredSamplerNames.Clear();
+        HasMutableFrameSourceSamplerBindings = false;
+        _publishedImageResourceSignature = 0UL;
+        _publishedBufferResourceSignature = 0UL;
+        _liveFrameSourceResourceSignatureFrameId = 0UL;
+        _liveFrameSourceResourceSignaturePipelineIdentity = 0;
+        _liveFrameSourceResourceSignatureScopeIdentity = 0;
+        _liveFrameSourceExactSamplerResourceSignature = 0UL;
+        _liveFrameSourcePersistentEngineResourceSignature = 0UL;
     }
 
     /// <summary>
@@ -280,6 +317,96 @@ internal sealed class ComputeDispatchSnapshot
     }
 
     /// <summary>
+    /// Resolves the current physical sampler identity once for each render frame
+    /// and stable view family. Immutable snapshots return their publication-time
+    /// signature without synchronization or descriptor dictionary walks.
+    /// </summary>
+    internal void ResolvePublishedResourceSignatures(
+        int resourceScopeIdentity,
+        out ulong exactSamplerResourceSignature,
+        out ulong persistentEngineResourceSignature)
+    {
+        if (!HasPublishedBindingLayoutSignatures ||
+            !HasMutableFrameSourceSamplerBindings)
+        {
+            exactSamplerResourceSignature = ExactSamplerResourceSignature;
+            persistentEngineResourceSignature =
+                PersistentEngineResourceSignature;
+            return;
+        }
+
+        ulong frameId =
+            RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
+        XRRenderPipelineInstance? pipeline =
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+        int pipelineIdentity = pipeline is null
+            ? 0
+            : RuntimeHelpers.GetHashCode(pipeline);
+        bool lockTaken = false;
+        try
+        {
+            _liveFrameSourceResourceSignatureLock.Enter(ref lockTaken);
+            if (frameId != 0UL &&
+                _liveFrameSourceResourceSignatureFrameId == frameId &&
+                _liveFrameSourceResourceSignaturePipelineIdentity ==
+                    pipelineIdentity &&
+                _liveFrameSourceResourceSignatureScopeIdentity ==
+                    resourceScopeIdentity)
+            {
+                exactSamplerResourceSignature =
+                    _liveFrameSourceExactSamplerResourceSignature;
+                persistentEngineResourceSignature =
+                    _liveFrameSourcePersistentEngineResourceSignature;
+                return;
+            }
+
+            ComputeLiveFrameSourceResourceSignatures(
+                out exactSamplerResourceSignature,
+                out persistentEngineResourceSignature);
+            if (frameId == 0UL)
+                return;
+
+            _liveFrameSourceExactSamplerResourceSignature =
+                exactSamplerResourceSignature;
+            _liveFrameSourcePersistentEngineResourceSignature =
+                persistentEngineResourceSignature;
+            _liveFrameSourceResourceSignaturePipelineIdentity =
+                pipelineIdentity;
+            _liveFrameSourceResourceSignatureScopeIdentity =
+                resourceScopeIdentity;
+            _liveFrameSourceResourceSignatureFrameId = frameId;
+        }
+        finally
+        {
+            if (lockTaken)
+                _liveFrameSourceResourceSignatureLock.Exit(
+                    useMemoryBarrier: true);
+        }
+    }
+
+    private void ComputeLiveFrameSourceResourceSignatures(
+        out ulong exactSamplerResourceSignature,
+        out ulong persistentEngineResourceSignature)
+    {
+        FrameOpSignatureHasher samplerResourceHash = new();
+        samplerResourceHash.Add(VulkanRenderer.HashSamplerUnitBindings(
+            Samplers,
+            SamplerNamesByUnit,
+            includeMutableFrameSourceDescriptors: true));
+        samplerResourceHash.Add(VulkanRenderer.HashSamplerNameBindings(
+            SamplersByName,
+            includeMutableFrameSourceDescriptors: true));
+        exactSamplerResourceSignature = samplerResourceHash.ToHash();
+
+        FrameOpSignatureHasher persistentEngineResources = new();
+        persistentEngineResources.Add(exactSamplerResourceSignature);
+        persistentEngineResources.Add(_publishedImageResourceSignature);
+        persistentEngineResources.Add(_publishedBufferResourceSignature);
+        persistentEngineResourceSignature =
+            persistentEngineResources.ToHash();
+    }
+
+    /// <summary>
     /// Publishes immutable descriptor-layout fingerprints after all captured
     /// buffer handles have been resolved. Uniform layout hashing is folded
     /// into the copy above so command-buffer signature validation does not
@@ -287,10 +414,14 @@ internal sealed class ComputeDispatchSnapshot
     /// </summary>
     internal void PublishBindingLayoutSignatures()
     {
+        XRRenderPipelineInstance? pipeline =
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         SamplerUnitBindingLayoutSignature = VulkanRenderer.HashSamplerUnitBindingLayout(Samplers, SamplerNamesByUnit);
         SamplerNameBindingLayoutSignature = VulkanRenderer.HashSamplerNameBindingLayout(SamplersByName);
         ImageBindingLayoutSignature = VulkanRenderer.HashImageBindingLayout(Images);
         BufferBindingLayoutSignature = VulkanRenderer.HashBufferBindingLayout(Buffers);
+        RequiredSamplerPolicySignature =
+            HashUniformNames(RequiredSamplerNames);
         FrameOpSignatureHasher samplerResourceHash = new();
         samplerResourceHash.Add(VulkanRenderer.HashSamplerUnitBindings(
             Samplers,
@@ -308,14 +439,18 @@ internal sealed class ComputeDispatchSnapshot
                 Uniforms,
                 EUniformRequirements.Lights |
                 EUniformRequirements.AmbientOcclusion);
+        _publishedImageResourceSignature =
+            VulkanRenderer.HashImageBindings(Images);
+        _publishedBufferResourceSignature =
+            VulkanRenderer.HashBufferBindings(Buffers);
         FrameOpSignatureHasher persistentEngineResources = new();
         persistentEngineResources.Add(ExactSamplerResourceSignature);
-        persistentEngineResources.Add(
-            VulkanRenderer.HashImageBindings(Images));
-        persistentEngineResources.Add(
-            VulkanRenderer.HashBufferBindings(Buffers));
+        persistentEngineResources.Add(_publishedImageResourceSignature);
+        persistentEngineResources.Add(_publishedBufferResourceSignature);
         PersistentEngineResourceSignature =
             persistentEngineResources.ToHash();
+        HasMutableFrameSourceSamplerBindings =
+            ContainsMutableFrameSourceSamplerBindings(pipeline);
         MutableLegacyUniformNameSignature =
             HashUniformNames(MutableLegacyUniformNames);
         MutableLegacyUniformValueSignature =
@@ -330,8 +465,32 @@ internal sealed class ComputeDispatchSnapshot
         hash.Add(SamplerNameBindingLayoutSignature);
         hash.Add(ImageBindingLayoutSignature);
         hash.Add(BufferBindingLayoutSignature);
+        hash.Add(RequiredSamplerPolicySignature);
         DescriptorSetLayoutSignature = hash.ToHash();
         HasPublishedBindingLayoutSignatures = true;
+    }
+
+    private bool ContainsMutableFrameSourceSamplerBindings(
+        XRRenderPipelineInstance? pipeline)
+    {
+        foreach ((uint unit, string name) in SamplerNamesByUnit)
+            if (Samplers.ContainsKey(unit) &&
+                VulkanRenderer.IsMutableFrameSourceSamplerName(
+                    name,
+                    pipeline))
+            {
+                return true;
+            }
+
+        foreach (string name in SamplersByName.Keys)
+            if (VulkanRenderer.IsMutableFrameSourceSamplerName(
+                    name,
+                    pipeline))
+            {
+                return true;
+            }
+
+        return false;
     }
 
     private void PublishRuntimeUniformPublicationSignatures()
