@@ -63,9 +63,9 @@ redistributed.
 | Render presets, blend/depth/stencil/fog/queue state | Exact where representable; otherwise reported native difference | Unity ForwardAdd is folded into Forward+ lighting rather than emitted as an additive light pass. |
 | Static and animated properties | Exact intent | Static values specialize shader source; animated values remain live uniforms and bindings. |
 | Locked and unlocked materials | Exact descriptor equivalence | XRENGINE prepares variants without destructive Unity shader locking. |
-| AudioLink | Native adapter | Requires `IPoiyomiAudioLinkProvider`; absent providers preserve state and emit one material diagnostic. |
-| LTCGI and Light Volumes | Native adapter | Requires `IPoiyomiEnvironmentProvider`; no provider means preserved inactive. |
-| Mirror and camera visibility | Native view-context adapter | Uses `PoiyomiViewContextScope` and stereo-safe engine view flags. |
+| AudioLink | Native adapter | Requires `IAudioLinkProvider`; absent providers preserve state and emit one material diagnostic. |
+| LTCGI and Light Volumes | Native adapter | Requires `IMaterialEnvironmentProvider`; no provider means preserved inactive. |
+| Mirror and camera visibility | Native view-context adapter | Uses `MaterialViewContextScope` and stereo-safe engine view flags. |
 | VRChat, Udon, and game-specific inputs | Preserved inactive unless an explicit service exists | No Unity/VRChat runtime code is executed inside the engine. |
 
 The exhaustive property, annotation, and workflow inventory is embedded as

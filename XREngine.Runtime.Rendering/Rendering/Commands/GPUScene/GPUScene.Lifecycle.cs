@@ -82,8 +82,6 @@ namespace XREngine.Rendering.Commands
             _updatingDrawMetadataBuffer = MakeDrawMetadataBuffer("UpdatingDrawMetadataBuffer");
             _updatingTransformBuffer?.Destroy();
             _updatingTransformBuffer = MakeTransformBuffer("UpdatingTransformBuffer");
-            _updatingPrevTransformBuffer?.Destroy();
-            _updatingPrevTransformBuffer = MakeTransformBuffer("UpdatingPrevTransformBuffer");
             _updatingBoundsBuffer?.Destroy();
             _updatingBoundsBuffer = MakeBoundsBuffer("UpdatingBoundsBuffer");
 
@@ -94,6 +92,9 @@ namespace XREngine.Rendering.Commands
             _materialStateBuffer = MakeMaterialStateBuffer();
             _skinningPaletteBuffer?.Destroy();
             _skinningPaletteBuffer = MakeSkinningPaletteBuffer();
+            _transformDirtyRange.Clear();
+            _previousPublishedTransformDirtyRange.Clear();
+            _newTransformIdsAwaitingPublication.Clear();
             _totalCommandCount = 0;
             _updatingCommandCount = 0;
             _skinnedCommandCount = 0;
@@ -168,8 +169,6 @@ namespace XREngine.Rendering.Commands
             _updatingDrawMetadataBuffer = null;
             _updatingTransformBuffer?.Destroy();
             _updatingTransformBuffer = null;
-            _updatingPrevTransformBuffer?.Destroy();
-            _updatingPrevTransformBuffer = null;
             _updatingBoundsBuffer?.Destroy();
             _updatingBoundsBuffer = null;
             _updatingTransparencyMetadataBuffer?.Destroy();
@@ -228,7 +227,8 @@ namespace XREngine.Rendering.Commands
             _stateClassIdAllocator.Clear();
             _drawMetadataDirtyRange.Clear();
             _transformDirtyRange.Clear();
-            _prevTransformDirtyRange.Clear();
+            _previousPublishedTransformDirtyRange.Clear();
+            _newTransformIdsAwaitingPublication.Clear();
             _boundsDirtyRange.Clear();
             _materialStateDirtyRange.Clear();
             _skinningPaletteDirtyRange.Clear();

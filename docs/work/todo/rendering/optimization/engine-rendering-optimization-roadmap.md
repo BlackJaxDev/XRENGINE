@@ -28,8 +28,8 @@ Canonical contracts:
 
 | # | Status | Remaining owner |
 | --- | --- | --- |
-| 01 | Complete | Measurement, attribution, manifests, and automated gates are recorded in the [framerate investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md). |
-| 02 | Complete | Primary state, invalidation, and stable reuse are recorded in the same [investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md). |
+| 01 | Complete | Measurement, attribution, manifests, and automated gates are recorded in the [framerate investigation](../../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md). |
+| 02 | Complete | Primary state, invalidation, and stable reuse are recorded in the same [investigation](../../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md). |
 | 03 | Implementation complete; pre-06 validation open | Run scaling, parity, overflow, mutation, allocation, crossover, and desktop/RVC acceptance in the [combined 03-05 gate](../../../testing/rendering/03-05-optimization-validation-todo.md#workstream-03-validation). |
 | 04 | Implementation closure and validation open | Finish producer-side binding/data preparation and legacy cutover, then pass publication, parity, lifetime, latency, and overlap acceptance in the [combined 03-05 gate](../../../testing/rendering/03-05-optimization-validation-todo.md#workstream-04-completion-and-validation). |
 | 05 | Implementation complete; pre-06 validation open | Prove real worker overlap, zero allocation, parity, fallback truth, and lifecycle safety in the [combined 03-05 gate](../../../testing/rendering/03-05-optimization-validation-todo.md#workstream-05-validation). |

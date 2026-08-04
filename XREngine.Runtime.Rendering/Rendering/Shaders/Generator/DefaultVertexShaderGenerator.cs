@@ -408,7 +408,7 @@ namespace XREngine.Rendering.Shaders.Generator
         {
             WriteUniformBufferBlocks();
             base.WriteUniforms();
-            WritePoiyomiVertexEffectUniforms();
+            WriteVertexEffectUniforms();
             if (UseDirectionalCascadeInstancedLayering)
             {
                 Line("uniform int CascadeLayerCount;");
@@ -422,9 +422,9 @@ namespace XREngine.Rendering.Shaders.Generator
             }
         }
 
-        private void WritePoiyomiVertexEffectUniforms()
+        private void WriteVertexEffectUniforms()
         {
-            Line("uniform float _PoiVertexEffectsEnabled;");
+            Line("uniform float _VertexEffectsEnabled;");
             Line("uniform vec3 _VertexManipulationLocalTranslation;");
             Line("uniform vec3 _VertexManipulationLocalRotation;");
             Line("uniform vec3 _VertexManipulationLocalRotationSpeed;");
@@ -437,10 +437,10 @@ namespace XREngine.Rendering.Shaders.Generator
             Line("uniform float _VertexBarrelWidth;");
             Line("uniform float _VertexBarrelAlpha;");
             Line("uniform float _VertexBarrelHeight;");
-            Line("uniform vec4 _PoiVertexGlitch;");
-            Line("uniform vec4 _PoiUzumore;");
-            Line("uniform vec4 _PoiNaturalEquation;");
-            Line("uniform vec4 _PoiDepthBulge;");
+            Line("uniform vec4 _VertexGlitch;");
+            Line("uniform vec4 _VertexWave;");
+            Line("uniform vec4 _VertexEquation;");
+            Line("uniform vec4 _VertexDepthBulge;");
             Line();
         }
 
@@ -632,7 +632,7 @@ namespace XREngine.Rendering.Shaders.Generator
                 }
             }
 
-            WritePoiyomiVertexEffects(hasNormals);
+            WriteVertexEffects(hasNormals);
 
             Line();
             if (hasNormals)
@@ -649,38 +649,43 @@ namespace XREngine.Rendering.Shaders.Generator
             ResolvePosition(FinalPositionName);
         }
 
-        private void WritePoiyomiVertexEffects(bool hasNormals)
+        /// <summary>
+        /// Applies vertex effects to the final position, and optionally the normal, of a vertex.
+        /// Effects include scaling, rotation, translation, height offset, wave motion, rounding, and barrel distortion.
+        /// </summary>
+        /// <param name="hasNormals">Indicates whether the vertex has normals.</param>
+        private void WriteVertexEffects(bool hasNormals)
         {
-            Line("if (_PoiVertexEffectsEnabled > 0.0001f)");
+            Line("if (_VertexEffectsEnabled > 0.0001f)");
             using (OpenBracketState())
             {
-                Line("vec3 xrePoiScale = max(abs(_VertexManipulationLocalScale), vec3(0.0001f));");
-                Line($"{FinalPositionName}.xyz *= xrePoiScale;");
-                Line("vec3 xrePoiAngles = radians(_VertexManipulationLocalRotation + _VertexManipulationLocalRotationSpeed * EngineTime);");
-                Line("vec3 xrePoiC = cos(xrePoiAngles);");
-                Line("vec3 xrePoiS = sin(xrePoiAngles);");
-                Line("mat3 xrePoiRotation = mat3(xrePoiC.y*xrePoiC.z, xrePoiC.z*xrePoiS.x*xrePoiS.y-xrePoiC.x*xrePoiS.z, xrePoiS.x*xrePoiS.z+xrePoiC.x*xrePoiC.z*xrePoiS.y, xrePoiC.y*xrePoiS.z, xrePoiC.x*xrePoiC.z+xrePoiS.x*xrePoiS.y*xrePoiS.z, xrePoiC.x*xrePoiS.y*xrePoiS.z-xrePoiC.z*xrePoiS.x, -xrePoiS.y, xrePoiC.y*xrePoiS.x, xrePoiC.x*xrePoiC.y);");
-                Line($"{FinalPositionName}.xyz = xrePoiRotation * {FinalPositionName}.xyz;");
+                Line("vec3 xreVertexScale = max(abs(_VertexManipulationLocalScale), vec3(0.0001f));");
+                Line($"{FinalPositionName}.xyz *= xreVertexScale;");
+                Line("vec3 xreVertexAngles = radians(_VertexManipulationLocalRotation + _VertexManipulationLocalRotationSpeed * EngineTime);");
+                Line("vec3 xreVertexC = cos(xreVertexAngles);");
+                Line("vec3 xreVertexS = sin(xreVertexAngles);");
+                Line("mat3 xreVertexRotation = mat3(xreVertexC.y*xreVertexC.z, xreVertexC.z*xreVertexS.x*xreVertexS.y-xreVertexC.x*xreVertexS.z, xreVertexS.x*xreVertexS.z+xreVertexC.x*xreVertexC.z*xreVertexS.y, xreVertexC.y*xreVertexS.z, xreVertexC.x*xreVertexC.z+xreVertexS.x*xreVertexS.y*xreVertexS.z, xreVertexC.x*xreVertexS.y*xreVertexS.z-xreVertexC.z*xreVertexS.x, -xreVertexS.y, xreVertexC.y*xreVertexS.x, xreVertexC.x*xreVertexC.y);");
+                Line($"{FinalPositionName}.xyz = xreVertexRotation * {FinalPositionName}.xyz;");
                 if (hasNormals)
-                    Line($"{FinalNormalName} = normalize(xrePoiRotation * {FinalNormalName});");
+                    Line($"{FinalNormalName} = normalize(xreVertexRotation * {FinalNormalName});");
                 Line($"{FinalPositionName}.xyz += _VertexManipulationLocalTranslation;");
                 if (hasNormals)
                     Line($"{FinalPositionName}.xyz += normalize({FinalNormalName}) * _VertexManipulationHeight;");
-                Line("float xrePoiUzumorePhase = dot(" + FinalPositionName + ".xyz, _PoiUzumore.xyz) + EngineTime * _PoiUzumore.w;");
+                Line("float xreVertexWavePhase = dot(" + FinalPositionName + ".xyz, _VertexWave.xyz) + EngineTime * _VertexWave.w;");
                 if (hasNormals)
-                    Line($"{FinalPositionName}.xyz += normalize({FinalNormalName}) * sin(xrePoiUzumorePhase) * _PoiUzumore.w;");
+                    Line($"{FinalPositionName}.xyz += normalize({FinalNormalName}) * sin(xreVertexWavePhase) * _VertexWave.w;");
                 Line($"{FinalPositionName}.xyz += (inverse({EEngineUniform.ModelMatrix}) * vec4(_VertexManipulationWorldTranslation, 0.0f)).xyz;");
                 Line("if (_VertexRoundingEnabled > 0.5f)");
                 using (OpenBracketState())
                 {
-                    Line("float xrePoiInterval = max(abs(_VertexRoundingDivision), 0.0001f);");
-                    Line($"{FinalPositionName}.xyz = floor({FinalPositionName}.xyz / xrePoiInterval + 0.5f) * xrePoiInterval;");
+                    Line("float xreVertexInterval = max(abs(_VertexRoundingDivision), 0.0001f);");
+                    Line($"{FinalPositionName}.xyz = floor({FinalPositionName}.xyz / xreVertexInterval + 0.5f) * xreVertexInterval;");
                 }
                 Line("if (_VertexBarrelMode > 0.5f)");
                 using (OpenBracketState())
                 {
-                    Line($"float xrePoiBarrel = smoothstep(0.0f, max(_VertexBarrelHeight, 0.0001f), abs({FinalPositionName}.y));");
-                    Line($"{FinalPositionName}.xz *= 1.0f + _VertexBarrelWidth * mix(_VertexBarrelAlpha, 1.0f, xrePoiBarrel);");
+                    Line($"float xreVertexBarrel = smoothstep(0.0f, max(_VertexBarrelHeight, 0.0001f), abs({FinalPositionName}.y));");
+                    Line($"{FinalPositionName}.xz *= 1.0f + _VertexBarrelWidth * mix(_VertexBarrelAlpha, 1.0f, xreVertexBarrel);");
                 }
             }
         }
@@ -688,44 +693,50 @@ namespace XREngine.Rendering.Shaders.Generator
         private void WriteComputeBaseAssignments(bool hasNormals, bool hasTangents)
         {
             if (Mesh.Interleaved)
-            {
-                uint strideFloats = Mesh.InterleavedStride / 4u;
-                Line($"uint interleavedStrideFloats = {strideFloats}u;");
-                Line("uint baseInterleavedIndex = interleavedStrideFloats * uint(gl_VertexID);");
+                WriteComputeBaseAssignmentsInterleaved(hasNormals, hasTangents);
+            else
+                WriteComputeBaseAssignmentsNonInterleaved(hasNormals, hasTangents);
+        }
 
-                uint posOffsetFloats = Mesh.PositionOffset / 4u;
-                Line($"{BasePositionName} = vec3({ComputeInterleavedBufferName}[baseInterleavedIndex + {posOffsetFloats}u], {ComputeInterleavedBufferName}[baseInterleavedIndex + {posOffsetFloats + 1u}u], {ComputeInterleavedBufferName}[baseInterleavedIndex + {posOffsetFloats + 2u}u]);");
-
-                if (hasNormals)
-                {
-                    if (Mesh.NormalOffset.HasValue)
-                    {
-                        uint nrmOffsetFloats = Mesh.NormalOffset.Value / 4u;
-                        Line($"{BaseNormalName} = vec3({ComputeInterleavedBufferName}[baseInterleavedIndex + {nrmOffsetFloats}u], {ComputeInterleavedBufferName}[baseInterleavedIndex + {nrmOffsetFloats + 1u}u], {ComputeInterleavedBufferName}[baseInterleavedIndex + {nrmOffsetFloats + 2u}u]);");
-                    }
-                    else
-                        Line($"{BaseNormalName} = vec3(0.0f);");
-                }
-
-                if (hasTangents)
-                {
-                    if (Mesh.TangentOffset.HasValue)
-                    {
-                        uint tanOffsetFloats = Mesh.TangentOffset.Value / 4u;
-                        Line($"{BaseTangentName} = vec3({ComputeInterleavedBufferName}[baseInterleavedIndex + {tanOffsetFloats}u], {ComputeInterleavedBufferName}[baseInterleavedIndex + {tanOffsetFloats + 1u}u], {ComputeInterleavedBufferName}[baseInterleavedIndex + {tanOffsetFloats + 2u}u]);");
-                    }
-                    else
-                        Line($"{BaseTangentName} = vec3(0.0f);");
-                }
-
-                return;
-            }
-
+        private void WriteComputeBaseAssignmentsNonInterleaved(bool hasNormals, bool hasTangents)
+        {
             Line($"{BasePositionName} = {ComputePositionBufferName}[gl_VertexID].xyz;");
             if (hasNormals)
                 Line($"{BaseNormalName} = {ComputeNormalBufferName}[gl_VertexID].xyz;");
             if (hasTangents)
                 Line($"{BaseTangentName} = {ComputeTangentBufferName}[gl_VertexID].xyz;");
+        }
+
+        private void WriteComputeBaseAssignmentsInterleaved(bool hasNormals, bool hasTangents)
+        {
+            uint strideFloats = Mesh.InterleavedStride / 4u;
+            Line($"uint interleavedStrideFloats = {strideFloats}u;");
+            Line("uint baseInterleavedIndex = interleavedStrideFloats * uint(gl_VertexID);");
+
+            uint posOffsetFloats = Mesh.PositionOffset / 4u;
+            Line($"{BasePositionName} = vec3({ComputeInterleavedBufferName}[baseInterleavedIndex + {posOffsetFloats}u], {ComputeInterleavedBufferName}[baseInterleavedIndex + {posOffsetFloats + 1u}u], {ComputeInterleavedBufferName}[baseInterleavedIndex + {posOffsetFloats + 2u}u]);");
+
+            if (hasNormals)
+            {
+                if (Mesh.NormalOffset.HasValue)
+                {
+                    uint nrmOffsetFloats = Mesh.NormalOffset.Value / 4u;
+                    Line($"{BaseNormalName} = vec3({ComputeInterleavedBufferName}[baseInterleavedIndex + {nrmOffsetFloats}u], {ComputeInterleavedBufferName}[baseInterleavedIndex + {nrmOffsetFloats + 1u}u], {ComputeInterleavedBufferName}[baseInterleavedIndex + {nrmOffsetFloats + 2u}u]);");
+                }
+                else
+                    Line($"{BaseNormalName} = vec3(0.0f);");
+            }
+
+            if (hasTangents)
+            {
+                if (Mesh.TangentOffset.HasValue)
+                {
+                    uint tanOffsetFloats = Mesh.TangentOffset.Value / 4u;
+                    Line($"{BaseTangentName} = vec3({ComputeInterleavedBufferName}[baseInterleavedIndex + {tanOffsetFloats}u], {ComputeInterleavedBufferName}[baseInterleavedIndex + {tanOffsetFloats + 1u}u], {ComputeInterleavedBufferName}[baseInterleavedIndex + {tanOffsetFloats + 2u}u]);");
+                }
+                else
+                    Line($"{BaseTangentName} = vec3(0.0f);");
+            }
         }
 
         private bool NeedsSkinningCalc()

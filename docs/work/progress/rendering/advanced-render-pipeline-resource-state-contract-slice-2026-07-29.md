@@ -68,7 +68,7 @@ atmosphere, fog, decal, and post-processing.
   `19.9898-20.5149 ms`.
 - The current original output is visibly washed out. The artifact and
   isolation attempts are recorded in
-  [the baseline investigation](../../investigations/rendering/default-reference-baseline-capture-2026-07-29.md).
+  [the baseline investigation](../../investigations/rendering/archive/default-reference-baseline-capture-2026-07-29.md).
 - Exact host data, captures, and CPU profiler dumps are under
   `Build/_AgentValidation/renderer-root-trace/baseline-default-20260729/`.
 

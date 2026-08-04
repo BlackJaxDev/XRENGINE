@@ -591,6 +591,12 @@ namespace XREngine.Rendering.Materials
     {
         public const uint MaterialTableSsboBinding = 11u;
         public const uint MaterialTextureHandleTableSsboBinding = 17u;
+        /// <summary>
+        /// Binding used by Vulkan's shared material texture descriptor table.
+        /// This array is the sole binding in descriptor set 2; pass resources,
+        /// including forward lighting, use Vulkan's per-pass descriptor set.
+        /// </summary>
+        public const uint VulkanMaterialTextureDescriptorTableBinding = 31u;
 
         public static MaterialBindingLayout OpaqueDeferred { get; } = new(
             "DeferredOpaque",
@@ -788,7 +794,7 @@ namespace XREngine.Rendering.Materials
 
         private static void AppendVulkanDescriptorIndexTextureTableDefinitions(StringBuilder sb)
         {
-            sb.AppendLine("layout(set = 2, binding = 31) uniform sampler2D XR_BindlessMaterialTextures[];");
+            sb.AppendLine($"layout(set = 2, binding = {MaterialBindingLayouts.VulkanMaterialTextureDescriptorTableBinding}) uniform sampler2D XR_BindlessMaterialTextures[];");
             sb.AppendLine("vec4 XR_TEXTURE2D(uint descriptorIndex, vec2 uv, vec4 fallback)");
             sb.AppendLine("{");
             sb.AppendLine("    if (descriptorIndex == 0u)");

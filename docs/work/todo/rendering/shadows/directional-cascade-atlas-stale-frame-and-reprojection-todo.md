@@ -1,16 +1,16 @@
 # Directional Cascade Atlas Stale Frame And Reprojection TODO
 
-Status: active child correctness/temporal tracker for
-[08 - Render Tail Latency](../optimization/08-render-tail-latency-shadows-streaming-jobs-todo.md);
-created 2026-07-02, updated 2026-07-28.
+Status: Archived historical checklist; superseded for active execution by the
+[Directional Light Vulkan Stability Investigation](../../../investigations/rendering/directional-light-inspector-shadow-2026-08-03.md).
+Created 2026-07-02; archived 2026-08-04.
 
-Ownership: this document owns stale-frame correctness, cascade slot provenance,
-atomic publication, shader reprojection, and physical-atlas reuse experiments.
-Workstream 08 owns directional-update performance budgets, comparative
-camera-motion evidence, and the final desktop 200+ Hz and Vulkan RVC
-zero-readback 120 Hz promotion gates.
+Ownership: this document retains the original design rationale and phase
+history. Its unchecked boxes are not an independent active backlog. Current
+directional-light correctness and stability work belongs to the investigation
+linked above; workstream 08 continues to own broader directional-update
+performance budgets and desktop/RVC promotion gates.
 
-Latest update 2026-07-02: framerate is stable. The latest user report ruled out
+Historical update 2026-07-02: framerate was stable. The user report ruled out
 the arbitrary camera/exposure frame-count hold and exposed a separate black
 main-view flicker regression. The hold was removed. The current fixes are:
 stable Vulkan physical resource planning for persistent targets, filtered
@@ -24,7 +24,7 @@ fresh render catches up. The latest audited MCP move showed smooth
 `decision=PreservedPrevious`, `fallback=StaleTile`, `sampleable=True`, and
 `DirectionalCascade.MixedGenerationPrevented` only during startup.
 See the follow-ups in
-`docs/work/investigations/rendering/shadow-atlas-framerate-regression-2026-07-02.md`.
+`docs/work/investigations/rendering/archive/shadow-atlas-framerate-regression-2026-07-02.md`.
 
 Goal: eliminate directional cascade shadow lag, one-frame post-camera-stop
 jitter, and movement-related frame drops in the shadow atlas path. Stale atlas
@@ -44,7 +44,7 @@ Primary code:
 
 Related notes:
 
-- `docs/work/investigations/rendering/shadow-atlas-framerate-regression-2026-07-02.md`
+- `docs/work/investigations/rendering/archive/shadow-atlas-framerate-regression-2026-07-02.md`
 - `docs/work/todo/rendering/shadows/shadow-atlas-allocation-and-threading-todo.md`
 - `docs/work/todo/rendering/optimization/vulkan-primary-command-recording-fast-path-todo.md`
 

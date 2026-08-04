@@ -188,7 +188,7 @@ process-lifetime Streamline broker (or a pre-teardown rejection that visibly
 requires an editor restart). Shader reload and same-generation Vulkan restart
 do not unload the collectible module and are the supported fast iteration paths.
 See the
-[2026-07-27 investigation](../../work/investigations/rendering/vulkan-uber-pipeline-stall-black-recovery-2026-07-27.md)
+[2026-07-27 investigation](../../work/investigations/rendering/archive/vulkan-uber-pipeline-stall-black-recovery-2026-07-27.md)
 for the crash evidence and validation captures.
 
 ## Reload limitations

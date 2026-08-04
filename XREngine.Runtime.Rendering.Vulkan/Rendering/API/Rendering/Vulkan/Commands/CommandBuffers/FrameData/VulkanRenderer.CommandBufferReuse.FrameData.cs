@@ -140,6 +140,8 @@ namespace XREngine.Rendering.Vulkan
                 }
                 if (variant.Dirty ||
                     dependencyMismatch.RequiresRecording ||
+                    variant.CommandChainScheduleSignature !=
+                        cachedSchedule.StructuralSignature ||
                     variant.CommandChainPrimaryGroupSignature != currentPrimaryGroupSignature ||
                     variant.CommandChainPrimarySkeletonSignature != currentPrimarySkeletonSignature ||
                     variant.CommandChainPrimaryGroupCount != currentPrimaryGroupCount ||

@@ -9,7 +9,7 @@ Blocks: [07 - Occlusion Systems Performance](07-occlusion-systems-performance-to
 
 Primary evidence:
 
-- [Vulkan Framerate Root-Cause Investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md)
+- [Vulkan Framerate Root-Cause Investigation](../../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md)
 - [Default Render Pipeline Notes](../../../../architecture/rendering/default-render-pipeline-notes.md)
 
 Child tracker:

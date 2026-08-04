@@ -1574,7 +1574,8 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
                     resourcePublication =
                         backendProgram.BeginTypedResourceBindingPublication(
                             frequency,
-                            resourceGeneration);
+                            resourceGeneration,
+                            resourcePublisher.RequiresReadyDescriptorResources);
                 resourcePublisher.PublishResources(program, program);
             }
             if (publisher.Frequency != frequency ||

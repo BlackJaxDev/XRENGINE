@@ -20,7 +20,7 @@ public sealed class PoiyomiVisualPerformanceTests
     public void SetUp()
     {
         _previousServices = RuntimeShaderServices.Current;
-        RuntimeShaderServices.Current = new PoiyomiRuntimeShaderServices();
+        RuntimeShaderServices.Current = new UberRuntimeShaderServices();
         _corpus = JsonDocument.Parse(File.ReadAllText(PoiyomiParityCorpusTests.FindRepositoryFile(
             "XREngine.UnitTests", "TestData", "Poiyomi", "ParityCorpus", "corpus-manifest.json")));
     }

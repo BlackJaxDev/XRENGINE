@@ -60,7 +60,7 @@ layout(location = 22) out float FragViewIndex;
 // Uniforms
 // ============================================
 #include "uniforms.glsl"
-#include "poiyomi_vertex_effects.glsl"
+#include "vertex_effects.glsl"
 
 // Per-eye matrices pushed by the engine each frame. We take inverse-view
 // (camera->world) for the view direction, and project with the per-eye
@@ -91,9 +91,9 @@ void main() {
 	vec3 tan  = Tangent.xyz;
 #endif
 	float tanSign = Tangent.w;
-	poiApplyVertexEffects(pos, norm, TexCoord0, Color0, u_CameraPosition, u_ModelMatrix, u_Time);
+	uberApplyVertexEffects(pos, norm, TexCoord0, Color0, u_CameraPosition, u_ModelMatrix, u_Time);
 
-	poiApplyOutlineLocal(pos, norm, Color0, u_ModelMatrix);
+	uberApplyOutlineLocal(pos, norm, Color0, u_ModelMatrix);
 
 	// Object -> world. World-space data is shared between both eyes so we
 	// only have to do this once per vertex-invocation even though each eye
@@ -110,7 +110,7 @@ void main() {
 	// the inverse view and we recover the forward matrix here when needed.
 	mat4 view = inverse(inverseView);
 	gl_Position = projection * view * worldPosition;
-	poiApplyOutlineClip(gl_Position, norm, projection * view * u_ModelMatrix);
+	uberApplyOutlineClip(gl_Position, norm, projection * view * u_ModelMatrix);
 
 	// u_NormalMatrix (adjoint of model) handles non-uniform scale for direction
 	// vectors; normalize() below absorbs the determinant scalar. Avoids a full

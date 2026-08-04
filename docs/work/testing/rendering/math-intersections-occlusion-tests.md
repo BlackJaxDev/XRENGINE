@@ -69,5 +69,5 @@ visibility and disocclusion behavior remain visually observable.
   and Hi-Z phase telemetry remain valid evidence for the qualification failure.
 
 Live screenshots, MCP responses, and the investigation record are linked from
-[Math Intersections Occlusion Qualification Investigation](../../investigations/rendering/math-intersections-occlusion-qualification-2026-08-03.md).
+[Math Intersections Occlusion Qualification Investigation](../../investigations/rendering/archive/math-intersections-occlusion-qualification-2026-08-03.md).
 

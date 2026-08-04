@@ -670,7 +670,7 @@ namespace XREngine.Components.Scene.Mesh
             if (RenderInfo is null)
                 return;
 
-            AABB expandedWorldBounds = ExpandPoiyomiWorldBounds(aggregateWorldBounds, GetSkinnedBasisMatrix());
+            AABB expandedWorldBounds = ExpandVertexEffectWorldBounds(aggregateWorldBounds, GetSkinnedBasisMatrix());
             if (RenderInfo.LocalCullingVolume is not AABB currentBounds || !AabbNearlyEqual(currentBounds, expandedWorldBounds))
                 RenderInfo.LocalCullingVolume = expandedWorldBounds;
 
@@ -698,7 +698,7 @@ namespace XREngine.Components.Scene.Mesh
                 return;
 
             AABB worldBounds = boundsAreWorldSpace ? bounds : TransformBounds(bounds, basis);
-            worldBounds = ExpandPoiyomiWorldBounds(worldBounds, basis);
+            worldBounds = ExpandVertexEffectWorldBounds(worldBounds, basis);
 
             // Force the offset to Identity FIRST so any octree move queued from the LocalCullingVolume
             // change already observes the identity offset (never world-local x stale-matrix).

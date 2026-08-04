@@ -35,6 +35,11 @@ internal unsafe sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDispos
             io.Fonts.Build();
         }
 
+        // The draw-list command header snapshots the atlas texture ID at frame
+        // start. Assign the backend's reserved font ID before the first frame so
+        // the render-resource upload cannot change it while AddText is running.
+        io.Fonts.SetTexID((IntPtr)1);
+
         // Enable docking early so DockContextInitialize runs on the first
         // NewFrame().  Without this, the INI's [Docking][Data] section would be
         // silently ignored because no docking handler is registered.

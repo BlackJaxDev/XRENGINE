@@ -8,6 +8,16 @@
 #pragma snippet "ShadowSampling"
 #endif
 
+// Vulkan's bindless material texture table owns descriptor set 2 as one shared
+// descriptor set. Forward-lighting resources are pass-owned, so keep them in
+// set 3 instead of merging them into the shared material layout. OpenGL only
+// consumes the binding qualifier and ignores the Vulkan descriptor tier.
+#ifdef XRENGINE_VULKAN
+#define XRENGINE_FORWARD_DESCRIPTOR_SET set = 3,
+#else
+#define XRENGINE_FORWARD_DESCRIPTOR_SET
+#endif
+
 const float PI = 3.14159265359;
 const float MAX_REFLECTION_LOD = 4.0;
 const float XRENGINE_MIN_FORWARD_AMBIENT_FALLBACK = 0.08;
@@ -58,16 +68,16 @@ uniform float ScreenHeight;
 #endif
 
 #ifndef XRENGINE_UBER_DISABLE_FORWARD_PBR_RESOURCES
-layout(binding = 6) uniform sampler2D BRDF;
-layout(binding = 7) uniform sampler2DArray IrradianceArray;
-layout(binding = 8) uniform sampler2DArray PrefilterArray;
+layout(XRENGINE_FORWARD_DESCRIPTOR_SET binding = 6) uniform sampler2D BRDF;
+layout(XRENGINE_FORWARD_DESCRIPTOR_SET binding = 7) uniform sampler2DArray IrradianceArray;
+layout(XRENGINE_FORWARD_DESCRIPTOR_SET binding = 8) uniform sampler2DArray PrefilterArray;
 
-layout(std430, binding = 0) readonly buffer LightProbePositions
+layout(std430, XRENGINE_FORWARD_DESCRIPTOR_SET binding = 0) readonly buffer LightProbePositions
 {
     vec4 ProbePositions[];
 };
 
-layout(std430, binding = 1) readonly buffer LightProbeTetrahedra
+layout(std430, XRENGINE_FORWARD_DESCRIPTOR_SET binding = 1) readonly buffer LightProbeTetrahedra
 {
     vec4 TetraIndices[];
 };
@@ -82,7 +92,7 @@ struct ProbeParam
     vec4 ProxyRotation;
 };
 
-layout(std430, binding = 2) readonly buffer LightProbeParameters
+layout(std430, XRENGINE_FORWARD_DESCRIPTOR_SET binding = 2) readonly buffer LightProbeParameters
 {
     ProbeParam ProbeParams[];
 };
@@ -93,12 +103,12 @@ struct ProbeGridCell
     ivec4 FallbackIndices;
 };
 
-layout(std430, binding = 3) readonly buffer LightProbeGridCells
+layout(std430, XRENGINE_FORWARD_DESCRIPTOR_SET binding = 3) readonly buffer LightProbeGridCells
 {
     ProbeGridCell GridCells[];
 };
 
-layout(std430, binding = 4) readonly buffer LightProbeGridIndices
+layout(std430, XRENGINE_FORWARD_DESCRIPTOR_SET binding = 4) readonly buffer LightProbeGridIndices
 {
     int CellTetraIndices[];
 };
@@ -114,8 +124,8 @@ uniform bool UseProbeGrid;
 // Directional shadow maps use fixed high texture units to avoid collision with material textures.
 #ifndef XRENGINE_UBER_DISABLE_FORWARD_SHADOWS
 const int XRENGINE_MAX_DIRECTIONAL_SHADOW_RECORDS = XRENGINE_MAX_FORWARD_DIRECTIONAL_LIGHTS * XRENGINE_MAX_CASCADES;
-layout(binding = 15) uniform sampler2D DirectionalShadowMaps[XRENGINE_MAX_FORWARD_DIRECTIONAL_LIGHTS];
-layout(binding = 17) uniform sampler2DArray DirectionalShadowMapArrays[XRENGINE_MAX_FORWARD_DIRECTIONAL_LIGHTS];
+layout(XRENGINE_FORWARD_DESCRIPTOR_SET binding = 15) uniform sampler2D DirectionalShadowMaps[XRENGINE_MAX_FORWARD_DIRECTIONAL_LIGHTS];
+layout(XRENGINE_FORWARD_DESCRIPTOR_SET binding = 17) uniform sampler2DArray DirectionalShadowMapArrays[XRENGINE_MAX_FORWARD_DIRECTIONAL_LIGHTS];
 uniform int DirectionalShadowMapEnabled[XRENGINE_MAX_FORWARD_DIRECTIONAL_LIGHTS];
 uniform int DirectionalUseCascadedShadows[XRENGINE_MAX_FORWARD_DIRECTIONAL_LIGHTS];
 uniform int DirectionalShadowMapEncoding[XRENGINE_MAX_FORWARD_DIRECTIONAL_LIGHTS];
@@ -167,17 +177,17 @@ uniform int DirLightCount;
 uniform int SpotLightCount;
 uniform int PointLightCount;
 
-layout(std430, binding = 22) readonly buffer ForwardDirectionalLightsBuffer
+layout(std430, XRENGINE_FORWARD_DESCRIPTOR_SET binding = 22) readonly buffer ForwardDirectionalLightsBuffer
 {
     DirLight DirectionalLights[];
 };
 
-layout(std430, binding = 35) readonly buffer ForwardPointLightsBuffer
+layout(std430, XRENGINE_FORWARD_DESCRIPTOR_SET binding = 35) readonly buffer ForwardPointLightsBuffer
 {
     PointLight PointLights[];
 };
 
-layout(std430, binding = 36) readonly buffer ForwardSpotLightsBuffer
+layout(std430, XRENGINE_FORWARD_DESCRIPTOR_SET binding = 36) readonly buffer ForwardSpotLightsBuffer
 {
     SpotLight SpotLights[];
 };
@@ -187,22 +197,22 @@ const int XRENGINE_MAX_FORWARD_SPOT_SHADOW_SLOTS = 4;
 const int XRENGINE_POINT_SHADOW_FACE_COUNT = 6;
 
 #ifndef XRENGINE_UBER_DISABLE_FORWARD_SHADOWS
-layout(binding = 19) uniform samplerCube PointLightShadowMaps[XRENGINE_MAX_FORWARD_POINT_SHADOW_SLOTS];
-layout(binding = 23) uniform sampler2D SpotLightShadowMaps[XRENGINE_MAX_FORWARD_SPOT_SHADOW_SLOTS];
+layout(XRENGINE_FORWARD_DESCRIPTOR_SET binding = 19) uniform samplerCube PointLightShadowMaps[XRENGINE_MAX_FORWARD_POINT_SHADOW_SLOTS];
+layout(XRENGINE_FORWARD_DESCRIPTOR_SET binding = 23) uniform sampler2D SpotLightShadowMaps[XRENGINE_MAX_FORWARD_SPOT_SHADOW_SLOTS];
 #ifndef XRENGINE_UBER_DISABLE_FORWARD_CONTACT_SHADOWS
-layout(binding = 28) uniform sampler2D ForwardContactDepthView;
-layout(binding = 29) uniform sampler2D ForwardContactNormalView;
-layout(binding = 30) uniform sampler2DArray ForwardContactDepthViewArray;
-layout(binding = 31) uniform sampler2DArray ForwardContactNormalViewArray;
+layout(XRENGINE_FORWARD_DESCRIPTOR_SET binding = 28) uniform sampler2D ForwardContactDepthView;
+layout(XRENGINE_FORWARD_DESCRIPTOR_SET binding = 29) uniform sampler2D ForwardContactNormalView;
+layout(XRENGINE_FORWARD_DESCRIPTOR_SET binding = 30) uniform sampler2DArray ForwardContactDepthViewArray;
+layout(XRENGINE_FORWARD_DESCRIPTOR_SET binding = 31) uniform sampler2DArray ForwardContactNormalViewArray;
 uniform bool ForwardContactShadowsEnabled = false;
 uniform bool ForwardContactShadowsArrayEnabled = false;
 #else
 const bool ForwardContactShadowsEnabled = false;
 const bool ForwardContactShadowsArrayEnabled = false;
 #endif
-layout(binding = 9) uniform sampler2DArray DirectionalShadowAtlas;
-layout(binding = 32) uniform sampler2DArray SpotLightShadowAtlas;
-layout(binding = 34) uniform sampler2DArray PointLightShadowAtlas;
+layout(XRENGINE_FORWARD_DESCRIPTOR_SET binding = 9) uniform sampler2DArray DirectionalShadowAtlas;
+layout(XRENGINE_FORWARD_DESCRIPTOR_SET binding = 32) uniform sampler2DArray SpotLightShadowAtlas;
+layout(XRENGINE_FORWARD_DESCRIPTOR_SET binding = 34) uniform sampler2DArray PointLightShadowAtlas;
 
 struct ForwardPointShadowData
 {
@@ -238,12 +248,12 @@ struct ForwardSpotShadowData
     vec4 Params6;  // depth bias texels, slope bias texels, normal bias texels, reserved
 };
 
-layout(std430, binding = 37) readonly buffer ForwardPointShadowMetadataBuffer
+layout(std430, XRENGINE_FORWARD_DESCRIPTOR_SET binding = 37) readonly buffer ForwardPointShadowMetadataBuffer
 {
     ForwardPointShadowData PointLightShadows[];
 };
 
-layout(std430, binding = 38) readonly buffer ForwardSpotShadowMetadataBuffer
+layout(std430, XRENGINE_FORWARD_DESCRIPTOR_SET binding = 38) readonly buffer ForwardSpotShadowMetadataBuffer
 {
     ForwardSpotShadowData SpotLightShadows[];
 };
@@ -274,12 +284,12 @@ struct ForwardPlusLocalLight
     ivec4 Indices;       // x=source light index, y=shadow record index, z=casts shadows
 };
 
-layout(std430, binding = 20) readonly buffer ForwardPlusLocalLightsBuffer
+layout(std430, XRENGINE_FORWARD_DESCRIPTOR_SET binding = 20) readonly buffer ForwardPlusLocalLightsBuffer
 {
     ForwardPlusLocalLight ForwardPlusLocalLights[];
 };
 
-layout(std430, binding = 21) readonly buffer ForwardPlusVisibleIndicesBuffer
+layout(std430, XRENGINE_FORWARD_DESCRIPTOR_SET binding = 21) readonly buffer ForwardPlusVisibleIndicesBuffer
 {
     int ForwardPlusVisibleIndices[];
 };
@@ -3336,9 +3346,15 @@ vec3 XRENGINE_CalcForwardPlusSpotLight(ForwardPlusLocalLight light, vec3 normal,
     return XRENGINE_CalcForwardPlusSpotLightWithViewDir(light, normal, fragPos, albedo, rms, F0, viewDir);
 }
 
-// Main lighting calculation function
-// Call this from your fragment shader main() with your surface parameters
-vec3 XRENGINE_CalculateForwardLighting(vec3 normal, vec3 fragPos, vec3 albedo, float specularIntensity, float ambientOcclusion)
+// Material-table lighting entry point. Unlike the legacy wrapper below, every
+// surface parameter is supplied by the caller instead of coming from uniforms.
+vec3 XRENGINE_CalculateForwardLightingMaterial(
+    vec3 normal,
+    vec3 fragPos,
+    vec3 albedo,
+    vec3 roughnessMetallicSpecular,
+    float emission,
+    float ambientOcclusion)
 {
     XRENGINE_BeginForwardLightingFragment(fragPos);
 #ifndef XRENGINE_UBER_DISABLE_FORWARD_SHADOWS
@@ -3347,7 +3363,10 @@ vec3 XRENGINE_CalculateForwardLighting(vec3 normal, vec3 fragPos, vec3 albedo, f
 #endif
     normal = normalize(normal);
     vec3 viewDir = normalize(XRENGINE_GetForwardResolvedCameraPosition() - fragPos);
-    vec3 rms = vec3(clamp(Roughness, 0.0, 1.0), clamp(Metallic, 0.0, 1.0), max(specularIntensity, 0.0));
+    vec3 rms = vec3(
+        clamp(roughnessMetallicSpecular.x, 0.0, 1.0),
+        clamp(roughnessMetallicSpecular.y, 0.0, 1.0),
+        max(roughnessMetallicSpecular.z, 0.0));
     vec3 F0 = mix(vec3(0.04), albedo, rms.y);
     vec3 totalLight = vec3(0.0);
 
@@ -3394,7 +3413,21 @@ vec3 XRENGINE_CalculateForwardLighting(vec3 normal, vec3 fragPos, vec3 albedo, f
         return XRENGINE_ForwardShadowDebugColor;
 #endif
 
-    return totalLight + XRENGINE_CalculateAmbientPbr(normal, fragPos, albedo, viewDir, rms, ambientOcclusion) + albedo * Emission;
+    return totalLight + XRENGINE_CalculateAmbientPbr(normal, fragPos, albedo, viewDir, rms, ambientOcclusion) + albedo * emission;
+}
+
+// Main lighting calculation function used by authored forward materials.
+// Call this from your fragment shader main() with your surface parameters.
+vec3 XRENGINE_CalculateForwardLighting(vec3 normal, vec3 fragPos, vec3 albedo, float specularIntensity, float ambientOcclusion)
+{
+    vec3 rms = vec3(Roughness, Metallic, specularIntensity);
+    return XRENGINE_CalculateForwardLightingMaterial(
+        normal,
+        fragPos,
+        albedo,
+        rms,
+        Emission,
+        ambientOcclusion);
 }
 
 #ifndef XRENGINE_UBER_DISABLE_FORWARD_SHADOWS

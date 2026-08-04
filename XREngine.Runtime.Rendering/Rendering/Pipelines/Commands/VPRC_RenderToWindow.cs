@@ -23,6 +23,9 @@ public sealed class VPRC_RenderToWindow : ViewportRenderCommand
     {
         private readonly object _generationSync = new();
         private XRTexture? _lastSourceTexture;
+        private AbstractRenderer? _lastRenderer;
+        private ulong _lastSourceDescriptorResourceEpoch;
+        private bool _lastSourceReady;
         private bool _lastFlipSourceYOnVulkan;
         private int _lastPipelineResourceGeneration = int.MinValue;
         private long _generation = 1;
@@ -30,11 +33,18 @@ public sealed class VPRC_RenderToWindow : ViewportRenderCommand
         public ERenderBindingFrequency Frequency
             => ERenderBindingFrequency.Pass;
 
+        public bool RequiresReadyDescriptorResources => true;
+
         public ulong Generation
         {
             get
             {
                 XRTexture? sourceTexture = owner.ResolvePresentSourceTexture();
+                AbstractRenderer? renderer = AbstractRenderer.Current;
+                RenderTextureSamplingState samplingState =
+                    owner.ResolvePresentSourceSamplingState(
+                        sourceTexture,
+                        renderer);
                 bool flipSourceYOnVulkan = owner.FlipSourceYOnVulkan;
                 int pipelineResourceGeneration =
                     RuntimeEngine.Rendering.State.CurrentRenderingPipeline
@@ -43,6 +53,10 @@ public sealed class VPRC_RenderToWindow : ViewportRenderCommand
                 lock (_generationSync)
                 {
                     if (ReferenceEquals(sourceTexture, _lastSourceTexture) &&
+                        ReferenceEquals(renderer, _lastRenderer) &&
+                        samplingState.DescriptorResourceEpoch ==
+                            _lastSourceDescriptorResourceEpoch &&
+                        samplingState.IsReady == _lastSourceReady &&
                         flipSourceYOnVulkan == _lastFlipSourceYOnVulkan &&
                         pipelineResourceGeneration == _lastPipelineResourceGeneration)
                     {
@@ -50,6 +64,10 @@ public sealed class VPRC_RenderToWindow : ViewportRenderCommand
                     }
 
                     _lastSourceTexture = sourceTexture;
+                    _lastRenderer = renderer;
+                    _lastSourceDescriptorResourceEpoch =
+                        samplingState.DescriptorResourceEpoch;
+                    _lastSourceReady = samplingState.IsReady;
                     _lastFlipSourceYOnVulkan = flipSourceYOnVulkan;
                     _lastPipelineResourceGeneration = pipelineResourceGeneration;
                     if (Interlocked.Increment(ref _generation) == 0)
@@ -149,6 +167,8 @@ void main()
     private XRMaterial? _stereoMaterial;
     private XRQuadFrameBuffer? _stereoQuad;
     private XRTexture? _resolvedSourceTexture;
+    private AbstractRenderer? _resolvedSourceRenderer;
+    private RenderTextureSamplingState _resolvedSourceSamplingState;
     private string? _cachedPassSourceTextureName;
     private string? _cachedPassSourceFboName;
     private string? _cachedRenderGraphPassName;
@@ -252,6 +272,23 @@ void main()
             return;
         }
 
+        RenderTextureSamplingState sourceSamplingState =
+            renderer.GetTextureShaderSamplingState(sourceTexture);
+        if (!sourceSamplingState.IsReady)
+        {
+            Debug.RenderingWarningEvery(
+                $"RenderToWindow.SourceNotReady.{instance.GetHashCode()}.{sourceTexture.GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] RenderToWindow deferred: required source texture is not ready for shader sampling. Source='{0}' SourceTex='{1}' SourceFBO='{2}' DescriptorEpoch={3} Pipeline={4} Generation={5}",
+                sourceTexture.Name ?? sourceTexture.GetDescribingName(),
+                SourceTextureName ?? "<null>",
+                SourceFBOName ?? "<null>",
+                sourceSamplingState.DescriptorResourceEpoch,
+                instance.Pipeline?.DebugName ?? instance.Pipeline?.GetType().Name ?? "<null>",
+                instance.ResourceGeneration);
+            return;
+        }
+
         XRViewport? windowViewport = instance.RenderState.WindowViewport;
         bool isActiveWindowViewport = windowViewport?.Window?.Viewports.Contains(windowViewport) == true;
         bool isExternalSwapchainTarget = renderer.IsRenderingExternalSwapchainTarget;
@@ -352,11 +389,15 @@ void main()
         try
         {
             _resolvedSourceTexture = sourceTexture;
+            _resolvedSourceRenderer = renderer;
+            _resolvedSourceSamplingState = sourceSamplingState;
             quad.Render(null);
         }
         finally
         {
             _resolvedSourceTexture = null;
+            _resolvedSourceRenderer = null;
+            _resolvedSourceSamplingState = default;
         }
     }
 
@@ -559,5 +600,21 @@ void main()
             out _)
             ? sourceTexture
             : null;
+    }
+
+    private RenderTextureSamplingState ResolvePresentSourceSamplingState(
+        XRTexture? sourceTexture,
+        AbstractRenderer? renderer)
+    {
+        if (sourceTexture is null || renderer is null)
+            return default;
+
+        if (ReferenceEquals(sourceTexture, _resolvedSourceTexture) &&
+            ReferenceEquals(renderer, _resolvedSourceRenderer))
+        {
+            return _resolvedSourceSamplingState;
+        }
+
+        return renderer.GetTextureShaderSamplingState(sourceTexture);
     }
 }

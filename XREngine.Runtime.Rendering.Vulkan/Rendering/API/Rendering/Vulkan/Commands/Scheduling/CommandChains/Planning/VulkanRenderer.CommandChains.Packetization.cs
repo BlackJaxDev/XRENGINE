@@ -685,8 +685,14 @@ public unsafe partial class VulkanRenderer
 
     private static DescriptorBindingSnapshot CreateMeshDrawDescriptorSnapshot(MeshDrawOp draw)
     {
-        if (draw.TryGetDescriptorBindingSnapshot(out DescriptorBindingSnapshot cached))
+        bool hasMutableFrameSourceBindings =
+            draw.Draw.ProgramBindingSnapshot is
+                { HasMutableFrameSourceSamplerBindings: true };
+        if (!hasMutableFrameSourceBindings &&
+            draw.TryGetDescriptorBindingSnapshot(out DescriptorBindingSnapshot cached))
+        {
             return cached;
+        }
 
         ulong descriptorGeneration = 0UL;
         ulong descriptorSetSignature = 0UL;
@@ -725,7 +731,8 @@ public unsafe partial class VulkanRenderer
             descriptorGeneration,
             setCount,
             descriptorSetSignature);
-        draw.SetDescriptorBindingSnapshot(descriptorSnapshot);
+        if (!hasMutableFrameSourceBindings)
+            draw.SetDescriptorBindingSnapshot(descriptorSnapshot);
         return descriptorSnapshot;
     }
 

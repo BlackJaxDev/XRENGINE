@@ -161,7 +161,10 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
         DestroySampler();
         if (_image.Handle != 0)
+        {
             CreateSamplerInternal();
+            PublishDescriptorResourceReplacement();
+        }
     }
 
     private void RecreateImageForPropertyChange()

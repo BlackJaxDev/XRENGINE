@@ -1,14 +1,7 @@
 namespace XREngine.Runtime.Bootstrap;
 
-public static class BootstrapNetworkingWorldProfiles
+public static partial class BootstrapNetworkingWorldProfiles
 {
-    private enum ENetworkingPoseRole
-    {
-        Server,
-        SendingClient,
-        ReceivingClient,
-    }
-
     public static void ApplyNetworkingPoseProfile()
     {
         ENetworkingPoseRole role = ResolveNetworkingPoseRole();

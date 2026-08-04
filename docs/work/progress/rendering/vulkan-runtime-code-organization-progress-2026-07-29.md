@@ -96,7 +96,7 @@ Detailed inventory is in
 | SteamVR/OpenXR smoke | Executed but externally blocked before system selection by `ErrorFormFactorUnavailable` | [`openxr-steamvr-smoke-summary.json`](../../../../Build/_AgentValidation/20260729-vulkan-runtime-organization/reports/openxr-steamvr-smoke-summary.json) |
 | Canonical Vulkan `Quick` performance lane | Superseded by the strict authored-material acceptance lane below | [`summary.json`](../../../../Build/_AgentValidation/20260729-vulkan-runtime-organization/perf-final-fixed/reports/summary.json) |
 | Focused GPU material and bloom contracts | Passed 7/7 | Focused `GpuMaterialReadinessContractTests` Release run |
-| Flying-camera Vulkan material/bloom capture | Passed: bloom and final targets finite, varied, and non-magenta | [`investigation`](../../investigations/rendering/vulkan-material-readiness-and-magenta-bloom-2026-07-30.md) |
+| Flying-camera Vulkan material/bloom capture | Passed: bloom and final targets finite, varied, and non-magenta | [`investigation`](../../investigations/rendering/archive/vulkan-material-readiness-and-magenta-bloom-2026-07-30.md) |
 | Strict authored-material Vulkan lane | Passed: readiness, fallback, reuse, allocation, compact-pass, submission, and VUID gates | [`summary.json`](../../../../Build/_AgentValidation/20260729-vulkan-runtime-organization/perf-material-final-short/reports/summary.json) |
 
 No new compiler warnings were introduced; the build warnings above are the
@@ -137,7 +137,7 @@ callback, so Vulkan published a fallback descriptor. Bloom now resolves and
 owns a stable source texture slot when its declared framebuffer material is
 created. The intermediate draw-time texture-list update was rejected because it
 fixed color while invalidating primary reuse. Full findings are in
-[Vulkan Material Readiness And Magenta Bloom](../../investigations/rendering/vulkan-material-readiness-and-magenta-bloom-2026-07-30.md).
+[Vulkan Material Readiness And Magenta Bloom](../../investigations/rendering/archive/vulkan-material-readiness-and-magenta-bloom-2026-07-30.md).
 
 The final strict material capture produced 628 steady-state samples and reports:
 

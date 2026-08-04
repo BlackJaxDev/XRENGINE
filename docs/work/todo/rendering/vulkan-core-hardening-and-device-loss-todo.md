@@ -236,9 +236,9 @@ The current desktop framerate investigation is executed through the following
 strictly serial workstreams:
 
 1. Performance truth and regression gates - complete; see the
-   [Vulkan framerate root-cause investigation](../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md).
+   [Vulkan framerate root-cause investigation](../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md).
 2. Primary reuse correctness - complete; see the same
-   [investigation](../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md).
+   [investigation](../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md).
 3. [True GPU-driven zero-readback submission](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-03-validation)
 4. [Next-frame preparation and collect-visible handoff](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-04-completion-and-validation)
 5. [Command-recording worker architecture](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-05-validation)
@@ -279,7 +279,7 @@ the multi-output performance contract. Related ownership remains with the
 [dynamic-rendering migration todo](vulkan-dynamic-rendering-migration-todo.md),
 the [GPU-driven occlusion TODO](gpu/gpu-driven-occlusion-culling-architecture-todo.md),
 the [VR rendering performance contract](optimization/vr-rendering-performance-contract-todo.md),
-the [completed primary-reuse evidence](../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md),
+the [completed primary-reuse evidence](../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md),
 and the [worker-recording workstream](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-05-validation).
 Those efforts must consume this same frame-view/output/plan contract and must
 not introduce a desktop-only scheduler, a second attachment identity model, or
@@ -324,7 +324,7 @@ Acceptance criteria:
 > acceptance box below unchecked until the remaining validation list is
 > completed. Detailed context is in the
 > [implementation ledger](../../progress/rendering/vulkan-core-hardening-phase525-2026-07-20.md)
-> and [live acceptance investigation](../../investigations/rendering/vulkan-phase525-live-acceptance-2026-07-20.md).
+> and [live acceptance investigation](../../investigations/rendering/archive/vulkan-phase525-live-acceptance-2026-07-20.md).
 >
 > **Required before checking acceptance:**
 >

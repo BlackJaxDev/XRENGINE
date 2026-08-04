@@ -120,7 +120,7 @@ identity.
   P0.6, and P0.7 checklist.
 
 Detailed evidence:
-[zero-readback Sponza device-loss investigation](../../investigations/rendering/vulkan-zero-readback-sponza-device-loss-2026-07-17.md).
+[zero-readback Sponza device-loss investigation](../../investigations/rendering/archive/vulkan-zero-readback-sponza-device-loss-2026-07-17.md).
 
 ### P0 Immediate Gate Closeout - 2026-07-18
 
@@ -206,18 +206,18 @@ Representative durable/local evidence:
 
 - [Phase 0 baseline and crash taxonomy](../../progress/rendering/vulkan-core-hardening-phase0-2026-07-09.md)
 - [Phase 2.1 validation manifest](../../testing/rendering/vulkan-core-hardening-phase21-validation-2026-07-09.json)
-- [Phase 4 live lifetime evidence](../../investigations/rendering/vulkan-core-hardening-phase4-live-validation-2026-07-09.md)
-- [Phase 5/5.1 live investigation](../../investigations/rendering/vulkan-core-hardening-phase5-live-validation-2026-07-09.md)
+- [Phase 4 live lifetime evidence](../../investigations/rendering/archive/vulkan-core-hardening-phase4-live-validation-2026-07-09.md)
+- [Phase 5/5.1 live investigation](../../investigations/rendering/archive/vulkan-core-hardening-phase5-live-validation-2026-07-09.md)
   and [validation manifest](../../testing/rendering/vulkan-core-hardening-phase5-validation-2026-07-09.json)
-- [CPU framerate regression investigation](../../investigations/rendering/vulkan-cpu-framerate-regression-2026-07-09.md)
+- [CPU framerate regression investigation](../../investigations/rendering/archive/vulkan-cpu-framerate-regression-2026-07-09.md)
 - Phase 5.2 validation:
   [5.2.1](../../testing/rendering/vulkan-core-hardening-phase521-validation-2026-07-09.json),
   [5.2.2](../../testing/rendering/vulkan-core-hardening-phase522-validation-2026-07-09.json),
   [5.2.3](../../testing/rendering/vulkan-core-hardening-phase523-validation-2026-07-10.json),
   [5.2.4](../../testing/rendering/vulkan-core-hardening-phase524-validation-2026-07-10.json), and
   [5.2.4a](../../testing/rendering/vulkan-core-hardening-phase524a-validation-2026-07-10.json)
-- [Descriptor lifetime freeze investigation](../../investigations/rendering/vulkan-descriptor-lifetime-freeze-2026-07-10.md)
-- [Dynamic rendering/OpenXR regression investigation](../../investigations/rendering/vulkan-dynamic-rendering-promotion-2026-07-10.md)
+- [Descriptor lifetime freeze investigation](../../investigations/rendering/archive/vulkan-descriptor-lifetime-freeze-2026-07-10.md)
+- [Dynamic rendering/OpenXR regression investigation](../../investigations/rendering/archive/vulkan-dynamic-rendering-promotion-2026-07-10.md)
 
 Representative raw evidence remains under
 `Build/_AgentValidation/20260709-233000-vulkan-phase521/` and
@@ -247,7 +247,7 @@ changes, 18 forced waits, and 182 retirement-backlog reports. The visible top
 strip is approximately 111 pixels, the same numerical difference as
 `1007 - 896`; treat that as a viewport/extent clue, not a proven cause. Preserve
 this diagnosis and subsequent evidence in the
-[dynamic rendering/OpenXR investigation](../../investigations/rendering/vulkan-dynamic-rendering-promotion-2026-07-10.md).
+[dynamic rendering/OpenXR investigation](../../investigations/rendering/archive/vulkan-dynamic-rendering-promotion-2026-07-10.md).
 
 #### 2026-07-13 implementation handoff
 
@@ -363,7 +363,7 @@ layers in every retained frame. A desktop-only run proved useful current-view
 CPU-query culling (32-52 of 46-76 tested meshes culled, versus all 393 rendered
 with culling disabled). Preserve the cause, fixes, performance measurements,
 and rejected per-draw command-chain experiment in the
-[CPU-query/Monado regression investigation](../../investigations/rendering/vulkan-cpu-query-monado-regressions-2026-07-14.md).
+[CPU-query/Monado regression investigation](../../investigations/rendering/archive/vulkan-cpu-query-monado-regressions-2026-07-14.md).
 
 Throughput is not closed. `FullIndependentRender` produced up to 17 output
 ledger entries per retained frame while rendering desktop preview, main desktop,
@@ -810,7 +810,7 @@ Implementation wrap-up (2026-07-14, updated 2026-07-15):
   that the Unit Testing World's explicit `GPURenderDispatch: false` was silently
   forced to `true` for Vulkan OpenXR and then resolved through the persisted
   `Diagnostics` profile to `GpuIndirectInstrumented`. Full evidence:
-  [OpenXR Monado and desktop framerate investigation](../../investigations/rendering/openxr-monado-desktop-framerate-invalidoperations-2026-07-15.md).
+  [OpenXR Monado and desktop framerate investigation](../../investigations/rendering/archive/openxr-monado-desktop-framerate-invalidoperations-2026-07-15.md).
 - The July 15 CPU-direct closeout made the checked-in
   `GPURenderDispatch: false` authoritative, replaced descriptor-pending throws
   with an explicit pre-record defer, drained exact completed pipeline-layout
@@ -1250,7 +1250,7 @@ reload, swapchain rotation, and delayed publication have focused regression
 coverage. The remaining P0.3 work is the explicit zero-managed-allocation and
 warmed Release p95/worst-frame measurement gate; it is not required to reopen
 the completed packet or descriptor correctness work. See
-[the implementation investigation](../../investigations/rendering/vulkan-stable-packets-and-descriptor-publication-2026-07-16.md).
+[the implementation investigation](../../investigations/rendering/archive/vulkan-stable-packets-and-descriptor-publication-2026-07-16.md).
 
 #### 2026-07-17 steady-state allocation cleanup
 
@@ -1370,7 +1370,7 @@ shader artifact, descriptor/vertex layout, pass, feature, and fixed-function
 state. The final StandardValidation warm run recorded 238 persisted-cache hits,
 zero compile-required misses, no draw that emitted zero commands, no VUID or
 validation error, no `InvalidOperationException`, and no device loss. See
-[the pipeline prewarm investigation](../../investigations/rendering/vulkan-pipeline-cache-prewarm-2026-07-16.md).
+[the pipeline prewarm investigation](../../investigations/rendering/archive/vulkan-pipeline-cache-prewarm-2026-07-16.md).
 
 ### P0.6 - Multi-Draw Indirect Implemented Core
 

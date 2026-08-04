@@ -231,6 +231,11 @@ public unsafe partial class VulkanRenderer
                 orderedNodes.Add(key.FrameSlot);
                 orderedNodes.Add(key.PassIndex);
                 orderedNodes.Add(key.TargetIdentity);
+                // DescriptorBindingVariant selects the exact secondary command
+                // buffer whose descriptor sets were recorded. Omitting it lets a
+                // thin primary recorded for an earlier frame-source publication
+                // appear compatible with a newly selected secondary chain.
+                orderedNodes.Add(key.DescriptorBindingVariant);
                 orderedNodes.Add(key.ChainOrdinal);
                 orderedNodes.Add(key.ViewKey.PipelineIdentity);
                 orderedNodes.Add(key.ViewKey.ViewportIdentity);

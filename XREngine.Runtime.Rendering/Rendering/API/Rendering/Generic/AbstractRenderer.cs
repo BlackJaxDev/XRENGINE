@@ -812,7 +812,23 @@ namespace XREngine.Rendering
         /// True when a texture can be bound for shader sampling without falling back to a placeholder descriptor.
         /// </summary>
         public virtual bool IsTextureReadyForShaderSampling(XRTexture? texture)
-            => texture is not null;
+            => GetTextureShaderSamplingState(texture).IsReady;
+
+        /// <summary>
+        /// Gets renderer-neutral sampling readiness plus the opaque resource
+        /// epoch used to invalidate retained descriptor artifacts.
+        /// </summary>
+        /// <remarks>
+        /// Backends with physical descriptor objects must override this method
+        /// and advance the epoch whenever an image, view, sampler, or equivalent
+        /// binding resource is replaced. This query must not perform a blocking
+        /// upload; callers use an unready result to defer required draws.
+        /// </remarks>
+        public virtual RenderTextureSamplingState GetTextureShaderSamplingState(
+            XRTexture? texture)
+            => texture is null
+                ? default
+                : RenderTextureSamplingState.LogicalResourceReady;
 
         /// <summary>
         /// Updates a 1x1 exposure texture based on the supplied HDR source texture.

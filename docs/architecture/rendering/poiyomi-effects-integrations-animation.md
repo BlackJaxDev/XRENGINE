@@ -5,7 +5,7 @@ contracts, vertex deformation path, and Unity material animation bridge.
 
 ## Effects and passes
 
-`poiyomi_effect_features.glsl` owns UV/face discard, pathing, proximity, touch glow,
+`extended_effects.glsl` owns UV/face discard, pathing, proximity, touch glow,
 internal parallax, video blending, CRT/Gameboy/Voronoi/Truchet effects, and the
 provider-backed environment/audio/view inputs. Coverage-affecting work runs
 before the depth, shadow, and depth-normal exits.
@@ -23,25 +23,25 @@ blend/queue state.
 
 ## Vertex contract
 
-`poiyomi_vertex_effects.glsl` runs after compute skinning and morph inputs in
+`vertex_effects.glsl` runs after compute skinning and morph inputs in
 the canonical vertex variants. The generated mesh vertex shader carries the
 same core local transform, rounding, barrel, Uzumore, and world-translation
 contract into override passes. Material vertex values are uploaded through a
 cached `SettingVertexUniforms` binding; the draw loop does not allocate.
 
 Materials using these effects opt out of GPU-indirect substitution because
-that path owns a material-indexed vertex program. `_PoiConservativeBounds`
+that path owns a material-indexed vertex program. `_VertexConservativeBounds`
 preserves the authored expansion hint for CPU culling. This is an explicit
 submission classification, not a silent deformation fallback.
 
 ## Runtime adapters
 
-`PoiyomiRuntimeAdapters` exposes optional providers:
+`UberMaterialRuntimeAdapters` exposes optional providers:
 
-- `IPoiyomiAudioLinkProvider` owns one stable texture. Bands are columns,
+- `IAudioLinkProvider` owns one stable texture. Bands are columns,
   newest-to-oldest history is rows, and scalar timing/history state is supplied
-  with `PoiyomiAudioLinkFrame`. Providers update the resource in place.
-- `IPoiyomiEnvironmentProvider` supplies native diffuse/specular/blacklight
+  with `AudioLinkFrame`. Providers update the resource in place.
+- `IMaterialEnvironmentProvider` supplies native diffuse/specular/blacklight
   state for LTCGI and light-volume mappings.
 - `PushViewContext` classifies main-camera, mirror, capture, stereo, and eye
   views with an allocation-free nested scope.

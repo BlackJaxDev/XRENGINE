@@ -1,157 +1,228 @@
 # Vulkan Zero-Readback Production Scheduling Progress
 
-Last Updated: 2026-08-03
+Last Updated: 2026-08-04
 Owner: Rendering / Vulkan Command Scheduling and GPU Indirect Submission
-Status: Paused at requested handoff; scheduling and base residency slices build, material and motion-vector integration is incomplete and unvalidated
+Status: The former next steps 1-3 are implemented and compile-validated. The
+generated MaskedForward and motion-vector paths now have production shader
+contracts, including stereo/multiview handling and render-frame transform
+history. Clean live acceptance is still pending because the bounded editor run
+exposed a Vulkan descriptor-layout defect and then a native ImGui assertion.
+Both defects are fixed in source and build cleanly, but the editor was stopped
+and was not relaunched in this task.
+
+This work is separate from the active
+[Directional Light Vulkan Stability Investigation](../../investigations/rendering/directional-light-inspector-shadow-2026-08-03.md).
 
 Related investigation:
 
-- [Vulkan camera-motion frame-rate regression](../../investigations/rendering/vulkan-camera-motion-framerate-regression-2026-07-21.md)
+- [Vulkan camera-motion frame-rate regression](../../investigations/rendering/archive/vulkan-camera-motion-framerate-regression-2026-07-21.md)
 
 ## Objective
 
 Implement the production recording schedule for camera-moving frames without
 discarding reusable command-chain work, and make
-`GpuIndirectZeroReadback` fully GPU-resident across the mesh render paths. In
-that strategy, MaskedForward must participate in generated indirect rendering;
-mesh submission must not fall back to CPU direct draw calls or GPU-to-CPU
-readbacks.
+`GpuIndirectZeroReadback` fully GPU-resident across mesh render paths. In this
+strategy, MaskedForward participates in generated indirect rendering; mesh
+submission must not fall back to CPU direct draws or GPU-to-CPU readbacks.
 
 ## Baseline Evidence
 
-The pre-change Vulkan trace showed that camera movement was still dominated by
-CPU-direct mesh recording:
+The pre-change Vulkan trace showed camera movement dominated by CPU-direct mesh
+recording:
 
 - An earlier complete sample contained 836 direct `MeshDrawOp` records and
   reported MaskedForward as skipped because no generated layout existed.
-- A later bounded 512-operation snapshot contained 336 direct motion-vector
-  draws in `RenderMotionVectors_VelocityFBO`, 32 direct prepass draws in
-  `PreRender` / `ForwardDepthPrePassMergeFBO`, and only two indirect draws in
-  OpaqueDeferred.
+- A bounded 512-operation snapshot contained 336 direct motion-vector draws in
+  `RenderMotionVectors_VelocityFBO`, 32 direct prepass draws in `PreRender` /
+  `ForwardDepthPrePassMergeFBO`, and only two indirect OpaqueDeferred draws.
 - MaskedForward published compute and barrier work but no indirect draw.
-- Command chains were globally quarantined for this workload: zero chains were
-  scheduled, one fresh primary was recorded, and five secondary command
-  buffers appeared without stable chain scheduling.
-- That bounded sample reported no Vulkan validation errors, frame drops, or
-  device loss. It is scheduling evidence, not proof that the visual artifact
-  is resolved.
+- Command chains were globally quarantined: zero chains were scheduled, one
+  fresh primary was recorded, and five secondary command buffers appeared
+  without stable chain scheduling.
 
-The top-left/black-padding camera-motion artifact has not been rechecked against
-the edited code. It must not be considered fixed until the new binaries are
-run, the camera is moved from multiple positions, and the captured images are
-visually inspected.
+The top-left/black-padding artifact has not been rechecked against the current
+binaries. It must not be considered fixed until the camera is moved through
+multiple views and captures are inspected visually.
 
 ## Completed And Build-Validated Work
 
 ### Mixed production command-chain schedule
 
-The scheduler no longer disables command chains merely because the frame uses
-zero-readback submission or contains mutable GPU-driven frame operations.
-Instead, it represents the mixed recording contract explicitly:
+The scheduler no longer disables command chains merely because a frame uses
+zero-readback submission or contains mutable GPU-driven operations.
 
-- stable mesh packets remain schedule groups eligible for reusable secondary
-  command buffers;
-- mutable GPU publication and indirect dispatch operations remain inline in a
-  freshly recorded primary;
-- the schedule carries `RequiresFreshPrimary` and `InlineFrameOpCount`;
-- schedule, primary-identity, and reuse signatures include the mixed-work
-  metadata; and
-- camera-generation changes no longer invalidate reusable secondary work when
-  all scheduled work is secondary, while a mixed schedule visibly forces a
-  fresh primary with reason `command-chain-inline-publication`.
-
-This slice built successfully:
-
-```powershell
-dotnet build .\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulkan.csproj --no-restore
-```
-
-Result: zero warnings and zero errors. The first sandboxed attempt reached an
-MSVC `FileTracker` access-denied condition; the identical approved build
-outside that restriction succeeded.
+- Stable mesh packets remain eligible for reusable secondary command buffers.
+- Mutable publication and indirect dispatch remain inline in a fresh primary.
+- The schedule carries `RequiresFreshPrimary` and `InlineFrameOpCount`.
+- Schedule, primary-identity, and reuse signatures include the mixed-work
+  metadata.
+- Camera-generation changes no longer invalidate reusable secondary work when
+  all scheduled work is secondary. A mixed schedule visibly forces a fresh
+  primary with reason `command-chain-inline-publication`.
 
 ### Base zero-readback mesh-residency contract
 
-The runtime path was changed so zero-readback treats every published mesh
-workload as GPU-owned:
+Strict zero-readback now treats every published mesh workload as GPU-owned.
 
 - CPU callbacks may still execute for non-mesh commands, but CPU mesh draws are
   suppressed in traditional, meshlet, forward depth/normal, and full-overdraw
   paths.
-- The OpenGL warmup/safety-net CPU mesh fallbacks are disabled for the strict
-  zero-readback strategy.
+- OpenGL warmup and safety-net CPU mesh fallbacks are disabled for the strict
+  strategy.
 - Commands marked `ForceCpu` or `ExcludeFromGpuIndirect` are still registered
-  with `GPUScene`; they receive a `CpuFallbackOnly` GPU flag instead of being
-  removed from GPU publication.
-- Non-zero-readback strategies cull `CpuFallbackOnly` commands. Strict
-  zero-readback clears that disabled-flags mask so those commands remain
-  GPU-resident.
-- GPU eligibility checks no longer cause the zero-readback path to route a
-  published mesh workload back through CPU direct rendering.
+  with `GPUScene`; they receive `CpuFallbackOnly` instead of being removed from
+  GPU publication.
+- Non-zero-readback strategies cull `CpuFallbackOnly`. Strict zero-readback
+  clears that disabled-flags mask so those commands remain GPU-resident.
+- GPU eligibility checks no longer route a published strict-mode mesh workload
+  back through CPU direct rendering.
 
-This slice built successfully before the later material/motion edits:
+### Render-frame transform history
+
+`GPUScene` now publishes current and previous transforms at render snapshot
+boundaries instead of treating update-thread writes as rendered history.
+
+- The previous render buffer is copied from the last current render snapshot
+  before the new current snapshot is published.
+- Multiple update-thread writes between rendered frames collapse into one
+  rendered-frame motion delta.
+- A prior dirty range is copied for one additional quiet frame so an object
+  that stops moving stops emitting stale velocity.
+- Newly published transforms initialize `previous = current`, using sorted,
+  coalesced copy ranges rather than one copy per transform.
+- The redundant update-side previous-transform buffer and dirty range were
+  removed.
+
+### Generated MaskedForward and OpaqueForward material-table shading
+
+The generated forward path is no longer an unlit base-color placeholder.
+
+- ForwardOpaque and MaskedForward retain the material table's per-material
+  `AlphaCutoff`.
+- Albedo, tangent-space normal, and metallic/roughness/AO texture references
+  are sampled from the GPU-resident material table.
+- The shared `ForwardLighting.glsl` snippet now exposes
+  `XRENGINE_CalculateForwardLightingMaterial(...)`, accepting per-material
+  roughness, metallic, specular, emission, and ambient occlusion while reusing
+  the production light, probe, Forward+, shadow, and ambient PBR loops.
+- Generated forward shaders bind the real forward-lighting state and use
+  dedicated scene SSBO bindings.
+- The direct meshlet material-table shader is limited to OpaqueDeferred because
+  its current fragment output is a deferred MRT contract. It no longer
+  advertises incompatible forward framebuffer support. Its material cutoff,
+  normal map, and metallic/roughness sampling were brought into parity for the
+  supported deferred path.
+
+### Generated GPU motion vectors
+
+The motion-vector pass now owns a complete generated indirect shader variant.
+
+- The vertex shader reads current and previous GPUScene transform snapshots and
+  emits current/previous clip positions to the fragment stage.
+- The fragment shader calculates velocity directly from those clip positions;
+  it no longer reconstructs transforms with incomplete fragment-stage state.
+- Current and previous unjittered temporal view-projection matrices are used.
+- Desktop, Vulkan `GL_EXT_multiview`, and OpenGL OVR multiview variants publish
+  per-eye current/previous matrices and select them with the active view index.
+- The generated-program cache key includes the stereo multiview variant.
+
+### Vulkan bindless descriptor-tier correction
+
+The bounded runtime compile reached the generated forward and motion programs,
+then validation reported
+`VUID-VkDescriptorSetLayoutBindingFlagsCreateInfo-pBindingFlags-03004`: the
+variable bindless array was not the highest binding because fixed
+forward-lighting resources had been rewritten into the same material set.
+
+The production layout is now explicit:
+
+- Descriptor set 2 is the shared material tier and contains only
+  `XR_BindlessMaterialTextures` at binding 31.
+- Forward-lighting samplers and SSBOs are pass-owned resources in descriptor
+  set 3. A qualifier macro preserves OpenGL `layout(binding=...)` syntax while
+  emitting Vulkan `layout(set=3, binding=...)` declarations that remain visible
+  to source optimization and binding reflection.
+- The global table layout declares the full 4096-entry runtime-array maximum;
+  descriptor allocation supplies the smaller device-clamped live count through
+  Vulkan's variable descriptor count.
+- Before binding the global table, the backend requires the program's material
+  layout to be the exact cached layout used by the shared table. An incompatible
+  shader now skips visibly with a diagnostic instead of issuing an invalid
+  Vulkan bind or silently falling back to CPU rendering.
+
+### Native ImGui assertion correction
+
+The bounded editor run also displayed the cimgui assertion:
+
+`font->ContainerAtlas->TexID == _CmdHeader.TextureId`
+
+The Vulkan backend previously built the font atlas with texture ID 0, began UI
+frames, and changed the atlas to reserved ID 1 later during GPU font-resource
+creation. That can change the atlas ID after an ImGui draw-list command header
+has captured its texture ID. The backend now assigns ID 1 immediately after
+building the atlas and before the first `ImGui.NewFrame()`; the render-resource
+path no longer mutates it later.
+
+## Validation Performed
+
+No tests were added or run; repository policy requires the feature to pass its
+live runtime path and the user to explicitly clear test work first.
+
+Compile-only validation after all current edits:
 
 ```powershell
 dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj --no-restore
+dotnet build .\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulkan.csproj --no-restore
+dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore
 ```
 
-Result: zero errors and one pre-existing unrelated nullable warning at
-`RendererHostContext.cs(78,20)` (`CS8603`).
+Results:
 
-## Incomplete Work In The Current Worktree
+- Rendering runtime: 0 warnings, 0 errors.
+- Vulkan backend: 0 warnings, 0 errors.
+- Editor integration build: 0 warnings, 0 errors.
+- Targeted `git diff --check`: clean; only Git line-ending notices were emitted.
+- The first sandboxed Vulkan build hit MSVC `FileTracker` access denied. The
+  identical approved compile-only build outside that restriction succeeded.
 
-### MaskedForward generated material path
+The bounded editor session before the final descriptor and ImGui fixes reached
+the Unit Testing World with Vulkan, `GpuIndirectZeroReadback`, bindless material
+tables, and Standard Validation. It observed 396 viewport commands, including
+361 OpaqueDeferred and 32 MaskedForward mesh commands, and queued these
+generated shaders without a shader compiler error:
 
-The material table now has an `AlphaCutoff` word and the layout generator knows
-the `alphacutoff` semantic. OpaqueDeferred was extended with that field, and
-generated layouts were started for ForwardOpaque and MaskedForward. Material
-publication now writes the per-material cutoff.
+- `GPUIndirect_VulkanDescriptorIndexTableMaterialTableForwardFS`
+- `GPUIndirect_VulkanDescriptorIndexTableMaterialTableMotionVectorsFS`
+- `GPUIndirect_AutoVS`
 
-The generated forward fragment program is currently only a base-color output.
-It does not yet implement the production forward-lighting contract. Before
-calling MaskedForward complete, either integrate the real forward lighting
-inputs and shading behavior or explicitly decide that this generated path is
-intentionally unlit. Material-specific alpha testing must remain intact in
-either case.
-
-### GPU motion-vector variant
-
-A render-state variant was started so the motion-vector pass can use generated
-GPU indirect material-table dispatch. The path begins binding previous
-transforms and publishing current/previous view-projection uniforms, and the
-default command chain now permits GPU render dispatch for Velocity.
-
-This edit is not compile-complete. `HybridRenderingManager.cs` currently calls
-`AppendMaterialTableTransformLoader(...)`, but that helper has not been
-defined. No build was run after these material and motion-vector edits, so
-additional compiler errors may remain. Desktop matrix handling was the active
-design target; stereo/multiview behavior has not been implemented or validated.
-
-The meshlet material-table shader also retains its separate alpha-cutoff path
-and hard-coded fallback behavior. It still needs parity review.
+That run is evidence that the generated variants were reached, not clean live
+acceptance: it exposed the descriptor VUID above, and the native ImGui assertion
+interrupted the session. The exact owned session was stopped and no editor or
+helper process from this work remains running.
 
 ## Important Scope Boundaries And Risks
 
-- `RenderCPUNonMeshOnly` prevents CPU mesh draws, but intentionally still runs
-  non-mesh callbacks. If “no CPU direct render calls” is meant to prohibit all
-  CPU-authored callbacks, UI, or explicit `CpuDirect` passes, that requires a
-  broader render-command architecture change.
+- `RenderCPUNonMeshOnly` intentionally permits non-mesh callbacks. If “no CPU
+  direct render calls” is intended to prohibit all CPU-authored callbacks, UI,
+  and explicit `CpuDirect` passes, that requires a broader command architecture
+  change.
 - Authored `PreRender`, `PostRender`, and `OnTopForward` CPU-direct command
-  routes have not been eliminated. The implemented strict contract currently
-  applies to mesh fallback inside GPU-owned passes.
-- Non-triangle or atlas-incompatible meshes can still fail GPU-scene
-  registration. Zero-readback will not silently draw them on the CPU; the
-  production path needs visible diagnostics and an explicit import/conversion
-  contract for unsupported geometry.
-- The current zero-readback eligibility check assumes a published mesh command
-  belongs to the GPU path even if a later registration step rejects it. Live
-  diagnostics must compare published, registered, culled, and drawn counts.
-- No readback audit has yet proven that all zero-readback branches avoid
-  `GetData`, `ReadUIntAt`, waits, or diagnostics that synchronize with the CPU.
-- The current dirty worktree contains unrelated user changes. They have been
-  preserved and must not be reverted during continuation.
+  routes have not been eliminated. The strict contract currently covers mesh
+  fallback inside GPU-owned passes.
+- Non-triangle or atlas-incompatible meshes can still fail GPUScene
+  registration. Strict mode does not silently render them on the CPU; live
+  diagnostics must make unsupported geometry visible.
+- A strict source audit has not yet proven every zero-readback branch avoids
+  `GetData`, `ReadUIntAt`, waits, or diagnostic synchronization.
+- Moving all Vulkan forward-lighting fixed resources to the per-pass tier is
+  compile-validated but still needs a live descriptor-publication check across
+  authored and generated forward programs.
+- The top-left/black-padding artifact, masked output, and motion vectors remain
+  visually unverified after the final source changes.
+- The worktree contains unrelated user changes. They were preserved and must
+  not be reverted during continuation.
 
-## Files Changed So Far
+## Files Changed For This Work
 
 Command scheduling:
 
@@ -160,7 +231,7 @@ Command scheduling:
 - `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Scheduling/CommandChains/Signatures/VulkanRenderer.CommandChains.Signatures.cs`
 - `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Lifecycle/VulkanRenderer.CommandBufferLifecycle.Reuse.cs`
 
-Zero-readback residency:
+Zero-readback residency and material dispatch:
 
 - `XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs`
 - `XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Traditional/VPRC_RenderMeshesPassTraditional.cs`
@@ -171,79 +242,80 @@ Zero-readback residency:
 - `XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.AddRemove.cs`
 - `XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.CommandConversion.cs`
 - `XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.CullingAndSoA.cs`
+- `XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs`
 
-Material, MaskedForward, and motion work in progress:
+Forward material, motion, and transform history:
 
+- `Build/CommonAssets/Shaders/Snippets/ForwardLighting.glsl`
 - `XREngine.Runtime.Rendering/Rendering/Materials/GPUMaterialEntry.cs`
 - `XREngine.Runtime.Rendering/Rendering/Materials/GPUMaterialTable.GPUMaterialEntryWords.cs`
 - `XREngine.Runtime.Rendering/Rendering/Materials/GPUMaterialTable.cs`
 - `XREngine.Runtime.Rendering/Rendering/Materials/MaterialBindingLayout.cs`
-- `XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs`
+- `XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.Soa.cs`
+- `XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.CommandBuffers.cs`
+- `XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.Lifecycle.cs`
 - `XREngine.Runtime.Rendering/Rendering/Pipelines/RenderingState.cs`
 - `XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_RenderMotionVectorsPass.cs`
 - `XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs`
 - `XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs`
 
+Vulkan descriptor and ImGui corrections:
+
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanBindlessMaterialDescriptors.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.BindlessMaterialTextureTable.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanImGuiBackend.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.Resources.cs`
+
 ## Next Steps
 
-1. Finish the current compile slice.
-   - Define or replace `AppendMaterialTableTransformLoader(...)` so generated
-     shaders load current and previous model transforms consistently.
-   - Build the runtime, Vulkan backend, and editor; fix only task-related
-     errors and warnings.
-2. Finish the generated MaskedForward contract.
-   - Preserve per-material alpha cutoff.
-   - Integrate production forward lighting, or document and approve a narrower
-     unlit contract.
-   - Review the meshlet path for the same material and cutoff behavior.
-3. Finish motion-vector GPU dispatch.
-   - Verify previous-transform descriptor binding and current/previous temporal
-     matrices.
-   - Add stereo/multiview handling.
-   - Validate shader-stage declarations and descriptor bindings on Vulkan.
-4. Audit strict zero-readback behavior in source.
-   - Search zero-readback branches for `ReadUIntAt`, `GetData`, `Readback`,
-     `WaitForGpu`, and CPU mesh rendering helpers.
+1. Audit strict zero-readback behavior in source.
+   - Search strict-mode branches for `ReadUIntAt`, `GetData`, `Readback`,
+     `WaitForGpu`, and CPU mesh-render helpers.
    - Keep diagnostic synchronization disabled in production and make any
-     unsupported GPU-resident workload fail visibly rather than silently
-     falling back.
-5. Run the live isolated Vulkan path.
-   - Force `GpuIndirectZeroReadback`, enable Vulkan command chains, Standard
+     unsupported GPU-resident workload fail visibly.
+2. Run a fresh isolated Vulkan live-validation session when GUI execution is
+   acceptable again.
+   - Force `GpuIndirectZeroReadback`, Vulkan command chains, Standard
      Validation, command-buffer labels, and frame-op tracing.
-   - Move the camera to at least two distinct views through MCP.
-   - Capture and visually inspect screenshots rather than trusting successful
-     tool responses.
-   - Inspect the named session logs and frame trace after shutdown.
-6. Use RenderDoc if screenshots and logs do not identify a remaining artifact.
-   - `rdc doctor` already passed on this machine.
-   - Export and inspect Velocity, forward depth/normal, MaskedForward, and final
-     post-process targets, plus the relevant pipeline and descriptor bindings.
-7. Update the related investigation with live results. Do not add or modify
-   tests until the feature works through the runtime path and the user
-   explicitly clears test work, per repository policy.
+   - Confirm generated forward and motion programs link without descriptor
+     validation errors and the ImGui assertion no longer occurs.
+   - Move the camera to at least two distinct views and visually inspect
+     captures rather than trusting successful tool responses.
+   - Verify MaskedForward, Velocity, command scheduling/reuse, and the absence
+     of direct mesh draws or readbacks.
+3. Use RenderDoc if screenshots and logs do not identify a remaining artifact.
+   - `rdc doctor` passed on this machine.
+   - Export Velocity, forward depth/normal, MaskedForward, and final
+     post-process targets, then inspect their pipeline and descriptor bindings.
+4. Update the related investigation with live results. Do not add or modify
+   tests until the runtime path works and the user explicitly clears test work.
 
 ## Live Acceptance Criteria
 
 - No direct mesh `MeshDrawOp` records in motion vectors, forward depth/normal,
-  OpaqueDeferred, OpaqueForward, or MaskedForward while using
+  OpaqueDeferred, OpaqueForward, or MaskedForward under
   `GpuIndirectZeroReadback`.
-- MaskedForward records a generated indirect draw and emits no skipped-layout
-  warning.
-- The camera-moving frame reports scheduled command chains, a fresh primary
-  for inline publication, and reusable secondaries after warmup.
-- No CPU readback, CPU mesh fallback, Vulkan validation error, device loss, or
-  watchdog timeout occurs.
-- Viewport captures remain full-resolution with no top-left image and black
+- MaskedForward records a generated indirect draw with production lighting and
+  per-material alpha cutoff, without a skipped-layout warning.
+- Velocity uses render-frame previous transforms and produces correct desktop
+  and stereo/multiview motion.
+- Camera-moving frames schedule command chains, record a fresh primary for
+  inline publication, and reuse stable secondaries after warmup.
+- No CPU readback, CPU mesh fallback, Vulkan validation error, device loss,
+  watchdog timeout, or ImGui native assertion occurs.
+- Viewport captures remain full-resolution without a top-left image and black
   bottom/right padding after camera movement.
 - Motion vectors and masked materials are visually correct from more than one
   camera position.
 
-## Session State At Handoff
+## Session State
 
-The owned isolated editor session `vulkan-state-schedule-20260803` was stopped
-cleanly before the incomplete material/motion edits. Its baseline logs are
-under:
+The owned session `zr-generated-shaders-20260804` was stopped with
+`Tools/Manage-McpEditorSession.ps1 Stop -Name zr-generated-shaders-20260804`.
+Its evidence remains under:
 
-`Build/_AgentValidation/mcp-sessions/vulkan-state-schedule-20260803/logs/`
+`Build/_AgentValidation/mcp-sessions/zr-generated-shaders-20260804/`
 
-No editor session or RenderDoc session was left running by this work.
+The earlier owned session `vulkan-state-schedule-20260803` was also stopped.
+No editor, ShaderEmitter helper, RenderDoc session, or other process launched by
+this work remains running.

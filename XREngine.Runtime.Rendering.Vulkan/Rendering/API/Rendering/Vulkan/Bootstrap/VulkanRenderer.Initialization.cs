@@ -1018,25 +1018,47 @@ namespace XREngine.Rendering.Vulkan
             _lastWindowPresentFrameOpContext = CaptureFrameOpContext();
         }
 
-        public override bool IsTextureReadyForShaderSampling(XRTexture? texture)
+        public override RenderTextureSamplingState GetTextureShaderSamplingState(
+            XRTexture? texture)
         {
             if (texture is null)
-                return false;
+                return default;
 
             if (GetOrCreateAPIRenderObject(texture, generateNow: false) is not IVkImageDescriptorSource source)
-                return false;
+                return default;
 
-            if (!source.TryGetDescriptorSnapshot(
+            bool descriptorReady = source.TryGetDescriptorSnapshot(
                     requestedViewType: null,
                     requestedAspectMask: null,
                     "shader sampling readiness",
                     allowSynchronousUpload: false,
-                    out VkImageDescriptorSnapshot snapshot))
-                return false;
+                    out VkImageDescriptorSnapshot snapshot);
 
-            return snapshot.View.Handle != 0 &&
+            bool isReady = descriptorReady &&
+                snapshot.View.Handle != 0 &&
                 IsLiveImageViewBackedByLiveImage(snapshot.View) &&
                 (snapshot.Usage & ImageUsageFlags.SampledBit) != 0;
+            ulong descriptorGeneration = descriptorReady
+                ? snapshot.Generation
+                : source.DescriptorGeneration;
+            if (DescriptorTraceEnabled)
+            {
+                Debug.VulkanEvery(
+                    $"Vulkan.Descriptor.SamplingState.{texture.GetHashCode()}.{snapshot.Generation}.{snapshot.Image.Handle}.{snapshot.View.Handle}.{snapshot.Sampler.Handle}.{isReady}",
+                    TimeSpan.FromSeconds(2),
+                    "[VulkanDescriptor] sampling-state texture='{0}' ready={1} descriptorReady={2} generation={3} image=0x{4:X} view=0x{5:X} sampler=0x{6:X} usage={7}.",
+                    texture.Name ?? texture.GetDescribingName(),
+                    isReady,
+                    descriptorReady,
+                    descriptorGeneration,
+                    snapshot.Image.Handle,
+                    snapshot.View.Handle,
+                    snapshot.Sampler.Handle,
+                    snapshot.Usage);
+            }
+            return RenderTextureSamplingState.FromBackendGeneration(
+                isReady,
+                descriptorGeneration);
         }
 
         private XRFrameBuffer? ResolveWindowPresentFallbackFrameBuffer(XRTexture? colorTexture)
