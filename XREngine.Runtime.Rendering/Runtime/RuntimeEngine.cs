@@ -902,10 +902,25 @@ public static partial class RuntimeEngine
             public static void ClearStencil(int value) => AbstractRenderer.Current?.ClearStencil(value);
             public static void ClearDepth(float value) => AbstractRenderer.Current?.ClearDepth(value);
             public static void Clear(bool color, bool depth, bool stencil) => AbstractRenderer.Current?.Clear(color, depth, stencil);
-            public static void ClearByBoundFBO(bool color = true, bool depth = true, bool stencil = true)
+            /// <summary>
+            /// Clears the attachments present on the currently bound framebuffer.
+            /// </summary>
+            /// <param name="color">Whether to clear a bound color attachment.</param>
+            /// <param name="depth">Whether to clear a bound depth attachment.</param>
+            /// <param name="stencil">Whether to clear a bound stencil attachment.</param>
+            /// <param name="depthClearValue">
+            /// Optional pass-local depth clear value. When omitted, the active rendering camera's
+            /// depth convention selects the value. Passes whose projection convention is independent
+            /// of the surrounding camera, such as normal-Z shadow maps, must provide it explicitly.
+            /// </param>
+            public static void ClearByBoundFBO(
+                bool color = true,
+                bool depth = true,
+                bool stencil = true,
+                float? depthClearValue = null)
             {
                 if (depth)
-                    ClearDepth(GetDefaultDepthClearValue());
+                    ClearDepth(depthClearValue ?? GetDefaultDepthClearValue());
 
                 var boundFBO = XRFrameBuffer.BoundForWriting;
                 if (boundFBO is null)

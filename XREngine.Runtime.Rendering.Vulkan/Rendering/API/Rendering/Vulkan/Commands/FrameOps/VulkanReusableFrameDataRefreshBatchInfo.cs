@@ -7,4 +7,5 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal readonly record struct VulkanReusableFrameDataRefreshBatchInfo(
     ulong StableMeshSignature,
-    int MeshRequestCount);
+    int MeshRequestCount,
+    bool SupportsDirectOwnerOnlyRefresh);

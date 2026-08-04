@@ -400,7 +400,14 @@ namespace XREngine.Rendering.Vulkan
                 0,
                 new ComputeDispatchPushConstants(op.GroupsX, op.GroupsY, op.GroupsZ, 0u));
 
-            ulong reusableDescriptorKey = ComputeReusableComputeDescriptorBindingKey(op, opIndex);
+            int descriptorBindingOrdinal =
+                op.ReusableDescriptorBindingOrdinal >= 0
+                    ? op.ReusableDescriptorBindingOrdinal
+                    : opIndex;
+            ulong reusableDescriptorKey =
+                ComputeReusableComputeDescriptorBindingKey(
+                    op,
+                    descriptorBindingOrdinal);
             if (!op.Program.TryBuildAndBindComputeDescriptorSets(commandBuffer, imageIndex, op.Snapshot, reusableDescriptorKey, out _, out var tempBuffers))
             {
                 foreach ((Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) in tempBuffers)

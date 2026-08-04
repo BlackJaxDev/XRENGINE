@@ -64,8 +64,8 @@ namespace XREngine.Rendering.Vulkan
                 new(ReferenceEqualityComparer.Instance);
             public CommandChainKey[] ScheduledCommandChainKeysByOpIndex { get; set; } = [];
             public List<KeyValuePair<int, int>> SwapchainWriterCountSort { get; } = new();
-            public List<KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState>> SecondaryDescriptorImageRequirements { get; } =
-                new();
+            public Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> SecondaryDescriptorImageRequirementMap { get; } =
+                new(64);
             public StringBuilder SwapchainWriterSummaryBuilder { get; } = new(256);
             public int SecondaryBucketByStartCapacityHint { get; set; } = 1;
             public int RecordSwapchainWriterCapacityHint { get; set; } = 1;
@@ -73,6 +73,8 @@ namespace XREngine.Rendering.Vulkan
             public int RecordMeshDrawSlotCapacityHint { get; set; } = 1;
             public int RecordFboLayoutCapacityHint { get; set; } = 1;
             private int[] _primaryMeshDrawUniformSlotsByOpIndex = [];
+            private bool[]
+                _primaryScheduledCommandChainFrameDataRefreshedByOpIndex = [];
             private VulkanReusableFrameDataRefreshRequest[]
                 _primaryReusableFrameDataRefreshRequests = [];
             private VulkanReusableFrameDataRefreshRequest[]
@@ -81,20 +83,35 @@ namespace XREngine.Rendering.Vulkan
                 _primaryReusableFrameDataOwnerWorkRequests = [];
             private VulkanReusableFrameDataRefreshRequest[]
                 _dynamicUiReusableFrameDataOwnerWorkRequests = [];
+            private VulkanReusableFrameDataRefreshRequest[]
+                _scheduledCommandChainFrameDataRefreshRequests = [];
+            private VulkanReusableFrameDataRefreshRequest[]
+                _scheduledCommandChainFrameDataOwnerWorkRequests = [];
             private int _primaryReusableFrameDataRefreshRequestCount;
             private int _dynamicUiReusableFrameDataRefreshRequestCount;
             private int _primaryReusableFrameDataOwnerWorkRequestCount;
             private int _dynamicUiReusableFrameDataOwnerWorkRequestCount;
+            private int _scheduledCommandChainFrameDataRefreshRequestCount;
+            private int _scheduledCommandChainFrameDataOwnerWorkRequestCount;
             private readonly HashSet<VulkanReusableFrameOwnerKey>
                 _primaryReusableFrameOwners = [];
             private readonly HashSet<VulkanReusableFrameOwnerKey>
                 _dynamicUiReusableFrameOwners = [];
+            private readonly HashSet<VulkanReusableFrameOwnerKey>
+                _scheduledCommandChainFrameDataOwners = [];
 
             public VulkanReusableFrameDataRefreshBatchInfo
                 PrimaryReusableFrameDataRefreshBatchInfo { get; private set; }
 
             public VulkanReusableFrameDataRefreshBatchInfo
                 DynamicUiReusableFrameDataRefreshBatchInfo { get; private set; }
+
+            public VulkanReusableFrameDataRefreshBatchInfo
+                ScheduledCommandChainFrameDataRefreshBatchInfo
+                { get; private set; }
+
+            public VulkanReusableFrameDataRefreshState
+                ScheduledCommandChainFrameDataRefreshState { get; } = new();
 
             public ReadOnlySpan<VulkanReusableFrameDataRefreshRequest>
                 PrimaryReusableFrameDataRefreshRequests
@@ -119,6 +136,18 @@ namespace XREngine.Rendering.Vulkan
                 => _dynamicUiReusableFrameDataOwnerWorkRequests.AsSpan(
                     0,
                     _dynamicUiReusableFrameDataOwnerWorkRequestCount);
+
+            public ReadOnlySpan<VulkanReusableFrameDataRefreshRequest>
+                ScheduledCommandChainFrameDataRefreshRequests
+                => _scheduledCommandChainFrameDataRefreshRequests.AsSpan(
+                    0,
+                    _scheduledCommandChainFrameDataRefreshRequestCount);
+
+            public ReadOnlySpan<VulkanReusableFrameDataRefreshRequest>
+                ScheduledCommandChainFrameDataOwnerWorkRequests
+                => _scheduledCommandChainFrameDataOwnerWorkRequests.AsSpan(
+                    0,
+                    _scheduledCommandChainFrameDataOwnerWorkRequestCount);
 
             public void BeginReusableFrameDataRefreshRequests()
             {
@@ -146,6 +175,22 @@ namespace XREngine.Rendering.Vulkan
                 _dynamicUiReusableFrameOwners.Clear();
                 PrimaryReusableFrameDataRefreshBatchInfo = default;
                 DynamicUiReusableFrameDataRefreshBatchInfo = default;
+            }
+
+            public void BeginScheduledCommandChainFrameDataRefreshRequests()
+            {
+                Array.Clear(
+                    _scheduledCommandChainFrameDataRefreshRequests,
+                    0,
+                    _scheduledCommandChainFrameDataRefreshRequestCount);
+                Array.Clear(
+                    _scheduledCommandChainFrameDataOwnerWorkRequests,
+                    0,
+                    _scheduledCommandChainFrameDataOwnerWorkRequestCount);
+                _scheduledCommandChainFrameDataRefreshRequestCount = 0;
+                _scheduledCommandChainFrameDataOwnerWorkRequestCount = 0;
+                _scheduledCommandChainFrameDataOwners.Clear();
+                ScheduledCommandChainFrameDataRefreshBatchInfo = default;
             }
 
             public void AddReusableFrameDataRefreshRequest(
@@ -218,6 +263,37 @@ namespace XREngine.Rendering.Vulkan
                     PrimaryReusableFrameDataRefreshBatchInfo = batchInfo;
             }
 
+            public void AddScheduledCommandChainFrameDataRefreshRequest(
+                in VulkanReusableFrameDataRefreshRequest request)
+            {
+                EnsureReusableFrameDataRefreshRequestCapacity(
+                    ref _scheduledCommandChainFrameDataRefreshRequests,
+                    _scheduledCommandChainFrameDataRefreshRequestCount + 1);
+                _scheduledCommandChainFrameDataRefreshRequests[
+                    _scheduledCommandChainFrameDataRefreshRequestCount++] =
+                    request;
+            }
+
+            public bool TryAddScheduledCommandChainFrameDataOwnerWorkRequest(
+                in VulkanReusableFrameOwnerKey ownerKey,
+                in VulkanReusableFrameDataRefreshRequest request)
+            {
+                if (!_scheduledCommandChainFrameDataOwners.Add(ownerKey))
+                    return false;
+
+                EnsureReusableFrameDataRefreshRequestCapacity(
+                    ref _scheduledCommandChainFrameDataOwnerWorkRequests,
+                    _scheduledCommandChainFrameDataOwnerWorkRequestCount + 1);
+                _scheduledCommandChainFrameDataOwnerWorkRequests[
+                    _scheduledCommandChainFrameDataOwnerWorkRequestCount++] =
+                    request;
+                return true;
+            }
+
+            public void SetScheduledCommandChainFrameDataRefreshBatchInfo(
+                in VulkanReusableFrameDataRefreshBatchInfo batchInfo)
+                => ScheduledCommandChainFrameDataRefreshBatchInfo = batchInfo;
+
             public int[] PreparePrimaryMeshDrawUniformSlots(int opCount)
             {
                 if (_primaryMeshDrawUniformSlotsByOpIndex.Length < opCount)
@@ -230,6 +306,32 @@ namespace XREngine.Rendering.Vulkan
 
                 Array.Fill(_primaryMeshDrawUniformSlotsByOpIndex, -1, 0, opCount);
                 return _primaryMeshDrawUniformSlotsByOpIndex;
+            }
+
+            public bool[]
+                PreparePrimaryScheduledCommandChainFrameDataRefreshFlags(
+                    int opCount)
+            {
+                if (_primaryScheduledCommandChainFrameDataRefreshedByOpIndex
+                        .Length < opCount)
+                {
+                    int capacity = Math.Max(
+                        opCount,
+                        Math.Max(
+                            4,
+                            _primaryScheduledCommandChainFrameDataRefreshedByOpIndex
+                                .Length * 2));
+                    Array.Resize(
+                        ref _primaryScheduledCommandChainFrameDataRefreshedByOpIndex,
+                        capacity);
+                }
+
+                Array.Fill(
+                    _primaryScheduledCommandChainFrameDataRefreshedByOpIndex,
+                    false,
+                    0,
+                    opCount);
+                return _primaryScheduledCommandChainFrameDataRefreshedByOpIndex;
             }
 
             private static void EnsureReusableFrameDataRefreshRequestCapacity(

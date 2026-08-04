@@ -756,13 +756,53 @@ internal unsafe partial class VkMeshRenderer
 		if (frameCount <= 0)
 			return 0UL;
 
-		return ComputeDescriptorResourceFingerprint(
-			material,
-			frameCount,
-			bindings,
-			drawUniformSlot: 0,
-			usesSharedMaterialTier: false,
-			bindingSnapshot);
+		if (bindingSnapshot is not
+			{ HasPublishedBindingLayoutSignatures: true })
+		{
+			// Legacy/compute callers without an immutable publication retain the
+			// authoritative reflected-binding walk.
+			return ComputeDescriptorResourceFingerprint(
+				material,
+				frameCount,
+				bindings,
+				drawUniformSlot: 0,
+				usesSharedMaterialTier: false,
+				bindingSnapshot);
+		}
+
+		// The enqueue-time binding publication already fingerprints exact sampler,
+		// image, and program-buffer handles. Frame-arena UBO views are mutable CPU
+		// routing records: frequency publication replaces their offsets as each view
+		// is refreshed, while descriptor sets keep binding the same arena buffer and
+		// secondary command buffers carry the dynamic offset. Hash the arena's native
+		// allocation generation instead of those mutable views. Dedicated-buffer
+		// mode still fingerprints the exact renderer-owned UBO allocations.
+		FrameOpSignatureHasher hash = new();
+		ulong snapshotResourceSignature =
+			bindingSnapshot.PersistentEngineResourceSignature;
+		ulong cachedBufferResourceSignature =
+			ComputeCachedBufferResourceFingerprintCore();
+		hash.Add(frameCount);
+		hash.Add(program!.BindingId);
+		hash.Add(program.LinkGeneration);
+		hash.Add(program.DescriptorLayoutFingerprint);
+		hash.Add(program.DescriptorSchemaFingerprint);
+		hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(material));
+		hash.Add(material.BindingLayoutVersion);
+		hash.Add(material.BindingResourceVersion);
+		hash.Add(bindingSnapshot.DescriptorSetLayoutSignature);
+		hash.Add(snapshotResourceSignature);
+		hash.Add(cachedBufferResourceSignature);
+		if (Renderer.MeshFrameDataArenaEnabled)
+		{
+			hash.Add(Renderer.MeshFrameDataReservationGeneration);
+		}
+		else
+		{
+			hash.Add(ComputeEngineUniformResourceFingerprintCore());
+			hash.Add(ComputeAutoUniformResourceFingerprintCore());
+		}
+		return hash.ToHash();
 	}
 
 	private bool CanReuseRecordedDescriptorSets(

@@ -343,9 +343,11 @@ public unsafe partial class VulkanRenderer
                 {
                     CommandBuffer freedSecondary = secondary;
                     FreeVulkanCommandBufferTracked(pool, ref secondary, "CommandChain.SecondaryReplacement");
-                    RemoveCommandBufferBindState(freedSecondary);
-                    UntrackOwnedCommandChainSecondaryCommandBuffer(pool, freedSecondary);
-                    DestroyPendingOwnedCommandChainSecondaryPoolIfEmpty(pool);
+                    if (!IsCommandBufferPendingRetirement(freedSecondary))
+                    {
+                        UntrackOwnedCommandChainSecondaryCommandBuffer(pool, freedSecondary);
+                        DestroyPendingOwnedCommandChainSecondaryPoolIfEmpty(pool);
+                    }
                 }
             }
             else
@@ -363,4 +365,3 @@ public unsafe partial class VulkanRenderer
         chain.RecordedArtifact.MarkRetired();
     }
 }
-

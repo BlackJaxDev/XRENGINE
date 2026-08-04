@@ -870,6 +870,79 @@ public unsafe partial class VulkanRenderer
         return found;
     }
 
+    /// <summary>
+    /// Finds the prior state owned by the same output/view even when descriptor
+    /// publication changed the registry or resource-generation input key. The
+    /// caller still runs the planner against the current context, so a genuine
+    /// physical-layout change replaces the allocator while a metadata-only change
+    /// keeps the existing images and buffers alive.
+    /// </summary>
+    private static bool TryFindBestPhysicalOwnerFrameOpPlannerState(
+        in VulkanFrameOpPlannerStateKey requestedKey,
+        FrameOpResourcePlannerSwitchingState switchingState,
+        out VulkanFrameOpPlannerStateKey key,
+        out ResourcePlannerRuntimeState state)
+    {
+        key = default;
+        state = default;
+        bool found = false;
+        int bestScore = int.MinValue;
+
+        foreach (KeyValuePair<VulkanFrameOpPlannerStateKey, ResourcePlannerRuntimeState> pair in switchingState.States)
+        {
+            if (!FrameOpPlannerStateKeysSharePhysicalOwner(pair.Key, requestedKey) ||
+                !IsReusableFrameOpResourcePlannerState(pair.Value) ||
+                !IsFrameOpPlannerAllocatorExclusivelyOwnedByKey(
+                    switchingState,
+                    pair.Key,
+                    pair.Value.ResourceAllocator))
+            {
+                continue;
+            }
+
+            int score = ScoreCompatibleFrameOpPlannerState(pair.Key, pair.Value);
+            if (found && score <= bestScore)
+                continue;
+
+            found = true;
+            bestScore = score;
+            key = pair.Key;
+            state = pair.Value;
+        }
+
+        return found;
+    }
+
+    private static bool FrameOpPlannerStateKeysSharePhysicalOwner(
+        in VulkanFrameOpPlannerStateKey first,
+        in VulkanFrameOpPlannerStateKey second)
+        => first.ContextKind == second.ContextKind &&
+           first.PipelineIdentity == second.PipelineIdentity &&
+           first.ViewportIdentity == second.ViewportIdentity &&
+           first.DisplayWidth == second.DisplayWidth &&
+           first.DisplayHeight == second.DisplayHeight &&
+           first.InternalWidth == second.InternalWidth &&
+           first.InternalHeight == second.InternalHeight &&
+           first.OutputFrameBufferIdentity == second.OutputFrameBufferIdentity &&
+           first.OutputTargetIdentity == second.OutputTargetIdentity &&
+           first.SubmissionQueueFamily == second.SubmissionQueueFamily;
+
+    private static void RekeyFrameOpResourcePlannerState(
+        FrameOpResourcePlannerSwitchingState switchingState,
+        in VulkanFrameOpPlannerStateKey previousKey,
+        in VulkanFrameOpPlannerStateKey currentKey,
+        in ResourcePlannerRuntimeState state)
+    {
+        if (!previousKey.Equals(currentKey))
+        {
+            switchingState.States.Remove(previousKey);
+            switchingState.LastUsedSerials.Remove(previousKey);
+            switchingState.ActiveKeys.Remove(previousKey);
+        }
+
+        switchingState.States[currentKey] = state;
+    }
+
     private static int ScoreCompatibleFrameOpPlannerState(
         in VulkanFrameOpPlannerStateKey key,
         in ResourcePlannerRuntimeState state)

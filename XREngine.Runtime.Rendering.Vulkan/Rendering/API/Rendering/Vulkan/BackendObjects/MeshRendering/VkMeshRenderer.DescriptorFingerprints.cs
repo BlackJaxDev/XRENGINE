@@ -861,7 +861,11 @@ internal unsafe partial class VkMeshRenderer
 		item.Add(name, StringComparer.Ordinal);
 		item.Add(buffers.Length);
 		for (int i = 0; i < buffers.Length; i++)
+		{
+			item.Add(buffers[i].Buffer.Handle);
 			item.Add(buffers[i].Size);
+			item.Add(buffers[i].Offset);
+		}
 
 		return unchecked((ulong)item.ToHashCode());
 	}
@@ -872,7 +876,11 @@ internal unsafe partial class VkMeshRenderer
 		item.Add(name, StringComparer.Ordinal);
 		item.Add(buffers.Length);
 		for (int i = 0; i < buffers.Length; i++)
+		{
+			item.Add(buffers[i].Buffer.Handle);
 			item.Add(buffers[i].Size);
+			item.Add(buffers[i].Offset);
+		}
 
 		return unchecked((ulong)item.ToHashCode());
 	}

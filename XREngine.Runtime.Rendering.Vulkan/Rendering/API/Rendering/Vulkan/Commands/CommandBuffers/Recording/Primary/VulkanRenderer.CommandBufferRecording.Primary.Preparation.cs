@@ -66,6 +66,15 @@ namespace XREngine.Rendering.Vulkan
                 ? recordingState.SwapchainTarget.InitialColorLayout
                 : ImageLayout.Undefined;
             recordingState.RecordingScratch = _commandBufferRecordingScratch.Value!;
+            recordingState.SecondaryBuckets =
+                recordingState.RecordingScratch.SecondaryRecordingBuckets;
+            recordingState.SecondaryBucketByStart = null;
+            recordingState.ScheduledCommandChainKeysByOpIndex = null;
+            recordingState.ScheduledCommandChainCache = null;
+            // Schedule before resource prewarm so clean secondary chains can
+            // reuse their already-compiled graphics pipelines. It also ensures
+            // the primary plan is built from the final sorted operation order.
+            PreparePrimaryOperationSchedule(ref recordingState);
             NormalizePrimaryPlanPassIndices(recordingState.Ops);
             recordingState.PrimaryCommandPlan.Build(
                 recordingState.Ops,
@@ -77,6 +86,10 @@ namespace XREngine.Rendering.Vulkan
                         recordingState.OpenXrTargetContext is not null),
                 BarrierPlanner);
             recordingState.MeshDrawUniformSlotsByOpIndex = recordingState.RecordingScratch.PreparePrimaryMeshDrawUniformSlots(recordingState.Ops.Length);
+            recordingState.ScheduledCommandChainFrameDataRefreshedByOpIndex =
+                recordingState.RecordingScratch
+                    .PreparePrimaryScheduledCommandChainFrameDataRefreshFlags(
+                        recordingState.Ops.Length);
             recordingState.ExecutedCommandChainSecondaryHandles = recordingState.RecordingScratch.ExecutedCommandChainSecondaryHandles;
             recordingState.ExecutedCommandChainSecondaryHandles.Clear();
         }
@@ -128,6 +141,8 @@ namespace XREngine.Rendering.Vulkan
             recordingState.MeshDrawSlotsByRendererFamily.Clear();
             recordingState.PipelineDeferredOps = recordingState.RecordingScratch.PipelineDeferredOps;
             recordingState.PipelineDeferredOps.Clear();
+            PrepareScheduledCommandChainFrameDataRefresh(
+                ref recordingState);
             EMeshSubmissionStrategy submissionStrategy = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
             VulkanPipelineVariantManifest pipelineVariantManifest = GetOrBuildPipelineVariantManifest(
                 CompiledRenderGraph.Plan,
@@ -189,15 +204,34 @@ namespace XREngine.Rendering.Vulkan
                     }
                     XRFrameBuffer? target = recordingState.Ops[opIndex].Target;
 
-                    int drawSlot = GetFrameWideMeshDrawUniformSlot(
-                        recordingState.MeshDrawSlotsByRendererFamily,
-                        recordingState.MeshFrameDataFamilyBases,
-                        meshRenderer,
-                        recordingState.CommandBufferImageSlot,
-                        EVulkanMeshFrameDataStreamKind.Primary,
-                        recordingState.Ops[opIndex].Context,
-                        pendingDraw);
+                    int drawSlot =
+                        recordingState.MeshDrawUniformSlotsByOpIndex[opIndex];
+                    if (drawSlot < 0)
+                    {
+                        drawSlot = GetFrameWideMeshDrawUniformSlot(
+                            recordingState.MeshDrawSlotsByRendererFamily,
+                            recordingState.MeshFrameDataFamilyBases,
+                            meshRenderer,
+                            recordingState.CommandBufferImageSlot,
+                            EVulkanMeshFrameDataStreamKind.Primary,
+                            recordingState.Ops[opIndex].Context,
+                            pendingDraw);
+                    }
                     recordingState.MeshDrawUniformSlotsByOpIndex[opIndex] = drawSlot;
+                    bool frameDataAlreadyRefreshed =
+                        recordingState
+                            .ScheduledCommandChainFrameDataRefreshedByOpIndex[
+                                opIndex];
+                    if (frameDataAlreadyRefreshed)
+                    {
+                        // The reusable-chain refresh already published the exact
+                        // draw slot and validated its descriptor/pipeline identity.
+                        // Entering a planner readback scope for every draw here is
+                        // otherwise especially costly for four CSM cohorts, even
+                        // though the body performs no additional work.
+                        continue;
+                    }
+
                     using var pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(
                         recordingState.Ops[opIndex].Context.PipelineInstance);
                     using var plannerScope =
@@ -228,6 +262,13 @@ namespace XREngine.Rendering.Vulkan
                         recordingState.Ops[opIndex].Context.PassMetadata);
                     if (pipelinePassIndex == int.MinValue)
                         continue;
+
+                    if (CanSkipScheduledCommandChainPipelinePrewarm(
+                            ref recordingState,
+                            opIndex))
+                    {
+                        continue;
+                    }
 
                     if (reuseDeferredPipelineReadiness &&
                         deferredRequirementIndices.Contains(requirementIndex))
@@ -361,6 +402,173 @@ namespace XREngine.Rendering.Vulkan
             return true;
         }
 
+        /// <summary>
+        /// Refreshes the frame-buffered data consumed by executable scheduled
+        /// secondaries before primary recording begins. The reusable refresh
+        /// state collapses stable cohorts to frequency-owner work, avoiding a
+        /// full draw preparation pass and a second refresh while encoding.
+        /// </summary>
+        private void PrepareScheduledCommandChainFrameDataRefresh(
+            scoped ref PrimaryCommandBufferRecordingState recordingState)
+        {
+            CommandBufferRecordingScratch scratch =
+                recordingState.RecordingScratch;
+            scratch.BeginScheduledCommandChainFrameDataRefreshRequests();
+
+            ReadOnlySpan<VulkanReusableFrameDataRefreshRequest> requests =
+                scratch.PrimaryReusableFrameDataRefreshRequests;
+            FrameOpSignatureHasher stableMeshHash = new();
+            stableMeshHash.Add(0x53454346);
+            stableMeshHash.Add(MeshFrameDataReservationGeneration);
+            int meshRequestCount = 0;
+            bool supportsDirectOwnerOnlyRefresh = true;
+
+            for (int requestIndex = 0;
+                 requestIndex < requests.Length;
+                 requestIndex++)
+            {
+                ref readonly VulkanReusableFrameDataRefreshRequest request =
+                    ref requests[requestIndex];
+                int opIndex = request.SourceOpIndex;
+                if ((uint)opIndex >= (uint)recordingState.Ops.Length)
+                    continue;
+
+                if (request.Kind is
+                    EVulkanReusableFrameDataRefreshKind.Mesh or
+                    EVulkanReusableFrameDataRefreshKind.IndirectMesh)
+                {
+                    recordingState.MeshDrawUniformSlotsByOpIndex[opIndex] =
+                        request.DrawUniformSlot;
+                }
+
+                if (request.Kind != EVulkanReusableFrameDataRefreshKind.Mesh ||
+                    !CanSkipScheduledCommandChainPipelinePrewarm(
+                        ref recordingState,
+                        opIndex))
+                {
+                    continue;
+                }
+
+                scratch.AddScheduledCommandChainFrameDataRefreshRequest(
+                    request);
+                supportsDirectOwnerOnlyRefresh &=
+                    request.MeshRenderer is not null &&
+                    request.MeshRenderer
+                        .SupportsOwnerOnlyReusableFrameDataRefresh(
+                            request.Draw);
+                stableMeshHash.Add(
+                    ComputeReusableMeshStableDataSignature(request));
+                AddReusableFrequencyOwnerWorkRequests(
+                    request,
+                    dynamicUi: false,
+                    scratch,
+                    scheduledCommandChain: true);
+                meshRequestCount++;
+            }
+
+            stableMeshHash.Add(meshRequestCount);
+            scratch.SetScheduledCommandChainFrameDataRefreshBatchInfo(
+                new VulkanReusableFrameDataRefreshBatchInfo(
+                    stableMeshHash.ToHash(),
+                    meshRequestCount,
+                    supportsDirectOwnerOnlyRefresh));
+            if (meshRequestCount == 0)
+                return;
+
+            _lastReusableFrameDataRefreshFailureReason = null;
+            bool refreshed;
+            using (VulkanCpuStageScope cpuStage =
+                   new(EVulkanCpuStage.FrameDataRefresh))
+            {
+                refreshed = TryRefreshReusableCommandBufferFrameData(
+                    recordingState.FrameDataImageIndex,
+                    scratch.ScheduledCommandChainFrameDataRefreshRequests,
+                    scratch.ScheduledCommandChainFrameDataOwnerWorkRequests,
+                    scratch.ScheduledCommandChainFrameDataRefreshBatchInfo,
+                    scratch.ScheduledCommandChainFrameDataRefreshState,
+                    dynamicUi: false,
+                    descriptorResourcesCapturedByFrameSignature: true,
+                    refreshMaterialUniforms: true);
+            }
+
+            if (!refreshed)
+            {
+                InvalidateScheduledCommandChainFrameDataRefresh(
+                    ref recordingState,
+                    scratch.ScheduledCommandChainFrameDataRefreshRequests);
+                return;
+            }
+
+            ReadOnlySpan<VulkanReusableFrameDataRefreshRequest>
+                refreshedRequests =
+                    scratch.ScheduledCommandChainFrameDataRefreshRequests;
+            for (int requestIndex = 0;
+                 requestIndex < refreshedRequests.Length;
+                 requestIndex++)
+            {
+                int opIndex = refreshedRequests[requestIndex].SourceOpIndex;
+                if ((uint)opIndex < (uint)recordingState.Ops.Length)
+                {
+                    recordingState
+                        .ScheduledCommandChainFrameDataRefreshedByOpIndex[
+                            opIndex] = true;
+                }
+            }
+        }
+
+        private void InvalidateScheduledCommandChainFrameDataRefresh(
+            scoped ref PrimaryCommandBufferRecordingState recordingState,
+            ReadOnlySpan<VulkanReusableFrameDataRefreshRequest> requests)
+        {
+            Array.Fill(
+                recordingState
+                    .ScheduledCommandChainFrameDataRefreshedByOpIndex,
+                false,
+                0,
+                recordingState.Ops.Length);
+            for (int requestIndex = 0;
+                 requestIndex < requests.Length;
+                 requestIndex++)
+            {
+                int opIndex = requests[requestIndex].SourceOpIndex;
+                if (!TryGetScheduledCommandChainForOp(
+                        ref recordingState,
+                        opIndex,
+                        out CommandChain chain,
+                        out _))
+                {
+                    continue;
+                }
+
+                chain.State = CommandChainState.Recorded;
+                chain.DirtyReason |=
+                    CommandChainDirtyReason.FrameDataRefreshFailed;
+                chain.FrameDataRefreshTouchedDescriptors = false;
+            }
+        }
+
+        private bool CanSkipScheduledCommandChainPipelinePrewarm(
+            scoped ref PrimaryCommandBufferRecordingState recordingState,
+            int opIndex)
+        {
+            if (CommandChainBenchmarkForceRerecord ||
+                !TryGetScheduledCommandChainForOp(
+                    ref recordingState,
+                    opIndex,
+                    out CommandChain chain,
+                    out _))
+            {
+                return false;
+            }
+
+            return chain.SecondaryCommandBuffer.Handle != 0 &&
+                   chain.SecondaryCommandBufferExecutable &&
+                   (chain.State is
+                       CommandChainState.Reused or
+                       CommandChainState.FrameDataRefreshed) &&
+                   !chain.FrameDataRefreshTouchedDescriptors;
+        }
+
         private void PreparePrimaryCommandEncoding(
             scoped ref PrimaryCommandBufferRecordingState recordingState)
         {
@@ -374,18 +582,6 @@ namespace XREngine.Rendering.Vulkan
             recordingState.InitialContext = recordingState.Ops.Length > 0
                 ? recordingState.Ops[0].Context
                 : CaptureFrameOpContext();
-
-            // Coalesce swapchain-targeting ops into a single context to avoid
-            // render-pass restarts across pipeline boundaries.  Context changes
-            // between pipelines that all render to the swapchain cause
-            // EndActiveRenderPass + BeginRenderPassForTarget cycles that can lose
-            // composited content (e.g. the skybox turns black).  FBO-targeting ops
-            // keep their original context for correct barrier/resource planning.
-            recordingState.SecondaryBuckets = recordingState.RecordingScratch.SecondaryRecordingBuckets;
-            recordingState.SecondaryBucketByStart = null;
-            recordingState.ScheduledCommandChainKeysByOpIndex = null;
-            recordingState.ScheduledCommandChainCache = null;
-            PreparePrimaryOperationSchedule(ref recordingState);
 
             recordingState.InitialContext = recordingState.Ops.Length > 0
                 ? recordingState.Ops[0].Context

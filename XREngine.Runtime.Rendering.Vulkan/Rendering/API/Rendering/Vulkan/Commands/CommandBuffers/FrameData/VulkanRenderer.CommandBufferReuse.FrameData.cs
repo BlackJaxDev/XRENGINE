@@ -75,14 +75,19 @@ namespace XREngine.Rendering.Vulkan
                     plannerRevision);
             }
             hasPreparedFastScheduleSignature = true;
-            if (!TryGetCachedCommandChainSchedule(
-                    imageIndex,
-                    fastScheduleSignature,
-                    out CommandChainSchedule? cachedSchedule,
-                    out _))
-            {
-                return false;
-            }
+            ulong scheduledDynamicUiSignature = preserveSwapchainForOverlay
+                ? 0UL
+                : dynamicUiBatchTextSignature;
+            CommandChainSchedule? cachedSchedule = TryBuildCommandChainSchedule(
+                imageIndex,
+                ops,
+                scheduledDynamicUiBatchTextOps,
+                frameOpsSignature,
+                scheduledDynamicUiSignature,
+                plannerRevision,
+                allowExternalSwapchainTarget: false,
+                out _,
+                fastScheduleSignature);
             if (cachedSchedule is null)
                 return false;
 
@@ -103,8 +108,12 @@ namespace XREngine.Rendering.Vulkan
                 currentPrimaryIdentityComponents.Combined;
             int currentPrimaryGroupCount = cachedSchedule.Groups.Length;
             ulong currentPrimarySkeletonSignature = ComputeCommandChainPrimarySkeletonSignature(ops);
-            bool allCommandChainGroupsUseSecondaryBuffers =
-                UsesOnlySecondaryCommandBufferGroups(cachedSchedule);
+            bool allPreparedDrawBindingsUseSecondaryBuffers =
+                AreAllPreparedDrawBindingsSecondaryOwned(cachedSchedule, ops);
+            CommandRecordingDependencySignature currentPrimaryDependencySignature =
+                CaptureCommandChainPrimaryPreparedBindingDependencies(
+                    currentDependencySignature,
+                    ops);
 
             List<CommandBufferCacheVariant> variants = _commandBufferVariants[imageIndex];
             bool hasDynamicUiBatchTextOverlay = dynamicUiBatchTextOpCount > 0;
@@ -113,17 +122,21 @@ namespace XREngine.Rendering.Vulkan
                 CommandBufferCacheVariant variant = variants[i];
                 CommandRecordingDependencyMismatch dependencyMismatch =
                     variant.RecordedDependencySignature.CompareCommandChainPrimary(
-                        currentDependencySignature,
-                        allCommandChainGroupsUseSecondaryBuffers);
+                        currentPrimaryDependencySignature);
                 if (dependencyMismatch.RequiresRecording && VulkanFrameDiagnosticsTraceEnabled)
                 {
                     Debug.VulkanEvery(
                         $"Vulkan.PrimaryReuse.DependencyMiss.{GetHashCode()}.{imageIndex}.{dependencyMismatch.Field}",
                         TimeSpan.FromSeconds(1),
-                        "[Vulkan] Cached primary dependency mismatch. Image={0} Field={1} Class={2}",
+                        "[Vulkan] Cached primary dependency mismatch. Image={0} Field={1} Class={2} " +
+                        "PipelineLayout=0x{3:X16}->0x{4:X16} SecondaryGroups={5} SecondaryDraws={6}",
                         imageIndex,
                         dependencyMismatch.Field,
-                        dependencyMismatch.InvalidationClass);
+                        dependencyMismatch.InvalidationClass,
+                        variant.RecordedDependencySignature.PipelineLayoutGeneration,
+                        currentPrimaryDependencySignature.PipelineLayoutGeneration,
+                        cachedSchedule.InlineFrameOpCount == 0,
+                        allPreparedDrawBindingsUseSecondaryBuffers);
                 }
                 if (variant.Dirty ||
                     dependencyMismatch.RequiresRecording ||
@@ -148,6 +161,7 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 bool refreshedReusableFrameData;
+                bool dynamicUiFrameDataNeedsRerecord = false;
                 using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.FrameDataRefresh))
                 {
                     refreshedReusableFrameData = ops.Length == 0 ||
@@ -162,11 +176,11 @@ namespace XREngine.Rendering.Vulkan
                             variant.PrimaryFrameDataRefreshState,
                             dynamicUi: false,
                             descriptorResourcesCapturedByFrameSignature:
-                                allCommandChainGroupsUseSecondaryBuffers);
+                                allPreparedDrawBindingsUseSecondaryBuffers);
                     if (refreshedReusableFrameData && dynamicUiBatchTextOps.Length > 0)
                     {
-                        refreshedReusableFrameData =
-                            TryRefreshReusableCommandBufferFrameData(
+                        dynamicUiFrameDataNeedsRerecord =
+                            !TryRefreshReusableCommandBufferFrameData(
                                 imageIndex,
                                 frameDataScratch
                                     .DynamicUiReusableFrameDataRefreshRequests,
@@ -176,6 +190,16 @@ namespace XREngine.Rendering.Vulkan
                                     .DynamicUiReusableFrameDataRefreshBatchInfo,
                                 variant.DynamicUiFrameDataRefreshState,
                                 dynamicUi: true);
+
+                        // Dynamic batched text is recorded into a dedicated
+                        // secondary. A descriptor-set pool miss prevents an
+                        // in-place refresh of that secondary, but it does not
+                        // invalidate the scene primary that only executes its
+                        // stable command-buffer handle. Re-record the isolated
+                        // text secondary below instead of rebuilding every scene
+                        // and shadow render scope.
+                        if (dynamicUiFrameDataNeedsRerecord)
+                            _lastReusableFrameDataRefreshFailureReason = null;
                     }
                 }
                 if (!refreshedReusableFrameData)
@@ -196,7 +220,8 @@ namespace XREngine.Rendering.Vulkan
                             imageIndex,
                             variant,
                             dynamicUiBatchTextOps,
-                            dynamicUiBatchTextSignature);
+                            dynamicUiBatchTextSignature,
+                            forceRecord: dynamicUiFrameDataNeedsRerecord);
                 }
                 else
                 {
@@ -226,7 +251,11 @@ namespace XREngine.Rendering.Vulkan
                 variant.GpuProfilerActive = gpuPipelineProfilingActive;
                 variant.GpuProfilerFrameSlot = gpuPipelineProfilingActive ? commandBufferImageSlot : -1;
                 variant.RecordedGenerations = currentGenerations;
-                variant.RecordedDependencySignature = currentDependencySignature;
+                // Preserve the same inline-only binding scope used by the primary
+                // comparison. Publishing the aggregate draw signature here poisoned
+                // the clean variant after one reuse and made the next camera frame
+                // look structurally dirty again.
+                variant.RecordedDependencySignature = currentPrimaryDependencySignature;
                 variant.RecordedFrameOpContextFingerprint = frameOpContextFingerprint;
                 variant.RecordedFrameOpContextId = frameOpContextId;
                 variant.LastUsedFrameId = VulkanFrameCounter;
@@ -291,8 +320,13 @@ namespace XREngine.Rendering.Vulkan
             if (requests.IsEmpty)
                 return true;
 
-            bool ownerOnlyRefresh =
+            bool directOwnerOnlyRefresh =
+                batchInfo.MeshRequestCount > 0 &&
+                batchInfo.SupportsDirectOwnerOnlyRefresh;
+            bool cachedOwnerOnlyRefresh =
                 refreshState.CanUseOwnerOnlyRefresh(batchInfo);
+            bool ownerOnlyRefresh =
+                directOwnerOnlyRefresh || cachedOwnerOnlyRefresh;
             ReadOnlySpan<VulkanReusableFrameDataRefreshRequest>
                 activeRequests =
                     ownerOnlyRefresh
@@ -462,7 +496,7 @@ namespace XREngine.Rendering.Vulkan
                 packetStart = packetEnd;
             }
 
-            if (ownerOnlyRefresh)
+            if (cachedOwnerOnlyRefresh && !directOwnerOnlyRefresh)
             {
                 ReadOnlySpan<int> fallbackRequestIndices =
                     refreshState.FallbackRequestIndices;
@@ -507,6 +541,8 @@ namespace XREngine.Rendering.Vulkan
 
             if (!ownerOnlyRefresh)
                 refreshState.CommitFullRefresh();
+            else if (directOwnerOnlyRefresh)
+                refreshState.CommitDirectOwnerOnlyRefresh(batchInfo);
 
             return true;
         }

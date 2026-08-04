@@ -1209,6 +1209,22 @@ namespace XREngine.Rendering.Vulkan
                 if (secondary.Handle == 0 || entry.Pool.Handle == 0)
                     continue;
 
+                ulong currentResourceGeneration = GetCurrentVulkanResourceGeneration(
+                    ObjectType.CommandBuffer,
+                    unchecked((ulong)secondary.Handle));
+                if (entry.ResourceGeneration != 0 &&
+                    currentResourceGeneration != entry.ResourceGeneration)
+                {
+                    if (CommandChainValidationEnabled)
+                    {
+                        Debug.VulkanWarning(
+                            $"[Vulkan.CommandChains] Ignored stale deferred secondary command buffer " +
+                            $"0x{unchecked((ulong)secondary.Handle):X}: deferredGeneration=" +
+                            $"{entry.ResourceGeneration} currentGeneration={currentResourceGeneration}.");
+                    }
+                    continue;
+                }
+
                 if (_deviceLost)
                 {
                     RemoveCommandBufferBindState(secondary);
@@ -1218,7 +1234,9 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 FreeVulkanCommandBufferTracked(entry.Pool, ref secondary, "CommandBuffers.DeferredSecondary");
-                RemoveCommandBufferBindState(entry.CommandBuffer);
+                if (IsCommandBufferPendingRetirement(entry.CommandBuffer))
+                    continue;
+
                 UntrackOwnedCommandChainSecondaryCommandBuffer(entry.Pool, entry.CommandBuffer);
                 DestroyPendingOwnedCommandChainSecondaryPoolIfEmpty(entry.Pool);
             }
@@ -1233,7 +1251,12 @@ namespace XREngine.Rendering.Vulkan
 
             DeferSecondaryCommandBufferFree(
                 imageIndex,
-                new DeferredSecondaryCommandBuffer(pool, commandBuffer));
+                new DeferredSecondaryCommandBuffer(
+                    pool,
+                    commandBuffer,
+                    GetCurrentVulkanResourceGeneration(
+                        ObjectType.CommandBuffer,
+                        unchecked((ulong)commandBuffer.Handle))));
         }
 
         private void DeferRecordedCommandArtifactRetirement(
@@ -1247,7 +1270,11 @@ namespace XREngine.Rendering.Vulkan
                 .RecordVulkanRecordedCommandArtifactRetirement();
             DeferSecondaryCommandBufferFree(
                 imageIndex,
-                new DeferredSecondaryCommandBuffer(retirement));
+                new DeferredSecondaryCommandBuffer(
+                    retirement,
+                    GetCurrentVulkanResourceGeneration(
+                        ObjectType.CommandBuffer,
+                        unchecked((ulong)retirement.NativeBuffer.Handle))));
         }
 
         private void DeferSecondaryCommandBufferFree(
@@ -1259,7 +1286,9 @@ namespace XREngine.Rendering.Vulkan
             if (_deferredSecondaryCommandBuffers is null || imageIndex >= _deferredSecondaryCommandBuffers.Length)
             {
                 FreeVulkanCommandBufferTracked(pool, ref commandBuffer, "CommandBuffers.OwnedSecondary");
-                RemoveCommandBufferBindState(deferred.CommandBuffer);
+                if (IsCommandBufferPendingRetirement(deferred.CommandBuffer))
+                    return;
+
                 UntrackOwnedCommandChainSecondaryCommandBuffer(pool, deferred.CommandBuffer);
                 DestroyPendingOwnedCommandChainSecondaryPoolIfEmpty(pool);
                 return;

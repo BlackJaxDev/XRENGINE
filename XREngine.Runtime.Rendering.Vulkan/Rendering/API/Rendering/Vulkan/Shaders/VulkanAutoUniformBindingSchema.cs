@@ -100,7 +100,13 @@ internal sealed class VulkanAutoUniformBindingSchema
             return new VulkanAutoUniformBindingOperation(
                 member,
                 EVulkanAutoUniformSourceKind.StructSnapshot,
-                EVulkanBindingFrequency.Material,
+                // Struct fields are published individually, but the source
+                // rewriter has already placed the complete struct in one
+                // frequency-owned block. Inherit that declared ownership so
+                // frame-slot publication follows the struct's actual owner.
+                // Treating every struct as Material leaves Object-owned data
+                // such as deferred LightData stale across reused slots.
+                block.Frequency,
                 default,
                 default,
                 default,
