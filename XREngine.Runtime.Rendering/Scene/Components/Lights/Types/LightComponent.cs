@@ -100,6 +100,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private long _lastMovedTicks;
         private uint _movementVersion = 0;
+        private long _bindingGeneration = 1;
         private long _activationCount;
 
         internal static float TimeSinceLastMovementSeconds(long currentTicks, long lastMovedTicks)
@@ -111,6 +112,14 @@ namespace XREngine.Components.Capture.Lights.Types
         /// </summary>
         [Browsable(false)]
         public uint MovementVersion => _movementVersion;
+
+        /// <summary>
+        /// Monotonic revision of every property or transform value published
+        /// by <see cref="SetUniforms(XRRenderProgram, string?)"/>.
+        /// </summary>
+        [Browsable(false)]
+        public ulong BindingGeneration
+            => unchecked((ulong)Interlocked.Read(ref _bindingGeneration));
 
         /// <summary>
         /// Number of times this light has entered the active scene hierarchy.
@@ -164,6 +173,7 @@ namespace XREngine.Components.Capture.Lights.Types
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
+            AdvanceBindingGeneration();
             switch (propName)
             {
                 case nameof(CastsShadows):
@@ -358,8 +368,15 @@ namespace XREngine.Components.Capture.Lights.Types
             if (World is not null)
                 _lastMovedTicks = RuntimeEngine.ElapsedTicks;
             unchecked { _movementVersion++; }
+            AdvanceBindingGeneration();
             UpdateLightMatrix(renderMatrix);
             base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
+        }
+
+        private void AdvanceBindingGeneration()
+        {
+            if (Interlocked.Increment(ref _bindingGeneration) == 0)
+                Interlocked.CompareExchange(ref _bindingGeneration, 1, 0);
         }
 
         /// <summary>

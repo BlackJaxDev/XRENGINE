@@ -65,22 +65,22 @@ layout(std430, binding = 24) buffer LightProbeGridIndices
     int CellTetraIndices[];
 };
 
-uniform int ProbeCount;
-uniform int TetraCount;
-uniform ivec3 ProbeGridDims;
-uniform vec3 ProbeGridOrigin;
-uniform float ProbeGridCellSize;
-uniform bool UseProbeGrid;
-uniform bool UseAmbientOcclusion = true;
-uniform float AmbientOcclusionPower = 1.0f;
-uniform bool AmbientOcclusionMultiBounce = false;
-uniform bool SpecularOcclusionEnabled = false;
-uniform vec3 GlobalAmbient = vec3(0.03f);
+uniform int ProbeCount; // XRENGINE_FREQUENCY(Pass)
+uniform int TetraCount; // XRENGINE_FREQUENCY(Pass)
+uniform ivec3 ProbeGridDims; // XRENGINE_FREQUENCY(Pass)
+uniform vec3 ProbeGridOrigin; // XRENGINE_FREQUENCY(Pass)
+uniform float ProbeGridCellSize; // XRENGINE_FREQUENCY(Pass)
+uniform bool UseProbeGrid; // XRENGINE_FREQUENCY(Pass)
+uniform bool UseAmbientOcclusion = true; // XRENGINE_FREQUENCY(Pass)
+uniform float AmbientOcclusionPower = 1.0f; // XRENGINE_FREQUENCY(Pass)
+uniform bool AmbientOcclusionMultiBounce = false; // XRENGINE_FREQUENCY(Pass)
+uniform bool SpecularOcclusionEnabled = false; // XRENGINE_FREQUENCY(Pass)
+uniform vec3 GlobalAmbient = vec3(0.03f); // XRENGINE_FREQUENCY(Pass)
 
 // Debug: set via XRE_DEFERRED_DEBUG env var.
 // 0 = normal, 1 = raw albedo, 2 = InLo, 3 = RMSE, 4 = normal, 5 = depth,
 // 6-9/11-14 = directional debug forwarded from the light shader, 10 = AO.
-uniform int DeferredDebugMode = 0;
+uniform int DeferredDebugMode = 0; // XRENGINE_FREQUENCY(Pass)
 
 uniform mat4 LeftEyeInverseViewMatrix;
 uniform mat4 RightEyeInverseViewMatrix;

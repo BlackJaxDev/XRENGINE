@@ -35,7 +35,11 @@ internal static partial class VulkanShaderAutoUniforms
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly Regex UniformStatementRegex = new(
-        @"^\s*(?:layout\s*\([^)]*\)\s*)?uniform\s+(?<statement>[^;]+);[ \t]*(?://[ \t]*XRENGINE_FREQUENCY[ \t]*\([ \t]*(?<frequency>[A-Za-z_][A-Za-z0-9_]*)[ \t]*\))?",
+        @"^\s*(?:layout\s*\([^)]*\)\s*)?uniform\s+(?<statement>[^;]+);[ \t]*(?://[ \t]*XRENGINE_FREQUENCY[ \t]*\([ \t]*(?<frequency>[A-Za-z_][A-Za-z0-9_]*)[ \t]*\)[^\r\n]*)?",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase | RegexOptions.Multiline);
+
+    private static readonly Regex FrequencyOverrideRegex = new(
+        @"^[ \t]*//[ \t]*XRENGINE_FREQUENCY_OVERRIDE[ \t]*\([ \t]*(?<name>[A-Za-z_][A-Za-z0-9_]*)[ \t]*,[ \t]*(?<frequency>[A-Za-z_][A-Za-z0-9_]*)[ \t]*\)[ \t]*\r?$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase | RegexOptions.Multiline);
 
     private static readonly Regex ArrayRegex = new(@"\[(?<size>[A-Za-z_][A-Za-z0-9_]*|\d+u?)\]", RegexOptions.Compiled);
@@ -144,6 +148,17 @@ internal static partial class VulkanShaderAutoUniforms
         => Rewrite(source, shaderType, RuntimeEngine.Rendering.ShouldUseVulkanShaderClipDepthRemap);
 
     public static AutoUniformRewriteResult Rewrite(string source, EShaderType shaderType, bool useVulkanClipDepthRemap)
+        => Rewrite(
+            source,
+            shaderType,
+            useVulkanClipDepthRemap,
+            explicitFrequencyHints: null);
+
+    internal static AutoUniformRewriteResult Rewrite(
+        string source,
+        EShaderType shaderType,
+        bool useVulkanClipDepthRemap,
+        IReadOnlyDictionary<string, EVulkanBindingFrequency>? explicitFrequencyHints)
     {
         if (string.IsNullOrWhiteSpace(source))
             return new AutoUniformRewriteResult(
@@ -165,6 +180,11 @@ internal static partial class VulkanShaderAutoUniforms
 
         Dictionary<string, uint> integralConstants = ParseIntegralConstants(source);
         Dictionary<string, GlslStructDefinition> structDefinitions = ParseStructDefinitions(source, integralConstants);
+        Dictionary<string, EVulkanBindingFrequency> explicitFrequencyOverrides =
+            ParseExplicitFrequencyOverrides(source);
+        MergeExplicitFrequencyHints(
+            explicitFrequencyOverrides,
+            explicitFrequencyHints);
 
         List<(string GlslType, string Name, bool IsArray, uint ArrayLength, AutoUniformDefaultValue? DefaultValue, IReadOnlyList<AutoUniformDefaultValue>? DefaultArrayValues, EVulkanBindingFrequency? ExplicitFrequency)> members = new();
         HashSet<string> memberNames = new(StringComparer.Ordinal);
@@ -182,7 +202,7 @@ internal static partial class VulkanShaderAutoUniforms
 
             bool canRewriteStatement = false;
             var statementMembers = new List<(string GlslType, string Name, bool IsArray, uint ArrayLength, AutoUniformDefaultValue? DefaultValue, IReadOnlyList<AutoUniformDefaultValue>? DefaultArrayValues, EVulkanBindingFrequency? ExplicitFrequency)>();
-            EVulkanBindingFrequency? explicitFrequency =
+            EVulkanBindingFrequency? statementFrequency =
                 ParseExplicitFrequencyAnnotation(match);
 
             if (!TryExtractTypeAndDeclarators(statement, out string glslType, out string declarators))
@@ -218,7 +238,10 @@ internal static partial class VulkanShaderAutoUniforms
                     arrayLength,
                     defaultValue,
                     defaultArrayValues,
-                    explicitFrequency));
+                    ResolveExplicitFrequency(
+                        name,
+                        statementFrequency,
+                        explicitFrequencyOverrides)));
             }
 
             if (!allDeclaratorsParsed)
@@ -376,6 +399,53 @@ internal static partial class VulkanShaderAutoUniforms
         return new AutoUniformRewriteResult(rewritten, blockInfos);
     }
 
+    /// <summary>
+    /// Captures comment-based ownership metadata before source optimization can
+    /// prune an adjacent declaration and its trailing annotation.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, EVulkanBindingFrequency> CaptureExplicitFrequencyHints(
+        string source)
+    {
+        Dictionary<string, EVulkanBindingFrequency> hints =
+            ParseExplicitFrequencyOverrides(source);
+        Dictionary<string, uint> integralConstants = ParseIntegralConstants(source);
+        foreach (Match match in UniformStatementRegex.Matches(source))
+        {
+            EVulkanBindingFrequency? frequency =
+                ParseExplicitFrequencyAnnotation(match);
+            if (!frequency.HasValue)
+                continue;
+
+            string statement = match.Groups["statement"].Value;
+            if (statement.IndexOf('{') >= 0 ||
+                !TryExtractTypeAndDeclarators(
+                    statement,
+                    out _,
+                    out string declarators))
+            {
+                continue;
+            }
+
+            foreach (string declarator in SplitDeclarators(declarators))
+            {
+                if (!TryParseDeclarator(
+                        declarator,
+                        integralConstants,
+                        out string name,
+                        out _,
+                        out _,
+                        out _))
+                {
+                    continue;
+                }
+
+                AddExplicitFrequencyHint(hints, name, frequency.Value);
+            }
+        }
+
+        return hints;
+    }
+
     private static EVulkanBindingFrequency? ParseExplicitFrequencyAnnotation(
         Match uniformStatement)
     {
@@ -397,6 +467,84 @@ internal static partial class VulkanShaderAutoUniforms
         throw new InvalidOperationException(
             $"Unsupported XRENGINE_FREQUENCY annotation '{frequencyName}'. " +
             "Expected Frame, View, Pass, Material, Object, Instance, or RuntimeCallback.");
+    }
+
+    private static Dictionary<string, EVulkanBindingFrequency> ParseExplicitFrequencyOverrides(
+        string source)
+    {
+        Dictionary<string, EVulkanBindingFrequency> overrides =
+            new(StringComparer.Ordinal);
+        foreach (Match match in FrequencyOverrideRegex.Matches(source))
+        {
+            string name = match.Groups["name"].Value;
+            string frequencyName = match.Groups["frequency"].Value;
+            if (!Enum.TryParse(
+                    frequencyName,
+                    ignoreCase: true,
+                    out EVulkanBindingFrequency frequency) ||
+                frequency <= EVulkanBindingFrequency.Unknown ||
+                frequency >= EVulkanBindingFrequency.Count)
+            {
+                throw new InvalidOperationException(
+                    $"Unsupported XRENGINE_FREQUENCY_OVERRIDE frequency '{frequencyName}' for '{name}'. " +
+                    "Expected Frame, View, Pass, Material, Object, Instance, or RuntimeCallback.");
+            }
+
+            AddExplicitFrequencyHint(overrides, name, frequency);
+        }
+
+        return overrides;
+    }
+
+    private static void MergeExplicitFrequencyHints(
+        Dictionary<string, EVulkanBindingFrequency> destination,
+        IReadOnlyDictionary<string, EVulkanBindingFrequency>? source)
+    {
+        if (source is null)
+            return;
+
+        foreach (KeyValuePair<string, EVulkanBindingFrequency> hint in source)
+            AddExplicitFrequencyHint(destination, hint.Key, hint.Value);
+    }
+
+    private static void AddExplicitFrequencyHint(
+        Dictionary<string, EVulkanBindingFrequency> hints,
+        string name,
+        EVulkanBindingFrequency frequency)
+    {
+        if (hints.TryGetValue(name, out EVulkanBindingFrequency existing) &&
+            existing != frequency)
+        {
+            throw new InvalidOperationException(
+                $"Conflicting explicit Vulkan auto-uniform frequencies for '{name}': " +
+                $"{existing} and {frequency}.");
+        }
+
+        hints[name] = frequency;
+    }
+
+    private static EVulkanBindingFrequency? ResolveExplicitFrequency(
+        string uniformName,
+        EVulkanBindingFrequency? statementFrequency,
+        IReadOnlyDictionary<string, EVulkanBindingFrequency> overrides)
+    {
+        if (!overrides.TryGetValue(
+                uniformName,
+                out EVulkanBindingFrequency overrideFrequency))
+        {
+            return statementFrequency;
+        }
+
+        if (statementFrequency.HasValue &&
+            statementFrequency.Value != overrideFrequency)
+        {
+            throw new InvalidOperationException(
+                $"Uniform '{uniformName}' has conflicting XRENGINE_FREQUENCY " +
+                $"({statementFrequency.Value}) and XRENGINE_FREQUENCY_OVERRIDE " +
+                $"({overrideFrequency}) annotations.");
+        }
+
+        return overrideFrequency;
     }
 
 }

@@ -7,7 +7,16 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$brokerDll = Join-Path $repoRoot "Build\AgentTools\LocalAgentBroker\XREngine.LocalAgentBroker.dll"
+$agentToolsRoot = Join-Path $repoRoot "Build\AgentTools"
+$deploymentPointerPath = Join-Path $agentToolsRoot "LocalAgentBroker.current"
+$brokerDll = Join-Path $agentToolsRoot "LocalAgentBroker\XREngine.LocalAgentBroker.dll"
+if (Test-Path -LiteralPath $deploymentPointerPath -PathType Leaf) {
+    $deploymentName = ([System.IO.File]::ReadAllText($deploymentPointerPath)).Trim()
+    if ($deploymentName -notmatch '^LocalAgentBroker-[0-9]{17}$') {
+        throw "The local agent broker deployment pointer is invalid."
+    }
+    $brokerDll = Join-Path $agentToolsRoot "$deploymentName\XREngine.LocalAgentBroker.dll"
+}
 $resolvedApiKeyEnvironmentVariable = if ([string]::IsNullOrWhiteSpace($ApiKeyEnvironmentVariable)) {
     if ([string]::IsNullOrWhiteSpace($env:XRE_LOCAL_AGENT_BROKER_API_KEY_ENV)) {
         "OPENAI_API_KEY"
@@ -19,6 +28,23 @@ $resolvedApiKeyEnvironmentVariable = if ([string]::IsNullOrWhiteSpace($ApiKeyEnv
 else {
     $ApiKeyEnvironmentVariable
 }
+$inheritedApiKey = [System.Environment]::GetEnvironmentVariable(
+    $resolvedApiKeyEnvironmentVariable,
+    [System.EnvironmentVariableTarget]::Process)
+$isWindowsHost = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
+if ([string]::IsNullOrWhiteSpace($inheritedApiKey) -and $isWindowsHost) {
+    $userApiKey = [System.Environment]::GetEnvironmentVariable(
+        $resolvedApiKeyEnvironmentVariable,
+        [System.EnvironmentVariableTarget]::User)
+    if (-not [string]::IsNullOrWhiteSpace($userApiKey)) {
+        [System.Environment]::SetEnvironmentVariable(
+            $resolvedApiKeyEnvironmentVariable,
+            $userApiKey,
+            [System.EnvironmentVariableTarget]::Process)
+    }
+    $userApiKey = $null
+}
+$inheritedApiKey = $null
 $resolvedEditorAuthEnvironmentVariable =
     if ([string]::IsNullOrWhiteSpace($EditorAuthTokenEnvironmentVariable)) {
         $env:XRE_LOCAL_AGENT_BROKER_EDITOR_AUTH_ENV

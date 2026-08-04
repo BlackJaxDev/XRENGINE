@@ -368,7 +368,10 @@ internal sealed class RuntimeEffectiveSettings
                 return parsed;
             }
 
-            return _forceMeshSubmissionStrategy;
+            // EngineSettings is the authoritative mutable source used by the editor.
+            // Keep the local value as a host/test override, but do not let its default
+            // null hide a live ForceMeshSubmissionStrategy change.
+            return _forceMeshSubmissionStrategy ?? RuntimeEngine.Rendering.Settings.ForceMeshSubmissionStrategy;
         }
         set => _forceMeshSubmissionStrategy = value;
     }

@@ -38,7 +38,7 @@ public unsafe partial class VulkanRenderer
 
     private bool SupportsDebugUtils => debugUtils is not null;
     private bool SupportsDebugUtilsLabels => SupportsDebugUtils && _diagnosticOptions.EnableCommandBufferLabels;
-    private bool CanRecordCommandBufferDebugLabels => SupportsDebugUtilsLabels;
+    internal bool CanRecordCommandBufferDebugLabels => SupportsDebugUtilsLabels;
 
     private sealed class VulkanValidationMessageAggregate
     {
@@ -51,7 +51,7 @@ public unsafe partial class VulkanRenderer
         public string LastSample = string.Empty;
     }
 
-    private bool CmdBeginLabel(CommandBuffer commandBuffer, string name)
+    internal bool CmdBeginLabel(CommandBuffer commandBuffer, string name)
     {
         if (!SupportsDebugUtilsLabels)
             return false;
@@ -79,7 +79,7 @@ public unsafe partial class VulkanRenderer
     /// If debug labels are not supported or enabled, this method does nothing.
     /// </summary>
     /// <param name="commandBuffer">The command buffer in which to end the debug label region.</param>
-    private void CmdEndLabel(CommandBuffer commandBuffer)
+    internal void CmdEndLabel(CommandBuffer commandBuffer)
     {
         if (!SupportsDebugUtilsLabels)
             return;

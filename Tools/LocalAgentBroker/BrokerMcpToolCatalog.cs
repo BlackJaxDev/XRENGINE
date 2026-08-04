@@ -22,13 +22,13 @@ internal static class BrokerMcpToolCatalog
         new McpToolSpec
         {
             Name = "start_agent_run",
-            Description = "Start one explicitly modeled OpenAI Responses API worker against a named local editor MCP session. Returns a run ID immediately.",
+            Description = "Start one explicitly modeled OpenAI Responses API worker against a named local editor MCP session. Returns a run ID immediately. Optional background mode temporarily stores provider response state for polling.",
             InputSchema = StartRunSchema(),
         },
         new McpToolSpec
         {
             Name = "get_agent_run",
-            Description = "Get incremental text, evidence, usage, exact model, and terminal result for one run.",
+            Description = "Get incremental text, evidence, usage, exact model, provider-attempt diagnostics, and terminal result for one run.",
             IsReadOnly = true,
             InputSchema = ObjectSchema(
                 required: ["run_id"],
@@ -79,6 +79,12 @@ internal static class BrokerMcpToolCatalog
                 ["enum"] = new JsonArray("none", "low", "medium", "high", "xhigh", "max"),
                 ["default"] = "medium",
             }),
+            ("use_background_mode", new JsonObject
+            {
+                ["type"] = "boolean",
+                ["default"] = false,
+                ["description"] = "Opt in to asynchronous Responses API execution and polling. Provider response data is temporarily stored for polling and is not Zero Data Retention compatible.",
+            }),
             ("editor_session", StringSchema("Exact named session created by Manage-McpEditorSession.ps1.")),
             ("evidence_packet", new JsonObject
             {
@@ -115,7 +121,7 @@ internal static class BrokerMcpToolCatalog
                 {
                     ["max_turns"] = IntegerSchema(1, 32, 10),
                     ["max_tool_calls"] = IntegerSchema(0, 256, 24),
-                    ["max_output_tokens"] = IntegerSchema(1, 128_000, 8_192),
+                    ["max_output_tokens"] = IntegerSchema(16, 128_000, 8_192),
                     ["max_tool_result_bytes"] = IntegerSchema(1_024, 4_194_304, 262_144),
                     ["max_elapsed_seconds"] = IntegerSchema(1, 3_600, 300),
                     ["max_retries"] = IntegerSchema(0, 5, 2),

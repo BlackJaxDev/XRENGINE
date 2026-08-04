@@ -1,0 +1,6 @@
+﻿License text could not be resolved locally for NuGet package 'System.IdentityModel.Tokens.Jwt' (8.22.0).
+
+Resolved license: MIT
+RepositoryUrl: https://github.com/AzureAD/azure-activedirectory-identitymodel-extensions-for-dotnet
+ProjectUrl: https://github.com/AzureAD/azure-activedirectory-identitymodel-extensions-for-dotnet
+

@@ -1,0 +1,6 @@
+﻿License text could not be resolved locally for NuGet package 'Raylib-cs' (8.0.0).
+
+Resolved license: Zlib
+RepositoryUrl: https://github.com/raylib-cs/raylib-cs/
+ProjectUrl: https://www.raylib.com/
+

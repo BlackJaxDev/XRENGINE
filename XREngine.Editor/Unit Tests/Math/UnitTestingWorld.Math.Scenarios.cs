@@ -2,6 +2,7 @@ using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
 using GeometryPlaneIntersection = XREngine.Data.Geometry.EPlaneIntersection;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -162,6 +163,21 @@ public static partial class EditorUnitTests
                 "Runs the same wavy-grid box, sphere, frustum, or finite raycast query through the renderable-owned GPU triangle BVH and returns selected point, line, and triangle results for CPU-oracle validation.",
                 AABB.FromCenterSize(new Vector3(0.0f, 3.2f, 0.0f), new Vector3(13.0f, 9.0f, 13.0f)),
                 (parent, controller) => AddMathBvhRig(parent, MathBvhTestMode.GpuMesh, controller)),
+            new(
+                "CPU Async Query Occlusion Test",
+                "Places a deterministic target field behind a wall and validates CPU-direct asynchronous hardware-query submission, resolution, hysteresis, and rejection while an orange target repeatedly disoccludes.",
+                AABB.FromCenterSize(new Vector3(0.0f, 3.0f, 0.0f), new Vector3(13.0f, 8.0f, 8.0f)),
+                (parent, controller) => AddOcclusionCullingRig(parent, EOcclusionCullingMode.CpuQueryAsync, EMeshSubmissionStrategy.CpuDirect, controller)),
+            new(
+                "CPU Rasterized Occlusion Test",
+                "Uses the same occluder and target field to validate CPU-direct masked depth rasterization, occluder selection, AABB tests, and hidden-target rejection.",
+                AABB.FromCenterSize(new Vector3(0.0f, 3.0f, 0.0f), new Vector3(13.0f, 8.0f, 8.0f)),
+                (parent, controller) => AddOcclusionCullingRig(parent, EOcclusionCullingMode.CpuSoftwareOcclusion, EMeshSubmissionStrategy.CpuDirect, controller)),
+            new(
+                "GPU Two-Pass Hi-Z + GPU BVH Test",
+                "Qualifies the production target: GPU Hi-Z with persistent phase-1/phase-2 visibility, GpuIndirectZeroReadback submission, and strategy-driven GPU-BVH acceleration. It reports the current single-phase implementation as a failure instead of silently passing.",
+                AABB.FromCenterSize(new Vector3(0.0f, 3.0f, 0.0f), new Vector3(13.0f, 8.0f, 8.0f)),
+                (parent, controller) => AddOcclusionCullingRig(parent, EOcclusionCullingMode.GpuHiZ, EMeshSubmissionStrategy.GpuIndirectZeroReadback, controller)),
             new(
                 "Physics Chain CPU Test",
                 "Runs a single-threaded CPU physics chain.",

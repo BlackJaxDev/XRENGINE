@@ -305,7 +305,7 @@ public partial class XRTexture2D
         texture.Mipmaps = residentData.Mipmaps;
         texture.AutoGenerateMipmaps = false;
         texture.Resizable = false;
-        texture.SizedInternalFormat = ESizedInternalFormat.Rgba8;
+        texture.SizedInternalFormat = residentData.SizedInternalFormat;
         texture.LargestMipmapLevel = 0;
         texture.SmallestAllowedMipmapLevel = includeMipChain && residentData.Mipmaps.Length > 0
             ? residentData.Mipmaps.Length - 1
@@ -362,7 +362,7 @@ public partial class XRTexture2D
         texture.StreamingLockMipLevel = lockMipLevel;
         texture._mipmaps = residentData.Mipmaps;
         texture._resizable = false;
-        texture._sizedInternalFormat = ESizedInternalFormat.Rgba8;
+        texture._sizedInternalFormat = residentData.SizedInternalFormat;
         texture.ApplyImportedTextureStreamingMipRangeMetadata(
             autoGenerateMipmaps: false,
             largestMipmapLevel: 0,

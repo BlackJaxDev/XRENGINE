@@ -104,6 +104,8 @@ internal static class VulkanShaderCompiler
         string entryPoint = "main";
         string source = shader.Source?.Text ?? string.Empty;
         source = ShaderSourcePreprocessor.ResolveSource(source, shader.Source?.FilePath, annotateIncludes: true);
+        IReadOnlyDictionary<string, EVulkanBindingFrequency> explicitFrequencyHints =
+            VulkanShaderAutoUniforms.CaptureExplicitFrequencyHints(source);
         source = ResolvedShaderSourceOptimizer.Optimize(
             source,
             new ResolvedShaderSourceOptimizationOptions
@@ -114,7 +116,11 @@ internal static class VulkanShaderCompiler
         if (string.IsNullOrWhiteSpace(source))
             throw new InvalidOperationException($"Shader '{shader.Name ?? "UnnamedShader"}' does not contain GLSL source code.");
 
-        AutoUniformRewriteResult rewrite = VulkanShaderAutoUniforms.Rewrite(source, shader.Type, useVulkanClipDepthRemap);
+        AutoUniformRewriteResult rewrite = VulkanShaderAutoUniforms.Rewrite(
+            source,
+            shader.Type,
+            useVulkanClipDepthRemap,
+            explicitFrequencyHints);
         string transformFeedbackSource = VulkanShaderTransformFeedback.Rewrite(rewrite.Source, shader.Type, transformFeedbackPlan);
         string rewrittenSource = InjectVulkanBackendDefine(transformFeedbackSource);
         rewrittenSource = RemoveVulkanMultiviewNumViewsLayout(rewrittenSource);

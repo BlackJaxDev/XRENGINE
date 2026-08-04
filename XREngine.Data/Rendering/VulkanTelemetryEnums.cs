@@ -47,6 +47,16 @@ public enum EVulkanCpuStage
     CommandDependencyComparison,
     CommandDirtyPropagation,
     CommandCacheScanning,
+    FrameOpDrain,
+    FrameOpScheduling,
+    FrameOpSort,
+    FrameOpCohort,
+    FrameOpSplit,
+    FrameOpSignature,
+    FrameOpPlan,
+    MeshDrawPublisherState,
+    MeshDrawArtifactEligibility,
+    MeshDrawArtifactLookup,
     Count,
 }
 

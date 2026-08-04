@@ -118,6 +118,10 @@ namespace XREngine
                     private static readonly long[] _lastFrameVulkanCpuStageAllocatedBytes = new long[(int)EVulkanCpuStage.Count];
                     private static readonly long[] _vulkanCpuStageAllocationHighWaterBytes = new long[(int)EVulkanCpuStage.Count];
                     private static readonly long[] _lastFrameVulkanCpuStageAllocationHighWaterBytes = new long[(int)EVulkanCpuStage.Count];
+                    private static readonly long[] _vulkanCpuStageBoundaryAllocatedBytes = new long[(int)EVulkanCpuStage.Count];
+                    private static readonly long[] _lastFrameVulkanCpuStageBoundaryAllocatedBytes = new long[(int)EVulkanCpuStage.Count];
+                    private static readonly long[] _vulkanCpuStageBoundaryAllocationHighWaterBytes = new long[(int)EVulkanCpuStage.Count];
+                    private static readonly long[] _lastFrameVulkanCpuStageBoundaryAllocationHighWaterBytes = new long[(int)EVulkanCpuStage.Count];
                     private static readonly long[] _vulkanCpuStageInvocationCount = new long[(int)EVulkanCpuStage.Count];
                     private static readonly long[] _vulkanCpuStageCumulativeTicks = new long[(int)EVulkanCpuStage.Count];
                     private static readonly long[] _vulkanCpuStagePeakTicks = new long[(int)EVulkanCpuStage.Count];
@@ -634,6 +638,10 @@ namespace XREngine
                         => Volatile.Read(ref _lastFrameVulkanCpuStageAllocatedBytes[(int)stage]);
                     public static long VulkanCpuStageAllocationHighWaterBytes(EVulkanCpuStage stage)
                         => Volatile.Read(ref _lastFrameVulkanCpuStageAllocationHighWaterBytes[(int)stage]);
+                    public static long VulkanCpuStageBoundaryAllocatedBytes(EVulkanCpuStage stage)
+                        => Volatile.Read(ref _lastFrameVulkanCpuStageBoundaryAllocatedBytes[(int)stage]);
+                    public static long VulkanCpuStageBoundaryAllocationHighWaterBytes(EVulkanCpuStage stage)
+                        => Volatile.Read(ref _lastFrameVulkanCpuStageBoundaryAllocationHighWaterBytes[(int)stage]);
                     public static long VulkanCpuStageInvocationCount(EVulkanCpuStage stage)
                         => Volatile.Read(ref _vulkanCpuStageInvocationCount[(int)stage]);
                     public static double VulkanCpuStageCumulativeMs(EVulkanCpuStage stage)
@@ -1635,6 +1643,25 @@ namespace XREngine
                         }
                     }
 
+                    public static void RecordVulkanCpuStageBoundaryAllocation(
+                        EVulkanCpuStage stage,
+                        long allocatedBytes)
+                    {
+                        int index = (int)stage;
+                        if (!EnableTracking || allocatedBytes <= 0 ||
+                            index < 0 || index >= (int)EVulkanCpuStage.Count)
+                        {
+                            return;
+                        }
+
+                        Interlocked.Add(
+                            ref _vulkanCpuStageBoundaryAllocatedBytes[index],
+                            allocatedBytes);
+                        UpdateHighWater(
+                            ref _vulkanCpuStageBoundaryAllocationHighWaterBytes[index],
+                            allocatedBytes);
+                    }
+
                     public static void RecordVulkanFrameGpuCommandBufferTime(TimeSpan commandBufferTime)
                     {
                         if (!EnableTracking)
@@ -2038,6 +2065,8 @@ namespace XREngine
                             _lastFrameVulkanCpuStageTicks[stageIndex] = Interlocked.Exchange(ref _vulkanCpuStageTicks[stageIndex], 0);
                             _lastFrameVulkanCpuStageAllocatedBytes[stageIndex] = Interlocked.Exchange(ref _vulkanCpuStageAllocatedBytes[stageIndex], 0);
                             _lastFrameVulkanCpuStageAllocationHighWaterBytes[stageIndex] = Interlocked.Exchange(ref _vulkanCpuStageAllocationHighWaterBytes[stageIndex], 0);
+                            _lastFrameVulkanCpuStageBoundaryAllocatedBytes[stageIndex] = Interlocked.Exchange(ref _vulkanCpuStageBoundaryAllocatedBytes[stageIndex], 0);
+                            _lastFrameVulkanCpuStageBoundaryAllocationHighWaterBytes[stageIndex] = Interlocked.Exchange(ref _vulkanCpuStageBoundaryAllocationHighWaterBytes[stageIndex], 0);
                         }
                         _lastFrameVulkanDeviceLocalAllocationCount = _vulkanDeviceLocalAllocationCount;
                         _lastFrameVulkanDeviceLocalAllocatedBytes = _vulkanDeviceLocalAllocatedBytes;

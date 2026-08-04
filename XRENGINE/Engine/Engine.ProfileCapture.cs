@@ -1218,6 +1218,16 @@ public static partial class Engine
             AppendVulkanCpuStageFields(s_lineBuilder, "command_dependency_comparison", EVulkanCpuStage.CommandDependencyComparison, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "command_dirty_propagation", EVulkanCpuStage.CommandDirtyPropagation, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "command_cache_scanning", EVulkanCpuStage.CommandCacheScanning, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_drain", EVulkanCpuStage.FrameOpDrain, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_scheduling", EVulkanCpuStage.FrameOpScheduling, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_sort", EVulkanCpuStage.FrameOpSort, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_cohort", EVulkanCpuStage.FrameOpCohort, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_split", EVulkanCpuStage.FrameOpSplit, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_signature", EVulkanCpuStage.FrameOpSignature, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_plan", EVulkanCpuStage.FrameOpPlan, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "mesh_draw_publisher_state", EVulkanCpuStage.MeshDrawPublisherState, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "mesh_draw_artifact_eligibility", EVulkanCpuStage.MeshDrawArtifactEligibility, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "mesh_draw_artifact_lookup", EVulkanCpuStage.MeshDrawArtifactLookup, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "mesh_draw_preparation", EVulkanCpuStage.MeshDrawPreparation, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "mesh_draw_resource_preparation", EVulkanCpuStage.MeshDrawResourcePreparation, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "mesh_draw_binding_preparation", EVulkanCpuStage.MeshDrawBindingPreparation, ref first);
@@ -1624,6 +1634,8 @@ public static partial class Engine
             AppendNumberField(builder, $"vulkan_cpu_{name}_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageMs(stage), ref first);
             AppendNumberField(builder, $"vulkan_cpu_{name}_allocated_bytes", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageAllocatedBytes(stage), ref first);
             AppendNumberField(builder, $"vulkan_cpu_{name}_allocation_high_water_bytes", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageAllocationHighWaterBytes(stage), ref first);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_boundary_allocated_bytes", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageBoundaryAllocatedBytes(stage), ref first);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_boundary_allocation_high_water_bytes", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageBoundaryAllocationHighWaterBytes(stage), ref first);
             AppendNumberField(builder, $"vulkan_cpu_{name}_process_invocation_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageInvocationCount(stage), ref first);
             AppendNumberField(builder, $"vulkan_cpu_{name}_process_elapsed_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageCumulativeMs(stage), ref first);
             AppendNumberField(builder, $"vulkan_cpu_{name}_process_peak_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStagePeakMs(stage), ref first);

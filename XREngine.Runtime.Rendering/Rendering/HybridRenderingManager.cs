@@ -13,6 +13,7 @@ using XREngine.Data.Vectors;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Materials;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Shaders.Generator;
 using XREngine.Rendering.Vulkan;
 using static XREngine.Rendering.GpuDispatchLogger;
@@ -49,7 +50,8 @@ namespace XREngine.Rendering
         private const uint MeshletMaterialStateSsboBinding = 16;
         private const uint MeshletAtlasUv0SsboBinding = 18;
         private const uint MeshletTransformSsboBinding = 19;
-        private const uint MeshletPrevTransformSsboBinding = 20;
+        private const uint PreviousInstanceTransformSsboBinding = 20;
+        private const uint MeshletPrevTransformSsboBinding = PreviousInstanceTransformSsboBinding;
         private const uint MeshletStatsSsboBinding = 21;
         private const uint IndirectLegacyBaseInstanceFlag = 0x80000000u;
         private const uint IndirectPreviousLodBaseInstanceFlag = 0x40000000u;
@@ -120,7 +122,7 @@ namespace XREngine.Rendering
         private readonly Dictionary<XRRenderProgramDescriptor, MaterialProgramCache> _materialPrograms = [];
         private readonly Dictionary<XRRenderProgramDescriptor, MaterialProgramCache> _pendingMaterialPrograms = [];
         private readonly Dictionary<(uint materialId, int rendererKey), XRRenderProgramDescriptor> _materialProgramUseDescriptors = [];
-        private readonly Dictionary<(EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash, bool depthNormalPrePass, bool maskedDepthNormalPrePass), MaterialTableProgramCache> _materialTablePrograms = [];
+        private readonly Dictionary<(EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash, bool depthNormalPrePass, bool maskedDepthNormalPrePass, bool motionVectorPass), MaterialTableProgramCache> _materialTablePrograms = [];
         private readonly Dictionary<(EMaterialTableTextureReferenceMode textureReferenceMode, EMeshShaderDialect dialect, bool skinned, string layoutHash), MeshletMaterialTableProgramCache> _meshletMaterialTablePrograms = [];
         private XRDataBuffer? _indirectTextTransformsBuffer;
         private XRDataBuffer? _indirectTextTexCoordsBuffer;
@@ -3015,12 +3017,13 @@ namespace XREngine.Rendering
             EMaterialTableTextureReferenceMode textureReferenceMode,
             MaterialBindingLayout layout,
             bool depthNormalPrePass,
-            bool maskedDepthNormalPrePass)
+            bool maskedDepthNormalPrePass,
+            bool motionVectorPass)
         {
             int rendererKey = vaoRenderer is null ? 0 : RuntimeHelpers.GetHashCode(vaoRenderer);
             bool sceneDatabaseBda = ShouldUseVulkanSceneDatabaseDeviceAddresses();
-            (EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash, bool depthNormalPrePass, bool maskedDepthNormalPrePass) cacheKey =
-                (textureReferenceMode, sceneDatabaseBda, rendererKey, layout.LayoutHash, depthNormalPrePass, maskedDepthNormalPrePass);
+            (EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash, bool depthNormalPrePass, bool maskedDepthNormalPrePass, bool motionVectorPass) cacheKey =
+                (textureReferenceMode, sceneDatabaseBda, rendererKey, layout.LayoutHash, depthNormalPrePass, maskedDepthNormalPrePass, motionVectorPass);
 
             if (_materialTablePrograms.TryGetValue(cacheKey, out var existing))
             {
@@ -3053,7 +3056,8 @@ namespace XREngine.Rendering
                 textureReferenceMode,
                 layout,
                 depthNormalPrePass,
-                maskedDepthNormalPrePass);
+                maskedDepthNormalPrePass,
+                motionVectorPass);
             var shaderList = new List<XRShader> { fragmentShader, generatedVertexShader };
             var program = new XRRenderProgram(false, false, shaderList);
             program.AllowLink();
@@ -3200,11 +3204,19 @@ namespace XREngine.Rendering
             EMaterialTableTextureReferenceMode textureReferenceMode,
             MaterialBindingLayout layout,
             bool depthNormalPrePass,
-            bool maskedDepthNormalPrePass)
+            bool maskedDepthNormalPrePass,
+            bool motionVectorPass)
         {
             var sb = new StringBuilder();
             sb.AppendLine("#version 460 core");
             bool samplesMaterialTextures = textureReferenceMode != EMaterialTableTextureReferenceMode.None;
+            bool forwardColorPass = !depthNormalPrePass &&
+                !motionVectorPass &&
+                layout.RenderPass is
+                    (int)EDefaultRenderPass.OpaqueForward or
+                    (int)EDefaultRenderPass.MaskedForward;
+            bool maskedMaterialPass = maskedDepthNormalPrePass ||
+                layout.RenderPass == (int)EDefaultRenderPass.MaskedForward;
             if (textureReferenceMode == EMaterialTableTextureReferenceMode.OpenGLBindlessHandleTable)
             {
                 sb.AppendLine("#extension GL_ARB_gpu_shader_int64 : require");
@@ -3219,12 +3231,22 @@ namespace XREngine.Rendering
             sb.AppendLine("layout(location=2) in vec3 FragTan;");
             sb.AppendLine("layout(location=3) in vec3 FragBinorm;");
             sb.AppendLine("layout(location=4) in vec2 FragUV0;");
+            if (motionVectorPass)
+                sb.AppendLine($"layout(location=20) in vec3 {DefaultVertexShaderGenerator.FragPosLocalName};");
             sb.AppendLine($"layout(location=21) flat in uint {DefaultVertexShaderGenerator.FragTransformIdName};");
             sb.AppendLine($"layout(location=27) flat in uint {DefaultVertexShaderGenerator.FragRenderIdentityIdName};");
             sb.AppendLine($"layout(location={FragMaterialIdLocation}) flat in uint {FragMaterialIdName};");
             if (depthNormalPrePass)
             {
                 sb.AppendLine("layout(location=0) out vec2 Normal;");
+            }
+            else if (motionVectorPass)
+            {
+                sb.AppendLine("layout(location=0) out vec2 OutVelocity;");
+            }
+            else if (forwardColorPass)
+            {
+                sb.AppendLine("layout(location=0) out vec4 Color;");
             }
             else
             {
@@ -3240,6 +3262,24 @@ namespace XREngine.Rendering
                 textureReferenceMode,
                 MaterialTableSsboBinding,
                 MaterialTextureHandleTableSsboBinding);
+            if (motionVectorPass)
+            {
+                sb.AppendLine();
+                AppendDrawMetadataGlsl(sb);
+                AppendTransformBufferGlsl(sb);
+                sb.AppendLine($"layout(std430, binding = {PreviousInstanceTransformSsboBinding}) readonly buffer PreviousTransformBuffer {{ float previousInstanceWorld[]; }};");
+                sb.AppendLine("uniform mat4 CurrViewProjection;");
+                sb.AppendLine("uniform mat4 PrevViewProjection;");
+                sb.AppendLine("const int XRE_TRANSFORM_FLOATS = 16;");
+                AppendMaterialTableTransformLoader(
+                    sb,
+                    "XRE_LoadCurrentTransform",
+                    "instanceWorld");
+                AppendMaterialTableTransformLoader(
+                    sb,
+                    "XRE_LoadPreviousTransform",
+                    "previousInstanceWorld");
+            }
             sb.AppendLine();
             sb.AppendLine("vec2 XRENGINE_EncodeNormal(vec3 normal)");
             sb.AppendLine("{");
@@ -3264,18 +3304,20 @@ namespace XREngine.Rendering
             sb.AppendLine("    uint flags = material.Flags;");
             if (depthNormalPrePass)
             {
+                if (maskedMaterialPass)
+                {
+                    sb.AppendLine("    float depthOpacity = material.BaseColorOpacity.a;");
+                    if (samplesMaterialTextures)
+                    {
+                        sb.AppendLine("    if ((flags & 1u) != 0u)");
+                        sb.AppendLine("        depthOpacity *= SampleBindlessTexture(material.AlbedoHandleIndex, FragUV0, vec4(1.0)).a;");
+                    }
+                    sb.AppendLine("    if (depthOpacity < material.AlphaCutoff)");
+                    sb.AppendLine("        discard;");
+                }
                 sb.AppendLine("    vec3 worldNormal = normalize(FragNorm);");
                 if (samplesMaterialTextures)
                 {
-                    if (maskedDepthNormalPrePass)
-                    {
-                        sb.AppendLine("    if ((flags & 1u) != 0u)");
-                        sb.AppendLine("    {");
-                        sb.AppendLine("        vec4 albedo = SampleBindlessTexture(material.AlbedoHandleIndex, FragUV0, vec4(1.0));");
-                        sb.AppendLine("        if (material.BaseColorOpacity.a * albedo.a < 0.5)");
-                        sb.AppendLine("            discard;");
-                        sb.AppendLine("    }");
-                    }
                     sb.AppendLine("    if ((flags & 2u) != 0u)");
                     sb.AppendLine("    {");
                     sb.AppendLine("        vec3 tangentNormal = SampleBindlessTexture(material.NormalHandleIndex, FragUV0, vec4(0.5, 0.5, 1.0, 1.0)).xyz * 2.0 - 1.0;");
@@ -3307,8 +3349,49 @@ namespace XREngine.Rendering
                 sb.AppendLine("        opacity *= albedo.a;");
                 sb.AppendLine("    }");
             }
+            if (maskedMaterialPass)
+            {
+                sb.AppendLine("    if (opacity < material.AlphaCutoff)");
+                sb.AppendLine("        discard;");
+            }
+            if (motionVectorPass)
+            {
+                sb.AppendLine($"    uint commandIndex = {DefaultVertexShaderGenerator.FragTransformIdName};");
+                sb.AppendLine("    uint transformId = XRE_LoadDrawMetadata(commandIndex).TransformID;");
+                sb.AppendLine($"    vec4 localPosition = vec4({DefaultVertexShaderGenerator.FragPosLocalName}, 1.0);");
+                sb.AppendLine("    vec4 currentClip = CurrViewProjection * (XRE_LoadCurrentTransform(transformId) * localPosition);");
+                sb.AppendLine("    vec4 previousClip = PrevViewProjection * (XRE_LoadPreviousTransform(transformId) * localPosition);");
+                sb.AppendLine("    if (abs(currentClip.w) <= 1e-5 || abs(previousClip.w) <= 1e-5)");
+                sb.AppendLine("    {");
+                sb.AppendLine("        OutVelocity = vec2(0.0);");
+                sb.AppendLine("        return;");
+                sb.AppendLine("    }");
+                sb.AppendLine("    vec2 currentNdc = currentClip.xy / currentClip.w;");
+                sb.AppendLine("    vec2 previousNdc = previousClip.xy / previousClip.w;");
+                sb.AppendLine("    OutVelocity = clamp(currentNdc - previousNdc, vec2(-2.0), vec2(2.0));");
+                sb.AppendLine("}");
+
+                return new XRShader(EShaderType.Fragment, sb.ToString())
+                {
+                    Name = textureReferenceMode == EMaterialTableTextureReferenceMode.None
+                        ? "GPUIndirect_MaterialTableMotionVectorsFS"
+                        : $"GPUIndirect_{textureReferenceMode}MaterialTableMotionVectorsFS"
+                };
+            }
             sb.AppendLine("    if ((flags & (1u << 31u)) == 0u)");
             sb.AppendLine("        baseColor = mix(baseColor, vec3(1.0, 0.0, 1.0), 0.65);");
+            if (forwardColorPass)
+            {
+                sb.AppendLine("    Color = vec4(baseColor, opacity);");
+                sb.AppendLine("}");
+
+                return new XRShader(EShaderType.Fragment, sb.ToString())
+                {
+                    Name = textureReferenceMode == EMaterialTableTextureReferenceMode.None
+                        ? "GPUIndirect_MaterialTableForwardFS"
+                        : $"GPUIndirect_{textureReferenceMode}MaterialTableForwardFS"
+                };
+            }
             sb.AppendLine("    TransformId = renderIdentityID;");
             sb.AppendLine("    Normal = XRENGINE_EncodeNormal(FragNorm);");
             sb.AppendLine("    AlbedoOpacity = vec4(baseColor, opacity);");
@@ -5214,6 +5297,7 @@ namespace XREngine.Rendering
 
             var renderState = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState;
             bool depthNormalPrePass = renderState?.UseDepthNormalMaterialVariants == true;
+            bool motionVectorPass = renderState?.UseMotionVectorMaterialVariant == true;
             bool depthNormalPassSupported = depthNormalPrePass &&
                 currentRenderPass is
                     (int)EDefaultRenderPass.OpaqueForward or
@@ -5305,7 +5389,8 @@ namespace XREngine.Rendering
                 textureReferenceMode,
                 layout,
                 depthNormalPassSupported,
-                maskedDepthNormalPrePass);
+                maskedDepthNormalPrePass,
+                motionVectorPass);
             if (program is null)
             {
                 RejectCompactMaterialTableSubmission(
@@ -5353,6 +5438,9 @@ namespace XREngine.Rendering
                 (int)GPUBatchingBindings.MaterialTierCount);
 
             XRDataBuffer? instanceTransformBuffer = scene.TransformBuffer;
+            XRDataBuffer? previousInstanceTransformBuffer = motionVectorPass
+                ? scene.PrevTransformBuffer
+                : null;
             XRDataBuffer? instanceSourceIndexBuffer = renderPasses.InstanceSourceIndexBuffer;
             bool useGpuInstanceTransforms = instanceTransformBuffer is not null;
 
@@ -5364,7 +5452,7 @@ namespace XREngine.Rendering
                 .MeasureSubmissionBackendAllocation();
             var renderer = AbstractRenderer.Current;
             XRMaterial? invalidMaterial = XRMaterial.InvalidMaterial;
-            XRMaterial? renderParametersMaterial = depthNormalPassSupported
+            XRMaterial? renderParametersMaterial = depthNormalPassSupported || motionVectorPass
                 ? renderState?.OverrideMaterial
                 : invalidMaterial;
             if (renderer is not null && renderParametersMaterial is not null)
@@ -5410,6 +5498,7 @@ namespace XREngine.Rendering
                     materialTableBuffer: materialTableBuffer,
                     materialTextureHandleBuffer: materialTextureHandleBuffer,
                     bindVulkanMaterialTextureDescriptorTable: textureReferenceMode == EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable,
+                    previousInstanceTransformBuffer: previousInstanceTransformBuffer,
                     allowMaxDrawFallback: false,
                     emitBarrier: false);
             }
@@ -5543,6 +5632,7 @@ namespace XREngine.Rendering
             XRDataBuffer? materialTableBuffer = null,
             XRDataBuffer? materialTextureHandleBuffer = null,
             bool bindVulkanMaterialTextureDescriptorTable = false,
+            XRDataBuffer? previousInstanceTransformBuffer = null,
             bool allowMaxDrawFallback = false,
             bool emitBarrier = true)
         {
@@ -5587,6 +5677,9 @@ namespace XREngine.Rendering
             drawMetadataBuffer.BindTo(graphicsProgram, DrawMetadataSsboBinding);
             lodTransitionBuffer?.BindTo(graphicsProgram, LodTransitionSsboBinding);
             instanceTransformBuffer?.BindTo(graphicsProgram, InstanceTransformSsboBinding);
+            previousInstanceTransformBuffer?.BindTo(
+                graphicsProgram,
+                PreviousInstanceTransformSsboBinding);
             instanceSourceIndexBuffer?.BindTo(graphicsProgram, InstanceSourceIndexSsboBinding);
             materialTableBuffer?.BindTo(graphicsProgram, MaterialTableSsboBinding);
             materialTextureHandleBuffer?.BindTo(graphicsProgram, MaterialTextureHandleTableSsboBinding);
@@ -5601,6 +5694,8 @@ namespace XREngine.Rendering
             }
             graphicsProgram.Uniform("UseInstanceTransformBuffer", useInstanceTransformBuffer ? 1 : 0);
             renderer.SetEngineUniforms(graphicsProgram, camera);
+            if (previousInstanceTransformBuffer is not null)
+                SetMotionVectorTemporalUniforms(graphicsProgram, camera);
             graphicsProgram.Uniform(EEngineUniform.ModelMatrix.ToStringFast(), modelMatrix);
 
             var version = vaoRenderer?.GetDefaultVersion();
@@ -5802,6 +5897,24 @@ namespace XREngine.Rendering
                 renderer.BindVAOForRenderer(null);
                 GPURenderPassCollection.Crumb("MDIC.BUCKET.UNBIND.END");
             }
+        }
+
+        private static void SetMotionVectorTemporalUniforms(
+            XRRenderProgram graphicsProgram,
+            XRCamera camera)
+        {
+            Matrix4x4 currentViewProjection = camera.ViewProjectionMatrix;
+            Matrix4x4 previousViewProjection = currentViewProjection;
+            if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
+            {
+                currentViewProjection = temporalData.CurrViewProjectionUnjittered;
+                previousViewProjection = temporalData.HistoryReady
+                    ? temporalData.PrevViewProjectionUnjittered
+                    : currentViewProjection;
+            }
+
+            graphicsProgram.Uniform("CurrViewProjection", currentViewProjection);
+            graphicsProgram.Uniform("PrevViewProjection", previousViewProjection);
         }
 
         private static bool ValidateIndirectDrawRange(

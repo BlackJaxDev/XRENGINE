@@ -16,7 +16,7 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
-        private void RecordClearOp(
+        internal void RecordClearOp(
             CommandBuffer commandBuffer,
             uint imageIndex,
             ClearOp op,
@@ -309,7 +309,7 @@ namespace XREngine.Rendering.Vulkan
             return (int)value;
         }
 
-        private void RecordPublishFramebufferForSamplingOp(CommandBuffer commandBuffer, PublishFramebufferForSamplingOp op)
+        internal void RecordPublishFramebufferForSamplingOp(CommandBuffer commandBuffer, PublishFramebufferForSamplingOp op)
         {
             XRFrameBuffer fbo = op.FrameBuffer;
             if (GetOrCreateAPIRenderObject(fbo, generateNow: true) is not VkFrameBuffer vkFbo)

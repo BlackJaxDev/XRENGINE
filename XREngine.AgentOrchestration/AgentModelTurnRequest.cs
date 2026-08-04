@@ -20,6 +20,11 @@ public sealed record AgentModelTurnRequest
     public bool ForceTextResponse { get; init; }
 
     /// <summary>
+    /// One-based provider attempt number within this turn.
+    /// </summary>
+    public int AttemptNumber { get; init; } = 1;
+
+    /// <summary>
     /// Remaining run-wide output-token budget for this provider turn.
     /// </summary>
     public int MaxOutputTokens { get; init; }

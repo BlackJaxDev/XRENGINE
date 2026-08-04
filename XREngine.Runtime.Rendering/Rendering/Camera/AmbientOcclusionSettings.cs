@@ -1,5 +1,4 @@
 using System;
-using System.Threading;
 using XREngine.Data;
 
 namespace XREngine.Rendering
@@ -21,15 +20,6 @@ namespace XREngine.Rendering
         private float _spatialHashRadius = SpatialHashDefaultRadius;
         private float _spatialHashPower = SpatialHashDefaultPower;
         private float _spatialHashBias = SpatialHashDefaultBias;
-        private long _bindingGeneration = 1;
-
-        /// <summary>
-        /// Gets the non-zero monotonic generation of values published by this
-        /// settings object and its nested mode settings.
-        /// </summary>
-        public ulong BindingGeneration
-            => unchecked((ulong)Interlocked.Read(ref _bindingGeneration));
-
         public enum EType
         {
             ScreenSpace,
@@ -173,13 +163,6 @@ namespace XREngine.Rendering
             }
 
             return true;
-        }
-
-        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
-        {
-            base.OnPropertyChanged(propName, prev, field);
-            if (Interlocked.Increment(ref _bindingGeneration) == 0)
-                Interlocked.CompareExchange(ref _bindingGeneration, 1, 0);
         }
 
         public void Lerp(AmbientOcclusionSettings from, AmbientOcclusionSettings to, float time)

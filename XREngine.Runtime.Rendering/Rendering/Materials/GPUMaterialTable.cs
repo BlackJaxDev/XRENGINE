@@ -128,7 +128,8 @@ namespace XREngine.Rendering.Materials
                left.RMHandleIndex == right.RMHandleIndex &&
                left.Flags == right.Flags &&
                left.BaseColorOpacity == right.BaseColorOpacity &&
-               left.RMSE == right.RMSE;
+               left.RMSE == right.RMSE &&
+               left.AlphaCutoff == right.AlphaCutoff;
 
         private uint ResolveTextureReference(GPUMaterialTextureReference reference, out uint openGlHandleIndex)
         {

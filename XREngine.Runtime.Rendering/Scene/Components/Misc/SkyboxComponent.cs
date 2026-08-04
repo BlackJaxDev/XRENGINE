@@ -80,6 +80,67 @@ namespace XREngine.Components.Scene.Mesh
     [Description("Renders a skybox background using equirectangular, octahedral, cubemap, or cubemap array textures.")]
     public class SkyboxComponent : XRComponent, IRenderable
     {
+        private readonly record struct SkyboxBindingState(
+            ESkyboxMode Mode,
+            ESkyboxProjection Projection,
+            float Intensity,
+            float Rotation,
+            int CubemapArrayLayer,
+            Vector3 TopColor,
+            Vector3 BottomColor,
+            float TimeOfDay,
+            float CloudCoverage,
+            float CloudScale,
+            float CloudSpeed,
+            float CloudSharpness,
+            float StarIntensity,
+            float HorizonHaze,
+            float SunDiscSize,
+            float MoonDiscSize,
+            float CameraTwinkle,
+            float TwinklePhase);
+
+        /// <summary>
+        /// Publishes exact dynamic sky values without retaining a mutable
+        /// material callback in the Vulkan steady-state path.
+        /// </summary>
+        private sealed class SkyboxBindingPublisher(
+            SkyboxComponent owner) : IRenderBindingPublisher
+        {
+            private readonly object _generationSync = new();
+            private SkyboxBindingState _lastState;
+            private bool _hasLastState;
+            private ulong _generation = 1;
+
+            public ERenderBindingFrequency Frequency
+                => ERenderBindingFrequency.View;
+
+            public ulong Generation
+            {
+                get
+                {
+                    SkyboxBindingState state = owner.CaptureBindingState();
+                    lock (_generationSync)
+                    {
+                        if (_hasLastState && state == _lastState)
+                            return _generation;
+
+                        _lastState = state;
+                        _hasLastState = true;
+                        unchecked { _generation++; }
+                        if (_generation == 0)
+                            _generation = 1;
+                        return _generation;
+                    }
+                }
+            }
+
+            public void PublishUniforms(
+                XRRenderProgram vertexProgram,
+                XRRenderProgram materialProgram)
+                => owner.PublishUniforms(materialProgram);
+        }
+
         private RenderInfo3D? _renderInfo;
         private RenderCommandMesh3D? _renderCommand;
         private XRMeshRenderer? _meshRenderer;
@@ -1093,8 +1154,6 @@ namespace XREngine.Components.Scene.Mesh
 
         private void RebuildMaterial()
         {
-            _material?.SettingUniforms -= SetUniforms;
-
             XRShader? vertexShader = GetVertexShader();
             XRShader? stereoVertexShader = GetStereoVertexShader();
             XRShader? fragmentShader = _mode switch
@@ -1145,7 +1204,8 @@ namespace XREngine.Components.Scene.Mesh
             // Some pipelines may not execute the Background pass; debug mode forces a widely-used pass.
             _renderCommand?.RenderPass = _material.RenderPass;
 
-            _material.SettingUniforms += SetUniforms;
+            _material.BindingPublishers.Add(
+                new SkyboxBindingPublisher(this));
 
             if (_meshRenderer is null)
             {
@@ -1161,7 +1221,33 @@ namespace XREngine.Components.Scene.Mesh
             UpdateRenderCommand();
         }
 
-        private void SetUniforms(XRMaterialBase material, XRRenderProgram program)
+        private SkyboxBindingState CaptureBindingState()
+        {
+            GetSkyTwinkleUniforms(
+                out float cameraTwinkle,
+                out float twinklePhase);
+            return new SkyboxBindingState(
+                _mode,
+                _projection,
+                _intensity,
+                _rotation,
+                _cubemapArrayLayer,
+                _topColor,
+                _bottomColor,
+                _timeOfDay,
+                _cloudCoverage,
+                _cloudScale,
+                _cloudSpeed,
+                _cloudSharpness,
+                _starIntensity,
+                _horizonHaze,
+                _sunDiscSize,
+                _moonDiscSize,
+                cameraTwinkle,
+                twinklePhase);
+        }
+
+        private void PublishUniforms(XRRenderProgram program)
         {
             program.Uniform("SkyboxIntensity", _intensity);
             program.Uniform("SkyboxRotation", _rotation * MathF.PI / 180.0f);
@@ -1295,8 +1381,6 @@ namespace XREngine.Components.Scene.Mesh
         private void CleanupResources()
         {
             DetachDebugHooks();
-
-            _material?.SettingUniforms -= SetUniforms;
 
             _mesh?.Destroy();
             _mesh = null;

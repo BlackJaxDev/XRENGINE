@@ -7,7 +7,7 @@ layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
 uniform sampler2DArray Texture0;
-uniform vec2 FxaaTexelStep;
+uniform vec2 FxaaTexelStep; // XRENGINE_FREQUENCY(Pass)
 uniform float ScreenWidth;
 uniform float ScreenHeight;
 uniform vec2 ScreenOrigin;

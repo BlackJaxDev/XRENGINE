@@ -255,6 +255,120 @@ entries, device loss, or unhandled exceptions.
 - [x] Default desktop camera-motion frame time is no longer dominated by primary command-buffer recording.
 - [x] Focused tests, editor build, Vulkan validation, logs, and multi-position screenshots are clean.
 
+## 2026-08-03 Internal-Resolution State Leak Follow-Up
+
+The reported camera-motion artifact rendered a live image in the upper-left
+`1286x723` region of a `1920x1080` desktop output and left black padding on the
+right and bottom. Those dimensions match the active temporal-upscaling internal
+resolution and the display resolution, respectively. The failing boundary was
+`vkCmdExecuteCommands`: after a primary executes secondary command buffers,
+almost all primary command-buffer state is undefined, but the renderer retained
+its cached pipeline, descriptor, vertex/index, viewport, and scissor bindings.
+Later full-resolution primary work could therefore suppress the Vulkan commands
+needed to replace a secondary's internal-resolution viewport/scissor.
+
+The tracked secondary-execution wrapper now invalidates the primary bind-state
+cache immediately after every `vkCmdExecuteCommands` call while preserving the
+command buffer's recording generation and its independently tracked resource
+lifetime/image-layout dependencies. Scheduled secondaries are already executed
+in contiguous batches, so this invalidation occurs once per execution batch,
+not once per draw.
+
+### Keeping camera motion out of the command topology
+
+The CPU-direct Sponza diagnostic contained approximately `835` scheduled mesh
+chains. The renderer issued only `22` batched `vkCmdExecuteCommands` calls for
+roughly `805` secondaries, but descriptor-publication changes still caused the
+individual chains to be recorded rather than reused. Reintroducing global
+mixed-program main-view packets is not the fix: the earlier sustained-motion
+experiment showed that one visible-set change invalidates an entire large
+packet and performs worse than bounded per-program packets.
+
+The correct low-schedule topology is the no-readback GPU-indirect path. Camera
+motion updates view/frustum buffers and GPU-written indirect counts while the
+CPU schedule remains keyed by stable pass/target/view/material buckets. An
+early topology sample reported `0` scheduled chains, `2` indirect draws, `44`
+compute operations, and `395` active GPU commands in a `512`-entry allocation.
+That sample was not functional proof: phase-two Hi-Z had been skipped because
+its descriptor contract was incomplete.
+
+After repairing the Hi-Z path, a Standard Validation run sampled frames during
+and after a ten-second interpolated camera move (frames `148` and `153`). The
+session log is under
+`Build/_AgentValidation/mcp-sessions/vulkan-state-schedule-20260803/logs/XREngine.Editor_debug/windows_x64/xrengine_2026-08-03_13-20-18_pid22984/`.
+Both samples reported:
+
+- a `1920x1080` display target with a distinct `1286x723` internal target;
+- `0` scheduled command-chain entries and one freshly recorded primary;
+- `2` indirect draws, `45` compute operations, and `5` secondary buffers;
+- `395` active GPU commands in a `512`-entry allocation;
+- no dropped frame operations; and
+- `0` Vulkan validation messages or errors.
+
+Enabling that path exposed and fixed these independent readiness defects:
+
+- the Vulkan auto-uniform parser now consumes the complete trailing
+  `XRENGINE_FREQUENCY(...)` marker comment instead of leaving comment text as
+  invalid GLSL;
+- `HiZDepthPyramid` is created with storage-image usage, as required by the
+  occlusion compute pass; and
+- every cold-command Hi-Z dispatch publishes layout-compatible aliases for the
+  two optional hot-command descriptor bindings, allowing a complete Vulkan
+  descriptor set while `UseHotCommands` is zero;
+- images that are both sampled and used as storage now keep one consistent
+  `General` descriptor-layout contract across overlapping mip views; and
+- descriptor indexing now requires and enables variable descriptor counts and
+  sampled-image non-uniform indexing before the backend advertises the feature.
+
+The run no longer reports the earlier image-entry-state conflict, missing
+descriptor bindings, or feature-enable VUIDs. The viewport MCP readback remains
+all black on this known Vulkan editor capture path, so it cannot confirm or
+refute the visible top-left artifact. The state-cache correction is validated
+by command-boundary reasoning, a successful build, and clean motion-time Vulkan
+validation; live viewport confirmation by the user remains pending. The two
+inspected but inconclusive captures are
+`Build/_AgentValidation/20260803-two-pass-occlusion/mcp-captures/Screenshot_20260803_132157_553_2167ae2c59014c2b90275a4df016a63b.png`
+and
+`Build/_AgentValidation/20260803-two-pass-occlusion/mcp-captures/Screenshot_20260803_132938_071_ed53e7da0db643c48230a7e6a1a139e1.png`.
+
+The strict GPU route is not ready to become the default: `MaskedForward` (pass
+`4`) still lacks a generated compact material-table layout and is deliberately
+skipped instead of silently using a CPU fallback. That limitation is separate
+from both the viewport-state fix and the stable command topology.
+
+### Remaining recording-cost work
+
+Zero command-chain entries does not yet mean zero recording cost. The current
+safety quarantine records the GPU producer/indirect-consumer frame in one fresh
+primary because reusing persistent secondaries beside mutable GPU publications
+previously triggered a Windows GPU watchdog reset. The complete Standard
+Validation motion sample recorded `980` frame operations, including `836`
+direct mesh draws, in that primary. Its approximately `1.2 s` whole-frame time
+is Debug-plus-validation evidence only and is not a performance sign-off.
+
+The next safe optimization is publication-aware segmentation:
+
+1. keep compute producers, indirect/count consumers, submission markers, and
+   their barriers in one freshly recorded mutable primary segment;
+2. admit only immutable direct-draw islands whose command-chain keys include
+   exact descriptor/resource publication identity and buffer handle/range;
+3. retain explicit compute-write to indirect-read barriers at segment
+   boundaries; and
+4. validate each island with read-back/capture evidence before expanding its
+   eligibility.
+
+The blanket zero-readback command-chain quarantine must not be removed until
+those dependencies are encoded; doing so would recreate the known watchdog
+failure. Extending GPU-indirect coverage to shadow buckets will remove most of
+the remaining direct draws without making camera-visible membership part of the
+CPU command schedule. A generated `MaskedForward` compact material layout is
+also required before the route can preserve full scene parity.
+
+The Vulkan renderer project builds successfully after these changes. The build
+retains one pre-existing nullable warning in
+`RendererHostContext.cs`; no tests were added or modified while this live
+feature regression remains under runtime validation.
+
 ## 2026-07-25 Full DefaultRenderPipeline Optimization
 
 The follow-up deliberately kept `ForceDebugOpaquePipeline=false`. All numbers

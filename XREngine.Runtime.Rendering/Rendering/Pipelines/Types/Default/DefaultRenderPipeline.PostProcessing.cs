@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.CompilerServices;
+using System.Threading;
 using XREngine;
 using XREngine.Data.Colors;
 using XREngine.Rendering.PostProcessing;
@@ -17,6 +19,77 @@ public partial class DefaultRenderPipeline
 {
     private static readonly Vector3 DefaultHoverOutlineColor = new(1.0f, 1.0f, 0.0f);
     private static readonly Vector3 DefaultSelectionOutlineColor = new(0.0f, 1.0f, 0.0f);
+    private static readonly VignetteSettings DefaultVignetteSettings = new();
+    private static readonly ColorGradingSettings DefaultColorGradingSettings = new();
+    private static readonly ChromaticAberrationSettings DefaultChromaticAberrationSettings = new();
+    private static readonly FogSettings DefaultFogSettings = new();
+    private static readonly VolumetricFogSettings DefaultVolumetricFogSettings = new();
+    private static readonly LensDistortionSettings DefaultLensDistortionSettings = new();
+    private static readonly BloomSettings DefaultBloomSettings = new();
+    private static readonly TonemappingSettings DefaultTonemappingSettings = new();
+
+    private enum EPostProcessBindingPublication
+    {
+        Composite,
+        Final,
+    }
+
+    /// <summary>
+    /// Publishes numeric post-process state with a generation derived from the
+    /// exact settings owners and camera values consumed by the pass. Texture
+    /// inputs remain material-owned and use the material resource generation.
+    /// </summary>
+    private sealed class PostProcessBindingPublisher(
+        DefaultRenderPipeline owner,
+        EPostProcessBindingPublication publication) : IRenderBindingPublisher
+    {
+        private const ulong HashOffset = 14695981039346656037UL;
+        private const ulong HashPrime = 1099511628211UL;
+        private readonly object _generationSync = new();
+        private ulong _lastContentSignature;
+        private long _generation = 1;
+
+        public ERenderBindingFrequency Frequency
+            => ERenderBindingFrequency.View;
+
+        public ulong Generation
+        {
+            get
+            {
+                ulong contentSignature = owner.ComputePostProcessBindingSignature(
+                    publication);
+                lock (_generationSync)
+                {
+                    if (contentSignature == _lastContentSignature)
+                        return unchecked((ulong)_generation);
+
+                    _lastContentSignature = contentSignature;
+                    if (Interlocked.Increment(ref _generation) == 0)
+                        Interlocked.CompareExchange(ref _generation, 1, 0);
+                    return unchecked((ulong)_generation);
+                }
+            }
+        }
+
+        public void PublishUniforms(
+            XRRenderProgram vertexProgram,
+            XRRenderProgram materialProgram)
+        {
+            if (publication == EPostProcessBindingPublication.Composite)
+                owner.PostProcessFBO_SettingUniforms(materialProgram);
+            else
+                owner.FinalPostProcessFBO_SettingUniforms(materialProgram);
+        }
+
+        internal static void Add(ref ulong hash, ulong value)
+        {
+            hash ^= value;
+            hash *= HashPrime;
+        }
+
+        internal static ulong BeginHash()
+            => HashOffset;
+    }
 
     private const string TemporalFeedbackMinParameterName = "FeedbackMin";
     private const string TemporalFeedbackMaxParameterName = "FeedbackMax";
@@ -1799,6 +1872,147 @@ public partial class DefaultRenderPipeline
         return result;
     }
 
+    private ulong ComputePostProcessBindingSignature(
+        EPostProcessBindingPublication publication)
+    {
+        ulong hash = PostProcessBindingPublisher.BeginHash();
+        XRCamera? camera = ResolveCurrentSettingsCamera();
+        PipelinePostProcessState? state = camera?.GetActivePostProcessState();
+
+        AddPostProcessSettings(
+            ref hash,
+            state,
+            DefaultLensDistortionSettings);
+        AddHash(ref hash, InternalWidth);
+        AddHash(ref hash, InternalHeight);
+        AddCameraLensInputs(ref hash, camera);
+
+        if (publication == EPostProcessBindingPublication.Composite)
+        {
+            AddPostProcessSettings(ref hash, state, DefaultVignetteSettings);
+            AddPostProcessSettings(
+                ref hash,
+                state,
+                DefaultColorGradingSettings);
+            AddPostProcessSettings(
+                ref hash,
+                state,
+                DefaultChromaticAberrationSettings);
+            AddPostProcessSettings(ref hash, state, DefaultFogSettings);
+            AddPostProcessSettings(
+                ref hash,
+                state,
+                AtmosphericScatteringSettings.Default);
+            AddPostProcessSettings(
+                ref hash,
+                state,
+                DefaultVolumetricFogSettings);
+            AddPostProcessSettings(ref hash, state, DefaultBloomSettings);
+            AddPostProcessSettings(
+                ref hash,
+                state,
+                DefaultTonemappingSettings);
+            AddHash(ref hash, ResolveOutputHDR());
+            AddHash(
+                ref hash,
+                RuntimeEngine.Rendering.Settings.DefaultLuminance);
+
+            var preferences = RuntimeEngine.EditorPreferences;
+            Vector3 hoverOutlineColor = preferences is null
+                ? DefaultHoverOutlineColor
+                : new Vector3(
+                    (float)preferences.HoverOutlineColor.R,
+                    (float)preferences.HoverOutlineColor.G,
+                    (float)preferences.HoverOutlineColor.B);
+            Vector3 selectionOutlineColor = preferences is null
+                ? DefaultSelectionOutlineColor
+                : new Vector3(
+                    (float)preferences.SelectionOutlineColor.R,
+                    (float)preferences.SelectionOutlineColor.G,
+                    (float)preferences.SelectionOutlineColor.B);
+            AddHash(ref hash, hoverOutlineColor);
+            AddHash(ref hash, selectionOutlineColor);
+            AddHash(
+                ref hash,
+                RuntimeRenderingHostServices.DebugDrawing
+                    .HoverOutlineEnabled);
+            AddHash(
+                ref hash,
+                RuntimeRenderingHostServices.DebugDrawing
+                    .SelectionOutlineEnabled);
+        }
+
+        return hash == 0UL ? 1UL : hash;
+    }
+
+    private static void AddPostProcessSettings<TSettings>(
+        ref ulong hash,
+        PipelinePostProcessState? state,
+        TSettings fallback)
+        where TSettings : PostProcessSettings
+    {
+        TSettings settings = GetSettings<TSettings>(state) ?? fallback;
+        PostProcessBindingPublisher.Add(
+            ref hash,
+            unchecked((uint)RuntimeHelpers.GetHashCode(settings)));
+        PostProcessBindingPublisher.Add(
+            ref hash,
+            settings.BindingGeneration);
+    }
+
+    private static void AddCameraLensInputs(
+        ref ulong hash,
+        XRCamera? camera)
+    {
+        object? cameraParameters = camera?.Parameters;
+        PostProcessBindingPublisher.Add(
+            ref hash,
+            cameraParameters is null
+                ? 0UL
+                : unchecked((uint)RuntimeHelpers.GetHashCode(cameraParameters)));
+
+        switch (cameraParameters)
+        {
+            case XRPerspectiveCameraParameters perspective:
+                AddHash(ref hash, perspective.VerticalFieldOfView);
+                AddHash(ref hash, perspective.InheritAspectRatio);
+                AddHash(ref hash, perspective.AspectRatio);
+                break;
+            case XRPhysicalCameraParameters physical:
+                AddHash(ref hash, physical.VerticalFieldOfViewDegrees);
+                AddHash(ref hash, physical.InheritPrincipalPoint);
+                AddHash(ref hash, physical.PrincipalPointPx);
+                break;
+        }
+    }
+
+    private static void AddHash(ref ulong hash, bool value)
+        => PostProcessBindingPublisher.Add(ref hash, value ? 1UL : 0UL);
+
+    private static void AddHash(ref ulong hash, int value)
+        => PostProcessBindingPublisher.Add(ref hash, unchecked((uint)value));
+
+    private static void AddHash(ref ulong hash, uint value)
+        => PostProcessBindingPublisher.Add(ref hash, value);
+
+    private static void AddHash(ref ulong hash, float value)
+        => PostProcessBindingPublisher.Add(
+            ref hash,
+            BitConverter.SingleToUInt32Bits(value));
+
+    private static void AddHash(ref ulong hash, Vector2 value)
+    {
+        AddHash(ref hash, value.X);
+        AddHash(ref hash, value.Y);
+    }
+
+    private static void AddHash(ref ulong hash, Vector3 value)
+    {
+        AddHash(ref hash, value.X);
+        AddHash(ref hash, value.Y);
+        AddHash(ref hash, value.Z);
+    }
+
     private static TSettings? GetSettings<TSettings>(PipelinePostProcessState? state) where TSettings : class
         => state?.GetStage<TSettings>()?.TryGetBacking(out TSettings? settings) == true ? settings : null;
 
@@ -1820,30 +2034,30 @@ public partial class DefaultRenderPipeline
     private static void ApplyPostProcessUniforms(PipelinePostProcessState? state, XRRenderProgram program, bool applyLensDistortion)
     {
         var vignette = GetSettings<VignetteSettings>(state);
-        (vignette ?? new VignetteSettings()).SetUniforms(program);
+        (vignette ?? DefaultVignetteSettings).SetUniforms(program);
 
         var color = GetSettings<ColorGradingSettings>(state);
-        (color ?? new ColorGradingSettings()).SetUniforms(program);
+        (color ?? DefaultColorGradingSettings).SetUniforms(program);
 
         var chroma = GetSettings<ChromaticAberrationSettings>(state);
-        (chroma ?? new ChromaticAberrationSettings()).SetUniforms(program);
+        (chroma ?? DefaultChromaticAberrationSettings).SetUniforms(program);
 
         var fog = GetSettings<FogSettings>(state);
-        (fog ?? new FogSettings()).SetUniforms(program);
+        (fog ?? DefaultFogSettings).SetUniforms(program);
 
         var atmosphere = GetSettings<AtmosphericScatteringSettings>(state);
         (atmosphere ?? AtmosphericScatteringSettings.Default).SetUniforms(program);
 
         var volumetricFog = GetSettings<VolumetricFogSettings>(state);
-        (volumetricFog ?? new VolumetricFogSettings()).SetUniforms(program);
+        (volumetricFog ?? DefaultVolumetricFogSettings).SetUniforms(program);
 
         ApplyLensDistortionUniforms(state, program, applyLensDistortion);
 
         var bloom = GetSettings<BloomSettings>(state);
-        (bloom ?? new BloomSettings()).SetCombineUniforms(program);
+        (bloom ?? DefaultBloomSettings).SetCombineUniforms(program);
 
         var tonemapping = GetSettings<TonemappingSettings>(state);
-        (tonemapping ?? new TonemappingSettings()).SetUniforms(program);
+        (tonemapping ?? DefaultTonemappingSettings).SetUniforms(program);
     }
 
     private static void ApplyLensDistortionUniforms(PipelinePostProcessState? state, XRRenderProgram program, bool enabled)
@@ -1878,7 +2092,7 @@ public partial class DefaultRenderPipeline
 
         if (enabled)
         {
-            (lens ?? new LensDistortionSettings()).SetUniforms(program, cameraFov, aspectRatio, distortionCenterUv);
+            (lens ?? DefaultLensDistortionSettings).SetUniforms(program, cameraFov, aspectRatio, distortionCenterUv);
             return;
         }
 
@@ -1918,10 +2132,6 @@ public partial class DefaultRenderPipeline
 
     private void FinalPostProcessFBO_SettingUniforms(XRRenderProgram materialProgram)
     {
-        XRTexture? source = GetTexture<XRTexture>(PostProcessOutputTextureName);
-        if (source is not null)
-            materialProgram.Sampler(PostProcessOutputTextureName, source, 0);
-
         var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         ApplyLensDistortionUniforms(state, materialProgram, enabled: true);
     }

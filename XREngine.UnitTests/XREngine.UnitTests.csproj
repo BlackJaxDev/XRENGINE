@@ -10,7 +10,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\XREngine.AgentOrchestration\XREngine.AgentOrchestration.csproj" />
-    <PackageReference Include="Magick.NET-Q16-HDRI-AnyCPU" Version="14.16.0" />
+    <PackageReference Include="Magick.NET-Q16-HDRI-x64" Version="14.16.0" />
     <PackageReference Include="Meshoptimizer.NET" Version="1.0.7" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
     <PackageReference Include="NUnit" Version="4.6.1" />

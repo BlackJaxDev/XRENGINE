@@ -245,7 +245,12 @@ namespace XREngine.Rendering.Commands
         CustomShader = 1 << 16,
         Deferred = 1 << 17,
         Forward = 1 << 18,
-        Unlit = 1 << 19
+        Unlit = 1 << 19,
+        /// <summary>
+        /// The mesh prefers the legacy CPU lane in diagnostic strategies. Strict
+        /// zero-readback ignores this bit and keeps the draw GPU-resident.
+        /// </summary>
+        CpuFallbackOnly = 1 << 20
     }
 
     public enum GPUSortAlgorithm

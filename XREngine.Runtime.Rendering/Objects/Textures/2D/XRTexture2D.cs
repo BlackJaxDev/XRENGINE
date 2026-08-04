@@ -1,8 +1,6 @@
 using ImageMagick;
 using ImageMagick.Drawing;
 using MemoryPack;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
 using System;
 using System.Collections;
 using System.Collections.Concurrent;
@@ -83,6 +81,7 @@ namespace XREngine.Rendering
                 using var sourceImage = new MagickImage(fileBytes);
                 // Only upload the base mip; the GPU generates the rest via glGenerateMipmap.
                 Mipmaps = [new Mipmap2D(sourceImage)];
+                SizedInternalFormat = DeriveESizedInternalFormat(Mipmaps[0].InternalFormat);
                 AutoGenerateMipmaps = true;
                 Resizable = false;
                 return true;
@@ -117,9 +116,10 @@ namespace XREngine.Rendering
         {
             try
             {
-                var sourceImage = new MagickImage(fileData);
+                using var sourceImage = new MagickImage(fileData);
                 // Only upload the base mip; the GPU generates the rest via glGenerateMipmap.
                 Mipmaps = [new Mipmap2D(sourceImage)];
+                SizedInternalFormat = DeriveESizedInternalFormat(Mipmaps[0].InternalFormat);
                 AutoGenerateMipmaps = true;
                 Resizable = false;
                 return true;
@@ -859,7 +859,9 @@ namespace XREngine.Rendering
         {
             RuntimeRenderingHostServices.Diagnostics.RecordMissingAsset(filePath, nameof(XRTexture2D), $"{nameof(XRTexture2D)}.{nameof(Load3rdParty)}");
 
-            Mipmaps = [new Mipmap2D(new MagickImage(FillerImage))];
+            using MagickImage filler = (MagickImage)FillerImage.Clone();
+            Mipmaps = [new Mipmap2D(filler)];
+            SizedInternalFormat = DeriveESizedInternalFormat(Mipmaps[0].InternalFormat);
             AutoGenerateMipmaps = true;
             Resizable = true;
             return false;
@@ -982,7 +984,7 @@ namespace XREngine.Rendering
                 target.Mipmaps = [new Mipmap2D(previewImage)];
                 target.AutoGenerateMipmaps = false;
                 target.Resizable = true;
-                target.SizedInternalFormat = ESizedInternalFormat.Rgba8;
+                target.SizedInternalFormat = DeriveESizedInternalFormat(target.Mipmaps[0].InternalFormat);
             }
             catch (MagickException ex)
             {
@@ -1079,7 +1081,7 @@ namespace XREngine.Rendering
             target.Mipmaps = [new Mipmap2D(filler)];
             target.AutoGenerateMipmaps = false;
             target.Resizable = true;
-            target.SizedInternalFormat = ESizedInternalFormat.Rgba8;
+            target.SizedInternalFormat = DeriveESizedInternalFormat(target.Mipmaps[0].InternalFormat);
         }
 
         private static void CopyTextureSettings(XRTexture2D source, XRTexture2D target)
@@ -1133,15 +1135,13 @@ namespace XREngine.Rendering
             int mipCount = Math.Max(1, GetSmallestMipmapLevel(image.Width, image.Height) + 1);
             Mipmap2D[] mips = new Mipmap2D[mipCount];
             mips[0] = new Mipmap2D(image);
-            uint w = image.Width;
-            uint h = image.Height;
+            using MagickImage workingImage = (MagickImage)image.Clone();
             for (int i = 1; i < mips.Length; ++i)
             {
-                var clone = image.Clone();
-                uint mipWidth = Math.Max(1u, w >> i);
-                uint mipHeight = Math.Max(1u, h >> i);
-                clone.Resize(mipWidth, mipHeight);
-                mips[i] = new Mipmap2D(clone as MagickImage);
+                uint mipWidth = Math.Max(1u, image.Width >> i);
+                uint mipHeight = Math.Max(1u, image.Height >> i);
+                workingImage.Resize(mipWidth, mipHeight);
+                mips[i] = new Mipmap2D(workingImage);
             }
             return mips;
         }
@@ -1338,10 +1338,12 @@ namespace XREngine.Rendering
 
         public override uint MaxDimension => Math.Max(Width, Height);
 
-        public XRTexture2D(Task<Image<Rgba32>?> loadTask)
+        /// <summary>
+        /// Creates a texture from tightly packed, row-major RGBA8 pixels.
+        /// </summary>
+        public XRTexture2D(uint width, uint height, ReadOnlySpan<byte> rgbaPixels)
         {
-            Mipmaps = [new Mipmap2D(loadTask)];
-            // Image<Rgba32> is always 8-bit RGBA.
+            Mipmaps = [new Mipmap2D(width, height, rgbaPixels)];
             _sizedInternalFormat = ESizedInternalFormat.Rgba8;
         }
         public XRTexture2D(uint width, uint height, ColorF4 color)
@@ -1404,7 +1406,8 @@ namespace XREngine.Rendering
                     path = path[7..];
                 try
                 {
-                    mips.Add(new Mipmap2D(new MagickImage(path)));
+                    using MagickImage image = new(path);
+                    mips.Add(new Mipmap2D(image));
                 }
                 catch (Exception e)
                 {
@@ -1438,11 +1441,18 @@ namespace XREngine.Rendering
             Mipmap2D[] mips = new Mipmap2D[mipmaps.Length];
             for (int i = 0; i < mipmaps.Length; ++i)
             {
-                var image = mipmaps[i];
+                MagickImage? image = mipmaps[i];
                 uint mipWidth = Math.Max(1u, width >> i);
                 uint mipHeight = Math.Max(1u, height >> i);
-                image?.Resize(mipWidth, mipHeight);
-                mips[i] = new Mipmap2D(image);
+                if (image is null || image.Width == mipWidth && image.Height == mipHeight)
+                {
+                    mips[i] = new Mipmap2D(image);
+                    continue;
+                }
+
+                using MagickImage resizedImage = (MagickImage)image.Clone();
+                resizedImage.Resize(mipWidth, mipHeight);
+                mips[i] = new Mipmap2D(resizedImage);
             }
             Mipmaps = mips;
             // Derive the sized format from the first mipmap so non-resizable textures
@@ -1458,15 +1468,6 @@ namespace XREngine.Rendering
             if (Mipmaps.Length > 0)
                 _sizedInternalFormat = DeriveESizedInternalFormat(Mipmaps[0].InternalFormat);
         }
-        public XRTexture2D(Image<Rgba32> image)
-        {
-            Mipmaps = [new Mipmap2D(image)];
-            // Image<Rgba32> is always 8-bit RGBA — ensure the sized format matches
-            // so that non-resizable textures resolve to R8G8B8A8Unorm instead of the
-            // default Rgba32f fallback.
-            _sizedInternalFormat = ESizedInternalFormat.Rgba8;
-        }
-
         private Mipmap2D[] _mipmaps = [];
         public Mipmap2D[] Mipmaps
         {

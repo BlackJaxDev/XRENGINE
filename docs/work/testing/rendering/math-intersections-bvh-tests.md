@@ -35,8 +35,11 @@ initial readiness is visible and does not silently substitute a CPU implementati
 ## Debug display controls
 
 Each BVH rig owns a sibling `CustomUIComponent` named `<mode> BVH Debug
-Controls`. Select the active test node in the hierarchy and open that component
-in the Inspector to edit its display and, for scene rigs, its query shape.
+Controls`. When a test is enabled from **Math Intersections Test Controls**, the
+root component conditionally projects that test's controls into a collapsible
+group. The group retains the source field objects, so editing it is equivalent
+to selecting the active test node in the hierarchy and opening its component in
+the Inspector.
 
 Shared controls on all four rigs include:
 

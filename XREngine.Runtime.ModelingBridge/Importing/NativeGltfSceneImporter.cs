@@ -1021,23 +1021,28 @@ internal static class NativeGltfSceneImporter
     private static MagickImage CreateSingleChannelImage(GltfAssetDocument document, string sourceFilePath, int textureIndex, int channelIndex)
     {
         using MagickImage source = LoadTextureImage(document, sourceFilePath, textureIndex);
-        MagickImage result = new(new MagickColor(0, 0, 0, 1), source.Width, source.Height);
-
-        using IPixelCollection<float> sourcePixels = source.GetPixels();
-        using IPixelCollection<float> resultPixels = result.GetPixels();
-        double maxValue = Quantum.Max;
-
-        for (int y = 0; y < source.Height; y++)
+        Channels channel = channelIndex switch
         {
-            for (int x = 0; x < source.Width; x++)
-            {
-                IPixel<float> pixel = sourcePixels.GetPixel(x, y);
-                float value = pixel.GetChannel((uint)channelIndex);
-                resultPixels.SetPixel(x, y, [value, value, value, (float)maxValue]);
-            }
-        }
+            0 => Channels.Red,
+            1 => Channels.Green,
+            2 => Channels.Blue,
+            3 => Channels.Alpha,
+            _ => throw new ArgumentOutOfRangeException(nameof(channelIndex), channelIndex, "Texture channel must be in the range 0..3."),
+        };
 
-        return result;
+        IReadOnlyList<IMagickImage<float>> separatedChannels = source.Separate(channel);
+        try
+        {
+            if (separatedChannels.Count != 1)
+                throw new InvalidDataException($"ImageMagick returned {separatedChannels.Count} images while separating one texture channel.");
+
+            return (MagickImage)separatedChannels[0].Clone();
+        }
+        finally
+        {
+            foreach (IMagickImage<float> separatedChannel in separatedChannels)
+                separatedChannel.Dispose();
+        }
     }
 
     private static int ResolveTextureImageIndex(GltfRoot document, int textureIndex)
@@ -1112,7 +1117,7 @@ internal static class NativeGltfSceneImporter
 
     private static XRTexture2D CreateTextureFromImage(string textureKey, MagickImage image, GltfSampler? sampler, string? displayName)
     {
-        XRTexture2D texture = new()
+        XRTexture2D texture = new(image)
         {
             Name = string.IsNullOrWhiteSpace(displayName) ? textureKey : displayName,
             FilePath = textureKey,
@@ -1124,14 +1129,13 @@ internal static class NativeGltfSceneImporter
             AutoGenerateMipmaps = true,
             Resizable = false,
         };
-        // Only upload the base mip; the GPU generates the rest via glGenerateMipmap.
-        texture.Mipmaps = [new Mipmap2D(image)];
         return texture;
     }
 
     private static XRTexture2D CreateFallbackTexture(string textureKey, GltfSampler? sampler)
     {
-        XRTexture2D texture = new()
+        using MagickImage filler = (MagickImage)XRTexture2D.FillerImage.Clone();
+        XRTexture2D texture = new(filler)
         {
             Name = Path.GetFileNameWithoutExtension(textureKey),
             FilePath = textureKey,
@@ -1143,8 +1147,6 @@ internal static class NativeGltfSceneImporter
             AutoGenerateMipmaps = false,
             Resizable = false,
         };
-        using MagickImage filler = (MagickImage)XRTexture2D.FillerImage.Clone();
-        texture.Mipmaps = [new Mipmap2D(filler)];
         return texture;
     }
 

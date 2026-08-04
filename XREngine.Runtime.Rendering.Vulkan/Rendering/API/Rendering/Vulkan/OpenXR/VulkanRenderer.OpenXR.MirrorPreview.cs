@@ -860,6 +860,7 @@ public unsafe partial class VulkanRenderer
                 dynamicUiBatchTextOpCount: 0,
                 commandChainSchedule,
                 preserveSwapchainForOverlay: false,
+                primaryCommandPlan: variant.PrimaryCommandPlan,
                 recordedSwapchainWriteCount: out int recordedSwapchainWriteCount,
                 recordedSwapchainFinalLayout: out ImageLayout swapchainLayoutAfterCommandBuffer,
                 recordingDeferredReason: out string recordingDeferredReason,

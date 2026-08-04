@@ -111,11 +111,8 @@ namespace XREngine.Rendering.Commands
             try
             {
             using var renderGraphPassScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(RenderPass);
-            _gpuBatchingPreparedThisFrame = false;
-            _zeroReadbackMaterialScatterPreparedThisFrame = false;
-            _zeroReadbackActiveBucketListPreparedThisFrame = false;
-            _meshletExpansionPreparedThisFrame = false;
             ResetZeroReadbackProgramPendingState();
+            bool useTwoPassGpuHiZ = TryPrepareGpuHiZTwoPass(scene, camera, out GpuHiZDepthInput twoPassDepthInput);
             Stopwatch resetStopwatch = Stopwatch.StartNew();
             ResetCounters();
             resetStopwatch.Stop();
@@ -123,26 +120,64 @@ namespace XREngine.Rendering.Commands
                 RuntimeEngine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming.Reset,
                 resetStopwatch.Elapsed);
 
-            Cull(scene, camera);
+            Cull(scene, camera, deferGpuHiZ: useTwoPassGpuHiZ);
             LogVulkanCounterDiagnostics("after-cull");
             LogVulkanCullInputDiagnostics(scene, "after-cull");
+            bool submitted = useTwoPassGpuHiZ
+                ? ExecuteGpuHiZTwoPass(scene, camera, twoPassDepthInput)
+                : PrepareAndSubmitVisibleSet(scene, camera, "single");
+            if (!submitted)
+            {
+                ClearPassPolicySnapshot();
+                return;
+            }
+
+            _useBufferAForRender = !_useBufferAForRender;
+
+            QueueAsyncGpuTriangleStatsReadback();
+            PostRenderDiagnostics(scene);
+
+            Log(LogCategory.Lifecycle, LogLevel.Info, "Render end");
+            Dbg("Render end", "Lifecycle");
+            ClearPassPolicySnapshot();
+            }
+            finally
+            {
+                if (meshletDebugForced)
+                {
+                    MeshSubmissionStrategy = savedStrategy;
+                    UseMeshletPipeline = savedUseMeshletPipeline;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Builds all GPU submission data for the currently active compact command
+        /// buffer and records one raster submission. Two-pass Hi-Z calls this once
+        /// for the early visibility set and once for the newly visible late set.
+        /// </summary>
+        private bool PrepareAndSubmitVisibleSet(
+            GPUScene scene,
+            XRCamera camera,
+            string phaseLabel,
+            EAdvancedVisibilitySynchronizationBoundary? synchronizationBoundary = null)
+        {
+            _gpuBatchingPreparedThisFrame = false;
+            _zeroReadbackMaterialScatterPreparedThisFrame = false;
+            _zeroReadbackActiveBucketListPreparedThisFrame = false;
+            _meshletExpansionPreparedThisFrame = false;
+
             SelectVisibleCommandLods(scene, camera);
             ExpandVisibleMeshlets(scene);
             ClassifyTransparencyDomains(scene);
 
             if (RequiresExactTransparentCandidateRejection)
-            {
                 ReportExactTransparentMultiviewRejection();
-            }
             else
-            {
                 ClearExactTransparentMultiviewRejection();
-            }
 
-
-            // Phase 2: do not early-out based on CPU-visible counters.
-            // The default submission path uses GPU-written count buffers; a 0 count naturally results in no draws.
-
+            // Do not early-out based on CPU-visible counters. GPU-written count
+            // buffers naturally turn an empty early/late list into zero draws.
             bool strictNoFallbacks = VulkanFeatureProfile.EnforceStrictNoFallbacks;
             bool cpuBatchingEnabled = IsCpuBatchingEnabledForPass();
             bool useCpuBatchFallback = !strictNoFallbacks && (!EnableGpuDrivenBatching || cpuBatchingEnabled);
@@ -151,10 +186,10 @@ namespace XREngine.Rendering.Commands
 
             if (useCpuBatchFallback)
             {
-                using (BeginTiming("PopulateMaterialIDs"))
+                using (BeginTiming($"PopulateMaterialIDs.{phaseLabel}"))
                     PopulateMaterialIDs(scene);
 
-                using (BeginTiming("BuildIndirectCommandBuffer"))
+                using (BeginTiming($"BuildIndirectCommandBuffer.{phaseLabel}"))
                 {
                     Stopwatch indirectStopwatch = Stopwatch.StartNew();
                     BuildIndirectCommandBuffer(scene);
@@ -162,7 +197,7 @@ namespace XREngine.Rendering.Commands
                     indirectStageElapsed += indirectStopwatch.Elapsed;
                 }
 
-                using var batchTiming = BeginTiming("BuildMaterialBatchesCpuFallback");
+                using var batchTiming = BeginTiming($"BuildMaterialBatchesCpuFallback.{phaseLabel}");
                 batches = BuildMaterialBatches(scene);
                 CurrentBatches = batches;
                 _gpuBatchingPreparedThisFrame = false;
@@ -172,7 +207,7 @@ namespace XREngine.Rendering.Commands
                 if (!EnableGpuDrivenBatching && strictNoFallbacks)
                     RecordForbiddenFallback("CPU material batch fallback requested while strict no-fallbacks is active.");
 
-                using var batchTiming = BeginTiming("BuildGpuBatchesAndInstancing");
+                using var batchTiming = BeginTiming($"BuildGpuBatchesAndInstancing.{phaseLabel}");
                 Stopwatch indirectStopwatch = Stopwatch.StartNew();
                 batches = BuildGpuBatchesAndInstancing(scene);
                 indirectStopwatch.Stop();
@@ -191,11 +226,10 @@ namespace XREngine.Rendering.Commands
                 {
                     if (scene.TotalCommandCount > 0)
                     {
-                        Debug.MeshesWarning($"{FormatDebugPrefix("Materials")} GPU batching produced no batch ranges. " +
-                                         "Enable IndirectDebug.EnableCpuBatching for emergency fallback diagnostics.");
+                        Debug.MeshesWarning($"{FormatDebugPrefix("Materials")} GPU batching produced no batch ranges during {phaseLabel}. " +
+                            "Enable IndirectDebug.EnableCpuBatching for emergency fallback diagnostics.");
                     }
-                    ClearPassPolicySnapshot();
-                    return;
+                    return false;
                 }
             }
 
@@ -206,17 +240,20 @@ namespace XREngine.Rendering.Commands
                     indirectStageElapsed);
             }
 
-            Log(LogCategory.Indirect, LogLevel.Info, "Indirect build complete - visible={0}", VisibleCommandCount);
-            Dbg("Indirect build complete", "Indirect");
+            Log(LogCategory.Indirect, LogLevel.Info, "Indirect build complete ({0}) - visible={1}", phaseLabel, VisibleCommandCount);
+            Dbg($"Indirect build complete ({phaseLabel})", "Indirect");
 
             if (batches is not null)
-                Log(LogCategory.Materials, LogLevel.Info, "Material batches={0}, visible commands={1}", batches.Count, VisibleCommandCount);
+                Log(LogCategory.Materials, LogLevel.Info, "Material batches={0}, visible commands={1}, phase={2}", batches.Count, VisibleCommandCount, phaseLabel);
 
             if (!PrepareMaterialTableAndValidateResidency(scene, batches))
             {
-                Dbg("Render abort - material table residency validation failed", "Materials");
-                return;
+                Dbg($"Render abort ({phaseLabel}) - material table residency validation failed", "Materials");
+                return false;
             }
+
+            if (synchronizationBoundary.HasValue)
+                AdvancedVisibilitySynchronizationContract.ApplyOpenGl(synchronizationBoundary.Value);
 
             Stopwatch drawStopwatch = Stopwatch.StartNew();
             _renderManager.Render(this, camera, scene, _indirectDrawBuffer!, _indirectRenderer, RenderPass, _drawCountBuffer, batches);
@@ -224,27 +261,10 @@ namespace XREngine.Rendering.Commands
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming(
                 RuntimeEngine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming.Draw,
                 drawStopwatch.Elapsed);
-            
-            Log(LogCategory.Lifecycle, LogLevel.Info, "Render submission done");
-            Dbg("Render submission done", "Lifecycle");
 
-            _useBufferAForRender = !_useBufferAForRender;
-
-            QueueAsyncGpuTriangleStatsReadback();
-            PostRenderDiagnostics(scene);
-            
-            Log(LogCategory.Lifecycle, LogLevel.Info, "Render end");
-            Dbg("Render end", "Lifecycle");
-            ClearPassPolicySnapshot();
-            }
-            finally
-            {
-                if (meshletDebugForced)
-                {
-                    MeshSubmissionStrategy = savedStrategy;
-                    UseMeshletPipeline = savedUseMeshletPipeline;
-                }
-            }
+            Log(LogCategory.Lifecycle, LogLevel.Info, "Render submission done ({0})", phaseLabel);
+            Dbg($"Render submission done ({phaseLabel})", "Lifecycle");
+            return true;
         }
 
         /// <summary>
@@ -1955,6 +1975,7 @@ namespace XREngine.Rendering.Commands
                 Flags = flags,
                 BaseColorOpacity = ResolveMaterialBaseColorOpacity(material),
                 RMSE = ResolveMaterialRmse(material),
+                AlphaCutoff = material.AlphaCutoff,
             };
         }
 
@@ -2692,6 +2713,11 @@ namespace XREngine.Rendering.Commands
             _indirectDrawBuffer?.Dispose();
             _culledCountBuffer?.Dispose();
             _cullCountScratchBuffer?.Dispose();
+            _twoPassCandidateCountBuffer?.Dispose();
+            _twoPassPhaseOneCountBuffer?.Dispose();
+            _twoPassPhaseOneCommandBuffer?.Dispose();
+            _twoPassPhaseOneHotCommandBuffer?.Dispose();
+            _twoPassVisibilityBuffer?.Dispose();
             _drawCountBuffer?.Dispose();
             _cullingOverflowFlagBuffer?.Dispose();
             _indirectOverflowFlagBuffer?.Dispose();
@@ -2705,6 +2731,8 @@ namespace XREngine.Rendering.Commands
             _materialSlotLookupBuffer?.Dispose();
             _materialTierIndirectDrawBuffer?.Dispose();
             _materialTierDrawCountBuffer?.Dispose();
+            _twoPassPhaseOneMaterialTierIndirectDrawBuffer?.Dispose();
+            _twoPassPhaseOneMaterialTierDrawCountBuffer?.Dispose();
             _materialTierActiveBucketBuffer?.Dispose();
             _materialTierActiveBucketCountBuffer?.Dispose();
             _instanceTransformBuffer?.Dispose();
@@ -2760,6 +2788,7 @@ namespace XREngine.Rendering.Commands
 
             _hiZInitProgram?.Destroy();
             _hiZGenProgram?.Destroy();
+            _hiZPhaseOneProgram?.Destroy();
             _hiZOcclusionProgram?.Destroy();
             _copyCount3Program?.Destroy();
         }

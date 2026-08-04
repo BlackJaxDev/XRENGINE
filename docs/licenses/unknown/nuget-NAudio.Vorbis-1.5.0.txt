@@ -1,0 +1,6 @@
+﻿License text could not be resolved locally for NuGet package 'NAudio.Vorbis' (1.5.0).
+
+Resolved license: MIT
+RepositoryUrl: https://github.com/naudio/Vorbis
+ProjectUrl: https://github.com/naudio/Vorbis
+

@@ -1,0 +1,6 @@
+﻿License text could not be resolved locally for NuGet package 'Svg.Skia' (5.1.1).
+
+Resolved license: MIT
+RepositoryUrl: https://github.com/wieslawsoltes/Svg.Skia
+ProjectUrl: https://github.com/wieslawsoltes/Svg.Skia
+

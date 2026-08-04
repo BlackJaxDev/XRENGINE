@@ -7,7 +7,13 @@ internal readonly record struct TextureStreamingResidentData(
     Mipmap2D[] Mipmaps,
     uint SourceWidth,
     uint SourceHeight,
-    uint ResidentMaxDimension);
+    uint ResidentMaxDimension)
+{
+    public ESizedInternalFormat SizedInternalFormat
+        => Mipmaps is { Length: > 0 }
+            ? XRTexture2D.DeriveESizedInternalFormat(Mipmaps[0].InternalFormat)
+            : ESizedInternalFormat.Rgba8;
+}
 
 public readonly record struct ImportedTextureStreamingUsage(
     float DistanceFromCamera,

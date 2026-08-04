@@ -20,7 +20,7 @@ uniform sampler2D AtmosphereColor;
 // Produced by VolumetricFogScatter.fs; early-outs to (0,0,0,1) when the effect
 // is disabled so the composite becomes a no-op.
 uniform sampler2D VolumetricFogColor;
-uniform bool UseGpuAutoExposure;
+uniform bool UseGpuAutoExposure; // XRENGINE_FREQUENCY(View)
 uniform vec3 CameraPosition;
 uniform mat4 ViewMatrix;
 uniform mat4 InverseViewMatrix;
@@ -28,10 +28,10 @@ uniform mat4 InverseProjMatrix;
 uniform int DirLightCount;
 uniform float RenderTime;
 
-uniform vec3 HoverOutlineColor = vec3(1.0f, 1.0f, 0.0f);
-uniform vec3 SelectionOutlineColor = vec3(0.0f, 1.0f, 0.0f);
-uniform bool EnableEditorOutline = true;
-uniform bool OutputHDR;
+uniform vec3 HoverOutlineColor = vec3(1.0f, 1.0f, 0.0f); // XRENGINE_FREQUENCY(View)
+uniform vec3 SelectionOutlineColor = vec3(0.0f, 1.0f, 0.0f); // XRENGINE_FREQUENCY(View)
+uniform bool EnableEditorOutline = true; // XRENGINE_FREQUENCY(View)
+uniform bool OutputHDR; // XRENGINE_FREQUENCY(View)
 
 struct VignetteStruct
 {
@@ -39,7 +39,7 @@ struct VignetteStruct
     float Intensity;
     float Power;
 };
-uniform VignetteStruct Vignette;
+uniform VignetteStruct Vignette; // XRENGINE_FREQUENCY(View)
 
 struct ColorGradeStruct
 {
@@ -53,7 +53,7 @@ struct ColorGradeStruct
     float Saturation; //1.0f = no change, 0.0f = grayscale
     float Brightness; //1.0f = no change, 0.0f = black
 };
-uniform ColorGradeStruct ColorGrade;
+uniform ColorGradeStruct ColorGrade; // XRENGINE_FREQUENCY(View)
 
 float GetExposure()
 {
@@ -71,7 +71,7 @@ float GetExposure()
   return exposure;
 }
 
-uniform float ChromaticAberrationIntensity;
+uniform float ChromaticAberrationIntensity; // XRENGINE_FREQUENCY(View)
 
 struct DepthFogStruct
 {
@@ -80,26 +80,26 @@ struct DepthFogStruct
     float End; //End distance of fog
     vec3 Color; //Color of fog
 };
-uniform DepthFogStruct DepthFog;
+uniform DepthFogStruct DepthFog; // XRENGINE_FREQUENCY(View)
 
 // Lens distortion mode: 0=None, 1=Radial, 2=RadialAutoFromFOV, 3=Panini, 4=BrownConrady
-uniform int LensDistortionMode;
-uniform float LensDistortionIntensity;
-uniform vec2 LensDistortionCenter;
-uniform float PaniniDistance;
-uniform float PaniniCrop;
-uniform vec2 PaniniViewExtents; // tan(fov/2) * aspect, tan(fov/2)
+uniform int LensDistortionMode; // XRENGINE_FREQUENCY(View)
+uniform float LensDistortionIntensity; // XRENGINE_FREQUENCY(View)
+uniform vec2 LensDistortionCenter; // XRENGINE_FREQUENCY(View)
+uniform float PaniniDistance; // XRENGINE_FREQUENCY(View)
+uniform float PaniniCrop; // XRENGINE_FREQUENCY(View)
+uniform vec2 PaniniViewExtents; // XRENGINE_FREQUENCY(View)
 
 // Brown-Conrady coefficients
-uniform vec3 BrownConradyRadial;     // k1,k2,k3
-uniform vec2 BrownConradyTangential; // p1,p2
+uniform vec3 BrownConradyRadial; // XRENGINE_FREQUENCY(View)
+uniform vec2 BrownConradyTangential; // XRENGINE_FREQUENCY(View)
 
 // Bloom combine controls
-uniform float BloomStrength = 0.5805;
-uniform int BloomStartMip = 1;
-uniform int BloomEndMip = 4;
-uniform float BloomLodWeights[5] = float[](0.0, 1.0, 0.649, 0.397, 0.102);
-uniform bool DebugBloomOnly = false;
+uniform float BloomStrength = 0.5805; // XRENGINE_FREQUENCY(View)
+uniform int BloomStartMip = 1; // XRENGINE_FREQUENCY(View)
+uniform int BloomEndMip = 4; // XRENGINE_FREQUENCY(View)
+uniform float BloomLodWeights[5] = float[](0.0, 1.0, 0.649, 0.397, 0.102); // XRENGINE_FREQUENCY(View)
+uniform bool DebugBloomOnly = false; // XRENGINE_FREQUENCY(View)
 
 uniform int DepthMode;
 uniform float ScreenWidth;
@@ -265,8 +265,8 @@ vec2 GetStencilOutlineIntensity(vec2 sourceUv)
 // Tonemapping selector and shared tonemap operators
 #include "../Snippets/ToneMapping.glsl"
 
-uniform int TonemapType = XRENGINE_TONEMAP_MOBIUS;
-uniform float MobiusTransition = 0.6f;
+uniform int TonemapType = XRENGINE_TONEMAP_MOBIUS; // XRENGINE_FREQUENCY(View)
+uniform float MobiusTransition = 0.6f; // XRENGINE_FREQUENCY(View)
 
 vec2 ApplyLensDistortion(vec2 uv, float intensity, vec2 center)
 {

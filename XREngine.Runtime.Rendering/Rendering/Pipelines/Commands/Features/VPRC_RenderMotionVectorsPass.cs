@@ -90,6 +90,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
                 : default;
             using var overrideTicket = rs.PushOverrideMaterial(material);
+            using var materialVariantTicket = rs.PushUseMotionVectorMaterialVariant();
             // Keep raster coverage on the active jittered projection so it exactly
             // matches the depth attachment produced earlier in this frame. The
             // fragment shader still encodes motion from the unjittered current and
@@ -112,13 +113,12 @@ namespace XREngine.Rendering.Pipelines.Commands
             // strategy as the lit pass on the same gpuPass instance. Otherwise RenderGPU(pass)
             // defaults to GpuIndirectInstrumented and thrashes gpuPass.MeshSubmissionStrategy
             // mid-frame, producing mismatched cull results between motion vectors and shading.
-            var motionStrategy = _gpuDispatch
-                ? RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(true)
-                : EMeshSubmissionStrategy.CpuDirect;
+            var motionStrategy =
+                RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(_gpuDispatch);
             foreach (int pass in RenderPasses)
             {
                 //Debug.Out($"[Velocity] Rendering motion vectors for pass {pass} (GPUDispatch={GPUDispatch}).");
-                if (_gpuDispatch)
+                if (motionStrategy != EMeshSubmissionStrategy.CpuDirect)
                     commands.RenderGPU(pass, motionStrategy);
                 else
                     // This auxiliary pass replays the primary visibility decision without

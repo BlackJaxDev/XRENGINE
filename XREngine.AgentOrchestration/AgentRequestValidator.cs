@@ -60,8 +60,8 @@ public static partial class AgentRequestValidator
             errors.Add("budget.max_turns must be between 1 and 32");
         if (budget.MaxToolCalls is < 0 or > 256)
             errors.Add("budget.max_tool_calls must be between 0 and 256");
-        if (budget.MaxOutputTokens is < 1 or > 128_000)
-            errors.Add("budget.max_output_tokens must be between 1 and 128000");
+        if (budget.MaxOutputTokens is < 16 or > 128_000)
+            errors.Add("budget.max_output_tokens must be between 16 and 128000");
         if (budget.MaxToolResultBytes is < 1_024 or > 4_194_304)
             errors.Add("budget.max_tool_result_bytes must be between 1024 and 4194304");
         if (budget.MaxElapsedSeconds is < 1 or > 3_600)

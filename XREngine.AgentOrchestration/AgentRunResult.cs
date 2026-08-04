@@ -25,6 +25,10 @@ public sealed record AgentRunResult
 
     public int TurnCount { get; init; }
 
+    public int RetryCount { get; init; }
+
+    public IReadOnlyList<AgentProviderAttemptDiagnostic> ProviderAttempts { get; init; } = [];
+
     public long ElapsedMilliseconds { get; init; }
 
     public AgentFailure? Failure { get; init; }
