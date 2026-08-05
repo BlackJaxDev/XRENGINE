@@ -87,7 +87,7 @@ public static partial class PoiyomiShaderMatcher
                     new MaterialConversionDiagnostic(
                         MaterialConversionDiagnosticCodes.ProLossyDowngrade,
                         MaterialConversionDiagnosticSeverity.Warning,
-                        $"Poiyomi Pro {version} input was recognized only for lossy downgrade to the supported Poiyomi Toon 9.3.64 conversion target."),
+                        $"Poiyomi Pro {version} input is being converted to the native Uber shader. Common Toon-compatible modules are preserved; only active Pro-exclusive feature groups are omitted and reported separately."),
                 ],
             };
         }

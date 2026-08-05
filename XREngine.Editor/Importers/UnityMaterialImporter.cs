@@ -105,18 +105,6 @@ public static partial class UnityMaterialImporter
             warnings.Add(diagnostic.ToString());
         bool isPoiyomiToon = poiyomiMatch.IsAccepted;
         bool isPoiyomiProDowngrade = poiyomiMatch.IsDowngradeSource;
-        if (isPoiyomiProDowngrade)
-        {
-            AddDiagnostic(
-                diagnostics,
-                warnings,
-                MaterialConversionDiagnosticCodes.ProFeatureDiscarded,
-                "The lossy Poiyomi Pro compatibility profile retained the common Toon surface " +
-                "(base texture/tint, normal, alpha, stylized lighting, common emission, matcap, rim, and specular) " +
-                "but discarded extended masks/themes, decals, multi-slot effects, procedural/vertex effects, " +
-                "runtime adapters, and inverse-hull outlines.",
-                sourceProperty: null);
-        }
         bool isLilToon = false;
         if (!isPoiyomiConversion && !poiyomiMatch.IsPoiyomiFamily)
             isLilToon = IsLilToonMaterial(document, resolver, out shaderPath);
@@ -176,6 +164,7 @@ public static partial class UnityMaterialImporter
                 ? "lilToon"
                 : isPoiyomiProDowngrade ? "Poiyomi Pro downgrade" : "Poiyomi Toon";
             warnings.Add($"{shaderFamily} material conversion failed for '{document.Name}'. Falling back to generic Unity material import. {ex.Message}");
+            Debug.LogWarning(warnings[^1]);
             try
             {
                 XRMaterial material = ConvertGenericUnityMaterial(document, resolver, warnings);
@@ -369,19 +358,12 @@ public static partial class UnityMaterialImporter
             diagnostics,
             warnings);
 
-        if (!isPoiyomiProDowngrade)
-        {
-            ApplyPoiyomiSurfaceFeatures(material, document, resolver, diagnostics, warnings);
-            ApplyPoiyomiEffectsAndIntegrations(material, document, resolver, diagnostics, warnings);
-        }
+        // Most rendering properties authored by Poiyomi Pro are the same
+        // public Toon modules. The normalizer has already removed active
+        // Pro-exclusive groups, so preserve every remaining common feature.
+        ApplyPoiyomiSurfaceFeatures(material, document, resolver, diagnostics, warnings);
+        ApplyPoiyomiEffectsAndIntegrations(material, document, resolver, diagnostics, warnings);
         ApplyPoiyomiRenderState(material, document, diagnostics);
-        if (isPoiyomiProDowngrade)
-        {
-            ApplyPoiyomiProDowngradeCompatibilityProfile(
-                material,
-                diagnostics,
-                warnings);
-        }
         // Pro material animation/controller semantics are not part of the lossy
         // Toon conversion contract. Keep their imported authored values as
         // variant constants so inactive branches can be pruned instead of
@@ -394,77 +376,6 @@ public static partial class UnityMaterialImporter
         PoiyomiSourceDocuments.Remove(material);
         PoiyomiSourceDocuments.Add(material, document);
         return material;
-    }
-
-    /// <summary>
-    /// Keeps the common Toon surface used by a lossy Pro downgrade while
-    /// excluding extended modules that cannot be represented faithfully
-    /// without importing Pro behavior. Besides making the downgrade contract
-    /// explicit, this bounds generated shader size and prevents dozens of
-    /// unsupported companion/effect variants from blocking the visible
-    /// fallback for minutes.
-    /// </summary>
-    private static void ApplyPoiyomiProDowngradeCompatibilityProfile(
-        XRMaterial material,
-        ICollection<MaterialConversionDiagnostic> diagnostics,
-        ICollection<string> warnings)
-    {
-        bool preserveMasksAndThemes = material.IsUberFeatureEnabled(
-            "global-masks-themes",
-            defaultEnabled: false);
-
-        string[] excludedFeatures =
-        [
-            "outline",
-            "surface-extensions",
-            "detail-textures",
-            "global-masks-themes",
-            "advanced-stylized-lighting",
-            "advanced-pbr",
-            "layered-matcap-rim",
-            "layered-decals",
-            "layered-emission",
-            "texture-array-flipbook",
-            "dissolve",
-            "glitter",
-            "extended-effects",
-            "vertex-effects",
-            "audiolink",
-            "environment-lighting",
-            "view-context",
-        ];
-
-        foreach (string feature in excludedFeatures)
-            material.SetUberFeatureEnabled(feature, false);
-
-        // Global theme colors and their HSV adjustments are part of the
-        // supported Toon surface, not a Pro-only effect. Preserve this small
-        // adapter when the source actually uses it; the dependency keeps the
-        // common surface helpers available without enabling other Pro modules.
-        if (preserveMasksAndThemes)
-        {
-            material.SetUberFeatureEnabled("surface-extensions", true);
-            material.SetUberFeatureEnabled("global-masks-themes", true);
-        }
-
-        MaterialPassSet sourcePassSet = material.PassSet;
-        material.PassSet = sourcePassSet with
-        {
-            Passes =
-            [
-                .. sourcePassSet.Passes.Select(static pass =>
-                    pass.Identity == EMaterialPassIdentity.Outline
-                        ? pass with { Enabled = false }
-                        : pass),
-            ],
-            DisabledSourcePasses = sourcePassSet.DisabledSourcePasses.Contains(
-                "Outline",
-                StringComparer.Ordinal)
-                ? sourcePassSet.DisabledSourcePasses
-                : [.. sourcePassSet.DisabledSourcePasses, "Outline"],
-        };
-
-        material.EnsureUberStateInitialized();
     }
 
     private static XRMaterial ConvertLilToonToUberMaterial(

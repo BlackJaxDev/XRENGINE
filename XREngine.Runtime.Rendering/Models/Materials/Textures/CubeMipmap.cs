@@ -54,13 +54,10 @@ namespace XREngine.Rendering.Models.Materials.Textures
         {
             uint inWidth = imgIn.Width;
             uint inHeight = imgIn.Height;
-            Console.WriteLine("Input image size: {0} x {1}", inWidth, inHeight);
             uint outWidth = imgOut.Width;
             uint outHeight = imgOut.Height;
-            Console.WriteLine("Output image size: {0} x {1}", outWidth, outHeight);
 
             uint edge = inWidth / 4;
-            Console.WriteLine("Edge length in pixels: {0}", edge);
 
             using IPixelCollection<float> inPixels = imgIn.GetPixels()
                 ?? throw new InvalidOperationException("ImageMagick could not expose the equirectangular source pixels.");
@@ -73,10 +70,6 @@ namespace XREngine.Rendering.Models.Materials.Textures
 
             for (uint i = 0; i < outWidth; i++)
             {
-                if (i % 100 == 0)
-                {
-                    Console.WriteLine("Processing {0} of {1}", i, outWidth);
-                }
                 uint face = i / edge;
                 int startRow = face == 2 ? 0 : (int)edge;
                 int endRow = face == 2 ? (int)edge * 3 : (int)edge * 2;

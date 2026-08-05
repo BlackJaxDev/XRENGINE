@@ -419,12 +419,91 @@ public unsafe partial class VulkanRenderer
         CmdPipelineBarrierTracked(commandBuffer, srcStage, dstStage, 0, 0, null, 0, null, 1, &barrier);
     }
 
+    private void TransitionImGuiViewportImage(
+        CommandBuffer commandBuffer,
+        Image image,
+        ImageLayout oldLayout,
+        ImageLayout newLayout)
+    {
+        ImageMemoryBarrier barrier = new()
+        {
+            SType = StructureType.ImageMemoryBarrier,
+            SrcAccessMask = oldLayout == ImageLayout.ColorAttachmentOptimal
+                ? AccessFlags.ColorAttachmentWriteBit
+                : 0,
+            DstAccessMask = newLayout == ImageLayout.ColorAttachmentOptimal
+                ? AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit
+                : 0,
+            OldLayout = oldLayout,
+            NewLayout = newLayout,
+            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+            Image = image,
+            SubresourceRange = new ImageSubresourceRange
+            {
+                AspectMask = ImageAspectFlags.ColorBit,
+                BaseMipLevel = 0,
+                LevelCount = 1,
+                BaseArrayLayer = 0,
+                LayerCount = 1,
+            },
+        };
+
+        PipelineStageFlags srcStage = oldLayout == ImageLayout.ColorAttachmentOptimal
+            ? PipelineStageFlags.ColorAttachmentOutputBit
+            : PipelineStageFlags.BottomOfPipeBit;
+        PipelineStageFlags dstStage = newLayout == ImageLayout.ColorAttachmentOptimal
+            ? PipelineStageFlags.ColorAttachmentOutputBit
+            : PipelineStageFlags.BottomOfPipeBit;
+        CmdPipelineBarrierTracked(
+            commandBuffer,
+            srcStage,
+            dstStage,
+            DependencyFlags.None,
+            0,
+            null,
+            0,
+            null,
+            1,
+            &barrier);
+    }
+
     private void RenderImGuiSnapshot(CommandBuffer commandBuffer, uint imageIndex, VulkanImGuiFrameSnapshot drawData)
     {
         ulong vertexBytes = (ulong)(drawData.TotalVertexCount * sizeof(ImDrawVert));
         ulong indexBytes = (ulong)(drawData.TotalIndexCount * sizeof(ushort));
         int bufferSlot = EnsureImGuiDrawBuffers(imageIndex, vertexBytes, indexBytes);
         ref VulkanImGuiDrawBufferSet buffers = ref _imguiResources.DrawBuffers[bufferSlot];
+        RenderImGuiSnapshot(commandBuffer, drawData, swapChainExtent, ref buffers);
+    }
+
+    private void RenderImGuiViewportSnapshot(
+        CommandBuffer commandBuffer,
+        uint imageIndex,
+        VulkanImGuiFrameSnapshot drawData,
+        Extent2D rasterExtent,
+        ref VulkanImGuiDrawBufferSet[] drawBuffers)
+    {
+        int bufferSlot = EnsureImGuiDrawBufferSlot(
+            ref drawBuffers,
+            imageIndex,
+            checked((int)imageIndex + 1));
+        ref VulkanImGuiDrawBufferSet buffers = ref drawBuffers[bufferSlot];
+        EnsureImGuiDrawBuffers(
+            ref buffers,
+            (ulong)(drawData.TotalVertexCount * sizeof(ImDrawVert)),
+            (ulong)(drawData.TotalIndexCount * sizeof(ushort)));
+        RenderImGuiSnapshot(commandBuffer, drawData, rasterExtent, ref buffers);
+    }
+
+    private void RenderImGuiSnapshot(
+        CommandBuffer commandBuffer,
+        VulkanImGuiFrameSnapshot drawData,
+        Extent2D rasterExtent,
+        ref VulkanImGuiDrawBufferSet buffers)
+    {
+        ulong vertexBytes = (ulong)(drawData.TotalVertexCount * sizeof(ImDrawVert));
+        ulong indexBytes = (ulong)(drawData.TotalIndexCount * sizeof(ushort));
 
         void* mappedVertex = null;
         void* mappedIndex = null;
@@ -475,8 +554,8 @@ public unsafe partial class VulkanRenderer
 
         PushConstantsTracked(commandBuffer, _imguiResources.PipelineLayout, ShaderStageFlags.VertexBit, 0, pushConstants);
 
-        uint fbWidth = swapChainExtent.Width;
-        uint fbHeight = swapChainExtent.Height;
+        uint fbWidth = rasterExtent.Width;
+        uint fbHeight = rasterExtent.Height;
         if (fbWidth == 0 || fbHeight == 0)
             return;
 

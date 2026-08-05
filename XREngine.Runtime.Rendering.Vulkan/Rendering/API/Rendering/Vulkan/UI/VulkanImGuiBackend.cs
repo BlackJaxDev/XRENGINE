@@ -9,6 +9,7 @@ internal unsafe sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDispos
 {
     private readonly VulkanRenderer _renderer;
     private readonly VulkanImGuiInputRouter _input;
+    private readonly VulkanRenderer.VulkanImGuiMultiViewportController? _viewports;
     private readonly IntPtr _context;
     private bool _disposed;
 
@@ -47,6 +48,8 @@ internal unsafe sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDispos
 
         VulkanImGuiClipboard.InstallCallbacks();
         _input.TryAttachInputHandlers();
+        _viewports = VulkanRenderer.VulkanImGuiMultiViewportController.TryCreate(renderer, _context);
+        _viewports?.Install();
     }
 
     public void MakeCurrent()
@@ -72,6 +75,7 @@ internal unsafe sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDispos
         _input.TryAttachInputHandlers();
         _input.PushModifierKeyState(io);
         _input.FlushPendingInputEvents(io);
+        _viewports?.PrepareForNewFrame(io);
 
         ImGui.NewFrame();
     }
@@ -94,10 +98,10 @@ internal unsafe sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDispos
     }
 
     public void RenderPlatformWindows()
-    {
-        // Vulkan multi-viewports require a swapchain/render-pass path per
-        // platform window. The OpenGL backend owns the current implementation.
-    }
+        => _viewports?.RenderPlatformWindows();
+
+    internal void RenderPendingViewports()
+        => _viewports?.RenderPendingViewports();
 
     public void Dispose()
     {
@@ -105,6 +109,7 @@ internal unsafe sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDispos
             return;
 
         _disposed = true;
+        _viewports?.Dispose();
         _input.Dispose();
         if (ImGuiContextTracker.IsAlive(_context))
         {

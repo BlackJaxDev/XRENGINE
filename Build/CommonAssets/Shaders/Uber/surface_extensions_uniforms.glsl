@@ -39,6 +39,11 @@ uniform vec4 _MainColorReplace;
 //@property(name="_MainColorReplaceStrength", display="Replacement Strength", mode=static, default="0.0")
 uniform float _MainColorReplaceStrength;
 
+//@property(name="_DepthAlphaEnabled", display="Depth Intersection Alpha", mode=static, default="0.0")
+uniform float _DepthAlphaEnabled;
+//@property(name="_DepthAlphaParams", display="Depth Alpha Min/Max", mode=static, default="vec4(0.0, 1.0, 0.0, 1.0)")
+uniform vec4 _DepthAlphaParams;
+
 //@property(name="_DetailTexUV", display="Detail UV", mode=static, default="0")
 uniform int _DetailTexUV;
 //@property(name="_DetailTexBlendMode", display="Detail Blend", mode=static, default="2")
@@ -283,6 +288,28 @@ uniform samplerCube _CubeMap;
 uniform vec4 _CubeMapColor;
 //@property(name="_CubeMapStrength", display="Cubemap Strength", mode=static, default="0.0")
 uniform float _CubeMapStrength;
+//@property(name="_CubeMapUvMode", display="Cubemap Projection", mode=static, default="1")
+uniform int _CubeMapUvMode;
+//@property(name="_CubeMapSmoothness", display="Cubemap Smoothness", mode=static, default="1.0")
+uniform float _CubeMapSmoothness;
+//@property(name="_CubeMapBlendType", display="Cubemap Blend", mode=static, default="0")
+uniform int _CubeMapBlendType;
+//@property(name="_CubeMapBlendAmount", display="Cubemap Blend Amount", mode=static, default="1.0")
+uniform float _CubeMapBlendAmount;
+//@property(name="_CubeMapEmissionStrength", display="Cubemap Emission", mode=static, default="0.0")
+uniform float _CubeMapEmissionStrength;
+//@property(name="_CubeMapLightMask", display="Cubemap Light Mask", mode=static, default="0.0")
+uniform float _CubeMapLightMask;
+//@property(name="_CubeMapCoordinateZSign", display="Cubemap Coordinate Z Sign", mode=static, default="1.0")
+uniform float _CubeMapCoordinateZSign;
+//@property(name="_CubeMapMask", display="Cubemap Mask", slot=texture, semantic=mask)
+uniform sampler2D _CubeMapMask;
+//@property(name="_CubeMapMask_ST", display="Cubemap Mask Transform", mode=static, default="vec4(1.0, 1.0, 0.0, 0.0)")
+uniform vec4 _CubeMapMask_ST;
+//@property(name="_CubeMapMaskChannel", display="Cubemap Mask Channel", mode=static, default="0")
+uniform int _CubeMapMaskChannel;
+//@property(name="_CubeMapMaskInvert", display="Invert Cubemap Mask", mode=static, default="0.0")
+uniform float _CubeMapMaskInvert;
 //@property(name="_RimEnviroIntensity", display="Environmental Rim", mode=static, default="0.0")
 uniform float _RimEnviroIntensity;
 //@property(name="_RimEnviroWidth", display="Environmental Rim Width", mode=static, default="0.45")
@@ -328,6 +355,14 @@ uniform vec4 _MatcapSlotColor1;
 uniform vec4 _MatcapSlotColor2;
 //@property(name="_MatcapSlotColor3", display="Matcap 3 Color", mode=animated, default="vec4(1.0)")
 uniform vec4 _MatcapSlotColor3;
+//@property(name="_MatcapSlotTheme0", display="Matcap 0 Theme", mode=static, default="0")
+uniform int _MatcapSlotTheme0;
+//@property(name="_MatcapSlotTheme1", display="Matcap 1 Theme", mode=static, default="0")
+uniform int _MatcapSlotTheme1;
+//@property(name="_MatcapSlotTheme2", display="Matcap 2 Theme", mode=static, default="0")
+uniform int _MatcapSlotTheme2;
+//@property(name="_MatcapSlotTheme3", display="Matcap 3 Theme", mode=static, default="0")
+uniform int _MatcapSlotTheme3;
 //@property(name="_MatcapSlotParams0", display="Matcap 0 Params", mode=static, default="vec4(0.0)")
 uniform vec4 _MatcapSlotParams0;
 //@property(name="_MatcapSlotParams1", display="Matcap 1 Params", mode=static, default="vec4(0.0)")
@@ -336,6 +371,22 @@ uniform vec4 _MatcapSlotParams1;
 uniform vec4 _MatcapSlotParams2;
 //@property(name="_MatcapSlotParams3", display="Matcap 3 Params", mode=static, default="vec4(0.0)")
 uniform vec4 _MatcapSlotParams3;
+//@property(name="_MatcapSlotBlend0", display="Matcap 0 Blend Weights", mode=static, default="vec4(0.0)")
+uniform vec4 _MatcapSlotBlend0;
+//@property(name="_MatcapSlotBlend1", display="Matcap 1 Blend Weights", mode=static, default="vec4(0.0)")
+uniform vec4 _MatcapSlotBlend1;
+//@property(name="_MatcapSlotBlend2", display="Matcap 2 Blend Weights", mode=static, default="vec4(0.0)")
+uniform vec4 _MatcapSlotBlend2;
+//@property(name="_MatcapSlotBlend3", display="Matcap 3 Blend Weights", mode=static, default="vec4(0.0)")
+uniform vec4 _MatcapSlotBlend3;
+//@property(name="_MatcapSlotExtra0", display="Matcap 0 Projection", mode=static, default="vec4(0.0, 0.43, 1.0, 0.0)")
+uniform vec4 _MatcapSlotExtra0;
+//@property(name="_MatcapSlotExtra1", display="Matcap 1 Projection", mode=static, default="vec4(0.0, 0.43, 1.0, 0.0)")
+uniform vec4 _MatcapSlotExtra1;
+//@property(name="_MatcapSlotExtra2", display="Matcap 2 Projection", mode=static, default="vec4(0.0, 0.43, 1.0, 0.0)")
+uniform vec4 _MatcapSlotExtra2;
+//@property(name="_MatcapSlotExtra3", display="Matcap 3 Projection", mode=static, default="vec4(0.0, 0.43, 1.0, 0.0)")
+uniform vec4 _MatcapSlotExtra3;
 
 //@property(name="_Rim2Color", display="Rim 2 Color", mode=animated, default="vec4(1.0)")
 uniform vec4 _Rim2Color;
@@ -477,6 +528,22 @@ uniform sampler2D _Emission1Mask;
 uniform sampler2D _Emission2Mask;
 //@property(name="_Emission3Mask", display="Emission 3 Mask", slot=texture, semantic=mask)
 uniform sampler2D _Emission3Mask;
+//@property(name="_Emission0Tex_ST", display="Emission 0 Transform", mode=static, default="vec4(1.0, 1.0, 0.0, 0.0)")
+uniform vec4 _Emission0Tex_ST;
+//@property(name="_Emission1Tex_ST", display="Emission 1 Transform", mode=static, default="vec4(1.0, 1.0, 0.0, 0.0)")
+uniform vec4 _Emission1Tex_ST;
+//@property(name="_Emission2Tex_ST", display="Emission 2 Transform", mode=static, default="vec4(1.0, 1.0, 0.0, 0.0)")
+uniform vec4 _Emission2Tex_ST;
+//@property(name="_Emission3Tex_ST", display="Emission 3 Transform", mode=static, default="vec4(1.0, 1.0, 0.0, 0.0)")
+uniform vec4 _Emission3Tex_ST;
+//@property(name="_Emission0Mask_ST", display="Emission 0 Mask Transform", mode=static, default="vec4(1.0, 1.0, 0.0, 0.0)")
+uniform vec4 _Emission0Mask_ST;
+//@property(name="_Emission1Mask_ST", display="Emission 1 Mask Transform", mode=static, default="vec4(1.0, 1.0, 0.0, 0.0)")
+uniform vec4 _Emission1Mask_ST;
+//@property(name="_Emission2Mask_ST", display="Emission 2 Mask Transform", mode=static, default="vec4(1.0, 1.0, 0.0, 0.0)")
+uniform vec4 _Emission2Mask_ST;
+//@property(name="_Emission3Mask_ST", display="Emission 3 Mask Transform", mode=static, default="vec4(1.0, 1.0, 0.0, 0.0)")
+uniform vec4 _Emission3Mask_ST;
 //@property(name="_EmissionSlotColor0", display="Emission 0 Color", mode=animated, default="vec4(1.0)")
 uniform vec4 _EmissionSlotColor0;
 //@property(name="_EmissionSlotColor1", display="Emission 1 Color", mode=animated, default="vec4(1.0)")
@@ -517,6 +584,14 @@ uniform vec4 _EmissionSlotModifiers1;
 uniform vec4 _EmissionSlotModifiers2;
 //@property(name="_EmissionSlotModifiers3", display="Emission 3 Modifiers", mode=static, default="vec4(0.0)")
 uniform vec4 _EmissionSlotModifiers3;
+//@property(name="_EmissionSlotSampling0", display="Emission 0 Sampling", mode=static, default="vec4(0.0)")
+uniform vec4 _EmissionSlotSampling0;
+//@property(name="_EmissionSlotSampling1", display="Emission 1 Sampling", mode=static, default="vec4(0.0)")
+uniform vec4 _EmissionSlotSampling1;
+//@property(name="_EmissionSlotSampling2", display="Emission 2 Sampling", mode=static, default="vec4(0.0)")
+uniform vec4 _EmissionSlotSampling2;
+//@property(name="_EmissionSlotSampling3", display="Emission 3 Sampling", mode=static, default="vec4(0.0)")
+uniform vec4 _EmissionSlotSampling3;
 #endif
 
 //@category("Advanced")

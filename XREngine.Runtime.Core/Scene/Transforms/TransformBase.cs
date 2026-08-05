@@ -57,9 +57,39 @@ namespace XREngine.Scene.Transforms
 
         [RequiresUnreferencedCode("This method is used to find all transform types in all assemblies in the current domain and should not be trimmed.")]
         private static Type[] GetAllTransformTypes()
-            => [.. AppDomain.CurrentDomain.GetAssemblies()
-                .SelectMany(x => x.GetExportedTypes())
-                .Where(x => x.IsSubclassOf(typeof(TransformBase)))];
+        {
+            List<Type> transformTypes = [];
+            foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                foreach (Type type in GetLoadableExportedTypes(assembly))
+                {
+                    if (type.IsSubclassOf(typeof(TransformBase)))
+                        transformTypes.Add(type);
+                }
+            }
+
+            return [.. transformTypes];
+        }
+
+        private static IEnumerable<Type> GetLoadableExportedTypes(Assembly assembly)
+        {
+            try
+            {
+                return assembly.GetExportedTypes();
+            }
+            catch (ReflectionTypeLoadException ex)
+            {
+                return ex.Types.OfType<Type>().Where(static type => type.IsPublic);
+            }
+            catch (Exception ex) when (ex is FileNotFoundException or FileLoadException or BadImageFormatException)
+            {
+                // Optional editor/plugin assemblies may be loaded even when one
+                // of their own dependencies is unavailable. Those assemblies
+                // cannot contribute usable transform types, but must not make
+                // unrelated prefab transform references impossible to load.
+                return [];
+            }
+        }
 
         private static Type[] ResolveTransformTypes()
         {

@@ -132,6 +132,17 @@ namespace XREngine.Rendering.OpenGL
             private bool TryResolveSamplerTextureUnit(int location, IGLTexture texture, int requestedTextureUnit, string? samplerName, out int resolvedTextureUnit)
             {
                 int maxTextureUnits = Math.Max(1, Renderer.MaxFragmentTextureImageUnits);
+
+                // Multiple uniforms frequently reference the same engine placeholder (shadow
+                // arrays, environment maps, or material fallback textures). OpenGL permits
+                // compatible sampler uniforms to share a unit, so reuse the exact existing
+                // texture/target binding before consuming another fragment texture unit. This
+                // is essential for feature-rich Uber variants, whose real material samplers and
+                // engine samplers can otherwise exhaust the guaranteed unit budget even though
+                // many of those bindings are duplicates.
+                if (location >= 0 && TryFindExistingSamplerTextureUnit(texture, out resolvedTextureUnit))
+                    return true;
+
                 bool requestedTextureUnitAvailable = requestedTextureUnit >= 0
                     && requestedTextureUnit < maxTextureUnits
                     && !IsTextureUnitReservedForDifferentActiveSampler(requestedTextureUnit, samplerName);
@@ -157,6 +168,21 @@ namespace XREngine.Rendering.OpenGL
 
                 resolvedTextureUnit = requestedTextureUnit;
                 return requestedTextureUnitAvailable;
+            }
+
+            private bool TryFindExistingSamplerTextureUnit(IGLTexture texture, out int textureUnit)
+            {
+                foreach ((int candidate, SamplerUnitBinding binding) in _boundSamplerUnits)
+                {
+                    if (!IsSameSamplerBinding(binding, texture))
+                        continue;
+
+                    textureUnit = candidate;
+                    return true;
+                }
+
+                textureUnit = -1;
+                return false;
             }
 
             private bool TryFindFreeSamplerTextureUnit(string? samplerName, out int textureUnit)
