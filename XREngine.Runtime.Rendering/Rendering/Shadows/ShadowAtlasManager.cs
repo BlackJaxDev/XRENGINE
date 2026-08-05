@@ -3346,10 +3346,17 @@ public sealed partial class ShadowAtlasManager
         }
 
         bool canRenderFullGroup = entry.MemberCount == group.CascadeCount;
+        bool canRenderGrouped = CanRenderDirectionalCascadeGroup(seedRequest, group);
         if (!canRenderFullGroup ||
+            !canRenderGrouped ||
             !light.RenderGroupedCascadeShadowAtlasTiles(group, entry.Page.FrameBuffer, collectVisibleNow))
         {
-            usedSequentialFallback = TryRenderDirectionalCascadeGroupSequentially(plan, light, entry, collectVisibleNow);
+            usedSequentialFallback = TryRenderDirectionalCascadeGroupSequentially(
+                plan,
+                light,
+                entry,
+                prepareSequentialCommands: canRenderGrouped,
+                collectVisibleNow: collectVisibleNow);
             if (!usedSequentialFallback)
             {
                 elapsedMs = ElapsedMilliseconds(start);
@@ -3383,13 +3390,19 @@ public sealed partial class ShadowAtlasManager
         ShadowAtlasRenderPlan plan,
         DirectionalLightComponent light,
         in ShadowAtlasRenderPlanEntry entry,
+        bool prepareSequentialCommands,
         bool collectVisibleNow)
     {
-        if (collectVisibleNow)
-            PrepareDirectionalCascadeGroupSequentialCommands(light);
-
         if (!TryValidatePlanMemberRange(plan, entry, "directional-cascade-sequential"))
             return false;
+
+        if (prepareSequentialCommands)
+        {
+            light.PrepareSequentialCascadeShadowAtlasCommands(
+                entry.DirectionalGroup.Source,
+                entry.DirectionalGroup.CascadeCount);
+            collectVisibleNow = false;
+        }
 
         for (int i = 0; i < entry.MemberCount; i++)
         {
@@ -3404,18 +3417,16 @@ public sealed partial class ShadowAtlasManager
                 page is null)
                 return false;
 
-            if (!light.RenderCascadeShadowAtlasTile(request.Key.Source, request.FaceOrCascadeIndex, page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow: false))
+            if (!light.RenderCascadeShadowAtlasTile(
+                    request.Key.Source,
+                    request.FaceOrCascadeIndex,
+                    page.FrameBuffer,
+                    allocation.InnerPixelRect,
+                    collectVisibleNow))
                 return false;
         }
 
         return entry.MemberCount > 0;
-    }
-
-    private static void PrepareDirectionalCascadeGroupSequentialCommands(DirectionalLightComponent light)
-    {
-        using var sample = RuntimeEngine.Profiler.Start("ShadowAtlas.Directional.SequentialCommandGeneration");
-        light.CollectVisibleItems();
-        light.SwapBuffers();
     }
 
     private void EnqueuePlanMemberCompletions(

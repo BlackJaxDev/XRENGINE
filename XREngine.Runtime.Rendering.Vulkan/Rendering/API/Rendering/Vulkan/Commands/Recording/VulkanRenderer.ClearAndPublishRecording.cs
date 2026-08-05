@@ -144,7 +144,14 @@ namespace XREngine.Rendering.Vulkan
 
             uint maxAttachments = Math.Max(vkFrameBuffer.AttachmentCount + 1u, 2u);
             ClearAttachment* fboAttachments = stackalloc ClearAttachment[(int)maxAttachments];
-            uint fboCount = vkFrameBuffer.WriteClearAttachments(fboAttachments, clearColor, op.ClearDepth, op.ClearStencil);
+            uint fboCount = vkFrameBuffer.WriteClearAttachments(
+                fboAttachments,
+                clearColor,
+                op.ClearDepth,
+                op.ClearStencil,
+                op.Color,
+                op.Depth,
+                op.Stencil);
             string targetName = op.Target.Name ?? "<unnamed>";
             if (DeferredLightingDiagnostics.Enabled && DeferredLightingDiagnostics.IsWatchedFrameBufferName(targetName))
             {

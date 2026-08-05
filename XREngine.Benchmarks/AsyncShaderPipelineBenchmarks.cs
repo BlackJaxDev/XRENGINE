@@ -405,7 +405,7 @@ public unsafe class AsyncShaderPipelineBenchmarks
                 if (programs[i] == 0)
                     continue;
 
-                if (_compileQueue.TryGetResult(programs[i], out var result))
+                if (_compileQueue.TryGetReadyResult(programs[i], _gl, out var result))
                 {
                     if (result.Status == GLProgramCompileLinkQueue.CompileStatus.Success)
                         successCount++;

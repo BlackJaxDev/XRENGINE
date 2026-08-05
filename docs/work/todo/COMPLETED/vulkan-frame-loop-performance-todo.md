@@ -11,7 +11,7 @@ This document preserves the June frame-loop evidence, visual regression
 checklists, and historical investigation backlog. Current stage definitions,
 benchmark manifests, counter correctness, and performance gates were completed
 in workstream 01; the durable outcome is recorded in the
-[Vulkan framerate root-cause investigation](../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md).
+[Vulkan framerate root-cause investigation](../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md).
 
 Open items below are historical routing inputs, not a competing active
 performance program. Route command reuse to workstream 02, production

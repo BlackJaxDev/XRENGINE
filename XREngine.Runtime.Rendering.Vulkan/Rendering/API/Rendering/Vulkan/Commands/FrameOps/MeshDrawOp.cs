@@ -6,6 +6,9 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
     : FrameOp(PassIndex, Target, Context)
 {
     private PendingMeshDraw _draw = Draw;
+    private DescriptorBindingSnapshot _descriptorBindingSnapshot;
+    private bool _hasDescriptorBindingSnapshot;
+
     public PendingMeshDraw Draw
     {
         get => _draw;
@@ -13,6 +16,26 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
     }
 
     internal ref readonly PendingMeshDraw DrawRef => ref _draw;
+
+    /// <summary>
+    /// Returns the immutable descriptor dependency captured while lowering this
+    /// frame operation. Mutable frame-source sampler snapshots deliberately bypass
+    /// this cache because their logical binding can acquire a new physical image,
+    /// view, or sampler while the retained draw operation remains unchanged.
+    /// </summary>
+    internal bool TryGetDescriptorBindingSnapshot(
+        out DescriptorBindingSnapshot snapshot)
+    {
+        snapshot = _descriptorBindingSnapshot;
+        return _hasDescriptorBindingSnapshot;
+    }
+
+    internal void SetDescriptorBindingSnapshot(
+        in DescriptorBindingSnapshot snapshot)
+    {
+        _descriptorBindingSnapshot = snapshot;
+        _hasDescriptorBindingSnapshot = true;
+    }
 
     /// <summary>
     /// True when this draw was enqueued inside an occlusion QueryOp Begin/End bracket
@@ -165,5 +188,7 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
         Draw = draw;
         Context = context;
         PreserveSubmissionOrder = preserveSubmissionOrder;
+        _descriptorBindingSnapshot = default;
+        _hasDescriptorBindingSnapshot = false;
     }
 }

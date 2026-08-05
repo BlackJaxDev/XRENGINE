@@ -168,8 +168,8 @@ an integer, commonly `15`. XRENGINE's Poiyomi extension had independently used
 the same identifier for an RGBA color-mask sampler. Materials with the feature
 group present but no texture therefore sampled the white fallback and applied
 four default white mask colors, replacing the hoodie, hair, and other dark
-albedo. The native sampler is now `_PoiColorMaskTexture`, defaults to black, and
-is gated by `_PoiColorMaskEnabled`. The importer enables and binds it only when
+albedo. The native sampler is now `_ColorMaskTexture`, defaults to black, and
+is gated by `_ColorMaskEnabled`. The importer enables and binds it only when
 the Unity material genuinely contains an external `_ColorMask` texture. Shader
 reload completed without an error, and the fresh front/oblique/rear captures
 show the intended dark outfit and black/cyan hair rather than flat white

@@ -158,7 +158,6 @@ public unsafe partial class VulkanRenderer
             }
 
             CreateImGuiFontDescriptorResources();
-            io.Fonts.SetTexID((IntPtr)1);
             _imguiResources.FontReady = true;
         }
         finally

@@ -50,10 +50,13 @@ internal unsafe partial class VkRenderProgram
         internal Dictionary<uint, XRTexture> SamplersByUnit = [];
         internal Dictionary<uint, string> SamplerNamesByUnit = [];
         internal Dictionary<string, XRTexture> SamplersByName = new(StringComparer.Ordinal);
+        internal HashSet<string> RequiredSamplerNames =
+            new(StringComparer.Ordinal);
         internal Dictionary<uint, ProgramImageBinding> ImagesByUnit = [];
         internal Dictionary<uint, XRDataBuffer> BuffersByBinding { get; } = [];
         internal int TypedPublicationDepth;
         internal int TypedResourcePublicationDepth;
+        internal bool TypedResourcePublicationRequiresReadyResources;
         internal EVulkanBindingFrequency TypedPublicationFrequency;
         internal ulong TypedPublicationGeneration;
         internal int MutableLegacyPublicationDepth;
@@ -66,6 +69,7 @@ internal unsafe partial class VkRenderProgram
             SamplersByUnit.Clear();
             SamplerNamesByUnit.Clear();
             SamplersByName.Clear();
+            RequiredSamplerNames.Clear();
             ImagesByUnit.Clear();
             BuffersByBinding.Clear();
         }
@@ -107,6 +111,15 @@ internal unsafe partial class VkRenderProgram
             {
                 SamplerNamesByUnit[unit] = name;
                 SamplersByName[name] = texture;
+                if (TypedResourcePublicationDepth != 0 &&
+                    TypedResourcePublicationRequiresReadyResources)
+                {
+                    RequiredSamplerNames.Add(name);
+                }
+                else
+                {
+                    RequiredSamplerNames.Remove(name);
+                }
             }
             else
             {
@@ -203,8 +216,14 @@ internal unsafe partial class VkRenderProgram
     /// </summary>
     internal TypedBindingPublicationScope BeginTypedResourceBindingPublication(
         ERenderBindingFrequency frequency,
-        ulong generation)
-        => new(this, frequency, generation, allowResourceWrites: true);
+        ulong generation,
+        bool requiresReadyDescriptorResources)
+        => new(
+            this,
+            frequency,
+            generation,
+            allowResourceWrites: true,
+            requiresReadyDescriptorResources);
 
     /// <summary>
     /// Marks numeric writes from an untyped callback so immutable snapshots can
@@ -243,13 +262,15 @@ internal unsafe partial class VkRenderProgram
         private readonly BindingCaptureState _capture;
         private readonly EVulkanBindingFrequency _previousFrequency;
         private readonly ulong _previousGeneration;
+        private readonly bool _previousRequiresReadyDescriptorResources;
         private readonly bool _allowsResourceWrites;
 
         internal TypedBindingPublicationScope(
             VkRenderProgram owner,
             ERenderBindingFrequency frequency,
             ulong generation,
-            bool allowResourceWrites = false)
+            bool allowResourceWrites = false,
+            bool requiresReadyDescriptorResources = false)
         {
             if (frequency is <= ERenderBindingFrequency.Unknown or
                 >= ERenderBindingFrequency.Count)
@@ -273,19 +294,29 @@ internal unsafe partial class VkRenderProgram
 
             _previousFrequency = _capture.TypedPublicationFrequency;
             _previousGeneration = _capture.TypedPublicationGeneration;
+            _previousRequiresReadyDescriptorResources =
+                _capture.TypedResourcePublicationRequiresReadyResources;
             _capture.TypedPublicationFrequency =
                 ToVulkanBindingFrequency(frequency);
             _capture.TypedPublicationGeneration = generation;
             _capture.TypedPublicationDepth++;
             _allowsResourceWrites = allowResourceWrites;
             if (_allowsResourceWrites)
+            {
                 _capture.TypedResourcePublicationDepth++;
+                _capture.TypedResourcePublicationRequiresReadyResources =
+                    requiresReadyDescriptorResources;
+            }
         }
 
         public void Dispose()
         {
             if (_allowsResourceWrites)
+            {
                 _capture.TypedResourcePublicationDepth--;
+                _capture.TypedResourcePublicationRequiresReadyResources =
+                    _previousRequiresReadyDescriptorResources;
+            }
             _capture.TypedPublicationDepth--;
             _capture.TypedPublicationFrequency = _previousFrequency;
             _capture.TypedPublicationGeneration = _previousGeneration;

@@ -27,6 +27,11 @@ namespace XREngine.Rendering
     {
         private const uint IndirectCommandSsboBinding = 7;
         private const uint InstanceTransformSsboBinding = GPUBatchingBindings.InstanceTransformBuffer;
+        // Full forward lighting owns bindings 7 and 9 for probe/shadow textures.
+        // Generated forward material-table shaders use dedicated scene bindings
+        // so Vulkan does not merge incompatible descriptors at the same slot.
+        private const uint ForwardIndirectCommandSsboBinding = 24;
+        private const uint ForwardInstanceTransformSsboBinding = 25;
         private const uint InstanceSourceIndexSsboBinding = GPUBatchingBindings.InstanceSourceIndexBuffer;
         private const uint MaterialTableSsboBinding = MaterialBindingLayouts.MaterialTableSsboBinding;
         private const uint DrawMetadataSsboBinding = 12;
@@ -72,6 +77,10 @@ namespace XREngine.Rendering
         private const int ZeroReadbackPendingProgramSampleLimit = 6;
         private const int FragMaterialIdLocation = 24;
         private const string FragMaterialIdName = "XRE_FragMaterialId";
+        private const int FragCurrentClipPositionLocation = 28;
+        private const string FragCurrentClipPositionName = "XRE_FragCurrentClipPosition";
+        private const int FragPreviousClipPositionLocation = 29;
+        private const string FragPreviousClipPositionName = "XRE_FragPreviousClipPosition";
         private const int FragStateClassIdLocation = 26;
         private const string FragStateClassIdName = "XRE_FragStateClassId";
         private const int FragMeshletDebugColorLocation = 12;
@@ -122,7 +131,7 @@ namespace XREngine.Rendering
         private readonly Dictionary<XRRenderProgramDescriptor, MaterialProgramCache> _materialPrograms = [];
         private readonly Dictionary<XRRenderProgramDescriptor, MaterialProgramCache> _pendingMaterialPrograms = [];
         private readonly Dictionary<(uint materialId, int rendererKey), XRRenderProgramDescriptor> _materialProgramUseDescriptors = [];
-        private readonly Dictionary<(EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash, bool depthNormalPrePass, bool maskedDepthNormalPrePass, bool motionVectorPass), MaterialTableProgramCache> _materialTablePrograms = [];
+        private readonly Dictionary<(EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash, bool depthNormalPrePass, bool maskedDepthNormalPrePass, bool motionVectorPass, bool stereoMultiview), MaterialTableProgramCache> _materialTablePrograms = [];
         private readonly Dictionary<(EMaterialTableTextureReferenceMode textureReferenceMode, EMeshShaderDialect dialect, bool skinned, string layoutHash), MeshletMaterialTableProgramCache> _meshletMaterialTablePrograms = [];
         private XRDataBuffer? _indirectTextTransformsBuffer;
         private XRDataBuffer? _indirectTextTexCoordsBuffer;
@@ -2891,13 +2900,11 @@ namespace XREngine.Rendering
         }
 
         private static bool IsMeshletMaterialTableDirectPassSupported(int renderPass)
-            => renderPass == (int)EDefaultRenderPass.OpaqueDeferred ||
-               renderPass == (int)EDefaultRenderPass.OpaqueForward ||
-               renderPass == (int)EDefaultRenderPass.MaskedForward ||
-               renderPass == (int)EDefaultRenderPass.TransparentForward ||
-               renderPass == (int)EDefaultRenderPass.WeightedBlendedOitForward ||
-               renderPass == (int)EDefaultRenderPass.PerPixelLinkedListForward ||
-               renderPass == (int)EDefaultRenderPass.DepthPeelingForward;
+            // The current direct meshlet fragment shader writes the deferred MRT
+            // contract. Advertising forward/transparent passes here silently linked
+            // that shader against incompatible framebuffers. Those passes remain
+            // visibly unsupported until they own real forward output variants.
+            => renderPass == (int)EDefaultRenderPass.OpaqueDeferred;
 
         private static uint GetMeshletPassFlags(GPURenderPassCollection renderPasses, int renderPass)
         {
@@ -2983,7 +2990,6 @@ namespace XREngine.Rendering
             program.Uniform("RequiredLayerMask", 0u);
             program.Uniform("AllowedStateClassMask", GetMeshletAllowedStateClassMask(currentRenderPass));
             program.Uniform("PassFlags", GetMeshletPassFlags(renderPasses, currentRenderPass));
-            program.Uniform("MeshletAlphaCutoff", 0.5f);
             program.Uniform("EnableSkinning", 0u);
             program.Uniform(MeshletDebugDisplayUniformName, GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(camera) ? 1u : 0u);
             if (hiZAvailable)
@@ -3022,8 +3028,10 @@ namespace XREngine.Rendering
         {
             int rendererKey = vaoRenderer is null ? 0 : RuntimeHelpers.GetHashCode(vaoRenderer);
             bool sceneDatabaseBda = ShouldUseVulkanSceneDatabaseDeviceAddresses();
-            (EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash, bool depthNormalPrePass, bool maskedDepthNormalPrePass, bool motionVectorPass) cacheKey =
-                (textureReferenceMode, sceneDatabaseBda, rendererKey, layout.LayoutHash, depthNormalPrePass, maskedDepthNormalPrePass, motionVectorPass);
+            bool forwardColorPass = IsMaterialTableForwardColorPass(layout, depthNormalPrePass, motionVectorPass);
+            bool stereoMultiview = IsGpuIndirectStereoMultiviewPass();
+            (EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash, bool depthNormalPrePass, bool maskedDepthNormalPrePass, bool motionVectorPass, bool stereoMultiview) cacheKey =
+                (textureReferenceMode, sceneDatabaseBda, rendererKey, layout.LayoutHash, depthNormalPrePass, maskedDepthNormalPrePass, motionVectorPass, stereoMultiview);
 
             if (_materialTablePrograms.TryGetValue(cacheKey, out var existing))
             {
@@ -3048,7 +3056,11 @@ namespace XREngine.Rendering
                 emitTransformId: true,
                 emitLodTransitionRole: false,
                 emitMaterialId: true,
-                useSceneDatabaseDeviceAddresses: sceneDatabaseBda);
+                useSceneDatabaseDeviceAddresses: sceneDatabaseBda,
+                motionVectorPass: motionVectorPass,
+                stereoMultiview: stereoMultiview,
+                indirectCommandBinding: forwardColorPass ? ForwardIndirectCommandSsboBinding : IndirectCommandSsboBinding,
+                instanceTransformBinding: forwardColorPass ? ForwardInstanceTransformSsboBinding : InstanceTransformSsboBinding);
             if (generatedVertexShader is null)
                 return null;
 
@@ -3079,6 +3091,22 @@ namespace XREngine.Rendering
             }
             return program;
         }
+
+        private static bool IsMaterialTableForwardColorPass(
+            MaterialBindingLayout layout,
+            bool depthNormalPrePass,
+            bool motionVectorPass)
+            => !depthNormalPrePass &&
+               !motionVectorPass &&
+               layout.RenderPass is
+                   (int)EDefaultRenderPass.OpaqueForward or
+                   (int)EDefaultRenderPass.MaskedForward;
+
+        private static bool IsGpuIndirectStereoMultiviewPass()
+            => RuntimeEngine.Rendering.State.IsStereoPass &&
+               (RuntimeEngine.Rendering.State.IsVulkan
+                   ? RuntimeEngine.Rendering.State.HasVulkanMultiView
+                   : RuntimeEngine.Rendering.State.HasOvrMultiViewExtension);
 
         private static bool ShouldUseVulkanSceneDatabaseDeviceAddresses()
             => AbstractRenderer.Current is IRuntimeRendererHost renderer &&
@@ -3188,9 +3216,31 @@ namespace XREngine.Rendering
             sb.AppendLine("}");
         }
 
-        private static void AppendTransformBufferGlsl(StringBuilder sb)
+        private static void AppendTransformBufferGlsl(
+            StringBuilder sb,
+            uint binding = InstanceTransformSsboBinding)
         {
-            sb.AppendLine($"layout(std430, binding = {InstanceTransformSsboBinding}) readonly buffer TransformBuffer {{ float instanceWorld[]; }};");
+            sb.AppendLine($"layout(std430, binding = {binding}) readonly buffer TransformBuffer {{ float instanceWorld[]; }};");
+        }
+
+        private static void AppendMaterialTableTransformLoader(
+            StringBuilder sb,
+            string functionName,
+            string transformBufferName)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"mat4 {functionName}(uint transformID)");
+            sb.AppendLine("{");
+            sb.AppendLine("    int base = int(transformID) * XRE_TRANSFORM_FLOATS;");
+            sb.AppendLine($"    if (base + 15 >= {transformBufferName}.length())");
+            sb.AppendLine("        return mat4(1.0);");
+            sb.AppendLine("    // CPU Matrix4x4 rows are intentionally reinterpreted as GLSL columns, matching uniform upload.");
+            sb.AppendLine($"    vec4 c0 = vec4({transformBufferName}[base+0],  {transformBufferName}[base+1],  {transformBufferName}[base+2],  {transformBufferName}[base+3]);");
+            sb.AppendLine($"    vec4 c1 = vec4({transformBufferName}[base+4],  {transformBufferName}[base+5],  {transformBufferName}[base+6],  {transformBufferName}[base+7]);");
+            sb.AppendLine($"    vec4 c2 = vec4({transformBufferName}[base+8],  {transformBufferName}[base+9],  {transformBufferName}[base+10], {transformBufferName}[base+11]);");
+            sb.AppendLine($"    vec4 c3 = vec4({transformBufferName}[base+12], {transformBufferName}[base+13], {transformBufferName}[base+14], {transformBufferName}[base+15]);");
+            sb.AppendLine("    return mat4(c0, c1, c2, c3);");
+            sb.AppendLine("}");
         }
 
         private static void AppendTransformBufferReferenceGlsl(StringBuilder sb)
@@ -3210,11 +3260,10 @@ namespace XREngine.Rendering
             var sb = new StringBuilder();
             sb.AppendLine("#version 460 core");
             bool samplesMaterialTextures = textureReferenceMode != EMaterialTableTextureReferenceMode.None;
-            bool forwardColorPass = !depthNormalPrePass &&
-                !motionVectorPass &&
-                layout.RenderPass is
-                    (int)EDefaultRenderPass.OpaqueForward or
-                    (int)EDefaultRenderPass.MaskedForward;
+            bool forwardColorPass = IsMaterialTableForwardColorPass(
+                layout,
+                depthNormalPrePass,
+                motionVectorPass);
             bool maskedMaterialPass = maskedDepthNormalPrePass ||
                 layout.RenderPass == (int)EDefaultRenderPass.MaskedForward;
             if (textureReferenceMode == EMaterialTableTextureReferenceMode.OpenGLBindlessHandleTable)
@@ -3227,12 +3276,17 @@ namespace XREngine.Rendering
                 sb.AppendLine("#extension GL_EXT_nonuniform_qualifier : require");
             }
             sb.AppendLine();
+            if (forwardColorPass)
+                sb.AppendLine("layout(location=0) in vec3 FragPos;");
             sb.AppendLine("layout(location=1) in vec3 FragNorm;");
             sb.AppendLine("layout(location=2) in vec3 FragTan;");
             sb.AppendLine("layout(location=3) in vec3 FragBinorm;");
             sb.AppendLine("layout(location=4) in vec2 FragUV0;");
             if (motionVectorPass)
-                sb.AppendLine($"layout(location=20) in vec3 {DefaultVertexShaderGenerator.FragPosLocalName};");
+            {
+                sb.AppendLine($"layout(location={FragCurrentClipPositionLocation}) in vec4 {FragCurrentClipPositionName};");
+                sb.AppendLine($"layout(location={FragPreviousClipPositionLocation}) in vec4 {FragPreviousClipPositionName};");
+            }
             sb.AppendLine($"layout(location=21) flat in uint {DefaultVertexShaderGenerator.FragTransformIdName};");
             sb.AppendLine($"layout(location=27) flat in uint {DefaultVertexShaderGenerator.FragRenderIdentityIdName};");
             sb.AppendLine($"layout(location={FragMaterialIdLocation}) flat in uint {FragMaterialIdName};");
@@ -3262,23 +3316,10 @@ namespace XREngine.Rendering
                 textureReferenceMode,
                 MaterialTableSsboBinding,
                 MaterialTextureHandleTableSsboBinding);
-            if (motionVectorPass)
+            if (forwardColorPass)
             {
                 sb.AppendLine();
-                AppendDrawMetadataGlsl(sb);
-                AppendTransformBufferGlsl(sb);
-                sb.AppendLine($"layout(std430, binding = {PreviousInstanceTransformSsboBinding}) readonly buffer PreviousTransformBuffer {{ float previousInstanceWorld[]; }};");
-                sb.AppendLine("uniform mat4 CurrViewProjection;");
-                sb.AppendLine("uniform mat4 PrevViewProjection;");
-                sb.AppendLine("const int XRE_TRANSFORM_FLOATS = 16;");
-                AppendMaterialTableTransformLoader(
-                    sb,
-                    "XRE_LoadCurrentTransform",
-                    "instanceWorld");
-                AppendMaterialTableTransformLoader(
-                    sb,
-                    "XRE_LoadPreviousTransform",
-                    "previousInstanceWorld");
+                sb.AppendLine("#pragma snippet \"ForwardLighting\"");
             }
             sb.AppendLine();
             sb.AppendLine("vec2 XRENGINE_EncodeNormal(vec3 normal)");
@@ -3356,11 +3397,8 @@ namespace XREngine.Rendering
             }
             if (motionVectorPass)
             {
-                sb.AppendLine($"    uint commandIndex = {DefaultVertexShaderGenerator.FragTransformIdName};");
-                sb.AppendLine("    uint transformId = XRE_LoadDrawMetadata(commandIndex).TransformID;");
-                sb.AppendLine($"    vec4 localPosition = vec4({DefaultVertexShaderGenerator.FragPosLocalName}, 1.0);");
-                sb.AppendLine("    vec4 currentClip = CurrViewProjection * (XRE_LoadCurrentTransform(transformId) * localPosition);");
-                sb.AppendLine("    vec4 previousClip = PrevViewProjection * (XRE_LoadPreviousTransform(transformId) * localPosition);");
+                sb.AppendLine($"    vec4 currentClip = {FragCurrentClipPositionName};");
+                sb.AppendLine($"    vec4 previousClip = {FragPreviousClipPositionName};");
                 sb.AppendLine("    if (abs(currentClip.w) <= 1e-5 || abs(previousClip.w) <= 1e-5)");
                 sb.AppendLine("    {");
                 sb.AppendLine("        OutVelocity = vec2(0.0);");
@@ -3378,11 +3416,36 @@ namespace XREngine.Rendering
                         : $"GPUIndirect_{textureReferenceMode}MaterialTableMotionVectorsFS"
                 };
             }
+            sb.AppendLine("    vec3 worldNormal = normalize(FragNorm);");
+            sb.AppendLine("    float materialAmbientOcclusion = 1.0;");
+            if (samplesMaterialTextures)
+            {
+                sb.AppendLine("    if ((flags & 2u) != 0u)");
+                sb.AppendLine("    {");
+                sb.AppendLine("        vec3 tangentNormal = SampleBindlessTexture(material.NormalHandleIndex, FragUV0, vec4(0.5, 0.5, 1.0, 1.0)).xyz * 2.0 - 1.0;");
+                sb.AppendLine("        mat3 tangentToWorld = mat3(normalize(FragTan), normalize(FragBinorm), worldNormal);");
+                sb.AppendLine("        worldNormal = normalize(tangentToWorld * tangentNormal);");
+                sb.AppendLine("    }");
+                sb.AppendLine("    if ((flags & 4u) != 0u)");
+                sb.AppendLine("    {");
+                sb.AppendLine("        vec3 metallicRoughnessAo = SampleBindlessTexture(material.RMHandleIndex, FragUV0, vec4(1.0)).rgb;");
+                sb.AppendLine("        materialAmbientOcclusion *= metallicRoughnessAo.r;");
+                sb.AppendLine("        rmse.x *= metallicRoughnessAo.g;");
+                sb.AppendLine("        rmse.y *= metallicRoughnessAo.b;");
+                sb.AppendLine("    }");
+            }
             sb.AppendLine("    if ((flags & (1u << 31u)) == 0u)");
             sb.AppendLine("        baseColor = mix(baseColor, vec3(1.0, 0.0, 1.0), 0.65);");
             if (forwardColorPass)
             {
-                sb.AppendLine("    Color = vec4(baseColor, opacity);");
+                sb.AppendLine("    vec3 litColor = XRENGINE_CalculateForwardLightingMaterial(");
+                sb.AppendLine("        worldNormal,");
+                sb.AppendLine("        FragPos,");
+                sb.AppendLine("        baseColor,");
+                sb.AppendLine("        rmse.xyz,");
+                sb.AppendLine("        rmse.w,");
+                sb.AppendLine("        materialAmbientOcclusion);");
+                sb.AppendLine("    Color = vec4(litColor, opacity);");
                 sb.AppendLine("}");
 
                 return new XRShader(EShaderType.Fragment, sb.ToString())
@@ -3393,7 +3456,7 @@ namespace XREngine.Rendering
                 };
             }
             sb.AppendLine("    TransformId = renderIdentityID;");
-            sb.AppendLine("    Normal = XRENGINE_EncodeNormal(FragNorm);");
+            sb.AppendLine("    Normal = XRENGINE_EncodeNormal(worldNormal);");
             sb.AppendLine("    AlbedoOpacity = vec4(baseColor, opacity);");
             sb.AppendLine("    RMSE = rmse;");
             sb.AppendLine("}");
@@ -3440,6 +3503,8 @@ namespace XREngine.Rendering
             sb.AppendLine($"layout(std430, binding = {MeshletMaterialStateSsboBinding}) readonly buffer MaterialStateBuffer {{ MaterialStateGpu MaterialStates[]; }};");
             sb.AppendLine();
             sb.AppendLine("layout(location=1) in vec3 FragNorm;");
+            sb.AppendLine("layout(location=2) in vec3 FragTan;");
+            sb.AppendLine("layout(location=3) in vec3 FragBinorm;");
             sb.AppendLine("layout(location=4) in vec2 FragUV0;");
             sb.AppendLine($"layout(location={FragMeshletDebugColorLocation}) in vec4 {FragMeshletDebugColorName};");
             sb.AppendLine($"layout(location=21) flat in uint {DefaultVertexShaderGenerator.FragTransformIdName};");
@@ -3451,7 +3516,6 @@ namespace XREngine.Rendering
             sb.AppendLine("layout(location=2) out vec4 RMSE;");
             sb.AppendLine("layout(location=3) out uint TransformId;");
             sb.AppendLine();
-            sb.AppendLine("uniform float MeshletAlphaCutoff;");
             sb.AppendLine($"uniform uint {MeshletDebugDisplayUniformName};");
             sb.AppendLine();
             MaterialBindingGlslGenerator.AppendMaterialTableDefinitions(
@@ -3511,12 +3575,28 @@ namespace XREngine.Rendering
                 sb.AppendLine("        opacity *= albedo.a;");
                 sb.AppendLine("    }");
             }
-            sb.AppendLine("    if ((state.TransparencyMode == XRE_TRANSPARENCY_MASKED || state.TransparencyMode == XRE_TRANSPARENCY_ALPHA_TO_COVERAGE) && opacity < MeshletAlphaCutoff)");
+            sb.AppendLine("    if ((state.TransparencyMode == XRE_TRANSPARENCY_MASKED || state.TransparencyMode == XRE_TRANSPARENCY_ALPHA_TO_COVERAGE) && opacity < material.AlphaCutoff)");
             sb.AppendLine("        discard;");
+            sb.AppendLine("    vec3 worldNormal = normalize(FragNorm);");
+            if (samplesMaterialTextures)
+            {
+                sb.AppendLine("    if ((flags & 2u) != 0u)");
+                sb.AppendLine("    {");
+                sb.AppendLine("        vec3 tangentNormal = SampleBindlessTexture(material.NormalHandleIndex, FragUV0, vec4(0.5, 0.5, 1.0, 1.0)).xyz * 2.0 - 1.0;");
+                sb.AppendLine("        mat3 tangentToWorld = mat3(normalize(FragTan), normalize(FragBinorm), worldNormal);");
+                sb.AppendLine("        worldNormal = normalize(tangentToWorld * tangentNormal);");
+                sb.AppendLine("    }");
+                sb.AppendLine("    if ((flags & 4u) != 0u)");
+                sb.AppendLine("    {");
+                sb.AppendLine("        vec3 metallicRoughnessAo = SampleBindlessTexture(material.RMHandleIndex, FragUV0, vec4(1.0)).rgb;");
+                sb.AppendLine("        rmse.x *= metallicRoughnessAo.g;");
+                sb.AppendLine("        rmse.y *= metallicRoughnessAo.b;");
+                sb.AppendLine("    }");
+            }
             sb.AppendLine("    if ((flags & (1u << 31u)) == 0u)");
             sb.AppendLine("        baseColor = mix(baseColor, vec3(1.0, 0.0, 1.0), 0.65);");
             sb.AppendLine("    TransformId = renderIdentityID;");
-            sb.AppendLine("    Normal = XRENGINE_EncodeNormal(FragNorm);");
+            sb.AppendLine("    Normal = XRENGINE_EncodeNormal(worldNormal);");
             sb.AppendLine("    AlbedoOpacity = vec4(baseColor, opacity);");
             sb.AppendLine("    RMSE = rmse;");
             sb.AppendLine("}");
@@ -3534,22 +3614,33 @@ namespace XREngine.Rendering
             bool emitTransformId,
             bool emitLodTransitionRole,
             bool emitMaterialId = false,
-            bool useSceneDatabaseDeviceAddresses = false)
+            bool useSceneDatabaseDeviceAddresses = false,
+            bool motionVectorPass = false,
+            bool stereoMultiview = false,
+            uint indirectCommandBinding = IndirectCommandSsboBinding,
+            uint instanceTransformBinding = InstanceTransformSsboBinding)
         {
             bool useDeviceAddressSceneDatabase = useSceneDatabaseDeviceAddresses && ShouldUseVulkanSceneDatabaseDeviceAddresses();
+            bool vulkanMultiview = stereoMultiview && RuntimeEngine.Rendering.State.IsVulkan;
 
             // Build a vertex shader compatible with the engine's default fragment shader expectations,
             // but sourcing ModelMatrix from the culled command buffer via gl_BaseInstance.
             var sb = new StringBuilder();
             sb.AppendLine("#version 460");
+            if (stereoMultiview)
+                sb.AppendLine(vulkanMultiview
+                    ? "#extension GL_EXT_multiview : require"
+                    : "#extension GL_OVR_multiview2 : require");
             if (useDeviceAddressSceneDatabase)
             {
                 sb.AppendLine("#extension GL_EXT_buffer_reference : require");
                 sb.AppendLine("#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require");
             }
             sb.AppendLine();
+            if (stereoMultiview)
+                sb.AppendLine("layout(num_views = 2) in;");
             sb.AppendLine($"// GPU indirect: per-draw command data (float[{IndirectCommandFloatCount}])");
-            sb.AppendLine($"layout(std430, binding = {IndirectCommandSsboBinding}) readonly buffer CulledCommandsBuffer {{ float culled[]; }};");
+            sb.AppendLine($"layout(std430, binding = {indirectCommandBinding}) readonly buffer CulledCommandsBuffer {{ float culled[]; }};");
             if (useDeviceAddressSceneDatabase)
             {
                 sb.AppendLine("uint64_t XRE_PackDeviceAddress(uvec2 address) { return uint64_t(address.x) | (uint64_t(address.y) << 32); }");
@@ -3557,8 +3648,10 @@ namespace XREngine.Rendering
             }
             else
             {
-                AppendTransformBufferGlsl(sb);
+                AppendTransformBufferGlsl(sb, instanceTransformBinding);
             }
+            if (motionVectorPass)
+                sb.AppendLine($"layout(std430, binding = {PreviousInstanceTransformSsboBinding}) readonly buffer PreviousTransformBuffer {{ float previousInstanceWorld[]; }};");
             sb.AppendLine($"layout(std430, binding = {InstanceSourceIndexSsboBinding}) readonly buffer InstanceSourceIndexBuffer {{ uint instanceSourceIndex[]; }};");
             if (useDeviceAddressSceneDatabase)
                 AppendDrawMetadataBufferReferenceGlsl(sb);
@@ -3566,6 +3659,8 @@ namespace XREngine.Rendering
                 AppendDrawMetadataGlsl(sb);
             sb.AppendLine($"const int COMMAND_FLOATS = {IndirectCommandFloatCount};");
             sb.AppendLine("const int INSTANCE_MATRIX_FLOATS = 16;");
+            if (motionVectorPass)
+                sb.AppendLine("const int XRE_TRANSFORM_FLOATS = 16;");
             sb.AppendLine($"const uint XRE_LEGACY_BASEINSTANCE_FLAG = 0x{IndirectLegacyBaseInstanceFlag:X8}u;");
             sb.AppendLine($"const uint XRE_PREVIOUS_LOD_BASEINSTANCE_FLAG = 0x{IndirectPreviousLodBaseInstanceFlag:X8}u;");
             sb.AppendLine($"const uint XRE_BASEINSTANCE_COMMAND_INDEX_MASK = 0x{IndirectBaseInstanceCommandIndexMask:X8}u;");
@@ -3616,12 +3711,42 @@ namespace XREngine.Rendering
                 sb.AppendLine($"layout(location={FragLodTransitionRoleLocation}) flat out uint {FragLodTransitionRoleName};");
             if (emitMaterialId)
                 sb.AppendLine($"layout(location={FragMaterialIdLocation}) flat out uint {FragMaterialIdName};");
+            if (motionVectorPass)
+            {
+                sb.AppendLine($"layout(location={FragCurrentClipPositionLocation}) out vec4 {FragCurrentClipPositionName};");
+                sb.AppendLine($"layout(location={FragPreviousClipPositionLocation}) out vec4 {FragPreviousClipPositionName};");
+            }
             sb.AppendLine();
 
-            sb.AppendLine($"uniform mat4 {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
-            sb.AppendLine($"uniform mat4 {EEngineUniform.InverseViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
-            sb.AppendLine($"uniform mat4 {EEngineUniform.ProjMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
-            sb.AppendLine($"uniform bool {EEngineUniform.VRMode};");
+            if (stereoMultiview)
+            {
+                sb.AppendLine($"uniform mat4 {EEngineUniform.LeftEyeInverseViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
+                sb.AppendLine($"uniform mat4 {EEngineUniform.RightEyeInverseViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
+                sb.AppendLine($"uniform mat4 {EEngineUniform.LeftEyeProjMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
+                sb.AppendLine($"uniform mat4 {EEngineUniform.RightEyeProjMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
+            }
+            else
+            {
+                sb.AppendLine($"uniform mat4 {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
+                sb.AppendLine($"uniform mat4 {EEngineUniform.InverseViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
+                sb.AppendLine($"uniform mat4 {EEngineUniform.ProjMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
+                sb.AppendLine($"uniform bool {EEngineUniform.VRMode};");
+            }
+            if (motionVectorPass)
+            {
+                if (stereoMultiview)
+                {
+                    sb.AppendLine("uniform mat4 LeftEyeCurrViewProjection;");
+                    sb.AppendLine("uniform mat4 RightEyeCurrViewProjection;");
+                    sb.AppendLine("uniform mat4 LeftEyePrevViewProjection;");
+                    sb.AppendLine("uniform mat4 RightEyePrevViewProjection;");
+                }
+                else
+                {
+                    sb.AppendLine("uniform mat4 CurrViewProjection;");
+                    sb.AppendLine("uniform mat4 PrevViewProjection;");
+                }
+            }
             sb.AppendLine("uniform int UseInstanceTransformBuffer;");
             sb.AppendLine();
 
@@ -3662,6 +3787,13 @@ namespace XREngine.Rendering
             sb.AppendLine($"    vec4 c3 = vec4({transformAccess}[base+12], {transformAccess}[base+13], {transformAccess}[base+14], {transformAccess}[base+15]);");
             sb.AppendLine("    return mat4(c0, c1, c2, c3);");
             sb.AppendLine("}");
+            if (motionVectorPass)
+            {
+                AppendMaterialTableTransformLoader(
+                    sb,
+                    "LoadPreviousWorldMatrixFromTransforms",
+                    "previousInstanceWorld");
+            }
             sb.AppendLine();
             sb.AppendLine("uint ResolveCommandIndex(uint rawBaseInstance, uint instanceLinearIndex)");
             sb.AppendLine("{");
@@ -3672,36 +3804,50 @@ namespace XREngine.Rendering
             sb.AppendLine("    return baseIndex;");
             sb.AppendLine("}");
             sb.AppendLine();
-            sb.AppendLine("mat4 ResolveModelMatrix(uint rawBaseInstance, uint instanceLinearIndex)");
-            sb.AppendLine("{");
-            sb.AppendLine("    if (UseInstanceTransformBuffer == 0)");
-            sb.AppendLine("        return mat4(1.0);");
-            sb.AppendLine("    uint drawID = ResolveCommandIndex(rawBaseInstance, instanceLinearIndex);");
-            sb.AppendLine("    return LoadWorldMatrixFromTransforms(LoadTransformId(drawID));");
-            sb.AppendLine("}");
-            sb.AppendLine();
-
             sb.AppendLine("void main()");
             sb.AppendLine("{");
             sb.AppendLine("    uint rawBaseInstance = uint(gl_BaseInstance);");
             sb.AppendLine("    uint baseIndex = rawBaseInstance & XRE_BASEINSTANCE_COMMAND_INDEX_MASK;");
             sb.AppendLine("    uint instanceLinearIndex = baseIndex + uint(gl_InstanceID);");
-            sb.AppendLine("    mat4 ModelMatrix = ResolveModelMatrix(rawBaseInstance, instanceLinearIndex);");
             sb.AppendLine("    uint commandIndex = ResolveCommandIndex(rawBaseInstance, instanceLinearIndex);");
+            sb.AppendLine("    DrawMetadata drawMetadata = XRE_LoadDrawMetadata(commandIndex);");
+            sb.AppendLine("    uint transformID = drawMetadata.TransformID;");
+            sb.AppendLine("    mat4 ModelMatrix = UseInstanceTransformBuffer != 0");
+            sb.AppendLine("        ? LoadWorldMatrixFromTransforms(transformID)");
+            sb.AppendLine("        : mat4(1.0);");
             if (emitTransformId)
             {
                 sb.AppendLine($"    {DefaultVertexShaderGenerator.FragTransformIdName} = commandIndex;");
-                sb.AppendLine($"    {DefaultVertexShaderGenerator.FragRenderIdentityIdName} = XRE_LoadDrawMetadata(commandIndex).RenderIdentityID;");
+                sb.AppendLine($"    {DefaultVertexShaderGenerator.FragRenderIdentityIdName} = drawMetadata.RenderIdentityID;");
             }
-            sb.AppendLine($"    {DefaultVertexShaderGenerator.FragViewIndexName} = 0.0;");
+            if (stereoMultiview)
+            {
+                string viewIndexBuiltin = vulkanMultiview ? "gl_ViewIndex" : "gl_ViewID_OVR";
+                sb.AppendLine($"    uint viewIndex = uint({viewIndexBuiltin});");
+            }
+            else
+            {
+                sb.AppendLine("    uint viewIndex = 0u;");
+            }
+            sb.AppendLine($"    {DefaultVertexShaderGenerator.FragViewIndexName} = float(viewIndex);");
             if (emitLodTransitionRole)
                 sb.AppendLine($"    {FragLodTransitionRoleName} = (rawBaseInstance & XRE_PREVIOUS_LOD_BASEINSTANCE_FLAG) != 0u ? 1u : 0u;");
             if (emitMaterialId)
-                sb.AppendLine($"    {FragMaterialIdName} = XRE_LoadDrawMetadata(commandIndex).MaterialID;");
+                sb.AppendLine($"    {FragMaterialIdName} = drawMetadata.MaterialID;");
             sb.AppendLine("    vec4 localPos = vec4(Position, 1.0);");
             sb.AppendLine($"    {DefaultVertexShaderGenerator.FragPosLocalName} = localPos.xyz;");
-            sb.AppendLine($"    mat4 viewMatrix = {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
-            sb.AppendLine($"    mat4 projMatrix = {EEngineUniform.ProjMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
+            if (stereoMultiview)
+            {
+                sb.AppendLine("    bool leftEye = viewIndex == 0u;");
+                sb.AppendLine($"    mat4 inverseViewMatrix = leftEye ? {EEngineUniform.LeftEyeInverseViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix} : {EEngineUniform.RightEyeInverseViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
+                sb.AppendLine("    mat4 viewMatrix = inverse(inverseViewMatrix);");
+                sb.AppendLine($"    mat4 projMatrix = leftEye ? {EEngineUniform.LeftEyeProjMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix} : {EEngineUniform.RightEyeProjMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
+            }
+            else
+            {
+                sb.AppendLine($"    mat4 viewMatrix = {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
+                sb.AppendLine($"    mat4 projMatrix = {EEngineUniform.ProjMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
+            }
             // CRITICAL: compose MVP in the same order as DefaultVertexShaderGenerator.DeclareMVP:
             //   mvMatrix  = viewMatrix * ModelMatrix
             //   mvpMatrix = projMatrix * mvMatrix
@@ -3714,6 +3860,24 @@ namespace XREngine.Rendering
             sb.AppendLine("    vec4 worldPos = ModelMatrix * localPos;");
             sb.AppendLine("    vec4 clipPos = mvpMatrix * localPos;");
             sb.AppendLine("    FragPos = worldPos.xyz;");
+            if (motionVectorPass)
+            {
+                if (stereoMultiview)
+                {
+                    sb.AppendLine("    mat4 currentTemporalViewProjection = leftEye ? LeftEyeCurrViewProjection : RightEyeCurrViewProjection;");
+                    sb.AppendLine("    mat4 previousTemporalViewProjection = leftEye ? LeftEyePrevViewProjection : RightEyePrevViewProjection;");
+                }
+                else
+                {
+                    sb.AppendLine("    mat4 currentTemporalViewProjection = CurrViewProjection;");
+                    sb.AppendLine("    mat4 previousTemporalViewProjection = PrevViewProjection;");
+                }
+                sb.AppendLine("    mat4 previousModelMatrix = UseInstanceTransformBuffer != 0");
+                sb.AppendLine("        ? LoadPreviousWorldMatrixFromTransforms(transformID)");
+                sb.AppendLine("        : ModelMatrix;");
+                sb.AppendLine($"    {FragCurrentClipPositionName} = currentTemporalViewProjection * worldPos;");
+                sb.AppendLine($"    {FragPreviousClipPositionName} = previousTemporalViewProjection * (previousModelMatrix * localPos);");
+            }
             sb.AppendLine();
 
             if (hasNormals)
@@ -5321,6 +5485,10 @@ namespace XREngine.Rendering
                     result.Reason);
                 return;
             }
+            bool forwardColorPass = IsMaterialTableForwardColorPass(
+                layout,
+                depthNormalPassSupported,
+                motionVectorPass);
 
             renderPasses.RecordMaterialBindingResolverResult(MaterialBindingResolverResult.Compatible(layout));
             if (IsEnabled(LogCategory.Validation, LogLevel.Debug))
@@ -5500,7 +5668,10 @@ namespace XREngine.Rendering
                     bindVulkanMaterialTextureDescriptorTable: textureReferenceMode == EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable,
                     previousInstanceTransformBuffer: previousInstanceTransformBuffer,
                     allowMaxDrawFallback: false,
-                    emitBarrier: false);
+                    emitBarrier: false,
+                    indirectCommandSsboBinding: forwardColorPass ? ForwardIndirectCommandSsboBinding : IndirectCommandSsboBinding,
+                    instanceTransformSsboBinding: forwardColorPass ? ForwardInstanceTransformSsboBinding : InstanceTransformSsboBinding,
+                    bindForwardLighting: forwardColorPass);
             }
         }
 
@@ -5634,7 +5805,10 @@ namespace XREngine.Rendering
             bool bindVulkanMaterialTextureDescriptorTable = false,
             XRDataBuffer? previousInstanceTransformBuffer = null,
             bool allowMaxDrawFallback = false,
-            bool emitBarrier = true)
+            bool emitBarrier = true,
+            uint indirectCommandSsboBinding = IndirectCommandSsboBinding,
+            uint instanceTransformSsboBinding = InstanceTransformSsboBinding,
+            bool bindForwardLighting = false)
         {
             using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.DispatchRenderIndirectCountBucket");
 
@@ -5673,10 +5847,10 @@ namespace XREngine.Rendering
                 return true;
             }
 
-            culledCommandsBuffer.BindTo(graphicsProgram, IndirectCommandSsboBinding);
+            culledCommandsBuffer.BindTo(graphicsProgram, indirectCommandSsboBinding);
             drawMetadataBuffer.BindTo(graphicsProgram, DrawMetadataSsboBinding);
             lodTransitionBuffer?.BindTo(graphicsProgram, LodTransitionSsboBinding);
-            instanceTransformBuffer?.BindTo(graphicsProgram, InstanceTransformSsboBinding);
+            instanceTransformBuffer?.BindTo(graphicsProgram, instanceTransformSsboBinding);
             previousInstanceTransformBuffer?.BindTo(
                 graphicsProgram,
                 PreviousInstanceTransformSsboBinding);
@@ -5696,6 +5870,8 @@ namespace XREngine.Rendering
             renderer.SetEngineUniforms(graphicsProgram, camera);
             if (previousInstanceTransformBuffer is not null)
                 SetMotionVectorTemporalUniforms(graphicsProgram, camera);
+            if (bindForwardLighting)
+                RuntimeEngine.Rendering.State.RenderingWorld?.Lights?.SetForwardLightingUniforms(graphicsProgram);
             graphicsProgram.Uniform(EEngineUniform.ModelMatrix.ToStringFast(), modelMatrix);
 
             var version = vaoRenderer?.GetDefaultVersion();
@@ -5903,18 +6079,41 @@ namespace XREngine.Rendering
             XRRenderProgram graphicsProgram,
             XRCamera camera)
         {
-            Matrix4x4 currentViewProjection = camera.ViewProjectionMatrix;
-            Matrix4x4 previousViewProjection = currentViewProjection;
-            if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
+            Matrix4x4 leftCurrentViewProjection = camera.ViewProjectionMatrixUnjittered;
+            Matrix4x4 leftPreviousViewProjection = leftCurrentViewProjection;
+            XRCamera? rightCamera = RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera;
+            Matrix4x4 rightCurrentViewProjection = rightCamera?.ViewProjectionMatrixUnjittered
+                ?? leftCurrentViewProjection;
+            Matrix4x4 rightPreviousViewProjection = rightCurrentViewProjection;
+
+            VPRC_TemporalAccumulationPass.TemporalUniformData temporalData;
+            XRRenderPipelineInstance? pipelineInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            bool hasTemporalData = pipelineInstance is not null
+                ? VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(pipelineInstance, out temporalData)
+                : VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out temporalData);
+            if (hasTemporalData)
             {
-                currentViewProjection = temporalData.CurrViewProjectionUnjittered;
-                previousViewProjection = temporalData.HistoryReady
+                leftCurrentViewProjection = temporalData.CurrViewProjectionUnjittered;
+                leftPreviousViewProjection = temporalData.LeftEyeHistoryReady
                     ? temporalData.PrevViewProjectionUnjittered
-                    : currentViewProjection;
+                    : leftCurrentViewProjection;
+                rightCurrentViewProjection = temporalData.RightEyeCurrViewProjectionUnjittered;
+                rightPreviousViewProjection = temporalData.RightEyeHistoryReady
+                    ? temporalData.RightEyePrevViewProjectionUnjittered
+                    : rightCurrentViewProjection;
             }
 
-            graphicsProgram.Uniform("CurrViewProjection", currentViewProjection);
-            graphicsProgram.Uniform("PrevViewProjection", previousViewProjection);
+            if (graphicsProgram.HasUniform("LeftEyeCurrViewProjection"))
+            {
+                graphicsProgram.Uniform("LeftEyeCurrViewProjection", leftCurrentViewProjection);
+                graphicsProgram.Uniform("RightEyeCurrViewProjection", rightCurrentViewProjection);
+                graphicsProgram.Uniform("LeftEyePrevViewProjection", leftPreviousViewProjection);
+                graphicsProgram.Uniform("RightEyePrevViewProjection", rightPreviousViewProjection);
+                return;
+            }
+
+            graphicsProgram.Uniform("CurrViewProjection", leftCurrentViewProjection);
+            graphicsProgram.Uniform("PrevViewProjection", leftPreviousViewProjection);
         }
 
         private static bool ValidateIndirectDrawRange(

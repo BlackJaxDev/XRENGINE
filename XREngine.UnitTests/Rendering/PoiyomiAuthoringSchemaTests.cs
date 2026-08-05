@@ -3,7 +3,7 @@ using NUnit.Framework;
 using Shouldly;
 using XREngine.Editor.MaterialAuthoring;
 using XREngine.Rendering;
-using XREngine.Rendering.Poiyomi;
+using XREngine.Rendering.Materials;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -17,7 +17,7 @@ public sealed class PoiyomiAuthoringSchemaTests
     public void SetUp()
     {
         _previousServices = RuntimeShaderServices.Current;
-        RuntimeShaderServices.Current = new PoiyomiRuntimeShaderServices();
+        RuntimeShaderServices.Current = new UberRuntimeShaderServices();
     }
 
     [TearDown]

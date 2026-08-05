@@ -1,5 +1,7 @@
 # Editor Hidden Scene And Camera Input Regression - 2026-07-08
 
+Status: Open; live OpenXR/editor input and preview validation remains
+
 ## Problem
 
 The unit-testing editor started with the `Editor View` scene node visible in the normal world hierarchy instead of the hidden editor scene, and the editor camera no longer responded to mouse, WASD, or arrow-key input.

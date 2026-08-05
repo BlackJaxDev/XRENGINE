@@ -26,7 +26,7 @@ two reported failure classes had independent root causes and are now fixed:
   (`15`) on materials such as the hoodie. The native extension had incorrectly
   reused that name for an RGBA texture sampler, so a white fallback mask
   replaced dark albedo across several materials. The native sampler is now
-  `_PoiColorMaskTexture` and is gated by `_PoiColorMaskEnabled`; the importer
+  `_ColorMaskTexture` and is gated by `_ColorMaskEnabled`; the importer
   enables it only when the source actually contains an external texture with
   that name.
 

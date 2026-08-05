@@ -11,7 +11,7 @@ camera, hierarchy, and physical-eye validation. Workstream 07 owns end-to-end
 performance acceptance, query-cadence tail limits, and the decision to retain,
 promote, keep diagnostic-only, or retire CPU query occlusion.
 
-Related investigation: [CPU async-query occlusion during camera motion](../../investigations/rendering/cpu-query-camera-motion-2026-07-20.md)
+Related investigation: [CPU async-query occlusion during camera motion](../../investigations/rendering/archive/cpu-query-camera-motion-2026-07-20.md)
 
 ## Objective
 
@@ -90,7 +90,7 @@ Tests and investigation:
 - `XREngine.UnitTests/Rendering/CpuRenderOcclusionCoordinatorTests.cs`
 - `XREngine.UnitTests/Rendering/VulkanP0ValidationTests.cs`
 - `XREngine.UnitTests/Rendering/VulkanUniformBufferGenerationCacheTests.cs`
-- `docs/work/investigations/rendering/cpu-query-camera-motion-2026-07-20.md`
+- `docs/work/investigations/rendering/archive/cpu-query-camera-motion-2026-07-20.md`
 
 ## Validation completed
 

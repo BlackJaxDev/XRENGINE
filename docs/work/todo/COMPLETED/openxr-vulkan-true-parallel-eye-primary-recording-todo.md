@@ -6,7 +6,7 @@ Status: active planning checklist
 
 Related progress doc: `docs/work/progress/rendering/openxr-monado-vulkan-120hz-performance-2026-06-27.md`
 
-Related flicker investigation: `docs/work/investigations/rendering/editor-origin-eye-camera-flicker-2026-06-28.md`
+Related flicker investigation: `docs/work/investigations/rendering/archive/editor-origin-eye-camera-flicker-2026-06-28.md`
 
 Related foveation/RVC validation:
 `docs/work/testing/rendering/retinal-visibility-cache-rendering-todo.md`

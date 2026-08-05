@@ -2,7 +2,7 @@
 // Uber Shader - Matcap Module
 // ===========================================
 // Supports multiple matcap slots (up to 4) with:
-// - Multiple UV modes (UTS, Top Pinch, Double Sided, Gradient)
+// - Multiple UV modes (view normal, top pinch, double sided, gradient)
 // - Per-slot masks, tints, and blend modes
 // - Emission contribution
 // - Normal strength adjustment
@@ -13,7 +13,7 @@
 #define TOON_MATCAP_GLSL
 
 // Matcap UV Modes
-#define MATCAP_UV_UTS           0   // Normal / UTS Style
+#define MATCAP_UV_VIEW_NORMAL   0
 #define MATCAP_UV_TOP_PINCH     1   // Top Pinch
 #define MATCAP_UV_DOUBLE_SIDED  2   // Double Sided
 #define MATCAP_UV_GRADIENT      3   // Gradient
@@ -76,9 +76,9 @@ vec2 calculateMatcapUV(
     vec2 matcapUV = vec2(0.5);
     
     switch (matcap.uvMode) {
-        case MATCAP_UV_UTS:
+        case MATCAP_UV_VIEW_NORMAL:
         {
-            // UTS Style - view-space normal with skew correction
+            // View-space normal with skew correction.
             vec3 viewNormal = (viewMatrix * vec4(normal, 0.0)).xyz;
             vec3 NormalBlend_Detail = viewNormal * vec3(-1.0, -1.0, 1.0);
             vec3 NormalBlend_Base = (viewMatrix * vec4(viewDir, 0.0)).xyz * vec3(-1.0, -1.0, 1.0) + vec3(0.0, 0.0, 1.0);

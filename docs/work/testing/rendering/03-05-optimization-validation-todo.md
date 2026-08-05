@@ -6,7 +6,7 @@ Status: Blocked On Final Phase 0 Allocation Closure And The 03-05 Matrix
 Sequence: Consolidated completion and validation gate after workstream 05 and
 before workstream 06
 Predecessor: Workstream 02 is complete; see the
-[Vulkan framerate root-cause investigation](../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md)
+[Vulkan framerate root-cause investigation](../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md)
 Blocks: [06 - Forward+ Prepass And Render-Graph Cost](../../todo/rendering/optimization/06-forward-prepass-and-render-graph-cost-todo.md)
 
 ## Purpose
@@ -41,15 +41,15 @@ validation before workstream 06.
 
 ## Evidence And Supporting Trackers
 
-- [Vulkan Optimization 03-05 Validation Investigation](../../investigations/rendering/vulkan-optimization-03-05-validation-2026-08-02.md)
+- [Vulkan Optimization 03-05 Validation Investigation](../../investigations/rendering/archive/vulkan-optimization-03-05-validation-2026-08-02.md)
   records the first live fail-fast pass, exact steady-frame counters, the
   verified broker analysis, and the ordered workstream-04 implementation
   slices that must close before the canonical matrix.
-- [Vulkan Framerate Root-Cause Investigation](../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md)
+- [Vulkan Framerate Root-Cause Investigation](../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md)
   owns the workstream-03 implementation and acceptance evidence.
 - [Next-Frame Preparation And Collect-Visible Handoff Progress](../../progress/rendering/next-frame-preparation-and-collect-visible-handoff-2026-07-29.md)
   records the workstream-04 package foundation.
-- [Vulkan Editor Steady-Frame CPU Cost Investigation](../../investigations/rendering/vulkan-editor-frame-time-spikes-2026-07-30.md)
+- [Vulkan Editor Steady-Frame CPU Cost Investigation](../../investigations/rendering/archive/vulkan-editor-frame-time-spikes-2026-07-30.md)
   records why workstream 04 was reopened.
 - [Vulkan Command Recording Architecture Optimization](../../todo/rendering/optimization/vulkan-command-recording-architecture-optimization-todo.md)
   owns the detailed binding schema, prepared-frame, command-artifact, and

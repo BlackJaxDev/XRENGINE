@@ -300,10 +300,14 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		string? identity = preparedProgramIdentity ?? preparedProgram.Data?.Name;
-		bool replacingProgram =
+		bool replacingSameInterface =
 			_program is not null &&
-			!ReferenceEquals(_program, preparedProgram);
-		if (replacingProgram ||
+			!ReferenceEquals(_program, preparedProgram) &&
+			string.Equals(
+				_activeProgramIdentity,
+				identity,
+				StringComparison.Ordinal);
+		if (!ReferenceEquals(_program, preparedProgram) ||
 			_program is null ||
 			!string.Equals(_activeProgramIdentity, identity, StringComparison.Ordinal))
 		{
@@ -331,7 +335,7 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		ObserveActiveProgramLinkGeneration(_program, replacingProgram);
+		ObserveActiveProgramLinkGeneration(_program, replacingSameInterface);
 		return true;
 	}
 
@@ -342,24 +346,26 @@ internal unsafe partial class VkMeshRenderer
 	/// </summary>
 	private void ObserveActiveProgramLinkGeneration(
 		VkRenderProgram program,
-		bool replacingProgram = false)
+		bool replacingSameInterface = false)
 	{
 		ulong linkGeneration = program.LinkGeneration;
-		if (!replacingProgram &&
-			_activeProgramLinkGeneration == linkGeneration)
-			return;
-
-		bool replacingLinkedInterface =
-			replacingProgram ||
-			_activeProgramLinkGeneration != 0;
+		bool observedProgram =
+			_observedProgramLinkGenerations.TryGetValue(
+				program,
+				out ulong observedLinkGeneration);
+		bool rebuiltLinkedInterface =
+			replacingSameInterface ||
+			(observedProgram && observedLinkGeneration != linkGeneration);
+		_observedProgramLinkGenerations[program] = linkGeneration;
 		_activeProgramLinkGeneration = linkGeneration;
-		if (replacingLinkedInterface)
+		if (rebuiltLinkedInterface)
 		{
-			// Pipeline keys and prepared records carry the link generation, but
-			// mesh-local descriptor/payload tables also retain reflected block
-			// identities. Drop only this renderer's interface-dependent state so
-			// a relink cannot reuse stale bindings or grow one payload set per
-			// historical shader interface.
+			// A wrapper replacement for the same logical interface or a relink of
+			// the same VkRenderProgram invalidates reflected block identities.
+			// Switching between separately cached main/shadow variants does not:
+			// their pipeline and descriptor keys already include program identity.
+			// Treating that ordinary pass switch as a relink retired descriptor
+			// sets and rebuilt auto-uniform arena views for every cascade.
 			_pipelines.Clear();
 			ReleaseDescriptorAllocation();
 			DestroyEngineUniformBuffers();

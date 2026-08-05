@@ -244,7 +244,7 @@ public partial class XRMaterial
             // Pipeline-owned inputs (shadow atlases, AO buffers, camera state, and
             // similar resources) are bound by the renderer. Material initialization
             // must not create placeholder assets for them or they become serialized
-            // as if they were authored Unity material properties.
+            // as if they were authored material properties.
             if (!IsAuthorableUberProperty(property))
                 continue;
 
@@ -294,8 +294,8 @@ public partial class XRMaterial
             if (resolvedParameter is null)
                 return false;
 
-            // Unity stores many enum/toggle properties as floats and legacy YAML
-            // could infer vec3 for aliased vec4 values. Seed a replacement from
+            // Source formats may store enum/toggle properties as floats, and
+            // legacy documents may infer vec3 for aliased vec4 values. Seed a replacement from
             // the manifest default, then overlay every authored component. Zero
             // is a valid authored value and must never be treated as "missing."
             ApplyUberDefaultLiteral(resolvedParameter, property.DefaultLiteral);
@@ -560,7 +560,7 @@ public partial class XRMaterial
             return new ColorF4(0.5f, 0.5f, 1.0f, 1.0f);
 
         if (string.Equals(samplerName, "_PBRMetallicMaps", StringComparison.Ordinal) ||
-            string.Equals(samplerName, "_PoiColorMaskTexture", StringComparison.Ordinal) ||
+            string.Equals(samplerName, "_ColorMaskTexture", StringComparison.Ordinal) ||
             string.Equals(samplerName, "_DissolveDetailNoise", StringComparison.Ordinal))
             return new ColorF4(0.0f, 0.0f, 0.0f, 1.0f);
 

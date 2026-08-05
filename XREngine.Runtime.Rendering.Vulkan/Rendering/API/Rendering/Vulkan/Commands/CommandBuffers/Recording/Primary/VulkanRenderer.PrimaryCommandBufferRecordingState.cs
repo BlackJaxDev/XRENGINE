@@ -42,6 +42,8 @@ namespace XREngine.Rendering.Vulkan
             public CommandBufferRecordingScratch RecordingScratch;
             public VulkanPrimaryCommandPlan PrimaryCommandPlan;
             public int[] MeshDrawUniformSlotsByOpIndex;
+            public bool[]
+                ScheduledCommandChainFrameDataRefreshedByOpIndex;
             public HashSet<nint> ExecutedCommandChainSecondaryHandles;
             public Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> MeshDrawSlotsByRendererFamily;
             public Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> MeshFrameDataFamilyBases;

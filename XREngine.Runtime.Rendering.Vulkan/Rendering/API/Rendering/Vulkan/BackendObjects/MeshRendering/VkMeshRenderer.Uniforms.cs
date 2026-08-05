@@ -1298,8 +1298,10 @@ internal unsafe partial class VkMeshRenderer
 		out ulong publicationLayoutSignature,
 		out ulong contentGeneration)
 	{
+		VkRenderProgram? publicationProgram =
+			draw.PreparedProgram ?? _program;
 		publicationLayoutSignature =
-			_program?.BindingSchema
+			publicationProgram?.BindingSchema
 				?.GetFrequencyPublicationLayoutSignature(frequency) ?? 0UL;
 		ownerIdentity = ComputeAutoUniformOwnerIdentity(
 			frequency,

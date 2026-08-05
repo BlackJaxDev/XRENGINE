@@ -1049,6 +1049,25 @@ public unsafe partial class VulkanRenderer
                 switchingState.States.TryGetValue(initialKey, out keyedState) &&
                 IsFrameOpPlannerAllocatorExclusivelyOwnedByKey(switchingState, initialKey, keyedState.ResourceAllocator) &&
                 IsReusableFrameOpResourcePlannerState(keyedState);
+            if (usesSingleKeyState &&
+                !hasCachedState &&
+                TryFindBestPhysicalOwnerFrameOpPlannerState(
+                    initialKey,
+                    switchingState,
+                    out VulkanFrameOpPlannerStateKey compatibleKey,
+                    out keyedState))
+            {
+                // Registry descriptor revisions are publication metadata, not
+                // physical-resource ownership. Start the current plan update from
+                // the compatible allocator and move its cache entry to the current
+                // key so obsolete revisions cannot crowd the bounded state arena.
+                RekeyFrameOpResourcePlannerState(
+                    switchingState,
+                    compatibleKey,
+                    initialKey,
+                    keyedState);
+                hasCachedState = true;
+            }
             ResourcePlannerRuntimeState state = usesSingleKeyState
                 ? hasCachedState
                     ? keyedState
@@ -1254,10 +1273,22 @@ public unsafe partial class VulkanRenderer
     }
 
     internal Viewport GetCurrentViewport()
-        => ActiveState.GetViewport(ResolveCurrentDrawTargetExtent());
+    {
+        Extent2D targetExtent = ResolveCurrentDrawTargetExtent();
+        BoundingRectangle region = RuntimeEngine.Rendering.State.RenderingPipelineState?.CurrentRenderRegion ?? default;
+        return region.Width > 0 && region.Height > 0
+            ? VulkanStateTracker.GetViewport(region, targetExtent)
+            : ActiveState.GetViewport(targetExtent);
+    }
 
     internal Rect2D GetCurrentScissor()
-        => ActiveState.GetScissor(ResolveCurrentDrawTargetExtent());
+    {
+        Extent2D targetExtent = ResolveCurrentDrawTargetExtent();
+        BoundingRectangle region = RuntimeEngine.Rendering.State.RenderingPipelineState?.CurrentCropRegion ?? default;
+        return region.Width > 0 && region.Height > 0
+            ? VulkanStateTracker.GetScissor(region, targetExtent)
+            : VulkanStateTracker.GetDefaultScissor(targetExtent);
+    }
 
     internal IndexedViewportScissorSnapshot GetCurrentIndexedViewportScissorSnapshot()
         => ActiveState.GetIndexedViewportScissorSnapshot(ResolveCurrentDrawTargetExtent());
@@ -1283,13 +1314,19 @@ public unsafe partial class VulkanRenderer
 
     internal XRFrameBuffer? GetCurrentDrawFrameBuffer()
     {
+        // A direct BindForWritingState scope is the innermost physical binding used
+        // by quad, bloom-mip, cubemap, and shadow-atlas helpers. It must win over an
+        // enclosing logical render-graph binding when draw state is snapshotted.
+        if (XRFrameBuffer.BoundForWriting is { } directlyBoundTarget)
+            return directlyBoundTarget;
+
         XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         XRRenderPipelineInstance.RenderingState.ScopedRenderTargetBinding? binding =
             pipeline?.RenderState.CurrentRenderTargetBinding;
         if (binding is { Write: true, FrameBuffer: { } scopedTarget })
             return scopedTarget;
 
-        return XRFrameBuffer.BoundForWriting ?? ActiveBoundDrawFrameBuffer;
+        return ActiveBoundDrawFrameBuffer;
     }
 
     internal uint CurrentDrawViewMask

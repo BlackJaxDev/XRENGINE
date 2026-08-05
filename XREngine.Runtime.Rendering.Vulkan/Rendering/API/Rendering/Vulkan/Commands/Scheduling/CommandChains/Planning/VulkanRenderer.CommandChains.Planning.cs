@@ -94,16 +94,6 @@ public unsafe partial class VulkanRenderer
                 volatileOps,
                 resourcePlanRevision);
         }
-        if (TryGetCachedCommandChainSchedule(
-                imageIndex,
-                fastScheduleSignature,
-                out CommandChainSchedule? cachedSchedule,
-                out stats))
-        {
-            ObserveCommandChainScheduleForStabilityGuard(imageIndex, resourcePlanRevision, in stats);
-            return cachedSchedule;
-        }
-
         if (ShouldBypassCommandChainScheduleForStabilityGuard(
                 imageIndex,
                 resourcePlanRevision,
@@ -117,6 +107,13 @@ public unsafe partial class VulkanRenderer
             return null;
         }
 
+        // A cached schedule is only a topology hint. Descriptor publication,
+        // frame-data ownership, and secondary executability can change while the
+        // structural operation signature stays identical (notably across shadow
+        // atlas and bloom mip passes). Always lower the current immutable frame
+        // operations and evaluate every chain before reusing its command buffer.
+        // Packet lowering is pooled and allocation-free on the steady-state path;
+        // primary and secondary command buffers remain independently reusable.
         List<RenderPacket> packets = _commandChainPacketScratch;
         packets.Clear();
         packets.EnsureCapacity(Math.Max(staticOps.Length + volatileOps.Length, 1));
@@ -209,12 +206,15 @@ public unsafe partial class VulkanRenderer
             }
 
             int chainOrdinal = BuildCommandChainOrdinal(packet, structuralOccurrences);
+            ulong descriptorBindingVariant =
+                ResolveCommandChainDescriptorBindingVariant(packet.DescriptorSnapshot);
 
             CommandChainKey key = new(
                 unchecked((int)Math.Min(imageIndex, int.MaxValue)),
                 packet.ViewKey,
                 packet.PassIndex,
                 packet.TargetIdentity,
+                descriptorBindingVariant,
                 packet.DynamicOverlay,
                 chainOrdinal);
 
@@ -365,6 +365,8 @@ public unsafe partial class VulkanRenderer
                     lastPacket.ViewKey,
                     lastPacket.PassIndex,
                     lastPacket.TargetIdentity,
+                    ResolveCommandChainDescriptorBindingVariant(
+                        lastPacket.DescriptorSnapshot),
                     lastPacket.DynamicOverlay,
                     0)) with
             {

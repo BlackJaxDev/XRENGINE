@@ -13,7 +13,7 @@ Implementation Evidence:
 - [Output-Purpose And Feature-Contract Slice - 2026-07-28](../../../progress/rendering/advanced-render-pipeline-output-purpose-and-feature-contract-slice-2026-07-28.md)
 - [Frame-Stage Skeleton Slice - 2026-07-28](../../../progress/rendering/advanced-render-pipeline-frame-stage-skeleton-slice-2026-07-28.md)
 - [Resource/State Contract Slice - 2026-07-29](../../../progress/rendering/advanced-render-pipeline-resource-state-contract-slice-2026-07-29.md)
-- [Default Reference Baseline Investigation - 2026-07-29](../../../investigations/rendering/default-reference-baseline-capture-2026-07-29.md)
+- [Default Reference Baseline Investigation - 2026-07-29](../../../investigations/rendering/archive/default-reference-baseline-capture-2026-07-29.md)
 
 ## Goal
 

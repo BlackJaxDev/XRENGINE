@@ -367,7 +367,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 HasUploadedData = true;
                 IsInvalidated = false;
-                MarkDescriptorClean();
+                MarkDescriptorPublished();
             }
             return CacheObject(this);
         }
@@ -982,7 +982,10 @@ namespace XREngine.Rendering.Vulkan
             {
                 DestroySampler();
                 if (_image.Handle != 0 && _texelBufferView.Handle == 0)
+                {
                     CreateSampler();
+                    PublishDescriptorResourceReplacement();
+                }
             }
         }
 

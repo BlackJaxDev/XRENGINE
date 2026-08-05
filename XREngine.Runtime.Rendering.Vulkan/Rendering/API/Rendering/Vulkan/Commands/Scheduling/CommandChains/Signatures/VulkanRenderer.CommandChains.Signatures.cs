@@ -41,6 +41,7 @@ public unsafe partial class VulkanRenderer
                 hash.Add(key.FrameSlot);
                 hash.Add(key.PassIndex);
                 hash.Add(key.TargetIdentity);
+                hash.Add(key.DescriptorBindingVariant);
                 hash.Add(key.ChainOrdinal);
                 hash.Add(key.ViewKey.PipelineIdentity);
                 hash.Add(key.ViewKey.ViewportIdentity);
@@ -54,11 +55,16 @@ public unsafe partial class VulkanRenderer
         return hash.ToHash();
     }
 
-    internal static bool UsesOnlySecondaryCommandBufferGroups(CommandChainSchedule schedule)
+    /// <summary>
+    /// Returns whether every prepared mesh binding represented by the aggregate
+    /// primary dependency signature is recorded in a command-chain secondary.
+    /// Inline clears, blits, barriers, and publications do not own those bindings
+    /// and therefore must not force the thin primary to track mesh identity.
+    /// </summary>
+    internal static bool AreAllPreparedDrawBindingsSecondaryOwned(
+        CommandChainSchedule schedule,
+        FrameOp[] ops)
     {
-        if (schedule.RequiresFreshPrimary || schedule.InlineFrameOpCount != 0)
-            return false;
-
         ReadOnlySpan<RenderPassChainGroup> groups = schedule.Groups.Span;
         if (groups.Length == 0)
             return false;
@@ -67,7 +73,38 @@ public unsafe partial class VulkanRenderer
             if (!groups[i].SupportsSecondaryCommandBuffers)
                 return false;
 
-        return true;
+        bool foundPreparedDraw = false;
+        int queryBracketDepth = 0;
+        for (int i = 0; i < ops.Length; i++)
+        {
+            FrameOp op = ops[i];
+            if (op is QueryOp queryOp)
+            {
+                if (queryOp.Operation == ERenderQueryOperation.Begin)
+                    queryBracketDepth++;
+                else if (queryOp.Operation == ERenderQueryOperation.End && queryBracketDepth > 0)
+                    queryBracketDepth--;
+                continue;
+            }
+
+            PendingMeshDraw draw = op switch
+            {
+                MeshDrawOp direct => direct.Draw,
+                IndirectDrawOp indirect => indirect.Draw,
+                _ => default,
+            };
+            if (draw.Renderer is null)
+                continue;
+
+            foundPreparedDraw = true;
+            if (queryBracketDepth != 0 ||
+                !IsSchedulableCommandChainFrameOp(op, dynamicOverlay: false))
+            {
+                return false;
+            }
+        }
+
+        return foundPreparedDraw;
     }
 
     internal static ulong ComputeCommandChainPrimarySkeletonSignature(FrameOp[] ops)
@@ -194,6 +231,11 @@ public unsafe partial class VulkanRenderer
                 orderedNodes.Add(key.FrameSlot);
                 orderedNodes.Add(key.PassIndex);
                 orderedNodes.Add(key.TargetIdentity);
+                // DescriptorBindingVariant selects the exact secondary command
+                // buffer whose descriptor sets were recorded. Omitting it lets a
+                // thin primary recorded for an earlier frame-source publication
+                // appear compatible with a newly selected secondary chain.
+                orderedNodes.Add(key.DescriptorBindingVariant);
                 orderedNodes.Add(key.ChainOrdinal);
                 orderedNodes.Add(key.ViewKey.PipelineIdentity);
                 orderedNodes.Add(key.ViewKey.ViewportIdentity);
@@ -325,7 +367,7 @@ public unsafe partial class VulkanRenderer
             throw new ArgumentException("The command-chain key scratch span is smaller than the frame-op count.", nameof(keysByOpIndex));
 
         keysByOpIndex = keysByOpIndex[..staticOpCount];
-        CommandChainKey unmappedKey = new(0, default, 0, 0, false, -1);
+        CommandChainKey unmappedKey = new(0, default, 0, 0, 0UL, false, -1);
         keysByOpIndex.Fill(unmappedKey);
         ReadOnlySpan<RenderPassChainGroup> groups = schedule.Groups.Span;
         for (int groupIndex = 0; groupIndex < groups.Length; groupIndex++)
@@ -500,6 +542,17 @@ public unsafe partial class VulkanRenderer
     private static ulong ComputeDispatchSnapshotSignature(ComputeDispatchSnapshot snapshot)
     {
         FrameOpSignatureHasher hash = new();
+        if (snapshot.HasPublishedBindingLayoutSignatures)
+        {
+            // CaptureProgramBindingSnapshot has already reduced the exact sampler,
+            // image, and buffer resources into this immutable signature. Rewalking
+            // its dictionaries for every compatibility and dependency comparison
+            // made clean command-buffer reuse O(draws * reflected bindings).
+            hash.Add(1);
+            hash.Add(snapshot.PersistentEngineResourceSignature);
+            return hash.ToHash();
+        }
+
         HashProgramBindingSnapshot(ref hash, snapshot, includeMutableFrameSourceDescriptors: true);
         return hash.ToHash();
     }

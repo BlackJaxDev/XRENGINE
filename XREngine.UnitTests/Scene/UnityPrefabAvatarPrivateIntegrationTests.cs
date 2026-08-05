@@ -615,7 +615,7 @@ public sealed class UnityPrefabAvatarPrivateIntegrationTests
         material.PrepareUberVariantImmediately()
             .ShouldBeTrue(material.UberVariantStatus.FailureReason);
 
-        material.ActiveUberVariant.EnabledFeatures.ShouldContain("poiyomi-masks-themes");
+        material.ActiveUberVariant.EnabledFeatures.ShouldContain("global-masks-themes");
         material.ActiveUberVariant.AnimatedProperties.ShouldContain("_GlobalThemeColor0");
         material.ActiveUberVariant.AnimatedProperties.ShouldContain("_GlobalThemeAdjust0");
         material.ActiveUberVariant.StaticProperties.ShouldContain("_ColorThemeIndex=1");
@@ -626,7 +626,7 @@ public sealed class UnityPrefabAvatarPrivateIntegrationTests
         source.ShouldContain("uniform vec4 _GlobalThemeColor0;");
         source.ShouldContain("uniform vec3 _GlobalThemeAdjust0;");
         source.ShouldContain("theme = _GlobalThemeColor0;");
-        source.ShouldNotContain("#define XRENGINE_UBER_DISABLE_POIYOMI_MASKS_THEMES 1");
+        source.ShouldNotContain("#define XRENGINE_UBER_DISABLE_GLOBAL_MASKS_THEMES 1");
 
         string textureSummary = string.Join(
             ", ",
@@ -682,8 +682,8 @@ public sealed class UnityPrefabAvatarPrivateIntegrationTests
         material.Parameter<ShaderVector2>("_MainTexDistortionSpeed").ShouldNotBeNull();
         material.Parameter<ShaderVector4>("_MainTexDistortionMap_ST").ShouldNotBeNull();
         material.Parameter<ShaderVector4>("_GlobalMaskMin").ShouldNotBeNull();
-        material.Parameter<ShaderVector2>("_PoiUvDiscardGrid").ShouldNotBeNull();
-        material.Parameter<ShaderVector4>("_PoiPathingParams").ShouldNotBeNull();
+        material.Parameter<ShaderVector2>("_UvTileDiscardGrid").ShouldNotBeNull();
+        material.Parameter<ShaderVector4>("_PathingParams").ShouldNotBeNull();
         material.Parameter<ShaderVector4>("_LightDataAOStrengths").ShouldNotBeNull();
         material.PrepareUberVariantImmediately()
             .ShouldBeTrue(material.UberVariantStatus.FailureReason);

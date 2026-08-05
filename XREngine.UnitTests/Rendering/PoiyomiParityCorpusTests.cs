@@ -11,6 +11,23 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed class PoiyomiParityCorpusTests
 {
+    private static readonly string[] ConvertedUberFeatureIds =
+    [
+        "surface-extensions",
+        "global-masks-themes",
+        "advanced-stylized-lighting",
+        "advanced-pbr",
+        "layered-matcap-rim",
+        "layered-decals",
+        "layered-emission",
+        "texture-array-flipbook",
+        "extended-effects",
+        "vertex-effects",
+        "audiolink",
+        "environment-lighting",
+        "view-context",
+    ];
+
     private JsonDocument _corpus = null!;
 
     [OneTimeSetUp]
@@ -58,13 +75,15 @@ public sealed class PoiyomiParityCorpusTests
             .Select(static feature => feature.GetString()!)
             .ToHashSet(StringComparer.Ordinal);
         IRuntimeShaderServices? previous = RuntimeShaderServices.Current;
-        RuntimeShaderServices.Current = new PoiyomiRuntimeShaderServices();
+        RuntimeShaderServices.Current = new UberRuntimeShaderServices();
         try
         {
             ShaderUiManifest manifest = ShaderHelper.UberFragForward().GetUiManifest();
-            foreach (ShaderUiFeature feature in manifest.Features.Where(static feature =>
-                         feature.Id.StartsWith("poiyomi-", StringComparison.Ordinal)))
-                corpusFeatures.ShouldContain(feature.Id);
+            foreach (string featureId in ConvertedUberFeatureIds)
+            {
+                manifest.FeatureLookup.ShouldContainKey(featureId);
+                corpusFeatures.ShouldContain(featureId);
+            }
         }
         finally
         {
@@ -174,7 +193,7 @@ public sealed class PoiyomiParityCorpusTests
             "Catalogs",
             "poiyomi-toon-9.3.64.json");
         string hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(catalogPath))).ToLowerInvariant();
-        hash.ShouldBe("1d72086a4e46344649d0f99d6b17e5666cdb33cfcba20d1fa270c7bae4124236");
+        hash.ShouldBe("d9ce662fed87308e0a841906d4e523032b24c629e66d2aa0de730755783fc663");
 
         using JsonDocument catalog = JsonDocument.Parse(File.ReadAllText(catalogPath));
         JsonElement[] properties = [.. catalog.RootElement.GetProperty("properties").EnumerateArray()];

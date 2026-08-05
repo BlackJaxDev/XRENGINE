@@ -10,14 +10,14 @@
       "id": "unlocked-baseline",
       "locked": false,
       "renderPreset": "Opaque",
-      "features": ["surface", "lighting", "poiyomi-surface"],
+      "features": ["surface", "lighting", "surface-extensions"],
       "sourceValues": {"_Mode": 0, "_Color": [0.8, 0.7, 0.6, 1.0]}
     },
     {
       "id": "locked-baseline",
       "locked": true,
       "renderPreset": "Opaque",
-      "features": ["surface", "lighting", "poiyomi-surface"],
+      "features": ["surface", "lighting", "surface-extensions"],
       "sourceValues": {"_ShaderOptimizerEnabled": 1, "_Mode": 0}
     },
     {
@@ -38,28 +38,28 @@
       "id": "pbr-reflections",
       "locked": false,
       "renderPreset": "Opaque",
-      "features": ["advanced-specular", "poiyomi-pbr-parity"],
+      "features": ["advanced-specular", "advanced-pbr"],
       "sourceValues": {"_EnableSpecular": 1, "_Metallic": 0.7, "_Smoothness": 0.4}
     },
     {
       "id": "emission-slots",
       "locked": false,
       "renderPreset": "Additive",
-      "features": ["emission", "poiyomi-emission-slots", "poiyomi-audiolink"],
+      "features": ["emission", "layered-emission", "audiolink"],
       "sourceValues": {"_EnableEmission": 1, "_EmissionStrength": 3.0}
     },
     {
       "id": "matcap-rim",
       "locked": false,
       "renderPreset": "Opaque",
-      "features": ["matcap", "rim-lighting", "poiyomi-matcap-rim-slots"],
+      "features": ["matcap", "rim-lighting", "layered-matcap-rim"],
       "sourceValues": {"_MatcapEnable": 1, "_EnableRimLighting": 1}
     },
     {
       "id": "decals-detail",
       "locked": false,
       "renderPreset": "Cutout",
-      "features": ["detail-textures", "poiyomi-decals"],
+      "features": ["detail-textures", "layered-decals"],
       "sourceValues": {"_DecalEnabled": 1, "_Cutoff": 0.42}
     },
     {
@@ -73,35 +73,35 @@
       "id": "special-effects",
       "locked": false,
       "renderPreset": "Transparent",
-      "features": ["glitter", "dissolve", "parallax", "poiyomi-special-effects"],
+      "features": ["glitter", "dissolve", "parallax", "extended-effects"],
       "sourceValues": {"_GlitterEnable": 1, "_EnableDissolve": 1}
     },
     {
       "id": "flipbook-substance",
       "locked": false,
       "renderPreset": "TransparentPremultiplied",
-      "features": ["flipbook", "subsurface", "poiyomi-flipbook-array"],
+      "features": ["flipbook", "subsurface", "texture-array-flipbook"],
       "sourceValues": {"_EnableFlipbook": 1, "_SubsurfaceScattering": 1}
     },
     {
       "id": "vertex-runtime",
       "locked": false,
       "renderPreset": "Multiplicative",
-      "features": ["poiyomi-vertex-effects", "poiyomi-view-context", "poiyomi-environment-adapters"],
-      "sourceValues": {"_PoiVertexEffectsEnabled": 1, "_LTCGI": 1}
+      "features": ["vertex-effects", "view-context", "environment-lighting"],
+      "sourceValues": {"_VertexEffectsEnabled": 1, "_LTCGI": 1}
     },
     {
       "id": "maximal-practical-a",
       "locked": false,
       "renderPreset": "CutoutOutline",
-      "features": ["surface", "normal-map", "stylized-shading", "advanced-specular", "emission", "matcap", "rim-lighting", "detail-textures", "outline", "glitter", "dissolve", "parallax", "poiyomi-decals", "poiyomi-vertex-effects"],
+      "features": ["surface", "normal-map", "stylized-shading", "advanced-specular", "emission", "matcap", "rim-lighting", "detail-textures", "outline", "glitter", "dissolve", "parallax", "layered-decals", "vertex-effects"],
       "sourceValues": {"_Mode": 1, "_Cutoff": 0.5, "_EnableEmission": 1, "_OutlineEnabled": 1}
     },
     {
       "id": "maximal-practical-b",
       "locked": true,
       "renderPreset": "TransparentAdditive",
-      "features": ["surface", "color-adjustments", "material-ao", "shadow-masks", "poiyomi-masks-themes", "poiyomi-lighting-parity", "poiyomi-emission-slots", "poiyomi-matcap-rim-slots", "flipbook", "subsurface", "poiyomi-special-effects", "poiyomi-audiolink", "poiyomi-environment-adapters", "poiyomi-view-context"],
+      "features": ["surface", "color-adjustments", "material-ao", "shadow-masks", "global-masks-themes", "advanced-stylized-lighting", "layered-emission", "layered-matcap-rim", "flipbook", "subsurface", "extended-effects", "audiolink", "environment-lighting", "view-context"],
       "sourceValues": {"_ShaderOptimizerEnabled": 1, "_Mode": 3, "_EnableEmission": 1}
     }
   ],
@@ -124,7 +124,7 @@
     {"id": "vector", "valueKind": "Vector", "source": "_MainTex_ST", "target": "_MainTex_ST"},
     {"id": "color", "valueKind": "Color", "source": "_Color", "target": "_Color"},
     {"id": "texture", "valueKind": "Texture", "source": "_MainTex", "target": "_MainTex"},
-    {"id": "repeated-slot", "valueKind": "Float", "source": "_EmissionStrength1", "target": "_PoiEmissionStrength1"},
+    {"id": "repeated-slot", "valueKind": "Float", "source": "_EmissionStrength1", "target": "_EmissionSlotParams1"},
     {"id": "renamed-locked", "valueKind": "Float", "source": "PROP_8f31d8", "target": "_RimWidth"}
   ],
   "schemaFixture": {

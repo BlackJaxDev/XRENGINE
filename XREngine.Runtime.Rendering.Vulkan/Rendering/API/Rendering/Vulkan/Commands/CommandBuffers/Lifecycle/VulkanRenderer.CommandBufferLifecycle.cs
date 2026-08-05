@@ -305,13 +305,6 @@ namespace XREngine.Rendering.Vulkan
             if (!TryRecordCommandBufferVariant(ref context, ref state))
                 return default;
 
-            if (!TryValidateRecordedCommandChainDependencies(
-                    ref context,
-                    ref state))
-            {
-                return default;
-            }
-
             return PublishRecordedCommandBufferVariant(
                 ref context,
                 ref state);

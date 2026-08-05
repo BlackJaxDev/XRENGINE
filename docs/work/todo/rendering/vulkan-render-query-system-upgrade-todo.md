@@ -5,7 +5,7 @@ Owner: Rendering
 Status: Implementation complete; focused validation passed; live Vulkan validation blocked before device creation
 Working Branch: `rendering-vulkan-core-hardening` (retained by explicit user request)
 
-Closeout evidence: [Vulkan render query system upgrade investigation](../../investigations/rendering/vulkan-render-query-system-upgrade-2026-07-22.md). Phases 1-9 are implemented. Unchecked items below are external live-validation gates or broader repository-health gates that could not be truthfully closed on this machine; they are not deferred query implementation work.
+Closeout evidence: [Vulkan render query system upgrade investigation](../../investigations/rendering/archive/vulkan-render-query-system-upgrade-2026-07-22.md). Phases 1-9 are implemented. Unchecked items below are external live-validation gates or broader repository-health gates that could not be truthfully closed on this machine; they are not deferred query implementation work.
 
 ## Related Work And Ownership
 

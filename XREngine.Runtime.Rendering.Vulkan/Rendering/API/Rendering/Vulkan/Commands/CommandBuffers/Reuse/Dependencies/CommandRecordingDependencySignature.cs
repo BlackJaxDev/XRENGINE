@@ -100,8 +100,7 @@ internal readonly record struct CommandRecordingDependencySignature(
     public CommandRecordingDependencyMismatch Compare(in CommandRecordingDependencySignature current)
         => Compare(
             current,
-            commandChainPrimaryTopologyValidatedSeparately: false,
-            secondaryDrawBindingsOwnedElsewhere: false);
+            commandChainPrimaryTopologyValidatedSeparately: false);
 
     /// <summary>
     /// Compares this dependency signature with another signature to determine if they are equivalent
@@ -109,12 +108,12 @@ internal readonly record struct CommandRecordingDependencySignature(
     /// and other relevant factors, specifically for command-chain primary variants where the topology is validated separately.
     /// </summary>
     /// <param name="current">The dependency signature to compare against.</param>
-    /// <param name="secondaryDrawBindingsOwnedElsewhere">Indicates whether secondary draw bindings are owned elsewhere.</param>
     /// <returns>A CommandRecordingDependencyMismatch indicating the differences between the signatures, if any.</returns>
     public CommandRecordingDependencyMismatch CompareCommandChainPrimary(
-        in CommandRecordingDependencySignature current,
-        bool secondaryDrawBindingsOwnedElsewhere)
-        => Compare(current, commandChainPrimaryTopologyValidatedSeparately: true, secondaryDrawBindingsOwnedElsewhere);
+        in CommandRecordingDependencySignature current)
+        => Compare(
+            current,
+            commandChainPrimaryTopologyValidatedSeparately: true);
 
     /// <summary>
     /// Compares this dependency signature with another signature to determine if they are equivalent
@@ -123,12 +122,10 @@ internal readonly record struct CommandRecordingDependencySignature(
     /// </summary>
     /// <param name="current">The dependency signature to compare against.</param>
     /// <param name="commandChainPrimaryTopologyValidatedSeparately">Indicates whether the command-chain primary topology is validated separately.</param>
-    /// <param name="secondaryDrawBindingsOwnedElsewhere">Indicates whether secondary draw bindings are owned elsewhere.</param>
     /// <returns>A CommandRecordingDependencyMismatch indicating the differences between the signatures, if any.</returns>
     private CommandRecordingDependencyMismatch Compare(
         in CommandRecordingDependencySignature current,
-        bool commandChainPrimaryTopologyValidatedSeparately,
-        bool secondaryDrawBindingsOwnedElsewhere)
+        bool commandChainPrimaryTopologyValidatedSeparately)
     {
         if (!commandChainPrimaryTopologyValidatedSeparately &&
             OutputPassAttachment != current.OutputPassAttachment)
@@ -153,20 +150,16 @@ internal readonly record struct CommandRecordingDependencySignature(
             PipelineGeneration != current.PipelineGeneration)
             return Structural(CommandRecordingDependencyField.PipelineGeneration);
 
-        if (!secondaryDrawBindingsOwnedElsewhere &&
-            PipelineLayoutGeneration != current.PipelineLayoutGeneration)
+        if (PipelineLayoutGeneration != current.PipelineLayoutGeneration)
             return Structural(CommandRecordingDependencyField.PipelineLayoutGeneration);
 
-        if (!secondaryDrawBindingsOwnedElsewhere &&
-            MeshBindingIdentity != current.MeshBindingIdentity)
+        if (MeshBindingIdentity != current.MeshBindingIdentity)
             return Binding(CommandRecordingDependencyField.MeshBindingIdentity);
 
-        if (!secondaryDrawBindingsOwnedElsewhere &&
-            IndexBufferBindingIdentity != current.IndexBufferBindingIdentity)
+        if (IndexBufferBindingIdentity != current.IndexBufferBindingIdentity)
             return Binding(CommandRecordingDependencyField.IndexBufferBindingIdentity);
 
-        if (!secondaryDrawBindingsOwnedElsewhere &&
-            VertexBufferBindingIdentity != current.VertexBufferBindingIdentity)
+        if (VertexBufferBindingIdentity != current.VertexBufferBindingIdentity)
             return Binding(CommandRecordingDependencyField.VertexBufferBindingIdentity);
 
         if (BufferAllocationGeneration != current.BufferAllocationGeneration)
@@ -213,14 +206,7 @@ internal readonly record struct CommandRecordingDependencySignature(
         if (FrameSlotVariant != current.FrameSlotVariant)
             return Binding(CommandRecordingDependencyField.FrameSlotVariant);
 
-        // A command-chain primary never records descriptor bindings when every
-        // group executes secondary command buffers. Each secondary owns and
-        // validates its exact descriptor snapshot, so a renderer-wide publication
-        // advance caused by an unrelated streamed material cannot invalidate the
-        // thin primary that only executes those secondaries. Inline primary draws
-        // still require the spec-mandated invalidation.
-        if (!secondaryDrawBindingsOwnedElsewhere &&
-            DescriptorPublicationGeneration != current.DescriptorPublicationGeneration)
+        if (DescriptorPublicationGeneration != current.DescriptorPublicationGeneration)
             return Binding(CommandRecordingDependencyField.DescriptorPublicationGeneration);
 
         if (DataPublicationGeneration != current.DataPublicationGeneration)

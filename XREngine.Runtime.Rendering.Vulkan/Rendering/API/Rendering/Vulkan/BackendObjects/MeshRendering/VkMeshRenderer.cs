@@ -96,6 +96,8 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
     private XRRenderProgram? _generatedProgram;
     private string? _activeProgramIdentity;
     private ulong _activeProgramLinkGeneration;
+    private readonly Dictionary<VkRenderProgram, ulong> _observedProgramLinkGenerations =
+        new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<string, GeneratedProgramCacheEntry> _programCache = new(4, StringComparer.Ordinal);
     private readonly Dictionary<GeneratedProgramState, GeneratedProgramCacheEntry> _programStateCache = new(4);
     private VertexInputBindingDescription[] _vertexBindings = [];
@@ -985,10 +987,15 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
             MeshRenderer.CaptureUniformsOnRender ||
             MeshRenderer.HasSettingUniformsHandlers ||
             material.HasSettingUniformsHandlers;
+        bool hasTypedBindingPublishers =
+            material.BindingPublishers.Count != 0 ||
+            MeshRenderer.BindingPublishers.Count != 0;
         bool mayNeedDescriptorResourceSnapshot =
             program.DescriptorBindings.Count != 0 &&
             program.DescriptorSetLayouts.Count != 0;
-        if (!captureUniforms && !mayNeedDescriptorResourceSnapshot)
+        if (!captureUniforms &&
+            !hasTypedBindingPublishers &&
+            !mayNeedDescriptorResourceSnapshot)
             return null;
 
         IRenderBindingPublisher[] materialBindingPublishers;
@@ -1309,7 +1316,9 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
                 usePersistentProgramBindingArtifact = false;
                 shareSnapshot = false;
             }
-            if (!captureUniforms && !program.HasBoundDescriptorResources())
+            if (!captureUniforms &&
+                !hasTypedBindingPublishers &&
+                !program.HasBoundDescriptorResources())
             {
                 if (usePersistentProgramBindingArtifact)
                 {
@@ -1565,7 +1574,8 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
                     resourcePublication =
                         backendProgram.BeginTypedResourceBindingPublication(
                             frequency,
-                            resourceGeneration);
+                            resourceGeneration,
+                            resourcePublisher.RequiresReadyDescriptorResources);
                 resourcePublisher.PublishResources(program, program);
             }
             if (publisher.Frequency != frequency ||

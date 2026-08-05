@@ -148,14 +148,14 @@ public sealed class UnityPoiyomiProDowngradeTests
         result.Diagnostics.Select(static diagnostic => diagnostic.Message)
             .ShouldContain(static message =>
                 message.Contains("common Toon surface", StringComparison.Ordinal));
-        material.IsUberFeatureEnabled("poiyomi-surface", defaultEnabled: false).ShouldBeTrue();
-        material.IsUberFeatureEnabled("poiyomi-masks-themes", defaultEnabled: false).ShouldBeTrue();
-        material.IsUberFeatureEnabled("poiyomi-emission-slots", defaultEnabled: true).ShouldBeFalse();
+        material.IsUberFeatureEnabled("surface-extensions", defaultEnabled: false).ShouldBeTrue();
+        material.IsUberFeatureEnabled("global-masks-themes", defaultEnabled: false).ShouldBeTrue();
+        material.IsUberFeatureEnabled("layered-emission", defaultEnabled: true).ShouldBeFalse();
         material.IsUberFeatureEnabled("detail-textures", defaultEnabled: true).ShouldBeFalse();
         material.IsUberFeatureEnabled("dissolve", defaultEnabled: true).ShouldBeFalse();
         material.IsUberFeatureEnabled("glitter", defaultEnabled: true).ShouldBeFalse();
-        material.IsUberFeatureEnabled("poiyomi-special-effects", defaultEnabled: true).ShouldBeFalse();
-        material.IsUberFeatureEnabled("poiyomi-vertex-effects", defaultEnabled: true).ShouldBeFalse();
+        material.IsUberFeatureEnabled("extended-effects", defaultEnabled: true).ShouldBeFalse();
+        material.IsUberFeatureEnabled("vertex-effects", defaultEnabled: true).ShouldBeFalse();
         material.IsUberFeatureEnabled("outline", defaultEnabled: true).ShouldBeFalse();
         material.PassSet.TryGetPass(EMaterialPassIdentity.Outline, out MaterialPassDefinition outlinePass)
             .ShouldBeTrue();

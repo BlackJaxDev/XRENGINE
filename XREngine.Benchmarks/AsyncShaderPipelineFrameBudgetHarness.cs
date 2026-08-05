@@ -224,7 +224,7 @@ public sealed unsafe class AsyncShaderPipelineFrameBudgetHarness : IDisposable
         for (int i = state.ProgramIds.Count - 1; i >= 0; i--)
         {
             uint program = state.ProgramIds[i];
-            if (_compileQueue.TryGetResult(program, out _))
+            if (_compileQueue.TryGetReadyResult(program, _gl, out _))
             {
                 _gl.DeleteProgram(program);
                 state.ProgramIds.RemoveAt(i);
@@ -277,7 +277,8 @@ public sealed unsafe class AsyncShaderPipelineFrameBudgetHarness : IDisposable
             for (int i = state.ProgramIds.Count - 1; i >= 0; i--)
             {
                 uint program = state.ProgramIds[i];
-                bool completed = _compileQueue.TryGetResult(program, out _) || _uploadQueue.TryGetResult(program, out _);
+                bool completed = _compileQueue.TryGetReadyResult(program, _gl, out _) ||
+                    _uploadQueue.TryGetResult(program, out _);
                 if (!completed)
                     continue;
 
