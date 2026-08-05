@@ -45,15 +45,15 @@ internal sealed class AgentRunRegistry : IAsyncDisposable
             throw new ArgumentException(
                 $"requested_model must be exactly one of: {string.Join(", ", AgentModelCatalog.Models)}");
         }
-        if (string.IsNullOrWhiteSpace(request.EditorSession))
-            throw new ArgumentException("editor_session is required");
         if (string.IsNullOrWhiteSpace(_configuration.ReadApiKey()))
         {
             throw new InvalidOperationException(
                 $"Environment variable '{_configuration.ApiKeyEnvironmentVariable}' is not set.");
         }
 
-        ResolvedEditorSession session = _sessionResolver.Resolve(request.EditorSession);
+        ResolvedEditorSession? session = string.IsNullOrWhiteSpace(request.EditorSession)
+            ? null
+            : _sessionResolver.Resolve(request.EditorSession);
         CleanupRetainedRuns();
         EnsureCapacity();
 
@@ -133,7 +133,7 @@ internal sealed class AgentRunRegistry : IAsyncDisposable
             record.Cancellation.Dispose();
     }
 
-    private async Task ExecuteAsync(BrokerRunRecord record, ResolvedEditorSession session)
+    private async Task ExecuteAsync(BrokerRunRecord record, ResolvedEditorSession? session)
     {
         Stopwatch stopwatch = Stopwatch.StartNew();
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
@@ -147,23 +147,9 @@ internal sealed class AgentRunRegistry : IAsyncDisposable
             enteredGlobal = true;
             record.MarkRunning();
 
-            await using AgentSessionLease lease = await _leaseManager.AcquireAsync(
-                session.Name,
-                record.Request.ToolPolicy.AllowMutation,
-                cancellationToken);
-            var provider = new HttpMcpToolProvider(
-                _httpClient,
-                session.Endpoint,
-                record.Request.ToolPolicy,
-                _configuration.ReadEditorAuthToken());
-            await provider.PreflightAsync(session.Name, cancellationToken);
-
-            AgentRunResult result = await _orchestrator.RunAsync(
-                record.RunId,
-                record.Request,
-                provider,
-                new BrokerRunObserver(record),
-                cancellationToken);
+            AgentRunResult result = session is null
+                ? await RunReasoningOnlyAsync(record, cancellationToken)
+                : await RunWithEditorSessionAsync(record, session, cancellationToken);
             record.SetResult(result);
             _traceWriter.Write(record, result);
         }
@@ -207,6 +193,40 @@ internal sealed class AgentRunRegistry : IAsyncDisposable
             if (enteredGlobal)
                 _globalConcurrency.Release();
         }
+    }
+
+    private Task<AgentRunResult> RunReasoningOnlyAsync(
+        BrokerRunRecord record,
+        CancellationToken cancellationToken)
+        => _orchestrator.RunAsync(
+            record.RunId,
+            record.Request,
+            EmptyAgentToolProvider.Instance,
+            new BrokerRunObserver(record),
+            cancellationToken);
+
+    private async Task<AgentRunResult> RunWithEditorSessionAsync(
+        BrokerRunRecord record,
+        ResolvedEditorSession session,
+        CancellationToken cancellationToken)
+    {
+        await using AgentSessionLease lease = await _leaseManager.AcquireAsync(
+            session.Name,
+            record.Request.ToolPolicy.AllowMutation,
+            cancellationToken);
+        var provider = new HttpMcpToolProvider(
+            _httpClient,
+            session.Endpoint,
+            record.Request.ToolPolicy,
+            _configuration.ReadEditorAuthToken());
+        await provider.PreflightAsync(session.Name, cancellationToken);
+
+        return await _orchestrator.RunAsync(
+            record.RunId,
+            record.Request,
+            provider,
+            new BrokerRunObserver(record),
+            cancellationToken);
     }
 
     private void CleanupRetainedRuns()

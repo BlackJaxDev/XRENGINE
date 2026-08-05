@@ -84,6 +84,17 @@ internal sealed class VulkanFrameOperationScheduler
             if (targetCompare != 0)
                 return targetCompare;
 
+            if (x.Draw.ShadowUniformState.IsShadowPass &&
+                y.Draw.ShadowUniformState.IsShadowPass)
+            {
+                int shadowBucketCompare =
+                    VulkanRenderer.ResolveShadowCommandChainBucket(x)
+                        .CompareTo(
+                            VulkanRenderer.ResolveShadowCommandChainBucket(y));
+                if (shadowBucketCompare != 0)
+                    return shadowBucketCompare;
+            }
+
             int materialCompare = (x.Draw.MaterialOverride?.GetHashCode() ?? 0).CompareTo(y.Draw.MaterialOverride?.GetHashCode() ?? 0);
             if (materialCompare != 0)
                 return materialCompare;

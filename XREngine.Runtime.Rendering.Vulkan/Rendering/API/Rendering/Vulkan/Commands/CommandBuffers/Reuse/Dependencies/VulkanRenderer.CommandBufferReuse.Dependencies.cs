@@ -831,6 +831,8 @@ namespace XREngine.Rendering.Vulkan
                     ? $"primary-chain-groups component={mismatch.Component} old=0x{mismatch.Recorded:X16} new=0x{mismatch.Current:X16} groups={variant.CommandChainPrimaryGroupCount}->{groupCount}"
                     : $"primary-chain-groups old=0x{variant.CommandChainPrimaryGroupSignature:X16}/{variant.CommandChainPrimaryGroupCount} new=0x{groupSignature:X16}/{groupCount}";
             }
+            if ((reasons & PrimaryCommandBufferDirtyReason.SecondaryArtifactSequence) != 0)
+                return "primary-chain-secondary-artifact-sequence old=recorded new=changed";
             if ((reasons & PrimaryCommandBufferDirtyReason.ProfilerMode) != 0)
                 return $"primary-chain-profiler old=0x{variant.RecordedGenerations.Profiler:X16} new=0x{profilerGeneration:X16}";
             return $"primary-chain-state old=clean new=record-required field={PrimaryCommandBufferDirtyReason.None}";

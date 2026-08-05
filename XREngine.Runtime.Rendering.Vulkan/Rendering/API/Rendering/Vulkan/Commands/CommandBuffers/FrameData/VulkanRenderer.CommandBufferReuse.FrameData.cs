@@ -114,6 +114,12 @@ namespace XREngine.Rendering.Vulkan
                 CaptureCommandChainPrimaryPreparedBindingDependencies(
                     currentDependencySignature,
                     ops);
+            ReadOnlySpan<CommandChainKey> scheduledCommandChainKeys =
+                PrepareReusableCommandChainKeysByOpIndex(
+                    cachedSchedule,
+                    commandChainCache,
+                    ops.Length,
+                    frameDataScratch);
 
             List<CommandBufferCacheVariant> variants = _commandBufferVariants[imageIndex];
             bool hasDynamicUiBatchTextOverlay = dynamicUiBatchTextOpCount > 0;
@@ -143,6 +149,8 @@ namespace XREngine.Rendering.Vulkan
                     variant.CommandChainScheduleSignature !=
                         cachedSchedule.StructuralSignature ||
                     variant.CommandChainPrimaryGroupSignature != currentPrimaryGroupSignature ||
+                    !variant.RecordedSecondaryArtifactSequence.MatchesCurrentArtifacts(
+                        commandChainCache) ||
                     variant.CommandChainPrimarySkeletonSignature != currentPrimarySkeletonSignature ||
                     variant.CommandChainPrimaryGroupCount != currentPrimaryGroupCount ||
                     // Query brackets stay inline and are deliberately omitted from the
@@ -175,10 +183,13 @@ namespace XREngine.Rendering.Vulkan
                                 .PrimaryReusableFrameDataOwnerWorkRequests,
                             frameDataScratch
                                 .PrimaryReusableFrameDataRefreshBatchInfo,
-                            variant.PrimaryFrameDataRefreshState,
-                            dynamicUi: false,
-                            descriptorResourcesCapturedByFrameSignature:
-                                allPreparedDrawBindingsUseSecondaryBuffers);
+                                variant.PrimaryFrameDataRefreshState,
+                                dynamicUi: false,
+                                descriptorResourcesCapturedByFrameSignature:
+                                allPreparedDrawBindingsUseSecondaryBuffers,
+                                commandChainCache: commandChainCache,
+                                scheduledCommandChainKeys:
+                                    scheduledCommandChainKeys);
                     if (refreshedReusableFrameData && dynamicUiBatchTextOps.Length > 0)
                     {
                         dynamicUiFrameDataNeedsRerecord =
@@ -190,8 +201,10 @@ namespace XREngine.Rendering.Vulkan
                                     .DynamicUiReusableFrameDataOwnerWorkRequests,
                                 frameDataScratch
                                     .DynamicUiReusableFrameDataRefreshBatchInfo,
-                                variant.DynamicUiFrameDataRefreshState,
-                                dynamicUi: true);
+                                    variant.DynamicUiFrameDataRefreshState,
+                                    dynamicUi: true,
+                                    commandChainCache: null,
+                                    scheduledCommandChainKeys: ReadOnlySpan<CommandChainKey>.Empty);
 
                         // Dynamic batched text is recorded into a dedicated
                         // secondary. A descriptor-set pool miss prevents an
@@ -317,7 +330,9 @@ namespace XREngine.Rendering.Vulkan
             VulkanReusableFrameDataRefreshState refreshState,
             bool dynamicUi,
             bool descriptorResourcesCapturedByFrameSignature = false,
-            bool refreshMaterialUniforms = true)
+            bool refreshMaterialUniforms = true,
+            IReadOnlyDictionary<CommandChainKey, CommandChain>? commandChainCache = null,
+            ReadOnlySpan<CommandChainKey> scheduledCommandChainKeys = default)
         {
             if (requests.IsEmpty)
                 return true;
@@ -371,13 +386,19 @@ namespace XREngine.Rendering.Vulkan
                                         dynamicUi);
                                 VkMeshRenderer meshRenderer =
                                     request.MeshRenderer!;
+                                CommandBuffer recordedSecondaryCommandBuffer =
+                                    ResolveRecordedSecondaryCommandBuffer(
+                                        request,
+                                        commandChainCache,
+                                        scheduledCommandChainKeys);
                                 if (!meshRenderer.TryRefreshReusableCommandBufferFrameData(
                                         imageIndex,
                                         request.Draw,
                                         request.DrawUniformSlot,
                                         out string reason,
                                         refreshMaterialUniforms,
-                                        descriptorResourcesCapturedByFrameSignature))
+                                        descriptorResourcesCapturedByFrameSignature,
+                                        recordedSecondaryCommandBuffer))
                                 {
                                     _lastReusableFrameDataRefreshFailureReason =
                                         $"mesh op={request.SourceOpIndex}/{request.SourceOpCount} mesh='{meshRenderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' material='{(request.Draw.MaterialOverride ?? meshRenderer.MeshRenderer.Material)?.Name ?? "<unnamed material>"}' slot={request.DrawUniformSlot}: {reason}";
@@ -416,6 +437,11 @@ namespace XREngine.Rendering.Vulkan
                                         dynamicUi);
                                 VkMeshRenderer meshRenderer =
                                     request.MeshRenderer!;
+                                CommandBuffer recordedSecondaryCommandBuffer =
+                                    ResolveRecordedSecondaryCommandBuffer(
+                                        request,
+                                        commandChainCache,
+                                        scheduledCommandChainKeys);
                                 bool refreshed =
                                     meshRenderer.TryRefreshReusableCommandBufferFrameData(
                                         imageIndex,
@@ -423,7 +449,8 @@ namespace XREngine.Rendering.Vulkan
                                         request.DrawUniformSlot,
                                         out string reason,
                                         refreshMaterialUniforms,
-                                        descriptorResourcesCapturedByFrameSignature);
+                                        descriptorResourcesCapturedByFrameSignature,
+                                        recordedSecondaryCommandBuffer);
                                 if (!refreshed)
                                 {
                                     _lastReusableFrameDataRefreshFailureReason =
@@ -547,6 +574,56 @@ namespace XREngine.Rendering.Vulkan
                 refreshState.CommitDirectOwnerOnlyRefresh(batchInfo);
 
             return true;
+        }
+
+        private static CommandBuffer ResolveRecordedSecondaryCommandBuffer(
+            in VulkanReusableFrameDataRefreshRequest request,
+            IReadOnlyDictionary<CommandChainKey, CommandChain>? commandChainCache,
+            ReadOnlySpan<CommandChainKey> scheduledCommandChainKeys)
+        {
+            if (commandChainCache is null ||
+                (uint)request.SourceOpIndex >= (uint)scheduledCommandChainKeys.Length)
+            {
+                return default;
+            }
+
+            CommandChainKey key = scheduledCommandChainKeys[request.SourceOpIndex];
+            return key.ChainOrdinal != -1 &&
+                   commandChainCache.TryGetValue(key, out CommandChain? chain) &&
+                   chain.SecondaryCommandBufferExecutable
+                ? chain.SecondaryCommandBuffer
+                : default;
+        }
+
+        private static ReadOnlySpan<CommandChainKey>
+            PrepareReusableCommandChainKeysByOpIndex(
+                CommandChainSchedule schedule,
+                IReadOnlyDictionary<CommandChainKey, CommandChain> commandChainCache,
+                int operationCount,
+                CommandBufferRecordingScratch scratch)
+        {
+            if (operationCount <= 0)
+                return ReadOnlySpan<CommandChainKey>.Empty;
+
+            if (scratch.ScheduledCommandChainKeysByOpIndex.Length < operationCount)
+            {
+                int capacity = Math.Max(
+                    operationCount,
+                    Math.Max(
+                        scratch.ScheduledCommandChainKeysByOpIndex.Length * 2,
+                        16));
+                scratch.ScheduledCommandChainKeysByOpIndex =
+                    new CommandChainKey[capacity];
+            }
+
+            Span<CommandChainKey> keys =
+                scratch.ScheduledCommandChainKeysByOpIndex.AsSpan(0, operationCount);
+            PopulateCommandChainKeysByFrameOpIndex(
+                schedule,
+                commandChainCache,
+                keys,
+                operationCount);
+            return keys;
         }
 
         private bool TryRefreshReusableFallbackMeshRequest(

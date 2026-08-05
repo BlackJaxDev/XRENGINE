@@ -76,6 +76,15 @@ public static partial class AgentRequestValidator
             errors.Add("mutation requires a non-empty tool_policy.allowed_tools allowlist");
         if (policy.AllowDestructive && !policy.AllowMutation)
             errors.Add("destructive tool authorization also requires allow_mutation");
+        if (string.IsNullOrWhiteSpace(request.EditorSession))
+        {
+            if (policy.AllowMutation || policy.AllowDestructive)
+                errors.Add("reasoning-only runs without editor_session cannot authorize mutation");
+            if (policy.AllowedTools.Count > 0 || policy.DeniedTools.Count > 0)
+                errors.Add("reasoning-only runs without editor_session cannot configure editor tools");
+            if (request.RequireToolUse)
+                errors.Add("reasoning-only runs without editor_session cannot require tool use");
+        }
 
         return errors;
     }

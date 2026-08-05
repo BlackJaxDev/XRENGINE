@@ -282,6 +282,7 @@ public static class XREngineEnvironmentVariables
     public const string VulkanNvDiagnosticsConfig = "XRE_VULKAN_NV_DIAGNOSTICS_CONFIG";
     public const string VulkanRenderDocFriendly = "XRE_VULKAN_RENDERDOC_FRIENDLY";
     public const string VulkanFrameOpTrace = "XRE_VULKAN_FRAMEOP_TRACE";
+    public const string VulkanFinalPresentationLedger = "XRE_VULKAN_FINAL_PRESENT_LEDGER";
     public const string VulkanTargetTrace = "XRE_VULKAN_TARGET_TRACE";
     public const string VulkanIndirectTrace = "XRE_VULKAN_INDIRECT_TRACE";
     public const string VulkanCounterDiagnostics = "XRE_VULKAN_COUNTER_DIAGNOSTICS";

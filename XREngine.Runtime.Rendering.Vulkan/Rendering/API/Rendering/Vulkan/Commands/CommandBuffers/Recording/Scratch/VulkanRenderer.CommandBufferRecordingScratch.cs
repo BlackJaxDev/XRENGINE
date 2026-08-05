@@ -16,6 +16,7 @@ namespace XREngine.Rendering.Vulkan
             public Dictionary<int, FrameOp> SwapchainWriterOpByPipeline { get; } = new();
             public Dictionary<int, int> SwapchainWriterDynamicUiDrawCountByPipeline { get; } = new();
             public HashSet<nint> ExecutedCommandChainSecondaryHandles { get; } = new();
+            public VulkanPrimarySecondaryArtifactSequence ExecutedCommandChainSecondaryArtifactSequence { get; } = new();
             public HashSet<FrameOp> PipelineDeferredOps { get; } =
                 new(ReferenceEqualityComparer.Instance);
             public HashSet<int> PipelineDeferredRequirementIndices { get; } = [];

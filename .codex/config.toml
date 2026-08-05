@@ -1,3 +1,12 @@
+model = "gpt-5.6-terra"
+model_reasoning_effort = "medium"
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 4
+default_subagent_model = "gpt-5.6-luna"
+default_subagent_reasoning_effort = "low"
+
 [mcp_servers.code-review-graph]
 command = "powershell"
 args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "$d = (Get-Location).Path; while ($true) { $launcher = Join-Path $d 'Tools/Invoke-CodeReviewGraph.ps1'; if (Test-Path -LiteralPath $launcher -PathType Leaf) { break }; $parent = [System.IO.Directory]::GetParent($d); if ($null -eq $parent) { throw 'Unable to locate the XRENGINE code-review-graph launcher.' }; $d = $parent.FullName }; & $launcher serve"]

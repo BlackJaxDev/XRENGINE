@@ -49,6 +49,14 @@ public static class RenderClipSpacePolicy
             : ERenderClipSpaceYDirection.YUp;
     }
 
+    /// <summary>
+    /// Returns whether a fullscreen Vulkan presentation draw must invert its
+    /// framebuffer-texture V coordinate to preserve the engine's screen Y direction.
+    /// </summary>
+    public static bool RequiresVulkanFramebufferTexturePresentationYFlip()
+        => FramebufferTextureYDirection(RuntimeGraphicsApiKind.Vulkan) ==
+           ERenderClipSpaceYDirection.YDown;
+
     public static float DepthBufferToClipZ(float depth, ERenderClipDepthRange range)
         => range == ERenderClipDepthRange.NegativeOneToOne
             ? depth * 2.0f - 1.0f

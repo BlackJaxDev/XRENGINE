@@ -71,6 +71,7 @@ public unsafe partial class VulkanRenderer
     private Format swapChainImageFormat;
     private ColorSpaceKHR swapChainImageColorSpace;
     private Extent2D swapChainExtent;
+    private ulong _swapchainGeneration;
 
     private VulkanSwapchainDepthResources? _swapchainDepthResources;
     private readonly object _swapchainDepthMutationLock = new();
@@ -557,6 +558,8 @@ public unsafe partial class VulkanRenderer
 
         if (createResult != Result.Success)
             throw new InvalidOperationException($"Failed to create swap chain ({createResult}){(requestStreamlineFrameGeneration ? " through Streamline for NVIDIA DLSS frame generation" : string.Empty)}.");
+
+        _swapchainGeneration++;
 
         _swapchainPresentScalingActive = usePresentScaling;
         _swapchainPresentScalingCapabilities = usePresentScaling

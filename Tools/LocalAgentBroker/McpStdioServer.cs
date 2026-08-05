@@ -201,14 +201,14 @@ internal sealed class McpStdioServer(
             ["serverInfo"] = new JsonObject
             {
                 ["name"] = "XREngine.LocalAgentBroker",
-                ["version"] = "0.2.0",
+                ["version"] = "0.3.0",
             },
             ["capabilities"] = new JsonObject
             {
                 ["tools"] = new JsonObject { ["listChanged"] = false },
             },
             ["instructions"] =
-                "Use only for explicit API-worker delegation. This broker does not switch the current Codex model.",
+                "Use for automatic bounded API-worker delegation under the XRENGINE standing authorization. This broker does not switch the current Codex model. Omit editor_session for reasoning-only runs.",
         };
     }
 

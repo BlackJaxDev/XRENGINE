@@ -39,6 +39,18 @@ public partial class VulkanRenderer :
         => GetLastFrameOpTraceDiagnostics(limit, targetContains);
 
     /// <inheritdoc />
+    object IRenderBackendDiagnosticsCapability.GetFinalPresentationLedgerDiagnostics(
+        int limit)
+        => GetFinalPresentationLedgerDiagnostics(limit);
+
+    /// <inheritdoc />
+    object IRenderBackendDiagnosticsCapability.ConfigureFinalPresentationLedgerDiagnostics(
+        bool enabled,
+        bool frozen,
+        bool clear)
+        => ConfigureFinalPresentationLedgerDiagnostics(enabled, frozen, clear);
+
+    /// <inheritdoc />
     bool IRenderBackendDiagnosticsCapability.TryReadDepthPixelDebug(
         XRFrameBuffer frameBuffer,
         int x,

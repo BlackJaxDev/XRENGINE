@@ -57,6 +57,29 @@ public unsafe partial class VulkanRenderer
     private const int MaxCachedScheduledCommandChainsPerFrameSlot = MaxCommandChainsPerSchedule * 2;
     internal const int MinMeshDrawsPerRenderPacket = 10;
     internal const int MaxMeshDrawsPerRenderPacket = 64;
+    internal const int MaxShadowMeshDrawsPerRenderPacket = 24;
+    private const int ShadowCommandChainBucketCount = 8;
+
+    /// <summary>
+    /// Assigns a shadow caster to a stable runtime bucket. Membership changes can
+    /// only disturb packet boundaries inside that bucket instead of shifting the
+    /// source ranges and duplicate ordinals of every later caster.
+    /// </summary>
+    internal static int ResolveShadowCommandChainBucket(MeshDrawOp draw)
+    {
+        XRMaterial? material =
+            draw.Draw.MaterialOverride ??
+            draw.Draw.Renderer.MeshRenderer.Material;
+        return ResolveShadowCommandChainBucket(
+            draw.Draw.Renderer.GetHashCode(),
+            material?.GetHashCode() ?? 0);
+    }
+
+    internal static int ResolveShadowCommandChainBucket(
+        int rendererIdentity,
+        int materialIdentity)
+        => (HashCode.Combine(rendererIdentity, materialIdentity) & int.MaxValue) %
+           ShadowCommandChainBucketCount;
 
     // GPU-zero-readback argument streams remain primary-owned after a reproducible
     // watchdog reset in the Sponza cohort. Only explicitly producer-complete streams
