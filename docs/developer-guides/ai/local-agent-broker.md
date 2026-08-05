@@ -2,7 +2,8 @@
 
 The local agent broker is a BCL-only .NET 10 orchestration surface shared with
 the ImGui MCP Assistant. It starts explicit public OpenAI Responses API calls
-and proxies model function calls to one named, loopback editor MCP session.
+as either tool-free reasoning runs or editor-aware runs that proxy model
+function calls to one named, loopback editor MCP session.
 
 It is not an in-place Codex model switch, a generic subprocess runner, or an
 Internet-facing editor bridge.
@@ -21,9 +22,11 @@ references only that project. No NuGet package was added for this feature.
 ## Run Contract
 
 `AgentRunRequest` carries the objective, success criteria, constraints, exact
-requested model, reasoning effort, compact evidence packet, named editor
-session, tool policy, budget, and the explicit `UseBackgroundMode` transport
-choice. Its evidence packet has these stable fields:
+requested model, reasoning effort, compact evidence packet, optional named
+editor session, tool policy, budget, and the explicit `UseBackgroundMode`
+transport choice. Omitting the editor session selects a reasoning-only run with
+`EmptyAgentToolProvider`; validation rejects mutation, tool policy entries, or
+required tool use in that mode. Its evidence packet has these stable fields:
 
 - relevant files and symbols;
 - current-diff summary;
@@ -110,6 +113,11 @@ before distribution.
 
 ## Editor Tool Security
 
+When `editor_session` is absent, the registry skips session resolution, leases,
+HTTP MCP construction, and preflight. The orchestrator receives an empty tool
+catalog, so the Responses request is a bounded reasoning-only call over the
+coordinator-supplied evidence packet.
+
 `EditorSessionResolver` validates the session-name grammar, combines it only
 under `Build/_AgentValidation/mcp-sessions`, checks full-path containment,
 reads `session.json`, requires a loopback HTTP(S) URI, and verifies the
@@ -142,6 +150,7 @@ when truncated.
 |---|---|
 | API-key exposure | Key name may be configured. The value is read from process scope first and, on Windows only when absent, from user scope. It is never accepted in MCP arguments, persisted, echoed, or traced. Errors exclude request headers. |
 | Prompt/tool injection | Workers receive an explicit system safety contract. Broker-side tool policy remains authoritative regardless of model instructions or hostile tool descriptions/results. |
+| Reasoning-only local access | Omitting `editor_session` selects an empty tool provider; validation rejects mutation, tool lists, and required tool use. |
 | Path traversal | Session names use a strict grammar and the resolved manifest must remain under the repository's session root. |
 | Arbitrary endpoint | Only the named session manifest is accepted; endpoints must be loopback and exact identity is preflighted. |
 | Duplicate/ambiguous mutation | Duplicate call IDs fail. Mutating tool calls are never transport-retried. Same-session mutations hold an exclusive lease. |
@@ -165,6 +174,13 @@ directory remains a fallback only when no pointer exists.
 The pointer affects only future launches. Existing Codex tasks retain their
 current stdio process and pipes; stopping that process closes the transport and
 requires a task/app restart rather than hot-rebinding the new deployment.
+
+The same project configuration selects Terra at medium effort for the primary
+Codex coordinator, Luna at low effort for default subagents, and four native
+subagent threads. Project custom agents define the read-only Luna explorer,
+workspace-writing Terra implementer, and read-only max-effort Sol architect.
+`AGENTS.md` provides standing bounded broker-spend authorization while retaining
+task-specific mutation and destructive-operation boundaries.
 
 `BrokerConfiguration` accepts only repository root and environment-variable
 names on the command line. API-key lookup uses process scope first and a
@@ -190,6 +206,10 @@ They cover streaming reconstruction, malformed/provider events, `store: false`
 continuation replay, exact model selection and substitution, mutation
 read-back, duplicate call IDs, cancellation, MCP error preservation, session
 identity, route advice, and reader/writer leases.
+
+The broker's non-paid protocol validation must also confirm that
+`editor_session` is optional in the advertised schema. Reasoning-only live runs
+must omit it and advertise no function tools.
 
 Run the deterministic suite:
 
@@ -229,7 +249,7 @@ tool results so transport variability does not masquerade as quality:
 | Result parsing/quality | Shared parser and tool loop | Same |
 | Provider token use | Same prompt/tools/budget produces the same reported usage | Same |
 | Tool-call count/evidence | Shared call-ID and evidence contracts | Same, plus broker policy filtering |
-| Latency | Provider plus tool latency | Adds enqueue, named-session preflight, lease, and caller polling |
+| Latency | Provider plus tool latency | Adds enqueue and caller polling; editor-aware runs also add named-session preflight and a lease |
 | Failure clarity | Structured provider/tool failure shown in ImGui | Same category plus queued/running/terminal status and requested/actual model |
 
 No fixed latency claim is recorded because editor state, model service load, and

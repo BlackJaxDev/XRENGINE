@@ -19,12 +19,22 @@ Related work that remains separate and is not part of this acceptance pass:
 
 ## Current status
 
-- Fix 3 (cold magenta Vulkan presentation): still open. The pre-present TSR texture is valid, but the actual composed editor window remains magenta with command chains and primary-command-buffer reuse enabled.
+- Fix 3 (cold magenta Vulkan presentation): **orientation regression corrected; overall acceptance remains open**. Recording the mutable desktop-present primary fresh removes the magenta clear while keeping secondaries reusable. The subsequent upside-down HWND regression came from exempting FXAA/SMAA outputs from the backend-wide framebuffer-texture Y contract; that source-name exception is removed. Warm actual-window captures are upright through camera motion and resize, but a fresh isolated run still exposed separate cold/resize render-target content corruption, so Fix 3 is not closed as a complete presentation-stability item.
 - ImGui directional-light inspector assertion: fixed and live-validated.
 - Non-cascaded directional shadows: working baseline.
-- Vulkan cascaded directional shadows: partially corrected but not complete; placement, flicker, and camera-motion recording spikes remain open.
+- Vulkan cascaded directional shadows: engine-side packet identity, matrix/atlas publication, split selection, and viewport containment are implemented and accepted in the isolated Vulkan path. Final user-facing shadow-quality validation remains.
 - Vulkan quadrant/inversion and disappearing-mesh artifacts: root causes have been narrowed and several state-lifetime leaks fixed, but final user-facing stability is not yet proven.
 - Procedural skybox: numeric-only publisher fixed; frequency mismatch and final user validation remain open.
+- Remaining item 2 (scheduled-chain descriptor preflight): **implemented and accepted**. Valid scheduled mesh chains no longer repeat the logical per-draw descriptor walk, while inline and fallback paths retain it. The three primary-encoding sub-stages are now exposed through MCP.
+- Remaining item 3 (CSM packet identity): **implemented and accepted**. Shadow packets are capped at 24 draws and use eight stable renderer/material buckets. Warm repeated sweeps caused no further descriptor-variant growth; moving shadow work remained bounded to 17 chains in ordinary motion and 22 on a membership transition.
+- Remaining item 4 (cascade positioning/atlas sampling): **accepted without an additional coordinate patch**. RenderDoc, matrix provenance, cascade debug colors, and viewport/scissor inspection all agree on the current single-flip Vulkan contract. The remaining 146-chain spike is a separate main-view resource-plan invalidation wave, tracked as item 5 below. Its `BufferAllocationGeneration` label currently contains a coarse resource-plan revision and is not proof that a Vulkan buffer was reallocated.
+
+### Latest user validation (2026-08-04)
+
+- First startup is now mostly stable: no immediate persistent magenta or black frame, but the editor renders at approximately 30 Hz.
+- Camera motion can produce a single-frame magenta flash, either during motion or immediately after motion stops.
+- Resizing the window still turns the scene black and makes magenta flicker much more frequent and sustained.
+- Interpretation: cold source readiness improved, but the motion dirty/reuse handoff and resize-driven native resource generation handoff remain incorrect. The 30 Hz result is consistent with the deliberately fresh desktop primary plus the still-duplicated scheduled-chain descriptor preflight; performance work must follow correctness isolation rather than mask these lifecycle failures.
 
 ## Problem statement
 
@@ -151,7 +161,7 @@ The latest isolated Vulkan sweep used `XRE_VULKAN_COMMAND_CHAINS=1`, four cascad
 - The final completed sweeps reported zero Vulkan validation errors. The named isolated process had exited by the later cleanup RPC; stdout/stderr contained no managed exception or assertion, so that exit remains unclassified and must not be counted as a clean stability pass.
 - The current Vulkan rendering project builds with 0 warnings and 0 errors. Automated tests remain deferred under repository policy until the live feature is functionally correct and the user explicitly clears regression-test work.
 
-### Frame-source descriptor liveness work (implemented, not accepted)
+### Frame-source descriptor liveness work (implemented; insufficient alone)
 
 The ImGui editor's solid-magenta scene at Vulkan startup was provisionally attributed to final-presentation descriptor liveness. Published descriptor snapshots retained a stable logical `SourceTexture` wrapper while the physical `TsrOutputTexture` image, view, sampler, or readiness changed from the placeholder to the live render target. `ComputeRecordedDescriptorResourceSignature` used the snapshot's frozen physical-resource signature for every published binding, so a final-present command chain could remain reusable until camera motion or light work dirtied it for an unrelated reason. This explains the symptom and exposed real lifetime defects, but actual-window validation below proves that descriptor liveness alone did not complete the fix.
 
@@ -178,7 +188,7 @@ Cached-publication validation on 2026-08-04:
 
 ### Fix 3 closeout and handoff: actual-window presentation
 
-Status: **open and blocking acceptance**. The Vulkan rendering project builds cleanly, and the frame-source/resource-epoch changes address genuine lifetime defects, but the default command-chain path still does not put the rendered scene into the actual editor window reliably.
+Status: **upside-down regression fixed; full presentation acceptance remains open**. The Vulkan rendering project builds cleanly. The actual editor HWND now applies the same backend-wide Y convention as the internal framebuffer texture instead of special-casing the final AA source. Separate stale/quadrant/black content after cold start or resize is still reproducible upstream of the orientation transform.
 
 #### Capture-method correction
 
@@ -198,6 +208,8 @@ The MCP `TsrOutputTexture` capture is a valid 1920x1080 scene while the correspo
 | Command chains enabled, `XRE_VULKAN_PRIMARY_COMMAND_BUFFER_REUSE=0` | Correct scene without camera movement | Strongest isolation: the defect depends on primary-command-buffer reuse or state gated by it: `present-fix3-primary-fresh-control-20260804/window-captures/cold/final-window-print.png` |
 | Default settings after adding descriptor variant to primary ordered-node identity and comparing the primary schedule signature | Magenta | The schedule-key additions are defensive but insufficient: `present-fix3-primary-key-20260804/window-captures/cold/final-window-print.png` |
 | Default settings after routing mutable frame-source samplers around the earliest clean-reuse return | Magenta before and after camera movement | The early-reuse guard is also insufficient: `present-fix3-validated-reuse-20260804/window-captures/.../final-window-print.png` |
+| Exact recorded-secondary artifact sequence plus exact native descriptor-set binding validation | Magenta | Both identities matched while the internal final texture remained valid, ruling out the two proposed stale-secondary/updated-wrong-set failure modes: `present-fix3-exactbinding-v2-20260804/window-captures/steady/final-window-print.png` |
+| Command chains enabled; mutable desktop-present primary recorded fresh; all scheduled secondaries reusable | Correct scene | Accepted correctness boundary: `present-fix3-nativecontent-v3-20260804/window-captures/thinprimary-v2/cold-final-window-print.png` |
 
 The paired pre-present evidence is `present-epoch-fix3-planner-20260804/mcp-captures/tsr-live/RenderPipeline_TsrOutputTexture_20260804_152558.png`. All paths above are under `Build/_AgentValidation/mcp-sessions/` and are disposable investigation evidence.
 
@@ -209,27 +221,128 @@ The paired pre-present evidence is `present-epoch-fix3-planner-20260804/mcp-capt
 - Rebuilt the Vulkan merged resource-registry snapshot on registry/FBO changes, with explicitly declared persistent resources winning over framebuffer-derived fallback descriptors. This prevents an `External`/absolute-pixel descriptor from replacing the declared persistent `TsrOutputTexture` contract.
 - Included `DescriptorBindingVariant` in primary ordered-node identity and compared the cached primary variant's command-chain schedule signature before fast reuse.
 - Routed mutable frame-source samplers through the common primary-reuse validation path instead of the earliest clean-reuse return.
+- Cached primaries now retain the exact ordered `(CommandChainKey, native command-buffer artifact, artifact/recording generation, resource identity)` sequence encoded by `vkCmdExecuteCommands`. Reuse rejects a replaced, reordered, or non-executable secondary artifact.
+- Reusable draw refresh validates that the active native descriptor sets are the exact sets bound by the scheduled secondary. This proved that the failing final-present draw was neither executing a stale secondary artifact nor refreshing a different descriptor-set handle.
+- Mutable frame-source refresh no longer treats a logical sampler signature as proof of native descriptor contents. It resolves the current image view and sampler and uses the cached native write signature as the no-write fast path.
+- The desktop compositor now treats its acquired-swapchain render scope and present-cycle state as primary-owned mutable state. It records that thin primary fresh while retaining all reusable scene, shadow, post-process, compute, and dynamic-text secondaries. Unrestricted primary reuse can be reconsidered only after the acquired-image entry/exit state is represented by a complete native reuse identity.
 
-The last targeted command was `dotnet build .\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulkan.csproj --no-restore`; it completed with 0 warnings and 0 errors. No tests were added or run because the live visual regression is still open and repository policy requires user clearance before regression-test work. A final trace session was started but cancelled before its build completed when work was wrapped up; it produced no diagnostic evidence. All named editor sessions used by this investigation are stopped.
+The last targeted command was `dotnet build .\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulkan.csproj --no-restore`; it completed with 0 warnings and 0 errors. No tests were added or run because the larger cascade-quality/performance investigation remains active and the user has not yet cleared regression-test work. All named editor sessions used by this acceptance pass are stopped.
 
-#### Next steps for fix 3 (do these before the shadow/performance work below)
+#### Fix 3 rejected acceptance evidence
 
-1. Run one isolated default-settings session with `XRE_VULKAN_COMMAND_CHAIN_TRACE=1`, `XRE_VULKAN_DESCRIPTOR_TRACE=1`, `XRE_VULKAN_DESCRIPTOR_FINGERPRINT_DIAG=1`, and `XRE_VULKAN_RECORDING_DIAG=1`. Capture the actual window with `PrintWindow` before moving the camera.
-2. Correlate the single final-present draw across: current source epoch/image/view/sampler; descriptor allocation object and exact descriptor-set handle written; secondary `CommandChainKey`, `DescriptorBindingVariant`, and command-buffer handle; primary variant handle; and the ordered secondary handles actually encoded into that primary. Include output context, pipeline, and view identity, specifically checking the observed `Unknown`/pipeline-0 versus `MainViewport`/pipeline-10 ownership split.
-3. Prove one of two remaining failure modes: either the reused primary executes a stale/different secondary artifact from the current schedule, or descriptor refresh writes a set that is not the set bound by the executed secondary. Do not add another aggregate hash until this exact identity chain is known.
-4. Make each cached primary variant retain the exact recorded secondary-artifact/key sequence it encoded. On reuse, compare it with the exact executable schedule; if any artifact, key, descriptor variant, or order differs, dirty and re-record only that primary variant. Keep primary reuse enabled; disabling command chains or `XRE_VULKAN_PRIMARY_COMMAND_BUFFER_REUSE` is a diagnostic control, not a shipping fix.
-5. Re-run actual-window cold acceptance with the directional light enabled and disabled, then after camera movement and across steady swapchain-slot reuse. Require `PrintWindow` to show the scene in every case; use MCP target captures only to localize a failure.
-6. Once the actual window passes, remove temporary verbose descriptor/fingerprint diagnostics, record the final images and logs here, and ask for clearance before adding or running regression tests.
+The accepted session was `present-fix3-nativecontent-v3-20260804`. It used a three-image `PresentModeMailboxKhr` swapchain with command chains enabled. The final profiler sample occurred after more than 4,900 presented frames and reported zero Vulkan validation messages, zero dropped frame operations, and zero dropped draws.
 
-## Remaining fixes, in priority order
+- Cold actual HWND: `window-captures/thinprimary-v2/cold-final-window-print.png`.
+- After an immediate camera cut: `window-captures/thinprimary-v2/camera-moved-final-window-print.png`.
+- Directional light disabled: `window-captures/thinprimary-v2/light-off-final-window-print.png`.
+- Directional light restored: `window-captures/thinprimary-v2/light-on-restored-final-window-print.png`.
+- Resized from 1550x902 to 1280x760: `window-captures/thinprimary-v2/resized-1280x760-final-window-print.png`.
+- Restored to 1550x902: `window-captures/thinprimary-v2/resize-restored-final-window-print.png`.
+- Four additional paced actual-window samples remained correctly presented: `window-captures/thinprimary-v2/slot-sample-1.png` through `slot-sample-4.png`.
 
-Fix 3 above is priority zero. Do not treat the following shadow-quality and performance items as acceptance blockers ahead of the final-present primary-reuse correction.
+All paths above are relative to `Build/_AgentValidation/mcp-sessions/present-fix3-nativecontent-v3-20260804/`. Reinspection after the user's report shows that these actual-window images are vertically inverted: the Sponza ceiling/floor relationship and editor debug geometry are upside down. They do prove that the magenta diagnostic clear was replaced by native scene content, but they do **not** satisfy Fix 3 acceptance. The user report supersedes the earlier classification.
 
-### 1. Remove the scheduled-chain per-draw descriptor preflight
+The decisive steady profiler sample reported `chains_scheduled=124`, `chains_reused=124`, `chains_recorded=0`, `primary_command_buffers_recorded=1`, and `primary_command_buffers_reused=0`. GPU command time was 4.57 ms. The diagnostics-heavy run spent 30.52 ms recording the scene primary because the remaining scheduled-chain per-draw preflight still walks the complete pass. That CPU cost is not accepted as final performance; it is the first remaining fix below and can now be addressed without risking an invalid present.
+
+The isolated session was stopped through the named session manager after capture. Automated regression tests were not added or run because repository policy still requires explicit user clearance after live feature acceptance.
+
+#### Upside-down regression correction (2026-08-04)
+
+The paired evidence isolated this regression to final presentation. `FxaaOutputTexture` contained an upright scene, while the actual HWND sampled the same content upside down. Vulkan's engine-default Y-up policy uses a negative-height viewport, so the fullscreen presentation shader must invert the framebuffer-texture V coordinate exactly once. `ShouldFlipVulkanPresentSourceY` incorrectly exempted `FxaaFBO` and `SmaaFBO`, even though those passes preserve the same backend-wide framebuffer-texture row convention as every other engine FBO.
+
+Implemented correction:
+
+- Added `RenderClipSpacePolicy.RequiresVulkanFramebufferTexturePresentationYFlip()` as the single policy query.
+- Removed source-name orientation exceptions from the default direct-present and vendor-fallback setup.
+- Routed the debug-opaque present path through the same policy.
+- Removed the contradictory vendor-fallback `YDown` override so the published policy value is authoritative.
+
+Live evidence under `Build/_AgentValidation/mcp-sessions/present-fix3-nativecontent-v3-20260804/orientation-fixed/`:
+
+- `RenderPipeline_FxaaOutputTexture_20260804_175650.png` and `actual-window.png` have the same upright wall/floor and cyan debug-volume orientation.
+- `camera-moved-window.png` remains upright after a 20-degree camera yaw.
+- `resized-window.png` remains upright at 1280x760.
+- The targeted `XREngine.Runtime.Rendering.csproj` and `XREngine.Runtime.Rendering.Vulkan.csproj` builds completed with 0 warnings and 0 errors.
+
+RenderDoc 1.44 passed `rdc doctor`. A named-session launch was successfully hooked and exposed its target-control port, but `capture-trigger` returned no capture artifact; the paired internal-texture/HWND evidence already isolates the Y transform without relying on the failed capture.
+
+Do not overstate this result: restoring the reused session from 1280x760 to its prior size later turned the internal FXAA target black, and a completely fresh isolated build (`present-orientation-final-v1-20260804`) produced zeroed `FxaaOutputTexture` capture data while the HWND showed red/blue quadrant content. That fresh run still reported 123/123 scheduled chains reused, one fresh primary, zero Vulkan validation errors, zero dropped operations, and zero dropped draws. Those failures occur before or independently of the corrected final Y mapping and remain part of the render-target/descriptor/atlas lifetime investigation.
+
+#### Final-presentation ledger implementation and first freeze (2026-08-04)
+
+Priority-1 diagnostics are now implemented rather than remaining a proposed next step. Vulkan owns a fixed 128-entry final-presentation ring that is inactive unless `XRE_VULKAN_FINAL_PRESENT_LEDGER=1` is set or MCP enables it. The enabled hot path retains structs in the bounded ring; JSON/list allocation occurs only when tooling requests a snapshot. It records:
+
+- desktop frame/slot/image identity, live and swapchain extents, swapchain handle and monotonic generation;
+- tracked final texture/FBO name, extent, readiness epoch, native image/view/sampler, descriptor generation, and tracked layout;
+- the exact `SourceTexture` descriptor set, set/binding, frame-data slot, native view/sampler/layout, resource signature, whether the native write matched or was refreshed, and the command artifact when available;
+- scene primary handle/recording generation, planner/context/resource/descriptor generations, fresh-primary decision, dirty generation, swapchain writer counts, prior valid swapchain contents, overlays, and queue-present result.
+
+`get_vulkan_final_presentation_ledger` reads the newest entries. `configure_vulkan_final_presentation_ledger` enables, freezes/unfreezes, and clears capture. The ring automatically freezes on a concrete accepted-present invariant failure: a tracked source that is not descriptor-ready, a missing/wrong frame-data slot, a failed native descriptor write, a native view/sampler mismatch, or a present with neither a writer nor valid prior swapchain contents. Legitimate bootstrap clears and unchanged-image presents were explicitly excluded from auto-freeze after live validation exposed those cases.
+
+The isolated Vulkan session `final-present-ledger-20260804` produced the first decisive freeze on frame 4:
+
+- intended source: `FxaaOutputTexture`, descriptor epoch 4 / native generation 3, image view `2084700040160`;
+- bound `SourceTexture`: descriptor set `2048904972592`, set 2 binding 0, frame-data slot 0, image view `2082993655664`, retained from the frame-3 observation;
+- sampler matched (`2084681116096`), the source was ready, the full 1920x1080 source/swapchain extents matched, one swapchain write was recorded, and the scene primary was freshly recorded;
+- automatic freeze reason: `bound final source descriptor payload differs from the current native source`.
+
+This directly explains the one-frame magenta/black/quadrant family: the logical final source advances to a replacement physical FXAA view, but the final-present descriptor can still contain the previous view. Fresh primary recording does not repair stale descriptor contents and is therefore no longer the primary suspect for this remaining failure. The next fix must make the final-present descriptor publication atomic with the source resource generation, then invalidate/re-record the owning secondary artifact when its bound descriptor slot cannot be safely updated.
+
+Visual evidence after the freeze was captured from two camera positions and inspected:
+
+- `Build/_AgentValidation/20260803-directional-light-shadow/mcp-captures/Screenshot_20260804_192441_669_37075d40158d4264a5263b5cca503158.png`;
+- `Build/_AgentValidation/20260803-directional-light-shadow/mcp-captures/Screenshot_20260804_192516_006_27a6b01a348d45e0b07170c926420c0a.png`.
+
+Both are full-resolution 1920x1080 scene readbacks and change with the camera, ruling out a permanently stale capture source. The named session was stopped through the session manager. Session file logging produced no runtime log files, so the structured ledger and inspected MCP captures are the durable evidence for this run. `rdc doctor` passed. The Vulkan renderer and full editor builds completed with 0 warnings and 0 errors. No tests were added or run because live acceptance remains open and the user has not cleared regression-test work.
+
+#### Remaining items 2-4 implementation and acceptance (2026-08-04)
+
+Items 2-4 below are now complete. The implementation deliberately leaves ordinary scene packets at 64 draws and preserves every unscheduled/inline fallback. The final editor build completed with 0 warnings and 0 errors. No regression tests were added or run because the active rendering regression still requires user clearance before test work.
+
+Scheduled-chain descriptor preflight:
+
+- `TransitionFrameOpDescriptorSnapshotsForSampling` now receives the scheduled key map and cache. A mesh operation is skipped only when its key resolves to a valid scheduled packet whose source range contains that exact operation.
+- The executable secondary still establishes its deduplicated descriptor-image entry requirements immediately before the primary opens the render scope and executes the buffers. If execution falls back inline, the existing mesh path re-establishes its prepared descriptor transitions before opening the inline render scope. Indirect, compute, unscheduled, and other inline operations remain unchanged.
+- `get_render_profiler_stats` now exposes `context_pass_transitions`, `barrier_planning_emission`, and `op_dispatch`. A rebuilt isolated editor returned all three fields and zero Vulkan validation errors.
+- In the warm live pass, 123 scheduled mesh chains were reused with zero secondary recordings. Primary encoding settled in the approximately 10-18 ms range under the enabled audit/ledger diagnostics, compared with the earlier 30.52 ms all-reused sample that still performed the duplicate scan. This is an improvement, not a claim that the broader 30 Hz frame is solved.
+
+Bounded shadow packet identity:
+
+- Shadow-view render packets are capped at 24 draws; non-shadow packets remain capped at 64.
+- Shadow casters are sorted into eight stable renderer/material hash buckets before the existing material/renderer order. Shadow chain ordinals are bucket plus per-bucket occurrence, so membership changes cannot shift every later bucket.
+- The first camera sweep warmed descriptor allocation variants from 377 to 426. Repeated sweeps then held both the live count and high-water mark at 426. Ordinary moving frames recorded 17 chains, one shadow-membership transition recorded 22, and settled frames recorded zero while reusing 144-146 chains.
+- One transition frame recorded 146 chains. The profiler's first dirty record identifies `RenderViewKind.Main`, dependency field `BufferAllocationGeneration`, and resource-plan revision `1 -> 4`; it is not shadow packet churn. Importantly, `BuildCommandChainDependencySignature` currently assigns `packet.ResourcePlanSnapshot.Revision` to both `BufferAllocationGeneration` and `ResourcePlanGeneration`. The diagnostic therefore reports a coarse renderer-wide planning revision through a buffer-specific field name; it does **not** establish that a `VkBuffer`, allocation, or device address changed. This is now the separate open item 5 below rather than part of CSM acceptance.
+
+Cascade placement and atlas sampling:
+
+- `rdc doctor` passed. `Build/_AgentValidation/20260803-directional-light-shadow/renderdoc/csm-vulkan-dirty-frame150_frame150.rdc` is a valid Vulkan capture with 413 draws. The 4096x4096 D24 cascade atlas is RenderDoc resource 6346; its four populated 1024 allocations were exported and visually inspected at `renderdoc/fix4-atlas-inspection/cascade-atlas-frame150-4096.png`. The `rdc` session was closed after inspection.
+- The fresh sequential-atlas run placed the four 1024 allocations at allocator rectangles `(0,0)`, `(1024,0)`, `(0,1024)`, and `(1024,1024)`, with two-texel gutters producing inner rectangles `(2,2)`, `(1026,2)`, `(2,1026)`, and `(1026,1026)`, each 1020x1020. All four were resident and sampleable.
+- For all four cascades, `CascadeProvenance` reported identical current and rendered matrix hashes, identical request/allocation/sample content generations, `fallback=None`, `StaleSampled=0`, and `MixedGenerationPrevented=0`. Both deferred and forward binding selected page 0 and records 0-3 from the same published slots.
+- The coordinate contract is internally consistent: shadow projection converts clip Y to framebuffer-texture Y once; atlas scale/bias converts the allocator's bottom-origin tile rectangle to the Vulkan texture's top-origin address once. RenderDoc event 73 used tile viewport `(1026,4094,1020,-1020)` and scissor `(1026,3074,1020,1020)`. Later deferred lighting event 9255 used the full 1767x994 viewport/scissor, proving tile state did not leak into post-processing or presentation.
+- Cascade debug colors were captured from two camera positions at `mcp-captures/fix4-cascade-debug/enabled-position-a/` and `enabled-position-b/`. The visible geometry changed from the expected green band to the expected red near band as the camera crossed the split. `DebugCascadeColors` was read back as `false` before shutdown.
+- Camera sequences and inspected screenshots stayed full-frame and upright, with no black/magenta/quadrant frame, no disappearing Sponza meshes, and no post-process tile inheritance. No additional cascade-matrix or atlas-Y patch was justified by this evidence.
+
+## Fix ledger, in priority order
+
+The upside-down regression is corrected. Fix 3 as a whole remains open until cold start and resize reliably publish the intended final render target to every swapchain image without zeroed, stale, or atlas-quadrant content. Items 2-4 are now complete and retained below as the accepted implementation contract. Item 5 tracks the independent main-view command-chain invalidation wave; item 6 tracks the skybox schema mismatch.
+
+### 1. Eliminate cold/resize final-target publication corruption
+
+The orientation boundary is now deterministic, but the source reaching it is not. The new final-presentation ledger proves one concrete transition failure: `FxaaOutputTexture` advanced from native view `2082993655664` to `2084700040160`, while the final `SourceTexture` descriptor remained on the old view for the accepted frame. A fresh primary and correct full-frame extents were present, so the remaining work is descriptor/resource-generation publication and secondary ownership, not another blanket primary-rerecord workaround. Earlier runs also captured an all-zero FXAA source, black resize restores, and red/blue quadrant HWND content from this failure family.
+
+Required validation/fix:
+
+- Use the implemented ledger on the first ready frame and after each swapchain/render-target generation change; keep RenderDoc for the first unresolved writer-side or execution-side mismatch.
+- Make `SourceTexture` publication consume one immutable tuple of logical epoch, native generation, image/view/sampler, descriptor slot, and owning command artifact. Reject or defer the frame if that tuple changes before submit.
+- Make render-target resize/generation changes invalidate every secondary whose framebuffer, viewport/scissor, or sampled image view depends on the previous generation.
+- Ensure a swapchain image is never presented from a stale atlas/post-process descriptor while its intended final source is zeroed or not ready.
+- Re-run cold start, resize down/up, camera motion, and paced multi-image captures with both paired internal targets and actual HWND evidence.
+
+### 2. Remove the scheduled-chain per-draw descriptor preflight (complete)
 
 The remaining all-reused encoding cost is now localized to the pass-transition path. `TransitionToPrimaryOperationPass` calls `TransitionFrameOpDescriptorSnapshotsForSampling`, which walks every mesh operation in the pass, enters pipeline/planner scopes, resolves a uniform slot, and transitions published descriptor images one draw at a time. Scheduled secondary chains then establish the same descriptor entry requirements again from their recorded artifacts. This duplicated scan explains a high primary-encoding time even when no secondary is recorded.
 
-Required change:
+Acceptance contract (met):
 
 - Pass scheduled-chain membership into `TransitionFrameOpDescriptorSnapshotsForSampling`.
 - Skip the per-draw descriptor transition for `MeshDrawOp` entries owned by a valid scheduled chain.
@@ -244,11 +357,11 @@ Relevant files:
 - `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Synchronization/VulkanRenderer.Synchronization.cs`
 - `XREngine.Editor/Mcp/Actions/EditorMcpActions.Profiler.cs`
 
-### 2. Stabilize dirty CSM packet identity and bound re-record work
+### 3. Stabilize dirty CSM packet identity and bound re-record work (complete)
 
 Command-chain packetization currently permits 64 mesh draws per packet for every view kind. A small caster-membership or cascade-fit change can therefore invalidate and reconstruct dozens of draws, and shifting the sorted caster list can move unrelated draws across packet boundaries.
 
-Required change:
+Acceptance contract (met):
 
 - Add a shadow-view packet limit (start by measuring 16 or 24 draws) while leaving ordinary scene packets at 64.
 - Treat the smaller packet size as a bounded mitigation, not the final identity model.
@@ -261,11 +374,11 @@ Relevant files:
 - `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Scheduling/CommandChains/Planning/VulkanRenderer.CommandChains.Packetization.cs`
 - `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Scheduling/CommandChains/Signatures/VulkanRenderer.CommandChains.Signatures.cs`
 
-### 3. Finish cascade positioning and atlas sampling validation
+### 4. Finish cascade positioning and atlas sampling validation (complete)
 
 The conservative collection and light-camera depth fixes address two known errors, but user validation still reports incorrect cascade placement. The next pass must inspect the actual resource rather than infer correctness from a final screenshot.
 
-Required validation/fix:
+Acceptance contract (met):
 
 - Capture all four atlas tiles in RenderDoc while the camera crosses a split and confirm each tile contains the expected slice geometry.
 - Compare the exact rendered light view-projection matrix with the matrix published to deferred and forward lighting for the same atomic atlas generation.
@@ -273,7 +386,42 @@ Required validation/fix:
 - Inspect cascade split selection and blend bands with cascade debug colors, then restore debug colors to off.
 - Confirm tile viewport/scissor state ends with the shadow pass and cannot be inherited by bloom, FXAA, swapchain, or debug-shape passes.
 
-### 4. Resolve the remaining procedural-skybox schema mismatch
+### 5. Separate coarse resource-plan revision changes from buffer binding identity (open)
+
+This is the remaining large command-chain recording spike observed during the fix 3 camera sweeps. It is independent of cascaded shadows.
+
+Observed frame:
+
+- Frame 4597 scheduled 206 chains, recorded 146, and reused 60. The comparable 146-recording frame took 184.16 ms overall and 56.86 ms in primary command encoding. Settled frames returned to zero recordings.
+- The first dirty chain was `RenderViewKind.Main`, pass 1, with an unchanged structural signature. Its invalidation reason was `ResourcePlan`, dependency field `BufferAllocationGeneration`, with revision `1 -> 4` and diagnostic affected range `4+1`.
+- Shadow frames in the same sweep remained bounded to 17 recordings normally and 22 on a caster-membership transition. Descriptor allocation variants remained at the warmed high-water mark of 426. The 146-chain wave is therefore not a cascade packet-identity failure.
+
+What `BufferAllocationGeneration` means in this trace:
+
+- `ResourcePlanSnapshot.Revision` is a coarse resource-planner revision carried by every render packet.
+- `BuildCommandChainDependencySignature` currently stores that same revision in both `BufferAllocationGeneration` and `ResourcePlanGeneration`.
+- `CommandRecordingDependencySignature.Compare` classifies a `BufferAllocationGeneration` mismatch as a binding-identity change, so an unrelated planner revision can invalidate otherwise reusable command chains.
+- The field currently has no independent per-buffer allocation signature. A mismatch does not prove that a vertex, index, uniform, storage, indirect, or device-memory allocation changed. The unchanged structural signature also shows that command topology alone did not require the observed re-record.
+- Physical image, framebuffer, pipeline, and descriptor identities are tracked separately. They must be compared directly before attributing this wave to resize, presentation, or a concrete resource replacement.
+
+Required investigation/fix:
+
+- Add telemetry at each resource-planner revision increment that records the reason and the exact logical/physical image and buffer groups added, removed, resized, aliased, or replaced. This must identify what caused revision `1 -> 4` rather than inferring from the command-chain label.
+- Give command-chain dependencies a real buffer binding/allocation identity derived only from the buffers and offsets recorded by that packet. Do not populate a buffer-specific field from the global planner revision.
+- Keep the coarse resource-plan revision as scheduling/diagnostic metadata. It may invalidate an artifact only when a concrete resource, render-scope, descriptor, or recorded binding used by that artifact changed.
+- Verify the command-chain primary comparison also does not re-record the thin primary solely because the global planner revision changed while its concrete pass boundaries, barriers, and executable secondary set remained valid.
+- Repeat the warmed back-and-forth camera sweep. Require stable descriptor-allocation high-water marks, zero full-main-view re-record waves, and recordings limited to chains whose concrete resource identities or visible membership changed.
+- Preserve validation safety: any changed buffer handle, memory binding, offset, range, device address, descriptor payload, or render-target generation must still invalidate every artifact that recorded it.
+
+Relevant files:
+
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Scheduling/CommandChains/Planning/VulkanRenderer.CommandChains.Dependencies.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Reuse/Dependencies/CommandRecordingDependencySignature.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/FrameOps/ResourcePlanSnapshot.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Scheduling/CommandChains/Planning/VulkanRenderer.CommandChains.Packetization.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Scheduling/CommandChains/Planning/VulkanRenderer.CommandChains.Planning.cs`
+
+### 6. Resolve the remaining procedural-skybox schema mismatch
 
 Profiler diagnostics still report two auto-uniform frequency mismatches in the procedural skybox program:
 
@@ -282,7 +430,7 @@ Profiler diagnostics still report two auto-uniform frequency mismatches in the p
 
 Align the typed publisher with the material-owned shader blocks (or deliberately change both shader declarations and ownership together). Until the reflected and runtime frequencies agree, the fast path can fall back or retain stale sky constants even though the earlier numeric-only publisher fix allows the draw to exist.
 
-### 5. Final acceptance pass
+### 7. Final acceptance pass
 
 - Run at least three back-and-forth interactive camera sweeps after warm-up.
 - Require no quadrant placement, inversion, disappearing or independently displaced Sponza meshes, stale camera frames, cascade popping beyond the configured blend, or skybox loss.

@@ -22,7 +22,7 @@ internal static class BrokerMcpToolCatalog
         new McpToolSpec
         {
             Name = "start_agent_run",
-            Description = "Start one explicitly modeled OpenAI Responses API worker against a named local editor MCP session. Returns a run ID immediately. Optional background mode temporarily stores provider response state for polling.",
+            Description = "Start one bounded OpenAI Responses API worker. Omit editor_session for reasoning-only work, or name a local editor MCP session for controlled editor tools. Returns a run ID immediately. Optional background mode temporarily stores provider response state for polling.",
             InputSchema = StartRunSchema(),
         },
         new McpToolSpec
@@ -61,7 +61,7 @@ internal static class BrokerMcpToolCatalog
 
     private static JsonObject StartRunSchema()
         => ObjectSchema(
-            required: ["objective", "requested_model", "editor_session"],
+            required: ["objective", "requested_model"],
             ("objective", StringSchema("Concrete delegated objective.")),
             ("success_criteria", StringArraySchema("Observable completion criteria.")),
             ("constraints", StringArraySchema("Hard constraints and approval boundaries.")),
@@ -85,7 +85,7 @@ internal static class BrokerMcpToolCatalog
                 ["default"] = false,
                 ["description"] = "Opt in to asynchronous Responses API execution and polling. Provider response data is temporarily stored for polling and is not Zero Data Retention compatible.",
             }),
-            ("editor_session", StringSchema("Exact named session created by Manage-McpEditorSession.ps1.")),
+            ("editor_session", StringSchema("Optional exact session created by Manage-McpEditorSession.ps1. Omit for a reasoning-only run with no local tools.")),
             ("evidence_packet", new JsonObject
             {
                 ["type"] = "object",
@@ -119,12 +119,12 @@ internal static class BrokerMcpToolCatalog
                 ["additionalProperties"] = false,
                 ["properties"] = new JsonObject
                 {
-                    ["max_turns"] = IntegerSchema(1, 32, 10),
-                    ["max_tool_calls"] = IntegerSchema(0, 256, 24),
-                    ["max_output_tokens"] = IntegerSchema(16, 128_000, 8_192),
+                    ["max_turns"] = IntegerSchema(1, 32, 3),
+                    ["max_tool_calls"] = IntegerSchema(0, 256, 8),
+                    ["max_output_tokens"] = IntegerSchema(16, 128_000, 4_096),
                     ["max_tool_result_bytes"] = IntegerSchema(1_024, 4_194_304, 262_144),
-                    ["max_elapsed_seconds"] = IntegerSchema(1, 3_600, 300),
-                    ["max_retries"] = IntegerSchema(0, 5, 2),
+                    ["max_elapsed_seconds"] = IntegerSchema(1, 3_600, 120),
+                    ["max_retries"] = IntegerSchema(0, 5, 1),
                     ["max_concurrency"] = IntegerSchema(1, 8, 1),
                 },
             }),

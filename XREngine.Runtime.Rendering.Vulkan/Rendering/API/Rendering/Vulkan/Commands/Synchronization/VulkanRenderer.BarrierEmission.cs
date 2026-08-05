@@ -1183,7 +1183,9 @@ namespace XREngine.Rendering.Vulkan
             int[] meshDrawUniformSlotsByOpIndex,
             Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> meshDrawSlotsByRendererFamily,
             Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> meshFrameDataFamilyBases,
-            int frameDataImageIndex)
+            int frameDataImageIndex,
+            CommandChainKey[]? scheduledCommandChainKeysByOpIndex,
+            Dictionary<CommandChainKey, CommandChain>? scheduledCommandChainCache)
         {
             for (int i = startIndex; i < ops.Length; i++)
             {
@@ -1197,6 +1199,22 @@ namespace XREngine.Rendering.Vulkan
                 bool transitionedPublishedDescriptors = false;
                 if (candidate is MeshDrawOp meshDraw)
                 {
+                    // A scheduled mesh secondary publishes its exact, deduplicated
+                    // descriptor-image entry requirements immediately before the
+                    // primary opens its render scope and executes the buffers.
+                    // Scanning the logical draw here repeats
+                    // pipeline/planner/slot work for every mesh in an all-reused
+                    // chain. If scheduled execution later falls back inline, the
+                    // mesh op re-establishes its descriptor transition before it
+                    // opens the inline render scope.
+                    if (IsDescriptorTransitionOwnedByScheduledMeshChain(
+                            i,
+                            scheduledCommandChainKeysByOpIndex,
+                            scheduledCommandChainCache))
+                    {
+                        continue;
+                    }
+
                     int drawUniformSlot = GetOrAssignPrimaryMeshDrawUniformSlot(
                         i,
                         meshDrawUniformSlotsByOpIndex,
@@ -1260,6 +1278,32 @@ namespace XREngine.Rendering.Vulkan
                 foreach (XRTexture texture in snapshot.SamplersByName.Values)
                     TransitionDescriptorTextureForSampling(commandBuffer, texture, candidate.Target);
             }
+        }
+
+        private static bool IsDescriptorTransitionOwnedByScheduledMeshChain(
+            int opIndex,
+            CommandChainKey[]? keysByOpIndex,
+            Dictionary<CommandChainKey, CommandChain>? commandChainCache)
+        {
+            if (keysByOpIndex is null ||
+                commandChainCache is null ||
+                (uint)opIndex >= (uint)keysByOpIndex.Length)
+            {
+                return false;
+            }
+
+            CommandChainKey key = keysByOpIndex[opIndex];
+            if (key.ChainOrdinal < 0 ||
+                !commandChainCache.TryGetValue(key, out CommandChain? chain))
+            {
+                return false;
+            }
+
+            return chain.ScheduledPacket &&
+                   chain.SourceStartIndex >= 0 &&
+                   chain.SourceCount > 0 &&
+                   opIndex >= chain.SourceStartIndex &&
+                   opIndex < chain.SourceStartIndex + chain.SourceCount;
         }
 
         internal bool TransitionPublishedDescriptorSetImagesForSampling(

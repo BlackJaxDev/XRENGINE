@@ -121,7 +121,10 @@ public unsafe partial class VulkanRenderer
         int targetIdentity = ResolveCommandChainTargetIdentity(first);
         DescriptorBindingSnapshot firstDescriptorSnapshot = CreateDescriptorSnapshot(first);
         int runCount = 1;
-        int available = Math.Min(ops.Length - startIndex, MaxMeshDrawsPerRenderPacket);
+        int packetDrawLimit = viewKey.Kind == RenderViewKind.Shadow
+            ? MaxShadowMeshDrawsPerRenderPacket
+            : MaxMeshDrawsPerRenderPacket;
+        int available = Math.Min(ops.Length - startIndex, packetDrawLimit);
         while (runCount < available &&
                ops[startIndex + runCount] is MeshDrawOp next &&
                IsMeshDrawPacketCompatible(
@@ -228,6 +231,17 @@ public unsafe partial class VulkanRenderer
         if (candidateDraw.Transparent != firstDraw.Transparent)
             return false;
 
+        if (viewKey.Kind == RenderViewKind.Shadow &&
+            ResolveShadowCommandChainBucket(
+                candidateDraw.RendererIdentity,
+                candidateDraw.MaterialIdentity) !=
+            ResolveShadowCommandChainBucket(
+                firstDraw.RendererIdentity,
+                firstDraw.MaterialIdentity))
+        {
+            return false;
+        }
+
         // Directional-shadow membership is stable while the camera moves, so a
         // packet can safely switch graphics programs and descriptor layouts per
         // draw and amortize secondary execution. Main-view membership churns with
@@ -322,6 +336,27 @@ public unsafe partial class VulkanRenderer
         RenderPacket packet,
         Dictionary<ulong, int> structuralOccurrences)
     {
+        if (packet.ViewKey.Kind == RenderViewKind.Shadow &&
+            packet.DrawCount > 0)
+        {
+            int bucket = ResolveShadowCommandChainBucket(
+                packet.FirstDraw.RendererIdentity,
+                packet.FirstDraw.MaterialIdentity);
+            ulong bucketSignature = unchecked(
+                0x534841444F570000UL | (uint)bucket);
+            structuralOccurrences.TryGetValue(
+                bucketSignature,
+                out int bucketOccurrence);
+            structuralOccurrences[bucketSignature] = bucketOccurrence + 1;
+            int bucketOrdinal = HashCode.Combine(
+                unchecked((int)0x53484457),
+                bucket,
+                bucketOccurrence);
+            return bucketOrdinal == -1
+                ? int.MaxValue
+                : bucketOrdinal;
+        }
+
         ulong structuralSignature = packet.StructuralSignature;
         ulong descriptorBindingVariant =
             ResolveCommandChainDescriptorBindingVariant(
