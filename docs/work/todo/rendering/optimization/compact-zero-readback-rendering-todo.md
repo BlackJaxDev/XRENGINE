@@ -13,7 +13,7 @@ delayed diagnostics.
 
 - [Workstream 03 validation](../../../testing/rendering/03-05-optimization-validation-todo.md#workstream-03-validation)
   owns Phases 0-3 and 5-7 plus the production zero-readback completion gate.
-- [07 - Occlusion Systems Performance](07-occlusion-systems-performance-todo.md)
+- [Vulkan occlusion code changes](../vulkan-core-hardening-and-device-loss-todo.md#9-make-occlusion-modes-bounded-and-effective)
   owns Phase 4, Hi-Z effectiveness, and any production promotion decision.
 
 Do not promote this child independently. Do not begin Phase 4 while executing

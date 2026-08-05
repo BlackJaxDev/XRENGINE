@@ -7,9 +7,9 @@ Execution ownership:
 
 - [Workstream 03](../../../testing/rendering/03-05-optimization-validation-todo.md#workstream-03-validation)
   owns the ordered Vulkan zero-readback submission gate.
-- [Workstream 07](../optimization/07-occlusion-systems-performance-todo.md)
+- [Vulkan occlusion code changes](../vulkan-core-hardening-and-device-loss-todo.md#9-make-occlusion-modes-bounded-and-effective)
   owns occlusion effectiveness and production promotion.
-- [Workstream 08](../optimization/08-render-tail-latency-shadows-streaming-jobs-todo.md)
+- [Vulkan render-tail code changes](../vulkan-core-hardening-and-device-loss-todo.md#7-bound-shadow-streaming-and-render-thread-tail-work)
   owns render-thread upload/publication tail latency.
 - This roadmap retains the broader GPUScene, material, meshlet, LOD,
   residency, cross-backend, and production-architecture implementation detail.

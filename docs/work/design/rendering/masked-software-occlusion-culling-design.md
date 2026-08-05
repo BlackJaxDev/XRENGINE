@@ -3,8 +3,8 @@
 ## Status
 
 - Author: rendering team
-- Implementation state: opt-in scalar SOC is implemented for traditional CPU mesh rendering and meshlet command visibility. Rectangle tests now use the masked tile data instead of a per-pixel scan. `CpuSocUseAvx2` is exposed as the planned SIMD selector; current correctness uses the scalar path.
-- Status: Phase A implemented; AVX2, stereo buffers, and promotion validation remain tracked in the TODO.
+- Implementation state: opt-in scalar SOC is implemented for traditional CPU mesh rendering and meshlet command visibility. Rectangle tests now use the masked tile data instead of a per-pixel scan. `CpuSocUseAvx2` is the current legacy planned selector; the [Vulkan CPU SIMD Refactor Pass](vulkan-cpu-simd-refactor-pass-design.md) replaces it with the shared scalar/128-bit/256-bit policy before SIMD cutover. Current correctness uses the scalar path.
+- Status: Phase A implemented; shared-policy SIMD, stereo buffers, and promotion validation remain tracked in the TODO.
 - Supersedes the C-CPU-3 scaffold in [render-submission-perf-debug-plan.md](render-submission-perf-debug-plan.md). Existing scaffold (`CpuSoftwareOcclusionCuller`, telemetry counters, `CpuSoftwareOcclusion` mode plus the legacy `EnableCpuSoftwareOcclusionCulling` toggle) is repurposed; no public API is removed.
 - Implementation TODO:
   [masked-software-occlusion-culling-todo.md](../../todo/rendering/masked-software-occlusion-culling-todo.md).
@@ -124,7 +124,7 @@ implementation constraints:
   rather than replacing it with a static-only API.
 - Visibility tests need the command's `StableQueryKey`; otherwise selected
   occluders cannot be exempted from self-occlusion.
-- The pass stays opt-in until scalar correctness, AVX2 parity, editor
+- The pass stays opt-in until scalar correctness, retained SIMD-width parity, editor
   validation, and Sponza capture acceptance pass. The current scaffold and
   settings default to disabled.
 - Occluder rasterization must use render-thread snapshots of mesh, material,
@@ -144,9 +144,9 @@ implementation constraints:
 | Metric                          | Budget                                       |
 | ------------------------------- | -------------------------------------------- |
 | SOC pass total CPU time / frame | ≤ 0.6 ms on Ryzen 7950X3D (single thread)    |
-| AVX2-enabled hot loop           | ≤ 0.15 ms                                    |
-| Occluder rasterization (per tri)| ≤ 1 µs scalar / ≤ 0.1 µs AVX2                |
-| AABB test                       | ≤ 50 ns scalar / ≤ 10 ns AVX2                |
+| Selected SIMD hot loop          | ≤ 0.15 ms on the recorded hardware/width     |
+| Occluder rasterization (per tri)| ≤ 1 µs scalar / ≤ 0.1 µs selected SIMD       |
+| AABB test                       | ≤ 50 ns scalar / ≤ 10 ns selected SIMD       |
 | Max occluder triangles / frame  | 5000 default (tunable; budget enforced)      |
 | Max test queries / frame        | 50000 (every CPU render command)             |
 | Buffer resolution               | 256 × 128 (configurable; W%8==0, H%4==0)     |
@@ -154,8 +154,9 @@ implementation constraints:
 
 These are validation targets, not hard contracts. The reference Intel
 implementation reports ~0.5 ms / frame for an Atrium-style scene at
-1920×1080 (paper §7) with AVX2 single-threaded; our 256×128 target is
-~13× cheaper to rasterize. Holding 0.6 ms is conservative.
+1920×1080 (paper §7) with AVX2 single-threaded; that is a reference result,
+not XRENGINE's required ISA. Our 256×128 target is ~13× cheaper to rasterize.
+Holding 0.6 ms is conservative.
 
 ### Conventions and units
 
@@ -212,7 +213,7 @@ XREngine.Runtime.Rendering/
   Rendering/Occlusion/
     Soc/                                            [NEW namespace]
       MaskedOcclusionBuffer.cs        // The tiled depth buffer + ops
-      MaskedOcclusionRasterizer.cs    // Scalar + AVX2 triangle raster
+      MaskedOcclusionRasterizer.cs    // Scalar + retained SIMD triangle raster
       MaskedOcclusionAabbTester.cs    // AABB → screen rect → depth compare
       OccluderSelector.cs             // Per-frame occluder selection
       CpuSoftwareOcclusionCuller.cs   // Public facade
@@ -362,9 +363,9 @@ Per occluder, per triangle:
 
 1. **Vertex transform.** `position_world = ModelMatrix * vertex; clip = ViewProj * position_world`.
    Output is clip-space `(x, y, z, w)` but we **only retain (x, y, w)** —
-   z is unused (reference uses `depth = 1/w`). Scalar path uses
-   `Vector4.Transform`; AVX2 path transforms 8 vertices in parallel via
-   `Vector256<float>`.
+   z is unused (reference uses `depth = 1/w`). The current scalar path uses
+   `Vector4.Transform`. Keep that runtime-vectorized transform unless batching
+   multiple independent bounds or vertices proves a complete-stage win.
 2. **Clipping.** Reject triangle if entirely outside any clip plane. If
    straddling near plane (w ≤ near), clip against near (only — far is
    fine because 1/w → 0). We expose per-call clip-plane disable flags
@@ -379,17 +380,18 @@ Per occluder, per triangle:
    by default. XRENGINE uses left-handed/D3D winding, so this aligns.
    Per-occluder override exposed via `RenderingParameters.CullMode`.
 5. **Edge function setup.** Standard half-plane edge functions evaluated
-   in fixed-point integer arithmetic. AVX2 path evaluates 8 pixels'
-   edge values per cycle using `Vector256<int>` adds.
+   in fixed-point integer arithmetic. The measured 256-bit candidate evaluates
+   8 pixels' edge values per cycle; the portable 128-bit path evaluates two
+   4-pixel groups.
 6. **Per-pixel `depth = 1/w` interpolation.** Reciprocal w is linear in
    screen space (this is the key insight enabling the cheap algorithm),
    so we interpolate `1/w` directly using the edge gradients — no
    perspective correction needed for depth.
 7. **Tile loop / binning.** For each 8 x 4 stored tile the triangle's
    bounding rect overlaps:
-   - Evaluate edge functions for all 32 tile samples. The AVX2 path may
-     group work through 32 x 8 traversal bins, then update the underlying
-     8 x 4 tiles.
+   - Evaluate edge functions for all 32 tile samples. A retained SIMD path may
+     group work through larger traversal bins, but it updates the underlying
+     8 x 4 tiles and does not redefine their stored layout.
    - Coverage mask = AND of three edges' sign bits.
    - Per covered subtile, compute the *farthest* `1/w` corner of the
      subtile (conservative: closest-corner would over-occlude).
@@ -415,9 +417,10 @@ caller.
 
 This is a faithful port or clean-room reimplementation of the reference
 Apache-2.0 algorithm.
-Scalar version first (clear correctness), AVX2 version second (performance);
-both maintained alongside (the scalar path is the reference oracle for
-`Debug.Assert` parity tests).
+Implement the scalar oracle first, the portable 128-bit path second, and a
+256-bit path only after measurement. Retain only widths that improve the owning
+stage and full frame; the scalar path remains the reference oracle for parity
+tests.
 
 ### Visibility test (`MaskedOcclusionAabbTester.TestVisible`)
 
@@ -434,8 +437,9 @@ Per `TestVisible(stableQueryKey, worldBounds)` call:
 1. **Self-occlusion guard.** If `stableQueryKey` is in the current frame's
    selected-occluder key set, return `true` immediately.
 2. **Compute 8 AABB corners in world space**, transform to clip space.
-   8 × `Vector4.Transform`; AVX2 path uses one matrix multiply on a
-   packed 8-corner SoA layout.
+   8 × `Vector4.Transform`. Introduce a stage-native cross-bound SoA batch only
+   if its construction and publication cost beats the existing transform path;
+   do not transpose each AABB merely to fill vector lanes.
 3. **Frustum reject.** If all 8 corners are outside any single clip
    plane, return `false` (frustum-culled). Frees the caller from a
    pre-frustum check.
@@ -491,10 +495,15 @@ CpuSocBufferHeight                         // default 128
 CpuSocOccluderTriangleBudget               // default 5000
 CpuSocMaxOccluders                         // default 64
 CpuSocMinOccluderScreenArea                // default 0.005 (NDC²)
-CpuSocUseAvx2                              // default true if CPU supports
+CpuSocUseAvx2                              // current legacy selector; remove at shared SIMD-policy cutover
 CpuSocDebugVisualization                   // default false (overlay)
 CpuSocDebugForceVisible                    // default false (kill-switch)
 ```
+
+`CpuSocUseAvx2` describes the current settings surface only. Phase B replaces
+it with the shared `Auto | Scalar | Vector128 | Vector256` diagnostic policy in
+the [Vulkan CPU SIMD Refactor Pass](vulkan-cpu-simd-refactor-pass-design.md);
+SOC does not retain an ISA-specific public toggle.
 
 All settings above are exposed through engine effective settings and the
 runtime rendering facade. `XRE_OCCLUSION_CULLING_MODE=CpuSoftwareOcclusion`
@@ -633,7 +642,7 @@ Toggle uses the new `CpuSocDebugVisualization` setting.
 
 1. **`MaskedOcclusionBufferTests`** — buffer state transitions, tile-merge
    correctness, save/restore round trips.
-2. **`MaskedOcclusionRasterizerTests`** — scalar vs AVX2 parity on a corpus
+2. **`MaskedOcclusionRasterizerTests`** — scalar vs every retained SIMD-width parity on a corpus
    of test triangles (axis-aligned, degenerate, near-clip-spanning,
    tiny, huge, back-facing).
 3. **`MaskedOcclusionAabbTesterTests`** — AABB inside/outside/straddling
@@ -657,14 +666,14 @@ Acceptance for the Sponza diagnostic:
 | Risk                                                | Mitigation                                                              |
 | --------------------------------------------------- | ----------------------------------------------------------------------- |
 | Rasterizer bugs cull visible meshes                 | Conservative rounding + `CpuSocDebugForceVisible` kill-switch.          |
-| AVX2 not available on target CPU                    | Runtime check via `Avx2.IsSupported`; scalar fallback first, then optional SSE 4.1 if profiling shows it is worth carrying. |
+| Requested SIMD width not available on target CPU    | Shared capability selection; `Auto` reports its scalar or supported-width choice, while an unsupported forced width fails explicitly. |
 | Reciprocal-depth (1/w) sign confusion vs z-depth    | Single helper `IsBehind(tileZ, queryZ)` documented + tested; scalar oracle parity tests cover every comparator. |
 | Selector picks bad occluders (high tri, small area) | Score penalizes tri count; minimum-area threshold; budget caps.         |
 | Stereo correctness                                  | OR-combine across eyes; per-eye buffers; AABB test surveys both.        |
 | Hot-path allocations                                | All buffers pooled / instance-fields; no per-call allocs in `TestVisible`. |
 | Render-thread blocking                              | Phase 1 single-threaded; budget enforced at ≤0.6 ms total.              |
 | Self-occlusion of selected occluders                | Tag occluder keys; `TestVisible` returns visible on tagged keys.        |
-| Near-plane clipping precision                       | Use reference's per-call `CLIP_PLANE_NEAR` enable; emit clipped-triangle pairs in scalar path before AVX2 rasterizes. |
+| Near-plane clipping precision                       | Use reference's per-call `CLIP_PLANE_NEAR` enable; emit clipped-triangle pairs in the scalar setup before the selected raster kernel. |
 | Ported-source license obligations                   | Preserve Apache-2.0 headers / notices for any translated reference code. |
 
 ## Implementation Plan
@@ -685,12 +694,16 @@ Acceptance: SOC remains opt-in; Sponza `Visible(query)` drops when enabled;
 forced-disabled behavior matches today's path; no visual regression; total
 budget <= 1.5 ms (relaxed for scalar).
 
-### Phase B — AVX2 hot loop (separate PR, ~2 days)
+### Phase B — SIMD hot loop (separate PR, estimate after baseline)
 
-1. AVX2 rasterizer (port or reimplement the Apache-2.0 Intel reference algorithm).
-2. AVX2 AABB tester (8 corners + tile loop SIMD).
-3. Parity tests between scalar and AVX2 paths.
-4. Re-profile, target ≤ 0.6ms budget.
+1. Portable 128-bit tile-row rasterizer under the shared SIMD policy.
+2. Measured 256-bit eight-pixel rasterizer where supported.
+3. Batched AABB testing only if cross-bound measurements beat existing
+   `System.Numerics` transforms and scalar tile queries.
+4. Parity and conservative-visibility tests between scalar and every retained
+   width.
+5. Re-profile the owning stage and full frame; retain the existing target of
+   ≤ 0.6ms only where the representative scene and hardware manifest match.
 
 ### Phase C — Threading (separate PR, ~2 days, optional)
 

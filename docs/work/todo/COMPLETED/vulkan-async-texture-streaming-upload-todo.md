@@ -4,7 +4,7 @@ Last Updated: 2026-06-21
 Owner: Rendering
 Status: historical implementation tracker. Implementation is complete; live
 performance/publication validation moved to
-[08 - Render Tail Latency](../rendering/optimization/08-render-tail-latency-shadows-streaming-jobs-todo.md)
+[Vulkan render-tail code changes](../rendering/vulkan-core-hardening-and-device-loss-todo.md#7-bound-shadow-streaming-and-render-thread-tail-work)
 and feature/residency follow-up moved to the
 [Texture Runtime, Streaming, And Virtual Texturing TODO](../texturing/texture-runtime-streaming-virtual-texturing-todo.md).
 

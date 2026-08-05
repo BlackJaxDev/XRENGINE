@@ -1,10 +1,20 @@
 # Vulkan Runtime Code Organization TODO
 
-Last updated: 2026-07-30
+Last updated: 2026-08-05
 
 Owner: Rendering / Vulkan
 
-Status: Implementation and measurable runtime acceptance complete; external and facade exceptions recorded
+Status: Historical extraction milestone; final simplification reopened in the consolidated hardening tracker
+
+The checkmarks below record the 2026-07-30 extraction milestone and its evidence,
+not the final v1 source architecture. A 2026-08-05 audit found 858 C# files,
+approximately 170,048 physical lines, and 320 `VulkanRenderer*.cs` files under
+the Vulkan core path. That growth and the still-stateful facade do not meet the
+new target. Remaining ownership, file-surface, and lifecycle-spine work is
+canonical in section 4 of the
+[Vulkan Core Hardening And Recording Code Changes TODO](vulkan-core-hardening-and-device-loss-todo.md#4-collapse-the-runtime-surface-and-remove-hot-path-work)
+and the
+[Vulkan Render Loop Target Architecture](../../design/rendering/vulkan-render-loop-target-architecture.md).
 
 Checklist reconciled against the integrated source and validation evidence on
 2026-07-30. Checked items have concrete implementation or recorded validation.
@@ -17,9 +27,10 @@ Related documentation and work:
 - [Vulkan Renderer](../../../architecture/rendering/vulkan-renderer.md)
 - [Rendering Code Map](../../../architecture/rendering/code-map.md)
 - [Frame Lifecycle And Dispatch Paths](../../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
-- [Vulkan Render Loop Design](../../design/rendering/vulkan-render-loop-design.md)
+- [Vulkan Render Loop Target Architecture](../../design/rendering/vulkan-render-loop-target-architecture.md)
+- [Vulkan Multi-View Render-Graph Design](../../design/rendering/vulkan-render-loop-design.md)
 - [Vulkan Desktop Frame Loop Decomposition TODO](../COMPLETED/vulkan-desktop-frame-loop-decomposition-todo.md)
-- [Vulkan Primary Command Recording Fast Path TODO](optimization/vulkan-primary-command-recording-fast-path-todo.md)
+- [Vulkan command-recording code changes](vulkan-core-hardening-and-device-loss-todo.md#3-make-command-recording-snapshot-driven-and-reusable)
 - [Vulkan Dynamic Rendering Migration TODO](vulkan-dynamic-rendering-migration-todo.md)
 - [Render Pipeline Resource Lifecycle TODO](render-pipeline-resource-lifecycle-todo.md)
 - [OpenGL And Vulkan Rendering Hot Reload TODO](../COMPLETED/rendering-backend-hot-reload-todo.md)

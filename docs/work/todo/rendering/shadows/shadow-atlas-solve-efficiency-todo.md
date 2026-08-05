@@ -1,7 +1,7 @@
 # Shadow Atlas Solve Efficiency TODO
 
 Status: child implementation tracker for
-[08 - Render Tail Latency](../optimization/08-render-tail-latency-shadows-streaming-jobs-todo.md);
+[Vulkan render-tail code changes](../vulkan-core-hardening-and-device-loss-todo.md#7-bound-shadow-streaming-and-render-thread-tail-work);
 code implementation complete, live benchmark/merge follow-up pending. Created
 2026-06-12, updated 2026-07-28.
 Branch: `rendering/shadow-atlas-solve-efficiency` (create before Phase 1, merge

@@ -2,7 +2,7 @@
 
 Status: active master feature/quality tracker, audited and rewritten
 2026-06-18; performance execution for directional updates is governed by
-[08 - Render Tail Latency](../optimization/08-render-tail-latency-shadows-streaming-jobs-todo.md).
+[Vulkan render-tail code changes](../vulkan-core-hardening-and-device-loss-todo.md#7-bound-shadow-streaming-and-render-thread-tail-work).
 
 Ownership: this document remains canonical for receiver relevance, grouping
 and paging, moment encodings/filtering, temporal shadow features, diagnostics,

@@ -46,7 +46,7 @@ Related notes:
 
 - `docs/work/investigations/rendering/archive/shadow-atlas-framerate-regression-2026-07-02.md`
 - `docs/work/todo/rendering/shadows/shadow-atlas-allocation-and-threading-todo.md`
-- `docs/work/todo/rendering/optimization/vulkan-primary-command-recording-fast-path-todo.md`
+- `docs/work/todo/rendering/vulkan-core-hardening-and-device-loss-todo.md` (command-recording section)
 
 ## Answer: Can We Temporally Reproject Stale Atlas Frames?
 
@@ -424,7 +424,7 @@ Acceptance criteria:
 - [ ] Revisit primary command-buffer reuse for shadow cascade frames; current
   dirty reason `primary-frame-state` keeps CPU recording high even when GPU
   work is small (tracked in
-  `docs/work/todo/rendering/optimization/vulkan-primary-command-recording-fast-path-todo.md`;
+  `docs/work/todo/rendering/vulkan-core-hardening-and-device-loss-todo.md` (command-recording section);
   keep the shadow-specific reuse criteria here).
 - [x] Add profiler counters for cascade group CPU collection time, command
   generation time, command recording time, and GPU time.

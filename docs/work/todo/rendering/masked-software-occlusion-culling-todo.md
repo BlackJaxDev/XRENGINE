@@ -3,11 +3,11 @@
 Last Updated: 2026-07-28
 Owner: Rendering
 Status: Child implementation/correctness tracker for
-[07 - Occlusion Systems Performance](optimization/07-occlusion-systems-performance-todo.md).
+[Vulkan occlusion code changes](vulkan-core-hardening-and-device-loss-todo.md#9-make-occlusion-modes-bounded-and-effective).
 Scalar implementation is in place and opt-in. Selector/budget
 hardening, stereo-safe buffers, material rejection coverage, and scalar hot-loop
 cleanup are implemented. Remaining work is viewport texture presentation,
-runtime smoke/scene validation, and optional AVX2 specialization.
+runtime smoke/scene validation, and optional measured SIMD specialization.
 Target Branch: `rendering-masked-software-occlusion`
 
 Ownership: this document owns selector/rasterizer implementation, scalar/SIMD
@@ -18,6 +18,7 @@ diagnostic-only, or retired disposition.
 Design sources:
 
 - [Masked Software Occlusion Culling Design](../../design/rendering/masked-software-occlusion-culling-design.md)
+- [Vulkan CPU SIMD Refactor Pass Design](../../design/rendering/vulkan-cpu-simd-refactor-pass-design.md)
 - [Render Submission Performance Debug Plan](../../design/rendering/render-submission-perf-debug-plan.md)
 
 ## Goal
@@ -154,16 +155,21 @@ rendering-stat namespace imports in `Engine.Rendering.Stats*.cs`.
      or a linked report.
 
 5. Add SIMD acceleration.
-   - Implement an AVX2 rasterizer path behind `Avx2.IsSupported` and
-     `CpuSocUseAvx2`.
-   - Implement an AVX2 AABB tester path, or prove scalar AABB testing is
-     already below budget.
+   - Replace `CpuSocUseAvx2` with the shared
+     `Auto | Scalar | Vector128 | Vector256` policy defined by the SIMD design.
+   - Implement the portable 128-bit tile-row rasterizer first, then retain a
+     256-bit eight-pixel path only when it improves the owning stage and frame.
+   - Implement batched AABB testing only if cross-bound measurements beat the
+     existing `System.Numerics` and scalar implementation.
    - Keep scalar as the correctness oracle.
-   - Add scalar-vs-AVX2 parity tests for rasterization and AABB testing.
-   - Profile SOC timings and hot-path allocations.
-   - Acceptance: AVX2 path reaches `<= 0.6 ms` total SOC cost on the target
-     scene, or SOC remains opt-in with documented limits.
-   - Avoid adding SSE 4.1 unless profiling shows a real target-machine need.
+   - After live-path correctness is established, add parity coverage for every
+     retained width and scalar tail.
+   - Profile SOC stage/frame p50/p95/p99, bytes, vector iterations, tails, and
+     hot-path allocations.
+   - Acceptance: the selected path reaches `<= 0.6 ms` total SOC cost on the
+     matched target scene and improves full-frame p95, or SOC remains opt-in
+     with documented limits.
+   - Do not retain ISA-specific public settings or source hierarchies.
 
 6. Add stereo and OpenVR support.
    - [x] Add per-eye SOC buffers for active stereo render state.
@@ -194,8 +200,8 @@ rendering-stat namespace imports in `Engine.Rendering.Stats*.cs`.
 
 ## Acceptance Criteria
 
-- No false occlusion is observed in scalar, AVX2, Sponza, editor, mono, and
-  stereo/OpenVR validation.
+- No false occlusion is observed in scalar, every retained SIMD width, Sponza,
+  editor, mono, and stereo/OpenVR validation.
 - Traditional CPU mesh rendering supports SOC pre-culling.
 - Meshlet rendering supports SOC visibility and has runtime smoke validation.
 - Non-meshlet GPU indirect zero-readback remains explicitly out of SOC v1

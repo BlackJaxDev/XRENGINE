@@ -10,7 +10,7 @@ Cross-cutting relationship:
 - This tracker is an independent acceptance overlay across every renderer
   strategy. It is not a child phase of the Default pipeline, Deferred+, or any
   one backend.
-- [06 - Forward+ Prepass And Render-Graph Cost](06-forward-prepass-and-render-graph-cost-todo.md)
+- [Forward+ render-graph code changes](../vulkan-core-hardening-and-device-loss-todo.md#6-simplify-the-forward-render-graph)
   owns current Default-pipeline prepass/copy/replay topology; this tracker owns
   whether that resulting graph satisfies whole-frame XR budgets and per-eye
   correctness.

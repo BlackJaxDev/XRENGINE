@@ -3,7 +3,7 @@
 Last Updated: 2026-07-28
 Status: canonical active texture residency and virtual-texturing roadmap.
 Vulkan upload/publication tail performance is governed by
-[08 - Render Tail Latency](../rendering/optimization/08-render-tail-latency-shadows-streaming-jobs-todo.md).
+[Vulkan render-tail code changes](../rendering/vulkan-core-hardening-and-device-loss-todo.md#7-bound-shadow-streaming-and-render-thread-tail-work).
 Source design: [Texture Runtime, Streaming, And Virtual Texturing Design](../../design/texturing/texture-runtime-streaming-virtual-texturing-design.md)
 Compression/cache design: [Texture Compression And Cooked Texture Cache Design](../../design/texturing/texture-compression-and-cooked-cache-design.md)
 Compression/cache tracker: [Texture Compression And Cooked Texture Cache TODO](texture-compression-and-cooked-cache-todo.md)

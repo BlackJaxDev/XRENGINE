@@ -1,7 +1,7 @@
 # CPU async-query occlusion during camera motion TODO
 
 Status: child correctness tracker for
-[07 - Occlusion Systems Performance](optimization/07-occlusion-systems-performance-todo.md).
+[Vulkan occlusion code changes](vulkan-core-hardening-and-device-loss-todo.md#9-make-occlusion-modes-bounded-and-effective).
 The critical regression is fixed and validated. Stationary, slow-translation,
 slow-rotation, and return-to-stable Vulkan cases pass; the
 edge/cut/stereo/hierarchy stress matrix remains open.

@@ -1,7 +1,7 @@
 # Shadow Atlas Allocation Efficiency And Off-Render-Thread Solve TODO
 
 Status: child implementation tracker for
-[08 - Render Tail Latency](../optimization/08-render-tail-latency-shadows-streaming-jobs-todo.md);
+[Vulkan render-tail code changes](../vulkan-core-hardening-and-device-loss-todo.md#7-bound-shadow-streaming-and-render-thread-tail-work);
 implementation complete and validation follow-ups pending. Created 2026-07-02,
 updated 2026-07-28. Analysis of `ShadowAtlasManager` allocation strategy,
 hot-game-loop cost, and thread placement.

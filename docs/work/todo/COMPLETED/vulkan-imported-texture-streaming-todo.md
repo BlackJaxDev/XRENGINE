@@ -4,7 +4,7 @@ Last Updated: 2026-06-18
 Owner: Rendering
 Status: historical implementation tracker. Dense synchronized upload is
 implemented. Live Vulkan upload/publication performance validation moved to
-[08 - Render Tail Latency](../rendering/optimization/08-render-tail-latency-shadows-streaming-jobs-todo.md);
+[Vulkan render-tail code changes](../rendering/vulkan-core-hardening-and-device-loss-todo.md#7-bound-shadow-streaming-and-render-thread-tail-work);
 progressive/sparse residency belongs to the
 [Texture Runtime, Streaming, And Virtual Texturing TODO](../texturing/texture-runtime-streaming-virtual-texturing-todo.md).
 
