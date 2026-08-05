@@ -34,6 +34,8 @@ internal unsafe partial class VkMeshRenderer
 		ComputeDispatchSnapshot? snapshot = null)
 	{
 		imageInfo = default;
+		bool requiresReadyDescriptor =
+			snapshot?.IsSamplerReadyRequired(binding.Name) == true;
 		bool bindless = VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(binding);
 		MaterialTextureBindingResolution textureBinding = snapshot is not null
 			? MaterialTextureBindingResolver.Resolve(
@@ -59,9 +61,38 @@ internal unsafe partial class VkMeshRenderer
 						? namedTexture
 						: null);
 		XRTexture? texture = textureBinding.Texture;
+		if (VulkanRenderer.DescriptorTraceEnabled &&
+			string.Equals(binding.Name, "SourceTexture", StringComparison.Ordinal))
+		{
+			XRTexture? capturedTexture = null;
+			bool snapshotHasNamedTexture =
+				snapshot?.TryGetSamplerTexture(binding.Name, out capturedTexture) == true;
+			Debug.VulkanEvery(
+				$"Vulkan.Descriptor.SourceResolve.{GetHashCode()}.{_program?.BindingId ?? 0}.{binding.Set}.{binding.Binding}",
+				TimeSpan.FromSeconds(1),
+				"[VulkanDescriptor] source-resolve program='{0}' binding='{1}' set={2} bindingIndex={3} snapshot={4} required={5} captured={6} capturedTexture='{7}' resolvedTexture='{8}' rung={9} reason='{10}'.",
+				_program?.Data?.Name ?? "<null>",
+				binding.Name ?? "<null>",
+				binding.Set,
+				binding.Binding,
+				snapshot is not null,
+				requiresReadyDescriptor,
+				snapshotHasNamedTexture,
+				capturedTexture?.Name ?? capturedTexture?.GetDescribingName() ?? "<null>",
+				texture?.Name ?? texture?.GetDescribingName() ?? "<null>",
+				textureBinding.Rung,
+				textureBinding.Reason);
+		}
 
 		if (texture is null)
 		{
+			if (requiresReadyDescriptor)
+			{
+				WarnOnce($"Required texture for descriptor binding '{binding.Name}' is unavailable. Deferring the draw.");
+				RecordDescriptorFailure(binding, "required texture unavailable");
+				return false;
+			}
+
 			// Use a 1×1 magenta placeholder to satisfy the descriptor binding
 			// instead of failing the entire descriptor set write.
 			imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
@@ -95,7 +126,7 @@ internal unsafe partial class VkMeshRenderer
 			}
 			catch (VulkanOutOfMemoryException ex)
 			{
-				if (TryUsePlaceholderDescriptor(binding, descriptorType, arrayIndex, material, textureBinding, texture, "placeholder-texture-allocation-failed", out imageInfo))
+				if (TryUsePlaceholderDescriptor(binding, descriptorType, arrayIndex, material, textureBinding, texture, "placeholder-texture-allocation-failed", requiresReadyDescriptor, out imageInfo))
 					return true;
 
 				WarnOnce($"Texture for descriptor binding '{binding.Name}' could not allocate a Vulkan image: {ex.Message}");
@@ -111,11 +142,11 @@ internal unsafe partial class VkMeshRenderer
 		if (apiTextureObject is not IVkImageDescriptorSource source)
 		{
 			if (suppressSynchronousTextureUploadForPressure &&
-				TryUsePlaceholderDescriptor(binding, descriptorType, arrayIndex, material, textureBinding, texture, "placeholder-texture-allocation-pressure", out imageInfo))
+				TryUsePlaceholderDescriptor(binding, descriptorType, arrayIndex, material, textureBinding, texture, "placeholder-texture-allocation-pressure", requiresReadyDescriptor, out imageInfo))
 				return true;
 
 			if (!allowSynchronousTextureUpload &&
-				TryUsePlaceholderDescriptor(binding, descriptorType, arrayIndex, material, textureBinding, texture, "placeholder-texture-wrapper-not-ready", out imageInfo))
+				TryUsePlaceholderDescriptor(binding, descriptorType, arrayIndex, material, textureBinding, texture, "placeholder-texture-wrapper-not-ready", requiresReadyDescriptor, out imageInfo))
 				return true;
 
 			WarnOnce($"Texture for descriptor binding '{binding.Name}' is not a Vulkan texture.");
@@ -124,7 +155,7 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		string descriptorReason = MeshMaterialDescriptorReasons.GetOrAdd(
-			binding.Name,
+			binding.Name ?? string.Empty,
 			static bindingName => $"mesh material descriptor '{bindingName}'");
 		bool snapshotReady = source.TryGetDescriptorSnapshot(
 			binding.ExpectedImageViewType,
@@ -132,9 +163,27 @@ internal unsafe partial class VkMeshRenderer
 			descriptorReason,
 			allowSynchronousTextureUpload,
 			out VkImageDescriptorSnapshot descriptorSnapshot);
+		if (VulkanRenderer.DescriptorTraceEnabled &&
+			string.Equals(binding.Name, "SourceTexture", StringComparison.Ordinal))
+		{
+			Debug.VulkanEvery(
+				$"Vulkan.Descriptor.SourceSnapshot.{GetHashCode()}.{_program?.BindingId ?? 0}.{binding.Set}.{binding.Binding}",
+				TimeSpan.FromSeconds(1),
+				"[VulkanDescriptor] source-snapshot program='{0}' required={1} ready={2} descriptorReady={3} generation={4} image=0x{5:X} view=0x{6:X} sampler=0x{7:X} layout={8} usage={9}.",
+				_program?.Data?.Name ?? "<null>",
+				requiresReadyDescriptor,
+				snapshotReady,
+				source.IsDescriptorReady,
+				source.DescriptorGeneration,
+				descriptorSnapshot.Image.Handle,
+				descriptorSnapshot.View.Handle,
+				descriptorSnapshot.Sampler.Handle,
+				descriptorSnapshot.TrackedLayout,
+				descriptorSnapshot.Usage);
+		}
 		if (!snapshotReady)
 		{
-			if (TryUsePlaceholderDescriptor(binding, descriptorType, arrayIndex, material, textureBinding, texture, "placeholder-texture-not-ready", out imageInfo, source))
+			if (TryUsePlaceholderDescriptor(binding, descriptorType, arrayIndex, material, textureBinding, texture, "placeholder-texture-not-ready", requiresReadyDescriptor, out imageInfo, source))
 				return true;
 
 			WarnOnce($"Texture for descriptor binding '{binding.Name}' is not ready for Vulkan descriptor use.");
@@ -173,7 +222,7 @@ internal unsafe partial class VkMeshRenderer
 			{
 				if (!Renderer.IsLiveImageViewBackedByLiveImage(descriptorSnapshot.View))
 				{
-					if (TryUsePlaceholderDescriptor(binding, descriptorType, arrayIndex, material, textureBinding, texture, "placeholder-retired-image-view", out imageInfo, source))
+					if (TryUsePlaceholderDescriptor(binding, descriptorType, arrayIndex, material, textureBinding, texture, "placeholder-retired-image-view", requiresReadyDescriptor, out imageInfo, source))
 						return true;
 
 					WarnOnce($"Texture for descriptor binding '{binding.Name}' references a retired Vulkan image view.");
@@ -181,7 +230,7 @@ internal unsafe partial class VkMeshRenderer
 					return false;
 				}
 
-				if (!TryResolveDescriptorSampler(binding, descriptorType, in descriptorSnapshot, out Sampler sampler))
+				if (!TryResolveDescriptorSampler(binding, descriptorType, in descriptorSnapshot, requiresReadyDescriptor, out Sampler sampler))
 					return false;
 
 				imageInfo = new DescriptorImageInfo
@@ -206,15 +255,18 @@ internal unsafe partial class VkMeshRenderer
 
 		if (descriptorSnapshot.View.Handle == 0)
 		{
-			imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
-			if (imageInfo.ImageView.Handle != 0)
+			if (!requiresReadyDescriptor)
 			{
-				WarnOnce($"Texture for descriptor binding '{binding.Name}' cannot provide expected view type '{binding.ExpectedImageViewType}'. Using placeholder.");
-				LogPostProcessDescriptor(binding, arrayIndex, texture, imageInfo, "placeholder-view-type");
-				LogDeferredLightingDescriptor(binding, arrayIndex, textureBinding, texture, source, imageInfo, "placeholder-view-type");
-				LogMaterialDescriptor(binding, material, arrayIndex, textureBinding, texture, source, imageInfo, "placeholder-view-type");
-				RecordDescriptorFallback(binding);
-				return true;
+				imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
+				if (imageInfo.ImageView.Handle != 0)
+				{
+					WarnOnce($"Texture for descriptor binding '{binding.Name}' cannot provide expected view type '{binding.ExpectedImageViewType}'. Using placeholder.");
+					LogPostProcessDescriptor(binding, arrayIndex, texture, imageInfo, "placeholder-view-type");
+					LogDeferredLightingDescriptor(binding, arrayIndex, textureBinding, texture, source, imageInfo, "placeholder-view-type");
+					LogMaterialDescriptor(binding, material, arrayIndex, textureBinding, texture, source, imageInfo, "placeholder-view-type");
+					RecordDescriptorFallback(binding);
+					return true;
+				}
 			}
 
 			WarnOnce($"Texture for descriptor binding '{binding.Name}' cannot provide expected view type '{binding.ExpectedImageViewType}'.");
@@ -224,7 +276,7 @@ internal unsafe partial class VkMeshRenderer
 
 		if (!Renderer.IsLiveImageViewBackedByLiveImage(descriptorSnapshot.View))
 		{
-			if (TryUsePlaceholderDescriptor(binding, descriptorType, arrayIndex, material, textureBinding, texture, "placeholder-retired-image-view", out imageInfo, source))
+			if (TryUsePlaceholderDescriptor(binding, descriptorType, arrayIndex, material, textureBinding, texture, "placeholder-retired-image-view", requiresReadyDescriptor, out imageInfo, source))
 				return true;
 
 			WarnOnce($"Texture for descriptor binding '{binding.Name}' references a retired Vulkan image view.");
@@ -232,7 +284,7 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		if (!TryResolveDescriptorSampler(binding, descriptorType, in descriptorSnapshot, out Sampler descriptorSampler))
+		if (!TryResolveDescriptorSampler(binding, descriptorType, in descriptorSnapshot, requiresReadyDescriptor, out Sampler descriptorSampler))
 			return false;
 
 		imageInfo = new DescriptorImageInfo
@@ -258,9 +310,16 @@ internal unsafe partial class VkMeshRenderer
 		MaterialTextureBindingResolution textureBinding,
 		XRTexture? texture,
 		string reason,
+		bool requiresReadyDescriptor,
 		out DescriptorImageInfo imageInfo,
 		IVkImageDescriptorSource? source = null)
 	{
+		if (requiresReadyDescriptor)
+		{
+			imageInfo = default;
+			return false;
+		}
+
 		imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
 		if (imageInfo.ImageView.Handle == 0)
 			return false;
@@ -297,6 +356,7 @@ internal unsafe partial class VkMeshRenderer
 		DescriptorBindingInfo binding,
 		DescriptorType descriptorType,
 		in VkImageDescriptorSnapshot snapshot,
+		bool requiresReadyDescriptor,
 		out Sampler sampler)
 	{
 		sampler = default;
@@ -306,6 +366,13 @@ internal unsafe partial class VkMeshRenderer
 		sampler = snapshot.Sampler;
 		if (sampler.Handle != 0 && Renderer.IsLiveSampler(sampler))
 			return true;
+
+		if (requiresReadyDescriptor)
+		{
+			WarnOnce($"Required texture for descriptor binding '{binding.Name}' has no live Vulkan sampler. Deferring the draw.");
+			RecordDescriptorFailure(binding, "required texture sampler unavailable");
+			return false;
+		}
 
 		if (sampler.Handle != 0)
 		{

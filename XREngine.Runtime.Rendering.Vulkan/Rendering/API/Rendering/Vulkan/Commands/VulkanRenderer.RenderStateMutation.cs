@@ -147,6 +147,9 @@ public unsafe partial class VulkanRenderer
                 ? CreateVulkanViewport(_viewportRegion, targetExtent)
                 : CreateVulkanViewport(targetExtent);
 
+        public static Viewport GetViewport(BoundingRectangle region, Extent2D targetExtent)
+            => CreateVulkanViewport(region, targetExtent);
+
         public bool SetViewport(BoundingRectangle region)
         {
             if (_viewportExplicitlySet && SameRectangle(_viewportRegion, region))
@@ -174,6 +177,12 @@ public unsafe partial class VulkanRenderer
                 ? CreateVulkanScissor(_scissorRegion, targetExtent)
                 : DefaultScissor(targetExtent);
 
+        public static Rect2D GetScissor(BoundingRectangle region, Extent2D targetExtent)
+            => CreateVulkanScissor(region, targetExtent);
+
+        public static Rect2D GetDefaultScissor(Extent2D targetExtent)
+            => DefaultScissor(targetExtent);
+
         public bool SetScissor(BoundingRectangle region)
         {
             if (SameRectangle(_scissorRegion, region))
@@ -193,10 +202,11 @@ public unsafe partial class VulkanRenderer
 
             BoundingRectangle[]? currentViewports = _indexedViewportRegions;
             BoundingRectangle[]? currentScissors = _indexedScissorRegions;
-            bool unchanged =
+            bool regionsUnchanged =
                 currentViewports is not null &&
                 currentScissors is not null &&
-                _indexedViewportScissorCount == count;
+                currentViewports.Length >= count &&
+                currentScissors.Length >= count;
 
             for (int i = 0; i < count; i++)
             {
@@ -204,35 +214,36 @@ public unsafe partial class VulkanRenderer
                 BoundingRectangle scissor = scissors[i];
                 viewport.CheckProperDimensions();
                 scissor.CheckProperDimensions();
-                if (unchanged &&
+                if (regionsUnchanged &&
                     (!SameRectangle(currentViewports![i], viewport) ||
                      !SameRectangle(currentScissors![i], scissor)))
                 {
-                    unchanged = false;
+                    regionsUnchanged = false;
                 }
             }
 
-            if (unchanged)
+            if (regionsUnchanged && _indexedViewportScissorCount == count)
                 return false;
 
-            BoundingRectangle[] viewportRegions =
-                currentViewports is not null && currentViewports.Length >= count
-                    ? currentViewports
-                    : new BoundingRectangle[count];
-            BoundingRectangle[] scissorRegions =
-                currentScissors is not null && currentScissors.Length >= count
-                    ? currentScissors
-                    : new BoundingRectangle[count];
-            for (int i = 0; i < count; i++)
+            if (!regionsUnchanged)
             {
-                viewportRegions[i] = viewports[i];
-                scissorRegions[i] = scissors[i];
+                // Pending mesh draws retain the converted arrays returned by
+                // GetIndexedViewportScissorSnapshot until command-chain preparation.
+                // Publish new backing storage instead of rewriting arrays that an
+                // already-enqueued cascade may still reference.
+                BoundingRectangle[] viewportRegions = new BoundingRectangle[count];
+                BoundingRectangle[] scissorRegions = new BoundingRectangle[count];
+                viewports[..count].CopyTo(viewportRegions);
+                scissors[..count].CopyTo(scissorRegions);
+
+                _indexedViewportRegions = viewportRegions;
+                _indexedScissorRegions = scissorRegions;
+                _indexedViewportCache = null;
+                _indexedScissorCache = null;
+                _indexedCacheExtent = default;
             }
 
-            _indexedViewportRegions = viewportRegions;
-            _indexedScissorRegions = scissorRegions;
             _indexedViewportScissorCount = count;
-            _indexedCacheExtent = default;
             return true;
         }
 
@@ -241,10 +252,9 @@ public unsafe partial class VulkanRenderer
             if (_indexedViewportScissorCount == 0)
                 return false;
 
-            // Retain growth-only storage. Shadow passes clear and restore indexed
-            // viewport state repeatedly while a command chain is rebuilt.
+            // Retain the immutable snapshot across the normal shadow-pass pop/push
+            // cycle. Restoring identical atlas tiles reuses it without allocating.
             _indexedViewportScissorCount = 0;
-            _indexedCacheExtent = default;
             return true;
         }
 
@@ -269,14 +279,10 @@ public unsafe partial class VulkanRenderer
             }
 
             int count = _indexedViewportScissorCount;
-            Viewport[] viewports =
-                _indexedViewportCache is not null && _indexedViewportCache.Length >= count
-                    ? _indexedViewportCache
-                    : new Viewport[count];
-            Rect2D[] scissors =
-                _indexedScissorCache is not null && _indexedScissorCache.Length >= count
-                    ? _indexedScissorCache
-                    : new Rect2D[count];
+            // The returned arrays become part of PendingMeshDraw. Never overwrite a
+            // previously published conversion when the target extent changes.
+            Viewport[] viewports = new Viewport[count];
+            Rect2D[] scissors = new Rect2D[count];
             for (int i = 0; i < count; i++)
             {
                 viewports[i] = CreateVulkanViewport(_indexedViewportRegions[i], targetExtent);

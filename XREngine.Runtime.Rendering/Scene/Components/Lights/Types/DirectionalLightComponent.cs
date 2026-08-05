@@ -663,6 +663,9 @@ namespace XREngine.Components.Lights
                 case nameof(CascadeCount):
                     EnsureCascadeShadowResources();
                     break;
+                case nameof(CascadeShadowRenderMode):
+                    ClearCascadeAtlasSlots();
+                    break;
                 case nameof(EnableCascadedShadows):
                     ClearDirectionalAtlasSlots();
                     if (EnableCascadedShadows)

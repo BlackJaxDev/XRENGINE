@@ -200,6 +200,12 @@ internal unsafe partial class VkRenderProgram
         foreach (KeyValuePair<string, XRTexture> pair in snapshot.SamplersByName)
             capture.SamplersByName[pair.Key] = pair.Value;
 
+        capture.RequiredSamplerNames.EnsureCapacity(
+            capture.RequiredSamplerNames.Count +
+            snapshot.RequiredSamplerNames.Count);
+        foreach (string name in snapshot.RequiredSamplerNames)
+            capture.RequiredSamplerNames.Add(name);
+
         capture.ImagesByUnit.EnsureCapacity(capture.ImagesByUnit.Count + snapshot.Images.Count);
         foreach (KeyValuePair<uint, ProgramImageBinding> pair in snapshot.Images)
             capture.ImagesByUnit[pair.Key] = pair.Value;
@@ -474,6 +480,7 @@ internal unsafe partial class VkRenderProgram
             ref capture.Uniforms,
             ref capture.RuntimeUniformPublications,
             ref capture.MutableLegacyUniformNames,
+            ref capture.RequiredSamplerNames,
             ref capture.SamplersByUnit,
             ref capture.SamplerNamesByUnit,
             ref capture.SamplersByName,

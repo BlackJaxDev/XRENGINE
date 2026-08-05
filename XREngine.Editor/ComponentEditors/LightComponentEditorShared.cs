@@ -1560,8 +1560,8 @@ internal static class LightComponentEditorShared
 
     private static bool DrawCommittedIntInput(string label, ref int value)
     {
-        bool enterPressed = ImGui.InputInt(label, ref value, 1, 100, ImGuiInputTextFlags.EnterReturnsTrue);
-        return enterPressed || ImGui.IsItemDeactivatedAfterEdit();
+        ImGui.InputInt(label, ref value, 1, 100);
+        return ImGui.IsItemDeactivatedAfterEdit();
     }
 
     private static void CommitShadowMapResolution(LightComponent light, ShadowResolutionEditState state, int width, int height)

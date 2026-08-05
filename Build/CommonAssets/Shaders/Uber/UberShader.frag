@@ -42,14 +42,14 @@
 #define XRENGINE_UBER_DISABLE_SHADOW_MASKS 1
 #define XRENGINE_UBER_DISABLE_STYLIZED_SHADING 1
 #define XRENGINE_UBER_DISABLE_SUBSURFACE 1
-#define XRENGINE_UBER_DISABLE_POIYOMI_SURFACE 1
-#define XRENGINE_UBER_DISABLE_POIYOMI_MASKS_THEMES 1
-#define XRENGINE_UBER_DISABLE_POIYOMI_LIGHTING_PARITY 1
-#define XRENGINE_UBER_DISABLE_POIYOMI_PBR_PARITY 1
-#define XRENGINE_UBER_DISABLE_POIYOMI_MATCAP_RIM_SLOTS 1
-#define XRENGINE_UBER_DISABLE_POIYOMI_DECALS 1
-#define XRENGINE_UBER_DISABLE_POIYOMI_EMISSION_SLOTS 1
-#define XRENGINE_UBER_DISABLE_POIYOMI_FLIPBOOK_ARRAY 1
+#define XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS 1
+#define XRENGINE_UBER_DISABLE_GLOBAL_MASKS_THEMES 1
+#define XRENGINE_UBER_DISABLE_ADVANCED_STYLIZED_LIGHTING 1
+#define XRENGINE_UBER_DISABLE_ADVANCED_PBR 1
+#define XRENGINE_UBER_DISABLE_LAYERED_MATCAP_RIM 1
+#define XRENGINE_UBER_DISABLE_LAYERED_DECALS 1
+#define XRENGINE_UBER_DISABLE_LAYERED_EMISSION 1
+#define XRENGINE_UBER_DISABLE_TEXTURE_ARRAY_FLIPBOOK 1
 
 // Shared engine headers:
 //   common.glsl   - math helpers, color space conversions, hashes, noise, ...
@@ -337,8 +337,8 @@ vec2 getUV(int uvIndex, ToonMesh mesh) {
     }
 }
 
-#include "poiyomi_surface_features.glsl"
-#include "poiyomi_effect_features.glsl"
+#include "surface_extensions.glsl"
+#include "extended_effects.glsl"
 
 // ============================================
 // Normal Mapping
@@ -406,8 +406,8 @@ vec3 calculateNormal(ToonMesh mesh) {
 // the material declares which.
 vec4 calculateBaseColor(ToonMesh mesh) {
     // Sample main texture
-    vec4 mainTex = poiSampleMainTexture(mesh);
-    vec4 baseColor = mainTex * vec4(poiResolveThemeColor(_ColorThemeIndex, _Color.rgb), _Color.a);
+    vec4 mainTex = uberSampleMainTexture(mesh);
+    vec4 baseColor = mainTex * vec4(uberResolveThemeColor(_ColorThemeIndex, _Color.rgb), _Color.a);
     
     // Apply vertex colors if enabled
     if (_MainVertexColoringEnabled > 0.5) {
@@ -432,7 +432,7 @@ vec4 calculateBaseColor(ToonMesh mesh) {
 // result. Disabled in this variant.
 vec3 applyColorAdjustments(vec3 color, ToonMesh mesh) {
 #ifdef XRENGINE_UBER_DISABLE_COLOR_ADJUSTMENTS
-    return poiApplyExtendedColorAdjustments(color);
+    return uberApplyExtendedColorAdjustments(color);
 #else
     // Sample adjustment mask
     vec2 adjustUV = transformUV(getUV(_MainColorAdjustTextureUV, mesh), _MainColorAdjustTexture_ST);
@@ -473,7 +473,7 @@ vec3 applyColorAdjustments(vec3 color, ToonMesh mesh) {
 // finally respects a hard "force opaque" override.
 float calculateAlpha(vec4 baseColor, ToonMesh mesh) {
     float alpha = baseColor.a;
-#ifndef XRENGINE_UBER_DISABLE_POIYOMI_SURFACE
+#ifndef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
     if (_AlphaSource == 1)
         alpha = luminance(baseColor.rgb);
     else if (_AlphaSource == 2)
@@ -486,10 +486,10 @@ float calculateAlpha(vec4 baseColor, ToonMesh mesh) {
         vec2 alphaMaskUV = transformUV(getUV(_AlphaMaskUV, mesh), _AlphaMask_ST);
         alphaMaskUV = panUV(alphaMaskUV, _AlphaMaskPan, u_Time);
         vec4 alphaMaskSample = texture(_AlphaMask, alphaMaskUV);
-#ifdef XRENGINE_UBER_DISABLE_POIYOMI_SURFACE
+#ifdef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
         float alphaMask = alphaMaskSample.r;
 #else
-        float alphaMask = poiChannel(alphaMaskSample, _AlphaMaskChannel);
+        float alphaMask = uberChannel(alphaMaskSample, _AlphaMaskChannel);
 #endif
         
         if (_AlphaMaskInvert > 0.5) {
@@ -515,7 +515,7 @@ float calculateAlpha(vec4 baseColor, ToonMesh mesh) {
         alpha = 1.0;
     }
     
-    return poiApplyExtendedAlpha(alpha, mesh);
+    return uberApplyExtendedAlpha(alpha, mesh);
 }
 
 // ============================================
@@ -592,7 +592,7 @@ float sampleMaterialAmbientOcclusion(ToonMesh mesh) {
     vec2 aoUV = transformUV(getUV(_LightingAOMapsUV, mesh), _LightingAOMaps_ST);
     aoUV = panUV(aoUV, _LightingAOMapsPan, u_Time);
     vec4 aoSample = texture(_LightingAOMaps, aoUV);
-#ifdef XRENGINE_UBER_DISABLE_POIYOMI_LIGHTING_PARITY
+#ifdef XRENGINE_UBER_DISABLE_ADVANCED_STYLIZED_LIGHTING
     return mix(1.0, aoSample.r, saturate(_LightDataAOStrengthR));
 #else
     vec4 weighted = mix(vec4(1.0), aoSample, saturate(_LightDataAOStrengths));
@@ -607,7 +607,7 @@ float sampleLightingShadowMask(ToonMesh mesh) {
 #else
     vec2 maskUV = transformUV(mesh.uv[0], _LightingShadowMasks_ST);
     vec4 mask = texture(_LightingShadowMasks, maskUV);
-#ifdef XRENGINE_UBER_DISABLE_POIYOMI_LIGHTING_PARITY
+#ifdef XRENGINE_UBER_DISABLE_ADVANCED_STYLIZED_LIGHTING
     return mix(1.0, mask.r, saturate(_LightingShadowMaskStrengthR));
 #else
     vec4 weighted = mix(vec4(1.0), mask, saturate(_LightingShadowMaskStrengths));
@@ -868,10 +868,9 @@ ToonLight createToonLight(ToonMesh mesh, vec3 normal, vec3 lightDirection, vec3 
     light.lightMap = saturate(light.nDotL);
     return light;
 #else
-    // Texture-ramp mode uses this value as a shadow-source blend, matching
-    // Poiyomi's "Ignore Indirect Shadow Color" control. Other stylized modes
-    // retain the older neutral-ambient remap until their native compositions
-    // consume that control directly.
+    // Texture-ramp mode uses this value as a shadow-source blend. Other
+    // stylized modes retain the neutral-ambient remap until their native
+    // compositions consume that control directly.
     if (_LightingIgnoreAmbientColor > 0.0 && _LightingMode != 0) {
         vec3 neutralAmbient = vec3(luminance(light.indirectColor));
         light.indirectColor = mix(light.indirectColor, neutralAmbient, saturate(_LightingIgnoreAmbientColor));
@@ -909,7 +908,7 @@ ToonLight createToonLight(ToonMesh mesh, vec3 normal, vec3 lightDirection, vec3 
 // path the early #ifdef short-circuits the fancy remap and only fills the
 // raw dot products.
 ToonLight calculateLighting(ToonMesh mesh, vec3 normal, vec3 indirectColor) {
-#ifndef XRENGINE_UBER_DISABLE_POIYOMI_LIGHTING_PARITY
+#ifndef XRENGINE_UBER_DISABLE_ADVANCED_STYLIZED_LIGHTING
     if (_LightingForceDirection > 0.5 || _LightingForceColor > 0.5) {
         vec3 forcedDirection = _LightingForceDirection > 0.5
             ? normalize(_LightingForcedDirection)
@@ -983,8 +982,8 @@ vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3
             rampCoord = panUV(rampCoord, _ToonRampPan, u_Time);
             vec3 rampColor = texture(_ToonRamp, rampCoord).rgb;
 
-            // Poiyomi's texture ramp is a component-wise lit/shadow blend,
-            // not merely a tint on direct light. XRENGINE's indirectColor is
+            // The texture ramp is a component-wise lit/shadow blend, not
+            // merely a tint on direct light. XRENGINE's indirectColor is
             // already surface-colored, so compose in final-color space to
             // avoid multiplying the albedo into ambient a second time.
             vec3 rampedLightMap = mix(
@@ -1016,7 +1015,7 @@ vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3
             vec2 secondUV = panUV(transformUV(getUV(_SecondShadeMapUV, mesh), _SecondShadeMap_ST), _SecondShadeMapPan, u_Time);
             vec4 firstShade = texture(_FirstShadeMap, firstUV);
             vec4 secondShade = texture(_SecondShadeMap, secondUV);
-#ifdef XRENGINE_UBER_DISABLE_POIYOMI_LIGHTING_PARITY
+#ifdef XRENGINE_UBER_DISABLE_ADVANCED_STYLIZED_LIGHTING
             float secondBand = smoothstep(border * 0.5 - blur, border * 0.5 + blur, light.lightMap);
             vec3 deepShade = _ShadowColor.rgb * _ShadowColor.a * secondShade.rgb;
 #else
@@ -1048,7 +1047,7 @@ vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3
             float wrap = max(_LightingWrappedWrap, 0.35);
             float skinLight = saturate((light.nDotL + wrap) / (1.0 + wrap));
             shadow = smoothstep(_LightingGradientStart, _LightingGradientEnd, skinLight);
-#ifdef XRENGINE_UBER_DISABLE_POIYOMI_LIGHTING_PARITY
+#ifdef XRENGINE_UBER_DISABLE_ADVANCED_STYLIZED_LIGHTING
             vec3 skinShadow = mix(_LightingShadowColor, vec3(1.0, 0.72, 0.58), 0.35);
 #else
             vec3 skinShadow = mix(_LightingShadowColor, _LightingSkinColor.rgb, saturate(_LightingSkinScatter));
@@ -1088,7 +1087,7 @@ vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3
         {
             float clothLight = saturate(light.lightMap);
             shadow = smoothstep(_ShadowBorder - _ShadowBlur, _ShadowBorder + _ShadowBlur, clothLight);
-#ifdef XRENGINE_UBER_DISABLE_POIYOMI_LIGHTING_PARITY
+#ifdef XRENGINE_UBER_DISABLE_ADVANCED_STYLIZED_LIGHTING
             float grazingFiber = 0.85 + 0.15 * pow(1.0 - saturate(abs(light.nDotV)), 2.0);
 #else
             float grazingFiber = 1.0 + _LightingClothSheen * pow(1.0 - saturate(abs(light.nDotV)), mix(8.0, 1.0, saturate(_LightingClothRoughness)));
@@ -1099,7 +1098,7 @@ vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3
 
         case 8: // SDF
         {
-#ifdef XRENGINE_UBER_DISABLE_POIYOMI_LIGHTING_PARITY
+#ifdef XRENGINE_UBER_DISABLE_ADVANCED_STYLIZED_LIGHTING
             vec3 localDir = normalize(mesh.localPos + normal * 0.25);
             float sdfLight = saturate(dot(localDir, light.direction) * 0.5 + 0.5);
             shadow = smoothstep(_ShadowBorder - _ShadowBlur, _ShadowBorder + _ShadowBlur, min(light.lightMap, sdfLight));
@@ -1135,8 +1134,8 @@ vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3
 
     // Compose direct lighting separately from ambient/IBL so AO and texture
     // color remain visible even outside direct-light cones. Texture-ramp mode
-    // already incorporated that ambient term according to Poiyomi's blend;
-    // only add it directly for the remaining native stylized modes.
+    // already incorporated that ambient term; only add it directly for the
+    // remaining stylized modes.
     vec3 result;
     if (usesTextureRampComposition) {
         float rampEngineVisibility = mix(1.0, saturate(shadowMapFactor), _ShadowStrength);
@@ -1337,7 +1336,7 @@ vec3 calculateEmission(ToonMesh mesh) {
     }
     
     vec4 emissionTex = texture(_EmissionMap, emissionUV);
-    vec3 emissionColor = poiResolveThemeColor(_EmissionColorThemeIndex, _EmissionColor.rgb);
+    vec3 emissionColor = uberResolveThemeColor(_EmissionColorThemeIndex, _EmissionColor.rgb);
     vec3 emission = emissionTex.rgb * emissionColor * _EmissionStrength;
     
     return emission;
@@ -1360,7 +1359,7 @@ vec3 calculateMatcap(ToonMesh mesh, vec3 normal, ToonLight light, inout vec3 emi
     
     vec2 matcapUV;
     switch(_MatcapUVMode) {
-        case 0: // UTS Style
+        case 0: // View normal
             matcapUV = viewNormal.xy * 0.5 + 0.5;
             break;
         case 1: // Top Pinch
@@ -1402,8 +1401,7 @@ vec3 calculateMatcap(ToonMesh mesh, vec3 normal, ToonLight light, inout vec3 emi
 // ============================================
 // Rim Lighting
 // ============================================
-// Fresnel-style edge highlight. Three curve shapes are offered to match the
-// common Poiyomi/UTS/LilToon looks familiar to the VRChat avatar community.
+// Fresnel-style edge highlight with three artist-selectable curve shapes.
 vec3 calculateRimLight(ToonMesh mesh, vec3 normal, ToonLight light) {
 #ifdef XRENGINE_UBER_DISABLE_RIM_LIGHTING
     return vec3(0.0);
@@ -1412,15 +1410,15 @@ vec3 calculateRimLight(ToonMesh mesh, vec3 normal, ToonLight light) {
     
     float rim;
     switch(_RimStyle) {
-        case 0: // Poiyomi
+        case 0: // Smooth
             rim = 1.0 - nDotV;
             rim = pow(rim, (1.0 - _RimWidth) * 10.0);
             rim = smoothstep(0.0, 1.0 - _RimSharpness, rim);
             break;
-        case 1: // UTS2
+        case 1: // Exponential
             rim = pow(1.0 - nDotV, exp2(mix(4.0, 0.0, _RimWidth)));
             break;
-        case 2: // LilToon
+        case 2: // Sharp
             rim = saturate((1.0 - nDotV - (1.0 - _RimWidth)) / _RimWidth);
             rim = pow(rim, 1.0 / max(_RimSharpness, EPSILON));
             break;
@@ -1550,9 +1548,9 @@ void main() {
     XRENGINE_BeginForwardFragmentOutput();
 #endif
 
-    if (poiApplyCoverageEffects(mesh))
+    if (uberApplyCoverageEffects(mesh))
         discard;
-    poiApplyInternalParallax(mesh);
+    uberApplyInternalParallax(mesh);
 
     // ---- 3. Parallax --------------------------------------------------------
     // Parallax occlusion mapping warps UVs along the view ray through a height
@@ -1583,8 +1581,8 @@ void main() {
 #if !defined(XRENGINE_UBER_DISABLE_DETAIL_TEXTURES) && !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
     mesh.worldNormal = applyDetailNormal(mesh, mesh.worldNormal);
 #endif
-#if !defined(XRENGINE_UBER_DISABLE_POIYOMI_SURFACE) && !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
-    mesh.worldNormal = poiApplyColorMaskNormal(poiCorrectNormal(mesh.worldNormal, mesh), mesh);
+#if !defined(XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS) && !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
+    mesh.worldNormal = uberApplyColorMaskNormal(uberCorrectNormal(mesh.worldNormal, mesh), mesh);
     if (mesh.isFrontFace < 0.0 && _BackFaceNormalStrength > EPSILON) {
         vec2 backNormalUv = transformUV(getUV(_BackFaceTextureUV, mesh), _BackFaceNormalMap_ST);
         vec3 backNormal = unpackNormal(texture(_BackFaceNormalMap, backNormalUv), _BackFaceNormalStrength);
@@ -1601,8 +1599,8 @@ void main() {
     fragData.alpha = calculateAlpha(baseColor, mesh);
 
     fragData.baseColor = baseColor.rgb;
-    poiApplyDecals(fragData, mesh);
-    poiApplySurfaceEffects(mesh, fragData.baseColor, fragData.emission, fragData.alpha);
+    uberApplyDecals(fragData, mesh);
+    uberApplySurfaceEffects(mesh, fragData.baseColor, fragData.emission, fragData.alpha);
 
     // Alpha-test after decals so decal alpha affects base, depth, and shadow
     // coverage identically.
@@ -1688,7 +1686,7 @@ void main() {
         float detailMask = texture(_DetailMask, detailMaskUV).r;
         float detailStrength = saturate(_DetailTexIntensity * detailMask);
 
-        fragData.baseColor = mix(fragData.baseColor, poiBlendRgb(fragData.baseColor, detailColor, _DetailTexBlendMode), detailStrength);
+        fragData.baseColor = mix(fragData.baseColor, uberBlendRgb(fragData.baseColor, detailColor, _DetailTexBlendMode), detailStrength);
     }
 #endif
     
@@ -1696,7 +1694,7 @@ void main() {
     // when a pass disables direct forward lighting. Keep it defined for those
     // unlit variants and initialize a neutral light below.
     PBRData surfacePbr = buildSurfacePbrData(mesh, fragData.baseColor);
-    fragData.baseColor = poiApplyColorMask(fragData.baseColor, mesh, fragData.emission, surfacePbr);
+    fragData.baseColor = uberApplyColorMask(fragData.baseColor, mesh, fragData.emission, surfacePbr);
     surfacePbr.F0 = mix(vec3(0.04), fragData.baseColor, surfacePbr.metallic);
     surfacePbr.diffuseColor = fragData.baseColor * (1.0 - surfacePbr.metallic);
 
@@ -1767,7 +1765,7 @@ void main() {
 #ifndef XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR
     fragData.finalColor += calculateAdvancedSpecular(mesh, mesh.worldNormal, light, surfacePbr);
 #endif
-    fragData.finalColor = poiApplyPbrParity(mesh, light, surfacePbr, fragData.finalColor);
+    fragData.finalColor = uberApplyAdvancedPbr(mesh, light, surfacePbr, fragData.finalColor);
     
     // Subsurface scattering (wrap-lighting approximation): backlit direction
     // times a view-aligned falloff, modulated by a thickness map. Produces
@@ -1785,7 +1783,7 @@ void main() {
 #endif
     
     // Matcap compositing — can replace, multiply, and/or add independently.
-#if !defined(XRENGINE_UBER_DISABLE_MATCAP) && defined(XRENGINE_UBER_DISABLE_POIYOMI_MATCAP_RIM_SLOTS)
+#if !defined(XRENGINE_UBER_DISABLE_MATCAP) && defined(XRENGINE_UBER_DISABLE_LAYERED_MATCAP_RIM)
     {
         vec3 matcapColor = calculateMatcap(mesh, mesh.worldNormal, light, fragData.emission);
         fragData.finalColor = mix(fragData.finalColor, matcapColor, _MatcapReplace);
@@ -1793,7 +1791,7 @@ void main() {
         fragData.finalColor += matcapColor * _MatcapAdd;
     }
 #endif
-    poiApplyMatcapSlots(fragData.finalColor, fragData.emission, mesh, light);
+    uberApplyMatcapSlots(fragData.finalColor, fragData.emission, mesh, light);
     
     // Rim light. Also contributes to emission so it survives bloom.
 #ifndef XRENGINE_UBER_DISABLE_RIM_LIGHTING
@@ -1808,10 +1806,10 @@ void main() {
     }
     fragData.emission += rimColor * _RimEmission * rimStrength;
 #endif
-    vec3 secondRim = poiApplySecondRim(mesh, light);
+    vec3 secondRim = uberApplySecondRim(mesh, light);
     fragData.finalColor += secondRim;
     fragData.emission += secondRim;
-    fragData.finalColor += poiApplyDepthRim(mesh);
+    fragData.finalColor += uberApplyDepthRim(mesh);
 
     // Sparkle: hashed noise gated by view angle and an optional mask,
     // scrolling over time. Contributes to both color and emission.
@@ -1851,16 +1849,16 @@ void main() {
 #endif
     
     // Authored emission (texture * color * strength).
-#if !defined(XRENGINE_UBER_DISABLE_EMISSION) && defined(XRENGINE_UBER_DISABLE_POIYOMI_EMISSION_SLOTS)
+#if !defined(XRENGINE_UBER_DISABLE_EMISSION) && defined(XRENGINE_UBER_DISABLE_LAYERED_EMISSION)
     fragData.emission += calculateEmission(mesh);
 #endif
-    poiApplyEmissionSlots(fragData, mesh);
-    poiApplyFlipbookArray(fragData, mesh);
+    uberApplyEmissionSlots(fragData, mesh);
+    uberApplyFlipbookArray(fragData, mesh);
 
     // Final composite: emission is always added on top of lit color so it
     // remains bright through tonemap and bloom.
     fragData.finalColor += fragData.emission;
-    fragData.finalColor = poiApplyPostEffects(mesh, fragData.finalColor);
+    fragData.finalColor = uberApplyPostEffects(mesh, fragData.finalColor);
 
     // ---- 8. Final write -----------------------------------------------------
     vec4 shadedColor = vec4(fragData.finalColor, fragData.alpha);
@@ -1871,7 +1869,7 @@ void main() {
     if (_Mode == BLEND_MODE_OPAQUE || _Mode == BLEND_MODE_CUTOUT) {
         shadedColor.a = 1.0;
     } else {
-#ifndef XRENGINE_UBER_DISABLE_POIYOMI_SURFACE
+#ifndef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
         shadedColor.rgb = mix(shadedColor.rgb, shadedColor.rgb * shadedColor.a, saturate(_AlphaPremultiply));
 #endif
     }

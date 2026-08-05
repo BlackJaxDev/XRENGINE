@@ -28,7 +28,7 @@ Related final closeout:
 
 Measured blocker:
 
-- [Vulkan Editor Steady-Frame CPU Cost Investigation](../../../investigations/rendering/vulkan-editor-frame-time-spikes-2026-07-30.md)
+- [Vulkan Editor Steady-Frame CPU Cost Investigation](../../../investigations/rendering/archive/vulkan-editor-frame-time-spikes-2026-07-30.md)
 
 Related data-path plan:
 

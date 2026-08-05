@@ -297,8 +297,8 @@ public partial class XRMesh
     /// bone hierarchy without changing bone ordering or packed influence data.
     /// </summary>
     /// <remarks>
-    /// Unity's ModelImporter metadata can provide a more authoritative imported skeleton pose
-    /// than Assimp's FBX node decomposition. Once that pose has been applied and saved on the
+    /// Source importer metadata can provide a more authoritative skeleton pose than generic
+    /// model-node decomposition. Once that pose has been applied and saved on the
     /// hierarchy, this method keeps the mesh palette and retained CPU vertex weights in the same
     /// coordinate frame.
     /// </remarks>

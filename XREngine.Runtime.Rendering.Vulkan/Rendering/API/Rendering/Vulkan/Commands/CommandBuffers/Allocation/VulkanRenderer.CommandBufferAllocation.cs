@@ -181,7 +181,6 @@ namespace XREngine.Rendering.Vulkan
             int commandChainPrimaryGroupCount,
             bool preserveSwapchainForOverlay,
             in CommandRecordingDependencySignature currentDependencySignature,
-            bool allCommandChainGroupsUseSecondaryBuffers,
             FrameOp[] frameOpsForDiagnostics)
         {
             if (_commandBufferVariants is null || imageIndex >= _commandBufferVariants.Length)
@@ -221,8 +220,7 @@ namespace XREngine.Rendering.Vulkan
                     CommandRecordingDependencyMismatch dependencyMismatch =
                         useCommandChainKey
                             ? variant.RecordedDependencySignature.CompareCommandChainPrimary(
-                                currentDependencySignature,
-                                allCommandChainGroupsUseSecondaryBuffers)
+                                currentDependencySignature)
                             : variant.RecordedDependencySignature.Compare(currentDependencySignature);
                     if (!ShouldPreserveCleanVariantForAttachmentMismatch(
                             variant.Dirty,

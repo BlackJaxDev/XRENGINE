@@ -292,7 +292,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 _currentImageLayout = _physicalGroup.LastKnownLayout;
                 HasUploadedData = true;
                 IsInvalidated = false;
-                MarkDescriptorPublished();
+                PublishDescriptorResourceReplacement();
             }
             return true;
         }
@@ -321,7 +321,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             _currentImageLayout = _physicalGroup.LastKnownLayout;
             HasUploadedData = true;
             IsInvalidated = false;
-            MarkDescriptorPublished();
+            PublishDescriptorResourceReplacement();
             return true;
         }
 
@@ -360,7 +360,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         _currentImageLayout = ImageLayout.Undefined;
         HasUploadedData = true;
         IsInvalidated = false;
-        MarkDescriptorPublished();
+        PublishDescriptorResourceReplacement();
 
         // The barrier planner will transition the new image inside the command
         // buffer at first use.

@@ -28,7 +28,16 @@ public unsafe partial class VulkanRenderer
                 case ComputeDispatchOp dispatch:
                     program = dispatch.Program;
                     snapshot = dispatch.Snapshot;
-                    reusableDescriptorKey = ComputeReusableComputeDescriptorBindingKey(dispatch, operationIndex);
+                    int descriptorBindingOrdinal =
+                        ResolveCommandChainInlineOperationIndex(
+                            operations,
+                            operationIndex);
+                    dispatch.SetReusableDescriptorBindingOrdinal(
+                        descriptorBindingOrdinal);
+                    reusableDescriptorKey =
+                        ComputeReusableComputeDescriptorBindingKey(
+                            dispatch,
+                            descriptorBindingOrdinal);
                     passIndex = dispatch.PassIndex;
                     passMetadata = dispatch.Context.PassMetadata;
                     break;

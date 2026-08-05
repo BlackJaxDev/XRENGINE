@@ -15,6 +15,7 @@ public sealed class ShadowAtlasPageResource
             : new XRFrameBuffer(
                 (Texture, EFrameBufferAttachment.ColorAttachment0, 0, descriptor.PageIndex),
                 (RasterDepthTexture, EFrameBufferAttachment.DepthAttachment, 0, descriptor.PageIndex));
+        FrameBuffer.Name = $"ShadowAtlas_{descriptor.AtlasKind}_{descriptor.Encoding}_Page{descriptor.PageIndex}FBO";
     }
 
     public ShadowAtlasPageDescriptor Descriptor { get; }

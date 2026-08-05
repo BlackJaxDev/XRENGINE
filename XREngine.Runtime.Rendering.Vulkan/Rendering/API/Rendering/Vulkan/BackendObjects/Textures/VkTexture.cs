@@ -137,14 +137,27 @@ internal abstract class VkTexture<T>(VulkanRenderer api, T data) : VkObject<T>(a
         if (!IsDescriptorDirty)
             return;
 
+        PublishDescriptorResourceReplacement();
+    }
+
+    /// <summary>
+    /// Advances the public descriptor epoch after a physical image, view, or
+    /// sampler replacement. Callers use this even when logical texture data did
+    /// not become dirty, because retained descriptor sets still need rebuilding.
+    /// </summary>
+    protected void PublishDescriptorResourceReplacement()
+    {
         IncrementDescriptorGeneration();
         MarkDescriptorClean();
     }
 
     protected void MarkUploaded()
     {
+        bool becameDescriptorReady = IsInvalidated || !HasUploadedData;
         HasUploadedData = true;
         IsInvalidated = false;
+        if (becameDescriptorReady)
+            MarkDescriptorDirty();
         MarkDescriptorPublished();
     }
 

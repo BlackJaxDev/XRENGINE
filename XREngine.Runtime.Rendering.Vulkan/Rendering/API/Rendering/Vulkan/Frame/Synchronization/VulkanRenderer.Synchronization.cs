@@ -1263,7 +1263,8 @@ public unsafe partial class VulkanRenderer
     }
 
     /// <summary>
-    /// Clears all global and command-buffer-local image synchronization state.
+    /// Clears global and command-buffer-local image synchronization state during
+    /// physical resource destruction or renderer teardown.
     /// </summary>
     /// <returns>The number of globally tracked subresources that were removed.</returns>
     private int ClearAllTrackedImageLayouts()
@@ -2515,7 +2516,9 @@ public unsafe partial class VulkanRenderer
                 }
 
                 foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> pair in secondaryState.TouchedSubresources)
+                {
                     primaryState.Subresources[pair.Key] = pair.Value;
+                }
                 primaryState.QueueOwnershipTransfers.AddRange(
                     secondaryState.QueueOwnershipTransfers);
             }
@@ -2545,23 +2548,151 @@ public unsafe partial class VulkanRenderer
             return;
 
         CommandBufferRecordingScratch scratch = _commandBufferRecordingScratch.Value!;
-        List<KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState>> requirements =
-            scratch.SecondaryDescriptorImageRequirements;
+        Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> requirements =
+            scratch.SecondaryDescriptorImageRequirementMap;
         requirements.Clear();
-        lock (_vulkanImageLayoutLock)
+        try
         {
-            if (_recordedImageLayoutsByCommandBuffer.TryGetValue(
-                    unchecked((ulong)secondary.Handle),
-                    out VulkanRecordedImageLayoutState? secondaryState))
+            lock (_vulkanImageLayoutLock)
             {
-                requirements.EnsureCapacity(secondaryState.SecondaryDescriptorRequirements.Count);
-                foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> requirement in
-                         secondaryState.SecondaryDescriptorRequirements)
+                if (_recordedImageLayoutsByCommandBuffer.TryGetValue(
+                        unchecked((ulong)secondary.Handle),
+                        out VulkanRecordedImageLayoutState? secondaryState))
                 {
-                    requirements.Add(requirement);
+                    requirements.EnsureCapacity(
+                        secondaryState.SecondaryDescriptorRequirements.Count);
+                    foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> requirement in
+                             secondaryState.SecondaryDescriptorRequirements)
+                    {
+                        MergeSecondaryDescriptorImageRequirement(
+                            requirements,
+                            requirement.Key,
+                            requirement.Value,
+                            secondary);
+                    }
                 }
             }
+
+            TransitionSecondaryDescriptorImageRequirementsForExecution(
+                primary,
+                requirements);
         }
+        finally
+        {
+            requirements.Clear();
+        }
+    }
+
+    /// <summary>
+    /// Establishes the union of descriptor image entry requirements for a
+    /// scheduled secondary-command-buffer run. Material textures are commonly
+    /// shared by many mesh packets, so collecting them under one layout lock
+    /// avoids repeating the same state lookup for every cached packet.
+    /// </summary>
+    private void TransitionSecondaryDescriptorImagesForExecution(
+        CommandBuffer primary,
+        CommandBuffer[] secondaryBuffers,
+        int secondaryCount)
+    {
+        if (primary.Handle == 0 || secondaryCount <= 0)
+            return;
+
+        CommandBufferRecordingScratch scratch = _commandBufferRecordingScratch.Value!;
+        Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> requirements =
+            scratch.SecondaryDescriptorImageRequirementMap;
+        requirements.Clear();
+        try
+        {
+            lock (_vulkanImageLayoutLock)
+            {
+                for (int secondaryIndex = 0;
+                     secondaryIndex < secondaryCount;
+                     secondaryIndex++)
+                {
+                    CommandBuffer secondary = secondaryBuffers[secondaryIndex];
+                    if (secondary.Handle == 0 ||
+                        !_recordedImageLayoutsByCommandBuffer.TryGetValue(
+                            unchecked((ulong)secondary.Handle),
+                            out VulkanRecordedImageLayoutState? secondaryState))
+                    {
+                        continue;
+                    }
+
+                    requirements.EnsureCapacity(
+                        requirements.Count +
+                        secondaryState.SecondaryDescriptorRequirements.Count);
+                    foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> requirement in
+                             secondaryState.SecondaryDescriptorRequirements)
+                    {
+                        MergeSecondaryDescriptorImageRequirement(
+                            requirements,
+                            requirement.Key,
+                            requirement.Value,
+                            secondary);
+                    }
+                }
+            }
+
+            TransitionSecondaryDescriptorImageRequirementsForExecution(
+                primary,
+                requirements);
+        }
+        finally
+        {
+            requirements.Clear();
+        }
+    }
+
+    private static void MergeSecondaryDescriptorImageRequirement(
+        Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> requirements,
+        in VulkanTrackedImageSubresource key,
+        in VulkanImageAccessState requiredState,
+        CommandBuffer secondary)
+    {
+        if (!requirements.TryGetValue(key, out VulkanImageAccessState existing))
+        {
+            requirements.Add(key, requiredState);
+            return;
+        }
+
+        bool queueFamiliesConflict =
+            existing.QueueFamilyIndex != Vk.QueueFamilyIgnored &&
+            requiredState.QueueFamilyIndex != Vk.QueueFamilyIgnored &&
+            existing.QueueFamilyIndex != requiredState.QueueFamilyIndex;
+        bool resourceGenerationsConflict =
+            existing.ResourceGeneration != 0 &&
+            requiredState.ResourceGeneration != 0 &&
+            existing.ResourceGeneration != requiredState.ResourceGeneration;
+        if (existing.Layout != requiredState.Layout ||
+            queueFamiliesConflict ||
+            resourceGenerationsConflict ||
+            existing.ExpectedDescriptorLayout != requiredState.ExpectedDescriptorLayout ||
+            existing.ExternalOwnership != requiredState.ExternalOwnership)
+        {
+            throw new InvalidOperationException(
+                $"Secondary command buffer 0x{secondary.Handle:X} publishes an incompatible descriptor entry requirement for image 0x{key.ImageHandle:X}. " +
+                $"existing={existing.Layout}/queue={existing.QueueFamilyIndex}/generation={existing.ResourceGeneration}/descriptor={existing.ExpectedDescriptorLayout}/ownership={existing.ExternalOwnership}; " +
+                $"required={requiredState.Layout}/queue={requiredState.QueueFamilyIndex}/generation={requiredState.ResourceGeneration}/descriptor={requiredState.ExpectedDescriptorLayout}/ownership={requiredState.ExternalOwnership}.");
+        }
+
+        requirements[key] = existing with
+        {
+            StageMask = existing.StageMask | requiredState.StageMask,
+            AccessMask = existing.AccessMask | requiredState.AccessMask,
+            QueueFamilyIndex = existing.QueueFamilyIndex != Vk.QueueFamilyIgnored
+                ? existing.QueueFamilyIndex
+                : requiredState.QueueFamilyIndex,
+            Serial = Math.Max(existing.Serial, requiredState.Serial),
+            ResourceGeneration = existing.ResourceGeneration != 0
+                ? existing.ResourceGeneration
+                : requiredState.ResourceGeneration,
+        };
+    }
+
+    private void TransitionSecondaryDescriptorImageRequirementsForExecution(
+        CommandBuffer primary,
+        Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> requirements)
+    {
 
         if (requirements.Count == 0)
             return;
@@ -2572,9 +2703,9 @@ public unsafe partial class VulkanRenderer
         PipelineStageFlags destinationStages = PipelineStageFlags.None;
         try
         {
-            for (int i = 0; i < requirements.Count; i++)
+            foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> requirement in
+                     requirements)
             {
-                KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> requirement = requirements[i];
                 VulkanTrackedImageSubresource key = requirement.Key;
                 VulkanImageAccessState requiredState = requirement.Value;
                 Image image = new(key.ImageHandle);
@@ -2592,7 +2723,7 @@ public unsafe partial class VulkanRenderer
                     currentGeneration != requiredState.ResourceGeneration)
                 {
                     throw new InvalidOperationException(
-                        $"Secondary command buffer 0x{secondary.Handle:X} requires image 0x{key.ImageHandle:X} " +
+                        $"Secondary command-buffer run requires image 0x{key.ImageHandle:X} " +
                         $"generation {requiredState.ResourceGeneration}, but generation {currentGeneration} is published.");
                 }
 
@@ -2619,7 +2750,7 @@ public unsafe partial class VulkanRenderer
                     EVulkanPrimaryEntryStateMismatch.QueueFamily)
                 {
                     throw new InvalidOperationException(
-                        $"Secondary command buffer 0x{secondary.Handle:X} cannot establish image 0x{key.ImageHandle:X} " +
+                        $"Secondary command-buffer run cannot establish image 0x{key.ImageHandle:X} " +
                         $"entry state because {mismatch} differs. " +
                         $"expected={requiredState.Layout}/queue={requiredState.QueueFamilyIndex}/generation={requiredState.ResourceGeneration} " +
                         $"actual={priorState.Layout}/queue={priorState.QueueFamilyIndex}/generation={priorState.ResourceGeneration}.");
@@ -2664,7 +2795,6 @@ public unsafe partial class VulkanRenderer
         finally
         {
             ArrayPool<ImageMemoryBarrier>.Shared.Return(barriers, clearArray: true);
-            requirements.Clear();
         }
     }
 
@@ -2852,6 +2982,7 @@ public unsafe partial class VulkanRenderer
             snapshot.Signature = signature;
         else
             variant.RecordedImageLayoutEndState = new VulkanImageLayoutStateSnapshot(signature);
+
     }
 
     /// <summary>
@@ -2960,7 +3091,8 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     private bool TryGetRecordedImageEntryStateMismatch(
         CommandBuffer commandBuffer,
-        out VulkanImageEntryStateMismatch mismatch)
+        out VulkanImageEntryStateMismatch mismatch,
+        bool includeIncompleteState = true)
     {
         mismatch = default;
         if (commandBuffer.Handle == 0)
@@ -2993,7 +3125,7 @@ public unsafe partial class VulkanRenderer
                 return true;
             }
 
-            if (recorded.EntryStateIncomplete)
+            if (includeIncompleteState && recorded.EntryStateIncomplete)
             {
                 mismatch = recorded.EntryStateFailure.RequiresRecording
                     ? recorded.EntryStateFailure

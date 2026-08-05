@@ -181,7 +181,7 @@ namespace XREngine.Rendering
         /// </summary>
         public static Vector2 CalcCropExtents(float verticalFovRadians, float d, float aspectRatio)
         {
-            // Based on Unity's implementation
+            // Project the crop extents from the distorted view boundary.
             float viewDist = 1f + d;
             var projPos = CalcViewExtents(verticalFovRadians, aspectRatio);
             float projHyp = MathF.Sqrt(projPos.X * projPos.X + 1f);

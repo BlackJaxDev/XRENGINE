@@ -1,4 +1,5 @@
 using Silk.NET.Vulkan;
+using XREngine.Rendering.Materials;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -22,7 +23,7 @@ internal static class VulkanBindlessMaterialDescriptors
     /// <summary>
     /// The binding index for the bindless texture array binding.
     /// </summary>
-    public const uint TextureArrayBinding = 31u;
+    public const uint TextureArrayBinding = MaterialBindingLayouts.VulkanMaterialTextureDescriptorTableBinding;
     /// <summary>
     /// The maximum number of texture descriptors allowed in the bindless texture array.
     /// </summary>

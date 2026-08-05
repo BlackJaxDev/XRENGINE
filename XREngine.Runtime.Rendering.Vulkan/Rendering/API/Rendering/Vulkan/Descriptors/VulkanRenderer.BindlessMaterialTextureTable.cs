@@ -257,7 +257,10 @@ public unsafe partial class VulkanRenderer
             {
                 Binding = VulkanBindlessMaterialDescriptors.TextureArrayBinding,
                 DescriptorType = DescriptorType.CombinedImageSampler,
-                DescriptorCount = _globalMaterialTextureDescriptorCapacity,
+                // The program layout declares the full runtime-array maximum.
+                // The descriptor-set allocation below supplies the smaller
+                // device-clamped live count through variableDescriptorCount.
+                DescriptorCount = VulkanBindlessMaterialDescriptors.MaxTextureDescriptorCount,
                 StageFlags = ShaderStageFlags.FragmentBit,
             };
 
@@ -464,6 +467,17 @@ public unsafe partial class VulkanRenderer
         if (!TryEnsureGlobalMaterialTextureDescriptorTable(out string reason))
         {
             RecordGlobalMaterialTextureBindingFailure(consumer, reason, skippedDraw: true);
+            return false;
+        }
+
+        DescriptorSetLayout programMaterialLayout =
+            program.DescriptorSetLayouts[(int)VulkanBindlessMaterialDescriptors.TextureArraySet];
+        if (programMaterialLayout.Handle != _globalMaterialTextureDescriptorSetLayout.Handle)
+        {
+            RecordGlobalMaterialTextureBindingFailure(
+                consumer,
+                "program material descriptor layout is incompatible with the shared bindless texture table; set 2 must contain only XR_BindlessMaterialTextures",
+                skippedDraw: true);
             return false;
         }
 

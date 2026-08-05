@@ -98,7 +98,7 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     public void UberShaderUniforms_DeclareMainColorThemeIndexOnce()
     {
         string uniforms = LoadShaderSource(Path.Combine("Uber", "uniforms.glsl"));
-        string surfaceUniforms = LoadShaderSource(Path.Combine("Uber", "poiyomi_surface_uniforms.glsl"));
+        string surfaceUniforms = LoadShaderSource(Path.Combine("Uber", "surface_extensions_uniforms.glsl"));
 
         uniforms.ShouldContain("uniform int _ColorThemeIndex;");
         surfaceUniforms.ShouldNotContain("uniform int _ColorThemeIndex;");
@@ -387,14 +387,14 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
             "subsurface",
             "dissolve",
             "parallax",
-            "poiyomi-surface",
-            "poiyomi-masks-themes",
-            "poiyomi-lighting-parity",
-            "poiyomi-pbr-parity",
-            "poiyomi-matcap-rim-slots",
-            "poiyomi-decals",
-            "poiyomi-emission-slots",
-            "poiyomi-flipbook-array",
+            "surface-extensions",
+            "global-masks-themes",
+            "advanced-stylized-lighting",
+            "advanced-pbr",
+            "layered-matcap-rim",
+            "layered-decals",
+            "layered-emission",
+            "texture-array-flipbook",
         })
         {
             material.SetUberFeatureEnabled(featureId, true);
@@ -427,8 +427,8 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         material.Shaders.Clear();
         material.Shaders.Add(fragment);
         material.EnsureUberStateInitialized();
-        material.SetUberFeatureEnabled("poiyomi-masks-themes", true);
-        material.SetUberFeatureEnabled("poiyomi-decals", true);
+        material.SetUberFeatureEnabled("global-masks-themes", true);
+        material.SetUberFeatureEnabled("layered-decals", true);
 
         foreach (string parameterName in new[]
         {

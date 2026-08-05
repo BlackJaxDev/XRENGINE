@@ -196,6 +196,7 @@ namespace XREngine.Rendering.Vulkan
 
             CapturePreparedBindingIdentities(
                 preparedStaticOps,
+                commandChainPrimaryOnly: false,
                 out ulong meshBindingIdentity,
                 out ulong indexBufferBindingIdentity,
                 out ulong vertexBufferBindingIdentity,
@@ -230,8 +231,120 @@ namespace XREngine.Rendering.Vulkan
                 VolatileSuffixGeneration: volatileSuffixSignature);
         }
 
+        /// <summary>
+        /// Replaces aggregate mesh identities with the exact subset encoded inline
+        /// by a mixed command-chain primary. Secondary-owned visibility and cascade
+        /// membership are validated by their own chain signatures and must not make
+        /// the thin primary appear structurally different.
+        /// </summary>
+        private static CommandRecordingDependencySignature
+            CaptureCommandChainPrimaryPreparedBindingDependencies(
+                in CommandRecordingDependencySignature signature,
+                FrameOp[] ops)
+        {
+            CapturePreparedBindingIdentities(
+                ops,
+                commandChainPrimaryOnly: true,
+                out ulong meshBindingIdentity,
+                out ulong indexBufferBindingIdentity,
+                out ulong vertexBufferBindingIdentity,
+                out ulong preparedProgramIdentity);
+            ulong inlineDescriptorBindingIdentity =
+                CaptureCommandChainPrimaryDescriptorBindingIdentity(ops);
+
+            return signature with
+            {
+                PipelineLayoutGeneration = preparedProgramIdentity,
+                MeshBindingIdentity = meshBindingIdentity,
+                IndexBufferBindingIdentity = indexBufferBindingIdentity,
+                VertexBufferBindingIdentity = vertexBufferBindingIdentity,
+                // Inline indirect/copy/query buffer handles are already part of
+                // the primary skeleton, while descriptor-backed buffers are
+                // protected by descriptor publication identity. The renderer-wide
+                // resource generation also includes secondary frame-data arenas
+                // and therefore cannot be a thin-primary recording dependency.
+                BufferAllocationGeneration = 0,
+                // Descriptor-set updates invalidate only command buffers that bind
+                // the updated sets. Track the exact inline descriptor snapshots;
+                // renderer-wide publication also includes every secondary draw.
+                DescriptorPublicationGeneration = inlineDescriptorBindingIdentity,
+            };
+        }
+
+        private static ulong CaptureCommandChainPrimaryDescriptorBindingIdentity(
+            FrameOp[] ops)
+        {
+            FrameOpSignatureHasher hash = new();
+            hash.Add(0x5052494D44455343UL);
+            int bindingCount = 0;
+            int queryBracketDepth = 0;
+            int inlineOpIndex = 0;
+            for (int i = 0; i < ops.Length; i++)
+            {
+                FrameOp op = ops[i];
+                if (op is QueryOp queryOp)
+                {
+                    if (queryOp.Operation == ERenderQueryOperation.Begin)
+                        queryBracketDepth++;
+                    else if (queryOp.Operation == ERenderQueryOperation.End && queryBracketDepth > 0)
+                        queryBracketDepth--;
+                    inlineOpIndex++;
+                    continue;
+                }
+
+                if (queryBracketDepth == 0 &&
+                    IsSchedulableCommandChainFrameOp(op, dynamicOverlay: false))
+                {
+                    continue;
+                }
+
+                // Secondary-owned draw counts can change with visibility without
+                // changing the primary command topology. Key inline bindings by
+                // their ordinal in the thin primary, not by their raw source-op
+                // index, so those secondary insertions do not invalidate an
+                // otherwise identical compute or descriptor-set bind.
+                int bindingOpIndex = inlineOpIndex++;
+                if (op is ComputeDispatchOp computeDispatch)
+                {
+                    // Reusable compute dispatches bind descriptor sets from the
+                    // per-image cache using this structural key. Their sampled
+                    // images and uniform values are frame data: the completed
+                    // frame slot refreshes those descriptor contents in place
+                    // before submission. Hashing the mutable snapshot here made
+                    // camera-dependent auto exposure invalidate the thin primary
+                    // even though its vkCmdBindDescriptorSets command was unchanged.
+                    hash.Add(bindingOpIndex);
+                    hash.Add(ComputeReusableComputeDescriptorBindingKey(
+                        computeDispatch,
+                        bindingOpIndex));
+                    hash.Add(computeDispatch.Program.BindingId);
+                    hash.Add(computeDispatch.Program.LinkGeneration);
+                    bindingCount++;
+                    continue;
+                }
+
+                DescriptorBindingSnapshot snapshot = CreateDescriptorSnapshot(op);
+                if (snapshot.DescriptorSetCount == 0 &&
+                    snapshot.DescriptorGeneration == 0 &&
+                    snapshot.DescriptorSetSignature == 0)
+                {
+                    continue;
+                }
+
+                hash.Add(bindingOpIndex);
+                hash.Add(snapshot.DescriptorGeneration);
+                hash.Add(snapshot.DescriptorSetCount);
+                hash.Add(snapshot.DescriptorSetSignature);
+                bindingCount++;
+            }
+
+            hash.Add(bindingCount);
+            return hash.ToHash();
+        }
+
         private static void CapturePreparedBindingIdentities(
             FrameOp[] ops,
+            bool commandChainPrimaryOnly,
             out ulong meshIdentity,
             out ulong indexIdentity,
             out ulong vertexIdentity,
@@ -241,9 +354,27 @@ namespace XREngine.Rendering.Vulkan
             FrameOpSignatureHasher indexHash = new();
             FrameOpSignatureHasher vertexHash = new();
             FrameOpSignatureHasher programHash = new();
+            int queryBracketDepth = 0;
             for (int i = 0; i < ops.Length; i++)
             {
-                PendingMeshDraw draw = ops[i] switch
+                FrameOp op = ops[i];
+                if (op is QueryOp queryOp)
+                {
+                    if (queryOp.Operation == ERenderQueryOperation.Begin)
+                        queryBracketDepth++;
+                    else if (queryOp.Operation == ERenderQueryOperation.End && queryBracketDepth > 0)
+                        queryBracketDepth--;
+                    continue;
+                }
+
+                if (commandChainPrimaryOnly &&
+                    queryBracketDepth == 0 &&
+                    IsSchedulableCommandChainFrameOp(op, dynamicOverlay: false))
+                {
+                    continue;
+                }
+
+                PendingMeshDraw draw = op switch
                 {
                     MeshDrawOp direct => direct.Draw,
                     IndirectDrawOp indirect => indirect.Draw,

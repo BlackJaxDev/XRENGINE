@@ -13,9 +13,9 @@ warmup. It does not independently own Vulkan measurement or primary reuse:
 
 - baselines, trustworthy counters, and regression gates were completed by
   workstream 01 and are recorded in the
-  [Vulkan framerate root-cause investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md);
+  [Vulkan framerate root-cause investigation](../../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md);
 - Vulkan primary reuse and invalidation were completed by workstream 02 in the
-  same [investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md);
+  same [investigation](../../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md);
 - backend-ready collect-side preparation is owned by
   [workstream 04 completion and validation](../../../testing/rendering/03-05-optimization-validation-todo.md#workstream-04-completion-and-validation).
 
@@ -35,7 +35,7 @@ Related todos (overlap guard):
 
 - Completed Vulkan primary reuse owns primary state and invalidation; do not
   duplicate it here. See the
-  [recorded evidence](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md).
+  [recorded evidence](../../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md).
 - [Workstream 04 completion and validation](../../../testing/rendering/03-05-optimization-validation-todo.md#workstream-04-completion-and-validation)
   owns backend-ready command handoff and preparation placement.
 - [Default Pipeline GPU Hotspots](default-pipeline-gpu-hotspots-todo.md) is a

@@ -749,6 +749,22 @@ float ApplyDirectionalStaleAtlasEdgeFade(in float shadow, in vec3 fragCoord, in 
 	return mix(1.0f, shadow, smoothstep(0.0f, fadeWidth, border));
 }
 
+bool CanSampleRenderedCascade(in int cascadeIndex)
+{
+	if (!DirectionalShadowAtlasEnabled)
+		return false;
+
+	ivec4 atlasState = DirectionalShadowAtlasPacked0[cascadeIndex];
+	bool atlasPageValid = atlasState.x != 0 &&
+		atlasState.y >= 0 &&
+		atlasState.y < textureSize(DirectionalShadowAtlas, 0).z;
+	float renderedAge = LightData.RenderedCascadeStaleAge[cascadeIndex];
+	bool staleTileFallback = atlasState.z == XRENGINE_SHADOW_FALLBACK_STALE_TILE;
+	return atlasPageValid &&
+		renderedAge >= 0.0f &&
+		(!staleTileFallback || renderedAge <= DirectionalShadowAtlasMaxStaleFrames);
+}
+
 float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float viewDepth, in int cascadeIndex)
 {
 		if (!LightHasShadowMap)
@@ -756,17 +772,10 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float 
 
 		ivec4 atlasState = ivec4(0, -1, XRENGINE_SHADOW_FALLBACK_LIT, -1);
 		float atlasResolutionScale = 1.0f;
-		bool atlasPageValid = false;
-		bool atlasSampleAllowed = false;
+		bool atlasSampleAllowed = CanSampleRenderedCascade(cascadeIndex);
 		if (DirectionalShadowAtlasEnabled)
 		{
 			atlasState = DirectionalShadowAtlasPacked0[cascadeIndex];
-			atlasPageValid = atlasState.x != 0 && atlasState.y >= 0 && atlasState.y < textureSize(DirectionalShadowAtlas, 0).z;
-			float renderedAge = LightData.RenderedCascadeStaleAge[cascadeIndex];
-			bool staleTileFallback = atlasState.z == XRENGINE_SHADOW_FALLBACK_STALE_TILE;
-			atlasSampleAllowed = atlasPageValid &&
-				renderedAge >= 0.0f &&
-				(!staleTileFallback || renderedAge <= DirectionalShadowAtlasMaxStaleFrames);
 			if (atlasSampleAllowed)
 				atlasResolutionScale = max(DirectionalShadowAtlasDepthParams[cascadeIndex].w, 1.0f);
 		}
@@ -899,17 +908,9 @@ vec4 DebugCascadeShadowProbe(in vec3 fragPosWS, in vec3 N, in int cascadeIndex)
 		return vec4(1.0f, 0.0f, 1.0f, 0.0f);
 
 	ivec4 atlasState = ivec4(0, -1, XRENGINE_SHADOW_FALLBACK_LIT, -1);
-	bool atlasSampleAllowed = false;
+	bool atlasSampleAllowed = CanSampleRenderedCascade(cascadeIndex);
 	if (DirectionalShadowAtlasEnabled)
-	{
 		atlasState = DirectionalShadowAtlasPacked0[cascadeIndex];
-		bool atlasPageValid = atlasState.x != 0 && atlasState.y >= 0 && atlasState.y < textureSize(DirectionalShadowAtlas, 0).z;
-		float renderedAge = LightData.RenderedCascadeStaleAge[cascadeIndex];
-		bool staleTileFallback = atlasState.z == XRENGINE_SHADOW_FALLBACK_STALE_TILE;
-		atlasSampleAllowed = atlasPageValid &&
-			renderedAge >= 0.0f &&
-			(!staleTileFallback || renderedAge <= DirectionalShadowAtlasMaxStaleFrames);
-	}
 
 	mat4 lightMatrix = atlasSampleAllowed ? LightData.RenderedCascadeMatrices[cascadeIndex] : LightData.CascadeMatrices[cascadeIndex];
 	float receiverOffset = atlasSampleAllowed ? LightData.RenderedCascadeReceiverOffsets[cascadeIndex] : LightData.CascadeReceiverOffsets[cascadeIndex];
@@ -1043,7 +1044,10 @@ in float viewDepth)
 
 			for (int i = 0; i < cascadeCount; ++i)
 			{
-				float splitFar = LightData.CascadeSplits[i];
+				bool useRenderedCascade = CanSampleRenderedCascade(i);
+				float splitFar = useRenderedCascade
+					? LightData.RenderedCascadeSplits[i]
+					: LightData.CascadeSplits[i];
 				bool isLast = (i == cascadeCount - 1);
 
 				if (viewDepth <= splitFar || isLast)
@@ -1070,8 +1074,13 @@ in float viewDepth)
 
 					if (!isLast)
 					{
-						float blendWidth = LightData.CascadeBlendWidths[i];
-						if (blendWidth > 0.0f && viewDepth > splitFar - blendWidth)
+						bool nextUsesRenderedCascade = CanSampleRenderedCascade(i + 1);
+						float blendWidth = useRenderedCascade
+							? LightData.RenderedCascadeBlendWidths[i]
+							: LightData.CascadeBlendWidths[i];
+						if (nextUsesRenderedCascade == useRenderedCascade &&
+							blendWidth > 0.0f &&
+							viewDepth > splitFar - blendWidth)
 						{
 							float t = clamp((viewDepth - (splitFar - blendWidth)) / blendWidth, 0.0f, 1.0f);
 							float s1 = ReadCascadeShadowMap(fragPosWS, N, NoL, viewDepth, i + 1);

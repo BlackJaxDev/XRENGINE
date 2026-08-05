@@ -970,6 +970,7 @@ namespace XREngine.Rendering.Vulkan
                         BuildRenderViewKey(op, dynamicOverlay: false),
                         op.PassIndex,
                         ResolveCommandChainTargetIdentity(op),
+                        0UL,
                         false,
                         primaryOwnedChainOrdinal);
                     CommandChain chain = GetOrCreateCommandChain(commandChainCache, chainKey);

@@ -19,7 +19,7 @@ public sealed class PoiyomiInspectorInteractionTests
     public void SetUp()
     {
         _previousServices = RuntimeShaderServices.Current;
-        RuntimeShaderServices.Current = new PoiyomiRuntimeShaderServices();
+        RuntimeShaderServices.Current = new UberRuntimeShaderServices();
         _schema = PoiyomiAuthoringSchemaCatalog.GetOrCreate(
             ShaderHelper.UberFragForward().GetUiManifest());
         _material = new()

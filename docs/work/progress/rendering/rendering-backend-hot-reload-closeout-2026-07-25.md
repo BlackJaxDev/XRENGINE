@@ -14,7 +14,7 @@ Result: Complete for the documented Windows/CoreCLR desktop workflow.
 > require a full editor restart until Streamline runtime ownership is moved to a
 > stable process-lifetime service or the operation is rejected before teardown.
 > See the
-> [2026-07-27 investigation](../../investigations/rendering/vulkan-uber-pipeline-stall-black-recovery-2026-07-27.md).
+> [2026-07-27 investigation](../../investigations/rendering/archive/vulkan-uber-pipeline-stall-black-recovery-2026-07-27.md).
 
 ## Inventory and ownership audit
 

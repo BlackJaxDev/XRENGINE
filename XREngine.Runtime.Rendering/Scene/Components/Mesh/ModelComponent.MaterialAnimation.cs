@@ -5,7 +5,7 @@ namespace XREngine.Components.Scene.Mesh;
 public partial class ModelComponent
 {
     /// <summary>
-    /// Resolves and prewarms a Unity material animation target. Animation
+    /// Resolves and prewarms a material animation target. Animation
     /// member reflection caches the returned binding for frame updates.
     /// </summary>
     public MaterialAnimationBinding GetMaterialAnimationBinding(
@@ -17,7 +17,7 @@ public partial class ModelComponent
     internal void RefreshMaterialAnimationBounds(int materialSlot)
     {
         if ((uint)materialSlot < (uint)Meshes.Count)
-            Meshes[materialSlot].RefreshPoiyomiVertexCullingBounds();
+            Meshes[materialSlot].RefreshVertexEffectCullingBounds();
     }
 
     internal XRMaterial? ResolveMaterialAnimationSlot(int materialSlot)

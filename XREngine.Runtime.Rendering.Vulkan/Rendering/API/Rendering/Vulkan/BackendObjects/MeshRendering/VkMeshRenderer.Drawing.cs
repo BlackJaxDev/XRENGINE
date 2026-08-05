@@ -1937,15 +1937,17 @@ internal unsafe partial class VkMeshRenderer
 		in PendingMeshDraw draw,
 		int drawUniformSlot,
 		int frameIndex,
-		XRFrameBuffer? target)
+		XRFrameBuffer? target,
+		bool frameDataAlreadyPrewarmed = false)
 	{
 		lock (_recordDrawSync)
 		{
-			if (!TryPrewarmFrameDataForRecordingNoLock(
+			if ((!frameDataAlreadyPrewarmed &&
+				 !TryPrewarmFrameDataForRecordingNoLock(
 					draw,
 					drawUniformSlot,
 					frameIndex,
-					out _) ||
+					out _)) ||
 				Renderer.IsDescriptorHeapDrawBindingActive ||
 				_descriptorSets is not { Length: > 0 })
 			{
@@ -2257,10 +2259,14 @@ internal unsafe partial class VkMeshRenderer
 			return "mesh frame-data arena disabled";
 		if (Renderer.IsDescriptorHeapDrawBindingActive)
 			return "descriptor-heap draw binding";
-		if (_program is null)
-			return "active program unavailable";
-		if (!ReferenceEquals(_program, draw.PreparedProgram))
-			return "prepared program is not active";
+		VkRenderProgram? publicationProgram =
+			draw.PreparedProgram ?? _program;
+		if (publicationProgram is null)
+			return "prepared program unavailable";
+		if (draw.PreparedProgram is not null &&
+			draw.PreparedProgramLinkGeneration !=
+				draw.PreparedProgram.LinkGeneration)
+			return "prepared program link generation changed";
 		XRMaterial? material =
 			draw.MaterialOverride ?? MeshRenderer.Material;
 		bool hasLegacyUniformCallback =
@@ -2275,6 +2281,15 @@ internal unsafe partial class VkMeshRenderer
 		if (draw.ProgramBindingSnapshot is { } bindingSnapshot &&
 			!bindingSnapshot.HasPublishedBindingLayoutSignatures)
 			return "prepared binding signatures are unpublished";
+		if (draw.ProgramBindingSnapshot?.HasMutableFrameSourceSamplerBindings == true)
+		{
+			// Owner-only refresh intentionally visits frequency-owned UBO work and
+			// skips the draw's descriptor publication. Frame sources such as the
+			// final-present SourceTexture can replace their physical image while the
+			// draw and its recorded secondary remain reusable, so they must retain a
+			// per-draw fallback that republishes the current descriptor for this slot.
+			return "mutable frame-source samplers require per-draw descriptor refresh";
+		}
 		if (_engineUniformBuffers.Count != 0)
 		{
 			foreach (string engineUniformName in
@@ -2301,7 +2316,7 @@ internal unsafe partial class VkMeshRenderer
 			return "blendshape frame-source descriptors are active";
 
 		foreach (AutoUniformBlockInfo block in
-				 _program.AutoUniformBlockMap.Values)
+				 publicationProgram.AutoUniformBlockMap.Values)
 		{
 			if (block.Frequency == EVulkanBindingFrequency.Unknown)
 				return $"auto-uniform block '{block.InstanceName}' has unknown frequency";

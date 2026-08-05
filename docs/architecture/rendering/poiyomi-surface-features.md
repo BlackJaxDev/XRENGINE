@@ -5,13 +5,13 @@ of the pinned Poiyomi Toon 9.3 conversion.
 
 ## Surface, Sampling, Masks, And Themes
 
-The `poiyomi-surface` shader family owns main color adjustment, alpha modes,
+The `surface-extensions` shader family owns main color adjustment, alpha modes,
 normal correction, backface shading, detail blending, projection modes, and
 stochastic sampling. UV0-UV3, object/world projection, panosphere, polar,
 Deliot-Heitz, and hex-tile paths retain explicit derivatives for mip-correct
 sampling. Normal and mask imports retain their authored linear-data intent.
 
-The `poiyomi-masks-themes` family exposes four RGBA global-mask textures,
+The `global-masks-themes` family exposes four RGBA global-mask textures,
 sixteen selectable channels, channel remapping/inversion, view and surface
 modifiers, four themes, and RGBA color-mask contributions to color, normal,
 PBR, and emission.

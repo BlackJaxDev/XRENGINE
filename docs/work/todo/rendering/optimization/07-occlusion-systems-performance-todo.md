@@ -15,7 +15,7 @@ promote a mode or waive this workstream's exit gate.
 
 Primary evidence:
 
-- [Vulkan Framerate Root-Cause Investigation](../../../investigations/rendering/vulkan-framerate-root-cause-2026-07-28.md)
+- [Vulkan Framerate Root-Cause Investigation](../../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md)
 
 Related trackers:
 

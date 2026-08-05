@@ -72,6 +72,14 @@ internal sealed class VulkanFrameOperationScheduler
 
         private static int CompareCanonicalMeshDrawOrder(MeshDrawOp x, MeshDrawOp y)
         {
+            // Material sorting must stay inside one render-view cohort. Sorting the
+            // same mesh from several directional cascades together interleaves their
+            // cameras and viewport/scissor state, which breaks contiguous secondary
+            // batches and forces a begin/barrier/draw/end sequence per mesh.
+            int viewCompare = CompareRenderViewCohort(x.Context, y.Context);
+            if (viewCompare != 0)
+                return viewCompare;
+
             int targetCompare = (x.Target?.GetHashCode() ?? 0).CompareTo(y.Target?.GetHashCode() ?? 0);
             if (targetCompare != 0)
                 return targetCompare;
@@ -89,6 +97,39 @@ internal sealed class VulkanFrameOperationScheduler
                 return instanceCompare;
 
             return ((int)x.Draw.BillboardMode).CompareTo((int)y.Draw.BillboardMode);
+        }
+
+        private static int CompareRenderViewCohort(in FrameOpContext x, in FrameOpContext y)
+        {
+            // SchedulingIdentity is the exact primary-recording/render-scope
+            // boundary. Sequential directional cascades intentionally share the
+            // pipeline, viewport, output atlas, and pass metadata, so comparing
+            // only those broader identities still interleaves cascade draws by
+            // material. Keep every scope contiguous before applying mesh order.
+            int compare = x.SchedulingIdentity.CompareTo(y.SchedulingIdentity);
+            if (compare != 0)
+                return compare;
+
+            compare = x.PipelineIdentity.CompareTo(y.PipelineIdentity);
+            if (compare != 0)
+                return compare;
+
+            compare = x.ViewportIdentity.CompareTo(y.ViewportIdentity);
+            if (compare != 0)
+                return compare;
+
+            compare = x.OutputTargetIdentity.CompareTo(y.OutputTargetIdentity);
+            if (compare != 0)
+                return compare;
+
+            compare = x.ContextKind.CompareTo(y.ContextKind);
+            if (compare != 0)
+                return compare;
+
+            compare = x.StereoEnabled.CompareTo(y.StereoEnabled);
+            return compare != 0
+                ? compare
+                : x.MultiviewEnabled.CompareTo(y.MultiviewEnabled);
         }
     }
     private static readonly Comparison<FrameOpSortKey> FrameOpSortComparison =
@@ -125,7 +166,7 @@ internal sealed class VulkanFrameOperationScheduler
     /// <summary>
     /// Sorts frame operations deterministically by:
     /// 1) compiled pass topological order,
-    /// 2) canonical opaque mesh draw order when both operations are safe to reorder,
+    /// 2) render-view cohort, then canonical opaque mesh draw order when both operations are safe to reorder,
     /// 3) original index for all dependency-carrying operations,
     /// 4) same-pass target clear-before-use normalization.
     /// </summary>

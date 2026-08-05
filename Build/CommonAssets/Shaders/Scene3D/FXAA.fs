@@ -1,10 +1,15 @@
 #version 450
 
+#pragma snippet "ScreenSpaceUtils"
+
 layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
 uniform sampler2D Texture0;
 uniform vec2 FxaaTexelStep; // XRENGINE_FREQUENCY(Pass)
+uniform float ScreenWidth;
+uniform float ScreenHeight;
+uniform vec2 ScreenOrigin;
 
 const vec3 LumaWeights = vec3(0.299f, 0.587f, 0.114f);
 
@@ -15,11 +20,13 @@ vec3 Sample(vec2 uv)
 
 void main()
 {
-    vec2 uv = FragPos.xy;
-    if (uv.x > 1.0f || uv.y > 1.0f)
-        discard;
-
-    uv = uv * 0.5f + 0.5f;
+    vec2 uv = clamp(
+        XRENGINE_FramebufferUV(
+            gl_FragCoord.xy,
+            ScreenOrigin,
+            vec2(ScreenWidth, ScreenHeight)),
+        vec2(0.0f),
+        vec2(1.0f));
 
     vec3 rgbM = Sample(uv);
     vec3 rgbNW = Sample(uv + vec2(-FxaaTexelStep.x, -FxaaTexelStep.y));

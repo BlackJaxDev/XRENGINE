@@ -19,7 +19,7 @@ public sealed class PoiyomiParityContractTests
     public void SetUp()
     {
         _previousServices = RuntimeShaderServices.Current;
-        RuntimeShaderServices.Current = new PoiyomiRuntimeShaderServices();
+        RuntimeShaderServices.Current = new UberRuntimeShaderServices();
     }
 
     [TearDown]

@@ -59,7 +59,8 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
         new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _computeWarnings = new(StringComparer.Ordinal);
     private readonly Dictionary<ComputeUniformBufferKey, ComputeUniformBuffer> _computeUniformBuffers = new();
-    private readonly HashSet<(uint ImageIndex, ulong BindingKey)> _reusableComputeDescriptorRefreshKeys = [];
+    private readonly Dictionary<(uint ImageIndex, ulong BindingKey), ulong>
+        _reusableComputeDescriptorResourceSignatures = [];
     private Pipeline _computePipeline;
     private DescriptorHeapProgramLayout? _descriptorHeapLayout;
     private bool[] _descriptorSetUsesUpdateAfterBind = Array.Empty<bool>();
