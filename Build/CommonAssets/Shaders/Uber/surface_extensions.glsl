@@ -377,18 +377,26 @@ void uberEmissionSlot(
     inout FragmentData fragData,
     sampler2D source,
     sampler2D maskTexture,
+    vec4 sourceTransform,
+    vec4 maskTransform,
     vec4 color,
     vec4 parameters,
     vec2 pan,
     int uvMode,
     vec4 modifiers,
+    vec4 sampling,
     ToonMesh mesh)
 {
-    vec2 uv = panUV(getUV(uvMode, mesh), pan, u_Time);
+    vec2 baseUv = getUV(uvMode, mesh);
+    vec2 uv = panUV(transformUV(baseUv, sourceTransform), pan, u_Time);
+    vec2 maskUv = transformUV(baseUv, maskTransform);
     vec4 texel = texture(source, uv);
-    float mask = texture(maskTexture, uv).r;
+    vec4 maskTexel = texture(maskTexture, maskUv);
+    float mask = maskTexel[int(clamp(sampling.y, 0.0, 3.0) + 0.5)];
+    mask = mix(mask, 1.0 - mask, saturate(sampling.z));
     float pulse = mix(1.0, 0.5 + 0.5 * sin(u_Time * parameters.z), saturate(parameters.y));
-    vec3 shifted = parameters.w == 0.0 ? texel.rgb : hueShift(texel.rgb, parameters.w * u_Time);
+    vec3 sourceColor = mix(texel.rgb, fragData.baseColor, saturate(sampling.x));
+    vec3 shifted = parameters.w == 0.0 ? sourceColor : hueShift(sourceColor, parameters.w * u_Time);
     vec3 themedColor = uberResolveThemeColor(int(modifiers.w + 0.5), color.rgb);
     float centerOut = modifiers.y > 0.5
         ? smoothstep(0.0, 0.5, abs(fract(uv.x + u_Time * parameters.z) - 0.5))
@@ -402,44 +410,81 @@ void uberEmissionSlot(
 void uberApplyEmissionSlots(inout FragmentData fragData, ToonMesh mesh)
 {
 #ifndef XRENGINE_UBER_DISABLE_LAYERED_EMISSION
-    uberEmissionSlot(fragData, _Emission0Tex, _Emission0Mask, _EmissionSlotColor0, _EmissionSlotParams0, _EmissionSlotPan0, _EmissionSlotUv0, _EmissionSlotModifiers0, mesh);
-    uberEmissionSlot(fragData, _Emission1Tex, _Emission1Mask, _EmissionSlotColor1, _EmissionSlotParams1, _EmissionSlotPan1, _EmissionSlotUv1, _EmissionSlotModifiers1, mesh);
-    uberEmissionSlot(fragData, _Emission2Tex, _Emission2Mask, _EmissionSlotColor2, _EmissionSlotParams2, _EmissionSlotPan2, _EmissionSlotUv2, _EmissionSlotModifiers2, mesh);
-    uberEmissionSlot(fragData, _Emission3Tex, _Emission3Mask, _EmissionSlotColor3, _EmissionSlotParams3, _EmissionSlotPan3, _EmissionSlotUv3, _EmissionSlotModifiers3, mesh);
+    uberEmissionSlot(fragData, _Emission0Tex, _Emission0Mask, _Emission0Tex_ST, _Emission0Mask_ST, _EmissionSlotColor0, _EmissionSlotParams0, _EmissionSlotPan0, _EmissionSlotUv0, _EmissionSlotModifiers0, _EmissionSlotSampling0, mesh);
+    uberEmissionSlot(fragData, _Emission1Tex, _Emission1Mask, _Emission1Tex_ST, _Emission1Mask_ST, _EmissionSlotColor1, _EmissionSlotParams1, _EmissionSlotPan1, _EmissionSlotUv1, _EmissionSlotModifiers1, _EmissionSlotSampling1, mesh);
+    uberEmissionSlot(fragData, _Emission2Tex, _Emission2Mask, _Emission2Tex_ST, _Emission2Mask_ST, _EmissionSlotColor2, _EmissionSlotParams2, _EmissionSlotPan2, _EmissionSlotUv2, _EmissionSlotModifiers2, _EmissionSlotSampling2, mesh);
+    uberEmissionSlot(fragData, _Emission3Tex, _Emission3Mask, _Emission3Tex_ST, _Emission3Mask_ST, _EmissionSlotColor3, _EmissionSlotParams3, _EmissionSlotPan3, _EmissionSlotUv3, _EmissionSlotModifiers3, _EmissionSlotSampling3, mesh);
 #endif
 }
 
-vec3 uberMatcapSlot(
+vec2 uberMatcapUv(ToonMesh mesh, vec4 parameters, vec4 projection)
+{
+    vec3 normal = normalize(mix(mesh.vertexNormal, mesh.worldNormal, saturate(parameters.w)));
+    int uvMode = int(projection.z + 0.5);
+    float border = max(projection.y, 0.0);
+
+    if (uvMode == 1)
+    {
+        vec3 viewUp = normalize(vec3(0.0, 1.0, 0.0) - mesh.viewDir * dot(mesh.viewDir, vec3(0.0, 1.0, 0.0)));
+        vec3 viewRight = normalize(cross(mesh.viewDir, viewUp));
+        return vec2(dot(viewRight, normal), dot(viewUp, normal)) * border + 0.5;
+    }
+
+    if (uvMode == 2)
+    {
+        vec3 reflected = reflect(-mesh.viewDir, normal);
+        return reflected.xy * border + 0.5;
+    }
+
+    vec3 viewNormal = normalize(mat3(u_ViewMatrix) * normal);
+    return viewNormal.xy * border + 0.5;
+}
+
+vec4 uberMatcapSlot(
     sampler2D source,
     sampler2D maskTexture,
     vec4 color,
+    int themeIndex,
     vec4 parameters,
-    vec2 uv,
+    vec4 projection,
     ToonMesh mesh,
     ToonLight light,
     inout vec3 emission)
 {
-    vec4 sampleColor = texture(source, uv) * color;
+    vec2 uv = uberMatcapUv(mesh, parameters, projection);
+    vec4 sampleColor = texture(source, uv);
+    sampleColor.rgb *= uberResolveThemeColor(themeIndex, color.rgb);
+    sampleColor.a *= color.a;
     float mask = texture(maskTexture, getUV(0, mesh)).r;
-    mask *= mix(1.0, saturate(light.lightMap), saturate(parameters.z));
-    vec3 value = sampleColor.rgb * max(parameters.x, 0.0) * mask;
-    emission += value * max(parameters.w, 0.0);
-    return value;
+    mask *= mix(1.0, saturate(light.lightMap), saturate(parameters.y));
+    sampleColor.rgb *= mix(vec3(1.0), light.color, saturate(projection.w));
+    sampleColor.rgb *= max(parameters.x, 0.0);
+    mask *= sampleColor.a;
+    emission += sampleColor.rgb * max(parameters.z, 0.0) * mask;
+    return vec4(sampleColor.rgb, mask);
+}
+
+void uberBlendMatcapSlot(inout vec3 finalColor, vec4 slot, vec4 blend, float mixed)
+{
+    float mask = saturate(slot.a);
+    finalColor = mix(finalColor, slot.rgb, saturate(blend.x) * mask * 0.999999);
+    finalColor *= mix(vec3(1.0), slot.rgb, saturate(blend.y) * mask);
+    finalColor += slot.rgb * max(blend.z, 0.0) * mask;
+    finalColor = mix(finalColor, uberBlendRgb(finalColor, slot.rgb, 6), saturate(blend.w) * mask);
+    finalColor = mix(finalColor, finalColor + finalColor * slot.rgb, saturate(mixed) * mask);
 }
 
 void uberApplyMatcapSlots(inout vec3 finalColor, inout vec3 emission, ToonMesh mesh, ToonLight light)
 {
 #ifndef XRENGINE_UBER_DISABLE_LAYERED_MATCAP_RIM
-    vec3 viewNormal = normalize(mat3(u_ViewMatrix) * mesh.worldNormal);
-    vec2 uv = viewNormal.xy * 0.5 + 0.5;
-    vec3 value0 = uberMatcapSlot(_Matcap0Tex, _Matcap0Mask, _MatcapSlotColor0, _MatcapSlotParams0, uv, mesh, light, emission);
-    vec3 value1 = uberMatcapSlot(_Matcap1Tex, _Matcap1Mask, _MatcapSlotColor1, _MatcapSlotParams1, uv, mesh, light, emission);
-    vec3 value2 = uberMatcapSlot(_Matcap2Tex, _Matcap2Mask, _MatcapSlotColor2, _MatcapSlotParams2, uv, mesh, light, emission);
-    vec3 value3 = uberMatcapSlot(_Matcap3Tex, _Matcap3Mask, _MatcapSlotColor3, _MatcapSlotParams3, uv, mesh, light, emission);
-    finalColor = mix(finalColor, uberBlendRgb(finalColor, value0, int(_MatcapSlotParams0.y + 0.5)), saturate(_MatcapSlotParams0.x));
-    finalColor = mix(finalColor, uberBlendRgb(finalColor, value1, int(_MatcapSlotParams1.y + 0.5)), saturate(_MatcapSlotParams1.x));
-    finalColor = mix(finalColor, uberBlendRgb(finalColor, value2, int(_MatcapSlotParams2.y + 0.5)), saturate(_MatcapSlotParams2.x));
-    finalColor = mix(finalColor, uberBlendRgb(finalColor, value3, int(_MatcapSlotParams3.y + 0.5)), saturate(_MatcapSlotParams3.x));
+    vec4 value0 = uberMatcapSlot(_Matcap0Tex, _Matcap0Mask, _MatcapSlotColor0, _MatcapSlotTheme0, _MatcapSlotParams0, _MatcapSlotExtra0, mesh, light, emission);
+    vec4 value1 = uberMatcapSlot(_Matcap1Tex, _Matcap1Mask, _MatcapSlotColor1, _MatcapSlotTheme1, _MatcapSlotParams1, _MatcapSlotExtra1, mesh, light, emission);
+    vec4 value2 = uberMatcapSlot(_Matcap2Tex, _Matcap2Mask, _MatcapSlotColor2, _MatcapSlotTheme2, _MatcapSlotParams2, _MatcapSlotExtra2, mesh, light, emission);
+    vec4 value3 = uberMatcapSlot(_Matcap3Tex, _Matcap3Mask, _MatcapSlotColor3, _MatcapSlotTheme3, _MatcapSlotParams3, _MatcapSlotExtra3, mesh, light, emission);
+    uberBlendMatcapSlot(finalColor, value0, _MatcapSlotBlend0, _MatcapSlotExtra0.x);
+    uberBlendMatcapSlot(finalColor, value1, _MatcapSlotBlend1, _MatcapSlotExtra1.x);
+    uberBlendMatcapSlot(finalColor, value2, _MatcapSlotBlend2, _MatcapSlotExtra2.x);
+    uberBlendMatcapSlot(finalColor, value3, _MatcapSlotBlend3, _MatcapSlotExtra3.x);
 #endif
 }
 
@@ -487,11 +532,50 @@ vec3 uberApplyDepthRim(ToonMesh mesh)
 #endif
 }
 
+float uberApplyDepthIntersectionAlpha(float alpha, ToonMesh mesh)
+{
+#if defined(XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS) || defined(XRENGINE_UBER_DISABLE_FORWARD_LIGHTING) || defined(XRENGINE_UBER_DISABLE_FORWARD_SHADOWS) || defined(XRENGINE_UBER_DISABLE_FORWARD_CONTACT_SHADOWS)
+    return alpha;
+#else
+    if (_DepthAlphaEnabled <= 0.5 || !ForwardContactShadowsEnabled)
+        return alpha;
+
+    vec2 pixel = gl_FragCoord.xy - ScreenOrigin;
+    vec2 uv = pixel / vec2(ScreenWidth, ScreenHeight);
+    float sceneDepth;
+    if (ForwardContactShadowsArrayEnabled)
+    {
+        float layer = float(XRENGINE_GetForwardResolvedViewIndex());
+        sceneDepth = texture(ForwardContactDepthViewArray, vec3(uv, layer)).r;
+    }
+    else
+    {
+        sceneDepth = texture(ForwardContactDepthView, uv).r;
+    }
+
+    if (XRENGINE_IsContactShadowFarDepth(sceneDepth, DepthMode))
+        return alpha;
+
+    vec3 sceneWorldPosition = XRENGINE_ContactShadowWorldPosFromDepth(
+        sceneDepth,
+        uv,
+        XRENGINE_GetForwardResolvedInverseProjMatrix(),
+        XRENGINE_GetForwardResolvedInverseViewMatrix(),
+        DepthMode);
+    float separation = distance(sceneWorldPosition, mesh.worldPos);
+    float depthRange = max(_DepthAlphaParams.w - _DepthAlphaParams.z, EPSILON);
+    float depthBlend = saturate((separation - _DepthAlphaParams.z) / depthRange);
+    float authoredAlpha = mix(_DepthAlphaParams.x, _DepthAlphaParams.y, depthBlend);
+    return alpha * saturate(authoredAlpha);
+#endif
+}
+
 vec3 uberApplyAdvancedPbr(
     ToonMesh mesh,
     ToonLight light,
     PBRData pbr,
-    vec3 finalColor)
+    vec3 finalColor,
+    inout vec3 emission)
 {
 #ifdef XRENGINE_UBER_DISABLE_ADVANCED_PBR
     return finalColor;
@@ -513,12 +597,29 @@ vec3 uberApplyAdvancedPbr(
     finalColor += vec3(coat);
 
     vec3 reflected = reflect(-mesh.viewDir, mesh.worldNormal);
-    vec3 environment = textureLod(_CubeMap, reflected, pbr.perceptualRoughness * 8.0).rgb * _CubeMapColor.rgb;
-    if (_StylizedReflectionMode == 0)
-        environment = floor(environment * 4.0 + 0.5) * 0.25;
+    vec3 cubeDirection = reflected;
+    if (_CubeMapUvMode == 0)
+        cubeDirection = -mesh.viewDir;
+    else if (_CubeMapUvMode == 2 || _CubeMapUvMode == 3)
+        cubeDirection = mesh.worldNormal;
+    cubeDirection.z *= _CubeMapCoordinateZSign;
+
+    float cubeLod = (1.0 - saturate(_CubeMapSmoothness));
+    cubeLod = cubeLod * cubeLod * 8.0;
+    vec4 cubeSample = textureLod(_CubeMap, cubeDirection, cubeLod);
+    vec3 environment = cubeSample.rgb * _CubeMapColor.rgb * max(_CubeMapStrength, 0.0);
+    vec4 cubeMaskTexel = texture(_CubeMapMask, transformUV(mesh.uv[0], _CubeMapMask_ST));
+    float cubeMask = cubeMaskTexel[clamp(_CubeMapMaskChannel, 0, 3)];
+    cubeMask = mix(cubeMask, 1.0 - cubeMask, saturate(_CubeMapMaskInvert));
+    cubeMask *= mix(1.0, saturate(light.lightMap), saturate(_CubeMapLightMask));
+    float cubeAlpha = saturate(cubeMask * cubeSample.a * _CubeMapBlendAmount);
+    if (_CubeMapBlendType == 1)
+        finalColor *= mix(vec3(1.0), environment, cubeAlpha);
+    else if (_CubeMapBlendType == 2)
+        finalColor += environment * cubeAlpha;
     else
-        environment = smoothstep(vec3(0.15), vec3(0.85), environment);
-    finalColor += environment * (_CubeMapStrength * pbr.reflectionMask);
+        finalColor = mix(finalColor, environment, cubeAlpha);
+    emission += environment * max(_CubeMapEmissionStrength, 0.0) * cubeMask * cubeSample.a;
 
     float rim = pow(1.0 - saturate(dot(mesh.worldNormal, mesh.viewDir)),
         mix(0.25, 16.0, saturate(_RimEnviroSharpness)));

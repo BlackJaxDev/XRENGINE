@@ -314,7 +314,7 @@ public partial class XRMesh
         };
     }
 
-    private bool TryReadPackedSkinningData(
+    internal bool TryReadPackedSkinningData(
         out byte[] coreIndices,
         out byte[] coreWeights,
         out byte[] spillHeaders,
@@ -353,7 +353,7 @@ public partial class XRMesh
         return true;
     }
 
-    private static bool TryDecodePackedInfluence(
+    internal static bool TryDecodePackedInfluence(
         uint boneIndexPlusOne,
         byte quantizedWeight,
         int paletteBoneCount,

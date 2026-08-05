@@ -1765,7 +1765,7 @@ void main() {
 #ifndef XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR
     fragData.finalColor += calculateAdvancedSpecular(mesh, mesh.worldNormal, light, surfacePbr);
 #endif
-    fragData.finalColor = uberApplyAdvancedPbr(mesh, light, surfacePbr, fragData.finalColor);
+    fragData.finalColor = uberApplyAdvancedPbr(mesh, light, surfacePbr, fragData.finalColor, fragData.emission);
     
     // Subsurface scattering (wrap-lighting approximation): backlit direction
     // times a view-aligned falloff, modulated by a thickness map. Produces
@@ -1859,6 +1859,7 @@ void main() {
     // remains bright through tonemap and bloom.
     fragData.finalColor += fragData.emission;
     fragData.finalColor = uberApplyPostEffects(mesh, fragData.finalColor);
+    fragData.alpha = uberApplyDepthIntersectionAlpha(fragData.alpha, mesh);
 
     // ---- 8. Final write -----------------------------------------------------
     vec4 shadedColor = vec4(fragData.finalColor, fragData.alpha);

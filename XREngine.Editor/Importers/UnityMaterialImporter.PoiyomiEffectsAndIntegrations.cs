@@ -81,21 +81,14 @@ public static partial class UnityMaterialImporter
             "_InternalParallaxEnabled",
             "_ParallaxInternal",
             "_ProceduralMode",
-            "_VideoEffectMode",
-            "_VideoBlend",
-            "_VideoTextureStrength");
+            "_VideoEffectMode");
 
     private static bool HasVertexEffects(UnityMaterialDocument document)
-        => HasAnyPositive(
+        => PoiyomiFeatureStateResolver.IsEnabled(
             document,
-            "_VertexManipulationsEnabled",
-            "_VertexRoundingEnabled",
-            "_VertexBarrelMode",
-            "_LookAtEnabled",
-            "_TextureGlitchEnabled",
-            "_UzumoreEnabled",
-            "_NaturalEquationEnabled",
-            "_DepthBulgeEnabled");
+            authoredEvidence: false,
+            ["_VertexManipulationsEnabled"],
+            ["AUTO_EXPOSURE"]);
 
     private static void MapOutlineAndDissolve(XRMaterial material, UnityMaterialDocument document)
     {

@@ -73,7 +73,6 @@ namespace XREngine.Rendering.OpenGL
                         return;
 
                     window.Window.MakeCurrent();
-                    using var clipScope = _renderer.PushUiClipSpacePolicy();
                     Vector2D<int> framebufferSize = window.Window.FramebufferSize;
                     _renderer.Api.Viewport(0, 0, (uint)Math.Max(1, framebufferSize.X), (uint)Math.Max(1, framebufferSize.Y));
 
@@ -111,7 +110,17 @@ namespace XREngine.Rendering.OpenGL
                     if (drawData.NativePtr is null)
                         return;
 
+                    if (GetPlatformWindow(viewport) is not { } window)
+                        return;
+
                     using var clipScope = _renderer.PushUiClipSpacePolicy();
+                    // PushUiClipSpacePolicy restores the engine's active render region, which
+                    // belongs to the primary window. Re-establish the platform context's
+                    // framebuffer viewport after that restoration and immediately before the
+                    // ImGui draw that consumes it.
+                    Vector2D<int> framebufferSize = window.Window.FramebufferSize;
+                    _renderer.Api.Viewport(0, 0, (uint)Math.Max(1, framebufferSize.X), (uint)Math.Max(1, framebufferSize.Y));
+                    using var srgbScope = FramebufferSrgbScope.Disable(_renderer.Api);
                     if (_controller is { } controller)
                         RenderImDrawData!(controller, drawData);
                 }

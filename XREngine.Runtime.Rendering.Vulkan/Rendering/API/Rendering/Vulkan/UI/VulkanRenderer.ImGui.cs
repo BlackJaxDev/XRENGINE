@@ -38,6 +38,24 @@ public unsafe partial class VulkanRenderer
     internal void StoreImGuiDrawData(ImDrawDataPtr drawData)
         => _imguiDrawData.Store(drawData);
 
+    private Result PresentImGuiViewport(ref PresentInfoKHR presentInfo)
+    {
+        using VulkanQueueOperationLease queueOperation =
+            VulkanQueueOperationLease.TryEnter(_oneTimeSubmitLock, _deviceStateMachine);
+        if (!queueOperation.Acquired)
+            return Result.ErrorDeviceLost;
+
+        Result result = khrSwapChain!.QueuePresent(presentQueue, ref presentInfo);
+        RecordVulkanQueueOperation("present-imgui-viewport", presentQueue, result, 0, nameof(PresentImGuiViewport));
+        if (result == Result.ErrorDeviceLost)
+        {
+            RecordFirstFailingVulkanApi($"vkQueuePresentKHR:{nameof(PresentImGuiViewport)}:{result}");
+            MarkDeviceLost($"QueuePresent returned ErrorDeviceLost in {nameof(PresentImGuiViewport)}");
+        }
+
+        return result;
+    }
+
     private const uint ImGuiDescriptorPoolMaxSets = 256;
 
     protected override bool SupportsImGui => true;
@@ -59,12 +77,13 @@ public unsafe partial class VulkanRenderer
 
     private void DisposeImGuiResources()
     {
+        _imguiBackend?.Dispose();
+        _imguiBackend = null;
+
         DestroyImGuiPipelineResources();
         DestroyImGuiFontResources();
         DestroyImGuiDrawBuffers();
 
-        _imguiBackend?.Dispose();
-        _imguiBackend = null;
         _imguiDrawData.Clear();
         ResetImGuiFrameMarker();
     }

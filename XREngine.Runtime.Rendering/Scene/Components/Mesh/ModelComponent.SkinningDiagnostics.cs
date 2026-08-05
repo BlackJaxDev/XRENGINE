@@ -9,6 +9,11 @@ namespace XREngine.Components.Scene.Mesh;
 public partial class ModelComponent
 {
     /// <summary>
+    /// Gets a bind-pose and live-palette audit intended for editor/MCP diagnostics.
+    /// </summary>
+    internal string RuntimeSkinningDiagnosticSummary => GetRuntimeSkinningDiagnosticSummary();
+
+    /// <summary>
     /// Describes the live skinning inputs owned by this component. Intended for editor/MCP
     /// diagnostics when imported meshes render differently from their CPU bind-pose result.
     /// </summary>

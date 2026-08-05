@@ -205,7 +205,7 @@ internal sealed class VulkanImGuiInputRouter : IDisposable
         EnqueueInputEvent(io => io.AddInputCharacter(character));
     }
 
-    private static bool TryConvertMouseButton(MouseButton button, out int imguiButton)
+    internal static bool TryConvertMouseButton(MouseButton button, out int imguiButton)
     {
         imguiButton = button switch
         {
@@ -220,7 +220,7 @@ internal sealed class VulkanImGuiInputRouter : IDisposable
         return imguiButton >= 0;
     }
 
-    private static bool TryConvertKey(Key key, out ImGuiKey imguiKey)
+    internal static bool TryConvertKey(Key key, out ImGuiKey imguiKey)
     {
         imguiKey = key switch
         {

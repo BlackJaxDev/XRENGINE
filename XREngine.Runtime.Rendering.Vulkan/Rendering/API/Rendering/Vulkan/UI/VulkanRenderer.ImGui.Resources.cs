@@ -19,10 +19,13 @@ namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     private void DestroyImGuiDrawBuffers()
+        => DestroyImGuiDrawBuffers(ref _imguiResources.DrawBuffers);
+
+    private void DestroyImGuiDrawBuffers(ref VulkanImGuiDrawBufferSet[] drawBuffers)
     {
-        for (int i = 0; i < _imguiResources.DrawBuffers.Length; i++)
+        for (int i = 0; i < drawBuffers.Length; i++)
         {
-            ref VulkanImGuiDrawBufferSet buffers = ref _imguiResources.DrawBuffers[i];
+            ref VulkanImGuiDrawBufferSet buffers = ref drawBuffers[i];
 
             if (buffers.VertexBuffer.Handle != 0)
             {
@@ -41,7 +44,7 @@ public unsafe partial class VulkanRenderer
             }
         }
 
-        _imguiResources.DrawBuffers = [];
+        drawBuffers = [];
     }
 
     private void DestroyImGuiPipelineResources()
@@ -724,21 +727,37 @@ public unsafe partial class VulkanRenderer
     private int EnsureImGuiDrawBufferSlot(uint imageIndex)
     {
         int requiredSlots = Math.Max(MAX_FRAMES_IN_FLIGHT, swapChainImages?.Length ?? 0);
-        if (imageIndex >= (uint)requiredSlots)
-            requiredSlots = (int)imageIndex + 1;
-        if (requiredSlots <= 0)
-            requiredSlots = 1;
-
-        if (_imguiResources.DrawBuffers.Length < requiredSlots)
-            Array.Resize(ref _imguiResources.DrawBuffers, requiredSlots);
-
-        return imageIndex < (uint)_imguiResources.DrawBuffers.Length ? (int)imageIndex : 0;
+        return EnsureImGuiDrawBufferSlot(ref _imguiResources.DrawBuffers, imageIndex, requiredSlots);
     }
 
     private int EnsureImGuiDrawBuffers(uint imageIndex, ulong vertexBytes, ulong indexBytes)
     {
         int bufferSlot = EnsureImGuiDrawBufferSlot(imageIndex);
         ref VulkanImGuiDrawBufferSet buffers = ref _imguiResources.DrawBuffers[bufferSlot];
+        EnsureImGuiDrawBuffers(ref buffers, vertexBytes, indexBytes);
+        return bufferSlot;
+    }
+
+    private static int EnsureImGuiDrawBufferSlot(
+        ref VulkanImGuiDrawBufferSet[] drawBuffers,
+        uint imageIndex,
+        int requiredSlots)
+    {
+        if (imageIndex >= (uint)requiredSlots)
+            requiredSlots = checked((int)imageIndex + 1);
+        requiredSlots = Math.Max(requiredSlots, 1);
+
+        if (drawBuffers.Length < requiredSlots)
+            Array.Resize(ref drawBuffers, requiredSlots);
+
+        return imageIndex < (uint)drawBuffers.Length ? (int)imageIndex : 0;
+    }
+
+    private void EnsureImGuiDrawBuffers(
+        ref VulkanImGuiDrawBufferSet buffers,
+        ulong vertexBytes,
+        ulong indexBytes)
+    {
 
         ulong requiredVertexBytes = Math.Max(vertexBytes, 1UL);
         ulong requiredIndexBytes = Math.Max(indexBytes, 1UL);
@@ -768,8 +787,6 @@ public unsafe partial class VulkanRenderer
                 MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
             buffers.IndexBufferSize = capacity;
         }
-
-        return bufferSlot;
     }
 
     private static ulong ComputeImGuiBufferCapacity(ulong currentCapacity, ulong requiredBytes)

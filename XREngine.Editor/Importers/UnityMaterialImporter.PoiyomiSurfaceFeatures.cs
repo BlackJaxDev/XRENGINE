@@ -1,9 +1,12 @@
 using System.Numerics;
+using ImageMagick;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Shaders.Parameters;
+using XREngine.Rendering.Models.Materials.Textures;
 using XREngine.Scene.Importers.Poiyomi;
+using XREngine.Scene.Prefabs;
 
 namespace XREngine.Scene.Importers;
 
@@ -35,6 +38,7 @@ public static partial class UnityMaterialImporter
         BindExactSurfaceParameters(material, document);
         BindCompositeSurfaceParameters(material, document);
         BindSurfaceFeatureTextures(material, document, resolver, diagnostics, warnings);
+        BindSurfaceCubemap(material, document, resolver, diagnostics, warnings);
         WarnForDeferredSurfaceAdapters(document, warnings);
     }
 
@@ -87,7 +91,11 @@ public static partial class UnityMaterialImporter
             "_Specular2Enabled",
             "_EnableRimEnviro",
             "_BacklightEnabled") ||
-           HasExternalTexture(document, "_CubeMap", "_MochieMetallicMaps");
+           HasExternalTexture(document, "_MochieMetallicMaps") ||
+           IsCubemapEnabled(document) && HasExternalTexture(document, "_CubeMap");
+
+    private static bool IsCubemapEnabled(UnityMaterialDocument document)
+        => document.TryGetPositive("_CubeMapEnabled");
 
     private static bool HasMatcapOrRim(UnityMaterialDocument document)
         => HasAnyPositive(
@@ -161,6 +169,30 @@ public static partial class UnityMaterialImporter
     {
         BindGlobalThemeParameters(material, document);
 
+        SetFloat(material, "_DepthAlphaEnabled", document.TryGetPositive("_DepthAlphaToggle") ? 1.0f : 0.0f);
+        SetVector4(
+            material,
+            "_DepthAlphaParams",
+            new Vector4(
+                GetFloat(document, "_DepthAlphaMinValue"),
+                GetFloat(document, "_DepthAlphaMaxValue", 1.0f),
+                GetFloat(document, "_DepthAlphaMinDepth"),
+                GetFloat(document, "_DepthAlphaMaxDepth", 1.0f)));
+
+        SetFloat(
+            material,
+            "_CubeMapStrength",
+            IsCubemapEnabled(document) ? GetFloat(document, "_CubeMapIntensity", 1.0f) : 0.0f);
+        MapInt(document, material, "_CubeMapUvMode", "_CubeMapUVMode");
+        MapInt(document, material, "_CubeMapBlendType", "_CubemapBlendType");
+        MapFloat(document, material, "_CubeMapBlendAmount", "_CubeMapBlendAmount");
+        MapFloat(document, material, "_CubeMapEmissionStrength", "_CubeMapEmissionStrength");
+        MapFloat(document, material, "_CubeMapLightMask", "_CubeMapLightMask");
+        SetFloat(
+            material,
+            "_CubeMapCoordinateZSign",
+            IsCubemapEnabled(document) && HasExternalTexture(document, "_CubeMap") ? -1.0f : 1.0f);
+
         for (int slot = 0; slot < 4; ++slot)
         {
             string suffix = slot == 0 ? string.Empty : slot.ToString();
@@ -192,11 +224,12 @@ public static partial class UnityMaterialImporter
                     GetInt(document, $"_DecalColor{suffix}ThemeIndex")));
 
             string emissionSuffix = slot == 0 ? string.Empty : slot.ToString();
+            bool emissionEnabled = document.TryGetPositive($"_EnableEmission{emissionSuffix}");
             SetVector4(
                 material,
                 $"_EmissionSlotParams{slot}",
                 new Vector4(
-                    GetFloat(document, $"_EmissionStrength{emissionSuffix}"),
+                    emissionEnabled ? GetFloat(document, $"_EmissionStrength{emissionSuffix}") : 0.0f,
                     GetFloat(document, $"_EmissionBlinkingEnabled{emissionSuffix}"),
                     GetFloat(document, $"_EmissiveBlink_Velocity{emissionSuffix}"),
                     GetFloat(document, $"_EmissionHueShiftSpeed{emissionSuffix}")));
@@ -211,6 +244,14 @@ public static partial class UnityMaterialImporter
                     GetFloat(document, $"_EmissionCenterOutEnabled{emissionSuffix}"),
                     GetInt(document, $"_EmissionMask{emissionSuffix}GlobalMask"),
                     GetInt(document, $"_EmissionColor{emissionSuffix}ThemeIndex")));
+            SetVector4(
+                material,
+                $"_EmissionSlotSampling{slot}",
+                new Vector4(
+                    GetFloat(document, $"_EmissionBaseColorAsMap{emissionSuffix}"),
+                    GetInt(document, $"_EmissionMask{emissionSuffix}Channel"),
+                    GetFloat(document, $"_EmissionMaskInvert{emissionSuffix}"),
+                    0.0f));
 
             string matcapPrefix = slot switch
             {
@@ -219,14 +260,32 @@ public static partial class UnityMaterialImporter
                 2 => "_Matcap3",
                 _ => "_Matcap4",
             };
+            bool matcapEnabled = document.TryGetPositive($"{matcapPrefix}Enable");
             SetVector4(
                 material,
                 $"_MatcapSlotParams{slot}",
                 new Vector4(
-                    GetFloat(document, $"{matcapPrefix}Intensity"),
-                    ResolveMatcapBlendMode(document, matcapPrefix),
+                    matcapEnabled ? GetFloat(document, $"{matcapPrefix}Intensity", 1.0f) : 0.0f,
                     GetFloat(document, $"{matcapPrefix}LightMask"),
-                    GetFloat(document, $"{matcapPrefix}EmissionStrength")));
+                    GetFloat(document, $"{matcapPrefix}EmissionStrength"),
+                    GetFloat(document, $"{matcapPrefix}Normal", 1.0f)));
+            SetVector4(
+                material,
+                $"_MatcapSlotBlend{slot}",
+                new Vector4(
+                    GetFloat(document, $"{matcapPrefix}Replace"),
+                    GetFloat(document, $"{matcapPrefix}Multiply"),
+                    GetFloat(document, $"{matcapPrefix}Add"),
+                    GetFloat(document, $"{matcapPrefix}Screen")));
+            SetVector4(
+                material,
+                $"_MatcapSlotExtra{slot}",
+                new Vector4(
+                    GetFloat(document, $"{matcapPrefix}Mixed"),
+                    GetFloat(document, $"{matcapPrefix}Border", 0.43f),
+                    GetInt(document, $"{matcapPrefix}UVMode", 1),
+                    GetFloat(document, $"{matcapPrefix}LightColorMix")));
+            SetInt(material, $"_MatcapSlotTheme{slot}", GetInt(document, $"{matcapPrefix}ColorThemeIndex"));
             MapVector4(document, material, $"_MatcapSlotColor{slot}", $"{matcapPrefix}Color");
         }
 
@@ -256,19 +315,6 @@ public static partial class UnityMaterialImporter
         }
     }
 
-    private static int ResolveMatcapBlendMode(UnityMaterialDocument document, string prefix)
-    {
-        if (document.TryGetPositive(prefix + "Multiply"))
-            return 2;
-        if (document.TryGetPositive(prefix + "Screen"))
-            return 6;
-        if (document.TryGetPositive(prefix + "Add"))
-            return 8;
-        if (document.TryGetPositive(prefix + "Mixed"))
-            return 20;
-        return 0;
-    }
-
     private static float GetFloat(UnityMaterialDocument document, string property, float fallback = 0.0f)
         => document.TryGetFloat(property, out float value) ? value : fallback;
 
@@ -296,6 +342,7 @@ public static partial class UnityMaterialImporter
             ("_LightingSDFMap", ["_LightingSDFMap", "_SDFLightingTexture"]),
             ("_Specular2Map", ["_Specular2Map"]),
             ("_BacklightMask", ["_BacklightMask"]),
+            ("_CubeMapMask", ["_CubeMapMask"]),
             ("_DecalMask", ["_DecalMask"]),
             ("_DecalTexture", ["_DecalTexture"]),
             ("_DecalTexture1", ["_DecalTexture1"]),
@@ -336,6 +383,120 @@ public static partial class UnityMaterialImporter
         }
 
         BindFlipbookArray(material, document, resolver, diagnostics, warnings);
+    }
+
+    /// <summary>
+    /// Imports Unity's equirectangular cubemap source as a native cubemap. A
+    /// two-dimensional fallback cannot be bound to a samplerCube and was the
+    /// reason authored metal reflections silently sampled the black default.
+    /// </summary>
+    private static void BindSurfaceCubemap(
+        XRMaterial material,
+        UnityMaterialDocument document,
+        UnityAssetResolver resolver,
+        ICollection<MaterialConversionDiagnostic> diagnostics,
+        List<string> warnings)
+    {
+        // Optimized Poiyomi shaders keep a default cubemap reference even when
+        // the module is disabled. Treat the enable flag as authoritative so a
+        // non-layout source used only as an inert default cannot fail the whole
+        // material conversion or add a large unused native cubemap asset.
+        if (!IsCubemapEnabled(document) ||
+            !document.Textures.TryGetValue("_CubeMap", out UnityTexturePropertyDocument? property) ||
+            property is null ||
+            !property.TextureReference.HasExternalGuid)
+        {
+            return;
+        }
+
+        string? texturePath = resolver.Resolve(property.TextureReference.Guid);
+        if (string.IsNullOrWhiteSpace(texturePath) || !File.Exists(texturePath))
+        {
+            string message = $"Could not resolve Unity cubemap '_CubeMap' ({property.TextureReference.Guid}) for material '{document.Name}'.";
+            if (resolver.ImportContext is not null)
+                throw new UnityVisualImportException(message);
+            warnings.Add(message);
+            return;
+        }
+
+        ValidateRequiredUnityTexture(texturePath, resolver.ImportContext);
+        try
+        {
+            using MagickImage source = new(texturePath);
+            var baseMipmap = new CubeMipmap();
+            bool isEquirectangular = source.Width == source.Height * 2;
+            bool converted = isEquirectangular
+                ? baseMipmap.SetEquirectangularMap(source)
+                : baseMipmap.SetCrossCubeMap(source);
+            if (!converted)
+                throw new InvalidDataException("Expected a 2:1 equirectangular image or a 4:3/3:4 cubemap cross.");
+
+            UnityTextureImportDocument? settings = UnityTextureImportDocumentParser.ParseFile(texturePath);
+            CubeMipmap[] mipmaps = CreateCubemapMipChain(
+                baseMipmap,
+                settings?.GenerateMipMaps is not false);
+            var cubemap = new XRTextureCube(mipmaps)
+            {
+                Name = Path.GetFileNameWithoutExtension(texturePath),
+                SamplerName = "_CubeMap",
+                SizedInternalFormat = XRTexture2D.DeriveESizedInternalFormat(baseMipmap.Sides[0].InternalFormat),
+                ImportedColorSpace = ETextureColorSpace.Linear,
+                ImportedUsage = ETextureImportUsage.Color,
+                MagFilter = settings?.FilterMode == 0 ? ETexMagFilter.Nearest : ETexMagFilter.Linear,
+                MinFilter = settings?.GenerateMipMaps is false
+                    ? ETexMinFilter.Linear
+                    : ETexMinFilter.LinearMipmapLinear,
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
+                WWrap = ETexWrapMode.ClampToEdge,
+                LodBias = settings?.MipBias ?? 0.0f,
+                AutoGenerateMipmaps = false,
+                Resizable = false,
+            };
+
+            ReplaceMaterialSampler(material, "_CubeMap", cubemap);
+            resolver.ImportContext?.MarkOutcome(texturePath, UnityImportConversionOutcome.Converted);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or ArgumentException or InvalidOperationException)
+        {
+            string message = $"Could not construct native cubemap '{texturePath}': {ex.Message}";
+            if (resolver.ImportContext is not null)
+                throw new UnityVisualImportException(message);
+
+            warnings.Add(message);
+            diagnostics.Add(new MaterialConversionDiagnostic(
+                MaterialConversionDiagnosticCodes.UnsupportedTextureAsset,
+                MaterialConversionDiagnosticSeverity.Warning,
+                message,
+                "_CubeMap"));
+        }
+    }
+
+    private static CubeMipmap[] CreateCubemapMipChain(CubeMipmap baseMipmap, bool generateMipmaps)
+    {
+        if (!generateMipmaps || baseMipmap.Sides.Length == 0)
+            return [baseMipmap];
+
+        uint baseExtent = baseMipmap.Sides[0].Width;
+        if (baseExtent <= 1)
+            return [baseMipmap];
+
+        List<CubeMipmap> mipmaps = [baseMipmap];
+        for (uint extent = baseExtent >> 1; extent > 0; extent >>= 1)
+        {
+            Mipmap2D[] sides = new Mipmap2D[6];
+            for (int side = 0; side < sides.Length; ++side)
+            {
+                using MagickImage image = baseMipmap.Sides[side].GetImage();
+                image.Resize(extent, extent);
+                sides[side] = new Mipmap2D(image);
+            }
+
+            mipmaps.Add(new CubeMipmap(
+                sides[0], sides[1], sides[2], sides[3], sides[4], sides[5]));
+        }
+
+        return [.. mipmaps];
     }
 
     private static void BindFlipbookArray(

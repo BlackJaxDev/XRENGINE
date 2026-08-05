@@ -21,6 +21,7 @@ current owner below explicitly adopts it.
 - [Editor Origin / Eye Camera Flicker](editor-origin-eye-camera-flicker-2026-06-28.md)
 - [Editor Resize Black Frame](editor-resize-black-frame-2026-07-17.md)
 - [Editor UI Overexposure And Physics Debug Black Output](editor-ui-overexposure-physics-debug-black-2026-07-23.md)
+- [ImGui Detached Platform Viewports](imgui-detached-platform-viewports-2026-08-04.md)
 - [Vulkan Camera-Motion Black Frames](vulkan-camera-motion-black-2026-07-10.md)
 - [Vulkan Command-Buffer Retirement Crash](vulkan-command-buffer-retirement-crash.md)
 - [Vulkan Editor Scroll And Depth-Hit Inconsistency](vulkan-editor-scroll-depth-inconsistency-2026-07-22.md)
