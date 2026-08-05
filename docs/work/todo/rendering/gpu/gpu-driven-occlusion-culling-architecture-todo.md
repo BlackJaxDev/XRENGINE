@@ -3,7 +3,7 @@
 Last Updated: 2026-07-28
 Owner: Rendering
 Status: Active child architecture tracker for
-[07 - Occlusion Systems Performance](../optimization/07-occlusion-systems-performance-todo.md)
+[Vulkan occlusion code changes](../vulkan-core-hardening-and-device-loss-todo.md#9-make-occlusion-modes-bounded-and-effective)
 Execution: Current worktree only; do not create or switch branches for this effort.
 
 Ownership: this document owns persistent GPU visibility, two-phase Hi-Z,

@@ -1,3 +1,16 @@
+# Vulkan Multi-View Render-Graph Design
+
+Last Updated: 2026-08-05
+
+Owner: Rendering / Vulkan / XR
+
+Status: Supporting design
+
+This document defines the multi-view render DAG, shared visibility, occlusion,
+and deadline-scheduling model. The canonical CPU lifecycle, ownership,
+simplicity, fault-containment, and observability target is the
+[Vulkan Render Loop Target Architecture](vulkan-render-loop-target-architecture.md).
+
 The clean architecture is a deadline-aware render graph with six logical views, but only four render batches:
 
 1. VR outer stereo — left/right multiview

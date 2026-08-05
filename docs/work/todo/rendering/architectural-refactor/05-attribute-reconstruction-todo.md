@@ -1,10 +1,10 @@
 # 05 - Attribute Reconstruction TODO
 
-Last Updated: 2026-07-29
+Last Updated: 2026-08-05
 Owner: Rendering
 Status: Phase-Owned Implementation Complete - live pipeline validation pending activation
 Depends On: [04 - Visibility Buffer Resources And Geometry](04-visibility-buffer-resources-and-geometry-todo.md)
-Next: [06 - Visible Material Work Classification](06-visible-material-work-classification-todo.md)
+Next: [Visible Material Work Classification](../vulkan-core-hardening-and-device-loss-todo.md#10-classify-visible-material-work-on-the-gpu)
 
 ## Goal
 

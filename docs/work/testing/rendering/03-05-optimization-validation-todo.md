@@ -7,7 +7,7 @@ Sequence: Consolidated completion and validation gate after workstream 05 and
 before workstream 06
 Predecessor: Workstream 02 is complete; see the
 [Vulkan framerate root-cause investigation](../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md)
-Blocks: [06 - Forward+ Prepass And Render-Graph Cost](../../todo/rendering/optimization/06-forward-prepass-and-render-graph-cost-todo.md)
+Blocks: [Forward+ render-graph code changes](../../todo/rendering/vulkan-core-hardening-and-device-loss-todo.md#6-simplify-the-forward-render-graph)
 
 ## Purpose
 

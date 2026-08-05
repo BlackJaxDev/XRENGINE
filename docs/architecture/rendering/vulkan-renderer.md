@@ -1044,6 +1044,8 @@ public override void CleanUp()
 
 ## See Also
 
+- [Vulkan Render Loop Target Architecture](../../work/design/rendering/vulkan-render-loop-target-architecture.md) - Target v1 ownership, lifecycle, simplicity, fault-containment, CPU-efficiency, and observability design
+
 - [Window Creation & Renderer Initialization](window-creation-and-renderer-init.md) — How windows and renderers are created at startup
 - [OpenGL Renderer](opengl-renderer.md) — OpenGL-specific initialization and render loop
 - [Rendering Code Map](code-map.md) — Full source file inventory

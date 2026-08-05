@@ -1,8 +1,8 @@
 # Advanced Render Pipeline Architectural Refactor TODO
 
-Last Updated: 2026-07-29
+Last Updated: 2026-08-05
 Owner: Rendering
-Status: Active - documents 01-03 implementation complete; visibility-buffer resources/geometry next
+Status: Active - documents 01-05 remain phase records; phases 06-10 are consolidated into the Vulkan hardening and recording trackers
 Migration Source: `DefaultRenderPipeline2`
 Target Type: `AdvancedRenderPipeline`
 
@@ -87,9 +87,10 @@ declared frame resources and immutable scene tables
 
 ## Ordered TODO Set
 
-Execute these documents in order. A later document may prototype against an
-earlier document's stable contract, but it may not redefine that contract
-without updating the earlier document and this index.
+Execute documents 01 through 05 and consolidated sections 10 through 14 in
+order. A later phase may prototype against an earlier phase's stable contract,
+but it may not redefine that contract without updating the owning phase and
+this index.
 
 | Order | TODO | Required outcome |
 | --- | --- | --- |
@@ -98,11 +99,11 @@ without updating the earlier document and this index.
 | 03 | [GPU Visibility Preparation And Deformation](03-gpu-visibility-preparation-and-deformation-todo.md) | Aggregate animation outputs, skinning, blendshapes, culling, and indirect preparation without per-renderer submission. |
 | 04 | [Visibility Buffer Resources And Geometry](04-visibility-buffer-resources-and-geometry-todo.md) | Rasterize backend-neutral surface identity and depth from all supported geometry producers. |
 | 05 | [Attribute Reconstruction](05-attribute-reconstruction-todo.md) | Recover stable surface attributes and derivatives from visibility identity. |
-| 06 | [Visible Material Work Classification](06-visible-material-work-classification-todo.md) | Build bounded GPU material work proportional to visible coverage. |
-| 07 | [Native Material, Lighting, Decal, And GI Shading](07-native-material-lighting-decals-and-gi-todo.md) | Shade opaque HDR directly without the classic deferred-light-combine path. |
-| 08 | [Transparency, Special Passes, And Post-Processing](08-transparency-special-passes-and-post-processing-todo.md) | Reconnect legitimate late passes and the temporal/post chain around the new opaque output. |
-| 09 | [Stereo, XR, Capture, And Editor Integration](09-stereo-xr-capture-and-editor-integration-todo.md) | Make RVC-owned OpenXR views, advanced offscreen consumers, selection, diagnostics, and tooling first-class on shared scene/feature contracts. |
-| 10 | [Validation, Performance, Cutover, And Retirement](10-validation-performance-cutover-and-retirement-todo.md) | Prove correctness and performance, make the advanced pipeline the default, and remove obsolete duplicated architecture. |
+| 06 | [Visible Material Work Classification](../vulkan-core-hardening-and-device-loss-todo.md#10-classify-visible-material-work-on-the-gpu) | Build bounded GPU material work proportional to visible coverage. |
+| 07 | [Native Material, Lighting, Decal, And GI Shading](../vulkan-core-hardening-and-device-loss-todo.md#11-shade-native-opaque-materials-lighting-decals-and-gi) | Shade opaque HDR directly without the classic deferred-light-combine path. |
+| 08 | [Transparency, Special Passes, And Post-Processing](../vulkan-core-hardening-and-device-loss-todo.md#12-integrate-transparency-special-passes-and-post-processing) | Reconnect legitimate late passes and the temporal/post chain around the new opaque output. |
+| 09 | [Stereo, XR, Capture, And Editor Integration](../vulkan-core-hardening-and-device-loss-todo.md#13-integrate-stereo-xr-capture-and-editor-views) | Make RVC-owned OpenXR views, advanced offscreen consumers, selection, diagnostics, and tooling first-class on shared scene/feature contracts. |
+| 10 | [Validation, Performance, Cutover, And Retirement](../vulkan-core-hardening-and-device-loss-todo.md#14-cut-over-production-rendering-and-retire-legacy-architecture) | Implement cutover/retirement after the companion testing tracker proves correctness and performance. |
 
 ## Capability Policy
 
@@ -136,7 +137,9 @@ must not change the logical payload or material contracts.
 
 ## Cross-Cutting Evidence
 
-Each implementation document must leave:
+Each implementation phase must leave the evidence required by the consolidated
+[testing tracker](../../../testing/rendering/vulkan-core-hardening-and-recording-testing-todo.md),
+including:
 
 - focused deterministic tests for its data and ordering contracts;
 - named GPU annotations and stable capture resource names;
@@ -162,7 +165,10 @@ Each implementation document must leave:
 
 ## Program Completion
 
-- [ ] Documents 01 through 10 satisfy every acceptance criterion.
+- [ ] Documents 01 through 05 and consolidated implementation sections 10
+  through 14 satisfy every code criterion; the companion testing tracker
+  satisfies every validation and promotion criterion formerly owned by phases
+  06 through 10.
 - [ ] `AdvancedRenderPipeline` is the production default for desktop and
   validated offscreen profiles; `RvcRenderPipeline` owns validated OpenXR eye
   profiles.

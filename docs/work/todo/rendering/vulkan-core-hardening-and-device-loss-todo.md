@@ -1,1112 +1,909 @@
-# Vulkan Core Hardening And Device-Loss TODO
+# Vulkan Core Hardening And Recording Code Changes TODO
 
-Last Updated: 2026-07-28
+Last Updated: 2026-08-05
 Owner: Rendering
-Status: P0 Complete; Inherited Validation Debt And Phase 5.2+ Remain Open
-Execution: Current worktree only; do not create or switch branches for this effort.
+Status: Active
 
-This file intentionally contains only open work and the active constraints needed
-to execute it. Completed implementation history, dated handoffs, and durable
-evidence are in the
+This is the single implementation tracker for Vulkan core hardening, frame-plan
+recording, primary recording fast paths, Forward+ render-graph cost, render tail
+latency, and advanced-render-pipeline architectural phases 06 through 10. Its
+companion, [Vulkan Core Hardening And Recording Testing
+TODO](../../testing/rendering/vulkan-core-hardening-and-recording-testing-todo.md), owns every build,
+test, capture, stress, visual, and performance validation task.
+
+The required end state is defined by the
+[Vulkan Render Loop Target Architecture](../../design/rendering/vulkan-render-loop-target-architecture.md).
+The implementation must combine production-grade fault containment and
+lifecycle correctness with a small readable ownership surface, zero-allocation
+steady-state hot paths, and complete CPU critical-path attribution. Stability,
+speed, observability, and source simplification are joint completion gates; none
+may be traded away to claim progress on another.
+
+Completed implementation history remains in the
 [completed-work record](vulkan-core-hardening-and-device-loss-completed.md).
 
-The former Vulkan frame-wide render-loop TODO has been merged into Phase 5.2 of
-this tracker. Its architectural rationale remains in the
-[Vulkan render-loop design](../../design/rendering/vulkan-render-loop-design.md);
-this file is the product-level promotion checklist for that work. The focused
-Vulkan desktop performance implementation order is delegated to the numbered
-01-08 documents listed in Phase 5.2.
-
-## Goal
-
-Make Vulkan robust and fast enough for normal editor, OpenXR, scene-capture,
-light-probe, shadow, mirror, UI-preview, and diagnostic rendering without recurring
-`VK_ERROR_DEVICE_LOST` failures caused by cross-context resource churn, stale
-descriptors, unsafe resource retirement, or oversized GPU submissions.
-
-This work is not about hiding Vulkan failures behind silent fallbacks. It should
-make invalid states visible earlier, isolate independent frame operations, and
-turn device-loss investigations into actionable diagnostics.
-
-## Scope
-
-- Vulkan renderer command submission, frame-op modeling, resource planning,
-  descriptor binding, image-layout tracking, and resource lifetime.
-- Canonical frame views, view-family and render-batch planning, shared
-  visibility, render-graph dataflow, and deadline-aware multi-output scheduling.
-- OpenXR Vulkan eye/mirror rendering, especially synchronization between XR
-  swapchain work and auxiliary renderer work.
-- Scene capture, light probes, reflection/GI probes, shadow captures, UI preview
-  viewports, and diagnostic framebuffer captures.
-- Tooling for validation layers, RenderDoc/Nsight/RGP captures, crash
-  breadcrumbs, profiler counters, and log summaries.
-
-## Non-Goals
-
-- Do not replace Vulkan with OpenGL fallback behavior.
-- Do not require DX12 work to land first.
-- Do not rewrite every render pipeline before isolating the crash-prone paths.
-- Do not accept a fix that only catches `VK_ERROR_DEVICE_LOST` after the GPU is
-  already unrecoverable.
-- Do not treat in-process logical-device recreation as part of the first
-  hardening pass. First make loss containment deterministic, preserve diagnostic
-  evidence, and exit or restart the renderer through an explicit operator policy.
-
-## Evidence And Reproducibility Rules
-
-- Treat the first observed failing Vulkan/OpenXR call as the detection point,
-  not automatically as the root cause. Preserve validation messages, resource
-  churn, allocation pressure, and submission history leading up to it.
-- Every baseline and stress result must record:
-  - engine commit and dirty-worktree state,
-  - GPU vendor/device/driver and Vulkan API version,
-  - Vulkan SDK and validation-layer versions,
-  - enabled instance/device extensions and features,
-  - OpenXR runtime name/version and active graphics requirements,
-  - diagnostic preset and relevant environment/settings snapshot,
-  - scene/settings hash, resolution, refresh rate, and run duration/frame count.
-- Store durable summaries and exact reproduction commands in tracked work docs.
-  Large captures and raw logs remain under the per-run
-  `Build/_AgentValidation/<run>/` root.
-- Keep a machine-readable result manifest for each validation run so two runs
-  can be compared without scraping prose logs.
-
-## Invariants
-
-- Vulkan/OpenXR device loss must stop further GPU work immediately and report a
-  precise reason, last submitted frame-op context, and known in-flight resource
-  generations.
-- Device-loss transition is first-writer-wins and thread-safe. Preserve the
-  original failing API/result/context; later failures are secondary fallout.
-- After confirmed device loss, no queue submit, wait, allocation, mapping,
-  descriptor update, command recording, or resource-planner publication may
-  begin. Only fault collection and best-effort teardown paths are permitted.
-- Main viewport, OpenXR eyes, scene captures, probes, shadows, and UI previews
-  must not accidentally mutate each other's resource-planner state.
-- Explicit failures are preferred over silent CPU or lower-feature fallbacks.
-- Descriptor image info must match the actual image view, sampler, and expected
-  layout at the time commands are recorded and submitted.
-- Resource destruction must be timeline/fence-safe. Destroying image views,
-  framebuffers, descriptor references, buffers, or images still referenced by
-  in-flight work is a bug.
-- Long GPU work must be budgeted and sliced so Windows TDR and OpenXR frame
-  timing are respected.
-- Hot paths must avoid per-frame heap allocation, LINQ, captured closures,
-  boxing, and string formatting except behind explicit diagnostics.
-- Recorded command reuse must be validated from an immutable dependency
-  signature that includes every structural, binding-identity, allocation, and
-  publication generation consumed by the recording. A global safety boolean or
-  diagnostic environment flag is not an acceptable production cache contract.
-- Classify render changes as structural, binding-identity, or data-only.
-  Data-only updates to a stable frame slot, buffer range, descriptor set, or
-  indirect/count buffer must not invalidate unrelated recorded command ranges.
-- Vulkan dynamic data uses bounded, frame-indexed upload/storage arenas and
-  stable bindings. Ordinary camera, transform, material, skinning, debug-line,
-  and GPU-generated count changes must update safe ranges rather than recreate
-  exact-sized backing resources or rerecord static scene topology.
-- Diagnostic features are capability-gated and additive. Unsupported standard
-  or vendor extensions must be reported explicitly, not silently treated as
-  successful diagnostic coverage.
-- Build one immutable logical view set after OpenXR views are located. Use the
-  same predicted display time for view state, the render snapshot, visibility,
-  histories, and the submitted projection layer.
-- Key temporal state by stable logical-view identity, not transient batch
-  position or swapchain image index. Keep view eligibility, exact frustum
-  visibility, exact occlusion visibility, and render-batch membership distinct.
-- `CpuDirect` uses CPU scene/BVH visibility and never consumes GPU compute-cull
-  output. GPU strategies request the GPU-scene BVH and must not hide an
-  unavailable accelerated path behind a silent CPU fallback.
-- Zero-readback strategies must not require CPU-visible candidate, bucket, draw,
-  visibility, or count data in their steady-state path.
-- GPU-driven strategies must expose stable pass-level dispatch, barrier, and
-  indirect-draw topology after warmup. Changing GPU-resident visibility,
-  commands, counts, or statistics is data mutation, not by itself a reason to
-  rebuild or rerecord a primary command buffer.
-- Desktop, secondary, capture, probe, and debug work must not delay required
-  OpenXR submission.
-- Transient physical-image aliasing remains disabled until actual
-  semaphore-constrained execution intervals prove non-overlap.
-
-## Completion Record
-
-Completed phases, checked criteria, historical handoffs, measurements, and the
-evidence index were moved to the
-[completed-work record](vulkan-core-hardening-and-device-loss-completed.md).
-Keep new completion detail there rather than growing this open-work list.
-
-## P0 Closeout And Post-P0 Dispositions
-
-The immediate desktop visibility, device-loss, and Vulkan recording gate closed
-on 2026-07-18. Its implementation history, checked criteria, measurements, and
-evidence now live in the
-[completed-work record](vulkan-core-hardening-and-device-loss-completed.md).
-Inherited validation debt and Phase 5.2+ may proceed; they are no longer blocked
-on P0.
-
-The closeout deliberately distinguishes production acceptance from diagnostic
-and tooling follow-ups:
-
-- The production GpuIndirectZeroReadback lane is visually present at the
-  matched Sponza camera, changes across a second pose and motion sequence, keeps
-  requested/consumed counts equal, and records zero readback, mapping, fallback,
-  VUID, or stale-generation events.
-- StandardValidation completed the 12-run static/moving and occlusion matrix.
-  The final SyncValidation interaction run survived streaming, camera motion,
-  resize, shader hot reload, and normal shutdown after the command-local
-  retirement publication fix. A later 406-sample SyncValidation forced-record
-  cohort also recorded zero VUIDs, readbacks, fallbacks, submission rejections,
-  and stale collection reuse; its two workload hashes make it correctness
-  evidence rather than a stable performance baseline.
-- Forced primary recording allocation fell from approximately 888.5 KiB/frame
-  to 322.7 KiB/frame by retaining command tracking capacity and removing
-  transient framebuffer attachment/layout/signature collections. Cached stable
-  production frames already reach zero record-path allocation. Eliminating the
-  remaining forced diagnostic-record allocation belongs to the general
-  Phase 5.2.5 recording architecture rather than the completed P0 stability
-  gate.
-- Parallel command-chain workers remain quarantined. Re-enabling them requires
-  immutable planner/renderer recording snapshots and the Phase 5.2.5 parallel
-  acceptance matrix; P0 accepts the validated serial/cached path.
-- XRE_FORCE_CPU_INDIRECT_BUILD=1 now exposes the CPU-built diagnostic
-  reference only for GpuIndirectInstrumented. The material-batched path
-  rebuilds commands and material runs instead of submitting stale/empty data.
-  Focused policy, lifetime, shader, and source-contract coverage passes 56/56.
-  The complete three-way visual matrix remains a diagnostic follow-up; the
-  CPU-built lane is not a production fallback for the accepted GPU path.
-- Engine Vulkan Debug Utils regions are implemented and source-verified.
-  Nsight Systems 2026.3.1 exported no Debug Utils marker table, while RenderDoc
-  1.44/rdc-cli 0.5.6 timed out without serializing a Vulkan capture. P0 records
-  that tooling disposition without claiming external marker visualization.
-
-Post-P0 follow-ups retained in this active tracker:
-
-- [ ] Reduce the remaining approximately 322.7 KiB/frame forced-primary
-  diagnostic allocation to zero as part of Phase 5.2.5's allocation work.
-- [ ] Replace the current hard-disabled primary-reuse safety quarantine with
-  generation-complete dependency validation. The public setting or environment
-  override must not be advertised as effective while a compile-time safety gate
-  forces reuse off.
-- [ ] Re-enable parallel command recording only after workers consume immutable
-  recording snapshots and improve or preserve the repeated validation matrix.
-- [ ] Capture an external Vulkan action/marker tree showing the named engine
-  regions when a compatible Nsight or RenderDoc exporter is available.
-- [ ] Complete the matched CpuDirect / CPU-built indirect / GPU-built indirect
-  visual and counter matrix for motion, CPU-query occlusion, resize, and
-  streaming as Phase 5.2 validation evidence.
-## Inherited Validation Debt
-
-These requirements were not closed by the implementation summarized in the
-[completed-work record](vulkan-core-hardening-and-device-loss-completed.md) and
-remain active. They must be reconciled with current evidence rather than
-silently discarded.
-
-- [ ] Record a Vulkan shadow-rendering baseline with the standard repro manifest.
-- [ ] Record a Vulkan UI-preview-rendering baseline with the standard repro
-  manifest.
-- [ ] On hardware that advertises `VK_KHR_device_fault`, run one
-  `CrashDiagnostics` launch and record whether KHR fault reports are returned.
-- [ ] Measure a steady alternating capture/OpenXR-eye workload and prove that
-  independent contexts do not churn the same physical resources except where
-  sharing is explicit.
-- [ ] Close the aggregate Phase 2.1 live gate: focused and broader Vulkan tests
-  plus repeated OpenXR/probe stress are green, with no cross-context churn,
-  engine-owned validation error, or device loss.
-- [ ] Re-run the original rapid-resize plus probe-capture plus OpenXR-eye
-  destruction stress and prove there are no engine-owned destroyed-in-use
-  objects. Reconcile the old Phase 4 failure counts against the later clean
-  Phase 5.1 lanes and keep any runtime-owned SteamVR exception bounded by exact
-  versions, handles, IDs, and ownership evidence.
-- [ ] A stable desktop scene reaches at least 99% clean command reuse after
-  warmup; every remaining record is attributable to an intentional structural
-  or volatile change.
-- [ ] Camera motion and ordinary frame-data updates do not rerecord static scene
-  command ranges.
-- [ ] Reuse enabled and disabled produce validation-clean, visually equivalent
-  output in explicit dynamic and legacy render-target modes.
-
-## Phase 5.2 - Multi-Output Render Throughput Architecture Gate
-
-Complete Phase 5.2 before Phase 6. The target data flow is:
-
-`Immutable frame snapshot + logical view set -> output requests -> compatible view families/batches -> shared visibility -> cached plans/resources -> record or reuse -> deadline-ordered submit DAG`
-
-### Ordered Vulkan Desktop 200+ Hz And RVC 120 Hz Implementation Authority
-
-The current desktop framerate investigation is executed through the following
-strictly serial workstreams:
-
-1. Performance truth and regression gates - complete; see the
-   [Vulkan framerate root-cause investigation](../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md).
-2. Primary reuse correctness - complete; see the same
-   [investigation](../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md).
-3. [True GPU-driven zero-readback submission](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-03-validation)
-4. [Next-frame preparation and collect-visible handoff](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-04-completion-and-validation)
-5. [Command-recording worker architecture](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-05-validation)
-6. [Forward+ prepass and render-graph cost](optimization/06-forward-prepass-and-render-graph-cost-todo.md)
-7. [Occlusion systems performance](optimization/07-occlusion-systems-performance-todo.md)
-8. [Tail latency: shadows, streaming, and jobs](optimization/08-render-tail-latency-shadows-streaming-jobs-todo.md)
-
-These documents own implementation order, focused checklists, measured exit
-gates, the final 5.00 ms desktop-only promotion result, and the final 8.33 ms
-Vulkan RVC zero-readback result with at least three renders per frame. This
-Phase 5.2 section remains the canonical product-level owner for multi-output,
-XR, retirement, device-loss containment, and Phase 5.2A/5.2B/5.2C lane
-promotion.
-
-No unchecked item below authorizes work on a later numbered workstream before
-its predecessor is marked `Complete`. Duplicated implementation requirements
-below are satisfied through their numbered owner and the evidence is then
-referenced here.
-
-Ownership mapping:
-
-| Phase 5.2 concern | Numbered implementation owner |
-| --- | --- |
-| Measurement, stage attribution, allocations, waits, promotion manifests | 01 |
-| Primary state contract, invalidation, and stable reuse | 02 |
-| Compact production zero-readback and indirect submission | 03 |
-| Immutable prepared frame package and collect/render ownership | 04 |
-| Persistent safe secondary-command workers | 05 |
-| Default-pipeline prepass, copies, barriers, and GPU pass cost | 06 |
-| CPU-query, CPU-software, and GPU Hi-Z disposition | 07 |
-| Shadows, upload publication, queue waits, jobs, and final desktop/RVC gates | 08 |
-
-This phase owns output-neutral scheduling, stable identity, command reuse,
-targeted invalidation, local tracking, asynchronous retirement, the canonical
-logical-view contract, frame-scoped visibility integration, graph dataflow, and
-the multi-output performance contract. Related ownership remains with the
-[desktop frame-loop decomposition todo](../COMPLETED/vulkan-desktop-frame-loop-decomposition-todo.md),
-[dynamic-rendering migration todo](vulkan-dynamic-rendering-migration-todo.md),
-the [GPU-driven occlusion TODO](gpu/gpu-driven-occlusion-culling-architecture-todo.md),
-the [VR rendering performance contract](optimization/vr-rendering-performance-contract-todo.md),
-the [completed primary-reuse evidence](../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md),
-and the [worker-recording workstream](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-05-validation).
-Those efforts must consume this same frame-view/output/plan contract and must
-not introduce a desktop-only scheduler, a second attachment identity model, or
-another independently constructed runtime view set.
-
-Phase 5.2 has three separately reported promotion gates:
-
-- **Phase 5.2A - CpuDirect production gate.** This is the first production-lane
-  gate and owns the immediate Vulkan/OpenGL CPU-direct regression boundary. It
-  does not independently unblock Phase 6 during the ordered 01-08 program.
-- **Phase 5.2B - GPU indirect production gate.** This opens after the compact
-  zero-readback and GPU visibility readiness checklists are complete. It owns
-  instrumented-reference parity plus production zero-readback performance.
-- **Phase 5.2C - GPU meshlet production gate.** This opens only on supported
-  hardware after meshlet parity/readiness is complete.
-
-The A/B/C labels remain separately reported production lanes, but they are not
-parallel-work authorization during the ordered performance program. Phase 6 may
-begin only after workstream 08 completes, unless the owner explicitly changes
-the numbered sequence and its exit gates.
-The entire Vulkan hardening tracker must not be marked complete until every
-supported production lane is promoted, explicitly removed from the v1 contract,
-or deferred by a recorded owner decision with replacement acceptance criteria.
-An unsupported hardware lane reports `unsupported`; an unfinished lane reports
-`not ready`, never a zero-cost or passing result.
-
-### 5.2.5 - Make Render Plans And Resource Arenas Versioned And Nonblocking
-
-Numbered ownership: primary reuse acceptance is workstream 02. Prepared
-snapshot and render-thread ownership work is workstream 04. This section keeps
-the broader resource lifetime, retirement, resize, OpenXR, and device-loss
-acceptance contract.
-
-Completed implementation has moved to the
-[completed-work record](vulkan-core-hardening-and-device-loss-completed.md).
-This section now tracks only acceptance and follow-up work.
-
-Acceptance criteria:
-
-> **Remaining acceptance work (2026-07-20):** The final nonblocking-wait audit
-> changes have not received a complete post-edit build/test run. Keep every
-> acceptance box below unchecked until the remaining validation list is
-> completed. Detailed context is in the
-> [implementation ledger](../../progress/rendering/vulkan-core-hardening-phase525-2026-07-20.md)
-> and [live acceptance investigation](../../investigations/rendering/archive/vulkan-phase525-live-acceptance-2026-07-20.md).
->
-> **Required before checking acceptance:**
->
-> 1. Rebuild `XREngine.Runtime.Rendering` and `XREngine.Editor` from the final
->    source, rerun the 68-test focused acceptance slice, and rerun the 110-test
->    `Test-VulkanPhase3-Regression` slice. Five stale Phase 3 test expectations
->    were corrected, but their final rerun was interrupted. Also update the stale
->    `VulkanCpuDirectOcclusionTests` query-wait markers and
->    `RenderPipelineResourceLifecycleTests.RetirementBackpressure_WaitsForEveryRendererBackend`
->    expectation exposed by the final no-global-wait audit.
-> 2. Finish the smoke-runner exit contract. It currently writes an exact native
->    resize ledger but does not fail for missing/unsuccessful/mismatched targets
->    and does not enforce at least two distinct extents and two cycles when Phase
->    5.2.5 validation is enabled. Add focused source/behavioral tests for the
->    max-eight retirement cap, shared/distinct queue markers, `OldSwapchain`
->    propagation, dependency-aware destruction, teardown-only forced drain, and
->    whole-window counters; include `VulkanRenderer.Swapchain.cs` in the static
->    no-global-drain contract.
-> 3. Run two SyncValidation Monado/OpenXR cohorts with GTAO and repeated desktop
->    resizing between at least two extents: production primary reuse enabled and
->    forced recording. Require successful resize ledgers, uninterrupted eyes,
->    zero validation/device-loss/rejection/global-wait/force-flush events, bounded
->    planner/command/swapchain-retirement state, and zero post-warmup resource or
->    pipeline churn.
-> 4. Compare reuse/forced-record captures for visual equivalence and inspect MCP
->    viewport screenshots from at least two camera positions. Review the copied
->    Vulkan/rendering logs for one committed desktop generation and one stable
->    GTAO feature mask per settled extent, with no supersession or repeated
->    same-extent swapchain recreation.
-> 5. Run and record validation-clean mono and actual async-compute lanes in
->    addition to the multiview/OpenXR resize cohorts, then summarize the evidence
->    in the linked investigation and check the criteria below individually.
->
-> Three explicit opt-in synchronous skinned-mesh-bounds readbacks still call
-> `WaitForGpu`. They are not part of normal frame scheduling, but should be
-> converted to exact asynchronous completion in a follow-up before treating the
-> global-wait helper as removable engine-wide.
-
-- [ ] With GTAO enabled and OpenXR eyes active, repeatedly resize the desktop
-  between at least two extents. Each settled extent produces one stable feature
-  mask and one committed desktop generation; desktop rendering resumes without
-  `ViewportResized`/`FrameProfileChanged` supersession, while eye submission
-  remains uninterrupted.
-- [ ] The resize regression records no repeated same-extent swapchain recreation,
-  unbounded retired-image/resource growth, rejected desktop-frame loop,
-  validation error, or device loss. A deterministic automated test covers the
-  camera-unavailable resize callback followed by camera-available frame prepare.
-- [ ] No normal frame, eye render, mirror update, probe face, or cache eviction
-  waits for all in-flight GPU work or force-flushes the device.
-- [ ] Alternating OpenXR images, mirror targets, probe faces, and desktop
-  swapchain images does not grow planner-state count or replace an otherwise
-  compatible physical plan.
-- [ ] The correlated 43.7-second planner-prune and 8.4-second plan-replacement
-  failure shapes are no longer reachable in normal scheduling.
-- [ ] Unit tests reject graph cycles, missing producers, uninitialized reads,
-  invalid subresource transitions, and unsafe queue-family ownership plans.
-- [ ] Resource-derived dependencies may reorder independent declaration order
-  without changing results, and standard/synchronization validation stays clean
-  across mono, multiview, async-compute, resize, and OpenXR lanes.
-- [ ] Primary reuse is production-enabled without a compile-time hard-off gate
-  or a required diagnostic environment flag. Reuse enabled and forced-record
-  modes are visually equivalent and validation-clean under descriptor
-  publication, streaming, hot reload, resize, and frame-slot rotation.
-- [ ] Camera, transform, animation, material-value, query-result, debug-line,
-  indirect-command, and count-buffer data updates do not rerecord compatible
-  static ranges. Cache misses identify a structural or binding-identity change.
-- [ ] After warmup, `LinesBuffer` and other capacity-backed dynamic buffers
-  perform no steady backing recreation; growth occurs only on capacity overflow
-  and publishes a bounded new generation safely.
-- [ ] After declared warmup, required pipeline pending/compile counts,
-  pipeline-caused `RecordDeferred`, whole-frame rejection, and render-thread
-  shader compilation are zero for retained steady-state cohorts.
-
-### 5.2.6 - Build The Immutable Snapshot, Logical View Set, And View-Family DAG
-
-Numbered ownership: the desktop next-frame package and collect/render handoff
-are workstream 04. This section retains multi-output logical-view, XR batching,
-mirror/probe, and view-family requirements.
-
-This section is the canonical runtime contract formerly tracked by the
-frame-wide render-loop TODO. It must support mono, stereo, quad-view, desktop,
-secondary/published textures, mirrors, captures, and probes without assuming a
-fixed six-view layout. Use the existing `RenderFrameViewSet` capacity and stable
-logical identities; omit inactive outputs without changing the meaning of the
-remaining IDs.
-
-#### 5.2.6.4 - Preserve Accelerated Masked-Visibility Promotion Lanes
-
-The following work is retained but is not part of the current `CpuDirect`
-Phase 5.2A promotion gate.
-
-- [ ] Remove the external OpenXR pass-through cull exception once exact
-  multi-view GPU visibility covers it, and move GPU main-camera culling out of
-  individual `GPURenderPassCollection` execution.
-- [ ] Define traditional-indirect layer suppression when clip/cull distance is
-  supported and a distinct meshlet/task path that compacts or rejects per-view
-  work without inheriting the traditional mechanism.
-- [ ] Measure per-batch union, intersection, and Jaccard similarity. Add a
-  hysteretic policy that may split low-similarity batches when saved geometry
-  work exceeds added submission cost.
-- [ ] Keep transparent sorting and LOD projection correct per point of view;
-  document any conservative shared-LOD policy used by a multiview union draw.
-
-#### 5.2.6.5 - Integrate Physical-Eye Hi-Z And Persistent Visibility
-
-Detailed algorithm and buffer-format ownership remains with the
-[GPU-driven occlusion TODO](gpu/gpu-driven-occlusion-culling-architecture-todo.md).
-This tracker owns stable-view integration and graph scheduling.
-
-- [ ] Extend meshlet occlusion to exact stereo/quad view data and remove its
-  mono-only restriction only after the accelerated lane is validated.
-
-Remaining implementation is limited to accelerated promotion and scheduling
-work whose prerequisites are still open. Completed 5.2.6 implementation has
-moved to the
-[completed-work record](vulkan-core-hardening-and-device-loss-completed.md).
-
-Acceptance criteria:
-
-- [ ] Runtime diagnostics show the same stable logical views and matrices at
-  every consumer boundary for mono, stereo, supported quad, desktop, and
-  secondary configurations; optional-output toggles do not migrate history.
-- [ ] Two-eye OpenXR uses a planned stereo batch. Supported four-view OpenXR
-  uses two planned stereo pairs by default; unsupported combinations are
-  rejected or explicitly selected at the planner boundary.
-- [ ] `CpuDirect` performs one exact masked main-camera BVH traversal per
-  compatible frame visibility domain, matches a per-view reference collector,
-  and adds no steady-state managed allocation.
-- [ ] Profiler counters prove one scene snapshot and no duplicate
-  material/light publication for compatible families. Composition-only desktop
-  mirroring adds no scene traversal or independent full render.
-- [ ] Cached mirrors/probes report content age and authorized reuse rather than
-  masquerading as freshly rendered output.
-- [ ] When each accelerated lane is opened, GPU masks match the reference
-  collector, zero-readback paths read back no visibility/count data, no geometry
-  appears in a view whose bit is clear, and Hi-Z validation reports no
-  false-negative visibility failures or inset-coordinate misuse.
-
-### 5.2.7 - Add A Deadline-Aware CPU/GPU Output Scheduler
-
-Numbered ownership: desktop package scheduling and ownership are workstream 04;
-tail-latency budgets and auxiliary render jobs are workstream 08. This section
-retains the multi-output and XR deadline scheduler contract.
-
-- [ ] Represent OpenXR submission, desktop present, secondary publication, and
-  capture/debug completion as explicit terminal nodes. Attach priority,
-  deadline, predicted/measured duration, and authorized reuse/degradation policy
-  to relevant graph nodes.
-- [ ] Schedule the output DAG by deadline, dependency readiness, measured cost,
-  and policy priority rather than invoking independent full render loops in
-  callback order.
-- [ ] Calculate the reverse longest path to required OpenXR submission and
-  schedule that critical path before optional output work. Diagnostics must name
-  every node on it and its predicted/measured duration.
-- [ ] Reserve the acquired OpenXR eye budget first. Do not start optional work
-  that cannot finish or reach a legal preemption boundary before the eye
-  submission deadline.
-- [ ] Make desktop acquisition nonblocking for XR-owned frames where the
-  platform allows it. Permit policy-authorized prior-frame reuse, skipped
-  updates, or resolution reduction instead of extending the XR critical path.
-- [ ] Double-buffer secondary publication and permit bounded rate reduction or
-  prior-frame reuse, especially when the texture is consumed by the XR scene.
-  Keep same-frame secondary-to-XR dependencies only for explicitly declared
-  pose-sensitive behavior.
-- [ ] Give desktop, pickup/in-world mirrors, shadows, probes, IBL, uploads, and
-  diagnostics explicit rolling CPU/GPU budgets and maximum consecutive work.
-- [ ] Budget optional SSAO, SSR, volumetrics, outer-eye quality, current-frame
-  occlusion, captures, and debug work through the same scheduler. Choose
-  outer-versus-inset priority from measured policy rather than a hard-coded
-  unconditional ordering.
-- [ ] Use measured exponential/percentile cost estimates per node to decide
-  start/defer. Record predicted versus actual time and correct bad estimates.
-- [ ] Make auxiliary work resumable at legal graph boundaries: probe face,
-  cubemap mip, octa conversion, irradiance pass, individual prefilter mip,
-  shadow slice, and upload batch.
-- [ ] Add adaptive mirror/probe cadence based on visibility, screen coverage,
-  motion, content age, and available slack. Preserve an explicit fixed-cadence
-  mode for validation and user requests.
-- [ ] Keep GPU submissions bounded for TDR and frame pacing. Batching outputs is
-  permitted only when it reduces CPU overhead without creating an oversized,
-  non-preemptible submission.
-- [ ] Feed per-node GPU timestamps and queue-idle measurements into existing
-  queue-overlap promotion/demotion hysteresis. Do not move all compute work to
-  async compute when contention or ownership-transfer cost is worse.
-- [ ] Expose queued/running/deferred/completed/failed state, budget reason,
-  content age, deadline miss, and accumulated work for every output.
-
-Acceptance criteria:
-
-- [ ] Optional mirrors/captures/probes cannot cause a deadline-critical eye frame
-  to miss its CPU submit budget or wait behind a long auxiliary submission.
-- [ ] A blocked or unavailable desktop/secondary output cannot block OpenXR;
-  every reuse, skip, cadence, resolution, or quality decision is visible in
-  telemetry.
-- [ ] A 36-probe batch and visible mirrors make bounded forward progress while XR
-  remains active; neither monopolizes consecutive frames.
-- [ ] No work is silently dropped. Every defer, stale reuse, cadence reduction,
-  or quality choice is visible and policy-authorized.
-- [ ] XR missed-frame rate and p95/p99 submit margin do not regress from the
-  controlled baseline on retained workloads.
-
-### 5.2.8 - Decompose Submission And Remove CPU Serialization
-
-Numbered ownership: submit/wait attribution is workstream 01, worker command
-recording is workstream 05, and upload/queue/fence tail latency is workstream
-08.
-
-- [ ] Split submit telemetry into queue-lock wait, diagnostic-context build,
-  image-contract validation, lifetime validation, native submit, lifetime
-  publication, layout publication, and completion advancement.
-- [ ] Build one ordered submission DAG across uploads, shadows, scene/view
-  families, mirrors, captures, overlays, and presentation. Preserve independent
-  queue work where dependencies permit.
-- [ ] Use timeline/frame-slot completion for engine queues and OpenXR image
-  reuse. Remove per-output fence creation and indefinite CPU waits from normal
-  eye/mirror/capture submission.
-- [ ] Narrow queue-lock ownership to the native externally synchronized Vulkan
-  operation and required adjacent state publication. Do not hold it while
-  building diagnostics or scanning unrelated state.
-- [ ] Batch compatible command buffers into a submit when it lowers CPU cost,
-  but retain separate completion/deadline boundaries for XR-critical and
-  auxiliary work.
-- [ ] Build render packets and record dirty independent secondary command ranges
-  on workers from the immutable frame snapshot. The render thread performs only
-  final ordered validation/reuse choice and submission.
-- [ ] Give workers persistent per-thread scratch, command pools, and capacity-
-  backed packet/recording buffers. Do not allocate or contend on shared global
-  collections in the worker hot path.
-- [ ] Measure worker record time, render-thread wait-for-worker time, queue-lock
-  time, submit count, command buffers per submit, and CPU/GPU overlap by family.
-
-Acceptance criteria:
-
-- [ ] Submit p95 has an attributable breakdown and contains no full global
-  dependency/layout scan.
-- [ ] OpenXR runtime updates, desktop submission, and auxiliary recording do not
-  serialize on a broad engine queue lock.
-- [ ] Parallel recording improves or preserves p95 without changing output,
-  submission order, fallback policy, or device-loss containment.
-
-### 5.2.9 - Remove Remaining Hot-Path Allocation And Superlinear Work
-
-Numbered ownership: measurement and allocation proof are workstream 01,
-prepared-frame data structures are workstream 04, and worker hot paths are
-workstream 05.
-
-- [ ] Remove per-FBO attachment-layout arrays, dynamic UI split arrays,
-  exact-length frame-op drain arrays, image-layout snapshot arrays/sorts,
-  planner registry merge arrays, and retirement-drain temporary arrays from
-  steady paths.
-- [ ] Complete dynamic-rendering Phase 1.1 bounded inline format-signature
-  storage and use the same allocation-free identity representation in planning,
-  inheritance, pipeline lookup, and command-cache keys.
-- [ ] Replace repeated render-graph sorting with one deterministic compile/sort
-  per structural generation. Replace O(n^2) context-order and clear-lifting
-  scans with indexed/linear algorithms.
-- [ ] Preallocate output/view-family DAG nodes, dependency edges, packet lists,
-  touched-resource lists, and telemetry rows to measured high-water marks.
-- [ ] Add per-scope allocation counters for snapshot build, family grouping,
-  visibility, plan lookup/compile, packet build, primary/secondary recording,
-  submit validation/publication, retirement drain, and diagnostics.
-
-Acceptance criteria:
-
-- [ ] Stable desktop and mixed-output frames allocate zero managed bytes in
-  collection, planning, recording, submission, and retirement hot paths.
-- [ ] Work scales approximately with changed nodes, unique view families, and
-  actual draws, not total cached outputs times total scene size.
-
-### 5.2.10 - Validation Matrix And Promotion Gate
-
-Numbered ownership: workstream 01 defines the reproducible measurement contract
-and workstream 08 owns final desktop 200+ Hz and Vulkan RVC zero-readback
-120 Hz promotion after all intermediate gates complete. This section retains
-the broader Vulkan/OpenGL, XR, multi-output, device-loss, and hardware matrix.
-
-This first matrix is the Phase 5.2A `CpuDirect` production gate and the shared
-baseline inherited by later lanes. `GpuIndirectInstrumented`,
-`GpuIndirectZeroReadback`, and meshlet submission must not be reported as
-passing until their readiness checklists open Phase 5.2B or 5.2C. Their current
-absence does not block Phase 6 after 5.2A, but it does remain visible tracker
-debt and prevents whole-tracker completion under the promotion semantics above.
-
-- [ ] Extend the controlled P0.2 baseline with mono desktop, OpenXR sequential
-  stereo, true two-eye multiview, available quad-view lanes, desktop/secondary
-  outputs, and current per-pass visibility-dispatch counts. Record candidate and
-  emitted-draw counts, culling/recording CPU and GPU duration, queue transfers,
-  barrier-stage flushes, missed XR frames, and steady-state allocation.
-- [ ] Add matched Release Vulkan/OpenGL `CpuDirect` cohorts with identical
-  scene, camera, lights, output extent/scale, warmup state, occlusion, debug
-  features, and profiler settings. Run low-, medium-, and high-draw-count plus
-  material-diverse workloads and retain the exact configuration manifest.
-- [ ] Add focused contract tests proving stable logical-view/history identity,
-  planned-batch selection, `CpuDirect` CPU-BVH ownership, and the distinction
-  between pass eligibility, frustum visibility, occlusion visibility, and
-  render-batch membership.
-- [ ] Run validation-disabled performance and validation-enabled correctness as
-  separate cohorts with identical workload/settings manifests.
-- [ ] Capture at least three 60-second stable repetitions for:
-  - [ ] desktop only;
-  - [ ] desktop plus ImGui/dynamic text;
-  - [ ] OpenXR foveated eye family without a desktop mirror;
-  - [ ] OpenXR eyes plus composition desktop mirror;
-  - [ ] OpenXR eyes plus pickup/handheld mirror;
-  - [ ] desktop with one and four visible in-world mirrors;
-  - [ ] light-probe batch without XR;
-  - [ ] OpenXR eyes plus mirrors plus a 36-probe batch;
-  - [ ] explicit dynamic and legacy render-target modes;
-  - [ ] `CpuDirect` with the startup/effective-strategy fingerprint preserved.
-- [ ] For every cohort record CPU frame p50/p95/p99/worst, observed render
-  throughput, GPU family/pass p50/p95, missed XR deadlines, output content age,
-  scene snapshots/visibility builds, record/reuse/dirty counts, allocation,
-  resource retirement, plan churn, queue waits/submits, and quality/fallback
-  events.
-- [ ] Record primary/secondary record and reuse time separately from native
-  Vulkan call time and GPU execution. Also record pipeline pending/created/
-  cache-hit counts, deferred/rejected-frame reasons, dynamic-buffer capacity/
-  growth/recreation, dirty object/range counts, uploaded bytes, pipeline/
-  descriptor/vertex/index bind counts, and avoided redundant binds.
-- [ ] Also record candidate count after shared traversal, exact visible count
-  per logical-view bit, per-batch union/intersection/Jaccard values where
-  applicable, per-view frustum/occlusion rejection, Hi-Z source/invalidation/
-  bypass/build frequency, graph-node and critical-path GPU timestamps,
-  ownership transfers/stage flushes, per-batch draw/triangle/meshlet counts, and
-  unexpected-readback counters. Unsupported lanes report `not ready`, not zero.
-- [ ] Capture and inspect screenshots from at least two camera positions for
-  desktop, each eye/foveated region, composition mirror, pickup/in-world mirror,
-  and representative probe faces/final IBL output.
-- [ ] Run StandardValidation and SyncValidation over the mixed-output matrix and
-  confirm Phase 5.1 ordered state/lifetime contracts remain clean.
-- [ ] Cover graphics-only and selected graphics-plus-compute queue plans;
-  dedicated transfer is required only on hardware where policy selects it.
-- [ ] Cover resize, minimize/restore, swapchain recreation, generation
-  replacement/failure, shader reload, scene transition, runtime/session loss,
-  camera cuts/tracking jumps, moving occluders, dirty scene/BVH, and device-loss
-  diagnostics as applicable to the ready lane.
-- [ ] On the RTX 3090 / 0.67-scale desktop diagnostic scene, require CPU frame
-  p50 <= 10 ms, p95 <= 12 ms, and p99 <= 14 ms, or approve and document a new
-  workload-equivalent baseline before promotion.
-- [ ] For the canonical warm desktop-only Deferred and Uber static/moving
-  cohorts, also require the stricter workstream 08 target of render
-  p95 <= 5.00 ms. The legacy diagnostic-scene threshold above cannot waive the
-  desktop 200+ Hz gate.
-- [ ] For Vulkan `GpuIndirectZeroReadback` with RVC eye rendering, require
-  whole-frame render p95 <= 8.33 ms with at least one desktop render plus both
-  eye renders per frame. Apply the same budget with foveation disabled or
-  enabled; extra RVC views or renders do not relax it.
-- [ ] By default, require warmed Vulkan `CpuDirect` CPU p95 to remain within 10%
-  of matched OpenGL `CpuDirect` p95 or beat the absolute Vulkan target above.
-  Any exception requires a repeated profile that attributes the delta to named
-  backend work, an approved threshold, and a retained follow-up; Debug-build or
-  cold-cache results cannot waive this gate.
-- [ ] Require Vulkan CPU-direct collection, upload, and state-change curves to
-  scale with dirty objects/ranges and compatible state groups rather than all
-  visible objects times pass count. Preserve the measured low/medium/high-count
-  curves as the baseline for Phase 5.2B/5.2C crossover analysis.
-- [ ] Require dynamic rendering to remain within 5% of legacy p50/p95/p99 across
-  repetitions unless an explained GPU-side win justifies a measured CPU cost.
-- [ ] Require >=99% clean command reuse, zero stable record-path allocation,
-  zero steady resource retirement/plan replacement, zero rejected submissions,
-  and zero global waits/force flushes for static-output cohorts.
-- [ ] Require zero post-warmup required-pipeline deferrals, pipeline-caused
-  whole-frame rejections, steady exact-size dynamic-buffer recreation, and
-  render-thread shader compilation in retained cohorts.
-- [ ] Define and meet an XR missed-deadline threshold before running auxiliary
-  work. The threshold must be based on the active runtime refresh rate and
-  separately report runtime/compositor-owned misses.
-- [ ] Require a composition-only desktop VR mirror to add no independent scene
-  render and no more than an approved sub-millisecond CPU p95 delta.
-- [ ] Require mixed mirror/probe workload cost to follow the configured scheduler
-  budget rather than grow linearly with every potential output each frame.
-- [ ] Update the CPU framerate investigation with final before/after tables,
-  manifests, screenshots, raw-log paths, and any approved exceptions.
-
-Final acceptance criteria:
-
-- [ ] Desktop-only rendering has an accepted CPU baseline and no longer relies
-  on a diagnostic environment flag for acceptable command reuse.
-- [ ] Multiple outputs consume one shared frame snapshot and reuse compatible
-  visibility, material, plan, resource, and command work.
-- [ ] Deadline-critical XR eyes cannot be blocked by optional mirror, probe,
-  capture, upload, or diagnostic work.
-- [ ] Correctness-safe reuse and targeted invalidation remain clean under
-  retirement, resize, hot reload, target rotation, and device-loss injection.
-- [ ] No tested workload hides a requested accelerated path behind a CPU fallback
-  or unreported quality/cadence reduction.
-- [ ] Only after all numbered workstreams through 08 and their shared
-  acceptance criteria pass may Phase 6 begin. Phase 5.2A/5.2B/5.2C remain
-  separately visible lane results and still govern whole-tracker completion.
-
-Phase 5.2B/5.2C accelerated-lane promotion requirements are evaluated after
-their numbered prerequisites complete. During the ordered program,
-workstream 03 owns GPU-indirect submission readiness and workstream 07 owns
-occlusion promotion:
-
-- [ ] Validate GPU indirect instrumented, GPU indirect zero-readback, and each
-  supported meshlet strategy independently across mono, sequential stereo,
-  parallel recording, true two-eye multiview, supported quad view, desktop
-  mirror, and secondary output.
-- [ ] Require Phase 5.2B to complete the active-list, overflow, barrier batching,
-  indirect-count, delayed-diagnostics, and workstream 03 validation contracts
-  in the compact zero-readback tracker. Its Hi-Z phase is separately owned by
-  workstream 07. Phase 5.2C additionally requires its meshlet readiness/parity
-  checklist on each supported hardware lane.
-- [ ] Compare disabled, temporal Hi-Z, and current-frame Hi-Z, including camera
-  cuts, tracking jumps, moving occluders, and scene/BVH revisions.
-- [ ] Require exact GPU visibility to match the per-view reference collector,
-  zero unexpected CPU readback for zero-readback lanes, and one main-camera BVH
-  traversal per compatible frame visibility domain.
-- [ ] Require warmed production GPU lanes to reuse stable pass-level dispatch,
-  barrier, and indirect-draw command topology. Per-frame changes to GPU-written
-  visibility/command/count contents must produce zero primary rerecords unless a
-  reported topology, capacity, binding, pipeline, or resource generation changes.
-- [ ] Require production zero-readback CPU submission work to scale with active
-  pass/state-class batches, not visible draw count, scene capacity, or the full
-  material/bucket table. Instrumented diagnostic readback cost is reported
-  separately and cannot stand in for the production result.
-- [ ] Require supported quad-view OpenXR to use two planned stereo batches by
-  default, with no geometry emitted into a logical view whose exact bit is clear.
-- [ ] Require zero steady-state managed allocation in frame-view construction,
-  visibility, compaction, graph scheduling, and submission; zero new Vulkan/
-  OpenXR validation errors; and no more than 5% two-eye CPU/GPU regression
-  without a documented downstream win and owner approval.
-- [ ] Capture matched low-, medium-, and high-count scaling curves for 5.2A,
-  5.2B, and supported 5.2C lanes with CPU recording and GPU execution separated.
-  GPU-driven rendering is not required to beat `CpuDirect` in the low-count
-  scene, but a production accelerated lane must demonstrate an approved
-  crossover or scaling advantage in a retained high-count/occluded workload.
-  If it does not, it remains correctness-ready rather than performance-promoted.
-
-Historical Phase 5.2 implementation outline:
-
-The numbered 01-08 sequence above supersedes this outline for current work.
-The list remains as architectural context for the broader multi-output and XR
-program and must not be used to start work out of order.
-
-1. Stabilize deterministic resource generations and versioned graph dataflow.
-2. Publish the immutable scene snapshot and canonical live
-   `RenderFrameViewSet` with its allocation-free GPU adapter.
-3. Put existing two-eye multiview behind runtime batch planning, then add the
-   supported wide/inset two-pair quad layout.
-4. Implement generation-complete command reuse plus the capacity-backed Vulkan
-   CPU-direct upload/data path.
-5. Implement exact masked `CpuDirect` traversal and reuse it across compatible
-   main-camera passes and outputs.
-6. Prewarm all reachable pipeline variants and separate warmup/streaming from
-   steady-state submission.
-7. Integrate output terminal nodes, XR critical-path analysis, optional-output
-   reuse, and deadline-ordered submission.
-8. Complete the `CpuDirect` validation matrix and promote Phase 5.2A.
-9. Open Phase 5.2B with exact GPU masked traversal, compact batch-oriented
-   indirect generation, stable recorded topology, and persistent physical-eye
-   Hi-Z.
-10. Open Phase 5.2C after GPU indirect promotion and complete meshlet parity on
-    supported hardware.
-
-Guardrails:
-
-- Measure two-view masked traversal before widening it; a worst-case work queue
-  or global-atomic design must not penalize the common stereo case.
-- Select quad batches from real runtime/target capabilities. Different extents
-  or layouts must produce an explicit split/rejection reason.
-- A low-overlap multiview union may waste geometry work; retain a hysteretic,
-  measurable split path.
-- Never share outer-eye Hi-Z with an inset until pose, containment, projection,
-  depth convention, and history generation are proven compatible.
-- Keep current-frame occluder depth graph-selectable because it can improve
-  correctness while lengthening the XR critical path.
-- Compute transient aliasing from semaphore-constrained execution intervals,
-  not topological order alone.
-- Separate structural batch/plan identity from frame data so transient matrices
-  and frame indices cannot create an unbounded cache.
-- Keep shadows, probes, reflections, and independent cameras in explicit
-  visibility domains; one shared frame snapshot does not imply one visibility
-  result for unrelated cameras.
-- Land new runtime code behind the focused owners defined by the Vulkan/OpenXR
-  organization trackers; do not grow another broad renderer partial-class
-  authority.
-
-## Phase 6 - Descriptor And Binding Robustness
-
-Build on Phase 5.2A's allocation-free, generation-driven descriptor publication
-and command-reuse seam. The minimum generations needed to validate cached
-recordings already belong to Phase 5.2.5; this phase completes descriptor
-coverage, pool robustness, null-binding policy, and crash diagnostics.
-Descriptor hardening must not restore per-draw fingerprint construction, global
-command-cache invalidation, or identical-write generation churn.
-
-- [ ] Define descriptor fingerprint inputs for all descriptor-affecting resources:
-  - [ ] image handle,
-  - [ ] image view handle,
-  - [ ] sampler handle,
-  - [ ] image layout,
-  - [ ] buffer handle,
-  - [ ] range/offset,
-  - [ ] descriptor type,
-  - [ ] array index,
-  - [ ] shader reflection binding identity.
-- [ ] Add stable allocation/resource generation IDs to fingerprints so Vulkan
-  handle reuse cannot make a stale descriptor appear current.
-- [ ] Ensure program-bound SSBOs and sampled images update descriptor
-  fingerprints when resources are recreated.
-- [ ] Replace placeholder descriptor use with explicit diagnostic counters:
-  - [ ] texture not generated,
-  - [ ] resource pending,
-  - [ ] image view missing,
-  - [ ] layout invalid,
-  - [ ] descriptor set stale,
-  - [ ] device lost.
-- [ ] Define which bindings may legally use null/dummy descriptors. Required
-  bindings must prevent recording/submission rather than sampling a placeholder
-  that masks a publication or lifetime bug.
-- [ ] Audit descriptor-pool capacity, reset/free synchronization, and exhaustion
-  telemetry. Include pool generation and remaining capacity in the last-frame
-  descriptor dump.
-- [ ] Cap repeated placeholder warnings by binding/resource key to keep logs
-  readable during crashes.
-- [ ] Add validation that `LightProbeIrradianceArray`,
-  `LightProbePrefilterArray`, and probe SSBO bindings do not collide with
-  G-buffer bindings.
-- [ ] Add descriptor-state dump for the last successfully submitted frame before
-  device loss.
-
-Acceptance criteria:
-
-- [ ] Descriptor sets are invalidated when any referenced Vulkan handle changes.
-- [ ] Stale descriptor use is diagnosable from logs without stepping through the
-  renderer.
-
-## Phase 7 - OpenXR Vulkan Submit And Synchronization Hardening
-
-Use the Phase 5.2 output scheduler, timeline completion, view-family, and submit
-DAG as the generic execution path. This phase owns OpenXR-specific image/runtime
-state-machine correctness and failure attribution, not a second eye-only
-submission architecture.
-
-- [ ] Audit OpenXR Vulkan frame phases:
-  - [ ] acquire swapchain image,
-  - [ ] wait image,
-  - [ ] render eye(s),
-  - [ ] release image,
-  - [ ] submit frame,
-  - [ ] mirror/update runtime state.
-- [ ] Track every OpenXR swapchain image with an explicit state machine:
-  `Available` -> `Acquired` -> `Waited` -> `Rendering` -> `GpuComplete` ->
-  `Released`; log and reject illegal transitions.
-- [ ] Ensure rendering and memory writes are complete before
-  `xrReleaseSwapchainImage`, and keep the runtime-required image layout and any
-  queue-family ownership transitions explicit.
-- [ ] Ensure auxiliary capture work cannot run inside an unsafe OpenXR image
-  ownership window unless explicitly scheduled.
-- [ ] Separate OpenXR eye command buffers from capture command buffers in
-  diagnostics and resource state.
-- [ ] Verify that requested `SinglePassStereo` never invokes sequential eye
-  rendering after capability, recording, dependency, submit, publish, runtime,
-  session, or device-loss failure. Separately selected sequential rendering is
-  an independent mode, not a fallback.
-- [ ] Improve `SubmitAndWaitOpenXrCommandBuffers` logs with:
-  - [ ] eye index,
-  - [ ] swapchain image index,
-  - [ ] fence/timeline value,
-  - [ ] command buffer labels,
-  - [ ] frame-op context.
-- [ ] Add a policy for draining/deferring retired resources before OpenXR eye
-  rendering when frame slots are pending.
-- [ ] Add smoke tests for OpenXR Vulkan with capture work queued during eye
-  rendering.
-- [ ] Test loss/exit paths at every OpenXR boundary (`xrWaitFrame`, image
-  acquire/wait/release, `xrBeginFrame`, `xrEndFrame`) independently from Vulkan
-  device loss so runtime/session loss is not mislabeled.
-
-Acceptance criteria:
-
-- [ ] OpenXR submit failures distinguish runtime/session loss, swapchain image
-  errors, and actual Vulkan device loss.
-- [ ] Requested `SinglePassStereo` never attempts fallback eye rendering after
-  any capability, recording, dependency, submit, publish, runtime/session, or
-  logical-device failure.
-
-## Phase 8 - GPU Work, Memory Budgeting, And TDR Protection
-
-Extend Phase 5.2's deadline scheduler and resumable auxiliary nodes with Vulkan
-memory admission, TDR protection, and subsystem-specific quality policy. Do not
-introduce a parallel probe/capture queue that bypasses the shared output DAG.
-
-- [ ] Add per-subsystem GPU work budgets for:
-  - [ ] light-probe cubemap faces,
-  - [ ] IBL irradiance convolution,
-  - [ ] IBL prefilter mip chain,
-  - [ ] shadow refresh,
-  - [ ] texture uploads,
-  - [ ] compute-heavy GI passes,
-  - [ ] pipeline/shader warmup.
-- [ ] Slice light-probe batch capture so it cannot monopolize multiple OpenXR
-  frame intervals.
-- [ ] Move IBL convolution to an explicit queued job with budgeted steps:
-  - [ ] cubemap mip generation,
-  - [ ] octa conversion,
-  - [ ] irradiance pass,
-  - [ ] prefilter mip pass per mip.
-- [ ] Add profiler counters for queued, running, completed, failed, and deferred
-  probe-capture work.
-- [ ] Add TDR-risk diagnostics for unusually long command submissions.
-- [ ] Record GPU timestamps around probe capture and IBL passes.
-- [ ] Add a throttle for batch capture when OpenXR frame timing degrades.
-- [ ] Add memory-budget telemetry using core/available budget facilities such as
-  `VK_EXT_memory_budget` where supported:
-  - [ ] heap budget and usage,
-  - [ ] VMA allocation/block totals and fragmentation indicators,
-  - [ ] pending allocation bytes by frame-op context,
-  - [ ] retired-but-not-yet-freed bytes,
-  - [ ] descriptor pool/set pressure,
-  - [ ] high-water marks immediately preceding device loss.
-- [ ] Define soft and hard admission thresholds for optional capture resources.
-  Defer work with an explicit reason before allocation pressure becomes an OOM
-  or device-loss cascade; do not silently reduce requested quality.
-- [ ] Keep the production policy inside Windows' normal TDR budget. Registry TDR
-  changes may be documented only as controlled diagnostic experiments, never as
-  the fix or a normal launch prerequisite.
-
-Acceptance criteria:
-
-- [ ] A 36-probe batch can run while OpenXR Vulkan is active without a long
-  single submission or repeated missed frame budget.
-- [ ] Probe capture progress remains visible in logs/profiler.
-- [ ] Stress logs show bounded memory/retirement growth and no allocation or
-  descriptor-pool exhaustion before, during, or after capture.
-
-## Phase 9 - Tests, Stress Runs, And Tooling
-
-- [ ] Add source-contract tests for:
-  - [ ] frame-op context capture before recording,
-  - [ ] direct FBO capture policy,
-  - [ ] capture pipeline exclusions,
-  - [ ] descriptor fingerprint inputs,
-  - [ ] resource retirement gates,
-  - [ ] image layout assertions.
-- [ ] Prefer behavioral/unit tests over string-only source-contract tests for
-  new state machines, fingerprints, retirement gates, and preset resolution.
-  Keep source-contract tests only as temporary migration guards.
-- [ ] Add runtime smoke tests for:
-  - [ ] Vulkan editor startup,
-  - [ ] Vulkan unit-testing world,
-  - [ ] OpenXR Vulkan startup,
-  - [ ] light-probe batch capture,
-  - [ ] OpenXR Vulkan plus light-probe capture,
-  - [ ] rapid resize during capture,
-  - [ ] device-lost handling path with an injected mock failure if possible.
-- [ ] Add deterministic fault injection at submit, fence/timeline wait,
-  allocation, descriptor update/publication, and OpenXR acquire/wait/release
-  boundaries. Assert first-error preservation, producer cancellation, zero
-  post-loss submissions, and non-blocking teardown.
-- [ ] Add RenderDoc capture recipe for the failing and fixed probe path.
-- [ ] Add MCP/editor iteration checklist for capture validation:
-  - [ ] capture from at least two camera positions,
-  - [ ] inspect viewport screenshots,
-  - [ ] inspect exported probe textures,
-  - [ ] inspect Vulkan logs after shutdown.
-- [ ] Fix stale source-contract tests in
-  `VulkanDeferredProbeGiFixesTests` so the whole class can be used as a
-  regression suite again.
-- [ ] Add CI-safe tests that do not require a physical OpenXR headset.
-- [ ] Add bounded soak/stress definitions with exact duration/frame count,
-  resize cadence, capture cadence, and pass/fail log counters. Avoid acceptance
-  criteria based only on one successful run.
-
-Acceptance criteria:
-
-- [ ] Focused tests cover each hardening area.
-- [ ] The broader Vulkan probe/deferred test class is no longer stale.
-- [ ] At least one automated stress path exercises OpenXR Vulkan plus queued
-  capture work.
-- [ ] Fault-injection tests prove that all GPU-work producers quiesce after the
-  first device-loss transition and teardown cannot wait forever on dead fences.
-
-## Phase 10 - Documentation And Operator Workflow
-
-- [ ] Update `docs/architecture/rendering/vulkan-renderer.md` with the frame-op
-  context model.
-- [ ] Update `docs/architecture/rendering/openxr-vr-rendering.md` with Vulkan
-  submit/device-loss behavior.
-- [ ] Add a capture pipeline note under `docs/architecture/rendering/`.
-- [ ] Document validation preset launch commands.
-- [ ] Document device-loss triage:
-  - [ ] what logs to inspect,
-  - [ ] what breadcrumbs mean,
-  - [ ] when to use RenderDoc,
-  - [ ] when to use validation layers,
-  - [ ] how to distinguish teardown noise from render failure.
-- [ ] Document driver/OS evidence collection on Windows, including Event Viewer
-  display-driver/TDR events, without treating OS-level timeout changes as an
-  engine fix.
-- [ ] Add editor UI/help text only where needed in diagnostics panels; avoid
-  normal in-app instructional clutter.
-- [ ] Keep `docs/work/todo/rendering/vulkan-deferred-and-probe-gi-fixes-todo.md`
-  cross-linked if probe GI remains a separate work item.
-
-Acceptance criteria:
-
-- [ ] A contributor can reproduce a diagnostic Vulkan launch and know where to
-  find the relevant logs.
-- [ ] The device-loss workflow is documented enough that future incidents do not
-  start from scratch.
-
-## Final Acceptance Criteria
-
-- [ ] One canonical immutable frame view set drives every live Vulkan/OpenXR
-  consumer with stable logical identities and predicted-time consistency.
-- [ ] Generation-complete command dependency validation replaces the hard
-  primary-reuse safety quarantine. Production reuse requires no diagnostic
-  environment flag, and data-only frame-slot publication does not invalidate
-  compatible recorded ranges.
-- [ ] `CpuDirect` generates exact main-view visibility with one masked CPU-BVH
-  traversal per compatible frame domain and reuses it across eligible passes.
-- [ ] Vulkan `CpuDirect` uses bounded capacity-backed dynamic resources and
-  dirty-range/frame-slot updates. Ordinary transforms, animation, material
-  values, camera motion, queries, and debug geometry do not recreate backing
-  storage or rerecord static work after warmup.
-- [ ] Matched Release Vulkan/OpenGL CPU-direct baselines and low/medium/high-count
-  scaling curves pass the Phase 5.2A thresholds with CPU recording separated
-  from native API and GPU execution time.
-- [ ] Every promoted GPU-driven lane submits compact active work through stable
-  reusable dispatch/barrier/indirect topology, performs no forbidden
-  current-frame readback, and demonstrates the approved high-count/occlusion
-  crossover or scaling advantage.
-- [ ] Supported OpenXR view configurations render through capability-planned
-  batches, including two stereo pairs for supported quad view, without silent
-  sequential fallback from strict single-pass mode.
-- [ ] The versioned render graph rejects invalid dataflow and schedules optional
-  outputs so they cannot delay required OpenXR submission.
-- [ ] Vulkan light-probe batch capture completes in the unit-testing world while
-  OpenXR Vulkan is active.
-- [ ] No `VK_ERROR_DEVICE_LOST` occurs in the targeted capture/OpenXR stress
-  runs.
-- [ ] Validation and sync-validation diagnostic runs are clean for the targeted
-  paths or have documented external-driver exceptions.
-- [ ] Resource planner logs show stable per-context resource plans instead of
-  cross-context physical image churn.
-- [ ] Device-loss injection or simulated submit failure stops rendering cleanly
-  and reports a useful breadcrumb summary.
-- [ ] Hot-path allocation checks remain clean for command recording and
-  submission.
-- [ ] Declared steady-state cohorts have zero required-pipeline deferrals,
-  pipeline-caused whole-frame rejections, render-thread shader compilation, and
-  exact-size dynamic-buffer recreation.
-- [ ] The final validation matrix names exact hardware/runtime configurations,
-  run duration/frame counts, diagnostic coverage, warning/VUID allowlist, peak
-  memory, maximum submission time, and OpenXR missed-frame threshold.
-- [ ] Device-fault and vendor diagnostic artifacts are collected when supported;
-  unsupported capabilities are explicit in the result manifest.
-- [ ] Documentation, source-contract tests, and smoke tests are updated.
-- [ ] Phase 5.2A is promoted, and every supported Phase 5.2B/5.2C production
-  lane is promoted or has an explicit recorded v1 removal/deferral decision;
-  unfinished accelerated lanes are not hidden by the overall tracker status.
-
-## Remaining Design Decisions
-
-These are decisions to make when their owning phase begins; they are not
-completion checkboxes.
-
-- Whether OpenXR auxiliary capture is forbidden during eye-image ownership or
-  admitted only through the scheduler with explicit barriers.
-- Whether probe IBL convolution should use compute, fullscreen graphics, or the
-  current pass model after measurement.
-- Which curated diagnostic preset is the default for local Vulkan crash
-  investigations.
-- Whether deterministic shutdown remains the v1 device-loss policy or a later
-  renderer/editor restart workflow is required.
-- The minimum acceptable light-probe throughput while OpenXR is active.
-
-## External Technical References
-
-- [Khronos Vulkan validation overview](https://docs.vulkan.org/guide/latest/validation_overview.html)
-- [Khronos synchronization examples](https://docs.vulkan.org/guide/latest/synchronization_examples.html)
-- [`VK_KHR_device_fault`](https://docs.vulkan.org/refpages/latest/refpages/source/VK_KHR_device_fault.html)
-- [`vkGetDeviceFaultReportsKHR`](https://docs.vulkan.org/refpages/latest/refpages/source/vkGetDeviceFaultReportsKHR.html)
-- [`vkGetDeviceFaultDebugInfoKHR`](https://docs.vulkan.org/refpages/latest/refpages/source/vkGetDeviceFaultDebugInfoKHR.html)
-- [`VkDeviceFaultInfoKHR`](https://docs.vulkan.org/refpages/latest/refpages/source/VkDeviceFaultInfoKHR.html)
-- [`VkDeviceFaultDebugInfoKHR`](https://docs.vulkan.org/refpages/latest/refpages/source/VkDeviceFaultDebugInfoKHR.html)
-- [`VK_EXT_device_fault`](https://docs.vulkan.org/refpages/latest/refpages/source/VK_EXT_device_fault.html)
-- [`vkGetDeviceFaultInfoEXT`](https://docs.vulkan.org/refpages/latest/refpages/source/vkGetDeviceFaultInfoEXT.html)
-- [`VK_EXT_device_address_binding_report`](https://docs.vulkan.org/refpages/latest/refpages/source/VK_EXT_device_address_binding_report.html)
-- [`VK_NV_device_diagnostic_checkpoints`](https://docs.vulkan.org/refpages/latest/refpages/source/VK_NV_device_diagnostic_checkpoints.html)
-- [LunarG Khronos validation-layer settings](https://vulkan.lunarg.com/doc/view/latest/windows/khronos_validation_layer.html)
-- [Microsoft WDDM timeout detection and recovery](https://learn.microsoft.com/windows-hardware/drivers/display/timeout-detection-and-recovery)
+The context-isolation and generation-publication work below incorporates the
+remaining architectural findings from the
+[directional-light and final-presentation investigation](../../investigations/rendering/directional-light-inspector-shadow-2026-08-03.md).
+The renderer must not mix main-view, shadow, UI-preview, capture, or swapchain
+resource generations even when those outputs share a window or frame.
+
+## Code Changes
+
+### 1. Contain Device Loss And Make Resource Lifetime Explicit
+
+- [ ] Make device-loss transition first-writer-wins and stop all new recording,
+  submission, waits, allocation, mapping, descriptor updates, and planner
+  publication after it is confirmed.
+- [ ] Preserve the original failing Vulkan/OpenXR call, result, frame operation,
+  submission context, and in-flight resource generations for diagnostics.
+- [ ] Make resource retirement timeline/fence-safe for images, views,
+  framebuffers, descriptors, buffers, command pools, and plans.
+- [ ] Replace physical resources through one generation transaction: prepare
+  the new allocation, image views, framebuffer attachments, descriptor payloads,
+  layout requirements, and command dependencies; publish them atomically; then
+  retire the previous generation only after every owning frame slot and timeline
+  dependency completes.
+- [ ] Give every native image, image view, framebuffer/dynamic-rendering
+  attachment, sampler, descriptor payload, and recorded command artifact an
+  explicit allocation/publication generation. Do not use managed-object hashes,
+  resource names, or stable logical wrappers as physical-lifetime identity.
+- [ ] Ensure retirement cannot wait on a frame that was rejected for a planner,
+  viewport, collect, or publication-generation mismatch; cancellation and
+  supersession must release or transfer all completion dependencies explicitly.
+- [ ] Add descriptor fingerprints that include every binding identity, resource
+  allocation generation, expected layout, image view, and sampler.
+- [ ] Replace placeholder descriptor behavior with explicit required-binding
+  failures and bounded diagnostic counters.
+
+### 2. Build Immutable Context-Local Frame, View, And Output Plans
+
+- [ ] Introduce immutable `FramePlan`, `ViewSetPlan`, `OutputRequest`,
+  `RenderPacket`, `RecordedPacketKey`, and `FramePlanBuilder` types; lower the
+  existing `FrameOp` stream into these plans while preserving frame-slot
+  ownership.
+- [ ] Build one immutable logical view set after OpenXR locates views; key
+  temporal state by logical-view identity rather than batch position or
+  swapchain image.
+- [ ] Route desktop, OpenXR, mirror, capture, probe, shadow, UI-preview, and
+  diagnostic outputs through the same output and view-family plan.
+- [ ] Make resource-planner state context-local. Its key must include pipeline,
+  logical view, output target, resource registry/generation, display extent, and
+  internal extent; a swapchain-targeting operation must never copy internal
+  dimensions or allocator state from whichever unrelated pipeline is currently
+  live on the render thread.
+- [ ] Replace the multi-context "merged physical plan" fallback with either a
+  genuinely merged immutable allocation plan that preserves each context's
+  registry and extents, or independently activated per-context planner states.
+  If neither is available, reject or defer the frame before recording rather
+  than warning and continuing with the first context's plan.
+- [ ] Treat a planner-context change during command recording as a failed plan
+  precondition. Abort and re-plan against one immutable snapshot; never continue
+  recording shadow, main-view, UI-preview, capture, or presentation operations
+  against a pre-recorded plan owned by another context.
+- [ ] Compile explicit resource dependencies into a deterministic render-pass
+  DAG; centralize primary-owned operations and reject invalid graph dataflow.
+- [ ] Version plans, resources, attachments, and publications so resize,
+  topology, descriptor, and allocation changes invalidate only affected work.
+- [ ] Publish the final presentation source as one immutable tuple containing
+  logical resource epoch, native allocation/view generation, image, image view,
+  sampler, expected layout, descriptor set/slot generation, output extent, and
+  owning command artifact. Re-resolve nothing between validation, descriptor
+  publication, command selection, and submission; reject or defer if the tuple
+  changes before submit.
+
+### 3. Make Command Recording Snapshot-Driven And Reusable
+
+- [ ] Add `FreshSerial` recording mode and retain comparable recording scopes,
+  counters, and miss reasons without hot-path allocation.
+- [ ] Record from immutable `RenderPacket` snapshots with frame-local tracking,
+  persistent per-thread command pools, scratch storage, and capacity-backed
+  collections.
+- [ ] Replace the primary-reuse hard-off gate with generation-complete
+  `RecordedPacketKey` dependency validation.
+- [ ] Make `RecordedPacketKey` and secondary-chain dependencies include exact
+  native image-allocation generation, image-view generation,
+  framebuffer/dynamic-rendering attachment identity, render area and extent,
+  descriptor payload/publication generation, sampler generation, and pipeline
+  layout generation. Remove placeholder `RenderArea=0` and logical target/name
+  hashes from fields that claim to represent physical resources.
+- [ ] Couple in-place descriptor-set updates to recorded-artifact ownership. A
+  descriptor payload that changes image/view/layout under a stable set handle
+  must also republish the secondary's descriptor-image requirements or
+  invalidate and re-record every dependent artifact before submission.
+- [ ] Retain live descriptor-image transition/preflight for mutable frame-source
+  bindings until a scheduled secondary proves that its frozen requirements were
+  produced from the exact descriptor payload generation being submitted. Never
+  skip the live scan solely because a reusable chain exists.
+- [ ] Cache only stable secondary command ranges; keep UI, text, debug,
+  dynamic-resource, and output-sensitive ranges dynamic.
+- [ ] Record stable GPU-driven dispatch, barrier, indirect-draw, and count
+  topology once; update only bounded data ranges for changing visibility and
+  counts.
+- [ ] Remove obsolete primary-command variant caches and cache-only scheduling
+  branches once packet reuse owns their responsibility.
+
+### 4. Collapse The Runtime Surface And Remove Hot-Path Work
+
+- [ ] Pre-resolve pass, resource, material, pipeline, and descriptor decisions
+  into compact plan data; defer diagnostic string construction until emission.
+- [ ] Move required pipeline/shader creation and planner warnings out of primary
+  recording.
+- [ ] Use frame-indexed upload/storage arenas, stable bindings and offsets, and
+  capacity growth with subrange updates for camera, transform, material,
+  skinning, debug-line, and indirect data.
+- [ ] Remove per-frame attachment-layout arrays, UI split arrays, graph sorting,
+  and other repeated/superlinear plan construction.
+- [ ] Add allocation and timing scopes for plan build, recording, queue-lock
+  wait, native submission, and worker wait.
+- [ ] Replace the stateful `VulkanRenderer` partial-class implementation with
+  the seven explicit authorities in the target architecture and one non-partial
+  facade that owns API translation and composition only.
+- [ ] Make the acquire-to-settlement frame loop one readable orchestration spine
+  with typed phase outcomes and exactly-once ownership settlement on every
+  return, exception, resize, output-unavailable, and device-loss path.
+- [ ] Inventory hand-written/generated source separately, dependency direction,
+  file/line counts, partials, fields, largest files/methods, directory depth, and
+  duplicated authorities before each consolidation phase.
+- [ ] Reduce the hand-written Vulkan core from the 2026-08-05 baseline of 858
+  files / 170,048 lines to at most 550 files / 125,000 lines, and reduce the
+  acquire-to-settlement lifecycle spine to at most 40 files / 20,000 lines.
+- [ ] Keep `VulkanRenderer` in one hand-written non-partial file of at most 500
+  physical lines; generated interop may not own renderer state or hide behavior
+  excluded from the structural audit.
+- [ ] Keep the main frame orchestration method at most 100 logical lines. Split
+  any hand-written file above 1,500 physical lines or method above 150 logical
+  lines unless a documented ownership exception is approved before cutover.
+- [ ] Consolidate or delete duplicate planners, schedulers, profilers, caches,
+  descriptor/lifetime models, forwarding shims, compatibility branches, and
+  one-method partials as their consumers migrate. Do not preserve two production
+  authorities or meet counts by combining unrelated top-level types.
+- [ ] Enforce dependency direction from facade/frame orchestration toward
+  output, planning, resource, command, device, and telemetry owners; forbid
+  ambient facade callbacks, service-location, and ordinary hot-path thread-static
+  state.
+- [ ] Make stable-frame work proportional to changed or visible content rather
+  than registered resources, cache size, or historical frame operations; remove
+  steady-state full scans, string parsing/hashing, reflection, repeated graph
+  sorting, and cache-wide dirty propagation.
+- [ ] Keep the normal hot path free of LINQ, closures, boxing, strings,
+  expected-status exceptions, `Task` creation, collection growth, and
+  contention-heavy global atomics; use fixed frame-slot arenas and persistent
+  worker-owned storage.
+
+#### 4.1 Make Hot Data Layout And Unsafe Boundaries Explicit
+
+The [target architecture's data-layout contract](../../design/rendering/vulkan-render-loop-target-architecture.md#data-layout-and-native-memory-boundary)
+is mandatory. SoA is used for field-wise bulk stages, compact AoS for records
+consumed as a unit, and hot/cold or AoSoA only where measured. Unsafe code is a
+contained native-memory mechanism, not a general performance mode.
+The [Vulkan CPU SIMD Refactor Pass Design](../../design/rendering/vulkan-cpu-simd-refactor-pass-design.md)
+defines the shared scalar oracle, width-selection policy, candidate order, and
+promotion gates; it does not authorize SIMD in branch-heavy lifecycle, graph,
+descriptor, barrier, or native command code.
+
+- [ ] Add a reproducible hot-data inventory containing every per-frame/per-draw
+  stream, current element size/alignment, managed-reference fields, arrays or
+  pooled buffers per element, producer/consumer stages, fields touched by each
+  consumer, bytes copied/converted, mutation frequency, and owning generation.
+- [ ] Establish a layout decision record for every changed stream. Compare the
+  existing AoS with candidate SoA, compact AoS/hot-cold, and—only when useful—
+  AoSoA layouts at representative counts before selecting the canonical form.
+- [ ] Preserve exact ABI/layout checks for `DrawMetadata`, `BoundsGpu`,
+  `GPUIndirectRenderCommandHot`, shader structs, and native Vulkan records. Treat
+  the current 64-byte metadata, 64-byte bounds, and 80-byte hot command as a
+  measured baseline, not an immutable contract.
+- [ ] Make GPUScene publish stage-native cull-control, cull-bounds,
+  classification/sort-key, material/state, transform, previous-transform,
+  visibility, and optional AABB streams directly. Keep compact vector AoS inside
+  a stream when one shader invocation consumes the complete vector group.
+- [ ] Define those logical streams in one scene-layout schema and publish them
+  through one storage owner and generation transaction. Use typed aligned ranges
+  in shared backing allocations where appropriate; do not add a wrapper, source
+  file, Vulkan allocation, or descriptor binding for every individual column.
+- [ ] Remove `GPURenderExtractSoA.comp`, its scratch buffers, and the uncalled
+  `SoACull` compatibility path unless a real consumer and a whole-stage win are
+  demonstrated first. Do not pay a conversion merely to label a path SoA.
+- [ ] Replace unconditional broad hot-command conversion with direct
+  stage-native GPUScene consumption. Retain a compatibility envelope only for a
+  named temporary consumer, meter its bytes/time, and give it a deletion gate.
+- [ ] Generate the final contiguous `VkDrawIndirectCommand` or
+  `VkDrawIndexedIndirectCommand` AoS stream after culling; do not split the
+  driver-required indirect command structure into submission-time SoA buffers.
+- [ ] Lower polymorphic `FrameOp` objects exactly once into an opcode/payload
+  index stream plus dense per-kind draw, dispatch, copy, clear, barrier, and
+  output payload arrays before sorting, planning, or worker scheduling.
+- [ ] Replace `RenderPacket`-owned draw/dispatch arrays and hot diagnostic target
+  strings with compact numeric headers and `start/count` ranges into frame-owned
+  arenas. Resolve names only in diagnostics/exporters.
+- [ ] Replace `VulkanPreparedMeshDrawState` and `VkPreparedMeshDraw` per-draw
+  descriptor, dynamic-offset, vertex, frame-payload, viewport, scissor, and
+  other pooled arrays with flattened frame-slot streams and typed ranges.
+  Separate the compact encoder hot header from managed owners, generation audit
+  data, and diagnostic names in cold indexed sidecars.
+- [ ] Keep prepared-draw headers compact AoS by default because encoding consumes
+  most hot fields together. Introduce AoSoA tiles only if CPU counter and
+  full-frame measurements beat compact AoS after including transpose, tail, and
+  publication cost.
+- [ ] Replace render-graph and barrier execution data based on strings,
+  dictionaries, and lists-of-lists with typed numeric resource IDs and flat
+  offset/count adjacency and barrier ranges. Materialize contiguous
+  `VkMemoryBarrier2`, `VkBufferMemoryBarrier2`, and `VkImageMemoryBarrier2` AoS
+  arrays only at the native call boundary.
+- [ ] Store descriptor dirty state, resource/allocation generations, layouts,
+  samplers, slots, and update frequency in scan-friendly publication streams.
+  Build native descriptor-info/write arrays or aligned descriptor-buffer bytes
+  only for dirty ranges in preallocated frame-slot scratch storage.
+- [ ] Keep worker queue entries as compact AoS records. Move mutable worker
+  counters and trace rings into independently write-owned blocks whose allocation
+  base and stride are both aligned; merge them after completion instead of using
+  contended per-item global atomics.
+- [ ] Keep frame-attempt/lifecycle state, typed outcomes, queue receipts, and
+  whole-record dependency keys as safe AoS. Split dependency identity into
+  structural, binding, and data keys only if comparison profiles show a benefit;
+  never replace resource ownership with naked pointers.
+- [ ] Introduce small focused `VulkanNativeScratchArena` and
+  `VulkanMappedFrameArena`-style owners for Vulkan ABI arrays, `pNext` chains,
+  mapped upload/uniform/staging/readback memory, descriptor bytes, and validated
+  binary decoding. Expose typed offset/length/alignment/generation slices and
+  acquire raw pointers only at the final boundary.
+- [ ] Remove type-wide `unsafe` from the renderer facade and ordinary planning,
+  graph, scheduling, and lifecycle owners. Prefer safe `Span<T>`/
+  `ReadOnlySpan<T>` and measured vector APIs; every retained pointer loop must
+  name the benchmarked gap that safe code could not close.
+- [ ] Forbid raw managed pointers escaping `fixed`, pooled buffers escaping
+  return ownership, per-frame `GCHandle` pinning that survives a native call,
+  unchecked bitwise copies of padded/non-blittable structs, and `stackalloc`
+  inside loops or with unbounded lengths.
+- [ ] Validate mapped-memory slices against host/device ownership,
+  `minMemoryMapAlignment`, and `nonCoherentAtomSize`; record flush/invalidate
+  expansion rather than confusing CPU cache-line alignment with Vulkan memory
+  visibility.
+- [ ] Add allocation-free telemetry for elements and bytes read/written per hot
+  stream, compatibility/conversion bytes, native scratch reservations/high-water
+  marks, dirty descriptor ranges, graph edges, prepared-draw side-stream bytes,
+  worker queue depth, and worker-local merge cost.
+- [ ] Delete superseded object pools, per-packet arrays, conversion shaders,
+  scratch buffers, descriptor builders, and unsafe helpers immediately after
+  their final consumer moves to the canonical layout.
+
+### 5. Schedule Outputs And Submission Without Cross-Output Blocking
+
+- [ ] Build one deadline-aware submission DAG for uploads, shadows, desktop,
+  OpenXR eyes, mirror, probes, captures, and publication.
+- [ ] Prioritize acquired OpenXR eyes and reserve their critical path before
+  optional output work; make desktop/secondary acquisition nonblocking for
+  XR-owned frames.
+- [ ] Add bounded, observable deferral, cadence, and stale-reuse policy for
+  mirrors, probes, optional effects, and captures.
+- [ ] Narrow native queue-lock ownership and never hold it across a blocking
+  fence wait; use timeline/frame-slot completion for queue and OpenXR image
+  ownership.
+- [ ] During Win32 modal interactive resize, keep the already-published scene,
+  shadow, UI, and presentation generations frozen independently and use WSI
+  presentation scaling for the changing surface. Do not rebuild or retire the
+  main physical resource plan inside the drag callback; publish one catch-up
+  generation after the modal loop exits.
+- [ ] Make modal resize dispatch bounded and nonblocking with respect to
+  visibility publication, GPU completion, and retirement drains. A missing or
+  incompatible frame package must produce an explicit defer/stale-reuse result,
+  not leave the interactive-render guard latched indefinitely.
+- [ ] Add persistent worker recording for independent safe packet classes and
+  preserve serial recording for packets that cannot yet be isolated.
+
+### 6. Simplify The Forward+ Render Graph
+
+- [ ] Co-produce or reuse depth, normals, and velocity where possible; skip the
+  depth prepass when no consumer requires it.
+- [ ] Remove redundant opaque/masked geometry replay, full-resolution
+  color/depth copies, paired blits, transitions, and barriers.
+- [ ] Model attachment lifetime, aliasing, input attachments, and explicit
+  transitions in backend-neutral graph intent with Vulkan realization.
+- [ ] Conditionally allocate and execute AO, bloom, probe, shadow, temporal,
+  and post-process producers only when their consumers are enabled.
+
+### 7. Bound Shadow, Streaming, And Render-Thread Tail Work
+
+- [ ] Define directional cascade invalidation from camera, light, caster,
+  receiver, atlas, and quality state; stabilize projections and reuse unaffected
+  cascade recording/data.
+- [ ] Add a bounded per-frame directional-cascade update budget and explicit
+  temporal policy.
+- [ ] Move texture decode, transcode, mip preparation, and upload planning off
+  the render thread; batch transfer recording, sparse transitions,
+  finalization, and descriptor publication.
+- [ ] Publish immutable texture generations with narrow descriptor/command
+  invalidation and bounded per-frame upload work.
+- [ ] Move pure generic jobs, BVH work, physics preparation, and capture
+  preparation to their owning workers; split render-thread-affine work into
+  budgeted increments with admission control.
+
+### 8. Add End-To-End CPU Observability And Runtime Diagnostics
+
+- [ ] Publish explicit counters and state for device loss, frame/output status,
+  reuse decisions and misses, queue/fence wait, worker wait, allocations,
+  jobs, cascade invalidation, uploads, descriptor publication, GPU work, and
+  deferred work.
+- [ ] Add device-fault, TDR-risk, memory-budget, and submission-breadcrumb
+  diagnostics when supported by the active Vulkan device.
+- [ ] Add concise Vulkan/OpenXR submit and descriptor-state dumps that preserve
+  the last successful submission context without adding steady-state work.
+- [ ] Record per-context planner ownership, display/internal extents, registry
+  and resource generations, active physical allocation, and every attempted
+  cross-context substitution. Promote incompatible context/extent reuse from a
+  throttled warning to a structured frame-rejection reason.
+- [ ] Extend final-presentation diagnostics with the complete immutable source
+  tuple, bound descriptor payload, selected primary/secondary artifacts, layout
+  transitions, swapchain image, and submit generation so a stale view cannot be
+  mistaken for a valid logical `SourceTexture` binding.
+- [ ] Add an interactive-resize liveness watchdog with breadcrumbs for modal
+  callback entry/exit, visibility publication, package selection, plan
+  replacement, retirement backlog, queue/timeline waits, submission, and
+  present. Report renderer hangs separately from validation errors, device loss,
+  managed exceptions, and native process crashes.
+- [ ] Replace the disconnected desktop lifecycle counters, flat
+  `EVulkanCpuStage` interpretation, and targeted Vulkan CPU spans with one
+  `VulkanFrameTelemetry` schema; retain compatibility adapters only until every
+  dashboard, profiler, MCP tool, and benchmark consumes the shared schema.
+- [ ] Define one stable coarse stage taxonomy from frame pacing and snapshot
+  handoff through acquire, plan, resource preparation, scheduling, recording,
+  submit, output completion, and settlement; keep detailed operation IDs nested
+  below those stages rather than expanding the top-level budget vocabulary.
+- [ ] Correlate every aggregate or retained span with engine/render frame IDs,
+  output and view-set IDs, frame slot, relevant generation, stage/detail ID,
+  span/parent/cross-thread link IDs, thread/worker ID, start/end timestamp,
+  allocation, operation count/bytes, typed outcome, and wait/reuse/invalidation
+  reason.
+- [ ] Classify time as engine work, wait, native-driver call, external-runtime
+  work, or intrusive diagnostics; prohibit unlabeled blocking calls and ensure
+  queue-lock, fence/timeline, acquire, present, worker, collect, and retirement
+  waits remain individually visible.
+- [ ] Compute inclusive and exclusive time, aggregate worker CPU, wall active
+  span, overlap, imbalance, render-thread wait, causal critical path, and
+  attributed/unattributed root time after capture without double-counting nested
+  or parallel scopes.
+- [ ] Keep aggregate mode allocation-free and low-contention with fixed
+  per-thread/per-frame storage. Keep targeted traces in pre-warmed bounded rings,
+  freeze bounded before/after windows for slow frames, and serialize or aggregate
+  only outside measured threads.
+- [ ] In detailed captures, attribute at least 99% of each frame-root wall
+  interval and emit an explicit `Unattributed` failure record for every gap of
+  50 microseconds or more.
+- [ ] Publish the same stable IDs and results to the editor frame tree/timeline,
+  runtime counters, MCP/component-profiler results, and machine-readable
+  JSON/CSV/trace exports; defer all string formatting until consumption.
+- [ ] Measure aggregate and targeted observer overhead against the accepted
+  clean-profile contract. Diagnostic instrumentation may not masquerade as a
+  clean promotion capture or invalidate unrelated reusable commands.
+
+### 9. Make Occlusion Modes Bounded And Effective
+
+- [ ] Separate occlusion candidates, occluders, tested bounds, rasterized
+  triangles, queries, Hi-Z invocations, indirect commands, and actual culls in
+  runtime telemetry.
+- [ ] Add representative open, moderate, occluder-heavy, masked, static, and
+  deterministic moving-camera occlusion scenarios.
+- [ ] Bound CPU-software candidate selection, sorting, and rasterization; bypass
+  cheaply when candidates, occluders, or prior benefit do not justify the work.
+- [ ] Define CPU-query latency, refresh, stale-result, and camera-motion policy
+  without CPU waits or current-frame result dependencies.
+- [ ] Use persistent minimal-format GPU Hi-Z resources; bound pyramid, barriers,
+  refinement, and count-copy work, consume visibility on GPU, and cheaply bypass
+  ineffective cases.
+- [ ] Define selection thresholds and hysteresis, retain a forced diagnostic
+  mode, and explicitly mark each CPU-software, CPU-query, and GPU Hi-Z mode as
+  production, opt-in, diagnostic-only, or retired.
+
+## Advanced Render Pipeline Phases 06 Through 10
+
+These phases continue the ordered
+[Advanced Render Pipeline Architectural Refactor](architectural-refactor/00-advanced-render-pipeline-refactor-todo.md)
+after [05 - Attribute Reconstruction](architectural-refactor/05-attribute-reconstruction-todo.md).
+They consume the immutable frame, resource, descriptor, scheduling, and
+diagnostic contracts in sections 1 through 9 above rather than creating a
+parallel renderer architecture.
+
+Sections 10 through 14 are backend-neutral rendering architecture. OpenGL and
+Vulkan may use different native encodings, but both must implement the same
+logical visibility, material, view, resource-generation, and output contracts;
+the Vulkan path additionally inherits every hardening invariant above.
+
+| Former phase | Consolidated section | Dependency outcome |
+| --- | --- | --- |
+| 06 | 10. Classify Visible Material Work | Attribute reconstruction supplies stable `AdvancedSurface` identity and derivatives. |
+| 07 | 11. Shade Native Opaque Materials | Classification supplies bounded visible kernel work. |
+| 08 | 12. Integrate Transparency, Special Passes, And Post | Native opaque HDR and depth become the only ordinary scene-color foundation. |
+| 09 | 13. Integrate Stereo, XR, Capture, And Editor Views | Every output consumes the same scene/feature contracts through independent context-local plans. |
+| 10 | 14. Cut Over And Retire Legacy Rendering | The companion testing tracker supplies the required promotion evidence. |
+
+### 10. Classify Visible Material Work On The GPU
+
+The canonical classification key is shading kernel, material layout,
+material-state/coverage class, required attribute/derivative mode, and view
+mode. Material-row ID remains data within a compatible kernel, and descriptor
+set object identity is never part of the logical key.
+
+#### 10.1 Work Domain And Tile Policy
+
+- [ ] Select initial tile dimensions from measured occupancy and subgroup
+  behavior.
+- [ ] Define mono and per-eye/layer addressing.
+- [ ] Define active-tile, kernel-tile, and optional compact pixel-list records.
+- [ ] Reserve capacities from screen size and documented worst-case material
+  diversity.
+- [ ] Define empty-pixel and background exclusion.
+
+#### 10.2 Classification Kernels
+
+- [ ] Read final visibility and resolve the material/kernel key from immutable
+  GPU tables.
+- [ ] Build active tiles and per-kernel tile membership.
+- [ ] Add a compact pixel-list path for sparse or highly mixed tiles only where
+  it wins measured workloads.
+- [ ] Use subgroup ballot/scan where available.
+- [ ] Provide a deterministic bounded shared-memory fallback when subgroup
+  operations are unavailable.
+- [ ] Avoid atomics proportional to total registered material count.
+- [ ] Skip empty tiles and kernels without CPU involvement.
+
+#### 10.3 GPU Dispatch Construction
+
+- [ ] Prefix-sum or otherwise compact kernel/tile/pixel ranges.
+- [ ] Build indirect dispatch arguments entirely on the GPU.
+- [ ] Keep bounded fixed command topology over kernel families or use a
+  backend-supported indirect execution mechanism.
+- [ ] Treat count and range changes as data-only publication that does not
+  rerecord otherwise reusable primary or secondary packets.
+- [ ] Publish the minimum resource-specific barriers required before native
+  shading through the immutable frame plan.
+- [ ] Keep delayed statistics readback outside the frame dependency chain.
+
+#### 10.4 Capacity And Overflow
+
+- [ ] Define independent overflow contracts for active tiles, kernel
+  memberships, pixel lists, and indirect-argument ranges.
+- [ ] Never drop pixels silently.
+- [ ] In automatic mode, use a bounded conservative full-tile kernel recovery
+  only when it preserves correctness.
+- [ ] In required mode, expose an error surface and structured failure when
+  correctness cannot be preserved.
+- [ ] Record the first overflow cause, required capacity, selected recovery,
+  and affected pixels through delayed diagnostics.
+- [ ] Grow persistent capacity only at a safe frame boundary through the
+  generation transaction in section 1.
+
+#### 10.5 Material Diversity And Kernel Scheduling
+
+- [ ] Keep many material rows sharing one kernel within common dispatch work;
+  never create one dispatch per material instance.
+- [ ] Order kernel work to reduce pipeline changes without changing visibility
+  correctness.
+- [ ] Prewarm engine-owned kernel families and backend variants.
+- [ ] Define explicit behavior for rare kernels, pending shader compilation,
+  and nonresident textures.
+- [ ] Expose material eligibility, kernel ID, and selected recovery in editor
+  diagnostics.
+
+#### 10.6 Classification Diagnostics
+
+- [ ] Add views for active tiles, kernel IDs, material IDs, mixed-tile density,
+  pixel-list density, dispatch ranges, and overflow.
+- [ ] Add counters for visible pixels, active tiles, kernel-tile pairs,
+  compacted pixels, active kernels, dispatches, overflows, and GPU time.
+- [ ] Report classification work independently for every stereo eye/layer.
+- [ ] Give every classification buffer a stable capture name.
+
+### 11. Shade Native Opaque Materials, Lighting, Decals, And GI
+
+Compatible opaque and masked surfaces shade directly from reconstructed
+visibility into advanced opaque HDR. This section must not recreate the classic
+GBuffer, deferred-light accumulation, ordinary opaque Forward+, or full-frame
+light-combine graph.
+
+#### 11.1 Native Kernel Interface
+
+- [ ] Define a generated/authored kernel interface receiving `AdvancedSurface`,
+  material row, view record, light/decal ranges, shadow tables,
+  environment/probe data, and GI resources.
+- [ ] Define outputs for opaque HDR, dense velocity, temporal/reactive masks,
+  exposure/luminance inputs, and only the minimal optional sidecars required by
+  later effects.
+- [ ] Load textures through material-row references and the active global
+  texture-indirection rung.
+- [ ] Bind global scene, material, light, and texture tables once per compatible
+  command scope.
+- [ ] Compile one kernel per material family/layout/feature contract, not per
+  material instance.
+- [ ] Define explicit missing-kernel, pending-compile, invalid-layout, and
+  nonresident-texture behavior.
+
+#### 11.2 Standard Material Families
+
+- [ ] Implement standard opaque PBR first.
+- [ ] Add masked PBR using the coverage decision already established by the
+  visibility pass.
+- [ ] Add unlit/emissive shading.
+- [ ] Add subsequent engine-owned families in measured priority order, such as
+  skin, cloth, terrain, toon, and hair cards.
+- [ ] Define custom-material opt-in metadata and reject undeclared arbitrary
+  shader state.
+- [ ] Add kernel prewarm and permutation-budget telemetry.
+
+#### 11.3 Clustered Lighting
+
+- [ ] Define one backend-neutral froxel grid per view using screen-tile X/Y and
+  depth-slice Z.
+- [ ] Build local point- and spot-light lists on the GPU.
+- [ ] Keep directional lights in a bounded global list.
+- [ ] Share the same light records and froxel indexing across every native
+  material kernel.
+- [ ] Define overflow and conservative recovery without silently dropping light
+  contribution.
+- [ ] Add froxel occupancy, light-count, overflow, and selected-light debug
+  views.
+
+#### 11.4 Shared Shadow Records
+
+- [ ] Publish directional, point, spot, cascade, atlas, filter, and fallback
+  metadata through GPU shadow records instead of large per-program uniform
+  sets.
+- [ ] Preserve the relevance, dirty-tile, stale-tile, contact-shadow, and
+  bounded cascade-update policies established in section 7.
+- [ ] Make every material kernel use shared shadow-sampling helpers.
+- [ ] Consume reconstructed screen position and depth consistently under normal
+  and reversed depth.
+- [ ] Publish machine-readable missing, stale, and unavailable shadow fallback
+  state.
+- [ ] Keep cascade transitions, atlas edges, cubemap seams, filter modes, and
+  stereo addressing explicit in the shadow contract.
+
+#### 11.5 Ambient Occlusion
+
+- [ ] Select the advanced AO contract: depth plus reconstructed normal, a
+  compact normal sidecar, or provider-specific visibility sampling.
+- [ ] Schedule AO before the lighting contribution that consumes it.
+- [ ] Do not recreate a multi-channel GBuffer solely for AO compatibility.
+- [ ] Adapt supported AO providers to declared advanced inputs.
+- [ ] Mark unsupported providers unavailable for the advanced pipeline instead
+  of silently invoking legacy resources.
+- [ ] Define coordinates, depth convention, half/full resolution, stereo,
+  temporal-history, and camera-cut behavior for every supported provider.
+
+#### 11.6 Decals And Surface Modifiers
+
+- [ ] Build per-tile/froxel decal lists.
+- [ ] Apply compatible decals as material/surface modifiers before lighting
+  using reconstructed position and normal basis.
+- [ ] Define decal ordering, blend semantics, normal blending, material
+  filters, and overflow.
+- [ ] Route geometry-changing or unsupported decals to an explicit special path
+  or error state.
+- [ ] Do not require classic deferred decal GBuffer writes.
+
+#### 11.7 Environment, Probes, And GI
+
+- [ ] Publish IBL and light-probe lookup through shared GPU records.
+- [ ] Define a narrow `IAdvancedGlobalIlluminationProvider` contract for
+  radiance/irradiance queries and optional screen-space outputs.
+- [ ] Adapt supported probe, surfel, radiance-cascade, voxel, ReSTIR, and future
+  providers without full-frame light-combine compositing.
+- [ ] Ensure only one selected GI mode contributes unless an explicitly
+  documented blend is requested.
+- [ ] Expose unavailable providers and required resources before rendering.
+- [ ] Define invalid-history, missing-probe, provider-switch, and stereo
+  behavior.
+
+#### 11.8 Background And Uncovered Pixels
+
+- [ ] Shade visibility-sentinel pixels through the selected sky/background
+  contract.
+- [ ] Preserve atmospheric sky inputs without drawing an ordinary opaque
+  forward background mesh where a compute/background kernel suffices.
+- [ ] Define clear color, alpha, HDR encoding, and external-capture behavior.
+- [ ] Keep procedural/custom background geometry as an explicit compatible
+  visibility producer or special pass.
+
+#### 11.9 Native Shading Diagnostics
+
+- [ ] Add views for reconstructed albedo, normal, roughness, metalness,
+  emission, AO, direct light, indirect light, shadow factor, decal contribution,
+  kernel ID, and final opaque HDR.
+- [ ] Add a diagnostic difference view against the original pipeline without
+  using the original pipeline in production execution.
+- [ ] Record GPU time per classification, kernel family, lighting, shadow, AO,
+  decal, and GI stage.
+
+### 12. Integrate Transparency, Special Passes, And Post-Processing
+
+Every late draw must declare whether it is temporally participating
+transparency, scene-color-dependent refraction, exact transparency/OIT,
+volumetric/atmospheric work, a post-temporal overlay, editor/debug/on-top work,
+or UI/presentation. Opaque and masked materials may not use these categories
+merely because their native kernel is unavailable.
+
+#### 12.1 Late-Pass Eligibility
+
+- [ ] Add explicit material/pass metadata for blend, refraction, order
+  dependence, temporal participation, depth-write behavior, and scene-color
+  dependency.
+- [ ] Remove advanced-pipeline use of `OpaqueForward` and `MaskedForward`.
+- [ ] Reject compatible opaque work that attempts to enter a late path.
+- [ ] Render unsupported required-mode opaque work with an observable error
+  material or fail pipeline selection.
+- [ ] Report late-pass counts and reasons per category.
+
+#### 12.2 Scene Color And Depth Contract
+
+- [ ] Publish native opaque HDR, final visibility depth, optional normal/AO
+  sidecars, and exposure state under advanced resource names.
+- [ ] Create a dedicated scene-color snapshot only when a visible refractive or
+  scene-color-dependent pass requires it.
+- [ ] Never sample an attachment while writing the same image without a
+  supported feedback-loop contract.
+- [ ] Preserve depth testing against final visibility depth.
+- [ ] Define internal/output resolution and stereo-layer policy for every
+  scene-color consumer.
+
+#### 12.3 Transparency And OIT
+
+- [ ] Port weighted blended OIT to native opaque HDR and advanced depth.
+- [ ] Port PPLL and depth peeling through declared resources and typed commands.
+- [ ] Define which transparent materials use sorted alpha, weighted OIT, PPLL,
+  or depth peeling.
+- [ ] Preserve shadow, froxel-light, probe, fog, and texture-table access through
+  shared GPU records.
+- [ ] Define current/previous transform and reactive-mask behavior for
+  transparent motion.
+- [ ] Add capacity and overflow diagnostics for OIT buffers without same-frame
+  readback.
+
+#### 12.4 Special Material Families
+
+- [ ] Classify water, hair, particles, trails, beams, portals, mirrors, and
+  custom effects as native visibility, transparent, refractive, volumetric, or
+  unsupported.
+- [ ] Give required geometry-displacing opaque effects a specialized visibility
+  writer plus native material kernel.
+- [ ] Keep simulation and update work outside the pipeline command-chain
+  builder.
+- [ ] Share global tables and avoid per-object descriptor reconstruction.
+- [ ] Expose an editor-visible reason for every unsupported special effect.
+
+#### 12.5 Atmosphere And Volumetric Fog
+
+- [ ] Define sky, aerial-perspective, volumetric-fog, transparency, and
+  refraction ordering.
+- [ ] Adapt atmosphere and fog providers to final visibility depth and native
+  HDR.
+- [ ] Preserve half-resolution resources and temporal histories through
+  declared generation-owned resources.
+- [ ] Fog transparent objects consistently without relying on a legacy
+  light-combine output.
+- [ ] Define camera-cut, underwater/interior, stereo, and disabled-provider
+  behavior.
+
+#### 12.6 Dense Motion And Temporal Inputs
+
+- [ ] Consume visibility-reconstructed opaque velocity directly.
+- [ ] Merge transparent/special velocity only for participating pixels.
+- [ ] Generate disocclusion, reactive, transparency, and invalid-history masks.
+- [ ] Preserve exact jitter and motion-vector conventions required by TAA, TSR,
+  DLSS, FSR, XeSS, and other active upscalers.
+- [ ] Reset history explicitly for resize, pipeline switch, camera cut,
+  view-count change, render-scale change, HDR change, and shader/resource
+  generation replacement.
+
+#### 12.7 Temporal And Post Chain
+
+- [ ] Place temporal accumulation correctly relative to participating
+  transparency and fog.
+- [ ] Reconnect motion blur, depth of field, bloom, exposure, tone mapping,
+  color grading, vignette, FXAA/SMAA, TSR, and vendor upscalers to advanced
+  resource names.
+- [ ] Skip disabled passes before resolving their resources or shaders.
+- [ ] Preserve HDR/SDR output encoding and alpha behavior.
+- [ ] Keep post-temporal overlays and UI outside temporal history.
+- [ ] Remove legacy post-process bindings that assume GBuffer or light-combine
+  attachment names.
+
+#### 12.8 Late-Pass Diagnostics
+
+- [ ] Add a pass-category overlay and per-category counts.
+- [ ] Add views for scene-color snapshot, transparency accumulation/revealage,
+  PPLL/depth-peel occupancy, reactive mask, velocity, history validity, fog,
+  bloom, exposure, and final output.
+
+### 13. Integrate Stereo, XR, Capture, And Editor Views
+
+Desktop Advanced, RVC-owned OpenXR eyes, and offscreen consumers share logical
+scene, mesh, material, GI, temporal, froxel, and post contracts while retaining
+independent output-local pipeline instances, resource generations, histories,
+and submission topology.
+
+#### 13.1 View-Set Contract
+
+- [ ] Specialize the immutable section-2 `ViewSetPlan` with view count, layer
+  mapping, current/previous matrices, jitter, render region, foveation region,
+  and output target.
+- [ ] Give every view independent visibility, depth pyramid, history validity,
+  material work, velocity, and temporal state.
+- [ ] Share only view-independent scene, material, animation, deformation,
+  light, and immutable-geometry preparation.
+- [ ] Define conservative union rules only for work that is genuinely shared
+  across views.
+- [ ] Never reuse one eye's occlusion or depth verdict as another eye's
+  authoritative result.
+
+#### 13.2 Stereo And Multiview
+
+- [ ] Declare layered visibility, depth, optional barycentric, HDR, velocity,
+  reactive, and post-process histories.
+- [ ] Add required RVC two-pass, OpenGL single-pass-stereo, and Vulkan
+  parallel-recording/multiview variants.
+- [ ] Add layered classification and native shading with explicit eye/layer
+  addressing.
+- [ ] Preserve per-eye derivatives, depth conventions, motion, and temporal
+  reprojection.
+- [ ] Select transparent, fog, atmosphere, shadow, probe, and post resources by
+  explicit view/layer identity.
+- [ ] Report the selected stereo mode and every structured fallback reason.
+
+#### 13.3 XR Timing And Foveation
+
+- [ ] Preserve runtime wait, begin, acquire, render, release, and end ordering.
+- [ ] Fit RVC compute/graphics work into the section-5 deadline scheduler without
+  hidden queue or device waits.
+- [ ] Represent runtime-provided swapchains and image-array layers as imported
+  generation-owned resources.
+- [ ] Define foveated and variable-rate visibility/shading behavior without
+  invalidating identity reconstruction.
+- [ ] Keep periphery derivative and texture-LOD behavior conservative.
+- [ ] Preserve late-latching, predicted-pose, motion-vector, and camera-cut
+  contracts.
+- [ ] Record CPU/GPU timing against the canonical XR budget while identifying
+  capture overhead separately.
+
+#### 13.4 Offscreen And Secondary Views
+
+- [ ] Select the advanced pipeline for scene capture, mirror, portal,
+  reflection, light probe, impostor, thumbnail, and test viewports through
+  capabilities rather than concrete V2 type checks.
+- [ ] Define minimal capture profiles that omit unrequested temporal, post, and
+  late stages.
+- [ ] Define depth-only and visibility-only capture profiles where useful.
+- [ ] Preserve external-target ownership, synchronization, and output format.
+- [ ] Avoid executing the main-view post chain for probe or shadow captures.
+- [ ] Isolate nested and repeated capture resource names and generations.
+
+#### 13.5 Editor Identity And Selection
+
+- [ ] Resolve transform, component, mesh section, material, primitive, meshlet,
+  and instance identity from visibility records.
+- [ ] Route picking through asynchronous readback or GPU selection queries,
+  never a frame-blocking full visibility readback.
+- [ ] Preserve outlines, hover, gizmos, bounds, icons, physics debug, and on-top
+  overlays.
+- [ ] Add an inspector panel for decoded visibility payload and material-kernel
+  eligibility.
+- [ ] Replace editor checks for `DefaultRenderPipeline` and
+  `DefaultRenderPipeline2` with focused provider interfaces.
+- [ ] Prevent editor platform windows and previews from reusing stale or
+  cross-context pipeline generations.
+
+#### 13.6 Debug And Capture Tooling
+
+- [ ] Register stable capture names for every advanced resource.
+- [ ] Add command annotations for every early/late visibility, classification,
+  shading, transparency, temporal, post, and output phase.
+- [ ] Add MCP-visible settings and state for selected advanced mode, capability
+  result, fallback/error reason, and debug view.
+- [ ] Capture final advanced output in viewport screenshots without relying on
+  legacy diagnostic FBO names.
+- [ ] Make visibility payloads, draw records, material work lists, and indirect
+  arguments RenderDoc-friendly.
+- [ ] Keep delayed profiler readback bounded and explicitly removable from
+  benchmark captures.
+
+### 14. Cut Over Production Rendering And Retire Legacy Architecture
+
+Code cutover begins only after the companion testing tracker records passing
+correctness, stability, performance, allocation, readback, desktop, offscreen,
+and XR evidence for the affected profile.
+
+#### 14.1 Production Cutover
+
+- [ ] Make `AdvancedRenderPipeline` the desktop and applicable offscreen default
+  only after its gates pass; promote the RVC-owned OpenXR eye path only after the
+  matching XR gates pass.
+- [ ] Replace development selectors with the final pipeline-kind setting and
+  documented launch/config behavior.
+- [ ] Update generated settings, schemas, editor defaults, launch profiles, and
+  unit-testing-world setup.
+- [ ] Remove every remaining `DefaultRenderPipeline2`, `Default2`, pipeline-V2
+  environment variable, diagnostic label, source-path assertion, and
+  documentation instruction.
+- [ ] Update `README.md`, `docs/README.md`, runtime overview, rendering
+  architecture, material authoring, pipeline authoring, MCP, benchmark, and
+  launch documentation.
+- [ ] Regenerate MCP documentation if tool names or settings change.
+
+#### 14.2 Legacy Retirement
+
+- [ ] Delete deferred/forward resources, shaders, commands, settings, and tests
+  that are unreachable after advanced cutover.
+- [ ] Delete the original `DefaultRenderPipeline` after every required desktop,
+  offscreen, capture, and XR consumer has migrated.
+- [ ] If immediate deletion is blocked by a named required consumer, rename it
+  to `LegacyDefaultRenderPipeline`, keep it opt-in, record its owner and exact
+  blocker in the closeout, and set a dated deletion gate.
+- [ ] Do not preserve both architectures through continued symmetric feature
+  development.
+- [ ] Move completed and superseded TODO material to the repository's historical
+  convention and update every canonical link.
+- [ ] Update dependency-free legal/product language only where renderer naming
+  changes; do not alter licensing policy.
+
+#### 14.3 Closeout
+
+- [ ] Create a progress closeout under `docs/work/progress/rendering/` with the
+  architecture summary, feature matrix, validation commands, images/captures,
+  performance tables, remaining risks, and legacy-deletion status.
+- [ ] Keep `Build/_AgentValidation/` within its ten-run-root limit and remove
+  unneeded disposable evidence.
+- [ ] Ensure tracked documentation does not depend on ignored evidence for
+  required behavior.
+- [ ] Mark the consolidated program complete only after no required work
+  remains.
+
+#### 14.4 Program Completion
+
+- [ ] Make `AdvancedRenderPipeline` the desktop production default and keep
+  production OpenXR eye output owned by `RvcRenderPipeline`.
+- [ ] Route compatible opaque and masked rendering through visibility plus
+  native material/lighting shading.
+- [ ] Remove the classic GBuffer, deferred light accumulation, ordinary opaque
+  Forward+, and light-combine stages from the advanced production graph.
+- [ ] Remove `DefaultRenderPipeline2` completely.
+- [ ] Delete the original default pipeline or retain exactly one explicit,
+  bounded legacy blocker with an owner and dated removal gate.
+- [ ] Meet the target architecture's facade, lifecycle-spine, complete Vulkan
+  source/line, directory-depth, file-size, method-size, dependency-direction,
+  and single-authority budgets from a reproducible final inventory.
+- [ ] Demonstrate zero warmed managed hot-path allocation and approved desktop,
+  presentationless, and XR p50/p95/p99/worst CPU budgets without moving cost to
+  waits, retirement, descriptors, another output, or tail latency.
+- [ ] Demonstrate that every hot stream has one canonical measured layout, no
+  unconsumed compatibility extraction/conversion pass remains, and bytes touched
+  scale with active stage work rather than broad record size or registry size.
+- [ ] Demonstrate that data-oriented layouts reduced or preserved source files,
+  runtime owners, Vulkan allocations, descriptor bindings, and lifetime
+  transitions instead of moving complexity into per-column infrastructure.
+- [ ] Demonstrate that unsafe code is confined to audited native/mapped-memory
+  owners, safe span-based implementations remain the default when equivalent,
+  and all retained unsafe paths pass lifetime, bounds, alignment, concurrency,
+  and end-to-end performance gates.
+- [ ] Demonstrate one correlated CPU lifecycle tree whose detailed captures
+  attribute at least 99% of frame-root time, identify every gap of 50
+  microseconds or more, and distinguish exclusive work, waits, driver/external
+  time, worker overlap, and the required-output critical path.
+- [ ] Demonstrate that a developer can locate every lifecycle owner and explain
+  a retained slow frame from the frame spine, editor profiler, and exported
+  trace without reconstructing state across `VulkanRenderer` partial files.
+
+## Superseded Trackers
+
+This tracker replaces the following implementation TODOs; their validation and
+test work is consolidated in the companion testing tracker.
+
+- Vulkan frame-plan recording refactor
+- Vulkan primary command-recording fast path
+- Forward+ prepass and render-graph cost
+- Occlusion systems performance
+- Render tail latency: shadows, streaming, and jobs
+- Vulkan runtime code organization: remaining small-facade, source-surface, and
+  ownership debt after the 2026-07-30 extraction milestone
+- Architectural refactor 06: visible material work classification
+- Architectural refactor 07: native material, lighting, decals, and GI
+- Architectural refactor 08: transparency, special passes, and post-processing
+- Architectural refactor 09: stereo, XR, capture, and editor integration
+- Architectural refactor 10: validation, performance, cutover, and retirement

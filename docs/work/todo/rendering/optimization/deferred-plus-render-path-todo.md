@@ -16,7 +16,7 @@ Consolidation note:
   also historical. Its unique traditional-mesh, cluster-producer,
   subgroup-fallback, editor-identity, MikkTSpace, and VR diagnostic
   requirements are preserved in the architectural-refactor series.
-- [06 - Forward+ Prepass And Render-Graph Cost](06-forward-prepass-and-render-graph-cost-todo.md)
+- [Forward+ render-graph code changes](../vulkan-core-hardening-and-device-loss-todo.md#6-simplify-the-forward-render-graph)
   remains canonical for optimizing the current Default-pipeline graph.
   Deferred+ is a separate future opaque render path and does not replace
   workstream 06's exit gate.

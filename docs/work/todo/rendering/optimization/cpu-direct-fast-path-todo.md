@@ -68,7 +68,7 @@ backend cases, and performance comparisons against GPU-driven strategies.
   descriptor/dynamic-offset bindings, capacity-backed resources, compatible
   primary/secondary reuse, and redundant pipeline/descriptor/mesh-bind
   elimination. The Vulkan recording details remain owned by
-  [Vulkan Primary Command Recording Fast Path](vulkan-primary-command-recording-fast-path-todo.md),
+  [Vulkan command-recording code changes](../vulkan-core-hardening-and-device-loss-todo.md#3-make-command-recording-snapshot-driven-and-reusable),
   while the canonical Phase 5.2A gate owns promotion.
 
 ## Non-Goals

@@ -8,7 +8,7 @@ later VR-only branch requires separate approval.
 
 Parent tracker:
 
-- [06 - Forward+ Prepass And Render-Graph Cost](06-forward-prepass-and-render-graph-cost-todo.md)
+- [Forward+ render-graph code changes](../vulkan-core-hardening-and-device-loss-todo.md#6-simplify-the-forward-render-graph)
 
 Evidence source:
 
