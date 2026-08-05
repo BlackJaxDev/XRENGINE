@@ -91,7 +91,8 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
 
         var present = container.Add<VPRC_RenderToWindow>();
         present.SourceFBOName = SceneFBOName;
-        present.FlipSourceYOnVulkan = true;
+        present.FlipSourceYOnVulkan =
+            RenderClipSpacePolicy.RequiresVulkanFramebufferTexturePresentationYFlip();
 
         container.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
         container.Add<VPRC_RenderScreenSpaceUI>();

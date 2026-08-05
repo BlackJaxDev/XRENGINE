@@ -17,7 +17,11 @@ public sealed record AgentRunRequest
 
     public AgentEvidencePacket EvidencePacket { get; init; } = new();
 
-    public string EditorSession { get; init; } = string.Empty;
+    /// <summary>
+    /// Names the editor MCP session available to the worker. Leave unset for a
+    /// reasoning-only run with no local tools.
+    /// </summary>
+    public string? EditorSession { get; init; }
 
     public AgentToolPolicy ToolPolicy { get; init; } = new();
 

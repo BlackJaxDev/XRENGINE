@@ -1566,6 +1566,49 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Verifies that a recorded command buffer binds every current native
+    /// descriptor set supplied by a reusable draw. Logical descriptor identity
+    /// alone cannot prove this when compatible allocation variants coexist.
+    /// </summary>
+    internal bool CommandBufferReferencesAllDescriptorSets(
+        CommandBuffer commandBuffer,
+        ReadOnlySpan<DescriptorSet> descriptorSets,
+        out ulong missingDescriptorSetHandle)
+    {
+        missingDescriptorSetHandle = 0;
+        if (commandBuffer.Handle == 0)
+            return false;
+
+        ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+        lock (_resourceLifetimeTracker.SyncRoot)
+        {
+            if (!_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(
+                    commandBufferHandle,
+                    out VulkanCommandBufferLifetimeRecord? lifetime))
+            {
+                return false;
+            }
+
+            for (int i = 0; i < descriptorSets.Length; i++)
+            {
+                DescriptorSet descriptorSet = descriptorSets[i];
+                if (descriptorSet.Handle == 0)
+                    continue;
+
+                VulkanResourceLifetimeKey key =
+                    ResourceKey(ObjectType.DescriptorSet, descriptorSet.Handle);
+                if (lifetime.Dependencies.ContainsKey(key))
+                    continue;
+
+                missingDescriptorSetHandle = descriptorSet.Handle;
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private void RecordSecondaryDescriptorImageLayoutRequirements(
         CommandBuffer commandBuffer,
         DescriptorSet descriptorSet,

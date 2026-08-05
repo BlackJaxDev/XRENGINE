@@ -16,8 +16,9 @@ public static class AgentRouteAdvisor
     [
         "inventory", "search", "find files", "mechanical", "boilerplate", "documentation",
         "run tests", "run build", "log classification", "rename", "read one", "single read",
+        "retrieve file", "file retrieval", "write comments", "comment writing", "xml documentation",
         "snapshot", "extract", "classification", "classify", "deterministic", "read-only",
-        "one tool call", "smoke test",
+        "one tool call", "smoke test", "smoke check",
     ];
 
     private static readonly string[] s_rendererDomainSignals =

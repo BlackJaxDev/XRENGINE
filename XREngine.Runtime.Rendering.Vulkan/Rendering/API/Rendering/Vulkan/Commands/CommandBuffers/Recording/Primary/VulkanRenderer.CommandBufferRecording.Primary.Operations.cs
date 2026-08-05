@@ -308,7 +308,9 @@ public unsafe partial class VulkanRenderer
                 recordingState.MeshDrawUniformSlotsByOpIndex,
                 recordingState.MeshDrawSlotsByRendererFamily,
                 recordingState.MeshFrameDataFamilyBases,
-                recordingState.CommandBufferImageSlot);
+                recordingState.CommandBufferImageSlot,
+                recordingState.ScheduledCommandChainKeysByOpIndex,
+                recordingState.ScheduledCommandChainCache);
             recordingState.ActivePassIndex = passIndex;
             recordingState.ActiveSchedulingIdentity = schedulingIdentity;
         }

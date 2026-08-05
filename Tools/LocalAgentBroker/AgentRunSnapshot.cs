@@ -19,7 +19,7 @@ public sealed record AgentRunSnapshot
 
     public string ActualModel { get; init; } = string.Empty;
 
-    public string EditorSession { get; init; } = string.Empty;
+    public string? EditorSession { get; init; }
 
     public bool UseBackgroundMode { get; init; }
 

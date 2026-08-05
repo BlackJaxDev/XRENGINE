@@ -43,6 +43,7 @@ namespace XREngine.Rendering.Vulkan
             public ulong CommandChainScheduleSignature { get; set; } = ulong.MaxValue;
             public ulong CommandChainPrimaryGroupSignature { get; set; } = ulong.MaxValue;
             public VulkanCommandIdentityComponents CommandChainPrimaryIdentityComponents { get; set; }
+            public VulkanPrimarySecondaryArtifactSequence RecordedSecondaryArtifactSequence { get; } = new();
             public ulong CommandChainPrimarySkeletonSignature { get; set; } = ulong.MaxValue;
             public int CommandChainPrimaryGroupCount { get; set; } = -1;
             public ulong PlannerRevision { get; set; } = ulong.MaxValue;

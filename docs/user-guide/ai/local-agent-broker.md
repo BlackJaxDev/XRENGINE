@@ -2,16 +2,33 @@
 
 The local agent broker is an optional, checkout-local stdio MCP app. It lets
 Codex or another MCP client start a bounded OpenAI Responses API worker on an
-explicit GPT-5.6 tier and give that worker controlled access to one named,
-loopback XRENGINE editor MCP session.
+explicit GPT-5.6 tier. A reasoning-only worker has no local tools; an
+editor-aware worker receives controlled access to one named, loopback XRENGINE
+editor MCP session.
 
 The current Codex task remains the coordinator. A broker worker is a separate,
 independently billed API request; it is not an in-place model switch. The
 broker has no generic shell, Git, repository-write, process-discovery, or
 process-lifecycle tool.
 
-Use it when a bounded second worker can contribute editor evidence or a focused
-reasoning slice. Ordinary repository work does not require it.
+Codex evaluates it automatically for substantive tasks and uses it when a
+bounded second worker can contribute editor evidence or a focused reasoning
+slice. Exact one-step shell operations remain local because the broker cannot
+perform them and delegation would add latency without useful judgment.
+
+## Native Agents And Broker Workers
+
+Project Codex configuration uses Terra/Medium for the coordinator and Luna/Low
+for default native subagents. The custom `luna_explorer`, `terra_worker`, and
+`sol_architect` agents own repository exploration, implementation, and
+consequential reasoning respectively. Native agents have the appropriate Codex
+filesystem and shell surface; broker workers do not.
+
+Use native agents for repository searches, file operations, code changes, and
+validation. Use broker workers for bounded reasoning over a compact evidence
+packet or controlled live-editor evidence. Independent read-heavy work may run
+in parallel; overlapping writes, moves, removals, and editor mutation remain
+serialized.
 
 ## Requirements
 
@@ -26,8 +43,8 @@ not make an OpenAI API request. Starting a worker requires every item below.
 | API project | Use an OpenAI API project with billing/quota and access to the exact selected model. API service is managed and billed separately from ChatGPT subscriptions. |
 | API key | Put the project key in the process environment or, on Windows, the user environment, normally as `OPENAI_API_KEY`. Never put the value in the repository, MCP arguments, a prompt, logs, or command-line arguments. |
 | Broker tools | Confirm the `local-agent-broker` MCP server exposes `recommend_agent_route`, `start_agent_run`, `get_agent_run`, `cancel_agent_run`, and `list_agent_runs`. |
-| Named editor session | Start one exact session with `Tools/Manage-McpEditorSession.ps1`. Its manifest and loopback MCP endpoint must be live for the whole run. |
-| Explicit authority | The user must explicitly authorize broker/API use, the objective, and any mutation. The coordinator selects the lowest-cost suitable model automatically unless the user pins a model or tier ceiling. A routing recommendation alone is not authorization. |
+| Editor session when needed | Omit `editor_session` for reasoning-only work. For editor evidence or mutation, start one exact session with `Tools/Manage-McpEditorSession.ps1`; its manifest and loopback MCP endpoint must be live for the whole run. |
+| Standing authority | `AGENTS.md` pre-authorizes bounded broker/API spend for XRENGINE tasks. The coordinator selects the lowest-cost suitable model automatically without asking per run. Mutation and destructive operations still require authority from the task itself. |
 | Bounded request | Set narrow turn, tool-call, output-token, elapsed-time, retry, and tool-result limits appropriate to the task. |
 
 The supported exact model IDs are:
@@ -45,9 +62,9 @@ substitutes another tier.
 The fixed MCP surface contains five orchestration tools:
 
 - `recommend_agent_route` classifies an objective under the repository routing
-  policy. It is local and advisory; it never launches or switches a model. Once
-  broker API spend is authorized, the coordinator uses its exact result
-  automatically unless the user pinned a model.
+  policy. It is local and advisory; it never launches or switches a model. The
+  coordinator uses its exact result automatically unless the user pinned a
+  model.
 - `start_agent_run` validates a request, starts the paid worker asynchronously,
   and returns a run ID promptly.
 - `get_agent_run` returns incremental text/evidence/usage, retry count, bounded
@@ -123,9 +140,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Invoke-LocalAgentBroke
 
 ## Per-Run Workflow
 
-### 1. Start One Named Editor Session
+### 1. Choose Reasoning-Only Or Editor-Aware Execution
 
-Read-only is the default and preferred permission:
+For focused reasoning over a compact evidence packet, omit `editor_session`.
+The worker receives no local tools, no editor lease or endpoint, and no ability
+to mutate repository, process, or editor state.
+
+Start a named session only when the worker needs live editor evidence. Read-only
+is the default and preferred permission:
+
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Manage-McpEditorSession.ps1 Start -Name broker-read -PermissionPolicy AllowReadOnly
@@ -148,18 +171,18 @@ The broker resolves only
 loopback HTTP(S) endpoint, calls `ping`, and verifies the exact reported
 session name. Do not edit `session.json` by hand.
 
-### 2. Ask Codex To Use The Broker Explicitly
+### 2. Let Codex Route Automatically
 
-A good request authorizes broker use and names the session, objective,
-authority, evidence, and limits. Model selection is automatic by default:
+XRENGINE's standing policy lets Codex invoke bounded broker workers without a
+per-run permission prompt. A user may still pin a model, tier ceiling, budget,
+or forbid broker use for a task. For editor-aware work, provide the session,
+objective, authority, evidence, and limits:
 
 > Use the local agent broker against editor session `broker-read` for a
 > read-only analysis of the shadow artifact. Select the lowest-cost suitable
 > tier automatically. Keep the run under 3 turns, 6 tool calls, 2,000 output
 > tokens, and 120 seconds. Poll it to completion, verify the selected and actual
 > model, and integrate the evidence locally. Do not modify files or the scene.
-
-The user may still pin an exact model or tier ceiling when desired.
 
 For mutation, name every permitted editor tool and the required verification:
 
@@ -169,16 +192,16 @@ For mutation, name every permitted editor tool and the required verification:
 > Require read-back or capture evidence. Do not use any other mutating or
 > destructive tool.
 
-The request must explicitly authorize broker/API use; saying only "use the
-best model" or "escalate" does not authorize API spend. After authorization,
-the coordinator supplies the exact model ID selected by the routing policy.
+The standing authorization covers API spend only within the documented bounds.
+It does not grant scene mutation, destructive access, external writes, or a
+broader task scope.
 
 ### 3. Let The Coordinator Drive The Run To A Terminal State
 
 Codex should:
 
-1. Confirm explicit broker/API authorization, exact named session, scope, and
-   mutation boundary.
+1. Choose reasoning-only execution or confirm the exact named editor session,
+   scope, and mutation boundary.
 2. Partition the task into a bounded slice. Unless the user pinned a model, call
    `recommend_agent_route` and use its exact result as `requested_model`.
 3. Build a compact evidence packet with relevant files/symbols, current diff,
@@ -199,10 +222,11 @@ Codex should:
    Report provider, editor, budget, or policy failures plainly; do not change
    tiers merely to bypass a model-access failure.
 
-Read-only runs may overlap. A mutating run takes an exclusive lease on its
-named editor session and excludes readers until the mutation lease ends.
+Reasoning-only runs share only the global concurrency bound. Editor read-only
+runs may overlap; a mutating run takes an exclusive lease on its named editor
+session and excludes readers until the mutation lease ends.
 
-### 4. Stop Only The Session You Started
+### 4. Stop Only A Session You Started
 
 When the run is terminal and no further inspection is needed:
 
@@ -216,9 +240,46 @@ owns.
 ## Start Request Contract
 
 A caller using the MCP tools directly must provide `objective`,
-`requested_model`, and `editor_session`. When the user did not pin a tier, the
-coordinator fills `requested_model` from `recommend_agent_route`. The other
-fields make the run safer and more reproducible:
+and `requested_model`. `editor_session` is optional and must be omitted for a
+reasoning-only run. When the user did not pin a tier, the coordinator fills
+`requested_model` from `recommend_agent_route`. The other fields make the run
+safer and more reproducible.
+
+A reasoning-only request has no editor session or tool policy entries:
+
+```json
+{
+  "objective": "Review the supplied architecture decision for concurrency risks.",
+  "success_criteria": [
+    "Return ranked risks and a concrete recommendation."
+  ],
+  "constraints": [
+    "Reason only from the supplied evidence packet."
+  ],
+  "requested_model": "gpt-5.6-sol",
+  "reasoning_effort": "max",
+  "use_background_mode": false,
+  "evidence_packet": {
+    "relevant_files_and_symbols": [],
+    "current_diff": "Compact coordinator-supplied summary.",
+    "commands_and_results": [],
+    "failed_hypotheses": [],
+    "unresolved_questions": [],
+    "next_decision": "Approve or revise the design."
+  },
+  "budget": {
+    "max_turns": 3,
+    "max_tool_calls": 0,
+    "max_output_tokens": 4096,
+    "max_tool_result_bytes": 262144,
+    "max_elapsed_seconds": 120,
+    "max_retries": 1,
+    "max_concurrency": 1
+  }
+}
+```
+
+An editor-aware request names the session and exact tool policy:
 
 ```json
 {
@@ -284,6 +345,10 @@ non-empty, the call must also be listed there. Mutation additionally requires:
 Destructive authorization also requires mutation authorization. Unknown or
 unannotated editor tools are classified conservatively.
 
+When `editor_session` is absent, `allow_mutation`, `allow_destructive`,
+`allowed_tools`, `denied_tools`, and required tool use are rejected if they
+would imply local tool access.
+
 `use_background_mode` defaults to `false`. When set to `true`, each provider
 turn is created asynchronously and polled until `completed`, `failed`,
 `incomplete`, or `cancelled`. Use it for long reasoning runs where one
@@ -300,8 +365,11 @@ Responses API minimum are rejected before any paid request starts.
 
 Each worker is billed to the API project associated with the configured key,
 independently of ChatGPT/Codex product billing. Configure API project budgets,
-usage alerts, and model access before enabling runs. The broker reports token
-usage but intentionally does not embed volatile price estimates.
+usage alerts, and model access before relying on standing automatic runs. The
+broker reports token usage but intentionally does not embed volatile price
+estimates. Omitted run budgets default to 3 turns, 8 tool calls, 4,096 output
+tokens, 120 seconds, 1 retry, and per-run concurrency 1; the process default is
+at most 4 concurrent runs.
 
 Requests and editor evidence selected for the run leave the machine for OpenAI
 processing. The editor MCP endpoint remains loopback-only. Responses use
@@ -361,7 +429,8 @@ named by `XRE_LOCAL_AGENT_BROKER_EDITOR_AUTH_ENV`.
   only when changing broker setup/configuration or when an older broker process
   is already loaded. Do not paste the key into chat.
 - **Quota, billing, or model access fails:** check the API project and exact
-  model. Retry with another tier only after explicit authorization.
+  model. Do not change tiers merely to bypass access failure; route a newly
+  bounded or materially reclassified slice under the standing policy.
 - **Session manifest is missing or stale:** use
   `Tools/Manage-McpEditorSession.ps1 Status -Name <exact-name>`, or stop and
   recreate only that named session. Do not repair the JSON manually.

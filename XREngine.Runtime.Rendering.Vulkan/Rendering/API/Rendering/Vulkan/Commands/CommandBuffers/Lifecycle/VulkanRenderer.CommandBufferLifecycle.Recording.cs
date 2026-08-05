@@ -289,6 +289,22 @@ namespace XREngine.Rendering.Vulkan
                 return true;
             }
 
+            VulkanPrimarySecondaryArtifactSequence executedArtifactSequence =
+                _commandBufferRecordingScratch.Value!
+                    .ExecutedCommandChainSecondaryArtifactSequence;
+            if (!executedArtifactSequence.MatchesCurrentArtifacts(
+                    state.CommandChainCache,
+                    out string? artifactMismatch))
+            {
+                context.RecordingDeferredReason =
+                    $"Recorded primary command buffer secondary artifact changed during command encoding: {artifactMismatch}.";
+                state.Variant.Dirty = true;
+                state.Variant.DirtyReason = context.RecordingDeferredReason;
+                _commandBufferDirtyFlags![state.ImageIndex] = true;
+                _lastEnsureCommandBufferRecordedPrimary = false;
+                return false;
+            }
+
             // Dirty secondaries can be replaced while the primary is built.
             // Publish the exact artifact generations the completed primary executes.
             if (!TryValidatePrimaryCommandBufferGroupSharedDependencies(
@@ -401,6 +417,9 @@ namespace XREngine.Rendering.Vulkan
                     : state.CommandChainPrimaryGroupSignature;
             variant.CommandChainPrimaryIdentityComponents =
                 state.CommandChainPrimaryIdentityComponents;
+            variant.RecordedSecondaryArtifactSequence.CopyFrom(
+                _commandBufferRecordingScratch.Value!
+                    .ExecutedCommandChainSecondaryArtifactSequence);
             variant.CommandChainPrimarySkeletonSignature =
                 state.CommandChainPrimarySkeletonSignature;
             variant.CommandChainPrimaryGroupCount =

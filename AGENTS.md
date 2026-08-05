@@ -30,8 +30,8 @@ Optimize for the lowest cost per successfully validated task, not the lowest cos
 - Give an expensive model a compact evidence packet instead of the repository's entire history. Include only the objective, success criteria, constraints, relevant files and symbols, current diff, commands and results, failed hypotheses, unresolved questions, and next decision.
 - For repeated workloads, compare the current reasoning effort with one level lower on representative tasks. Keep the cheaper setting only when the same validation passes. Reserve high, xhigh, max, or pro-style execution for measured quality gains; never use them merely because a task is large.
 - The user controls native or in-place model switches for the current Codex
-  task. This does not prohibit automatic tier selection for a separately
-  billed broker worker after the user explicitly authorizes broker/API use.
+  task. Separately billed broker workers have standing repository authorization
+  within the bounded policy below; do not ask for per-run API-spend permission.
 
 When the active model is Terra, treat these user instructions as routing commands:
 
@@ -41,6 +41,27 @@ When the active model is Terra, treat these user instructions as routing command
 - A routing command does not authorize creating a new task, thread, branch, or worktree, committing, pushing, or performing external writes. Do not create those merely to simulate a model switch unless the user separately asks for them.
 - After a handoff, continue from the recorded state. Do not redo completed investigation, edits, or validation unless the evidence is stale or the receiving model identifies a concrete reason.
 
+### Native Agent Roles
+
+Project-scoped Codex defaults use Terra at medium effort for the coordinator and
+Luna at low effort for spawned agents. Proactively delegate independent bounded
+slices without asking the user when parallel work will materially improve speed
+or keep noisy evidence out of the coordinator context. Use the custom agents in
+`.codex/agents/` by responsibility:
+
+- `luna_explorer`: read-only searches, inventories, extraction, classification,
+  deterministic documentation drafts, and log summaries.
+- `terra_worker`: ordinary scoped implementation, refactoring, integration, and
+  task-authorized filesystem operations after ownership and acceptance criteria
+  are clear.
+- `sol_architect`: read-only max-effort escalation for consequential architecture,
+  ambiguous root cause, concurrency, GPU/rendering, security, data-loss risk, or
+  final review.
+
+Run independent read-heavy workers in parallel. Serialize overlapping edits,
+moves, and removals through the coordinator. A trivial command does not merit a
+subagent; perform it directly.
+
 ### Local Agent Broker
 
 The optional `local-agent-broker` MCP server is a supported, checkout-local
@@ -48,19 +69,23 @@ evidence-worker surface. Each worker is a separate, independently billed public
 OpenAI Responses API request. It does not change the model running the current
 Codex task and must never be described as an in-place switch or native handoff.
 
-#### Preconditions For A Broker Run
+#### Standing Authorization And Preconditions
 
-Do not call `start_agent_run` unless all of these conditions are true:
+Broker/API spend is pre-authorized for XRENGINE tasks within the model-routing,
+scope, data, and budget limits below. For every substantive repository task,
+assess whether an independent reasoning or editor-evidence slice will improve
+quality or wall-clock time and invoke the broker automatically when it will.
+Do not ask for per-run permission. Skip a paid worker when there is no meaningful
+delegated judgment, such as a single exact file read or deterministic shell
+operation that the coordinator can complete faster itself.
 
-- The current user request explicitly asks to use the local broker/API worker or
-  explicitly authorizes broker API spend after route advice. A
-  `recommend_agent_route` result alone never authorizes API spend.
-- Once broker/API use is authorized for the task, the coordinator automatically
-  selects the exact supported model ID for each bounded slice unless the user
-  pins a model or tier ceiling. Use `recommend_agent_route` plus the routing
-  policy above, and pass its exact `gpt-5.6-luna`, `gpt-5.6-terra`, or
-  `gpt-5.6-sol` result to `start_agent_run`. Do not stop merely to ask the user
-  which tier to use.
+Call `start_agent_run` only when all of these conditions are true:
+
+- The coordinator automatically selects the exact supported model ID for each
+  bounded slice unless the user pins a model or tier ceiling. Use
+  `recommend_agent_route` plus the routing policy above, and pass its exact
+  `gpt-5.6-luna`, `gpt-5.6-terra`, or `gpt-5.6-sol` result to
+  `start_agent_run`. Do not stop to ask the user which tier to use.
 - The five broker tools are callable in the current session. If they are
   missing, follow `docs/user-guide/ai/local-agent-broker.md` for setup,
   project trust, and restart requirements. Do not simulate a broker run.
@@ -69,22 +94,28 @@ Do not call `start_agent_run` unless all of these conditions are true:
   the API project has billing/quota plus access to the selected exact model.
   Never ask the user to paste the key into chat, print or echo it, inspect its
   value, put it in MCP arguments, or persist it.
-- The run targets one exact named editor session created with
-  `Tools/Manage-McpEditorSession.ps1`. The broker accepts only that session's
-  manifest and loopback endpoint; it never discovers or manages processes.
+- A reasoning-only run omits `editor_session`, exposes no local tools, and
+  cannot mutate repository, process, or editor state. A run that needs editor
+  evidence targets one exact named session created with
+  `Tools/Manage-McpEditorSession.ps1`; the broker accepts only that session's
+  manifest and loopback endpoint and never discovers or manages processes.
 - The objective is one bounded reasoning/editor slice with explicit success
   criteria, constraints, tool policy, and narrow turn, tool-call,
   tool-result-byte, output-token, elapsed-time, retry, and concurrency budgets.
 
-Every broker run requires an editor session name, even when no editor tool call
-is expected.
+Automatic runs default to at most 3 turns, 8 editor tool calls, 4,096 output
+tokens, 120 seconds, 1 retry, and per-run concurrency 1. Raise an individual
+limit only when the objective requires it and the expected validation benefit
+justifies the additional cost. Global broker concurrency remains bounded by
+`XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY`.
 
 #### Required Coordinator Workflow
 
-1. Keep the current Codex agent as coordinator. Prefer a supported native Codex
-   handoff for routing an entire coding task; use the broker for a bounded
-   analysis or editor-tool slice.
-2. Partition the authorized broker work into coherent bounded slices and route
+1. Keep the current Codex agent as coordinator. Use native Codex subagents for
+   repository searches, filesystem operations, implementation, and validation;
+   use the broker for bounded reasoning or editor-tool evidence. Prefer a
+   supported native Codex handoff for routing an entire coding task.
+2. Partition broker work into coherent bounded slices and route
    each slice to the lowest-cost tier likely to validate successfully: Luna for
    deterministic inventory, evidence extraction, and classification; Terra for
    ordinary scoped analysis and integration; Sol for unresolved architecture,
@@ -92,9 +123,8 @@ is expected.
    expensive reasoning slice resolves the ambiguity, route later mechanical
    slices back down instead of retaining the expensive tier.
 3. Unless the user pinned a model, call `recommend_agent_route` for the current
-   slice and use its exact result as `requested_model`. The recommendation is
-   automatic tier selection within the user's existing broker authorization;
-   it is not authorization to spend when broker use was never authorized.
+   slice and use its exact result as `requested_model` under the standing
+   repository authorization.
 4. Build a compact evidence packet containing only the objective, success
    criteria, constraints, relevant files/symbols, current diff, commands and
    observed results, failed hypotheses, unresolved questions, and next
@@ -105,7 +135,7 @@ is expected.
    enabled, retain provider attempt diagnostics and cancellation acceptance.
 6. Use read-only editor access by default. A non-empty allowlist should name
    only the tools needed for the objective.
-7. Mutation requires all of: explicit task authority, an `AllowMutate` named
+7. Mutation still requires all of: explicit task authority, an `AllowMutate` named
    session, `allow_mutation: true`, an exact non-empty mutating-tool allowlist,
    and a later read-back, query, inspection, validation, or capture. Destructive
    access additionally requires explicit destructive authority.
@@ -115,7 +145,7 @@ is expected.
 9. Verify both `requested_model` and `actual_model`. Treat any mismatch as a
    terminal failure for that run. Do not accept silent substitution. A later
    run may use another automatically recommended tier only for a newly bounded
-   or materially reclassified slice within the same authorized task; do not
+   or materially reclassified slice; do not
    change tiers merely to bypass provider/model-access failure.
 10. Integrate the returned evidence into the local investigation and perform the
    relevant local read-back, capture, build, or test. The worker has no generic

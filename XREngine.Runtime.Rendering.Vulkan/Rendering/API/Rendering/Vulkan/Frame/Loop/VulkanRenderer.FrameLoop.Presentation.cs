@@ -210,6 +210,11 @@ namespace XREngine.Rendering.Vulkan
             bool presentAccepted,
             bool hasValidFrameContent)
         {
+            RecordFinalPresentationLedger(
+                ref attempt,
+                result,
+                presentAccepted,
+                hasValidFrameContent);
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPresentResult(
                 (int)result,
                 presentAccepted);

@@ -1677,7 +1677,7 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		if (!TryRefreshFrameSourceDescriptorSetsForDraw(imageIndex, drawUniformSlot, material, draw.ProgramBindingSnapshot, out string frameSourceDescriptorReason))
+		if (!TryRefreshFrameSourceDescriptorSetsForDraw(imageIndex, drawUniformSlot, material, draw.ProgramBindingSnapshot, commandBuffer, out string frameSourceDescriptorReason))
 		{
 			WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason={frameSourceDescriptorReason}");
 			RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
@@ -2054,6 +2054,7 @@ internal unsafe partial class VkMeshRenderer
 				drawUniformSlot,
 				material,
 				draw.ProgramBindingSnapshot,
+				default,
 				out string frameSourceReason))
 		{
 			reason = $"frame-source descriptors pending: {frameSourceReason}";
@@ -2172,7 +2173,8 @@ internal unsafe partial class VkMeshRenderer
 		int drawUniformSlot,
 		out string reason,
 		bool refreshMaterialUniforms = true,
-		bool descriptorResourcesCapturedByFrameSignature = false)
+		bool descriptorResourcesCapturedByFrameSignature = false,
+		CommandBuffer recordedSecondaryCommandBuffer = default)
 	{
 		// Reuse does not record Vulkan commands, but it does update the same
 		// renderer-owned descriptor and UBO state consumed by RecordDraw.
@@ -2185,7 +2187,8 @@ internal unsafe partial class VkMeshRenderer
 				drawUniformSlot,
 				out reason,
 				refreshMaterialUniforms,
-				descriptorResourcesCapturedByFrameSignature);
+				descriptorResourcesCapturedByFrameSignature,
+				recordedSecondaryCommandBuffer);
 	}
 
 	internal bool TryRefreshReusableFrequencyData(
@@ -2331,7 +2334,8 @@ internal unsafe partial class VkMeshRenderer
 		int drawUniformSlot,
 		out string reason,
 		bool refreshMaterialUniforms,
-		bool descriptorResourcesCapturedByFrameSignature)
+		bool descriptorResourcesCapturedByFrameSignature,
+		CommandBuffer recordedSecondaryCommandBuffer)
 	{
 		reason = "reusable";
 		XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
@@ -2397,7 +2401,8 @@ internal unsafe partial class VkMeshRenderer
 				out reason,
 				refreshMaterialUniforms,
 				material,
-				descriptorResourcesCapturedByFrameSignature);
+				descriptorResourcesCapturedByFrameSignature,
+				recordedSecondaryCommandBuffer);
 		}
 
 		return TryRefreshReusableCommandBufferFrameDataBindingsNoLock(
@@ -2407,7 +2412,8 @@ internal unsafe partial class VkMeshRenderer
 			out reason,
 			refreshMaterialUniforms,
 			material,
-			descriptorResourcesCapturedByFrameSignature);
+			descriptorResourcesCapturedByFrameSignature,
+			recordedSecondaryCommandBuffer);
 	}
 
 	private bool TryRefreshReusableCommandBufferFrameDataBindingsNoLock(
@@ -2417,7 +2423,8 @@ internal unsafe partial class VkMeshRenderer
 		out string reason,
 		bool refreshMaterialUniforms,
 		XRMaterial material,
-		bool descriptorResourcesCapturedByFrameSignature)
+		bool descriptorResourcesCapturedByFrameSignature,
+		CommandBuffer recordedSecondaryCommandBuffer)
 	{
 		reason = "reusable";
 		RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanFrameDataDrawVisited();
@@ -2445,6 +2452,19 @@ internal unsafe partial class VkMeshRenderer
                 reason = $"descriptors {descriptorReason}; snapshot={(draw.ProgramBindingSnapshot is null ? "none" : "captured")} program='{_program?.Data?.Name ?? "<unnamed program>"}'";
                 return false;
             }
+			bool hasDescriptorBindings =
+				_program?.DescriptorSetLayouts.Count > 0 &&
+				_program.DescriptorBindings.Count > 0;
+			if (recordedSecondaryCommandBuffer.Handle != 0 &&
+				hasDescriptorBindings &&
+				!ActiveDescriptorSetsMatchRecordedCommandBuffer(
+					frameIndex,
+					recordedSecondaryCommandBuffer,
+					out string recordedDescriptorReason))
+			{
+				reason = $"descriptors {recordedDescriptorReason}; program='{_program?.Data?.Name ?? "<unnamed program>"}'";
+				return false;
+			}
             if (!TryRefreshSharedMaterialDescriptorSetForReusableFrame(
                     material,
                     frameIndex,
@@ -2459,6 +2479,7 @@ internal unsafe partial class VkMeshRenderer
                 drawUniformSlot,
                 material,
                 draw.ProgramBindingSnapshot,
+				recordedSecondaryCommandBuffer,
                 out string frameSourceDescriptorReason);
             if (!frameSourceDescriptorsReady)
             {
@@ -2479,6 +2500,35 @@ internal unsafe partial class VkMeshRenderer
             UpdateAutoUniformBuffersForDraw(frameIndex, drawUniformSlot, material, draw);
         }
         return true;
+	}
+
+	private bool ActiveDescriptorSetsMatchRecordedCommandBuffer(
+		int frameIndex,
+		CommandBuffer recordedSecondaryCommandBuffer,
+		out string reason)
+	{
+		if (_descriptorSets is not { Length: > 0 })
+		{
+			reason = "active descriptor set array is unavailable";
+			return false;
+		}
+
+		int descriptorSlotIndex = ResolveDescriptorFrameIndex(
+			frameIndex,
+			_descriptorSets.Length);
+		DescriptorSet[] frameSets = _descriptorSets[descriptorSlotIndex];
+		if (Renderer.CommandBufferReferencesAllDescriptorSets(
+				recordedSecondaryCommandBuffer,
+				frameSets,
+				out ulong missingDescriptorSetHandle))
+		{
+			reason = "recorded descriptor sets match";
+			return true;
+		}
+
+		reason =
+			$"recorded secondary 0x{recordedSecondaryCommandBuffer.Handle:X} does not bind active descriptor set 0x{missingDescriptorSetHandle:X}";
+		return false;
 	}
 
 	internal string DescribeReusableCommandBufferFrameDataBlocker(in PendingMeshDraw draw, int drawUniformSlot)

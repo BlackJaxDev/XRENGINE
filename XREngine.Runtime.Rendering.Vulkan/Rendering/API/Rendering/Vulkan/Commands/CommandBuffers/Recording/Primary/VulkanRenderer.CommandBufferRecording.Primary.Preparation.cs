@@ -92,6 +92,9 @@ namespace XREngine.Rendering.Vulkan
                         recordingState.Ops.Length);
             recordingState.ExecutedCommandChainSecondaryHandles = recordingState.RecordingScratch.ExecutedCommandChainSecondaryHandles;
             recordingState.ExecutedCommandChainSecondaryHandles.Clear();
+            recordingState.ExecutedCommandChainSecondaryArtifactSequence =
+                recordingState.RecordingScratch.ExecutedCommandChainSecondaryArtifactSequence;
+            recordingState.ExecutedCommandChainSecondaryArtifactSequence.Clear();
         }
 
         private bool TryPreparePrimaryFrameData(

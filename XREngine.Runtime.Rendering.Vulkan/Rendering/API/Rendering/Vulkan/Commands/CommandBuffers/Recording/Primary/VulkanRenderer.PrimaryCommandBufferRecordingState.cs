@@ -45,6 +45,7 @@ namespace XREngine.Rendering.Vulkan
             public bool[]
                 ScheduledCommandChainFrameDataRefreshedByOpIndex;
             public HashSet<nint> ExecutedCommandChainSecondaryHandles;
+            public VulkanPrimarySecondaryArtifactSequence ExecutedCommandChainSecondaryArtifactSequence;
             public Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> MeshDrawSlotsByRendererFamily;
             public Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> MeshFrameDataFamilyBases;
             public HashSet<FrameOp> PipelineDeferredOps;
