@@ -410,6 +410,76 @@ No work remains in the defined importer/OpenGL scope. Vulkan origin/masked-pass
 rendering and optional execution of VRCFury menu behavior remain separate
 subsystem follow-ups.
 
+## Close-Up Poiyomi Pro Material Audit - 2026-08-04
+
+A later close-up Unity comparison exposed material-fidelity differences that
+the full-body acceptance images were too distant to evaluate. The affected
+geometry and material-slot assignments are present: the horns, ears, and
+choker each retain separate surface and metal submeshes. The differences come
+from the documented Poiyomi Pro downgrade boundary, plus validation against a
+stale generated closure.
+
+All of the audited source materials use Poiyomi Pro rather than the pinned
+Poiyomi Toon 9.3.64 target. The eye, horn-glow, metal, and hoodie materials use
+locked Pro 9.3.11 shaders; the ear/hair and choker-strap materials use the Pro
+9.3.66 package shader. `ApplyPoiyomiProDowngradeCompatibilityProfile` explicitly
+disables multi-slot emission, multi-slot matcap/rim, PBR-parity, and Pro special
+effects. Those are the exact modules required by the close-up reference:
+
+- `LEFT EYE 3` has emission strength `3.9`, a white default emission map, and
+  an external `_EmissionMask` (`eyesblacknwhite.png`) using the same
+  `0.29 x 0.37`, offset-`0.735` transform as the iris texture. The downgrade
+  retains legacy emission but drops the emission-slot mask, so it cannot
+  reproduce the authored masked iris emission and may clip the whole eye
+  toward white.
+- `Mat_Glow 5` is premultiplied transparent (`_Mode = 3`, queue `3000`,
+  `_ZWrite = 0`) and also enables Pro depth-alpha/depth-glow behavior
+  (`_DepthAlphaToggle = 1`, `_DepthGlowEmission = 3`) plus a strongly emissive
+  rim. The transparent render state survives, but the Pro depth/glow surface
+  behavior does not; the horn shell therefore renders as pale transparent
+  geometry instead of the authored translucent glow.
+- `Metal Silver` is a black-base, smoothness-`1`, Mochie-BRDF material driven
+  by an external `_CubeMap`. It is shared by metal submeshes on the horns,
+  ears, and choker. The downgrade disables the PBR-parity module, and the
+  current surface-texture binding table detects `_CubeMap` as feature evidence
+  but does not bind that cubemap to the Uber sampler. The shared metal therefore
+  loses the reflection that makes it read as silver.
+- `Goth Bunny-Straps` enables `_Matcap2` at intensity `1.28`; losing the second
+  matcap slot also flattens the non-metal choker surface.
+- `Hoodie` does import and bind `ZipUp_Normal_Map.png`, with `normal-map`
+  enabled and `_BumpScale = 1`. The missing fabric response is not a missing
+  normal texture. The source additionally enables `_Matcap2` at intensity `2`,
+  additive blend, and full normal influence using `T_Matcap_MC (5).png`. That
+  slot is stripped by the Pro downgrade, so the authored view-dependent
+  response that makes the ribbed normal detail prominent is absent.
+
+The retained native closure was generated on 2026-08-02, while the multi-slot
+surface binding implementation was modified on 2026-08-04. Its generated
+materials still contain zero/default `_EmissionSlotParams0` and
+`_MatcapSlotParams1` values. The final fresh-process run only placed that
+existing `jax2026.asset`; it did not regenerate the Unity closure. It therefore
+validated stable native loading and the supported lossy surface, but not the
+newer slot-binding code.
+
+The runtime audit used OpenGL, the flying camera, engine-negative-Z front view,
+no mirror, no character locomotion, and disabled all 13 discovered physics
+chains. A close-up capture is retained at
+`mcp-captures/material-feature-audit/Screenshot_20260804_205051_732_41811c5d7dd74633bc8cf136bf81a1cb.png`.
+It confirms pale horn shells, flat shared metal/choker response, and loss of
+the authored close-up material treatment. It is material evidence only, not a
+new mesh/pose acceptance image: physics simulation had already displaced hair
+chains before the retained process was frozen. RenderDoc was not needed after
+the serialized source, generated material state, shader feature gates, and
+live image all identified the same causes.
+
+This does not invalidate mesh, skinning, prefab-closure, or material-slot
+acceptance. It does invalidate treating the prior representative full-body
+comparison as close-up material parity. Reproducing the supplied Unity image
+requires expanding the TODO's explicit non-goals: support the required subset
+of Poiyomi Pro emission masks, secondary matcap, material cubemap/Mochie PBR,
+and depth/glow behavior, then regenerate the closure and perform matched
+close-up validation.
+
 ## Remaining Risks And Separate Follow-Ups
 
 - Exact Unity/VRChat runtime behavior is not promised for preserved unsupported
