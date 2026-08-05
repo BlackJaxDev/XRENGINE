@@ -26,6 +26,15 @@ public interface IRenderBackendDiagnosticsCapability
     object GetLastFrameOperationTraceDiagnostics(int limit, string? targetContains)
         => Array.Empty<object>();
 
+    object GetFinalPresentationLedgerDiagnostics(int limit)
+        => Array.Empty<object>();
+
+    object ConfigureFinalPresentationLedgerDiagnostics(
+        bool enabled,
+        bool frozen,
+        bool clear)
+        => Array.Empty<object>();
+
     bool TryReadDepthPixelDebug(
         XRFrameBuffer frameBuffer,
         int x,

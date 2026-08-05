@@ -402,6 +402,7 @@ internal unsafe partial class VkMeshRenderer
 		int drawUniformSlot,
 		XRMaterial material,
 		ComputeDispatchSnapshot? snapshot,
+		CommandBuffer descriptorCommandBuffer,
 		out string reason)
 	{
 		reason = "no frame-source sampler descriptors";
@@ -450,6 +451,7 @@ internal unsafe partial class VkMeshRenderer
 			_program.DescriptorBindings,
 			material,
 			snapshot,
+			descriptorCommandBuffer,
 			out reason);
 	}
 
@@ -484,6 +486,7 @@ internal unsafe partial class VkMeshRenderer
 		IReadOnlyList<DescriptorBindingInfo> bindings,
 		XRMaterial material,
 		ComputeDispatchSnapshot? snapshot,
+		CommandBuffer descriptorCommandBuffer,
 		out string reason)
 	{
 		bool refreshed = false;
@@ -528,12 +531,6 @@ internal unsafe partial class VkMeshRenderer
 				slotSignatureMatches);
 		}
 
-		if (slotSignatureMatches)
-		{
-			reason = "frame-source sampler descriptors already match";
-			return true;
-		}
-
 		Span<DescriptorImageInfo> imageInfos = stackalloc DescriptorImageInfo[8];
 		for (int i = 0; i < bindings.Count; i++)
 		{
@@ -567,8 +564,33 @@ internal unsafe partial class VkMeshRenderer
 			}
 
 			ReadOnlySpan<DescriptorImageInfo> resolvedImageInfos = imageInfos[..(int)descriptorCount];
-			if (FrameSourceDescriptorWriteMatches(allocation, descriptorSlotIndex, binding, descriptorCount, resolvedImageInfos))
+			// The published sampler signature identifies the logical frame source,
+			// but it does not prove that the native image view was ready when the
+			// descriptor was last written. A placeholder and the subsequently ready
+			// view can share that logical signature. Always resolve the current native
+			// payload and use the cached descriptor-write signature as the no-write
+			// fast path.
+			bool writeMatched = FrameSourceDescriptorWriteMatches(
+				allocation,
+				descriptorSlotIndex,
+				binding,
+				descriptorCount,
+				resolvedImageInfos);
+			if (writeMatched)
+			{
+				Renderer.ObserveFinalPresentationDescriptor(
+					descriptorSlotIndex,
+					descriptorCommandBuffer,
+					frameSets[binding.Set],
+					binding.Set,
+					binding.Binding,
+					binding.Name,
+					resolvedImageInfos[0],
+					exactSamplerResourceSignature,
+					writeMatched: true,
+					writeSucceeded: true);
 				continue;
+			}
 
 			fixed (DescriptorImageInfo* imageInfoPtr = imageInfos)
 			{
@@ -624,6 +646,17 @@ internal unsafe partial class VkMeshRenderer
 			}
 
 			RecordFrameSourceDescriptorWriteSignature(allocation, descriptorSlotIndex, binding, descriptorCount, resolvedImageInfos);
+			Renderer.ObserveFinalPresentationDescriptor(
+				descriptorSlotIndex,
+				descriptorCommandBuffer,
+				frameSets[binding.Set],
+				binding.Set,
+				binding.Binding,
+				binding.Name,
+				resolvedImageInfos[0],
+				exactSamplerResourceSignature,
+				writeMatched: false,
+				writeSucceeded: true);
 			refreshed = true;
 		}
 

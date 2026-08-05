@@ -267,6 +267,9 @@ namespace XREngine.Rendering.Vulkan
                     VulkanPrimaryCommandBufferReuseEnabled);
             bool scheduleRequiresFreshPrimary =
                 state.CommandChainSchedule?.RequiresFreshPrimary == true;
+            bool mutableSwapchainFrameSourceRequiresFreshPrimary =
+                state.UsingCommandChains &&
+                HasMutableFrameSourceSamplerBindings(state.FrameOperations);
 
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.RecordCommandBuffer.DirtyEvaluation"))
@@ -277,6 +280,23 @@ namespace XREngine.Rendering.Vulkan
                     state.PrimaryFrameStateDirty = true;
                     state.PrimaryFrameStateDirtyReason =
                         "command-chain-inline-publication";
+                }
+
+                // The desktop compositor samples a mutable frame source while
+                // targeting an acquired swapchain image. Secondary scene and
+                // shadow command buffers remain reusable, but the thin primary
+                // also owns the acquired-image render scope and present-cycle
+                // transitions. Re-record it until that native present state is
+                // represented by a complete reusable-primary identity; reusing
+                // the current logical identity can leave the diagnostic clear
+                // visible even though the final source texture is valid.
+                if (!state.Dirty &&
+                    mutableSwapchainFrameSourceRequiresFreshPrimary)
+                {
+                    state.Dirty = true;
+                    state.PrimaryFrameStateDirty = true;
+                    state.PrimaryFrameStateDirtyReason =
+                        "mutable-swapchain-frame-source";
                 }
 
                 if (!state.Dirty && frameOperationsRequireFreshPrimary)
@@ -418,6 +438,14 @@ namespace XREngine.Rendering.Vulkan
                             state.GpuPipelineProfilingActive,
                             state.CommandBufferImageSlot);
 
+                    if (state.CommandChainCache is null ||
+                        !variant.RecordedSecondaryArtifactSequence
+                            .MatchesCurrentArtifacts(state.CommandChainCache))
+                    {
+                        state.CommandChainPrimaryDirtyReason |=
+                            PrimaryCommandBufferDirtyReason.SecondaryArtifactSequence;
+                    }
+
                     if (state.CommandChainPrimaryDirtyReason !=
                         PrimaryCommandBufferDirtyReason.None)
                     {
@@ -434,6 +462,15 @@ namespace XREngine.Rendering.Vulkan
             bool refreshedReusableFrameData = true;
             state.DynamicUiFrameDataNeedsRerecord = false;
             _lastReusableFrameDataRefreshFailureReason = null;
+            ReadOnlySpan<CommandChainKey> scheduledCommandChainKeys =
+                state.CommandChainSchedule is not null &&
+                state.CommandChainCache is not null
+                    ? PrepareReusableCommandChainKeysByOpIndex(
+                        state.CommandChainSchedule,
+                        state.CommandChainCache,
+                        state.FrameOperations.Length,
+                        state.Scratch)
+                    : ReadOnlySpan<CommandChainKey>.Empty;
             using (VulkanCpuStageScope cpuStage =
                    new(EVulkanCpuStage.FrameDataRefresh))
             {
@@ -451,7 +488,10 @@ namespace XREngine.Rendering.Vulkan
                         dynamicUi: false,
                         descriptorResourcesCapturedByFrameSignature:
                             state.UsingCommandChains &&
-                            state.AllPreparedDrawBindingsUseSecondaryBuffers);
+                            state.AllPreparedDrawBindingsUseSecondaryBuffers,
+                        commandChainCache: state.CommandChainCache,
+                        scheduledCommandChainKeys:
+                            scheduledCommandChainKeys);
 
                 if (refreshedReusableFrameData &&
                     state.HasDynamicUiOperations)
@@ -466,7 +506,10 @@ namespace XREngine.Rendering.Vulkan
                             state.Scratch
                                 .DynamicUiReusableFrameDataRefreshBatchInfo,
                             state.Variant.DynamicUiFrameDataRefreshState,
-                            dynamicUi: true);
+                            dynamicUi: true,
+                            commandChainCache: null,
+                            scheduledCommandChainKeys:
+                                ReadOnlySpan<CommandChainKey>.Empty);
 
                     // The scene primary only executes the dynamic-text
                     // secondary's stable handle. If that secondary cannot be

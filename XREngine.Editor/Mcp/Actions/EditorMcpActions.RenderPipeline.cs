@@ -288,6 +288,39 @@ namespace XREngine.Editor.Mcp
             return Task.FromResult(new McpToolResponse("Retrieved Vulkan frame-op trace diagnostics.", snapshot));
         }
 
+        [XRMcp(Name = "get_vulkan_final_presentation_ledger", Permission = McpPermissionLevel.ReadOnly)]
+        [Description("Return the bounded Vulkan final-presentation ledger, including final source, native descriptor payload, command artifact, swapchain generation, and present outcome.")]
+        public static Task<McpToolResponse> GetVulkanFinalPresentationLedgerAsync(
+            [McpName("limit"), Description("Maximum newest frame entries to return.")] int limit = 64)
+        {
+            if (!EditorRendererCapabilityResolver.TryGetForBackend(
+                    RendererBackendId.Vulkan,
+                    out IRenderBackendDiagnosticsCapability diagnostics))
+                return Task.FromResult(new McpToolResponse("The active renderer is not Vulkan.", isError: true));
+
+            object snapshot = diagnostics.GetFinalPresentationLedgerDiagnostics(limit);
+            return Task.FromResult(new McpToolResponse("Retrieved Vulkan final-presentation ledger.", snapshot));
+        }
+
+        [XRMcp(
+            Name = "configure_vulkan_final_presentation_ledger",
+            Permission = McpPermissionLevel.Mutate,
+            PermissionReason = "Changes only the in-memory Vulkan diagnostic capture state.")]
+        [Description("Enable, freeze/unfreeze, or clear the Vulkan final-presentation ledger. Invariant failures freeze it automatically.")]
+        public static Task<McpToolResponse> ConfigureVulkanFinalPresentationLedgerAsync(
+            [McpName("enabled"), Description("Enable or disable frame capture.")] bool enabled = true,
+            [McpName("frozen"), Description("Freeze capture while retaining current entries.")] bool frozen = false,
+            [McpName("clear"), Description("Clear retained entries before applying the requested state.")] bool clear = false)
+        {
+            if (!EditorRendererCapabilityResolver.TryGetForBackend(
+                    RendererBackendId.Vulkan,
+                    out IRenderBackendDiagnosticsCapability diagnostics))
+                return Task.FromResult(new McpToolResponse("The active renderer is not Vulkan.", isError: true));
+
+            object snapshot = diagnostics.ConfigureFinalPresentationLedgerDiagnostics(enabled, frozen, clear);
+            return Task.FromResult(new McpToolResponse("Configured Vulkan final-presentation ledger.", snapshot));
+        }
+
         [XRMcp(Name = "capture_render_pipeline_texture", Permission = McpPermissionLevel.ReadOnly)]
         [Description("Capture a named live render-pipeline texture to PNG, EXR, or Radiance HDR and report pixel statistics.")]
         public static async Task<McpToolResponse> CaptureRenderPipelineTextureAsync(

@@ -2008,7 +2008,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         else
             present.SourceFBOName = sourceFboName;
 
-        present.FlipSourceYOnVulkan = ShouldFlipVulkanPresentSourceY(sourceFboName);
+        present.FlipSourceYOnVulkan = ShouldFlipVulkanPresentSourceY();
         return cmds;
     }
 
@@ -2029,12 +2029,16 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         vendorBlit.MotionTextureName = VelocityTextureName;
         vendorBlit.MotionFrameBufferName = VelocityFBOName;
         vendorBlit.ForceFallbackBlit = forceFallback;
-        vendorBlit.FlipSourceYOnVulkanFallback = ShouldFlipVulkanPresentSourceY(sourceFboName);
+        vendorBlit.FlipSourceYOnVulkanFallback = ShouldFlipVulkanPresentSourceY();
         return cmds;
     }
 
-    private static bool ShouldFlipVulkanPresentSourceY(string sourceFboName)
-        => sourceFboName is not (FxaaFBOName or SmaaFBOName);
+    private static bool ShouldFlipVulkanPresentSourceY()
+        // Every engine framebuffer texture follows the backend-wide texture-row
+        // convention. FXAA and SMAA preserve that convention; they do not create
+        // a separate presentation orientation. Source-name exceptions therefore
+        // double-flip (or fail to flip) as the final AA mode changes.
+        => RenderClipSpacePolicy.RequiresVulkanFramebufferTexturePresentationYFlip();
 
     private static string? ResolveVendorUpscaleSourceTextureName(string sourceFboName)
         => sourceFboName switch

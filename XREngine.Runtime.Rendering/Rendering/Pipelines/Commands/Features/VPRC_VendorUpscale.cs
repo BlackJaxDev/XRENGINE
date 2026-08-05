@@ -455,11 +455,9 @@ void main()
             }
 
             program.Uniform("ApplySharpen", _fallbackApplySharpen);
-            bool flipSourceY = FlipSourceYOnVulkanFallback ||
-                RuntimeEngine.Rendering.Settings.ClipSpaceYDirection == ERenderClipSpaceYDirection.YDown;
             program.Uniform(
                 "FlipSourceYOnVulkanFallback",
-                flipSourceY);
+                FlipSourceYOnVulkanFallback);
             program.Uniform("EncodeOutputSrgb", _fallbackEncodeOutputSrgb);
             program.Uniform("SharpenStrength", _fallbackSharpenStrength);
         }

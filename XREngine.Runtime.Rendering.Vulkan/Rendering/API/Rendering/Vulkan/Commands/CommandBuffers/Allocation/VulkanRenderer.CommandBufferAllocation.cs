@@ -300,6 +300,7 @@ namespace XREngine.Rendering.Vulkan
             evicted.CommandChainScheduleSignature = ulong.MaxValue;
             evicted.CommandChainPrimaryGroupSignature = ulong.MaxValue;
             evicted.CommandChainPrimaryIdentityComponents = default;
+            evicted.RecordedSecondaryArtifactSequence.Clear();
             evicted.CommandChainPrimarySkeletonSignature = ulong.MaxValue;
             evicted.CommandChainPrimaryGroupCount = -1;
             evicted.PlannerRevision = ulong.MaxValue;

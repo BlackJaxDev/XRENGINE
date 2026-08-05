@@ -440,7 +440,11 @@ namespace XREngine.Rendering.Vulkan
                 for (int i = 0; i < runCount; i++)
                 {
                     if (secondaryBuffers[i].Handle != 0)
+                    {
                         recordingState.ExecutedCommandChainSecondaryHandles.Add(secondaryBuffers[i].Handle);
+                        if (secondaryChains[i] is { } chain)
+                            recordingState.ExecutedCommandChainSecondaryArtifactSequence.Add(chain);
+                    }
                 }
 
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(secondaryCommandBuffers: runCount);
@@ -968,6 +972,8 @@ namespace XREngine.Rendering.Vulkan
                         {
                             recordingState.ExecutedCommandChainSecondaryHandles
                                 .Add(secondaryBuffers[i].Handle);
+                            recordingState.ExecutedCommandChainSecondaryArtifactSequence
+                                .Add(secondaryChains[i]);
                         }
                     }
 
@@ -1211,7 +1217,10 @@ namespace XREngine.Rendering.Vulkan
                     for (int i = 0; i < secondaryCount; i++)
                     {
                         if (secondaryBuffers[i].Handle != 0)
+                        {
                             recordingState.ExecutedCommandChainSecondaryHandles.Add(secondaryBuffers[i].Handle);
+                            recordingState.ExecutedCommandChainSecondaryArtifactSequence.Add(secondaryChains[i]);
+                        }
                     }
 
                     RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(secondaryCommandBuffers: secondaryCount);
@@ -1641,7 +1650,10 @@ namespace XREngine.Rendering.Vulkan
 
                 CmdExecuteCommandsTracked(recordingState.CommandBuffer, 1, &secondary);
                 if (secondary.Handle != 0)
+                {
                     recordingState.ExecutedCommandChainSecondaryHandles.Add(secondary.Handle);
+                    recordingState.ExecutedCommandChainSecondaryArtifactSequence.Add(chain);
+                }
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(secondaryCommandBuffers: 1);
                 executedInPrimary = true;
                 return true;
