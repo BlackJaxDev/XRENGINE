@@ -1154,6 +1154,17 @@ public unsafe partial class VulkanRenderer
                 return;
             }
 
+            if (!_usesSingleKeyState)
+            {
+                // Mixed-context plans are published exclusively through their
+                // independently keyed partition scopes. The outer lifecycle
+                // scope does not own the runtime state left behind by that
+                // process and must never create a second merged alias for it.
+                _renderer.RestoreUsableFrameOpPlannerState(_previousState);
+                _renderer.AssertFrameOpPlannerAllocatorOwnership(_switchingState);
+                return;
+            }
+
             ResourcePlannerRuntimeState state = PublishCurrentState();
 
             ResourcePlannerRuntimeState restoreState =
@@ -1170,6 +1181,9 @@ public unsafe partial class VulkanRenderer
                 return default;
 
             ResourcePlannerRuntimeState state = _renderer.CaptureResourcePlannerRuntimeState();
+            if (!_usesSingleKeyState)
+                return state;
+
             if (_usesSingleKeyState &&
                 _operations is not null &&
                 TryGetSingleFrameOpPlannerStateKey(_operations, out VulkanFrameOpPlannerStateKey currentKey))
@@ -1184,6 +1198,18 @@ public unsafe partial class VulkanRenderer
                 }
 
                 _switchingState.States[currentKey] = state;
+                if (_switchingState.HasPreparationState &&
+                    ReferenceEquals(
+                        _switchingState.PreparationState.ResourceAllocator,
+                        state.ResourceAllocator))
+                {
+                    // Ownership has moved from the legacy merged preparation
+                    // slot into this exact context key. Keeping both aliases
+                    // would let later cleanup or restore mutate one allocator
+                    // through two independent ownership records.
+                    _switchingState.PreparationState = default;
+                    _switchingState.HasPreparationState = false;
+                }
                 _renderer.MarkFrameOpResourcePlannerStateUsed(_switchingState, currentKey);
                 return state;
             }
@@ -1255,16 +1281,17 @@ public unsafe partial class VulkanRenderer
     private void RestoreResourcePlannerRuntimeState(in ResourcePlannerRuntimeState state)
     {
         AssertResourcePlannerRuntimeStateCanBeRestored(state);
+        ResourcePlannerRuntimeState next = state;
+        next.FrameOpResourcePlannerSwitchingState =
+            ActiveFrameOpResourcePlannerSwitchingState;
         if (HasThreadResourcePlannerRuntimeState)
         {
-            ResourcePlannerRuntimeState next = state;
-            next.FrameOpResourcePlannerSwitchingState = ActiveFrameOpResourcePlannerSwitchingState;
             CommandThreadContext.ResourcePlannerRuntimeState = next;
             return;
         }
 
         lock (_framePlanner.PlannerReadbackGate)
-            RestoreResourcePlannerRuntimeStateCore(in state);
+            RestoreResourcePlannerRuntimeStateCore(in next);
     }
 
     private static FrameOpResourcePlannerSwitchingState CloneFrameOpResourcePlannerSwitchingState(
@@ -1326,6 +1353,43 @@ public unsafe partial class VulkanRenderer
                 state.ResourceAllocator.CommitReusedPhysicalImageMetadata();
 
             RestoreResourcePlannerRuntimeStateCore(in state);
+        }
+    }
+
+    /// <summary>
+    /// Atomically merges a generation prepared on a worker thread into the
+    /// renderer-wide context-key set and publishes it. This deliberately bypasses
+    /// thread-local publication: a completed preparation transaction is global
+    /// renderer state, not another temporary worker scope.
+    /// </summary>
+    private FrameOpResourcePlannerSwitchingState PublishPreparedResourcePlannerRuntimeState(
+        ref ResourcePlannerRuntimeState state,
+        in VulkanFrameOpPlannerStateKey key,
+        VulkanPreparedResourceGenerationManifest preparedManifest)
+    {
+        if (!_deviceContext.IsOperational)
+        {
+            throw new InvalidOperationException(
+                $"Cannot publish Vulkan resource-planner generation while device state is {_deviceContext.State}.");
+        }
+
+        AssertResourcePlannerRuntimeStateCanBeRestored(state);
+        lock (_framePlanner.PlannerReadbackGate)
+        {
+            ResourcePlannerRuntimeState publishedState = PublishedResourcePlannerRuntimeState;
+            FrameOpResourcePlannerSwitchingState switchingState =
+                CloneFrameOpResourcePlannerSwitchingState(
+                    publishedState.FrameOpResourcePlannerSwitchingState ??
+                    _frameOpResourcePlannerSwitchingState);
+            state.FrameOpResourcePlannerSwitchingState = switchingState;
+            state.PreparedGenerationManifest = preparedManifest;
+            switchingState.States[key] = state;
+            MarkFrameOpResourcePlannerStateUsed(switchingState, key);
+            PruneFrameOpResourcePlannerStatesToCapacity(switchingState);
+
+            state.ResourceAllocator.CommitReusedPhysicalImageMetadata();
+            RestoreResourcePlannerRuntimeStateCore(in state);
+            return switchingState;
         }
     }
 

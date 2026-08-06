@@ -83,6 +83,43 @@ internal struct VulkanRecordedRenderTargetSnapshot : IEquatable<VulkanRecordedRe
     public override readonly bool Equals(object? obj)
         => obj is VulkanRecordedRenderTargetSnapshot other && Equals(other);
 
+    /// <summary>
+    /// Describes the first physical target field that differs. Used only by
+    /// rejected-frame diagnostics, where the string allocation is acceptable.
+    /// </summary>
+    internal readonly string DescribeFirstMismatch(in VulkanRecordedRenderTargetSnapshot other)
+    {
+        if (FramebufferHandle != other.FramebufferHandle)
+            return $"FramebufferHandle 0x{FramebufferHandle:X}->0x{other.FramebufferHandle:X}";
+        if (FramebufferGeneration != other.FramebufferGeneration)
+            return $"FramebufferGeneration {FramebufferGeneration}->{other.FramebufferGeneration}";
+        if (Width != other.Width || Height != other.Height)
+            return $"Extent {Width}x{Height}->{other.Width}x{other.Height}";
+        if (ViewMask != other.ViewMask)
+            return $"ViewMask 0x{ViewMask:X}->0x{other.ViewMask:X}";
+        if (AttachmentCount != other.AttachmentCount)
+            return $"AttachmentCount {AttachmentCount}->{other.AttachmentCount}";
+        if (IsComplete != other.IsComplete)
+            return $"IsComplete {IsComplete}->{other.IsComplete}";
+
+        for (int i = 0; i < AttachmentCount; i++)
+        {
+            VulkanNativeAttachmentIdentity current = _attachments[i];
+            VulkanNativeAttachmentIdentity expected = other._attachments[i];
+            if (current != expected)
+            {
+                return $"Attachment[{i}] " +
+                    $"image=0x{current.ImageHandle:X}/{current.ImageGeneration}->" +
+                    $"0x{expected.ImageHandle:X}/{expected.ImageGeneration} " +
+                    $"view=0x{current.ImageViewHandle:X}/{current.ImageViewGeneration}->" +
+                    $"0x{expected.ImageViewHandle:X}/{expected.ImageViewGeneration} " +
+                    $"layout={current.ExpectedLayout}->{expected.ExpectedLayout}";
+            }
+        }
+
+        return "<none>";
+    }
+
     public override readonly int GetHashCode()
     {
         HashCode hash = new();

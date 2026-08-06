@@ -1121,8 +1121,11 @@ public unsafe partial class VulkanRenderer
         {
             Dictionary<CommandChainKey, CommandChain> commandChainCache =
                 GetCommandChainCache(commandChainImageIndex);
+            VulkanPrimarySecondaryArtifactSequence executedArtifactSequence =
+                _commandBufferRecordingScratch.Value!
+                    .ExecutedCommandChainSecondaryArtifactSequence;
             if (!TryValidatePrimaryCommandBufferGroupSharedDependencies(
-                    commandChainSchedule,
+                    executedArtifactSequence,
                     commandChainCache,
                     out CommandRecordingDependencyMismatch sharedDependencyMismatch))
             {

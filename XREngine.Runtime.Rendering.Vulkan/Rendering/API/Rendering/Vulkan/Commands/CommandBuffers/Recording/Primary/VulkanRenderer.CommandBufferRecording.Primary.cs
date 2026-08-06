@@ -39,6 +39,15 @@ namespace XREngine.Rendering.Vulkan
             using VulkanCpuStageScope primaryCommandEncodingStage =
                 new(_frameTelemetry, EVulkanCpuStage.PrimaryCommandEncoding);
             PreparePrimaryCommandEncoding(ref recordingState);
+            if (recordingState.FramePlan is { } framePlan &&
+                !TryRestoreSealedFramePlanPlannerStates(
+                    framePlan,
+                    out string sealedPlanFailureReason))
+            {
+                recordingState.RecordingDeferredReason = sealedPlanFailureReason;
+                return false;
+            }
+
             using FrameOpResourcePlannerRecordingScope frameOpResourcePlannerRecordingScope =
                 EnterFrameOpResourcePlannerRecordingScope();
             FrameOpResourcePlannerSwitchingState plannerSwitchingState =
@@ -54,7 +63,15 @@ namespace XREngine.Rendering.Vulkan
 
             try
             {
-                RecordPrimaryOperations(ref recordingState);
+                if (!RecordPrimaryOperations(ref recordingState))
+                {
+                    _ = EndCommandBufferTracked(
+                        recordingState.CommandBuffer,
+                        cacheVariant: false,
+                        out _);
+                    _ = TryAbandonCommandBufferRecording(recordingState.CommandBuffer);
+                    return false;
+                }
 
                 FinalizePrimaryCommandRecording(ref recordingState);
 
@@ -64,6 +81,10 @@ namespace XREngine.Rendering.Vulkan
             catch (VulkanPlanPreconditionException exception)
             {
                 recordingState.RecordingDeferredReason = exception.Message;
+                _ = EndCommandBufferTracked(
+                    recordingState.CommandBuffer,
+                    cacheVariant: false,
+                    out _);
                 _ = TryAbandonCommandBufferRecording(recordingState.CommandBuffer);
                 return false;
             }

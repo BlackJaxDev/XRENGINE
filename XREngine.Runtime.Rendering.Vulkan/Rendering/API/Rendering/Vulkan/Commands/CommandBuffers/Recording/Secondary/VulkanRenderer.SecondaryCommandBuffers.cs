@@ -940,7 +940,13 @@ namespace XREngine.Rendering.Vulkan
                     label,
                     imageIndex,
                     contract.QueryInheritance,
-                    secondary => RecordFrameOpInSecondary(secondary, imageIndex, runOp, opIndex, packet: null));
+                    secondary => RecordFrameOpInSecondary(
+                        secondary,
+                        imageIndex,
+                        runOp,
+                        opIndex,
+                        ResolveCommandChainInlineOperationIndex(ops, opIndex),
+                        packet: null));
             }
 
             return true;
@@ -1016,7 +1022,7 @@ namespace XREngine.Rendering.Vulkan
                         if (op is ComputeDispatchOp or ComputeDispatchIndirectOp &&
                             TryCapturePreparedNonGraphicsComputeKey(op, chain, out VulkanPreparedCommandChainKey currentKey) &&
                             chain.PreparedKey.IsComplete &&
-                            chain.PreparedKey == currentKey &&
+                            chain.PreparedKey.Matches(in currentKey) &&
                             chain.RecordedArtifact.IsExecutable)
                             return;
 
@@ -1061,6 +1067,7 @@ namespace XREngine.Rendering.Vulkan
                             imageIndex,
                             op,
                             opIndex,
+                            ResolveCommandChainInlineOperationIndex(ops, opIndex),
                             packet);
                         if (op is ComputeDispatchOp or ComputeDispatchIndirectOp)
                             chain.PreparedComputePayload =
@@ -1075,7 +1082,7 @@ namespace XREngine.Rendering.Vulkan
                         {
                             VulkanPreparedCommandChainAuthority authority =
                                 chain.PreparedAuthority is { } currentAuthority &&
-                                currentAuthority.PreparedKey == preparedKey
+                                currentAuthority.PreparedKey.Matches(in preparedKey)
                                     ? currentAuthority
                                     : new VulkanPreparedCommandChainAuthority(preparedKey);
                             PublishPreparedCommandChainAuthority(chain, authority);
@@ -1183,6 +1190,20 @@ namespace XREngine.Rendering.Vulkan
             {
                 DescriptorSets = sets,
             };
+            RenderPacket? packet = chain.PacketSnapshot;
+            if (packet is null)
+                return false;
+            RecordedPacketKey expected = packet.RecordedPacketKey with
+            {
+                DescriptorSets = sets,
+            };
+            if (!expected.IsComplete || !expected.Matches(in packetKey))
+            {
+                // A non-graphics secondary may execute once for the current
+                // frame, but it is not reusable unless its post-binding key is
+                // the exact completion of the immutable packet snapshot.
+                return false;
+            }
             key = new VulkanPreparedCommandChainKey(
                 pipeline.ToHash(), ComputeRecordedDescriptorSetIdentityHash(sets), sets.Count,
                 packetKey, IsComplete: packetKey.IsComplete);
@@ -1217,6 +1238,7 @@ namespace XREngine.Rendering.Vulkan
             uint imageIndex,
             FrameOp runOp,
             int opIndex,
+            int descriptorBindingOrdinal,
             RenderPacket? packet)
         {
             if (packet is not null &&
@@ -1227,7 +1249,15 @@ namespace XREngine.Rendering.Vulkan
             switch (runOp)
             {
                 case ComputeDispatchOp computeDispatchOp:
-                    RecordComputeDispatchOp(secondaryCommandBuffer, imageIndex, computeDispatchOp, opIndex);
+                    // Reusable compute descriptors are prepared and refreshed by
+                    // their thin-primary ordinal. Source indices include dynamic
+                    // secondary-owned operations and therefore are not a stable
+                    // cache identity for this binding.
+                    RecordComputeDispatchOp(
+                        secondaryCommandBuffer,
+                        imageIndex,
+                        computeDispatchOp,
+                        descriptorBindingOrdinal);
                     break;
                 case ComputeDispatchIndirectOp computeDispatchIndirectOp:
                     RecordComputeDispatchIndirectOp(secondaryCommandBuffer, imageIndex, computeDispatchIndirectOp);

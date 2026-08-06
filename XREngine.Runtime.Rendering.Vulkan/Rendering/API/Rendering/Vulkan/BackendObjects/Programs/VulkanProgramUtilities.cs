@@ -20,6 +20,7 @@ internal static class VulkanProgramUtilities
     internal static DescriptorLayoutBuildResult BuildDescriptorLayoutsShared(VulkanRenderer renderer, Device device, IEnumerable<DescriptorBindingInfo> bindings, string programName)
     {
         List<DescriptorBindingInfo> reflectedBindings = bindings
+            .Select(DescriptorBindingInfo.NormalizeKnownMetadata)
             .Select(NormalizeGraphicsFrameDataBinding)
             .ToList();
         if (VulkanFeatureProfile.EnableDescriptorContractValidation &&

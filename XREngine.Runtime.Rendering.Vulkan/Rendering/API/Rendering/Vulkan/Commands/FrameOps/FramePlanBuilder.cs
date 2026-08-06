@@ -11,6 +11,8 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class FramePlanBuilder
 {
+    private readonly record struct ResourceVersionKey(ulong ResourceId, ulong Version);
+
     private sealed class Slot
     {
         internal readonly ViewSetPlan ViewSet = new();
@@ -24,6 +26,12 @@ internal sealed class FramePlanBuilder
         internal int[] OperationOrderScratch = new int[64];
         internal int[] OperationDependencyScratch = new int[64];
         internal int[] OperationTopologicalOrderScratch = new int[64];
+        internal int[] OperationPriorityScratch = new int[64];
+        internal int[] OperationReadyHeapScratch = new int[64];
+        internal int[] DependencyFirstEdgeScratch = new int[64];
+        internal int[] DependencyEdgeConsumerScratch = new int[256];
+        internal int[] DependencyEdgeNextScratch = new int[256];
+        internal readonly Dictionary<ResourceVersionKey, int> LastResourceWriters = new(256);
         internal int[] DynamicOverlayOperationOrderScratch = new int[16];
         internal OutputRequest[] Outputs = new OutputRequest[8];
         internal int[] OutputExecutionRanks = new int[8];
@@ -32,6 +40,7 @@ internal sealed class FramePlanBuilder
         internal int[] OutputNodeOrderScratch = new int[32];
         internal int[] OutputNodeIndegreeScratch = new int[32];
         internal FramePlanOperationKey[] OperationKeys = new FramePlanOperationKey[64];
+        internal VulkanFrameOpPlannerStateKey[] StaticPlannerContextKeys = new VulkanFrameOpPlannerStateKey[8];
 
         internal Slot() => Plan = new FramePlan(ViewSet);
     }
@@ -92,6 +101,7 @@ internal sealed class FramePlanBuilder
             slot,
             operationCount,
             dynamicOperationCount);
+        int staticPlannerContextKeyCount = CollectStaticPlannerContextKeys(slot);
 
         ComputeVersionSignatures(
             staticIngress,
@@ -117,8 +127,45 @@ internal sealed class FramePlanBuilder
             slot.OutputExecutionNodes,
             outputExecutionNodeCount,
             slot.OperationKeys,
-            operationKeyCount);
+            operationKeyCount,
+            slot.StaticPlannerContextKeys,
+            staticPlannerContextKeyCount);
         return slot.Plan;
+    }
+
+    private static int CollectStaticPlannerContextKeys(Slot slot)
+    {
+        int keyCount = 0;
+        for (int operationIndex = 0; operationIndex < slot.Operations.Count; operationIndex++)
+        {
+            ref readonly FrameOpContext context = ref slot.Operations.GetContext(operationIndex);
+            if (context.ResourceRegistry is null && context.PassMetadata is not { Count: > 0 })
+                continue;
+
+            VulkanFrameOpPlannerStateKey key = VulkanRenderer.BuildFrameOpPlannerStateKey(context);
+            bool exists = false;
+            for (int keyIndex = 0; keyIndex < keyCount; keyIndex++)
+            {
+                if (!slot.StaticPlannerContextKeys[keyIndex].Equals(key))
+                    continue;
+
+                exists = true;
+                break;
+            }
+
+            if (exists)
+                continue;
+
+            if (keyCount == slot.StaticPlannerContextKeys.Length)
+            {
+                int newCapacity = Math.Max(8, slot.StaticPlannerContextKeys.Length * 2);
+                Array.Resize(ref slot.StaticPlannerContextKeys, newCapacity);
+            }
+
+            slot.StaticPlannerContextKeys[keyCount++] = key;
+        }
+
+        return keyCount;
     }
 
     private Slot AcquireWritableSlot(int frameSlot)
@@ -190,12 +237,7 @@ internal sealed class FramePlanBuilder
             openXrViewKind);
         EnsureCapacity(ref slot.OperationDependencyScratch, source.Count);
         EnsureCapacity(ref slot.OperationTopologicalOrderScratch, source.Count);
-        CompileResourceDependencyOrder(
-            source,
-            orderScratch,
-            source.Count,
-            slot.OperationDependencyScratch,
-            slot.OperationTopologicalOrderScratch);
+        CompileResourceDependencyOrder(slot, source, orderScratch, source.Count);
         if (dynamicOverlay)
             slot.DynamicOverlayOperationOrderScratch = orderScratch;
         else
@@ -251,126 +293,165 @@ internal sealed class FramePlanBuilder
     }
 
     private static void CompileResourceDependencyOrder(
+        Slot slot,
         FrameOperationIngress operations,
         int[] preferredOrder,
-        int operationCount,
-        int[] indegree,
-        int[] destination)
+        int operationCount)
     {
+        int[] indegree = slot.OperationDependencyScratch;
+        int[] destination = slot.OperationTopologicalOrderScratch;
+        EnsureCapacity(ref slot.OperationPriorityScratch, operationCount);
+        EnsureCapacity(ref slot.OperationReadyHeapScratch, operationCount);
+        EnsureCapacity(ref slot.DependencyFirstEdgeScratch, operationCount);
+        int[] priorities = slot.OperationPriorityScratch;
+        int[] readyHeap = slot.OperationReadyHeapScratch;
+        int[] firstEdges = slot.DependencyFirstEdgeScratch;
+        Array.Fill(firstEdges, -1, 0, operationCount);
+        slot.LastResourceWriters.Clear();
+        int edgeCount = 0;
+        Span<int> dependencies = stackalloc int[FrameOpResourceUseBuffer.Capacity];
+
         for (int index = 0; index < operationCount; index++)
         {
             indegree[index] = 0;
             FrameOpResourceUseList uses = operations.GetResourceUses(index);
+            int dependencyCount = 0;
             for (int useIndex = 0; useIndex < uses.Count; useIndex++)
             {
                 FrameOpResourceUse use = uses[useIndex];
+                ResourceVersionKey key = new(use.ResourceId, use.Version);
+                bool hasProducer = slot.LastResourceWriters.TryGetValue(key, out int producer);
                 if ((use.Access & EFrameOpResourceAccess.Read) != 0 &&
-                    FindUniqueProducer(operations, operationCount, index, use) < 0 &&
+                    !hasProducer &&
                     (use.Access & EFrameOpResourceAccess.Imported) == 0)
                 {
                     throw new InvalidOperationException(
                         "Frame operation reads a resource with no producer or imported declaration.");
                 }
+
+                if (!hasProducer || producer == index ||
+                    ((use.Access & (EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Write)) == 0))
+                {
+                    continue;
+                }
+
+                bool duplicate = false;
+                for (int dependencyIndex = 0; dependencyIndex < dependencyCount; dependencyIndex++)
+                {
+                    if (dependencies[dependencyIndex] != producer)
+                        continue;
+
+                    duplicate = true;
+                    break;
+                }
+                if (duplicate)
+                    continue;
+
+                dependencies[dependencyCount++] = producer;
+                AddResourceDependencyEdge(slot, producer, index, ref edgeCount);
+                indegree[index]++;
             }
-            for (int candidate = 0; candidate < operationCount; candidate++)
-                if (candidate != index &&
-                    DependsOn(operations, operationCount, index, candidate))
-                    indegree[index]++;
+
+            // Publish writes only after every access in this operation has
+            // resolved against the preceding stream. A read/write use must
+            // depend on the prior producer, never on itself.
+            for (int useIndex = 0; useIndex < uses.Count; useIndex++)
+            {
+                FrameOpResourceUse use = uses[useIndex];
+                if ((use.Access & EFrameOpResourceAccess.Write) != 0)
+                    slot.LastResourceWriters[new(use.ResourceId, use.Version)] = index;
+            }
         }
+
+        for (int priority = 0; priority < operationCount; priority++)
+            priorities[preferredOrder[priority]] = priority;
+
+        int readyCount = 0;
+        for (int operation = 0; operation < operationCount; operation++)
+            if (indegree[operation] == 0)
+                PushReadyOperation(readyHeap, ref readyCount, operation, priorities);
 
         for (int outputIndex = 0; outputIndex < operationCount; outputIndex++)
         {
-            int selected = -1;
-            for (int priority = 0; priority < operationCount; priority++)
-            {
-                int candidate = preferredOrder[priority];
-                if (candidate >= 0 && indegree[candidate] == 0)
-                {
-                    selected = candidate;
-                    preferredOrder[priority] = -1;
-                    break;
-                }
-            }
-            if (selected < 0)
+            if (readyCount == 0)
                 throw new InvalidOperationException("Frame operation resource dependency graph contains a cycle.");
 
+            int selected = PopReadyOperation(readyHeap, ref readyCount, priorities);
             destination[outputIndex] = selected;
             indegree[selected] = -1;
-            for (int consumer = 0; consumer < operationCount; consumer++)
+            for (int edge = firstEdges[selected]; edge >= 0; edge = slot.DependencyEdgeNextScratch[edge])
             {
-                if (indegree[consumer] <= 0 || !DependsOn(operations, operationCount, consumer, selected))
+                int consumer = slot.DependencyEdgeConsumerScratch[edge];
+                if (indegree[consumer] <= 0)
                     continue;
-                indegree[consumer]--;
+
+                if (--indegree[consumer] == 0)
+                    PushReadyOperation(readyHeap, ref readyCount, consumer, priorities);
             }
         }
 
         Array.Copy(destination, preferredOrder, operationCount);
     }
 
-    private static bool DependsOn(
-        FrameOperationIngress operations,
-        int operationCount,
+    private static void AddResourceDependencyEdge(
+        Slot slot,
+        int producer,
         int consumer,
-        int producer)
+        ref int edgeCount)
     {
-        FrameOpResourceUseList uses = operations.GetResourceUses(consumer);
-        for (int useIndex = 0; useIndex < uses.Count; useIndex++)
-        {
-            FrameOpResourceUse use = uses[useIndex];
-            if ((use.Access & EFrameOpResourceAccess.Read) != 0 &&
-                FindUniqueProducer(operations, operationCount, consumer, use) == producer)
-                return true;
-            if ((use.Access & EFrameOpResourceAccess.Write) != 0 &&
-                FindPreviousWriter(operations, consumer, use) == producer)
-                return true;
-        }
-        return false;
+        EnsureCapacity(ref slot.DependencyEdgeConsumerScratch, edgeCount + 1);
+        EnsureCapacity(ref slot.DependencyEdgeNextScratch, edgeCount + 1);
+        slot.DependencyEdgeConsumerScratch[edgeCount] = consumer;
+        slot.DependencyEdgeNextScratch[edgeCount] = slot.DependencyFirstEdgeScratch[producer];
+        slot.DependencyFirstEdgeScratch[producer] = edgeCount++;
     }
 
-    private static int FindUniqueProducer(
-        FrameOperationIngress operations,
-        int operationCount,
-        int consumer,
-        in FrameOpResourceUse read)
+    private static void PushReadyOperation(
+        int[] heap,
+        ref int count,
+        int operation,
+        int[] priorities)
     {
-        for (int candidate = consumer - 1; candidate >= 0; candidate--)
+        int index = count++;
+        while (index > 0)
         {
-            FrameOpResourceUseList uses = operations.GetResourceUses(candidate);
-            for (int useIndex = 0; useIndex < uses.Count; useIndex++)
-            {
-                FrameOpResourceUse write = uses[useIndex];
-                if (write.ResourceId != read.ResourceId || write.Version != read.Version ||
-                    (write.Access & EFrameOpResourceAccess.Write) == 0)
-                {
-                    continue;
-                }
-                // The operation stream is the source of version chronology;
-                // a later op cannot produce an earlier op's read.
-                return candidate;
-            }
+            int parent = (index - 1) / 2;
+            int parentOperation = heap[parent];
+            if (priorities[parentOperation] <= priorities[operation])
+                break;
+
+            heap[index] = parentOperation;
+            index = parent;
         }
-        return -1;
+
+        heap[index] = operation;
     }
 
-    private static int FindPreviousWriter(
-        FrameOperationIngress operations,
-        int consumer,
-        in FrameOpResourceUse write)
+    private static int PopReadyOperation(int[] heap, ref int count, int[] priorities)
     {
-        for (int candidate = consumer - 1; candidate >= 0; candidate--)
+        int result = heap[0];
+        int replacement = heap[--count];
+        int index = 0;
+        while (true)
         {
-            FrameOpResourceUseList uses = operations.GetResourceUses(candidate);
-            for (int useIndex = 0; useIndex < uses.Count; useIndex++)
-            {
-                FrameOpResourceUse prior = uses[useIndex];
-                if (prior.ResourceId == write.ResourceId && prior.Version == write.Version &&
-                    (prior.Access & EFrameOpResourceAccess.Write) != 0)
-                {
-                    return candidate;
-                }
-            }
+            int left = (index * 2) + 1;
+            if (left >= count)
+                break;
+
+            int right = left + 1;
+            int child = right < count && priorities[heap[right]] < priorities[heap[left]]
+                ? right
+                : left;
+            if (priorities[replacement] <= priorities[heap[child]])
+                break;
+
+            heap[index] = heap[child];
+            index = child;
         }
-        return -1;
+
+        if (count > 0)
+            heap[index] = replacement;
+        return result;
     }
 
     private static int GetOutputRank(

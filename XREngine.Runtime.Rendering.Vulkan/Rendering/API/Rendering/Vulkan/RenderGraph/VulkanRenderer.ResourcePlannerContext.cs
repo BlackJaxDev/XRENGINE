@@ -404,6 +404,11 @@ public unsafe partial class VulkanRenderer
         List<VulkanPreparedResourceGenerationManifest.FrameBufferEntry> frameBuffers = [];
         List<VulkanPreparedResourceGenerationManifest.BufferEntry> buffers = [];
 
+        // Materialize every planner-backed texture before framebuffer generation.
+        // Framebuffers can create mip/layer attachment views (BloomBlurTexture is
+        // the common case), which legitimately advances the texture descriptor
+        // epoch. The immutable manifest must therefore be captured only after all
+        // framebuffer attachment views have been created.
         foreach ((string name, RenderTextureResource record) in generation.Registry.TextureRecords)
         {
             if (record.Instance is null ||
@@ -428,15 +433,6 @@ public unsafe partial class VulkanRenderer
                 failureReason = $"Vulkan image-view/descriptor payload for '{name}' was not ready for the pending generation.";
                 return false;
             }
-
-            images.Add(new(
-                name,
-                record.Instance,
-                source,
-                snapshot,
-                GetCurrentVulkanResourceGeneration(ObjectType.Image, snapshot.Image.Handle),
-                GetCurrentVulkanResourceGeneration(ObjectType.ImageView, snapshot.View.Handle),
-                GetCurrentVulkanResourceGeneration(ObjectType.Sampler, snapshot.Sampler.Handle)));
         }
 
         foreach ((string name, RenderFrameBufferResource record) in generation.Registry.FrameBufferRecords)
@@ -453,20 +449,57 @@ public unsafe partial class VulkanRenderer
                 // switched its cached native attachments to the pending planner
                 // state. Restore the complete partial transaction immediately;
                 // no manifest is published on this failure path.
-                if (wrapper is not null || frameBuffers.Count != 0)
-                {
-                    using ThreadResourcePlannerRuntimeStateScope restoreScope =
-                        EnterThreadResourcePlannerRuntimeStateScope(in previousState);
-                    for (int preparedIndex = 0; preparedIndex < frameBuffers.Count; preparedIndex++)
-                        frameBuffers[preparedIndex].Wrapper.EnsureCurrent();
-                    wrapper?.EnsureCurrent();
-                }
+                RestorePreparedGenerationFramebufferWrappers(frameBuffers, wrapper, previousState);
                 manifest = null;
                 failureReason = $"Vulkan framebuffer/dynamic-attachment snapshot for '{name}' was incomplete for the pending generation.";
                 return false;
             }
 
             frameBuffers.Add(new(name, record.Instance, wrapper, snapshot));
+        }
+
+        // Capture descriptor identity only after resource materialization is
+        // complete. Any change observed by Commit from this point forward is a
+        // real lifetime/identity violation rather than preparation creating the
+        // attachment views it was asked to prepare.
+        foreach ((string name, RenderTextureResource record) in generation.Registry.TextureRecords)
+        {
+            if (record.Instance is null ||
+                !pendingState.ResourceAllocator.TryGetPhysicalGroupForResource(name, out VulkanPhysicalImageGroup? physicalGroup) ||
+                physicalGroup?.IsAllocated != true)
+            {
+                continue;
+            }
+
+            if (!TryGetAPIRenderObject(record.Instance, out var apiObject) ||
+                apiObject is not IVkImageDescriptorSource source ||
+                !source.TryGetDescriptorSnapshot(
+                    requestedViewType: null,
+                    requestedAspectMask: null,
+                    "pending Vulkan resource generation manifest",
+                    allowSynchronousUpload: false,
+                    out VkImageDescriptorSnapshot snapshot) ||
+                !snapshot.IsReady ||
+                !snapshot.UsesAllocatorImage ||
+                snapshot.Image.Handle != physicalGroup.Image.Handle)
+            {
+                RestorePreparedGenerationFramebufferWrappers(
+                    frameBuffers,
+                    currentWrapper: null,
+                    previousState: previousState);
+                manifest = null;
+                failureReason = $"Vulkan image-view/descriptor payload for '{name}' did not remain ready through pending-generation materialization.";
+                return false;
+            }
+
+            images.Add(new(
+                name,
+                record.Instance,
+                source,
+                snapshot,
+                GetCurrentVulkanResourceGeneration(ObjectType.Image, snapshot.Image.Handle),
+                GetCurrentVulkanResourceGeneration(ObjectType.ImageView, snapshot.View.Handle),
+                GetCurrentVulkanResourceGeneration(ObjectType.Sampler, snapshot.Sampler.Handle)));
         }
 
         foreach (VulkanPhysicalBufferGroup group in pendingState.ResourceAllocator.EnumeratePhysicalBufferGroups())
@@ -572,6 +605,21 @@ public unsafe partial class VulkanRenderer
             manifest.GetFrameBuffer(i).Wrapper.EnsureCurrent();
     }
 
+    private void RestorePreparedGenerationFramebufferWrappers(
+        List<VulkanPreparedResourceGenerationManifest.FrameBufferEntry> frameBuffers,
+        VkFrameBuffer? currentWrapper,
+        in ResourcePlannerRuntimeState previousState)
+    {
+        if (frameBuffers.Count == 0 && currentWrapper is null)
+            return;
+
+        using ThreadResourcePlannerRuntimeStateScope scope =
+            EnterThreadResourcePlannerRuntimeStateScope(in previousState);
+        for (int i = 0; i < frameBuffers.Count; i++)
+            frameBuffers[i].Wrapper.EnsureCurrent();
+        currentWrapper?.EnsureCurrent();
+    }
+
     private sealed class VulkanRenderResourceGenerationTransaction(
         VulkanRenderer renderer,
         ResourcePlannerRuntimeState previousState,
@@ -595,15 +643,15 @@ public unsafe partial class VulkanRenderer
                     throw new InvalidOperationException(failureReason);
             }
 
+            // Preparation owns a thread-local planner scope, but committing the
+            // completed generation is renderer-wide. Merge and publish beneath
+            // the global planner gate so concurrent worker commits cannot clone
+            // stale key sets or leave the result trapped in worker-local state.
             FrameOpResourcePlannerSwitchingState switchingState =
-                CloneFrameOpResourcePlannerSwitchingState(
-                    renderer.ActiveFrameOpResourcePlannerSwitchingState);
-            pendingState.FrameOpResourcePlannerSwitchingState = switchingState;
-            pendingState.PreparedGenerationManifest = preparedManifest;
-            switchingState.States[pendingKey] = pendingState;
-            renderer.MarkFrameOpResourcePlannerStateUsed(switchingState, pendingKey);
-            renderer.PruneFrameOpResourcePlannerStatesToCapacity(switchingState);
-            renderer.PublishResourcePlannerRuntimeState(pendingState, commitReusedImageMetadata: true);
+                renderer.PublishPreparedResourcePlannerRuntimeState(
+                    ref pendingState,
+                    in pendingKey,
+                    preparedManifest);
             _committed = true;
 
             try

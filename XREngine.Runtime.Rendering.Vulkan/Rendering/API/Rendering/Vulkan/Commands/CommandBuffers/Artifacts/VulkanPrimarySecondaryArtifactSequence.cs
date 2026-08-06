@@ -28,6 +28,14 @@ internal sealed class VulkanPrimarySecondaryArtifactSequence
         Count = source.Count;
     }
 
+    public ref readonly VulkanPrimarySecondaryArtifactSequenceEntry GetEntry(int index)
+    {
+        if ((uint)index >= (uint)Count)
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        return ref _entries[index];
+    }
+
     public bool MatchesCurrentArtifacts(
         IReadOnlyDictionary<CommandChainKey, CommandChain> commandChainCache)
         => MatchesCurrentArtifacts(commandChainCache, out _);

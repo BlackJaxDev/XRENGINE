@@ -232,9 +232,11 @@ internal sealed class VulkanPreparedFrameRecording
         {
             DescriptorSets = commandChain.Authority.PreparedKey.RecordedPacketKey.DescriptorSets,
         };
+        RecordedPacketKey authorityRecordedKey =
+            commandChain.Authority.PreparedKey.RecordedPacketKey;
         if (!packet.IsSealed ||
             !preparedPacketKey.IsComplete ||
-            preparedPacketKey != commandChain.Authority.PreparedKey.RecordedPacketKey ||
+            !preparedPacketKey.Matches(in authorityRecordedKey) ||
             packet.SourceStartIndex != commandChain.SourceStartIndex ||
             packet.SourceCount != commandChain.SourceCount)
         {

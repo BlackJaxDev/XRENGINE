@@ -17,6 +17,75 @@ internal readonly record struct RecordedPacketKey(
     VulkanRecordedBufferIdentityBuffer VertexBuffers,
     VulkanRecordedBufferIdentityBuffer AuxiliaryBuffers)
 {
+    private readonly VulkanRecordedDescriptorSetIdentityBuffer _descriptorSets =
+        DescriptorSets;
+
+    public VulkanRecordedDescriptorSetIdentityBuffer DescriptorSets
+    {
+        get => _descriptorSets;
+        init => _descriptorSets = value;
+    }
+
+    private static ref readonly VulkanRecordedDescriptorSetIdentityBuffer
+        GetDescriptorSetsReference(in RecordedPacketKey key)
+        => ref key._descriptorSets;
+
+    /// <summary>
+    /// Compares the large bounded native-identity buffers by reference. The
+    /// synthesized record operator copies this packet (including up to 1,024
+    /// descriptor resources) by value and can exhaust the render-thread stack.
+    /// </summary>
+    internal bool Matches(in RecordedPacketKey other)
+    {
+        ref readonly VulkanRecordedDescriptorSetIdentityBuffer descriptorSets =
+            ref GetDescriptorSetsReference(in this);
+        ref readonly VulkanRecordedDescriptorSetIdentityBuffer otherDescriptorSets =
+            ref GetDescriptorSetsReference(in other);
+        return ExecutionDomain == other.ExecutionDomain &&
+            RenderTarget == other.RenderTarget &&
+            RenderArea == other.RenderArea &&
+            QueueFamily == other.QueueFamily &&
+            descriptorSets.Equals(in otherDescriptorSets) &&
+            Programs.Equals(other.Programs) &&
+            IndexBuffer == other.IndexBuffer &&
+            VertexBuffers.Equals(other.VertexBuffers) &&
+            AuxiliaryBuffers.Equals(other.AuxiliaryBuffers);
+    }
+
+    /// <summary>
+    /// Identifies the first native packet field that differs. This is used only
+    /// on command-recording failure paths so an identity race can be diagnosed
+    /// without expanding the large descriptor-resource buffers in every log.
+    /// </summary>
+    internal string DescribeFirstMismatch(in RecordedPacketKey other)
+    {
+        if (ExecutionDomain != other.ExecutionDomain)
+            return nameof(ExecutionDomain);
+        if (RenderTarget != other.RenderTarget)
+            return nameof(RenderTarget);
+        if (RenderArea != other.RenderArea)
+            return nameof(RenderArea);
+        if (QueueFamily != other.QueueFamily)
+            return nameof(QueueFamily);
+
+        ref readonly VulkanRecordedDescriptorSetIdentityBuffer descriptorSets =
+            ref GetDescriptorSetsReference(in this);
+        ref readonly VulkanRecordedDescriptorSetIdentityBuffer otherDescriptorSets =
+            ref GetDescriptorSetsReference(in other);
+        if (!descriptorSets.Equals(in otherDescriptorSets))
+            return nameof(DescriptorSets);
+        if (!Programs.Equals(other.Programs))
+            return nameof(Programs);
+        if (IndexBuffer != other.IndexBuffer)
+            return nameof(IndexBuffer);
+        if (!VertexBuffers.Equals(other.VertexBuffers))
+            return nameof(VertexBuffers);
+        if (!AuxiliaryBuffers.Equals(other.AuxiliaryBuffers))
+            return nameof(AuxiliaryBuffers);
+
+        return "<none>";
+    }
+
     public ulong PipelineLayoutGeneration
     {
         get

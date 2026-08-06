@@ -391,7 +391,10 @@ void main()
             _resolvedSourceTexture = sourceTexture;
             _resolvedSourceRenderer = renderer;
             _resolvedSourceSamplingState = sourceSamplingState;
-            quad.Render(null);
+            // SourceTexture is published by PresentBindingPublisher while the
+            // draw snapshot is captured. Eager quad preflight runs before that
+            // publication and would reject the draw for its not-yet-bound source.
+            quad.EnqueueRender();
         }
         finally
         {

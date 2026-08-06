@@ -91,9 +91,10 @@ namespace XREngine.Rendering.Vulkan
             if (cachedSchedule is null)
                 return false;
 
+            PrimaryCommandArtifactOwner variant = _primaryCommandArtifactOwners[imageIndex];
             Dictionary<CommandChainKey, CommandChain> commandChainCache = GetCommandChainCache(imageIndex);
             if (!TryValidatePrimaryCommandBufferGroupSharedDependencies(
-                    cachedSchedule,
+                    variant.RecordedSecondaryArtifactSequence,
                     commandChainCache,
                     out _))
             {
@@ -129,7 +130,6 @@ namespace XREngine.Rendering.Vulkan
                     ops.Length,
                     frameDataScratch);
 
-            PrimaryCommandArtifactOwner variant = _primaryCommandArtifactOwners[imageIndex];
             bool hasDynamicUiBatchTextOverlay = dynamicUiBatchTextOpCount > 0;
             CommandRecordingDependencyMismatch dependencyMismatch =
                     variant.RecordedDependencySignature.CompareCommandChainPrimary(

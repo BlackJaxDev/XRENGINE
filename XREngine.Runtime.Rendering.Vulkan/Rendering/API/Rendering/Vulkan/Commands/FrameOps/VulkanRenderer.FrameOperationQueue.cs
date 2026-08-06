@@ -96,14 +96,11 @@ public unsafe partial class VulkanRenderer
         XRFrameBuffer? output = GetOutputFrameBuffer(op);
         XRFrameBuffer? input = op is BlitOp { InFbo: { } source } ? source : null;
 
-        FrameOpContext context = op.Context with
-        {
-            OutputProducerDependencySetId = ComputeOutputResourceSetId(output, op.Context),
-            OutputConsumerDependencySetId = input is null
-                ? 0UL
-                : ComputeOutputResourceSetId(input, op.Context),
-        };
-        op.Context = context;
+        // An operation's target/input FBOs describe dependencies inside one
+        // output pipeline. They are not output-terminal publications. Preserve
+        // only semantic cross-output dependency ids supplied by the context;
+        // the per-operation resource-use graph below orders internal passes.
+        FrameOpContext context = op.Context;
         AddTypedOperationUses(ref uses, op, output, input, context.ResourceGeneration);
 
         ComputeDispatchSnapshot? bindings = op switch
@@ -335,37 +332,6 @@ public unsafe partial class VulkanRenderer
         hash.Add(0x46524D4F50524553UL);
         hash.Add(RuntimeHelpers.GetHashCode(resource));
         hash.Add(resource.GetType().GetHashCode());
-        ulong result = hash.ToHash();
-        return result == 0UL ? 1UL : result;
-    }
-
-    private static ulong ComputeOutputResourceSetId(
-        XRFrameBuffer? frameBuffer,
-        in FrameOpContext context)
-    {
-        FrameOpSignatureHasher hash = new();
-        hash.Add(0x46524D45534F5552UL);
-        if (frameBuffer?.Targets is { Length: > 0 } targets)
-        {
-            for (int index = 0; index < targets.Length; index++)
-            {
-                var attachment = targets[index];
-                hash.Add(RuntimeHelpers.GetHashCode(attachment.Target));
-                hash.Add((int)attachment.Attachment);
-                hash.Add(attachment.MipLevel);
-                hash.Add(attachment.LayerIndex);
-            }
-        }
-        else
-        {
-            // Default/OpenXR presentation targets have no managed framebuffer
-            // attachment list. Their target identity is still the resource
-            // contract captured by the render context, never an order token.
-            hash.Add(context.OutputTargetIdentity);
-            hash.Add(context.OutputFrameBufferIdentity);
-            hash.Add((int)context.ContextKind);
-        }
-
         ulong result = hash.ToHash();
         return result == 0UL ? 1UL : result;
     }
