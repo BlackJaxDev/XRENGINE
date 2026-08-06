@@ -57,32 +57,29 @@ internal static class VulkanShaderReflection
         IReadOnlyList<DescriptorBindingInfo> reflectedBindings,
         IReadOnlyList<DescriptorBindingInfo> sourceBindings)
     {
-        if (sourceBindings.Count == 0)
-            return reflectedBindings;
-
         List<DescriptorBindingInfo>? mergedBindings = null;
         for (int i = 0; i < reflectedBindings.Count; i++)
         {
             DescriptorBindingInfo reflected = reflectedBindings[i];
-            if (!TryFindMatchingSourceBinding(
+            DescriptorBindingInfo merged = DescriptorBindingInfo.NormalizeKnownMetadata(reflected);
+            if (TryFindMatchingSourceBinding(
                     sourceBindings,
                     reflected.Set,
                     reflected.Binding,
                     out DescriptorBindingInfo source))
-                continue;
+            {
+                if (string.IsNullOrWhiteSpace(merged.Name) && !string.IsNullOrWhiteSpace(source.Name))
+                    merged = merged with { Name = source.Name };
 
-            DescriptorBindingInfo merged = reflected;
-            if (string.IsNullOrWhiteSpace(merged.Name) && !string.IsNullOrWhiteSpace(source.Name))
-                merged = merged with { Name = source.Name };
+                if (merged.ExpectedImageViewType is null && source.ExpectedImageViewType is not null)
+                    merged = merged with { ExpectedImageViewType = source.ExpectedImageViewType };
 
-            if (merged.ExpectedImageViewType is null && source.ExpectedImageViewType is not null)
-                merged = merged with { ExpectedImageViewType = source.ExpectedImageViewType };
-
-            // The authored source declaration owns optional/required policy. SPIR-V
-            // reflection supplies the native shape and defaults to required when no
-            // source declaration is available.
-            if (merged.Requirement != source.Requirement)
-                merged = merged with { Requirement = source.Requirement };
+                // The authored source declaration owns optional/required policy. SPIR-V
+                // reflection supplies the native shape and defaults to required when no
+                // source declaration is available.
+                if (merged.Requirement != source.Requirement)
+                    merged = merged with { Requirement = source.Requirement };
+            }
 
             if (merged.Equals(reflected))
                 continue;
@@ -137,7 +134,16 @@ internal static class VulkanShaderReflection
                 continue;
             }
 
-            TryParseQualifier(qualifiers, "set", out uint set);
+            uint set;
+            if (!TryParseQualifier(qualifiers, "set", out set) &&
+                qualifiers.Contains("XRENGINE_FORWARD_DESCRIPTOR_SET", StringComparison.Ordinal))
+            {
+                // The source fallback is captured before shaderc expands the
+                // Vulkan-only forwarding macro. Preserve its authored set so
+                // source names and optional-resource policy can merge with the
+                // otherwise anonymous SPIR-V storage-buffer declarations.
+                set = VulkanRenderer.DescriptorSetPerPass;
+            }
 
             DescriptorType descriptorType = ClassifyDescriptor(storage, declaration, source, match.Index + match.Length);
             uint arraySize = ExtractArraySize(declaration);

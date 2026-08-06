@@ -4,7 +4,7 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private void RecordPrimaryOperations(
+    private bool RecordPrimaryOperations(
         scoped ref PrimaryCommandBufferRecordingState recordingState)
     {
         using var mainLoopProfileScope =
@@ -45,7 +45,15 @@ public unsafe partial class VulkanRenderer
                         operation,
                         operationIndex,
                         out int passIndex))
+                {
+                    if (IsPlanPreconditionRecordingFailure(
+                            recordingState.RecordingDeferredReason))
+                    {
+                        return false;
+                    }
+
                     continue;
+                }
 
                 operationIndex = RecordPreparedPrimaryOperation(
                     ref recordingState,
@@ -65,6 +73,8 @@ public unsafe partial class VulkanRenderer
                     exception);
             }
         }
+
+        return true;
     }
 
     private int RecordContextIndependentPrimaryOperation(
@@ -87,7 +97,12 @@ public unsafe partial class VulkanRenderer
         int operationIndex,
         out int passIndex)
     {
-        UpdatePrimaryRecordingContext(ref recordingState, operation);
+        if (!UpdatePrimaryRecordingContext(ref recordingState, operation))
+        {
+            passIndex = int.MinValue;
+            return false;
+        }
+
         passIndex = operation.PassIndex;
 
         if (passIndex == int.MinValue)
@@ -141,7 +156,7 @@ public unsafe partial class VulkanRenderer
         return true;
     }
 
-    private void UpdatePrimaryRecordingContext(
+    private bool UpdatePrimaryRecordingContext(
         scoped ref PrimaryCommandBufferRecordingState recordingState,
         FrameOp operation)
     {
@@ -149,7 +164,7 @@ public unsafe partial class VulkanRenderer
             FrameOpContextCompatibility.AreRecordingCompatible(
                 recordingState.ActiveContext,
                 operation.Context))
-            return;
+            return true;
 
         IDisposable? contextChangeProfileScope = null;
         if (CommandRecordingDetailProfilingEnabled)
@@ -189,7 +204,8 @@ public unsafe partial class VulkanRenderer
             recordingState.ActiveContext = operation.Context;
             recordingState.HasActiveContext = true;
             ApplyPipelineOverride(ref recordingState, recordingState.ActiveContext);
-            UpdatePrimaryResourcePlannerContext(ref recordingState);
+            if (!UpdatePrimaryResourcePlannerContext(ref recordingState))
+                return false;
 
             if (preservedRenderPass)
             {
@@ -201,6 +217,8 @@ public unsafe partial class VulkanRenderer
                 recordingState.ActivePassIndex = int.MinValue;
                 recordingState.ActiveSchedulingIdentity = int.MinValue;
             }
+
+            return true;
         }
         finally
         {
@@ -208,42 +226,51 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private void UpdatePrimaryResourcePlannerContext(
+    private bool UpdatePrimaryResourcePlannerContext(
         scoped ref PrimaryCommandBufferRecordingState recordingState)
     {
         if (TryActivateFrameOpResourcePlannerState(recordingState.ActiveContext))
         {
             recordingState.PlannerContext = recordingState.ActiveContext;
             recordingState.HasPlannerContext = true;
-            return;
+            return true;
         }
+
+        // Shadow/UI/bootstrap operations can own a pipeline context without
+        // referencing planner-backed resources. They must not replace the
+        // planner state selected for surrounding resource-owning operations.
+        if (!FrameOpContextHasPlannerResources(recordingState.ActiveContext))
+            return true;
 
         if (recordingState.ActiveContext.PipelineInstance is null)
         {
             string missingPipelineReason =
                 "frame-plan precondition failed during recording: an operation requiring planner context has no pipeline instance.";
             recordingState.RecordingDeferredReason = missingPipelineReason;
-            throw new VulkanPlanPreconditionException(missingPipelineReason);
+            return false;
         }
 
         if (!recordingState.HasPlannerContext)
         {
             recordingState.PlannerContext = recordingState.ActiveContext;
             recordingState.HasPlannerContext = true;
-            return;
+            return true;
         }
 
         if (!RequiresResourcePlannerRebuild(
                 recordingState.PlannerContext,
                 recordingState.ActiveContext))
-            return;
+            return true;
 
         string reason =
             $"frame-plan precondition failed during recording: planner context changed " +
             $"from pipe={recordingState.PlannerContext.PipelineIdentity}/vp={recordingState.PlannerContext.ViewportIdentity} " +
-            $"to pipe={recordingState.ActiveContext.PipelineIdentity}/vp={recordingState.ActiveContext.ViewportIdentity}";
+            $"to pipe={recordingState.ActiveContext.PipelineIdentity}/vp={recordingState.ActiveContext.ViewportIdentity}; " +
+            DescribeActiveFrameOpPlannerStateKeys(
+                recordingState.ActiveContext,
+                recordingState.FramePlan);
         recordingState.RecordingDeferredReason = reason;
-        throw new VulkanPlanPreconditionException(reason);
+        return false;
     }
 
     private void TransitionToPrimaryOperationPass(

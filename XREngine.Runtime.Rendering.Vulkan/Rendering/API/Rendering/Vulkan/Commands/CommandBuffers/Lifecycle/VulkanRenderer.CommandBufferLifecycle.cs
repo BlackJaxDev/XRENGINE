@@ -274,6 +274,26 @@ namespace XREngine.Rendering.Vulkan
             // Publish only after resource planning has selected the coherent
             // revision and captured its generation-visible contexts.
             state.SealFramePlan();
+            if (state.SealedFramePlan is not { } sealedFramePlan)
+            {
+                _ = DeferCommandBufferLifecycle(
+                    ref context,
+                    ref state,
+                    "frame-plan sealing did not publish a plan");
+                return default;
+            }
+
+            if (!TryRestoreSealedFramePlanPlannerStates(
+                    sealedFramePlan,
+                    out string sealedPlanFailureReason))
+            {
+                _ = DeferCommandBufferLifecycle(
+                    ref context,
+                    ref state,
+                    sealedPlanFailureReason);
+                return default;
+            }
+
             RebuildPrimaryPlanForFramePlanOrder(ref state);
             if (!state.IsSealedFramePlanCurrent())
             {

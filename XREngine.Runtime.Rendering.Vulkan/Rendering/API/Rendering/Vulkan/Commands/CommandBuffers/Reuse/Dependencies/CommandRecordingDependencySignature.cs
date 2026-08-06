@@ -33,6 +33,18 @@ internal readonly record struct CommandRecordingDependencySignature(
     VulkanRecordedRenderTargetSnapshot RenderTargetSnapshot = default,
     RecordedPacketKey RecordedPacketKey = default)
 {
+    private readonly RecordedPacketKey _recordedPacketKey = RecordedPacketKey;
+
+    public RecordedPacketKey RecordedPacketKey
+    {
+        get => _recordedPacketKey;
+        init => _recordedPacketKey = value;
+    }
+
+    internal static ref readonly RecordedPacketKey GetRecordedPacketKeyReference(
+        in CommandRecordingDependencySignature signature)
+        => ref signature._recordedPacketKey;
+
     /// <summary>
     /// Captures the identity components of this dependency signature,
     /// which can be used for comparison with other signatures to determine
@@ -51,7 +63,9 @@ internal readonly record struct CommandRecordingDependencySignature(
         resourceGenerations.Add(SamplerAllocationGeneration);
         resourceGenerations.Add(DescriptorLayoutGeneration);
         resourceGenerations.Add(DescriptorSetGeneration);
-        RecordedPacketKey.AddIdentityComponents(ref resourceGenerations);
+        ref readonly RecordedPacketKey recordedPacketKey =
+            ref GetRecordedPacketKeyReference(in this);
+        recordedPacketKey.AddIdentityComponents(ref resourceGenerations);
 
         FrameOpSignatureHasher renderScopeInheritance = new();
         renderScopeInheritance.Add(OutputPassAttachment);
@@ -130,7 +144,11 @@ internal readonly record struct CommandRecordingDependencySignature(
         in CommandRecordingDependencySignature current,
         bool commandChainPrimaryTopologyValidatedSeparately)
     {
-        if (RecordedPacketKey != current.RecordedPacketKey)
+        ref readonly RecordedPacketKey recordedPacketKey =
+            ref GetRecordedPacketKeyReference(in this);
+        ref readonly RecordedPacketKey currentRecordedPacketKey =
+            ref GetRecordedPacketKeyReference(in current);
+        if (!recordedPacketKey.Matches(in currentRecordedPacketKey))
             return Binding(CommandRecordingDependencyField.RecordedPacketKey);
 
         if (!commandChainPrimaryTopologyValidatedSeparately &&

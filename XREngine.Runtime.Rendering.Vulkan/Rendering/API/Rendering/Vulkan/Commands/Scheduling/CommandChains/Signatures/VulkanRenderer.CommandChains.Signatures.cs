@@ -295,8 +295,69 @@ public unsafe partial class VulkanRenderer
                 if (!chain.RecordedArtifact.TryValidateSharedDependency(
                         chain.DependencySignature,
                         out mismatch))
+                {
+                    RecordedPacketKey recordedKey =
+                        chain.RecordedArtifact.DependencyIdentity.RecordedPacketKey;
+                    RecordedPacketKey expectedKey =
+                        chain.DependencySignature.RecordedPacketKey;
+                    VulkanRecordedRenderTargetSnapshot expectedRenderTarget =
+                        expectedKey.RenderTarget;
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.CommandChain.SharedDependency.{chain.Key.GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Command-chain shared dependency changed after recording. chain={0} field={1} packetField={2} renderTargetField={3} artifactExecutable={4}.",
+                        chain.Key,
+                        mismatch.Field,
+                        recordedKey.DescribeFirstMismatch(in expectedKey),
+                        recordedKey.RenderTarget.DescribeFirstMismatch(in expectedRenderTarget),
+                        chain.RecordedArtifact.IsExecutable);
                     return false;
+                }
             }
+        }
+
+        mismatch = CommandRecordingDependencyMismatch.None;
+        return true;
+    }
+
+    internal static bool TryValidatePrimaryCommandBufferGroupSharedDependencies(
+        VulkanPrimarySecondaryArtifactSequence executedArtifacts,
+        IReadOnlyDictionary<CommandChainKey, CommandChain> chains,
+        out CommandRecordingDependencyMismatch mismatch)
+    {
+        for (int artifactIndex = 0; artifactIndex < executedArtifacts.Count; artifactIndex++)
+        {
+            ref readonly VulkanPrimarySecondaryArtifactSequenceEntry entry =
+                ref executedArtifacts.GetEntry(artifactIndex);
+            if (!chains.TryGetValue(entry.Key, out CommandChain? chain))
+            {
+                mismatch = CommandRecordingDependencyMismatch.None;
+                return false;
+            }
+
+            if (chain.RecordedArtifact.TryValidateSharedDependency(
+                    chain.DependencySignature,
+                    out mismatch))
+            {
+                continue;
+            }
+
+            RecordedPacketKey recordedKey =
+                chain.RecordedArtifact.DependencyIdentity.RecordedPacketKey;
+            RecordedPacketKey expectedKey =
+                chain.DependencySignature.RecordedPacketKey;
+            VulkanRecordedRenderTargetSnapshot expectedRenderTarget =
+                expectedKey.RenderTarget;
+            Debug.VulkanWarningEvery(
+                $"Vulkan.CommandChain.ExecutedSharedDependency.{chain.Key.GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Executed command-chain dependency changed after recording. chain={0} field={1} packetField={2} renderTargetField={3} artifactExecutable={4}.",
+                chain.Key,
+                mismatch.Field,
+                recordedKey.DescribeFirstMismatch(in expectedKey),
+                recordedKey.RenderTarget.DescribeFirstMismatch(in expectedRenderTarget),
+                chain.RecordedArtifact.IsExecutable);
+            return false;
         }
 
         mismatch = CommandRecordingDependencyMismatch.None;
@@ -333,6 +394,36 @@ public unsafe partial class VulkanRenderer
                         : CommandChainDirtyReason.Structure;
                 invalidated++;
             }
+        }
+
+        return invalidated;
+    }
+
+    private static int InvalidatePrimaryCommandBufferGroupSharedDependencyMismatches(
+        VulkanPrimarySecondaryArtifactSequence executedArtifacts,
+        IReadOnlyDictionary<CommandChainKey, CommandChain> chains)
+    {
+        int invalidated = 0;
+        for (int artifactIndex = 0; artifactIndex < executedArtifacts.Count; artifactIndex++)
+        {
+            ref readonly VulkanPrimarySecondaryArtifactSequenceEntry entry =
+                ref executedArtifacts.GetEntry(artifactIndex);
+            if (!chains.TryGetValue(entry.Key, out CommandChain? chain) ||
+                chain.RecordedArtifact.TryValidateSharedDependency(
+                    chain.DependencySignature,
+                    out CommandRecordingDependencyMismatch mismatch))
+            {
+                continue;
+            }
+
+            MarkCommandChainSecondaryCommandBufferInvalid(
+                chain,
+                EVulkanRecordedCommandArtifactInvalidationReason.DependencyChanged);
+            chain.DirtyReason |=
+                mismatch.InvalidationClass == CommandRecordingInvalidationClass.BindingIdentity
+                    ? CommandChainDirtyReason.ResourcePlan
+                    : CommandChainDirtyReason.Structure;
+            invalidated++;
         }
 
         return invalidated;

@@ -291,6 +291,58 @@ therefore still open.
 
 ## Phase 4.1 Authority Extraction Evidence
 
+### 4.1.0 Working Runtime Baseline Restoration
+
+- Resource-generation publication now preserves the complete context-local
+  planner switching state while pending resources materialize. The initial
+  pipeline generation commits without the former `BloomBlurTexture` native
+  identity changing between prepare and commit.
+- Exact frame-op tracing identified the final visible/queued mismatch: 22
+  visible draws produced only 21 mesh frame operations. The omitted operation
+  was `RenderToWindow_TsrOutputTexture`. `XRQuadFrameBuffer.Render` performed a
+  descriptor-complete preflight before `PresentBindingPublisher` could publish
+  `SourceTexture`, so the final fullscreen draw was never captured.
+- `XRQuadFrameBuffer.EnqueueRender` now provides the explicit deferred capture
+  path for typed publishers whose descriptor resources are established by the
+  draw snapshot. `VPRC_RenderToWindow` uses that path while its resolved source
+  scope is active. Normal `XRQuadFrameBuffer.Render` retains its existing eager
+  readiness contract for other callers.
+- Final-presentation publication now accepts both an exact descriptor-write
+  cache hit and a successful new descriptor write. A first use no longer leaves
+  the tuple incomplete after `vkUpdateDescriptorSets` has already committed the
+  exact native payload.
+- `dotnet build
+  .\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulkan.csproj
+  --no-restore -warnaserror` passed with zero warnings and zero errors. Tests
+  were not changed or run while completing this live feature-validation gate,
+  per the repository testing policy.
+- Final named session `vulkan-core-410-final23-20260806` used Vulkan at
+  1920x1080. Its stable frame had 34 operations / 22 mesh draws, including
+  `RenderToWindow_TsrOutputTexture`, two swapchain writes, a `Completed` frame
+  outcome, no command-buffer dirty reason, and zero live descriptor failures or
+  skipped draws in the initial acceptance view.
+- The enabled final-presentation ledger recorded accepted valid frames whose
+  `TsrOutputTexture` image view and sampler exactly matched `SourceTexture` set
+  2/binding 0. The descriptor command buffer equaled the selected scene primary,
+  and the ledger reported no invariant failure or recovery swapchain write.
+- Three screenshots were visually inspected. The initial view showed a textured
+  Sponza wall and sky instead of uniform purple recovery content; focusing the
+  model and moving to a second exterior angle produced different Sponza
+  silhouettes, proving camera-dependent live rendering. Evidence is under
+  `Build/_AgentValidation/mcp-sessions/vulkan-core-410-final23-20260806/mcp-captures/`.
+- Camera changes that expanded the visible/shadow workload caused a bounded
+  startup/replanning burst (seven rejected frames and eighteen planner
+  precondition messages), after which both counts remained unchanged across the
+  final steady-state sample and completed frames resumed. Descriptor failures
+  accumulated while previously unseen Sponza material/shadow resources warmed,
+  then also remained flat.
+- Clean shutdown logs contain zero `BloomBlurTexture` generation-commit
+  instability, `NullReferenceException`, retry-backoff match, incomplete final
+  presentation epoch, stale-secondary match, VUID, device loss, or Vulkan
+  validation error. The lone rendering-log `LastError` field is the expected
+  diagnostic that the optional OpenGL-to-Vulkan DLSS bridge is disabled, not a
+  Vulkan runtime failure.
+
 - `VulkanDeviceContext` now owns the bounded KHR/EXT fault capture, formatting
   inputs, artifact persistence handoff, native identity, capabilities, and
   queues. Internal Vulkan consumers use `DeviceContext` directly; the private

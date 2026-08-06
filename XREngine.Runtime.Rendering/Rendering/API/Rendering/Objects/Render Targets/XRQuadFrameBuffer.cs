@@ -143,21 +143,30 @@ namespace XREngine.Rendering
                 if (!TryPrepareForRendering(forceNoStereo))
                     return false;
 
-                var state = RuntimeEngine.Rendering.State.RenderingPipelineState;
-                if (state != null)
-                {
-                    using (state.PushRenderingCamera(null))
-                        FullScreenMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, 1, forceNoStereo);
-                }
-                else
-                    FullScreenMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, 1, forceNoStereo);
-
+                EnqueueRender(forceNoStereo);
                 return true;
             }
             finally
             {
                 target?.UnbindFromWriting();
             }
+        }
+
+        /// <summary>
+        /// Enqueues the fullscreen draw without an eager API-object readiness check.
+        /// Use this when typed binding publishers establish descriptor resources as
+        /// part of the draw snapshot; those resources do not exist during preflight.
+        /// </summary>
+        internal void EnqueueRender(bool forceNoStereo = true)
+        {
+            var state = RuntimeEngine.Rendering.State.RenderingPipelineState;
+            if (state != null)
+            {
+                using (state.PushRenderingCamera(null))
+                    FullScreenMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, 1, forceNoStereo);
+            }
+            else
+                FullScreenMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, 1, forceNoStereo);
         }
     }
 }

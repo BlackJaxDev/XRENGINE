@@ -22,13 +22,16 @@ internal readonly record struct VulkanPreparedCommandChain(
     /// artifact lease and dependency identity frozen for this encoding job.
     /// </summary>
     internal bool Matches(CommandChain chain, RenderPacket packet)
-        => chain.Key == Key &&
+    {
+        VulkanPreparedCommandChainKey authorityKey = Authority.PreparedKey;
+        return chain.Key == Key &&
             chain.SourceStartIndex == SourceStartIndex &&
             chain.SourceCount == SourceCount &&
             ReferenceEquals(chain.PacketSnapshot, packet) &&
-            chain.PreparedKey == Authority.PreparedKey &&
+            chain.PreparedKey.Matches(in authorityKey) &&
             chain.RecordedArtifact.Generation ==
                 WritableArtifact.ArtifactGeneration &&
             chain.RecordedArtifact.NativeBuffer.Handle ==
                 WritableArtifact.NativeBuffer.Handle;
+    }
 }

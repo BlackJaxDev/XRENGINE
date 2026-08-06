@@ -13,11 +13,14 @@ internal sealed class FramePlan
     private RenderOutputDagNodeDescriptor[] _outputExecutionNodes =
         Array.Empty<RenderOutputDagNodeDescriptor>();
     private FramePlanOperationKey[] _operationKeys = Array.Empty<FramePlanOperationKey>();
+    private VulkanFrameOpPlannerStateKey[] _staticPlannerContextKeys =
+        Array.Empty<VulkanFrameOpPlannerStateKey>();
     private int _operationCount;
     private int _dynamicOverlayOperationCount;
     private int _outputCount;
     private int _outputExecutionNodeCount;
     private int _operationKeyCount;
+    private int _staticPlannerContextKeyCount;
     private int _leaseCount;
     private readonly object _leaseGate = new();
 
@@ -44,6 +47,8 @@ internal sealed class FramePlan
     /// </summary>
     internal int OutputExecutionNodeCount => _outputExecutionNodeCount;
     internal int OperationKeyCount => _operationKeyCount;
+    internal ReadOnlySpan<VulkanFrameOpPlannerStateKey> StaticPlannerContextKeys
+        => _staticPlannerContextKeys.AsSpan(0, _staticPlannerContextKeyCount);
     internal bool IsPinned
     {
         get
@@ -125,7 +130,9 @@ internal sealed class FramePlan
         RenderOutputDagNodeDescriptor[] outputExecutionNodes,
         int outputExecutionNodeCount,
         FramePlanOperationKey[] operationKeys,
-        int operationKeyCount)
+        int operationKeyCount,
+        VulkanFrameOpPlannerStateKey[] staticPlannerContextKeys,
+        int staticPlannerContextKeyCount)
     {
         lock (_leaseGate)
         {
@@ -150,6 +157,8 @@ internal sealed class FramePlan
             _outputExecutionNodeCount = outputExecutionNodeCount;
             _operationKeys = operationKeys;
             _operationKeyCount = operationKeyCount;
+            _staticPlannerContextKeys = staticPlannerContextKeys;
+            _staticPlannerContextKeyCount = staticPlannerContextKeyCount;
             ViewSet.Seal();
             IsSealed = true;
         }
@@ -175,6 +184,7 @@ internal sealed class FramePlan
             _outputCount = 0;
             _outputExecutionNodeCount = 0;
             _operationKeyCount = 0;
+            _staticPlannerContextKeyCount = 0;
             IsSealed = false;
             ViewSet.Reset();
         }

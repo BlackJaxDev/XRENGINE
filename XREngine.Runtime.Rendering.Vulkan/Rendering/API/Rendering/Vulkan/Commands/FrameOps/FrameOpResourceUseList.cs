@@ -2,9 +2,15 @@ using System.Runtime.CompilerServices;
 
 namespace XREngine.Rendering.Vulkan;
 
-[InlineArray(24)]
+[InlineArray(Capacity)]
 internal struct FrameOpResourceUseBuffer
 {
+    // PostProcess.fs currently publishes camera/light buffers plus its sampled
+    // images in one immutable descriptor snapshot. Keep the dependency packet
+    // large enough for that supported program shape without allocating in the
+    // per-operation hot path.
+    internal const int Capacity = 64;
+
     private FrameOpResourceUse _element0;
 }
 
@@ -28,8 +34,11 @@ internal struct FrameOpResourceUseList
             _items[index] = current with { Access = current.Access | access };
             return;
         }
-        if (Count >= 24)
-            throw new InvalidOperationException("Frame-operation resource-use capacity exceeded.");
+        if (Count >= FrameOpResourceUseBuffer.Capacity)
+        {
+            throw new InvalidOperationException(
+                $"Frame-operation resource-use capacity of {FrameOpResourceUseBuffer.Capacity} was exceeded.");
+        }
         _items[Count++] = new(resourceId, version, access);
     }
 }

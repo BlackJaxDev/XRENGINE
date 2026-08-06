@@ -261,7 +261,10 @@ public unsafe partial class VulkanRenderer
         switchingState.HasPreparedPlan = false;
     }
 
-    private ulong PrepareFrameOpResourcePlannerStatesForFrameOps(FrameOp[] ops, ulong frameOpsSignature = 0)
+    private ulong PrepareFrameOpResourcePlannerStatesForFrameOps(
+        FrameOp[] ops,
+        ulong frameOpsSignature = 0,
+        bool preserveActiveKeys = false)
     {
         if (!_deviceContext.IsOperational)
             return ResourcePlannerRevision;
@@ -272,7 +275,8 @@ public unsafe partial class VulkanRenderer
         switchingState.RecordingScopeActive = false;
         switchingState.HasActiveKey = false;
         switchingState.HasActiveContext = false;
-        switchingState.ActiveKeys.Clear();
+        if (!preserveActiveKeys)
+            switchingState.ActiveKeys.Clear();
 
         if (!FrameOpResourcePlannerSwitchingEnabled)
         {
@@ -349,6 +353,53 @@ public unsafe partial class VulkanRenderer
         return false;
     }
 
+    private bool TryRestoreSealedFramePlanPlannerStates(
+        FramePlan framePlan,
+        out string failureReason)
+    {
+        failureReason = string.Empty;
+        ReadOnlySpan<VulkanFrameOpPlannerStateKey> requiredKeys =
+            framePlan.StaticPlannerContextKeys;
+        if (!FrameOpResourcePlannerSwitchingEnabled || requiredKeys.IsEmpty)
+            return true;
+
+        if (requiredKeys.Length > MaxFrameOpResourcePlannerSwitchingStates)
+        {
+            failureReason =
+                $"sealed frame plan requires {requiredKeys.Length} Vulkan planner contexts, exceeding capacity {MaxFrameOpResourcePlannerSwitchingStates}";
+            return false;
+        }
+
+        FrameOpResourcePlannerSwitchingState switchingState =
+            ActiveFrameOpResourcePlannerSwitchingState;
+        for (int keyIndex = 0; keyIndex < requiredKeys.Length; keyIndex++)
+        {
+            VulkanFrameOpPlannerStateKey key = requiredKeys[keyIndex];
+            if (switchingState.States.TryGetValue(key, out ResourcePlannerRuntimeState plannerState) &&
+                IsReusableFrameOpResourcePlannerState(plannerState))
+            {
+                continue;
+            }
+
+            failureReason =
+                $"sealed frame-plan planner context is not prepared pipe={key.PipelineIdentity} viewport={key.ViewportIdentity}";
+            return false;
+        }
+
+        switchingState.ActiveKeys.Clear();
+        for (int keyIndex = 0; keyIndex < requiredKeys.Length; keyIndex++)
+        {
+            VulkanFrameOpPlannerStateKey key = requiredKeys[keyIndex];
+            switchingState.ActiveKeys.Add(key);
+            MarkFrameOpResourcePlannerStateUsed(switchingState, key);
+        }
+
+        ResetActiveFrameOpResourcePlannerState(switchingState);
+        switchingState.SwitchingActive = false;
+        switchingState.RecordingScopeActive = false;
+        return true;
+    }
+
     private void RejectMixedFrameOpPlannerContexts(FrameOp[] operations)
     {
         if (!FrameOpResourcePlannerSwitchingEnabled || operations.Length == 0)
@@ -409,6 +460,8 @@ public unsafe partial class VulkanRenderer
         FrameOpResourcePlannerSwitchingState switchingState =
             ActiveFrameOpResourcePlannerSwitchingState;
         InvalidatePreparedFrameOpResourcePlan(switchingState);
+        switchingState.ActiveKeys.Clear();
+        ResetActiveFrameOpResourcePlannerState(switchingState);
 
         for (int keyIndex = 0; keyIndex < planKeyCount; keyIndex++)
         {
@@ -441,7 +494,8 @@ public unsafe partial class VulkanRenderer
             preparationScope.PublishCurrentState();
             _ = PrepareFrameOpResourcePlannerStatesForFrameOps(
                 partition,
-                partitionSignature);
+                partitionSignature,
+                preserveActiveKeys: true);
             if (!switchingState.States.ContainsKey(key))
             {
                 failureReason =
@@ -959,6 +1013,29 @@ public unsafe partial class VulkanRenderer
 
         key = default;
         return false;
+    }
+
+    private string DescribeActiveFrameOpPlannerStateKeys(
+        in FrameOpContext requestedContext,
+        FramePlan? framePlan)
+    {
+        VulkanFrameOpPlannerStateKey requested = BuildFrameOpPlannerStateKey(requestedContext);
+        FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
+        StringBuilder builder = new();
+        builder.Append("requested=").Append(requested)
+            .Append(" sealedCount=").Append(framePlan?.StaticPlannerContextKeys.Length ?? 0)
+            .Append(" activeCount=").Append(switchingState.ActiveKeys.Count)
+            .Append(" active=[");
+        bool first = true;
+        foreach (VulkanFrameOpPlannerStateKey key in switchingState.ActiveKeys)
+        {
+            if (!first)
+                builder.Append("; ");
+            first = false;
+            builder.Append(key);
+        }
+        builder.Append(']');
+        return builder.ToString();
     }
 
     private void SaveActiveFrameOpResourcePlannerState()

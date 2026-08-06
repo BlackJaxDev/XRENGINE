@@ -387,13 +387,13 @@ namespace XREngine.Rendering.Vulkan
             // Dirty secondaries can be replaced while the primary is built.
             // Publish the exact artifact generations the completed primary executes.
             if (!TryValidatePrimaryCommandBufferGroupSharedDependencies(
-                    state.CommandChainSchedule,
+                    executedArtifactSequence,
                     state.CommandChainCache,
                     out CommandRecordingDependencyMismatch dependencyMismatch))
             {
                 int invalidatedSecondaryCount =
                     InvalidatePrimaryCommandBufferGroupSharedDependencyMismatches(
-                        state.CommandChainSchedule,
+                        executedArtifactSequence,
                         state.CommandChainCache);
                 context.RecordingDeferredReason =
                     $"Recorded primary command buffer referenced {invalidatedSecondaryCount} " +

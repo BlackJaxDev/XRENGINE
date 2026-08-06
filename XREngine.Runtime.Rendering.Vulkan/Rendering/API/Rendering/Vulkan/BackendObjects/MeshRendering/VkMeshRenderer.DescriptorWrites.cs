@@ -59,12 +59,16 @@ internal unsafe partial class VkMeshRenderer
 		ComputeDispatchSnapshot? bindingSnapshot = null)
 	{
 		imageStart = imageInfos.Count;
+		bool usesNamedArrayElements = descriptorCount > 1 && !string.IsNullOrWhiteSpace(binding.Name);
 		for (int i = 0; i < descriptorCount; i++)
 		{
+			DescriptorBindingInfo elementBinding = usesNamedArrayElements
+				? binding with { Name = ResolveDescriptorArrayElementName(binding.Name, i) }
+				: binding;
 			if (!TryResolveImage(
-					binding,
+					elementBinding,
 					material,
-					binding.DescriptorType,
+					elementBinding.DescriptorType,
 					out DescriptorImageInfo info,
 					i,
 					bindingSnapshot))
@@ -75,6 +79,11 @@ internal unsafe partial class VkMeshRenderer
 
 		return true;
 	}
+
+	private static string ResolveDescriptorArrayElementName(string bindingName, int arrayIndex)
+		=> DescriptorArrayElementNames.GetOrAdd(
+			(bindingName, arrayIndex),
+			static key => $"{key.Name}[{key.Index}]");
 
 	/// <summary>Resolves one or more texel buffer view descriptors for a binding.</summary>
 	private bool TryResolveTexelBuffers(DescriptorBindingInfo binding, XRMaterial material, uint descriptorCount, List<BufferView> texelBufferViews, out int texelStart)

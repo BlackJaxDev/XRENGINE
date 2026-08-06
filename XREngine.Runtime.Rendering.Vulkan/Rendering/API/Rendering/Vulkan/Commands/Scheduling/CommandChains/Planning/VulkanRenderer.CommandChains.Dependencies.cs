@@ -28,8 +28,10 @@ public unsafe partial class VulkanRenderer
             {
                 DescriptorSets = authority.PreparedKey.RecordedPacketKey.DescriptorSets,
             };
+            RecordedPacketKey authorityRecordedKey =
+                authority.PreparedKey.RecordedPacketKey;
             if (!currentRecordedKey.IsComplete ||
-                currentRecordedKey != authority.PreparedKey.RecordedPacketKey)
+                !currentRecordedKey.Matches(in authorityRecordedKey))
                 return CommandChainDirtyReason.ResourcePlan;
         }
 
@@ -86,7 +88,9 @@ public unsafe partial class VulkanRenderer
             {
                 DescriptorSets = authority.PreparedKey.RecordedPacketKey.DescriptorSets,
             };
-            if (prepared.IsComplete && prepared == authority.PreparedKey.RecordedPacketKey)
+            RecordedPacketKey authorityRecordedKey =
+                authority.PreparedKey.RecordedPacketKey;
+            if (prepared.IsComplete && prepared.Matches(in authorityRecordedKey))
                 recordedKey = prepared;
         }
 
@@ -173,7 +177,8 @@ public unsafe partial class VulkanRenderer
         {
             DescriptorSets = preparedKey.RecordedPacketKey.DescriptorSets,
         };
-        if (!expected.IsComplete || expected != preparedKey.RecordedPacketKey)
+        RecordedPacketKey preparedPacketKey = preparedKey.RecordedPacketKey;
+        if (!expected.IsComplete || !expected.Matches(in preparedPacketKey))
             throw new InvalidOperationException("Prepared command-chain authority does not match its sealed packet snapshot.");
 
         chain.PreparedKey = preparedKey;

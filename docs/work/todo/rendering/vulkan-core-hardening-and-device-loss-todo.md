@@ -186,8 +186,9 @@ state.
 
 #### 4.1 Extract The Seven Runtime Authorities
 
-> **Status on 2026-08-06:** state ownership has been consolidated, but behavior
-> ownership and the runtime baseline are not complete. `VulkanRenderer` has the
+> **Status on 2026-08-06:** state ownership has been consolidated and blocker
+> 4.1.0 restored the runtime baseline, but behavior ownership is not complete.
+> `VulkanRenderer` has the
 > intended seven authority-root instance fields, while 207 partial declarations
 > still contain renderer implementation behavior. The seven-field result must
 > not be treated as completion of this section.
@@ -197,22 +198,31 @@ state.
 > dependency order; 4.1.7 is the final proof. The parent checkbox may be checked
 > only when every blocker below meets its stated exit condition.
 
-- [ ] **4.1.0 Restore a working Vulkan runtime baseline before continuing the
-  extraction.** The latest isolated Vulkan run repeatedly fails resource
-  generation with `InvalidOperationException: Vulkan image-view/descriptor
-  payload for 'BloomBlurTexture' changed before generation commit` at
-  `VulkanRenderResourceGenerationTransaction.Commit()` in
-  `VulkanRenderer.ResourcePlannerContext.cs`; the active pipeline generation
-  remains absent and the window is white. An earlier attempt in the same session
-  also recorded a null-reference failure during pending-generation
-  materialization.
-  - [ ] Fix the resource-generation identity/lifetime instability which lets the
+- [x] **4.1.0 Restore a working Vulkan runtime baseline before continuing the
+  extraction.** The original failure was a resource-generation identity and
+  publication regression. After that was corrected, live tracing exposed a
+  second blocker: `XRQuadFrameBuffer.Render` rejected the final Vulkan present
+  quad before its typed publisher could capture `SourceTexture`, so the frame
+  omitted `RenderToWindow`, the final-presentation tuple stayed incomplete, and
+  the window presented recovery content indefinitely. The present path now
+  enqueues publisher-owned draws without descriptor preflight and treats a
+  successful first descriptor write as authoritative publication.
+  - [x] Fix the resource-generation identity/lifetime instability which lets the
     `BloomBlurTexture` image-view or descriptor payload change between prepare
     and commit. Do not suppress or retry past the invariant failure.
-  - [ ] Validate the fix through a Vulkan Unit Testing World run: the initial
+  - [x] Validate the fix through a Vulkan Unit Testing World run: the initial
     generation commits, a non-white scene is visible in screenshots from two
     camera positions, and the Vulkan/rendering logs contain no repeating
     generation exception, retry-backoff loop, or validation error.
+    Named session `vulkan-core-410-final23-20260806` completed frames with 34
+    frame operations, including `RenderToWindow_TsrOutputTexture`, and two
+    swapchain writes. The final-presentation ledger matched the source image
+    view/sampler, descriptor set/slot, and scene primary with no invariant
+    failure. Two inspected camera-dependent screenshots showed Sponza geometry
+    instead of white/purple recovery content. The warning-as-error Vulkan build
+    passed, and clean shutdown logs contained no repeated generation-commit
+    exception, null reference, retry backoff, incomplete presentation epoch,
+    stale secondary, VUID, device loss, or validation error.
 - [ ] **4.1.1 Cut the frame loop's facade callback spine.**
   - [x] Delete `IVulkanDesktopFramePhaseService` and the stateful desktop frame
     coordinator; `VulkanFrameLoop` owns admission, settlement, and ordered phase

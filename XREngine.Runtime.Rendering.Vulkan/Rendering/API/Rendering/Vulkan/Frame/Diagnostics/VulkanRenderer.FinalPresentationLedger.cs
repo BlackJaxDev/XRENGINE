@@ -21,7 +21,11 @@ public unsafe partial class VulkanRenderer
         if (!string.Equals(bindingName, "SourceTexture", StringComparison.Ordinal))
             return;
 
-        if (writeMatched && writeSucceeded)
+        // A successful new write is just as authoritative as a cache hit. The
+        // old matched-only gate left the presentation tuple incomplete on the
+        // first use of every descriptor slot even though vkUpdateDescriptorSets
+        // had already published the exact native payload.
+        if (writeSucceeded)
         {
             VulkanPresentationSourceTuple current =
                 _windowPresentSource.Capture();

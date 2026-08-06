@@ -14,8 +14,9 @@ internal struct VulkanRecordedDescriptorSetIdentityBuffer : IEquatable<VulkanRec
     public void Invalidate() { Count = 0; IsComplete = false; }
     public void Set(int index, in VulkanRecordedDescriptorSetIdentity value) { if ((uint)index >= (uint)Count || index >= Capacity) throw new ArgumentOutOfRangeException(nameof(index)); _items[index] = value; IsComplete &= value.IsComplete; }
     public readonly VulkanRecordedDescriptorSetIdentity Get(int index) => (uint)index < (uint)Count && index < Capacity ? _items[index] : throw new ArgumentOutOfRangeException(nameof(index));
-    public readonly bool Equals(VulkanRecordedDescriptorSetIdentityBuffer other) { if (Count != other.Count || IsComplete != other.IsComplete) return false; for (int i = 0; i < Count; i++) if (_items[i] != other._items[i]) return false; return true; }
-    public override readonly bool Equals(object? obj) => obj is VulkanRecordedDescriptorSetIdentityBuffer other && Equals(other);
+    public readonly bool Equals(in VulkanRecordedDescriptorSetIdentityBuffer other) { if (Count != other.Count || IsComplete != other.IsComplete) return false; for (int i = 0; i < Count; i++) if (!_items[i].Matches(in other._items[i])) return false; return true; }
+    public readonly bool Equals(VulkanRecordedDescriptorSetIdentityBuffer other) => Equals(in other);
+    public override readonly bool Equals(object? obj) => obj is VulkanRecordedDescriptorSetIdentityBuffer other && Equals(in other);
     public override readonly int GetHashCode() { HashCode hash = new(); hash.Add(Count); hash.Add(IsComplete); for (int i = 0; i < Count; i++) hash.Add(_items[i]); return hash.ToHashCode(); }
 }
 
@@ -29,8 +30,9 @@ internal struct VulkanRecordedDescriptorResourceIdentityBuffer : IEquatable<Vulk
     public void Invalidate() { Count = 0; IsComplete = false; }
     public void Set(int index, in VulkanRecordedDescriptorResourceIdentity value) { if ((uint)index >= (uint)Count || index >= Capacity) throw new ArgumentOutOfRangeException(nameof(index)); _items[index] = value; IsComplete &= value.IsComplete; }
     public readonly VulkanRecordedDescriptorResourceIdentity Get(int index) => (uint)index < (uint)Count && index < Capacity ? _items[index] : throw new ArgumentOutOfRangeException(nameof(index));
-    public readonly bool Equals(VulkanRecordedDescriptorResourceIdentityBuffer other) { if (Count != other.Count || IsComplete != other.IsComplete) return false; for (int i = 0; i < Count; i++) if (_items[i] != other._items[i]) return false; return true; }
-    public override readonly bool Equals(object? obj) => obj is VulkanRecordedDescriptorResourceIdentityBuffer other && Equals(other);
+    public readonly bool Equals(in VulkanRecordedDescriptorResourceIdentityBuffer other) { if (Count != other.Count || IsComplete != other.IsComplete) return false; for (int i = 0; i < Count; i++) if (_items[i] != other._items[i]) return false; return true; }
+    public readonly bool Equals(VulkanRecordedDescriptorResourceIdentityBuffer other) => Equals(in other);
+    public override readonly bool Equals(object? obj) => obj is VulkanRecordedDescriptorResourceIdentityBuffer other && Equals(in other);
     public override readonly int GetHashCode() { HashCode hash = new(); hash.Add(Count); hash.Add(IsComplete); for (int i = 0; i < Count; i++) hash.Add(_items[i]); return hash.ToHashCode(); }
 }
 

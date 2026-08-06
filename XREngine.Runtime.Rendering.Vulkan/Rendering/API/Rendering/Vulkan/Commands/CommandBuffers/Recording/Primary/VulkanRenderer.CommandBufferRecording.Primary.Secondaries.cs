@@ -672,7 +672,7 @@ namespace XREngine.Rendering.Vulkan
                 chain.SecondaryCommandBufferExecutable &&
                 preparedKey.IsComplete &&
                 chain.PreparedKey.IsComplete &&
-                chain.PreparedKey == preparedKey &&
+                chain.PreparedKey.Matches(in preparedKey) &&
                 chain.RecordedIndirectSecondaryContract ==
                     operation.SecondaryRecordingContract &&
                 chain.RecordedUniformSlotSignature == unchecked((ulong)(uint)uniformSlot) &&
@@ -1051,9 +1051,17 @@ namespace XREngine.Rendering.Vulkan
                             batch.PreparedFrame,
                             chain,
                             startIndex);
-                    needsRecording |= !preparedKey.IsComplete ||
-                        !chain.PreparedKey.IsComplete ||
-                        chain.PreparedKey != preparedKey;
+                    if (!preparedKey.IsComplete)
+                    {
+                        // Pipeline compilation and descriptor publication may
+                        // still be converging during startup. The primary path
+                        // can encode that draw once ready; an incomplete native
+                        // key must never enter the reusable-secondary authority.
+                        return false;
+                    }
+
+                    needsRecording |= !chain.PreparedKey.IsComplete ||
+                        !chain.PreparedKey.Matches(in preparedKey);
 
                     if (needsRecording)
                     {
@@ -1065,7 +1073,7 @@ namespace XREngine.Rendering.Vulkan
                         PublishPreparedCommandChainAuthority(
                             chain,
                             chain.PreparedAuthority is { } authority &&
-                            authority.PreparedKey == preparedKey
+                            authority.PreparedKey.Matches(in preparedKey)
                                 ? authority
                                 : new VulkanPreparedCommandChainAuthority(preparedKey));
                         chain.WorkerEligibility =
@@ -1281,9 +1289,10 @@ namespace XREngine.Rendering.Vulkan
                     int preparedDrawStartIndex =
                         chain.SourceStartIndex - startIndex;
                     int packetIndex = batch.PreparedFrame.RetainPacket(packet);
+                    VulkanPreparedCommandChainKey chainPreparedKey = chain.PreparedKey;
                     VulkanPreparedCommandChainAuthority authority =
                         chain.PreparedAuthority is { } publishedAuthority &&
-                        publishedAuthority.PreparedKey == chain.PreparedKey
+                        publishedAuthority.PreparedKey.Matches(in chainPreparedKey)
                             ? publishedAuthority
                             : new VulkanPreparedCommandChainAuthority(chain.PreparedKey);
                     int preparedChainIndex =

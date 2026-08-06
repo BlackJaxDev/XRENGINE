@@ -32,6 +32,7 @@ internal unsafe partial class VkMeshRenderer
 		new(StringComparer.Ordinal);
 	private static readonly ConcurrentDictionary<string, byte> DescriptorWriteChangeDiagnostics =
 		new(StringComparer.Ordinal);
+	private static readonly ConcurrentDictionary<(string Name, int Index), string> DescriptorArrayElementNames = new();
 
 	private static bool DescriptorResourceFingerprintDiagnosticsEnabled =>
 		XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanFrameDataReuseDiag) ||
