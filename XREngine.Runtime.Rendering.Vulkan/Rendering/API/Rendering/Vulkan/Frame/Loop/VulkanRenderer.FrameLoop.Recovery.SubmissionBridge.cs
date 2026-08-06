@@ -19,7 +19,7 @@ namespace XREngine.Rendering.Vulkan
             ulong* signalValues = stackalloc ulong[2] { signalTimelineValue, 0UL };
             ulong* waitValues = stackalloc ulong[1] { 0UL };
             Semaphore* waitSemaphores = stackalloc Semaphore[1] { acquireSemaphore };
-            Semaphore* signalSemaphores = stackalloc Semaphore[2] { _graphicsTimelineSemaphore, signalPresentSemaphore };
+            Semaphore* signalSemaphores = stackalloc Semaphore[2] { _commandRuntime.Synchronization._graphicsTimelineSemaphore, signalPresentSemaphore };
             PipelineStageFlags* waitStages = stackalloc PipelineStageFlags[1] { PipelineStageFlags.TopOfPipeBit };
 
             TimelineSemaphoreSubmitInfo timelineInfo = new()
@@ -45,7 +45,7 @@ namespace XREngine.Rendering.Vulkan
             };
 
             return SubmitToQueueTracked(
-                graphicsQueue,
+                _deviceContext.GraphicsQueue,
                 ref submit,
                 default,
                 caller: nameof(SubmitAcquireSemaphoreBridge));

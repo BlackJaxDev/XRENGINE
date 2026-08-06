@@ -4,10 +4,10 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private readonly object _forwardLightingBindingSnapshotCacheSync = new();
-    private readonly Dictionary<ForwardLightingBindingSnapshotCacheKey, ComputeDispatchSnapshot>
-        _forwardLightingBindingSnapshots = [];
-    private ulong _forwardLightingBindingSnapshotFrame;
+    private object _forwardLightingBindingSnapshotCacheSync => _commandRuntime.CommandBuffers.ForwardLightingGate;
+    private Dictionary<ForwardLightingBindingSnapshotCacheKey, ComputeDispatchSnapshot>
+        _forwardLightingBindingSnapshots => _commandRuntime.CommandBuffers.ForwardLightingSnapshots;
+    private ref ulong _forwardLightingBindingSnapshotFrame => ref _commandRuntime.CommandBuffers.ForwardLightingSnapshotFrame;
 
     /// <summary>
     /// Captures the expensive world/view lighting bindings once per exact pass

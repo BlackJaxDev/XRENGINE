@@ -29,27 +29,27 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        if (_imguiResources.OverlayCommandBuffers is null ||
-            imageIndex >= _imguiResources.OverlayCommandBuffers.Length ||
-            swapChainImages is null ||
-            imageIndex >= swapChainImages.Length)
+        if (_outputRuntime._imguiResources.OverlayCommandBuffers is null ||
+            imageIndex >= _outputRuntime._imguiResources.OverlayCommandBuffers.Length ||
+            OutputRuntime.Desktop.Images is null ||
+            imageIndex >= OutputRuntime.Desktop.Images.Length)
         {
             return false;
         }
 
         bool useDynamicRendering = UseDynamicRenderingRenderTargets &&
-            swapChainImageViews is not null &&
-            imageIndex < swapChainImageViews.Length;
+            OutputRuntime.Desktop.ImageViews is not null &&
+            imageIndex < OutputRuntime.Desktop.ImageViews.Length;
 
         if (!useDynamicRendering &&
-            (swapChainFramebuffers is null ||
-             imageIndex >= swapChainFramebuffers.Length ||
-             _renderPassLoad.Handle == 0))
+            (OutputRuntime.Desktop.Framebuffers is null ||
+             imageIndex >= OutputRuntime.Desktop.Framebuffers.Length ||
+             ResourceRuntime.SwapchainLoadRenderPass.Handle == 0))
         {
             return false;
         }
 
-        CommandBuffer commandBuffer = _imguiResources.OverlayCommandBuffers[imageIndex];
+        CommandBuffer commandBuffer = _outputRuntime._imguiResources.OverlayCommandBuffers[imageIndex];
         return commandBuffer.Handle != 0;
     }
 
@@ -66,21 +66,21 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        if (!_imguiDrawData.TryConsume(out drawData) || drawData is null)
+        if (!_outputRuntime._imguiDrawData.TryConsume(out drawData) || drawData is null)
             return false;
 
         if (!HasRenderableImGuiSnapshot(drawData))
         {
-            _imguiDrawData.Recycle(drawData);
+            _outputRuntime._imguiDrawData.Recycle(drawData);
             drawData = null;
             return false;
         }
 
         bool snapshotMatchesSwapchain =
-            drawData.FramebufferWidth == swapChainExtent.Width &&
-            drawData.FramebufferHeight == swapChainExtent.Height;
+            drawData.FramebufferWidth == OutputRuntime.Desktop.Extent.Width &&
+            drawData.FramebufferHeight == OutputRuntime.Desktop.Extent.Height;
         bool canMapLiveSnapshotToScaledSwapchain =
-            _swapchainPresentScalingActive &&
+            OutputRuntime.Desktop.PresentScalingActive &&
             XRWindow.IsInteractiveResizeInProgress;
         if (!snapshotMatchesSwapchain && !canMapLiveSnapshotToScaledSwapchain)
         {
@@ -92,9 +92,9 @@ public unsafe partial class VulkanRenderer
                 "[Vulkan] Skipping stale ImGui overlay snapshot. Snapshot={0}x{1} Swapchain={2}x{3}.",
                 drawData.FramebufferWidth,
                 drawData.FramebufferHeight,
-                swapChainExtent.Width,
-                swapChainExtent.Height);
-            _imguiDrawData.Recycle(drawData);
+                OutputRuntime.Desktop.Extent.Width,
+                OutputRuntime.Desktop.Extent.Height);
+            _outputRuntime._imguiDrawData.Recycle(drawData);
             drawData = null;
             return false;
         }
@@ -107,8 +107,8 @@ public unsafe partial class VulkanRenderer
                 "[Vulkan] Mapping live ImGui snapshot to scaled-present swapchain. Snapshot={0}x{1} Swapchain={2}x{3}.",
                 drawData.FramebufferWidth,
                 drawData.FramebufferHeight,
-                swapChainExtent.Width,
-                swapChainExtent.Height);
+                OutputRuntime.Desktop.Extent.Width,
+                OutputRuntime.Desktop.Extent.Height);
         }
 
         return true;
@@ -133,10 +133,10 @@ public unsafe partial class VulkanRenderer
         EnsureImGuiPipeline();
 
         bool useDynamicRendering = UseDynamicRenderingRenderTargets &&
-            swapChainImageViews is not null &&
-            imageIndex < swapChainImageViews.Length;
+            OutputRuntime.Desktop.ImageViews is not null &&
+            imageIndex < OutputRuntime.Desktop.ImageViews.Length;
 
-        CommandBuffer commandBuffer = _imguiResources.OverlayCommandBuffers![imageIndex];
+        CommandBuffer commandBuffer = _outputRuntime._imguiResources.OverlayCommandBuffers![imageIndex];
 
         ResetVulkanCommandBufferTracked(commandBuffer);
 
@@ -168,7 +168,7 @@ public unsafe partial class VulkanRenderer
             RenderingAttachmentInfo colorAttachment = new()
             {
                 SType = StructureType.RenderingAttachmentInfo,
-                ImageView = swapChainImageViews![imageIndex],
+                ImageView = OutputRuntime.Desktop.ImageViews![imageIndex],
                 ImageLayout = ImageLayout.ColorAttachmentOptimal,
                 LoadOp = AttachmentLoadOp.Load,
                 StoreOp = AttachmentStoreOp.Store,
@@ -180,7 +180,7 @@ public unsafe partial class VulkanRenderer
                 RenderArea = new Rect2D
                 {
                     Offset = new Offset2D(0, 0),
-                    Extent = swapChainExtent
+                    Extent = OutputRuntime.Desktop.Extent
                 },
                 LayerCount = 1,
                 ColorAttachmentCount = 1,
@@ -202,12 +202,12 @@ public unsafe partial class VulkanRenderer
             RenderPassBeginInfo renderPassInfo = new()
             {
                 SType = StructureType.RenderPassBeginInfo,
-                RenderPass = _renderPassLoad,
-                Framebuffer = swapChainFramebuffers![imageIndex],
+                RenderPass = ResourceRuntime.SwapchainLoadRenderPass,
+                Framebuffer = OutputRuntime.Desktop.Framebuffers![imageIndex],
                 RenderArea = new Rect2D
                 {
                     Offset = new Offset2D(0, 0),
-                    Extent = swapChainExtent
+                    Extent = OutputRuntime.Desktop.Extent
                 }
             };
 
@@ -274,7 +274,7 @@ public unsafe partial class VulkanRenderer
             RenderArea = new Rect2D
             {
                 Offset = new Offset2D(0, 0),
-                Extent = swapChainExtent,
+                Extent = OutputRuntime.Desktop.Extent,
             },
             LayerCount = 1,
             ColorAttachmentCount = 1,
@@ -313,7 +313,7 @@ public unsafe partial class VulkanRenderer
             {
                 VulkanImGuiCommandSnapshot drawCommand = commandList.Commands[commandIndex];
                 if (drawCommand.HasUserCallback || drawCommand.TextureId <= 1 ||
-                    !_imguiTextureRegistry.TexturesById.TryGetValue(drawCommand.TextureId, out XRTexture? texture) ||
+                    !_outputRuntime._imguiTextureRegistry.TexturesById.TryGetValue(drawCommand.TextureId, out XRTexture? texture) ||
                     GetOrCreateAPIRenderObject(texture, generateNow: false) is not IVkImageDescriptorSource source)
                 {
                     continue;
@@ -383,7 +383,7 @@ public unsafe partial class VulkanRenderer
         ImageLayout oldLayout,
         ImageLayout newLayout)
     {
-        if (swapChainImages is null || imageIndex >= swapChainImages.Length)
+        if (OutputRuntime.Desktop.Images is null || imageIndex >= OutputRuntime.Desktop.Images.Length)
             return;
 
         ImageMemoryBarrier barrier = new()
@@ -399,7 +399,7 @@ public unsafe partial class VulkanRenderer
             NewLayout = newLayout,
             SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
             DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-            Image = swapChainImages[imageIndex],
+            Image = OutputRuntime.Desktop.Images[imageIndex],
             SubresourceRange = new ImageSubresourceRange
             {
                 AspectMask = ImageAspectFlags.ColorBit,
@@ -474,8 +474,8 @@ public unsafe partial class VulkanRenderer
         ulong vertexBytes = (ulong)(drawData.TotalVertexCount * sizeof(ImDrawVert));
         ulong indexBytes = (ulong)(drawData.TotalIndexCount * sizeof(ushort));
         int bufferSlot = EnsureImGuiDrawBuffers(imageIndex, vertexBytes, indexBytes);
-        ref VulkanImGuiDrawBufferSet buffers = ref _imguiResources.DrawBuffers[bufferSlot];
-        RenderImGuiSnapshot(commandBuffer, drawData, swapChainExtent, ref buffers);
+        ref VulkanImGuiDrawBufferSet buffers = ref _outputRuntime._imguiResources.DrawBuffers[bufferSlot];
+        RenderImGuiSnapshot(commandBuffer, drawData, OutputRuntime.Desktop.Extent, ref buffers);
     }
 
     private void RenderImGuiViewportSnapshot(
@@ -528,7 +528,7 @@ public unsafe partial class VulkanRenderer
             UnmapBufferMemory(buffers.VertexBuffer, buffers.VertexBufferMemory);
         }
 
-        BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, _imguiResources.Pipeline);
+        BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, _outputRuntime._imguiResources.Pipeline);
 
         DescriptorSet boundDescriptorSet = default;
         bool hasBoundDescriptorSet = false;
@@ -553,7 +553,7 @@ public unsafe partial class VulkanRenderer
                 -1.0f - clipOff.Y * (2.0f / displaySize.Y))
         };
 
-        PushConstantsTracked(commandBuffer, _imguiResources.PipelineLayout, ShaderStageFlags.VertexBit, 0, pushConstants);
+        PushConstantsTracked(commandBuffer, _outputRuntime._imguiResources.PipelineLayout, ShaderStageFlags.VertexBit, 0, pushConstants);
 
         uint fbWidth = rasterExtent.Width;
         uint fbHeight = rasterExtent.Height;
@@ -613,7 +613,7 @@ public unsafe partial class VulkanRenderer
                         BindDescriptorSetTracked(
                             commandBuffer,
                             PipelineBindPoint.Graphics,
-                            _imguiResources.PipelineLayout,
+                            _outputRuntime._imguiResources.PipelineLayout,
                             0,
                             setToBind);
                         boundDescriptorSet = drawDescriptorSet;
@@ -668,7 +668,7 @@ public unsafe partial class VulkanRenderer
         };
 
     private bool ShouldEmulateOpenGlImGuiSrgbPassthrough()
-        => IsSrgbSwapchainFormat(swapChainImageFormat) || IsLinearSrgbSwapchainColorSpace(swapChainImageColorSpace);
+        => IsSrgbSwapchainFormat(OutputRuntime.Desktop.ImageFormat) || IsLinearSrgbSwapchainColorSpace(OutputRuntime.Desktop.ImageColorSpace);
 
     private static bool IsSrgbSwapchainFormat(Format format)
         => format is Format.B8G8R8A8Srgb or Format.R8G8B8A8Srgb;

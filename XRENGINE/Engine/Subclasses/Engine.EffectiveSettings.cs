@@ -259,12 +259,6 @@ namespace XREngine
             }
 
             /// <summary>
-            /// Gets the active GPU culling data layout mode.
-            /// </summary>
-            public static EGpuCullingDataLayout GpuCullingDataLayout
-                => RuntimeEngine.Rendering.Settings.GpuCullingDataLayout;
-
-            /// <summary>
             /// Gets the active occlusion culling mode for GPU indirect rendering.
             /// </summary>
             public static EOcclusionCullingMode GpuOcclusionCullingMode

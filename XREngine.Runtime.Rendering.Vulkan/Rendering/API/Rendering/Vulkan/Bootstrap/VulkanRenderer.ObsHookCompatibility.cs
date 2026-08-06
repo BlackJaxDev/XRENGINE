@@ -11,13 +11,11 @@ public unsafe partial class VulkanRenderer
     private const string VulkanLoaderLayersDisableEnvVar = XREngineEnvironmentVariables.VulkanLoaderLayersDisable;
     private const string ObsRequiredDeviceExtension = "VK_KHR_external_memory_win32";
 
-    private EVulkanObsHookPolicy _obsHookPolicy = EVulkanObsHookPolicy.Auto;
-    private bool _obsHookLayerAvailable;
-    private bool _obsHookDisabledForProcess;
-    private bool _obsHookDisabledByLoader;
-    private bool _obsHookDeviceCaptureReady;
-    private string? _obsHookDeviceCaptureFailure;
-    private string? _obsHookLayerManifestPath;
+    private ref EVulkanObsHookPolicy _obsHookPolicy => ref OutputRuntime.ObsHook.Policy;
+    private ref bool _obsHookLayerAvailable => ref OutputRuntime.ObsHook.LayerAvailable;
+    private ref bool _obsHookDisabledForProcess => ref OutputRuntime.ObsHook.DisabledForProcess;
+    private ref bool _obsHookDisabledByLoader => ref OutputRuntime.ObsHook.DisabledByLoader;
+    private ref string? _obsHookLayerManifestPath => ref OutputRuntime.ObsHook.LayerManifestPath;
 
     private bool ObsHookLayerLikelyEnabled
         => _obsHookLayerAvailable && !_obsHookDisabledForProcess && !_obsHookDisabledByLoader;
@@ -103,13 +101,13 @@ public unsafe partial class VulkanRenderer
                 out sharedTextureImportResult);
         }
 
-        _obsHookDeviceCaptureReady =
+        OutputRuntime.Capture.ObsHookDeviceCaptureReady =
             ObsHookLayerLikelyEnabled &&
             externalMemoryWin32Available &&
             externalMemoryWin32Enabled &&
             sharedTextureImportSupported;
 
-        _obsHookDeviceCaptureFailure = _obsHookDeviceCaptureReady
+        OutputRuntime.Capture.ObsHookDeviceCaptureFailure = OutputRuntime.Capture.ObsHookDeviceCaptureReady
             ? null
             : BuildObsHookDeviceCaptureFailure(
                 externalMemoryWin32Available,
@@ -118,13 +116,13 @@ public unsafe partial class VulkanRenderer
                 sharedTextureImportResult,
                 sharedTextureImportFeatures);
 
-        if (_obsHookPolicy == EVulkanObsHookPolicy.Require && !_obsHookDeviceCaptureReady)
+        if (_obsHookPolicy == EVulkanObsHookPolicy.Require && !OutputRuntime.Capture.ObsHookDeviceCaptureReady)
         {
             throw new InvalidOperationException(
-                $"{ObsHookPolicyEnvVar}=Require was requested, but Vulkan OBS capture is not ready: {_obsHookDeviceCaptureFailure}");
+                $"{ObsHookPolicyEnvVar}=Require was requested, but Vulkan OBS capture is not ready: {OutputRuntime.Capture.ObsHookDeviceCaptureFailure}");
         }
 
-        if (_obsHookDeviceCaptureReady)
+        if (OutputRuntime.Capture.ObsHookDeviceCaptureReady)
         {
             Debug.Vulkan(
                 "[Vulkan][OBS] Capture-ready device path confirmed: {0}=enabled, D3D11 texture KMT import result={1}, features={2}.",
@@ -136,7 +134,7 @@ public unsafe partial class VulkanRenderer
         {
             Debug.VulkanWarning(
                 "[Vulkan][OBS] Capture device path is not ready: {0}",
-                _obsHookDeviceCaptureFailure ?? "unknown failure");
+                OutputRuntime.Capture.ObsHookDeviceCaptureFailure ?? "unknown failure");
         }
     }
 
@@ -177,7 +175,7 @@ public unsafe partial class VulkanRenderer
         };
 
         result = Api!.GetPhysicalDeviceImageFormatProperties2(
-            _physicalDevice,
+            _deviceContext.PhysicalDevice,
             &formatInfo,
             &imageFormatProperties);
 

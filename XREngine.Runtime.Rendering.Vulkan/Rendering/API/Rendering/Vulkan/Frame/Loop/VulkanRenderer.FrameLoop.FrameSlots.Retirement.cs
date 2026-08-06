@@ -9,12 +9,12 @@ namespace XREngine.Rendering.Vulkan
             bool interactiveResize,
             string reason)
         {
-            if (_frameSlotTimelineValues is not null &&
+            if (_commandRuntime.Synchronization._frameSlotTimelineValues is not null &&
                 frameSlot >= 0 &&
-                frameSlot < _frameSlotTimelineValues.Length)
+                frameSlot < _commandRuntime.Synchronization._frameSlotTimelineValues.Length)
             {
-                ulong slotWaitValue = _frameSlotTimelineValues[frameSlot];
-                if (interactiveResize && !HasTimelineValueCompleted(_graphicsTimelineSemaphore, slotWaitValue))
+                ulong slotWaitValue = _commandRuntime.Synchronization._frameSlotTimelineValues[frameSlot];
+                if (interactiveResize && !HasTimelineValueCompleted(_commandRuntime.Synchronization._graphicsTimelineSemaphore, slotWaitValue))
                 {
                     Debug.VulkanEvery(
                         $"Vulkan.Frame.{GetHashCode()}.InteractiveResizeBusySlot",
@@ -26,7 +26,7 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
-                WaitForTimelineValue(_graphicsTimelineSemaphore, slotWaitValue);
+                WaitForTimelineValue(_commandRuntime.Synchronization._graphicsTimelineSemaphore, slotWaitValue);
                 SampleFrameTimingQueries(frameSlot);
             }
 

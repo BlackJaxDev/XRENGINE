@@ -146,7 +146,7 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
             .Replace("\r\n", "\n");
         string dirtyReasonSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferDirtyReasons.cs")
             .Replace("\r\n", "\n");
-        string loweringSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs")
+        string loweringSource = SourceContractWorkspace.ReadVulkanSourcesContaining("private void InvalidateCommandChainScheduleForResourceChange(string reason)")
             .Replace("\r\n", "\n");
 
         directionalSource.ShouldContain("GetSampleableCascadedShadowReceiverTexture");

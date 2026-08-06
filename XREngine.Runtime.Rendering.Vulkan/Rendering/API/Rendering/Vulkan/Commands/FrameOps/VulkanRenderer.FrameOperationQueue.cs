@@ -684,7 +684,7 @@ public unsafe partial class VulkanRenderer
         if (op is TextureUploadFrameOp)
             return op;
 
-        int validatedPassIndex = EnsureValidPassIndex(op.PassIndex, op.GetType().Name, op.Context.PassMetadata);
+        int validatedPassIndex = EnsureValidPassIndex(op.PassIndex, GetFrameOpDiagnosticName(op), op.Context.PassMetadata);
         if (validatedPassIndex == op.PassIndex)
             return op;
 
@@ -893,7 +893,7 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private static ulong ComputeFrameOpsSignature(FrameOp[] ops)
+    private static ulong ComputeFrameOpsSignature(FrameOperationSequence ops)
     {
         FrameOpSignatureHasher hash = new();
         hash.Add(ops.Length);
@@ -1184,9 +1184,9 @@ public unsafe partial class VulkanRenderer
         }
 
         hash.Add(1);
-        hash.Add(HashSamplerUnitBindings(snapshot.Samplers, snapshot.SamplerNamesByUnit, pipeline, includeMutableFrameSourceDescriptors));
-        hash.Add(HashSamplerNameBindings(snapshot.SamplersByName, pipeline, includeMutableFrameSourceDescriptors));
-        hash.Add(HashImageBindings(snapshot.Images));
+        hash.Add(HashSamplerUnitBindings(snapshot.Samplers, snapshot.SamplerNamesByUnit, snapshot.DescriptorSignatures, pipeline, includeMutableFrameSourceDescriptors));
+        hash.Add(HashSamplerNameBindings(snapshot.SamplersByName, snapshot.DescriptorSignatures, pipeline, includeMutableFrameSourceDescriptors));
+        hash.Add(HashImageBindings(snapshot.Images, snapshot.DescriptorSignatures));
         hash.Add(HashBufferBindings(snapshot.Buffers));
     }
 
@@ -1321,6 +1321,7 @@ public unsafe partial class VulkanRenderer
     internal static ulong HashSamplerUnitBindings(
         Dictionary<uint, XRTexture> samplers,
         Dictionary<uint, string> samplerNamesByUnit,
+        VulkanTextureDescriptorSignaturePlan descriptorSignatures,
         XRRenderPipelineInstance? pipeline = null,
         bool includeMutableFrameSourceDescriptors = false)
     {
@@ -1335,7 +1336,7 @@ public unsafe partial class VulkanRenderer
             if (!includeMutableFrameSourceDescriptors && mutableFrameSource)
                 AddFrameSourceTextureDescriptorSignature(ref item, pair.Value);
             else
-                AddTextureDescriptorSignature(ref item, pair.Value);
+                descriptorSignatures.AddSignature(ref item, pair.Value);
             AddUnorderedItemHash(ref xor, ref sum, item.ToHash());
         }
 
@@ -1344,6 +1345,7 @@ public unsafe partial class VulkanRenderer
 
     internal static ulong HashSamplerNameBindings(
         Dictionary<string, XRTexture> samplers,
+        VulkanTextureDescriptorSignaturePlan descriptorSignatures,
         XRRenderPipelineInstance? pipeline = null,
         bool includeMutableFrameSourceDescriptors = false)
     {
@@ -1356,14 +1358,16 @@ public unsafe partial class VulkanRenderer
             if (!includeMutableFrameSourceDescriptors && IsMutableFrameSourceSamplerName(pair.Key, pipeline))
                 AddFrameSourceTextureDescriptorSignature(ref item, pair.Value);
             else
-                AddTextureDescriptorSignature(ref item, pair.Value);
+                descriptorSignatures.AddSignature(ref item, pair.Value);
             AddUnorderedItemHash(ref xor, ref sum, item.ToHash());
         }
 
         return FinishUnorderedHash(samplers.Count, xor, sum);
     }
 
-    internal static ulong HashImageBindings(Dictionary<uint, ProgramImageBinding> images)
+    internal static ulong HashImageBindings(
+        Dictionary<uint, ProgramImageBinding> images,
+        VulkanTextureDescriptorSignaturePlan descriptorSignatures)
     {
         ulong xor = 0;
         ulong sum = 0;
@@ -1372,7 +1376,7 @@ public unsafe partial class VulkanRenderer
             ProgramImageBinding binding = pair.Value;
             FrameOpSignatureHasher item = new();
             item.Add(pair.Key);
-            AddTextureDescriptorSignature(ref item, binding.Texture);
+            descriptorSignatures.AddSignature(ref item, binding.Texture);
             item.Add(binding.Level);
             item.Add(binding.Layered);
             item.Add(binding.Layer);
@@ -1384,48 +1388,15 @@ public unsafe partial class VulkanRenderer
         return FinishUnorderedHash(images.Count, xor, sum);
     }
 
-    private static void AddTextureDescriptorSignature(ref FrameOpSignatureHasher hash, XRTexture? texture)
-    {
-        hash.Add(texture?.GetHashCode() ?? 0);
-        if (texture is null)
-        {
-            hash.Add(0UL);
-            return;
-        }
-
-        if (AbstractRenderer.Current is VulkanRenderer renderer &&
-            renderer.GetOrCreateAPIRenderObject(texture, generateNow: false) is IVkImageDescriptorSource source)
-        {
-            hash.Add(source.IsDescriptorReady);
-            hash.Add(source.DescriptorGeneration);
-            hash.Add(source.DescriptorImage.Handle);
-            hash.Add(source.DescriptorView.Handle);
-            hash.Add(source.DescriptorSampler.Handle);
-            hash.Add((int)source.DescriptorViewType);
-            hash.Add((int)source.DescriptorFormat);
-            hash.Add((int)source.DescriptorAspect);
-            hash.Add((int)source.DescriptorUsage);
-            hash.Add((int)source.DescriptorSamples);
-            hash.Add(source.DescriptorMipLevels);
-            hash.Add(source.DescriptorArrayLayers);
-        }
-        else
-        {
-            hash.Add(0UL);
-        }
-    }
-
     private static void AddFrameSourceTextureDescriptorSignature(ref FrameOpSignatureHasher hash, XRTexture? texture)
     {
         hash.Add(FrameSourceMutableDescriptorSignature);
     }
 
-    private static ulong ComputeTextureDescriptorSignature(XRTexture? texture)
-    {
-        FrameOpSignatureHasher hash = new();
-        AddTextureDescriptorSignature(ref hash, texture);
-        return hash.ToHash();
-    }
+    private static ulong ComputeTextureDescriptorSignature(
+        XRTexture? texture,
+        VulkanTextureDescriptorSignaturePlan descriptorSignatures)
+        => descriptorSignatures.ComputeSignature(texture);
 
     internal static ulong HashBufferBindings(Dictionary<uint, VulkanComputeBufferBinding> buffers)
     {

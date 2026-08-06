@@ -14,32 +14,13 @@ public unsafe partial class VulkanRenderer
     private const int VulkanCommandDiagnosticMarkerCapacity = 512;
     private const int VulkanImageLayoutTransitionCapacity = 128;
 
-    private readonly object _deviceLostTransitionLock = new();
-    private readonly object _vulkanSubmissionDiagnosticsLock = new();
-    private readonly VulkanCrashBreadcrumb[] _vulkanCrashBreadcrumbs = new VulkanCrashBreadcrumb[VulkanCrashBreadcrumbCapacity];
-    private VulkanSubmissionDiagnosticContext _lastVulkanSubmissionDiagnosticContext;
-    private long _vulkanSubmissionSerial;
-    private long _vulkanCrashBreadcrumbSerial;
-    private long _vulkanCommandDiagnosticMarkerSerial;
-    private readonly VulkanCommandDiagnosticMarker[] _vulkanCommandDiagnosticMarkers = new VulkanCommandDiagnosticMarker[VulkanCommandDiagnosticMarkerCapacity];
-    private long _vulkanImageLayoutTransitionSerial;
-    private readonly VulkanImageLayoutTransitionBreadcrumb[] _vulkanImageLayoutTransitions = new VulkanImageLayoutTransitionBreadcrumb[VulkanImageLayoutTransitionCapacity];
-    private long _vulkanDescriptorTableGeneration;
-    private string? _firstFailingVulkanApi;
-    private VulkanDeviceLossRecord? _firstDeviceLossRecord;
-    private readonly object _vulkanDeviceAddressDiagnosticsLock = new();
-    private readonly VulkanDeviceAddressRange[] _vulkanDeviceAddressRanges = new VulkanDeviceAddressRange[VulkanDeviceAddressRangeCapacity];
-    private readonly VulkanDeviceAddressBindingEvent[] _vulkanDeviceAddressBindingEvents = new VulkanDeviceAddressBindingEvent[VulkanDeviceAddressBindingEventCapacity];
-    private long _vulkanDeviceAddressBindingEventSerial;
-    private readonly object _vulkanNvCheckpointMarkerLock = new();
-    private readonly VulkanNvCheckpointMarker[] _vulkanNvCheckpointMarkers = new VulkanNvCheckpointMarker[VulkanNvCheckpointMarkerCapacity];
 
     /// <summary>
     /// Gets the immutable record published by the thread that won the device-loss
     /// transition. Later fallout must not overwrite the original failure evidence.
     /// </summary>
     private VulkanDeviceLossRecord? FirstDeviceLossRecord
-        => Volatile.Read(ref _firstDeviceLossRecord);
+        => Volatile.Read(ref _frameTelemetry._firstDeviceLossRecord);
 
     /// <summary>
     /// Creates a diagnostic context for a swapchain submission.
@@ -74,10 +55,10 @@ public unsafe partial class VulkanRenderer
             SubmissionKind = submissionKind,
             FrameOpKind = "MainViewport",
             OutputTargetName = "Swapchain",
-            OutputWidth = swapChainExtent.Width,
-            OutputHeight = swapChainExtent.Height,
-            InternalWidth = swapChainExtent.Width,
-            InternalHeight = swapChainExtent.Height,
+            OutputWidth = OutputRuntime.Desktop.Extent.Width,
+            OutputHeight = OutputRuntime.Desktop.Extent.Height,
+            InternalWidth = OutputRuntime.Desktop.Extent.Width,
+            InternalHeight = OutputRuntime.Desktop.Extent.Height,
             FrameId = frameNumber,
             FrameSlot = desktopFrameSlot,
             SwapchainImageIndex = imageIndex,
@@ -276,8 +257,8 @@ public unsafe partial class VulkanRenderer
         if (submitInfo.CommandBufferCount > 0 && submitInfo.PCommandBuffers is not null)
             firstCommandBufferHandle = unchecked((ulong)submitInfo.PCommandBuffers[0].Handle);
 
-        uint outputWidth = context.OutputWidth != 0 ? context.OutputWidth : swapChainExtent.Width;
-        uint outputHeight = context.OutputHeight != 0 ? context.OutputHeight : swapChainExtent.Height;
+        uint outputWidth = context.OutputWidth != 0 ? context.OutputWidth : OutputRuntime.Desktop.Extent.Width;
+        uint outputHeight = context.OutputHeight != 0 ? context.OutputHeight : OutputRuntime.Desktop.Extent.Height;
         uint internalWidth = context.InternalWidth != 0 ? context.InternalWidth : outputWidth;
         uint internalHeight = context.InternalHeight != 0 ? context.InternalHeight : outputHeight;
         VulkanCommandDiagnosticMarker commandMarker = SnapshotVulkanCommandDiagnosticMarker(ref submitInfo);
@@ -285,7 +266,7 @@ public unsafe partial class VulkanRenderer
 
         return context with
         {
-            SubmissionSerial = unchecked((ulong)Interlocked.Increment(ref _vulkanSubmissionSerial)),
+            SubmissionSerial = unchecked((ulong)Interlocked.Increment(ref _frameTelemetry._vulkanSubmissionSerial)),
             SubmissionKind = string.IsNullOrWhiteSpace(context.SubmissionKind)
                 ? caller ?? "<unknown>"
                 : context.SubmissionKind,
@@ -318,9 +299,9 @@ public unsafe partial class VulkanRenderer
             LastCommandMarkerKind = commandMarker.OpKind,
             LastCommandMarkerPassIndex = commandMarker.PassIndex,
             LastCommandMarkerBatchIndex = commandMarker.BatchIndex,
-            ImageLayoutTransitionSerial = unchecked((ulong)Math.Max(Volatile.Read(ref _vulkanImageLayoutTransitionSerial), 0L)),
-            DescriptorTableGeneration = unchecked((ulong)Math.Max(Volatile.Read(ref _vulkanDescriptorTableGeneration), 0L)),
-            FirstFailingApi = Volatile.Read(ref _firstFailingVulkanApi),
+            ImageLayoutTransitionSerial = unchecked((ulong)Math.Max(Volatile.Read(ref _frameTelemetry._vulkanImageLayoutTransitionSerial), 0L)),
+            DescriptorTableGeneration = unchecked((ulong)Math.Max(Volatile.Read(ref _frameTelemetry._vulkanDescriptorTableGeneration), 0L)),
+            FirstFailingApi = Volatile.Read(ref _frameTelemetry._firstFailingVulkanApi),
         };
     }
 
@@ -331,11 +312,11 @@ public unsafe partial class VulkanRenderer
     /// <returns>The kind of the Vulkan queue as a string.</returns>
     private string ResolveVulkanQueueKind(Queue queue)
     {
-        if (queue.Handle == graphicsQueue.Handle)
+        if (queue.Handle == _deviceContext.GraphicsQueue.Handle)
             return "Graphics";
-        if (queue.Handle == transferQueue.Handle)
+        if (queue.Handle == _deviceContext.TransferQueue.Handle)
             return "Transfer";
-        if (queue.Handle == presentQueue.Handle)
+        if (queue.Handle == _deviceContext.PresentQueue.Handle)
             return "Present";
         return "Unknown";
     }
@@ -346,12 +327,9 @@ public unsafe partial class VulkanRenderer
     /// <param name="context">The Vulkan submission diagnostic context to record.</param>
     private void RecordLastVulkanSubmissionDiagnosticContext(VulkanSubmissionDiagnosticContext context)
     {
-        lock (_vulkanSubmissionDiagnosticsLock)
-        {
-            _lastVulkanSubmissionDiagnosticContext = context;
-            if (_diagnosticOptions.EnableCrashBreadcrumbs)
-                RecordVulkanCrashBreadcrumb(context);
-        }
+        _deviceContext.RecordSubmissionDiagnostics(context);
+        if (_frameTelemetry._diagnosticOptions.EnableCrashBreadcrumbs)
+            RecordVulkanCrashBreadcrumb(context);
     }
 
     /// <summary>
@@ -359,10 +337,7 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     /// <returns>The last recorded Vulkan submission diagnostic context.</returns>
     private VulkanSubmissionDiagnosticContext SnapshotLastVulkanSubmissionDiagnosticContext()
-    {
-        lock (_vulkanSubmissionDiagnosticsLock)
-            return _lastVulkanSubmissionDiagnosticContext;
-    }
+        => _deviceContext.SnapshotSubmissionDiagnostics();
 
     /// <summary>
     /// Builds a detailed device lost reason string that includes the last Vulkan submission diagnostic context, crash breadcrumbs, image layout transitions, queue operations, validation summary, and fault diagnostics.
@@ -371,6 +346,7 @@ public unsafe partial class VulkanRenderer
     /// <returns>A detailed device lost reason string including diagnostic context and breadcrumbs.</returns>
     private string BuildDeviceLostReasonWithSubmissionContext(string? reason)
     {
+        ImportValidationDeviceAddressBindings();
         string baseReason = string.IsNullOrWhiteSpace(reason) ? "<unknown>" : reason.Trim();
         VulkanSubmissionDiagnosticContext context = SnapshotLastVulkanSubmissionDiagnosticContext();
         StringBuilder builder = new(baseReason);
@@ -412,14 +388,14 @@ public unsafe partial class VulkanRenderer
         if (!string.IsNullOrWhiteSpace(queueOperations))
             builder.Append("; ").Append(queueOperations);
 
-        builder.Append("; DeviceState=").Append(DeviceState)
-            .Append(" FalloutErrors=").Append(Volatile.Read(ref _deviceLossFalloutCount));
+        builder.Append("; _deviceContext.State=").Append(_deviceContext.State)
+            .Append(" FalloutErrors=").Append(_deviceContext.DeviceFaultFacility.DeviceLossFalloutCount);
 
         string validationSummary = DescribeVulkanValidationSummary();
         if (!string.IsNullOrWhiteSpace(validationSummary))
             builder.Append("; ").Append(validationSummary);
 
-        string? firstFailingApi = Volatile.Read(ref _firstFailingVulkanApi);
+        string? firstFailingApi = Volatile.Read(ref _frameTelemetry._firstFailingVulkanApi);
         if (!string.IsNullOrWhiteSpace(firstFailingApi))
             builder.Append("; FirstFailingApi=").Append(firstFailingApi);
 
@@ -440,9 +416,9 @@ public unsafe partial class VulkanRenderer
     /// </remarks>
     private void RecordVulkanCrashBreadcrumb(VulkanSubmissionDiagnosticContext context)
     {
-        long serial = Interlocked.Increment(ref _vulkanCrashBreadcrumbSerial);
+        long serial = Interlocked.Increment(ref _frameTelemetry._vulkanCrashBreadcrumbSerial);
         int index = unchecked((int)((serial - 1) % VulkanCrashBreadcrumbCapacity));
-        _vulkanCrashBreadcrumbs[index] = new()
+        _frameTelemetry._vulkanCrashBreadcrumbs[index] = new()
         {
             Serial = unchecked((ulong)serial),
             SubmissionKind = context.SubmissionKind,
@@ -482,12 +458,12 @@ public unsafe partial class VulkanRenderer
     /// <returns>A string describing the tail of the Vulkan crash breadcrumb trail.</returns>
     private string DescribeVulkanCrashBreadcrumbTail(int maxEntries = 8)
     {
-        if (!_diagnosticOptions.EnableCrashBreadcrumbs)
+        if (!_frameTelemetry._diagnosticOptions.EnableCrashBreadcrumbs)
             return string.Empty;
 
-        lock (_vulkanSubmissionDiagnosticsLock)
+        lock (_frameTelemetry._vulkanSubmissionDiagnosticsLock)
         {
-            long latestSerial = Volatile.Read(ref _vulkanCrashBreadcrumbSerial);
+            long latestSerial = Volatile.Read(ref _frameTelemetry._vulkanCrashBreadcrumbSerial);
             if (latestSerial <= 0)
                 return string.Empty;
 
@@ -499,7 +475,7 @@ public unsafe partial class VulkanRenderer
             for (long serial = latestSerial; serial > 0 && emitted < maxEntries && emitted < count; serial--)
             {
                 int index = unchecked((int)((serial - 1) % VulkanCrashBreadcrumbCapacity));
-                VulkanCrashBreadcrumb breadcrumb = _vulkanCrashBreadcrumbs[index];
+                VulkanCrashBreadcrumb breadcrumb = _frameTelemetry._vulkanCrashBreadcrumbs[index];
                 if (breadcrumb.Serial != unchecked((ulong)serial))
                     continue;
 
@@ -575,12 +551,12 @@ public unsafe partial class VulkanRenderer
     /// <returns>A string describing the most recent Vulkan image layout transitions.</returns>
     private string DescribeVulkanImageLayoutTransitionTail(int maxEntries = 8)
     {
-        if (!_diagnosticOptions.EnableCrashBreadcrumbs)
+        if (!_frameTelemetry._diagnosticOptions.EnableCrashBreadcrumbs)
             return string.Empty;
 
-        lock (_vulkanSubmissionDiagnosticsLock)
+        lock (_frameTelemetry._vulkanSubmissionDiagnosticsLock)
         {
-            long latestSerial = Volatile.Read(ref _vulkanImageLayoutTransitionSerial);
+            long latestSerial = Volatile.Read(ref _frameTelemetry._vulkanImageLayoutTransitionSerial);
             if (latestSerial <= 0)
                 return string.Empty;
 
@@ -590,7 +566,7 @@ public unsafe partial class VulkanRenderer
             for (long serial = latestSerial; serial > 0 && emitted < maxEntries && latestSerial - serial < available; serial--)
             {
                 int index = unchecked((int)((serial - 1) % VulkanImageLayoutTransitionCapacity));
-                VulkanImageLayoutTransitionBreadcrumb transition = _vulkanImageLayoutTransitions[index];
+                VulkanImageLayoutTransitionBreadcrumb transition = _frameTelemetry._vulkanImageLayoutTransitions[index];
                 if (transition.Serial != unchecked((ulong)serial))
                     continue;
 

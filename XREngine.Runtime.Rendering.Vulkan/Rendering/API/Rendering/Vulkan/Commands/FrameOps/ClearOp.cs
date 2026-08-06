@@ -27,7 +27,7 @@ internal sealed record ClearOp(
 
     internal override int RecordPrimary(
         VulkanRenderer renderer,
-        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
+        scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
         if (VulkanRenderer.CommandRecordingDiagnosticsEnabled &&
@@ -134,7 +134,7 @@ internal sealed record ClearOp(
         Rect2D rect,
         in FrameOpContext context)
     {
-        bool frameOwned = TryRentForCurrentFrame(out ClearOp? reusable);
+        bool frameOwned = TryRentForCurrentFrame(context, out ClearOp? reusable);
         if (reusable is null)
         {
             ClearOp created = new(
@@ -148,7 +148,7 @@ internal sealed record ClearOp(
                 stencil,
                 rect,
                 context);
-            return frameOwned ? RetainForCurrentFrame(created) : created;
+            return frameOwned ? RetainForCurrentFrame(created, context) : created;
         }
 
         reusable.Reset(

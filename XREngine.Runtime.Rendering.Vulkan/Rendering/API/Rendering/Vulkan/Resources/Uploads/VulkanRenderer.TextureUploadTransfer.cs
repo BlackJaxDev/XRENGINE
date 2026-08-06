@@ -8,8 +8,8 @@ public unsafe partial class VulkanRenderer
     {
         get
         {
-            QueueFamilyIndices families = FamilyQueueIndices;
-            return transferQueue.Handle != 0
+            QueueFamilyIndices families = _deviceContext.QueueFamilies;
+            return _deviceContext.TransferQueue.Handle != 0
                 && families.GraphicsFamilyIndex.HasValue
                 && families.TransferFamilyIndex.HasValue
                 && families.TransferFamilyIndex.Value != families.GraphicsFamilyIndex.Value;
@@ -36,10 +36,10 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        QueueFamilyIndices families = FamilyQueueIndices;
+        QueueFamilyIndices families = _deviceContext.QueueFamilies;
         uint graphicsFamily = families.GraphicsFamilyIndex ?? 0u;
         uint transferFamily = families.TransferFamilyIndex ?? graphicsFamily;
-        if (transferQueue.Handle == 0 || transferFamily == graphicsFamily)
+        if (_deviceContext.TransferQueue.Handle == 0 || transferFamily == graphicsFamily)
         {
             failureReason = "no dedicated transfer queue family is available";
             return false;
@@ -100,7 +100,7 @@ public unsafe partial class VulkanRenderer
                 SType = StructureType.FenceCreateInfo,
                 Flags = 0,
             };
-            Result fenceResult = Api!.CreateFence(device, ref fenceCreateInfo, null, out fence);
+            Result fenceResult = Api!.CreateFence(_deviceContext.Device, ref fenceCreateInfo, null, out fence);
             if (fenceResult != Result.Success || fence.Handle == 0)
             {
                 failureReason = $"failed to create transfer upload fence ({fenceResult})";
@@ -116,7 +116,7 @@ public unsafe partial class VulkanRenderer
 
             Result submitResult;
             lock (_oneTimeSubmitLock)
-                submitResult = SubmitToQueueTracked(transferQueue, ref submitInfo, fence);
+                submitResult = SubmitToQueueTracked(_deviceContext.TransferQueue, ref submitInfo, fence);
 
             if (submitResult != Result.Success)
             {
@@ -147,7 +147,7 @@ public unsafe partial class VulkanRenderer
         finally
         {
             if (fence.Handle != 0)
-                Api!.DestroyFence(device, fence, null);
+                Api!.DestroyFence(_deviceContext.Device, fence, null);
 
             if (commandBuffer.Handle != 0)
             {
@@ -171,7 +171,7 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        Result result = Api!.GetFenceStatus(device, submitted.Fence);
+        Result result = Api!.GetFenceStatus(_deviceContext.Device, submitted.Fence);
         if (result == Result.Success)
         {
             NotifyVulkanFenceCompleted(submitted.Fence);
@@ -210,7 +210,7 @@ public unsafe partial class VulkanRenderer
         if (submitted.Fence.Handle != 0)
         {
             NotifyVulkanFenceCompleted(submitted.Fence);
-            Api!.DestroyFence(device, submitted.Fence, null);
+            Api!.DestroyFence(_deviceContext.Device, submitted.Fence, null);
         }
         if (commandBuffer.Handle != 0)
             FreeVulkanCommandBufferTracked(submitted.CommandPool, ref commandBuffer, "TextureUpload.TransferComplete");

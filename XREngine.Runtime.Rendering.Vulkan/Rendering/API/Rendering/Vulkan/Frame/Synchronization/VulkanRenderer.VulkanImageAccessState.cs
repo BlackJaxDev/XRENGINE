@@ -2,8 +2,6 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
-{
     /// <summary>
     /// Captures the layout, visibility, queue ownership, and resource-generation
     /// contract for one tracked Vulkan image subresource.
@@ -20,7 +18,7 @@ public unsafe partial class VulkanRenderer
     /// The generation that distinguishes recycled native handles.
     /// </param>
     /// <param name="ExternalOwnership">The current external ownership state.</param>
-    internal readonly record struct VulkanImageAccessState(
+internal readonly record struct VulkanImageAccessState(
         ImageLayout Layout,
         PipelineStageFlags2 StageMask,
         AccessFlags2 AccessMask,
@@ -44,5 +42,4 @@ public unsafe partial class VulkanRenderer
             0,
             0,
             EVulkanExternalImageOwnership.EngineOwned);
-    }
 }

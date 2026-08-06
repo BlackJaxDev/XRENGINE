@@ -33,11 +33,10 @@ public unsafe partial class VulkanRenderer
         XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||
         XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw;
 
-    private readonly VulkanOpenXrBackend _openXrBackend = new();
     private Dictionary<ulong, PrimaryCommandArtifactOwner> OpenXrPrimaryCommandArtifactOwners =>
-        _openXrBackend.GetPrimaryCommandArtifactOwners<PrimaryCommandArtifactOwner>();
+        OutputRuntime.OpenXrBackend.GetPrimaryCommandArtifactOwners<PrimaryCommandArtifactOwner>();
     private Dictionary<VulkanOpenXrViewResourcePlannerContextKey, ResourcePlannerRuntimeState> OpenXrResourcePlannerStates =>
-        _openXrBackend.GetResourcePlannerStates<VulkanOpenXrViewResourcePlannerContextKey, ResourcePlannerRuntimeState>();
+        OutputRuntime.OpenXrBackend.GetResourcePlannerStates<VulkanOpenXrViewResourcePlannerContextKey, ResourcePlannerRuntimeState>();
 
     internal static bool IsOpenXrStrictSpsFaultBoundary(
         EOpenXrStrictSpsFaultInjectionStage requested,
@@ -50,22 +49,22 @@ public unsafe partial class VulkanRenderer
 
     private void ReleaseCurrentThreadOpenXrCaches()
     {
-        _openXrBackend.CurrentThreadExecutionState.Reset();
+        OutputRuntime.OpenXrBackend.CurrentThreadExecutionState.Reset();
     }
 
     public override bool IsRenderingExternalSwapchainTarget => IsThreadOpenXrExternalSwapchainTarget;
     internal bool IsPrewarmingOpenXrExternalSwapchainTarget =>
         IsThreadOpenXrExternalSwapchainTarget &&
-        Volatile.Read(ref _openXrBackend.ExternalSwapchainPrewarmDepth) > 0;
+        Volatile.Read(ref OutputRuntime.OpenXrBackend.ExternalSwapchainPrewarmDepth) > 0;
     public override bool AllowSynchronousResourceUploads
         => !IsThreadSynchronousResourceUploadBlocked &&
-           Volatile.Read(ref _openXrBackend.SynchronousResourceUploadBlockDepth) == 0;
+           Volatile.Read(ref OutputRuntime.OpenXrBackend.SynchronousResourceUploadBlockDepth) == 0;
 
     private bool IsThreadOpenXrExternalSwapchainTarget =>
-        _openXrBackend.CurrentThreadExecutionState.ExternalSwapchainDepth > 0;
+        OutputRuntime.OpenXrBackend.CurrentThreadExecutionState.ExternalSwapchainDepth > 0;
 
     private bool IsThreadSynchronousResourceUploadBlocked =>
-        _openXrBackend.CurrentThreadExecutionState.SynchronousUploadBlockDepth > 0;
+        OutputRuntime.OpenXrBackend.CurrentThreadExecutionState.SynchronousUploadBlockDepth > 0;
 
     internal IDisposable BlockSynchronousResourceUploads(string reason)
     {
@@ -81,8 +80,8 @@ public unsafe partial class VulkanRenderer
                 "[VulkanDescriptor] syncUploads=blocked reason={0} depth={1}",
                 reason,
                 Math.Max(
-                    _openXrBackend.CurrentThreadExecutionState.SynchronousUploadBlockDepth,
-                    Volatile.Read(ref _openXrBackend.SynchronousResourceUploadBlockDepth)));
+                    OutputRuntime.OpenXrBackend.CurrentThreadExecutionState.SynchronousUploadBlockDepth,
+                    Volatile.Read(ref OutputRuntime.OpenXrBackend.SynchronousResourceUploadBlockDepth)));
     }
 
     private void ReserveOpenXrFrameDataSlotsIfRequired(string reason)
@@ -90,7 +89,7 @@ public unsafe partial class VulkanRenderer
         if (!ShouldReserveOpenXrFrameDataSlots())
             return;
 
-        int frameDataSlotCount = ResolveOpenXrFrameDataSlotCount(swapChainImages?.Length ?? 0);
+        int frameDataSlotCount = ResolveOpenXrFrameDataSlotCount(OutputRuntime.Desktop.Images?.Length ?? 0);
         EnsureOpenXrFrameDataSlotCapacity(frameDataSlotCount);
         bool grew = EnsureDescriptorFrameSlotFrameCountFloor(frameDataSlotCount);
         if (grew || OpenXrVulkanTraceEnabled)
@@ -98,7 +97,7 @@ public unsafe partial class VulkanRenderer
             Debug.Vulkan(
                 "[OpenXR] Reserved Vulkan frame-data slots for OpenXR. Reason={0} desktopSwapchainImages={1} frameDataSlots={2} descriptorFrameSlots={3}",
                 reason,
-                swapChainImages?.Length ?? 0,
+                OutputRuntime.Desktop.Images?.Length ?? 0,
                 frameDataSlotCount,
                 DescriptorFrameSlotFrameCount);
         }
@@ -126,7 +125,7 @@ public unsafe partial class VulkanRenderer
 
     internal void MarkOpenXrPrimaryCommandArtifactOwnersDirty()
     {
-        lock (_openXrBackend.PrimaryCommandArtifactOwnersLock)
+        lock (OutputRuntime.OpenXrBackend.PrimaryCommandArtifactOwnersLock)
         {
             foreach (PrimaryCommandArtifactOwner owner in OpenXrPrimaryCommandArtifactOwners.Values)
                 owner.Dirty = true;
@@ -140,7 +139,7 @@ public unsafe partial class VulkanRenderer
         if (!recorded.OwnedByOpenXrPrimaryCache || recorded.CommandBuffer.Handle == 0)
             return;
 
-        lock (_openXrBackend.PrimaryCommandArtifactOwnersLock)
+        lock (OutputRuntime.OpenXrBackend.PrimaryCommandArtifactOwnersLock)
         {
             foreach (PrimaryCommandArtifactOwner owner in OpenXrPrimaryCommandArtifactOwners.Values)
             {
@@ -157,7 +156,7 @@ public unsafe partial class VulkanRenderer
     public override bool TryGetExternalSwapchainTargetRegion(out BoundingRectangle region)
     {
         VulkanOpenXrThreadExecutionState executionState =
-            _openXrBackend.CurrentThreadExecutionState;
+            OutputRuntime.OpenXrBackend.CurrentThreadExecutionState;
         if (IsThreadOpenXrExternalSwapchainTarget &&
             executionState.FrameContext.TargetRegion.Width > 0 &&
             executionState.FrameContext.TargetRegion.Height > 0)
@@ -173,7 +172,7 @@ public unsafe partial class VulkanRenderer
     private bool TryGetExternalSwapchainTargetIdentity(out int targetIdentity, out string? targetName)
     {
         VulkanOpenXrThreadExecutionState executionState =
-            _openXrBackend.CurrentThreadExecutionState;
+            OutputRuntime.OpenXrBackend.CurrentThreadExecutionState;
         if (IsThreadOpenXrExternalSwapchainTarget &&
             executionState.FrameContext.TargetIdentity != 0)
         {
@@ -221,7 +220,7 @@ public unsafe partial class VulkanRenderer
     }
 
     internal VulkanOpenXrDiagnosticsSnapshot CaptureOpenXrDiagnostics()
-        => _openXrBackend.CaptureDiagnostics<
+        => OutputRuntime.OpenXrBackend.CaptureDiagnostics<
             PrimaryCommandArtifactOwner,
             VulkanOpenXrViewResourcePlannerContextKey,
             ResourcePlannerRuntimeState>();

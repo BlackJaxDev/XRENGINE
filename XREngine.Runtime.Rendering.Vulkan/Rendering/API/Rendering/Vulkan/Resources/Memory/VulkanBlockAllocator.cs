@@ -16,7 +16,7 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed unsafe class VulkanBlockAllocator : IVulkanMemoryAllocator
 {
-    private readonly VulkanRenderer _renderer;
+    private readonly VulkanDeviceContext _deviceContext;
     private readonly ulong _defaultBlockSize;
 
     /// <summary>
@@ -37,9 +37,9 @@ internal sealed unsafe class VulkanBlockAllocator : IVulkanMemoryAllocator
     private long _totalAllocatedBytes;
     private int _nextBlockId;
 
-    public VulkanBlockAllocator(VulkanRenderer renderer, ulong defaultBlockSizeMB = 64)
+    public VulkanBlockAllocator(VulkanDeviceContext deviceContext, ulong defaultBlockSizeMB = 64)
     {
-        _renderer = renderer;
+        _deviceContext = deviceContext;
         _defaultBlockSize = defaultBlockSizeMB * 1024UL * 1024UL;
         _dedicatedThreshold = _defaultBlockSize / 4;
     }
@@ -93,7 +93,7 @@ internal sealed unsafe class VulkanBlockAllocator : IVulkanMemoryAllocator
     {
         allocation = VulkanMemoryAllocation.Null;
         result = Result.Success;
-        uint memoryTypeIndex = _renderer.ResolveMemoryType(memReqs.MemoryTypeBits, requiredProperties);
+        uint memoryTypeIndex = ResolveMemoryType(api, memReqs.MemoryTypeBits, requiredProperties);
         ulong alignment = Math.Max(memReqs.Alignment, 1UL);
         ulong size = memReqs.Size;
 
@@ -153,6 +153,31 @@ internal sealed unsafe class VulkanBlockAllocator : IVulkanMemoryAllocator
             // Should be unreachable — we just allocated an empty block.
             return false;
         }
+    }
+
+    private uint ResolveMemoryType(Vk api, uint typeFilter, MemoryPropertyFlags properties)
+    {
+        if (_deviceContext.TryFindMemoryType(api, typeFilter, properties, out uint exactIndex))
+            return exactIndex;
+
+        bool prefersReadbackFallback =
+            (properties & (MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCachedBit)) ==
+            (MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCachedBit);
+        if (prefersReadbackFallback &&
+            _deviceContext.TryFindMemoryType(
+                api,
+                typeFilter,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+                out uint coherentIndex))
+        {
+            Debug.VulkanWarningEvery(
+                "Vulkan.ReadbackMemoryTypeFallback",
+                TimeSpan.FromSeconds(10),
+                "[Vulkan] Host-cached readback memory unavailable; falling back to host-coherent staging memory.");
+            return coherentIndex;
+        }
+
+        return _deviceContext.FindMemoryType(api, typeFilter, properties);
     }
 
     private bool TryDedicatedAllocation(

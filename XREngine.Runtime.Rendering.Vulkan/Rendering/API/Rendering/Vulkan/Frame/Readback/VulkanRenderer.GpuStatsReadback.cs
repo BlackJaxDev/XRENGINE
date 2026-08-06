@@ -14,10 +14,6 @@ public unsafe partial class VulkanRenderer
     private const int GpuRenderStatsReadbackRingSize = 32;
     private const uint GpuRenderStatsReadbackInlineUIntCapacity = 64u;
 
-    private readonly GpuRenderStatsReadbackSlot?[] _gpuRenderStatsReadbackSlots =
-        new GpuRenderStatsReadbackSlot?[GpuRenderStatsReadbackRingSize];
-    private readonly Dictionary<string, ulong> _gpuRenderStatsTraceHashes = [];
-    private int _gpuRenderStatsReadbackCursor;
 
     public override void PollGpuRenderStatsReadbacks()
     {
@@ -30,9 +26,9 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        for (int i = 0; i < _gpuRenderStatsReadbackSlots.Length; ++i)
+        for (int i = 0; i < _frameTelemetry._gpuRenderStatsReadbackSlots.Length; ++i)
         {
-            GpuRenderStatsReadbackSlot? slot = _gpuRenderStatsReadbackSlots[i];
+            GpuRenderStatsReadbackSlot? slot = _frameTelemetry._gpuRenderStatsReadbackSlots[i];
             if (slot is not null && slot.Active)
                 TryConsumeGpuRenderStatsReadback(slot);
         }
@@ -116,7 +112,7 @@ public unsafe partial class VulkanRenderer
         if (slot is null || !EnsureGpuRenderStatsReadbackResources(slot, byteCount))
             return false;
 
-        Result resetFenceResult = Api!.ResetFences(device, 1, in slot.Fence);
+        Result resetFenceResult = Api!.ResetFences(_deviceContext.Device, 1, in slot.Fence);
         Result resetCommandResult = ResetVulkanCommandBufferTracked(slot.CommandBuffer);
         if (resetFenceResult != Result.Success || resetCommandResult != Result.Success)
             return false;
@@ -176,7 +172,7 @@ public unsafe partial class VulkanRenderer
 
         Result submitResult;
         lock (_oneTimeSubmitLock)
-            submitResult = SubmitToQueueTracked(graphicsQueue, ref submitInfo, slot.Fence);
+            submitResult = SubmitToQueueTracked(_deviceContext.GraphicsQueue, ref submitInfo, slot.Fence);
 
         if (submitResult != Result.Success)
         {
@@ -201,14 +197,14 @@ public unsafe partial class VulkanRenderer
 
     private GpuRenderStatsReadbackSlot? AcquireGpuRenderStatsReadbackSlot()
     {
-        for (int i = 0; i < _gpuRenderStatsReadbackSlots.Length; ++i)
+        for (int i = 0; i < _frameTelemetry._gpuRenderStatsReadbackSlots.Length; ++i)
         {
-            int index = (_gpuRenderStatsReadbackCursor + i) % _gpuRenderStatsReadbackSlots.Length;
-            GpuRenderStatsReadbackSlot slot = _gpuRenderStatsReadbackSlots[index] ??= new GpuRenderStatsReadbackSlot();
+            int index = (_frameTelemetry._gpuRenderStatsReadbackCursor + i) % _frameTelemetry._gpuRenderStatsReadbackSlots.Length;
+            GpuRenderStatsReadbackSlot slot = _frameTelemetry._gpuRenderStatsReadbackSlots[index] ??= new GpuRenderStatsReadbackSlot();
             if (slot.Active && !TryConsumeGpuRenderStatsReadback(slot))
                 continue;
 
-            _gpuRenderStatsReadbackCursor = (index + 1) % _gpuRenderStatsReadbackSlots.Length;
+            _frameTelemetry._gpuRenderStatsReadbackCursor = (index + 1) % _frameTelemetry._gpuRenderStatsReadbackSlots.Length;
             return slot;
         }
 
@@ -243,7 +239,7 @@ public unsafe partial class VulkanRenderer
                 SType = StructureType.FenceCreateInfo,
                 Flags = FenceCreateFlags.SignaledBit,
             };
-            if (Api!.CreateFence(device, in fenceCreateInfo, null, out slot.Fence) != Result.Success)
+            if (Api!.CreateFence(_deviceContext.Device, in fenceCreateInfo, null, out slot.Fence) != Result.Success)
                 return false;
 
             SetDebugObjectName(ObjectType.Fence, slot.Fence.Handle, "GpuStatsReadback.Fence");
@@ -266,7 +262,7 @@ public unsafe partial class VulkanRenderer
         if (!slot.Active)
             return true;
 
-        Result fenceResult = Api!.GetFenceStatus(device, slot.Fence);
+        Result fenceResult = Api!.GetFenceStatus(_deviceContext.Device, slot.Fence);
         if (fenceResult is Result.NotReady or Result.Timeout)
             return false;
         if (fenceResult != Result.Success)
@@ -401,10 +397,10 @@ public unsafe partial class VulkanRenderer
         }
 
         string key = $"{kind}:{sourceName}:0x{sourceHandle:X}";
-        if (_gpuRenderStatsTraceHashes.TryGetValue(key, out ulong previousHash) && previousHash == hash)
+        if (_frameTelemetry._gpuRenderStatsTraceHashes.TryGetValue(key, out ulong previousHash) && previousHash == hash)
             return;
 
-        _gpuRenderStatsTraceHashes[key] = hash;
+        _frameTelemetry._gpuRenderStatsTraceHashes[key] = hash;
 
         StringBuilder line = new(128 + values.Length * 12);
         line.Append(DateTime.UtcNow.ToString("O"));
@@ -440,14 +436,14 @@ public unsafe partial class VulkanRenderer
 
     private void DisposeGpuRenderStatsReadbacks()
     {
-        for (int i = 0; i < _gpuRenderStatsReadbackSlots.Length; ++i)
+        for (int i = 0; i < _frameTelemetry._gpuRenderStatsReadbackSlots.Length; ++i)
         {
-            GpuRenderStatsReadbackSlot? slot = _gpuRenderStatsReadbackSlots[i];
+            GpuRenderStatsReadbackSlot? slot = _frameTelemetry._gpuRenderStatsReadbackSlots[i];
             if (slot is null)
                 continue;
 
             if (slot.Fence.Handle != 0)
-                Api!.DestroyFence(device, slot.Fence, null);
+                Api!.DestroyFence(_deviceContext.Device, slot.Fence, null);
             if (slot.CommandBuffer.Handle != 0)
             {
                 CommandBuffer commandBuffer = slot.CommandBuffer;
@@ -465,6 +461,6 @@ public unsafe partial class VulkanRenderer
             slot.CapacityBytes = 0;
         }
 
-        _gpuRenderStatsTraceHashes.Clear();
+        _frameTelemetry._gpuRenderStatsTraceHashes.Clear();
     }
 }

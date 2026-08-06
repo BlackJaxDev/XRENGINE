@@ -191,9 +191,6 @@ namespace XREngine.Rendering.Commands
             _resetCountersComputeShader = CreateDeferredComputeProgram("Compute/Indirect/GPURenderResetCounters.comp", "GPURenderResetCounters");
             _expandMeshletsComputeShader = CreateDeferredComputeProgram("Compute/Indirect/GPURenderExpandMeshlets.comp", "GPURenderExpandMeshlets");
             _clearUIntsComputeShader = CreateDeferredComputeProgram("Compute/Indirect/GPURenderClearUInts.comp", "GPURenderClearUInts");
-            _extractSoAComputeShader = CreateDeferredComputeProgram("Compute/Culling/GPURenderExtractSoA.comp", "GPURenderExtractSoA");
-            _soACullingComputeShader = CreateDeferredComputeProgram("Compute/Culling/GPURenderCullingSoA.comp", "GPURenderCullingSoA");
-            //HiZSoACullingComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Culling/GPURenderHiZSoACulling.comp", EShaderType.Compute));
             //_gatherProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Debug/GPURenderGather.comp", EShaderType.Compute));
             _copyCommandsProgram = CreateDeferredComputeProgram("Compute/Indirect/GPURenderCopyCommands.comp", "GPURenderCopyCommands");
             _bvhFrustumCullProgram = CreateDeferredComputeProgram("Scene3D/RenderPipeline/bvh_frustum_cull.comp", "BvhFrustumCull");
@@ -218,8 +215,6 @@ namespace XREngine.Rendering.Commands
                 _resetCountersComputeShader,
                 _expandMeshletsComputeShader,
                 _clearUIntsComputeShader,
-                _extractSoAComputeShader,
-                _soACullingComputeShader,
                 _copyCommandsProgram,
                 _bvhFrustumCullProgram,
                 _hiZInitProgram,
@@ -948,72 +943,6 @@ namespace XREngine.Rendering.Commands
 
         //    Dbg("EnsureSortBuffers complete", "Buffers");
         //}
-
-        private void EnsureSoABuffers(uint capacity)
-        {
-            Dbg($"EnsureSoABuffers capacity = {capacity}", "SoA");
-
-            uint sphereStride = 4;
-            uint metaStride = 4;
-
-            if (_soaBoundingSpheresA is null)
-            {
-                _soaBoundingSpheresA = new XRDataBuffer("SoA_Spheres_A", EBufferTarget.ShaderStorageBuffer, capacity, EComponentType.Float, sphereStride, false, false)
-                {
-                    Usage = EBufferUsage.DynamicCopy,
-                    DisposeOnPush = false
-                };
-                _soaBoundingSpheresA.Generate();
-            }
-
-            if (_soaMetadataA is null)
-            {
-                _soaMetadataA = new XRDataBuffer("SoA_Metadata_A", EBufferTarget.ShaderStorageBuffer, capacity, EComponentType.UInt, metaStride, false, false)
-                {
-                    Usage = EBufferUsage.DynamicCopy,
-                    DisposeOnPush = false
-                };
-                _soaMetadataA.Generate();
-            }
-
-            if (_soaBoundingSpheresB is null)
-            {
-                _soaBoundingSpheresB = new XRDataBuffer("SoA_Spheres_B", EBufferTarget.ShaderStorageBuffer, capacity, EComponentType.Float, sphereStride, false, false)
-                {
-                    Usage = EBufferUsage.DynamicCopy,
-                    DisposeOnPush=false
-                };
-                _soaBoundingSpheresB.Generate();
-            }
-
-            if (_soaMetadataB is null)
-            {
-                _soaMetadataB = new XRDataBuffer("SoA_Metadata_B", EBufferTarget.ShaderStorageBuffer, capacity, EComponentType.UInt, metaStride, false, false)
-                {
-                    Usage=EBufferUsage.DynamicCopy,
-                    DisposeOnPush=false
-                };
-                _soaMetadataB.Generate();
-            }
-            
-            Dbg("EnsureSoABuffers complete", "SoA");
-        }
-
-        private void EnsureIndexList(uint capacity)
-        {
-            if (_soaIndexList != null)
-                return;
-            
-            _soaIndexList = new XRDataBuffer("SoA_IndexList", EBufferTarget.ShaderStorageBuffer, capacity + 1, EComponentType.UInt, 1, false, true)
-            {
-                Usage = EBufferUsage.DynamicCopy,
-                DisposeOnPush = false
-            };
-
-            _soaIndexList.Generate();
-
-            Dbg($"EnsureIndexList created capacity = {capacity}", "SoA");
-        }
 
         private void EnsureMaterialIDs(uint capacity)
         {

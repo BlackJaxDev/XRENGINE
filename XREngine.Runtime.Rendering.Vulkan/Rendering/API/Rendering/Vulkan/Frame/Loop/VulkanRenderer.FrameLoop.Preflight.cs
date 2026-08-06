@@ -5,11 +5,11 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
-        private EDesktopFrameFlow RunDesktopFramePreflight(ref VulkanFrameAttempt attempt)
+        internal EDesktopFrameFlow RunDesktopFramePreflight(ref VulkanFrameAttempt attempt)
         {
-            attempt.InteractiveResize = DesktopWsiTarget.IsInteractiveResizeInProgress;
+            attempt.InteractiveResize = DesktopWsiOutput.IsInteractiveResizeInProgress;
 
-            var liveFramebufferSize = DesktopWsiTarget.EffectiveFramebufferSize;
+            var liveFramebufferSize = DesktopWsiOutput.EffectiveFramebufferSize;
             var liveWindowSize = Window.Size;
             attempt.LiveFramebufferWidth = liveFramebufferSize.X;
             attempt.LiveFramebufferHeight = liveFramebufferSize.Y;
@@ -29,16 +29,16 @@ namespace XREngine.Rendering.Vulkan
 
             attempt.SurfaceMatchesSwapchain =
                 attempt.LiveSurfaceValid &&
-                attempt.LiveSurfaceWidth == swapChainExtent.Width &&
-                attempt.LiveSurfaceHeight == swapChainExtent.Height;
+                attempt.LiveSurfaceWidth == OutputRuntime.Desktop.Extent.Width &&
+                attempt.LiveSurfaceHeight == OutputRuntime.Desktop.Extent.Height;
             attempt.CanPresentMismatchedSwapchainExtent =
                 attempt.LiveSurfaceValid &&
                 !attempt.SurfaceMatchesSwapchain &&
                 CanPresentMismatchedSwapchainExtent(
                     attempt.LiveSurfaceWidth,
                     attempt.LiveSurfaceHeight,
-                    swapChainExtent.Width,
-                    swapChainExtent.Height);
+                    OutputRuntime.Desktop.Extent.Width,
+                    OutputRuntime.Desktop.Extent.Height);
 
             ApplyDesktopSwapchainExtentPolicy(ref attempt);
             ServiceDesktopSwapchainRecreatePolicy(ref attempt);
@@ -56,9 +56,9 @@ namespace XREngine.Rendering.Vulkan
                  !attempt.CanPresentMismatchedSwapchainExtent))
             {
                 string reason =
-                    $"Swapchain resize/recreate pending. Pending={_pendingSurfaceWidth}x{_pendingSurfaceHeight} " +
+                    $"Swapchain resize/recreate pending. Pending={_outputRuntime._desktopSwapchainPolicy.PendingSurfaceWidth}x{_outputRuntime._desktopSwapchainPolicy.PendingSurfaceHeight} " +
                     $"Live={attempt.LiveSurfaceWidth}x{attempt.LiveSurfaceHeight} " +
-                    $"Swapchain={swapChainExtent.Width}x{swapChainExtent.Height}";
+                    $"Swapchain={OutputRuntime.Desktop.Extent.Width}x{OutputRuntime.Desktop.Extent.Height}";
                 return StopDesktopFrameForPreflightStatus(
                     ref attempt,
                     EVulkanDesktopPreflightStatus.ResizePending,
@@ -75,12 +75,12 @@ namespace XREngine.Rendering.Vulkan
                     resourceMismatchReason);
             }
 
-            bool frameGenerationProxyRequired = _streamlineFrameGenerationProvisioned;
+            bool frameGenerationProxyRequired = _outputRuntime._streamlineFrameGenerationProvisioned;
             bool frameGenerationProxyIncludesDlss =
-                frameGenerationProxyRequired && _streamlineDlssProvisioned;
-            if (_streamlineFrameGenerationSwapchainActive != frameGenerationProxyRequired ||
-                (_streamlineFrameGenerationSwapchainActive &&
-                 _streamlineFrameGenerationSwapchainIncludesDlss != frameGenerationProxyIncludesDlss))
+                frameGenerationProxyRequired && _outputRuntime._streamlineDlssProvisioned;
+            if (OutputRuntime.Desktop.StreamlineFrameGenerationActive != frameGenerationProxyRequired ||
+                (OutputRuntime.Desktop.StreamlineFrameGenerationActive &&
+                 OutputRuntime.Desktop.StreamlineFrameGenerationIncludesDlss != frameGenerationProxyIncludesDlss))
             {
                 TryRecreateSwapchainNow(
                     frameGenerationProxyRequired
@@ -102,7 +102,7 @@ namespace XREngine.Rendering.Vulkan
             string detail)
         {
             VulkanDesktopPreflightOutcome outcome =
-                DesktopWsiTarget.ClassifyPreflight(status);
+                DesktopWsiOutput.ClassifyPreflight(status);
             EDesktopFrameReason reason = outcome.Reason switch
             {
                 EVulkanDesktopPolicyReason.ZeroSurface =>

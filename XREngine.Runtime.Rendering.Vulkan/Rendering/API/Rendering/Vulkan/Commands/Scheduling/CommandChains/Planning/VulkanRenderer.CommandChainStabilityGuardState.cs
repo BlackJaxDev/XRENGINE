@@ -13,15 +13,12 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal struct CommandChainStabilityGuardState
 {
-    private struct CommandChainStabilityGuardState
-    {
-        public ulong ResourcePlanRevision;
-        public int StableObservations;
-        public int ScheduledAttemptsForRevision;
-        public int ConsecutiveRecordedWithoutReuse;
-        public int ConsecutiveBypasses;
-    }
+    public ulong ResourcePlanRevision;
+    public int StableObservations;
+    public int ScheduledAttemptsForRevision;
+    public int ConsecutiveRecordedWithoutReuse;
+    public int ConsecutiveBypasses;
 }
 

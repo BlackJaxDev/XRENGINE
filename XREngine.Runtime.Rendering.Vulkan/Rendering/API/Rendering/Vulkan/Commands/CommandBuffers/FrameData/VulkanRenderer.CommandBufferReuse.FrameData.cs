@@ -53,7 +53,7 @@ namespace XREngine.Rendering.Vulkan
             hasPreparedFastScheduleSignature = false;
             CommandBufferRecordingScratch frameDataScratch =
                 _commandBufferRecordingScratch.Value!;
-            using VulkanCpuStageScope commandBufferReuseStage = new(EVulkanCpuStage.CommandBufferReuse);
+            using VulkanCpuStageScope commandBufferReuseStage = new(_frameTelemetry, EVulkanCpuStage.CommandBufferReuse);
 
             if (!CommandChainsEnabledForCurrentRecording ||
                 _primaryCommandArtifactOwners is null ||
@@ -66,7 +66,7 @@ namespace XREngine.Rendering.Vulkan
                 ? Array.Empty<FrameOp>()
                 : dynamicUiBatchTextOps;
             ulong fastScheduleSignature;
-            using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.CommandChainFastSignature))
+            using (VulkanCpuStageScope cpuStage = new(_frameTelemetry, EVulkanCpuStage.CommandChainFastSignature))
             {
                 fastScheduleSignature = ComputeCommandChainFastScheduleSignature(
                     imageIndex,
@@ -177,7 +177,7 @@ namespace XREngine.Rendering.Vulkan
 
                 bool refreshedReusableFrameData;
                 bool dynamicUiFrameDataNeedsRerecord = false;
-                using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.FrameDataRefresh))
+                using (VulkanCpuStageScope cpuStage = new(_frameTelemetry, EVulkanCpuStage.FrameDataRefresh))
                 {
                     refreshedReusableFrameData = ops.Length == 0 ||
                         TryRefreshReusableCommandBufferFrameData(
@@ -235,7 +235,7 @@ namespace XREngine.Rendering.Vulkan
                 if (!delayDynamicUiSecondaryRecording)
                 {
                     using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordCommandBuffer.FastReuse.RecordDynamicUiSecondary"))
-                    using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.SecondaryRecording))
+                    using (VulkanCpuStageScope cpuStage = new(_frameTelemetry, EVulkanCpuStage.SecondaryRecording))
                         dynamicUiSecondaryReady = RecordDynamicUiBatchTextSecondaryCommandBuffer(
                             imageIndex,
                             variant,

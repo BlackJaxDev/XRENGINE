@@ -1,54 +1,45 @@
-using System;
 using System.Threading;
 
 namespace XREngine.Rendering.Vulkan;
 
+/// <summary>
+/// Compact command-chain packet header. Variable draw/dispatch payloads and
+/// diagnostic target names are owned by the frame publication arena rather
+/// than copied into every pooled packet.
+/// </summary>
 internal sealed class RenderPacket
 {
-    private DrawPacket[]? _draws;
-    private DispatchPacket[]? _dispatches;
+    // Kept only for direct construction in isolated diagnostics/tests. Runtime
+    // packet lowering always supplies a frame-publication arena.
+    private RenderPacketPayloadArena? _standalonePayloadArena;
+    private RenderPacketPayloadArena? _payloadArena;
     private int _leaseCount;
 
-    public RenderPacket()
+    public RenderViewKey ViewKey { get; private set; }
+    public int PassIndex { get; private set; }
+    public int TargetIdentity { get; private set; }
+    internal int TargetNameDiagnosticIndex { get; private set; } = -1;
+    public RenderPacketVolatility Volatility { get; private set; }
+    public int DrawStartIndex { get; private set; }
+    public int DrawCount { get; private set; }
+    public int DispatchStartIndex { get; private set; }
+    public int DispatchCount { get; private set; }
+    public DescriptorBindingSnapshot DescriptorSnapshot { get; private set; }
+    public ResourcePlanSnapshot ResourcePlanSnapshot { get; private set; }
+    public RecordedPacketKey RecordedPacketKey { get; private set; }
+    public ulong StructuralSignature { get; private set; }
+    public ulong FrameDataSignature { get; private set; }
+    public int SourceStartIndex { get; private set; }
+    public int SourceCount { get; private set; }
+    public bool DynamicOverlay { get; private set; }
+    internal bool IsSealed { get; private set; }
+    internal bool IsLeased => Volatile.Read(ref _leaseCount) != 0;
+
+    internal RenderPacket()
     {
     }
 
-    public RenderPacket(
-        RenderViewKey viewKey,
-        int passIndex,
-        int targetIdentity,
-        string targetName,
-        RenderPacketVolatility volatility,
-        DrawPacket firstDraw,
-        int drawCount,
-        DispatchPacket firstDispatch,
-        int dispatchCount,
-        DescriptorBindingSnapshot descriptorSnapshot,
-        ResourcePlanSnapshot resourcePlanSnapshot,
-        ulong structuralSignature,
-        ulong frameDataSignature,
-        int sourceStartIndex,
-        int sourceCount,
-        bool dynamicOverlay)
-        => Reset(
-            viewKey,
-            passIndex,
-            targetIdentity,
-            targetName,
-            volatility,
-            firstDraw,
-            drawCount,
-            firstDispatch,
-            dispatchCount,
-            descriptorSnapshot,
-            resourcePlanSnapshot,
-            structuralSignature,
-            frameDataSignature,
-            sourceStartIndex,
-            sourceCount,
-            dynamicOverlay);
-
-    public RenderPacket(
+    internal RenderPacket(
         RenderViewKey viewKey,
         int passIndex,
         int targetIdentity,
@@ -79,41 +70,28 @@ internal sealed class RenderPacket
             sourceCount,
             dynamicOverlay);
 
-    public RenderViewKey ViewKey { get; private set; }
-    public int PassIndex { get; private set; }
-    public int TargetIdentity { get; private set; }
-    public string TargetName { get; private set; } = string.Empty;
-    public RenderPacketVolatility Volatility { get; private set; }
-    public DrawPacket FirstDraw { get; private set; }
-    public int DrawCount { get; private set; }
-    public DispatchPacket FirstDispatch { get; private set; }
-    public int DispatchCount { get; private set; }
-    public DescriptorBindingSnapshot DescriptorSnapshot { get; private set; }
-    public ResourcePlanSnapshot ResourcePlanSnapshot { get; private set; }
-    /// <summary>
-    /// Immutable native state captured while packetizing this operation. This is
-    /// intentionally separate from logical scheduling identity so command reuse
-    /// never relies on managed-object hashes or debug names.
-    /// </summary>
-    public RecordedPacketKey RecordedPacketKey { get; private set; }
-    public ulong StructuralSignature { get; private set; }
-    public ulong FrameDataSignature { get; private set; }
-    public int SourceStartIndex { get; private set; }
-    public int SourceCount { get; private set; }
-    public bool DynamicOverlay { get; private set; }
-    internal bool IsSealed { get; private set; }
-    internal bool IsLeased => Volatile.Read(ref _leaseCount) != 0;
+    /// <summary>Cold diagnostic text. Worker recording must use <see cref="TargetIdentity"/>.</summary>
+    internal string GetDiagnosticTargetName()
+        => _payloadArena is null || TargetNameDiagnosticIndex < 0
+            ? string.Empty
+            : _payloadArena.GetTargetName(TargetNameDiagnosticIndex);
+
+    // Compatibility properties intentionally resolve a range through the arena;
+    // they do not reintroduce packet-owned draw/dispatch arrays.
+    public DrawPacket FirstDraw
+        => DrawCount == 0 ? default : _payloadArena!.GetDraw(DrawStartIndex);
+    public DispatchPacket FirstDispatch
+        => DispatchCount == 0 ? default : _payloadArena!.GetDispatch(DispatchStartIndex);
 
     internal void Reset(
+        RenderPacketPayloadArena payloadArena,
         RenderViewKey viewKey,
         int passIndex,
         int targetIdentity,
         string targetName,
         RenderPacketVolatility volatility,
-        DrawPacket firstDraw,
-        int drawCount,
-        DispatchPacket firstDispatch,
-        int dispatchCount,
+        ReadOnlySpan<DrawPacket> draws,
+        ReadOnlySpan<DispatchPacket> dispatches,
         DescriptorBindingSnapshot descriptorSnapshot,
         ResourcePlanSnapshot resourcePlanSnapshot,
         ulong structuralSignature,
@@ -122,16 +100,18 @@ internal sealed class RenderPacket
         int sourceCount,
         bool dynamicOverlay)
     {
+        ArgumentNullException.ThrowIfNull(payloadArena);
         EnsureMutable();
+        _payloadArena = payloadArena;
         ViewKey = viewKey;
         PassIndex = passIndex;
         TargetIdentity = targetIdentity;
-        TargetName = targetName;
+        TargetNameDiagnosticIndex = payloadArena.AppendTargetName(targetName);
         Volatility = volatility;
-        FirstDraw = firstDraw;
-        DrawCount = drawCount;
-        FirstDispatch = firstDispatch;
-        DispatchCount = dispatchCount;
+        DrawStartIndex = payloadArena.AppendDraws(draws);
+        DrawCount = draws.Length;
+        DispatchStartIndex = payloadArena.AppendDispatches(dispatches);
+        DispatchCount = dispatches.Length;
         DescriptorSnapshot = descriptorSnapshot;
         ResourcePlanSnapshot = resourcePlanSnapshot;
         RecordedPacketKey = default;
@@ -140,51 +120,6 @@ internal sealed class RenderPacket
         SourceStartIndex = sourceStartIndex;
         SourceCount = sourceCount;
         DynamicOverlay = dynamicOverlay;
-    }
-
-    internal void SetRecordedPacketKey(in RecordedPacketKey key)
-    {
-        EnsureMutable();
-        RecordedPacketKey = key;
-    }
-
-    /// <summary>
-    /// Publishes this fully lowered packet to command-chain consumers. A pooled
-    /// packet cannot be changed until its owner explicitly prepares it for a
-    /// later lowering pass after all leases have been released.
-    /// </summary>
-    internal void Seal()
-    {
-        EnsureMutable();
-        IsSealed = true;
-    }
-
-    internal void AcquireLease()
-    {
-        EnsureSealed();
-        Interlocked.Increment(ref _leaseCount);
-    }
-
-    internal void ReleaseLease()
-    {
-        if (Interlocked.Decrement(ref _leaseCount) < 0)
-        {
-            Interlocked.Increment(ref _leaseCount);
-            throw new InvalidOperationException("Render-packet lease underflow.");
-        }
-    }
-
-    /// <summary>
-    /// Returns this packet to its pool's private construction state. This is
-    /// deliberately separate from <see cref="Reset"/> so publication cannot be
-    /// silently overwritten while a consumer still holds the packet.
-    /// </summary>
-    internal void PrepareForReuse()
-    {
-        if (Volatile.Read(ref _leaseCount) != 0)
-            throw new InvalidOperationException("A leased render packet cannot be reused.");
-
-        IsSealed = false;
     }
 
     internal void Reset(
@@ -203,16 +138,17 @@ internal sealed class RenderPacket
         int sourceCount,
         bool dynamicOverlay)
     {
+        RenderPacketPayloadArena standaloneArena = _standalonePayloadArena ??= new();
+        standaloneArena.ResetForPublication();
         Reset(
+            standaloneArena,
             viewKey,
             passIndex,
             targetIdentity,
             targetName,
             volatility,
-            draws.Length > 0 ? draws[0] : default,
-            draws.Length,
-            dispatches.Length > 0 ? dispatches[0] : default,
-            dispatches.Length,
+            draws,
+            dispatches,
             descriptorSnapshot,
             resourcePlanSnapshot,
             structuralSignature,
@@ -220,36 +156,95 @@ internal sealed class RenderPacket
             sourceStartIndex,
             sourceCount,
             dynamicOverlay);
-
-        if (draws.Length > 1)
-        {
-            EnsureDrawCapacity(draws.Length);
-            draws.CopyTo(_draws);
-        }
-
-        if (dispatches.Length > 1)
-        {
-            EnsureDispatchCapacity(dispatches.Length);
-            dispatches.CopyTo(_dispatches);
-        }
     }
 
-    private void EnsureDrawCapacity(int required)
+    internal void Reset(
+        RenderPacketPayloadArena payloadArena,
+        RenderViewKey viewKey,
+        int passIndex,
+        int targetIdentity,
+        string targetName,
+        RenderPacketVolatility volatility,
+        DrawPacket firstDraw,
+        int drawCount,
+        DispatchPacket firstDispatch,
+        int dispatchCount,
+        DescriptorBindingSnapshot descriptorSnapshot,
+        ResourcePlanSnapshot resourcePlanSnapshot,
+        ulong structuralSignature,
+        ulong frameDataSignature,
+        int sourceStartIndex,
+        int sourceCount,
+        bool dynamicOverlay)
     {
-        if (_draws is not null && _draws.Length >= required)
-            return;
+        if (drawCount is < 0 or > 1 || dispatchCount is < 0 or > 1)
+            throw new ArgumentOutOfRangeException(
+                drawCount > 1 ? nameof(drawCount) : nameof(dispatchCount),
+                "Single-payload reset accepts at most one draw and dispatch.");
 
-        int capacity = Math.Max(required, _draws is null ? 16 : _draws.Length * 2);
-        Array.Resize(ref _draws, capacity);
+        Span<DrawPacket> draws = stackalloc DrawPacket[1];
+        Span<DispatchPacket> dispatches = stackalloc DispatchPacket[1];
+        if (drawCount != 0)
+            draws[0] = firstDraw;
+        if (dispatchCount != 0)
+            dispatches[0] = firstDispatch;
+        Reset(
+            payloadArena,
+            viewKey,
+            passIndex,
+            targetIdentity,
+            targetName,
+            volatility,
+            draws[..drawCount],
+            dispatches[..dispatchCount],
+            descriptorSnapshot,
+            resourcePlanSnapshot,
+            structuralSignature,
+            frameDataSignature,
+            sourceStartIndex,
+            sourceCount,
+            dynamicOverlay);
     }
 
-    private void EnsureDispatchCapacity(int required)
+    internal void SetRecordedPacketKey(in RecordedPacketKey key)
     {
-        if (_dispatches is not null && _dispatches.Length >= required)
-            return;
+        EnsureMutable();
+        RecordedPacketKey = key;
+    }
 
-        int capacity = Math.Max(required, _dispatches is null ? 4 : _dispatches.Length * 2);
-        Array.Resize(ref _dispatches, capacity);
+    internal void Seal()
+    {
+        EnsureMutable();
+        IsSealed = true;
+    }
+
+    internal void AcquireLease()
+    {
+        EnsureSealed();
+        _payloadArena!.AcquireLease();
+        Interlocked.Increment(ref _leaseCount);
+    }
+
+    internal void ReleaseLease()
+    {
+        if (Interlocked.Decrement(ref _leaseCount) >= 0)
+        {
+            _payloadArena!.ReleaseLease();
+            return;
+        }
+
+        Interlocked.Increment(ref _leaseCount);
+        throw new InvalidOperationException("Render-packet lease underflow.");
+    }
+
+    internal void PrepareForReuse()
+    {
+        if (Volatile.Read(ref _leaseCount) != 0)
+            throw new InvalidOperationException("A leased render packet cannot be reused.");
+
+        IsSealed = false;
+        _payloadArena = null;
+        TargetNameDiagnosticIndex = -1;
     }
 
     public DrawPacket GetDraw(int index)
@@ -258,15 +253,7 @@ internal sealed class RenderPacket
         if ((uint)index >= (uint)DrawCount)
             throw new ArgumentOutOfRangeException(nameof(index));
 
-        if (DrawCount == 1)
-        {
-            return FirstDraw;
-        }
-
-        if (_draws is null)
-            throw new InvalidOperationException("Multi-draw render packet is missing expanded draw storage.");
-
-        return _draws[index];
+        return _payloadArena!.GetDraw(DrawStartIndex + index);
     }
 
     public DispatchPacket GetDispatch(int index)
@@ -275,15 +262,7 @@ internal sealed class RenderPacket
         if ((uint)index >= (uint)DispatchCount)
             throw new ArgumentOutOfRangeException(nameof(index));
 
-        if (DispatchCount == 1)
-        {
-            return FirstDispatch;
-        }
-
-        if (_dispatches is null)
-            throw new InvalidOperationException("Multi-dispatch render packet is missing expanded dispatch storage.");
-
-        return _dispatches[index];
+        return _payloadArena!.GetDispatch(DispatchStartIndex + index);
     }
 
     private void EnsureMutable()

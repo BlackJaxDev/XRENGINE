@@ -94,30 +94,32 @@ public sealed class GpuIndirectPhase3PolicyTests
     public void CpuIndirectReferenceOverride_ReadsCachedEnvironmentValue()
     {
         string variable = XREngineEnvironmentVariables.ForceCpuIndirectBuild;
-        string? previous = Environment.GetEnvironmentVariable(variable);
+        bool hadRuntimeOverride = XREnvironment.TryGetRuntimeOverride(
+            variable,
+            out string? previousRuntimeOverride);
         bool previousDebugValue = GPURenderPassCollection.IndirectDebug.ForceCpuIndirectBuild;
 
         try
         {
             variable.ShouldBe("XRE_FORCE_CPU_INDIRECT_BUILD");
             GPURenderPassCollection.ConfigureIndirectDebug(settings => settings.ForceCpuIndirectBuild = false);
-            Environment.SetEnvironmentVariable(variable, " true ");
-            EffectiveSettingsEnvOverrides.ReloadForTests();
+            XREnvironment.SetRuntimeOverride(variable, " true ");
 
             GPURenderPassCollection.ShouldForceCpuIndirectBuild(EMeshSubmissionStrategy.GpuIndirectInstrumented)
                 .ShouldBeTrue();
             GPURenderPassCollection.ShouldForceCpuIndirectBuild(EMeshSubmissionStrategy.GpuIndirectZeroReadback)
                 .ShouldBeFalse();
 
-            Environment.SetEnvironmentVariable(variable, "invalid");
-            EffectiveSettingsEnvOverrides.ReloadForTests();
+            XREnvironment.SetRuntimeOverride(variable, "invalid");
             GPURenderPassCollection.ShouldForceCpuIndirectBuild(EMeshSubmissionStrategy.GpuIndirectInstrumented)
                 .ShouldBeFalse();
         }
         finally
         {
-            Environment.SetEnvironmentVariable(variable, previous);
-            EffectiveSettingsEnvOverrides.ReloadForTests();
+            if (hadRuntimeOverride)
+                XREnvironment.SetRuntimeOverride(variable, previousRuntimeOverride);
+            else
+                XREnvironment.ClearRuntimeOverride(variable);
             GPURenderPassCollection.ConfigureIndirectDebug(settings => settings.ForceCpuIndirectBuild = previousDebugValue);
         }
     }

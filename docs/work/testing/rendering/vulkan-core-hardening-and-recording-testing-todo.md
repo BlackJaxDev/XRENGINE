@@ -1,6 +1,6 @@
 # Vulkan Core Hardening And Recording Testing TODO
 
-Last Updated: 2026-08-05
+Last Updated: 2026-08-06
 Owner: Rendering
 Status: Active
 
@@ -19,6 +19,79 @@ overhead are equal promotion gates.
 It also owns the evidence formerly tracked by advanced-render-pipeline phases
 06 through 10. Implementation and cutover changes now live in sections 10
 through 14 of the consolidated code-changes tracker.
+
+## Phase 1-3 Closeout Evidence (2026-08-06)
+
+- [x] Migrate stale Vulkan unit-test call sites for the removed schedule-cache
+  authority and required `CommandChainKey.ChainOrdinal`.
+- [x] Run `Test-VulkanPhase3-Regression`: 110 passed, 0 failed.
+- [x] Build `XRENGINE.slnx` with `--no-restore -warnaserror`: zero warnings and
+  zero errors.
+- [x] Run the final named isolated Vulkan editor session with standard
+  validation. The MCP profiler reported zero validation errors and zero pending
+  retired resources; Vulkan/rendering logs contained no VUID, device-loss,
+  submission-rejection, lifetime-rejection, fatal, or unhandled-exception match.
+- [x] Exercise two camera-dependent viewport captures. Both returned the typed
+  Vulkan no-transfer-readable-image result and confirmed no CPU or OS-window
+  fallback.
+
+## Phase 4 Vertical-Cut Evidence (2026-08-06)
+
+- [x] Run the final Phase 3 regression task after the Phase 4 cut: 110 passed,
+  0 failed.
+- [x] Run the focused Phase 4, Phase 2.1, stable-packet, GPU hot-layout,
+  presentation-independent, and CPU-span suites: 177 passed, 0 failed.
+- [x] Build the complete solution with `--no-restore -warnaserror`: zero
+  warnings and zero errors.
+- [x] Exercise the deterministic presentationless clear/readback/hash path and
+  the accepted-submission receipt/lifetime path.
+- [x] Run a final isolated standard-validation Vulkan session. The profiler
+  reported zero validation errors/messages, zero pending retired resources, and
+  a live generation-1 mapped-frame arena with three chunks / 100,663,296 mapped
+  bytes. Clean shutdown logs contained no VUID, device-loss, rejection, fatal,
+  unhandled, or access-violation match.
+- [x] Record the post-cut architecture inventory: 918 hand-written files /
+  181,146 physical lines, 321 renderer partial declarations, 379 type-wide
+  unsafe files, 101 ambient facade-callback files, and two thread-static files.
+  The final Phase 4 structural budget is still open.
+- [x] Validate the follow-up device-capability ownership cut: focused
+  device-context, Phase 4, Phase 2.1, backend-registry, and
+  presentation-independent suites passed 50/50; the independent hardware
+  presentationless clear/readback/hash smoke passed 1/1 without skipping.
+- [x] Run the post-device-capability validation-enabled Vulkan session and full
+  warnings-as-errors build. The session reported zero validation
+  errors/messages and zero pending retired resources; clean shutdown logs had
+  no VUID, validation error, device-loss, rejection, fatal, unhandled, or access
+  violation match; the solution build completed with zero warnings and errors.
+- [x] Record the post-device-capability architecture inventory: 918 hand-written
+  files / 181,253 physical lines, 320 renderer partial declarations, 378
+  type-wide unsafe files, 101 ambient facade-callback files, and two
+  thread-static files. This is a one-partial/one-unsafe-file reduction from the
+  preceding cut, not the final Phase 4 structural gate.
+- [x] Audit every Phase 4 implementation checkbox against production code and
+  validation evidence, then rewrite the epic-sized requirements as hierarchical
+  parent/child gates. Checked children now expose independently validated
+  vertical slices while final integration parents remain open.
+- [x] Validate the native-lifetime context cut: focused device-context,
+  backend-registry, presentation-independent, diagnostics, and fault-boundary
+  coverage passed 25/25; `Test-VulkanPhase3-Regression` passed 110/110; the
+  full warning-as-error solution build completed with zero warnings and errors.
+- [x] Run three validation-enabled Vulkan sessions after the native-lifetime cut
+  and the final architecture-review fixes.
+  The final profiler snapshot reported zero validation messages/errors, zero
+  pending retired resources, three mapped-frame chunks / 100,663,296 mapped
+  bytes, and active rendering. Clean shutdown logs contained no VUID,
+  validation error, device-loss, fatal, unhandled, or access-violation match.
+- [x] Record the post-native-lifetime architecture inventory: 926 hand-written
+  files / 181,668 physical lines, 308 renderer partial declarations, 372
+  type-wide unsafe files, 101 ambient facade-callback files, and two
+  thread-static files. The final Phase 4 structural budget remains open.
+- [ ] Reconcile the legacy broad source-contract aggregates with the current
+  split-file layout and one-way architecture baselines. The exploratory broad
+  run still contains moved-file/obsolete-marker failures unrelated to the
+  focused runtime gate; do not report the full unit-test suite as green.
+- [ ] Run the OpenXR paths against a live supported runtime; no live runtime was
+  available for this vertical cut.
 
 ## Automated Tests
 
@@ -55,14 +128,15 @@ through 14 of the consolidated code-changes tracker.
 
 ## Architecture, Simplicity, And Profiler Contract Validation
 
-- [ ] Add a reproducible Vulkan source-inventory report that separates
+- [x] Add a reproducible Vulkan source-inventory report that separates
   hand-written and generated files and records file/line counts, partials,
   mutable facade fields, directory depth, largest files/methods, dependencies,
   and duplicate lifecycle authorities.
-- [ ] Record the 2026-08-05 baseline of 858 files / 170,048 physical lines in
-  the Vulkan core path, 320 `VulkanRenderer*.cs` files, and the defined
-  acquire-to-settlement lifecycle-spine boundary; fail comparison if the source
-  manifest changes without explanation.
+- [x] Record the reproducible 2026-08-06 baseline of 890 hand-written files /
+  178,506 physical lines in the Vulkan core path, 323 `VulkanRenderer` partial
+  declarations, 381 type-wide unsafe files, 102 ambient facade-callback files,
+  and two thread-static files. The older 858-file / 170,048-line draft baseline
+  predated the final Phase 1-3 source and is superseded.
 - [ ] Verify the final hand-written Vulkan core has at most 550 files / 125,000
   lines, the lifecycle spine has at most 40 files / 20,000 lines, and
   `VulkanRenderer` is one non-partial facade file of at most 500 lines.
@@ -170,9 +244,9 @@ is accepted.
   compare source-file count, runtime-owner count, Vulkan allocation/binding
   count, publication calls, and lifetime transitions before and after. Reject a
   per-column wrapper or resource explosion even when an isolated kernel improves.
-- [ ] Add a source/runtime gate that `GPURenderExtractSoA.comp`, its scratch
-  buffers, and uncalled compatibility methods are absent from production unless
-  a named active consumer and retained benchmark evidence are present.
+- [x] Remove `GPURenderExtractSoA.comp`, its scratch buffers, and uncalled
+  compatibility methods from production. A future replacement requires a named
+  active consumer and retained benchmark evidence.
 - [ ] Prove final indirect buffers remain valid contiguous
   `VkDrawIndirectCommand`/`VkDrawIndexedIndirectCommand` arrays with correct
   offset, count, stride, bounds, and shader-to-native field semantics.

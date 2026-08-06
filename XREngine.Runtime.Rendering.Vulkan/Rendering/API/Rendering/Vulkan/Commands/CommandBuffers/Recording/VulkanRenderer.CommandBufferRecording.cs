@@ -19,10 +19,10 @@ namespace XREngine.Rendering.Vulkan
             out long commandBufferDirtyGenerationAfterRecord)
         {
             VulkanCommandSchedulingContext<PrimaryCommandArtifactOwner> schedulingContext =
-                _commandScheduler.Capture<PrimaryCommandArtifactOwner>(
+                _commandRuntime.Scheduler.Capture<PrimaryCommandArtifactOwner>(
                     imageIndex,
                     preserveSwapchainForOverlay,
-                    _renderGraphRuntime.CurrentPlan);
+                    _framePlanner.CaptureSnapshot());
 
             CommandBuffer commandBuffer =
                 ScheduleCommandBufferLifecycle(ref schedulingContext);

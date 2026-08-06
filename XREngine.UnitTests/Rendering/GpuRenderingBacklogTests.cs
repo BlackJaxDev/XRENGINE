@@ -225,15 +225,14 @@ public class GpuRenderingBacklogTests
     }
 
     [Test]
-    public void GpuFrustumShaders_UseAabbBoundsForVisibilityRejection()
+    public void CanonicalGpuFrustumShaders_UseAabbBoundsForVisibilityRejection()
     {
         string classicCull = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Culling/GPURenderCulling.comp");
-        string soaCull = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Culling/GPURenderCullingSoA.comp");
         string bvhCull = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/RenderPipeline/bvh_frustum_cull.comp");
 
         classicCull.ShouldContain("FrustumAabbVisible(bounds.AabbMin.xyz, bounds.AabbMax.xyz)");
-        soaCull.ShouldContain("FrustumAabbVisible(bounds.AabbMin.xyz, bounds.AabbMax.xyz)");
         bvhCull.ShouldContain("AabbVisibleMasked(bounds.AabbMin.xyz, bounds.AabbMax.xyz");
+        File.Exists(Path.Combine(GltfImportTestUtilities.ResolveWorkspaceRoot(), "Build", "CommonAssets", "Shaders", "Compute", "Culling", "GPURenderCullingSoA.comp")).ShouldBeFalse();
     }
 
     [Test]
@@ -731,26 +730,27 @@ public class GpuRenderingBacklogTests
     [Test]
     public void VR_Vulkan_CommandChainWorkers_DoNotUseGenericScheduler()
     {
-        string recording = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string recording = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Secondaries.cs");
         string secondary = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
         string workers = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainWorkers.cs");
+        string workerState = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Secondary/Workers/VulkanRenderer.CommandChainRecordingWorkerState.cs");
         string commandPools = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandPool.cs");
 
         secondary.ShouldNotContain("Task.Run");
         recording.ShouldContain("TryExecuteIndirectCommandChainSecondaryRun");
         workers.ShouldContain("DispatchCommandChainRecordingWorkers");
-        workers.ShouldContain("new Thread");
+        workerState.ShouldContain("new Thread");
         commandPools.ShouldContain("GetThreadCommandPool");
     }
 
     [Test]
     public void Vulkan_GpuPipelineProfilerToggle_DoesNotInstrumentMainRenderCommandBuffers()
     {
-        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs")
+        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Lifecycle/VulkanRenderer.CommandBufferLifecycle.cs")
             .Replace("\r\n", "\n");
-        string frameTiming = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameTiming.cs")
+        string frameTiming = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Timing/VulkanRenderer.FrameTiming.cs")
             .Replace("\r\n", "\n");
-        string frameSlots = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.FrameSlots.cs")
+        string frameSlots = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/VulkanRenderer.FrameLoop.FrameSlots.cs")
             .Replace("\r\n", "\n");
         string gpuProfiler = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/RenderPipelineGpuProfiler.cs")
             .Replace("\r\n", "\n");
@@ -803,10 +803,9 @@ public class GpuRenderingBacklogTests
         uiBatchCollector.ShouldContain("bool profileGpu = profiler.ShouldInstrumentCommandScopes;");
         viewportCommand.ShouldContain("using var gpuScope = gpuProfiler.ShouldInstrumentCommandScopes");
 
-        commandBuffers.ShouldContain("bool gpuPipelineProfilingActive =\n                IsVulkanGpuProfilerCommandBufferInstrumentationEnabled &&\n                RenderPipelineGpuProfiler.Instance.IsProfilingActive;");
-        commandBuffers.ShouldContain("bool gpuProfilerCommandBufferStateDirty = IsVulkanGpuProfilerCommandBufferStateDirty");
-        commandBuffers.ShouldContain("ClearVulkanGpuProfilerPendingQueries();\n                MarkCommandBufferVariantsDirty(imageIndex, \"gpu-profiler-command-buffer-state\");");
-        commandBuffers.ShouldContain("UpdateVulkanGpuProfilerCommandBufferState(");
+        commandBuffers.ShouldContain("GpuPipelineProfilingActive =\n                    IsVulkanGpuProfilerCommandBufferInstrumentationEnabled &&\n                    RenderPipelineGpuProfiler.Instance.IsProfilingActive,");
+        commandBuffers.ShouldContain("state.GpuProfilerCommandBufferStateDirty =\n                IsVulkanGpuProfilerCommandBufferStateDirty(");
+        commandBuffers.ShouldContain("ClearVulkanGpuProfilerPendingQueries();\n                MarkPrimaryCommandArtifactOwnersDirty(");
 
         frameTiming.ShouldContain("private void ClearVulkanGpuProfilerPendingQueries()");
         frameTiming.ShouldContain("Array.Fill(_vulkanGpuProfilerPendingQueryCounts, 0);");
@@ -817,13 +816,13 @@ public class GpuRenderingBacklogTests
     [Test]
     public void Vulkan_ImGuiOverlay_UsesExplicitSwapchainLayoutHandoff()
     {
-        string recording = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recording.cs")
+        string recording = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/VulkanRenderer.FrameLoop.Recording.cs")
             .Replace("\r\n", "\n");
-        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs")
+        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Finalization.cs")
             .Replace("\r\n", "\n");
-        string commandBufferVariant = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferCacheVariant.cs")
+        string commandBufferVariant = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Reuse/VulkanRenderer.PrimaryCommandArtifactOwner.cs")
             .Replace("\r\n", "\n");
-        string commandBufferAllocation = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs")
+        string commandBufferFrameData = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/FrameData/VulkanRenderer.CommandBufferReuse.FrameData.cs")
             .Replace("\r\n", "\n");
         string imgui = global::XREngine.UnitTests.SourceContractWorkspace.ReadFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.Rendering.cs")
             .Replace("\r\n", "\n");
@@ -840,8 +839,8 @@ public class GpuRenderingBacklogTests
 
         commandBufferVariant.ShouldContain("public bool PreserveSwapchainForOverlay { get; set; }");
         commandBufferVariant.ShouldContain("public ImageLayout RecordedSwapchainFinalLayout { get; set; } = ImageLayout.PresentSrcKhr;");
-        commandBufferAllocation.ShouldContain("variant.PreserveSwapchainForOverlay == preserveSwapchainForOverlay");
-        commandBuffers.ShouldContain("int expectedPresentTransitions = preserveSwapchainForOverlay || !transitionSwapchainToPresent ? 0 : 1;");
+        commandBufferFrameData.ShouldContain("variant.PreserveSwapchainForOverlay != preserveSwapchainForOverlay");
+        commandBuffers.ShouldContain("int expectedPresentTransitions = recordingState.PreserveSwapchainForOverlay || !recordingState.TransitionSwapchainToPresent ? 0 : 1;");
 
         imgui.ShouldContain("ImageLayout initialSwapchainLayout");
         imgui.ShouldContain("initialSwapchainLayout,\n                ImageLayout.ColorAttachmentOptimal");

@@ -11,7 +11,7 @@ internal sealed record SubmissionMarkerOp(
 
     internal override int RecordPrimary(
         VulkanRenderer renderer,
-        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
+        scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
         renderer.RegisterSubmissionMarker(recordingState.CommandBuffer, Fence);

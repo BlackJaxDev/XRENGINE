@@ -7,34 +7,17 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, string> _liveImageViewHandles = new();
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, ImageViewCreateInfo> _descriptorHeapImageViewCreateInfos = new();
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, byte> _retiringImageHandles = new();
-    private readonly object _internedImageViewsLock = new();
-    private readonly Dictionary<VulkanImageViewStructuralKey, InternedImageViewEntry> _internedImageViews = new();
-    private readonly Dictionary<ulong, VulkanImageViewStructuralKey> _internedImageViewKeysByHandle = new();
-
-    private readonly record struct VulkanImageViewStructuralKey(
-        ulong ImageHandle,
-        ulong ImageGeneration,
-        ImageViewCreateFlags Flags,
-        ImageViewType ViewType,
-        Format Format,
-        ComponentSwizzle R,
-        ComponentSwizzle G,
-        ComponentSwizzle B,
-        ComponentSwizzle A,
-        ImageAspectFlags AspectMask,
-        uint BaseMipLevel,
-        uint LevelCount,
-        uint BaseArrayLayer,
-        uint LayerCount);
-
-    private sealed class InternedImageViewEntry(ImageView view)
-    {
-        public ImageView View { get; } = view;
-        public int ReferenceCount { get; set; } = 1;
-    }
+    private System.Collections.Concurrent.ConcurrentDictionary<ulong, string> _liveImageViewHandles
+        => ResourceRuntime.Lifetime.ImageViews.LiveHandles;
+    private System.Collections.Concurrent.ConcurrentDictionary<ulong, ImageViewCreateInfo> _descriptorHeapImageViewCreateInfos
+        => ResourceRuntime.Lifetime.ImageViews.DescriptorHeapCreateInfos;
+    private System.Collections.Concurrent.ConcurrentDictionary<ulong, byte> _retiringImageHandles
+        => ResourceRuntime.Lifetime.ImageViews.RetiringImageHandles;
+    private object _internedImageViewsLock => ResourceRuntime.Lifetime.ImageViews.InternGate;
+    private Dictionary<VulkanImageViewStructuralKey, InternedImageViewEntry> _internedImageViews
+        => ResourceRuntime.Lifetime.ImageViews.InternedViews;
+    private Dictionary<ulong, VulkanImageViewStructuralKey> _internedImageViewKeysByHandle
+        => ResourceRuntime.Lifetime.ImageViews.InternedKeysByHandle;
 
     private VulkanImageViewStructuralKey BuildImageViewStructuralKey(in ImageViewCreateInfo createInfo)
         => new(
@@ -76,7 +59,7 @@ public unsafe partial class VulkanRenderer
             }
 
             ImageViewCreateInfo mutableCreateInfo = createInfo;
-            if (Api!.CreateImageView(device, ref mutableCreateInfo, null, out imageView) != Result.Success)
+            if (Api!.CreateImageView(_deviceContext.Device, ref mutableCreateInfo, null, out imageView) != Result.Success)
                 return false;
 
             TrackLiveImageView(imageView, in mutableCreateInfo, owner);
@@ -245,7 +228,7 @@ public unsafe partial class VulkanRenderer
         if (IsExternalImageViewOwner(owner))
             return true;
 
-        return _imageAllocationTracker.Allocations.ContainsKey(image.Handle) && !_retiringImageHandles.ContainsKey(image.Handle);
+        return ResourceRuntime.Allocations.Images.Allocations.ContainsKey(image.Handle) && !_retiringImageHandles.ContainsKey(image.Handle);
     }
 
     /// <summary>
@@ -259,9 +242,10 @@ public unsafe partial class VulkanRenderer
             return false;
 
         VulkanResourceLifetimeKey viewKey = new(ObjectType.ImageView, imageView.Handle);
-        lock (_resourceLifetimeTracker.SyncRoot)
+        VulkanResourceLifetimeTracker lifetimeTracker = ResourceRuntime.Lifetime.Tracker;
+        lock (lifetimeTracker.SyncRoot)
         {
-            return !_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(viewKey, out VulkanResourceLifetimeRecord? lifetime) ||
+            return !lifetimeTracker.ResourceLifetimes.TryGetValue(viewKey, out VulkanResourceLifetimeRecord? lifetime) ||
                 (lifetime.State & (EVulkanResourceLifetimeState.PendingRetirement | EVulkanResourceLifetimeState.Destroyed)) == 0;
         }
     }
@@ -378,7 +362,7 @@ public unsafe partial class VulkanRenderer
                 "[Vulkan] Destroying remaining tracked image view 0x{0:X} owner={1} during renderer shutdown.",
                 pair.Key,
                 owner);
-            Api!.DestroyImageView(device, imageView, null);
+            Api!.DestroyImageView(_deviceContext.Device, imageView, null);
             CompleteVulkanResourceDestruction(ObjectType.ImageView, pair.Key);
             destroyedViews++;
         }

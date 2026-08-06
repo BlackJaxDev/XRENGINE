@@ -12,11 +12,19 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer :
+    public sealed unsafe partial class VulkanRenderer :
         AbstractRenderer<Vk>,
         ISparseTextureStreamingBackendCapability,
         IStreamlinePresentationBackendCapability
     {
+        private readonly VulkanDeviceContext _deviceContext;
+        private readonly VulkanOutputRuntime _outputRuntime;
+        private readonly VulkanFrameLoop _frameLoop = new();
+        private readonly VulkanFramePlanner _framePlanner = new();
+        private readonly VulkanResourceRuntime _resourceRuntime = new(MAX_FRAMES_IN_FLIGHT);
+        private readonly VulkanCommandRuntime _commandRuntime = new();
+        private readonly VulkanFrameTelemetry _frameTelemetry = new();
+
         public VulkanRenderer(
             XRWindow window,
             bool shouldLinkWindow = true,
@@ -28,28 +36,31 @@ namespace XREngine.Rendering.Vulkan
         public VulkanRenderer(RendererHostContext hostContext)
             : base(hostContext)
         {
-            _targetDriver = VulkanRendererTargetDriverFactory.Create(hostContext);
-            _requiredDeviceExtensions =
-            [
-                .. CommonRequiredDeviceExtensions,
-                .. _targetDriver.RequiredDeviceExtensions,
-            ];
+            IVulkanRendererTargetDriver targetDriver = VulkanRendererTargetDriverFactory.Create(hostContext);
+            _outputRuntime = new VulkanOutputRuntime(targetDriver);
+            _deviceContext = new VulkanDeviceContext(
+                new VulkanDeviceContextConfiguration(
+                    targetDriver.RequiresPresentQueue,
+                    targetDriver.RequiresSwapchainOutput,
+                    targetDriver.RequiredDeviceExtensions,
+                    OptionalDeviceExtensions));
+            ResourceRuntime.BackendObjectContext?.PublishDeviceContext(_deviceContext);
+            _framePlanner.PublishResourcePlannerGeneration(
+                new ResourcePlannerRuntimeGeneration(ResourcePlannerRuntimeState.CreateEmpty()));
         }
 
-        private readonly IVulkanRendererTargetDriver _targetDriver;
-        private readonly VulkanBufferResourceManager _bufferResourceManager = new();
-        internal readonly VulkanImageAllocationTracker _imageAllocationTracker = new();
-        internal Vk VulkanApi => Api!;
-        internal string TargetDriverName => _targetDriver.GetType().Name;
-        internal bool TargetRequiresPresentQueue => _targetDriver.RequiresPresentQueue;
-        internal bool TargetRequiresSwapchainOutput => _targetDriver.RequiresSwapchainOutput;
-        internal bool HasInitializedMemoryAllocator => _bufferResourceManager.MemoryAllocator is not null;
-        internal bool HasExplicitFrameTarget => _targetDriver is IVulkanExplicitFrameTargetDriver;
-        private readonly VulkanBindlessMaterialTextureTableState _bindlessMaterialTextureTableState = new();
-        private readonly VulkanStagingManager _stagingManager = new();
+        /// <summary>Executes one frame through the composed frame-loop authority.</summary>
+        protected override void RenderFrameCallback(double delta)
+            => RenderComposedFrame(delta);
 
-        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> ComputeDispatchOperationNames =
-            new(StringComparer.Ordinal);
+        internal Vk VulkanApi => Api!;
+        internal string TargetDriverName => OutputRuntime.TargetDriver.GetType().Name;
+        internal bool TargetRequiresPresentQueue => OutputRuntime.TargetDriver.RequiresPresentQueue;
+        internal bool TargetRequiresSwapchainOutput => OutputRuntime.TargetDriver.RequiresSwapchainOutput;
+        internal bool HasInitializedMemoryAllocator => ResourceRuntime.Allocations.Buffers.MemoryAllocator is not null;
+        internal bool HasExplicitFrameTarget => OutputRuntime.TargetDriver is IVulkanExplicitFrameTargetDriver;
+        private VulkanBindlessMaterialTextureTableState BindlessMaterialTextureTableState
+            => ResourceRuntime.Descriptors.BindlessMaterialTextures;
 
         public override RendererBackendId BackendId => RendererBackendId.Vulkan;
 
@@ -58,21 +69,25 @@ namespace XREngine.Rendering.Vulkan
 
         public override void Initialize()
         {
-            if (_targetDriver.SupportsStreamlinePresentation)
+            VulkanIndirectCommandLayoutContract.ValidateRuntimeLayout();
+
+            if (OutputRuntime.TargetDriver.SupportsStreamlinePresentation)
                 PrepareStreamlineVulkanRequirements();
             CreateInstance();
             SetupDebugMessenger();
-            _targetDriver.CreateInstanceResources(this);
+            OutputRuntime.CreateTargetInstanceResources(Api!, _deviceContext, Window);
+            PublishPresentationSupportProbe();
             PickPhysicalDevice();
-            if (_targetDriver.SupportsStreamlinePresentation)
+            if (OutputRuntime.TargetDriver.SupportsStreamlinePresentation)
                 ValidateStreamlineSelectedPhysicalDevice();
             CreateLogicalDevice();
             InitializeMemoryAllocator();
+            VulkanTextureStreamingBackendProvider.Instance.BindScheduler(this);
             InitializeCanonicalImmutableSamplers();
             CreateCommandPool();
 
             CreateDescriptorSetLayout();
-            _targetDriver.InitializeFinalOutput(this);
+            OutputRuntime.InitializeTargetFinalOutput(this);
 
             //CreateTestModel();
             //CreateUniformBuffers();
@@ -81,7 +96,7 @@ namespace XREngine.Rendering.Vulkan
             CreateFrameTimingResources();
             InitializeSynchronizationBackend();
             LogStartupCapabilitySnapshot();
-            InitializeDynamicUniformRingBuffers();
+            InitializeMappedFrameArena();
             ReserveOpenXrFrameDataSlotsIfRequired("initialization");
             FlushPendingDeviceReadyProgramLinks();
         }
@@ -90,30 +105,28 @@ namespace XREngine.Rendering.Vulkan
         /// Whether any device memory type supports <see cref="MemoryPropertyFlags.LazilyAllocatedBit"/>.
         /// True on most mobile/tiler GPUs; false on typical discrete desktop GPUs.
         /// </summary>
-        internal bool SupportsLazyAllocation { get; private set; }
-
         private void InitializeMemoryAllocator()
         {
             // Probe for lazy allocation support (TransientAttachment optimization).
-            Api!.GetPhysicalDeviceMemoryProperties(_physicalDevice, out PhysicalDeviceMemoryProperties memProps);
+            Api!.GetPhysicalDeviceMemoryProperties(_deviceContext.PhysicalDevice, out PhysicalDeviceMemoryProperties memProps);
             for (int i = 0; i < memProps.MemoryTypeCount; i++)
             {
                 if (memProps.MemoryTypes[i].PropertyFlags.HasFlag(MemoryPropertyFlags.LazilyAllocatedBit))
                 {
-                    SupportsLazyAllocation = true;
+                    _deviceContext.MutableCapabilities.SupportsLazyAllocation = true;
                     break;
                 }
             }
 
             EVulkanAllocatorBackend backend = RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.AllocatorBackend;
-            _bufferResourceManager.MemoryAllocator = backend switch
+            ResourceRuntime.Allocations.Buffers.MemoryAllocator = backend switch
             {
-                EVulkanAllocatorBackend.Legacy => new VulkanLegacyAllocator(this),
-                EVulkanAllocatorBackend.Managed => new VulkanBlockAllocator(this),
+                EVulkanAllocatorBackend.Legacy => new VulkanLegacyAllocator(_deviceContext),
+                EVulkanAllocatorBackend.Managed => new VulkanBlockAllocator(_deviceContext),
                 EVulkanAllocatorBackend.Vma => new VulkanVmaAllocator(
-                    instance,
-                    _physicalDevice,
-                    device,
+                    _deviceContext.Instance,
+                    _deviceContext.PhysicalDevice,
+                    _deviceContext.Device,
                     Vk.Version13,
                     SupportsBufferDeviceAddress),
                 _ => throw new ArgumentOutOfRangeException(
@@ -121,7 +134,7 @@ namespace XREngine.Rendering.Vulkan
                     backend,
                     "Unknown Vulkan allocator backend.")
             };
-            Debug.Vulkan($"[Vulkan] Memory allocator initialized: {backend} (lazyAlloc={SupportsLazyAllocation})");
+            Debug.Vulkan($"[Vulkan] Memory allocator initialized: {backend} (lazyAlloc={_deviceContext.MutableCapabilities.SupportsLazyAllocation})");
         }
 
         internal void SubmitExplicitTargetFrame(Action<Vk, CommandBuffer, VulkanRenderFrameTarget> record)
@@ -149,16 +162,16 @@ namespace XREngine.Rendering.Vulkan
             => RequireExplicitFrameTarget().PresentationDescription;
 
         internal bool ExplicitTargetIsDeviceLost
-            => _targetDriver is IVulkanExplicitFrameTargetDriver explicitTarget &&
+            => OutputRuntime.TargetDriver is IVulkanExplicitFrameTargetDriver explicitTarget &&
                explicitTarget.IsDeviceLost;
 
         private IVulkanExplicitFrameTargetDriver RequireExplicitFrameTarget()
-            => _targetDriver as IVulkanExplicitFrameTargetDriver
+            => OutputRuntime.TargetDriver as IVulkanExplicitFrameTargetDriver
                 ?? throw new InvalidOperationException(
                     $"Vulkan target '{ExecutionMode}' does not expose explicit target-frame submission.");
 
         private VulkanDesktopWsiTargetDriver DesktopWsiTarget
-            => _targetDriver as VulkanDesktopWsiTargetDriver
+            => OutputRuntime.TargetDriver as VulkanDesktopWsiTargetDriver
                 ?? throw new InvalidOperationException(
                     $"Vulkan target '{ExecutionMode}' does not provide desktop WSI policy.");
 
@@ -170,7 +183,7 @@ namespace XREngine.Rendering.Vulkan
         {
             bool mappedSuccessfully = MemoryAllocator.TryMap(
                 Api!,
-                device,
+                _deviceContext.Device,
                 allocation,
                 offset,
                 length,
@@ -193,7 +206,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         internal void UnmapMemoryAllocation(VulkanMemoryAllocation allocation)
-            => MemoryAllocator.Unmap(Api!, device, allocation);
+            => MemoryAllocator.Unmap(Api!, _deviceContext.Device, allocation);
 
         public override void CleanUp() => CleanUp(waitForGpu: true);
 
@@ -201,7 +214,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void CleanUp(bool waitForGpu)
         {
-            if (device.Handle != 0)
+            if (_deviceContext.Device.Handle != 0)
             {
                 if (waitForGpu)
                     DeviceWaitIdle();
@@ -217,7 +230,8 @@ namespace XREngine.Rendering.Vulkan
 
             try
             {
-            _textureUploadService.CancelAllQueuedWork(this, "Vulkan renderer shutdown");
+            VulkanTextureStreamingBackendProvider.Instance.UnbindScheduler(this);
+            ResourceRuntime.Uploads.CancelAllQueuedWork(this, "Vulkan renderer shutdown");
             CancelPendingImportedTextureUploadFrameOps("Vulkan renderer shutdown");
             CancelRecordedTextureUploadPublications("Vulkan renderer shutdown");
             DrainVulkanPipelineCompileQueueForShutdown();
@@ -246,7 +260,7 @@ namespace XREngine.Rendering.Vulkan
             DisposeImGuiResources();
             DestroyOpenXrRenderingResources();
             DestroyFrameOpResourcePlannerStates();
-            _targetDriver.DestroyFinalOutput(this);
+            OutputRuntime.DestroyTargetFinalOutput();
             // FBO render passes are NOT destroyed during swapchain recreation
             // (they are swapchain-independent). Clean them up here at full shutdown.
             DestroyFrameBufferRenderPasses();
@@ -255,8 +269,8 @@ namespace XREngine.Rendering.Vulkan
             VulkanResourceAllocator resourceAllocator = CaptureResourcePlannerRuntimeState().ResourceAllocator;
             resourceAllocator.DestroyPhysicalImages(this);
             resourceAllocator.DestroyPhysicalBuffers(this);
-            _stagingManager.Destroy(this);
-            DestroyDynamicUniformRingBuffers();
+            ResourceRuntime.Allocations.Staging.Destroy(this);
+            DestroyMappedFrameArena();
 
             // Teardown paths above may create or retain late-bound GPU resources.
             // Sweep wrappers and deferred queues before disposing the allocator so
@@ -276,11 +290,11 @@ namespace XREngine.Rendering.Vulkan
             DestroyRemainingTrackedBufferAllocations();
             DestroyRemainingTrackedImageAllocations();
 
-            if (_bufferResourceManager.MemoryAllocator is VulkanBlockAllocator blockAllocator)
-                blockAllocator.DestroyAllBlocks(Api!, device);
-            _bufferResourceManager.MemoryAllocator?.Dispose();
-            _bufferResourceManager.MemoryAllocator = null;
-            _activeSynchronizationBackend = EVulkanSynchronizationBackend.Legacy;
+            if (ResourceRuntime.Allocations.Buffers.MemoryAllocator is VulkanBlockAllocator blockAllocator)
+                blockAllocator.DestroyAllBlocks(Api!, _deviceContext.Device);
+            ResourceRuntime.Allocations.Buffers.MemoryAllocator?.Dispose();
+            ResourceRuntime.Allocations.Buffers.MemoryAllocator = null;
+            _commandRuntime.Synchronization._activeSynchronizationBackend = EVulkanSynchronizationBackend.Legacy;
             DestroyFrameTimingResources();
 
             DestroySyncObjects();
@@ -296,8 +310,7 @@ namespace XREngine.Rendering.Vulkan
             DestroySharedGraphicsPipelineLibraries();
 
             DestroyLogicalDevice();
-            DestroyValidationLayers();
-            _targetDriver.DestroyInstanceResources(this);
+            OutputRuntime.DestroyTargetInstanceResources(Api!, _deviceContext, Window);
             DestroyInstance();
             }
             finally
@@ -312,7 +325,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyDanglingMaterialWrappers()
         {
-            var wrappers = _backendObjectRegistry.Snapshot<XRMaterial>();
+            var wrappers = ResourceRuntime.BackendObjects.Snapshot<XRMaterial>();
             foreach (var wrapper in wrappers)
             {
                 try
@@ -327,7 +340,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyDanglingMeshRendererWrappers()
         {
-            var wrappers = _backendObjectRegistry.Snapshot<XRMeshRenderer.BaseVersion>();
+            var wrappers = ResourceRuntime.BackendObjects.Snapshot<XRMeshRenderer.BaseVersion>();
             foreach (var wrapper in wrappers)
             {
                 try
@@ -342,7 +355,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyDanglingRenderProgramPipelineWrappers()
         {
-            var wrappers = _backendObjectRegistry.Snapshot<XRRenderProgramPipeline>();
+            var wrappers = ResourceRuntime.BackendObjects.Snapshot<XRRenderProgramPipeline>();
             foreach (var wrapper in wrappers)
             {
                 try
@@ -357,7 +370,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyDanglingRenderProgramWrappers()
         {
-            var wrappers = _backendObjectRegistry.Snapshot<XRRenderProgram>();
+            var wrappers = ResourceRuntime.BackendObjects.Snapshot<XRRenderProgram>();
             foreach (var wrapper in wrappers)
             {
                 try
@@ -372,7 +385,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyDanglingDataBufferWrappers()
         {
-            var wrappers = _backendObjectRegistry.Snapshot<XRDataBuffer>();
+            var wrappers = ResourceRuntime.BackendObjects.Snapshot<XRDataBuffer>();
             foreach (var wrapper in wrappers)
             {
                 try
@@ -387,23 +400,23 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyDanglingFrameBufferWrappers()
         {
-            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRFrameBuffer>(), "framebuffer");
-            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRRenderBuffer>(), "renderbuffer");
+            DestroyCachedWrappers(ResourceRuntime.BackendObjects.Snapshot<XRFrameBuffer>(), "framebuffer");
+            DestroyCachedWrappers(ResourceRuntime.BackendObjects.Snapshot<XRRenderBuffer>(), "renderbuffer");
         }
 
         private void DestroyDanglingTextureWrappers()
         {
-            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRTexture1D>(), "texture1D");
-            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRTexture1DArray>(), "texture1DArray");
-            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRTexture2D>(), "texture2D");
-            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRTexture2DArray>(), "texture2DArray");
-            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRTexture3D>(), "texture3D");
-            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRTextureCube>(), "textureCube");
-            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRTextureCubeArray>(), "textureCubeArray");
-            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRTextureRectangle>(), "textureRectangle");
-            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRTextureBuffer>(), "textureBuffer");
-            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRTextureViewBase>(), "textureView");
-            DestroyCachedWrappers(_backendObjectRegistry.Snapshot<XRSampler>(), "sampler");
+            DestroyCachedWrappers(ResourceRuntime.BackendObjects.Snapshot<XRTexture1D>(), "texture1D");
+            DestroyCachedWrappers(ResourceRuntime.BackendObjects.Snapshot<XRTexture1DArray>(), "texture1DArray");
+            DestroyCachedWrappers(ResourceRuntime.BackendObjects.Snapshot<XRTexture2D>(), "texture2D");
+            DestroyCachedWrappers(ResourceRuntime.BackendObjects.Snapshot<XRTexture2DArray>(), "texture2DArray");
+            DestroyCachedWrappers(ResourceRuntime.BackendObjects.Snapshot<XRTexture3D>(), "texture3D");
+            DestroyCachedWrappers(ResourceRuntime.BackendObjects.Snapshot<XRTextureCube>(), "textureCube");
+            DestroyCachedWrappers(ResourceRuntime.BackendObjects.Snapshot<XRTextureCubeArray>(), "textureCubeArray");
+            DestroyCachedWrappers(ResourceRuntime.BackendObjects.Snapshot<XRTextureRectangle>(), "textureRectangle");
+            DestroyCachedWrappers(ResourceRuntime.BackendObjects.Snapshot<XRTextureBuffer>(), "textureBuffer");
+            DestroyCachedWrappers(ResourceRuntime.BackendObjects.Snapshot<XRTextureViewBase>(), "textureView");
+            DestroyCachedWrappers(ResourceRuntime.BackendObjects.Snapshot<XRSampler>(), "sampler");
         }
 
         private static void DestroyCachedWrappers<T>(VkObject<T>[] wrappers, string label)
@@ -428,26 +441,26 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyRemainingTrackedBufferAllocations()
         {
-            foreach (var pair in _bufferResourceManager.Allocations.ToArray())
+            foreach (var pair in ResourceRuntime.Allocations.Buffers.Allocations.ToArray())
             {
-                if (!_bufferResourceManager.Allocations.TryRemove(pair.Key, out VulkanMemoryAllocation allocation))
+                if (!ResourceRuntime.Allocations.Buffers.Allocations.TryRemove(pair.Key, out VulkanMemoryAllocation allocation))
                     continue;
 
                 Buffer buffer = new() { Handle = pair.Key };
                 if (buffer.Handle != 0 && TryBeginDestroyBuffer(buffer, "DestroyRemainingTrackedBufferAllocations"))
-                    Api!.DestroyBuffer(device, buffer, null);
+                    Api!.DestroyBuffer(_deviceContext.Device, buffer, null);
 
                 FreeMemoryAllocation(allocation);
             }
 
-            foreach (var pair in _bufferResourceManager.LegacyAllocations.ToArray())
+            foreach (var pair in ResourceRuntime.Allocations.Buffers.LegacyAllocations.ToArray())
             {
-                if (!_bufferResourceManager.LegacyAllocations.TryRemove(pair.Key, out VulkanMemoryAllocation allocation))
+                if (!ResourceRuntime.Allocations.Buffers.LegacyAllocations.TryRemove(pair.Key, out VulkanMemoryAllocation allocation))
                     continue;
 
                 Buffer buffer = new() { Handle = pair.Key };
                 if (buffer.Handle != 0 && TryBeginDestroyBuffer(buffer, "DestroyRemainingTrackedLegacyBufferAllocations"))
-                    Api!.DestroyBuffer(device, buffer, null);
+                    Api!.DestroyBuffer(_deviceContext.Device, buffer, null);
 
                 if (allocation.Memory.Handle != 0)
                     FreeLegacyBufferMemory(allocation);
@@ -456,9 +469,9 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyRemainingTrackedImageAllocations()
         {
-            foreach (var pair in _imageAllocationTracker.Allocations.ToArray())
+            foreach (var pair in ResourceRuntime.Allocations.Images.Allocations.ToArray())
             {
-                if (!_imageAllocationTracker.Allocations.TryRemove(pair.Key, out VulkanMemoryAllocation allocation))
+                if (!ResourceRuntime.Allocations.Images.Allocations.TryRemove(pair.Key, out VulkanMemoryAllocation allocation))
                     continue;
 
                 Image image = new() { Handle = pair.Key };
@@ -478,7 +491,7 @@ namespace XREngine.Rendering.Vulkan
             // Allocation admission must be checked at the native call boundary: a
             // device-loss transition can occur after a caller passed its create gate.
             ThrowIfDeviceLostForResourceCreation("vkAllocateMemory");
-            Result result = Api!.AllocateMemory(device, ref allocInfo, null, memPtr);
+            Result result = Api!.AllocateMemory(_deviceContext.Device, ref allocInfo, null, memPtr);
             RecordAllocatorNativeFailure("vkAllocateMemory", result);
             if (result == Result.ErrorOutOfDeviceMemory || result == Result.ErrorOutOfHostMemory)
             {
@@ -501,7 +514,7 @@ namespace XREngine.Rendering.Vulkan
         {
             IVulkanMemoryAllocator alloc = MemoryAllocator;
             ThrowIfDeviceLostForResourceCreation("AllocateBufferMemoryWithFallback.Initial");
-            if (alloc.TryAllocateForBuffer(Api!, device, buffer, requiredProperties, out VulkanMemoryAllocation allocation, out Result initialResult))
+            if (alloc.TryAllocateForBuffer(Api!, _deviceContext.Device, buffer, requiredProperties, out VulkanMemoryAllocation allocation, out Result initialResult))
                 return allocation;
             RecordAllocatorNativeFailure("vkAllocateMemory.AllocatorBuffer.Initial", initialResult);
             ThrowIfDeviceLostForResourceCreation("vkAllocateMemory.AllocatorBuffer.Initial");
@@ -513,7 +526,7 @@ namespace XREngine.Rendering.Vulkan
                 Debug.VulkanWarning(
                     $"[Vulkan] OOM for buffer (requested {requiredProperties}). Falling back to {fallback}.");
                 ThrowIfDeviceLostForResourceCreation("AllocateBufferMemoryWithFallback.Fallback");
-                if (alloc.TryAllocateForBuffer(Api!, device, buffer, fallback, out allocation, out Result fallbackResult))
+                if (alloc.TryAllocateForBuffer(Api!, _deviceContext.Device, buffer, fallback, out allocation, out Result fallbackResult))
                 {
                     RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanOomFallback();
                     return allocation;
@@ -554,7 +567,7 @@ namespace XREngine.Rendering.Vulkan
             failureReason = string.Empty;
 
             // Strip lazy if device doesn't support it, to avoid guaranteed first-try failure.
-            if (requiredProperties.HasFlag(MemoryPropertyFlags.LazilyAllocatedBit) && !SupportsLazyAllocation)
+            if (requiredProperties.HasFlag(MemoryPropertyFlags.LazilyAllocatedBit) && !_deviceContext.MutableCapabilities.SupportsLazyAllocation)
                 requiredProperties &= ~MemoryPropertyFlags.LazilyAllocatedBit;
 
             if (ShouldDeferVulkanImageMemoryAllocationForPressure(
@@ -566,7 +579,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             ThrowIfDeviceLostForResourceCreation("TryAllocateImageMemoryWithFallback.Initial");
-            if (alloc.TryAllocateForImage(Api!, device, image, requiredProperties, out allocation, out Result initialResult))
+            if (alloc.TryAllocateForImage(Api!, _deviceContext.Device, image, requiredProperties, out allocation, out Result initialResult))
             {
                 failureReason = string.Empty;
                 return true;
@@ -579,7 +592,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 MemoryPropertyFlags withoutLazy = requiredProperties & ~MemoryPropertyFlags.LazilyAllocatedBit;
                 ThrowIfDeviceLostForResourceCreation("TryAllocateImageMemoryWithFallback.WithoutLazy");
-                if (alloc.TryAllocateForImage(Api!, device, image, withoutLazy, out allocation, out Result withoutLazyResult))
+                if (alloc.TryAllocateForImage(Api!, _deviceContext.Device, image, withoutLazy, out allocation, out Result withoutLazyResult))
                 {
                     Debug.VulkanWarning(
                         $"[Vulkan] Image allocation requested {requiredProperties} but lazy allocation failed; falling back to {withoutLazy}.");
@@ -607,7 +620,7 @@ namespace XREngine.Rendering.Vulkan
             reason = string.Empty;
             if (!requiredProperties.HasFlag(MemoryPropertyFlags.DeviceLocalBit) ||
                 Api is null ||
-                device.Handle == 0 ||
+                _deviceContext.Device.Handle == 0 ||
                 image.Handle == 0)
             {
                 return false;
@@ -617,7 +630,7 @@ namespace XREngine.Rendering.Vulkan
             if (!presentation.IsOpenXRActive && !presentation.IsInVR)
                 return false;
 
-            Api.GetImageMemoryRequirements(device, image, out MemoryRequirements requirements);
+            Api.GetImageMemoryRequirements(_deviceContext.Device, image, out MemoryRequirements requirements);
             long requestedBytes = requirements.Size > long.MaxValue
                 ? long.MaxValue
                 : (long)requirements.Size;
@@ -779,10 +792,10 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            if (Api is null || _physicalDevice.Handle == 0)
+            if (Api is null || _deviceContext.PhysicalDevice.Handle == 0)
                 return false;
 
-            Api.GetPhysicalDeviceProperties(_physicalDevice, out PhysicalDeviceProperties properties);
+            Api.GetPhysicalDeviceProperties(_deviceContext.PhysicalDevice, out PhysicalDeviceProperties properties);
             uint maxAllocationCount = properties.Limits.MaxMemoryAllocationCount;
             if (maxAllocationCount == 0)
                 return false;
@@ -805,7 +818,7 @@ namespace XREngine.Rendering.Vulkan
         {
             if (allocation.IsNull)
                 return;
-            MemoryAllocator.Free(Api!, device, allocation);
+            MemoryAllocator.Free(Api!, _deviceContext.Device, allocation);
         }
 
         public static unsafe void* Allocated(void* pUserData, nuint size, nuint alignment, SystemAllocationScope allocationScope)
@@ -920,7 +933,7 @@ namespace XREngine.Rendering.Vulkan
             uint groupsY,
             uint groupsZ)
         {
-            if (!IsDeviceOperational)
+            if (!_deviceContext.IsOperational)
                 return ERendererComputeEnqueueStatus.DeviceLost;
             if (program is null)
                 return ERendererComputeEnqueueStatus.InvalidResource;
@@ -948,7 +961,7 @@ namespace XREngine.Rendering.Vulkan
 
             FrameOpContext context = CaptureFrameOpContextOrLastActive();
             string programName = string.IsNullOrWhiteSpace(program.Name) ? "UnnamedProgram" : program.Name;
-            string opName = ComputeDispatchOperationNames.GetOrAdd(
+            string opName = _frameTelemetry.ComputeDispatchOperationNames.GetOrAdd(
                 programName,
                 static name => string.Concat("DispatchCompute:", name));
             int passIndex = ResolveOrderedPrimaryWorkPassIndex(opName, context.PassMetadata);
@@ -1009,7 +1022,7 @@ namespace XREngine.Rendering.Vulkan
         {
             if (timeout < TimeSpan.Zero)
                 throw new ArgumentOutOfRangeException(nameof(timeout), timeout, "The shutdown timeout must be non-negative.");
-            if (device.Handle == 0)
+            if (_deviceContext.Device.Handle == 0)
                 return true;
 
             Exception? waitFailure = null;
@@ -1198,7 +1211,7 @@ namespace XREngine.Rendering.Vulkan
                 if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))
                     ActiveState.SetCurrentTargetExtent(externalExtent);
                 else
-                    ActiveState.SetCurrentTargetExtent(swapChainExtent);
+                    ActiveState.SetCurrentTargetExtent(OutputRuntime.Desktop.Extent);
             }
             else
             {
@@ -1253,7 +1266,7 @@ namespace XREngine.Rendering.Vulkan
 
                 if (TryResolveBlitImage(
                         fbo,
-                        _lastPresentedImageIndex,
+                        OutputRuntime.Desktop.LastPresentedImageIndex,
                         GetReadBufferMode(),
                         wantColor: false,
                         wantDepth: false,
@@ -1269,11 +1282,11 @@ namespace XREngine.Rendering.Vulkan
             if (_swapchainDepthImage.Handle == 0)
                 return 0;
 
-            sampleX = Math.Clamp((int)x, 0, Math.Max((int)swapChainExtent.Width - 1, 0));
-            sampleY = Math.Clamp((int)y, 0, Math.Max((int)swapChainExtent.Height - 1, 0));
+            sampleX = Math.Clamp((int)x, 0, Math.Max((int)OutputRuntime.Desktop.Extent.Width - 1, 0));
+            sampleY = Math.Clamp((int)y, 0, Math.Max((int)OutputRuntime.Desktop.Extent.Height - 1, 0));
 
             BlitImageInfo swapchainStencilSource = ResolveSwapchainBlitImage(
-                _lastPresentedImageIndex,
+                OutputRuntime.Desktop.LastPresentedImageIndex,
                 wantColor: false,
                 wantDepth: false,
                 wantStencil: true);
@@ -1294,10 +1307,10 @@ namespace XREngine.Rendering.Vulkan
         {
             lock (_oneTimeSubmitLock)
             {
-                if (!IsDeviceOperational)
+                if (!_deviceContext.IsOperational)
                     return;
 
-                Result result = Api!.DeviceWaitIdle(device);
+                Result result = Api!.DeviceWaitIdle(_deviceContext.Device);
                 if (result == Result.Success)
                 {
                     NotifyVulkanDeviceIdle();

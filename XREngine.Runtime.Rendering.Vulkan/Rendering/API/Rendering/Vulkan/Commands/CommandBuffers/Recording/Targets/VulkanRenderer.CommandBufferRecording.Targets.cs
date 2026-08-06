@@ -24,9 +24,9 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private bool IsSwapchainImageEverPresented(uint imageIndex)
-            => _swapchainImageEverPresented is not null &&
-               imageIndex < _swapchainImageEverPresented.Length &&
-               _swapchainImageEverPresented[imageIndex];
+            => OutputRuntime.Desktop.ImageEverPresented is not null &&
+               imageIndex < OutputRuntime.Desktop.ImageEverPresented.Length &&
+               OutputRuntime.Desktop.ImageEverPresented[imageIndex];
 
         private ImageLayout ResolveTrackedSwapchainTargetColorLayout(Image image)
         {
@@ -67,15 +67,15 @@ namespace XREngine.Rendering.Vulkan
                     ImageEverPresentedAtRecordStart: false);
             }
 
-            if (swapChainImages is null ||
-                swapChainImageViews is null ||
-                imageIndex >= swapChainImages.Length ||
-                imageIndex >= swapChainImageViews.Length)
+            if (OutputRuntime.Desktop.Images is null ||
+                OutputRuntime.Desktop.ImageViews is null ||
+                imageIndex >= OutputRuntime.Desktop.Images.Length ||
+                imageIndex >= OutputRuntime.Desktop.ImageViews.Length)
             {
                 return default;
             }
 
-            Image swapchainImage = swapChainImages[imageIndex];
+            Image swapchainImage = OutputRuntime.Desktop.Images[imageIndex];
             bool imageEverPresented = IsSwapchainImageEverPresented(imageIndex);
             ImageLayout initialSwapchainLayout = ResolveTrackedSwapchainTargetColorLayout(swapchainImage);
             if (initialSwapchainLayout == ImageLayout.Undefined && imageEverPresented)
@@ -84,9 +84,9 @@ namespace XREngine.Rendering.Vulkan
             VulkanSwapchainDepthResources? depth = CurrentSwapchainDepthResources;
             return new SwapchainRecordingTarget(
                 swapchainImage,
-                swapChainImageViews[imageIndex],
-                swapChainImageFormat,
-                swapChainExtent,
+                OutputRuntime.Desktop.ImageViews[imageIndex],
+                OutputRuntime.Desktop.ImageFormat,
+                OutputRuntime.Desktop.Extent,
                 depth?.Image ?? default,
                 depth?.View ?? default,
                 depth?.Format ?? default,
@@ -123,7 +123,7 @@ namespace XREngine.Rendering.Vulkan
                     return true;
                 }
 
-                renderPass = _renderPass;
+                renderPass = ResourceRuntime.SwapchainRenderPass;
                 if (renderPass.Handle != 0)
                     return true;
 
@@ -176,7 +176,7 @@ namespace XREngine.Rendering.Vulkan
             uint imageIndex,
             CommandBuffer commandBuffer,
             CommandBuffer dynamicUiBatchTextSecondaryCommandBuffer,
-            FrameOp[] ops,
+            FrameOperationSequence ops,
             int dynamicUiBatchTextOpCount,
             CommandChainSchedule? commandChainSchedule,
             bool preserveSwapchainForOverlay,
@@ -215,10 +215,10 @@ namespace XREngine.Rendering.Vulkan
                 frameDataImageIndexOverride,
                 openXrTargetContext,
                 excludeDesktopSwapchainBarriers,
-                _renderGraphRuntime.CurrentPlan,
+                _framePlanner.CaptureSnapshot().RenderGraphPlan,
                 framePlan);
 
-            if (!_commandRecorder.Prepare(ref context))
+            if (!_commandRuntime.Recorder.Prepare(ref context))
             {
                 recordedSwapchainWriteCount = context.RecordedSwapchainWriteCount;
                 recordedSwapchainFinalLayout = context.RecordedSwapchainFinalLayout;
@@ -237,7 +237,7 @@ namespace XREngine.Rendering.Vulkan
 
         private static bool TryValidateNativeRecordingFramePlan(
             FramePlan? framePlan,
-            FrameOp[] operations,
+            FrameOperationSequence operations,
             out string reason)
         {
             if (framePlan is null)

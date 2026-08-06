@@ -156,7 +156,7 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
         Debug.Vulkan($"Vulkan requirements: Min {requirements.MinApiVersionSupported}, Max {requirements.MaxApiVersionSupported}");
 
         // Get the primary graphics queue family index
-        var graphicsFamilyIndex = renderer.FamilyQueueIndices.GraphicsFamilyIndex!.Value;
+        var graphicsFamilyIndex = renderer.DeviceContext.QueueFamilies.GraphicsFamilyIndex!.Value;
 
         // Check if multiple graphics queues are supported
         bool supportsMultiQueue = renderer.SupportsMultipleGraphicsQueues();
@@ -818,12 +818,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
         if (selectedFormat == 0)
             return LogVulkanEyeRenderNotReady(viewIndex, imageIndex, "no selected Vulkan swapchain format");
 
-        var previous = AbstractRenderer.Current;
-        bool previousRendererActive = renderer.Active;
-        try
+        using (renderer.EnterOpenXrRenderOperation())
         {
-            renderer.Active = true;
-            AbstractRenderer.Current = renderer;
 
             ApplyOpenXrEyePoseForRenderThread(viewIndex);
             if (VulkanCaptureEyeOutputs)
@@ -886,11 +882,6 @@ Target:                 new RenderFrameViewTargetDescriptor(
             PublishVulkanEyeMirror(renderer, mirrorColor, viewIndex, imageIndex, width, height);
             MarkVulkanEyeResourceWarmupComplete(viewIndex);
             return true;
-        }
-        finally
-        {
-            renderer.Active = previousRendererActive;
-            AbstractRenderer.Current = previous;
         }
     }
 
@@ -1180,7 +1171,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         if (strictSinglePassStereoRequested &&
             TryCommitStrictSpsFailure(
                 OpenXrStrictSpsFailureStage.Capability,
-                VulkanRenderer.EVulkanQueueSubmissionDisposition.NotSubmitted.ToString(),
+                EVulkanQueueSubmissionDisposition.NotSubmitted.ToString(),
                 out OpenXrStrictSpsFailureResolution capabilityFailure))
         {
             handled = capabilityFailure.Handled;
@@ -1287,7 +1278,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         if (strictSinglePassStereoRequested &&
             TryCommitStrictSpsFailure(
                 OpenXrStrictSpsFailureStage.Target,
-                VulkanRenderer.EVulkanQueueSubmissionDisposition.NotSubmitted.ToString(),
+                EVulkanQueueSubmissionDisposition.NotSubmitted.ToString(),
                 out OpenXrStrictSpsFailureResolution targetFailure))
         {
             handled = targetFailure.Handled;
@@ -1345,10 +1336,10 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.RenderSwapchains"))
             {
-                VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage requestedFaultInjectionStage =
+                EOpenXrStrictSpsFaultInjectionStage requestedFaultInjectionStage =
                     ResolveVulkanStrictSpsFaultInjectionStage();
-                VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage injectedFailureStage =
-                    VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.None;
+                EOpenXrStrictSpsFaultInjectionStage injectedFailureStage =
+                    EOpenXrStrictSpsFaultInjectionStage.None;
 
                 bool rendered = modeResolution.EffectiveMode switch
                 {
@@ -1372,13 +1363,13 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
                 if (!rendered)
                 {
-                    if (injectedFailureStage != VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.None)
+                    if (injectedFailureStage != EOpenXrStrictSpsFaultInjectionStage.None)
                     {
                         OpenXrStrictSpsFailureStage apiFailureStage =
                             ConvertVulkanStrictSpsFaultInjectionStage(injectedFailureStage);
                         if (TryCommitStrictSpsFailure(
                                 apiFailureStage,
-                                VulkanRenderer.EVulkanQueueSubmissionDisposition.NotSubmitted.ToString(),
+                                EVulkanQueueSubmissionDisposition.NotSubmitted.ToString(),
                                 out OpenXrStrictSpsFailureResolution rendererFailure))
                         {
                             handled = rendererFailure.Handled;
@@ -1411,7 +1402,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 if (strictSinglePassStereoRequested &&
                     TryCommitStrictSpsFailure(
                         OpenXrStrictSpsFailureStage.Publish,
-                        VulkanRenderer.EVulkanQueueSubmissionDisposition.Completed.ToString(),
+                        EVulkanQueueSubmissionDisposition.Completed.ToString(),
                         out OpenXrStrictSpsFailureResolution publishFailure))
                 {
                     handled = publishFailure.Handled;
@@ -1477,33 +1468,33 @@ Target:                 new RenderFrameViewTargetDescriptor(
         }
     }
 
-    private VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage ResolveVulkanStrictSpsFaultInjectionStage()
+    private EOpenXrStrictSpsFaultInjectionStage ResolveVulkanStrictSpsFaultInjectionStage()
     {
         OpenXrStrictSpsFailureStage configuredStage = _strictSpsInjectedFailureStage;
         if (!IsStrictSpsFailureInjectionEligible(configuredStage))
-            return VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.None;
+            return EOpenXrStrictSpsFaultInjectionStage.None;
 
         return configuredStage switch
         {
             OpenXrStrictSpsFailureStage.Recording =>
-                VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.Recording,
+                EOpenXrStrictSpsFaultInjectionStage.Recording,
             OpenXrStrictSpsFailureStage.LifetimeValidation =>
-                VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.LifetimeValidation,
+                EOpenXrStrictSpsFaultInjectionStage.LifetimeValidation,
             OpenXrStrictSpsFailureStage.Submit =>
-                VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.Submit,
-            _ => VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.None,
+                EOpenXrStrictSpsFaultInjectionStage.Submit,
+            _ => EOpenXrStrictSpsFaultInjectionStage.None,
         };
     }
 
     private static OpenXrStrictSpsFailureStage ConvertVulkanStrictSpsFaultInjectionStage(
-        VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage stage)
+        EOpenXrStrictSpsFaultInjectionStage stage)
         => stage switch
         {
-            VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.Recording =>
+            EOpenXrStrictSpsFaultInjectionStage.Recording =>
                 OpenXrStrictSpsFailureStage.Recording,
-            VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.LifetimeValidation =>
+            EOpenXrStrictSpsFaultInjectionStage.LifetimeValidation =>
                 OpenXrStrictSpsFailureStage.LifetimeValidation,
-            VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.Submit =>
+            EOpenXrStrictSpsFaultInjectionStage.Submit =>
                 OpenXrStrictSpsFailureStage.Submit,
             _ => throw new ArgumentOutOfRangeException(
                 nameof(stage),
@@ -1568,10 +1559,10 @@ Target:                 new RenderFrameViewTargetDescriptor(
         uint leftImageIndex,
         uint rightImageIndex,
         VrViewRenderModeResolution modeResolution,
-        VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage faultInjectionStage,
-        out VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage injectedFailureStage)
+        EOpenXrStrictSpsFaultInjectionStage faultInjectionStage,
+        out EOpenXrStrictSpsFaultInjectionStage injectedFailureStage)
     {
-        injectedFailureStage = VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.None;
+        injectedFailureStage = EOpenXrStrictSpsFaultInjectionStage.None;
         if (modeResolution.EffectiveImplementationPath != EVrViewRenderImplementationPath.TrueSinglePassStereo)
         {
             Debug.VulkanWarningEvery(
@@ -1593,7 +1584,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 return true;
         }
 
-        if (injectedFailureStage != VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.None)
+        if (injectedFailureStage != EOpenXrStrictSpsFaultInjectionStage.None)
             return false;
 
         Debug.VulkanWarningEvery(
@@ -1607,10 +1598,10 @@ Target:                 new RenderFrameViewTargetDescriptor(
         VulkanRenderer renderer,
         uint leftImageIndex,
         uint rightImageIndex,
-        VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage faultInjectionStage,
-        out VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage injectedFailureStage)
+        EOpenXrStrictSpsFaultInjectionStage faultInjectionStage,
+        out EOpenXrStrictSpsFaultInjectionStage injectedFailureStage)
     {
-        injectedFailureStage = VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.None;
+        injectedFailureStage = EOpenXrStrictSpsFaultInjectionStage.None;
         if (!CanUseOpenXrTrueSinglePassStereo(out string unavailableReason))
         {
             Debug.VulkanWarningEvery(
@@ -1736,19 +1727,15 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 _openXrFrameWorld.TargetWorldName ?? "<unnamed world>");
         }
 
-        var previousRenderer = AbstractRenderer.Current;
-        bool previousRendererActive = renderer.Active;
-        try
+        using (renderer.EnterOpenXrRenderOperation())
         {
-            renderer.Active = true;
-            AbstractRenderer.Current = renderer;
 
             ulong renderFrameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
             FrameOutputPacingDecision stereoPacing = CreateOpenXrStereoFrameOutputPacing(
                 renderFrameId,
                 checked((int)leftImageIndex));
 
-            var renderRequest = new VulkanRenderer.OpenXrEyeMirrorRenderRequest(
+            var renderRequest = new OpenXrEyeMirrorRenderRequest(
                 target.FrameBuffer,
                 target.Extent,
                 ResourcePlannerStateIndex: 0,
@@ -1784,7 +1771,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
             if (!stereoRenderedAndPublished)
             {
-                if (injectedFailureStage != VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.None)
+                if (injectedFailureStage != EOpenXrStrictSpsFaultInjectionStage.None)
                     return false;
 
                 if (!stereoViewport.RenderPipelineInstance.SkippedResizeCatchUpThisFrame)
@@ -1862,11 +1849,6 @@ Target:                 new RenderFrameViewTargetDescriptor(
             MarkVulkanEyeResourceWarmupComplete(0);
             MarkVulkanEyeResourceWarmupComplete(1);
             return true;
-        }
-        finally
-        {
-            AbstractRenderer.Current = previousRenderer;
-            renderer.Active = previousRendererActive;
         }
     }
 
@@ -2025,12 +2007,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
         if (leftFormat == 0 || rightFormat == 0)
             return LogVulkanEyeRenderNotReady(0, leftImageIndex, "no selected Vulkan swapchain format");
 
-        var previous = AbstractRenderer.Current;
-        bool previousRendererActive = renderer.Active;
-        try
+        using (renderer.EnterOpenXrRenderOperation())
         {
-            renderer.Active = true;
-            AbstractRenderer.Current = renderer;
 
             if (VulkanCaptureEyeOutputs)
             {
@@ -2062,7 +2040,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 if (leftMirrorFbo is null || rightMirrorFbo is null || leftMirrorColor is null || rightMirrorColor is null)
                     return LogVulkanEyeRenderNotReady(0, leftImageIndex, "no Vulkan per-eye mirror FBOs");
 
-                var leftMirrorRequest = new VulkanRenderer.OpenXrEyeMirrorRenderRequest(
+                var leftMirrorRequest = new OpenXrEyeMirrorRenderRequest(
                     leftMirrorFbo,
                     extent,
                     ResourcePlannerStateIndex: 0,
@@ -2074,7 +2052,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                         RenderOpenXrVulkanMirrorViewport(leftViewport, leftMirrorFbo, leftCamera);
                     });
 
-                var rightMirrorRequest = new VulkanRenderer.OpenXrEyeMirrorRenderRequest(
+                var rightMirrorRequest = new OpenXrEyeMirrorRenderRequest(
                     rightMirrorFbo,
                     extent,
                     ResourcePlannerStateIndex: 1,
@@ -2086,7 +2064,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                         RenderOpenXrVulkanMirrorViewport(rightViewport, rightMirrorFbo, rightCamera);
                     });
 
-                var leftPublishRequest = new VulkanRenderer.OpenXrEyeMirrorPublishRequest(
+                var leftPublishRequest = new OpenXrEyeMirrorPublishRequest(
                     leftMirrorColor,
                     leftImage,
                     (VkFormat)leftFormat,
@@ -2094,7 +2072,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                     _previewLeftEyeTexture,
                     $"left eye swapchain image {leftImageIndex}",
                     FlipPreviewY: false);
-                var rightPublishRequest = new VulkanRenderer.OpenXrEyeMirrorPublishRequest(
+                var rightPublishRequest = new OpenXrEyeMirrorPublishRequest(
                     rightMirrorColor,
                     rightImage,
                     (VkFormat)rightFormat,
@@ -2144,7 +2122,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 return true;
             }
 
-            var leftRequest = new VulkanRenderer.OpenXrEyeSwapchainRenderRequest(
+            var leftRequest = new OpenXrEyeSwapchainRenderRequest(
                 leftImage,
                 (VkFormat)leftFormat,
                 extent,
@@ -2158,7 +2136,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                     leftViewport.Render(null, _openXrFrameWorld, leftCamera, shadowPass: false, forcedMaterial: null);
                 });
 
-            var rightRequest = new VulkanRenderer.OpenXrEyeSwapchainRenderRequest(
+            var rightRequest = new OpenXrEyeSwapchainRenderRequest(
                 rightImage,
                 (VkFormat)rightFormat,
                 extent,
@@ -2192,11 +2170,6 @@ Target:                 new RenderFrameViewTargetDescriptor(
             MarkVulkanEyeResourceWarmupComplete(0);
             MarkVulkanEyeResourceWarmupComplete(1);
             return true;
-        }
-        finally
-        {
-            renderer.Active = previousRendererActive;
-            AbstractRenderer.Current = previous;
         }
     }
 
@@ -2403,12 +2376,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
         eyeViewport.WorldInstanceOverride = _openXrFrameWorld;
 
-        var previous = AbstractRenderer.Current;
-        bool previousRendererActive = renderer.Active;
-        try
+        using (renderer.EnterOpenXrRenderOperation())
         {
-            renderer.Active = true;
-            AbstractRenderer.Current = renderer;
 
             ApplyOpenXrEyePoseForRenderThread(viewIndex);
 
@@ -2438,11 +2407,6 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 {
                     eyeViewport.Render(mirrorFbo, _openXrFrameWorld, eyeCamera, shadowPass: false, forcedMaterial: null);
                 });
-        }
-        finally
-        {
-            renderer.Active = previousRendererActive;
-            AbstractRenderer.Current = previous;
         }
     }
 

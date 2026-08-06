@@ -66,11 +66,10 @@ public sealed unsafe class VulkanPresentationIndependentHostTests
             new() { QueueFlags = QueueFlags.TransferBit, QueueCount = 1 },
         ];
 
-        VulkanRenderer.QueueFamilyIndices indices = VulkanQueueFamilySelector.Select(
+        QueueFamilyIndices indices = VulkanQueueFamilySelector.Select(
             families,
-            surfaceApi: null,
             physicalDevice: default,
-            surface: default);
+            presentationSupportProbe: null);
 
         indices.IsComplete(requirePresentQueue: false).ShouldBeTrue();
         indices.GraphicsFamilyIndex.ShouldBe(0u);
@@ -79,6 +78,29 @@ public sealed unsafe class VulkanPresentationIndependentHostTests
         indices.ComputeFamilyIndex.ShouldBe(1u);
         indices.TransferFamilyIndex.ShouldBe(2u);
         indices.PresentFamilyIndex.ShouldBeNull();
+    }
+
+    [Test]
+    public void QueueSelection_PropagatesPresentationQueryFailure()
+    {
+        QueueFamilyProperties[] families =
+        [
+            new() { QueueFlags = QueueFlags.GraphicsBit, QueueCount = 1 },
+        ];
+        VulkanPresentationSupportProbe failingProbe =
+            (PhysicalDevice _, uint _, out bool supported) =>
+            {
+                supported = false;
+                return Result.ErrorSurfaceLostKhr;
+            };
+
+        InvalidOperationException exception = Should.Throw<InvalidOperationException>(() =>
+            VulkanQueueFamilySelector.Select(
+                families,
+                new PhysicalDevice((nint)0x101),
+                failingProbe));
+
+        exception.Message.ShouldContain(nameof(Result.ErrorSurfaceLostKhr));
     }
 
     [Test]

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -16,10 +16,9 @@ using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+/// <summary>Owns mutable Vulkan fixed-function state used while recording commands.</summary>
+internal unsafe sealed class VulkanStateTracker
 {
-    private sealed class VulkanStateTracker
-    {
         private Extent2D _swapchainExtent;
         private Extent2D _currentTargetExtent;
         private bool _viewportExplicitlySet;
@@ -144,11 +143,11 @@ public unsafe partial class VulkanRenderer
         // previous pass's target height (off-target rasterization on half-res passes).
         public Viewport GetViewport(Extent2D targetExtent)
             => _viewportExplicitlySet
-                ? CreateVulkanViewport(_viewportRegion, targetExtent)
-                : CreateVulkanViewport(targetExtent);
+                ? VulkanRenderer.CreateVulkanViewport(_viewportRegion, targetExtent)
+                : VulkanRenderer.CreateVulkanViewport(targetExtent);
 
         public static Viewport GetViewport(BoundingRectangle region, Extent2D targetExtent)
-            => CreateVulkanViewport(region, targetExtent);
+            => VulkanRenderer.CreateVulkanViewport(region, targetExtent);
 
         public bool SetViewport(BoundingRectangle region)
         {
@@ -285,7 +284,7 @@ public unsafe partial class VulkanRenderer
             Rect2D[] scissors = new Rect2D[count];
             for (int i = 0; i < count; i++)
             {
-                viewports[i] = CreateVulkanViewport(_indexedViewportRegions[i], targetExtent);
+                viewports[i] = VulkanRenderer.CreateVulkanViewport(_indexedViewportRegions[i], targetExtent);
                 scissors[i] = CreateVulkanScissor(_indexedScissorRegions[i], targetExtent);
             }
 
@@ -627,5 +626,4 @@ public unsafe partial class VulkanRenderer
                 };
             }
         }
-    }
 }

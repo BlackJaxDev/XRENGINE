@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
-        private EDesktopFrameFlow RecordDesktopFrame(
+        internal EDesktopFrameFlow RecordDesktopFrame(
             ref VulkanFrameAttempt attempt)
         {
             VulkanImGuiFrameSnapshot? imguiOverlaySnapshot = null;
@@ -157,7 +157,7 @@ namespace XREngine.Rendering.Vulkan
             }
             finally
             {
-                _imguiDrawData.Recycle(imguiOverlaySnapshot);
+                _outputRuntime._imguiDrawData.Recycle(imguiOverlaySnapshot);
             }
         }
 

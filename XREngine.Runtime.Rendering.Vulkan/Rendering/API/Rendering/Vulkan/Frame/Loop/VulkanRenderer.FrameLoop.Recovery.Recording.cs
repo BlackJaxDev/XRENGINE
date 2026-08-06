@@ -69,7 +69,7 @@ namespace XREngine.Rendering.Vulkan
             CommandBuffer commandBuffer,
             bool imageWasEverPresented)
         {
-            Image swapchainImage = swapChainImages![imageIndex];
+            Image swapchainImage = OutputRuntime.Desktop.Images![imageIndex];
             ImageSubresourceRange clearRange = new()
             {
                 AspectMask = ImageAspectFlags.ColorBit,

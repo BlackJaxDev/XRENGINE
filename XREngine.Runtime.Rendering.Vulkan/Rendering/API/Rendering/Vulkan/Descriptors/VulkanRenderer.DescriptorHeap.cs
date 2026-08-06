@@ -9,35 +9,35 @@ public unsafe partial class VulkanRenderer
     private const uint DescriptorHeapDefaultSamplerCapacity = 4096u;
     private const uint DescriptorHeapDefaultResourceCapacity = 16384u;
 
-    private VulkanDescriptorHeapNativeApi? _descriptorHeapApi;
-    private DescriptorHeapStorage _descriptorHeapSamplerStorage;
-    private DescriptorHeapStorage _descriptorHeapResourceStorage;
-    private EVulkanDescriptorBackend _activeDescriptorBackend = EVulkanDescriptorBackend.DescriptorSets;
-    private string _descriptorBackendFallbackReason = "Vulkan logical device is not initialized.";
-    private bool _descriptorHeapFeatureSupported;
-    private bool _descriptorHeapCaptureReplaySupported;
-    private bool _descriptorHeapShaderUntypedPointersAvailable;
-    private bool _descriptorHeapNativeApiAvailable;
-    private bool _descriptorHeapStorageReady;
-    private PhysicalDeviceDescriptorHeapPropertiesEXTNative _descriptorHeapProperties;
-    private ulong _descriptorHeapSamplerHighWaterBytes;
-    private ulong _descriptorHeapResourceHighWaterBytes;
-    private ulong _descriptorHeapSamplerWriteCount;
-    private ulong _descriptorHeapResourceWriteCount;
-    private ulong _descriptorHeapSamplerBindCount;
-    private ulong _descriptorHeapResourceBindCount;
-    private ulong _descriptorHeapCopyCount;
-    private ulong _descriptorHeapCopyBytes;
-    private ulong _descriptorHeapAllocationFailureCount;
-    private ulong _descriptorHeapSamplerDirtyStart = ulong.MaxValue;
-    private ulong _descriptorHeapSamplerDirtyEnd;
-    private ulong _descriptorHeapResourceDirtyStart = ulong.MaxValue;
-    private ulong _descriptorHeapResourceDirtyEnd;
-    private ulong _descriptorHeapFrameNumber;
-    private ulong _descriptorHeapFrameWrites;
-    private ulong _descriptorHeapFrameCopies;
-    private ulong _descriptorHeapLastFrameWrites;
-    private ulong _descriptorHeapLastFrameCopies;
+    private ref VulkanDescriptorHeapNativeFunctions? _descriptorHeapApi => ref ResourceRuntime.Descriptors.Heap.NativeFunctions;
+    private ref VulkanDescriptorHeapStorage _descriptorHeapSamplerStorage => ref ResourceRuntime.Descriptors.Heap.SamplerStorage;
+    private ref VulkanDescriptorHeapStorage _descriptorHeapResourceStorage => ref ResourceRuntime.Descriptors.Heap.ResourceStorage;
+    private ref EVulkanDescriptorBackend _activeDescriptorBackend => ref ResourceRuntime.Descriptors.Heap.ActiveBackend;
+    private ref string _descriptorBackendFallbackReason => ref ResourceRuntime.Descriptors.Heap.FallbackReason;
+    private ref bool _descriptorHeapFeatureSupported => ref ResourceRuntime.Descriptors.Heap.FeatureSupported;
+    private ref bool _descriptorHeapCaptureReplaySupported => ref ResourceRuntime.Descriptors.Heap.CaptureReplaySupported;
+    private ref bool _descriptorHeapShaderUntypedPointersAvailable => ref ResourceRuntime.Descriptors.Heap.ShaderUntypedPointersAvailable;
+    private ref bool _descriptorHeapNativeApiAvailable => ref ResourceRuntime.Descriptors.Heap.NativeApiAvailable;
+    private ref bool _descriptorHeapStorageReady => ref ResourceRuntime.Descriptors.Heap.StorageReady;
+    private ref PhysicalDeviceDescriptorHeapPropertiesEXTNative _descriptorHeapProperties => ref ResourceRuntime.Descriptors.Heap.Properties;
+    private ref ulong _descriptorHeapSamplerHighWaterBytes => ref ResourceRuntime.Descriptors.Heap.SamplerHighWaterBytes;
+    private ref ulong _descriptorHeapResourceHighWaterBytes => ref ResourceRuntime.Descriptors.Heap.ResourceHighWaterBytes;
+    private ref ulong _descriptorHeapSamplerWriteCount => ref ResourceRuntime.Descriptors.Heap.SamplerWriteCount;
+    private ref ulong _descriptorHeapResourceWriteCount => ref ResourceRuntime.Descriptors.Heap.ResourceWriteCount;
+    private ref ulong _descriptorHeapSamplerBindCount => ref ResourceRuntime.Descriptors.Heap.SamplerBindCount;
+    private ref ulong _descriptorHeapResourceBindCount => ref ResourceRuntime.Descriptors.Heap.ResourceBindCount;
+    private ref ulong _descriptorHeapCopyCount => ref ResourceRuntime.Descriptors.Heap.CopyCount;
+    private ref ulong _descriptorHeapCopyBytes => ref ResourceRuntime.Descriptors.Heap.CopyBytes;
+    private ref ulong _descriptorHeapAllocationFailureCount => ref ResourceRuntime.Descriptors.Heap.AllocationFailureCount;
+    private ref ulong _descriptorHeapSamplerDirtyStart => ref ResourceRuntime.Descriptors.Heap.SamplerDirtyStart;
+    private ref ulong _descriptorHeapSamplerDirtyEnd => ref ResourceRuntime.Descriptors.Heap.SamplerDirtyEnd;
+    private ref ulong _descriptorHeapResourceDirtyStart => ref ResourceRuntime.Descriptors.Heap.ResourceDirtyStart;
+    private ref ulong _descriptorHeapResourceDirtyEnd => ref ResourceRuntime.Descriptors.Heap.ResourceDirtyEnd;
+    private ref ulong _descriptorHeapFrameNumber => ref ResourceRuntime.Descriptors.Heap.FrameNumber;
+    private ref ulong _descriptorHeapFrameWrites => ref ResourceRuntime.Descriptors.Heap.FrameWrites;
+    private ref ulong _descriptorHeapFrameCopies => ref ResourceRuntime.Descriptors.Heap.FrameCopies;
+    private ref ulong _descriptorHeapLastFrameWrites => ref ResourceRuntime.Descriptors.Heap.LastFrameWrites;
+    private ref ulong _descriptorHeapLastFrameCopies => ref ResourceRuntime.Descriptors.Heap.LastFrameCopies;
 
     public EVulkanDescriptorBackend ActiveDescriptorBackend => _activeDescriptorBackend;
     public string DescriptorBackendFallbackReason => _descriptorBackendFallbackReason;
@@ -85,7 +85,7 @@ public unsafe partial class VulkanRenderer
             PNext = &descriptorHeapFeatures,
         };
 
-        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        Api!.GetPhysicalDeviceFeatures2(_deviceContext.PhysicalDevice, &features2);
         descriptorHeapFeatureSupported = descriptorHeapFeatures.DescriptorHeap;
         descriptorHeapCaptureReplaySupported = descriptorHeapFeatures.DescriptorHeapCaptureReplay;
 
@@ -101,7 +101,7 @@ public unsafe partial class VulkanRenderer
             PNext = &properties,
         };
 
-        Api.GetPhysicalDeviceProperties2(_physicalDevice, &properties2);
+        Api.GetPhysicalDeviceProperties2(_deviceContext.PhysicalDevice, &properties2);
         descriptorHeapProperties = properties;
     }
 
@@ -162,8 +162,8 @@ public unsafe partial class VulkanRenderer
         _descriptorHeapNativeApiAvailable = false;
         _descriptorHeapApi = null;
 
-        VulkanDescriptorHeapNativeApi api = new();
-        if (!api.TryLoad(Api!, instance, device, out reason))
+        VulkanDescriptorHeapNativeFunctions api = new();
+        if (!api.TryLoad(Api!, _deviceContext.Instance, _deviceContext.Device, out reason))
             return false;
 
         _descriptorHeapApi = api;
@@ -184,7 +184,7 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        if (_bufferResourceManager.MemoryAllocator is null)
+        if (ResourceRuntime.Allocations.Buffers.MemoryAllocator is null)
         {
             reason = "Vulkan memory allocator is not initialized yet.";
             return false;
@@ -247,7 +247,7 @@ public unsafe partial class VulkanRenderer
 
     private ulong ResolveDescriptorHeapDescriptorSize(DescriptorType descriptorType, ulong fallbackSize)
     {
-        if (_descriptorHeapApi?.TryGetDescriptorSize(_physicalDevice, descriptorType, out ulong exactSize) == true &&
+        if (_descriptorHeapApi?.TryGetDescriptorSize(_deviceContext.PhysicalDevice, descriptorType, out ulong exactSize) == true &&
             exactSize > 0)
         {
             return exactSize;
@@ -256,7 +256,7 @@ public unsafe partial class VulkanRenderer
         return Math.Max(1ul, fallbackSize);
     }
 
-    private DescriptorHeapStorage CreateDescriptorHeapStorage(string name, ulong size)
+    private VulkanDescriptorHeapStorage CreateDescriptorHeapStorage(string name, ulong size)
     {
         BufferUsageFlags usage =
             VulkanDescriptorHeapExt.DescriptorHeapBufferUsage |
@@ -317,7 +317,7 @@ public unsafe partial class VulkanRenderer
             name,
             requiresCopy ? "DeviceLocalWithStaging" : "HostVisibleDeviceLocal",
             size);
-        return new DescriptorHeapStorage(
+        return new VulkanDescriptorHeapStorage(
             buffer,
             memory,
             mapped,
@@ -350,7 +350,7 @@ public unsafe partial class VulkanRenderer
         _descriptorHeapResourceDirtyEnd = 0;
     }
 
-    private void DestroyDescriptorHeapStorage(ref DescriptorHeapStorage storage)
+    private void DestroyDescriptorHeapStorage(ref VulkanDescriptorHeapStorage storage)
     {
         if (!storage.IsReady)
         {
@@ -513,7 +513,7 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        Result result = _descriptorHeapApi.WriteSamplerDescriptors(device, samplerCount, samplers, &destination);
+        Result result = _descriptorHeapApi.WriteSamplerDescriptors(_deviceContext.Device, samplerCount, samplers, &destination);
         if (result != Result.Success)
         {
             reason = $"vkWriteSamplerDescriptorsEXT failed ({result}).";
@@ -557,7 +557,7 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        Result result = _descriptorHeapApi.WriteResourceDescriptors(device, resourceCount, resources, &destination);
+        Result result = _descriptorHeapApi.WriteResourceDescriptors(_deviceContext.Device, resourceCount, resources, &destination);
         if (result != Result.Success)
         {
             reason = $"vkWriteResourceDescriptorsEXT failed ({result}).";
@@ -578,7 +578,7 @@ public unsafe partial class VulkanRenderer
     }
 
     private static void MarkDescriptorHeapDirty(
-        DescriptorHeapStorage storage,
+        VulkanDescriptorHeapStorage storage,
         ulong offset,
         ulong size,
         ref ulong dirtyStart,
@@ -611,7 +611,7 @@ public unsafe partial class VulkanRenderer
 
     private void FlushDescriptorHeapStagingCopy(
         CommandBuffer commandBuffer,
-        DescriptorHeapStorage storage,
+        VulkanDescriptorHeapStorage storage,
         ref ulong dirtyStart,
         ref ulong dirtyEnd,
         AccessFlags2 heapReadAccess,
@@ -671,7 +671,7 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private void BeginDescriptorHeapFrame(ulong frameNumber)
+    internal void BeginDescriptorHeapFrame(ulong frameNumber)
     {
         if (_descriptorHeapFrameNumber == frameNumber)
             return;
@@ -728,7 +728,7 @@ public unsafe partial class VulkanRenderer
     }
 
     private static bool TryResolveDescriptorHeapWriteDestination(
-        DescriptorHeapStorage storage,
+        VulkanDescriptorHeapStorage storage,
         ulong offsetBytes,
         ulong sizeBytes,
         out HostAddressRangeEXTNative destination,
@@ -777,105 +777,4 @@ public unsafe partial class VulkanRenderer
     private static ulong AlignDescriptorHeapDown(ulong value, ulong alignment)
         => alignment <= 1ul ? value : value / alignment * alignment;
 
-    private readonly struct DescriptorHeapStorage(
-        Buffer buffer,
-        DeviceMemory memory,
-        void* mapped,
-        ulong size,
-        ulong deviceAddress,
-        Buffer stagingBuffer,
-        DeviceMemory stagingMemory,
-        bool requiresCopy)
-    {
-        public Buffer Buffer { get; } = buffer;
-        public DeviceMemory Memory { get; } = memory;
-        public void* Mapped { get; } = mapped;
-        public ulong Size { get; } = size;
-        public ulong DeviceAddress { get; } = deviceAddress;
-        public Buffer StagingBuffer { get; } = stagingBuffer;
-        public DeviceMemory StagingMemory { get; } = stagingMemory;
-        public bool RequiresCopy { get; } = requiresCopy;
-        public bool IsReady => Buffer.Handle != 0 && Memory.Handle != 0 && Mapped != null && Size > 0 && DeviceAddress != 0;
-    }
-
-    private sealed class VulkanDescriptorHeapNativeApi
-    {
-        private delegate* unmanaged[Stdcall]<CommandBuffer, BindHeapInfoEXTNative*, void> _cmdBindSamplerHeap;
-        private delegate* unmanaged[Stdcall]<CommandBuffer, BindHeapInfoEXTNative*, void> _cmdBindResourceHeap;
-        private delegate* unmanaged[Stdcall]<CommandBuffer, PushDataInfoEXTNative*, void> _cmdPushData;
-        private delegate* unmanaged[Stdcall]<PhysicalDevice, DescriptorType, ulong> _getPhysicalDeviceDescriptorSize;
-        private delegate* unmanaged[Stdcall]<Device, uint, SamplerCreateInfo*, HostAddressRangeEXTNative*, Result> _writeSamplerDescriptors;
-        private delegate* unmanaged[Stdcall]<Device, uint, ResourceDescriptorInfoEXTNative*, HostAddressRangeEXTNative*, Result> _writeResourceDescriptors;
-
-        public bool TryLoad(Vk api, Instance instance, Device device, out string reason)
-        {
-            reason = string.Empty;
-            _cmdBindSamplerHeap =
-                (delegate* unmanaged[Stdcall]<CommandBuffer, BindHeapInfoEXTNative*, void>)
-                (nint)api.GetDeviceProcAddr(device, "vkCmdBindSamplerHeapEXT");
-            _cmdBindResourceHeap =
-                (delegate* unmanaged[Stdcall]<CommandBuffer, BindHeapInfoEXTNative*, void>)
-                (nint)api.GetDeviceProcAddr(device, "vkCmdBindResourceHeapEXT");
-            _cmdPushData =
-                (delegate* unmanaged[Stdcall]<CommandBuffer, PushDataInfoEXTNative*, void>)
-                (nint)api.GetDeviceProcAddr(device, "vkCmdPushDataEXT");
-            _writeSamplerDescriptors =
-                (delegate* unmanaged[Stdcall]<Device, uint, SamplerCreateInfo*, HostAddressRangeEXTNative*, Result>)
-                (nint)api.GetDeviceProcAddr(device, "vkWriteSamplerDescriptorsEXT");
-            _writeResourceDescriptors =
-                (delegate* unmanaged[Stdcall]<Device, uint, ResourceDescriptorInfoEXTNative*, HostAddressRangeEXTNative*, Result>)
-                (nint)api.GetDeviceProcAddr(device, "vkWriteResourceDescriptorsEXT");
-            _getPhysicalDeviceDescriptorSize =
-                (delegate* unmanaged[Stdcall]<PhysicalDevice, DescriptorType, ulong>)
-                (nint)api.GetInstanceProcAddr(instance, "vkGetPhysicalDeviceDescriptorSizeEXT");
-
-            if (_cmdBindSamplerHeap == null ||
-                _cmdBindResourceHeap == null ||
-                _cmdPushData == null ||
-                _writeSamplerDescriptors == null ||
-                _writeResourceDescriptors == null)
-            {
-                reason =
-                    $"missing entry points: bindSampler={_cmdBindSamplerHeap != null}, bindResource={_cmdBindResourceHeap != null}, pushData={_cmdPushData != null}, writeSampler={_writeSamplerDescriptors != null}, writeResource={_writeResourceDescriptors != null}.";
-                return false;
-            }
-
-            return true;
-        }
-
-        public void CmdBindSamplerHeap(CommandBuffer commandBuffer, BindHeapInfoEXTNative* bindInfo)
-            => _cmdBindSamplerHeap(commandBuffer, bindInfo);
-
-        public void CmdBindResourceHeap(CommandBuffer commandBuffer, BindHeapInfoEXTNative* bindInfo)
-            => _cmdBindResourceHeap(commandBuffer, bindInfo);
-
-        public void CmdPushData(CommandBuffer commandBuffer, PushDataInfoEXTNative* pushDataInfo)
-            => _cmdPushData(commandBuffer, pushDataInfo);
-
-        public bool TryGetDescriptorSize(PhysicalDevice physicalDevice, DescriptorType descriptorType, out ulong size)
-        {
-            size = 0;
-            if (_getPhysicalDeviceDescriptorSize == null)
-                return false;
-
-            size = _getPhysicalDeviceDescriptorSize(physicalDevice, descriptorType);
-            return size > 0;
-        }
-
-        public Result WriteSamplerDescriptors(Device device, uint samplerCount, SamplerCreateInfo* samplers, HostAddressRangeEXTNative* descriptors)
-            => _writeSamplerDescriptors(device, samplerCount, samplers, descriptors);
-
-        public Result WriteResourceDescriptors(Device device, uint resourceCount, ResourceDescriptorInfoEXTNative* resources, HostAddressRangeEXTNative* descriptors)
-            => _writeResourceDescriptors(device, resourceCount, resources, descriptors);
-
-        public void ReleaseDelegates()
-        {
-            _cmdBindSamplerHeap = null;
-            _cmdBindResourceHeap = null;
-            _cmdPushData = null;
-            _getPhysicalDeviceDescriptorSize = null;
-            _writeSamplerDescriptors = null;
-            _writeResourceDescriptors = null;
-        }
-    }
 }

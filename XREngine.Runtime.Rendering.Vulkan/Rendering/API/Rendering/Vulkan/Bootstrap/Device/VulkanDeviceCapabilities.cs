@@ -33,8 +33,6 @@ internal sealed class VulkanDeviceCapabilities
     public VulkanDeviceExtensionSet EnabledExtensions { get; }
     public EVulkanDeviceCapability EnabledCapabilities { get; }
     public EVulkanDeviceFallback ActiveFallbacks { get; }
-    public bool IsInitialized => EnabledExtensions.Count != 0 || AvailableExtensions.Count != 0;
-
     public bool Supports(EVulkanDeviceCapability capability)
         => (EnabledCapabilities & capability) == capability;
 

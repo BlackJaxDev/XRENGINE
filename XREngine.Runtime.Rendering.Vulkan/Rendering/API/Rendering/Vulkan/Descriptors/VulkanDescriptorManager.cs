@@ -11,6 +11,11 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanDescriptorManager
 {
+    internal readonly object _descriptorSetLayoutCacheLock = new();
+    internal readonly Dictionary<ulong, List<CachedDescriptorSetLayout>> _descriptorSetLayoutsByHash = new();
+    internal readonly Dictionary<ulong, CachedDescriptorSetLayout> _descriptorSetLayoutsByHandle = new();
+    internal readonly object _descriptorUpdateTemplateCacheLock = new();
+    internal readonly Dictionary<ulong, List<CachedDescriptorUpdateTemplate>> _descriptorUpdateTemplateCache = new();
     private readonly object _sharedMeshDescriptorAllocationLock = new();
     private readonly Dictionary<
         VkMeshRenderer.DescriptorAllocationKey,
@@ -23,9 +28,19 @@ internal sealed class VulkanDescriptorManager
     internal Sampler[] CanonicalImmutableSamplers { get; } = new Sampler[5];
     internal ConcurrentDictionary<ulong, string> LiveDescriptorSetLayoutHandles { get; } = new();
     internal object MeshDescriptorPoolSlabLock { get; } = new();
+    internal object SamplerLifetimeLock { get; } = new();
+    internal HashSet<ulong> LiveSamplerHandles { get; } = [];
+    internal Dictionary<ulong, SamplerCreateInfo> DescriptorHeapSamplerCreateInfos { get; } = [];
+    internal ConcurrentDictionary<ulong, BufferViewCreateInfo> DescriptorHeapBufferViewCreateInfos { get; } = new();
     internal Dictionary<
         MeshDescriptorPoolSlabKey,
         List<MeshDescriptorPoolSlab>> MeshDescriptorPoolSlabs { get; } = [];
+    internal VulkanBindlessMaterialTextureTableState BindlessMaterialTextures { get; } = new();
+    internal VulkanComputeDescriptorCacheState Compute { get; } = new();
+    internal VulkanDescriptorHeapState Heap { get; } = new();
+    internal DescriptorSet[]? RootSets;
+    internal DescriptorPool RootPool;
+    internal DescriptorSetLayout RootSetLayout;
 
     internal int FrameSlotCount => Volatile.Read(ref _frameSlotCount);
 

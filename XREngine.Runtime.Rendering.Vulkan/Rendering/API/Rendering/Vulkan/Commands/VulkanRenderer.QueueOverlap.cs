@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -48,7 +48,7 @@ public unsafe partial class VulkanRenderer
         IReadOnlyCollection<RenderPassMetadata>? passMetadata,
         ulong frameId)
     {
-        QueueFamilyIndices familyIndices = FamilyQueueIndices;
+        QueueFamilyIndices familyIndices = _deviceContext.QueueFamilies;
         uint graphicsFamily = familyIndices.GraphicsFamilyIndex ?? 0u;
         uint candidateComputeFamily = familyIndices.ComputeFamilyIndex ?? graphicsFamily;
         uint candidateTransferFamily = familyIndices.TransferFamilyIndex ?? candidateComputeFamily;
@@ -141,7 +141,7 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     private static bool SupportsFrameGraphMultiQueueSubmission => false;
 
-    private readonly record struct QueueOwnershipConfigCacheEntry(
+    internal readonly record struct QueueOwnershipConfigCacheEntry(
         IReadOnlyCollection<RenderPassMetadata>? PassMetadata,
         VulkanBarrierPlanner.QueueOwnershipConfig Config);
 

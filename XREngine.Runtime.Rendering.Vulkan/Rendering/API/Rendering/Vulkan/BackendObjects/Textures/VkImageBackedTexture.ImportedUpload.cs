@@ -378,9 +378,9 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         committedBytes = 0L;
         failureReason = null;
 
-        if (!Renderer.IsDeviceOperational)
+        if (!Renderer.DeviceContext.IsOperational)
         {
-            failureReason = $"Vulkan device state is {Renderer.DeviceState}";
+            failureReason = $"Vulkan device state is {Renderer.DeviceContext.State}";
             return false;
         }
 
@@ -397,7 +397,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         uint uploadQueueFamilyCount = 0;
         if (Renderer.HasDedicatedTextureUploadTransferQueue)
         {
-            VulkanRenderer.QueueFamilyIndices families = Renderer.FamilyQueueIndices;
+            QueueFamilyIndices families = Renderer.DeviceContext.QueueFamilies;
             uint? graphicsFamily = families.GraphicsFamilyIndex;
             uint? transferFamily = families.TransferFamilyIndex;
             if (graphicsFamily.HasValue &&
@@ -449,7 +449,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             return false;
         }
 
-        Renderer._imageAllocationTracker.Allocations[image.Handle] = allocation;
+        Renderer.ResourceRuntime.Allocations.Images.Allocations[image.Handle] = allocation;
         Renderer.TrackImageAllocation(
             image,
             allocation,
@@ -468,7 +468,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         Result bindResult = Api!.BindImageMemory(Device, image, allocation.Memory, allocation.Offset);
         if (bindResult != Result.Success)
         {
-            Renderer._imageAllocationTracker.Allocations.TryRemove(image.Handle, out _);
+            Renderer.ResourceRuntime.Allocations.Images.Allocations.TryRemove(image.Handle, out _);
             Renderer.UntrackImageAllocation(image);
             Renderer.DestroyVulkanImageImmediateTracked(image, "ImportedUpload.BindFailure");
             Renderer.FreeMemoryAllocation(allocation);

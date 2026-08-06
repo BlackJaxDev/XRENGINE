@@ -314,7 +314,7 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
         IsLinked = false;
         _linkedTransformFeedbackLayoutVersion = ulong.MaxValue;
 
-        if (Data.LinkReady && Renderer.IsLogicalDeviceReady)
+        if (Data.LinkReady && Renderer.DeviceContext.IsReady)
             Link();
     }
 
@@ -323,7 +323,7 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
         if (RuntimeEngine.InvokeOnMainThread(() => OnLinkRequested(program), "VkRenderProgram.LinkRequested"))
             return;
 
-        if (!Renderer.IsLogicalDeviceReady)
+        if (!Renderer.DeviceContext.IsReady)
         {
             BackendContext.Pipelines.QueueProgramLinkUntilDeviceReady(this);
             return;
@@ -353,7 +353,7 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
         if (RuntimeEngine.InvokeOnMainThread(() => OnUseRequested(program), "VkRenderProgram.UseRequested"))
             return;
 
-        if (!Renderer.IsLogicalDeviceReady)
+        if (!Renderer.DeviceContext.IsReady)
         {
             BackendContext.Pipelines.QueueProgramLinkUntilDeviceReady(this);
             return;

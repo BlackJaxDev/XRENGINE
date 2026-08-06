@@ -4,55 +4,46 @@ using Silk.NET.Vulkan;
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
-    private RenderPass _renderPass;
-    /// <summary>
-    /// A second swapchain render pass that uses <see cref="AttachmentLoadOp.Load"/>
-    /// for the color attachment. Used when re-entering the swapchain render pass
-    /// after a compute dispatch or blit forced it to end, so that previous
-    /// contents (e.g. the composited scene) are preserved instead of cleared.
-    /// </summary>
-    private RenderPass _renderPassLoad;
-
     private (RenderPass Clear, RenderPass Load) DetachSwapchainRenderPassesForRetirement()
     {
-        (RenderPass Clear, RenderPass Load) detached = (_renderPass, _renderPassLoad);
-        _renderPass = default;
-        _renderPassLoad = default;
+        (RenderPass Clear, RenderPass Load) detached = (ResourceRuntime.SwapchainRenderPass, ResourceRuntime.SwapchainLoadRenderPass);
+        ResourceRuntime.SwapchainRenderPass = default;
+        ResourceRuntime.SwapchainLoadRenderPass = default;
         return detached;
     }
 
     private void DestroyRenderPasses()
     {
-        if (_renderPass.Handle != 0)
+        if (ResourceRuntime.SwapchainRenderPass.Handle != 0)
         {
-            UnregisterRenderPass(_renderPass);
-            Api!.DestroyRenderPass(device, _renderPass, null);
+            UnregisterRenderPass(ResourceRuntime.SwapchainRenderPass);
+            Api!.DestroyRenderPass(_deviceContext.Device, ResourceRuntime.SwapchainRenderPass, null);
         }
 
-        if (_renderPassLoad.Handle != 0)
+        if (ResourceRuntime.SwapchainLoadRenderPass.Handle != 0)
         {
-            UnregisterRenderPass(_renderPassLoad);
-            Api!.DestroyRenderPass(device, _renderPassLoad, null);
+            UnregisterRenderPass(ResourceRuntime.SwapchainLoadRenderPass);
+            Api!.DestroyRenderPass(_deviceContext.Device, ResourceRuntime.SwapchainLoadRenderPass, null);
         }
 
-        _renderPass = default;
-        _renderPassLoad = default;
+        ResourceRuntime.SwapchainRenderPass = default;
+        ResourceRuntime.SwapchainLoadRenderPass = default;
     }
 
     private void CreateRenderPass()
     {
         if (UseDynamicRenderingRenderTargets)
         {
-            _renderPass = default;
-            _renderPassLoad = default;
+            ResourceRuntime.SwapchainRenderPass = default;
+            ResourceRuntime.SwapchainLoadRenderPass = default;
             return;
         }
 
-        _renderPass = CreateSwapchainRenderPass(AttachmentLoadOp.Clear);
-        RegisterRenderPassColorAttachmentFormats(_renderPass, [swapChainImageFormat], BuildSwapchainRenderPassSignature(AttachmentLoadOp.Clear));
+        ResourceRuntime.SwapchainRenderPass = CreateSwapchainRenderPass(AttachmentLoadOp.Clear);
+        RegisterRenderPassColorAttachmentFormats(ResourceRuntime.SwapchainRenderPass, [OutputRuntime.Desktop.ImageFormat], BuildSwapchainRenderPassSignature(AttachmentLoadOp.Clear));
 
-        _renderPassLoad = CreateSwapchainRenderPass(AttachmentLoadOp.Load);
-        RegisterRenderPassColorAttachmentFormats(_renderPassLoad, [swapChainImageFormat], BuildSwapchainRenderPassSignature(AttachmentLoadOp.Load));
+        ResourceRuntime.SwapchainLoadRenderPass = CreateSwapchainRenderPass(AttachmentLoadOp.Load);
+        RegisterRenderPassColorAttachmentFormats(ResourceRuntime.SwapchainLoadRenderPass, [OutputRuntime.Desktop.ImageFormat], BuildSwapchainRenderPassSignature(AttachmentLoadOp.Load));
     }
 
     private RenderPass CreateSwapchainRenderPass(AttachmentLoadOp colorLoadOp)
@@ -67,7 +58,7 @@ public unsafe partial class VulkanRenderer
 
         AttachmentDescription colorAttachment = new()
         {
-            Format = swapChainImageFormat,
+            Format = OutputRuntime.Desktop.ImageFormat,
             Samples = SampleCountFlags.Count1Bit,
             LoadOp = colorLoadOp,
             StoreOp = colorStoreOp,
@@ -158,7 +149,7 @@ public unsafe partial class VulkanRenderer
             PDependencies = dependencies,
         };
 
-        if (Api!.CreateRenderPass(device, ref renderPassInfo, null, out RenderPass renderPass) != Result.Success)
+        if (Api!.CreateRenderPass(_deviceContext.Device, ref renderPassInfo, null, out RenderPass renderPass) != Result.Success)
             throw new Exception("Failed to create render pass.");
 
         return renderPass;
@@ -175,7 +166,7 @@ public unsafe partial class VulkanRenderer
         => string.Join(
             "|",
             "RenderPass:Swapchain",
-            $"color={swapChainImageFormat}",
+            $"color={OutputRuntime.Desktop.ImageFormat}",
             $"depth={_swapchainDepthFormat}",
             "samples=Count1Bit",
             $"colorLoad={colorLoadOp}",

@@ -13,12 +13,9 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal enum CommandChainStabilityBypassReason
 {
-    private enum CommandChainStabilityBypassReason
-    {
-        None,
-        RecentZeroReuse,
-    }
+    None,
+    RecentZeroReuse,
 }
 

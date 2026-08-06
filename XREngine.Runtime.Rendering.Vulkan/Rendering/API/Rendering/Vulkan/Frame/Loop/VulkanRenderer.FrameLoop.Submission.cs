@@ -10,7 +10,7 @@ namespace XREngine.Rendering.Vulkan
     {
         private const uint DesktopSubmitCommandBufferCapacity = 4;
 
-        private EDesktopFrameFlow SubmitDesktopFrame(
+        internal EDesktopFrameFlow SubmitDesktopFrame(
             ref VulkanFrameAttempt attempt)
         {
             if (!TryValidatePresentationSourceForSubmission(
@@ -31,10 +31,10 @@ namespace XREngine.Rendering.Vulkan
 
             ThrowIfDesktopFrameFaultInjected(
                 EVulkanDesktopFrameFaultPoint.Submission);
-            _graphicsTimelineValue = Math.Max(
-                _graphicsTimelineValue + 1,
+            _commandRuntime.Synchronization._graphicsTimelineValue = Math.Max(
+                _commandRuntime.Synchronization._graphicsTimelineValue + 1,
                 attempt.AcquireTimelineValue + 1);
-            attempt.GraphicsSignalValue = _graphicsTimelineValue;
+            attempt.GraphicsSignalValue = _commandRuntime.Synchronization._graphicsTimelineValue;
 
             ulong* waitTimelineValues = stackalloc ulong[1] { 0UL };
             ulong* signalTimelineValues = stackalloc ulong[2]
@@ -87,7 +87,7 @@ namespace XREngine.Rendering.Vulkan
 
             Semaphore* signalSemaphores = stackalloc Semaphore[2]
             {
-                _graphicsTimelineSemaphore,
+                _commandRuntime.Synchronization._graphicsTimelineSemaphore,
                 attempt.PresentSemaphore,
             };
             TimelineSemaphoreSubmitInfo timelineSubmitInfo = new()
@@ -111,6 +111,35 @@ namespace XREngine.Rendering.Vulkan
                 PSignalSemaphores = signalSemaphores,
             };
 
+            VulkanMappedFrameArena? mappedFrameArena = MappedFrameArena;
+            ulong mappedFrameGeneration = mappedFrameArena?.Generation ?? 0UL;
+            bool mappedFrameSlotPrepared;
+            try
+            {
+                mappedFrameSlotPrepared = mappedFrameArena is null ||
+                    mappedFrameArena.TryPrepareFrameSlotForSubmission(
+                        attempt.ImageIndex,
+                        mappedFrameGeneration);
+            }
+            catch
+            {
+                CompleteMappedFrameArenaDeviceLossObservation();
+                throw;
+            }
+            if (!mappedFrameSlotPrepared)
+            {
+                CompleteMappedFrameArenaDeviceLossObservation();
+                MarkCommandBuffersDirty(
+                    $"mapped frame-data slot {attempt.ImageIndex} was not writable/flushable for generation {mappedFrameGeneration}");
+                SettleRejectedDesktopCommandArtifacts(
+                    ref attempt,
+                    "mapped frame-data submission preparation failed");
+                return HandleDesktopRecordingDeferred(
+                    ref attempt,
+                    "mapped frame-data submission preparation failed",
+                    recoveryOverlaySnapshot: null);
+            }
+
             try
             {
                 MarkDlssFrameGenerationPclMarker(
@@ -119,6 +148,9 @@ namespace XREngine.Rendering.Vulkan
             }
             catch
             {
+                _ = mappedFrameArena?.TryCancelFrameSlotSubmission(
+                    attempt.ImageIndex,
+                    mappedFrameGeneration);
                 _ = TryRecoverRejectedDesktopImage(
                     ref attempt,
                     commandBufferDirtyFlagSet: true,
@@ -132,77 +164,101 @@ namespace XREngine.Rendering.Vulkan
 
             long stageStartTimestamp = Stopwatch.GetTimestamp();
             Result submitResult;
-            using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
-                       "Vulkan.FrameLifecycle.Submit"))
-            using (VulkanCpuStageScope cpuStage =
-                   new(EVulkanCpuStage.Submission))
+            try
             {
-                lock (_oneTimeSubmitLock)
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                           "Vulkan.FrameLifecycle.Submit"))
+                using (VulkanCpuStageScope cpuStage =
+                       new(_frameTelemetry, EVulkanCpuStage.Submission))
                 {
-                    ulong frameOpsSignature =
-                        _commandBufferFrameOpSignatures is not null &&
-                        attempt.ImageIndex <
-                        (uint)_commandBufferFrameOpSignatures.Length
-                            ? _commandBufferFrameOpSignatures[
-                                attempt.ImageIndex]
-                            : 0UL;
-                    _ = TryGetCommandBufferDiagnosticMetadata(
-                        attempt.ImageIndex,
-                        attempt.SceneCommandBuffer,
-                        out ulong plannerRevision,
-                        out ulong frameOpContextId,
-                        out ulong resourceGeneration,
-                        out ulong descriptorGeneration);
-                    VulkanSubmissionDiagnosticContext diagnosticContext =
-                        CreateSwapchainSubmissionDiagnosticContext(
-                            "SwapchainDraw",
+                    lock (_oneTimeSubmitLock)
+                    {
+                        ulong frameOpsSignature =
+                            _commandBufferFrameOpSignatures is not null &&
+                            attempt.ImageIndex <
+                            (uint)_commandBufferFrameOpSignatures.Length
+                                ? _commandBufferFrameOpSignatures[
+                                    attempt.ImageIndex]
+                                : 0UL;
+                        _ = TryGetCommandBufferDiagnosticMetadata(
                             attempt.ImageIndex,
-                            attempt.FrameNumber,
-                            attempt.FrameSlot,
-                            0UL,
-                            attempt.GraphicsSignalValue,
-                            attempt.SceneCommandBufferDirtyGeneration,
-                            frameOpsSignature,
-                            plannerRevision,
-                            frameOpContextId,
-                            resourceGeneration,
-                            descriptorGeneration);
-                    submitResult = SubmitToQueueTracked(
-                        graphicsQueue,
-                        ref submitInfo,
-                        default,
-                        diagnosticContext,
-                        caller: nameof(RenderFrameCallback));
+                            attempt.SceneCommandBuffer,
+                            out ulong plannerRevision,
+                            out ulong frameOpContextId,
+                            out ulong resourceGeneration,
+                            out ulong descriptorGeneration);
+                        VulkanSubmissionDiagnosticContext diagnosticContext =
+                            CreateSwapchainSubmissionDiagnosticContext(
+                                "SwapchainDraw",
+                                attempt.ImageIndex,
+                                attempt.FrameNumber,
+                                attempt.FrameSlot,
+                                0UL,
+                                attempt.GraphicsSignalValue,
+                                attempt.SceneCommandBufferDirtyGeneration,
+                                frameOpsSignature,
+                                plannerRevision,
+                                frameOpContextId,
+                                resourceGeneration,
+                                descriptorGeneration);
+                        submitResult = SubmitToQueueTracked(
+                            _deviceContext.GraphicsQueue,
+                            ref submitInfo,
+                            default,
+                            diagnosticContext,
+                            caller: nameof(RenderFrameCallback));
+                        if (submitResult == Result.Success)
+                        {
+                            // The queue owns this frame as soon as vkQueueSubmit accepts it. Set
+                            // settlement flags before profiling/telemetry scopes can unwind.
+                            attempt.Submitted = true;
+                            attempt.CommandArtifactsSettled = true;
+                            attempt.TransitionAcquireOwnership(
+                                EVulkanDesktopAcquireOwnership
+                                    .ConsumedBySubmissionImagePendingPresent);
+                            attempt.AdvanceTo(EDesktopFramePhase.Submitted);
+                            mappedFrameArena?.MarkFrameSlotSubmitted(
+                                attempt.ImageIndex,
+                                mappedFrameGeneration);
+                        }
+                    }
                 }
+            }
+            catch
+            {
+                if (!attempt.Submitted)
+                {
+                    _ = mappedFrameArena?.TryCancelFrameSlotSubmission(
+                        attempt.ImageIndex,
+                        mappedFrameGeneration);
+                }
+                CompleteMappedFrameArenaDeviceLossObservation();
+                throw;
             }
 
             attempt.Timing.SubmitQueue +=
                 Stopwatch.GetElapsedTime(stageStartTimestamp);
             if (submitResult != Result.Success)
+            {
+                _ = mappedFrameArena?.TryCancelFrameSlotSubmission(
+                    attempt.ImageIndex,
+                    mappedFrameGeneration);
                 return HandleDesktopSubmitFailure(
                     ref attempt,
                     submitResult);
+            }
 
-            // Commit every ownership transition immediately after the queue
-            // accepts the submit. Auxiliary marker, trim, and telemetry failures
-            // cannot strand a submitted image.
-            attempt.TransitionAcquireOwnership(
-                EVulkanDesktopAcquireOwnership
-                    .ConsumedBySubmissionImagePendingPresent);
-            attempt.Submitted = true;
-            attempt.CommandArtifactsSettled = true;
-            attempt.AdvanceTo(EDesktopFramePhase.Submitted);
             MarkFrameTimingSubmitted(
                 unchecked((int)Math.Min(
                     attempt.ImageIndex,
                     int.MaxValue)));
-            _frameSlotTimelineValues![attempt.FrameSlot] =
+            _commandRuntime.Synchronization._frameSlotTimelineValues![attempt.FrameSlot] =
                 attempt.GraphicsSignalValue;
-            if (_swapchainImageTimelineValues is not null &&
+            if (OutputRuntime.Desktop.ImageTimelineValues is not null &&
                 attempt.ImageIndex <
-                _swapchainImageTimelineValues.Length)
+                OutputRuntime.Desktop.ImageTimelineValues.Length)
             {
-                _swapchainImageTimelineValues[attempt.ImageIndex] =
+                OutputRuntime.Desktop.ImageTimelineValues[attempt.ImageIndex] =
                     attempt.GraphicsSignalValue;
             }
 
@@ -234,7 +290,7 @@ namespace XREngine.Rendering.Vulkan
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                            "Vulkan.FrameLifecycle.TrimStaging"))
                 {
-                    _stagingManager.Trim(this);
+                    ResourceRuntime.Allocations.Staging.Trim(this);
                 }
             }
             catch (Exception ex)

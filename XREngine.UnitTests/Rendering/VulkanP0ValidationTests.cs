@@ -435,14 +435,13 @@ public sealed class VulkanP0ValidationTests
     }
 
     [Test]
-    public void VulkanDynamicUniformRingBuffer_UsesDedicatedMemoryForPersistentMap()
+    public void VulkanMappedFrameArena_OwnsAndRegistersPersistentMappedMemory()
     {
-        string ringSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanDynamicUniformRingBuffer.cs");
-        string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
+        string arenaBackendSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanMappedFrameArenaBackend.cs");
 
-        ringSource.ShouldContain("renderer.CreateDedicatedBufferRaw");
-        bufferSource.ShouldContain("CreateDedicatedBufferRaw");
-        bufferSource.ShouldContain("enableDeviceAddress ? \"LegacyDeviceAddress\" : \"Dedicated\"");
+        arenaBackendSource.ShouldContain("_api.CreateBuffer(");
+        arenaBackendSource.ShouldContain("_api.MapMemory(");
+        arenaBackendSource.ShouldContain("_resourceManager.RegisterMappedFrameArenaChunk(");
     }
 
     #endregion

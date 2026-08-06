@@ -5,22 +5,13 @@ namespace XREngine.Rendering.Vulkan;
 public partial class VulkanRenderer :
     IIndirectDrawSecondaryRecordingBackendCapability
 {
-    private readonly record struct ProducerCompleteIndirectStream(
-        XRDataBuffer IndirectBuffer,
-        XRDataBuffer? ParameterBuffer,
-        ulong IndirectBufferIdentity,
-        ulong ParameterBufferIdentity);
-
-    private ProducerCompleteIndirectStream?
-        _pendingProducerCompleteIndirectStream;
-
     bool IIndirectDrawSecondaryRecordingBackendCapability.
         TryBeginProducerCompleteIndirectStream(
             XRDataBuffer indirectBuffer,
             XRDataBuffer? parameterBuffer,
             out IndirectDrawSecondaryRecordingToken token)
     {
-        token = _pendingProducerCompleteIndirectStream is { } previous
+        token = _commandRuntime.PendingProducerCompleteIndirectStream is { } previous
             ? new(
                 previous.IndirectBuffer,
                 previous.ParameterBuffer,
@@ -49,7 +40,7 @@ public partial class VulkanRenderer :
             boundParameter = parameter;
         }
 
-        _pendingProducerCompleteIndirectStream = new(
+        _commandRuntime.PendingProducerCompleteIndirectStream = new(
             indirectBuffer,
             parameterBuffer,
             CaptureProducerCompleteIndirectBufferIdentity(boundIndirect),
@@ -60,7 +51,7 @@ public partial class VulkanRenderer :
     void IIndirectDrawSecondaryRecordingBackendCapability.
         EndProducerCompleteIndirectStream(
             in IndirectDrawSecondaryRecordingToken token)
-        => _pendingProducerCompleteIndirectStream = token.HadPreviousState
+        => _commandRuntime.PendingProducerCompleteIndirectStream = token.HadPreviousState
             ? new(
                 token.PreviousIndirectBuffer!,
                 token.PreviousParameterBuffer,
@@ -97,7 +88,7 @@ public partial class VulkanRenderer :
             nuint countByteOffset,
             bool useCount)
     {
-        if (_pendingProducerCompleteIndirectStream is not { } pending)
+        if (_commandRuntime.PendingProducerCompleteIndirectStream is not { } pending)
         {
             return new(
                 EVulkanIndirectSecondaryEligibility.MutableCurrentFrame,

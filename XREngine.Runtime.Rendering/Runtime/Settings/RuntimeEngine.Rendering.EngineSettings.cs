@@ -455,7 +455,6 @@ public static partial class RuntimeEngine
                 private global::XREngine.Rendering.ERenderClipSpaceYDirection _clipSpaceYDirection = global::XREngine.Rendering.ERenderClipSpaceYDirection.YUp;
                 private global::XREngine.Rendering.ERenderClipDepthRange _clipDepthRange = global::XREngine.Rendering.ERenderClipDepthRange.ZeroToOne;
                 private ECpuSceneCullingStructure _cpuSceneCullingStructure = ECpuSceneCullingStructure.Bvh;
-                private EGpuCullingDataLayout _gpuCullingDataLayout = EGpuCullingDataLayout.AoSHot;
                 private EGpuSortDomainPolicy _gpuSortDomainPolicy = EGpuSortDomainPolicy.OpaqueFrontToBackTransparentBackToFront;
                 private EOcclusionCullingMode _gpuOcclusionCullingMode = EOcclusionCullingMode.GpuHiZ;
                 private bool _cacheGpuHiZOcclusionOncePerFrame = false;
@@ -1557,17 +1556,6 @@ public static partial class RuntimeEngine
                 {
                     get => Vulkan.TargetMode.RenderTargetMode;
                     set => Vulkan.TargetMode.RenderTargetMode = value;
-                }
-
-                /// <summary>
-                /// Selects the GPU command data layout policy used before culling.
-                /// </summary>
-                [Category("Culling")]
-                [Description("Selects the GPU command data layout policy used before culling. SoA mode enables extraction for runtime experimentation/benchmarking.")]
-                public EGpuCullingDataLayout GpuCullingDataLayout
-                {
-                    get => _gpuCullingDataLayout;
-                    set => SetField(ref _gpuCullingDataLayout, value);
                 }
 
                 /// <summary>

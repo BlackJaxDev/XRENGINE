@@ -125,7 +125,7 @@ internal sealed class VulkanRecordedCommandArtifact(
 
     internal void PublishExecutable(
         in CommandRecordingDependencySignature dependencyIdentity,
-        IReadOnlyList<KeyValuePair<VulkanRenderer.VulkanResourceLifetimeKey, ulong>> dependencies,
+        IReadOnlyList<KeyValuePair<VulkanResourceLifetimeKey, ulong>> dependencies,
         ulong recordingGeneration,
         int queuedSubmissionCount,
         int recordedPrimaryReferenceCount)
@@ -213,14 +213,14 @@ internal sealed class VulkanRecordedCommandArtifact(
     }
 
     private void PublishReferencedResources(
-        IReadOnlyList<KeyValuePair<VulkanRenderer.VulkanResourceLifetimeKey, ulong>> dependencies)
+        IReadOnlyList<KeyValuePair<VulkanResourceLifetimeKey, ulong>> dependencies)
     {
         _referencedResources.Clear();
         ulong xorIdentity = 0;
         ulong sumIdentity = 0;
         for (int i = 0; i < dependencies.Count; i++)
         {
-            KeyValuePair<VulkanRenderer.VulkanResourceLifetimeKey, ulong> dependency =
+            KeyValuePair<VulkanResourceLifetimeKey, ulong> dependency =
                 dependencies[i];
             VulkanRecordedResourceReference reference = new(
                 dependency.Key.Type,

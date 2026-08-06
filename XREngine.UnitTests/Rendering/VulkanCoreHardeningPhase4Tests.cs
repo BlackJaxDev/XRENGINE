@@ -50,9 +50,9 @@ public sealed class VulkanCoreHardeningPhase4Tests
         string layouts = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Pipelines/VulkanRenderer.PipelineLayoutLifetime.cs");
         string frameSlots = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.FrameSlots.cs");
-        string openXr = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/VulkanRenderer.FrameLoop.FrameSlots.cs");
+        string openXrResources = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.ResourcesPressure.cs");
 
         layouts.ShouldContain("RetiredPipelineLayout(");
         layouts.ShouldContain("CaptureVulkanRetirementTicket(");
@@ -61,7 +61,7 @@ public sealed class VulkanCoreHardeningPhase4Tests
         layouts.ShouldContain("CompleteVulkanResourceDestruction(\n                ObjectType.PipelineLayout");
         layouts.ShouldNotContain("Pipeline-layout destruction deferred until shutdown");
         frameSlots.ShouldContain("DrainRetiredPipelineLayouts();");
-        openXr.ShouldContain("DrainRetiredPipelineLayouts(i, int.MaxValue)");
+        openXrResources.ShouldContain("DrainRetiredPipelineLayouts(i, int.MaxValue)");
     }
 
     [Test]
@@ -117,7 +117,7 @@ public sealed class VulkanCoreHardeningPhase4Tests
     public void QueueGateway_ValidatesDependenciesBeforeDispatchAndRecordsSuccessfulUse()
     {
         string synchronization = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Synchronization/VulkanRenderer.Synchronization.cs");
         string method = SliceBetween(
             synchronization,
             "private Result SubmitToQueueTracked(",
@@ -137,15 +137,15 @@ public sealed class VulkanCoreHardeningPhase4Tests
     public void CommandPoolHostOperations_AreExternallySynchronized()
     {
         string commandPools = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandPool.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Allocation/VulkanRenderer.CommandPool.cs");
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Lifetime/VulkanRenderer.ResourceLifetimeTracking.cs");
         string retirement = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Retirement/VulkanRenderer.ResourceRetirement.cs");
 
         commandPools.ShouldContain("private Result AllocateCommandBuffersHostSynchronized(");
         commandPools.ShouldContain("private void FreeCommandBuffersHostSynchronized(");
-        commandPools.ShouldContain("private void DestroyCommandPoolHostSynchronized(CommandPool pool)");
+        commandPools.ShouldContain("internal void DestroyCommandPoolHostSynchronized(CommandPool pool)");
         commandPools.ShouldContain("lock (_commandPoolsLock)");
         lifetime.ShouldContain("AllocateCommandBuffersHostSynchronized(ref allocateInfo, commandBuffers)");
         lifetime.ShouldContain("FreeCommandBuffersHostSynchronized(commandPool, 1, &commandBuffer)");
@@ -156,9 +156,9 @@ public sealed class VulkanCoreHardeningPhase4Tests
     public void CommandBufferRetirement_WaitsForCpuRecordingAndQueueOwnership()
     {
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Lifetime/VulkanRenderer.ResourceLifetimeTracking.cs");
         string retirement = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Retirement/VulkanRenderer.ResourceRetirement.cs");
 
         lifetime.ShouldContain("private bool IsVulkanCommandBufferRetirementReady(");
         lifetime.ShouldContain("batch.IsRecording || batch.QueuedSubmissionCount != 0");
@@ -171,9 +171,9 @@ public sealed class VulkanCoreHardeningPhase4Tests
     public void WorkerCommandPools_WaitForDeferredCommandBufferRetirement()
     {
         string lowering = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Secondary/VulkanRenderer.CommandChainSecondaryBuffers.cs");
         string workers = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainWorkers.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Secondary/Workers/VulkanRenderer.CommandChainWorkers.cs");
 
         lowering.ShouldContain("TrackOwnedCommandChainSecondaryCommandBuffer(workerPool, secondary);");
         lowering.ShouldContain("TrackOwnedCommandChainSecondaryCommandBuffer(workerPool, replacement);");
@@ -186,15 +186,17 @@ public sealed class VulkanCoreHardeningPhase4Tests
     public void CompletionTracking_CoversTimelineFenceQueueAndDeviceIdlePaths()
     {
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Lifetime/VulkanRenderer.ResourceLifetimeTracking.cs");
         string syncObjects = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.SyncObjects.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Synchronization/VulkanRenderer.SyncObjects.cs");
         string synchronization = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Synchronization/VulkanRenderer.Synchronization.cs");
         string initialization = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
-        string openXr = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string openXrSubmission = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.Submission.cs");
+        string presentationless = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Targets/VulkanPresentationlessTargetDriver.cs");
         string transfer = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Uploads/VulkanRenderer.TextureUploadTransfer.cs");
 
@@ -205,7 +207,8 @@ public sealed class VulkanCoreHardeningPhase4Tests
         syncObjects.ShouldContain("NotifyVulkanTimelineCompleted(semaphore, currentValue)");
         synchronization.ShouldContain("NotifyVulkanQueueIdle(queue)");
         initialization.ShouldContain("NotifyVulkanDeviceIdle()");
-        openXr.ShouldContain("NotifyVulkanFenceCompleted(fence)");
+        openXrSubmission.ShouldContain("NotifyVulkanFenceCompleted(fence)");
+        presentationless.ShouldContain("NotifyVulkanFenceCompleted(fence)");
         transfer.ShouldContain("NotifyVulkanFenceCompleted(submitted.Fence)");
     }
 
@@ -213,7 +216,7 @@ public sealed class VulkanCoreHardeningPhase4Tests
     public void RetirementQueues_CoverEveryPhase4ObjectFamily()
     {
         string retirement = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Retirement/VulkanRenderer.ResourceRetirement.cs");
 
         retirement.ShouldContain("RetiredImageResourceEntry");
         retirement.ShouldContain("RetiredFramebuffer");
@@ -228,34 +231,35 @@ public sealed class VulkanCoreHardeningPhase4Tests
     }
 
     [Test]
-    public void VulkanDestruction_ForRuntimeFamilies_IsCentralizedInRetirementQueue()
+    public void VulkanDestruction_ForRuntimeFamilies_IsCentralizedExceptPresentationlessTargetOwnedQueryPools()
     {
         AssertRawVulkanCallOnlyIn(
             "DestroyFramebuffer(device",
-            "Frame/VulkanRenderer.ResourceRetirement.cs");
+            "Frame/Resources/Retirement/VulkanRenderer.ResourceRetirement.cs");
         AssertRawVulkanCallOnlyIn(
             "FreeDescriptorSets(device",
-            "Frame/VulkanRenderer.ResourceRetirement.cs");
+            "Frame/Resources/Retirement/VulkanRenderer.ResourceRetirement.cs");
         AssertRawVulkanCallOnlyIn(
             "ResetDescriptorPool(device",
-            "Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "Frame/Resources/Lifetime/VulkanRenderer.ResourceLifetimeTracking.cs");
         AssertRawVulkanCallOnlyIn(
             "DestroyQueryPool(device",
-            "Frame/VulkanRenderer.ResourceRetirement.cs");
+            "Frame/Resources/Retirement/VulkanRenderer.ResourceRetirement.cs",
+            "Bootstrap/Targets/VulkanPresentationlessTargetDriver.cs");
         AssertRawVulkanCallOnlyIn(
             "DestroyBufferView(device",
-            "Frame/VulkanRenderer.ResourceRetirement.cs");
+            "Frame/Resources/Retirement/VulkanRenderer.ResourceRetirement.cs");
     }
 
     [Test]
     public void DescriptorLifetime_PreventsIllegalMutationAndTracksPoolChildren()
     {
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Lifetime/VulkanRenderer.ResourceLifetimeTracking.cs");
         string descriptorSets = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.DescriptorSets.cs");
         string commandState = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/State/VulkanRenderer.CommandBufferState.cs");
 
         lifetime.ShouldContain("Cannot update in-flight Vulkan descriptor set");
         lifetime.ShouldContain("CaptureVulkanDescriptorPoolRetirementTicket");
@@ -268,14 +272,14 @@ public sealed class VulkanCoreHardeningPhase4Tests
     public void DeviceLossTeardown_ForcesDestructionWithoutCompletingTimelines()
     {
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Lifetime/VulkanRenderer.ResourceLifetimeTracking.cs");
         string retirement = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Retirement/VulkanRenderer.ResourceRetirement.cs");
         string initialization = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
 
         lifetime.ShouldContain("NotifyVulkanResourceLifetimeDeviceLost");
-        lifetime.ShouldContain("_vulkanForcedResourceDestructionCount");
+        lifetime.ShouldContain("_resourceLifetimeTracker.ForcedResourceDestructionCount");
         retirement.ShouldContain("Force-destroying retired resources after device loss without waiting");
         initialization.ShouldContain("BeginForcedVulkanRetirementDrain");
         initialization.ShouldContain("EndForcedVulkanRetirementDrain");
@@ -290,7 +294,7 @@ public sealed class VulkanCoreHardeningPhase4Tests
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorLayoutCache.cs");
 
         lifetime.ShouldContain("Skipping stale descriptor-set-layout destroy");
-        lifetime.ShouldContain("_liveDescriptorSetLayoutHandles.TryRemove");
+        lifetime.ShouldContain("_descriptorManager.LiveDescriptorSetLayoutHandles.TryRemove");
         cache.ShouldContain("TryBeginDestroyDescriptorSetLayout(layout, \"DescriptorLayoutCache.UncachedRelease\")");
         cache.ShouldNotContain("if (!_descriptorSetLayoutsByHandle.TryGetValue(layout.Handle, out CachedDescriptorSetLayout? cached))\n            {\n                Api!.DestroyDescriptorSetLayout");
     }
@@ -299,9 +303,9 @@ public sealed class VulkanCoreHardeningPhase4Tests
     public void CommandRecording_TracksSecondaryCopyBlitAndDescriptorDependencies()
     {
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Lifetime/VulkanRenderer.ResourceLifetimeTracking.cs");
         string commandState = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/State/VulkanRenderer.CommandBufferState.cs");
 
         lifetime.ShouldContain("CmdExecuteCommandsTracked");
         lifetime.ShouldContain("CmdCopyBufferTracked");
@@ -349,27 +353,31 @@ public sealed class VulkanCoreHardeningPhase4Tests
     public void ParentChildAndDescriptorOwnership_AreRetainedUntilSafeDestruction()
     {
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Lifetime/VulkanRenderer.ResourceLifetimeTracking.cs");
         string retirement = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Retirement/VulkanRenderer.ResourceRetirement.cs");
+        string retirementQueue = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Retirement/VulkanResourceRetirementQueue.cs");
 
         lifetime.ShouldContain("HasUndestroyedVulkanBufferViewReference");
         lifetime.ShouldContain("HasUndestroyedVulkanImageDependency");
         lifetime.ShouldContain("PropagateVulkanDescriptorSetSubmission_NoLock");
         lifetime.ShouldContain("UpdateVulkanResourceCompletionState_NoLock");
         retirement.ShouldContain("RemoveRetiredDescriptorSetsForPool_NoLock");
-        retirement.ShouldContain("_retiredPipelineHandlesAll");
-        retirement.ShouldContain("_retiredImageViewHandlesAll");
+        retirement.ShouldContain("_resourceRetirementQueue.AllPipelineHandles");
+        retirement.ShouldContain("_resourceRetirementQueue.AllImageViewHandles");
+        retirementQueue.ShouldContain("internal HashSet<ulong> AllPipelineHandles");
+        retirementQueue.ShouldContain("internal HashSet<VulkanRenderer.VulkanPinnedResourceGeneration> AllImageViewHandles");
         AssertRawVulkanCallOnlyIn(
             "AllocateCommandBuffers(device",
-            "Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "Commands/CommandBuffers/Allocation/VulkanRenderer.CommandPool.cs");
         AssertRawVulkanCallOnlyIn(
             "CreateImage(device",
-            "Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "Frame/Resources/Lifetime/VulkanRenderer.ResourceLifetimeTracking.cs");
         AssertRawVulkanCallOnlyIn(
             "DestroyImage(device",
-            "Frame/VulkanRenderer.ResourceLifetimeTracking.cs",
-            "Frame/VulkanRenderer.ResourceRetirement.cs",
+            "Frame/Resources/Lifetime/VulkanRenderer.ResourceLifetimeTracking.cs",
+            "Frame/Resources/Retirement/VulkanRenderer.ResourceRetirement.cs",
             "Features/Upscaling/VulkanUpscaleBridgeSharedImage.cs");
     }
 
@@ -377,7 +385,7 @@ public sealed class VulkanCoreHardeningPhase4Tests
     public void MipmapBarriers_UseTrackedResourceRecordingGateway()
     {
         string texture = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.Mipmaps.cs");
         string mipmapMethod = SliceBetween(
             texture,
             "protected void GenerateMipmapsWithBlit()",

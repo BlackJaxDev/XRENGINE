@@ -41,7 +41,7 @@ namespace XREngine.Rendering.Vulkan
                 out MemoryHeapFlags heapFlags,
                 out MemoryPropertyFlags memoryTypeFlags);
             string allocationClass = ClassifyVulkanAllocation(allocation.Properties, allocation.Properties);
-            _imageAllocationTracker.DebugInfo[image.Handle] = new VulkanImageAllocationDebugInfo(
+            ResourceRuntime.Allocations.Images.DebugInfo[image.Handle] = new VulkanImageAllocationDebugInfo(
                 image.Handle,
                 string.IsNullOrWhiteSpace(name) ? "<unnamed>" : name!,
                 source,
@@ -84,13 +84,13 @@ namespace XREngine.Rendering.Vulkan
         internal void UntrackImageAllocation(Image image)
         {
             if (image.Handle != 0)
-                _imageAllocationTracker.DebugInfo.TryRemove(image.Handle, out _);
+                ResourceRuntime.Allocations.Images.DebugInfo.TryRemove(image.Handle, out _);
         }
 
         public object GetLiveImageAllocationDiagnostics(int limit)
         {
             int clampedLimit = Math.Clamp(limit, 1, 512);
-            var entries = _imageAllocationTracker.DebugInfo.Values.ToArray();
+            var entries = ResourceRuntime.Allocations.Images.DebugInfo.Values.ToArray();
             long knownBytes = 0L;
             for (int i = 0; i < entries.Length; i++)
             {
@@ -148,10 +148,10 @@ namespace XREngine.Rendering.Vulkan
             heapFlags = 0;
             memoryTypeFlags = 0;
 
-            if (Api is null || _physicalDevice.Handle == 0)
+            if (Api is null || _deviceContext.PhysicalDevice.Handle == 0)
                 return;
 
-            Api.GetPhysicalDeviceMemoryProperties(_physicalDevice, out PhysicalDeviceMemoryProperties memoryProperties);
+            Api.GetPhysicalDeviceMemoryProperties(_deviceContext.PhysicalDevice, out PhysicalDeviceMemoryProperties memoryProperties);
             if (allocation.MemoryTypeIndex >= memoryProperties.MemoryTypeCount)
                 return;
 

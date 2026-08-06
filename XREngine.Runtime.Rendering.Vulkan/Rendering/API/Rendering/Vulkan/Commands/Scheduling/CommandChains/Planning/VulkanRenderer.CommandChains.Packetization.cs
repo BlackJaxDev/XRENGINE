@@ -17,8 +17,8 @@ public unsafe partial class VulkanRenderer
 {
     private void BuildCommandChainRenderPackets(
         uint targetImageIndex,
-        FrameOp[] staticOps,
-        FrameOp[] volatileOps,
+        FrameOperationStream staticOps,
+        FrameOperationStream volatileOps,
         ulong resourcePlanRevision,
         bool excludeStaticQueryBrackets,
         List<RenderPacket> packets)
@@ -37,15 +37,17 @@ public unsafe partial class VulkanRenderer
 
     private void LowerFrameOpsToRenderPacketsExcludingQueryBrackets(
         uint targetImageIndex,
-        FrameOp[] ops,
+        FrameOperationStream ops,
         ulong resourcePlanRevision,
         List<RenderPacket> packets)
     {
         int queryBracketDepth = 0;
-        for (int i = 0; i < ops.Length; i++)
+        for (int i = 0; i < ops.Count; i++)
         {
-            if (ops[i] is QueryOp queryOp)
+            ref readonly FrameOperationHeader header = ref ops.GetHeader(i);
+            if (header.OpCode == EVulkanPrimaryPlanNodeKind.Query)
             {
+                QueryOp queryOp = (QueryOp)ops.GetPayloadForPrimaryDispatch(i);
                 if (queryOp.Operation == ERenderQueryOperation.Begin)
                     queryBracketDepth++;
                 else if (queryOp.Operation == ERenderQueryOperation.End && queryBracketDepth > 0)
@@ -65,9 +67,9 @@ public unsafe partial class VulkanRenderer
                     out DrawPacket preparedMeshDraw);
                 if (consumed > 0)
                     i += consumed - 1;
-                else if (IsSchedulableCommandChainFrameOp(ops[i], dynamicOverlay: false))
+                else if (IsSchedulableCommandChainFrameOp(ops, i, dynamicOverlay: false))
                     packets.Add(CreateRenderPacket(
-                        targetImageIndex, ops[i], i, dynamicOverlay: false, resourcePlanRevision, preparedMeshDraw));
+                        targetImageIndex, ops, i, dynamicOverlay: false, resourcePlanRevision, preparedMeshDraw));
             }
         }
 
@@ -83,12 +85,12 @@ public unsafe partial class VulkanRenderer
 
     private void LowerFrameOpsToRenderPackets(
         uint targetImageIndex,
-        FrameOp[] ops,
+        FrameOperationStream ops,
         bool dynamicOverlay,
         ulong resourcePlanRevision,
         List<RenderPacket> packets)
     {
-        for (int i = 0; i < ops.Length; i++)
+        for (int i = 0; i < ops.Count; i++)
         {
             int consumed = TryLowerCompatibleMeshPacket(
                 targetImageIndex,
@@ -100,15 +102,15 @@ public unsafe partial class VulkanRenderer
                 out DrawPacket preparedMeshDraw);
             if (consumed > 0)
                 i += consumed - 1;
-            else if (IsSchedulableCommandChainFrameOp(ops[i], dynamicOverlay))
+            else if (IsSchedulableCommandChainFrameOp(ops, i, dynamicOverlay))
                 packets.Add(CreateRenderPacket(
-                    targetImageIndex, ops[i], i, dynamicOverlay, resourcePlanRevision, preparedMeshDraw));
+                    targetImageIndex, ops, i, dynamicOverlay, resourcePlanRevision, preparedMeshDraw));
         }
     }
 
     private int TryLowerCompatibleMeshPacket(
         uint targetImageIndex,
-        FrameOp[] ops,
+        FrameOperationStream ops,
         int startIndex,
         bool dynamicOverlay,
         ulong resourcePlanRevision,
@@ -116,9 +118,10 @@ public unsafe partial class VulkanRenderer
         out DrawPacket preparedMeshDraw)
     {
         preparedMeshDraw = default;
-        if (!IsSchedulableCommandChainFrameOp(ops[startIndex], dynamicOverlay) ||
-            ops[startIndex] is not MeshDrawOp first)
+        if (!IsSchedulableCommandChainFrameOp(ops, startIndex, dynamicOverlay) ||
+            ops.GetHeader(startIndex).OpCode != EVulkanPrimaryPlanNodeKind.MeshDraw)
             return 0;
+        MeshDrawOp first = (MeshDrawOp)ops.GetPayloadForPrimaryDispatch(startIndex);
 
         DrawPacket firstDraw = CreateDrawPacket(startIndex, first);
         preparedMeshDraw = firstDraw;
@@ -130,16 +133,16 @@ public unsafe partial class VulkanRenderer
         int packetDrawLimit = viewKey.Kind == RenderViewKind.Shadow
             ? MaxShadowMeshDrawsPerRenderPacket
             : MaxMeshDrawsPerRenderPacket;
-        int available = Math.Min(ops.Length - startIndex, packetDrawLimit);
+        int available = Math.Min(ops.Count - startIndex, packetDrawLimit);
         while (runCount < available &&
-               ops[startIndex + runCount] is MeshDrawOp next &&
+               ops.GetHeader(startIndex + runCount).OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw &&
                IsMeshDrawPacketCompatible(
                    first,
                    firstDraw,
                    viewKey,
                    targetIdentity,
                    firstDescriptorSnapshot,
-                   next,
+                   (MeshDrawOp)ops.GetPayloadForPrimaryDispatch(startIndex + runCount),
                    startIndex + runCount,
                    out DrawPacket candidateDraw))
         {
@@ -160,7 +163,7 @@ public unsafe partial class VulkanRenderer
         bool hasDescriptorBindings = false;
         for (int i = 0; i < runCount; i++)
         {
-            MeshDrawOp drawOp = (MeshDrawOp)ops[startIndex + i];
+            MeshDrawOp drawOp = (MeshDrawOp)ops.GetPayloadForPrimaryDispatch(startIndex + i);
             DrawPacket draw = draws[i];
             structuralHash.Add(draw.StructuralSignature);
             frameDataHash.Add(draw.FrameDataSignature);
@@ -205,6 +208,7 @@ public unsafe partial class VulkanRenderer
             nativeTarget);
         RenderPacket packet = RentRenderPacket();
         packet.Reset(
+            GetActiveCommandChainPacketPayloadArena(),
             viewKey,
             first.PassIndex,
             targetIdentity,
@@ -286,12 +290,14 @@ public unsafe partial class VulkanRenderer
 
     private RenderPacket CreateRenderPacket(
         uint targetImageIndex,
-        FrameOp op,
+        FrameOperationStream operations,
         int opIndex,
         bool dynamicOverlay,
         ulong resourcePlanRevision,
         DrawPacket preparedMeshDraw)
     {
+        ref readonly FrameOperationHeader header = ref operations.GetHeader(opIndex);
+        FrameOp op = operations.GetPayloadForPrimaryDispatch(opIndex);
         RenderViewKey viewKey = BuildRenderViewKey(op, dynamicOverlay);
         RenderPacketVolatility volatility = ClassifyRenderPacketVolatility(op, dynamicOverlay);
         DrawPacket firstDraw = op switch
@@ -315,7 +321,7 @@ public unsafe partial class VulkanRenderer
         ulong frameDataSignature = op is MeshDrawOp
             ? firstDraw.FrameDataSignature
             : ComputeFrameOpFrameDataSignature(op, opIndex);
-        int targetIdentity = ResolveCommandChainTargetIdentity(op);
+        int targetIdentity = header.TargetIdentity;
         string targetName = ResolveCommandChainTargetName(op);
         DescriptorBindingSnapshot descriptorSnapshot = CreateDescriptorSnapshot(op);
         VulkanRecordedRenderTargetSnapshot nativeTarget =
@@ -330,11 +336,12 @@ public unsafe partial class VulkanRenderer
             ResourcePlanSnapshot.PackRenderArea(
                 nativeTarget.Width,
                 nativeTarget.Height),
-            op.Context.SubmissionQueueFamily,
+            operations.GetContext(opIndex).SubmissionQueueFamily,
             nativeTarget);
 
         RenderPacket packet = RentRenderPacket();
         packet.Reset(
+            GetActiveCommandChainPacketPayloadArena(),
             viewKey,
             op.PassIndex,
             targetIdentity,
@@ -378,7 +385,7 @@ public unsafe partial class VulkanRenderer
         if (IsRenderingExternalSwapchainTarget)
         {
             OpenXrEyeRenderTargetContext openXrTarget =
-                _openXrBackend.CurrentThreadExecutionState.NativeTargetContext;
+                OutputRuntime.OpenXrBackend.CurrentThreadExecutionState.NativeTargetContext;
             if (!openXrTarget.IsValid)
                 return default;
 
@@ -417,22 +424,22 @@ public unsafe partial class VulkanRenderer
             return openXrSnapshot;
         }
 
-        if (swapChainImages is null ||
-            swapChainImageViews is null ||
-            targetImageIndex >= swapChainImages.Length ||
-            targetImageIndex >= swapChainImageViews.Length)
+        if (OutputRuntime.Desktop.Images is null ||
+            OutputRuntime.Desktop.ImageViews is null ||
+            targetImageIndex >= OutputRuntime.Desktop.Images.Length ||
+            targetImageIndex >= OutputRuntime.Desktop.ImageViews.Length)
         {
             return default;
         }
 
-        Image colorImage = swapChainImages[targetImageIndex];
-        ImageView colorView = swapChainImageViews[targetImageIndex];
+        Image colorImage = OutputRuntime.Desktop.Images[targetImageIndex];
+        ImageView colorView = OutputRuntime.Desktop.ImageViews[targetImageIndex];
         VulkanSwapchainDepthResources? depth = CurrentSwapchainDepthResources;
         int attachmentCount = depth is null ? 1 : 2;
         Framebuffer framebuffer = !UseDynamicRenderingRenderTargets &&
-                                  swapChainFramebuffers is not null &&
-                                  targetImageIndex < swapChainFramebuffers.Length
-            ? swapChainFramebuffers[targetImageIndex]
+                                  OutputRuntime.Desktop.Framebuffers is not null &&
+                                  targetImageIndex < OutputRuntime.Desktop.Framebuffers.Length
+            ? OutputRuntime.Desktop.Framebuffers[targetImageIndex]
             : default;
         VulkanRecordedRenderTargetSnapshot snapshot = default;
         snapshot.Initialize(
@@ -442,8 +449,8 @@ public unsafe partial class VulkanRenderer
                 : GetCurrentVulkanResourceGeneration(
                     ObjectType.Framebuffer,
                     framebuffer.Handle),
-            swapChainExtent.Width,
-            swapChainExtent.Height,
+            OutputRuntime.Desktop.Extent.Width,
+            OutputRuntime.Desktop.Extent.Height,
             op.Context.MultiviewEnabled ? 0b11u : 0u,
             attachmentCount);
         snapshot.SetAttachment(
@@ -524,6 +531,19 @@ public unsafe partial class VulkanRenderer
             programCount,
             programOverflow);
     }
+
+    private RecordedPacketKey CaptureRecordedPacketKey(
+        FrameOperationStream ops,
+        int startIndex,
+        int count,
+        in VulkanRecordedRenderTargetSnapshot nativeTarget,
+        in DescriptorBindingSnapshot descriptorSnapshot,
+        in ResourcePlanSnapshot resourceSnapshot)
+        => CaptureRecordedPacketKey(
+            ops.GetEncoderPayloadRange(startIndex, count),
+            nativeTarget,
+            descriptorSnapshot,
+            resourceSnapshot);
 
     private RecordedPacketKey CaptureRecordedPacketKey(
         FrameOp[] ops,
@@ -1014,6 +1034,42 @@ public unsafe partial class VulkanRenderer
         return result;
     }
 
+    /// <summary>
+    /// Starts one immutable packet-payload publication. Cached chains and
+    /// prepared workers can retain an older arena, so only an unleased arena is
+    /// reset; otherwise a fresh arena is selected without invalidating ranges.
+    /// </summary>
+    private void BeginCommandChainPacketPayloadPublication(int operationCapacity)
+    {
+        for (int index = 0; index < _commandChainPacketPayloadArenas.Count; index++)
+        {
+            RenderPacketPayloadArena candidate = _commandChainPacketPayloadArenas[index];
+            if (candidate.IsLeased)
+                continue;
+
+            candidate.ResetForPublication();
+            candidate.EnsurePublicationCapacity(
+                operationCapacity,
+                operationCapacity,
+                operationCapacity);
+            _activeCommandChainPacketPayloadArena = candidate;
+            return;
+        }
+
+        RenderPacketPayloadArena created = new();
+        created.EnsurePublicationCapacity(
+            operationCapacity,
+            operationCapacity,
+            operationCapacity);
+        _commandChainPacketPayloadArenas.Add(created);
+        _activeCommandChainPacketPayloadArena = created;
+    }
+
+    private RenderPacketPayloadArena GetActiveCommandChainPacketPayloadArena()
+        => _activeCommandChainPacketPayloadArena
+            ?? throw new InvalidOperationException(
+                "Command-chain packet payload publication has not been started.");
+
     private RenderPacket RentRenderPacket()
     {
         while ((uint)_commandChainPacketPoolCursor <
@@ -1102,12 +1158,12 @@ public unsafe partial class VulkanRenderer
     }
 
     private void ValidateParallelRenderPacketBuild(
-        FrameOp[] staticOps,
-        FrameOp[] volatileOps,
+        FrameOperationStream staticOps,
+        FrameOperationStream volatileOps,
         ulong resourcePlanRevision,
         List<RenderPacket> parallelPackets)
     {
-        List<RenderPacket> sequential = new(staticOps.Length + volatileOps.Length);
+        List<RenderPacket> sequential = new(staticOps.Count + volatileOps.Count);
         LowerFrameOpsToRenderPackets(0u, staticOps, dynamicOverlay: false, resourcePlanRevision, sequential);
         LowerFrameOpsToRenderPackets(0u, volatileOps, dynamicOverlay: true, resourcePlanRevision, sequential);
         if (sequential.Count != parallelPackets.Count)
@@ -1122,7 +1178,7 @@ public unsafe partial class VulkanRenderer
         if (expected.ViewKey != actual.ViewKey ||
             expected.PassIndex != actual.PassIndex ||
             expected.TargetIdentity != actual.TargetIdentity ||
-            !string.Equals(expected.TargetName, actual.TargetName, StringComparison.Ordinal) ||
+            !string.Equals(expected.GetDiagnosticTargetName(), actual.GetDiagnosticTargetName(), StringComparison.Ordinal) ||
             expected.Volatility != actual.Volatility ||
             expected.StructuralSignature != actual.StructuralSignature ||
             expected.FrameDataSignature != actual.FrameDataSignature ||
@@ -1185,6 +1241,31 @@ public unsafe partial class VulkanRenderer
             IndirectDrawOp => false,
             _ => false,
         };
+    }
+
+    private static bool IsSchedulableCommandChainFrameOp(
+        FrameOperationStream operations,
+        int operationIndex,
+        bool dynamicOverlay)
+    {
+        ref readonly FrameOperationHeader header = ref operations.GetHeader(operationIndex);
+        if (header.OpCode is not (
+                EVulkanPrimaryPlanNodeKind.MeshDraw or
+                EVulkanPrimaryPlanNodeKind.IndirectDraw or
+                EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount or
+                EVulkanPrimaryPlanNodeKind.ComputeDispatch or
+                EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect or
+                EVulkanPrimaryPlanNodeKind.BufferCopy or
+                EVulkanPrimaryPlanNodeKind.MemoryBarrier))
+        {
+            return false;
+        }
+
+        // The numerical opcode rejects all non-command-chain kinds before the
+        // final typed payload check needed for mesh stability policy.
+        return IsSchedulableCommandChainFrameOp(
+            operations.GetPayloadForPrimaryDispatch(operationIndex),
+            dynamicOverlay);
     }
 
     /// <summary>
@@ -1595,7 +1676,7 @@ public unsafe partial class VulkanRenderer
             ComputeFrameOpStructuralSignature(op, opIndex, RenderPacketVolatility.FrameDataOnly),
             ComputeFrameOpFrameDataSignature(op, opIndex));
 
-    private static int ResolveCommandChainInlineOperationIndex(FrameOp[] ops, int sourceIndex)
+    private static int ResolveCommandChainInlineOperationIndex(FrameOperationSequence ops, int sourceIndex)
     {
         int inlineOpIndex = 0;
         int queryBracketDepth = 0;

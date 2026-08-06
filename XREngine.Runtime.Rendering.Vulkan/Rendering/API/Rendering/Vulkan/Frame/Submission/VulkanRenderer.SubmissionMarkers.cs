@@ -6,16 +6,13 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private readonly object _submissionMarkerLock = new();
-    private readonly Dictionary<nint, List<VulkanTimelineGpuFence>> _submissionMarkersByCommandBuffer = [];
-    private readonly Stack<VulkanTimelineGpuFence> _timelineGpuFencePool = [];
 
     private VulkanTimelineGpuFence RentTimelineGpuFence()
     {
-        lock (_submissionMarkerLock)
+        lock (_commandRuntime.Synchronization._submissionMarkerLock)
         {
-            VulkanTimelineGpuFence fence = _timelineGpuFencePool.Count > 0
-                ? _timelineGpuFencePool.Pop()
+            VulkanTimelineGpuFence fence = _commandRuntime.Synchronization._timelineGpuFencePool.Count > 0
+                ? _commandRuntime.Synchronization._timelineGpuFencePool.Pop()
                 : new VulkanTimelineGpuFence();
             fence.Reset(this);
             return fence;
@@ -24,18 +21,18 @@ public unsafe partial class VulkanRenderer
 
     private void ReturnTimelineGpuFence(VulkanTimelineGpuFence fence)
     {
-        lock (_submissionMarkerLock)
-            _timelineGpuFencePool.Push(fence);
+        lock (_commandRuntime.Synchronization._submissionMarkerLock)
+            _commandRuntime.Synchronization._timelineGpuFencePool.Push(fence);
     }
 
     internal void RegisterSubmissionMarker(CommandBuffer commandBuffer, VulkanTimelineGpuFence fence)
     {
-        lock (_submissionMarkerLock)
+        lock (_commandRuntime.Synchronization._submissionMarkerLock)
         {
-            if (!_submissionMarkersByCommandBuffer.TryGetValue(commandBuffer.Handle, out List<VulkanTimelineGpuFence>? markers))
+            if (!_commandRuntime.Synchronization._submissionMarkersByCommandBuffer.TryGetValue(commandBuffer.Handle, out List<VulkanTimelineGpuFence>? markers))
             {
                 markers = [];
-                _submissionMarkersByCommandBuffer.Add(commandBuffer.Handle, markers);
+                _commandRuntime.Synchronization._submissionMarkersByCommandBuffer.Add(commandBuffer.Handle, markers);
             }
 
             markers.Add(fence);
@@ -44,9 +41,9 @@ public unsafe partial class VulkanRenderer
 
     private void ResetSubmissionMarkersForCommandBuffer(CommandBuffer commandBuffer)
     {
-        lock (_submissionMarkerLock)
+        lock (_commandRuntime.Synchronization._submissionMarkerLock)
         {
-            if (!_submissionMarkersByCommandBuffer.TryGetValue(commandBuffer.Handle, out List<VulkanTimelineGpuFence>? markers))
+            if (!_commandRuntime.Synchronization._submissionMarkersByCommandBuffer.TryGetValue(commandBuffer.Handle, out List<VulkanTimelineGpuFence>? markers))
                 return;
 
             for (int i = 0; i < markers.Count; i++)
@@ -119,12 +116,12 @@ public unsafe partial class VulkanRenderer
         if (submissionSucceeded)
             ResolveSubmissionTimelineSignal(ref submitInfo, out semaphoreHandle, out timelineValue);
 
-        lock (_submissionMarkerLock)
+        lock (_commandRuntime.Synchronization._submissionMarkerLock)
         {
             for (uint commandIndex = 0; commandIndex < submitInfo.CommandBufferCount; commandIndex++)
             {
                 nint commandBufferHandle = submitInfo.PCommandBuffers[commandIndex].Handle;
-                if (!_submissionMarkersByCommandBuffer.TryGetValue(commandBufferHandle, out List<VulkanTimelineGpuFence>? markers))
+                if (!_commandRuntime.Synchronization._submissionMarkersByCommandBuffer.TryGetValue(commandBufferHandle, out List<VulkanTimelineGpuFence>? markers))
                     continue;
 
                 bool canBind = submissionSucceeded && semaphoreHandle != 0 && timelineValue != 0;
@@ -142,13 +139,13 @@ public unsafe partial class VulkanRenderer
 
     private void FailAllSubmissionMarkers()
     {
-        lock (_submissionMarkerLock)
+        lock (_commandRuntime.Synchronization._submissionMarkerLock)
         {
-            foreach (List<VulkanTimelineGpuFence> markers in _submissionMarkersByCommandBuffer.Values)
+            foreach (List<VulkanTimelineGpuFence> markers in _commandRuntime.Synchronization._submissionMarkersByCommandBuffer.Values)
                 for (int i = 0; i < markers.Count; i++)
                     markers[i].Fail();
 
-            _submissionMarkersByCommandBuffer.Clear();
+            _commandRuntime.Synchronization._submissionMarkersByCommandBuffer.Clear();
         }
     }
 

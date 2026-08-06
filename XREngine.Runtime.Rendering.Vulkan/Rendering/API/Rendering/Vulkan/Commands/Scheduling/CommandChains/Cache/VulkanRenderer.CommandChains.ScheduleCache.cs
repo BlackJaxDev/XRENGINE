@@ -21,7 +21,7 @@ public unsafe partial class VulkanRenderer
             !CommandChainTraceEnabled &&
             TryGetIndexedCommandChainCacheSlot(imageIndex, out int slot))
         {
-            CommandChainSchedule? schedule = _commandScheduler.GetReusableSchedule(
+            CommandChainSchedule? schedule = _commandRuntime.GetReusableSchedule(
                 slot,
                 _commandBuffers?.Length ?? 0);
             if (schedule is not null)
@@ -149,7 +149,7 @@ public unsafe partial class VulkanRenderer
         if (!TryGetIndexedCommandChainCacheSlot(imageIndex, out int slot))
             return;
 
-        _commandScheduler.CacheSchedule(
+        _commandRuntime.CacheSchedule(
             slot,
             _commandBuffers?.Length ?? 0,
             schedule);
@@ -157,8 +157,8 @@ public unsafe partial class VulkanRenderer
 
     private static ulong ComputeCommandChainFastScheduleSignature(
         uint imageIndex,
-        FrameOp[] staticOps,
-        FrameOp[] volatileOps,
+        FrameOperationStream staticOps,
+        FrameOperationStream volatileOps,
         ulong resourcePlanRevision)
     {
         FrameOpSignatureHasher hash = new();
@@ -175,20 +175,32 @@ public unsafe partial class VulkanRenderer
         return hash.ToHash();
     }
 
+    private static ulong ComputeCommandChainFastScheduleSignature(
+        uint imageIndex,
+        FrameOp[] staticOps,
+        FrameOp[] volatileOps,
+        ulong resourcePlanRevision)
+        => ComputeCommandChainFastScheduleSignature(
+            imageIndex,
+            FrameOperationStream.CreateCompatibility(staticOps),
+            FrameOperationStream.CreateCompatibility(volatileOps),
+            resourcePlanRevision);
+
     private static void AddCommandChainFastScheduleSignatureParts(
         ref FrameOpSignatureHasher hash,
-        FrameOp[] ops,
+        FrameOperationStream ops,
         bool dynamicOverlay)
     {
-        hash.Add(ops.Length);
-        for (int i = 0; i < ops.Length; i++)
+        hash.Add(ops.Count);
+        for (int i = 0; i < ops.Count; i++)
         {
-            FrameOp op = ops[i];
+            ref readonly FrameOperationHeader header = ref ops.GetHeader(i);
+            FrameOp op = ops.GetPayloadForPrimaryDispatch(i);
             RenderViewKey viewKey = BuildRenderViewKey(op, dynamicOverlay);
             RenderPacketVolatility volatility =
                 ClassifyRenderPacketVolatility(op, dynamicOverlay);
-            hash.Add(op.PassIndex);
-            hash.Add(ResolveCommandChainTargetIdentity(op));
+            hash.Add(header.PassIndex);
+            hash.Add(header.TargetIdentity);
             hash.Add(dynamicOverlay);
             hash.Add(i);
             hash.Add(viewKey.PipelineIdentity);

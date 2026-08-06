@@ -108,7 +108,11 @@ public unsafe partial class VulkanRenderer
             ShouldPreserveSubmissionOrderBlock(),
             outputTargetIdentity,
             outputTargetName);
-        context = CompleteFrameOpContext(context with { OutputFrameBuffer = outputFrameBuffer });
+        context = CompleteFrameOpContext(context with
+        {
+            OutputFrameBuffer = outputFrameBuffer,
+            OperationWorkspace = GetCommandThreadFrameOpWorkspace(),
+        });
         context = ApplyInteractiveResizePlannerFreeze(context);
 
         if (pipeline is not null)
@@ -172,7 +176,7 @@ public unsafe partial class VulkanRenderer
                 "[VulkanResourcePlanner] Interactive-resize extent cache reached its {0}-context capacity. " +
                 "Preserving existing frozen extents; additional context {1} pipeline={2} viewport={3} " +
                 "outputFbo=0x{4:X8} output=0x{5:X8} will use live extents.",
-                _renderGraphRuntime.InteractiveResizeExtentCache.Capacity,
+                _framePlanner.InteractiveResizeExtentCache.Capacity,
                 key.ContextKind,
                 key.PipelineIdentity,
                 key.ViewportIdentity,
@@ -216,7 +220,7 @@ public unsafe partial class VulkanRenderer
             context.DisplayHeight,
             context.InternalWidth,
             context.InternalHeight);
-        snapshot = _renderGraphRuntime.InteractiveResizeExtentCache.GetOrCapture(
+        snapshot = _framePlanner.InteractiveResizeExtentCache.GetOrCapture(
             key,
             candidate,
             out captured,
@@ -224,7 +228,7 @@ public unsafe partial class VulkanRenderer
     }
 
     private void ResetInteractiveResizePlannerFreeze()
-        => _renderGraphRuntime.InteractiveResizeExtentCache.Clear();
+        => _framePlanner.InteractiveResizeExtentCache.Clear();
 
     internal FrameOpContext CaptureFrameOpContextOrLastActive()
     {
@@ -255,7 +259,7 @@ public unsafe partial class VulkanRenderer
         FrameOpContext context = CreateFrameOpContext(pipeline, viewport);
         return !FrameOpContextHasPlannerResources(context)
             ? null
-            : PooledExternalResourcePlannerReadbackScope.Rent(this, context);
+            : RentExternalResourcePlannerReadbackScope(context);
     }
 
     internal override bool TryPrepareRenderResourceGeneration(
@@ -267,7 +271,7 @@ public unsafe partial class VulkanRenderer
     {
         transaction = null;
         failureReason = null;
-        if (!IsDeviceOperational)
+        if (!_deviceContext.IsOperational)
         {
             failureReason = "Vulkan device is not operational.";
             return false;
@@ -482,7 +486,7 @@ public unsafe partial class VulkanRenderer
             images.ToArray(),
             frameBuffers.ToArray(),
             buffers.ToArray(),
-            _resourceLifetimeTracker.CaptureRetirementWatermark());
+            ResourceRuntime.Lifetime.Tracker.CaptureRetirementWatermark());
         failureReason = null;
         return true;
     }
@@ -728,7 +732,7 @@ public unsafe partial class VulkanRenderer
         {
             OutputFrameBufferIdentity = ComputeOutputFrameBufferIdentity(context.OutputFrameBufferName),
             ContextKind = contextKind,
-            ContextId = _renderGraphRuntime.NextFrameContextId(),
+            ContextId = _framePlanner.NextFrameContextId(),
             LogicalViewId = ResolveFrameOpLogicalViewId(context, contextKind),
             SubmissionQueueFamily = ResolveFrameOpSubmissionQueueFamily(context.PassMetadata),
             StereoEnabled = stereoEnabled,
@@ -747,7 +751,7 @@ public unsafe partial class VulkanRenderer
     {
         if (contextKind is EVulkanFrameOpContextKind.OpenXrEye or EVulkanFrameOpContextKind.OpenXrMirror)
         {
-            uint openXrViewIndex = _openXrBackend.CurrentThreadExecutionState.FrameContext.ViewIndex;
+            uint openXrViewIndex = OutputRuntime.OpenXrBackend.CurrentThreadExecutionState.FrameContext.ViewIndex;
             ulong frameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
             if (frameId != 0UL &&
                 RenderFrameViewSetPublication.TryGet(frameId, out RenderFrameViewSet views))
@@ -779,7 +783,7 @@ public unsafe partial class VulkanRenderer
         if (IsThreadOpenXrExternalSwapchainTarget)
         {
             EVulkanFrameOpContextKind contextKind =
-                _openXrBackend.CurrentThreadExecutionState.FrameContext.ContextKind;
+                OutputRuntime.OpenXrBackend.CurrentThreadExecutionState.FrameContext.ContextKind;
             return contextKind == EVulkanFrameOpContextKind.Unknown
                 ? EVulkanFrameOpContextKind.OpenXrEye
                 : contextKind;
@@ -830,7 +834,7 @@ public unsafe partial class VulkanRenderer
 
     private ulong ResolveFrameOpContextDescriptorGeneration(RenderResourceRegistry? registry)
     {
-        // _vulkanDescriptorTableGeneration is a crash-breadcrumb counter. It advances for
+        // _frameTelemetry._vulkanDescriptorTableGeneration is a crash-breadcrumb counter. It advances for
         // descriptor content writes while the same frame is being prepared, so treating it
         // as a recording dependency makes otherwise identical frame ops acquire a different
         // primary-command-buffer key every frame. Descriptor-set identity and legal
@@ -911,7 +915,7 @@ public unsafe partial class VulkanRenderer
             _renderer = renderer;
             _context = context;
             _previousState = renderer.CaptureResourcePlannerRuntimeState();
-            _active = renderer.IsDeviceOperational &&
+            _active = renderer.DeviceContext.IsOperational &&
                 FrameOpResourcePlannerSwitchingEnabled &&
                 !renderer.ActiveFrameOpResourcePlannerSwitchingState.MergedPlanActive &&
                 FrameOpContextHasPlannerResources(context);
@@ -998,7 +1002,7 @@ public unsafe partial class VulkanRenderer
         public void Dispose()
         {
             ResourcePlannerRuntimeState currentState = default;
-            bool canPublish = _active && _renderer.IsDeviceOperational;
+            bool canPublish = _active && _renderer.DeviceContext.IsOperational;
             if (canPublish)
             {
                 currentState = _renderer.CaptureResourcePlannerRuntimeState();
@@ -1030,7 +1034,7 @@ public unsafe partial class VulkanRenderer
                 // Descriptor and attachment wrappers are shared even though planner
                 // allocators are scoped. Force the next command-buffer preparation
                 // for this registry to rebind wrappers to its restored allocator.
-                _renderer._openXrBackend.ResourceRegistryWrapperRefreshStamps.Remove(
+                _renderer.OutputRuntime.OpenXrBackend.ResourceRegistryWrapperRefreshStamps.Remove(
                     _context.ResourceRegistry);
             }
         }
@@ -1040,34 +1044,20 @@ public unsafe partial class VulkanRenderer
     /// Removes the interface-boxing allocation from the render-pipeline scope
     /// override. Nested pipelines rent distinct instances, and disposed instances
     /// remain thread-local so the steady-state render loop only resets their value
-    /// state.
+    /// state. The renderer owns its reusable instances, so worker lifecycle
+    /// cannot retain scopes for a retired backend generation.
     /// </summary>
-    private sealed class PooledExternalResourcePlannerReadbackScope : IDisposable
+    internal sealed class PooledExternalResourcePlannerReadbackScope : IDisposable
     {
-        private static readonly ThreadLocal<PooledExternalResourcePlannerReadbackScope?> FreeScopes = new();
-
-        private PooledExternalResourcePlannerReadbackScope? _next;
+        private VulkanRenderer? _owner;
         private ExternalResourcePlannerReadbackScope _scope;
         private bool _leased;
 
-        public static PooledExternalResourcePlannerReadbackScope Rent(
-            VulkanRenderer renderer,
-            in FrameOpContext context)
+        public void Lease(VulkanRenderer renderer, in FrameOpContext context)
         {
-            PooledExternalResourcePlannerReadbackScope? pooled = FreeScopes.Value;
-            if (pooled is null)
-            {
-                pooled = new PooledExternalResourcePlannerReadbackScope();
-            }
-            else
-            {
-                FreeScopes.Value = pooled._next;
-                pooled._next = null;
-            }
-
-            pooled._scope = new ExternalResourcePlannerReadbackScope(renderer, context);
-            pooled._leased = true;
-            return pooled;
+            _owner = renderer;
+            _scope = new ExternalResourcePlannerReadbackScope(renderer, context);
+            _leased = true;
         }
 
         public void Dispose()
@@ -1083,14 +1073,28 @@ public unsafe partial class VulkanRenderer
             {
                 _leased = false;
                 _scope = default;
-                _next = FreeScopes.Value;
-                FreeScopes.Value = this;
+                VulkanRenderer? owner = _owner;
+                _owner = null;
+                owner?.ReturnExternalResourcePlannerReadbackScope(this);
             }
         }
-
-        internal static void ReleaseCurrentThreadPool()
-            => FreeScopes.Value = null;
     }
+
+    private PooledExternalResourcePlannerReadbackScope RentExternalResourcePlannerReadbackScope(
+        in FrameOpContext context)
+    {
+        if (!_framePlanner.FreeExternalResourcePlannerReadbackScopes.TryPop(out PooledExternalResourcePlannerReadbackScope? scope))
+            scope = new PooledExternalResourcePlannerReadbackScope();
+        scope.Lease(this, context);
+        return scope;
+    }
+
+    private void ReturnExternalResourcePlannerReadbackScope(
+        PooledExternalResourcePlannerReadbackScope scope)
+        => _framePlanner.FreeExternalResourcePlannerReadbackScopes.Push(scope);
+
+    private void ReleasePooledExternalResourcePlannerReadbackScopes()
+        => _framePlanner.FreeExternalResourcePlannerReadbackScopes.Clear();
 
     private static bool TryFindBestCompatibleFrameOpPlannerState(
         in FrameOpContext context,

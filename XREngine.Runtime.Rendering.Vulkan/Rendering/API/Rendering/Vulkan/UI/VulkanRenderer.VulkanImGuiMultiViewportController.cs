@@ -10,11 +10,12 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
+
     /// <summary>
     /// Owns Dear ImGui's platform callbacks and delegates renderer callbacks to one
     /// Vulkan surface/swapchain bundle per detached viewport.
     /// </summary>
-    internal sealed class VulkanImGuiMultiViewportController : IRendererImGuiViewportCallbacks, IDisposable
+    internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGuiViewportCallbacks, IDisposable
     {
         private const int PlatformWindowDisposalQuietFrames = 2;
         private static readonly List<IWindow> AbandonedShutdownWindows = [];
@@ -63,7 +64,7 @@ public unsafe partial class VulkanRenderer
                 return null;
             }
 
-            if (renderer.khrSurface is null || renderer.khrSwapChain is null || !renderer.IsLogicalDeviceReady)
+            if (renderer.OutputRuntime.SurfaceApi is null || renderer.OutputRuntime.Desktop.SwapchainExtension is null || !renderer.DeviceContext.IsReady)
             {
                 Debug.RenderingWarning("Vulkan ImGui multi-viewports disabled: Vulkan WSI initialization is incomplete.");
                 return null;
@@ -938,14 +939,14 @@ public unsafe partial class VulkanRenderer
         int IRendererImGuiViewportCallbacks.EnumerateMonitor(nint monitor, nint hdc, nint rectangle)
             => EnumerateMonitor(monitor) ? 1 : 0;
 
-        private struct PendingPlatformWindowDisposal(VulkanImGuiPlatformWindow window)
+        internal struct PendingPlatformWindowDisposal(VulkanImGuiPlatformWindow window)
         {
             public VulkanImGuiPlatformWindow Window = window;
             public int QuietFramesRemaining = PlatformWindowDisposalQuietFrames;
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct MutableImVector
+        internal struct MutableImVector
         {
             public int Size;
             public int Capacity;
@@ -953,14 +954,14 @@ public unsafe partial class VulkanRenderer
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct NativePoint
+        internal struct NativePoint
         {
             public int X;
             public int Y;
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct NativeRect
+        internal struct NativeRect
         {
             public int Left;
             public int Top;
@@ -973,7 +974,7 @@ public unsafe partial class VulkanRenderer
         }
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
-        private struct NativeMonitorInfo
+        internal struct NativeMonitorInfo
         {
             public int Size;
             public NativeRect Monitor;
@@ -981,7 +982,7 @@ public unsafe partial class VulkanRenderer
             public uint Flags;
         }
 
-        private enum MonitorDpiType
+        internal enum MonitorDpiType
         {
             Effective = 0,
         }

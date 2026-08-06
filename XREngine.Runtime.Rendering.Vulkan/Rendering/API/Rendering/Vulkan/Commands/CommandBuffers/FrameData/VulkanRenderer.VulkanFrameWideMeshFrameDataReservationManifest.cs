@@ -2,7 +2,7 @@ using System.Runtime.CompilerServices;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed partial class VulkanFrameWideMeshFrameDataReservationManifest
 {
     /// <summary>
     /// Publishes the mesh frame-data capacity shared by every command stream in one
@@ -11,8 +11,6 @@ public unsafe partial class VulkanRenderer
     /// rejected and teaches the next frame's generation instead of mutating state
     /// captured by an already recorded or submitted output.
     /// </summary>
-    internal sealed partial class VulkanFrameWideMeshFrameDataReservationManifest
-    {
         // Draw counts within an output family vary slightly with bounded work such as
         // asynchronous occlusion probes. Publishing the exact first-observed count would
         // relocate that family as soon as a later frame schedules one more probe, leaving
@@ -374,5 +372,4 @@ public unsafe partial class VulkanRenderer
             else
                 requirements.Add(renderer, requiredDrawSlots);
         }
-    }
 }

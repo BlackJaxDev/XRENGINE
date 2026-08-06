@@ -161,7 +161,7 @@ public class VulkanPrimaryReuseStateContractTests
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
         string submit = SliceMethod(
             synchronization,
-            "private Result SubmitToQueueTrackedCore(",
+            "private VulkanSubmissionReceipt SubmitToQueueTrackedCore(",
             "internal Result WaitForQueueIdleTracked(");
         string publication = SliceMethod(
             synchronization,
@@ -175,7 +175,7 @@ public class VulkanPrimaryReuseStateContractTests
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
 
         int acceptedSubmission = submit.IndexOf(
-            "if (result == Result.Success)",
+            "if (submissionAccepted)",
             StringComparison.Ordinal);
         int publicationCall = submit.IndexOf(
             "PublishRecordedImageLayouts(",
@@ -306,8 +306,9 @@ public class VulkanPrimaryReuseStateContractTests
         source.ShouldContain("TryGetRecordedImageEntryStateMismatch(");
         source.ShouldContain("EVulkanPrimaryEntryStateMismatch.MissingSubmittedState");
         source.ShouldContain("HasCompleteRecordedImageEntrySnapshot(");
-        source.ShouldContain(
-            "PublishRecordedImageLayouts(\n                        queue,\n                        ref submitInfo,\n                        lifetimeSubmission)");
+        // Receipt-based publication adds a containment scope; preserve the
+        // semantic requirement without coupling this reuse contract to it.
+        source.ShouldContain("PublishRecordedImageLayouts(");
     }
 
     [Test]

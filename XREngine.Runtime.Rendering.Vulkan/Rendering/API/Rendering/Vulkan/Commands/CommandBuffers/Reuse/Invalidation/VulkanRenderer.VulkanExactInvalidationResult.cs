@@ -13,12 +13,9 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
-{
-    private readonly record struct VulkanExactInvalidationResult(
-        int ExactVariantsDirtied,
-        int ExactCommandChainsDirtied,
-        int UnrelatedVariantsPreserved,
-        int GlobalFallbackInvalidations);
-}
+internal readonly record struct VulkanExactInvalidationResult(
+    int ExactVariantsDirtied,
+    int ExactCommandChainsDirtied,
+    int UnrelatedVariantsPreserved,
+    int GlobalFallbackInvalidations);
 

@@ -21,7 +21,7 @@ public unsafe partial class VulkanRenderer
         if (descriptorSetLayout.Handle == 0)
             return;
 
-        _descriptorManager.LiveDescriptorSetLayoutHandles[descriptorSetLayout.Handle] = owner;
+        ResourceRuntime.Descriptors.LiveDescriptorSetLayoutHandles[descriptorSetLayout.Handle] = owner;
         RegisterVulkanResource(
             ObjectType.DescriptorSetLayout,
             descriptorSetLayout.Handle,
@@ -41,7 +41,7 @@ public unsafe partial class VulkanRenderer
         if (descriptorSetLayout.Handle == 0)
             return false;
 
-        if (!_descriptorManager.LiveDescriptorSetLayoutHandles.TryRemove(descriptorSetLayout.Handle, out _))
+        if (!ResourceRuntime.Descriptors.LiveDescriptorSetLayoutHandles.TryRemove(descriptorSetLayout.Handle, out _))
         {
             Debug.VulkanEvery(
                 $"Vulkan.DescriptorSetLayout.SkipStaleDestroy.{GetHashCode()}.{descriptorSetLayout.Handle}",
@@ -56,29 +56,29 @@ public unsafe partial class VulkanRenderer
             ObjectType.DescriptorSetLayout,
             descriptorSetLayout.Handle,
             owner);
-        lock (_resourceRetirementQueue.SyncRoot)
+        lock (ResourceRuntime.Lifetime.Retirement.SyncRoot)
         {
-            if (_resourceRetirementQueue.AllDescriptorSetLayoutHandles.Contains(
+            if (ResourceRuntime.Lifetime.Retirement.AllDescriptorSetLayoutHandles.Contains(
                     descriptorSetLayout.Handle))
             {
-                _descriptorManager.LiveDescriptorSetLayoutHandles[descriptorSetLayout.Handle] = owner;
+                ResourceRuntime.Descriptors.LiveDescriptorSetLayoutHandles[descriptorSetLayout.Handle] = owner;
                 return false;
             }
         }
 
         if (!IsVulkanRetirementReady(ticket))
         {
-            _descriptorManager.LiveDescriptorSetLayoutHandles[descriptorSetLayout.Handle] = owner;
+            ResourceRuntime.Descriptors.LiveDescriptorSetLayoutHandles[descriptorSetLayout.Handle] = owner;
             int frameSlot = CurrentDesktopFrameSlot;
-            lock (_resourceRetirementQueue.SyncRoot)
+            lock (ResourceRuntime.Lifetime.Retirement.SyncRoot)
             {
                 VulkanResourceRetirementQueue.TryEnqueueUniqueNoLock(
                     frameSlot,
                     descriptorSetLayout.Handle,
                     new RetiredDescriptorSetLayout(descriptorSetLayout, ticket, owner),
-                    _resourceRetirementQueue.DescriptorSetLayouts,
-                    _resourceRetirementQueue.DescriptorSetLayoutHandles,
-                    _resourceRetirementQueue.AllDescriptorSetLayoutHandles);
+                    ResourceRuntime.Lifetime.Retirement.DescriptorSetLayouts,
+                    ResourceRuntime.Lifetime.Retirement.DescriptorSetLayoutHandles,
+                    ResourceRuntime.Lifetime.Retirement.AllDescriptorSetLayoutHandles);
             }
             Debug.VulkanEvery(
                 $"Vulkan.DescriptorSetLayout.RetirementQueued.{GetHashCode()}.{descriptorSetLayout.Handle}",
@@ -103,15 +103,15 @@ public unsafe partial class VulkanRenderer
 
     private void DrainRetiredDescriptorSetLayouts(int frameSlot, int maxItems)
     {
-        if (Api is null || device.Handle == 0)
+        if (Api is null || _deviceContext.Device.Handle == 0)
             return;
 
         RetiredDescriptorSetLayout[] retired;
         int remaining;
-        lock (_resourceRetirementQueue.SyncRoot)
+        lock (ResourceRuntime.Lifetime.Retirement.SyncRoot)
         {
             List<RetiredDescriptorSetLayout> list =
-                _resourceRetirementQueue.DescriptorSetLayouts[frameSlot];
+                ResourceRuntime.Lifetime.Retirement.DescriptorSetLayouts[frameSlot];
             int capacity = GetRetiredResourceDrainCount(list.Count, maxItems);
             if (capacity == 0)
                 return;
@@ -131,9 +131,9 @@ public unsafe partial class VulkanRenderer
                 VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
                     frameSlot,
                     candidate.DescriptorSetLayout.Handle,
-                    _resourceRetirementQueue.DescriptorSetLayoutHandles,
-                    _resourceRetirementQueue.AllDescriptorSetLayoutHandles);
-                _descriptorManager.LiveDescriptorSetLayoutHandles.TryRemove(
+                    ResourceRuntime.Lifetime.Retirement.DescriptorSetLayoutHandles,
+                    ResourceRuntime.Lifetime.Retirement.AllDescriptorSetLayoutHandles);
+                ResourceRuntime.Descriptors.LiveDescriptorSetLayoutHandles.TryRemove(
                     candidate.DescriptorSetLayout.Handle,
                     out _);
             }
@@ -149,7 +149,7 @@ public unsafe partial class VulkanRenderer
             if (layout.Handle == 0)
                 continue;
 
-            Api.DestroyDescriptorSetLayout(device, layout, null);
+            Api.DestroyDescriptorSetLayout(_deviceContext.Device, layout, null);
             CompleteVulkanResourceDestruction(ObjectType.DescriptorSetLayout, layout.Handle);
         }
     }
@@ -159,13 +159,13 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     private void DestroyRemainingTrackedDescriptorSetLayouts()
     {
-        foreach ((ulong handle, string owner) in _descriptorManager.LiveDescriptorSetLayoutHandles.ToArray())
+        foreach ((ulong handle, string owner) in ResourceRuntime.Descriptors.LiveDescriptorSetLayoutHandles.ToArray())
         {
             DescriptorSetLayout layout = new() { Handle = handle };
             if (!TryBeginDestroyDescriptorSetLayout(layout, $"Shutdown:{owner}"))
                 continue;
 
-            Api!.DestroyDescriptorSetLayout(device, layout, null);
+            Api!.DestroyDescriptorSetLayout(_deviceContext.Device, layout, null);
         }
     }
 }

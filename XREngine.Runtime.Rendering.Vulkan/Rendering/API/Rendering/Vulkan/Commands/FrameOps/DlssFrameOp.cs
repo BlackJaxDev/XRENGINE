@@ -16,7 +16,7 @@ internal abstract unsafe record DlssFrameOp(
 
     internal sealed override int RecordPrimary(
         VulkanRenderer renderer,
-        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
+        scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
         renderer.CmdBeginLabel(recordingState.CommandBuffer, CommandLabel);

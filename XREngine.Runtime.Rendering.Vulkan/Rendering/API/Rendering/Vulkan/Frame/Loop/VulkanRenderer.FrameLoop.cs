@@ -5,15 +5,13 @@ namespace XREngine.Rendering.Vulkan
 {
 public unsafe partial class VulkanRenderer
 {
+        internal VulkanFrameTelemetry FrameTelemetry => _frameTelemetry;
+
         /// <summary>
         /// Coordinates one allocation-free desktop Vulkan frame attempt.
         /// </summary>
-        protected override void RenderFrameCallback(double delta)
-            => DesktopFrameCoordinator.Render(delta);
-
-        internal bool TryEnterCoordinatedDesktopFrame(
-            out DesktopFrameIdentity identity)
-            => TryEnterDesktopFrameAttempt(out identity);
+        private void RenderComposedFrame(double delta)
+            => FrameLoop.Render(this, delta);
 
         internal void ReportReentrantDesktopFrame()
         {
@@ -29,56 +27,9 @@ public unsafe partial class VulkanRenderer
 
         internal bool IsDesktopFrameDeviceLost => _deviceLost;
 
-        internal InvalidOperationException CreateDesktopFrameDeviceLostException(
-            string operation,
-            Result result)
-            => CreateDeviceLostException(operation, result);
-
-        internal void BeginCoordinatedDesktopFrame(ulong frameNumber)
-            => BeginDescriptorHeapFrame(frameNumber);
-
-        internal void RecordCoordinatedDesktopFrameGap(
+        internal EDesktopFrameFlow AcquireDesktopFrameTarget(
             ref VulkanFrameAttempt attempt)
-            => RecordDesktopFrameGap(ref attempt);
-
-        internal EDesktopFrameFlow RunCoordinatedDesktopFramePreflight(
-            ref VulkanFrameAttempt attempt)
-            => RunDesktopFramePreflight(ref attempt);
-
-        internal EDesktopFrameFlow PrepareCoordinatedDesktopFrameSlot(
-            ref VulkanFrameAttempt attempt)
-            => PrepareDesktopFrameSlot(ref attempt);
-
-        internal EDesktopFrameFlow AcquireCoordinatedDesktopSwapchainImage(
-            ref VulkanFrameAttempt attempt)
-            => DesktopWsiTarget.AcquireFrameTarget(this, ref attempt);
-
-        internal void PrepareCoordinatedDesktopImage(
-            ref VulkanFrameAttempt attempt)
-            => PrepareAcquiredDesktopImage(ref attempt);
-
-        internal EDesktopFrameFlow RecordCoordinatedDesktopFrame(
-            ref VulkanFrameAttempt attempt)
-            => RecordDesktopFrame(ref attempt);
-
-        internal EDesktopFrameFlow SubmitCoordinatedDesktopFrame(
-            ref VulkanFrameAttempt attempt)
-            => SubmitDesktopFrame(ref attempt);
-
-        internal EDesktopFrameFlow PresentCoordinatedDesktopFrame(
-            ref VulkanFrameAttempt attempt)
-            => PresentSubmittedDesktopFrame(ref attempt);
-
-        internal void SettleCoordinatedDesktopAcquireAfterFailure(
-            ref VulkanFrameAttempt attempt,
-            Exception primaryFailure)
-            => SettleDesktopAcquireAfterUnexpectedFailure(
-                ref attempt,
-                primaryFailure);
-
-        internal void PublishCoordinatedDesktopFrameTelemetry(
-            ref VulkanFrameAttempt attempt)
-            => PublishDesktopFrameTelemetry(ref attempt);
+            => DesktopWsiOutput.AcquireFrameTarget(this, ref attempt);
 
         internal void ReportDesktopFrameTelemetryFailure(
             Exception telemetryFailure)
@@ -86,8 +37,5 @@ public unsafe partial class VulkanRenderer
                 "[Vulkan] Desktop frame telemetry finalization failed: {0}",
                 telemetryFailure.Message);
 
-        internal void ExitCoordinatedDesktopFrame(
-            in DesktopFrameIdentity identity)
-            => ExitDesktopFrameAttempt(in identity);
     }
 }

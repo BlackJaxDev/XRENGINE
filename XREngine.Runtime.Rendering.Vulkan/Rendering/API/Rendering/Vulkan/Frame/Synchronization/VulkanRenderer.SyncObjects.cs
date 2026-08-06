@@ -6,44 +6,29 @@ using Semaphore = Silk.NET.Vulkan.Semaphore;
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
-    private Semaphore[]? acquireBridgeSemaphores;
     /// <summary>
     /// Present bridge semaphores indexed by swapchain image index (one per swapchain image).
     /// This prevents signaling a semaphore that may still be in use by a previously presented image.
     /// </summary>
-    private Semaphore[]? presentBridgeSemaphores;
-    private Semaphore _graphicsTimelineSemaphore;
-    private Semaphore _presentTimelineSemaphore;
-    private Semaphore _transferTimelineSemaphore;
-    private ulong[]? _frameSlotTimelineValues;
-    private ulong[]? _swapchainImageTimelineValues;
-    private ulong _acquireTimelineValue;
-    private ulong _graphicsTimelineValue;
     private const ulong TimelineWaitPollTimeoutNanoseconds = 50_000_000UL;
 
     /// <summary>
     /// Set to <c>true</c> when <c>VK_ERROR_DEVICE_LOST</c> is detected. Once the Vulkan
-    /// logical device is lost it cannot be recovered — all subsequent API calls will fail.
+    /// logical device is lost it cannot be recovered â€” all subsequent API calls will fail.
     /// The render loop checks this flag to short-circuit immediately instead of looping
     /// forever with cascading failures.
     /// </summary>
-    private readonly VulkanDeviceStateMachine _deviceStateMachine = new();
     // All legacy field-style checks read the atomic device-state authority. This
     // closes the admission window between the winning loss CAS and diagnostic
     // collection without requiring every hot path to take the transition lock.
-    private bool _deviceLost => !_deviceStateMachine.IsOperational;
-    private long _deviceLossFalloutCount;
-    private string? _deviceLostReason;
+    private bool _deviceLost => !_deviceContext.StateMachine.IsOperational;
     public override bool IsDeviceLost => _deviceLost;
-    public override string? DeviceLostReason => _deviceLostReason;
-    internal EVulkanDeviceState DeviceState => _deviceStateMachine.State;
+    public override string? DeviceLostReason => _deviceContext.DeviceFaultFacility.DeviceLostReason;
     /// <summary>
     /// Whether a live logical device exists and has not entered a terminal fault state.
     /// The state machine starts healthy so it can collect a later device loss, but that
     /// state alone must not make re-entrant startup rendering treat a null device as ready.
     /// </summary>
-    internal bool IsDeviceOperational => device.Handle != 0 && _deviceStateMachine.IsOperational;
-
     /// <summary>
     /// Admits a native device operation only while the logical device is healthy.
     /// New recording, submission, waiting, allocation, mapping, descriptor update,
@@ -51,14 +36,14 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     internal bool TryAdmitVulkanDeviceOperation(string operation, out string failureReason)
     {
-        if (IsDeviceOperational)
+        if (_deviceContext.IsOperational)
         {
             failureReason = string.Empty;
             return true;
         }
 
         failureReason =
-            $"Cannot start Vulkan operation '{operation}' while device state is {DeviceState}.";
+            $"Cannot start Vulkan operation '{operation}' while device state is {_deviceContext.State}.";
         return false;
     }
 
@@ -77,12 +62,23 @@ public unsafe partial class VulkanRenderer
         string? operation = null,
         Result result = Result.ErrorDeviceLost)
     {
+        DeviceBootstrap.VulkanNativeDeviceFault? nativeFault =
+            _deviceContext.FirstNativeDeviceFault;
+        operation ??= nativeFault?.Operation;
+        if (nativeFault is not null && result == Result.ErrorDeviceLost)
+            result = nativeFault.Result;
+        reason ??= nativeFault is null
+            ? null
+            : $"{nativeFault.Operation} returned {nativeFault.Result}";
+
         bool firstObservation;
         lock (_oneTimeSubmitLock)
         {
-            lock (_deviceLostTransitionLock)
+            lock (_frameTelemetry._deviceLostTransitionLock)
             {
-                firstObservation = _deviceStateMachine.TryBeginLossCollection();
+                _ = _deviceContext.TryBeginDeviceLossCollection();
+                firstObservation =
+                    _deviceContext.TryClaimDeviceLossDiagnostics();
                 if (firstObservation)
                 {
                     CaptureFirstDeviceLossRecord(operation, result, reason);
@@ -90,16 +86,16 @@ public unsafe partial class VulkanRenderer
                     NotifyVulkanResourceLifetimeDeviceLost();
 
                     // Pending timeline signals will never arrive after device loss.
-                    if (_frameSlotTimelineValues is not null)
-                        Array.Clear(_frameSlotTimelineValues);
-                    if (_swapchainImageTimelineValues is not null)
-                        Array.Clear(_swapchainImageTimelineValues);
-                    _acquireTimelineValue = 0;
-                    _graphicsTimelineValue = 0;
+                    if (_commandRuntime.Synchronization._frameSlotTimelineValues is not null)
+                        Array.Clear(_commandRuntime.Synchronization._frameSlotTimelineValues);
+                    if (OutputRuntime.Desktop.ImageTimelineValues is not null)
+                        Array.Clear(OutputRuntime.Desktop.ImageTimelineValues);
+                    _commandRuntime.Synchronization._acquireTimelineValue = 0;
+                    _commandRuntime.Synchronization._graphicsTimelineValue = 0;
                 }
                 else
                 {
-                    Interlocked.Increment(ref _deviceLossFalloutCount);
+                    _deviceContext.DeviceFaultFacility.RecordDeviceLossFallout();
                 }
             }
         }
@@ -108,10 +104,10 @@ public unsafe partial class VulkanRenderer
             return;
 
         string deviceLostReason = BuildDeviceLostReasonWithSubmissionContext(reason);
-        lock (_deviceLostTransitionLock)
+        lock (_frameTelemetry._deviceLostTransitionLock)
         {
-            _deviceLostReason = deviceLostReason;
-            _deviceStateMachine.CompleteLossCollection();
+            _deviceContext.DeviceFaultFacility.CompleteDeviceLoss(deviceLostReason);
+            _deviceContext.CompleteDeviceLossCollection();
         }
 
         Debug.VulkanWarning(
@@ -127,10 +123,10 @@ public unsafe partial class VulkanRenderer
     private void MarkDeviceDisposed()
     {
         lock (_oneTimeSubmitLock)
-            _deviceStateMachine.Dispose();
+            _deviceContext.MarkDisposed();
     }
 
-    private InvalidOperationException CreateDeviceLostException(string operation, Result result)
+    internal InvalidOperationException CreateDeviceLostException(string operation, Result result)
     {
         MarkDeviceLost($"{operation} returned {result}", operation, result);
         return new InvalidOperationException(
@@ -146,7 +142,7 @@ public unsafe partial class VulkanRenderer
         Result result,
         string? reason)
     {
-        string? provisionalOperation = Volatile.Read(ref _firstFailingVulkanApi);
+        string? provisionalOperation = Volatile.Read(ref _frameTelemetry._firstFailingVulkanApi);
         string resolvedOperation = !string.IsNullOrWhiteSpace(operation)
             ? operation
             : !string.IsNullOrWhiteSpace(provisionalOperation)
@@ -160,7 +156,7 @@ public unsafe partial class VulkanRenderer
         // Earlier operation sites may have observed an error concurrently, but
         // only this state-transition winner defines the terminal device-loss
         // diagnosis. Replace the provisional marker with the CAS-owned record.
-        Interlocked.Exchange(ref _firstFailingVulkanApi, $"{resolvedOperation}:{result}");
+        Interlocked.Exchange(ref _frameTelemetry._firstFailingVulkanApi, $"{resolvedOperation}:{result}");
 
         VulkanDeviceLossRecord record = new(
             resolvedOperation,
@@ -169,21 +165,21 @@ public unsafe partial class VulkanRenderer
             DateTimeOffset.UtcNow,
             SnapshotLastVulkanSubmissionDiagnosticContext(),
             GetVulkanResourceLifetimeSnapshot(includeExactLiveResourceGenerations: true));
-        _ = Interlocked.CompareExchange(ref _firstDeviceLossRecord, record, null);
+        _ = Interlocked.CompareExchange(ref _frameTelemetry._firstDeviceLossRecord, record, null);
     }
 
     private void EnsureSwapchainTimelineState()
     {
-        if (swapChainImages is null)
+        if (OutputRuntime.Desktop.Images is null)
         {
-            _swapchainImageTimelineValues = null;
+            OutputRuntime.Desktop.ImageTimelineValues = null;
             return;
         }
 
-        if (_swapchainImageTimelineValues is null || _swapchainImageTimelineValues.Length != swapChainImages.Length)
-            _swapchainImageTimelineValues = new ulong[swapChainImages.Length];
+        if (OutputRuntime.Desktop.ImageTimelineValues is null || OutputRuntime.Desktop.ImageTimelineValues.Length != OutputRuntime.Desktop.Images.Length)
+            OutputRuntime.Desktop.ImageTimelineValues = new ulong[OutputRuntime.Desktop.Images.Length];
         else
-            Array.Clear(_swapchainImageTimelineValues, 0, _swapchainImageTimelineValues.Length);
+            Array.Clear(OutputRuntime.Desktop.ImageTimelineValues, 0, OutputRuntime.Desktop.ImageTimelineValues.Length);
     }
 
     private bool HasTimelineValueCompleted(Semaphore semaphore, ulong value)
@@ -198,7 +194,7 @@ public unsafe partial class VulkanRenderer
             throw new InvalidOperationException("Refusing to query Vulkan timeline semaphore completion for the invalid ulong.MaxValue sentinel.");
 
         ulong currentValue = 0;
-        Result result = Api!.GetSemaphoreCounterValue(device, semaphore, &currentValue);
+        Result result = Api!.GetSemaphoreCounterValue(_deviceContext.Device, semaphore, &currentValue);
         if (result == Result.ErrorDeviceLost)
         {
             MarkDeviceLost(
@@ -243,7 +239,7 @@ public unsafe partial class VulkanRenderer
         waitInfo.PSemaphores = semaphorePtr;
         waitInfo.PValues = valuePtr;
 
-        Result waitResult = Api!.WaitSemaphores(device, &waitInfo, timeoutNanoseconds);
+        Result waitResult = Api!.WaitSemaphores(_deviceContext.Device, &waitInfo, timeoutNanoseconds);
         if (waitResult == Result.Success)
         {
             NotifyVulkanTimelineCompleted(semaphore, value);
@@ -288,44 +284,44 @@ public unsafe partial class VulkanRenderer
     private void DestroySyncObjects()
     {
         FailAllSubmissionMarkers();
-        if (acquireBridgeSemaphores is not null)
+        if (_commandRuntime.Synchronization.acquireBridgeSemaphores is not null)
         {
-            for (int i = 0; i < acquireBridgeSemaphores.Length; i++)
-                Api!.DestroySemaphore(device, acquireBridgeSemaphores[i], null);
+            for (int i = 0; i < _commandRuntime.Synchronization.acquireBridgeSemaphores.Length; i++)
+                Api!.DestroySemaphore(_deviceContext.Device, _commandRuntime.Synchronization.acquireBridgeSemaphores[i], null);
         }
 
-        if (presentBridgeSemaphores is not null)
+        if (OutputRuntime.Desktop.PresentBridgeSemaphores is not null)
         {
-            for (int i = 0; i < presentBridgeSemaphores.Length; i++)
-                Api!.DestroySemaphore(device, presentBridgeSemaphores[i], null);
+            for (int i = 0; i < OutputRuntime.Desktop.PresentBridgeSemaphores.Length; i++)
+                Api!.DestroySemaphore(_deviceContext.Device, OutputRuntime.Desktop.PresentBridgeSemaphores[i], null);
         }
 
-        if (_graphicsTimelineSemaphore.Handle != 0)
-            Api!.DestroySemaphore(device, _graphicsTimelineSemaphore, null);
-        if (_presentTimelineSemaphore.Handle != 0)
-            Api!.DestroySemaphore(device, _presentTimelineSemaphore, null);
-        if (_transferTimelineSemaphore.Handle != 0)
-            Api!.DestroySemaphore(device, _transferTimelineSemaphore, null);
+        if (_commandRuntime.Synchronization._graphicsTimelineSemaphore.Handle != 0)
+            Api!.DestroySemaphore(_deviceContext.Device, _commandRuntime.Synchronization._graphicsTimelineSemaphore, null);
+        if (_commandRuntime.Synchronization._presentTimelineSemaphore.Handle != 0)
+            Api!.DestroySemaphore(_deviceContext.Device, _commandRuntime.Synchronization._presentTimelineSemaphore, null);
+        if (_commandRuntime.Synchronization._transferTimelineSemaphore.Handle != 0)
+            Api!.DestroySemaphore(_deviceContext.Device, _commandRuntime.Synchronization._transferTimelineSemaphore, null);
 
-        acquireBridgeSemaphores = null;
-        presentBridgeSemaphores = null;
-        _graphicsTimelineSemaphore = default;
-        _presentTimelineSemaphore = default;
-        _transferTimelineSemaphore = default;
-        _frameSlotTimelineValues = null;
-        _swapchainImageTimelineValues = null;
-        _acquireTimelineValue = 0;
-        _graphicsTimelineValue = 0;
+        _commandRuntime.Synchronization.acquireBridgeSemaphores = null;
+        OutputRuntime.Desktop.PresentBridgeSemaphores = null;
+        _commandRuntime.Synchronization._graphicsTimelineSemaphore = default;
+        _commandRuntime.Synchronization._presentTimelineSemaphore = default;
+        _commandRuntime.Synchronization._transferTimelineSemaphore = default;
+        _commandRuntime.Synchronization._frameSlotTimelineValues = null;
+        OutputRuntime.Desktop.ImageTimelineValues = null;
+        _commandRuntime.Synchronization._acquireTimelineValue = 0;
+        _commandRuntime.Synchronization._graphicsTimelineValue = 0;
     }
 
     private void CreateSyncObjects()
     {
-        if (!DeviceCapabilities.Supports(EVulkanDeviceCapability.TimelineSemaphores))
+        if (!_deviceContext.Capabilities.Supports(EVulkanDeviceCapability.TimelineSemaphores))
             throw new InvalidOperationException("Vulkan timeline semaphores are required but were not enabled on the logical device.");
 
-        acquireBridgeSemaphores = new Semaphore[MAX_FRAMES_IN_FLIGHT];
-        int presentSemaphoreCount = swapChainImages?.Length ?? MAX_FRAMES_IN_FLIGHT;
-        _frameSlotTimelineValues = new ulong[MAX_FRAMES_IN_FLIGHT];
+        _commandRuntime.Synchronization.acquireBridgeSemaphores = new Semaphore[MAX_FRAMES_IN_FLIGHT];
+        int presentSemaphoreCount = OutputRuntime.Desktop.Images?.Length ?? MAX_FRAMES_IN_FLIGHT;
+        _commandRuntime.Synchronization._frameSlotTimelineValues = new ulong[MAX_FRAMES_IN_FLIGHT];
         EnsureSwapchainTimelineState();
 
         SemaphoreCreateInfo semaphoreInfo = new()
@@ -346,28 +342,28 @@ public unsafe partial class VulkanRenderer
             PNext = &timelineTypeInfo,
         };
 
-        if (Api!.CreateSemaphore(device, ref timelineSemaphoreInfo, null, out _graphicsTimelineSemaphore) != Result.Success ||
-            Api.CreateSemaphore(device, ref timelineSemaphoreInfo, null, out _presentTimelineSemaphore) != Result.Success ||
-            Api.CreateSemaphore(device, ref timelineSemaphoreInfo, null, out _transferTimelineSemaphore) != Result.Success)
+        if (Api!.CreateSemaphore(_deviceContext.Device, ref timelineSemaphoreInfo, null, out _commandRuntime.Synchronization._graphicsTimelineSemaphore) != Result.Success ||
+            Api.CreateSemaphore(_deviceContext.Device, ref timelineSemaphoreInfo, null, out _commandRuntime.Synchronization._presentTimelineSemaphore) != Result.Success ||
+            Api.CreateSemaphore(_deviceContext.Device, ref timelineSemaphoreInfo, null, out _commandRuntime.Synchronization._transferTimelineSemaphore) != Result.Success)
         {
             throw new Exception("failed to create timeline synchronization semaphores.");
         }
 
-        SetDebugObjectName(ObjectType.Semaphore, _graphicsTimelineSemaphore.Handle, "Timeline.Graphics");
-        SetDebugObjectName(ObjectType.Semaphore, _presentTimelineSemaphore.Handle, "Timeline.Present");
-        SetDebugObjectName(ObjectType.Semaphore, _transferTimelineSemaphore.Handle, "Timeline.Transfer");
+        SetDebugObjectName(ObjectType.Semaphore, _commandRuntime.Synchronization._graphicsTimelineSemaphore.Handle, "Timeline.Graphics");
+        SetDebugObjectName(ObjectType.Semaphore, _commandRuntime.Synchronization._presentTimelineSemaphore.Handle, "Timeline.Present");
+        SetDebugObjectName(ObjectType.Semaphore, _commandRuntime.Synchronization._transferTimelineSemaphore.Handle, "Timeline.Transfer");
 
         for (var i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
         {
-            if (Api!.CreateSemaphore(device, ref semaphoreInfo, null, out acquireBridgeSemaphores[i]) != Result.Success)
+            if (Api!.CreateSemaphore(_deviceContext.Device, ref semaphoreInfo, null, out _commandRuntime.Synchronization.acquireBridgeSemaphores[i]) != Result.Success)
             {
                 throw new Exception("failed to create acquire bridge synchronization semaphores.");
             }
 
-            SetDebugObjectName(ObjectType.Semaphore, acquireBridgeSemaphores[i].Handle, $"AcquireBridge[{i}]");
+            SetDebugObjectName(ObjectType.Semaphore, _commandRuntime.Synchronization.acquireBridgeSemaphores[i].Handle, $"AcquireBridge[{i}]");
         }
 
-        presentBridgeSemaphores = CreatePresentBridgeSemaphores(presentSemaphoreCount);
+        OutputRuntime.Desktop.PresentBridgeSemaphores = CreatePresentBridgeSemaphores(presentSemaphoreCount);
     }
 
     private Semaphore[] CreatePresentBridgeSemaphores(int count)
@@ -380,10 +376,10 @@ public unsafe partial class VulkanRenderer
 
         for (int i = 0; i < semaphores.Length; i++)
         {
-            if (Api!.CreateSemaphore(device, ref semaphoreInfo, null, out semaphores[i]) != Result.Success)
+            if (Api!.CreateSemaphore(_deviceContext.Device, ref semaphoreInfo, null, out semaphores[i]) != Result.Success)
             {
                 for (int createdIndex = 0; createdIndex < i; createdIndex++)
-                    Api.DestroySemaphore(device, semaphores[createdIndex], null);
+                    Api.DestroySemaphore(_deviceContext.Device, semaphores[createdIndex], null);
                 throw new Exception("failed to create frame bridge synchronization semaphores.");
             }
 

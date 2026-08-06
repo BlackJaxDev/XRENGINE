@@ -10,10 +10,9 @@ public unsafe partial class VulkanRenderer
     /// Prepares compute pipelines, persistent uniform buffers, and reusable
     /// descriptor sets before the command recorder enters its guarded scope.
     /// </summary>
-    private bool TryPrepareComputeFrameOpsForRecording(
+    private VulkanComputePreparationResult PrepareComputeFrameOpsForRecording(
         uint imageIndex,
-        FrameOp[] operations,
-        out string failureReason)
+        FrameOp[] operations)
     {
         for (int operationIndex = 0; operationIndex < operations.Length; operationIndex++)
         {
@@ -51,27 +50,29 @@ public unsafe partial class VulkanRenderer
             }
 
             if (!program.Link())
-            {
-                failureReason =
-                    $"Compute program '{program.Data.Name ?? "UnnamedProgram"}' is not linkable before recording.";
-                return false;
-            }
+                return new(
+                    EVulkanComputePreparationOutcome.ProgramLinkFailed,
+                    operationIndex,
+                    operations.Length,
+                    program.Data.Name);
 
             try
             {
                 if (program.GetOrCreateComputePipeline(passIndex, passMetadata).Handle == 0)
-                {
-                    failureReason =
-                        $"Compute pipeline '{program.Data.Name ?? "UnnamedProgram"}' is unavailable before recording.";
-                    return false;
-                }
+                    return new(
+                        EVulkanComputePreparationOutcome.PipelineUnavailable,
+                        operationIndex,
+                        operations.Length,
+                        program.Data.Name);
             }
             catch (Exception exception)
             {
-                failureReason =
-                    $"Compute pipeline '{program.Data.Name ?? "UnnamedProgram"}' preparation failed: " +
-                    $"{exception.GetType().Name}: {exception.Message}";
-                return false;
+                return new(
+                    EVulkanComputePreparationOutcome.PipelineCreationFailed,
+                    operationIndex,
+                    operations.Length,
+                    program.Data.Name,
+                    exception);
             }
 
             if (program.TryPrepareComputeDispatchResources(
@@ -82,13 +83,13 @@ public unsafe partial class VulkanRenderer
                 continue;
             }
 
-            failureReason =
-                $"Compute descriptor resources for '{program.Data.Name ?? "UnnamedProgram"}' " +
-                $"could not be prepared before recording (op {operationIndex}/{operations.Length}).";
-            return false;
+            return new(
+                EVulkanComputePreparationOutcome.DescriptorPreparationFailed,
+                operationIndex,
+                operations.Length,
+                program.Data.Name);
         }
 
-        failureReason = string.Empty;
-        return true;
+        return VulkanComputePreparationResult.Success;
     }
 }

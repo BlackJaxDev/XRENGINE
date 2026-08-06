@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 
 namespace XREngine.Rendering.Vulkan;
@@ -10,12 +9,13 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal static partial class VulkanCpuSpanProfiler
 {
-    private static readonly ConcurrentBag<ThreadBuffer> s_buffers = [];
+    private const int MaxCaptureThreads = 64;
+    private static readonly object s_configurationGate = new();
+    private static readonly ThreadBuffer?[] s_buffers = new ThreadBuffer[MaxCaptureThreads];
+    private static int s_bufferCount;
     private static long s_targetMask;
     private static int s_enabled;
     private static int s_capacity;
-    [ThreadStatic] private static ThreadBuffer? t_buffer;
-    [ThreadStatic] private static long t_activeSpanId;
 
     public static void Configure(EVulkanCpuStage[] stages, int capacityPerThread)
     {
@@ -34,20 +34,34 @@ internal static partial class VulkanCpuSpanProfiler
         Volatile.Write(ref s_enabled, 0);
         Volatile.Write(ref s_targetMask, targetMask);
         Volatile.Write(ref s_capacity, capacityPerThread);
+        lock (s_configurationGate)
+        {
+            Array.Clear(s_buffers, 0, s_bufferCount);
+            s_bufferCount = 0;
+        }
     }
 
     /// <summary>Allocates this thread's fixed buffer before capture begins.</summary>
     public static void WarmCurrentThread()
     {
-        if (t_buffer is not null)
+        int threadId = Environment.CurrentManagedThreadId;
+        if (FindThreadBuffer(threadId) is not null)
             return;
 
         int capacity = Volatile.Read(ref s_capacity);
         if (capacity <= 0)
             throw new InvalidOperationException("Configure targeted Vulkan CPU spans before warming worker threads.");
-        ThreadBuffer buffer = new(capacity, Environment.CurrentManagedThreadId);
-        t_buffer = buffer;
-        s_buffers.Add(buffer);
+        lock (s_configurationGate)
+        {
+            if (FindThreadBuffer(threadId) is not null)
+                return;
+            if (s_bufferCount >= s_buffers.Length)
+                throw new InvalidOperationException($"Vulkan CPU span capture supports at most {MaxCaptureThreads} warmed threads.");
+
+            ThreadBuffer buffer = new(capacity, threadId);
+            Volatile.Write(ref s_buffers[s_bufferCount], buffer);
+            s_bufferCount++;
+        }
     }
 
     public static void Arm()
@@ -64,14 +78,14 @@ internal static partial class VulkanCpuSpanProfiler
         if (Volatile.Read(ref s_enabled) == 0 || (Volatile.Read(ref s_targetMask) & (1L << (int)stage)) == 0)
             return default;
 
-        ThreadBuffer? buffer = t_buffer;
+        ThreadBuffer? buffer = FindThreadBuffer(Environment.CurrentManagedThreadId);
         if (buffer is null)
             return default;
 
         // Zero is the root sentinel in exported records, so real spans begin at one.
         long id = ++buffer.NextSpanId;
-        VulkanCpuSpanToken token = new(buffer, stage, id, t_activeSpanId, startTimestamp, startAllocatedBytes);
-        t_activeSpanId = id;
+        VulkanCpuSpanToken token = new(buffer, stage, id, buffer.ActiveSpanId, startTimestamp, startAllocatedBytes);
+        buffer.ActiveSpanId = id;
         return token;
     }
 
@@ -80,7 +94,7 @@ internal static partial class VulkanCpuSpanProfiler
         if (token.Buffer is null)
             return;
 
-        t_activeSpanId = token.ParentSpanId;
+        token.Buffer.ActiveSpanId = token.ParentSpanId;
         token.Buffer.Write(new(
             token.Stage,
             token.Id,
@@ -95,9 +109,23 @@ internal static partial class VulkanCpuSpanProfiler
     public static VulkanCpuSpanRecord[] GetSnapshot()
     {
         List<VulkanCpuSpanRecord> records = [];
-        foreach (ThreadBuffer buffer in s_buffers)
-            buffer.CopyTo(records);
+        int count = Volatile.Read(ref s_bufferCount);
+        for (int index = 0; index < count; index++)
+            Volatile.Read(ref s_buffers[index])?.CopyTo(records);
         return [.. records];
+    }
+
+    private static ThreadBuffer? FindThreadBuffer(int threadId)
+    {
+        int count = Volatile.Read(ref s_bufferCount);
+        for (int index = 0; index < count; index++)
+        {
+            ThreadBuffer? buffer = Volatile.Read(ref s_buffers[index]);
+            if (buffer?.ThreadId == threadId)
+                return buffer;
+        }
+
+        return null;
     }
 
 }

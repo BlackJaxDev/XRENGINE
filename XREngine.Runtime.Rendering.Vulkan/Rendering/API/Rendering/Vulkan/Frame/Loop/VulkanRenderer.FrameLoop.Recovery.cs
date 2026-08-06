@@ -31,7 +31,7 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private void SettleDesktopAcquireAfterUnexpectedFailure(
+        internal void SettleDesktopAcquireAfterUnexpectedFailure(
             ref VulkanFrameAttempt attempt,
             Exception primaryFailure)
         {
@@ -180,7 +180,7 @@ namespace XREngine.Rendering.Vulkan
             ref VulkanFrameAttempt attempt)
         {
             VulkanDesktopPresentDispatchOutcome dispatch =
-                DesktopWsiTarget.PresentFrameTarget(
+                DesktopWsiOutput.PresentFrameTarget(
                     this,
                     ref attempt,
                     "Vulkan.FrameLifecycle.RecoveryFailureQueuePresent",
@@ -279,7 +279,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             ulong signalValue = Math.Max(
-                _graphicsTimelineValue + 1,
+                _commandRuntime.Synchronization._graphicsTimelineValue + 1,
                 attempt.AcquireTimelineValue + 1);
             long stageStartTimestamp = Stopwatch.GetTimestamp();
             Result result;
@@ -295,8 +295,8 @@ namespace XREngine.Rendering.Vulkan
                 Stopwatch.GetElapsedTime(stageStartTimestamp);
             if (result == Result.Success)
             {
-                _graphicsTimelineValue = Math.Max(
-                    _graphicsTimelineValue,
+                _commandRuntime.Synchronization._graphicsTimelineValue = Math.Max(
+                    _commandRuntime.Synchronization._graphicsTimelineValue,
                     signalValue);
                 attempt.TransitionAcquireOwnership(
                     EVulkanDesktopAcquireOwnership

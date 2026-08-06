@@ -6,7 +6,7 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
-        private void RecordDesktopFrameGap(
+        internal void RecordDesktopFrameGap(
             ref VulkanFrameAttempt attempt)
         {
             long previousTimestamp = LastDesktopFrameTickObservedTimestamp;
@@ -21,10 +21,10 @@ namespace XREngine.Rendering.Vulkan
 
             Debug.VulkanWarning(
                 $"[Vulkan] Frame {attempt.FrameNumber}: {gap.TotalSeconds:F1}s gap since the last observed desktop frame tick. " +
-                $"Slot={attempt.FrameSlot} SlotTimelineValue={_frameSlotTimelineValues?[attempt.FrameSlot]}");
+                $"Slot={attempt.FrameSlot} SlotTimelineValue={_commandRuntime.Synchronization._frameSlotTimelineValues?[attempt.FrameSlot]}");
         }
 
-        private void PublishDesktopFrameTelemetry(
+        internal void PublishDesktopFrameTelemetry(
             ref VulkanFrameAttempt attempt)
         {
             if (!VulkanDesktopFramePolicy.IsAcquireFinalizationLegal(
@@ -43,27 +43,44 @@ namespace XREngine.Rendering.Vulkan
 
             TimeSpan totalFrameTime =
                 Stopwatch.GetElapsedTime(attempt.StartTimestamp);
-            RuntimeEngine.Rendering.Stats.Vulkan
-                .RecordVulkanFrameLifecycleTiming(
-                    attempt.Timing.WaitFrameSlot,
-                    attempt.Timing.AcquireImage,
-                    attempt.Timing.RecordCommandBuffer,
-                    attempt.Timing.SubmitQueue,
-                    attempt.Timing.TrimStaging,
-                    attempt.Timing.PresentQueue,
-                    totalFrameTime);
-            RuntimeEngine.Rendering.Stats.Vulkan
-                .RecordVulkanFrameLifecycleDetailTiming(
-                    attempt.Timing.SampleTimingQueries,
-                    attempt.Timing.DrainRetiredResources,
-                    attempt.Timing.AcquireBridgeSubmit,
-                    attempt.Timing.WaitSwapchainImage,
-                    attempt.Timing.ResetDynamicUniformRing,
-                    attempt.Timing.SnapshotImGuiOverlay,
-                    attempt.Timing.RecordSceneCommandBuffer,
-                    attempt.Timing.RecordImGuiOverlay,
-                    attempt.Timing.RecordDynamicUiTextOverlay);
+            attempt.Timing.SetOutputIdentity(
+                unchecked((int)attempt.ImageIndex),
+                OutputRuntime.Desktop.Generation);
+            attempt.Timing.PublishAfterFrame(
+                totalFrameTime,
+                ResolveDesktopFrameTelemetryOutcome(ref attempt));
             attempt.AdvanceTo(EDesktopFramePhase.Finalized);
+        }
+
+        private static EVulkanFrameOutcome ResolveDesktopFrameTelemetryOutcome(
+            ref VulkanFrameAttempt attempt)
+        {
+            if (attempt.PrimaryFailure is not null || attempt.DeferredFailure is not null)
+                return EVulkanFrameOutcome.Failed;
+
+            return attempt.Reason switch
+            {
+                EDesktopFrameReason.Success or EDesktopFrameReason.PresentSuboptimal =>
+                    EVulkanFrameOutcome.Completed,
+                EDesktopFrameReason.ZeroSurface or EDesktopFrameReason.FrameSlotBusy =>
+                    EVulkanFrameOutcome.Skipped,
+                EDesktopFrameReason.ResizePending or
+                EDesktopFrameReason.ResourceGenerationBlocked or
+                EDesktopFrameReason.FrameGenerationModeChanged or
+                EDesktopFrameReason.AcquireNotReady or
+                EDesktopFrameReason.AcquireTimeout or
+                EDesktopFrameReason.AcquireOutOfDate or
+                EDesktopFrameReason.RecordingDeferred or
+                EDesktopFrameReason.RecordingResourceRetired or
+                EDesktopFrameReason.PresentOutOfDate =>
+                    EVulkanFrameOutcome.Deferred,
+                EDesktopFrameReason.RecordingDirtied =>
+                    EVulkanFrameOutcome.Rejected,
+                EDesktopFrameReason.None when attempt.Flow == EDesktopFrameFlow.Completed =>
+                    EVulkanFrameOutcome.Completed,
+                EDesktopFrameReason.None => EVulkanFrameOutcome.Deferred,
+                _ => EVulkanFrameOutcome.Failed,
+            };
         }
     }
 }

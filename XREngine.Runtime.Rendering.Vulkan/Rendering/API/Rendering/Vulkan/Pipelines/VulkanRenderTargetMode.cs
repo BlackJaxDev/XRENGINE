@@ -9,26 +9,23 @@ public unsafe partial class VulkanRenderer
 {
     private const string VulkanRenderTargetModeEnvVar = XREngineEnvironmentVariables.VkRenderTargetMode;
 
-    private EVulkanRenderTargetMode _requestedRenderTargetMode = EVulkanRenderTargetMode.Auto;
-    private bool _useDynamicRenderingRenderTargets;
-
-    internal bool UseDynamicRenderingRenderTargets => _useDynamicRenderingRenderTargets;
-    public EVulkanRenderTargetMode RequestedRenderTargetMode => _requestedRenderTargetMode;
-    public EVulkanRenderTargetMode EffectiveRenderTargetMode => _useDynamicRenderingRenderTargets
+    internal bool UseDynamicRenderingRenderTargets => _deviceContext.MutableCapabilities._useDynamicRenderingRenderTargets;
+    public EVulkanRenderTargetMode RequestedRenderTargetMode => _outputRuntime._requestedRenderTargetMode;
+    public EVulkanRenderTargetMode EffectiveRenderTargetMode => _deviceContext.MutableCapabilities._useDynamicRenderingRenderTargets
         ? EVulkanRenderTargetMode.DynamicRendering
         : EVulkanRenderTargetMode.LegacyRenderPass;
 
     private void ResolveRenderTargetMode()
     {
-        _requestedRenderTargetMode = ResolveRequestedRenderTargetMode();
+        _outputRuntime._requestedRenderTargetMode = ResolveRequestedRenderTargetMode();
 
-        if (_requestedRenderTargetMode == EVulkanRenderTargetMode.DynamicRendering && !SupportsDynamicRendering)
+        if (_outputRuntime._requestedRenderTargetMode == EVulkanRenderTargetMode.DynamicRendering && !SupportsDynamicRendering)
         {
             throw new InvalidOperationException(
                 $"Vulkan dynamic rendering was explicitly requested by render settings or {VulkanRenderTargetModeEnvVar}=DynamicRendering, but VK_KHR_dynamic_rendering/Vulkan 1.3 dynamicRendering is unavailable.");
         }
 
-        _useDynamicRenderingRenderTargets = _requestedRenderTargetMode switch
+        _deviceContext.MutableCapabilities._useDynamicRenderingRenderTargets = _outputRuntime._requestedRenderTargetMode switch
         {
             EVulkanRenderTargetMode.LegacyRenderPass => false,
             EVulkanRenderTargetMode.DynamicRendering => true,

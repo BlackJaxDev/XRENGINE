@@ -21,51 +21,40 @@ public unsafe partial class VulkanRenderer
     private const int MaxMergedFrameOpRegistryCacheEntries = 8;
     private const int MaxActivePassMetadataFilterCacheEntries = 32;
 
-    private readonly VulkanStateTracker _state = new();
-    private readonly VulkanRenderGraphRuntime _renderGraphRuntime = new();
-    private readonly VulkanCommandScheduler _commandScheduler = new();
-    private readonly VulkanCommandRecorder _commandRecorder = new();
-    private readonly VulkanFrameOperationQueue _frameOperationQueue = new();
-    private ResourcePlannerRuntimeGeneration _publishedResourcePlannerGeneration =
-        new(ResourcePlannerRuntimeState.CreateEmpty());
+    private VulkanStateTracker _state => _commandRuntime.StateTracker;
+    private VulkanFrameOperationQueue _frameOperationQueue => _framePlanner.Operations;
 
-    /// <summary>
-    /// Allocation-free state installed only for the duration of a worker recording scope.
-    /// Keeping the state in one value prevents independent thread-static fields from
-    /// retaining stale renderer or device identities after a scope exits.
-    /// </summary>
-    private sealed class VulkanCommandThreadContext
+    private VulkanCommandThreadContext<
+        VulkanStateTracker,
+        ResourcePlannerRuntimeState,
+        FrameOpResourcePlannerSwitchingState,
+        XRFrameBuffer,
+        EReadBufferMode> CommandThreadContext
+        => _commandRuntime.GetThreadWorkspace<
+            VulkanStateTracker,
+            ResourcePlannerRuntimeState,
+            FrameOpResourcePlannerSwitchingState,
+            XRFrameBuffer,
+            EReadBufferMode>().Current;
+
+    internal VulkanFrameOpWorkspace GetCommandThreadFrameOpWorkspace()
+        => CommandThreadContext.FrameOpWorkspace ??= new VulkanFrameOpWorkspace();
+
+    internal T GetOrCreateCommandThreadBindingCaptureWorkspace<T>(Func<T> factory)
+        where T : class
     {
-        public VulkanRenderer? RenderStateOwner;
-        public VulkanStateTracker? RenderState;
-        public VulkanRenderer? ResourcePlannerRuntimeStateOwner;
-        public ResourcePlannerRuntimeState? ResourcePlannerRuntimeState;
-        public VulkanRenderer? FrameOpResourcePlannerSwitchingStateOwner;
-        public FrameOpResourcePlannerSwitchingState? FrameOpResourcePlannerSwitchingState;
-        public VulkanRenderer? FramebufferBindingOwner;
-        public XRFrameBuffer? BoundDrawFrameBuffer;
-        public XRFrameBuffer? BoundReadFrameBuffer;
-        public EReadBufferMode ReadBufferMode;
-        public bool PreparedCommandChainEncodingActive;
+        ArgumentNullException.ThrowIfNull(factory);
+        if (ReferenceEquals(CommandThreadContext.BindingCaptureWorkspaceOwner, this) &&
+            CommandThreadContext.BindingCaptureWorkspace is T workspace)
+        {
+            return workspace;
+        }
+
+        T created = factory();
+        CommandThreadContext.BindingCaptureWorkspaceOwner = this;
+        CommandThreadContext.BindingCaptureWorkspace = created;
+        return created;
     }
-
-    private sealed class VulkanCommandThreadWorkspace : IDisposable
-    {
-        private readonly ThreadLocal<VulkanCommandThreadContext> _current =
-            new(static () => new VulkanCommandThreadContext(), trackAllValues: false);
-
-        public VulkanCommandThreadContext Current
-            => _current.Value
-                ?? throw new InvalidOperationException(
-                    "The Vulkan command thread workspace has been disposed.");
-
-        public void Dispose()
-            => _current.Dispose();
-    }
-
-    private readonly VulkanCommandThreadWorkspace _commandThreadWorkspace = new();
-    private VulkanCommandThreadContext CommandThreadContext
-        => _commandThreadWorkspace.Current;
 
     private void ReleaseCurrentThreadStateTrackingCaches()
     {
@@ -87,6 +76,15 @@ public unsafe partial class VulkanRenderer
             CommandThreadContext.FrameOpResourcePlannerSwitchingState = null;
         }
 
+        if (ReferenceEquals(CommandThreadContext.BindingCaptureWorkspaceOwner, this))
+        {
+            CommandThreadContext.BindingCaptureWorkspaceOwner = null;
+            CommandThreadContext.BindingCaptureWorkspace = null;
+        }
+
+        CommandThreadContext.FrameOpWorkspace?.Reset();
+        CommandThreadContext.FrameOpWorkspace = null;
+
         if (!ReferenceEquals(CommandThreadContext.FramebufferBindingOwner, this))
             return;
 
@@ -96,7 +94,9 @@ public unsafe partial class VulkanRenderer
         CommandThreadContext.ReadBufferMode = default;
     }
     private ResourcePlannerRuntimeState PublishedResourcePlannerRuntimeState
-        => Volatile.Read(ref _publishedResourcePlannerGeneration).State;
+        => _framePlanner
+            .GetPublishedResourcePlannerGeneration<ResourcePlannerRuntimeGeneration>()
+            .State;
     private VulkanResourcePlanner _resourcePlanner => PublishedResourcePlannerRuntimeState.ResourcePlanner;
     private VulkanResourceAllocator _resourceAllocator => PublishedResourcePlannerRuntimeState.ResourceAllocator;
     private VulkanBarrierPlanner _barrierPlanner => PublishedResourcePlannerRuntimeState.BarrierPlanner;
@@ -109,7 +109,15 @@ public unsafe partial class VulkanRenderer
     private bool _hasBarrierPlanFastPathKey => PublishedResourcePlannerRuntimeState.HasBarrierPlanFastPathKey;
     private ResourcePlannerSignatureBreakdown _resourcePlannerSignatureBreakdown => PublishedResourcePlannerRuntimeState.ResourcePlannerSignatureBreakdown;
     private ulong _resourcePlannerRevision => PublishedResourcePlannerRuntimeState.ResourcePlannerRevision;
-    private readonly FrameOpResourcePlannerSwitchingState _frameOpResourcePlannerSwitchingState = new();
+    private VulkanFramePlannerMutableState<
+        VulkanFrameOpPlannerStateKey,
+        FrameOpResourcePlannerSwitchingState,
+        QueueOwnershipConfigCacheEntry,
+        MergedFrameOpRegistryCacheEntry,
+        FrameOpRegistryCacheSource,
+        ActivePassMetadataFilterCacheEntry> PlannerMutableState
+        => _framePlanner.MutableState;
+    private FrameOpResourcePlannerSwitchingState _frameOpResourcePlannerSwitchingState => PlannerMutableState.DefaultSwitchingState;
     private VulkanStateTracker ActiveState =>
         ReferenceEquals(CommandThreadContext.RenderStateOwner, this) &&
         CommandThreadContext.RenderState is not null
@@ -502,52 +510,64 @@ public unsafe partial class VulkanRenderer
             PublishResourcePlannerRuntimeState(publishedState, commitReusedImageMetadata: false);
         }
     }
-    private bool IsCommandChainResourcePlanFrozen => _renderGraphRuntime.IsResourcePlanFrozen;
-    private bool[]? _commandBufferDirtyFlags;
-    private readonly object _commandBufferDirtyReasonLock = new();
-    private readonly Dictionary<string, int> _commandBufferDirtyReasons = new(StringComparer.Ordinal);
-    private long _lastCommandBufferDirtyReasonLogTimestamp;
-    private XRFrameBuffer? _boundDrawFrameBuffer;
-    private XRFrameBuffer? _boundReadFrameBuffer;
-    private XRTexture? _lastWindowPresentColorTexture;
-    private XRFrameBuffer? _lastWindowPresentFrameBuffer;
-    private XRTexture? _lastWindowPresentFallbackFrameBufferTexture;
-    private XRFrameBuffer? _lastWindowPresentFallbackFrameBuffer;
-    private FrameOpContext? _lastWindowPresentFrameOpContext;
-    private readonly VulkanPresentationSourcePublication _windowPresentSource = new();
-    private VulkanPhysicalImageGroup? _retainedAutoExposureHistoryGroup;
-    private ulong _lastResourcePlanReplacementRevision;
-    private ulong _lastResourcePlanReplacementSignature;
-    private ulong _lastResourcePlanReplacementAllocationSignature;
-    private int _lastResourcePlanReplacementRetiredImageCount;
-    private int _lastResourcePlanReplacementRetiredBufferCount;
-    private EReadBufferMode _readBufferMode = EReadBufferMode.ColorAttachment0;
-    private EVulkanQueueOverlapMode _autoQueueOverlapMode = EVulkanQueueOverlapMode.GraphicsOnly;
-    private EVulkanQueueOverlapMode _lastResolvedQueueOverlapMode = EVulkanQueueOverlapMode.GraphicsOnly;
-    private int _queueOverlapPromotionStabilityFrames;
-    private int _queueOverlapFramesInMode;
-    private long _lastQueueOverlapSampleTimestamp;
-    private ulong _lastQueueOverlapSampleFrameId = ulong.MaxValue;
-    private ulong _lastQueueOverlapPolicyFrameId = ulong.MaxValue;
-    private double _queueOverlapFrameDeltaEmaMs = -1.0;
-    private double _queueOverlapModeStartFrameDeltaMs = -1.0;
-    private ulong _queueOwnershipConfigCacheFrameId = ulong.MaxValue;
-    private readonly List<QueueOwnershipConfigCacheEntry> _queueOwnershipConfigCache = [];
-    private readonly List<MergedFrameOpRegistryCacheEntry> _mergedFrameOpRegistryCache = new(MaxMergedFrameOpRegistryCacheEntries);
-    private readonly List<VulkanFrameOpPlannerStateKey> _frameOpPlannerStateKeyScratch = [];
-    private readonly List<VulkanFrameOpPlannerStateKey> _frameOpPlannerStateEvictionScratch = [];
-    private readonly List<RenderResourceRegistry> _frameOpRegistryScratch = [];
-    private readonly List<FrameOpRegistryCacheSource> _frameOpRegistryCacheSourceScratch = [];
-    private readonly List<XRFrameBuffer> _frameOpFrameBufferScratch = [];
-    private readonly List<ActivePassMetadataFilterCacheEntry> _activePassMetadataFilterCache = new(MaxActivePassMetadataFilterCacheEntries);
-    private int _activePassMetadataFilterCacheReplacementIndex;
-    private IReadOnlyCollection<RenderPassMetadata>? _lastActiveFilterSourcePassMetadata;
-    private IReadOnlyCollection<RenderPassMetadata>? _lastActiveFilterResult;
-    private RenderResourceRegistry? _lastActiveFilterResourceRegistry;
-    private int _lastActiveFilterResourceRegistryRevision = int.MinValue;
-    private int _lastActiveFilterPassSetSignature = int.MinValue;
-    private int _lastActiveFilterResourceSetSignature = int.MinValue;
-    private bool _lastActiveFilterConstrainToActivePassSet;
+    private bool IsCommandChainResourcePlanFrozen => _framePlanner.IsResourcePlanFrozen;
+    private ref bool[]? _commandBufferDirtyFlags => ref _commandRuntime.CommandBuffers.DirtyFlags;
+    private object _commandBufferDirtyReasonLock => _commandRuntime.CommandBuffers.DirtyReasonGate;
+    private Dictionary<string, int> _commandBufferDirtyReasons => _commandRuntime.CommandBuffers.DirtyReasons;
+    private ref long _lastCommandBufferDirtyReasonLogTimestamp => ref _commandRuntime.CommandBuffers.LastDirtyReasonLogTimestamp;
+    private ref XRFrameBuffer? _boundDrawFrameBuffer => ref _commandRuntime.CommandBuffers.BoundDrawFrameBuffer;
+    private ref XRFrameBuffer? _boundReadFrameBuffer => ref _commandRuntime.CommandBuffers.BoundReadFrameBuffer;
+    private ref XRTexture? _lastWindowPresentColorTexture => ref OutputRuntime.PresentationSource.ColorTexture;
+    private ref XRFrameBuffer? _lastWindowPresentFrameBuffer => ref OutputRuntime.PresentationSource.FrameBuffer;
+    private ref XRTexture? _lastWindowPresentFallbackFrameBufferTexture => ref OutputRuntime.PresentationSource.FallbackFrameBufferTexture;
+    private ref XRFrameBuffer? _lastWindowPresentFallbackFrameBuffer => ref OutputRuntime.PresentationSource.FallbackFrameBuffer;
+    private ref FrameOpContext? _lastWindowPresentFrameOpContext => ref OutputRuntime.PresentationSource.FrameOpContext;
+    private VulkanPresentationSourcePublication _windowPresentSource => OutputRuntime.PresentationSource.Publication;
+    private ref VulkanPhysicalImageGroup? _retainedAutoExposureHistoryGroup => ref ResourceRuntime.RetainedAutoExposureHistoryGroup;
+    private ref ulong _lastResourcePlanReplacementRevision => ref _framePlanner.LastResourcePlanReplacementRevision;
+    private ref ulong _lastResourcePlanReplacementSignature => ref _framePlanner.LastResourcePlanReplacementSignature;
+    private ref ulong _lastResourcePlanReplacementAllocationSignature => ref _framePlanner.LastResourcePlanReplacementAllocationSignature;
+    private ref int _lastResourcePlanReplacementRetiredImageCount => ref _framePlanner.LastResourcePlanReplacementRetiredImageCount;
+    private ref int _lastResourcePlanReplacementRetiredBufferCount => ref _framePlanner.LastResourcePlanReplacementRetiredBufferCount;
+    private ref EReadBufferMode _readBufferMode => ref _commandRuntime.CommandBuffers.ReadBufferMode;
+    private ref EVulkanQueueOverlapMode _autoQueueOverlapMode => ref _framePlanner.AutoQueueOverlapMode;
+    private ref EVulkanQueueOverlapMode _lastResolvedQueueOverlapMode => ref _framePlanner.LastResolvedQueueOverlapMode;
+    private ref int _queueOverlapPromotionStabilityFrames => ref _framePlanner.QueueOverlapPromotionStabilityFrames;
+    private ref int _queueOverlapFramesInMode => ref _framePlanner.QueueOverlapFramesInMode;
+    private ref long _lastQueueOverlapSampleTimestamp => ref _framePlanner.LastQueueOverlapSampleTimestamp;
+    private ref ulong _lastQueueOverlapSampleFrameId => ref _framePlanner.LastQueueOverlapSampleFrameId;
+    private ref ulong _lastQueueOverlapPolicyFrameId => ref _framePlanner.LastQueueOverlapPolicyFrameId;
+    private ref double _queueOverlapFrameDeltaEmaMs => ref _framePlanner.QueueOverlapFrameDeltaEmaMilliseconds;
+    private ref double _queueOverlapModeStartFrameDeltaMs => ref _framePlanner.QueueOverlapModeStartFrameDeltaMilliseconds;
+    private ref ulong _queueOwnershipConfigCacheFrameId => ref _framePlanner.QueueOwnershipConfigCacheFrameId;
+    private List<QueueOwnershipConfigCacheEntry> _queueOwnershipConfigCache => PlannerMutableState.QueueOwnershipCache;
+    private List<MergedFrameOpRegistryCacheEntry> _mergedFrameOpRegistryCache => PlannerMutableState.MergedRegistryCache;
+    private List<VulkanFrameOpPlannerStateKey> _frameOpPlannerStateKeyScratch => PlannerMutableState.PlannerStateKeyScratch;
+    private List<VulkanFrameOpPlannerStateKey> _frameOpPlannerStateEvictionScratch => PlannerMutableState.PlannerStateEvictionScratch;
+    private List<RenderResourceRegistry> _frameOpRegistryScratch => PlannerMutableState.RegistryScratch;
+    private List<FrameOpRegistryCacheSource> _frameOpRegistryCacheSourceScratch => PlannerMutableState.RegistryCacheSourceScratch;
+    private List<XRFrameBuffer> _frameOpFrameBufferScratch => PlannerMutableState.FrameBufferScratch;
+    private List<ActivePassMetadataFilterCacheEntry> _activePassMetadataFilterCache => PlannerMutableState.ActivePassMetadataFilterCache;
+    private ref int _activePassMetadataFilterCacheReplacementIndex => ref PlannerMutableState.ActivePassMetadataFilterCacheReplacementIndex;
+    private IReadOnlyCollection<RenderPassMetadata>? _lastActiveFilterSourcePassMetadata
+    {
+        get => PlannerMutableState.LastActiveFilterSourcePassMetadata;
+        set => PlannerMutableState.LastActiveFilterSourcePassMetadata = value;
+    }
+    private IReadOnlyCollection<RenderPassMetadata>? _lastActiveFilterResult
+    {
+        get => PlannerMutableState.LastActiveFilterResult;
+        set => PlannerMutableState.LastActiveFilterResult = value;
+    }
+    private RenderResourceRegistry? _lastActiveFilterResourceRegistry
+    {
+        get => PlannerMutableState.LastActiveFilterResourceRegistry;
+        set => PlannerMutableState.LastActiveFilterResourceRegistry = value;
+    }
+    private ref int _lastActiveFilterResourceRegistryRevision => ref PlannerMutableState.LastActiveFilterResourceRegistryRevision;
+    private ref int _lastActiveFilterPassSetSignature => ref PlannerMutableState.LastActiveFilterPassSetSignature;
+    private ref int _lastActiveFilterResourceSetSignature => ref PlannerMutableState.LastActiveFilterResourceSetSignature;
+    private ref bool _lastActiveFilterConstrainToActivePassSet => ref PlannerMutableState.LastActiveFilterConstrainToActivePassSet;
     private static readonly TimeSpan ResourceAllocationFailureRetryDelay = TimeSpan.FromMilliseconds(750);
     private static readonly TimeSpan OpenXrResourceAllocationFailureRetryDelay = TimeSpan.FromSeconds(10);
 
@@ -573,11 +593,11 @@ public unsafe partial class VulkanRenderer
         int BarrierStageFlushes,
         TimeSpan FrameDelta);
 
-    private readonly record struct FrameOpRegistryCacheSource(
+    internal readonly record struct FrameOpRegistryCacheSource(
         RenderResourceRegistry Registry,
         int DescriptorSignature);
 
-    private readonly record struct ActivePassMetadataFilterCacheEntry(
+    internal readonly record struct ActivePassMetadataFilterCacheEntry(
         IReadOnlyCollection<RenderPassMetadata> SourcePassMetadata,
         RenderResourceRegistry? ResourceRegistry,
         int ResourceRegistryRevision,
@@ -601,7 +621,7 @@ public unsafe partial class VulkanRenderer
                 && ConstrainToActivePassSet == constrainToActivePassSet;
     }
 
-    private sealed class MergedFrameOpRegistryCacheEntry(
+    internal sealed class MergedFrameOpRegistryCacheEntry(
         VulkanFrameOpPlannerStateKey ownerKey,
         RenderResourceRegistry? primaryRegistry,
         FrameOpRegistryCacheSource[] sources,
@@ -620,7 +640,7 @@ public unsafe partial class VulkanRenderer
         public ulong LastUsedFrameId { get; set; } = lastUsedFrameId;
     }
 
-    private sealed class FrameOpResourcePlannerSwitchingState
+    internal sealed class FrameOpResourcePlannerSwitchingState
     {
         public Dictionary<VulkanFrameOpPlannerStateKey, ResourcePlannerRuntimeState> States { get; } =
             new(VulkanFrameOpPlannerStateKeyComparer.Instance);
@@ -643,13 +663,11 @@ public unsafe partial class VulkanRenderer
         public bool HasPreparedPlan;
     }
 
-    private readonly Dictionary<VulkanFrameOpPlannerStateKey, FrameOp[]> _frameOpPlannerPartitionCache =
-        new(VulkanFrameOpPlannerStateKeyComparer.Instance);
-    private readonly VulkanFrameOpPlannerStateKey[] _frameOpPlannerPartitionKeyBuffer =
-        new VulkanFrameOpPlannerStateKey[MaxFrameOpResourcePlannerSwitchingStates];
-    private ulong _frameOpPlannerPartitionSignature;
+    private Dictionary<VulkanFrameOpPlannerStateKey, FrameOp[]> _frameOpPlannerPartitionCache => PlannerMutableState.PartitionCache;
+    private VulkanFrameOpPlannerStateKey[] _frameOpPlannerPartitionKeyBuffer => PlannerMutableState.PartitionKeyBuffer;
+    private ref ulong _frameOpPlannerPartitionSignature => ref PlannerMutableState.PartitionSignature;
 
-    private struct ResourcePlannerRuntimeState
+    internal struct ResourcePlannerRuntimeState
     {
         public VulkanResourcePlanner ResourcePlanner;
         public VulkanResourceAllocator ResourceAllocator;
@@ -692,7 +710,7 @@ public unsafe partial class VulkanRenderer
 
     private readonly struct ThreadRenderStateScope : IDisposable
     {
-        private readonly VulkanCommandThreadContext _threadContext;
+        private readonly VulkanCommandThreadContext<VulkanStateTracker, ResourcePlannerRuntimeState, FrameOpResourcePlannerSwitchingState, XRFrameBuffer, EReadBufferMode> _threadContext;
         private readonly VulkanRenderer? _previousOwner;
         private readonly VulkanStateTracker? _previousState;
         private readonly VulkanRenderer? _previousFramebufferBindingOwner;
@@ -704,9 +722,9 @@ public unsafe partial class VulkanRenderer
         public ThreadRenderStateScope(VulkanRenderer renderer, VulkanStateTracker state)
         {
             _threadContext = renderer.CommandThreadContext;
-            _previousOwner = _threadContext.RenderStateOwner;
+            _previousOwner = _threadContext.RenderStateOwner as VulkanRenderer;
             _previousState = _threadContext.RenderState;
-            _previousFramebufferBindingOwner = _threadContext.FramebufferBindingOwner;
+            _previousFramebufferBindingOwner = _threadContext.FramebufferBindingOwner as VulkanRenderer;
             _previousThreadBoundDrawFrameBuffer = _threadContext.BoundDrawFrameBuffer;
             _previousThreadBoundReadFrameBuffer = _threadContext.BoundReadFrameBuffer;
             _previousThreadReadBufferMode = _threadContext.ReadBufferMode;
@@ -761,9 +779,9 @@ public unsafe partial class VulkanRenderer
         CommandThreadContext.ResourcePlannerRuntimeState = next;
     }
 
-    private readonly struct ThreadResourcePlannerRuntimeStateScope : IDisposable
+    internal readonly struct ThreadResourcePlannerRuntimeStateScope : IDisposable
     {
-        private readonly VulkanCommandThreadContext _threadContext;
+        private readonly VulkanCommandThreadContext<VulkanStateTracker, ResourcePlannerRuntimeState, FrameOpResourcePlannerSwitchingState, XRFrameBuffer, EReadBufferMode> _threadContext;
         private readonly VulkanRenderer? _previousOwner;
         private readonly ResourcePlannerRuntimeState? _previousState;
 
@@ -774,7 +792,7 @@ public unsafe partial class VulkanRenderer
             _threadContext = renderer.CommandThreadContext;
             ResourcePlannerRuntimeState scopedState = state;
             scopedState.FrameOpResourcePlannerSwitchingState ??= new FrameOpResourcePlannerSwitchingState();
-            _previousOwner = _threadContext.ResourcePlannerRuntimeStateOwner;
+            _previousOwner = _threadContext.ResourcePlannerRuntimeStateOwner as VulkanRenderer;
             _previousState = _threadContext.ResourcePlannerRuntimeState;
             _threadContext.ResourcePlannerRuntimeStateOwner = renderer;
             _threadContext.ResourcePlannerRuntimeState = scopedState;
@@ -812,9 +830,9 @@ public unsafe partial class VulkanRenderer
         return new(this, state);
     }
 
-    private readonly struct ThreadFrameOpResourcePlannerSwitchingStateScope : IDisposable
+    internal readonly struct ThreadFrameOpResourcePlannerSwitchingStateScope : IDisposable
     {
-        private readonly VulkanCommandThreadContext _threadContext;
+        private readonly VulkanCommandThreadContext<VulkanStateTracker, ResourcePlannerRuntimeState, FrameOpResourcePlannerSwitchingState, XRFrameBuffer, EReadBufferMode> _threadContext;
         private readonly VulkanRenderer? _previousOwner;
         private readonly FrameOpResourcePlannerSwitchingState? _previousState;
 
@@ -823,7 +841,7 @@ public unsafe partial class VulkanRenderer
             FrameOpResourcePlannerSwitchingState state)
         {
             _threadContext = renderer.CommandThreadContext;
-            _previousOwner = _threadContext.FrameOpResourcePlannerSwitchingStateOwner;
+            _previousOwner = _threadContext.FrameOpResourcePlannerSwitchingStateOwner as VulkanRenderer;
             _previousState = _threadContext.FrameOpResourcePlannerSwitchingState;
             _threadContext.FrameOpResourcePlannerSwitchingStateOwner = renderer;
             _threadContext.FrameOpResourcePlannerSwitchingState = state;
@@ -854,7 +872,7 @@ public unsafe partial class VulkanRenderer
         => new(this, state);
 
 
-    private readonly record struct ResourcePlannerSignatureBreakdown(
+    internal readonly record struct ResourcePlannerSignatureBreakdown(
         EVulkanFrameOpContextKind ContextKind,
         ulong ContextId,
         ulong CompatibilityFingerprint,
@@ -958,7 +976,7 @@ public unsafe partial class VulkanRenderer
                $"physicalUsage=0x{PhysicalUsage:X8} xfb={SupportsTransformFeedback}";
     }
 
-    private readonly record struct ResourcePlannerFastPathKey(
+    internal readonly record struct ResourcePlannerFastPathKey(
         RenderResourceRegistry? Registry,
         int RegistryDescriptorRevision,
         IReadOnlyCollection<RenderPassMetadata>? ActivePassMetadata,
@@ -1004,12 +1022,12 @@ public unsafe partial class VulkanRenderer
         public CommandChainResourcePlanReadScope(VulkanRenderer renderer, ulong resourcePlanRevision)
         {
             _renderer = renderer;
-            _renderer._renderGraphRuntime.AddFrozenPlanReader(resourcePlanRevision);
+            _renderer._framePlanner.AddFrozenPlanReader(resourcePlanRevision);
         }
 
         public void Dispose()
         {
-            _renderer._renderGraphRuntime.RemoveFrozenPlanReader();
+            _renderer._framePlanner.RemoveFrozenPlanReader();
         }
     }
 
@@ -1033,7 +1051,7 @@ public unsafe partial class VulkanRenderer
             _usesSingleKeyState = false;
             _active = false;
 
-            if (!renderer.IsDeviceOperational ||
+            if (!renderer.DeviceContext.IsOperational ||
                 !FrameOpResourcePlannerSwitchingEnabled ||
                 ops.Length == 0)
                 return;
@@ -1126,7 +1144,7 @@ public unsafe partial class VulkanRenderer
 
 
             _switchingState.MergedPlanActive = false;
-            if (!_renderer.IsDeviceOperational)
+            if (!_renderer.DeviceContext.IsOperational)
             {
                 ResourcePlannerRuntimeState terminalRestoreState =
                     _previousState.ResourceAllocator is not null && _previousState.ResourceAllocator.IsRetired
@@ -1148,7 +1166,7 @@ public unsafe partial class VulkanRenderer
 
         public ResourcePlannerRuntimeState PublishCurrentState()
         {
-            if (!_active || _switchingState is null || !_renderer.IsDeviceOperational)
+            if (!_active || _switchingState is null || !_renderer.DeviceContext.IsOperational)
                 return default;
 
             ResourcePlannerRuntimeState state = _renderer.CaptureResourcePlannerRuntimeState();
@@ -1187,7 +1205,7 @@ public unsafe partial class VulkanRenderer
         {
             _renderer = renderer;
             FrameOpResourcePlannerSwitchingState switchingState = renderer.ActiveFrameOpResourcePlannerSwitchingState;
-            _active = renderer.IsDeviceOperational && switchingState.ActiveKeys.Count > 0;
+            _active = renderer.DeviceContext.IsOperational && switchingState.ActiveKeys.Count > 0;
             _previousState = _active
                 ? renderer.CaptureResourcePlannerRuntimeState()
                 : default;
@@ -1206,7 +1224,7 @@ public unsafe partial class VulkanRenderer
                 return;
 
             FrameOpResourcePlannerSwitchingState switchingState = _renderer.ActiveFrameOpResourcePlannerSwitchingState;
-            if (_renderer.IsDeviceOperational)
+            if (_renderer.DeviceContext.IsOperational)
                 _renderer.SaveActiveFrameOpResourcePlannerState();
             switchingState.RecordingScopeActive = false;
             switchingState.HasActiveKey = false;
@@ -1245,7 +1263,7 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        lock (_renderGraphRuntime.PlannerReadbackGate)
+        lock (_framePlanner.PlannerReadbackGate)
             RestoreResourcePlannerRuntimeStateCore(in state);
     }
 
@@ -1287,10 +1305,10 @@ public unsafe partial class VulkanRenderer
         in ResourcePlannerRuntimeState state,
         bool commitReusedImageMetadata)
     {
-        if (!_deviceStateMachine.IsOperational)
+        if (!_deviceContext.IsOperational)
         {
             throw new InvalidOperationException(
-                $"Cannot publish Vulkan resource-planner generation while device state is {DeviceState}.");
+                $"Cannot publish Vulkan resource-planner generation while device state is {_deviceContext.State}.");
         }
 
         AssertResourcePlannerRuntimeStateCanBeRestored(state);
@@ -1302,7 +1320,7 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        lock (_renderGraphRuntime.PlannerReadbackGate)
+        lock (_framePlanner.PlannerReadbackGate)
         {
             if (commitReusedImageMetadata)
                 state.ResourceAllocator.CommitReusedPhysicalImageMetadata();
@@ -1325,8 +1343,7 @@ public unsafe partial class VulkanRenderer
     {
         ResourcePlannerRuntimeState publishedState = state;
         publishedState.FrameOpResourcePlannerSwitchingState ??= _frameOpResourcePlannerSwitchingState;
-        Volatile.Write(
-            ref _publishedResourcePlannerGeneration,
+        _framePlanner.PublishResourcePlannerGeneration(
             new ResourcePlannerRuntimeGeneration(publishedState));
     }
 
@@ -1335,7 +1352,7 @@ public unsafe partial class VulkanRenderer
         ulong Signature,
         bool Changed);
 
-    private readonly record struct BarrierPlanFastPathKey(
+    internal readonly record struct BarrierPlanFastPathKey(
         VulkanCompiledRenderGraph CompiledGraph,
         ulong ResourcePlannerSignature,
         ulong ResourceAllocationSignature,
@@ -1539,9 +1556,6 @@ public unsafe partial class VulkanRenderer
     internal Extent2D GetCurrentTargetExtent()
         => ActiveState.GetCurrentTargetExtent();
 
-    private static bool _reportedNativeNegativeOneToOneDepth;
-    private static bool _reportedShaderRemappedNegativeOneToOneDepth;
-
     private static ERenderClipDepthRange ResolveEffectiveVulkanClipDepthRange()
     {
         ERenderClipDepthRange requested = RuntimeEngine.Rendering.Settings.ClipDepthRange;
@@ -1550,9 +1564,9 @@ public unsafe partial class VulkanRenderer
 
         if (RuntimeEngine.Rendering.ShouldUseNativeVulkanDepthClipControl)
         {
-            if (!_reportedNativeNegativeOneToOneDepth)
+            if (!VulkanFramePlanner.ReportedNativeNegativeOneToOneDepth)
             {
-                _reportedNativeNegativeOneToOneDepth = true;
+                VulkanFramePlanner.ReportedNativeNegativeOneToOneDepth = true;
                 Debug.Vulkan(
                     "[Vulkan] ClipDepthRange=NegativeOneToOne is using {0}.",
                     VulkanDepthClipControlExt.ExtensionName);
@@ -1561,9 +1575,9 @@ public unsafe partial class VulkanRenderer
             return requested;
         }
 
-        if (!_reportedShaderRemappedNegativeOneToOneDepth)
+        if (!VulkanFramePlanner.ReportedShaderRemappedNegativeOneToOneDepth)
         {
-            _reportedShaderRemappedNegativeOneToOneDepth = true;
+            VulkanFramePlanner.ReportedShaderRemappedNegativeOneToOneDepth = true;
             Debug.VulkanWarning(
                 "[Vulkan] ClipDepthRange=NegativeOneToOne was requested, but {0} is unavailable. " +
                 "Keeping the engine's -1..1 clip-depth policy and remapping vertex shader gl_Position.z to Vulkan 0..w clip depth.",
@@ -1573,7 +1587,7 @@ public unsafe partial class VulkanRenderer
         return requested;
     }
 
-    private static Viewport CreateVulkanViewport(Extent2D extent)
+    internal static Viewport CreateVulkanViewport(Extent2D extent)
     {
         _ = ResolveEffectiveVulkanClipDepthRange();
         return RuntimeEngine.Rendering.Settings.ClipSpaceYDirection == ERenderClipSpaceYDirection.YDown
@@ -1597,7 +1611,7 @@ public unsafe partial class VulkanRenderer
             };
     }
 
-    private static Viewport CreateVulkanViewport(BoundingRectangle region, Extent2D targetExtent)
+    internal static Viewport CreateVulkanViewport(BoundingRectangle region, Extent2D targetExtent)
     {
         _ = ResolveEffectiveVulkanClipDepthRange();
         if (RuntimeEngine.Rendering.Settings.ClipSpaceYDirection == ERenderClipSpaceYDirection.YDown)

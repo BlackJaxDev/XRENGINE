@@ -51,4 +51,26 @@ internal readonly record struct FramePlanOperationKey(
             context.RecordingFingerprint,
             isDynamicOverlay);
     }
+
+    internal static FramePlanOperationKey FromHeader(
+        in FrameOperationHeader header,
+        in FrameOpContext context,
+        bool isDynamicOverlay)
+        => new(
+            header.OriginalIndex,
+            header.OpCode,
+            header.PassIndex,
+            context.ContextKind,
+            context.OutputTargetIdentity,
+            context.OutputFrameBufferIdentity,
+            context.PipelineIdentity,
+            context.ViewportIdentity,
+            context.DisplayWidth,
+            context.DisplayHeight,
+            context.InternalWidth,
+            context.InternalHeight,
+            context.ResourceGeneration,
+            context.DescriptorGeneration,
+            context.RecordingFingerprint,
+            isDynamicOverlay);
 }

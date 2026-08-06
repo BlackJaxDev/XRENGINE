@@ -20,14 +20,14 @@ public unsafe partial class VulkanRenderer
     private const ImageCreateFlags PlaceholderCubeCompatibleFlag = (ImageCreateFlags)0x10;
 
     // ── Fields ───────────────────────────────────────────────────────────
-    private Image _placeholderImage;
-    private DeviceMemory _placeholderImageMemory;
-    private ImageView _placeholderImageView;
-    private ImageView _placeholderImageView2DArray;
-    private ImageView _placeholderImageViewCube;
-    private ImageView _placeholderImageViewCubeArray;
-    private Sampler _placeholderSampler;
-    private bool _placeholderTextureReady;
+    private ref Image _placeholderImage => ref ResourceRuntime.FallbackTexture.Image;
+    private ref DeviceMemory _placeholderImageMemory => ref ResourceRuntime.FallbackTexture.Memory;
+    private ref ImageView _placeholderImageView => ref ResourceRuntime.FallbackTexture.View;
+    private ref ImageView _placeholderImageView2DArray => ref ResourceRuntime.FallbackTexture.View2DArray;
+    private ref ImageView _placeholderImageViewCube => ref ResourceRuntime.FallbackTexture.ViewCube;
+    private ref ImageView _placeholderImageViewCubeArray => ref ResourceRuntime.FallbackTexture.ViewCubeArray;
+    private ref Sampler _placeholderSampler => ref ResourceRuntime.FallbackTexture.Sampler;
+    private ref bool _placeholderTextureReady => ref ResourceRuntime.FallbackTexture.Ready;
 
     // ── Public API ───────────────────────────────────────────────────────
 
@@ -99,12 +99,12 @@ public unsafe partial class VulkanRenderer
 
         ClearTrackedImageLayouts(_placeholderImage);
         VulkanMemoryAllocation allocation = AllocateImageMemoryWithFallback(_placeholderImage, MemoryPropertyFlags.DeviceLocalBit);
-        _imageAllocationTracker.Allocations[_placeholderImage.Handle] = allocation;
+        ResourceRuntime.Allocations.Images.Allocations[_placeholderImage.Handle] = allocation;
         _placeholderImageMemory = allocation.Memory;
 
-        if (Api.BindImageMemory(device, _placeholderImage, _placeholderImageMemory, allocation.Offset) != Result.Success)
+        if (Api.BindImageMemory(_deviceContext.Device, _placeholderImage, _placeholderImageMemory, allocation.Offset) != Result.Success)
         {
-            _imageAllocationTracker.Allocations.TryRemove(_placeholderImage.Handle, out _);
+            ResourceRuntime.Allocations.Images.Allocations.TryRemove(_placeholderImage.Handle, out _);
             DestroyVulkanImageImmediateTracked(_placeholderImage, "Placeholder.BindFailure");
             FreeMemoryAllocation(allocation);
             _placeholderImage = default;
@@ -185,7 +185,7 @@ public unsafe partial class VulkanRenderer
             },
         };
 
-        if (Api.CreateImageView(device, ref viewInfo, null, out _placeholderImageView) != Result.Success)
+        if (Api.CreateImageView(_deviceContext.Device, ref viewInfo, null, out _placeholderImageView) != Result.Success)
         {
             Debug.VulkanWarning("[Vulkan] Failed to create placeholder image view.");
             return;
@@ -213,7 +213,7 @@ public unsafe partial class VulkanRenderer
             UnnormalizedCoordinates = Vk.False,
         };
 
-        if (Api.CreateSampler(device, ref samplerInfo, null, out _placeholderSampler) != Result.Success)
+        if (Api.CreateSampler(_deviceContext.Device, ref samplerInfo, null, out _placeholderSampler) != Result.Success)
         {
             Debug.VulkanWarning("[Vulkan] Failed to create placeholder sampler.");
             return;
@@ -281,7 +281,7 @@ public unsafe partial class VulkanRenderer
             },
         };
 
-        if (Api!.CreateImageView(device, ref viewInfo, null, out imageView) == Result.Success)
+        if (Api!.CreateImageView(_deviceContext.Device, ref viewInfo, null, out imageView) == Result.Success)
         {
             TrackLiveImageView(imageView, in viewInfo, "Placeholder.TextureVariant");
             return true;

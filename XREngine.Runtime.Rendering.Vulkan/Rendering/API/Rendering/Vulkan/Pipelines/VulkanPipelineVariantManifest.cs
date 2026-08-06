@@ -8,11 +8,8 @@ namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     private const int MaxCachedPipelineVariantManifests = 64;
-    private readonly Dictionary<VulkanPipelineManifestCacheKey, VulkanPipelineVariantManifest> _pipelineVariantManifestCache = new();
-    private readonly Queue<VulkanPipelineManifestCacheKey> _pipelineVariantManifestInsertionOrder = new();
-    private readonly Lock _pipelineVariantManifestCacheLock = new();
 
-    private readonly record struct VulkanPipelineManifestCacheKey(
+    internal readonly record struct VulkanPipelineManifestCacheKey(
         ulong PlanCompatibilityIdentity,
         ulong RecordingStructuralSignature,
         EMeshSubmissionStrategy SubmissionStrategy,
@@ -44,6 +41,19 @@ public unsafe partial class VulkanRenderer
         internal static VulkanPipelineVariantManifest Build(
             VulkanCompiledRenderGraphPlan plan,
             FrameOp[] ops,
+            EMeshSubmissionStrategy submissionStrategy,
+            bool dynamicRendering,
+            ulong recordingStructuralSignature)
+            => Build(
+                plan,
+                new FrameOperationSequence(ops),
+                submissionStrategy,
+                dynamicRendering,
+                recordingStructuralSignature);
+
+        internal static VulkanPipelineVariantManifest Build(
+            VulkanCompiledRenderGraphPlan plan,
+            FrameOperationSequence ops,
             EMeshSubmissionStrategy submissionStrategy,
             bool dynamicRendering,
             ulong recordingStructuralSignature)
@@ -129,7 +139,7 @@ public unsafe partial class VulkanRenderer
 
     private VulkanPipelineVariantManifest GetOrBuildPipelineVariantManifest(
         VulkanCompiledRenderGraphPlan plan,
-        FrameOp[] ops,
+        FrameOperationSequence ops,
         EMeshSubmissionStrategy submissionStrategy,
         bool dynamicRendering,
         ulong recordingStructuralSignature)
@@ -139,9 +149,9 @@ public unsafe partial class VulkanRenderer
             recordingStructuralSignature,
             submissionStrategy,
             dynamicRendering);
-        lock (_pipelineVariantManifestCacheLock)
+        lock (ResourceRuntime.PipelineManager._pipelineVariantManifestCacheLock)
         {
-            if (_pipelineVariantManifestCache.TryGetValue(key, out VulkanPipelineVariantManifest? manifest))
+            if (ResourceRuntime.PipelineManager._pipelineVariantManifestCache.TryGetValue(key, out VulkanPipelineVariantManifest? manifest))
                 return manifest;
 
             manifest = VulkanPipelineVariantManifest.Build(
@@ -150,14 +160,14 @@ public unsafe partial class VulkanRenderer
                 submissionStrategy,
                 dynamicRendering,
                 recordingStructuralSignature);
-            while (_pipelineVariantManifestCache.Count >= MaxCachedPipelineVariantManifests &&
-                   _pipelineVariantManifestInsertionOrder.TryDequeue(out VulkanPipelineManifestCacheKey evictedKey))
+            while (ResourceRuntime.PipelineManager._pipelineVariantManifestCache.Count >= MaxCachedPipelineVariantManifests &&
+                   ResourceRuntime.PipelineManager._pipelineVariantManifestInsertionOrder.TryDequeue(out VulkanPipelineManifestCacheKey evictedKey))
             {
-                _pipelineVariantManifestCache.Remove(evictedKey);
+                ResourceRuntime.PipelineManager._pipelineVariantManifestCache.Remove(evictedKey);
             }
 
-            _pipelineVariantManifestCache.Add(key, manifest);
-            _pipelineVariantManifestInsertionOrder.Enqueue(key);
+            ResourceRuntime.PipelineManager._pipelineVariantManifestCache.Add(key, manifest);
+            ResourceRuntime.PipelineManager._pipelineVariantManifestInsertionOrder.Enqueue(key);
             return manifest;
         }
     }

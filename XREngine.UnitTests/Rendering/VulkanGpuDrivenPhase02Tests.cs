@@ -18,7 +18,6 @@ public sealed class VulkanGpuDrivenPhase02Tests
     [
         "Compute/Indirect/GPURenderResetCounters.comp",
         "Compute/Culling/GPURenderCulling.comp",
-        "Compute/Culling/GPURenderCullingSoA.comp",
         "Compute/Indirect/GPURenderIndirect.comp",
         "Compute/Indirect/GPURenderBuildKeys.comp",
         "Compute/Indirect/GPURenderBuildBatches.comp",

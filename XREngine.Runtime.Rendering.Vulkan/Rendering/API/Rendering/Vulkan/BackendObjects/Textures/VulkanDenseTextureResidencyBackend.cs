@@ -345,18 +345,6 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
             return;
         }
 
-        if ((RuntimeRenderingHostServices.FrameTiming.CurrentRenderer ?? AbstractRenderer.Current) is not VulkanRenderer renderer)
-        {
-            onError?.Invoke(new InvalidOperationException("Vulkan imported texture upload service could not resolve the active Vulkan renderer."));
-            return;
-        }
-
-        if (!VulkanTextureUploadService.IsSynchronizedImportedTextureStreamingAvailable)
-        {
-            onError?.Invoke(new InvalidOperationException("Vulkan synchronized imported texture upload service is not available. Use VulkanTextureUploadService for imported-texture residency instead of GL-style texture mutation."));
-            return;
-        }
-
         if (cancellationToken.IsCancellationRequested
             || (shouldAcceptResult is not null && !shouldAcceptResult()))
         {
@@ -374,7 +362,7 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
                 Interlocked.Exchange(ref s_activeGpuUploadCount, 0);
         }
 
-        bool queued = renderer.TryScheduleImportedTextureResidencyTransition(
+        bool queued = VulkanTextureStreamingBackendProvider.Instance.TryScheduleSynchronizedUpload(
             target,
             residentData,
             includeMipChain,
@@ -382,23 +370,23 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
             streamingGeneration,
             ImportedTextureStreamingManager.ResolveUploadPriorityClass(priority),
             shouldAcceptResult,
+            cancellationToken,
             tex =>
             {
                 CompleteUploadCounter();
                 onProgress?.Invoke(1.0f);
                 onFinished?.Invoke(tex);
             },
-            () =>
-            {
-                CompleteUploadCounter();
-                onCanceled?.Invoke();
-            },
             ex =>
             {
                 CompleteUploadCounter();
                 onError?.Invoke(ex);
             },
-            cancellationToken);
+            () =>
+            {
+                CompleteUploadCounter();
+                onCanceled?.Invoke();
+            });
 
         if (!queued)
         {

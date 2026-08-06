@@ -65,7 +65,7 @@ internal sealed partial class VulkanTextureUploadService
                 continue;
             }
 
-            PublishCompletedImportedTextureUpload(renderer, submitted.Upload, "transferQueue");
+            PublishCompletedImportedTextureUpload(renderer, submitted.Upload, "_deviceContext.TransferQueue");
         }
 
         Interlocked.Exchange(ref _transferDrainScheduled, 0);

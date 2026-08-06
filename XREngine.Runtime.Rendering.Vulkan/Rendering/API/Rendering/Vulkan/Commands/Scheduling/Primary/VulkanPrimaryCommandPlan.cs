@@ -53,8 +53,29 @@ internal sealed class VulkanPrimaryCommandPlan
         ulong operationSignature = 0,
         VulkanPrimaryPlanTerminalContext terminalContext = default,
         VulkanBarrierPlanner? barrierPlanner = null)
+        => Build(
+            new FrameOperationSequence(operations),
+            operationSignature,
+            terminalContext,
+            barrierPlanner);
+
+    internal void Build(
+        FrameOperationStream operations,
+        ulong operationSignature = 0,
+        VulkanPrimaryPlanTerminalContext terminalContext = default,
+        VulkanBarrierPlanner? barrierPlanner = null)
+        => Build(
+            new FrameOperationSequence(operations),
+            operationSignature,
+            terminalContext,
+            barrierPlanner);
+
+    internal void Build(
+        FrameOperationSequence operations,
+        ulong operationSignature,
+        VulkanPrimaryPlanTerminalContext terminalContext,
+        VulkanBarrierPlanner? barrierPlanner)
     {
-        ArgumentNullException.ThrowIfNull(operations);
 
         // Compute the total number of nodes needed, including terminal nodes for end-of-rendering actions.
         int terminalNodeCount =
@@ -267,8 +288,14 @@ internal sealed class VulkanPrimaryCommandPlan
     internal bool IsEquivalentToDirectOperations(
         FrameOp[] operations,
         VulkanBarrierPlanner? barrierPlanner = null)
+        => IsEquivalentToDirectOperations(
+            new FrameOperationSequence(operations),
+            barrierPlanner);
+
+    internal bool IsEquivalentToDirectOperations(
+        FrameOperationSequence operations,
+        VulkanBarrierPlanner? barrierPlanner = null)
     {
-        ArgumentNullException.ThrowIfNull(operations);
         if (operations.Length != OperationCount)
             return false;
 

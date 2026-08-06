@@ -35,6 +35,8 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         public void Initialize()
         {
+            GPUSceneLayoutContract.ValidateRuntimeLayout();
+
             _meshDataBuffer?.Destroy();
             _meshDataBuffer = MakeMeshDataBuffer();
             _meshletRangeBuffer?.Destroy();

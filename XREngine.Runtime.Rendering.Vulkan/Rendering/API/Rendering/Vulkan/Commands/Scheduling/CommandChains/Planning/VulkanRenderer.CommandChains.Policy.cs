@@ -30,19 +30,24 @@ public unsafe partial class VulkanRenderer
     internal const int CommandChainRightEyeViewIndex = 1;
     internal const int CommandChainStereoMultiviewViewIndex = -1;
 
-    private Dictionary<CommandChainKey, CommandChain>[]? _commandChainCaches;
-    private Dictionary<uint, Dictionary<CommandChainKey, CommandChain>>? _externalCommandChainCaches;
-    private readonly List<RenderPacket> _commandChainPacketScratch = [];
-    private readonly List<RenderPacket> _commandChainPacketPool = [];
-    private readonly DrawPacket[] _commandChainDrawPacketScratch = new DrawPacket[MaxMeshDrawsPerRenderPacket];
-    private int _commandChainPacketPoolCursor;
-    private readonly List<RenderPassChainGroup> _commandChainGroupScratch = [];
-    private readonly List<CommandChainKey> _commandChainGroupKeyScratch = [];
-    private readonly Dictionary<ulong, int> _commandChainStructuralOccurrenceScratch = [];
-    private readonly HashSet<RenderViewKey> _commandChainViewKeyScratch = [];
-    private readonly Dictionary<uint, CommandChainStabilityGuardState> _commandChainStabilityGuardStates = [];
-    private int _commandChainTraceDumped;
-    private long _commandChainTraceLastDumpTimestamp;
+    private ref Dictionary<CommandChainKey, CommandChain>[]? _commandChainCaches => ref _commandRuntime.CommandChains.Caches;
+    private ref Dictionary<uint, Dictionary<CommandChainKey, CommandChain>>? _externalCommandChainCaches => ref _commandRuntime.CommandChains.ExternalCaches;
+    private List<RenderPacket> _commandChainPacketScratch => _commandRuntime.CommandChains.PacketScratch;
+    private List<RenderPacket> _commandChainPacketPool => _commandRuntime.CommandChains.PacketPool;
+    // Packets hold only numeric range headers. A publication selects one arena;
+    // retained packet leases keep that arena immutable until every prepared
+    // command chain and worker has retired it.
+    private List<RenderPacketPayloadArena> _commandChainPacketPayloadArenas => _commandRuntime.CommandChains.PacketPayloadArenas;
+    private ref RenderPacketPayloadArena? _activeCommandChainPacketPayloadArena => ref _commandRuntime.CommandChains.ActivePacketPayloadArena;
+    private DrawPacket[] _commandChainDrawPacketScratch => _commandRuntime.CommandChains.DrawPacketScratch;
+    private ref int _commandChainPacketPoolCursor => ref _commandRuntime.CommandChains.PacketPoolCursor;
+    private List<RenderPassChainGroup> _commandChainGroupScratch => _commandRuntime.CommandChains.GroupScratch;
+    private List<CommandChainKey> _commandChainGroupKeyScratch => _commandRuntime.CommandChains.GroupKeyScratch;
+    private Dictionary<ulong, int> _commandChainStructuralOccurrenceScratch => _commandRuntime.CommandChains.StructuralOccurrenceScratch;
+    private HashSet<RenderViewKey> _commandChainViewKeyScratch => _commandRuntime.CommandChains.ViewKeyScratch;
+    private Dictionary<uint, CommandChainStabilityGuardState> _commandChainStabilityGuardStates => _commandRuntime.CommandChains.StabilityGuardStates;
+    private ref int _commandChainTraceDumped => ref _commandRuntime.CommandChains.TraceDumped;
+    private ref long _commandChainTraceLastDumpTimestamp => ref _commandRuntime.CommandChains.TraceLastDumpTimestamp;
     private const int CommandChainZeroReuseBackoffThreshold = 1;
     private const int CommandChainZeroReuseProbeInterval = 120;
     // Correct program-scoped descriptor identity can split a large imported scene into
@@ -251,11 +256,11 @@ public unsafe partial class VulkanRenderer
         return true;
     }
 
-    private static bool ContainsQueryFrameOp(FrameOp[] ops)
+    private static bool ContainsQueryFrameOp(FrameOperationStream ops)
     {
-        for (int i = 0; i < ops.Length; i++)
+        for (int i = 0; i < ops.Count; i++)
         {
-            if (ops[i] is QueryOp)
+            if (ops.GetHeader(i).OpCode == EVulkanPrimaryPlanNodeKind.Query)
                 return true;
         }
 

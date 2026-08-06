@@ -110,7 +110,7 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            if (op.UseCount && DeviceCapabilities.Supports(EVulkanDeviceCapability.DrawIndirectCount))
+            if (op.UseCount && _deviceContext.Capabilities.Supports(EVulkanDeviceCapability.DrawIndirectCount))
             {
                 var parameterBuffer = op.ParameterBuffer?.BufferHandle;
                 if (parameterBuffer is null || !parameterBuffer.HasValue)
@@ -125,7 +125,7 @@ namespace XREngine.Rendering.Vulkan
                     ObjectType.Buffer,
                     parameterBuffer.Value.Handle,
                     "IndirectDraw.Count");
-                if (_usesCoreDrawIndirectCountCommands)
+                if (_deviceContext.MutableCapabilities._usesCoreDrawIndirectCountCommands)
                 {
                     Api!.CmdDrawIndexedIndirectCount(
                         commandBuffer,
@@ -373,20 +373,10 @@ namespace XREngine.Rendering.Vulkan
 
         internal void RecordComputeDispatchOp(CommandBuffer commandBuffer, uint imageIndex, ComputeDispatchOp op, int opIndex = -1)
         {
-            if (!op.Program.Link())
-                throw new InvalidOperationException($"Compute program '{op.Program.Data.Name ?? "UnnamedProgram"}' became unavailable after enqueue.");
-
-            Pipeline pipeline;
-            try
-            {
-                pipeline = op.Program.GetOrCreateComputePipeline(op.PassIndex, op.Context.PassMetadata);
-            }
-            catch (Exception ex)
-            {
-                Debug.VulkanWarning($"Failed to create Vulkan compute pipeline for '{op.Program.Data.Name ?? "UnnamedProgram"}': {ex.Message}");
-                return;
-            }
-
+            // Resource preparation is the only phase allowed to link shaders or
+            // create compute pipelines. Recording consumes the published handle
+            // directly so a cache miss cannot compile inside the command scope.
+            Pipeline pipeline = op.Program.ComputePipeline;
             if (pipeline.Handle == 0)
                 throw new InvalidOperationException($"Compute pipeline '{op.Program.Data.Name ?? "UnnamedProgram"}' became unavailable after enqueue.");
 

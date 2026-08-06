@@ -7,42 +7,28 @@ using XREngine.Rendering.API.Rendering.OpenXR;
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
-    private Instance instance;
-    private string[] _enabledInstanceExtensions = [];
-    private uint _vulkanInstanceApiVersion;
-    private bool _vulkanInstanceCreatedThroughOpenXr;
-    private OpenXrVulkanEnable2BootstrapContext? _openXrVulkanEnable2Context;
-    public Instance Instance => instance;
-    internal IReadOnlyList<string> EnabledInstanceExtensions => _enabledInstanceExtensions;
-    internal bool UsesOpenXrVulkanEnable2Creation => _vulkanInstanceCreatedThroughOpenXr && _vulkanDeviceCreatedThroughOpenXr;
+    public Instance Instance => _deviceContext.Instance;
+    internal IReadOnlyList<string> EnabledInstanceExtensions =>
+        _deviceContext.EnabledInstanceExtensions;
+    internal bool UsesOpenXrVulkanEnable2Creation => _deviceContext.InstanceCreatedThroughOpenXr && _deviceContext.CreatedThroughOpenXr;
     internal bool TryGetOpenXrVulkanEnable2BootstrapInstance(
         out Silk.NET.OpenXR.XR api,
         out Silk.NET.OpenXR.Instance xrInstance,
         out string[] enabledExtensions)
     {
-        if (_openXrVulkanEnable2Context is not null)
-        {
-            api = _openXrVulkanEnable2Context.Api;
-            xrInstance = _openXrVulkanEnable2Context.XrInstance;
-            enabledExtensions = _openXrVulkanEnable2Context.EnabledExtensions;
-            return xrInstance.Handle != 0;
-        }
-
-        api = null!;
-        xrInstance = default;
-        enabledExtensions = [];
-        return false;
+        return _deviceContext.TryGetOpenXrBootstrapInstance(
+            out api,
+            out xrInstance,
+            out enabledExtensions);
     }
 
     internal bool InvalidateOpenXrVulkanEnable2BootstrapInstance(string reason)
     {
-        if (_openXrVulkanEnable2Context is null)
+        if (_deviceContext.OpenXrBootstrapContext is null)
             return false;
 
         bool rendererHandlesCreatedThroughOpenXr = UsesOpenXrVulkanEnable2Creation;
-        _openXrVulkanEnable2Context.AbandonXrInstanceOnDispose(reason);
-        _openXrVulkanEnable2Context.Dispose();
-        _openXrVulkanEnable2Context = null;
+        _deviceContext.InvalidateOpenXrBootstrapInstance(reason);
 
         Debug.VulkanWarning(
             "[OpenXR] Invalidated renderer-owned XR_KHR_vulkan_enable2 bootstrap instance. Reason={0}",
@@ -60,23 +46,9 @@ public unsafe partial class VulkanRenderer
         RuntimeEngine.Rendering.State.VulkanValidationLayersEnabled = false;
         RuntimeEngine.Rendering.State.VulkanSynchronizationValidationEnabled = false;
 
-        if (instance.Handle != 0)
-        {
-            Api!.DestroyInstance(instance, null);
-            instance = default;
-        }
-        _enabledInstanceExtensions = [];
-
-        if (_deviceLost)
-        {
-            _openXrVulkanEnable2Context?.AbandonXrInstanceOnDispose(
-                string.IsNullOrWhiteSpace(_deviceLostReason)
-                    ? "Vulkan logical device lost"
-                    : _deviceLostReason);
-        }
-
-        _openXrVulkanEnable2Context?.Dispose();
-        _openXrVulkanEnable2Context = null;
+        _deviceContext.DestroyInstance(
+            Api!,
+            _deviceLost ? _deviceContext.DeviceFaultFacility.DeviceLostReason : null);
     }
 
     private void CreateInstance()
@@ -90,7 +62,6 @@ public unsafe partial class VulkanRenderer
         }
 
         uint requestedApiVersion = ResolveRequestedVulkanInstanceApiVersion();
-        _vulkanInstanceApiVersion = requestedApiVersion;
 
         ApplicationInfo appInfo = new()
         {
@@ -109,92 +80,116 @@ public unsafe partial class VulkanRenderer
         };
 
         var extensions = GetRequiredExtensions();
-        _enabledInstanceExtensions = extensions;
         createInfo.EnabledExtensionCount = (uint)extensions.Length;
         createInfo.PpEnabledExtensionNames = (byte**)SilkMarshal.StringArrayToPtr(extensions); ;
 
         LogResolvedVulkanDiagnosticOptions(extensions);
-
-        ValidationFeatureEnableEXT* enabledValidationFeatures = stackalloc ValidationFeatureEnableEXT[4];
-        uint enabledValidationFeatureCount = EnableValidationLayers
-            ? PopulateEnabledValidationFeatures(enabledValidationFeatures)
-            : 0u;
-
-        if (EnableValidationLayers)
+        try
         {
-            createInfo.EnabledLayerCount = (uint)validationLayers.Length;
-            createInfo.PpEnabledLayerNames = (byte**)SilkMarshal.StringArrayToPtr(validationLayers);
+            ValidationFeatureEnableEXT* enabledValidationFeatures = stackalloc ValidationFeatureEnableEXT[4];
+            DebugUtilsMessengerCreateInfoEXT debugCreateInfo = default;
+            ValidationFeaturesEXT validationFeatures = default;
+            uint enabledValidationFeatureCount = EnableValidationLayers
+                ? PopulateEnabledValidationFeatures(enabledValidationFeatures)
+                : 0u;
 
-            DebugUtilsMessengerCreateInfoEXT debugCreateInfo = new();
-            PopulateDebugMessengerCreateInfo(ref debugCreateInfo);
-
-            if (enabledValidationFeatureCount > 0)
+            if (EnableValidationLayers)
             {
-                ValidationFeaturesEXT validationFeatures = new()
+                createInfo.EnabledLayerCount = (uint)_deviceContext.MutableCapabilities.validationLayers.Length;
+                createInfo.PpEnabledLayerNames = (byte**)SilkMarshal.StringArrayToPtr(_deviceContext.MutableCapabilities.validationLayers);
+
+                debugCreateInfo = _deviceContext.PrepareDebugMessengerCreateInfo();
+
+                if (enabledValidationFeatureCount > 0)
                 {
-                    SType = StructureType.ValidationFeaturesExt,
-                    EnabledValidationFeatureCount = enabledValidationFeatureCount,
-                    PEnabledValidationFeatures = enabledValidationFeatures,
-                    PNext = &debugCreateInfo,
-                };
-                createInfo.PNext = &validationFeatures;
+                    validationFeatures = new()
+                    {
+                        SType = StructureType.ValidationFeaturesExt,
+                        EnabledValidationFeatureCount = enabledValidationFeatureCount,
+                        PEnabledValidationFeatures = enabledValidationFeatures,
+                        PNext = &debugCreateInfo,
+                    };
+                    createInfo.PNext = &validationFeatures;
+                }
+                else
+                {
+                    createInfo.PNext = &debugCreateInfo;
+                }
             }
             else
             {
-                createInfo.PNext = &debugCreateInfo;
+                createInfo.EnabledLayerCount = 0;
+                createInfo.PNext = null;
             }
-        }
-        else
-        {
-            createInfo.EnabledLayerCount = 0;
-            createInfo.PNext = null;
-        }
 
-        var getInstanceProcAddr = Api!.GetInstanceProcAddr(default, "vkGetInstanceProcAddr");
-        if (OpenXRAPI.TryCreateVulkanEnable2BootstrapContext(
-            out OpenXrVulkanEnable2BootstrapContext? openXrContext,
-            out string? openXrContextFailure))
-        {
-            if (openXrContext!.TryCreateVulkanInstance(
-                &createInfo,
-                getInstanceProcAddr,
-                out nint openXrCreatedInstanceHandle,
-                out _,
-                out string? openXrCreateFailure))
+            var getInstanceProcAddr = Api!.GetInstanceProcAddr(default, "vkGetInstanceProcAddr");
+            Instance createdInstance;
+            OpenXrVulkanEnable2BootstrapContext? createdOpenXrContext;
+            bool createdThroughOpenXr;
+            if (OpenXRAPI.TryCreateVulkanEnable2BootstrapContext(
+                out OpenXrVulkanEnable2BootstrapContext? openXrContext,
+                out string? openXrContextFailure))
             {
-                instance = new Instance(openXrCreatedInstanceHandle);
-                _openXrVulkanEnable2Context = openXrContext;
-                _vulkanInstanceCreatedThroughOpenXr = true;
+                if (openXrContext!.TryCreateVulkanInstance(
+                    &createInfo,
+                    getInstanceProcAddr,
+                    out nint openXrCreatedInstanceHandle,
+                    out _,
+                    out string? openXrCreateFailure))
+                {
+                    createdInstance = new Instance(openXrCreatedInstanceHandle);
+                    createdOpenXrContext = openXrContext;
+                    createdThroughOpenXr = true;
+                }
+                else
+                {
+                    openXrContext.Dispose();
+                    throw new Exception($"Failed to create Vulkan instance through OpenXR: {openXrCreateFailure}");
+                }
             }
             else
             {
-                openXrContext.Dispose();
-                throw new Exception($"Failed to create Vulkan instance through OpenXR: {openXrCreateFailure}");
+                if (!string.IsNullOrWhiteSpace(openXrContextFailure))
+                    throw new Exception($"Failed to create Vulkan OpenXR bootstrap context: {openXrContextFailure}");
+
+                Result createResult = Api.CreateInstance(ref createInfo, null, out createdInstance);
+                if (createResult != Result.Success)
+                    throw new Exception($"Failed to create Vulkan instance. Result={createResult}");
+
+                createdOpenXrContext = null;
+                createdThroughOpenXr = false;
             }
+
+            try
+            {
+                _deviceContext.AttachInstance(
+                    createdInstance,
+                    extensions,
+                    requestedApiVersion,
+                    createdThroughOpenXr,
+                    createdOpenXrContext);
+            }
+            catch
+            {
+                Api.DestroyInstance(createdInstance, null);
+                createdOpenXrContext?.Dispose();
+                throw;
+            }
+
+            RuntimeEngine.Rendering.State.VulkanValidationLayersEnabled = EnableValidationLayers;
+            RuntimeEngine.Rendering.State.VulkanSynchronizationValidationEnabled =
+                EnableValidationLayers && _frameTelemetry._diagnosticOptions.EnableSynchronizationValidation;
         }
-        else
+        finally
         {
-            if (!string.IsNullOrWhiteSpace(openXrContextFailure))
-                throw new Exception($"Failed to create Vulkan OpenXR bootstrap context: {openXrContextFailure}");
-
-            Result createResult = Api.CreateInstance(ref createInfo, null, out instance);
-            if (createResult != Result.Success)
-                throw new Exception($"Failed to create Vulkan instance. Result={createResult}");
-
-            _openXrVulkanEnable2Context = null;
-            _vulkanInstanceCreatedThroughOpenXr = false;
+            Marshal.FreeHGlobal((IntPtr)appInfo.PApplicationName);
+            Marshal.FreeHGlobal((IntPtr)appInfo.PEngineName);
+            SilkMarshal.Free((nint)createInfo.PpEnabledExtensionNames);
+            if (createInfo.PpEnabledLayerNames is not null)
+                SilkMarshal.Free((nint)createInfo.PpEnabledLayerNames);
+            if (!_deviceContext.HasInstance)
+                _deviceContext.DestroyValidation(Api!);
         }
-        
-        Marshal.FreeHGlobal((IntPtr)appInfo.PApplicationName);
-        Marshal.FreeHGlobal((IntPtr)appInfo.PEngineName);
-        SilkMarshal.Free((nint)createInfo.PpEnabledExtensionNames);
-
-        if (EnableValidationLayers)
-            SilkMarshal.Free((nint)createInfo.PpEnabledLayerNames);
-
-        RuntimeEngine.Rendering.State.VulkanValidationLayersEnabled = EnableValidationLayers;
-        RuntimeEngine.Rendering.State.VulkanSynchronizationValidationEnabled =
-            EnableValidationLayers && _diagnosticOptions.EnableSynchronizationValidation;
     }
 
     private uint ResolveRequestedVulkanInstanceApiVersion()
@@ -202,7 +197,7 @@ public unsafe partial class VulkanRenderer
         uint defaultApiVersion = Vk.Version13;
         OpenXrVulkanRuntimeRequirements openXrRequirements = OpenXRAPI.GetRequestedVulkanRuntimeRequirements();
         if (openXrRequirements.MaxApiVersionSupported == 0)
-            return Math.Max(defaultApiVersion, _streamlineMinimumApiVersion);
+            return Math.Max(defaultApiVersion, _outputRuntime._streamlineMinimumApiVersion);
 
         uint minApiVersion = ConvertOpenXrVulkanApiVersion(openXrRequirements.MinApiVersionSupported);
         uint maxApiVersion = ConvertOpenXrVulkanApiVersion(openXrRequirements.MaxApiVersionSupported);
@@ -224,10 +219,10 @@ public unsafe partial class VulkanRenderer
         if (resolvedApiVersion > maxApiVersion)
             resolvedApiVersion = maxApiVersion;
 
-        if (resolvedApiVersion < _streamlineMinimumApiVersion)
+        if (resolvedApiVersion < _outputRuntime._streamlineMinimumApiVersion)
         {
             throw new NotSupportedException(
-                $"Streamline requires Vulkan {FormatVulkanApiVersion(_streamlineMinimumApiVersion)}, but the active OpenXR runtime caps Vulkan at {FormatVulkanApiVersion(maxApiVersion)}.");
+                $"Streamline requires Vulkan {FormatVulkanApiVersion(_outputRuntime._streamlineMinimumApiVersion)}, but the active OpenXR runtime caps Vulkan at {FormatVulkanApiVersion(maxApiVersion)}.");
         }
 
         if (resolvedApiVersion != defaultApiVersion)

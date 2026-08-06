@@ -242,7 +242,7 @@ namespace XREngine.Rendering.Vulkan
 
                 if (TryResolveBlitImage(
                         boundReadFrameBuffer,
-                        _lastPresentedImageIndex,
+                        OutputRuntime.Desktop.LastPresentedImageIndex,
                         GetReadBufferMode(),
                         wantColor: false,
                         wantDepth: true,
@@ -388,7 +388,7 @@ namespace XREngine.Rendering.Vulkan
 
                 if (TryResolveBlitImage(
                         fbo,
-                        _lastPresentedImageIndex,
+                        OutputRuntime.Desktop.LastPresentedImageIndex,
                         GetReadBufferMode(),
                         wantColor: false,
                         wantDepth: true,
@@ -464,7 +464,7 @@ namespace XREngine.Rendering.Vulkan
                 depthCallback?.Invoke(1.0f);
                 return;
             }
-            Result createFenceResult = Api!.CreateFence(device, ref fenceInfo, null, out Fence fence);
+            Result createFenceResult = Api!.CreateFence(_deviceContext.Device, ref fenceInfo, null, out Fence fence);
             if (createFenceResult != Result.Success)
             {
                 if (createFenceResult == Result.ErrorDeviceLost)
@@ -484,7 +484,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (!TryAdmitVulkanDeviceOperation("vkBeginCommandBuffer.Readback.Depth", out _))
             {
-                Api!.DestroyFence(device, fence, null);
+                Api!.DestroyFence(_deviceContext.Device, fence, null);
                 FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "Readback.DeviceLost");
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 depthCallback?.Invoke(1.0f);
@@ -495,7 +495,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (beginCommandBufferResult == Result.ErrorDeviceLost)
                     MarkDeviceLost("Depth readback command recording returned ErrorDeviceLost", "vkBeginCommandBuffer.Readback.Depth", beginCommandBufferResult);
-                Api.DestroyFence(device, fence, null);
+                Api.DestroyFence(_deviceContext.Device, fence, null);
                 FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "Readback.BeginFailure");
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 depthCallback?.Invoke(1.0f);
@@ -571,7 +571,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (!TryAdmitVulkanDeviceOperation("vkEndCommandBuffer.Readback.Depth", out _))
             {
-                Api!.DestroyFence(device, fence, null);
+                Api!.DestroyFence(_deviceContext.Device, fence, null);
                 FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "Readback.DeviceLost");
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 depthCallback?.Invoke(1.0f);
@@ -582,7 +582,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (endCommandBufferResult == Result.ErrorDeviceLost)
                     MarkDeviceLost("Depth readback command recording returned ErrorDeviceLost", "vkEndCommandBuffer.Readback.Depth", endCommandBufferResult);
-                Api.DestroyFence(device, fence, null);
+                Api.DestroyFence(_deviceContext.Device, fence, null);
                 FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "Readback.EndFailure");
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 depthCallback?.Invoke(1.0f);
@@ -600,7 +600,7 @@ namespace XREngine.Rendering.Vulkan
             Result depthSubmitResult;
             lock (_oneTimeSubmitLock)
             {
-                depthSubmitResult = SubmitToQueueTracked(graphicsQueue, ref submitInfo, fence);
+                depthSubmitResult = SubmitToQueueTracked(_deviceContext.GraphicsQueue, ref submitInfo, fence);
             }
 
             if (depthSubmitResult != Result.Success)
@@ -611,7 +611,7 @@ namespace XREngine.Rendering.Vulkan
                         "vkQueueSubmit.Readback.Depth",
                         depthSubmitResult);
 
-                Api!.DestroyFence(device, fence, null);
+                Api!.DestroyFence(_deviceContext.Device, fence, null);
                 FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "Readback.SubmitFailure");
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 depthCallback?.Invoke(1.0f);
@@ -620,7 +620,7 @@ namespace XREngine.Rendering.Vulkan
 
             // Capture values for the async continuation
             var api = Api;
-            var dev = device;
+            var dev = _deviceContext.Device;
             var pool = commandPool;
             var depthFormat = resources.Format;
             var capturedCommandBuffer = commandBuffer; // Copy for lambda capture
@@ -700,9 +700,9 @@ namespace XREngine.Rendering.Vulkan
 
         private ImageLayout GetSwapchainReadbackLayout(uint readIndex)
         {
-            bool wasPresented = _swapchainImageEverPresented is not null
-                && readIndex < _swapchainImageEverPresented.Length
-                && _swapchainImageEverPresented[readIndex];
+            bool wasPresented = OutputRuntime.Desktop.ImageEverPresented is not null
+                && readIndex < OutputRuntime.Desktop.ImageEverPresented.Length
+                && OutputRuntime.Desktop.ImageEverPresented[readIndex];
 
             return wasPresented
                 ? ImageLayout.PresentSrcKhr
@@ -719,7 +719,7 @@ namespace XREngine.Rendering.Vulkan
 
                 if (TryResolveBlitImage(
                         boundReadFrameBuffer,
-                        _lastPresentedImageIndex,
+                        OutputRuntime.Desktop.LastPresentedImageIndex,
                         ActiveReadBufferMode,
                         wantColor: true,
                         wantDepth: false,
@@ -787,7 +787,7 @@ namespace XREngine.Rendering.Vulkan
                 ClampReadbackRegion(region, _lastWindowPresentFrameBuffer.Width, _lastWindowPresentFrameBuffer.Height, out int fboX, out int fboY, out int fboW, out int fboH);
                 if (TryResolveBlitImage(
                         _lastWindowPresentFrameBuffer,
-                        _lastPresentedImageIndex,
+                        OutputRuntime.Desktop.LastPresentedImageIndex,
                         EReadBufferMode.ColorAttachment0,
                         wantColor: true,
                         wantDepth: false,
@@ -838,7 +838,7 @@ namespace XREngine.Rendering.Vulkan
                 y = Math.Clamp(y, 0, Math.Max((int)_lastWindowPresentFrameBuffer.Height - 1, 0));
                 if (TryResolveBlitImage(
                         _lastWindowPresentFrameBuffer,
-                        _lastPresentedImageIndex,
+                        OutputRuntime.Desktop.LastPresentedImageIndex,
                         EReadBufferMode.ColorAttachment0,
                         wantColor: true,
                         wantDepth: false,

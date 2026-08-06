@@ -13,7 +13,7 @@ internal ref struct VulkanFrameAttempt
     public EDesktopFrameReason Reason;
     public EVulkanDesktopAcquireOwnership AcquireOwnership;
     public EVulkanDesktopUploadOwnership UploadOwnership;
-    public DesktopFrameTiming Timing;
+    public VulkanFrameTrace Timing;
 
     public bool InteractiveResize;
     public int LiveFramebufferWidth;
@@ -57,10 +57,11 @@ internal ref struct VulkanFrameAttempt
     public Exception? DeferredFailure;
     public Exception? PrimaryFailure;
 
-    public VulkanFrameAttempt(in DesktopFrameIdentity identity)
+    public VulkanFrameAttempt(VulkanFrameTelemetry telemetry, in DesktopFrameIdentity identity)
     {
         this = default;
         Identity = identity;
+        Timing = telemetry.BeginFrame(identity);
         Phase = EDesktopFramePhase.Entered;
         Flow = EDesktopFrameFlow.Continue;
     }

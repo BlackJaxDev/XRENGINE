@@ -1,3 +1,4 @@
+using Silk.NET.Core;
 using Silk.NET.Vulkan;
 using XREngine;
 using XREngine.Rendering.API.Rendering.OpenXR;
@@ -5,16 +6,38 @@ using XREngine.Rendering.API.Rendering.OpenXR;
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
-    private PhysicalDevice _physicalDevice;
-    private VulkanPhysicalDeviceCapabilitySnapshot? _physicalDeviceCapabilitySnapshot;
-    public PhysicalDevice PhysicalDevice => _physicalDevice;
-    private ulong _nonCoherentAtomSize = 1;
-    internal ulong _uniformBufferOffsetAlignment = 1;
+    public PhysicalDevice PhysicalDevice => _deviceContext.PhysicalDevice;
+
+    private void PublishPresentationSupportProbe()
+    {
+        if (!OutputRuntime.TargetDriver.RequiresPresentQueue)
+            return;
+
+        Silk.NET.Vulkan.Extensions.KHR.KhrSurface surfaceApi = _outputRuntime.SurfaceApi
+            ?? throw new InvalidOperationException("The Vulkan target did not publish a surface API before physical-device selection.");
+        SurfaceKHR presentationSurface = _outputRuntime.Surface;
+        if (presentationSurface.Handle == 0)
+            throw new InvalidOperationException("The Vulkan target did not publish a surface before physical-device selection.");
+
+        _deviceContext.AttachPresentationSupportProbe((
+            PhysicalDevice physicalDevice,
+            uint queueFamilyIndex,
+            out bool supportsPresentation) =>
+        {
+            Result result = surfaceApi.GetPhysicalDeviceSurfaceSupport(
+                physicalDevice,
+                queueFamilyIndex,
+                presentationSurface,
+                out Bool32 presentSupport);
+            supportsPresentation = presentSupport;
+            return result;
+        });
+    }
 
     private void PickPhysicalDevice()
     {
         uint devicedCount = 0;
-        Api!.EnumeratePhysicalDevices(instance, ref devicedCount, null);
+        Api!.EnumeratePhysicalDevices(_deviceContext.Instance, ref devicedCount, null);
 
         if (devicedCount == 0)
             throw new Exception("Failed to find GPUs with Vulkan support.");
@@ -22,23 +45,23 @@ public unsafe partial class VulkanRenderer
         var devices = new PhysicalDevice[devicedCount];
         fixed (PhysicalDevice* devicesPtr = devices)
         {
-            Api!.EnumeratePhysicalDevices(instance, ref devicedCount, devicesPtr);
+            Api!.EnumeratePhysicalDevices(_deviceContext.Instance, ref devicedCount, devicesPtr);
         }
 
         nint openXrRequestedDeviceHandle;
         string? openXrDeviceQueryFailure;
         bool hasOpenXrRequestedDevice;
-        if (_openXrVulkanEnable2Context is not null)
+        if (_deviceContext.OpenXrBootstrapContext is not null)
         {
-            hasOpenXrRequestedDevice = _openXrVulkanEnable2Context.TryGetRequestedVulkanPhysicalDevice(
-                (nint)instance.Handle,
+            hasOpenXrRequestedDevice = _deviceContext.OpenXrBootstrapContext.TryGetRequestedVulkanPhysicalDevice(
+                (nint)_deviceContext.Instance.Handle,
                 out openXrRequestedDeviceHandle,
                 out openXrDeviceQueryFailure);
         }
         else
         {
             hasOpenXrRequestedDevice = OpenXRAPI.TryGetRequestedVulkanPhysicalDevice(
-                (nint)instance.Handle,
+                (nint)_deviceContext.Instance.Handle,
                 out openXrRequestedDeviceHandle,
                 out openXrDeviceQueryFailure);
         }
@@ -52,17 +75,14 @@ public unsafe partial class VulkanRenderer
 
             VulkanPhysicalDeviceCapabilitySnapshot snapshot =
                 VulkanDeviceCapabilityQuery.Query(Api!, device);
-            if (IsDeviceSuitable(device, snapshot, out var indices))
+            if (IsDeviceSuitable(device, snapshot, out QueueFamilyIndices indices))
             {
-                _physicalDevice = device;
-                _deviceContext.AttachPhysicalDevice(device);
-                _physicalDeviceCapabilitySnapshot = snapshot;
-                _familyQueueIndicesCache = indices;
+                _deviceContext.AttachPhysicalDevice(device, snapshot, indices);
                 break;
             }
         }
         
-        if (_physicalDevice.Handle == 0)
+        if (_deviceContext.PhysicalDevice.Handle == 0)
         {
             if (hasOpenXrRequestedDevice)
                 throw new Exception($"The OpenXR runtime-selected Vulkan physical device 0x{(nuint)openXrRequestedDeviceHandle:X} is not suitable for this Vulkan renderer/window surface.");
@@ -70,7 +90,7 @@ public unsafe partial class VulkanRenderer
             throw new Exception("Failed to find a suitable GPU for Vulkan.");
         }
 
-        Api!.GetPhysicalDeviceProperties(_physicalDevice, out var properties);
+        Api!.GetPhysicalDeviceProperties(_deviceContext.PhysicalDevice, out var properties);
         if (hasOpenXrRequestedDevice)
         {
             string deviceName = Silk.NET.Core.Native.SilkMarshal.PtrToString((nint)properties.DeviceName) ?? "<unknown>";
@@ -79,11 +99,9 @@ public unsafe partial class VulkanRenderer
                 deviceName,
                 properties.VendorID,
                 properties.DeviceID,
-                (nuint)_physicalDevice.Handle);
+                (nuint)_deviceContext.PhysicalDevice.Handle);
         }
 
-        _nonCoherentAtomSize = System.Math.Max(properties.Limits.NonCoherentAtomSize, 1UL);
-        _uniformBufferOffsetAlignment = System.Math.Max(properties.Limits.MinUniformBufferOffsetAlignment, 1UL);
         // NVIDIA PCI vendor ID.
         RuntimeEngine.Rendering.State.IsNVIDIA = properties.VendorID == 0x10DE;
         // Intel PCI vendor ID.
@@ -103,7 +121,7 @@ public unsafe partial class VulkanRenderer
 
         // Cache Vulkan ray tracing extension availability once at startup.
         RuntimeEngine.Rendering.State.HasVulkanRayTracing =
-            ProbeVulkanRayTracingSupport(_physicalDeviceCapabilitySnapshot!);
+            ProbeVulkanRayTracingSupport(_deviceContext.PhysicalDeviceCapabilities!);
     }
 
     private static bool ProbeVulkanRayTracingSupport(
@@ -122,19 +140,16 @@ public unsafe partial class VulkanRenderer
         VulkanPhysicalDeviceCapabilitySnapshot snapshot,
         out QueueFamilyIndices indices)
     {
-        indices = VulkanQueueFamilySelector.Select(
-            snapshot.QueueFamilyArray,
-            _targetDriver.RequiresPresentQueue ? khrSurface : null,
-            device,
-            surface);
-        bool extensionsSupported =
-            VulkanPhysicalDevicePolicy.SupportsRequiredExtensions(
+        indices = _deviceContext.SelectQueueFamilies(device, snapshot);
+        bool extensionsSupported = _deviceContext.SupportsRequiredDeviceExtensions(
+            snapshot.AvailableExtensions,
+            _outputRuntime._streamlineRequiredDeviceExtensions) &&
+            _deviceContext.SupportsRequiredDeviceExtensions(
                 snapshot.AvailableExtensions,
-                _requiredDeviceExtensions,
-                _streamlineRequiredDeviceExtensions);
+                OpenXRAPI.GetRequestedVulkanRuntimeRequirements().DeviceExtensions);
 
         bool finalOutputAdequate = extensionsSupported;
-        if (extensionsSupported && _targetDriver.RequiresSwapchainOutput)
+        if (extensionsSupported && OutputRuntime.TargetDriver.RequiresSwapchainOutput)
         {
             var swapChainSupport = QuerySwapChainSupport(device);
             finalOutputAdequate = VulkanPhysicalDevicePolicy.IsSwapchainAdequate(
@@ -142,14 +157,14 @@ public unsafe partial class VulkanRenderer
                 swapChainSupport.PresentModes.Length);
         }
 
-        return indices.IsComplete(_targetDriver.RequiresPresentQueue) &&
+        return indices.IsComplete(OutputRuntime.TargetDriver.RequiresPresentQueue) &&
             extensionsSupported &&
             finalOutputAdequate;
     }
 
     public uint FindMemoryType(uint typeFilter, MemoryPropertyFlags memProps)
     {
-        Api!.GetPhysicalDeviceMemoryProperties(_physicalDevice, out PhysicalDeviceMemoryProperties memProperties);
+        Api!.GetPhysicalDeviceMemoryProperties(_deviceContext.PhysicalDevice, out PhysicalDeviceMemoryProperties memProperties);
 
         for (int i = 0; i < memProperties.MemoryTypeCount; i++)
             if ((typeFilter & (1 << i)) != 0 && (memProperties.MemoryTypes[i].PropertyFlags & memProps) == memProps)
@@ -160,7 +175,7 @@ public unsafe partial class VulkanRenderer
 
     public bool TryFindMemoryType(uint typeFilter, MemoryPropertyFlags memProps, out uint memoryTypeIndex)
     {
-        Api!.GetPhysicalDeviceMemoryProperties(_physicalDevice, out PhysicalDeviceMemoryProperties memProperties);
+        Api!.GetPhysicalDeviceMemoryProperties(_deviceContext.PhysicalDevice, out PhysicalDeviceMemoryProperties memProperties);
 
         for (int i = 0; i < memProperties.MemoryTypeCount; i++)
         {

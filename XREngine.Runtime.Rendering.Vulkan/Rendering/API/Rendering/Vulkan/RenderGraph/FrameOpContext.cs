@@ -65,7 +65,8 @@ internal readonly record struct FrameOpContext(
     XRFrameBuffer? OutputFrameBuffer = null,
     int? ResourceRegistrySignatureSnapshot = null,
     ulong OutputProducerDependencySetId = 0,
-    ulong OutputConsumerDependencySetId = 0)
+    ulong OutputConsumerDependencySetId = 0,
+    VulkanFrameOpWorkspace? OperationWorkspace = null)
 {
     public int SchedulingIdentity => OutputTargetIdentity == 0
         ? HashCode.Combine(PipelineIdentity, ViewportIdentity)

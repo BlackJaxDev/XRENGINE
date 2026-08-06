@@ -13,7 +13,7 @@ public unsafe partial class VulkanRenderer
     /// fields directly.
     /// </summary>
     private DesktopFrameRetirementScope EnterDesktopFrameRetirementScope()
-        => new(this, DesktopFrameCoordinator.RetirementGate);
+        => new(this, FrameLoop.RetirementGate);
 
     private readonly ref struct DesktopFrameRetirementScope
     {
@@ -30,12 +30,12 @@ public unsafe partial class VulkanRenderer
         }
 
         public ReadOnlySpan<ulong> TimelineValues
-            => _renderer._frameSlotTimelineValues is { } values
+            => _renderer._commandRuntime.Synchronization._frameSlotTimelineValues is { } values
                 ? values
                 : ReadOnlySpan<ulong>.Empty;
 
         public Semaphore TimelineSemaphore
-            => _renderer._graphicsTimelineSemaphore;
+            => _renderer._commandRuntime.Synchronization._graphicsTimelineSemaphore;
 
         public void Dispose()
             => Monitor.Exit(_gate);

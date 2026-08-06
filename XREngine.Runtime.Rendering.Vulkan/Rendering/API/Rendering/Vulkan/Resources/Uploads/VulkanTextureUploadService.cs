@@ -19,6 +19,7 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed partial class VulkanTextureUploadService
 {
+    internal VulkanTextureUploadPublicationState PublicationState { get; } = new();
     private const int MaxPreparedUploadsPerDrain = 1;
     private const double AllocationPressureRetryDelayMilliseconds = 500.0;
 

@@ -562,9 +562,6 @@ namespace XREngine.Rendering.Commands
             BuildSourceHotCommandBuffer(gpuCommands, numCommands);
             _culledHotCommandsValid = false;
 
-            if (ShouldExtractSoAForCurrentPolicy(numCommands))
-                ExtractSoA(gpuCommands);
-
             bool externalVrSharedVisibility = ShouldUseExternalVrSharedVisibilityPassFilter(camera);
 
             if (externalVrSharedVisibility)
@@ -630,11 +627,6 @@ namespace XREngine.Rendering.Commands
                     _loggedBvhCullMode = true;
                     modeName = "BVH";
                     break;
-                case CullFrameMode.SoA:
-                    shouldLog = !_loggedFrustumCullMode;
-                    _loggedFrustumCullMode = true;
-                    modeName = "SoA";
-                    break;
                 default:
                     shouldLog = !_loggedFrustumCullMode;
                     _loggedFrustumCullMode = true;
@@ -646,19 +638,6 @@ namespace XREngine.Rendering.Commands
                 return;
 
             Log(LogCategory.Culling, LogLevel.Info, "Culling mode active: {0} (pass={1})", modeName, RenderPass);
-        }
-
-        private bool ShouldExtractSoAForCurrentPolicy(uint commandCount)
-        {
-            if (_extractSoAComputeShader is null)
-                return false;
-
-            return RuntimeEngine.EffectiveSettings.GpuCullingDataLayout switch
-            {
-                EGpuCullingDataLayout.SoA => true,
-                EGpuCullingDataLayout.Auto => commandCount >= 4096u,
-                _ => false,
-            };
         }
 
         private void BuildSourceHotCommandBuffer(GPUScene scene, uint inputCount)
@@ -1607,54 +1586,6 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        private void ExtractSoA(GPUScene scene)
-        {
-            Dbg("ExtractSoA begin", "SoA");
-
-            if (_extractSoAComputeShader is null)
-                return;
-
-            uint count = scene.TotalCommandCount;
-            if (count == 0)
-                return;
-
-            EnsureSoABuffers(scene.AllocatedMaxCommandCount);
-
-            var spheres = _useBufferAForRender
-                ? _soaBoundingSpheresA
-                : _soaBoundingSpheresB;
-
-            var meta = _useBufferAForRender
-                ? _soaMetadataA
-                : _soaMetadataB;
-
-            if (spheres is null || meta is null)
-            {
-                Debug.MeshesWarning($"{FormatDebugPrefix("SoA")} SoA extraction buffers not available");
-                return;
-            }
-
-            _extractSoAComputeShader.Uniform("InputCommandCount", (int)count);
-            bool requireHotCommands = IsHotCommandLayoutRequired();
-            bool useHotCommands = _sourceCommandsUseHotLayout && _sourceHotCommandBuffer is not null;
-            if (requireHotCommands && !useHotCommands)
-            {
-                Debug.MeshesWarning($"{FormatDebugPrefix("SoA")} ShippingFast profile requires hot-command layout for SoA extraction.");
-                return;
-            }
-
-            _extractSoAComputeShader.Uniform("UseHotCommands", useHotCommands ? 1 : 0);
-            scene.DrawMetadataBuffer.BindTo(_extractSoAComputeShader, 0);
-            scene.BoundsBuffer.BindTo(_extractSoAComputeShader, 1);
-            _extractSoAComputeShader.BindBuffer(spheres, 2);
-            _extractSoAComputeShader.BindBuffer(meta, 3);
-
-            uint groups = (count + ComputeWorkGroupSize - 1) / ComputeWorkGroupSize;
-            _extractSoAComputeShader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
-
-            Dbg($"ExtractSoA dispatched groups={groups} count={count}", "SoA");
-        }
-
         private struct SoftIssueInfo
         {
             public int Count;
@@ -2139,87 +2070,6 @@ namespace XREngine.Rendering.Commands
                 sb.Append($" sample=[{string.Join(", ", materialSample)}]");
 
             Dbg(sb.ToString(), "Materials");
-        }
-
-        //public void SetHiZDepthPyramid(XRTexture? tex, int maxMip) { _hiZDepthPyramid = tex; HiZMaxMip = maxMip; }
-
-        private void SoACull(XRCamera camera, GPUScene scene)
-        {
-            Dbg("SoACull begin","SoA");
-
-            if (_culledCountBuffer == null)
-                return;
-
-            uint count = scene.TotalCommandCount;
-            if (count == 0)
-                return;
-
-            EnsureIndexList(count);
-
-            if (_soaIndexList is null)
-            {
-                Dbg("SoACull missing index list", "SoA");
-                return;
-            }
-
-            var spheres = _useBufferAForRender
-                ? _soaBoundingSpheresA
-                : _soaBoundingSpheresB;
-
-            var meta = _useBufferAForRender
-                ? _soaMetadataA
-                : _soaMetadataB;
-
-            if (spheres is null || meta is null)
-                return;
-
-            _soaIndexList.SetDataRawAtIndex(0, 0u);
-            _soaIndexList.PushSubData();
-
-            var shader = 
-                //UseHiZ
-            //    ? HiZSoACullingComputeShader
-            //    : 
-                _soACullingComputeShader;
-
-            if (shader is null)
-                return;
-
-            shader.Uniform("CameraPosition", camera.Transform.RenderTranslation);
-            shader.Uniform("MaxRenderDistance", camera.FarZ * camera.FarZ);
-            shader.Uniform("CameraLayerMask", unchecked((uint)camera.CullingMask.Value));
-            shader.Uniform("CurrentRenderPass", RenderPass);
-            shader.Uniform("DisabledFlagsMask", ResolveDisabledFlagsMask());
-            shader.Uniform("InputCommandCount", (int)count);
-
-            var planes = camera.WorldFrustum().Planes.Select(x => x.AsVector4()).ToArray();
-            if (planes.Length >= 6)
-                shader.Uniform("FrustumPlanes", planes);
-
-            //if (UseHiZ)
-            //{
-            //    shader.Uniform("HiZMaxMip", HiZMaxMip);
-            //    if (_hiZDepthPyramid != null)
-            //        shader.Sampler(_hiZDepthPyramid.Name ?? "HiZDepthPyramid", _hiZDepthPyramid, 0);
-            //}
-
-            scene.DrawMetadataBuffer.BindTo(shader, 0);
-            scene.BoundsBuffer.BindTo(shader, 1);
-            shader.BindBuffer(_soaIndexList, 2);
-            BindStorageBuffer(shader, _culledCountBuffer, 3);
-
-            if (_cullingOverflowFlagBuffer != null)
-                shader.BindBuffer(_cullingOverflowFlagBuffer, 4);
-
-            if (_statsBuffer != null)
-                shader.BindBuffer(_statsBuffer, 8);
-
-            uint groups = (count + ComputeWorkGroupSize - 1) / ComputeWorkGroupSize;
-            shader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
-
-            UpdateVisibleCountersFromBuffer();
-
-            Dbg($"SoACull visible={VisibleCommandCount} instances={VisibleInstanceCount}","SoA");
         }
 
         public void DebugDraw(XRCamera camera, GPUScene scene)

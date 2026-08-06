@@ -11,7 +11,7 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class VulkanCoreHardeningPhase21Tests
 {
     [Test]
-    public void PlannerAllocatorKey_IgnoresDescriptorOnlyGenerationChanges()
+    public void PlannerAllocatorKey_TracksDescriptorOnlyGenerationChanges()
     {
         FrameOpContext first = CreateContext(
             EVulkanFrameOpContextKind.MainViewport,
@@ -20,7 +20,7 @@ public sealed class VulkanCoreHardeningPhase21Tests
         FrameOpContext allocationChange = first with { ResourceGeneration = 2 };
 
         VulkanRenderer.BuildFrameOpPlannerStateKey(first)
-            .ShouldBe(VulkanRenderer.BuildFrameOpPlannerStateKey(descriptorOnlyChange));
+            .ShouldNotBe(VulkanRenderer.BuildFrameOpPlannerStateKey(descriptorOnlyChange));
         VulkanRenderer.BuildFrameOpPlannerStateKey(first)
             .ShouldNotBe(VulkanRenderer.BuildFrameOpPlannerStateKey(allocationChange));
     }
@@ -304,7 +304,7 @@ public sealed class VulkanCoreHardeningPhase21Tests
     }
 
     [Test]
-    public void DescriptorOnlyChange_ReusesOwnerAndPruningAnotherOwnerDoesNotRetireIt()
+    public void DescriptorOnlyChange_UsesDistinctOwnerAndPruningAnotherOwnerDoesNotRetireIt()
     {
         FrameOpContext main = CreateContext(
             EVulkanFrameOpContextKind.MainViewport,
@@ -323,9 +323,10 @@ public sealed class VulkanCoreHardeningPhase21Tests
         VulkanResourceAllocator captureOwner = new();
         owners[VulkanRenderer.BuildFrameOpPlannerStateKey(capture)] = captureOwner;
 
-        descriptorChangeOwner.ShouldBeSameAs(mainOwner);
+        descriptorChangeOwner.ShouldNotBeSameAs(mainOwner);
         captureOwner.TryRetirePhysicalResources(null!).ShouldBeTrue();
         mainOwner.IsRetired.ShouldBeFalse();
+        descriptorChangeOwner.IsRetired.ShouldBeFalse();
     }
 
     [Test]
@@ -360,17 +361,22 @@ public sealed class VulkanCoreHardeningPhase21Tests
         });
 
         winners.ShouldBe(1);
-        state.State.ShouldBe(VulkanRenderer.EVulkanDeviceState.CollectingFaultData);
+        state.State.ShouldBe(EVulkanDeviceState.CollectingFaultData);
         state.IsOperational.ShouldBeFalse();
 
         object queueGate = new();
-        using (VulkanQueueOperationLease lease = VulkanQueueOperationLease.TryEnter(queueGate, state))
+        VulkanFrameTelemetry telemetry = new();
+        using (VulkanQueueOperationLease lease = VulkanQueueOperationLease.TryEnter(queueGate, state, telemetry))
             lease.Acquired.ShouldBeFalse();
 
         state.CompleteLossCollection();
-        state.State.ShouldBe(VulkanRenderer.EVulkanDeviceState.Quiesced);
+        state.State.ShouldBe(EVulkanDeviceState.Quiesced);
         state.Dispose();
-        state.State.ShouldBe(VulkanRenderer.EVulkanDeviceState.Disposed);
+        state.State.ShouldBe(EVulkanDeviceState.Disposed);
+
+        state.TryBeginLossCollection().ShouldBeFalse();
+        state.CompleteLossCollection();
+        state.State.ShouldBe(EVulkanDeviceState.Disposed);
     }
 
     [Test]
@@ -378,13 +384,14 @@ public sealed class VulkanCoreHardeningPhase21Tests
     {
         VulkanDeviceStateMachine state = new();
         object queueGate = new();
+        VulkanFrameTelemetry telemetry = new();
         int active = 0;
         int maxActive = 0;
         int acquired = 0;
 
         Parallel.For(0, 64, _ =>
         {
-            using VulkanQueueOperationLease lease = VulkanQueueOperationLease.TryEnter(queueGate, state);
+            using VulkanQueueOperationLease lease = VulkanQueueOperationLease.TryEnter(queueGate, state, telemetry);
             lease.Acquired.ShouldBeTrue();
             Interlocked.Increment(ref acquired);
             int nowActive = Interlocked.Increment(ref active);

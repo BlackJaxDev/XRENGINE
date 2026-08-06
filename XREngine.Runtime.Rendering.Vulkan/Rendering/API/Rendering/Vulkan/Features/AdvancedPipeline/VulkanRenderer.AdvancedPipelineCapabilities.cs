@@ -45,6 +45,6 @@ public unsafe partial class VulkanRenderer
             SupportsSubgroupOperations: false,
             SupportsMeshShaders: SupportsMeshletDispatch(),
             SupportsAsyncCompute: false,
-            SupportsTimelineSemaphores: DeviceCapabilities.Supports(EVulkanDeviceCapability.TimelineSemaphores));
+            SupportsTimelineSemaphores: _deviceContext.Capabilities.Supports(EVulkanDeviceCapability.TimelineSemaphores));
     }
 }

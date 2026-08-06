@@ -17,7 +17,7 @@ public unsafe partial class VulkanRenderer
     internal bool TryGetCanonicalImmutableSampler(VulkanCanonicalSampler sampler, out Sampler handle)
     {
         int index = (int)sampler;
-        Sampler[] canonicalImmutableSamplers = _descriptorManager.CanonicalImmutableSamplers;
+        Sampler[] canonicalImmutableSamplers = ResourceRuntime.Descriptors.CanonicalImmutableSamplers;
         handle = index >= 0 && index < canonicalImmutableSamplers.Length
             ? canonicalImmutableSamplers[index]
             : default;
@@ -33,7 +33,7 @@ public unsafe partial class VulkanRenderer
         CreateCanonicalSampler(VulkanCanonicalSampler.LinearClamp, Filter.Linear, SamplerMipmapMode.Linear, SamplerAddressMode.ClampToEdge, false, false);
         CreateCanonicalSampler(VulkanCanonicalSampler.NearestClamp, Filter.Nearest, SamplerMipmapMode.Nearest, SamplerAddressMode.ClampToEdge, false, false);
         CreateCanonicalSampler(VulkanCanonicalSampler.LinearRepeat, Filter.Linear, SamplerMipmapMode.Linear, SamplerAddressMode.Repeat, false, false);
-        CreateCanonicalSampler(VulkanCanonicalSampler.Anisotropic, Filter.Linear, SamplerMipmapMode.Linear, SamplerAddressMode.Repeat, DeviceCapabilities.Supports(EVulkanDeviceCapability.Anisotropy), false);
+        CreateCanonicalSampler(VulkanCanonicalSampler.Anisotropic, Filter.Linear, SamplerMipmapMode.Linear, SamplerAddressMode.Repeat, _deviceContext.Capabilities.Supports(EVulkanDeviceCapability.Anisotropy), false);
         CreateCanonicalSampler(VulkanCanonicalSampler.ShadowComparison, Filter.Linear, SamplerMipmapMode.Linear, SamplerAddressMode.ClampToEdge, false, true);
     }
 
@@ -55,14 +55,14 @@ public unsafe partial class VulkanRenderer
         bool comparison)
     {
         int index = (int)sampler;
-        Sampler[] canonicalImmutableSamplers = _descriptorManager.CanonicalImmutableSamplers;
+        Sampler[] canonicalImmutableSamplers = ResourceRuntime.Descriptors.CanonicalImmutableSamplers;
         if ((uint)index >= (uint)canonicalImmutableSamplers.Length || canonicalImmutableSamplers[index].Handle != 0)
             return;
 
         float maxAnisotropy = 1f;
         if (anisotropy)
         {
-            Api!.GetPhysicalDeviceProperties(_physicalDevice, out PhysicalDeviceProperties properties);
+            Api!.GetPhysicalDeviceProperties(_deviceContext.PhysicalDevice, out PhysicalDeviceProperties properties);
             maxAnisotropy = MathF.Max(1f, MathF.Min(16f, properties.Limits.MaxSamplerAnisotropy));
         }
 
@@ -86,7 +86,7 @@ public unsafe partial class VulkanRenderer
             UnnormalizedCoordinates = Vk.False,
         };
 
-        if (Api!.CreateSampler(device, ref info, null, out Sampler handle) == Result.Success)
+        if (Api!.CreateSampler(_deviceContext.Device, ref info, null, out Sampler handle) == Result.Success)
         {
             canonicalImmutableSamplers[index] = handle;
             RegisterLiveSampler(handle, in info);
@@ -101,14 +101,14 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     private void DestroyCanonicalImmutableSamplers()
     {
-        Sampler[] canonicalImmutableSamplers = _descriptorManager.CanonicalImmutableSamplers;
+        Sampler[] canonicalImmutableSamplers = ResourceRuntime.Descriptors.CanonicalImmutableSamplers;
         for (int i = 0; i < canonicalImmutableSamplers.Length; i++)
         {
             if (canonicalImmutableSamplers[i].Handle == 0)
                 continue;
 
             UnregisterLiveSampler(canonicalImmutableSamplers[i]);
-            Api!.DestroySampler(device, canonicalImmutableSamplers[i], null);
+            Api!.DestroySampler(_deviceContext.Device, canonicalImmutableSamplers[i], null);
             CompleteVulkanResourceDestruction(
                 ObjectType.Sampler,
                 canonicalImmutableSamplers[i].Handle);

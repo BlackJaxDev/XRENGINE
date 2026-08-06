@@ -57,6 +57,7 @@ public enum EVulkanCpuStage
     MeshDrawPublisherState,
     MeshDrawArtifactEligibility,
     MeshDrawArtifactLookup,
+    WorkerWait,
     Count,
 }
 

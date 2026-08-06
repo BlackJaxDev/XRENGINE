@@ -12,6 +12,7 @@ internal static partial class VulkanCpuSpanProfiler
         private int _count;
         public int ThreadId { get; } = threadId;
         public long NextSpanId;
+        public long ActiveSpanId;
 
         public void Write(in VulkanCpuSpanRecord record)
         {

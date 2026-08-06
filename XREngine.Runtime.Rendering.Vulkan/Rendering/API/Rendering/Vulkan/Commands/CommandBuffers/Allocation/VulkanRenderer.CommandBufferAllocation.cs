@@ -15,14 +15,15 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
-        private readonly ConcurrentDictionary<ulong, byte> _invalidatedCommandBuffersPendingReset = new();
+        private ConcurrentDictionary<ulong, byte> _invalidatedCommandBuffersPendingReset
+            => _commandRuntime.CommandBuffers.InvalidatedBuffersPendingReset;
 
         private void CreateCommandBuffers()
         {
-            if (swapChainFramebuffers is null || swapChainFramebuffers.Length == 0)
+            if (OutputRuntime.Desktop.Framebuffers is null || OutputRuntime.Desktop.Framebuffers.Length == 0)
                 throw new InvalidOperationException("Framebuffers must be created before allocating command buffers.");
 
-            _commandBuffers = new CommandBuffer[swapChainFramebuffers.Length];
+            _commandBuffers = new CommandBuffer[OutputRuntime.Desktop.Framebuffers.Length];
 
             CommandBufferAllocateInfo allocInfo = new()
             {
@@ -142,7 +143,7 @@ namespace XREngine.Rendering.Vulkan
 
         private bool TryEnsureCommandBuffersForSwapchain()
         {
-            if (swapChainFramebuffers is null || swapChainFramebuffers.Length == 0)
+            if (OutputRuntime.Desktop.Framebuffers is null || OutputRuntime.Desktop.Framebuffers.Length == 0)
                 return false;
 
             bool needsAllocation =
@@ -150,10 +151,10 @@ namespace XREngine.Rendering.Vulkan
                 _commandBufferDirtyFlags is null ||
                 _dynamicUiBatchTextOverlayCommandBuffers is null ||
                 _imguiOverlayCommandBuffers is null ||
-                _commandBuffers.Length != swapChainFramebuffers.Length ||
-                _dynamicUiBatchTextOverlayCommandBuffers.Length != swapChainFramebuffers.Length ||
-                _imguiOverlayCommandBuffers.Length != swapChainFramebuffers.Length ||
-                _commandBufferDirtyFlags.Length != swapChainFramebuffers.Length;
+                _commandBuffers.Length != OutputRuntime.Desktop.Framebuffers.Length ||
+                _dynamicUiBatchTextOverlayCommandBuffers.Length != OutputRuntime.Desktop.Framebuffers.Length ||
+                _imguiOverlayCommandBuffers.Length != OutputRuntime.Desktop.Framebuffers.Length ||
+                _commandBufferDirtyFlags.Length != OutputRuntime.Desktop.Framebuffers.Length;
 
             if (!needsAllocation)
                 return true;
@@ -165,8 +166,8 @@ namespace XREngine.Rendering.Vulkan
 
             return _commandBuffers is not null &&
                 _commandBufferDirtyFlags is not null &&
-                _commandBuffers.Length == swapChainFramebuffers.Length &&
-                _commandBufferDirtyFlags.Length == swapChainFramebuffers.Length;
+                _commandBuffers.Length == OutputRuntime.Desktop.Framebuffers.Length &&
+                _commandBufferDirtyFlags.Length == OutputRuntime.Desktop.Framebuffers.Length;
         }
 
         private PrimaryCommandArtifactOwner GetOrCreatePrimaryCommandArtifactOwner(
@@ -319,7 +320,7 @@ namespace XREngine.Rendering.Vulkan
             string reason)
         {
             using VulkanCpuStageScope dirtyPropagationStage =
-                new(EVulkanCpuStage.CommandDirtyPropagation);
+                new(_frameTelemetry, EVulkanCpuStage.CommandDirtyPropagation);
             if (dependentCommandBuffers.IsEmpty)
                 return default;
 
@@ -357,7 +358,7 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            lock (_openXrBackend.PrimaryCommandArtifactOwnersLock)
+            lock (OutputRuntime.OpenXrBackend.PrimaryCommandArtifactOwnersLock)
             {
                 foreach (PrimaryCommandArtifactOwner owner in OpenXrPrimaryCommandArtifactOwners.Values)
                 {
@@ -432,7 +433,7 @@ namespace XREngine.Rendering.Vulkan
                 ulong handle = pair.Key;
                 CommandBuffer commandBuffer = new() { Handle = unchecked((nint)handle) };
                 bool reset = false;
-                lock (_resourceLifetimeTracker.SyncRoot)
+                lock (ResourceRuntime.Lifetime.Tracker.SyncRoot)
                 {
                     // Use the complete reset predicate here. The former partial copy omitted
                     // PendingRetirement, then called the throwing wrapper and turned a normal
@@ -440,7 +441,7 @@ namespace XREngine.Rendering.Vulkan
                     if (!CanResetVulkanCommandBuffer(commandBuffer, out _))
                         continue;
 
-                    _resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(
+                    ResourceRuntime.Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(
                         handle,
                         out VulkanCommandBufferLifetimeRecord? lifetime);
 

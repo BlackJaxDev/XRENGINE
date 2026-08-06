@@ -40,4 +40,34 @@ internal sealed class VulkanBufferResourceManager
             return remaining;
         }
     }
+
+    /// <summary>
+    /// Registers a dedicated mapped-frame chunk with the same allocation and live-handle
+    /// registries used by renderer-owned raw buffers. The frame arena performs native teardown
+    /// only after a device-idle proof, so this intentionally does not enter the frame retirement
+    /// queue whose owner is the renderer command lifetime subsystem.
+    /// </summary>
+    internal void RegisterMappedFrameArenaChunk(
+        Silk.NET.Vulkan.Buffer buffer,
+        in VulkanMemoryAllocation allocation)
+    {
+        if (buffer.Handle == 0 || allocation.Memory.Handle == 0)
+            throw new ArgumentException("Mapped frame chunks require live buffer and memory handles.");
+
+        if (!LiveHandles.TryAdd(buffer.Handle, 0))
+            throw new InvalidOperationException($"Mapped frame chunk buffer 0x{buffer.Handle:X} was already registered.");
+        if (LegacyAllocations.TryAdd(buffer.Handle, allocation))
+            return;
+
+        LiveHandles.TryRemove(buffer.Handle, out _);
+        throw new InvalidOperationException($"Mapped frame chunk allocation 0x{buffer.Handle:X} was already registered.");
+    }
+
+    internal bool TryUnregisterMappedFrameArenaChunk(
+        Silk.NET.Vulkan.Buffer buffer,
+        out VulkanMemoryAllocation allocation)
+    {
+        LiveHandles.TryRemove(buffer.Handle, out _);
+        return LegacyAllocations.TryRemove(buffer.Handle, out allocation);
+    }
 }

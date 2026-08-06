@@ -57,8 +57,8 @@ Dispatch-path culling order (`GPURenderPassCollection`):
 frustum OR BVH cull compute -> (optional) GpuHiZ occlusion refine -> indirect build -> MultiDraw*IndirectCount
 ```
 
-- Frustum culling: `GPURenderCulling.comp` / `GPURenderCullingSoA.comp` write
-  compact commands to `_culledSceneToRenderBuffer` + counts to
+- Frustum culling: `GPURenderCulling.comp` writes compact commands to
+  `_culledSceneToRenderBuffer` + counts to
   `_culledCountBuffer`.
 - GPU BVH (`GpuBvhTree`, `bvh_frustum_cull.comp`): internal command-bounds BVH
   with GPU build/refit and stable LBVH construction. Traversal is **frustum-only** — interior

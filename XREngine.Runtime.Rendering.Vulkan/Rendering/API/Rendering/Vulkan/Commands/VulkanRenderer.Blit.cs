@@ -628,16 +628,16 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            if (wantColor && swapChainImages is not null && swapchainImageIndex < swapChainImages.Length)
+            if (wantColor && OutputRuntime.Desktop.Images is not null && swapchainImageIndex < OutputRuntime.Desktop.Images.Length)
             {
                 return new BlitImageInfo(
-                    swapChainImages[swapchainImageIndex],
-                    swapChainImageFormat,
+                    OutputRuntime.Desktop.Images[swapchainImageIndex],
+                    OutputRuntime.Desktop.ImageFormat,
                     ImageAspectFlags.ColorBit,
                     0,
                     1,
                     0,
-                    swapChainExtent,
+                    OutputRuntime.Desktop.Extent,
                     ImageLayout.ColorAttachmentOptimal,
                     PipelineStageFlags.ColorAttachmentOutputBit,
                     AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit);

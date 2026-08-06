@@ -35,6 +35,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     private readonly uint _streamlineOpticalFlowQueueIndex;
     private readonly object _graphicsQueueOperationGate = new();
     private readonly VulkanDeviceStateMachine _deviceState = new();
+    private readonly VulkanFrameTelemetry _telemetry = new();
     private VulkanUpscaleBridgeDeviceLossRecord? _firstDeviceLoss;
     private bool _disposed;
     private Instance _instance;
@@ -188,7 +189,8 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
 
         using VulkanQueueOperationLease lease = VulkanQueueOperationLease.TryEnter(
             _graphicsQueueOperationGate,
-            _deviceState);
+            _deviceState,
+            _telemetry);
         if (!lease.Acquired)
             throw new InvalidOperationException($"The Vulkan upscale bridge device is {_deviceState.State}.");
 
@@ -510,7 +512,8 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             return Result.ErrorDeviceLost;
         using VulkanQueueOperationLease lease = VulkanQueueOperationLease.TryEnter(
             _graphicsQueueOperationGate,
-            _deviceState);
+            _deviceState,
+            _telemetry);
         if (!lease.Acquired)
             return Result.ErrorDeviceLost;
 

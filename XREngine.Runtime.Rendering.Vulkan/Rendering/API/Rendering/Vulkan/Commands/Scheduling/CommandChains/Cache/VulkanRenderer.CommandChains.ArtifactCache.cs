@@ -96,7 +96,7 @@ public unsafe partial class VulkanRenderer
         // Descriptor generations are validated while rebuilding the command-chain
         // schedule. Clearing the fast schedule cache prevents stale primary reuse
         // while still letting unchanged chains survive texture streaming.
-        _commandScheduler.InvalidateScheduleCache();
+        _commandRuntime.InvalidateScheduleCache();
     }
 
     private Dictionary<CommandChainKey, CommandChain>
@@ -129,7 +129,7 @@ public unsafe partial class VulkanRenderer
         CommandChainDirtyReason dirtyReason)
     {
         using VulkanCpuStageScope cpuStage =
-            new(EVulkanCpuStage.CommandDirtyPropagation);
+            new(_frameTelemetry, EVulkanCpuStage.CommandDirtyPropagation);
         int invalidated = 0;
         if (_commandChainCaches is not null)
         {
@@ -179,7 +179,7 @@ public unsafe partial class VulkanRenderer
             }
         }
 
-        _commandScheduler.InvalidateScheduleCache();
+        _commandRuntime.InvalidateScheduleCache();
 
         if (invalidated > 0)
             MarkOpenXrPrimaryCommandArtifactOwnersDirty();
@@ -203,8 +203,13 @@ public unsafe partial class VulkanRenderer
     private void TrimScheduledCommandChainCache(
         Dictionary<CommandChainKey, CommandChain> cache)
     {
+        // Scheduled entries cannot outnumber the cache. Keep the stable frame
+        // off the cache-wide scan entirely until capacity is actually exceeded.
+        if (cache.Count <= MaxCachedScheduledCommandChainsPerFrameSlot)
+            return;
+
         using VulkanCpuStageScope cpuStage =
-            new(EVulkanCpuStage.CommandCacheScanning);
+            new(_frameTelemetry, EVulkanCpuStage.CommandCacheScanning);
         int scheduledCount = 0;
         foreach (CommandChain chain in cache.Values)
         {

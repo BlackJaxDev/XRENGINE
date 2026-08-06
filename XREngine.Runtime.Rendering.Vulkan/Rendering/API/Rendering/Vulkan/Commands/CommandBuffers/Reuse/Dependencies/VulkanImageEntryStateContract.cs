@@ -16,8 +16,8 @@ internal static class VulkanImageEntryStateContract
     /// command identity.
     /// </summary>
     public static EVulkanPrimaryEntryStateMismatch Compare(
-        in VulkanRenderer.VulkanImageAccessState actual,
-        in VulkanRenderer.VulkanImageAccessState expected)
+        in VulkanImageAccessState actual,
+        in VulkanImageAccessState expected)
     {
         if (expected.Layout == ImageLayout.Undefined)
             return EVulkanPrimaryEntryStateMismatch.UnknownExpectedLayout;

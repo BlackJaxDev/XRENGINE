@@ -10,10 +10,10 @@ public unsafe partial class VulkanRenderer
 {
     /// <summary>Whether the active device and graphics queue can accept compute frame work.</summary>
     public bool SupportsOrderedComputeWork
-        => IsDeviceOperational
-        && graphicsQueue.Handle != 0
-        && _graphicsTimelineSemaphore.Handle != 0
-        && FamilyQueueIndices.GraphicsFamilySupportsCompute;
+        => _deviceContext.IsOperational
+        && _deviceContext.GraphicsQueue.Handle != 0
+        && _commandRuntime.Synchronization._graphicsTimelineSemaphore.Handle != 0
+        && _deviceContext.QueueFamilies.GraphicsFamilySupportsCompute;
 
     public ERendererComputeEnqueueStatus TryDispatchComputeIndirect(
         XRRenderProgram program,
@@ -234,10 +234,9 @@ public unsafe partial class VulkanRenderer
         uint imageIndex,
         ComputeDispatchIndirectOp op)
     {
-        if (!op.Program.Link())
-            throw new InvalidOperationException($"Compute program '{op.Program.Data.Name ?? "UnnamedProgram"}' is not ready.");
-
-        Pipeline pipeline = op.Program.GetOrCreateComputePipeline(op.PassIndex, op.Context.PassMetadata);
+        // The enqueue/preparation phases own program linking and pipeline
+        // creation. The recorder may only consume the warmed pipeline handle.
+        Pipeline pipeline = op.Program.ComputePipeline;
         if (pipeline.Handle == 0)
             throw new InvalidOperationException($"Compute pipeline '{op.Program.Data.Name ?? "UnnamedProgram"}' is unavailable.");
 

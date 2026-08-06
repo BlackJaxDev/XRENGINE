@@ -8,8 +8,8 @@ public unsafe partial class VulkanRenderer
 {
     private OpenXrEyeRecordWorkerScheduler? OpenXrEyeWorkerSchedulerInstance
     {
-        get => _openXrBackend.EyeRecordWorkerScheduler as OpenXrEyeRecordWorkerScheduler;
-        set => _openXrBackend.EyeRecordWorkerScheduler = value;
+        get => OutputRuntime.OpenXrBackend.EyeRecordWorkerScheduler as OpenXrEyeRecordWorkerScheduler;
+        set => OutputRuntime.OpenXrBackend.EyeRecordWorkerScheduler = value;
     }
 
     private bool TryRenderOpenXrEyeSwapchainsWithParallelEyeWorkers(
@@ -136,10 +136,10 @@ public unsafe partial class VulkanRenderer
         in OpenXrPreparedEyeCommandBufferInput leftEye,
         in OpenXrPreparedEyeCommandBufferInput rightEye)
     {
-        if (!IsDeviceOperational)
+        if (!_deviceContext.IsOperational)
             return new OpenXrEyeRecordWorkerBatchResult(
-                new(false, default, Environment.CurrentManagedThreadId, TimeSpan.Zero, $"Vulkan device state is {DeviceState}"),
-                new(false, default, Environment.CurrentManagedThreadId, TimeSpan.Zero, $"Vulkan device state is {DeviceState}"),
+                new(false, default, Environment.CurrentManagedThreadId, TimeSpan.Zero, $"Vulkan device state is {_deviceContext.State}"),
+                new(false, default, Environment.CurrentManagedThreadId, TimeSpan.Zero, $"Vulkan device state is {_deviceContext.State}"),
                 TimeSpan.Zero);
 
         OpenXrEyeRecordWorkerScheduler scheduler = EnsureOpenXrEyeRecordWorkerScheduler();
@@ -154,7 +154,7 @@ public unsafe partial class VulkanRenderer
         in OpenXrPreparedEyeCommandBufferInput prepared,
         out OpenXrRecordedEyeCommandBuffer recorded)
     {
-        if (!IsDeviceOperational)
+        if (!_deviceContext.IsOperational)
         {
             recorded = default;
             return false;

@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>
         /// The Vulkan descriptor pool associated with this renderer.
         /// </summary>
-        private DescriptorPool descriptorPool;
+        private ref DescriptorPool descriptorPool => ref ResourceRuntime.Descriptors.RootPool;
 
         /// <summary>
         /// Destroys the Vulkan descriptor pool associated with this renderer, if it exists.
@@ -33,12 +33,12 @@ namespace XREngine.Rendering.Vulkan
                 new()
                 {
                     Type = DescriptorType.UniformBuffer,
-                    DescriptorCount = (uint)swapChainImages!.Length,
+                    DescriptorCount = (uint)OutputRuntime.Desktop.Images!.Length,
                 },
                 new()
                 {
                     Type = DescriptorType.CombinedImageSampler,
-                    DescriptorCount = (uint)swapChainImages!.Length,
+                    DescriptorCount = (uint)OutputRuntime.Desktop.Images!.Length,
                 }
             };
 
@@ -51,10 +51,10 @@ namespace XREngine.Rendering.Vulkan
                     SType = StructureType.DescriptorPoolCreateInfo,
                     PoolSizeCount = (uint)poolSizes.Length,
                     PPoolSizes = poolSizesPtr,
-                    MaxSets = (uint)swapChainImages!.Length,
+                    MaxSets = (uint)OutputRuntime.Desktop.Images!.Length,
                 };
 
-                if (Api!.CreateDescriptorPool(device, ref poolInfo, null, descriptorPoolPtr) != Result.Success)
+                if (Api!.CreateDescriptorPool(_deviceContext.Device, ref poolInfo, null, descriptorPoolPtr) != Result.Success)
                     throw new Exception("Failed to create descriptor pool.");
 
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolCreate();

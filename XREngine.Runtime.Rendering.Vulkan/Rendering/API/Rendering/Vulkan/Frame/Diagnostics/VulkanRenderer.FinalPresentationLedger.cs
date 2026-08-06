@@ -5,9 +5,6 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private readonly VulkanFinalPresentationLedgerState _finalPresentationLedger =
-        new(XREnvironment.IsEnabled(
-            XREngineEnvironmentVariables.VulkanFinalPresentationLedger));
 
     internal void ObserveFinalPresentationDescriptor(
         int descriptorSlot,
@@ -42,10 +39,10 @@ public unsafe partial class VulkanRenderer
                 out _);
         }
 
-        if (!_finalPresentationLedger.Enabled)
+        if (!_frameTelemetry._finalPresentationLedger.Enabled)
             return;
 
-        _finalPresentationLedger.ObserveDescriptor(
+        _frameTelemetry._finalPresentationLedger.ObserveDescriptor(
             VulkanFrameCounter,
             descriptorSlot,
             unchecked((ulong)commandBuffer.Handle),
@@ -65,7 +62,7 @@ public unsafe partial class VulkanRenderer
         bool presentAccepted,
         bool hasValidFrameContent)
     {
-        if (!_finalPresentationLedger.Enabled)
+        if (!_frameTelemetry._finalPresentationLedger.Enabled)
             return;
 
         string? sourceName = _lastWindowPresentColorTexture?.Name;
@@ -88,7 +85,7 @@ public unsafe partial class VulkanRenderer
                 out sourceSnapshot);
 
         VulkanFinalPresentationDescriptorObservation descriptor =
-            _finalPresentationLedger.CaptureLatestDescriptor();
+            _frameTelemetry._finalPresentationLedger.CaptureLatestDescriptor();
 
         _ = TryGetCommandBufferDiagnosticMetadata(
             attempt.ImageIndex,
@@ -101,9 +98,9 @@ public unsafe partial class VulkanRenderer
             ResolveCommandBufferRecordingGeneration(
                 attempt.SceneCommandBuffer);
         bool hadValidPriorSwapchainContent =
-            _swapchainImageHasValidPresentedContent is not null &&
-            attempt.ImageIndex < _swapchainImageHasValidPresentedContent.Length &&
-            _swapchainImageHasValidPresentedContent[attempt.ImageIndex];
+            OutputRuntime.Desktop.ImageHasValidPresentedContent is not null &&
+            attempt.ImageIndex < OutputRuntime.Desktop.ImageHasValidPresentedContent.Length &&
+            OutputRuntime.Desktop.ImageHasValidPresentedContent[attempt.ImageIndex];
 
         bool invariantFailed = false;
         string? invariantFailure = null;
@@ -147,15 +144,15 @@ public unsafe partial class VulkanRenderer
             }
         }
 
-        _finalPresentationLedger.Append(
+        _frameTelemetry._finalPresentationLedger.Append(
             new VulkanFinalPresentationLedgerEntry(
                 attempt.FrameNumber,
                 attempt.FrameSlot,
                 attempt.ImageIndex,
-                _swapchainGeneration,
-                swapChain.Handle,
-                swapChainExtent.Width,
-                swapChainExtent.Height,
+                OutputRuntime.Desktop.Generation,
+                OutputRuntime.Desktop.Swapchain.Handle,
+                OutputRuntime.Desktop.Extent.Width,
+                OutputRuntime.Desktop.Extent.Height,
                 attempt.LiveFramebufferWidth,
                 attempt.LiveFramebufferHeight,
                 attempt.InteractiveResize,
@@ -192,13 +189,13 @@ public unsafe partial class VulkanRenderer
 
     public object GetFinalPresentationLedgerDiagnostics(int limit = 64)
     {
-        _finalPresentationLedger.CaptureStatus(
+        _frameTelemetry._finalPresentationLedger.CaptureStatus(
             out bool enabled,
             out bool frozen,
             out int count,
             out string? freezeReason);
         VulkanFinalPresentationLedgerEntry[] entries =
-            _finalPresentationLedger.Snapshot(limit);
+            _frameTelemetry._finalPresentationLedger.Snapshot(limit);
         return new
         {
             enabled,
@@ -216,7 +213,7 @@ public unsafe partial class VulkanRenderer
         bool frozen,
         bool clear)
     {
-        _finalPresentationLedger.Configure(enabled, frozen, clear);
+        _frameTelemetry._finalPresentationLedger.Configure(enabled, frozen, clear);
         return GetFinalPresentationLedgerDiagnostics(1);
     }
 }

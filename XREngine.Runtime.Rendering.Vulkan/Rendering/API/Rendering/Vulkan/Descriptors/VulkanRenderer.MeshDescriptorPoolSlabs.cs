@@ -22,9 +22,10 @@ public unsafe partial class VulkanRenderer
             setsPerAllocation,
             updateAfterBind);
 
-        lock (_descriptorManager.MeshDescriptorPoolSlabLock)
+        VulkanDescriptorManager descriptors = ResourceRuntime.Descriptors;
+        lock (descriptors.MeshDescriptorPoolSlabLock)
         {
-            if (_descriptorManager.MeshDescriptorPoolSlabs.TryGetValue(key, out List<MeshDescriptorPoolSlab>? slabs))
+            if (descriptors.MeshDescriptorPoolSlabs.TryGetValue(key, out List<MeshDescriptorPoolSlab>? slabs))
             {
                 for (int i = 0; i < slabs.Count; i++)
                 {
@@ -40,7 +41,7 @@ public unsafe partial class VulkanRenderer
             else
             {
                 slabs = [];
-                _descriptorManager.MeshDescriptorPoolSlabs.Add(key, slabs);
+                descriptors.MeshDescriptorPoolSlabs.Add(key, slabs);
             }
 
             DescriptorPoolSize[] slabPoolSizes = new DescriptorPoolSize[perAllocationPoolSizes.Length];
@@ -97,7 +98,8 @@ public unsafe partial class VulkanRenderer
 
         DescriptorPool pool = lease.Pool;
         bool retireWholePool = false;
-        lock (_descriptorManager.MeshDescriptorPoolSlabLock)
+        VulkanDescriptorManager descriptors = ResourceRuntime.Descriptors;
+        lock (descriptors.MeshDescriptorPoolSlabLock)
         {
             if (lease.Released)
                 return;
@@ -109,11 +111,11 @@ public unsafe partial class VulkanRenderer
                 throw new InvalidOperationException("Mesh descriptor pool slab lease underflow.");
             if (slab.LiveAllocationCount == 0)
             {
-                if (_descriptorManager.MeshDescriptorPoolSlabs.TryGetValue(slab.Key, out List<MeshDescriptorPoolSlab>? slabs))
+                if (descriptors.MeshDescriptorPoolSlabs.TryGetValue(slab.Key, out List<MeshDescriptorPoolSlab>? slabs))
                 {
                     slabs.Remove(slab);
                     if (slabs.Count == 0)
-                        _descriptorManager.MeshDescriptorPoolSlabs.Remove(slab.Key);
+                        descriptors.MeshDescriptorPoolSlabs.Remove(slab.Key);
                 }
                 retireWholePool = true;
             }
@@ -150,7 +152,7 @@ public unsafe partial class VulkanRenderer
         int allocatedSetCount,
         bool sharedMaterialTier)
     {
-        int diagnosticIndex = _descriptorManager.RecordMeshOwnershipDiagnostic();
+        int diagnosticIndex = ResourceRuntime.Descriptors.RecordMeshOwnershipDiagnostic();
         if (diagnosticIndex > MeshOwnershipDiagnosticLimit)
             return;
 

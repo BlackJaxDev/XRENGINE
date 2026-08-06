@@ -4,29 +4,28 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private Framebuffer[]? swapChainFramebuffers;
 
     private void DestroyFrameBuffers()
     {
-        if (swapChainFramebuffers is null)
+        if (OutputRuntime.Desktop.Framebuffers is null)
             return;
 
-        foreach (var framebuffer in swapChainFramebuffers)
+        foreach (var framebuffer in OutputRuntime.Desktop.Framebuffers)
         {
             if (framebuffer.Handle != 0)
                 RetireFramebuffer(framebuffer);
         }
 
         DrainRetiredFramebuffers(CurrentDesktopFrameSlot, int.MaxValue);
-        swapChainFramebuffers = null;
+        OutputRuntime.Desktop.Framebuffers = null;
     }
 
     private void CreateFramebuffers()
     {
-        if (swapChainImageViews is null || swapChainImageViews.Length == 0)
+        if (OutputRuntime.Desktop.ImageViews is null || OutputRuntime.Desktop.ImageViews.Length == 0)
             throw new InvalidOperationException("Swapchain image views must be created before framebuffers.");
 
-        swapChainFramebuffers = new Framebuffer[swapChainImageViews.Length];
+        OutputRuntime.Desktop.Framebuffers = new Framebuffer[OutputRuntime.Desktop.ImageViews.Length];
         if (UseDynamicRenderingRenderTargets)
         {
             AllocateCommandBufferDirtyFlags();
@@ -35,9 +34,9 @@ public unsafe partial class VulkanRenderer
 
         ImageView[] attachments = new ImageView[2];
 
-        for (int i = 0; i < swapChainImageViews.Length; i++)
+        for (int i = 0; i < OutputRuntime.Desktop.ImageViews.Length; i++)
         {
-            attachments[0] = swapChainImageViews[i];
+            attachments[0] = OutputRuntime.Desktop.ImageViews[i];
             attachments[1] = _swapchainDepthView;
 
             fixed (ImageView* attachmentsPtr = attachments)
@@ -45,22 +44,22 @@ public unsafe partial class VulkanRenderer
                 FramebufferCreateInfo framebufferInfo = new()
                 {
                     SType = StructureType.FramebufferCreateInfo,
-                    RenderPass = _renderPass,
+                    RenderPass = ResourceRuntime.SwapchainRenderPass,
                     AttachmentCount = 2,
                     PAttachments = attachmentsPtr,
-                    Width = swapChainExtent.Width,
-                    Height = swapChainExtent.Height,
+                    Width = OutputRuntime.Desktop.Extent.Width,
+                    Height = OutputRuntime.Desktop.Extent.Height,
                     Layers = 1,
                 };
 
-                if (Api!.CreateFramebuffer(device, ref framebufferInfo, null, out swapChainFramebuffers[i]) != Result.Success)
+                if (Api!.CreateFramebuffer(_deviceContext.Device, ref framebufferInfo, null, out OutputRuntime.Desktop.Framebuffers[i]) != Result.Success)
                     throw new Exception("Failed to create framebuffer.");
 
                 RegisterVulkanFramebuffer(
-                    swapChainFramebuffers[i],
+                    OutputRuntime.Desktop.Framebuffers[i],
                     attachments,
                     $"Swapchain.Framebuffer[{i}]");
-                SetDebugObjectName(ObjectType.Framebuffer, swapChainFramebuffers[i].Handle, $"Swapchain.Framebuffer[{i}]");
+                SetDebugObjectName(ObjectType.Framebuffer, OutputRuntime.Desktop.Framebuffers[i].Handle, $"Swapchain.Framebuffer[{i}]");
             }
         }
 

@@ -15,28 +15,25 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+/// <summary>
+/// Counters and failure details collected while recording a primary command buffer.
+/// </summary>
+internal struct PrimaryCommandBufferRecordingMetrics
 {
-    /// <summary>
-    /// Counters and failure details collected while recording a primary command buffer.
-    /// </summary>
-    internal struct PrimaryCommandBufferRecordingMetrics
-    {
-        public int DroppedDrawOps;
-        public int DroppedComputeOps;
-        public int DroppedFrameOps;
-        public FrameOpFailureSnapshot? FirstFailure;
-        public int ClearCount;
-        public int DrawCount;
-        public int MeshDrawCount;
-        public int IndirectDrawCount;
-        public int MeshTaskDispatchCount;
-        public int BlitCount;
-        public int ComputeCount;
-        public int SwapchainClearWrites;
-        public int ForcedDiagnosticSwapchainWriters;
-        public int FboOnlyDrawOps;
-        public int FboOnlyBlitOps;
-    }
+    public int DroppedDrawOps;
+    public int DroppedComputeOps;
+    public int DroppedFrameOps;
+    public FrameOpFailureSnapshot? FirstFailure;
+    public int ClearCount;
+    public int DrawCount;
+    public int MeshDrawCount;
+    public int IndirectDrawCount;
+    public int MeshTaskDispatchCount;
+    public int BlitCount;
+    public int ComputeCount;
+    public int SwapchainClearWrites;
+    public int ForcedDiagnosticSwapchainWriters;
+    public int FboOnlyDrawOps;
+    public int FboOnlyBlitOps;
 }
 

@@ -246,6 +246,7 @@ internal unsafe partial class VkMeshRenderer
             }
 
         artifact = snapshot.CreatePersistentProgramBindingArtifact(
+            Renderer,
             RetainedArtifactEngineRequirements);
         return true;
     }

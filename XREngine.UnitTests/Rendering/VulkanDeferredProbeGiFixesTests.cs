@@ -332,7 +332,7 @@ public sealed class VulkanDeferredProbeGiFixesTests
         string vmaSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Memory/VulkanVmaAllocator.cs");
         string graphCompilerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderGraphCompiler.cs");
         string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
-        string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
+        string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanRenderer.BufferOperations.cs");
         string imageTextureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
         string gpuBvhSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/GpuMeshBvh.cs");
         string bvhRaycastSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/BvhRaycastDispatcher.cs");
@@ -620,8 +620,8 @@ public sealed class VulkanDeferredProbeGiFixesTests
     [Test]
     public void VulkanPhase1Diagnostics_DeviceLossFooterIncludesBreadcrumbsFaultsAndNamedSyncObjects()
     {
-        string diagnosticsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.DeviceLossDiagnostics.cs");
-        string phase1Source = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.DeviceLossDiagnostics.Phase1.cs");
+        string diagnosticsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Diagnostics/VulkanRenderer.DeviceLossDiagnostics.cs");
+        string phase1Source = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Diagnostics/VulkanRenderer.DeviceLossDiagnostics.ExtendedReporting.cs");
         string syncSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.SyncObjects.cs");
         string openXrSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
         string oneTimeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.OneTimeSubmit.cs");
@@ -650,12 +650,13 @@ public sealed class VulkanDeferredProbeGiFixesTests
     [Test]
     public void VulkanPhase1Diagnostics_CollectFaultArtifactsAddressBindingsAndCheckpoints()
     {
-        string diagnosticsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.DeviceLossDiagnostics.cs");
-        string phase1Source = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.DeviceLossDiagnostics.Phase1.cs");
-        string validationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Validation.cs");
-        string synchronizationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
-        string recordingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
-        string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
+        string diagnosticsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Diagnostics/VulkanRenderer.DeviceLossDiagnostics.cs");
+        string phase1Source = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Diagnostics/VulkanRenderer.DeviceLossDiagnostics.ExtendedReporting.cs");
+        string validationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanValidationDiagnostics.cs");
+        string extendedReportingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Diagnostics/VulkanRenderer.DeviceLossDiagnostics.ExtendedReporting.cs");
+        string synchronizationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Synchronization/VulkanRenderer.Synchronization.cs");
+        string recordingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Operations.cs");
+        string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanRenderer.BufferOperations.cs");
         string descriptorHeapSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.DescriptorHeap.cs");
         string logicalDeviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
 
@@ -668,15 +669,17 @@ public sealed class VulkanDeferredProbeGiFixesTests
         phase1Source.ShouldContain("vulkan-device-fault-vendor-");
         phase1Source.ShouldContain("Result.Incomplete");
         phase1Source.ShouldContain("vendorBinaryStatus");
-        phase1Source.ShouldContain("DeviceAddressBindingCallbackDataEXT");
+        validationSource.ShouldContain("DeviceAddressBindingCallbackDataEXT");
         phase1Source.ShouldContain("RegisterVulkanDeviceAddressRange");
         phase1Source.ShouldContain("DescribeVulkanAddressCorrelation");
         phase1Source.ShouldContain("CmdSetCheckpoint");
         phase1Source.ShouldContain("VulkanNvCheckpointMarkerCapacity");
         phase1Source.ShouldContain("GetQueueCheckpointData2");
-        validationSource.ShouldContain("RecordVulkanDeviceAddressBindingCallback(pCallbackData)");
+        validationSource.ShouldContain("RecordDeviceAddressBindings(callbackData)");
+        validationSource.ShouldContain("DrainDeviceAddressBindings(");
+        extendedReportingSource.ShouldContain("ImportValidationDeviceAddressBindings()");
         synchronizationSource.ShouldContain("RecordVulkanImageLayoutTransitionBreadcrumb(commandBuffer, imageBarrierCount, imageBarriers, caller)");
-        recordingSource.ShouldContain("RecordVulkanCommandDiagnosticMarker(commandBuffer, op, opPassIndex, opIndex)");
+        recordingSource.ShouldContain("RecordVulkanCommandDiagnosticMarker(");
         bufferSource.ShouldContain("RegisterVulkanDeviceAddressRange(buffer, address, bufferSize");
         descriptorHeapSource.ShouldContain("RecordVulkanDescriptorTableGeneration");
         logicalDeviceSource.ShouldContain("VendorCrashHooks");

@@ -4,9 +4,10 @@ using XREngine.Rendering.Vulkan.RenderGraph;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Thread-owned, frame-slot-ring builder for immutable <see cref="FramePlan"/>
-/// publications. Storage grows only when a new high-water mark is observed and
-/// is reused by the same frame slot after warmup.
+/// Render-graph-owned, frame-slot-ring builder for immutable
+/// <see cref="FramePlan"/> publications. Storage grows only when a new
+/// high-water mark is observed and is reused by the same frame slot after
+/// warmup.
 /// </summary>
 internal sealed class FramePlanBuilder
 {
@@ -14,12 +15,12 @@ internal sealed class FramePlanBuilder
     {
         internal readonly ViewSetPlan ViewSet = new();
         internal readonly FramePlan Plan;
-        internal readonly ExactLengthBufferCache<FrameOp> OperationBuffers = new();
-        internal readonly ExactLengthBufferCache<FrameOp> DynamicOverlayOperationBuffers = new();
-        internal FrameOp[] Operations = Array.Empty<FrameOp>();
-        internal FrameOp[] DynamicOverlayOperations = Array.Empty<FrameOp>();
-        internal FrameOp[] OperationOrderingScratch = new FrameOp[64];
-        internal FrameOp[] DynamicOverlayOrderingScratch = new FrameOp[16];
+        internal readonly FrameOperationStream Operations = new();
+        internal readonly FrameOperationStream DynamicOverlayOperations = new();
+        internal readonly FrameOperationIngress StaticIngress = new();
+        internal readonly FrameOperationIngress DynamicIngress = new();
+        // Authoring arrays are never published. The slot's operation streams
+        // are the plan-owned representation after numeric ordering.
         internal int[] OperationOrderScratch = new int[64];
         internal int[] OperationDependencyScratch = new int[64];
         internal int[] OperationTopologicalOrderScratch = new int[64];
@@ -35,17 +36,11 @@ internal sealed class FramePlanBuilder
         internal Slot() => Plan = new FramePlan(ViewSet);
     }
 
-    [ThreadStatic]
-    private static FramePlanBuilder? s_currentThreadBuilder;
-
     private Slot[] _slots = [new(), new(), new(), new()];
     private Slot[] _retiredSlots = new Slot[4];
     private int _retiredSlotCount;
     private readonly RenderOutputGraphPlanner _outputGraphPlanner = new();
-    private static long s_nextGeneration;
-
-    internal static FramePlanBuilder GetCurrentThread()
-        => s_currentThreadBuilder ??= new FramePlanBuilder();
+    private long _nextGeneration;
 
     internal FramePlan BuildAndSeal(
         int frameSlot,
@@ -67,11 +62,15 @@ internal sealed class FramePlanBuilder
         EVrOutputViewKind? openXrViewKind = ResolveOpenXrViewKind(
             slot.ViewSet,
             openXrViewIndex);
+        slot.StaticIngress.Populate(operations);
+        slot.DynamicIngress.Populate(dynamicOverlayOperations);
+        FrameOperationIngress staticIngress = slot.StaticIngress;
+        FrameOperationIngress dynamicIngress = slot.DynamicIngress;
 
         int outputCount = 0;
         int operationKeyCount = 0;
-        AddPlanMetadata(slot, operations, dynamicOverlay: false, openXrViewKind, ref outputCount, ref operationKeyCount);
-        AddPlanMetadata(slot, dynamicOverlayOperations, dynamicOverlay: true, openXrViewKind, ref outputCount, ref operationKeyCount);
+        AddPlanMetadata(slot, staticIngress, dynamicOverlay: false, openXrViewKind, ref outputCount, ref operationKeyCount);
+        AddPlanMetadata(slot, dynamicIngress, dynamicOverlay: true, openXrViewKind, ref outputCount, ref operationKeyCount);
         SortOutputs(slot.Outputs, outputCount);
         int outputExecutionNodeCount = CompileOutputGraph(
             slot,
@@ -79,13 +78,13 @@ internal sealed class FramePlanBuilder
             renderFrameId);
         int operationCount = CopyOperationsInDagOrder(
             slot,
-            operations,
+            staticIngress,
             outputCount,
             openXrViewKind,
             dynamicOverlay: false);
         int dynamicOperationCount = CopyOperationsInDagOrder(
             slot,
-            dynamicOverlayOperations,
+            dynamicIngress,
             outputCount,
             openXrViewKind,
             dynamicOverlay: true);
@@ -95,13 +94,13 @@ internal sealed class FramePlanBuilder
             dynamicOperationCount);
 
         ComputeVersionSignatures(
-            operations,
-            dynamicOverlayOperations,
+            staticIngress,
+            dynamicIngress,
             out ulong resourceVersionSignature,
             out ulong descriptorVersionSignature);
-        ulong generation = unchecked((ulong)Interlocked.Increment(ref s_nextGeneration));
+        ulong generation = unchecked((ulong)Interlocked.Increment(ref _nextGeneration));
         if (generation == 0UL)
-            generation = unchecked((ulong)Interlocked.Increment(ref s_nextGeneration));
+            generation = unchecked((ulong)Interlocked.Increment(ref _nextGeneration));
         slot.Plan.Publish(
             frameSlot,
             generation,
@@ -112,9 +111,7 @@ internal sealed class FramePlanBuilder
             staticOperationSignature,
             dynamicOverlaySignature,
             slot.Operations,
-            operationCount,
             slot.DynamicOverlayOperations,
-            dynamicOperationCount,
             slot.Outputs,
             outputCount,
             slot.OutputExecutionNodes,
@@ -173,40 +170,30 @@ internal sealed class FramePlanBuilder
 
     private static int CopyOperationsInDagOrder(
         Slot slot,
-        FrameOp[] source,
+        FrameOperationIngress source,
         int outputCount,
         EVrOutputViewKind? openXrViewKind,
         bool dynamicOverlay)
     {
-        FrameOp[] orderingScratch = dynamicOverlay
-            ? slot.DynamicOverlayOrderingScratch
-            : slot.OperationOrderingScratch;
-        EnsureCapacity(ref orderingScratch, source.Length);
-        source.CopyTo(orderingScratch, 0);
-        if (dynamicOverlay)
-            slot.DynamicOverlayOrderingScratch = orderingScratch;
-        else
-            slot.OperationOrderingScratch = orderingScratch;
-
         int[] orderScratch = dynamicOverlay
             ? slot.DynamicOverlayOperationOrderScratch
             : slot.OperationOrderScratch;
-        EnsureCapacity(ref orderScratch, source.Length);
-        for (int index = 0; index < source.Length; index++)
+        EnsureCapacity(ref orderScratch, source.Count);
+        for (int index = 0; index < source.Count; index++)
             orderScratch[index] = index;
         SortOperationOrder(
             slot,
-            orderingScratch,
+            source,
             orderScratch,
-            source.Length,
+            source.Count,
             outputCount,
             openXrViewKind);
-        EnsureCapacity(ref slot.OperationDependencyScratch, source.Length);
-        EnsureCapacity(ref slot.OperationTopologicalOrderScratch, source.Length);
+        EnsureCapacity(ref slot.OperationDependencyScratch, source.Count);
+        EnsureCapacity(ref slot.OperationTopologicalOrderScratch, source.Count);
         CompileResourceDependencyOrder(
-            orderingScratch,
+            source,
             orderScratch,
-            source.Length,
+            source.Count,
             slot.OperationDependencyScratch,
             slot.OperationTopologicalOrderScratch);
         if (dynamicOverlay)
@@ -214,24 +201,19 @@ internal sealed class FramePlanBuilder
         else
             slot.OperationOrderScratch = orderScratch;
 
-        FrameOp[] destination = dynamicOverlay
-            ? slot.DynamicOverlayOperationBuffers.Get(source.Length)
-            : slot.OperationBuffers.Get(source.Length);
-        for (int index = 0; index < source.Length; index++)
-            // Plans own a frozen logical snapshot rather than a frame-pool
-            // object that a later producer path could reset or repurpose.
-            destination[index] = orderingScratch[orderScratch[index]].CreateSealedPlanSnapshot();
-        if (dynamicOverlay)
-            slot.DynamicOverlayOperations = destination;
-        else
-            slot.Operations = destination;
+        FrameOperationStream destination = dynamicOverlay
+            ? slot.DynamicOverlayOperations
+            : slot.Operations;
+        // This is the sole producer-to-plan lowering boundary. The resulting
+        // stream owns opcode/payload-index headers and dense kind payloads.
+        destination.Lower(source, orderScratch.AsSpan(0, source.Count));
 
-        return source.Length;
+        return source.Count;
     }
 
     private static void SortOperationOrder(
         Slot slot,
-        FrameOp[] operations,
+        FrameOperationIngress operations,
         int[] order,
         int operationCount,
         int outputCount,
@@ -242,7 +224,7 @@ internal sealed class FramePlanBuilder
             int candidate = order[index];
             int candidateRank = GetOutputRank(
                 slot,
-                operations[candidate],
+                operations.GetContext(candidate),
                 outputCount,
                 openXrViewKind);
             int insertionIndex = index;
@@ -251,7 +233,7 @@ internal sealed class FramePlanBuilder
                 int prior = order[insertionIndex - 1];
                 int priorRank = GetOutputRank(
                     slot,
-                    operations[prior],
+                operations.GetContext(prior),
                     outputCount,
                     openXrViewKind);
                 if (priorRank < candidateRank ||
@@ -269,7 +251,7 @@ internal sealed class FramePlanBuilder
     }
 
     private static void CompileResourceDependencyOrder(
-        FrameOp[] operations,
+        FrameOperationIngress operations,
         int[] preferredOrder,
         int operationCount,
         int[] indegree,
@@ -278,7 +260,7 @@ internal sealed class FramePlanBuilder
         for (int index = 0; index < operationCount; index++)
         {
             indegree[index] = 0;
-            FrameOpResourceUseList uses = operations[index].ResourceUses;
+            FrameOpResourceUseList uses = operations.GetResourceUses(index);
             for (int useIndex = 0; useIndex < uses.Count; useIndex++)
             {
                 FrameOpResourceUse use = uses[useIndex];
@@ -326,12 +308,12 @@ internal sealed class FramePlanBuilder
     }
 
     private static bool DependsOn(
-        FrameOp[] operations,
+        FrameOperationIngress operations,
         int operationCount,
         int consumer,
         int producer)
     {
-        FrameOpResourceUseList uses = operations[consumer].ResourceUses;
+        FrameOpResourceUseList uses = operations.GetResourceUses(consumer);
         for (int useIndex = 0; useIndex < uses.Count; useIndex++)
         {
             FrameOpResourceUse use = uses[useIndex];
@@ -346,14 +328,14 @@ internal sealed class FramePlanBuilder
     }
 
     private static int FindUniqueProducer(
-        FrameOp[] operations,
+        FrameOperationIngress operations,
         int operationCount,
         int consumer,
         in FrameOpResourceUse read)
     {
         for (int candidate = consumer - 1; candidate >= 0; candidate--)
         {
-            FrameOpResourceUseList uses = operations[candidate].ResourceUses;
+            FrameOpResourceUseList uses = operations.GetResourceUses(candidate);
             for (int useIndex = 0; useIndex < uses.Count; useIndex++)
             {
                 FrameOpResourceUse write = uses[useIndex];
@@ -371,13 +353,13 @@ internal sealed class FramePlanBuilder
     }
 
     private static int FindPreviousWriter(
-        FrameOp[] operations,
+        FrameOperationIngress operations,
         int consumer,
         in FrameOpResourceUse write)
     {
         for (int candidate = consumer - 1; candidate >= 0; candidate--)
         {
-            FrameOpResourceUseList uses = operations[candidate].ResourceUses;
+            FrameOpResourceUseList uses = operations.GetResourceUses(candidate);
             for (int useIndex = 0; useIndex < uses.Count; useIndex++)
             {
                 FrameOpResourceUse prior = uses[useIndex];
@@ -393,12 +375,12 @@ internal sealed class FramePlanBuilder
 
     private static int GetOutputRank(
         Slot slot,
-        FrameOp operation,
+        in FrameOpContext context,
         int outputCount,
         EVrOutputViewKind? openXrViewKind)
     {
         OutputRequest request = OutputRequest.FromContext(
-            operation.Context,
+            context,
             openXrViewKind);
         for (int index = 0; index < outputCount; index++)
         {
@@ -419,14 +401,14 @@ internal sealed class FramePlanBuilder
         for (int index = 0; index < operationCount; index++)
         {
             slot.OperationKeys[keyCount++] = FramePlanOperationKey.FromOperation(
-                slot.Operations[index],
+                slot.Operations.GetPayloadForPrimaryDispatch(index),
                 index,
                 isDynamicOverlay: false);
         }
         for (int index = 0; index < dynamicOperationCount; index++)
         {
             slot.OperationKeys[keyCount++] = FramePlanOperationKey.FromOperation(
-                slot.DynamicOverlayOperations[index],
+                slot.DynamicOverlayOperations.GetPayloadForPrimaryDispatch(index),
                 index,
                 isDynamicOverlay: true);
         }
@@ -436,16 +418,15 @@ internal sealed class FramePlanBuilder
 
     private static void AddPlanMetadata(
         Slot slot,
-        FrameOp[] operations,
+        FrameOperationIngress operations,
         bool dynamicOverlay,
         EVrOutputViewKind? openXrViewKind,
         ref int outputCount,
         ref int operationKeyCount)
     {
-        for (int index = 0; index < operations.Length; index++)
+        for (int index = 0; index < operations.Count; index++)
         {
-            FrameOp operation = operations[index];
-            FrameOpContext context = operation.Context;
+            FrameOpContext context = operations.GetContext(index);
             slot.ViewSet.Add(context);
             EVrOutputViewKind? operationViewKind = openXrViewKind;
             if (context.ContextKind == EVulkanFrameOpContextKind.OpenXrEye &&
@@ -457,9 +438,9 @@ internal sealed class FramePlanBuilder
             }
             AddOutput(slot, OutputRequest.FromContext(context, operationViewKind), ref outputCount);
             EnsureCapacity(ref slot.OperationKeys, operationKeyCount + 1);
-            slot.OperationKeys[operationKeyCount++] = FramePlanOperationKey.FromOperation(
-                operation,
-                index,
+            slot.OperationKeys[operationKeyCount++] = FramePlanOperationKey.FromHeader(
+                operations.GetHeader(index),
+                context,
                 dynamicOverlay);
         }
     }
@@ -669,8 +650,8 @@ internal sealed class FramePlanBuilder
     }
 
     private static void ComputeVersionSignatures(
-        FrameOp[] operations,
-        FrameOp[] dynamicOverlayOperations,
+        FrameOperationIngress operations,
+        FrameOperationIngress dynamicOverlayOperations,
         out ulong resourceVersionSignature,
         out ulong descriptorVersionSignature)
     {
@@ -681,13 +662,13 @@ internal sealed class FramePlanBuilder
     }
 
     private static void AddVersionComponents(
-        FrameOp[] operations,
+        FrameOperationIngress operations,
         ref ulong resourceVersionSignature,
         ref ulong descriptorVersionSignature)
     {
-        for (int index = 0; index < operations.Length; index++)
+        for (int index = 0; index < operations.Count; index++)
         {
-            FrameOpContext context = operations[index].Context;
+            FrameOpContext context = operations.GetContext(index);
             Add(ref resourceVersionSignature, context.ResourceGeneration);
             Add(ref resourceVersionSignature, context.RecordingFingerprint);
             Add(ref descriptorVersionSignature, context.DescriptorGeneration);
@@ -701,37 +682,4 @@ internal sealed class FramePlanBuilder
         hash *= 1099511628211UL;
     }
 
-    private sealed class ExactLengthBufferCache<T>
-    {
-        // A transient spike must not permanently retain an unbounded set of
-        // exact-length plan buffers. Four sizes cover the slot ring's normal
-        // steady state while keeping future allocation behavior deterministic.
-        private const int MaximumCachedLengths = 8;
-        private T[][] _buffers = new T[4][];
-        private int _bufferCount;
-
-        internal T[] Get(int length)
-        {
-            for (int index = 0; index < _bufferCount; index++)
-            {
-                T[] buffer = _buffers[index];
-                if (buffer.Length == length)
-                    return buffer;
-            }
-
-            T[] created = length == 0 ? Array.Empty<T>() : new T[length];
-            if (_bufferCount == MaximumCachedLengths)
-            {
-                int evictionIndex = 0;
-                for (int index = 1; index < _bufferCount; index++)
-                    if (_buffers[index].Length < _buffers[evictionIndex].Length)
-                        evictionIndex = index;
-                _buffers[evictionIndex] = created;
-                return created;
-            }
-            EnsureCapacity(ref _buffers, _bufferCount + 1);
-            _buffers[_bufferCount++] = created;
-            return created;
-        }
-    }
 }

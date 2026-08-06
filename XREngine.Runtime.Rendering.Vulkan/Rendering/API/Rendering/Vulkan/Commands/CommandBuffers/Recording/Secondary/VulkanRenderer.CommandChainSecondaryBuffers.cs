@@ -26,7 +26,7 @@ public unsafe partial class VulkanRenderer
 
         DestroyCommandChainSecondaryCommandBuffer(chain);
 
-        QueueFamilyIndices queueFamilyIndices = FamilyQueueIndices;
+        QueueFamilyIndices queueFamilyIndices = _deviceContext.QueueFamilies;
         uint graphicsFamily = queueFamilyIndices.GraphicsFamilyIndex
             ?? throw new InvalidOperationException("Graphics queue family is not available.");
         CommandPool pool = CreateCommandPoolForFamily(graphicsFamily);
@@ -217,13 +217,13 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        lock (_resourceLifetimeTracker.SyncRoot)
+        lock (ResourceRuntime.Lifetime.Tracker.SyncRoot)
         {
             IReadOnlyList<KeyValuePair<VulkanResourceLifetimeKey, ulong>> dependencies =
                 Array.Empty<KeyValuePair<VulkanResourceLifetimeKey, ulong>>();
             ulong recordingGeneration = artifact.RecordingGeneration;
             int queuedSubmissionCount = 0;
-            if (_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(
+            if (ResourceRuntime.Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(
                     handle,
                     out VulkanCommandBufferLifetimeRecord? lifetime))
             {
@@ -233,7 +233,7 @@ public unsafe partial class VulkanRenderer
             }
 
             int recordedPrimaryReferenceCount = 0;
-            if (_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(
+            if (ResourceRuntime.Lifetime.Tracker.ResourceLifetimes.TryGetValue(
                     ResourceKey(ObjectType.CommandBuffer, handle),
                     out VulkanResourceLifetimeRecord? resource))
             {

@@ -1,12 +1,10 @@
 using System.Text;
 using Silk.NET.Vulkan;
 
-namespace XREngine.Rendering.Vulkan
+namespace XREngine.Rendering.Vulkan;
+
+internal sealed partial class CommandBufferRecordingScratch
 {
-    public unsafe partial class VulkanRenderer
-    {
-        internal sealed partial class CommandBufferRecordingScratch
-        {
             public VulkanRenderScopeController RenderScope { get; } = new();
             public Dictionary<int, VulkanSecondaryRecordingBucket> SecondaryBucketByStart { get; } = new();
             public List<VulkanSecondaryRecordingBucket> SecondaryRecordingBuckets { get; } = new(32);
@@ -74,6 +72,22 @@ namespace XREngine.Rendering.Vulkan
             public int RecordMeshDrawSlotCapacityHint { get; set; } = 1;
             public int RecordFboLayoutCapacityHint { get; set; } = 1;
             public VulkanPreparedComputePayload? PreparedComputePayload { get; set; }
+            private CommandBuffer[] _indirectSecondaryBuffers = [];
+            private CommandChain[] _indirectSecondaryChains = [];
+            private int[] _indirectSecondaryUniformSlots = [];
+            private VkMeshRenderer.IndirectDrawRecordingState[] _indirectSecondaryRecordingStates = [];
+            private bool[] _indirectSecondaryRecordingStatePrepared = [];
+            private int[] _meshSecondaryUniformSlots = [];
+            private CommandBuffer[] _nonGraphicsSecondaryBuffers = [];
+            private CommandChain[] _nonGraphicsSecondaryChains = [];
+            public CommandBuffer[] IndirectSecondaryBuffers => _indirectSecondaryBuffers;
+            public CommandChain[] IndirectSecondaryChains => _indirectSecondaryChains;
+            public int[] IndirectSecondaryUniformSlots => _indirectSecondaryUniformSlots;
+            public VkMeshRenderer.IndirectDrawRecordingState[] IndirectSecondaryRecordingStates => _indirectSecondaryRecordingStates;
+            public bool[] IndirectSecondaryRecordingStatePrepared => _indirectSecondaryRecordingStatePrepared;
+            public int[] MeshSecondaryUniformSlots => _meshSecondaryUniformSlots;
+            public CommandBuffer[] NonGraphicsSecondaryBuffers => _nonGraphicsSecondaryBuffers;
+            public CommandChain[] NonGraphicsSecondaryChains => _nonGraphicsSecondaryChains;
             private int[] _primaryMeshDrawUniformSlotsByOpIndex = [];
             private bool[]
                 _primaryScheduledCommandChainFrameDataRefreshedByOpIndex = [];
@@ -101,6 +115,33 @@ namespace XREngine.Rendering.Vulkan
                 _dynamicUiReusableFrameOwners = [];
             private readonly HashSet<VulkanReusableFrameOwnerKey>
                 _scheduledCommandChainFrameDataOwners = [];
+
+            public void EnsureIndirectSecondaryCapacity(int required)
+            {
+                EnsureCapacity(ref _indirectSecondaryBuffers, required);
+                EnsureCapacity(ref _indirectSecondaryChains, required);
+                EnsureCapacity(ref _indirectSecondaryUniformSlots, required);
+                EnsureCapacity(ref _indirectSecondaryRecordingStates, required);
+                EnsureCapacity(ref _indirectSecondaryRecordingStatePrepared, required);
+            }
+
+            public void EnsureMeshSecondaryCapacity(int required)
+                => EnsureCapacity(ref _meshSecondaryUniformSlots, required);
+
+            public void EnsureNonGraphicsSecondaryCapacity(int required)
+            {
+                EnsureCapacity(ref _nonGraphicsSecondaryBuffers, required);
+                EnsureCapacity(ref _nonGraphicsSecondaryChains, required);
+            }
+
+            private static void EnsureCapacity<T>(ref T[] buffer, int required)
+            {
+                if (required <= buffer.Length)
+                    return;
+
+                int capacity = Math.Max(required, Math.Max(buffer.Length * 2, 16));
+                Array.Resize(ref buffer, capacity);
+            }
 
             public VulkanReusableFrameDataRefreshBatchInfo
                 PrimaryReusableFrameDataRefreshBatchInfo { get; private set; }
@@ -349,7 +390,4 @@ namespace XREngine.Rendering.Vulkan
                 Array.Resize(ref requests, capacity);
             }
 
-        }
-
-    }
 }

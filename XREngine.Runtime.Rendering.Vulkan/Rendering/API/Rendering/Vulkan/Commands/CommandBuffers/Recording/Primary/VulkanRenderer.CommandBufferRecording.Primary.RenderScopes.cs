@@ -403,7 +403,7 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 // Fallback: traditional render pass path.
-                // Use _renderPassLoad (LoadOp.Load) on re-entry to preserve contents.
+                // Use ResourceRuntime.SwapchainLoadRenderPass (LoadOp.Load) on re-entry to preserve contents.
                 bool legacyOverlaySwapchainPass = IsOverlayContext(context);
                 bool legacyLoadExistingSwapchainColor =
                     recordingState.SwapchainClearedThisFrame ||
@@ -413,14 +413,14 @@ namespace XREngine.Rendering.Vulkan
                     ? AttachmentLoadOp.Load
                     : AttachmentLoadOp.Clear;
                 RenderPass selectedRenderPass = legacyLoadExistingSwapchainColor
-                    ? _renderPassLoad
-                    : _renderPass;
+                    ? ResourceRuntime.SwapchainLoadRenderPass
+                    : ResourceRuntime.SwapchainRenderPass;
 
                 RenderPassBeginInfo renderPassInfo = new()
                 {
                     SType = StructureType.RenderPassBeginInfo,
                     RenderPass = selectedRenderPass,
-                    Framebuffer = swapChainFramebuffers![recordingState.ImageIndex],
+                    Framebuffer = OutputRuntime.Desktop.Framebuffers![recordingState.ImageIndex],
                     RenderArea = new Rect2D
                     {
                         Offset = new Offset2D(0, 0),
@@ -443,7 +443,7 @@ namespace XREngine.Rendering.Vulkan
                     null,
                     usesDynamicRendering: false,
                     selectedRenderPass,
-                    swapChainFramebuffers![recordingState.ImageIndex],
+                    OutputRuntime.Desktop.Framebuffers![recordingState.ImageIndex],
                     default,
                     null,
                     renderPassInfo.RenderArea,
@@ -457,7 +457,7 @@ namespace XREngine.Rendering.Vulkan
                         ResolvePassName(context.PassMetadata, passIndex),
                         recordingState.ImageIndex,
                         selectedRenderPass.Handle,
-                        swapChainFramebuffers![recordingState.ImageIndex].Handle,
+                        OutputRuntime.Desktop.Framebuffers![recordingState.ImageIndex].Handle,
                         recordingState.SwapchainRecordExtent.Width,
                         recordingState.SwapchainRecordExtent.Height,
                         legacySwapchainLoadOp,

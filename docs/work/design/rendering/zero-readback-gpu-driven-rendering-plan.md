@@ -149,7 +149,7 @@ Current command layout:
   - `GPUIndirectRenderCommandHot` (168 bytes) — bounds, IDs, flags, layer mask, LOD, source index. Consumed by SoA culling.
   - `GPUIndirectRenderCommandCold` (144 bytes) — transforms, shader program, render distance. Consumed by draw generation.
   - `ToHot()`, `ToCold()`, `FromHotCold()` conversion helpers.
-  - `GPURenderCullingSoA.comp` and `GPURenderExtractSoA.comp` already consume these.
+  - The canonical GPU culling stages consume `DrawMetadata` and `BoundsBuffer` directly.
 
 Current structural issues:
 
@@ -732,7 +732,7 @@ Do not attribute CPU synchronization cost to generic `RenderMeshesPass` once the
 ## Phase 3. Refactor scene data layout
 
 - extend the existing Hot/Cold decomposition (`GPUIndirectRenderCommandHot`/`Cold`) into the full target stream set: metadata, transform, previous-transform, bounds, and skinning streams
-- the existing `GPURenderCullingSoA.comp` and `GPURenderExtractSoA.comp` shaders provide the starting point — generalize them for the new buffer layout
+- retain direct consumption of stage-native GPUScene streams; do not reintroduce an extraction compatibility stage
 - add stable IDs and dirty-range upload plumbing
 - minimize full-buffer rewrites during swap
 

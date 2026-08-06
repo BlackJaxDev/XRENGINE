@@ -197,24 +197,11 @@ public interface IRuntimeRenderStatisticsServices
         string? firstFailedMessage,
         string? diagnosticSummary);
     void RecordRenderVulkanFrameGpuCommandBufferTime(TimeSpan elapsed);
-    void RecordRenderVulkanFrameLifecycleTiming(
-        TimeSpan waitFence,
-        TimeSpan acquireImage,
-        TimeSpan recordCommandBuffer,
-        TimeSpan submit,
-        TimeSpan trim,
-        TimeSpan present,
-        TimeSpan total);
-    void RecordRenderVulkanFrameLifecycleDetailTiming(
-        TimeSpan sampleTimingQueries,
-        TimeSpan drainRetiredResources,
-        TimeSpan acquireBridgeSubmit,
-        TimeSpan waitSwapchainImage,
-        TimeSpan resetDynamicUniformRing,
-        TimeSpan snapshotImGuiOverlay,
-        TimeSpan recordSceneCommandBuffer,
-        TimeSpan recordImGuiOverlay,
-        TimeSpan recordDynamicUiTextOverlay);
+    void PublishRenderVulkanFrameTelemetry(
+        in VulkanFrameTelemetryPublication publication,
+        ReadOnlySpan<VulkanCpuStageTelemetry> cpuStages)
+    {
+    }
     void RecordRenderVulkanFrameOpCensus(
         int totalCount,
         int clearCount,
@@ -240,7 +227,6 @@ public interface IRuntimeRenderStatisticsServices
         ulong structuralSignature,
         ulong descriptorGeneration,
         int swapchainSlot);
-    void RecordRenderVulkanCpuStage(EVulkanCpuStage stage, TimeSpan elapsed, long allocatedBytes);
     void RecordRenderVulkanCommandBuffersDirty(string? reason);
     void RecordRenderVulkanExactResourceInvalidation(
         int exactVariantsDirtied,

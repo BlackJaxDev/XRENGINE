@@ -14,6 +14,7 @@ using XREngine.Input;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Shadows;
+using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 namespace XREngine.Rendering;
 
@@ -950,27 +951,9 @@ internal sealed class UninstalledRuntimeRenderingHostServices : IRuntimeRenderin
     {
     }
 
-    public void RecordRenderVulkanFrameLifecycleTiming(
-        TimeSpan waitFence,
-        TimeSpan acquireImage,
-        TimeSpan recordCommandBuffer,
-        TimeSpan submit,
-        TimeSpan trim,
-        TimeSpan present,
-        TimeSpan total)
-    {
-    }
-
-    public void RecordRenderVulkanFrameLifecycleDetailTiming(
-        TimeSpan sampleTimingQueries,
-        TimeSpan drainRetiredResources,
-        TimeSpan acquireBridgeSubmit,
-        TimeSpan waitSwapchainImage,
-        TimeSpan resetDynamicUniformRing,
-        TimeSpan snapshotImGuiOverlay,
-        TimeSpan recordSceneCommandBuffer,
-        TimeSpan recordImGuiOverlay,
-        TimeSpan recordDynamicUiTextOverlay)
+    public void PublishRenderVulkanFrameTelemetry(
+        in VulkanFrameTelemetryPublication publication,
+        ReadOnlySpan<VulkanCpuStageTelemetry> cpuStages)
     {
     }
 
@@ -1002,10 +985,6 @@ internal sealed class UninstalledRuntimeRenderingHostServices : IRuntimeRenderin
         ulong structuralSignature,
         ulong descriptorGeneration,
         int swapchainSlot)
-    {
-    }
-
-    public void RecordRenderVulkanCpuStage(EVulkanCpuStage stage, TimeSpan elapsed, long allocatedBytes)
     {
     }
 

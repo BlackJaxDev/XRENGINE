@@ -30,7 +30,7 @@ namespace XREngine.Rendering.Vulkan
             bool clearColor = op.ClearColor && !suppressColorClear;
 
             Extent2D targetExtent = op.Target is null
-                ? (swapchainTarget.IsValid ? swapchainTarget.Extent : swapChainExtent)
+                ? (swapchainTarget.IsValid ? swapchainTarget.Extent : OutputRuntime.Desktop.Extent)
                 : new Extent2D(Math.Max(op.Target.Width, 1u), Math.Max(op.Target.Height, 1u));
 
             Rect2D clearArea = ClampRectToExtent(

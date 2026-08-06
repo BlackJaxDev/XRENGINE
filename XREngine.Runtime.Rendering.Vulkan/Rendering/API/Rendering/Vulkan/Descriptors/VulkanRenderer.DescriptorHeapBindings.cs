@@ -522,7 +522,7 @@ public unsafe partial class VulkanRenderer
 
     private bool TryAllocateDescriptorHeapRange(
         ref ulong cursor,
-        DescriptorHeapStorage storage,
+        VulkanDescriptorHeapStorage storage,
         ulong stride,
         uint descriptorCount,
         out ulong offset,

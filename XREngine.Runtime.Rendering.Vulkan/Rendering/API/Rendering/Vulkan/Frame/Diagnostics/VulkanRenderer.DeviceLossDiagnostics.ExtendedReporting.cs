@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Text;
 using Silk.NET.Vulkan;
+using Silk.NET.Vulkan.Extensions.EXT;
 using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
@@ -17,7 +18,7 @@ public unsafe partial class VulkanRenderer
     /// Releases the Vulkan diagnostic storage, including function pointers for device fault reporting.
     /// </summary>
     private void ReleaseVulkanDiagnosticStorage()
-        => ReleaseKhrDeviceFaultFunctionPointers();
+        => _deviceContext.ReleaseKhrDeviceFaultCommandTable();
 
     /// <summary>
     /// Takes a snapshot of the Vulkan command diagnostic marker for the given submit info.
@@ -29,14 +30,14 @@ public unsafe partial class VulkanRenderer
         if (submitInfo.CommandBufferCount == 0 || submitInfo.PCommandBuffers is null)
             return default;
 
-        lock (_vulkanSubmissionDiagnosticsLock)
+        lock (_frameTelemetry._vulkanSubmissionDiagnosticsLock)
         {
-            long latestSerial = Volatile.Read(ref _vulkanCommandDiagnosticMarkerSerial);
+            long latestSerial = Volatile.Read(ref _frameTelemetry._vulkanCommandDiagnosticMarkerSerial);
             int available = (int)Math.Min(latestSerial, VulkanCommandDiagnosticMarkerCapacity);
             for (long serial = latestSerial; serial > 0 && latestSerial - serial < available; serial--)
             {
                 int index = unchecked((int)((serial - 1) % VulkanCommandDiagnosticMarkerCapacity));
-                VulkanCommandDiagnosticMarker marker = _vulkanCommandDiagnosticMarkers[index];
+                VulkanCommandDiagnosticMarker marker = _frameTelemetry._vulkanCommandDiagnosticMarkers[index];
                 if (marker.Serial != unchecked((ulong)serial))
                     continue;
 
@@ -83,7 +84,7 @@ public unsafe partial class VulkanRenderer
         if (string.IsNullOrWhiteSpace(api))
             return;
 
-        Interlocked.CompareExchange(ref _firstFailingVulkanApi, api, null);
+        Interlocked.CompareExchange(ref _frameTelemetry._firstFailingVulkanApi, api, null);
     }
 
     /// <summary>
@@ -99,17 +100,17 @@ public unsafe partial class VulkanRenderer
         ImageMemoryBarrier* imageBarriers,
         string? caller)
     {
-        if (!_diagnosticOptions.EnableCrashBreadcrumbs || imageBarrierCount == 0 || imageBarriers is null)
+        if (!_frameTelemetry._diagnosticOptions.EnableCrashBreadcrumbs || imageBarrierCount == 0 || imageBarriers is null)
             return;
 
-        lock (_vulkanSubmissionDiagnosticsLock)
+        lock (_frameTelemetry._vulkanSubmissionDiagnosticsLock)
         {
             for (uint i = 0; i < imageBarrierCount; i++)
             {
                 ImageMemoryBarrier barrier = imageBarriers[i];
-                long serial = Interlocked.Increment(ref _vulkanImageLayoutTransitionSerial);
+                long serial = Interlocked.Increment(ref _frameTelemetry._vulkanImageLayoutTransitionSerial);
                 int index = unchecked((int)((serial - 1) % VulkanImageLayoutTransitionCapacity));
-                _vulkanImageLayoutTransitions[index] = new(
+                _frameTelemetry._vulkanImageLayoutTransitions[index] = new(
                     unchecked((ulong)serial),
                     unchecked((ulong)commandBuffer.Handle),
                     barrier.Image.Handle,
@@ -133,10 +134,10 @@ public unsafe partial class VulkanRenderer
     /// <param name="reason">The reason for recording the descriptor table generation event.</param>
     internal void RecordVulkanDescriptorTableGeneration(string reason)
     {
-        if (!_diagnosticOptions.EnableCrashBreadcrumbs)
+        if (!_frameTelemetry._diagnosticOptions.EnableCrashBreadcrumbs)
             return;
 
-        Interlocked.Increment(ref _vulkanDescriptorTableGeneration);
+        Interlocked.Increment(ref _frameTelemetry._vulkanDescriptorTableGeneration);
     }
 
     /// <summary>
@@ -148,12 +149,12 @@ public unsafe partial class VulkanRenderer
     /// <param name="batchIndex">The index of the batch within the pass.</param>
     internal void RecordVulkanCommandDiagnosticMarker(CommandBuffer commandBuffer, FrameOp op, int passIndex, int batchIndex)
     {
-        bool wantsCrashMarker = _diagnosticOptions.EnableCrashBreadcrumbs;
-        bool wantsNvCheckpoint = _diagnosticOptions.RequestNvDiagnosticCheckpoints && SupportsNvDiagnosticCheckpoints;
+        bool wantsCrashMarker = _frameTelemetry._diagnosticOptions.EnableCrashBreadcrumbs;
+        bool wantsNvCheckpoint = _frameTelemetry._diagnosticOptions.RequestNvDiagnosticCheckpoints && SupportsNvDiagnosticCheckpoints;
         if (!wantsCrashMarker && !wantsNvCheckpoint)
             return;
 
-        ulong serial = unchecked((ulong)Interlocked.Increment(ref _vulkanCommandDiagnosticMarkerSerial));
+        ulong serial = unchecked((ulong)Interlocked.Increment(ref _frameTelemetry._vulkanCommandDiagnosticMarkerSerial));
         VulkanCommandDiagnosticMarker marker = new()
         {
             Serial = serial,
@@ -167,12 +168,12 @@ public unsafe partial class VulkanRenderer
             CommandBufferRecordingGeneration = ResolveCommandBufferRecordingGeneration(commandBuffer),
         };
 
-        lock (_vulkanSubmissionDiagnosticsLock)
+        lock (_frameTelemetry._vulkanSubmissionDiagnosticsLock)
         {
             int index = unchecked((int)((serial - 1UL) % VulkanCommandDiagnosticMarkerCapacity));
-            _vulkanCommandDiagnosticMarkers[index] = marker;
+            _frameTelemetry._vulkanCommandDiagnosticMarkers[index] = marker;
         }
-        if (_diagnosticOptions.EnableCommandBufferLabels)
+        if (_frameTelemetry._diagnosticOptions.EnableCommandBufferLabels)
         {
             SetDebugObjectName(
                 ObjectType.CommandBuffer,
@@ -205,13 +206,13 @@ public unsafe partial class VulkanRenderer
     /// <param name="marker">The diagnostic marker containing information about the command.</param>
     private void TrySetNvDiagnosticCheckpoint(CommandBuffer commandBuffer, VulkanCommandDiagnosticMarker marker)
     {
-        if (_nvDeviceDiagnosticCheckpoints is null || !SupportsNvDiagnosticCheckpoints || commandBuffer.Handle == 0)
+        if (_deviceContext.ExtensionFunctions.NvDeviceDiagnosticCheckpoints is null || !SupportsNvDiagnosticCheckpoints || commandBuffer.Handle == 0)
             return;
 
         int index = unchecked((int)((marker.Serial - 1UL) % VulkanNvCheckpointMarkerCapacity));
-        lock (_vulkanNvCheckpointMarkerLock)
+        lock (_frameTelemetry._vulkanNvCheckpointMarkerLock)
         {
-            _vulkanNvCheckpointMarkers[index] = new()
+            _frameTelemetry._vulkanNvCheckpointMarkers[index] = new()
             {
                 Serial = marker.Serial,
                 OpKind = marker.OpKind,
@@ -223,7 +224,7 @@ public unsafe partial class VulkanRenderer
                 CommandBufferHandle = marker.CommandBufferHandle,
                 CommandBufferRecordingGeneration = marker.CommandBufferRecordingGeneration,
             };
-            _nvDeviceDiagnosticCheckpoints.CmdSetCheckpoint(commandBuffer, (void*)(nuint)marker.Serial);
+            _deviceContext.ExtensionFunctions.NvDeviceDiagnosticCheckpoints.CmdSetCheckpoint(commandBuffer, (void*)(nuint)marker.Serial);
         }
     }
 
@@ -242,9 +243,9 @@ public unsafe partial class VulkanRenderer
             return "<zero>";
 
         int index = unchecked((int)((serial - 1UL) % VulkanNvCheckpointMarkerCapacity));
-        lock (_vulkanNvCheckpointMarkerLock)
+        lock (_frameTelemetry._vulkanNvCheckpointMarkerLock)
         {
-            VulkanNvCheckpointMarker marker = _vulkanNvCheckpointMarkers[index];
+            VulkanNvCheckpointMarker marker = _frameTelemetry._vulkanNvCheckpointMarkers[index];
             return marker.Serial != serial
                 ? $"#{serial}:<evicted>"
                 : $"#{marker.Serial}:{marker.OpKind ?? "<unknown>"} " +
@@ -267,15 +268,15 @@ public unsafe partial class VulkanRenderer
         if (buffer.Handle == 0 || baseAddress == 0 || size == 0)
             return;
 
-        lock (_vulkanDeviceAddressDiagnosticsLock)
+        lock (_frameTelemetry._vulkanDeviceAddressDiagnosticsLock)
         {
             int firstInactive = -1;
-            for (int i = 0; i < _vulkanDeviceAddressRanges.Length; i++)
+            for (int i = 0; i < _frameTelemetry._vulkanDeviceAddressRanges.Length; i++)
             {
-                VulkanDeviceAddressRange existing = _vulkanDeviceAddressRanges[i];
+                VulkanDeviceAddressRange existing = _frameTelemetry._vulkanDeviceAddressRanges[i];
                 if (existing.Active && existing.Buffer.Handle == buffer.Handle)
                 {
-                    _vulkanDeviceAddressRanges[i] = new(buffer, baseAddress, size, label, Active: true);
+                    _frameTelemetry._vulkanDeviceAddressRanges[i] = new(buffer, baseAddress, size, label, Active: true);
                     return;
                 }
 
@@ -286,7 +287,7 @@ public unsafe partial class VulkanRenderer
             int index = firstInactive >= 0
                 ? firstInactive
                 : unchecked((int)(buffer.Handle % (ulong)VulkanDeviceAddressRangeCapacity));
-            _vulkanDeviceAddressRanges[index] = new(buffer, baseAddress, size, label, Active: true);
+            _frameTelemetry._vulkanDeviceAddressRanges[index] = new(buffer, baseAddress, size, label, Active: true);
         }
     }
 
@@ -299,63 +300,45 @@ public unsafe partial class VulkanRenderer
         if (buffer.Handle == 0)
             return;
 
-        lock (_vulkanDeviceAddressDiagnosticsLock)
+        lock (_frameTelemetry._vulkanDeviceAddressDiagnosticsLock)
         {
-            for (int i = 0; i < _vulkanDeviceAddressRanges.Length; i++)
+            for (int i = 0; i < _frameTelemetry._vulkanDeviceAddressRanges.Length; i++)
             {
-                VulkanDeviceAddressRange existing = _vulkanDeviceAddressRanges[i];
+                VulkanDeviceAddressRange existing = _frameTelemetry._vulkanDeviceAddressRanges[i];
                 if (existing.Active && existing.Buffer.Handle == buffer.Handle)
-                    _vulkanDeviceAddressRanges[i] = existing with { Active = false };
+                    _frameTelemetry._vulkanDeviceAddressRanges[i] = existing with { Active = false };
             }
         }
     }
 
-    /// <summary>
-    /// Records a Vulkan device address binding callback for diagnostic purposes.
-    /// </summary>
-    /// <param name="callbackData">The callback data containing information about the Vulkan device address binding event.</param>
-    private void RecordVulkanDeviceAddressBindingCallback(DebugUtilsMessengerCallbackDataEXT* callbackData)
+    private void ImportValidationDeviceAddressBindings()
     {
-        if (!_diagnosticOptions.RequestDeviceAddressBindingReport ||
-            !SupportsDeviceAddressBindingReport ||
-            callbackData is null)
+        if (!_frameTelemetry._diagnosticOptions.RequestDeviceAddressBindingReport ||
+            !SupportsDeviceAddressBindingReport)
             return;
 
-        BaseInStructure* current = (BaseInStructure*)callbackData->PNext;
-        while (current is not null)
+        VulkanValidationDeviceAddressBinding[] bindings =
+            _deviceContext.ValidationDiagnostics.DrainDeviceAddressBindings(out int overflowCount);
+        for (int i = 0; i < bindings.Length; i++)
         {
-            if (current->SType == StructureType.DeviceAddressBindingCallbackDataExt)
+            VulkanValidationDeviceAddressBinding binding = bindings[i];
+            string? correlatedObject = DescribeVulkanAddressCorrelation(binding.BaseAddress);
+            long serial = Interlocked.Increment(ref _frameTelemetry._vulkanDeviceAddressBindingEventSerial);
+            int index = unchecked((int)((serial - 1) % VulkanDeviceAddressBindingEventCapacity));
+            lock (_frameTelemetry._vulkanDeviceAddressDiagnosticsLock)
             {
-                DeviceAddressBindingCallbackDataEXT* binding = (DeviceAddressBindingCallbackDataEXT*)current;
-                RecordVulkanDeviceAddressBindingEvent(binding);
+                _frameTelemetry._vulkanDeviceAddressBindingEvents[index] = new(
+                    unchecked((ulong)serial),
+                    binding.BaseAddress,
+                    binding.Size,
+                    binding.BindingType,
+                    binding.Flags,
+                    correlatedObject);
             }
-
-            current = current->PNext;
         }
-    }
 
-    /// <summary>
-    /// Records a Vulkan device address binding event for diagnostic purposes.
-    /// </summary>
-    /// <param name="binding">The binding data containing information about the Vulkan device address binding event.</param>
-    private void RecordVulkanDeviceAddressBindingEvent(DeviceAddressBindingCallbackDataEXT* binding)
-    {
-        if (binding is null || binding->BaseAddress == 0 || binding->Size == 0)
-            return;
-
-        string? correlatedObject = DescribeVulkanAddressCorrelation(binding->BaseAddress);
-        long serial = Interlocked.Increment(ref _vulkanDeviceAddressBindingEventSerial);
-        int index = unchecked((int)((serial - 1) % VulkanDeviceAddressBindingEventCapacity));
-        lock (_vulkanDeviceAddressDiagnosticsLock)
-        {
-            _vulkanDeviceAddressBindingEvents[index] = new(
-                unchecked((ulong)serial),
-                binding->BaseAddress,
-                binding->Size,
-                binding->BindingType,
-                binding->Flags,
-                correlatedObject);
-        }
+        if (overflowCount > 0)
+            Debug.VulkanWarning($"[Vulkan] Dropped {overflowCount} device-address binding callbacks before device-loss reporting.");
     }
 
     /// <summary>
@@ -368,11 +351,11 @@ public unsafe partial class VulkanRenderer
         if (address == 0)
             return null;
 
-        lock (_vulkanDeviceAddressDiagnosticsLock)
+        lock (_frameTelemetry._vulkanDeviceAddressDiagnosticsLock)
         {
-            for (int i = 0; i < _vulkanDeviceAddressRanges.Length; i++)
+            for (int i = 0; i < _frameTelemetry._vulkanDeviceAddressRanges.Length; i++)
             {
-                VulkanDeviceAddressRange range = _vulkanDeviceAddressRanges[i];
+                VulkanDeviceAddressRange range = _frameTelemetry._vulkanDeviceAddressRanges[i];
                 if (!range.Active || range.BaseAddress == 0 || range.Size == 0)
                     continue;
 
@@ -395,7 +378,7 @@ public unsafe partial class VulkanRenderer
     /// <param name="builder">The StringBuilder to which the summary will be appended.</param>
     private void AppendDeviceAddressBindingSummary(StringBuilder builder)
     {
-        if (!_diagnosticOptions.RequestDeviceAddressBindingReport)
+        if (!_frameTelemetry._diagnosticOptions.RequestDeviceAddressBindingReport)
             return;
 
         if (!SupportsDeviceAddressBindingReport)
@@ -404,7 +387,7 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        long latestSerial = Volatile.Read(ref _vulkanDeviceAddressBindingEventSerial);
+        long latestSerial = Volatile.Read(ref _frameTelemetry._vulkanDeviceAddressBindingEventSerial);
         int activeRangeCount = CountTrackedVulkanDeviceAddressRanges();
         if (latestSerial <= 0)
         {
@@ -416,12 +399,12 @@ public unsafe partial class VulkanRenderer
         section.Append("AddressBindingReport events=").Append(latestSerial).Append(" activeRanges=").Append(activeRangeCount);
 
         int emitted = 0;
-        lock (_vulkanDeviceAddressDiagnosticsLock)
+        lock (_frameTelemetry._vulkanDeviceAddressDiagnosticsLock)
         {
             for (long serial = latestSerial; serial > 0 && emitted < MaxDeviceAddressBindingReportEntries; serial--)
             {
                 int index = unchecked((int)((serial - 1) % VulkanDeviceAddressBindingEventCapacity));
-                VulkanDeviceAddressBindingEvent evt = _vulkanDeviceAddressBindingEvents[index];
+                VulkanDeviceAddressBindingEvent evt = _frameTelemetry._vulkanDeviceAddressBindingEvents[index];
                 if (evt.Serial != unchecked((ulong)serial))
                     continue;
 
@@ -447,10 +430,10 @@ public unsafe partial class VulkanRenderer
     private int CountTrackedVulkanDeviceAddressRanges()
     {
         int count = 0;
-        lock (_vulkanDeviceAddressDiagnosticsLock)
+        lock (_frameTelemetry._vulkanDeviceAddressDiagnosticsLock)
         {
-            for (int i = 0; i < _vulkanDeviceAddressRanges.Length; i++)
-                if (_vulkanDeviceAddressRanges[i].Active)
+            for (int i = 0; i < _frameTelemetry._vulkanDeviceAddressRanges.Length; i++)
+                if (_frameTelemetry._vulkanDeviceAddressRanges[i].Active)
                     count++;
         }
 
@@ -463,11 +446,14 @@ public unsafe partial class VulkanRenderer
     /// <param name="builder">The StringBuilder to which the detailed summary will be appended.</param>
     private void AppendDeviceFaultSummaryDetailed(StringBuilder builder)
     {
-        if (!_diagnosticOptions.RequestDeviceFault)
+        if (!_frameTelemetry._diagnosticOptions.RequestDeviceFault)
             return;
 
-        bool khrExposed = Array.Exists(_availableDeviceExtensions, static x => x == KhrDeviceFaultExtensionName);
-        bool khrQueried = TryAppendKhrDeviceFaultSummary(builder);
+        bool khrExposed = _deviceContext.AvailableDeviceExtensions.Contains(KhrDeviceFaultExtensionName);
+        bool khrQueried = _deviceContext.TryAppendPersistedKhrDeviceFaultSummary(
+            builder,
+            _frameTelemetry._diagnosticOptions,
+            includeVendorBinary: _deviceLost);
         if (!_deviceLost)
         {
             if (!khrQueried)
@@ -475,237 +461,25 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        if (_deviceFaultUsingKhr && khrQueried)
+        VulkanDeviceFaultFacility deviceFaultFacility = _deviceContext.DeviceFaultFacility;
+        if (deviceFaultFacility.IsUsingKhrDeviceFault && khrQueried)
             return;
 
-        if (_extDeviceFault is null || !_supportsExtDeviceFault)
+        ExtDeviceFault? extDeviceFault = _deviceContext.ExtensionFunctions.ExtDeviceFault;
+        if (extDeviceFault is null || !deviceFaultFacility.SupportsExtDeviceFault)
         {
             AppendFaultSection(
                 builder,
-                $"DeviceFaultEXT unavailable khrExposed={khrExposed} khrActive={_deviceFaultUsingKhr} khrFunctionTable={_vkGetDeviceFaultReportsKHR is not null}");
+                $"DeviceFaultEXT unavailable khrExposed={khrExposed} khrActive={deviceFaultFacility.IsUsingKhrDeviceFault} khrFunctionTable={deviceFaultFacility.GetDeviceFaultReportsKhr is not null}");
             return;
         }
 
-        try
-        {
-            DeviceFaultCountsEXT counts = new()
-            {
-                SType = StructureType.DeviceFaultCountsExt,
-                PNext = null,
-            };
-
-            Result countsResult = _extDeviceFault.GetDeviceFaultInfo(device, &counts, null);
-            if (countsResult is not (Result.Success or Result.Incomplete))
-            {
-                AppendFaultSection(builder, $"DeviceFaultEXT countsResult={countsResult} khrExposed={khrExposed}");
-                return;
-            }
-
-            uint reportedAddressInfoCount = counts.AddressInfoCount;
-            uint reportedVendorInfoCount = counts.VendorInfoCount;
-            ulong reportedVendorBinarySize = counts.VendorBinarySize;
-            uint writableAddressInfoCount = Math.Min(reportedAddressInfoCount, (uint)_diagnosticOptions.DeviceFaultAddressRecordCap);
-            uint writableVendorInfoCount = Math.Min(reportedVendorInfoCount, (uint)_diagnosticOptions.DeviceFaultVendorRecordCap);
-            ulong writableVendorBinarySize = Math.Min(reportedVendorBinarySize, (ulong)_diagnosticOptions.DeviceFaultVendorBinaryByteCap);
-            bool recordsTruncated = writableAddressInfoCount < reportedAddressInfoCount ||
-                writableVendorInfoCount < reportedVendorInfoCount;
-
-            DeviceFaultAddressInfoEXT[] addressInfos = writableAddressInfoCount == 0
-                ? Array.Empty<DeviceFaultAddressInfoEXT>()
-                : new DeviceFaultAddressInfoEXT[checked((int)writableAddressInfoCount)];
-            DeviceFaultVendorInfoEXT[] vendorInfos = writableVendorInfoCount == 0
-                ? Array.Empty<DeviceFaultVendorInfoEXT>()
-                : new DeviceFaultVendorInfoEXT[checked((int)writableVendorInfoCount)];
-
-            ulong vendorBinarySize = writableVendorBinarySize;
-            byte[]? vendorBinary = null;
-            string vendorBinaryStatus;
-            if (!DeviceCapabilities.Supports(EVulkanDeviceCapability.DeviceFaultVendorBinary))
-            {
-                vendorBinaryStatus = "feature-disabled";
-            }
-            else if (vendorBinarySize == 0)
-            {
-                vendorBinaryStatus = "not-reported";
-            }
-            else
-            {
-                vendorBinary = new byte[(int)vendorBinarySize];
-                vendorBinaryStatus = vendorBinarySize < reportedVendorBinarySize
-                    ? $"captured-truncated:{vendorBinarySize}/{reportedVendorBinarySize}"
-                    : "captured";
-            }
-
-            counts.AddressInfoCount = writableAddressInfoCount;
-            counts.VendorInfoCount = writableVendorInfoCount;
-            counts.VendorBinarySize = vendorBinary?.LongLength is > 0 ? vendorBinarySize : 0UL;
-
-            DeviceFaultInfoEXT faultInfo = new()
-            {
-                SType = StructureType.DeviceFaultInfoExt,
-                PNext = null,
-            };
-
-            byte[] vendorBinaryBuffer = vendorBinary ?? Array.Empty<byte>();
-            fixed (DeviceFaultAddressInfoEXT* addressInfosPtr = addressInfos)
-            fixed (DeviceFaultVendorInfoEXT* vendorInfosPtr = vendorInfos)
-            fixed (byte* vendorBinaryPtr = vendorBinaryBuffer)
-            {
-                faultInfo.PAddressInfos = addressInfos.Length == 0 ? null : addressInfosPtr;
-                faultInfo.PVendorInfos = vendorInfos.Length == 0 ? null : vendorInfosPtr;
-                faultInfo.PVendorBinaryData = vendorBinaryBuffer.Length == 0 ? null : vendorBinaryPtr;
-
-                Result infoResult = _extDeviceFault.GetDeviceFaultInfo(device, &counts, &faultInfo);
-                bool infoResultUsable = infoResult is Result.Success or Result.Incomplete;
-                if (!infoResultUsable)
-                {
-                    vendorBinary = null;
-                    vendorBinaryStatus = $"failed-unusable:{infoResult}";
-                }
-                bool incomplete = countsResult == Result.Incomplete ||
-                    infoResult != Result.Success ||
-                    recordsTruncated ||
-                    vendorBinarySize < reportedVendorBinarySize;
-                string description = ReadNullTerminatedUtf8(faultInfo.Description, VulkanDeviceFaultDescriptionBytes);
-
-                string artifactSummary = PersistDeviceFaultArtifacts(
-                    description,
-                    counts,
-                    addressInfos,
-                    vendorInfos,
-                    vendorBinary,
-                    countsResult,
-                    infoResult,
-                    incomplete,
-                    vendorBinaryStatus,
-                    khrExposed);
-
-                AppendFaultSection(
-                    builder,
-                    $"DeviceFaultEXT countsResult={countsResult} infoResult={infoResult} incomplete={incomplete} " +
-                    $"addressInfos={counts.AddressInfoCount}/{reportedAddressInfoCount} vendorInfos={counts.VendorInfoCount}/{reportedVendorInfoCount} " +
-                    $"vendorBinaryBytes={vendorBinarySize}/{reportedVendorBinarySize} vendorBinary={vendorBinaryStatus} " +
-                    $"description='{SummarizeForInlineLog(description)}' {artifactSummary}");
-            }
-        }
-        catch (Exception ex)
-        {
-            AppendFaultSection(builder, $"DeviceFaultEXT queryFailed={ex.GetType().Name}:{ex.Message}");
-        }
-    }
-
-    /// <summary>
-    /// Persists the artifacts related to a Vulkan device fault and generates a summary string.
-    /// </summary>
-    /// <param name="description">The description of the device fault.</param>
-    /// <param name="counts">The counts of various device fault artifacts.</param>
-    /// <param name="addressInfos">The array of address information related to the device fault.</param>
-    /// <param name="vendorInfos">The array of vendor-specific information related to the device fault.</param>
-    /// <param name="vendorBinary">The vendor binary data associated with the device fault, if any.</param>
-    /// <param name="countsResult">The result of querying the counts of device fault artifacts.</param>
-    /// <param name="infoResult">The result of querying the detailed device fault information.</param>
-    /// <param name="incomplete">Indicates whether the device fault information is incomplete.</param>
-    /// <param name="vendorBinaryStatus">The status of the vendor binary data.</param>
-    /// <param name="khrExposed">Indicates whether the KHR device fault extension is exposed.</param>
-    /// <returns>A summary string describing the persisted device fault artifacts.</returns>
-    private string PersistDeviceFaultArtifacts(
-        string description,
-        in DeviceFaultCountsEXT counts,
-        DeviceFaultAddressInfoEXT[] addressInfos,
-        DeviceFaultVendorInfoEXT[] vendorInfos,
-        byte[]? vendorBinary,
-        Result countsResult,
-        Result infoResult,
-        bool incomplete,
-        string vendorBinaryStatus,
-        bool khrExposed)
-    {
-        try
-        {
-            StringBuilder report = new();
-            report.AppendLine("Vulkan Device Fault Report");
-            report.Append("Utc=").AppendLine(DateTimeOffset.UtcNow.ToString("O"));
-            report.Append("KHR device fault exposed=").Append(khrExposed)
-                .Append(" active=").Append(_deviceFaultUsingKhr)
-                .Append(" functionTable=").Append(_vkGetDeviceFaultReportsKHR is not null)
-                .AppendLine();
-            report.Append("CountsResult=").Append(countsResult).Append(" InfoResult=").Append(infoResult).Append(" Incomplete=").AppendLine(incomplete.ToString());
-            report.Append("Description=").AppendLine(string.IsNullOrWhiteSpace(description) ? "<empty>" : description);
-            report.Append("AddressInfoCount=").Append(counts.AddressInfoCount)
-                .Append(" VendorInfoCount=").Append(counts.VendorInfoCount)
-                .Append(" VendorBinarySize=").Append(counts.VendorBinarySize)
-                .Append(" VendorBinaryStatus=").AppendLine(vendorBinaryStatus);
-
-            int addressCount = Math.Min(addressInfos.Length, MaxDeviceFaultReportEntries);
-            for (int i = 0; i < addressCount; i++)
-            {
-                DeviceFaultAddressInfoEXT info = addressInfos[i];
-                report
-                    .Append("Address[").Append(i).Append("] type=").Append(info.AddressType)
-                    .Append(" reported=0x").Append(info.ReportedAddress.ToString("X"))
-                    .Append(" precision=0x").Append(info.AddressPrecision.ToString("X"))
-                    .Append(" object=").Append(DescribeVulkanAddressCorrelation(info.ReportedAddress) ?? "<untracked>")
-                    .AppendLine();
-            }
-
-            int vendorCount = Math.Min(vendorInfos.Length, MaxDeviceFaultReportEntries);
-            for (int i = 0; i < vendorCount; i++)
-            {
-                DeviceFaultVendorInfoEXT info = vendorInfos[i];
-                string vendorDescription = ReadNullTerminatedUtf8(info.Description, VulkanDeviceFaultDescriptionBytes);
-
-                report
-                    .Append("Vendor[").Append(i).Append("] code=0x").Append(info.VendorFaultCode.ToString("X"))
-                    .Append(" data=0x").Append(info.VendorFaultData.ToString("X"))
-                    .Append(" description=").AppendLine(string.IsNullOrWhiteSpace(vendorDescription) ? "<empty>" : vendorDescription);
-            }
-
-            if (vendorBinary is { Length: > 0 })
-                AppendVendorBinaryHeader(report, vendorBinary);
-
-            const string reportFileName = "vulkan-device-fault-report.log";
-            Debug.WriteAuxiliaryLog(reportFileName, report.ToString());
-
-            string binarySummary = "vendorBinaryFile=<none>";
-            if (vendorBinary is { Length: > 0 })
-            {
-                string directory = Debug.EnsureLogRunDirectory();
-                string binaryFileName = $"vulkan-device-fault-vendor-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmssfff}.bin";
-                string binaryPath = Path.Combine(directory, binaryFileName);
-                File.WriteAllBytes(binaryPath, vendorBinary);
-                binarySummary = $"vendorBinaryFile={binaryFileName}";
-            }
-
-            return $"artifact={reportFileName} {binarySummary}";
-        }
-        catch (Exception ex)
-        {
-            return $"artifactWriteFailed={ex.GetType().Name}:{ex.Message}";
-        }
-    }
-
-    /// <summary>
-    /// Appends the header information of the vendor binary to the device fault report.
-    /// </summary>
-    /// <param name="report">The StringBuilder to which the vendor binary header information will be appended.</param>
-    /// <param name="vendorBinary">The vendor binary data containing the header information.</param>
-    private static void AppendVendorBinaryHeader(StringBuilder report, byte[] vendorBinary)
-    {
-        if (vendorBinary.Length < sizeof(DeviceFaultVendorBinaryHeaderVersionOneEXT))
-            return;
-
-        fixed (byte* binaryPtr = vendorBinary)
-        {
-            DeviceFaultVendorBinaryHeaderVersionOneEXT* header = (DeviceFaultVendorBinaryHeaderVersionOneEXT*)binaryPtr;
-            report
-                .Append("VendorBinaryHeader headerSize=").Append(header->HeaderSize)
-                .Append(" version=").Append(header->HeaderVersion)
-                .Append(" vendor=0x").Append(header->VendorID.ToString("X"))
-                .Append(" device=0x").Append(header->DeviceID.ToString("X"))
-                .Append(" driver=0x").Append(header->DriverVersion.ToString("X"))
-                .Append(" api=0x").Append(header->ApiVersion.ToString("X"))
-                .AppendLine();
-        }
+        _deviceContext.TryAppendPersistedExtDeviceFaultSummary(
+            builder,
+            extDeviceFault,
+            _frameTelemetry._diagnosticOptions,
+            khrExposed,
+            _deviceContext.Capabilities.Supports(EVulkanDeviceCapability.DeviceFaultVendorBinary));
     }
 
     /// <summary>
@@ -714,10 +488,10 @@ public unsafe partial class VulkanRenderer
     /// <param name="builder">The StringBuilder to which the NVIDIA checkpoint summary will be appended.</param>
     private void AppendNvCheckpointSummaryDetailed(StringBuilder builder)
     {
-        if (!_diagnosticOptions.RequestNvDiagnosticCheckpoints)
+        if (!_frameTelemetry._diagnosticOptions.RequestNvDiagnosticCheckpoints)
             return;
 
-        if (_nvDeviceDiagnosticCheckpoints is null || !SupportsNvDiagnosticCheckpoints)
+        if (_deviceContext.ExtensionFunctions.NvDeviceDiagnosticCheckpoints is null || !SupportsNvDiagnosticCheckpoints)
         {
             AppendFaultSection(builder, "NvCheckpoints unavailable");
             return;
@@ -726,11 +500,11 @@ public unsafe partial class VulkanRenderer
         try
         {
             StringBuilder section = new("NvCheckpoints");
-            AppendNvQueueCheckpointData(section, graphicsQueue, "graphics");
-            if (presentQueue.Handle != graphicsQueue.Handle)
-                AppendNvQueueCheckpointData(section, presentQueue, "present");
-            if (transferQueue.Handle != 0 && transferQueue.Handle != graphicsQueue.Handle && transferQueue.Handle != presentQueue.Handle)
-                AppendNvQueueCheckpointData(section, transferQueue, "transfer");
+            AppendNvQueueCheckpointData(section, _deviceContext.GraphicsQueue, "graphics");
+            if (_deviceContext.PresentQueue.Handle != _deviceContext.GraphicsQueue.Handle)
+                AppendNvQueueCheckpointData(section, _deviceContext.PresentQueue, "present");
+            if (_deviceContext.TransferQueue.Handle != 0 && _deviceContext.TransferQueue.Handle != _deviceContext.GraphicsQueue.Handle && _deviceContext.TransferQueue.Handle != _deviceContext.PresentQueue.Handle)
+                AppendNvQueueCheckpointData(section, _deviceContext.TransferQueue, "transfer");
             AppendFaultSection(builder, section.ToString());
         }
         catch (Exception ex)
@@ -747,11 +521,11 @@ public unsafe partial class VulkanRenderer
     /// <param name="queueName">The name of the Vulkan queue (e.g., "graphics", "present", "transfer").</param>
     private void AppendNvQueueCheckpointData(StringBuilder section, Queue queue, string queueName)
     {
-        if (queue.Handle == 0 || _nvDeviceDiagnosticCheckpoints is null)
+        if (queue.Handle == 0 || _deviceContext.ExtensionFunctions.NvDeviceDiagnosticCheckpoints is null)
             return;
 
         uint count = 0;
-        _nvDeviceDiagnosticCheckpoints.GetQueueCheckpointData2(queue, &count, null);
+        _deviceContext.ExtensionFunctions.NvDeviceDiagnosticCheckpoints.GetQueueCheckpointData2(queue, &count, null);
         section.Append(' ').Append(queueName).Append('=').Append(count);
         if (count == 0)
             return;
@@ -769,7 +543,7 @@ public unsafe partial class VulkanRenderer
         fixed (CheckpointData2NV* checkpointPtr = checkpoints)
         {
             uint writableCount = count;
-            _nvDeviceDiagnosticCheckpoints.GetQueueCheckpointData2(queue, &writableCount, checkpointPtr);
+            _deviceContext.ExtensionFunctions.NvDeviceDiagnosticCheckpoints.GetQueueCheckpointData2(queue, &writableCount, checkpointPtr);
             int emitted = Math.Min((int)writableCount, MaxNvCheckpointReportEntries);
             for (int i = 0; i < emitted; i++)
             {

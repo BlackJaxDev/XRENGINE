@@ -115,68 +115,47 @@ public sealed class VulkanCommandRecordingDependencyTests
         };
 
         recorded.Compare(changedSecondaryBindings).RequiresRecording.ShouldBeTrue();
-        recorded.CompareCommandChainPrimary(
-                changedSecondaryBindings,
-                secondaryDrawBindingsOwnedElsewhere: true)
+        recorded.CompareCommandChainPrimary(changedSecondaryBindings)
             .ShouldBe(CommandRecordingDependencyMismatch.None);
 
-        CommandRecordingDependencyMismatch inlineBindingChange = recorded.CompareCommandChainPrimary(
-            changedSecondaryBindings,
-            secondaryDrawBindingsOwnedElsewhere: false);
-        inlineBindingChange.RequiresRecording.ShouldBeTrue();
-        inlineBindingChange.Field.ShouldBe(CommandRecordingDependencyField.PipelineLayoutGeneration);
+        recorded.CompareCommandChainPrimary(changedSecondaryBindings)
+            .ShouldBe(CommandRecordingDependencyMismatch.None);
 
         CommandRecordingDependencySignature changedDescriptorPublication =
             recorded with
             {
                 DescriptorPublicationGeneration = recorded.DescriptorPublicationGeneration + 1UL,
             };
-        recorded.CompareCommandChainPrimary(
-                changedDescriptorPublication,
-                secondaryDrawBindingsOwnedElsewhere: true)
+        recorded.CompareCommandChainPrimary(changedDescriptorPublication)
             .ShouldBe(CommandRecordingDependencyMismatch.None);
-        recorded.CompareCommandChainPrimary(
-                changedDescriptorPublication,
-                secondaryDrawBindingsOwnedElsewhere: false)
-            .Field.ShouldBe(CommandRecordingDependencyField.DescriptorPublicationGeneration);
 
-        recorded.CompareCommandChainPrimary(
-            recorded with
+        recorded.CompareCommandChainPrimary(recorded with
             {
                 OutputPassAttachment = recorded.OutputPassAttachment + 1UL,
-            },
-            secondaryDrawBindingsOwnedElsewhere: false).ShouldBe(CommandRecordingDependencyMismatch.None);
+            }).ShouldBe(CommandRecordingDependencyMismatch.None);
 
         CommandRecordingDependencySignature changedRenderArea =
             recorded with { RenderArea = recorded.RenderArea + 1UL };
         recorded.Compare(changedRenderArea).Field.ShouldBe(CommandRecordingDependencyField.RenderArea);
-        recorded.CompareCommandChainPrimary(
-                changedRenderArea,
-                secondaryDrawBindingsOwnedElsewhere: false)
+        recorded.CompareCommandChainPrimary(changedRenderArea)
             .ShouldBe(CommandRecordingDependencyMismatch.None);
 
         CommandRecordingDependencySignature changedViewMask =
             recorded with { ViewMask = recorded.ViewMask + 1u };
         recorded.Compare(changedViewMask).Field.ShouldBe(CommandRecordingDependencyField.ViewMask);
-        recorded.CompareCommandChainPrimary(
-                changedViewMask,
-                secondaryDrawBindingsOwnedElsewhere: false)
+        recorded.CompareCommandChainPrimary(changedViewMask)
             .ShouldBe(CommandRecordingDependencyMismatch.None);
 
         CommandRecordingDependencySignature changedInheritance =
             recorded with { DynamicRenderingInheritance = recorded.DynamicRenderingInheritance + 1UL };
         recorded.Compare(changedInheritance).Field.ShouldBe(CommandRecordingDependencyField.DynamicRenderingInheritance);
-        recorded.CompareCommandChainPrimary(
-                changedInheritance,
-                secondaryDrawBindingsOwnedElsewhere: false)
+        recorded.CompareCommandChainPrimary(changedInheritance)
             .ShouldBe(CommandRecordingDependencyMismatch.None);
 
         CommandRecordingDependencySignature changedPipeline =
             recorded with { PipelineGeneration = recorded.PipelineGeneration + 1UL };
         recorded.Compare(changedPipeline).Field.ShouldBe(CommandRecordingDependencyField.PipelineGeneration);
-        recorded.CompareCommandChainPrimary(
-                changedPipeline,
-                secondaryDrawBindingsOwnedElsewhere: false)
+        recorded.CompareCommandChainPrimary(changedPipeline)
             .ShouldBe(CommandRecordingDependencyMismatch.None);
 
         CommandRecordingDependencySignature changedFallbackContextResources = recorded with
@@ -189,9 +168,7 @@ public sealed class VulkanCommandRecordingDependencyTests
         };
         recorded.Compare(changedFallbackContextResources)
             .Field.ShouldBe(CommandRecordingDependencyField.ImageAllocationGeneration);
-        recorded.CompareCommandChainPrimary(
-                changedFallbackContextResources,
-                secondaryDrawBindingsOwnedElsewhere: false)
+        recorded.CompareCommandChainPrimary(changedFallbackContextResources)
             .ShouldBe(CommandRecordingDependencyMismatch.None);
 
         CommandRecordingDependencySignature changedResourcePlan = recorded with
@@ -200,9 +177,7 @@ public sealed class VulkanCommandRecordingDependencyTests
         };
         recorded.Compare(changedResourcePlan)
             .Field.ShouldBe(CommandRecordingDependencyField.ResourcePlanGeneration);
-        recorded.CompareCommandChainPrimary(
-                changedResourcePlan,
-                secondaryDrawBindingsOwnedElsewhere: false)
+        recorded.CompareCommandChainPrimary(changedResourcePlan)
             .ShouldBe(CommandRecordingDependencyMismatch.None);
     }
 
@@ -295,8 +270,8 @@ public sealed class VulkanCommandRecordingDependencyTests
     [Test]
     public void HybridCommandRecording_AutoDoesNotPromoteExternalSwapchainTargets()
     {
-        string lowering = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string lowering = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "bool commandChainsEnabledForTarget = allowExternalSwapchainTarget");
         string targetPolicy = Slice(
             lowering,
             "bool commandChainsEnabledForTarget = allowExternalSwapchainTarget",
@@ -311,8 +286,9 @@ public sealed class VulkanCommandRecordingDependencyTests
     {
         string program = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
-        string lowering = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string lowering = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "pipelineGenerationHash.Add(ResolvePipelineGeneration(drawOp))",
+            "hash.Add(program?.LinkGeneration ?? 0UL)");
 
         program.ShouldContain("internal ulong LinkGeneration");
         program.ShouldContain("Interlocked.Increment(ref _linkGeneration)");
@@ -410,18 +386,16 @@ public sealed class VulkanCommandRecordingDependencyTests
             CommandRecordingDependencyField.PipelineGeneration,
             CommandRecordingInvalidationClass.Structural);
 
-        VulkanRenderer.ShouldPreserveCleanVariantForAttachmentMismatch(
-                variantDirty: false,
-                attachmentMismatch)
-            .ShouldBeTrue();
-        VulkanRenderer.ShouldPreserveCleanVariantForAttachmentMismatch(
-                variantDirty: true,
-                attachmentMismatch)
-            .ShouldBeFalse();
-        VulkanRenderer.ShouldPreserveCleanVariantForAttachmentMismatch(
-                variantDirty: false,
-                pipelineMismatch)
-            .ShouldBeFalse();
+        attachmentMismatch.Field.ShouldBe(
+            CommandRecordingDependencyField.OutputPassAttachment);
+        pipelineMismatch.Field.ShouldBe(
+            CommandRecordingDependencyField.PipelineGeneration);
+        CreateSignature().CompareCommandChainPrimary(
+            CreateSignature() with
+            {
+                OutputPassAttachment = 99,
+                PipelineGeneration = 99,
+            }).ShouldBe(CommandRecordingDependencyMismatch.None);
     }
 
     [Test]
@@ -440,10 +414,11 @@ public sealed class VulkanCommandRecordingDependencyTests
     [Test]
     public void ReusableChainRefreshAdvancesDataOnlyDependencyBaseline()
     {
-        string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string source = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "chain.DependencySignature = BuildCommandChainDependencySignature(");
 
-        source.ShouldContain("chain.DependencySignature = BuildCommandChainDependencySignature(packet, chain.Key)");
+        source.ShouldContain("chain.DependencySignature = BuildCommandChainDependencySignature(");
+        source.ShouldContain("chain.Key,");
     }
 
     [Test]
@@ -458,8 +433,8 @@ public sealed class VulkanCommandRecordingDependencyTests
         primaryDependency.ShouldContain("SamplerAllocationGeneration: descriptorBindingIdentity");
         primaryDependency.ShouldNotContain("SamplerAllocationGeneration: generations.Descriptor");
 
-        string lowering = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string lowering = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "internal static CommandRecordingDependencySignature BuildCommandChainDependencySignature(");
         string chainDependency = Slice(
             lowering,
             "internal static CommandRecordingDependencySignature BuildCommandChainDependencySignature(",
@@ -474,8 +449,9 @@ public sealed class VulkanCommandRecordingDependencyTests
     {
         string recording = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
-        string lowering = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string lowering = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "hash.Add(draw.Draw.PreparedProgram?.BindingId ?? 0u)",
+            "MixSignature(descriptorSetSignature, preparedProgram.BindingId)");
         string manifest = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineVariantManifest.cs");
 
@@ -548,11 +524,13 @@ public sealed class VulkanCommandRecordingDependencyTests
     {
         string chains = SourceContractWorkspace.ReadVulkanSourcesContaining(
             "CommandRecordingDependencySignature DependencySignature");
-        string lowering = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string lowering = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "chain.DependencySignature = BuildCommandChainDependencySignature(",
+            "schedule.PublishDependencySignature(scheduleDependencySignature)",
+            "affected-family");
 
         chains.ShouldContain("CommandRecordingDependencySignature DependencySignature");
-        lowering.ShouldContain("chain.DependencySignature = BuildCommandChainDependencySignature(packet, key)");
+        lowering.ShouldContain("chain.DependencySignature = BuildCommandChainDependencySignature(");
         lowering.ShouldContain("schedule.PublishDependencySignature(scheduleDependencySignature)");
         lowering.ShouldContain("affected-family");
         lowering.ShouldContain("affected-range");

@@ -2,10 +2,11 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private readonly struct PreparedCommandChainEncodingScope : IDisposable
+
+    internal readonly struct PreparedCommandChainEncodingScope : IDisposable
     {
         private readonly VulkanRenderer _renderer;
-        private readonly VulkanCommandThreadContext _threadContext;
+        private readonly VulkanCommandThreadContext<VulkanStateTracker, VulkanRenderer.ResourcePlannerRuntimeState, VulkanRenderer.FrameOpResourcePlannerSwitchingState, XRFrameBuffer, EReadBufferMode> _threadContext;
         private readonly VulkanPreparedWorkerPlannerStamp _plannerStamp;
 
         internal PreparedCommandChainEncodingScope(VulkanRenderer renderer)
@@ -49,5 +50,5 @@ public unsafe partial class VulkanRenderer
             }
         }
     }
-}
 
+}

@@ -96,11 +96,11 @@ namespace XREngine.Rendering.Vulkan
                        "Vulkan.RecordCommandBuffer.CommandChainLowering"))
             {
                 using VulkanCpuStageScope cpuStage =
-                    new(EVulkanCpuStage.PacketConstruction);
-                FrameOp[] scheduledDynamicUiOperations =
+                    new(_frameTelemetry, EVulkanCpuStage.PacketConstruction);
+                FrameOperationStream scheduledDynamicUiOperations =
                     state.PreserveSwapchainForOverlay
-                        ? Array.Empty<FrameOp>()
-                        : state.DynamicUiOperations;
+                        ? FrameOperationStream.Empty
+                        : state.SealedFramePlan!.DynamicOverlayOperations;
                 ulong scheduledDynamicUiSignature =
                     state.PreserveSwapchainForOverlay
                         ? 0
@@ -108,7 +108,7 @@ namespace XREngine.Rendering.Vulkan
 
                 state.CommandChainSchedule = TryBuildCommandChainSchedule(
                     state.ImageIndex,
-                    state.FrameOperations,
+                    state.SealedFramePlan!.StaticOperations,
                     scheduledDynamicUiOperations,
                     state.FrameOperationsSignature,
                     scheduledDynamicUiSignature,
@@ -229,7 +229,7 @@ namespace XREngine.Rendering.Vulkan
         {
             PrimaryCommandArtifactOwner variant = state.Variant;
             bool frameOperationsRequireFreshPrimary =
-                _commandScheduler.RequiresFreshPrimary(
+                _commandRuntime.Scheduler.RequiresFreshPrimary(
                     state.HasStaticFrameOperations,
                     VulkanPrimaryCommandBufferReuseEnabled);
             bool scheduleRequiresFreshPrimary =
@@ -292,7 +292,7 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 if (!state.Dirty &&
-                    _commandScheduler.HasOperationSignatureChanged(
+                    _commandRuntime.Scheduler.HasOperationSignatureChanged(
                         state.HasFrameOperations,
                         variant.FrameOpsSignature,
                         state.FrameOperationsSignature))
@@ -307,7 +307,7 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 if (!state.Dirty &&
-                    _commandScheduler.HasPlannerGenerationChanged(
+                    _commandRuntime.Scheduler.HasPlannerGenerationChanged(
                         state.UsingCommandChains,
                         variant.PlannerRevision,
                         state.PlannerRevision))
@@ -321,7 +321,7 @@ namespace XREngine.Rendering.Vulkan
                 // primary can refresh inline and secondary per-draw camera data in
                 // place; its exact inline structure remains separately validated.
                 if (!state.Dirty &&
-                    _commandScheduler.HasCameraGenerationChanged(
+                    _commandRuntime.Scheduler.HasCameraGenerationChanged(
                         state.UsingCommandChains,
                         variant.RecordedGenerations.CameraPose,
                         state.CurrentGenerations.CameraPose))
@@ -349,7 +349,7 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 if (!state.Dirty &&
-                    _commandScheduler.HasSwapchainLifecycleChanged(
+                    _commandRuntime.Scheduler.HasSwapchainLifecycleChanged(
                         variant.RecordedSwapchainImageEverPresented,
                         state.SwapchainImageEverPresentedAtRecord,
                         state.RequiresTrackedPresentSourceRefresh,
@@ -439,7 +439,7 @@ namespace XREngine.Rendering.Vulkan
                         state.Scratch)
                     : ReadOnlySpan<CommandChainKey>.Empty;
             using (VulkanCpuStageScope cpuStage =
-                   new(EVulkanCpuStage.FrameDataRefresh))
+                   new(_frameTelemetry, EVulkanCpuStage.FrameDataRefresh))
             {
                 refreshedReusableFrameData =
                     !state.HasStaticFrameOperations ||
@@ -529,7 +529,7 @@ namespace XREngine.Rendering.Vulkan
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                            "Vulkan.RecordCommandBuffer.RecordDynamicUiSecondary"))
                 using (VulkanCpuStageScope cpuStage =
-                       new(EVulkanCpuStage.SecondaryRecording))
+                       new(_frameTelemetry, EVulkanCpuStage.SecondaryRecording))
                 {
                     state.DynamicUiSecondaryReady =
                         RecordDynamicUiBatchTextSecondaryCommandBuffer(

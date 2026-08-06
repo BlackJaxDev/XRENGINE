@@ -6,36 +6,31 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private bool? _supportsGpuAutoExposure;
-    private bool _autoExposureComputeInitialized;
-    private XRRenderProgram? _autoExposureComputeProgram2D;
-    private XRRenderProgram? _autoExposureComputeProgram2DArray;
-
     public override bool SupportsGpuAutoExposure
     {
         get
         {
-            if (_supportsGpuAutoExposure == false)
+            if (ResourceRuntime.SupportsGpuAutoExposure == false)
                 return false;
 
-            _supportsGpuAutoExposure ??= ComputeSupportsGpuAutoExposure();
-            if (_supportsGpuAutoExposure != true)
+            ResourceRuntime.SupportsGpuAutoExposure ??= ComputeSupportsGpuAutoExposure();
+            if (ResourceRuntime.SupportsGpuAutoExposure != true)
                 return false;
 
             EnsureAutoExposureComputeResources();
-            if (!_autoExposureComputeInitialized)
-                _supportsGpuAutoExposure = false;
+            if (!ResourceRuntime.AutoExposureComputeInitialized)
+                ResourceRuntime.SupportsGpuAutoExposure = false;
 
-            return _autoExposureComputeInitialized;
+            return ResourceRuntime.AutoExposureComputeInitialized;
         }
     }
 
     public override bool UpdateAutoExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, ColorGradingSettings settings, float deltaTime, bool generateMipmapsNow)
     {
         EnsureAutoExposureComputeResources();
-        if (!_autoExposureComputeInitialized)
+        if (!ResourceRuntime.AutoExposureComputeInitialized)
         {
-            _supportsGpuAutoExposure = false;
+            ResourceRuntime.SupportsGpuAutoExposure = false;
             return false;
         }
 
@@ -85,7 +80,7 @@ public unsafe partial class VulkanRenderer
                     "[Vulkan] Auto exposure is using filtered mipless metering for planner-backed source texture '{0}' because render-graph mip generation is not available yet.",
                     source2D.Name ?? "<unnamed>");
             }
-            program = _autoExposureComputeProgram2D;
+            program = ResourceRuntime.AutoExposureComputeProgram2D;
         }
         else if (sourceTex is XRTexture2DArray source2DArray)
         {
@@ -122,7 +117,7 @@ public unsafe partial class VulkanRenderer
                     source2DArray.Name ?? "<unnamed>");
             }
             layerCount = (int)Math.Max(source2DArray.Depth, 1u);
-            program = _autoExposureComputeProgram2DArray;
+            program = ResourceRuntime.AutoExposureComputeProgram2DArray;
             Debug.VulkanEvery(
                 $"Vulkan.AutoExposure.HeadsetSharedArray.{source2DArray.Name ?? source2DArray.SamplerName ?? "<unnamed>"}",
                 TimeSpan.FromSeconds(30),
@@ -227,7 +222,7 @@ public unsafe partial class VulkanRenderer
     private bool ComputeSupportsGpuAutoExposure()
     {
         // Vulkan backend requires a compute-capable queue for this path.
-        return FamilyQueueIndices.ComputeFamilyIndex.HasValue;
+        return _deviceContext.QueueFamilies.ComputeFamilyIndex.HasValue;
     }
 
     private bool EnsureExposureStorageUsage(XRTexture2D exposureTex)
@@ -257,12 +252,12 @@ public unsafe partial class VulkanRenderer
 
     private void EnsureAutoExposureComputeResources()
     {
-        if (_autoExposureComputeInitialized)
+        if (ResourceRuntime.AutoExposureComputeInitialized)
             return;
 
         try
         {
-            _autoExposureComputeProgram2D = new XRRenderProgram(
+            ResourceRuntime.AutoExposureComputeProgram2D = new XRRenderProgram(
                 linkNow: true,
                 separable: false,
                 new XRShader(EShaderType.Compute, AutoExposureComputeShaderSource2D)
@@ -273,7 +268,7 @@ public unsafe partial class VulkanRenderer
                 Name = "VulkanAutoExposure2D"
             };
 
-            _autoExposureComputeProgram2DArray = new XRRenderProgram(
+            ResourceRuntime.AutoExposureComputeProgram2DArray = new XRRenderProgram(
                 linkNow: true,
                 separable: false,
                 new XRShader(EShaderType.Compute, AutoExposureComputeShaderSource2DArray)
@@ -284,23 +279,23 @@ public unsafe partial class VulkanRenderer
                 Name = "VulkanAutoExposure2DArray"
             };
 
-            _autoExposureComputeInitialized = true;
+            ResourceRuntime.AutoExposureComputeInitialized = true;
         }
         catch (Exception ex)
         {
             Debug.VulkanWarning($"Failed to initialize Vulkan auto exposure compute shaders: {ex.Message}");
-            _autoExposureComputeInitialized = false;
-            _supportsGpuAutoExposure = false;
+            ResourceRuntime.AutoExposureComputeInitialized = false;
+            ResourceRuntime.SupportsGpuAutoExposure = false;
         }
     }
 
     private void DestroyAutoExposureComputeResources()
     {
-        _autoExposureComputeProgram2D?.Destroy();
-        _autoExposureComputeProgram2DArray?.Destroy();
-        _autoExposureComputeProgram2D = null;
-        _autoExposureComputeProgram2DArray = null;
-        _autoExposureComputeInitialized = false;
+        ResourceRuntime.AutoExposureComputeProgram2D?.Destroy();
+        ResourceRuntime.AutoExposureComputeProgram2DArray?.Destroy();
+        ResourceRuntime.AutoExposureComputeProgram2D = null;
+        ResourceRuntime.AutoExposureComputeProgram2DArray = null;
+        ResourceRuntime.AutoExposureComputeInitialized = false;
     }
 
     private const string AutoExposureComputeShaderSource2D = @"#version 460

@@ -443,11 +443,9 @@ contains broad per-draw records and compatibility conversions:
 - `DrawMetadata` and `BoundsGpu` are currently 64 bytes each, while
   `GPUIndirectRenderCommandHot` is 80 bytes. Culling consumes only selected draw
   control lanes plus its chosen sphere/AABB representation.
-- `GPURenderExtractSoA.comp` writes sphere/control scratch buffers, but the
-  current `SoACull` method has no callers and itself binds `DrawMetadataBuffer`
-  and `BoundsBuffer` rather than those extracted buffers. Production must remove
-  this dead conversion and its scratch resources, or establish a measured real
-  consumer before retaining it.
+- The dead `GPURenderExtractSoA.comp` conversion, its scratch resources, and the
+  uncalled `SoACull` compatibility path were removed. Culling reads
+  `DrawMetadataBuffer` and `BoundsBuffer` directly.
 - `BuildSourceHotCommandBuffer` remains a compatibility conversion for current
   culling consumers. The target is direct consumption of stage-native GPUScene
   streams; a broad compatibility envelope must not remain an unconditional

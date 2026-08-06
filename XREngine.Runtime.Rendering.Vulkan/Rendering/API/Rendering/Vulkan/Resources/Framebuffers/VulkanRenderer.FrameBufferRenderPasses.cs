@@ -6,12 +6,13 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private readonly Dictionary<RenderPassKey, RenderPass> _frameBufferRenderPasses = new();
+    private Dictionary<VulkanFrameBufferRenderPassKey, RenderPass> _frameBufferRenderPasses
+        => ResourceRuntime.FrameBufferRenderPasses;
 
     internal RenderPass GetOrCreateFrameBufferRenderPass(FrameBufferAttachmentSignature[] signature)
     {
         FrameBufferAttachmentSignature[] keyData = (FrameBufferAttachmentSignature[])signature.Clone();
-        RenderPassKey key = new(keyData);
+        VulkanFrameBufferRenderPassKey key = new(keyData);
         if (!_frameBufferRenderPasses.TryGetValue(key, out RenderPass renderPass))
         {
             renderPass = CreateFrameBufferRenderPass(signature);
@@ -164,7 +165,7 @@ public unsafe partial class VulkanRenderer
                 PDependencies = dependencies,
             };
 
-            if (Api!.CreateRenderPass(device, ref createInfo, null, out RenderPass renderPass) != Result.Success)
+            if (Api!.CreateRenderPass(_deviceContext.Device, ref createInfo, null, out RenderPass renderPass) != Result.Success)
                 throw new Exception("Failed to create framebuffer render pass.");
 
             RegisterRenderPassColorAttachmentFormats(
@@ -211,36 +212,11 @@ public unsafe partial class VulkanRenderer
             if (renderPass.Handle != 0)
             {
                 UnregisterRenderPass(renderPass);
-                Api!.DestroyRenderPass(device, renderPass, null);
+                Api!.DestroyRenderPass(_deviceContext.Device, renderPass, null);
             }
         }
 
         _frameBufferRenderPasses.Clear();
-    }
-
-    private readonly record struct RenderPassKey(FrameBufferAttachmentSignature[] Attachments) : IEquatable<RenderPassKey>
-    {
-        public bool Equals(RenderPassKey other)
-        {
-            if (Attachments.Length != other.Attachments.Length)
-                return false;
-
-            for (int i = 0; i < Attachments.Length; i++)
-            {
-                if (!Attachments[i].Equals(other.Attachments[i]))
-                    return false;
-            }
-
-            return true;
-        }
-
-        public override int GetHashCode()
-        {
-            HashCode hash = new();
-            foreach (FrameBufferAttachmentSignature attachment in Attachments)
-                hash.Add(attachment);
-            return hash.ToHashCode();
-        }
     }
 
     private static bool IsColorLikeAttachmentRole(AttachmentRole role)

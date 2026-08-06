@@ -10,7 +10,7 @@ public unsafe partial class VulkanRenderer
         if (buffer.Handle == 0)
             return;
 
-        _bufferResourceManager.TrackMeshUniformBuffer(buffer, memory);
+        ResourceRuntime.Allocations.Buffers.TrackMeshUniformBuffer(buffer, memory);
     }
 
     internal void DestroyTrackedMeshUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)
@@ -19,7 +19,7 @@ public unsafe partial class VulkanRenderer
             return;
 
         if (buffer.Handle != 0)
-            _bufferResourceManager.RemoveMeshUniformBuffer(buffer);
+            ResourceRuntime.Allocations.Buffers.RemoveMeshUniformBuffer(buffer);
 
         if (buffer.Handle != 0)
             RetireBuffer(buffer, memory);
@@ -30,7 +30,7 @@ public unsafe partial class VulkanRenderer
     private void DestroyRemainingTrackedMeshUniformBuffers()
     {
         KeyValuePair<ulong, DeviceMemory>[] remaining =
-            _bufferResourceManager.DrainMeshUniformBuffers();
+            ResourceRuntime.Allocations.Buffers.DrainMeshUniformBuffers();
 
         foreach (KeyValuePair<ulong, DeviceMemory> entry in remaining)
         {

@@ -27,10 +27,10 @@ namespace XREngine.Rendering.Vulkan
             out CommandBufferLifecycleState state)
         {
             state = default;
-            if (!IsDeviceOperational)
+            if (!_deviceContext.IsOperational)
             {
                 context.RecordingDeferredReason =
-                    $"Vulkan device state is {DeviceState}";
+                    $"Vulkan device state is {_deviceContext.State}";
                 return false;
             }
 
@@ -77,7 +77,8 @@ namespace XREngine.Rendering.Vulkan
 
             state = new CommandBufferLifecycleState(
                 imageIndex,
-                context.PreserveSwapchainForOverlay)
+                context.PreserveSwapchainForOverlay,
+                _framePlanner.FramePlanBuilder)
             {
                 ImageForcedDirty = _commandBufferDirtyFlags[imageIndex],
                 EnsureStartDirtyGeneration =
@@ -113,10 +114,10 @@ namespace XREngine.Rendering.Vulkan
         {
             ResourcePlannerRuntimeState plannerState = CaptureResourcePlannerRuntimeState();
             using (VulkanCpuStageScope cpuStage =
-                   new(EVulkanCpuStage.FrameOpPreparation))
+                   new(_frameTelemetry, EVulkanCpuStage.FrameOpPreparation))
             {
                 using (VulkanCpuStageScope drainStage =
-                       new(EVulkanCpuStage.FrameOpDrain))
+                       new(_frameTelemetry, EVulkanCpuStage.FrameOpDrain))
                 {
                     state.FrameOperations = DrainFrameOpsExcludingTextureUploads(
                         out state.RawFrameOpsSignature,
@@ -135,13 +136,13 @@ namespace XREngine.Rendering.Vulkan
                 return;
 
             using (VulkanCpuStageScope cpuStage =
-                   new(EVulkanCpuStage.FrameOpPreparation))
+                   new(_frameTelemetry, EVulkanCpuStage.FrameOpPreparation))
             {
                 using (VulkanCpuStageScope schedulingStage =
-                       new(EVulkanCpuStage.FrameOpScheduling))
+                       new(_frameTelemetry, EVulkanCpuStage.FrameOpScheduling))
                 {
                     using (VulkanCpuStageScope sortStage =
-                           new(EVulkanCpuStage.FrameOpSort))
+                           new(_frameTelemetry, EVulkanCpuStage.FrameOpSort))
                     {
                         state.FrameOperations = _frameOperationScheduler
                             .SortFrameOpsCore(
@@ -149,7 +150,7 @@ namespace XREngine.Rendering.Vulkan
                                 plannerState.CompiledRenderGraph);
                     }
                     using (VulkanCpuStageScope cohortStage =
-                           new(EVulkanCpuStage.FrameOpCohort))
+                           new(_frameTelemetry, EVulkanCpuStage.FrameOpCohort))
                     {
                         RecordVisibleMeshDrawCohort(
                             state.FrameOperations,
@@ -157,7 +158,7 @@ namespace XREngine.Rendering.Vulkan
                     }
                     FrameOp[] staticOperations;
                     using (VulkanCpuStageScope splitStage =
-                           new(EVulkanCpuStage.FrameOpSplit))
+                           new(_frameTelemetry, EVulkanCpuStage.FrameOpSplit))
                     {
                         SplitDynamicUiBatchTextFrameOps(
                             state.FrameOperations,
@@ -166,7 +167,7 @@ namespace XREngine.Rendering.Vulkan
                     }
                     state.FrameOperations = staticOperations;
                     using (VulkanCpuStageScope signatureStage =
-                           new(EVulkanCpuStage.FrameOpSignature))
+                           new(_frameTelemetry, EVulkanCpuStage.FrameOpSignature))
                     {
                         NormalizePrimaryPlanPassIndicesForPublication(state.FrameOperations);
                         state.FrameOperationsSignature =
@@ -177,7 +178,7 @@ namespace XREngine.Rendering.Vulkan
                     }
 
                     using (VulkanCpuStageScope planStage =
-                           new(EVulkanCpuStage.FrameOpPlan))
+                           new(_frameTelemetry, EVulkanCpuStage.FrameOpPlan))
                     {
                         VulkanPrimaryCommandPlan primaryPlan =
                             state.PrimaryCommandPlan;
@@ -220,7 +221,7 @@ namespace XREngine.Rendering.Vulkan
             bool registered;
             string failureReason;
             using (VulkanCpuStageScope cpuStage =
-                   new(EVulkanCpuStage.FrameDataManifest))
+                   new(_frameTelemetry, EVulkanCpuStage.FrameDataManifest))
             {
                 registered = TryRegisterFrameWideMeshFrameDataRequirements(
                     state.FrameOperations,
@@ -346,10 +347,9 @@ namespace XREngine.Rendering.Vulkan
             if (!state.HasStaticFrameOperations)
                 return;
 
-            ulong normalizedSignature = ComputeFrameOpsSignature(state.FrameOperations);
             state.PrimaryCommandPlan.Build(
-                state.FrameOperations,
-                normalizedSignature,
+                state.SealedFramePlan!.StaticOperations,
+                state.FrameOperationsSignature,
                 new VulkanPrimaryPlanTerminalContext(
                     state.PreserveSwapchainForOverlay,
                     TransitionSwapchainToPresent: true,
@@ -382,7 +382,7 @@ namespace XREngine.Rendering.Vulkan
                     : state.DynamicUiSignature;
 
             using VulkanCpuStageScope cpuStage =
-                new(EVulkanCpuStage.ResourcePlanning);
+                new(_frameTelemetry, EVulkanCpuStage.ResourcePlanning);
             bool hasPlannerOperations = plannerOperations.Length > 0;
             if (hasPlannerOperations &&
                 !TryValidateFrameOpPlannerContextSet(
@@ -553,7 +553,7 @@ namespace XREngine.Rendering.Vulkan
             scoped ref CommandBufferLifecycleState state)
         {
             using VulkanCpuStageScope cpuStage =
-                new(EVulkanCpuStage.DependencySnapshot);
+                new(_frameTelemetry, EVulkanCpuStage.DependencySnapshot);
             state.FallbackContext = state.HasStaticFrameOperations
                 ? state.FrameOperations[0].Context
                 : state.HasDynamicUiOperations
@@ -639,7 +639,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             using VulkanCpuStageScope cpuStage =
-                new(EVulkanCpuStage.ImageLayoutSnapshot);
+                new(_frameTelemetry, EVulkanCpuStage.ImageLayoutSnapshot);
             state.ImageLayoutStartSignature =
                 ComputeImageLayoutStateSignature();
         }

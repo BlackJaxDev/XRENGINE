@@ -21,27 +21,27 @@ public unsafe partial class VulkanRenderer
     private DescriptorSet ResolveImGuiDescriptorSet(nint textureId)
     {
         if (textureId == 0)
-            return _imguiResources.FontDescriptorSet;
+            return _outputRuntime._imguiResources.FontDescriptorSet;
 
         if (!RefreshImGuiRegisteredTexture(textureId))
-            return _imguiResources.FontDescriptorSet;
+            return _outputRuntime._imguiResources.FontDescriptorSet;
 
-        if (_imguiTextureRegistry.DescriptorSets.TryGetValue(textureId, out DescriptorSet set) && set.Handle != 0)
+        if (_outputRuntime._imguiTextureRegistry.DescriptorSets.TryGetValue(textureId, out DescriptorSet set) && set.Handle != 0)
             return set;
 
-        return _imguiResources.FontDescriptorSet;
+        return _outputRuntime._imguiResources.FontDescriptorSet;
     }
 
     private bool RefreshImGuiRegisteredTexture(nint textureId)
     {
-        if (!_imguiTextureRegistry.TexturesById.TryGetValue(textureId, out XRTexture? texture))
+        if (!_outputRuntime._imguiTextureRegistry.TexturesById.TryGetValue(textureId, out XRTexture? texture))
             return false;
 
-        if (!_imguiTextureRegistry.Registrations.TryGetValue(texture, out VulkanImGuiTextureRegistration registration) ||
+        if (!_outputRuntime._imguiTextureRegistry.Registrations.TryGetValue(texture, out VulkanImGuiTextureRegistration registration) ||
             registration.Id != textureId)
             return false;
 
-        if (!_imguiTextureRegistry.DescriptorSets.TryGetValue(textureId, out DescriptorSet descriptorSet) ||
+        if (!_outputRuntime._imguiTextureRegistry.DescriptorSets.TryGetValue(textureId, out DescriptorSet descriptorSet) ||
             descriptorSet.Handle == 0)
             return false;
 
@@ -65,7 +65,7 @@ public unsafe partial class VulkanRenderer
         if (replacementSet.Handle == 0)
             return false;
 
-        _imguiTextureRegistry.DescriptorSets[textureId] = replacementSet;
+        _outputRuntime._imguiTextureRegistry.DescriptorSets[textureId] = replacementSet;
         UpdateImGuiDescriptorHeapPayload(textureId, new DescriptorImageInfo
         {
             Sampler = descriptorSampler,
@@ -77,8 +77,8 @@ public unsafe partial class VulkanRenderer
         registration.SamplerHandle = descriptorSampler.Handle;
         registration.ImageLayout = descriptorLayout;
         registration.DescriptorGeneration = descriptorGeneration;
-        _imguiTextureRegistry.Registrations[texture] = registration;
-        RetireDescriptorSet(_imguiResources.DescriptorPool, descriptorSet);
+        _outputRuntime._imguiTextureRegistry.Registrations[texture] = registration;
+        RetireDescriptorSet(_outputRuntime._imguiResources.DescriptorPool, descriptorSet);
         return true;
     }
 
@@ -97,19 +97,19 @@ public unsafe partial class VulkanRenderer
                 out ulong descriptorGeneration))
             return IntPtr.Zero;
 
-        if (_imguiTextureRegistry.Registrations.TryGetValue(texture, out VulkanImGuiTextureRegistration registration))
+        if (_outputRuntime._imguiTextureRegistry.Registrations.TryGetValue(texture, out VulkanImGuiTextureRegistration registration))
         {
-            if (!_imguiTextureRegistry.DescriptorSets.TryGetValue(registration.Id, out DescriptorSet liveDescriptorSet)
+            if (!_outputRuntime._imguiTextureRegistry.DescriptorSets.TryGetValue(registration.Id, out DescriptorSet liveDescriptorSet)
                 || liveDescriptorSet.Handle == 0)
             {
-                _imguiTextureRegistry.Registrations.Remove(texture);
-                _imguiTextureRegistry.DescriptorSets.Remove(registration.Id);
-                _imguiTextureRegistry.TexturesById.Remove(registration.Id);
+                _outputRuntime._imguiTextureRegistry.Registrations.Remove(texture);
+                _outputRuntime._imguiTextureRegistry.DescriptorSets.Remove(registration.Id);
+                _outputRuntime._imguiTextureRegistry.TexturesById.Remove(registration.Id);
             }
             else
             {
                 registration.DescriptorSet = liveDescriptorSet;
-                _imguiTextureRegistry.TexturesById[registration.Id] = texture;
+                _outputRuntime._imguiTextureRegistry.TexturesById[registration.Id] = texture;
                 if (registration.ImageViewHandle != descriptorView.Handle
                     || registration.SamplerHandle != descriptorSampler.Handle
                     || registration.ImageLayout != descriptorLayout
@@ -119,7 +119,7 @@ public unsafe partial class VulkanRenderer
                     if (replacementSet.Handle == 0)
                         return (IntPtr)registration.Id;
 
-                    _imguiTextureRegistry.DescriptorSets[registration.Id] = replacementSet;
+                    _outputRuntime._imguiTextureRegistry.DescriptorSets[registration.Id] = replacementSet;
                     UpdateImGuiDescriptorHeapPayload(registration.Id, new DescriptorImageInfo
                     {
                         Sampler = descriptorSampler,
@@ -131,8 +131,8 @@ public unsafe partial class VulkanRenderer
                     registration.SamplerHandle = descriptorSampler.Handle;
                     registration.ImageLayout = descriptorLayout;
                     registration.DescriptorGeneration = descriptorGeneration;
-                    _imguiTextureRegistry.Registrations[texture] = registration;
-                    RetireDescriptorSet(_imguiResources.DescriptorPool, liveDescriptorSet);
+                    _outputRuntime._imguiTextureRegistry.Registrations[texture] = registration;
+                    RetireDescriptorSet(_outputRuntime._imguiResources.DescriptorPool, liveDescriptorSet);
                 }
 
                 return (IntPtr)registration.Id;
@@ -143,16 +143,16 @@ public unsafe partial class VulkanRenderer
         if (descriptorSet.Handle == 0)
             return IntPtr.Zero;
 
-        nint id = _imguiTextureRegistry.NextTextureId++;
-        _imguiTextureRegistry.DescriptorSets[id] = descriptorSet;
+        nint id = _outputRuntime._imguiTextureRegistry.NextTextureId++;
+        _outputRuntime._imguiTextureRegistry.DescriptorSets[id] = descriptorSet;
         UpdateImGuiDescriptorHeapPayload(id, new DescriptorImageInfo
         {
             Sampler = descriptorSampler,
             ImageView = descriptorView,
             ImageLayout = descriptorLayout,
         });
-        _imguiTextureRegistry.TexturesById[id] = texture;
-        _imguiTextureRegistry.Registrations[texture] = new VulkanImGuiTextureRegistration
+        _outputRuntime._imguiTextureRegistry.TexturesById[id] = texture;
+        _outputRuntime._imguiTextureRegistry.Registrations[texture] = new VulkanImGuiTextureRegistration
         {
             Id = id,
             DescriptorSet = descriptorSet,
@@ -170,15 +170,15 @@ public unsafe partial class VulkanRenderer
         if (id <= 1)
             return false;
 
-        if (!_imguiTextureRegistry.DescriptorSets.TryGetValue(id, out DescriptorSet descriptorSet))
+        if (!_outputRuntime._imguiTextureRegistry.DescriptorSets.TryGetValue(id, out DescriptorSet descriptorSet))
             return false;
 
-        _imguiTextureRegistry.DescriptorSets.Remove(id);
-        _imguiTextureRegistry.DescriptorHeapPushData.Remove(id);
-        _imguiTextureRegistry.TexturesById.Remove(id);
+        _outputRuntime._imguiTextureRegistry.DescriptorSets.Remove(id);
+        _outputRuntime._imguiTextureRegistry.DescriptorHeapPushData.Remove(id);
+        _outputRuntime._imguiTextureRegistry.TexturesById.Remove(id);
 
         XRTexture? keyToRemove = null;
-        foreach (var entry in _imguiTextureRegistry.Registrations)
+        foreach (var entry in _outputRuntime._imguiTextureRegistry.Registrations)
         {
             if (entry.Value.Id == id)
             {
@@ -188,10 +188,10 @@ public unsafe partial class VulkanRenderer
         }
 
         if (keyToRemove is not null)
-            _imguiTextureRegistry.Registrations.Remove(keyToRemove);
+            _outputRuntime._imguiTextureRegistry.Registrations.Remove(keyToRemove);
 
         if (descriptorSet.Handle != 0)
-            RetireDescriptorSet(_imguiResources.DescriptorPool, descriptorSet);
+            RetireDescriptorSet(_outputRuntime._imguiResources.DescriptorPool, descriptorSet);
 
         return true;
     }
@@ -266,23 +266,23 @@ public unsafe partial class VulkanRenderer
 
     private DescriptorSet AllocateImGuiDescriptorSet(ImageView descriptorView, Sampler descriptorSampler, ImageLayout descriptorLayout)
     {
-        if (_imguiResources.DescriptorPool.Handle == 0 || _imguiResources.DescriptorSetLayout.Handle == 0)
+        if (_outputRuntime._imguiResources.DescriptorPool.Handle == 0 || _outputRuntime._imguiResources.DescriptorSetLayout.Handle == 0)
             return default;
 
-        DescriptorSetLayout layout = _imguiResources.DescriptorSetLayout;
+        DescriptorSetLayout layout = _outputRuntime._imguiResources.DescriptorSetLayout;
         DescriptorSetAllocateInfo allocInfo = new()
         {
             SType = StructureType.DescriptorSetAllocateInfo,
-            DescriptorPool = _imguiResources.DescriptorPool,
+            DescriptorPool = _outputRuntime._imguiResources.DescriptorPool,
             DescriptorSetCount = 1,
             PSetLayouts = &layout
         };
 
-        if (Api!.AllocateDescriptorSets(device, ref allocInfo, out DescriptorSet descriptorSet) != Result.Success)
+        if (Api!.AllocateDescriptorSets(_deviceContext.Device, ref allocInfo, out DescriptorSet descriptorSet) != Result.Success)
             return default;
 
         RegisterVulkanDescriptorSet(
-            _imguiResources.DescriptorPool,
+            _outputRuntime._imguiResources.DescriptorPool,
             descriptorSet,
             usesUpdateAfterBind: false,
             "ImGui.Texture.DescriptorSet");
@@ -328,7 +328,7 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        _imguiTextureRegistry.DescriptorHeapPushData[textureId] = payload;
+        _outputRuntime._imguiTextureRegistry.DescriptorHeapPushData[textureId] = payload;
         return true;
     }
 
@@ -337,10 +337,10 @@ public unsafe partial class VulkanRenderer
         if (textureId != 0)
             RefreshImGuiRegisteredTexture(textureId);
 
-        if (_imguiTextureRegistry.DescriptorHeapPushData.TryGetValue(textureId, out DescriptorHeapPushDataPayload? payload))
+        if (_outputRuntime._imguiTextureRegistry.DescriptorHeapPushData.TryGetValue(textureId, out DescriptorHeapPushDataPayload? payload))
             return payload;
 
-        if (_imguiTextureRegistry.DescriptorHeapPushData.TryGetValue((nint)1, out payload))
+        if (_outputRuntime._imguiTextureRegistry.DescriptorHeapPushData.TryGetValue((nint)1, out payload))
             return payload;
 
         return null;

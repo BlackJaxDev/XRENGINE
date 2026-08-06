@@ -16,10 +16,10 @@ namespace XREngine.Rendering.Vulkan
             imageWasEverPresented =
                 IsSwapchainImageEverPresented(attempt.ImageIndex);
             imageHasValidPresentedContent =
-                _swapchainImageHasValidPresentedContent is not null &&
+                OutputRuntime.Desktop.ImageHasValidPresentedContent is not null &&
                 attempt.ImageIndex <
-                _swapchainImageHasValidPresentedContent.Length &&
-                _swapchainImageHasValidPresentedContent[attempt.ImageIndex];
+                OutputRuntime.Desktop.ImageHasValidPresentedContent.Length &&
+                OutputRuntime.Desktop.ImageHasValidPresentedContent[attempt.ImageIndex];
             acquireAvailable =
                 attempt.AcquireOwnership ==
                     EVulkanDesktopAcquireOwnership.AcquiredUnresolved &&

@@ -1,6 +1,4 @@
-using Silk.NET.Core;
 using Silk.NET.Vulkan;
-using Silk.NET.Vulkan.Extensions.KHR;
 
 namespace XREngine.Rendering.Vulkan.DeviceBootstrap;
 
@@ -10,13 +8,12 @@ namespace XREngine.Rendering.Vulkan.DeviceBootstrap;
 /// </summary>
 internal static class VulkanQueueFamilySelector
 {
-    public static VulkanRenderer.QueueFamilyIndices Select(
+    public static QueueFamilyIndices Select(
         ReadOnlySpan<QueueFamilyProperties> queueFamilies,
-        KhrSurface? surfaceApi,
         PhysicalDevice physicalDevice,
-        SurfaceKHR surface)
+        VulkanPresentationSupportProbe? presentationSupportProbe)
     {
-        VulkanRenderer.QueueFamilyIndices indices = default;
+        QueueFamilyIndices indices = default;
 
         for (uint i = 0; i < queueFamilies.Length; i++)
         {
@@ -49,15 +46,22 @@ internal static class VulkanQueueFamilySelector
                 indices.TransferFamilyIndex = i;
             }
 
-            if (surfaceApi is not null)
+            if (presentationSupportProbe is not null)
             {
-                surfaceApi.GetPhysicalDeviceSurfaceSupport(
+                Result result = presentationSupportProbe(
                     physicalDevice,
                     i,
-                    surface,
-                    out Bool32 presentSupport);
-                if (presentSupport && !indices.PresentFamilyIndex.HasValue)
+                    out bool supportsPresentation);
+                if (result != Result.Success)
+                {
+                    throw new InvalidOperationException(
+                        $"Vulkan presentation support query failed for queue family {i}. Result={result}.");
+                }
+                if (supportsPresentation &&
+                    !indices.PresentFamilyIndex.HasValue)
+                {
                     indices.PresentFamilyIndex = i;
+                }
             }
         }
 

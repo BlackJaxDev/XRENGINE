@@ -3,14 +3,14 @@ namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     internal void QueueProgramLinkUntilDeviceReady(VkRenderProgram program)
-        => _pipelineManager.QueueProgramLinkUntilDeviceReady(program);
+        => ResourceRuntime.PipelineManager.QueueProgramLinkUntilDeviceReady(program);
 
     private void FlushPendingDeviceReadyProgramLinks()
     {
-        if (!IsLogicalDeviceReady)
+        if (!_deviceContext.IsReady)
             return;
 
-        int deferredCount = _pipelineManager.FlushPendingDeviceReadyProgramLinks();
+        int deferredCount = ResourceRuntime.PipelineManager.FlushPendingDeviceReadyProgramLinks();
         if (deferredCount == 0)
             return;
 
@@ -21,5 +21,5 @@ public unsafe partial class VulkanRenderer
     }
 
     private void ClearPendingDeviceReadyProgramLinks()
-        => _pipelineManager.ClearPendingDeviceReadyProgramLinks();
+        => ResourceRuntime.PipelineManager.ClearPendingDeviceReadyProgramLinks();
 }

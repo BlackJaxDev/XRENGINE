@@ -18,35 +18,30 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    internal bool SamplerAnisotropyEnabled => DeviceCapabilities.Supports(EVulkanDeviceCapability.Anisotropy);
+    internal bool SamplerAnisotropyEnabled => _deviceContext.Capabilities.Supports(EVulkanDeviceCapability.Anisotropy);
     internal IInputContext? ImGuiInputContext => XRWindow.Input;
-    private VulkanImGuiBackend? _imguiBackend;
-    private readonly VulkanImGuiDrawDataCache _imguiDrawData = new();
-    private readonly VulkanImGuiResources _imguiResources = new();
-    private readonly VulkanImGuiTextureRegistry _imguiTextureRegistry = new();
-
     /// <summary>
     /// Compatibility facade for command-buffer orchestration while ownership
     /// remains centralized in <see cref="VulkanImGuiResources"/>.
     /// </summary>
     private CommandBuffer[]? _imguiOverlayCommandBuffers
     {
-        get => _imguiResources.OverlayCommandBuffers;
-        set => _imguiResources.OverlayCommandBuffers = value;
+        get => _outputRuntime._imguiResources.OverlayCommandBuffers;
+        set => _outputRuntime._imguiResources.OverlayCommandBuffers = value;
     }
 
     internal void StoreImGuiDrawData(ImDrawDataPtr drawData)
-        => _imguiDrawData.Store(drawData);
+        => _outputRuntime._imguiDrawData.Store(drawData);
 
     private Result PresentImGuiViewport(ref PresentInfoKHR presentInfo)
     {
         using VulkanQueueOperationLease queueOperation =
-            VulkanQueueOperationLease.TryEnter(_oneTimeSubmitLock, _deviceStateMachine);
+            VulkanQueueOperationLease.TryEnter(_oneTimeSubmitLock, _deviceContext.StateMachine, _frameTelemetry);
         if (!queueOperation.Acquired)
             return Result.ErrorDeviceLost;
 
-        Result result = khrSwapChain!.QueuePresent(presentQueue, ref presentInfo);
-        RecordVulkanQueueOperation("present-imgui-viewport", presentQueue, result, 0, nameof(PresentImGuiViewport));
+        Result result = OutputRuntime.Desktop.SwapchainExtension!.QueuePresent(_deviceContext.PresentQueue, ref presentInfo);
+        RecordVulkanQueueOperation("present-imgui-viewport", _deviceContext.PresentQueue, result, 0, nameof(PresentImGuiViewport));
         if (result == Result.ErrorDeviceLost)
         {
             RecordFirstFailingVulkanApi($"vkQueuePresentKHR:{nameof(PresentImGuiViewport)}:{result}");
@@ -65,14 +60,14 @@ public unsafe partial class VulkanRenderer
 
     private VulkanImGuiBackend GetOrCreateImGuiBackend()
     {
-        if (_imguiBackend is not null && !ImGuiContextTracker.IsAlive(_imguiBackend.ContextHandle))
+        if (_outputRuntime._imguiBackend is not null && !ImGuiContextTracker.IsAlive(_outputRuntime._imguiBackend.ContextHandle))
         {
-            _imguiBackend.Dispose();
-            _imguiBackend = null;
-            _imguiDrawData.Clear();
+            _outputRuntime._imguiBackend.Dispose();
+            _outputRuntime._imguiBackend = null;
+            _outputRuntime._imguiDrawData.Clear();
         }
 
-        return _imguiBackend ??= new VulkanImGuiBackend(this);
+        return _outputRuntime._imguiBackend ??= new VulkanImGuiBackend(this);
     }
 
     protected override IImGuiRendererBackend? GetImGuiBackend(XRViewport? viewport)
@@ -80,14 +75,14 @@ public unsafe partial class VulkanRenderer
 
     private void DisposeImGuiResources()
     {
-        _imguiBackend?.Dispose();
-        _imguiBackend = null;
+        _outputRuntime._imguiBackend?.Dispose();
+        _outputRuntime._imguiBackend = null;
 
         DestroyImGuiPipelineResources();
         DestroyImGuiFontResources();
         DestroyImGuiDrawBuffers();
 
-        _imguiDrawData.Clear();
+        _outputRuntime._imguiDrawData.Clear();
         ResetImGuiFrameMarker();
     }
 

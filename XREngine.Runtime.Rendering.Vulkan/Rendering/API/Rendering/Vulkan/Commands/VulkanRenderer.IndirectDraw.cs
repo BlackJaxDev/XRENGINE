@@ -113,17 +113,12 @@ namespace XREngine.Rendering.Vulkan
         }
 
         // =========== Indirect Draw State ===========
-        private VkDataBuffer? _boundIndirectBuffer;
-        private VkDataBuffer? _boundParameterBuffer;
-        private VkMeshRenderer? _boundMeshRendererForIndirect;
-        private IndexType _boundIndexType = IndexType.Uint32;
-        private uint _boundIndexCount;
-        private VulkanIndirectDrawState? _pendingIndirectDrawState;
-
-        internal readonly record struct VulkanIndirectDrawState(
-            XRRenderProgram Program,
-            XRMaterial Material,
-            Matrix4x4 ModelMatrix);
+        private ref VkDataBuffer? _boundIndirectBuffer => ref _commandRuntime.CommandBuffers.BoundIndirectBuffer;
+        private ref VkDataBuffer? _boundParameterBuffer => ref _commandRuntime.CommandBuffers.BoundParameterBuffer;
+        private ref VkMeshRenderer? _boundMeshRendererForIndirect => ref _commandRuntime.CommandBuffers.BoundMeshRendererForIndirect;
+        private ref IndexType _boundIndexType => ref _commandRuntime.CommandBuffers.BoundIndexType;
+        private ref uint _boundIndexCount => ref _commandRuntime.CommandBuffers.BoundIndexCount;
+        private ref VulkanIndirectDrawState? _pendingIndirectDrawState => ref _commandRuntime.CommandBuffers.PendingIndirectDrawState;
 
         private bool TryCaptureIndirectDrawPayload(
             string contextName,
@@ -265,7 +260,7 @@ namespace XREngine.Rendering.Vulkan
 
         public override void MultiDrawElementsIndirectCount(uint maxDrawCount, uint stride, nuint byteOffset, nuint countByteOffset)
         {
-            if (!DeviceCapabilities.Supports(EVulkanDeviceCapability.DrawIndirectCount))
+            if (!_deviceContext.Capabilities.Supports(EVulkanDeviceCapability.DrawIndirectCount))
             {
                 Debug.VulkanWarning("MultiDrawElementsIndirectCount called but VK_KHR_draw_indirect_count is not supported. Falling back to regular indirect draw.");
                 MultiDrawElementsIndirectWithOffset(maxDrawCount, stride, byteOffset);
@@ -333,7 +328,7 @@ namespace XREngine.Rendering.Vulkan
 
         public override bool SupportsIndirectCountDraw()
         {
-            return DeviceCapabilities.Supports(EVulkanDeviceCapability.DrawIndirectCount);
+            return _deviceContext.Capabilities.Supports(EVulkanDeviceCapability.DrawIndirectCount);
         }
 
         public override void ConfigureVAOAttributesForProgram(XRRenderProgram program, XRMeshRenderer.BaseVersion? version)

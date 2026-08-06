@@ -25,7 +25,7 @@ internal sealed record ComputeDispatchOp(
 
     internal override int RecordPrimary(
         VulkanRenderer renderer,
-        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
+        scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
         if (TryRecordSecondaryBucket(
@@ -55,7 +55,7 @@ internal sealed record ComputeDispatchOp(
         ComputeDispatchSnapshot snapshot,
         in FrameOpContext context)
     {
-        bool frameOwned = TryRentForCurrentFrame(out ComputeDispatchOp? reusable);
+        bool frameOwned = TryRentForCurrentFrame(context, out ComputeDispatchOp? reusable);
         if (reusable is null)
         {
             ComputeDispatchOp created = new(
@@ -66,7 +66,7 @@ internal sealed record ComputeDispatchOp(
                 groupsZ,
                 snapshot,
                 context);
-            return frameOwned ? RetainForCurrentFrame(created) : created;
+            return frameOwned ? RetainForCurrentFrame(created, context) : created;
         }
 
         reusable.Reset(

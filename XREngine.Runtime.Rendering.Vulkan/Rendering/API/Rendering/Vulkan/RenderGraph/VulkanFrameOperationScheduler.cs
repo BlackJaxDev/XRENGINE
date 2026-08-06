@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using XREngine.Rendering.RenderGraph;
@@ -24,6 +23,30 @@ internal sealed class VulkanFrameOperationScheduler
         public int PassOrder { get; } = passOrder;
         public int OriginalIndex { get; } = originalIndex;
         public int QueryOrderBlock { get; } = queryOrderBlock;
+    }
+
+    private readonly struct SchedulingTargetKey(
+        int passOrder,
+        int schedulingIdentity,
+        object? target) : IEquatable<SchedulingTargetKey>
+    {
+        private readonly int _passOrder = passOrder;
+        private readonly int _schedulingIdentity = schedulingIdentity;
+        private readonly object? _target = target;
+
+        public bool Equals(SchedulingTargetKey other)
+            => _passOrder == other._passOrder &&
+               _schedulingIdentity == other._schedulingIdentity &&
+               ReferenceEquals(_target, other._target);
+
+        public override bool Equals(object? obj)
+            => obj is SchedulingTargetKey other && Equals(other);
+
+        public override int GetHashCode()
+            => HashCode.Combine(
+                _passOrder,
+                _schedulingIdentity,
+                _target is null ? 0 : RuntimeHelpers.GetHashCode(_target));
     }
 
     private sealed class FrameOpSortKeyComparer : IComparer<FrameOpSortKey>
@@ -163,6 +186,13 @@ internal sealed class VulkanFrameOperationScheduler
 
     private readonly ConcurrentDictionary<IReadOnlyCollection<RenderPassMetadata>, PassOrderCacheEntry>
         _passOrderCache = new(ReferenceEqualityComparer.Instance);
+    private FrameOpSortKey[] _sortKeyScratch = new FrameOpSortKey[256];
+    private FrameOpSortKey[] _clearReorderScratch = new FrameOpSortKey[256];
+    private int[] _nextClearIndexScratch = new int[256];
+    private readonly Dictionary<int, int> _contextBlockOrderScratch = new();
+    private readonly Dictionary<SchedulingTargetKey, int> _earliestTargetUseScratch = new();
+    private readonly Dictionary<SchedulingTargetKey, int> _firstTargetClearScratch = new();
+    private readonly Dictionary<SchedulingTargetKey, int> _lastTargetClearScratch = new();
     internal void ReleaseCaches()
         => _passOrderCache.Clear();
 
@@ -207,12 +237,14 @@ internal sealed class VulkanFrameOperationScheduler
             return ops;
 
         int opCount = ops.Length;
-        FrameOpSortKey[] sortKeys =
-            ArrayPool<FrameOpSortKey>.Shared.Rent(opCount);
+        EnsureSortScratchCapacity(opCount);
+        FrameOpSortKey[] sortKeys = _sortKeyScratch;
 
         try
         {
             bool preserveContextBlocks = HasSubmissionOrderBlock(ops);
+            if (preserveContextBlocks)
+                BuildContextBlockOrders(ops);
             int queryOrderBlock = 0;
 
             for (int i = 0; i < opCount; i++)
@@ -220,7 +252,9 @@ internal sealed class VulkanFrameOperationScheduler
                 FrameOp op = ops[i];
                 sortKeys[i] = new FrameOpSortKey(
                     op,
-                    preserveContextBlocks ? ResolveContextBlockOrder(ops, i) : 0,
+                    preserveContextBlocks
+                        ? _contextBlockOrderScratch[op.Context.SchedulingIdentity]
+                        : 0,
                     ResolvePassOrder(op, graph),
                     i,
                     queryOrderBlock);
@@ -257,8 +291,23 @@ internal sealed class VulkanFrameOperationScheduler
         finally
         {
             Array.Clear(sortKeys, 0, opCount);
-            ArrayPool<FrameOpSortKey>.Shared.Return(sortKeys);
+            Array.Clear(_clearReorderScratch, 0, opCount);
+            _contextBlockOrderScratch.Clear();
+            _earliestTargetUseScratch.Clear();
+            _firstTargetClearScratch.Clear();
+            _lastTargetClearScratch.Clear();
         }
+    }
+
+    private void EnsureSortScratchCapacity(int required)
+    {
+        if (_sortKeyScratch.Length >= required)
+            return;
+
+        int capacity = Math.Max(required, _sortKeyScratch.Length * 2);
+        Array.Resize(ref _sortKeyScratch, capacity);
+        Array.Resize(ref _clearReorderScratch, capacity);
+        Array.Resize(ref _nextClearIndexScratch, capacity);
     }
 
     /// <summary>
@@ -282,54 +331,83 @@ internal sealed class VulkanFrameOperationScheduler
         return false;
     }
 
-    private static int ResolveContextBlockOrder(FrameOp[] ops, int index)
+    private void BuildContextBlockOrders(FrameOp[] ops)
     {
-        int schedulingIdentity = ops[index].Context.SchedulingIdentity;
-        for (int i = 0; i < index; i++)
-        {
-            if (ops[i].Context.SchedulingIdentity == schedulingIdentity)
-                return i;
-        }
-
-        return index;
+        _contextBlockOrderScratch.Clear();
+        for (int index = 0; index < ops.Length; index++)
+            _contextBlockOrderScratch.TryAdd(
+                ops[index].Context.SchedulingIdentity,
+                index);
     }
 
-    private static bool MoveTargetClearsBeforeFirstSameTargetUse(FrameOpSortKey[] sortKeys, int opCount)
+    private bool MoveTargetClearsBeforeFirstSameTargetUse(FrameOpSortKey[] sortKeys, int opCount)
     {
-        bool moved = false;
-        for (int i = 1; i < opCount; i++)
+        _earliestTargetUseScratch.Clear();
+        _firstTargetClearScratch.Clear();
+        _lastTargetClearScratch.Clear();
+
+        for (int index = 0; index < opCount; index++)
         {
-            FrameOpSortKey clearKey = sortKeys[i];
-            if (clearKey.Operation is not ClearOp clear)
+            FrameOpSortKey sortKey = sortKeys[index];
+            FrameOp operation = sortKey.Operation;
+            SchedulingTargetKey targetKey = CreateSchedulingTargetKey(sortKey);
+            if (IsTargetUseThatClearMustPrecede(operation))
+            {
+                _earliestTargetUseScratch.TryAdd(targetKey, index);
+                continue;
+            }
+
+            if (operation is not ClearOp)
                 continue;
 
-            int insertIndex = i;
-            for (int j = i - 1; j >= 0; j--)
+            _nextClearIndexScratch[index] = -1;
+            if (_lastTargetClearScratch.TryGetValue(targetKey, out int previousClearIndex))
+                _nextClearIndexScratch[previousClearIndex] = index;
+            else
+                _firstTargetClearScratch.Add(targetKey, index);
+            _lastTargetClearScratch[targetKey] = index;
+        }
+
+        bool moved = false;
+        int writeIndex = 0;
+        for (int index = 0; index < opCount; index++)
+        {
+            FrameOpSortKey sortKey = sortKeys[index];
+            SchedulingTargetKey targetKey = CreateSchedulingTargetKey(sortKey);
+            if (sortKey.Operation is ClearOp &&
+                _earliestTargetUseScratch.TryGetValue(targetKey, out int earliestUseIndex) &&
+                index > earliestUseIndex)
             {
-                FrameOpSortKey previous = sortKeys[j];
-                if (previous.PassOrder != clearKey.PassOrder)
-                    break;
-                if (IsSameSchedulingTarget(clear, previous.Operation) &&
-                    IsTargetUseThatClearMustPrecede(previous.Operation))
+                moved = true;
+                continue;
+            }
+
+            if (IsTargetUseThatClearMustPrecede(sortKey.Operation) &&
+                _earliestTargetUseScratch[targetKey] == index &&
+                _firstTargetClearScratch.TryGetValue(targetKey, out int clearIndex))
+            {
+                while (clearIndex >= 0)
                 {
-                    insertIndex = j;
+                    if (clearIndex > index)
+                        _clearReorderScratch[writeIndex++] = sortKeys[clearIndex];
+                    clearIndex = _nextClearIndexScratch[clearIndex];
                 }
             }
 
-            if (insertIndex == i)
-                continue;
-
-            Array.Copy(sortKeys, insertIndex, sortKeys, insertIndex + 1, i - insertIndex);
-            sortKeys[insertIndex] = clearKey;
-            moved = true;
+            _clearReorderScratch[writeIndex++] = sortKey;
         }
+
+        if (moved)
+            Array.Copy(_clearReorderScratch, sortKeys, opCount);
 
         return moved;
     }
 
-    private static bool IsSameSchedulingTarget(FrameOp x, FrameOp y)
-        => x.Context.SchedulingIdentity == y.Context.SchedulingIdentity &&
-           ReferenceEquals(x.Target, y.Target);
+    private static SchedulingTargetKey CreateSchedulingTargetKey(in FrameOpSortKey sortKey)
+        => new(
+            sortKey.PassOrder,
+            sortKey.Operation.Context.SchedulingIdentity,
+            sortKey.Operation.Target);
 
     private static bool IsTargetUseThatClearMustPrecede(FrameOp op)
         => op is MeshDrawOp or QueryOp or BlitOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp or TransformFeedbackOp;
@@ -409,7 +487,7 @@ internal sealed class VulkanFrameOperationScheduler
     /// <param name="ops">Sorted frame operations for the current frame.</param>
     /// <param name="destination">Caller-owned reusable destination; cleared before use.</param>
     public void BuildSecondaryRecordingBuckets(
-        FrameOp[] ops,
+        FrameOperationSequence ops,
         List<VulkanSecondaryRecordingBucket> destination)
     {
         destination.Clear();

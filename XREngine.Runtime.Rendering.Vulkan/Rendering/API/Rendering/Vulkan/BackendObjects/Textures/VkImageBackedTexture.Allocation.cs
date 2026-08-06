@@ -379,8 +379,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
     private void CreateDedicatedImage()
     {
-        if (!Renderer.IsDeviceOperational)
-            throw new InvalidOperationException($"Cannot create a Vulkan image while device state is {Renderer.DeviceState}.");
+        if (!Renderer.DeviceContext.IsOperational)
+            throw new InvalidOperationException($"Cannot create a Vulkan image while device state is {Renderer.DeviceContext.State}.");
 
         ImageCreateInfo imageInfo = new()
         {
@@ -418,7 +418,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         Api!.GetImageMemoryRequirements(Device, _image, out MemoryRequirements memRequirements);
 
         VulkanMemoryAllocation allocation = Renderer.AllocateImageMemoryWithFallback(_image, MemoryProperties);
-        Renderer._imageAllocationTracker.Allocations[_image.Handle] = allocation;
+        Renderer.ResourceRuntime.Allocations.Images.Allocations[_image.Handle] = allocation;
         Renderer.TrackImageAllocation(
             _image,
             allocation,
@@ -436,7 +436,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
         if (Api!.BindImageMemory(Device, _image, allocation.Memory, allocation.Offset) != Result.Success)
         {
-            Renderer._imageAllocationTracker.Allocations.TryRemove(_image.Handle, out _);
+            Renderer.ResourceRuntime.Allocations.Images.Allocations.TryRemove(_image.Handle, out _);
             Renderer.UntrackImageAllocation(_image);
             Renderer.FreeMemoryAllocation(allocation);
             throw new Exception("Failed to bind memory for texture image.");

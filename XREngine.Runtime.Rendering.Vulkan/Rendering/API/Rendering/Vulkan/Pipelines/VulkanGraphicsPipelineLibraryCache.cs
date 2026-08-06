@@ -15,7 +15,7 @@ public unsafe partial class VulkanRenderer
         in VkMeshRenderer.GraphicsPipelineLibraryKey key,
         out Pipeline library,
         out bool creationReserved)
-        => _pipelineManager.TryGetOrReserveSharedGraphicsPipelineLibrary(
+        => ResourceRuntime.PipelineManager.TryGetOrReserveSharedGraphicsPipelineLibrary(
             key,
             out library,
             out creationReserved);
@@ -23,19 +23,19 @@ public unsafe partial class VulkanRenderer
     internal Pipeline CompleteSharedGraphicsPipelineLibraryCreation(
         in VkMeshRenderer.GraphicsPipelineLibraryKey key,
         Pipeline library)
-        => _pipelineManager.CompleteSharedGraphicsPipelineLibraryCreation(key, library);
+        => ResourceRuntime.PipelineManager.CompleteSharedGraphicsPipelineLibraryCreation(key, library);
 
     internal void CancelSharedGraphicsPipelineLibraryCreation(
         in VkMeshRenderer.GraphicsPipelineLibraryKey key)
-        => _pipelineManager.CancelSharedGraphicsPipelineLibraryCreation(key);
+        => ResourceRuntime.PipelineManager.CancelSharedGraphicsPipelineLibraryCreation(key);
 
     private void DestroySharedGraphicsPipelineLibraries()
     {
-        Pipeline[] libraries = _pipelineManager.DrainSharedGraphicsPipelineLibraries();
+        Pipeline[] libraries = ResourceRuntime.PipelineManager.DrainSharedGraphicsPipelineLibraries();
         if (libraries.Length == 0)
             return;
 
-        if (Api is null || device.Handle == 0)
+        if (Api is null || _deviceContext.Device.Handle == 0)
             return;
 
         int destroyed = 0;
@@ -44,7 +44,7 @@ public unsafe partial class VulkanRenderer
             if (library.Handle == 0)
                 continue;
 
-            Api.DestroyPipeline(device, library, null);
+            Api.DestroyPipeline(_deviceContext.Device, library, null);
             CompleteVulkanResourceDestruction(ObjectType.Pipeline, library.Handle);
             destroyed++;
         }

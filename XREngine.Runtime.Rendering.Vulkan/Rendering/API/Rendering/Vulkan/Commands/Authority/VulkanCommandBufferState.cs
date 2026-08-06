@@ -1,0 +1,80 @@
+using System.Threading;
+using System.Collections.Concurrent;
+using Silk.NET.Vulkan;
+using XREngine.Data.Rendering;
+using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Vulkan.Commands.Readback;
+
+namespace XREngine.Rendering.Vulkan;
+
+/// <summary>Owns native command artifacts, bind caches, diagnostics, and reusable recording scratch.</summary>
+internal sealed class VulkanCommandBufferState
+{
+    internal CommandBuffer[]? Buffers;
+    internal CommandBuffer[]? ActiveBuffers;
+    internal VulkanPrimaryCommandPlan[]? PrimaryPlans;
+    internal PrimaryCommandArtifactOwner[]? PrimaryOwners;
+    internal CommandBuffer[]? DynamicUiSecondaries;
+    internal CommandBuffer[]? DynamicUiOverlays;
+    internal int[]? DynamicUiOpCounts;
+    internal ulong[]? DynamicUiSignatures;
+    internal ulong[]? FrameOpSignatures;
+    internal ulong[]? PlannerRevisions;
+    internal ComputeTransientResources[]? ComputeTransientResources;
+    internal List<DeferredSecondaryCommandBuffer>[]? DeferredSecondaries;
+    internal object OneTimePoolsGate { get; } = new();
+    internal Dictionary<nint, OneTimeCommandOwner> OneTimePools { get; } = new();
+    internal object OneTimeSubmitGate { get; } = new();
+    internal object BindStateGate { get; } = new();
+    internal Dictionary<ulong, CommandBufferBindState> BindStates { get; } = new();
+    internal Dictionary<ulong, int> ImageIndices { get; } = new();
+    internal long RecordingGeneration;
+    internal object OwnedSecondaryPoolsGate { get; } = new();
+    internal Dictionary<ulong, OwnedCommandChainSecondaryPool> OwnedSecondaryPools { get; } = new();
+    internal bool EnableSecondary = true;
+    internal bool EnableComputeSecondary = true;
+    internal bool EnableTransferSecondary = true;
+    internal bool EnableQuerySecondary = true;
+    internal FrameOpSignatureDebugPart[][]? SignatureDebugParts;
+    internal int SignatureDiffLogCount;
+    internal string? DiagnosticBaseWindowTitle;
+    internal string? DiagnosticLastTitle;
+    internal int LastFrameDroppedDrawOps;
+    internal int LastFrameDroppedOps;
+    internal ThreadLocal<CommandBufferRecordingScratch> RecordingScratch { get; } =
+        new(static () => new CommandBufferRecordingScratch());
+    internal VulkanFrameWideMeshFrameDataReservationManifest FrameWideMeshDataManifest { get; } = new();
+    internal long ObservedMeshFrameDataManifestGeneration;
+    internal bool LastEnsureRecordedPrimary;
+    internal string? LastReusableFrameDataRefreshFailureReason;
+    internal Dictionary<ulong, CameraPoseReuseState> CameraPoseReuseStates { get; } = new(8);
+    internal VkDataBuffer? BoundIndirectBuffer;
+    internal VkDataBuffer? BoundParameterBuffer;
+    internal VkMeshRenderer? BoundMeshRendererForIndirect;
+    internal IndexType BoundIndexType = IndexType.Uint32;
+    internal uint BoundIndexCount;
+    internal VulkanIndirectDrawState? PendingIndirectDrawState;
+    internal VulkanReadbackTaskTracker ReadbackTasks { get; } = new();
+    internal ulong MaterialUniformFrameTimeFrameId = ulong.MaxValue;
+    internal float MaterialUniformUpdateDeltaLive;
+    internal float MaterialUniformSecondsLive;
+    internal float MaterialUniformDeltaSecondsLive;
+    internal XRMaterial? ShadowBindingSourceMaterial;
+    internal XRRenderProgram? ShadowBindingProgram;
+    internal ulong ShadowBindingSourceLayoutVersion = ulong.MaxValue;
+    internal MaterialShadowBindingPlan? ShadowBindingPlan;
+    internal object ForwardLightingGate { get; } = new();
+    internal Dictionary<ForwardLightingBindingSnapshotCacheKey, ComputeDispatchSnapshot> ForwardLightingSnapshots { get; } = [];
+    internal ulong ForwardLightingSnapshotFrame;
+    internal ConcurrentDictionary<ulong, byte> InvalidatedBuffersPendingReset { get; } = new();
+    internal ConcurrentDictionary<ulong, VulkanCommandBufferTrackingBatch> TrackingBatches { get; } = new();
+    internal long DirtyGeneration;
+    internal long LastDirtyTimestamp;
+    internal bool[]? DirtyFlags;
+    internal object DirtyReasonGate { get; } = new();
+    internal Dictionary<string, int> DirtyReasons { get; } = new(StringComparer.Ordinal);
+    internal long LastDirtyReasonLogTimestamp;
+    internal XRFrameBuffer? BoundDrawFrameBuffer;
+    internal XRFrameBuffer? BoundReadFrameBuffer;
+    internal EReadBufferMode ReadBufferMode = EReadBufferMode.ColorAttachment0;
+}
