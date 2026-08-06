@@ -1,8 +1,0 @@
-namespace XREngine.Rendering.Vulkan;
-
-public unsafe partial class VulkanRenderer
-{
-    internal readonly record struct VulkanPinnedResourceGeneration(
-        VulkanResourceLifetimeKey Key,
-        ulong Generation);
-}

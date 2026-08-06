@@ -4,14 +4,13 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private readonly VulkanDescriptorManager _descriptorManager = new();
-    private DescriptorSet[]? descriptorSets;
+    private ref DescriptorSet[]? descriptorSets => ref ResourceRuntime.Descriptors.RootSets;
 
     private long SnapshotDescriptorSetContentUpdateGeneration()
-        => _descriptorManager.SnapshotDescriptorSetContentUpdateGeneration();
+        => ResourceRuntime.Descriptors.SnapshotDescriptorSetContentUpdateGeneration();
 
     private bool HaveDescriptorSetContentsUpdatedSince(long generation)
-        => _descriptorManager.HaveDescriptorSetContentsUpdatedSince(generation);
+        => ResourceRuntime.Descriptors.HaveDescriptorSetContentsUpdatedSince(generation);
 
     /// <summary>
     /// Updates the Vulkan descriptor sets with the specified descriptor writes, while tracking the updates for validation and debugging purposes.
@@ -21,17 +20,17 @@ public unsafe partial class VulkanRenderer
     /// <exception cref="InvalidOperationException">Thrown if the Vulkan device is not in an operational state.</exception>
     internal void UpdateDescriptorSetsTracked(uint descriptorWriteCount, WriteDescriptorSet* descriptorWrites)
     {
-        if (!IsDeviceOperational)
-            throw new InvalidOperationException($"Cannot update Vulkan descriptors while device state is {DeviceState}.");
+        if (!_deviceContext.IsOperational)
+            throw new InvalidOperationException($"Cannot update Vulkan descriptors while device state is {_deviceContext.State}.");
 
         ulong[]? dependentCommandBuffers;
         int dependentCommandBufferCount;
         bool invalidatesRecordedCommandBuffers;
         VulkanDescriptorUpdateInvalidation firstInvalidation;
-        lock (_resourceLifetimeTracker.SyncRoot)
+        lock (ResourceRuntime.Lifetime.Tracker.SyncRoot)
         {
             ValidateAndRecordVulkanDescriptorWrites(descriptorWriteCount, descriptorWrites);
-            Api!.UpdateDescriptorSets(device, descriptorWriteCount, descriptorWrites, 0, null);
+            Api!.UpdateDescriptorSets(_deviceContext.Device, descriptorWriteCount, descriptorWrites, 0, null);
             invalidatesRecordedCommandBuffers = TryCaptureDescriptorUpdateInvalidations_NoLock(
                 descriptorWriteCount,
                 descriptorWrites,
@@ -59,9 +58,9 @@ public unsafe partial class VulkanRenderer
         WriteDescriptorSet* descriptorWrites,
         out string failureReason)
     {
-        if (!IsDeviceOperational)
+        if (!_deviceContext.IsOperational)
         {
-            failureReason = $"Cannot update Vulkan descriptors while device state is {DeviceState}.";
+            failureReason = $"Cannot update Vulkan descriptors while device state is {_deviceContext.State}.";
             return false;
         }
 
@@ -69,7 +68,7 @@ public unsafe partial class VulkanRenderer
         int dependentCommandBufferCount;
         bool invalidatesRecordedCommandBuffers;
         VulkanDescriptorUpdateInvalidation firstInvalidation;
-        lock (_resourceLifetimeTracker.SyncRoot)
+        lock (ResourceRuntime.Lifetime.Tracker.SyncRoot)
         {
             if (!TryPrevalidateVulkanDescriptorWrites_NoLock(
                     descriptorWriteCount,
@@ -83,7 +82,7 @@ public unsafe partial class VulkanRenderer
             // generation can retire after validation but before vkUpdateDescriptorSets, leaving the
             // lifetime ledger and native descriptor contents describing different resources.
             ValidateAndRecordVulkanDescriptorWrites(descriptorWriteCount, descriptorWrites);
-            Api!.UpdateDescriptorSets(device, descriptorWriteCount, descriptorWrites, 0, null);
+            Api!.UpdateDescriptorSets(_deviceContext.Device, descriptorWriteCount, descriptorWrites, 0, null);
             invalidatesRecordedCommandBuffers = TryCaptureDescriptorUpdateInvalidations_NoLock(
                 descriptorWriteCount,
                 descriptorWrites,
@@ -104,7 +103,7 @@ public unsafe partial class VulkanRenderer
 
     /// <summary>
     /// Captures the cached command buffers invalidated by ordinary descriptor writes.
-    /// The caller must hold <see cref="_resourceLifetimeTracker.SyncRoot"/>.
+    /// The caller must hold <see cref="ResourceRuntime.Lifetime.Tracker.SyncRoot"/>.
     /// </summary>
     private bool TryCaptureDescriptorUpdateInvalidations_NoLock(
         uint descriptorWriteCount,
@@ -129,7 +128,7 @@ public unsafe partial class VulkanRenderer
 
             invalidatesRecordedCommandBuffers = true;
             VulkanResourceLifetimeKey setKey = ResourceKey(ObjectType.DescriptorSet, write.DstSet.Handle);
-            if (_resourceLifetimeTracker.ResourceCommandBufferDependencies.TryGetValue(setKey, out HashSet<ulong>? dependents))
+            if (ResourceRuntime.Lifetime.Tracker.ResourceCommandBufferDependencies.TryGetValue(setKey, out HashSet<ulong>? dependents))
             {
                 dependentCapacity = checked(dependentCapacity + dependents.Count);
                 if (firstInvalidation.DescriptorSetHandle == 0 && dependents.Count > 0)
@@ -155,15 +154,15 @@ public unsafe partial class VulkanRenderer
                 continue;
 
             VulkanResourceLifetimeKey setKey = ResourceKey(ObjectType.DescriptorSet, write.DstSet.Handle);
-            if (!_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(setKey, out VulkanResourceLifetimeRecord? setResource) ||
-                !_resourceLifetimeTracker.ResourceCommandBufferDependencies.TryGetValue(setKey, out HashSet<ulong>? dependents))
+            if (!ResourceRuntime.Lifetime.Tracker.ResourceLifetimes.TryGetValue(setKey, out VulkanResourceLifetimeRecord? setResource) ||
+                !ResourceRuntime.Lifetime.Tracker.ResourceCommandBufferDependencies.TryGetValue(setKey, out HashSet<ulong>? dependents))
             {
                 continue;
             }
 
             foreach (ulong commandBufferHandle in dependents)
             {
-                if (!_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(
+                if (!ResourceRuntime.Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(
                         commandBufferHandle,
                         out VulkanCommandBufferLifetimeRecord? commandBufferLifetime) ||
                     !commandBufferLifetime.Dependencies.TryGetValue(
@@ -196,7 +195,7 @@ public unsafe partial class VulkanRenderer
         if (IsLifetimeTrackedImageDescriptorType(write.DescriptorType))
             return true;
 
-        return !_resourceLifetimeTracker.DescriptorSetLifetimes.TryGetValue(
+        return !ResourceRuntime.Lifetime.Tracker.DescriptorSetLifetimes.TryGetValue(
                 write.DstSet.Handle,
                 out VulkanDescriptorSetLifetimeRecord? setState) ||
             !setState.UsesUpdateAfterBind ||
@@ -215,12 +214,12 @@ public unsafe partial class VulkanRenderer
             if (!invalidatesRecordedCommandBuffers)
                 return;
 
-            _descriptorManager.RecordDescriptorSetContentUpdate();
+            ResourceRuntime.Descriptors.RecordDescriptorSetContentUpdate();
             if (dependentCommandBufferCount == 0 || dependentCommandBuffers is null)
                 return;
 
             if (CommandRecordingDiagnosticsEnabled &&
-                _descriptorManager.RecordDescriptorUpdateInvalidationDiagnostic() <= 128)
+                ResourceRuntime.Descriptors.RecordDescriptorUpdateInvalidationDiagnostic() <= 128)
             {
                 Debug.WriteAuxiliaryLog(
                     "vulkan-descriptor-invalidations.log",
@@ -251,7 +250,7 @@ public unsafe partial class VulkanRenderer
     {
         // Prepare an array of descriptor set layouts for allocation. 
         // Each swapchain image will have its own descriptor set.
-        var layouts = new DescriptorSetLayout[swapChainImages!.Length];
+        var layouts = new DescriptorSetLayout[OutputRuntime.Desktop.Images!.Length];
         Array.Fill(layouts, descriptorSetLayout);
 
         // Allocate the descriptor sets using the prepared layouts.
@@ -262,15 +261,15 @@ public unsafe partial class VulkanRenderer
             {
                 SType = StructureType.DescriptorSetAllocateInfo,
                 DescriptorPool = descriptorPool,
-                DescriptorSetCount = (uint)swapChainImages!.Length,
+                DescriptorSetCount = (uint)OutputRuntime.Desktop.Images!.Length,
                 PSetLayouts = layoutsPtr,
             };
 
             // Allocate the descriptor sets and handle any allocation failures.
-            descriptorSets = new DescriptorSet[swapChainImages.Length];
+            descriptorSets = new DescriptorSet[OutputRuntime.Desktop.Images.Length];
             fixed (DescriptorSet* descriptorSetsPtr = descriptorSets)
             {
-                if (Api!.AllocateDescriptorSets(device, ref allocateInfo, descriptorSetsPtr) != Result.Success)
+                if (Api!.AllocateDescriptorSets(_deviceContext.Device, ref allocateInfo, descriptorSetsPtr) != Result.Success)
                     throw new Exception("Failed to allocate descriptor sets.");
             }
         }
@@ -285,7 +284,7 @@ public unsafe partial class VulkanRenderer
         RecordVulkanDescriptorTableGeneration("SwapchainDescriptorSets.Allocated");
 
         // Update each descriptor set with the appropriate buffer and image information.
-        for (int i = 0; i < swapChainImages.Length; i++)
+        for (int i = 0; i < OutputRuntime.Desktop.Images.Length; i++)
         {
             //DescriptorBufferInfo ubo = new()
             //{

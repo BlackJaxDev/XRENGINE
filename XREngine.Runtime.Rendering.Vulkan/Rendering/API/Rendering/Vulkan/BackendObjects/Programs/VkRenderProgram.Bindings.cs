@@ -486,7 +486,7 @@ internal unsafe partial class VkRenderProgram
             ref capture.SamplersByName,
             ref capture.ImagesByUnit);
         CaptureComputeBufferBindings(capture.BuffersByBinding, snapshot);
-        snapshot.PublishBindingLayoutSignatures();
+        snapshot.PublishBindingLayoutSignatures(Renderer);
         return snapshot;
     }
 
@@ -507,7 +507,7 @@ internal unsafe partial class VkRenderProgram
             samplersByName,
             imagesByUnit);
         CaptureComputeBufferBindings(buffersByBinding, snapshot);
-        snapshot.PublishBindingLayoutSignatures();
+        snapshot.PublishBindingLayoutSignatures(Renderer);
 
         return snapshot;
     }

@@ -12,8 +12,8 @@ internal interface IVulkanRendererTargetDriver
     bool SupportsStreamlinePresentation { get; }
     IReadOnlyList<string> RequiredDeviceExtensions { get; }
     string[] GetRequiredInstanceExtensions();
-    void CreateInstanceResources(VulkanRenderer renderer);
-    void InitializeFinalOutput(VulkanRenderer renderer);
-    void DestroyFinalOutput(VulkanRenderer renderer);
-    void DestroyInstanceResources(VulkanRenderer renderer);
+    void CreateInstanceResources(VulkanTargetSurfaceAuthority surfaces);
+    void InitializeFinalOutput(VulkanTargetOutputContext output);
+    void DestroyFinalOutput(VulkanTargetOutputContext output);
+    void DestroyInstanceResources(VulkanTargetSurfaceAuthority surfaces);
 }

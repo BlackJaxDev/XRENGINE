@@ -6,12 +6,14 @@ namespace XREngine.Rendering.Vulkan;
 /// Device identity and wrapper binding identity are obtained through narrow
 /// renderer-owned contexts rather than static caches.
 /// </summary>
-internal abstract class VkObjectBase(VulkanRenderer renderer) :
-    AbstractRenderer<Silk.NET.Vulkan.Vk>.AbstractRenderObject<VulkanRenderer>(renderer),
+internal abstract class VkObjectBase(
+    VulkanBackendObjectContext backendContext,
+    IRenderApiWrapperOwner owner) :
+    AbstractRenderAPIObject(owner),
     IRenderAPIObject
 {
-    internal VulkanBackendObjectContext BackendContext { get; } =
-        renderer.BackendObjectContext;
+    internal VulkanBackendObjectContext BackendContext { get; } = backendContext;
+    protected Silk.NET.Vulkan.Vk Api => BackendContext.Api;
 
     public const uint InvalidBindingId = 0;
     public abstract VkObjectType Type { get; }

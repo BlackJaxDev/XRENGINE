@@ -1,22 +1,20 @@
-using System.Runtime.CompilerServices;
 
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
 /// Captures immutable scheduling inputs before the renderer enters cache
-/// validation. Cache storage remains behind the renderer facade during migration.
+/// validation. Persistent schedule artifacts belong to <see cref="VulkanCommandRuntime"/>.
 /// </summary>
 internal sealed class VulkanCommandScheduler
 {
-    private CommandChainSchedule?[]? _scheduleCache;
     private ulong _scheduleGeneration;
 
     public VulkanCommandSchedulingContext<TVariant> Capture<TVariant>(
         uint imageIndex,
         bool preserveSwapchainForOverlay,
-        VulkanRenderGraphPlan renderGraphPlan)
+        in RenderGraph.VulkanFramePlanningSnapshot planningSnapshot)
         where TVariant : class
-        => new(imageIndex, preserveSwapchainForOverlay, renderGraphPlan);
+        => new(imageIndex, preserveSwapchainForOverlay, planningSnapshot);
 
     public bool RequiresFreshPrimary(bool hasStaticOperations, bool primaryReuseEnabled)
         => hasStaticOperations && !primaryReuseEnabled;
@@ -65,57 +63,4 @@ internal sealed class VulkanCommandScheduler
         return generation;
     }
 
-    public CommandChainSchedule? GetReusableSchedule(int slot, int slotCount)
-    {
-        EnsureScheduleCache(slotCount);
-        return (uint)slot < (uint)_scheduleCache!.Length
-            ? _scheduleCache[slot]
-            : null;
-    }
-
-    public void CacheSchedule(
-        int slot,
-        int slotCount,
-        CommandChainSchedule schedule)
-    {
-        EnsureScheduleCache(slotCount);
-        if ((uint)slot >= (uint)_scheduleCache!.Length)
-            return;
-
-        _scheduleCache[slot] = schedule;
-    }
-
-    public void InvalidateScheduleCache()
-    {
-        if (_scheduleCache is not null)
-            Array.Clear(_scheduleCache);
-    }
-
-    public void ReleaseScheduleCache()
-    {
-        _scheduleCache = null;
-    }
-
-    public int ResolveParallelRecordingBucket(
-        in VulkanMeshFrameDataRendererFamilyKey rendererFamily,
-        int workerCount)
-    {
-        if (workerCount <= 1)
-            return 0;
-
-        int rendererIdentity = RuntimeHelpers.GetHashCode(rendererFamily.Renderer);
-        return unchecked((int)((uint)rendererIdentity % (uint)workerCount));
-    }
-
-    private void EnsureScheduleCache(int slotCount)
-    {
-        int count = Math.Max(slotCount, 1);
-        if (_scheduleCache is not null &&
-            _scheduleCache.Length == count)
-        {
-            return;
-        }
-
-        _scheduleCache = new CommandChainSchedule?[count];
-    }
 }

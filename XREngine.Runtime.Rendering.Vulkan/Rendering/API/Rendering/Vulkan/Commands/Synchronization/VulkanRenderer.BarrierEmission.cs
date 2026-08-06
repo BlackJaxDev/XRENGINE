@@ -1098,11 +1098,11 @@ namespace XREngine.Rendering.Vulkan
 
         private bool IsDesktopSwapchainImage(Image image)
         {
-            if (image.Handle == 0 || swapChainImages is null)
+            if (image.Handle == 0 || OutputRuntime.Desktop.Images is null)
                 return false;
 
-            for (int i = 0; i < swapChainImages.Length; i++)
-                if (swapChainImages[i].Handle == image.Handle)
+            for (int i = 0; i < OutputRuntime.Desktop.Images.Length; i++)
+                if (OutputRuntime.Desktop.Images[i].Handle == image.Handle)
                     return true;
 
             return false;
@@ -1176,7 +1176,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void TransitionFrameOpDescriptorSnapshotsForSampling(
             CommandBuffer commandBuffer,
-            FrameOp[] ops,
+            FrameOperationSequence ops,
             int startIndex,
             int passIndex,
             int schedulingIdentity,
@@ -1192,7 +1192,7 @@ namespace XREngine.Rendering.Vulkan
                 FrameOp candidate = ops[i];
                 int candidatePassIndex = candidate.PassIndex == int.MinValue
                     ? passIndex
-                    : EnsureValidPassIndex(candidate.PassIndex, candidate.GetType().Name, candidate.Context.PassMetadata);
+                    : EnsureValidPassIndex(candidate.PassIndex, GetFrameOpDiagnosticName(candidate), candidate.Context.PassMetadata);
                 if (candidatePassIndex != passIndex || candidate.Context.SchedulingIdentity != schedulingIdentity)
                     break;
 
@@ -1314,7 +1314,7 @@ namespace XREngine.Rendering.Vulkan
             XRFrameBuffer? target)
         {
             if (descriptorSet.Handle == 0 ||
-                !_resourceLifetimeTracker.PublishedDescriptorSets.TryGetValue(
+                !ResourceRuntime.Lifetime.Tracker.PublishedDescriptorSets.TryGetValue(
                     descriptorSet.Handle,
                     out VulkanPublishedDescriptorSetSnapshot? snapshot))
             {

@@ -7,8 +7,6 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private long _explicitTargetFrameNumber;
-
     private string FrameExecutionLabel
         => ExecutionMode switch
         {
@@ -69,14 +67,24 @@ public unsafe partial class VulkanRenderer
         Action<Vk, CommandBuffer, VulkanRenderFrameTarget> record)
     {
         ArgumentNullException.ThrowIfNull(record);
-        IVulkanExplicitFrameTargetDriver target =
-            RequireExplicitFrameTarget();
+        IVulkanExplicitFrameTargetDriver target = OutputRuntime.RequireExplicitFrameTarget();
         VulkanFrameTargetLease lease = default;
         bool acquired = false;
         bool submitted = false;
+        long frameStart = Stopwatch.GetTimestamp();
+        ulong frameNumber = unchecked((ulong)OutputRuntime.NextExplicitTargetFrameNumber());
+        VulkanFrameRootIdentity rootIdentity = new(
+            frameNumber,
+            frameNumber,
+            -1,
+            frameStart,
+            new VulkanFrameOutputIdentity(-1, 0));
+        VulkanFrameTrace frameTrace = _frameTelemetry.BeginFrame(rootIdentity);
+        EVulkanFrameOutcome frameOutcome = EVulkanFrameOutcome.Failed;
 
         try
         {
+            long acquireStart = Stopwatch.GetTimestamp();
             lease = target.AcquireFrameTarget(
                 out CommandBuffer commandBuffer);
             acquired = true;
@@ -85,12 +93,25 @@ public unsafe partial class VulkanRenderer
                 throw new InvalidOperationException(
                     $"Vulkan target '{FrameExecutionLabel}' returned an invalid frame-target lease.");
             }
+            frameTrace.SetOutputIdentity(
+                unchecked((int)lease.Target.FrameSlotIndex),
+                lease.Target.TargetGeneration);
+            frameTrace.RecordStage(
+                EVulkanFrameStage.OutputAcquire,
+                Stopwatch.GetElapsedTime(acquireStart),
+                EVulkanFrameIntervalClass.Driver,
+                EVulkanFrameOutcome.Completed,
+                EVulkanFrameWaitReason.Driver);
 
+            long recordStart = Stopwatch.GetTimestamp();
             record(VulkanApi, commandBuffer, lease.Target);
             target.EndFrameRecording(in lease, commandBuffer);
+            frameTrace.RecordStage(
+                EVulkanFrameStage.CommandRecord,
+                Stopwatch.GetElapsedTime(recordStart),
+                EVulkanFrameIntervalClass.Work,
+                EVulkanFrameOutcome.Completed);
 
-            ulong frameNumber = unchecked((ulong)Interlocked.Increment(
-                ref _explicitTargetFrameNumber));
             VulkanSubmissionDiagnosticContext diagnosticContext =
                 CreateFrameTargetSubmissionDiagnosticContext(
                     FrameSubmissionKind,
@@ -108,7 +129,7 @@ public unsafe partial class VulkanRenderer
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        FrameSubmissionProfileName))
             using (VulkanCpuStageScope cpuStage =
-                   new(EVulkanCpuStage.Submission))
+                   new(_frameTelemetry, EVulkanCpuStage.Submission))
             {
                 result = SubmitFrameTargetLease(
                     in lease,
@@ -118,7 +139,23 @@ public unsafe partial class VulkanRenderer
                     graphicsTimelineSignalValue: 0,
                     diagnosticContext,
                     caller: nameof(SubmitExplicitTargetFrame));
+                if (result == Result.Success)
+                {
+                    // Queue acceptance transfers output ownership immediately. Publish it before
+                    // telemetry, diagnostics, or profiling teardown can throw so catch settles
+                    // accepted work correctly.
+                    submitted = true;
+                    target.NotifyFrameSubmitted(in lease);
+                }
             }
+            frameTrace.RecordStage(
+                EVulkanFrameStage.QueueSubmit,
+                Stopwatch.GetElapsedTime(submitStart),
+                EVulkanFrameIntervalClass.Driver,
+                result == Result.Success
+                    ? EVulkanFrameOutcome.Completed
+                    : EVulkanFrameOutcome.Failed,
+                EVulkanFrameWaitReason.Driver);
 
             if (VulkanFrameDiagnosticsTraceEnabled)
             {
@@ -146,15 +183,26 @@ public unsafe partial class VulkanRenderer
                     $"Vulkan {FrameExecutionLabel} queue submission failed ({result}).");
             }
 
-            submitted = true;
-            target.NotifyFrameSubmitted(in lease);
+            long completionStart = Stopwatch.GetTimestamp();
             target.CompleteFrameTarget(in lease);
+            frameTrace.RecordStage(
+                EVulkanFrameStage.OutputComplete,
+                Stopwatch.GetElapsedTime(completionStart),
+                EVulkanFrameIntervalClass.Work,
+                EVulkanFrameOutcome.Completed);
+            frameOutcome = EVulkanFrameOutcome.Completed;
         }
         catch
         {
             if (acquired)
                 target.AbortFrameTarget(in lease, submitted);
             throw;
+        }
+        finally
+        {
+            frameTrace.PublishAfterFrame(
+                Stopwatch.GetElapsedTime(frameStart),
+                frameOutcome);
         }
     }
 
@@ -192,7 +240,7 @@ public unsafe partial class VulkanRenderer
         if (signalGraphicsTimeline)
         {
             signalSemaphores[signalSemaphoreCount] =
-                _graphicsTimelineSemaphore;
+                _commandRuntime.Synchronization._graphicsTimelineSemaphore;
             signalValues[signalSemaphoreCount] =
                 graphicsTimelineSignalValue;
             signalSemaphoreCount++;
@@ -241,7 +289,7 @@ public unsafe partial class VulkanRenderer
         lock (_oneTimeSubmitLock)
         {
             return SubmitToQueueTracked(
-                graphicsQueue,
+                _deviceContext.GraphicsQueue,
                 ref submitInfo,
                 lease.CompletionFence,
                 diagnosticContext,

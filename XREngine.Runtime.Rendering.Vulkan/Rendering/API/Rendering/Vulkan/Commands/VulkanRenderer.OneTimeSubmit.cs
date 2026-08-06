@@ -104,7 +104,7 @@ namespace XREngine.Rendering.Vulkan
                 Flags = 0,
             };
             Fence submitFence;
-            Result fenceResult = Api!.CreateFence(device, ref fenceCreateInfo, null, &submitFence);
+            Result fenceResult = Api!.CreateFence(_deviceContext.Device, ref fenceCreateInfo, null, &submitFence);
             if (fenceResult != Result.Success)
             {
                 Debug.VulkanWarning($"[Vulkan] Failed to create one-shot submit fence (result={fenceResult}). Falling back to QueueWaitIdle.");
@@ -138,7 +138,7 @@ namespace XREngine.Rendering.Vulkan
 
                     Debug.VulkanWarning($"[Vulkan] One-shot QueueSubmit failed (result={submitResult}). Skipping command buffer free.");
                     if (submitFence.Handle != 0 && submitResult != Result.ErrorDeviceLost)
-                        Api!.DestroyFence(device, submitFence, null);
+                        Api!.DestroyFence(_deviceContext.Device, submitFence, null);
                     RemoveCommandBufferBindState(commandBuffer);
                     return;
                 }
@@ -153,10 +153,10 @@ namespace XREngine.Rendering.Vulkan
 
                     Result waitResult;
                     using (VulkanCpuStageScope fenceWaitStage =
-                        new(EVulkanCpuStage.AuxiliaryFenceWait))
+                        new(_frameTelemetry, EVulkanCpuStage.AuxiliaryFenceWait))
                     {
                         waitResult = Api!.WaitForFences(
-                            device,
+                            _deviceContext.Device,
                             1,
                             &submitFence,
                             true,
@@ -184,7 +184,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             if (submitFence.Handle != 0 && waitSucceeded)
-                Api!.DestroyFence(device, submitFence, null);
+                Api!.DestroyFence(_deviceContext.Device, submitFence, null);
 
             if (!waitSucceeded)
             {
@@ -210,9 +210,9 @@ namespace XREngine.Rendering.Vulkan
         private Queue SelectOneTimeSubmitQueue(bool useTransferQueue)
         {
             if (useTransferQueue)
-                return transferQueue;
+                return _deviceContext.TransferQueue;
 
-            return graphicsQueue;
+            return _deviceContext.GraphicsQueue;
         }
 
     }

@@ -68,7 +68,7 @@ namespace XREngine.Rendering.Vulkan
                 exception.Message);
         }
 
-        private void CaptureLastFrameOpTrace(FrameOp[] ops)
+        private void CaptureLastFrameOpTrace(FrameOperationSequence ops)
         {
             const int MaxCapturedEntries = 512;
             int count = Math.Min(ops.Length, MaxCapturedEntries);
@@ -420,6 +420,15 @@ namespace XREngine.Rendering.Vulkan
             return false;
         }
 
+        private static bool HasMutableGpuDrivenFrameOps(FrameOperationStream ops)
+        {
+            for (int index = 0; index < ops.Count; index++)
+                if (ops.GetHeader(index).OpCode == EVulkanPrimaryPlanNodeKind.SubmissionMarker)
+                    return true;
+
+            return false;
+        }
+
         private static FrameOp[] FilterDiagnosticSkippedFrameOps(FrameOp[] ops)
         {
             if (ops.Length == 0 || !XREngine.Rendering.RenderDiagnosticsFlags.VkSkipUiBatchText)
@@ -523,7 +532,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private string BuildVulkanFrameDiagnosticSummary(
-            FrameOp[] ops,
+            FrameOperationSequence ops,
             int clearCount,
             int drawCount,
             int blitCount,
@@ -537,9 +546,22 @@ namespace XREngine.Rendering.Vulkan
             in FrameOpContext context,
             FrameOpFailureSnapshot? firstFailure)
         {
-            string opSummary = string.Join(", ",
-                ops.Take(12).Select(op =>
-                    $"{op.GetType().Name}:p{op.PassIndex}:pipe{op.Context.PipelineIdentity}:vp{op.Context.ViewportIdentity}:target={op.Target?.Name ?? "<swapchain>"}"));
+            StringBuilder opSummaryBuilder = new();
+            int summaryOperationCount = Math.Min(ops.Length, 12);
+            for (int operationIndex = 0; operationIndex < summaryOperationCount; operationIndex++)
+            {
+                if (operationIndex > 0)
+                    opSummaryBuilder.Append(", ");
+
+                FrameOp op = ops[operationIndex];
+                opSummaryBuilder
+                    .Append(op.GetType().Name)
+                    .Append(":p").Append(op.PassIndex)
+                    .Append(":pipe").Append(op.Context.PipelineIdentity)
+                    .Append(":vp").Append(op.Context.ViewportIdentity)
+                    .Append(":target=").Append(op.Target?.Name ?? "<swapchain>");
+            }
+            string opSummary = opSummaryBuilder.ToString();
 
             string passSummary = context.PassMetadata is null
                 ? "passes=<null>"
@@ -567,7 +589,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private static void RecordVulkanFrameOpCensus(
-            FrameOp[] ops,
+            FrameOperationSequence ops,
             int clearCount,
             int meshDrawCount,
             int indirectDrawCount,
@@ -636,7 +658,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private static void RecordVulkanFrameOpCensusCore(
-            FrameOp[] ops,
+            FrameOperationSequence ops,
             int clearCount,
             int meshDrawCount,
             int indirectDrawCount,
@@ -723,4 +745,5 @@ namespace XREngine.Rendering.Vulkan
                 Window.Title = diagnosticTitle;
         }
     }
+
 }

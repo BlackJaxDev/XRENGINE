@@ -215,12 +215,12 @@ internal unsafe sealed class VkRenderBuffer(VulkanRenderer api, XRRenderBuffer d
 
         Renderer.ClearTrackedImageLayouts(_image);
         VulkanMemoryAllocation allocation = Renderer.AllocateImageMemoryWithFallback(_image, MemoryPropertyFlags.DeviceLocalBit);
-        Renderer._imageAllocationTracker.Allocations[_image.Handle] = allocation;
+        Renderer.ResourceRuntime.Allocations.Images.Allocations[_image.Handle] = allocation;
         _memory = allocation.Memory;
 
         if (Api!.BindImageMemory(Device, _image, _memory, allocation.Offset) != Result.Success)
         {
-            Renderer._imageAllocationTracker.Allocations.TryRemove(_image.Handle, out _);
+            Renderer.ResourceRuntime.Allocations.Images.Allocations.TryRemove(_image.Handle, out _);
             Renderer.DestroyVulkanImageImmediateTracked(_image, "VkRenderBuffer.BindFailure");
             Renderer.FreeMemoryAllocation(allocation);
             _image = default;

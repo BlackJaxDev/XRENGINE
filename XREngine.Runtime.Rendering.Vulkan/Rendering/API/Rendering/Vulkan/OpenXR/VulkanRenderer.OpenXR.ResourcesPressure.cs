@@ -419,7 +419,7 @@ public unsafe partial class VulkanRenderer
 
         DrainCompletedRecordedTextureUploadPublications();
     }
-    private void WaitForOpenXrFrameDataSlot(uint frameDataImageIndex, string reason)
+    private bool WaitForOpenXrFrameDataSlot(uint frameDataImageIndex, string reason)
     {
         ulong value;
         Silk.NET.Vulkan.Semaphore timelineSemaphore;
@@ -431,12 +431,14 @@ public unsafe partial class VulkanRenderer
             if (timelineSemaphore.Handle == 0 ||
                 frameDataImageIndex >= timelineValues.Length)
             {
-                return;
+                return false;
             }
 
             value = timelineValues[(int)frameDataImageIndex];
-            if (value == 0 || HasTimelineValueCompleted(timelineSemaphore, value))
-                return;
+            if (value == 0)
+                return false;
+            if (HasTimelineValueCompleted(timelineSemaphore, value))
+                return true;
         }
 
         Debug.VulkanEvery(
@@ -448,22 +450,23 @@ public unsafe partial class VulkanRenderer
             value);
 
         WaitForTimelineValue(timelineSemaphore, value);
+        return true;
     }
     private ImageView GetOrCreateOpenXrSwapchainImageView(Image image, Format format)
     {
         ulong key = image.Handle;
-        if (_openXrBackend.SwapchainImageViews.TryGetValue(key, out VulkanOpenXrSwapchainImageViewCacheEntry cached))
+        if (OutputRuntime.OpenXrBackend.SwapchainImageViews.TryGetValue(key, out VulkanOpenXrSwapchainImageViewCacheEntry cached))
         {
             if (cached.Format == format && cached.View.Handle != 0)
                 return cached.View;
 
             if (cached.View.Handle != 0 && TryBeginDestroyImageView(cached.View, "OpenXR.SwapchainImageViewFormatChanged"))
-                Api!.DestroyImageView(device, cached.View, null);
-            _openXrBackend.SwapchainImageViews.Remove(key);
+                Api!.DestroyImageView(_deviceContext.Device, cached.View, null);
+            OutputRuntime.OpenXrBackend.SwapchainImageViews.Remove(key);
         }
 
         ImageView imageView = CreateOpenXrSwapchainImageView(image, format);
-        _openXrBackend.SwapchainImageViews[key] = new VulkanOpenXrSwapchainImageViewCacheEntry(imageView, format);
+        OutputRuntime.OpenXrBackend.SwapchainImageViews[key] = new VulkanOpenXrSwapchainImageViewCacheEntry(imageView, format);
         return imageView;
     }
 
@@ -485,7 +488,7 @@ public unsafe partial class VulkanRenderer
             }
         };
 
-        if (Api!.CreateImageView(device, ref viewInfo, null, out ImageView imageView) != Result.Success)
+        if (Api!.CreateImageView(_deviceContext.Device, ref viewInfo, null, out ImageView imageView) != Result.Success)
             throw new InvalidOperationException("Failed to create OpenXR Vulkan swapchain image view.");
 
         TrackLiveImageView(imageView, in viewInfo, "OpenXR.SwapchainImageView");
@@ -496,8 +499,8 @@ public unsafe partial class VulkanRenderer
     private VulkanOpenXrDepthTarget GetOrCreateOpenXrDepthTarget(uint openXrViewIndex, Extent2D extent)
     {
         int targetIndex = ResolveOpenXrEyeUploadPublicationBufferIndex(openXrViewIndex);
-        ref VulkanOpenXrDepthTarget cachedTarget = ref _openXrBackend.CachedDepthTargets[targetIndex];
-        ref Extent2D cachedExtent = ref _openXrBackend.CachedDepthExtents[targetIndex];
+        ref VulkanOpenXrDepthTarget cachedTarget = ref OutputRuntime.OpenXrBackend.CachedDepthTargets[targetIndex];
+        ref Extent2D cachedExtent = ref OutputRuntime.OpenXrBackend.CachedDepthExtents[targetIndex];
         if (cachedTarget.Image.Handle != 0 &&
             cachedExtent.Width == extent.Width &&
             cachedExtent.Height == extent.Height)
@@ -541,9 +544,9 @@ public unsafe partial class VulkanRenderer
 
             ClearTrackedImageLayouts(depthImage);
             allocation = AllocateImageMemoryWithFallback(depthImage, MemoryPropertyFlags.DeviceLocalBit);
-            _imageAllocationTracker.Allocations[depthImage.Handle] = allocation;
+            ResourceRuntime.Allocations.Images.Allocations[depthImage.Handle] = allocation;
 
-            if (Api!.BindImageMemory(device, depthImage, allocation.Memory, allocation.Offset) != Result.Success)
+            if (Api!.BindImageMemory(_deviceContext.Device, depthImage, allocation.Memory, allocation.Offset) != Result.Success)
                 throw new InvalidOperationException("Failed to bind OpenXR Vulkan depth image memory.");
 
             ImageViewCreateInfo viewInfo = new()
@@ -562,7 +565,7 @@ public unsafe partial class VulkanRenderer
                 }
             };
 
-            if (Api!.CreateImageView(device, ref viewInfo, null, out depthView) != Result.Success)
+            if (Api!.CreateImageView(_deviceContext.Device, ref viewInfo, null, out depthView) != Result.Success)
                 throw new InvalidOperationException("Failed to create OpenXR Vulkan depth image view.");
 
             TrackLiveImageView(depthView, in viewInfo, "OpenXR.DepthTarget");
@@ -571,11 +574,11 @@ public unsafe partial class VulkanRenderer
         catch
         {
             if (depthView.Handle != 0 && TryBeginDestroyImageView(depthView, "CreateOpenXrDepthTargetFailed"))
-                Api!.DestroyImageView(device, depthView, null);
+                Api!.DestroyImageView(_deviceContext.Device, depthView, null);
 
             if (depthImage.Handle != 0)
             {
-                bool hasTrackedAllocation = _imageAllocationTracker.Allocations.TryRemove(
+                bool hasTrackedAllocation = ResourceRuntime.Allocations.Images.Allocations.TryRemove(
                     depthImage.Handle,
                     out VulkanMemoryAllocation trackedAllocation);
                 DestroyVulkanImageImmediateTracked(depthImage, "CreateOpenXrDepthTargetFailed");
@@ -603,24 +606,24 @@ public unsafe partial class VulkanRenderer
         DestroyOpenXrPrimaryCommandBufferCache();
         DestroyOpenXrResourcePlannerState();
 
-        foreach (VulkanOpenXrSwapchainImageViewCacheEntry entry in _openXrBackend.SwapchainImageViews.Values)
+        foreach (VulkanOpenXrSwapchainImageViewCacheEntry entry in OutputRuntime.OpenXrBackend.SwapchainImageViews.Values)
             if (entry.View.Handle != 0 && TryBeginDestroyImageView(entry.View, "DestroyOpenXrSwapchainImageViewCache"))
-                Api!.DestroyImageView(device, entry.View, null);
+                Api!.DestroyImageView(_deviceContext.Device, entry.View, null);
         
-        _openXrBackend.SwapchainImageViews.Clear();
+        OutputRuntime.OpenXrBackend.SwapchainImageViews.Clear();
 
-        for (int i = 0; i < _openXrBackend.CachedDepthTargets.Length; i++)
+        for (int i = 0; i < OutputRuntime.OpenXrBackend.CachedDepthTargets.Length; i++)
         {
-            DestroyOpenXrDepthTarget(_openXrBackend.CachedDepthTargets[i]);
-            _openXrBackend.CachedDepthTargets[i] = default;
-            _openXrBackend.CachedDepthExtents[i] = default;
+            DestroyOpenXrDepthTarget(OutputRuntime.OpenXrBackend.CachedDepthTargets[i]);
+            OutputRuntime.OpenXrBackend.CachedDepthTargets[i] = default;
+            OutputRuntime.OpenXrBackend.CachedDepthExtents[i] = default;
         }
 
     }
 
     internal void ResetOpenXrRenderingResourcesForRuntimeRecreate(string reason)
     {
-        if (_deviceLost || Api is null || device.Handle == 0)
+        if (_deviceLost || Api is null || _deviceContext.Device.Handle == 0)
             return;
 
         Debug.VulkanWarning(
@@ -649,7 +652,7 @@ public unsafe partial class VulkanRenderer
     {
         ArgumentNullException.ThrowIfNull(transition);
 
-        if (_deviceLost || Api is null || device.Handle == 0)
+        if (_deviceLost || Api is null || _deviceContext.Device.Handle == 0)
             throw new InvalidOperationException("Cannot initialize OpenXR Vulkan session resources after the Vulkan device was lost.");
 
         long lockWaitStart = Stopwatch.GetTimestamp();
@@ -694,7 +697,7 @@ public unsafe partial class VulkanRenderer
     {
         reason = string.Empty;
 
-        if (_deviceLost || Api is null || device.Handle == 0)
+        if (_deviceLost || Api is null || _deviceContext.Device.Handle == 0)
         {
             reason = "Vulkan device is not available";
             return true;
@@ -738,11 +741,11 @@ public unsafe partial class VulkanRenderer
             if (dirtyAge < OpenXrRuntimeSessionStartDirtyQuietPeriod)
             {
                 long now = Stopwatch.GetTimestamp();
-                long dirtyWaitStart = Volatile.Read(ref _openXrBackend.RuntimeSessionStartDirtyWaitStartTimestamp);
+                long dirtyWaitStart = Volatile.Read(ref OutputRuntime.OpenXrBackend.RuntimeSessionStartDirtyWaitStartTimestamp);
                 if (dirtyWaitStart == 0)
                 {
-                    Interlocked.CompareExchange(ref _openXrBackend.RuntimeSessionStartDirtyWaitStartTimestamp, now, 0);
-                    dirtyWaitStart = Volatile.Read(ref _openXrBackend.RuntimeSessionStartDirtyWaitStartTimestamp);
+                    Interlocked.CompareExchange(ref OutputRuntime.OpenXrBackend.RuntimeSessionStartDirtyWaitStartTimestamp, now, 0);
+                    dirtyWaitStart = Volatile.Read(ref OutputRuntime.OpenXrBackend.RuntimeSessionStartDirtyWaitStartTimestamp);
                 }
 
                 TimeSpan dirtyWait = Stopwatch.GetElapsedTime(dirtyWaitStart, now);
@@ -765,11 +768,11 @@ public unsafe partial class VulkanRenderer
         if (TryGetPendingSubmittedFrameSlot(out int pendingSlot, out ulong pendingTimelineValue))
         {
             long now = Stopwatch.GetTimestamp();
-            long pendingFrameWaitStart = Volatile.Read(ref _openXrBackend.RuntimeSessionStartPendingFrameWaitStartTimestamp);
+            long pendingFrameWaitStart = Volatile.Read(ref OutputRuntime.OpenXrBackend.RuntimeSessionStartPendingFrameWaitStartTimestamp);
             if (pendingFrameWaitStart == 0)
             {
-                Interlocked.CompareExchange(ref _openXrBackend.RuntimeSessionStartPendingFrameWaitStartTimestamp, now, 0);
-                pendingFrameWaitStart = Volatile.Read(ref _openXrBackend.RuntimeSessionStartPendingFrameWaitStartTimestamp);
+                Interlocked.CompareExchange(ref OutputRuntime.OpenXrBackend.RuntimeSessionStartPendingFrameWaitStartTimestamp, now, 0);
+                pendingFrameWaitStart = Volatile.Read(ref OutputRuntime.OpenXrBackend.RuntimeSessionStartPendingFrameWaitStartTimestamp);
             }
 
             TimeSpan pendingFrameWait = Stopwatch.GetElapsedTime(pendingFrameWaitStart, now);
@@ -789,8 +792,8 @@ public unsafe partial class VulkanRenderer
                 pendingFrameWait.TotalMilliseconds);
         }
 
-        Volatile.Write(ref _openXrBackend.RuntimeSessionStartDirtyWaitStartTimestamp, 0);
-        Volatile.Write(ref _openXrBackend.RuntimeSessionStartPendingFrameWaitStartTimestamp, 0);
+        Volatile.Write(ref OutputRuntime.OpenXrBackend.RuntimeSessionStartDirtyWaitStartTimestamp, 0);
+        Volatile.Write(ref OutputRuntime.OpenXrBackend.RuntimeSessionStartPendingFrameWaitStartTimestamp, 0);
 
         return false;
     }
@@ -799,7 +802,7 @@ public unsafe partial class VulkanRenderer
     {
         reason = string.Empty;
 
-        if (_deviceLost || Api is null || device.Handle == 0)
+        if (_deviceLost || Api is null || _deviceContext.Device.Handle == 0)
         {
             reason = "Vulkan device is not available";
             return true;
@@ -830,7 +833,7 @@ public unsafe partial class VulkanRenderer
     {
         reason = string.Empty;
 
-        if (_deviceLost || Api is null || device.Handle == 0)
+        if (_deviceLost || Api is null || _deviceContext.Device.Handle == 0)
         {
             reason = "Vulkan device is not available";
             return true;
@@ -861,7 +864,7 @@ public unsafe partial class VulkanRenderer
     {
         reason = string.Empty;
 
-        if (_deviceLost || Api is null || device.Handle == 0)
+        if (_deviceLost || Api is null || _deviceContext.Device.Handle == 0)
         {
             reason = "Vulkan device is not available";
             return true;
@@ -880,7 +883,7 @@ public unsafe partial class VulkanRenderer
     {
         reason = string.Empty;
 
-        if (_deviceLost || Api is null || device.Handle == 0)
+        if (_deviceLost || Api is null || _deviceContext.Device.Handle == 0)
         {
             reason = "Vulkan device is not available";
             return true;
@@ -929,9 +932,9 @@ public unsafe partial class VulkanRenderer
 
         if (MemoryAllocator is VulkanVmaAllocator vmaAllocator
             && Api is not null
-            && _physicalDevice.Handle != 0)
+            && _deviceContext.PhysicalDevice.Handle != 0)
         {
-            Api.GetPhysicalDeviceMemoryProperties(_physicalDevice, out PhysicalDeviceMemoryProperties memoryProperties);
+            Api.GetPhysicalDeviceMemoryProperties(_deviceContext.PhysicalDevice, out PhysicalDeviceMemoryProperties memoryProperties);
             if (vmaAllocator.TryGetDeviceLocalHeapBudgetSnapshot(
                     in memoryProperties,
                     budgetRatio,
@@ -991,10 +994,10 @@ public unsafe partial class VulkanRenderer
 
     private long ResolveLargestVulkanMemoryHeapBytes()
     {
-        if (Api is null || _physicalDevice.Handle == 0)
+        if (Api is null || _deviceContext.PhysicalDevice.Handle == 0)
             return 0;
 
-        Api.GetPhysicalDeviceMemoryProperties(_physicalDevice, out PhysicalDeviceMemoryProperties memoryProperties);
+        Api.GetPhysicalDeviceMemoryProperties(_deviceContext.PhysicalDevice, out PhysicalDeviceMemoryProperties memoryProperties);
         ulong largestHeapBytes = 0;
         for (int i = 0; i < memoryProperties.MemoryHeapCount; i++)
             largestHeapBytes = Math.Max(largestHeapBytes, memoryProperties.MemoryHeaps[i].Size);
@@ -1040,7 +1043,7 @@ public unsafe partial class VulkanRenderer
     }
     private void DestroyOpenXrPrimaryCommandBufferCache()
     {
-        lock (_openXrBackend.PrimaryCommandArtifactOwnersLock)
+        lock (OutputRuntime.OpenXrBackend.PrimaryCommandArtifactOwnersLock)
         {
             if (OpenXrPrimaryCommandArtifactOwners.Count != 0)
             {
@@ -1083,7 +1086,7 @@ public unsafe partial class VulkanRenderer
     private void DestroyOpenXrResourcePlannerState()
     {
         KeyValuePair<VulkanOpenXrViewResourcePlannerContextKey, ResourcePlannerRuntimeState>[] states;
-        lock (_openXrBackend.ResourcePlannerStatesLock)
+        lock (OutputRuntime.OpenXrBackend.ResourcePlannerStatesLock)
         {
             if (OpenXrResourcePlannerStates.Count == 0)
                 return;

@@ -29,7 +29,7 @@ namespace XREngine.Rendering.Vulkan
                 ResetSubmissionMarkersForCommandBuffer(recordingState.CommandBuffer);
                 CleanupComputeTransientResources(recordingState.FrameDataImageIndex);
 
-                _commandRecorder.Begin(this, recordingState.CommandBuffer);
+                _commandRuntime.Recorder.Begin(this, recordingState.CommandBuffer);
 
                 BeginFrameTimingQueries(recordingState.CommandBuffer, recordingState.CommandBufferImageSlot);
                 BeginVulkanGpuProfilerQueries(recordingState.CommandBuffer, recordingState.CommandBufferImageSlot);
@@ -52,14 +52,17 @@ namespace XREngine.Rendering.Vulkan
         {
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.SortAndSecondaryBuckets"))
             {
-                if (recordingState.CommandChainSchedule is null)
+                if (recordingState.CommandChainSchedule is null &&
+                    !recordingState.Ops.IsNumericStream)
                 {
                     // Always sort frame ops by (PassOrder, safe draw order, OriginalIndex)
                     // and then normalize same-target clears before first same-target use.
                     // Render graph pass order preserves cross-pass dependencies, while same-pass
                     // compute/barrier/indirect operations stay in enqueue order so GPU-produced
                     // counters are written before the draw commands that consume them.
-                    recordingState.Ops = _frameOperationScheduler.SortFrameOpsCore(recordingState.Ops, CompiledRenderGraph);
+                    recordingState.Ops = _frameOperationScheduler.SortFrameOpsCore(
+                        recordingState.Ops.CompatibilityOperations,
+                        CompiledRenderGraph);
                 }
 
                 _frameOperationScheduler.BuildSecondaryRecordingBuckets(recordingState.Ops, recordingState.SecondaryBuckets);
@@ -241,7 +244,7 @@ namespace XREngine.Rendering.Vulkan
                         Debug.Vulkan(
                             "[VulkanFrameOp] index={0} op={1} pass={2} passName='{3}' target='{4}' targetId={5} pipe={6} vp={7} sched={8}{9}",
                             opScanIndex,
-                            op.GetType().Name,
+                            GetFrameOpDiagnosticName(op),
                             op.PassIndex,
                             TryGetPassName(op) ?? "<unknown>",
                             ResolveCommandChainTargetName(op),

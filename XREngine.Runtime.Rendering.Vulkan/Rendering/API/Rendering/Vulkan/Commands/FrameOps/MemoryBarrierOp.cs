@@ -11,7 +11,7 @@ internal sealed record MemoryBarrierOp(
 
     internal override int RecordPrimary(
         VulkanRenderer renderer,
-        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
+        scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
         if (TryRecordSecondaryBucket(
@@ -33,11 +33,11 @@ internal sealed record MemoryBarrierOp(
         EMemoryBarrierMask mask,
         in FrameOpContext context)
     {
-        bool frameOwned = TryRentForCurrentFrame(out MemoryBarrierOp? reusable);
+        bool frameOwned = TryRentForCurrentFrame(context, out MemoryBarrierOp? reusable);
         if (reusable is null)
         {
             MemoryBarrierOp created = new(passIndex, mask, context);
-            return frameOwned ? RetainForCurrentFrame(created) : created;
+            return frameOwned ? RetainForCurrentFrame(created, context) : created;
         }
 
         reusable.PassIndex = passIndex;

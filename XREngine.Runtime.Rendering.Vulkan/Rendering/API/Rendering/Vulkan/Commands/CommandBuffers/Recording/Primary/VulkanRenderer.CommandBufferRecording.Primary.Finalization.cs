@@ -316,7 +316,7 @@ namespace XREngine.Rendering.Vulkan
         {
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.EndCommandBuffer"))
             {
-                Result endResult = _commandRecorder.End(
+                Result endResult = _commandRuntime.Recorder.End(
                     this,
                     recordingState.CommandBuffer,
                     out string trackingFailure);

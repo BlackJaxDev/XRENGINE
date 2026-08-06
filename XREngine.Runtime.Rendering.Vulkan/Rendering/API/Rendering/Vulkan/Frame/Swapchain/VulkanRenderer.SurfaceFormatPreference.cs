@@ -3,11 +3,8 @@ using Format = Silk.NET.Vulkan.Format;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal readonly struct SurfaceFormatPreference(Format format, ColorSpaceKHR colorSpace)
 {
-    private readonly struct SurfaceFormatPreference(Format format, ColorSpaceKHR colorSpace)
-    {
-        public Format Format { get; } = format;
-        public ColorSpaceKHR ColorSpace { get; } = colorSpace;
-    }
+    public Format Format { get; } = format;
+    public ColorSpaceKHR ColorSpace { get; } = colorSpace;
 }

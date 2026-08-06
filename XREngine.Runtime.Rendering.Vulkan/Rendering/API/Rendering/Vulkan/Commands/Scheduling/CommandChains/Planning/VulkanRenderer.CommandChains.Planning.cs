@@ -15,10 +15,33 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
+    // Cold pre-plan/OpenXR compatibility only. Desktop lifecycle scheduling
+    // calls the stream overload below after FramePlan sealing.
     private CommandChainSchedule? TryBuildCommandChainSchedule(
         uint imageIndex,
         FrameOp[] staticOps,
         FrameOp[] volatileOps,
+        ulong frameOpsSignature,
+        ulong volatileSignature,
+        ulong resourcePlanRevision,
+        bool allowExternalSwapchainTarget,
+        out CommandChainLoweringStats stats,
+        ulong? preparedFastScheduleSignature = null)
+        => TryBuildCommandChainSchedule(
+            imageIndex,
+            FrameOperationStream.CreateCompatibility(staticOps),
+            FrameOperationStream.CreateCompatibility(volatileOps),
+            frameOpsSignature,
+            volatileSignature,
+            resourcePlanRevision,
+            allowExternalSwapchainTarget,
+            out stats,
+            preparedFastScheduleSignature);
+
+    private CommandChainSchedule? TryBuildCommandChainSchedule(
+        uint imageIndex,
+        FrameOperationStream staticOps,
+        FrameOperationStream volatileOps,
         ulong frameOpsSignature,
         ulong volatileSignature,
         ulong resourcePlanRevision,
@@ -87,7 +110,7 @@ public unsafe partial class VulkanRenderer
         if (!preparedFastScheduleSignature.HasValue)
         {
             using VulkanCpuStageScope cpuStage =
-                new(EVulkanCpuStage.CommandChainFastSignature);
+                new(_frameTelemetry, EVulkanCpuStage.CommandChainFastSignature);
             fastScheduleSignature = ComputeCommandChainFastScheduleSignature(
                 imageIndex,
                 staticOps,
@@ -102,7 +125,7 @@ public unsafe partial class VulkanRenderer
             LogCommandChainStabilityGuardBypass(
                 imageIndex,
                 resourcePlanRevision,
-                staticOps.Length + volatileOps.Length,
+                staticOps.Count + volatileOps.Count,
                 bypassReason);
             return null;
         }
@@ -116,9 +139,10 @@ public unsafe partial class VulkanRenderer
         // primary and secondary command buffers remain independently reusable.
         List<RenderPacket> packets = _commandChainPacketScratch;
         packets.Clear();
-        packets.EnsureCapacity(Math.Max(staticOps.Length + volatileOps.Length, 1));
+        packets.EnsureCapacity(Math.Max(staticOps.Count + volatileOps.Count, 1));
+        BeginCommandChainPacketPayloadPublication(staticOps.Count + volatileOps.Count);
         _commandChainPacketPoolCursor = 0;
-        using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.CommandChainPacketLowering))
+        using (VulkanCpuStageScope cpuStage = new(_frameTelemetry, EVulkanCpuStage.CommandChainPacketLowering))
         {
             BuildCommandChainRenderPackets(
                 imageIndex,
@@ -129,7 +153,7 @@ public unsafe partial class VulkanRenderer
                 packets);
         }
         using VulkanCpuStageScope scheduleEvaluationStage =
-            new(EVulkanCpuStage.CommandChainScheduleEvaluation);
+            new(_frameTelemetry, EVulkanCpuStage.CommandChainScheduleEvaluation);
 
         if (packets.Count > MaxCommandChainsPerSchedule)
         {
@@ -148,7 +172,7 @@ public unsafe partial class VulkanRenderer
 
         if (packets.Count == 0)
         {
-            if (staticOps.Length != 0 || volatileOps.Length != 0)
+            if (staticOps.Count != 0 || volatileOps.Count != 0)
                 return null;
 
             stats = new CommandChainLoweringStats(0, 0, 0, 0, 0, 0, 0, 0, null, null, null);
@@ -164,7 +188,7 @@ public unsafe partial class VulkanRenderer
 
         Dictionary<CommandChainKey, CommandChain> cache = GetCommandChainCache(imageIndex);
         CommandChainSchedule schedule = RentCommandChainSchedule(imageIndex);
-        ulong scheduleGeneration = _commandScheduler.NextScheduleGeneration();
+        ulong scheduleGeneration = _commandRuntime.Scheduler.NextScheduleGeneration();
         List<string>? commandChainTraceRows = traceCommandChains ? [] : null;
         List<RenderPassChainGroup> groups = _commandChainGroupScratch;
         groups.Clear();
@@ -176,7 +200,7 @@ public unsafe partial class VulkanRenderer
         structuralOccurrences.Clear();
         int currentPass = packets[0].PassIndex;
         int currentTarget = packets[0].TargetIdentity;
-        string currentTargetName = packets[0].TargetName;
+        string currentTargetName = packets[0].GetDiagnosticTargetName();
         bool currentDynamicOverlay = packets[0].DynamicOverlay;
         ulong currentGroupSignature = 0;
 
@@ -202,7 +226,7 @@ public unsafe partial class VulkanRenderer
                 structuralOccurrences.Clear();
                 currentPass = packet.PassIndex;
                 currentTarget = packet.TargetIdentity;
-                currentTargetName = packet.TargetName;
+                currentTargetName = packet.GetDiagnosticTargetName();
                 currentDynamicOverlay = packet.DynamicOverlay;
                 currentGroupSignature = 0;
             }
@@ -225,7 +249,7 @@ public unsafe partial class VulkanRenderer
             chain.LastUsedScheduleGeneration = scheduleGeneration;
             CommandChainDirtyReason dirtyReason;
             using (VulkanCpuStageScope cpuStage =
-                new(EVulkanCpuStage.CommandDependencyComparison))
+                new(_frameTelemetry, EVulkanCpuStage.CommandDependencyComparison))
             {
                 dirtyReason = EvaluateCommandChainDirtyReason(chain, packet);
             }
@@ -348,7 +372,7 @@ public unsafe partial class VulkanRenderer
             scheduledFrameOpCount += packets[packetIndex].SourceCount;
         int inlineFrameOpCount = Math.Max(
             0,
-            staticOps.Length + volatileOps.Length - scheduledFrameOpCount);
+            staticOps.Count + volatileOps.Count - scheduledFrameOpCount);
         ulong scheduleSignature = ComputeScheduleStructuralSignature(
             groupSpan,
             requiresFreshPrimary,
@@ -400,7 +424,7 @@ public unsafe partial class VulkanRenderer
         {
             ValidateCommandChainSchedule(schedule, packets, frameOpsSignature);
             ValidateCommandChainViewSpecialization(schedule);
-            QueueFamilyIndices families = FamilyQueueIndices;
+            QueueFamilyIndices families = _deviceContext.QueueFamilies;
             CommandChainQueueSchedule queueSchedule = BuildCommandChainQueueSchedule(
                 schedule,
                 CommandChainMultiQueueEnabled,

@@ -19,7 +19,7 @@ namespace XREngine.Rendering.Vulkan
             bool recoveryFrameWritten)
         {
             VulkanDesktopPresentDispatchOutcome dispatch =
-                DesktopWsiTarget.PresentFrameTarget(
+                DesktopWsiOutput.PresentFrameTarget(
                     this,
                     ref attempt,
                     "Vulkan.FrameLifecycle.DirtyAbortQueuePresent",

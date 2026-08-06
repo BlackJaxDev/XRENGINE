@@ -16,16 +16,6 @@ public unsafe partial class VulkanRenderer
     private static readonly TimeSpan ScreenshotReadbackWatchdogWarningAge = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan ScreenshotReadbackFailureAge = TimeSpan.FromSeconds(10);
 
-    private readonly VulkanScreenshotReadbackSlot?[] _screenshotReadbackSlots =
-        new VulkanScreenshotReadbackSlot?[ScreenshotReadbackRingSize];
-    private int _screenshotReadbackCursor;
-    private long _screenshotReadbackReservedRawBytes;
-    private long _screenshotReadbackQueuedCount;
-    private long _screenshotReadbackCompletedCount;
-    private long _screenshotReadbackFailedCount;
-    private long _screenshotReadbackRejectedCount;
-    private long _screenshotReadbackTimeoutCount;
-
     public override bool TryQueueScreenshotReadback(
         BoundingRectangle region,
         bool withTransparency,
@@ -35,7 +25,7 @@ public unsafe partial class VulkanRenderer
         ArgumentNullException.ThrowIfNull(callback);
         failure = null;
 
-        if (_deviceLost || !IsDeviceOperational)
+        if (_deviceLost || !_deviceContext.IsOperational)
             return RejectScreenshotReadback(DeviceLostReason ?? "The Vulkan device is not operational.", out failure);
 
         if (!RuntimeEngine.IsRenderThread)
@@ -61,7 +51,7 @@ public unsafe partial class VulkanRenderer
                 out int height,
                 out failure))
         {
-            Interlocked.Increment(ref _screenshotReadbackRejectedCount);
+            Interlocked.Increment(ref OutputRuntime.Capture.ScreenshotReadbackRejectedCount);
             return false;
         }
 
@@ -139,7 +129,7 @@ public unsafe partial class VulkanRenderer
                 return RejectPreparedScreenshotReadback(slot, failure ?? "Failed to allocate Vulkan screenshot readback resources.", out failure);
             }
 
-            Result resetFenceResult = Api!.ResetFences(device, 1, in slot.Fence);
+            Result resetFenceResult = Api!.ResetFences(_deviceContext.Device, 1, in slot.Fence);
             Result resetCommandResult = ResetVulkanCommandBufferTracked(slot.CommandBuffer);
             if (resetFenceResult != Result.Success || resetCommandResult != Result.Success)
             {
@@ -191,7 +181,7 @@ public unsafe partial class VulkanRenderer
             };
 
             Result submitResult = SubmitToQueueTracked(
-                graphicsQueue,
+                _deviceContext.GraphicsQueue,
                 ref submitInfo,
                 slot.Fence,
                 caller: "VulkanScreenshotReadback");
@@ -214,13 +204,13 @@ public unsafe partial class VulkanRenderer
             Volatile.Write(ref slot.State, (int)EVulkanScreenshotReadbackSlotState.Submitted);
             submitted = true;
             UpdateReadbackRestoredAttachmentLayout(source, ResolvePostTransferReadLayout(source));
-            Interlocked.Increment(ref _screenshotReadbackQueuedCount);
+            Interlocked.Increment(ref OutputRuntime.Capture.ScreenshotReadbackQueuedCount);
             return true;
         }
         catch (Exception ex)
         {
             failure = $"Failed to queue Vulkan screenshot readback: {ex.Message}";
-            Interlocked.Increment(ref _screenshotReadbackRejectedCount);
+            Interlocked.Increment(ref OutputRuntime.Capture.ScreenshotReadbackRejectedCount);
             return false;
         }
         finally
@@ -250,9 +240,9 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        for (int i = 0; i < _screenshotReadbackSlots.Length; ++i)
+        for (int i = 0; i < OutputRuntime.Capture.ScreenshotReadbackSlots.Length; ++i)
         {
-            VulkanScreenshotReadbackSlot? slot = _screenshotReadbackSlots[i];
+            VulkanScreenshotReadbackSlot? slot = OutputRuntime.Capture.ScreenshotReadbackSlots[i];
             if (slot is not null &&
                 Volatile.Read(ref slot.State) == (int)EVulkanScreenshotReadbackSlotState.Submitted)
             {
@@ -269,9 +259,9 @@ public unsafe partial class VulkanRenderer
         double? oldestSubmittedSeconds = null;
         long now = Stopwatch.GetTimestamp();
 
-        for (int i = 0; i < _screenshotReadbackSlots.Length; ++i)
+        for (int i = 0; i < OutputRuntime.Capture.ScreenshotReadbackSlots.Length; ++i)
         {
-            VulkanScreenshotReadbackSlot? slot = _screenshotReadbackSlots[i];
+            VulkanScreenshotReadbackSlot? slot = OutputRuntime.Capture.ScreenshotReadbackSlots[i];
             if (slot is null)
                 continue;
 
@@ -307,13 +297,13 @@ public unsafe partial class VulkanRenderer
             SubmittedCount = submitted,
             CpuProcessingCount = cpuProcessing,
             AbandonedCount = abandoned,
-            ReservedRawBytes = Math.Max(0L, Interlocked.Read(ref _screenshotReadbackReservedRawBytes)),
+            ReservedRawBytes = Math.Max(0L, Interlocked.Read(ref OutputRuntime.Capture.ScreenshotReadbackReservedRawBytes)),
             OldestSubmittedSeconds = oldestSubmittedSeconds,
-            LifetimeQueuedCount = Interlocked.Read(ref _screenshotReadbackQueuedCount),
-            LifetimeCompletedCount = Interlocked.Read(ref _screenshotReadbackCompletedCount),
-            LifetimeFailedCount = Interlocked.Read(ref _screenshotReadbackFailedCount),
-            LifetimeRejectedCount = Interlocked.Read(ref _screenshotReadbackRejectedCount),
-            LifetimeTimeoutCount = Interlocked.Read(ref _screenshotReadbackTimeoutCount),
+            LifetimeQueuedCount = Interlocked.Read(ref OutputRuntime.Capture.ScreenshotReadbackQueuedCount),
+            LifetimeCompletedCount = Interlocked.Read(ref OutputRuntime.Capture.ScreenshotReadbackCompletedCount),
+            LifetimeFailedCount = Interlocked.Read(ref OutputRuntime.Capture.ScreenshotReadbackFailedCount),
+            LifetimeRejectedCount = Interlocked.Read(ref OutputRuntime.Capture.ScreenshotReadbackRejectedCount),
+            LifetimeTimeoutCount = Interlocked.Read(ref OutputRuntime.Capture.ScreenshotReadbackTimeoutCount),
         };
     }
 
@@ -346,7 +336,7 @@ public unsafe partial class VulkanRenderer
                 out height);
             if (TryResolveBlitImage(
                     boundReadFrameBuffer,
-                    _lastPresentedImageIndex,
+                    OutputRuntime.Desktop.LastPresentedImageIndex,
                     ActiveReadBufferMode,
                     wantColor: true,
                     wantDepth: false,
@@ -378,7 +368,7 @@ public unsafe partial class VulkanRenderer
                 out height);
             if (TryResolveBlitImage(
                     _lastWindowPresentFrameBuffer,
-                    _lastPresentedImageIndex,
+                    OutputRuntime.Desktop.LastPresentedImageIndex,
                     EReadBufferMode.ColorAttachment0,
                     wantColor: true,
                     wantDepth: false,
@@ -433,9 +423,9 @@ public unsafe partial class VulkanRenderer
 
         if (needsResolve)
         {
-            for (int i = 0; i < _screenshotReadbackSlots.Length; ++i)
+            for (int i = 0; i < OutputRuntime.Capture.ScreenshotReadbackSlots.Length; ++i)
             {
-                VulkanScreenshotReadbackSlot? compatible = _screenshotReadbackSlots[i];
+                VulkanScreenshotReadbackSlot? compatible = OutputRuntime.Capture.ScreenshotReadbackSlots[i];
                 if (compatible is null ||
                     compatible.ResolveImage.Handle == 0 ||
                     compatible.ResolveFormat != format ||
@@ -457,10 +447,10 @@ public unsafe partial class VulkanRenderer
             }
         }
 
-        for (int i = 0; i < _screenshotReadbackSlots.Length; ++i)
+        for (int i = 0; i < OutputRuntime.Capture.ScreenshotReadbackSlots.Length; ++i)
         {
-            int index = (_screenshotReadbackCursor + i) % _screenshotReadbackSlots.Length;
-            VulkanScreenshotReadbackSlot slot = _screenshotReadbackSlots[index] ??=
+            int index = (OutputRuntime.Capture.ScreenshotReadbackCursor + i) % OutputRuntime.Capture.ScreenshotReadbackSlots.Length;
+            VulkanScreenshotReadbackSlot slot = OutputRuntime.Capture.ScreenshotReadbackSlots[index] ??=
                 new VulkanScreenshotReadbackSlot();
             if (Interlocked.CompareExchange(
                     ref slot.State,
@@ -471,7 +461,7 @@ public unsafe partial class VulkanRenderer
                 continue;
             }
 
-            _screenshotReadbackCursor = (index + 1) % _screenshotReadbackSlots.Length;
+            OutputRuntime.Capture.ScreenshotReadbackCursor = (index + 1) % OutputRuntime.Capture.ScreenshotReadbackSlots.Length;
             slotIndex = index;
             return slot;
         }
@@ -544,7 +534,7 @@ public unsafe partial class VulkanRenderer
                 SType = StructureType.FenceCreateInfo,
                 Flags = FenceCreateFlags.SignaledBit,
             };
-            Result fenceResult = Api!.CreateFence(device, in fenceCreateInfo, null, out slot.Fence);
+            Result fenceResult = Api!.CreateFence(_deviceContext.Device, in fenceCreateInfo, null, out slot.Fence);
             if (fenceResult != Result.Success)
             {
                 failure = $"Failed to create Vulkan screenshot fence ({fenceResult}).";
@@ -644,8 +634,8 @@ public unsafe partial class VulkanRenderer
         {
             ClearTrackedImageLayouts(resolveImage);
             allocation = AllocateImageMemoryWithFallback(resolveImage, MemoryPropertyFlags.DeviceLocalBit);
-            _imageAllocationTracker.Allocations[resolveImage.Handle] = allocation;
-            Result bindResult = Api!.BindImageMemory(device, resolveImage, allocation.Memory, allocation.Offset);
+            ResourceRuntime.Allocations.Images.Allocations[resolveImage.Handle] = allocation;
+            Result bindResult = Api!.BindImageMemory(_deviceContext.Device, resolveImage, allocation.Memory, allocation.Offset);
             if (bindResult != Result.Success)
                 throw new InvalidOperationException($"vkBindImageMemory returned {bindResult}.");
 
@@ -660,7 +650,7 @@ public unsafe partial class VulkanRenderer
         }
         catch (Exception ex)
         {
-            _imageAllocationTracker.Allocations.TryRemove(resolveImage.Handle, out _);
+            ResourceRuntime.Allocations.Images.Allocations.TryRemove(resolveImage.Handle, out _);
             UntrackImageAllocation(resolveImage);
             DestroyVulkanImageImmediateTracked(resolveImage, "ScreenshotReadback.ResolveCreateFailure");
             if (!allocation.IsNull)
@@ -805,7 +795,7 @@ public unsafe partial class VulkanRenderer
 
     private bool TryConsumeScreenshotReadback(VulkanScreenshotReadbackSlot slot, int slotIndex)
     {
-        Result fenceResult = Api!.GetFenceStatus(device, slot.Fence);
+        Result fenceResult = Api!.GetFenceStatus(_deviceContext.Device, slot.Fence);
         if (fenceResult is Result.NotReady or Result.Timeout)
         {
             ObserveScreenshotReadbackFenceAge(slot, slotIndex);
@@ -917,7 +907,7 @@ public unsafe partial class VulkanRenderer
         if (age < ScreenshotReadbackFailureAge || Volatile.Read(ref slot.CallbackDelivered) != 0)
             return;
 
-        Interlocked.Increment(ref _screenshotReadbackTimeoutCount);
+        Interlocked.Increment(ref OutputRuntime.Capture.ScreenshotReadbackTimeoutCount);
         DeliverScreenshotReadbackFailure(
             slot,
             $"The Vulkan screenshot GPU fence did not signal within {ScreenshotReadbackFailureAge.TotalSeconds:F0} seconds. The request failed without blocking the render thread; its submitted resources remain quarantined until the fence signals or the device is destroyed.",
@@ -979,7 +969,7 @@ public unsafe partial class VulkanRenderer
                 gpuCompletionSeconds,
                 cpuProcessingSeconds);
             Action<ScreenshotReadbackResult>? callback = Interlocked.Exchange(ref slot.Callback, null);
-            Interlocked.Increment(ref _screenshotReadbackCompletedCount);
+            Interlocked.Increment(ref OutputRuntime.Capture.ScreenshotReadbackCompletedCount);
             if (callback is null)
                 return;
 
@@ -1019,7 +1009,7 @@ public unsafe partial class VulkanRenderer
             return;
 
         Action<ScreenshotReadbackResult>? callback = Interlocked.Exchange(ref slot.Callback, null);
-        Interlocked.Increment(ref _screenshotReadbackFailedCount);
+        Interlocked.Increment(ref OutputRuntime.Capture.ScreenshotReadbackFailedCount);
         if (callback is null)
             return;
 
@@ -1033,7 +1023,7 @@ public unsafe partial class VulkanRenderer
                 slot.SourceFormat.ToString(),
                 checked((long)slot.RawByteCount),
                 slot.UsedMultisampleResolve,
-                Array.IndexOf(_screenshotReadbackSlots, slot),
+                Array.IndexOf(OutputRuntime.Capture.ScreenshotReadbackSlots, slot),
                 slot.SubmittedAtUtc == default ? null : slot.SubmittedAtUtc,
                 DateTimeOffset.UtcNow,
                 gpuCompletionSeconds));
@@ -1048,9 +1038,9 @@ public unsafe partial class VulkanRenderer
 
     private void FailPendingScreenshotReadbacksForDeviceLoss(string reason)
     {
-        for (int i = 0; i < _screenshotReadbackSlots.Length; ++i)
+        for (int i = 0; i < OutputRuntime.Capture.ScreenshotReadbackSlots.Length; ++i)
         {
-            VulkanScreenshotReadbackSlot? slot = _screenshotReadbackSlots[i];
+            VulkanScreenshotReadbackSlot? slot = OutputRuntime.Capture.ScreenshotReadbackSlots[i];
             if (slot is null ||
                 Interlocked.CompareExchange(
                     ref slot.State,
@@ -1074,7 +1064,7 @@ public unsafe partial class VulkanRenderer
     private bool RejectScreenshotReadback(string error, out string? failure)
     {
         failure = error;
-        Interlocked.Increment(ref _screenshotReadbackRejectedCount);
+        Interlocked.Increment(ref OutputRuntime.Capture.ScreenshotReadbackRejectedCount);
         return false;
     }
 
@@ -1084,7 +1074,7 @@ public unsafe partial class VulkanRenderer
         out string? failure)
     {
         failure = error;
-        Interlocked.Increment(ref _screenshotReadbackRejectedCount);
+        Interlocked.Increment(ref OutputRuntime.Capture.ScreenshotReadbackRejectedCount);
         return false;
     }
 
@@ -1111,12 +1101,12 @@ public unsafe partial class VulkanRenderer
         long requested = checked((long)rawByteCount);
         while (true)
         {
-            long current = Interlocked.Read(ref _screenshotReadbackReservedRawBytes);
+            long current = Interlocked.Read(ref OutputRuntime.Capture.ScreenshotReadbackReservedRawBytes);
             if (current < 0 || (ulong)current + rawByteCount > MaximumScreenshotReadbackRawBytes)
                 return false;
 
             if (Interlocked.CompareExchange(
-                    ref _screenshotReadbackReservedRawBytes,
+                    ref OutputRuntime.Capture.ScreenshotReadbackReservedRawBytes,
                     checked(current + requested),
                     current) == current)
             {
@@ -1139,10 +1129,10 @@ public unsafe partial class VulkanRenderer
             return;
 
         long remaining = Interlocked.Add(
-            ref _screenshotReadbackReservedRawBytes,
+            ref OutputRuntime.Capture.ScreenshotReadbackReservedRawBytes,
             -checked((long)rawByteCount));
         if (remaining < 0)
-            Interlocked.Exchange(ref _screenshotReadbackReservedRawBytes, 0);
+            Interlocked.Exchange(ref OutputRuntime.Capture.ScreenshotReadbackReservedRawBytes, 0);
     }
 
     private void ReleaseScreenshotReadbackStaging(VulkanScreenshotReadbackSlot slot)
@@ -1176,9 +1166,9 @@ public unsafe partial class VulkanRenderer
         if (retainedBytes + requiredBytes <= MaximumScreenshotResolveImageBytes)
             return;
 
-        for (int i = 0; i < _screenshotReadbackSlots.Length; ++i)
+        for (int i = 0; i < OutputRuntime.Capture.ScreenshotReadbackSlots.Length; ++i)
         {
-            VulkanScreenshotReadbackSlot? candidate = _screenshotReadbackSlots[i];
+            VulkanScreenshotReadbackSlot? candidate = OutputRuntime.Capture.ScreenshotReadbackSlots[i];
             if (candidate is null ||
                 ReferenceEquals(candidate, requestingSlot) ||
                 candidate.ResolveImage.Handle == 0 ||
@@ -1197,8 +1187,8 @@ public unsafe partial class VulkanRenderer
     private ulong GetRetainedScreenshotResolveImageBytes()
     {
         ulong total = 0;
-        for (int i = 0; i < _screenshotReadbackSlots.Length; ++i)
-            total += _screenshotReadbackSlots[i]?.ResolveByteCount ?? 0;
+        for (int i = 0; i < OutputRuntime.Capture.ScreenshotReadbackSlots.Length; ++i)
+            total += OutputRuntime.Capture.ScreenshotReadbackSlots[i]?.ResolveByteCount ?? 0;
         return total;
     }
 
@@ -1212,7 +1202,7 @@ public unsafe partial class VulkanRenderer
 
         VulkanMemoryAllocation allocation = slot.ResolveAllocation;
         ClearTrackedImageLayouts(image);
-        if (_imageAllocationTracker.Allocations.TryRemove(image.Handle, out VulkanMemoryAllocation trackedAllocation))
+        if (ResourceRuntime.Allocations.Images.Allocations.TryRemove(image.Handle, out VulkanMemoryAllocation trackedAllocation))
             allocation = trackedAllocation;
         UntrackImageAllocation(image);
         DestroyVulkanImageImmediateTracked(image, owner);
@@ -1235,9 +1225,9 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        for (int i = 0; i < _screenshotReadbackSlots.Length; ++i)
+        for (int i = 0; i < OutputRuntime.Capture.ScreenshotReadbackSlots.Length; ++i)
         {
-            VulkanScreenshotReadbackSlot? slot = _screenshotReadbackSlots[i];
+            VulkanScreenshotReadbackSlot? slot = OutputRuntime.Capture.ScreenshotReadbackSlots[i];
             if (slot is not null &&
                 Volatile.Read(ref slot.State) == (int)EVulkanScreenshotReadbackSlotState.Submitted)
             {
@@ -1248,9 +1238,9 @@ public unsafe partial class VulkanRenderer
 
     private void DisposeScreenshotReadbacks()
     {
-        for (int i = 0; i < _screenshotReadbackSlots.Length; ++i)
+        for (int i = 0; i < OutputRuntime.Capture.ScreenshotReadbackSlots.Length; ++i)
         {
-            VulkanScreenshotReadbackSlot? slot = _screenshotReadbackSlots[i];
+            VulkanScreenshotReadbackSlot? slot = OutputRuntime.Capture.ScreenshotReadbackSlots[i];
             if (slot is null)
                 continue;
 
@@ -1271,7 +1261,7 @@ public unsafe partial class VulkanRenderer
             if (slot.ResolveImage.Handle != 0)
                 DestroyScreenshotResolveImage(slot, "ScreenshotReadback.Dispose");
             if (slot.Fence.Handle != 0)
-                Api!.DestroyFence(device, slot.Fence, null);
+                Api!.DestroyFence(_deviceContext.Device, slot.Fence, null);
             if (slot.CommandBuffer.Handle != 0)
             {
                 CommandBuffer commandBuffer = slot.CommandBuffer;
@@ -1288,6 +1278,6 @@ public unsafe partial class VulkanRenderer
             Volatile.Write(ref slot.State, (int)EVulkanScreenshotReadbackSlotState.Disposed);
         }
 
-        Interlocked.Exchange(ref _screenshotReadbackReservedRawBytes, 0);
+        Interlocked.Exchange(ref OutputRuntime.Capture.ScreenshotReadbackReservedRawBytes, 0);
     }
 }

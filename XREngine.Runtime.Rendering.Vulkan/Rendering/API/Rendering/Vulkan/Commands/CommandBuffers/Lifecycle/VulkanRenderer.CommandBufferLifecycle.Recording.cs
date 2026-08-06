@@ -9,22 +9,22 @@ namespace XREngine.Rendering.Vulkan
             scoped ref VulkanCommandSchedulingContext<PrimaryCommandArtifactOwner> context,
             scoped ref CommandBufferLifecycleState state)
         {
-            if (TryPrepareComputeFrameOpsForRecording(
+            VulkanComputePreparationResult preparationResult =
+                PrepareComputeFrameOpsForRecording(
                     state.ImageIndex,
-                    state.FrameOperations,
-                    out string preparationFailureReason) &&
-                TryPrepareComputeFrameOpsForRecording(
+                    state.FrameOperations);
+            if (preparationResult.Succeeded)
+                preparationResult = PrepareComputeFrameOpsForRecording(
                     state.ImageIndex,
-                    state.DynamicUiOperations,
-                    out preparationFailureReason))
-            {
+                    state.DynamicUiOperations);
+
+            if (preparationResult.Succeeded)
                 return true;
-            }
 
             return DeferCommandBufferLifecycle(
                 ref context,
                 ref state,
-                preparationFailureReason);
+                preparationResult.FormatFailure());
         }
 
         private void RecordCommandBufferCacheMiss(
@@ -112,7 +112,7 @@ namespace XREngine.Rendering.Vulkan
             scoped ref CommandBufferLifecycleState state)
         {
             _lastEnsureCommandBufferRecordedPrimary = true;
-            _commandRecorder.EnterRecordingScope();
+            _commandRuntime.Recorder.EnterRecordingScope();
             state.RecordedDynamicUiSecondaryReady =
                 state.DelayDynamicUiOverlayRecording;
             state.RecordedSwapchainWriteCount = 0;
@@ -141,7 +141,7 @@ namespace XREngine.Rendering.Vulkan
             }
             finally
             {
-                _commandRecorder.ExitRecordingScope();
+                _commandRuntime.Recorder.ExitRecordingScope();
             }
         }
 
@@ -153,7 +153,7 @@ namespace XREngine.Rendering.Vulkan
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                            "Vulkan.RecordCommandBuffer.RecordDynamicUiSecondary"))
                 using (VulkanCpuStageScope cpuStage =
-                       new(EVulkanCpuStage.SecondaryRecording))
+                       new(_frameTelemetry, EVulkanCpuStage.SecondaryRecording))
                 {
                     state.RecordedDynamicUiSecondaryReady =
                         RecordDynamicUiBatchTextSecondaryCommandBuffer(
@@ -177,19 +177,20 @@ namespace XREngine.Rendering.Vulkan
                        "Vulkan.RecordCommandBuffer.RecordPrimary"))
             {
                 using VulkanCpuStageScope cpuStage =
-                    new(EVulkanCpuStage.PrimaryRecording);
+                    new(_frameTelemetry, EVulkanCpuStage.PrimaryRecording);
                 for (int recordingAttempt = 0;
-                     recordingAttempt < _commandScheduler.RecordingAttemptLimit;
+                     recordingAttempt < _commandRuntime.Scheduler.RecordingAttemptLimit;
                      recordingAttempt++)
                 {
                     bool primaryRecorded = TryRecordCommandBuffer(
                         state.ImageIndex,
                         state.Variant.PrimaryCommandBuffer,
                         state.Variant.DynamicUiSecondaryCommandBuffer,
-                        state.FrameOperations,
+                        new FrameOperationSequence(
+                            state.SealedFramePlan!.StaticOperations),
                         state.RecordedDynamicUiSecondaryReady &&
                         !state.PreserveSwapchainForOverlay
-                            ? state.DynamicUiOperations.Length
+                            ? state.SealedFramePlan.DynamicOverlayOperationCount
                             : 0,
                         state.CommandChainSchedule,
                         state.PreserveSwapchainForOverlay,
@@ -227,7 +228,7 @@ namespace XREngine.Rendering.Vulkan
                             state.Variant.PrimaryCommandBuffer);
 
                         if (recordingAttempt + 1 >=
-                            _commandScheduler.RecordingAttemptLimit)
+                            _commandRuntime.Scheduler.RecordingAttemptLimit)
                         {
                             break;
                         }
@@ -249,7 +250,7 @@ namespace XREngine.Rendering.Vulkan
                     }
 
                     if (recordingAttempt + 1 <
-                            _commandScheduler.RecordingAttemptLimit &&
+                            _commandRuntime.Scheduler.RecordingAttemptLimit &&
                         IsPlanPreconditionRecordingFailure(
                             context.RecordingDeferredReason) &&
                         TryReplanCommandBufferAfterPreconditionFailure(
@@ -267,7 +268,7 @@ namespace XREngine.Rendering.Vulkan
                         continue;
                     }
 
-                    if (!_commandScheduler.ShouldRetryRecording(
+                    if (!_commandRuntime.Scheduler.ShouldRetryRecording(
                             recordingAttempt,
                             IsTransientResourceRetirementRecordingFailure(
                                 context.RecordingDeferredReason),
@@ -336,7 +337,7 @@ namespace XREngine.Rendering.Vulkan
             // recorder. Temporarily leave the logical recording scope so the
             // planner may publish a replacement snapshot, then re-enter before
             // the next bounded encoding attempt.
-            _commandRecorder.ExitRecordingScope();
+            _commandRuntime.Recorder.ExitRecordingScope();
             try
             {
                 using FrameOpResourcePlannerPreparationScope preparationScope =
@@ -348,7 +349,7 @@ namespace XREngine.Rendering.Vulkan
             }
             finally
             {
-                _commandRecorder.EnterRecordingScope();
+                _commandRuntime.Recorder.EnterRecordingScope();
             }
         }
 

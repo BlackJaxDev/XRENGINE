@@ -856,9 +856,9 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private bool ShouldFailFastOnFrameOpContextMismatch()
-            => _diagnosticOptions.EnableValidationLayers ||
-               _diagnosticOptions.EnableCrashBreadcrumbs ||
-               _diagnosticOptions.Preset == EVulkanDiagnosticPreset.CrashDiagnostics;
+            => _frameTelemetry._diagnosticOptions.EnableValidationLayers ||
+               _frameTelemetry._diagnosticOptions.EnableCrashBreadcrumbs ||
+               _frameTelemetry._diagnosticOptions.Preset == EVulkanDiagnosticPreset.CrashDiagnostics;
 
     }
 }

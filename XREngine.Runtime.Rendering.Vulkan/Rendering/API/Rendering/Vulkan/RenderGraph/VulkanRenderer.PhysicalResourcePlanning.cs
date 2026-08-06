@@ -64,7 +64,7 @@ public unsafe partial class VulkanRenderer
             }
 
             PublishResourcePlannerRuntimeState(pendingState, commitReusedImageMetadata: true);
-            _renderGraphRuntime.PublishPlan(
+            _framePlanner.PublishPlan(
                 pendingState.ResourcePlannerRevision,
                 pendingState.CompiledRenderGraph,
                 pendingState.BarrierPlanner);
@@ -88,12 +88,12 @@ public unsafe partial class VulkanRenderer
         bool constrainToActivePassSet,
         bool deferReusedImageMetadataCommit)
     {
-        if (!IsDeviceOperational)
+        if (!_deviceContext.IsOperational)
             return;
 
         if (IsCommandChainResourcePlanFrozen)
             throw new InvalidOperationException(
-                $"Resource planner cannot be replaced while command-chain readers are using frozen plan revision {_renderGraphRuntime.FrozenResourcePlanRevision}.");
+                $"Resource planner cannot be replaced while command-chain readers are using frozen plan revision {_framePlanner.FrozenResourcePlanRevision}.");
 
         int activePassSetSignature = ComputeActivePassSetSignature(activePassIndices);
         ResourcePlanningInputs planningInputs = PrepareResourcePlanningInputs(
@@ -213,7 +213,7 @@ public unsafe partial class VulkanRenderer
         if (!HasThreadResourcePlannerRuntimeState)
         {
             ResourcePlannerRuntimeState currentState = CaptureResourcePlannerRuntimeState();
-            _renderGraphRuntime.PublishPlan(
+            _framePlanner.PublishPlan(
                 currentState.ResourcePlannerRevision,
                 currentState.CompiledRenderGraph,
                 currentState.BarrierPlanner);

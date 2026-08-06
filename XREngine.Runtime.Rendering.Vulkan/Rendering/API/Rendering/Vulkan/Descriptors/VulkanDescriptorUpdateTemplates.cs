@@ -8,8 +8,6 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private readonly object _descriptorUpdateTemplateCacheLock = new();
-    private readonly Dictionary<ulong, List<CachedDescriptorUpdateTemplate>> _descriptorUpdateTemplateCache = new();
 
     /// <summary>
     /// Attempts to update a Vulkan descriptor set using a descriptor update template.
@@ -29,7 +27,7 @@ public unsafe partial class VulkanRenderer
         uint setIndex,
         ReadOnlySpan<WriteDescriptorSet> writes)
     {
-        if (!IsDeviceOperational)
+        if (!_deviceContext.IsOperational)
             return false;
 
         if (descriptorSet.Handle == 0 || descriptorSetLayout.Handle == 0 || writes.Length == 0)
@@ -105,7 +103,7 @@ public unsafe partial class VulkanRenderer
                     out DescriptorUpdateTemplate updateTemplate))
                     return false;
 
-                if (!IsDeviceOperational)
+                if (!_deviceContext.IsOperational)
                     return false;
 
                 ulong[]? dependentCommandBuffers;
@@ -114,7 +112,7 @@ public unsafe partial class VulkanRenderer
                 VulkanDescriptorUpdateInvalidation firstInvalidation;
                 fixed (WriteDescriptorSet* writePtr = writes)
                 {
-                    lock (_resourceLifetimeTracker.SyncRoot)
+                    lock (ResourceRuntime.Lifetime.Tracker.SyncRoot)
                     {
                         if (!TryPrevalidateVulkanDescriptorWrites_NoLock(
                                 unchecked((uint)writes.Length),
@@ -128,7 +126,7 @@ public unsafe partial class VulkanRenderer
                             unchecked((uint)writes.Length),
                             writePtr);
                         Api!.UpdateDescriptorSetWithTemplate(
-                            device,
+                            _deviceContext.Device,
                             descriptorSet,
                             updateTemplate,
                             dataPtr);
@@ -222,9 +220,9 @@ public unsafe partial class VulkanRenderer
         updateTemplate = default;
         ulong hash = ComputeDescriptorUpdateTemplateHash(signature);
 
-        lock (_descriptorUpdateTemplateCacheLock)
+        lock (_resourceRuntime.Descriptors._descriptorUpdateTemplateCacheLock)
         {
-            if (_descriptorUpdateTemplateCache.TryGetValue(hash, out List<CachedDescriptorUpdateTemplate>? bucket))
+            if (_resourceRuntime.Descriptors._descriptorUpdateTemplateCache.TryGetValue(hash, out List<CachedDescriptorUpdateTemplate>? bucket))
             {
                 foreach (CachedDescriptorUpdateTemplate cached in bucket)
                 {
@@ -250,7 +248,7 @@ public unsafe partial class VulkanRenderer
                     Set = setIndex,
                 };
 
-                if (Api!.CreateDescriptorUpdateTemplate(device, &createInfo, null, out updateTemplate) != Result.Success)
+                if (Api!.CreateDescriptorUpdateTemplate(_deviceContext.Device, &createInfo, null, out updateTemplate) != Result.Success)
                     return false;
             }
 
@@ -263,7 +261,7 @@ public unsafe partial class VulkanRenderer
 
             bucket ??= [];
             bucket.Add(created);
-            _descriptorUpdateTemplateCache[hash] = bucket;
+            _resourceRuntime.Descriptors._descriptorUpdateTemplateCache[hash] = bucket;
             return true;
         }
     }
@@ -274,14 +272,14 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     private void DestroyDescriptorUpdateTemplateCache()
     {
-        lock (_descriptorUpdateTemplateCacheLock)
+        lock (_resourceRuntime.Descriptors._descriptorUpdateTemplateCacheLock)
         {
-            foreach (List<CachedDescriptorUpdateTemplate> bucket in _descriptorUpdateTemplateCache.Values)
+            foreach (List<CachedDescriptorUpdateTemplate> bucket in _resourceRuntime.Descriptors._descriptorUpdateTemplateCache.Values)
                 foreach (CachedDescriptorUpdateTemplate cached in bucket)
                     if (cached.Template.Handle != 0)
-                        Api!.DestroyDescriptorUpdateTemplate(device, cached.Template, null);
+                        Api!.DestroyDescriptorUpdateTemplate(_deviceContext.Device, cached.Template, null);
             
-            _descriptorUpdateTemplateCache.Clear();
+            _resourceRuntime.Descriptors._descriptorUpdateTemplateCache.Clear();
         }
     }
 

@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Threading;
 using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
@@ -8,6 +10,34 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanPipelineManager
 {
+    internal readonly ConcurrentDictionary<VkMeshRenderer.GraphicsPipelineCompileKey, VulkanRenderer.VulkanGraphicsPipelineCompileJob> _vulkanGraphicsPipelineCompileJobs = new();
+    internal readonly Dictionary<ulong, VkMeshRenderer.GraphicsPipelineCompileKey> _vulkanGraphicsPipelineProgramCompileJobs = new();
+    internal readonly Lock _vulkanGraphicsPipelineCompileJobsLock = new();
+    internal readonly object _vulkanPipelineCompileDependencyMutationLock = new();
+    internal readonly Lock _vulkanPipelineCompileGateLock = new();
+    internal SemaphoreSlim? _vulkanPipelineCompileGate;
+    internal int _vulkanPipelineCompileWorkerCount;
+    internal int _vulkanPipelineCompileQueueAnnounced;
+    internal int _vulkanPipelineCompileShutdownStarted;
+    internal int _vulkanPipelineCompileDependencyMutationActive;
+    internal int _vulkanPipelineCompileDependencyMutationDepth;
+    internal long _vulkanPipelineCompileDependencyGeneration;
+    internal long _vulkanPipelineCompileActivityGeneration;
+    internal PipelineCache _pipelineCache;
+    internal PipelineCache _backgroundPipelineCache;
+    internal string? _pipelineCacheFilePath;
+    internal int _pipelineCacheCreatesSinceSave;
+    internal int _pipelineCacheInitialDataBytes;
+    internal bool _supportsPipelineCreationCacheControl;
+    internal long _pipelineCacheLastAutoSaveAttemptTick;
+    internal int _pipelineCacheAutoSaveInFlight;
+    internal long _pipelineCacheSaveGeneration;
+    internal readonly object _pipelineCacheFileWriteLock = new();
+    internal readonly Lock _pipelineCacheHostAccessLock = new();
+    internal readonly Lock _backgroundPipelineCacheHostAccessLock = new();
+    internal readonly Dictionary<VulkanRenderer.VulkanPipelineManifestCacheKey, VulkanRenderer.VulkanPipelineVariantManifest> _pipelineVariantManifestCache = new();
+    internal readonly Queue<VulkanRenderer.VulkanPipelineManifestCacheKey> _pipelineVariantManifestInsertionOrder = new();
+    internal readonly Lock _pipelineVariantManifestCacheLock = new();
     private readonly object _pendingDeviceReadyProgramLinksLock = new();
     private readonly HashSet<VkRenderProgram> _pendingDeviceReadyProgramLinks = [];
     private readonly object _sharedGraphicsPipelineLock = new();

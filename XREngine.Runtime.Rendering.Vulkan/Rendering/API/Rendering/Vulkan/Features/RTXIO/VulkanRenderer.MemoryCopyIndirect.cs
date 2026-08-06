@@ -26,7 +26,7 @@ public unsafe partial class VulkanRenderer
             Buffer = buffer,
         };
 
-        return Api!.GetBufferDeviceAddress(device, &info);
+        return Api!.GetBufferDeviceAddress(_deviceContext.Device, &info);
     }
 
     private bool TryCreateIndirectCopyCommandBuffer<TCommand>(

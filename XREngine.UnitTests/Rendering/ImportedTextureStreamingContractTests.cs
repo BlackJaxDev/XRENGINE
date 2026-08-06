@@ -455,7 +455,7 @@ public sealed class ImportedTextureStreamingContractTests
     {
         string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs")
             + ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/FrameOpDiagnostics.cs");
-        string commandChainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string commandChainSource = SourceContractWorkspace.ReadVulkanSourcesContaining("case TextureUploadFrameOp upload:");
 
         commandBufferSource.ShouldContain("private static bool HasTextureUploadFrameOps(FrameOp[] ops)");
         commandBufferSource.ShouldContain("usingCommandChains && variant.FrameOpsSignature != frameOpsSignature");

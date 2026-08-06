@@ -11,7 +11,7 @@ public unsafe partial class VulkanRenderer
     /// and queue-ownership transfers before the secondary is executed.
     /// </summary>
     private VulkanSecondaryRecordingContract EvaluateSecondaryRecordingContract(
-        FrameOp[] operations,
+        FrameOperationSequence operations,
         int startIndex,
         in VulkanSecondaryRecordingBucket bucket,
         int resolvedPassIndex,
@@ -83,7 +83,7 @@ public unsafe partial class VulkanRenderer
                 queryInheritance);
         }
 
-        QueueFamilyIndices queueFamilies = FamilyQueueIndices;
+        QueueFamilyIndices queueFamilies = _deviceContext.QueueFamilies;
         bool queueFamilySupported = family switch
         {
             EVulkanSecondaryCommandFamily.Compute =>
@@ -173,7 +173,7 @@ public unsafe partial class VulkanRenderer
 
     private static EVulkanSecondaryRecordingEligibility
         EvaluateQuerySecondaryOperations(
-            FrameOp[] operations,
+            FrameOperationSequence operations,
             int startIndex,
             in VulkanSecondaryRecordingBucket bucket)
     {
@@ -236,7 +236,7 @@ public unsafe partial class VulkanRenderer
     }
 
     private static bool IsQueryResultCopyOrdered(
-        FrameOp[] operations,
+        FrameOperationSequence operations,
         int copyIndex,
         QueryOp copy)
     {

@@ -48,7 +48,7 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        if (_commandRecorder.IsRecording)
+        if (_commandRuntime.Recorder.IsRecording)
         {
             Debug.VulkanWarningEvery(
                 $"Vulkan.ResourcePlanner.LazyRebuildDuringRecord.{resourceName}",
@@ -67,8 +67,8 @@ public unsafe partial class VulkanRenderer
                 TimeSpan.FromSeconds(2),
                 "[VulkanResourcePlanner] Refusing lazy physical-image plan rebuild for '{0}' while command-chain readers are using frozen plan revision {1}.",
                 resourceName,
-                _renderGraphRuntime.FrozenResourcePlanRevision);
-            failureReason = $"resource planner rebuild is deferred while command-chain readers are using frozen plan revision {_renderGraphRuntime.FrozenResourcePlanRevision}";
+                _framePlanner.FrozenResourcePlanRevision);
+            failureReason = $"resource planner rebuild is deferred while command-chain readers are using frozen plan revision {_framePlanner.FrozenResourcePlanRevision}";
             group = null;
             return false;
         }
@@ -145,7 +145,7 @@ public unsafe partial class VulkanRenderer
     {
         plannerRevision = ResourcePlannerRevision;
         FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
-        if (!IsDeviceOperational ||
+        if (!_deviceContext.IsOperational ||
             !FrameOpResourcePlannerSwitchingEnabled ||
             frameOpsSignature == 0 ||
             !switchingState.HasPreparedPlan ||
@@ -207,7 +207,7 @@ public unsafe partial class VulkanRenderer
         ulong plannerRevision)
     {
         FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
-        if (!IsDeviceOperational ||
+        if (!_deviceContext.IsOperational ||
             !FrameOpResourcePlannerSwitchingEnabled ||
             frameOpsSignature == 0 ||
             !TryGetPreparedFrameOpResourcePlannerState(switchingState, out ResourcePlannerRuntimeState preparedState) ||
@@ -263,7 +263,7 @@ public unsafe partial class VulkanRenderer
 
     private ulong PrepareFrameOpResourcePlannerStatesForFrameOps(FrameOp[] ops, ulong frameOpsSignature = 0)
     {
-        if (!IsDeviceOperational)
+        if (!_deviceContext.IsOperational)
             return ResourcePlannerRevision;
 
         FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
@@ -906,7 +906,7 @@ public unsafe partial class VulkanRenderer
 
     private bool TryActivateFrameOpResourcePlannerState(in FrameOpContext context)
     {
-        if (!IsDeviceOperational)
+        if (!_deviceContext.IsOperational)
             return false;
 
         FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
@@ -963,7 +963,7 @@ public unsafe partial class VulkanRenderer
 
     private void SaveActiveFrameOpResourcePlannerState()
     {
-        if (!IsDeviceOperational)
+        if (!_deviceContext.IsOperational)
             return;
 
         FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
@@ -1605,7 +1605,7 @@ public unsafe partial class VulkanRenderer
     }
 
     private Extent2D ResolveFrameOpContextFallbackExtent()
-        => TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent) ? externalExtent : swapChainExtent;
+        => TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent) ? externalExtent : OutputRuntime.Desktop.Extent;
 
     private VulkanResourceExtentContext BuildResourceExtentContext(in FrameOpContext context)
     {

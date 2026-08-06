@@ -49,36 +49,36 @@ public unsafe partial class VulkanRenderer
         new(Format.R8G8B8A8Unorm, ColorSpaceKHR.SpaceSrgbNonlinearKhr),
     ];
 
-    public Format PreferredFormat { get; set; } = Format.B8G8R8A8Srgb;
-    public ColorSpaceKHR PreferredColorSpace { get; set; } = ColorSpaceKHR.SpaceSrgbNonlinearKhr;
-    public PresentModeKHR PreferredPresentMode { get; set; } = PresentModeKHR.MailboxKhr;
-    public PresentModeKHR FallbackPresentMode { get; set; } = PresentModeKHR.FifoKhr;
+    public Format PreferredFormat
+    {
+        get => OutputRuntime.Desktop.PreferredFormat;
+        set => OutputRuntime.Desktop.PreferredFormat = value;
+    }
+    public ColorSpaceKHR PreferredColorSpace
+    {
+        get => OutputRuntime.Desktop.PreferredColorSpace;
+        set => OutputRuntime.Desktop.PreferredColorSpace = value;
+    }
+    public PresentModeKHR PreferredPresentMode
+    {
+        get => OutputRuntime.Desktop.PreferredPresentMode;
+        set => OutputRuntime.Desktop.PreferredPresentMode = value;
+    }
+    public PresentModeKHR FallbackPresentMode
+    {
+        get => OutputRuntime.Desktop.FallbackPresentMode;
+        set => OutputRuntime.Desktop.FallbackPresentMode = value;
+    }
     private static readonly PresentModeKHR[] DlssFrameGenerationPresentModePreferences =
     [
         PresentModeKHR.MailboxKhr,
         PresentModeKHR.ImmediateKhr,
     ];
 
-    private KhrSwapchain? khrSwapChain;
-    private SwapchainKHR swapChain;
-    private Image[]? swapChainImages;
-    private bool[]? _swapchainImageEverPresented;
-    private bool[]? _swapchainImageHasValidPresentedContent;
-    private uint _lastPresentedImageIndex;
-    private bool _streamlineFrameGenerationSwapchainActive;
-    private bool _streamlineFrameGenerationSwapchainIncludesDlss;
     //private VkBuffer<UniformBufferObject>[]? uniformBuffers;
-    private Format swapChainImageFormat;
-    private ColorSpaceKHR swapChainImageColorSpace;
-    private Extent2D swapChainExtent;
-    private ulong _swapchainGeneration;
-
-    private VulkanSwapchainDepthResources? _swapchainDepthResources;
-    private readonly object _swapchainDepthMutationLock = new();
-    private int _recreateSwapChainInProgress;
 
     private VulkanSwapchainDepthResources? CurrentSwapchainDepthResources
-        => Volatile.Read(ref _swapchainDepthResources);
+        => Volatile.Read(ref OutputRuntime.Desktop.DepthResources);
 
     private Image _swapchainDepthImage
         => CurrentSwapchainDepthResources?.Image ?? default;
@@ -92,15 +92,15 @@ public unsafe partial class VulkanRenderer
     private ImageAspectFlags _swapchainDepthAspect
         => CurrentSwapchainDepthResources?.Aspect ?? default;
 
-    internal bool StreamlineFrameGenerationSwapchainActive => _streamlineFrameGenerationSwapchainActive;
-    internal bool StreamlineFrameGenerationSwapchainIncludesDlss => _streamlineFrameGenerationSwapchainIncludesDlss;
-    internal uint SwapchainImageCount => (uint)(swapChainImages?.Length ?? 0);
-    internal Format SwapchainImageFormat => swapChainImageFormat;
-    internal Extent2D SwapchainExtent => swapChainExtent;
+    internal bool StreamlineFrameGenerationSwapchainActive => OutputRuntime.Desktop.StreamlineFrameGenerationActive;
+    internal bool StreamlineFrameGenerationSwapchainIncludesDlss => OutputRuntime.Desktop.StreamlineFrameGenerationIncludesDlss;
+    internal uint SwapchainImageCount => (uint)(OutputRuntime.Desktop.Images?.Length ?? 0);
+    internal Format SwapchainImageFormat => OutputRuntime.Desktop.ImageFormat;
+    internal Extent2D SwapchainExtent => OutputRuntime.Desktop.Extent;
 
     internal bool RecreateDesktopSwapchainCore()
     {
-        if (Interlocked.CompareExchange(ref _recreateSwapChainInProgress, 1, 0) != 0)
+        if (Interlocked.CompareExchange(ref OutputRuntime.Desktop.RecreateInProgress, 1, 0) != 0)
             return false;
 
         try
@@ -108,7 +108,7 @@ public unsafe partial class VulkanRenderer
             WindowSurfaceSnapshot snapshot = XRWindow.LatestWindowSurfaceSnapshot;
             Vector2D<int> framebufferSize = snapshot.HasValidFramebufferExtent
                 ? snapshot.FramebufferExtent
-                : DesktopWsiTarget.EffectiveFramebufferSize;
+                : DesktopWsiOutput.EffectiveFramebufferSize;
             Vector2D<int> windowSize = snapshot.HasValidClientExtent
                 ? snapshot.ClientExtent
                 : XRWindow.EffectiveWindowSize;
@@ -148,14 +148,14 @@ public unsafe partial class VulkanRenderer
                     out Fence presentMarkerFence))
                 return false;
 
-            SwapchainKHR oldSwapchain = swapChain;
-            Image[] oldImages = swapChainImages ?? [];
-            ImageView[] oldImageViews = swapChainImageViews ?? [];
-            Framebuffer[] oldFramebuffers = swapChainFramebuffers ?? [];
-            Semaphore[] oldPresentBridgeSemaphores = presentBridgeSemaphores ?? [];
-            bool oldStreamlineProxy = _streamlineFrameGenerationSwapchainActive;
-            uint oldWidth = swapChainExtent.Width;
-            uint oldHeight = swapChainExtent.Height;
+            SwapchainKHR oldSwapchain = OutputRuntime.Desktop.Swapchain;
+            Image[] oldImages = OutputRuntime.Desktop.Images ?? [];
+            ImageView[] oldImageViews = OutputRuntime.Desktop.ImageViews ?? [];
+            Framebuffer[] oldFramebuffers = OutputRuntime.Desktop.Framebuffers ?? [];
+            Semaphore[] oldPresentBridgeSemaphores = OutputRuntime.Desktop.PresentBridgeSemaphores ?? [];
+            bool oldStreamlineProxy = OutputRuntime.Desktop.StreamlineFrameGenerationActive;
+            uint oldWidth = OutputRuntime.Desktop.Extent.Width;
+            uint oldHeight = OutputRuntime.Desktop.Extent.Height;
 
             DestroySwapchainImGuiResources();
             DestroyStreamlineUiResources();
@@ -169,13 +169,13 @@ public unsafe partial class VulkanRenderer
             ulong[] oldImageLifetimeGenerations =
                 DetachSwapchainImageLifetimesForHandleReuse(oldImages);
 
-            swapChain = default;
-            swapChainImages = null;
-            _swapchainImageEverPresented = null;
-            _swapchainImageHasValidPresentedContent = null;
-            presentBridgeSemaphores = null;
-            _streamlineFrameGenerationSwapchainActive = false;
-            _streamlineFrameGenerationSwapchainIncludesDlss = false;
+            OutputRuntime.Desktop.Swapchain = default;
+            OutputRuntime.Desktop.Images = null;
+            OutputRuntime.Desktop.ImageEverPresented = null;
+            OutputRuntime.Desktop.ImageHasValidPresentedContent = null;
+            OutputRuntime.Desktop.PresentBridgeSemaphores = null;
+            OutputRuntime.Desktop.StreamlineFrameGenerationActive = false;
+            OutputRuntime.Desktop.StreamlineFrameGenerationIncludesDlss = false;
 
             RetiredSwapchainGeneration retiredGeneration = new(
                 oldSwapchain,
@@ -195,7 +195,7 @@ public unsafe partial class VulkanRenderer
             try
             {
                 CreateAllSwapChainObjects(oldSwapchain);
-                presentBridgeSemaphores = CreatePresentBridgeSemaphores(swapChainImages?.Length ?? MAX_FRAMES_IN_FLIGHT);
+                OutputRuntime.Desktop.PresentBridgeSemaphores = CreatePresentBridgeSemaphores(OutputRuntime.Desktop.Images?.Length ?? MAX_FRAMES_IN_FLIGHT);
                 ReserveOpenXrFrameDataSlotsIfRequired("swapchain recreation");
                 EnsureSwapchainTimelineState();
                 return true;
@@ -217,7 +217,7 @@ public unsafe partial class VulkanRenderer
         }
         finally
         {
-            Interlocked.Exchange(ref _recreateSwapChainInProgress, 0);
+            Interlocked.Exchange(ref OutputRuntime.Desktop.RecreateInProgress, 0);
         }
     }
     private void DestroyAllSwapChainObjects()
@@ -244,7 +244,7 @@ public unsafe partial class VulkanRenderer
 
     private void DisableStreamlineFrameGenerationBeforeSwapchainMutation(string reason)
     {
-        if (!_streamlineFrameGenerationSwapchainActive)
+        if (!OutputRuntime.Desktop.StreamlineFrameGenerationActive)
             return;
 
         var viewports = XRWindow.Viewports;
@@ -272,7 +272,7 @@ public unsafe partial class VulkanRenderer
 
     private void DrainStreamlineFrameGenerationDisableBeforePresent()
     {
-        if (!_streamlineFrameGenerationSwapchainActive || NvidiaDlssManager.IsFrameGenerationRequested)
+        if (!OutputRuntime.Desktop.StreamlineFrameGenerationActive || NvidiaDlssManager.IsFrameGenerationRequested)
             return;
 
         var viewports = XRWindow.Viewports;
@@ -313,8 +313,8 @@ public unsafe partial class VulkanRenderer
     private void DestroyDepth()
     {
         VulkanSwapchainDepthResources? resources;
-        lock (_swapchainDepthMutationLock)
-            resources = Interlocked.Exchange(ref _swapchainDepthResources, null);
+        lock (OutputRuntime.Desktop.DepthMutationGate)
+            resources = Interlocked.Exchange(ref OutputRuntime.Desktop.DepthResources, null);
 
         if (resources is null)
             return;
@@ -336,7 +336,7 @@ public unsafe partial class VulkanRenderer
 
     private void CreateDepth(Format depthFormat, ImageAspectFlags depthAspect)
     {
-        lock (_swapchainDepthMutationLock)
+        lock (OutputRuntime.Desktop.DepthMutationGate)
         {
             if (CurrentSwapchainDepthResources is not null)
                 return;
@@ -345,7 +345,7 @@ public unsafe partial class VulkanRenderer
             {
                 SType = StructureType.ImageCreateInfo,
                 ImageType = ImageType.Type2D,
-                Extent = new Extent3D(swapChainExtent.Width, swapChainExtent.Height, 1),
+                Extent = new Extent3D(OutputRuntime.Desktop.Extent.Width, OutputRuntime.Desktop.Extent.Height, 1),
                 MipLevels = 1,
                 ArrayLayers = 1,
                 Format = depthFormat,
@@ -361,12 +361,12 @@ public unsafe partial class VulkanRenderer
 
             ClearTrackedImageLayouts(depthImage);
             VulkanMemoryAllocation allocation = AllocateImageMemoryWithFallback(depthImage, MemoryPropertyFlags.DeviceLocalBit);
-            _imageAllocationTracker.Allocations[depthImage.Handle] = allocation;
+            ResourceRuntime.Allocations.Images.Allocations[depthImage.Handle] = allocation;
             DeviceMemory depthMemory = allocation.Memory;
 
-            if (Api!.BindImageMemory(device, depthImage, depthMemory, allocation.Offset) != Result.Success)
+            if (Api!.BindImageMemory(_deviceContext.Device, depthImage, depthMemory, allocation.Offset) != Result.Success)
             {
-                _imageAllocationTracker.Allocations.TryRemove(depthImage.Handle, out _);
+                ResourceRuntime.Allocations.Images.Allocations.TryRemove(depthImage.Handle, out _);
                 DestroyVulkanImageImmediateTracked(depthImage, "Swapchain.Depth.BindFailure");
                 FreeMemoryAllocation(allocation);
                 throw new Exception("Failed to bind swapchain depth memory.");
@@ -388,9 +388,9 @@ public unsafe partial class VulkanRenderer
                 }
             };
 
-            if (Api!.CreateImageView(device, ref viewInfo, null, out ImageView depthView) != Result.Success)
+            if (Api!.CreateImageView(_deviceContext.Device, ref viewInfo, null, out ImageView depthView) != Result.Success)
             {
-                _imageAllocationTracker.Allocations.TryRemove(depthImage.Handle, out _);
+                ResourceRuntime.Allocations.Images.Allocations.TryRemove(depthImage.Handle, out _);
                 DestroyVulkanImageImmediateTracked(depthImage, "Swapchain.Depth.ViewFailure");
                 FreeMemoryAllocation(allocation);
                 throw new Exception("Failed to create swapchain depth view.");
@@ -404,14 +404,14 @@ public unsafe partial class VulkanRenderer
                 depthView,
                 depthFormat,
                 depthAspect,
-                swapChainExtent);
-            Volatile.Write(ref _swapchainDepthResources, resources);
+                OutputRuntime.Desktop.Extent);
+            Volatile.Write(ref OutputRuntime.Desktop.DepthResources, resources);
             Debug.Vulkan(
                 "[Vulkan] Published swapchain depth target. Image=0x{0:X} Generation={1} Extent={2}x{3}.",
                 depthImage.Handle,
                 GetCurrentVulkanResourceGeneration(ObjectType.Image, depthImage.Handle),
-                swapChainExtent.Width,
-                swapChainExtent.Height);
+                OutputRuntime.Desktop.Extent.Width,
+                OutputRuntime.Desktop.Extent.Height);
         }
     }
 
@@ -422,7 +422,7 @@ public unsafe partial class VulkanRenderer
     {
         foreach (var format in candidates)
         {
-            Api!.GetPhysicalDeviceFormatProperties(_physicalDevice, format, out var props);
+            Api!.GetPhysicalDeviceFormatProperties(_deviceContext.PhysicalDevice, format, out var props);
             if ((tiling == ImageTiling.Linear && (props.LinearTilingFeatures & features) == features) ||
                 (tiling == ImageTiling.Optimal && (props.OptimalTilingFeatures & features) == features))
                 return format;
@@ -436,36 +436,36 @@ public unsafe partial class VulkanRenderer
 
     private void DestroySwapChain()
     {
-        if (swapChain.Handle == 0)
+        if (OutputRuntime.Desktop.Swapchain.Handle == 0)
             return;
 
         DisableStreamlineFrameGenerationBeforeSwapchainMutation("swapchain destruction");
 
-        if (_streamlineFrameGenerationSwapchainActive)
+        if (OutputRuntime.Desktop.StreamlineFrameGenerationActive)
         {
-            if (!NvidiaDlssManager.Native.TryDestroyProxySwapchain(this, swapChain, out string failureReason))
+            if (!NvidiaDlssManager.Native.TryDestroyProxySwapchain(this, OutputRuntime.Desktop.Swapchain, out string failureReason))
             {
                 Debug.RenderingError(
                     $"NVIDIA DLSS frame generation failed to destroy the Streamline proxy swapchain cleanly ({failureReason}). Attempting direct VK_KHR_swapchain destruction for teardown cleanup.");
-                khrSwapChain!.DestroySwapchain(device, swapChain, null);
+                OutputRuntime.Desktop.SwapchainExtension!.DestroySwapchain(_deviceContext.Device, OutputRuntime.Desktop.Swapchain, null);
             }
         }
         else
         {
-            khrSwapChain!.DestroySwapchain(device, swapChain, null);
+            OutputRuntime.Desktop.SwapchainExtension!.DestroySwapchain(_deviceContext.Device, OutputRuntime.Desktop.Swapchain, null);
         }
 
-        swapChain = default;
-        swapChainImages = null;
-        _swapchainImageEverPresented = null;
-        _swapchainImageHasValidPresentedContent = null;
-        _streamlineFrameGenerationSwapchainActive = false;
-        _streamlineFrameGenerationSwapchainIncludesDlss = false;
+        OutputRuntime.Desktop.Swapchain = default;
+        OutputRuntime.Desktop.Images = null;
+        OutputRuntime.Desktop.ImageEverPresented = null;
+        OutputRuntime.Desktop.ImageHasValidPresentedContent = null;
+        OutputRuntime.Desktop.StreamlineFrameGenerationActive = false;
+        OutputRuntime.Desktop.StreamlineFrameGenerationIncludesDlss = false;
     }
 
     private void CreateSwapChain(SwapchainKHR oldSwapchain = default)
     {
-        var swapChainSupport = QuerySwapChainSupport(_physicalDevice);
+        var swapChainSupport = QuerySwapChainSupport(_deviceContext.PhysicalDevice);
         var surfaceFormat = ChooseSwapSurfaceFormat(swapChainSupport.Formats);
         var presentMode = ChoosePresentMode(swapChainSupport.PresentModes);
         if (!TryChooseSwapExtent(swapChainSupport.Capabilities, out Extent2D extent, out string unavailableReason))
@@ -478,7 +478,7 @@ public unsafe partial class VulkanRenderer
         SwapchainCreateInfoKHR createInfo = new()
         {
             SType = StructureType.SwapchainCreateInfoKhr,
-            Surface = surface,
+            Surface = _outputRuntime.Surface,
 
             MinImageCount = imageCount,
             ImageFormat = surfaceFormat.Format,
@@ -488,7 +488,7 @@ public unsafe partial class VulkanRenderer
             ImageUsage = ImageUsageFlags.ColorAttachmentBit | ImageUsageFlags.TransferSrcBit | ImageUsageFlags.TransferDstBit,
         };
 
-        var indices = FamilyQueueIndices;
+        var indices = _deviceContext.QueueFamilies;
         var queueFamilyIndices = stackalloc[] { indices.GraphicsFamilyIndex!.Value, indices.PresentFamilyIndex!.Value };
 
         if (indices.GraphicsFamilyIndex != indices.PresentFamilyIndex)
@@ -521,20 +521,20 @@ public unsafe partial class VulkanRenderer
         if (usePresentScaling)
             createInfo.PNext = &presentScalingCreateInfo;
 
-        if (!Api!.TryGetDeviceExtension(instance, device, out khrSwapChain))
+        if (!Api!.TryGetDeviceExtension(_deviceContext.Instance, _deviceContext.Device, out OutputRuntime.Desktop.SwapchainExtension))
             throw new NotSupportedException("VK_KHR_swapchain extension not found.");
 
         // Streamline's proxy swapchain is a provisioned device capability, not a live
         // frame-generation option. Keeping it for the renderer lifetime lets the UI
         // toggle DLSS-G without destroying the swapchain and all generation-bound
         // descriptors. Frame generation itself remains disabled until requested.
-        bool requestStreamlineFrameGeneration = _streamlineFrameGenerationProvisioned;
+        bool requestStreamlineFrameGeneration = _outputRuntime._streamlineFrameGenerationProvisioned;
         bool requestStreamlineFrameGenerationDlss = requestStreamlineFrameGeneration
-            && _streamlineDlssProvisioned;
+            && _outputRuntime._streamlineDlssProvisioned;
         Result createResult;
         if (requestStreamlineFrameGeneration)
         {
-            if (!NvidiaDlssManager.Native.TryCreateProxySwapchain(this, ref createInfo, requestStreamlineFrameGenerationDlss, out swapChain, out createResult, out string failureReason))
+            if (!NvidiaDlssManager.Native.TryCreateProxySwapchain(this, ref createInfo, requestStreamlineFrameGenerationDlss, out OutputRuntime.Desktop.Swapchain, out createResult, out string failureReason))
             {
                 if (NvidiaDlssManager.IsFrameGenerationRequested)
                 {
@@ -545,29 +545,29 @@ public unsafe partial class VulkanRenderer
                 Debug.RenderingWarning(
                     "[Vulkan] Optional DLSS-G proxy-swapchain provisioning failed; creating a direct Vulkan swapchain and disabling the live DLSS-G toggle. Reason={0}",
                     failureReason);
-                _streamlineFrameGenerationProvisioned = false;
+                _outputRuntime._streamlineFrameGenerationProvisioned = false;
                 requestStreamlineFrameGeneration = false;
                 requestStreamlineFrameGenerationDlss = false;
-                createResult = khrSwapChain!.CreateSwapchain(device, ref createInfo, null, out swapChain);
+                createResult = OutputRuntime.Desktop.SwapchainExtension!.CreateSwapchain(_deviceContext.Device, ref createInfo, null, out OutputRuntime.Desktop.Swapchain);
             }
         }
         else
         {
-            createResult = khrSwapChain!.CreateSwapchain(device, ref createInfo, null, out swapChain);
+            createResult = OutputRuntime.Desktop.SwapchainExtension!.CreateSwapchain(_deviceContext.Device, ref createInfo, null, out OutputRuntime.Desktop.Swapchain);
         }
 
         if (createResult != Result.Success)
             throw new InvalidOperationException($"Failed to create swap chain ({createResult}){(requestStreamlineFrameGeneration ? " through Streamline for NVIDIA DLSS frame generation" : string.Empty)}.");
 
-        _swapchainGeneration++;
+        OutputRuntime.Desktop.Generation++;
 
-        _swapchainPresentScalingActive = usePresentScaling;
-        _swapchainPresentScalingCapabilities = usePresentScaling
+        OutputRuntime.Desktop.PresentScalingActive = usePresentScaling;
+        OutputRuntime.Desktop.PresentScalingCapabilities = usePresentScaling
             ? presentScalingCapabilities
             : default;
         Debug.Vulkan(
             "[Vulkan] Swapchain present scaling: active={0} behavior={1} imageExtent={2}x{3} scaledRange={4}x{5}-{6}x{7}.",
-            _swapchainPresentScalingActive,
+            OutputRuntime.Desktop.PresentScalingActive,
             usePresentScaling ? presentScalingCreateInfo.ScalingBehavior : PresentScalingFlagsKHR.None,
             extent.Width,
             extent.Height,
@@ -576,82 +576,82 @@ public unsafe partial class VulkanRenderer
             presentScalingCapabilities.MaxScaledImageExtent.Width,
             presentScalingCapabilities.MaxScaledImageExtent.Height);
 
-        _streamlineFrameGenerationSwapchainActive = requestStreamlineFrameGeneration;
-        _streamlineFrameGenerationSwapchainIncludesDlss = requestStreamlineFrameGenerationDlss;
+        OutputRuntime.Desktop.StreamlineFrameGenerationActive = requestStreamlineFrameGeneration;
+        OutputRuntime.Desktop.StreamlineFrameGenerationIncludesDlss = requestStreamlineFrameGenerationDlss;
 
         Result getImagesResult;
-        if (_streamlineFrameGenerationSwapchainActive)
+        if (OutputRuntime.Desktop.StreamlineFrameGenerationActive)
         {
-            if (!NvidiaDlssManager.Native.TryGetProxySwapchainImages(this, swapChain, ref imageCount, null, out getImagesResult, out string failureReason))
+            if (!NvidiaDlssManager.Native.TryGetProxySwapchainImages(this, OutputRuntime.Desktop.Swapchain, ref imageCount, null, out getImagesResult, out string failureReason))
                 throw new InvalidOperationException($"Requested NVIDIA DLSS frame generation could not query Streamline proxy swapchain images: {failureReason}");
         }
         else
         {
-            getImagesResult = khrSwapChain!.GetSwapchainImages(device, swapChain, ref imageCount, null);
+            getImagesResult = OutputRuntime.Desktop.SwapchainExtension!.GetSwapchainImages(_deviceContext.Device, OutputRuntime.Desktop.Swapchain, ref imageCount, null);
         }
 
         if (getImagesResult != Result.Success)
-            throw new InvalidOperationException($"Failed to query swapchain image count ({getImagesResult}){(_streamlineFrameGenerationSwapchainActive ? " through Streamline" : string.Empty)}.");
+            throw new InvalidOperationException($"Failed to query swapchain image count ({getImagesResult}){(OutputRuntime.Desktop.StreamlineFrameGenerationActive ? " through Streamline" : string.Empty)}.");
 
         if (imageCount == 0)
             throw new InvalidOperationException("Swapchain image count was zero.");
 
-        swapChainImages = new Image[imageCount];
-        _descriptorManager.EnsureFrameSlotCountFloor(checked((int)imageCount));
-        _swapchainImageEverPresented = new bool[imageCount];
-        _swapchainImageHasValidPresentedContent = new bool[imageCount];
-        fixed (Image* swapChainImagesPtr = swapChainImages)
+        OutputRuntime.Desktop.Images = new Image[imageCount];
+        ResourceRuntime.Descriptors.EnsureFrameSlotCountFloor(checked((int)imageCount));
+        OutputRuntime.Desktop.ImageEverPresented = new bool[imageCount];
+        OutputRuntime.Desktop.ImageHasValidPresentedContent = new bool[imageCount];
+        fixed (Image* swapChainImagesPtr = OutputRuntime.Desktop.Images)
         {
-            if (_streamlineFrameGenerationSwapchainActive)
+            if (OutputRuntime.Desktop.StreamlineFrameGenerationActive)
             {
-                if (!NvidiaDlssManager.Native.TryGetProxySwapchainImages(this, swapChain, ref imageCount, swapChainImagesPtr, out getImagesResult, out string failureReason))
+                if (!NvidiaDlssManager.Native.TryGetProxySwapchainImages(this, OutputRuntime.Desktop.Swapchain, ref imageCount, swapChainImagesPtr, out getImagesResult, out string failureReason))
                     throw new InvalidOperationException($"Requested NVIDIA DLSS frame generation could not fetch Streamline proxy swapchain images: {failureReason}");
             }
             else
             {
-                getImagesResult = khrSwapChain!.GetSwapchainImages(device, swapChain, ref imageCount, swapChainImagesPtr);
+                getImagesResult = OutputRuntime.Desktop.SwapchainExtension!.GetSwapchainImages(_deviceContext.Device, OutputRuntime.Desktop.Swapchain, ref imageCount, swapChainImagesPtr);
             }
         }
 
         if (getImagesResult != Result.Success)
-            throw new InvalidOperationException($"Failed to fetch swapchain images ({getImagesResult}){(_streamlineFrameGenerationSwapchainActive ? " through Streamline" : string.Empty)}.");
+            throw new InvalidOperationException($"Failed to fetch swapchain images ({getImagesResult}){(OutputRuntime.Desktop.StreamlineFrameGenerationActive ? " through Streamline" : string.Empty)}.");
 
-        for (int i = 0; i < swapChainImages.Length; i++)
-            ClearTrackedImageLayouts(swapChainImages[i]);
+        for (int i = 0; i < OutputRuntime.Desktop.Images.Length; i++)
+            ClearTrackedImageLayouts(OutputRuntime.Desktop.Images[i]);
 
-        swapChainImageFormat = surfaceFormat.Format;
-        swapChainImageColorSpace = surfaceFormat.ColorSpace;
-        swapChainExtent = extent;
+        OutputRuntime.Desktop.ImageFormat = surfaceFormat.Format;
+        OutputRuntime.Desktop.ImageColorSpace = surfaceFormat.ColorSpace;
+        OutputRuntime.Desktop.Extent = extent;
         Debug.VulkanWarningEvery(
             "Vulkan.Swapchain.SelectedSurfaceFormat",
             TimeSpan.FromSeconds(10),
             "[Vulkan] Swapchain surface selected: format={0} colorSpace={1} presentMode={2} extent={3}x{4} images={5} imguiSrgbPassthroughEmulation={6}",
-            swapChainImageFormat,
-            swapChainImageColorSpace,
+            OutputRuntime.Desktop.ImageFormat,
+            OutputRuntime.Desktop.ImageColorSpace,
             presentMode,
-            swapChainExtent.Width,
-            swapChainExtent.Height,
+            OutputRuntime.Desktop.Extent.Width,
+            OutputRuntime.Desktop.Extent.Height,
             imageCount,
             ShouldEmulateOpenGlImGuiSrgbPassthrough());
-        if (_streamlineFrameGenerationSwapchainActive)
+        if (OutputRuntime.Desktop.StreamlineFrameGenerationActive)
         {
             Debug.Rendering(
                 "[Vulkan] NVIDIA DLSS frame generation provisioned: swapchain created through Streamline proxy. format={0} extent={1}x{2} images={3}",
-                swapChainImageFormat,
-                swapChainExtent.Width,
-                swapChainExtent.Height,
+                OutputRuntime.Desktop.ImageFormat,
+                OutputRuntime.Desktop.Extent.Width,
+                OutputRuntime.Desktop.Extent.Height,
                 imageCount);
         }
-        OnSwapchainExtentChanged(swapChainExtent);
+        OnSwapchainExtentChanged(OutputRuntime.Desktop.Extent);
     }
 
     private SurfaceFormatKHR ChooseSwapSurfaceFormat(IReadOnlyList<SurfaceFormatKHR> availableFormats)
     {
-        bool requestHdr = DesktopWsiTarget.PreferHdrOutput;
+        bool requestHdr = DesktopWsiOutput.PreferHdrOutput;
 
-        if (_supportsSwapchainColorspace
+        if (_deviceContext.MutableCapabilities._supportsSwapchainColorspace
             && requestHdr
-            && _streamlineFrameGenerationProvisioned
+            && _outputRuntime._streamlineFrameGenerationProvisioned
             && TrySelectSurfaceFormat(availableFormats, DlssFrameGenerationHdrSurfacePreferences, out SurfaceFormatKHR dlssFrameGenerationHdrFormat))
         {
             PreferredFormat = dlssFrameGenerationHdrFormat.Format;
@@ -659,7 +659,7 @@ public unsafe partial class VulkanRenderer
             return dlssFrameGenerationHdrFormat;
         }
 
-        if (_streamlineFrameGenerationProvisioned
+        if (_outputRuntime._streamlineFrameGenerationProvisioned
             && TrySelectSurfaceFormat(availableFormats, DlssFrameGenerationSdrSurfacePreferences, out SurfaceFormatKHR dlssFrameGenerationSdrFormat))
         {
             PreferredFormat = dlssFrameGenerationSdrFormat.Format;
@@ -667,13 +667,13 @@ public unsafe partial class VulkanRenderer
             return dlssFrameGenerationSdrFormat;
         }
 
-        if (_streamlineFrameGenerationProvisioned)
+        if (_outputRuntime._streamlineFrameGenerationProvisioned)
         {
             throw new NotSupportedException(
                 "NVIDIA DLSS frame generation requires an RGB10 HDR10 or UNORM SDR Vulkan swapchain format; this surface exposes no Streamline-compatible back-buffer format.");
         }
 
-        if (_supportsSwapchainColorspace &&
+        if (_deviceContext.MutableCapabilities._supportsSwapchainColorspace &&
             requestHdr &&
             TrySelectSurfaceFormat(availableFormats, HDRSurfacePreferences, out SurfaceFormatKHR hdrFormat))
         {
@@ -712,7 +712,7 @@ public unsafe partial class VulkanRenderer
 
     private PresentModeKHR ChoosePresentMode(IReadOnlyList<PresentModeKHR> availablePresentModes)
     {
-        if (_streamlineFrameGenerationProvisioned)
+        if (_outputRuntime._streamlineFrameGenerationProvisioned)
         {
             for (int preferenceIndex = 0; preferenceIndex < DlssFrameGenerationPresentModePreferences.Length; preferenceIndex++)
             {
@@ -740,15 +740,15 @@ public unsafe partial class VulkanRenderer
 
     private bool IsSurfacePresentableForSwapchain(out string reason)
     {
-        if (khrSurface is null || surface.Handle == 0 || _physicalDevice.Handle == 0)
+        if (_outputRuntime.SurfaceApi is null || _outputRuntime.Surface.Handle == 0 || _deviceContext.PhysicalDevice.Handle == 0)
         {
             reason =
-                $"surface query is not initialized (extension={khrSurface is not null}, " +
-                $"surface=0x{surface.Handle:X}, physicalDevice=0x{_physicalDevice.Handle:X})";
+                $"surface query is not initialized (extension={_outputRuntime.SurfaceApi is not null}, " +
+                $"surface=0x{_outputRuntime.Surface.Handle:X}, physicalDevice=0x{_deviceContext.PhysicalDevice.Handle:X})";
             return false;
         }
 
-        var swapChainSupport = QuerySwapChainSupport(_physicalDevice);
+        var swapChainSupport = QuerySwapChainSupport(_deviceContext.PhysicalDevice);
         if (swapChainSupport.Formats.Length == 0)
         {
             reason = "surface reported no formats";
@@ -782,7 +782,7 @@ public unsafe partial class VulkanRenderer
             return true;
         }
 
-        Vector2D<int> framebufferSize = DesktopWsiTarget.EffectiveFramebufferSize;
+        Vector2D<int> framebufferSize = DesktopWsiOutput.EffectiveFramebufferSize;
         Vector2D<int> windowSize = Window.Size;
 
         if ((framebufferSize.X <= 0 || framebufferSize.Y <= 0) &&
@@ -821,17 +821,17 @@ public unsafe partial class VulkanRenderer
     {
         var details = new SwapChainSupportDetails();
 
-        khrSurface!.GetPhysicalDeviceSurfaceCapabilities(physicalDevice, surface, out details.Capabilities);
+        _outputRuntime.SurfaceApi!.GetPhysicalDeviceSurfaceCapabilities(physicalDevice, _outputRuntime.Surface, out details.Capabilities);
 
         uint formatCount = 0;
-        khrSurface.GetPhysicalDeviceSurfaceFormats(physicalDevice, surface, ref formatCount, null);
+        _outputRuntime.SurfaceApi.GetPhysicalDeviceSurfaceFormats(physicalDevice, _outputRuntime.Surface, ref formatCount, null);
 
         if (formatCount != 0)
         {
             details.Formats = new SurfaceFormatKHR[formatCount];
             fixed (SurfaceFormatKHR* formatsPtr = details.Formats)
             {
-                khrSurface.GetPhysicalDeviceSurfaceFormats(physicalDevice, surface, ref formatCount, formatsPtr);
+                _outputRuntime.SurfaceApi.GetPhysicalDeviceSurfaceFormats(physicalDevice, _outputRuntime.Surface, ref formatCount, formatsPtr);
             }
         }
         else
@@ -840,14 +840,14 @@ public unsafe partial class VulkanRenderer
         }
 
         uint presentModeCount = 0;
-        khrSurface.GetPhysicalDeviceSurfacePresentModes(physicalDevice, surface, ref presentModeCount, null);
+        _outputRuntime.SurfaceApi.GetPhysicalDeviceSurfacePresentModes(physicalDevice, _outputRuntime.Surface, ref presentModeCount, null);
 
         if (presentModeCount != 0)
         {
             details.PresentModes = new PresentModeKHR[presentModeCount];
             fixed (PresentModeKHR* formatsPtr = details.PresentModes)
             {
-                khrSurface.GetPhysicalDeviceSurfacePresentModes(physicalDevice, surface, ref presentModeCount, formatsPtr);
+                _outputRuntime.SurfaceApi.GetPhysicalDeviceSurfacePresentModes(physicalDevice, _outputRuntime.Surface, ref presentModeCount, formatsPtr);
             }
         }
         else

@@ -2,8 +2,6 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
-{
     /// <summary>
     /// Identifies one independently tracked Vulkan image aspect, mip level, and
     /// array layer.
@@ -12,9 +10,8 @@ public unsafe partial class VulkanRenderer
     /// <param name="MipLevel">The mip level within the image.</param>
     /// <param name="ArrayLayer">The array layer within the image.</param>
     /// <param name="Aspect">The single image aspect represented by the key.</param>
-    internal readonly record struct VulkanTrackedImageSubresource(
-        ulong ImageHandle,
-        uint MipLevel,
-        uint ArrayLayer,
-        ImageAspectFlags Aspect);
-}
+internal readonly record struct VulkanTrackedImageSubresource(
+    ulong ImageHandle,
+    uint MipLevel,
+    uint ArrayLayer,
+    ImageAspectFlags Aspect);

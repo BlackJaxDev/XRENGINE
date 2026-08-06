@@ -8,20 +8,20 @@ namespace XREngine.UnitTests.Rendering;
 internal sealed class VulkanStrictSpsFailureBoundaryTests
 {
     [TestCase(
-        VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.Recording,
-        VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.Recording,
+        EOpenXrStrictSpsFaultInjectionStage.Recording,
+        EOpenXrStrictSpsFaultInjectionStage.Recording,
         true)]
     [TestCase(
-        VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.LifetimeValidation,
-        VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.Recording,
+        EOpenXrStrictSpsFaultInjectionStage.LifetimeValidation,
+        EOpenXrStrictSpsFaultInjectionStage.Recording,
         false)]
     [TestCase(
-        VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.None,
-        VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage.Recording,
+        EOpenXrStrictSpsFaultInjectionStage.None,
+        EOpenXrStrictSpsFaultInjectionStage.Recording,
         false)]
     public void FaultBoundary_ConsumesOnlyTheRequestedProductionSeam(
-        VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage requested,
-        VulkanRenderer.EOpenXrStrictSpsFaultInjectionStage boundary,
+        EOpenXrStrictSpsFaultInjectionStage requested,
+        EOpenXrStrictSpsFaultInjectionStage boundary,
         bool expected)
     {
         VulkanRenderer.IsOpenXrStrictSpsFaultBoundary(requested, boundary)

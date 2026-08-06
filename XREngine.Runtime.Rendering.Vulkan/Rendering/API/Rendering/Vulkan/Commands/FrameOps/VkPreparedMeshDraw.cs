@@ -1,4 +1,3 @@
-using System.Buffers;
 using XREngine.Rendering.Vulkan.RenderGraph;
 using Silk.NET.Vulkan;
 
@@ -57,14 +56,14 @@ internal readonly record struct VkPreparedMeshDraw(
                 return false;
             }
 
-            indexedViewports = ArrayPool<Viewport>.Shared.Rent(count);
+            indexedViewports = recordingState.OwnerIdentity.RentPreparedViewportArray(count);
             try
             {
-                indexedScissors = ArrayPool<Rect2D>.Shared.Rent(count);
+                indexedScissors = recordingState.OwnerIdentity.RentPreparedScissorArray(count);
             }
             catch
             {
-                ArrayPool<Viewport>.Shared.Return(indexedViewports);
+                recordingState.OwnerIdentity.ReturnPreparedViewportArray(indexedViewports);
                 throw;
             }
             sourceViewports.AsSpan(0, count).CopyTo(indexedViewports);
@@ -96,8 +95,8 @@ internal readonly record struct VkPreparedMeshDraw(
             return;
 
         if (IndexedViewports is not null)
-            ArrayPool<Viewport>.Shared.Return(IndexedViewports);
+            OwnerIdentity.ReturnPreparedViewportArray(IndexedViewports);
         if (IndexedScissors is not null)
-            ArrayPool<Rect2D>.Shared.Return(IndexedScissors);
+            OwnerIdentity.ReturnPreparedScissorArray(IndexedScissors);
     }
 }

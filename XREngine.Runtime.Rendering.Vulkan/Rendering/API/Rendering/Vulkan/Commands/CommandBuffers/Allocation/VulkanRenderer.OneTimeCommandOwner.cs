@@ -1,13 +1,9 @@
 using Silk.NET.Vulkan;
 
-namespace XREngine.Rendering.Vulkan
+namespace XREngine.Rendering.Vulkan;
+
+internal readonly struct OneTimeCommandOwner(CommandPool pool, bool useTransferQueue)
 {
-    public unsafe partial class VulkanRenderer
-    {
-        private readonly struct OneTimeCommandOwner(CommandPool pool, bool useTransferQueue)
-        {
-            public CommandPool Pool { get; } = pool;
-            public bool UseTransferQueue { get; } = useTransferQueue;
-        }
-    }
+    public CommandPool Pool { get; } = pool;
+    public bool UseTransferQueue { get; } = useTransferQueue;
 }

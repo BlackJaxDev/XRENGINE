@@ -76,9 +76,9 @@ public unsafe partial class VulkanRenderer
         out string failureReason)
     {
         failureReason = string.Empty;
-        if (!IsDeviceOperational)
+        if (!_deviceContext.IsOperational)
         {
-            failureReason = $"Vulkan device state is {DeviceState}";
+            failureReason = $"Vulkan device state is {_deviceContext.State}";
             return false;
         }
 
@@ -129,7 +129,7 @@ public unsafe partial class VulkanRenderer
             group.Samples);
 
         if (group.TransientAttachmentPolicy == VulkanTransientAttachmentPolicy.PreferLazilyAllocated &&
-            !SupportsLazyAllocation)
+            !_deviceContext.MutableCapabilities.SupportsLazyAllocation)
         {
             Debug.VulkanWarningEvery(
                 $"Vulkan.TransientAttachment.LazyUnsupported.{group.Key}",
@@ -156,7 +156,7 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
-            _imageAllocationTracker.Allocations[image.Handle] = allocation;
+            ResourceRuntime.Allocations.Images.Allocations[image.Handle] = allocation;
             TrackImageAllocation(
                 image,
                 allocation,
@@ -172,10 +172,10 @@ public unsafe partial class VulkanRenderer
                 group.Samples);
             memory = allocation.Memory;
 
-            Result bindResult = Api!.BindImageMemory(device, image, memory, allocation.Offset);
+            Result bindResult = Api!.BindImageMemory(_deviceContext.Device, image, memory, allocation.Offset);
             if (bindResult != Result.Success)
             {
-                _imageAllocationTracker.Allocations.TryRemove(image.Handle, out _);
+                ResourceRuntime.Allocations.Images.Allocations.TryRemove(image.Handle, out _);
                 UntrackImageAllocation(image);
                 if (image.Handle != 0)
                 {
@@ -193,7 +193,7 @@ public unsafe partial class VulkanRenderer
         {
             VulkanMemoryAllocation trackedAllocation = default;
             bool hasTrackedAllocation = image.Handle != 0 &&
-                _imageAllocationTracker.Allocations.TryRemove(image.Handle, out trackedAllocation);
+                ResourceRuntime.Allocations.Images.Allocations.TryRemove(image.Handle, out trackedAllocation);
             if (image.Handle != 0)
             {
                 UntrackImageAllocation(image);
@@ -206,7 +206,7 @@ public unsafe partial class VulkanRenderer
                 if (hasTrackedAllocation)
                     FreeMemoryAllocation(trackedAllocation);
                 else
-                    Api!.FreeMemory(device, memory, null);
+                    Api!.FreeMemory(_deviceContext.Device, memory, null);
                 memory = default;
             }
 
@@ -245,7 +245,7 @@ public unsafe partial class VulkanRenderer
 
         VulkanMemoryAllocation trackedAllocation = default;
         bool hasTrackedAllocation = imageToDestroy.Handle != 0 &&
-            _imageAllocationTracker.Allocations.TryRemove(imageToDestroy.Handle, out trackedAllocation);
+            ResourceRuntime.Allocations.Images.Allocations.TryRemove(imageToDestroy.Handle, out trackedAllocation);
         if (imageToDestroy.Handle != 0)
             UntrackImageAllocation(imageToDestroy);
 
@@ -263,7 +263,7 @@ public unsafe partial class VulkanRenderer
 
         if (MemoryAllocator is VulkanLegacyAllocator)
         {
-            Api!.FreeMemory(device, memoryToFree, null);
+            Api!.FreeMemory(_deviceContext.Device, memoryToFree, null);
             return;
         }
 
@@ -277,8 +277,8 @@ public unsafe partial class VulkanRenderer
 
     internal void AllocatePhysicalBuffer(VulkanPhysicalBufferGroup group, ref Buffer buffer, ref DeviceMemory memory)
     {
-        if (!IsDeviceOperational)
-            throw new InvalidOperationException($"Cannot allocate a Vulkan physical buffer while device state is {DeviceState}.");
+        if (!_deviceContext.IsOperational)
+            throw new InvalidOperationException($"Cannot allocate a Vulkan physical buffer while device state is {_deviceContext.State}.");
 
         if (buffer.Handle != 0)
             return;
@@ -293,7 +293,7 @@ public unsafe partial class VulkanRenderer
 
         fixed (Buffer* bufferPtr = &buffer)
         {
-            Result createResult = Api!.CreateBuffer(device, ref bufferInfo, null, bufferPtr);
+            Result createResult = Api!.CreateBuffer(_deviceContext.Device, ref bufferInfo, null, bufferPtr);
             if (createResult != Result.Success)
                 throw new Exception($"Failed to create Vulkan buffer for resource group '{group.Key}'. Result={createResult}.");
         }
@@ -302,13 +302,13 @@ public unsafe partial class VulkanRenderer
         try
         {
             VulkanMemoryAllocation allocation = AllocateBufferMemoryWithFallback(buffer, MemoryPropertyFlags.DeviceLocalBit);
-            _bufferResourceManager.Allocations[buffer.Handle] = allocation;
+            ResourceRuntime.Allocations.Buffers.Allocations[buffer.Handle] = allocation;
             memory = allocation.Memory;
 
-            Result bindResult = Api!.BindBufferMemory(device, buffer, memory, allocation.Offset);
+            Result bindResult = Api!.BindBufferMemory(_deviceContext.Device, buffer, memory, allocation.Offset);
             if (bindResult != Result.Success)
             {
-                _bufferResourceManager.Allocations.TryRemove(buffer.Handle, out _);
+                ResourceRuntime.Allocations.Buffers.Allocations.TryRemove(buffer.Handle, out _);
                 FreeMemoryAllocation(allocation);
                 memory = default;
                 throw new Exception($"Failed to bind device memory for Vulkan buffer group '{group.Key}'. Result={bindResult}.");
@@ -407,7 +407,7 @@ public unsafe partial class VulkanRenderer
         if (string.IsNullOrWhiteSpace(name))
             return;
 
-        _renderGraphRuntime.TrackedBuffersByName[name] = buffer;
+        _framePlanner.TrackedBuffersByName[name] = buffer;
     }
 
     internal bool TryResolveTrackedBuffer(string resourceName, out Buffer buffer, out ulong size)
@@ -415,7 +415,7 @@ public unsafe partial class VulkanRenderer
         if (ResourceAllocator.TryGetBuffer(resourceName, out buffer, out size))
             return true;
 
-        if (_renderGraphRuntime.TrackedBuffersByName.TryGetValue(resourceName, out XRDataBuffer? dataBuffer) &&
+        if (_framePlanner.TrackedBuffersByName.TryGetValue(resourceName, out XRDataBuffer? dataBuffer) &&
             GetOrCreateAPIRenderObject(dataBuffer, true) is VkDataBuffer vkBuffer)
         {
             vkBuffer.Generate();

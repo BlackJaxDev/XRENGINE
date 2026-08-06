@@ -12,13 +12,12 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
+
     /// <summary>
     /// Owns one detached ImGui native window and the Vulkan WSI resources that present it.
     /// </summary>
-    private sealed class VulkanImGuiPlatformWindow : IDisposable
+    internal sealed class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWindowOutputLifetime, IDisposable
     {
-        private const int FramesInFlight = 2;
-
         private readonly VulkanImGuiMultiViewportController _owner;
         private readonly VulkanRenderer _renderer;
         private readonly GCHandle _handle;
@@ -26,26 +25,8 @@ public unsafe partial class VulkanRenderer
         private IInputContext? _input;
         private IMouse? _mouse;
         private readonly List<IKeyboard> _keyboards = [];
-        private SurfaceKHR _surface;
-        private SwapchainKHR _swapchain;
-        private Format _format;
-        private ColorSpaceKHR _colorSpace;
-        private Extent2D _extent;
-        private Image[] _images = [];
-        private ImageView[] _imageViews = [];
-        private bool[] _imagePresented = [];
-        private CommandPool _commandPool;
-        private CommandBuffer[] _commandBuffers = [];
-        private Fence[] _frameFences = [];
-        private bool[] _frameFenceSubmitted = [];
-        private Semaphore[] _imageAvailableSemaphores = [];
-        private Semaphore[] _renderFinishedSemaphores = [];
-        private VulkanImGuiDrawBufferSet[] _drawBuffers = [];
         private Vector2D<int> _lastPosition;
         private Vector2D<int> _lastSize;
-        private int _frameSlot;
-        private bool _rendererReady;
-        private bool _resizeRequested;
         private bool _disposeStarted;
         private bool _disposed;
 
@@ -79,6 +60,7 @@ public unsafe partial class VulkanRenderer
             VulkanImGuiMultiViewportController.SetClientScreenPosition(Window, ToWindowPosition(viewport.Pos));
             _lastPosition = VulkanImGuiMultiViewportController.GetClientScreenPosition(Window);
             _lastSize = Window.Size;
+            renderer.OutputRuntime.ImGuiPlatformWindows.Register(this);
         }
 
         public IWindow Window { get; }
@@ -136,7 +118,7 @@ public unsafe partial class VulkanRenderer
                 throw new NotSupportedException("The detached ImGui window does not expose Vulkan surface services.");
 
             _surface = Window.VkSurface
-                .Create<AllocationCallbacks>(_renderer.instance.ToHandle(), null)
+                .Create<AllocationCallbacks>(_renderer.DeviceContext.Instance.ToHandle(), null)
                 .ToSurface();
             try
             {
@@ -232,6 +214,7 @@ public unsafe partial class VulkanRenderer
 
             if (_handle.IsAllocated)
                 _handle.Free();
+            _renderer.OutputRuntime.ImGuiPlatformWindows.Unregister(this);
         }
 
         public void AbandonNativeWindowForShutdown()
@@ -246,6 +229,7 @@ public unsafe partial class VulkanRenderer
                 _handle.Free();
             VulkanImGuiMultiViewportController.PreserveAbandonedWindow(Window, _input);
             _input = null;
+            _renderer.OutputRuntime.ImGuiPlatformWindows.Unregister(this);
         }
 
         public void DestroyRendererResources()
@@ -255,8 +239,8 @@ public unsafe partial class VulkanRenderer
 
             WaitForViewportQueuesIdle();
             DestroySwapchainResources();
-            if (_surface.Handle != 0 && _renderer.khrSurface is not null)
-                _renderer.khrSurface.DestroySurface(_renderer.instance, _surface, null);
+            if (_surface.Handle != 0 && _renderer.OutputRuntime.SurfaceApi is not null)
+                _renderer.OutputRuntime.SurfaceApi.DestroySurface(_renderer.DeviceContext.Instance, _surface, null);
             _surface = default;
             _rendererReady = false;
             _resizeRequested = false;
@@ -265,10 +249,10 @@ public unsafe partial class VulkanRenderer
 
         private void ValidatePresentSupport()
         {
-            uint presentFamily = _renderer.FamilyQueueIndices.PresentFamilyIndex
+            uint presentFamily = _renderer.DeviceContext.QueueFamilies.PresentFamilyIndex
                 ?? throw new InvalidOperationException("The Vulkan renderer has no presentation queue family.");
-            Result result = _renderer.khrSurface!.GetPhysicalDeviceSurfaceSupport(
-                _renderer._physicalDevice,
+            Result result = _renderer.OutputRuntime.SurfaceApi!.GetPhysicalDeviceSurfaceSupport(
+                _renderer._deviceContext.PhysicalDevice,
                 presentFamily,
                 _surface,
                 out Bool32 supported);
@@ -291,8 +275,8 @@ public unsafe partial class VulkanRenderer
 
             SurfaceCapabilitiesKHR capabilities;
             ThrowIfFailed(
-                _renderer.khrSurface!.GetPhysicalDeviceSurfaceCapabilities(
-                    _renderer._physicalDevice,
+                _renderer.OutputRuntime.SurfaceApi!.GetPhysicalDeviceSurfaceCapabilities(
+                    _renderer._deviceContext.PhysicalDevice,
                     _surface,
                     out capabilities),
                 "query detached-window surface capabilities");
@@ -310,8 +294,8 @@ public unsafe partial class VulkanRenderer
             if (capabilities.MaxImageCount > 0)
                 imageCount = Math.Min(imageCount, capabilities.MaxImageCount);
 
-            uint graphicsFamily = _renderer.FamilyQueueIndices.GraphicsFamilyIndex!.Value;
-            uint presentFamily = _renderer.FamilyQueueIndices.PresentFamilyIndex!.Value;
+            uint graphicsFamily = _renderer.DeviceContext.QueueFamilies.GraphicsFamilyIndex!.Value;
+            uint presentFamily = _renderer.DeviceContext.QueueFamilies.PresentFamilyIndex!.Value;
             uint* queueFamilies = stackalloc uint[2] { graphicsFamily, presentFamily };
             bool concurrent = graphicsFamily != presentFamily;
 
@@ -335,13 +319,13 @@ public unsafe partial class VulkanRenderer
             };
 
             ThrowIfFailed(
-                _renderer.khrSwapChain!.CreateSwapchain(_renderer.device, in createInfo, null, out _swapchain),
+                _renderer.OutputRuntime.Desktop.SwapchainExtension!.CreateSwapchain(_renderer.DeviceContext.Device, in createInfo, null, out _swapchain),
                 "create detached-window swapchain");
 
             uint actualImageCount = 0;
             ThrowIfFailed(
-                _renderer.khrSwapChain.GetSwapchainImages(
-                    _renderer.device,
+                _renderer.OutputRuntime.Desktop.SwapchainExtension.GetSwapchainImages(
+                    _renderer.DeviceContext.Device,
                     _swapchain,
                     ref actualImageCount,
                     null),
@@ -350,8 +334,8 @@ public unsafe partial class VulkanRenderer
             fixed (Image* imagesPtr = _images)
             {
                 ThrowIfFailed(
-                    _renderer.khrSwapChain.GetSwapchainImages(
-                        _renderer.device,
+                    _renderer.OutputRuntime.Desktop.SwapchainExtension.GetSwapchainImages(
+                        _renderer.DeviceContext.Device,
                         _swapchain,
                         ref actualImageCount,
                         imagesPtr),
@@ -384,8 +368,8 @@ public unsafe partial class VulkanRenderer
         {
             uint count = 0;
             ThrowIfFailed(
-                _renderer.khrSurface!.GetPhysicalDeviceSurfaceFormats(
-                    _renderer._physicalDevice,
+                _renderer.OutputRuntime.SurfaceApi!.GetPhysicalDeviceSurfaceFormats(
+                    _renderer._deviceContext.PhysicalDevice,
                     _surface,
                     ref count,
                     null),
@@ -397,16 +381,16 @@ public unsafe partial class VulkanRenderer
             fixed (SurfaceFormatKHR* formatsPtr = formats)
             {
                 ThrowIfFailed(
-                    _renderer.khrSurface.GetPhysicalDeviceSurfaceFormats(
-                        _renderer._physicalDevice,
+                    _renderer.OutputRuntime.SurfaceApi.GetPhysicalDeviceSurfaceFormats(
+                        _renderer._deviceContext.PhysicalDevice,
                         _surface,
                         ref count,
                         formatsPtr),
                     "query detached-window surface formats");
             }
 
-            Format requiredFormat = _renderer.swapChainImageFormat;
-            ColorSpaceKHR requiredColorSpace = _renderer.swapChainImageColorSpace;
+            Format requiredFormat = _renderer.OutputRuntime.Desktop.ImageFormat;
+            ColorSpaceKHR requiredColorSpace = _renderer.OutputRuntime.Desktop.ImageColorSpace;
             if (formats.Length == 1 && formats[0].Format == Format.Undefined)
                 return new SurfaceFormatKHR(requiredFormat, requiredColorSpace);
 
@@ -425,8 +409,8 @@ public unsafe partial class VulkanRenderer
         {
             uint count = 0;
             ThrowIfFailed(
-                _renderer.khrSurface!.GetPhysicalDeviceSurfacePresentModes(
-                    _renderer._physicalDevice,
+                _renderer.OutputRuntime.SurfaceApi!.GetPhysicalDeviceSurfacePresentModes(
+                    _renderer._deviceContext.PhysicalDevice,
                     _surface,
                     ref count,
                     null),
@@ -438,8 +422,8 @@ public unsafe partial class VulkanRenderer
             fixed (PresentModeKHR* modesPtr = modes)
             {
                 ThrowIfFailed(
-                    _renderer.khrSurface.GetPhysicalDeviceSurfacePresentModes(
-                        _renderer._physicalDevice,
+                    _renderer.OutputRuntime.SurfaceApi.GetPhysicalDeviceSurfacePresentModes(
+                        _renderer._deviceContext.PhysicalDevice,
                         _surface,
                         ref count,
                         modesPtr),
@@ -504,7 +488,7 @@ public unsafe partial class VulkanRenderer
                     1),
             };
             ThrowIfFailed(
-                _renderer.Api!.CreateImageView(_renderer.device, in createInfo, null, out ImageView view),
+                _renderer.Api!.CreateImageView(_renderer.DeviceContext.Device, in createInfo, null, out ImageView view),
                 "create detached-window swapchain image view");
             _renderer.TrackLiveImageView(
                 view,
@@ -552,17 +536,17 @@ public unsafe partial class VulkanRenderer
             for (int i = 0; i < FramesInFlight; i++)
             {
                 ThrowIfFailed(
-                    _renderer.Api!.CreateFence(_renderer.device, in fenceInfo, null, out _frameFences[i]),
+                    _renderer.Api!.CreateFence(_renderer.DeviceContext.Device, in fenceInfo, null, out _frameFences[i]),
                     "create detached-window frame fence");
                 ThrowIfFailed(
-                    _renderer.Api.CreateSemaphore(_renderer.device, in semaphoreInfo, null, out _imageAvailableSemaphores[i]),
+                    _renderer.Api.CreateSemaphore(_renderer.DeviceContext.Device, in semaphoreInfo, null, out _imageAvailableSemaphores[i]),
                     "create detached-window acquire semaphore");
             }
 
             for (int i = 0; i < _renderFinishedSemaphores.Length; i++)
             {
                 ThrowIfFailed(
-                    _renderer.Api!.CreateSemaphore(_renderer.device, in semaphoreInfo, null, out _renderFinishedSemaphores[i]),
+                    _renderer.Api!.CreateSemaphore(_renderer.DeviceContext.Device, in semaphoreInfo, null, out _renderFinishedSemaphores[i]),
                     "create detached-window render-finished semaphore");
             }
         }
@@ -602,15 +586,15 @@ public unsafe partial class VulkanRenderer
             {
                 _renderer.ThrowIfVulkanDeviceOperationNotAdmitted("vkWaitForFences.ImGuiViewport");
                 ThrowIfFailed(
-                    _renderer.Api!.WaitForFences(_renderer.device, 1, in frameFence, true, ulong.MaxValue),
+                    _renderer.Api!.WaitForFences(_renderer.DeviceContext.Device, 1, in frameFence, true, ulong.MaxValue),
                     "wait for detached-window frame fence");
                 _renderer.NotifyVulkanFenceCompleted(frameFence);
                 _frameFenceSubmitted[frameSlot] = false;
             }
 
             uint imageIndex = 0;
-            Result acquireResult = _renderer.khrSwapChain!.AcquireNextImage(
-                _renderer.device,
+            Result acquireResult = _renderer.OutputRuntime.Desktop.SwapchainExtension!.AcquireNextImage(
+                _renderer.DeviceContext.Device,
                 _swapchain,
                 ulong.MaxValue,
                 _imageAvailableSemaphores[frameSlot],
@@ -628,7 +612,7 @@ public unsafe partial class VulkanRenderer
             if (acquireResult == Result.SuboptimalKhr)
                 _resizeRequested = true;
 
-            Result resetFenceResult = _renderer.Api!.ResetFences(_renderer.device, 1, in frameFence);
+            Result resetFenceResult = _renderer.Api!.ResetFences(_renderer.DeviceContext.Device, 1, in frameFence);
             if (resetFenceResult != Result.Success)
             {
                 _resizeRequested = true;
@@ -663,7 +647,7 @@ public unsafe partial class VulkanRenderer
                 PSignalSemaphores = &renderFinished,
             };
             Result submitResult = _renderer.SubmitToQueueTracked(
-                _renderer.graphicsQueue,
+                _renderer._deviceContext.GraphicsQueue,
                 ref submitInfo,
                 frameFence,
                 caller: "ImGuiViewport");
@@ -776,30 +760,30 @@ public unsafe partial class VulkanRenderer
 
         private void WaitForViewportQueuesIdle()
         {
-            if (!_renderer.IsLogicalDeviceReady || !_renderer.IsDeviceOperational)
+            if (!_renderer.DeviceContext.IsReady || !_renderer.DeviceContext.IsOperational)
                 return;
 
-            _ = _renderer.WaitForQueueIdleTracked(_renderer.graphicsQueue, "ImGuiViewportDestroy.Graphics");
-            if (_renderer.presentQueue.Handle != _renderer.graphicsQueue.Handle)
-                _ = _renderer.WaitForQueueIdleTracked(_renderer.presentQueue, "ImGuiViewportDestroy.Present");
+            _ = _renderer.WaitForQueueIdleTracked(_renderer._deviceContext.GraphicsQueue, "ImGuiViewportDestroy.Graphics");
+            if (_renderer._deviceContext.PresentQueue.Handle != _renderer._deviceContext.GraphicsQueue.Handle)
+                _ = _renderer.WaitForQueueIdleTracked(_renderer._deviceContext.PresentQueue, "ImGuiViewportDestroy.Present");
         }
 
         private void DestroySwapchainResources()
         {
-            if (_renderer.Api is null || !_renderer.IsLogicalDeviceReady)
+            if (_renderer.Api is null || !_renderer.DeviceContext.IsReady)
                 return;
 
             _renderer.DestroyImGuiDrawBuffers(ref _drawBuffers);
 
             foreach (Fence fence in _frameFences)
                 if (fence.Handle != 0)
-                    _renderer.Api.DestroyFence(_renderer.device, fence, null);
+                    _renderer.Api.DestroyFence(_renderer.DeviceContext.Device, fence, null);
             foreach (Semaphore semaphore in _imageAvailableSemaphores)
                 if (semaphore.Handle != 0)
-                    _renderer.Api.DestroySemaphore(_renderer.device, semaphore, null);
+                    _renderer.Api.DestroySemaphore(_renderer.DeviceContext.Device, semaphore, null);
             foreach (Semaphore semaphore in _renderFinishedSemaphores)
                 if (semaphore.Handle != 0)
-                    _renderer.Api.DestroySemaphore(_renderer.device, semaphore, null);
+                    _renderer.Api.DestroySemaphore(_renderer.DeviceContext.Device, semaphore, null);
 
             if (_commandPool.Handle != 0)
             {
@@ -828,12 +812,12 @@ public unsafe partial class VulkanRenderer
                 if (view.Handle != 0)
                 {
                     if (_renderer.TryBeginDestroyImageView(view, "ImGuiViewport.DestroySwapchainResources"))
-                        _renderer.Api.DestroyImageView(_renderer.device, view, null);
+                        _renderer.Api.DestroyImageView(_renderer.DeviceContext.Device, view, null);
                 }
             foreach (Image image in _images)
                 _renderer.ClearTrackedImageLayouts(image);
-            if (_swapchain.Handle != 0 && _renderer.khrSwapChain is not null)
-                _renderer.khrSwapChain.DestroySwapchain(_renderer.device, _swapchain, null);
+            if (_swapchain.Handle != 0 && _renderer.OutputRuntime.Desktop.SwapchainExtension is not null)
+                _renderer.OutputRuntime.Desktop.SwapchainExtension.DestroySwapchain(_renderer.DeviceContext.Device, _swapchain, null);
 
             _swapchain = default;
             _format = default;

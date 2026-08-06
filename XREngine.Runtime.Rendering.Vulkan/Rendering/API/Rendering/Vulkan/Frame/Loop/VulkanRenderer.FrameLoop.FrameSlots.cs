@@ -5,24 +5,24 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
-        private EDesktopFrameFlow PrepareDesktopFrameSlot(ref VulkanFrameAttempt attempt)
+        internal EDesktopFrameFlow PrepareDesktopFrameSlot(ref VulkanFrameAttempt attempt)
         {
             long stageStartTimestamp = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.FrameLifecycle.WaitFrameSlot"))
             {
                 ulong slotWaitValue =
-                    _frameSlotTimelineValues![attempt.FrameSlot];
+                    _commandRuntime.Synchronization._frameSlotTimelineValues![attempt.FrameSlot];
                 if (attempt.InteractiveResize &&
                     !HasTimelineValueCompleted(
-                        _graphicsTimelineSemaphore,
+                        _commandRuntime.Synchronization._graphicsTimelineSemaphore,
                         slotWaitValue))
                 {
                     DrainSkippedResizeFrameOps(
                         $"Interactive resize frame slot {attempt.FrameSlot} is still busy. TimelineValue={slotWaitValue}");
                     MarkSkippedResizeFrameObserved(attempt.StartTimestamp);
                     VulkanDesktopPreflightOutcome outcome =
-                        DesktopWsiTarget.ClassifyPreflight(
+                        DesktopWsiOutput.ClassifyPreflight(
                             EVulkanDesktopPreflightStatus
                                 .InteractiveSlotBusy);
                     attempt.Stop(
@@ -39,7 +39,7 @@ namespace XREngine.Rendering.Vulkan
                                 $"Unexpected interactive slot flow {outcome.Flow}.");
                 }
 
-                WaitForTimelineValue(_graphicsTimelineSemaphore, slotWaitValue);
+                WaitForTimelineValue(_commandRuntime.Synchronization._graphicsTimelineSemaphore, slotWaitValue);
             }
 
             attempt.Timing.WaitFrameSlot +=
@@ -78,28 +78,31 @@ namespace XREngine.Rendering.Vulkan
                     attempt.FrameNumber,
                     attempt.LiveFramebufferWidth,
                     attempt.LiveFramebufferHeight,
-                    swapChainExtent.Width,
-                    swapChainExtent.Height);
+                    OutputRuntime.Desktop.Extent.Width,
+                    OutputRuntime.Desktop.Extent.Height);
             }
 
             attempt.AdvanceTo(EDesktopFramePhase.SlotReady);
             return EDesktopFrameFlow.Continue;
         }
 
-        private void PrepareAcquiredDesktopImage(ref VulkanFrameAttempt attempt)
+        internal void PrepareAcquiredDesktopImage(ref VulkanFrameAttempt attempt)
         {
             ThrowIfDesktopFrameFaultInjected(
                 EVulkanDesktopFrameFaultPoint.ImagePreparation);
             long stageStartTimestamp = Stopwatch.GetTimestamp();
+            ulong imageCompletionValue = 0;
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.FrameLifecycle.WaitSwapchainImage"))
             {
-                if (_swapchainImageTimelineValues is not null &&
-                    attempt.ImageIndex < _swapchainImageTimelineValues.Length)
+                if (OutputRuntime.Desktop.ImageTimelineValues is not null &&
+                    attempt.ImageIndex < OutputRuntime.Desktop.ImageTimelineValues.Length)
                 {
+                    imageCompletionValue =
+                        OutputRuntime.Desktop.ImageTimelineValues[attempt.ImageIndex];
                     WaitForTimelineValue(
-                        _graphicsTimelineSemaphore,
-                        _swapchainImageTimelineValues[attempt.ImageIndex]);
+                        _commandRuntime.Synchronization._graphicsTimelineSemaphore,
+                        imageCompletionValue);
                 }
             }
 
@@ -121,7 +124,16 @@ namespace XREngine.Rendering.Vulkan
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.FrameLifecycle.ResetDynamicUniformRing"))
             {
-                ResetDynamicUniformRingBuffer(attempt.ImageIndex);
+                if (MappedFrameArena is { } arena &&
+                    !arena.TryResetFrameSlot(
+                        attempt.ImageIndex,
+                        arena.Generation,
+                        submissionCompletionProven:
+                            imageCompletionValue != 0))
+                {
+                    throw new InvalidOperationException(
+                        $"Mapped frame-data slot {attempt.ImageIndex} could not be reopened after swapchain-image completion.");
+                }
             }
 
             attempt.Timing.ResetDynamicUniformRing +=

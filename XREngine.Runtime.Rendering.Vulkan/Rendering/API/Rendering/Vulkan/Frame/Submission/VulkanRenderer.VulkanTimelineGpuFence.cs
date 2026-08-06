@@ -6,6 +6,7 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
+
     internal sealed class VulkanTimelineGpuFence : XRGpuFence
     {
         private VulkanRenderer? _renderer;
@@ -44,7 +45,7 @@ public unsafe partial class VulkanRenderer
                 return EGpuFenceStatus.Failed;
 
             VulkanRenderer? currentRenderer = _renderer;
-            if (currentRenderer is null || !currentRenderer.IsDeviceOperational)
+            if (currentRenderer is null || !currentRenderer.DeviceContext.IsOperational)
             {
                 Fail();
                 return EGpuFenceStatus.Failed;
@@ -80,5 +81,5 @@ public unsafe partial class VulkanRenderer
                 owner.ReturnTimelineGpuFence(this);
         }
     }
-}
 
+}

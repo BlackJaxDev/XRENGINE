@@ -4,7 +4,8 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private sealed class SynchronousResourceUploadBlockScope : IDisposable
+
+    internal sealed class SynchronousResourceUploadBlockScope : IDisposable
     {
         private readonly VulkanRenderer _renderer;
         private readonly VulkanOpenXrThreadExecutionState _threadState;
@@ -14,11 +15,11 @@ public unsafe partial class VulkanRenderer
         public SynchronousResourceUploadBlockScope(VulkanRenderer renderer, string reason)
         {
             _renderer = renderer;
-            _threadState = renderer._openXrBackend.CurrentThreadExecutionState;
+            _threadState = renderer.OutputRuntime.OpenXrBackend.CurrentThreadExecutionState;
             _previousThreadDepth = _threadState.SynchronousUploadBlockDepth;
             _threadState.SynchronousUploadBlockDepth = _previousThreadDepth + 1;
 
-            Interlocked.Increment(ref renderer._openXrBackend.SynchronousResourceUploadBlockDepth);
+            Interlocked.Increment(ref renderer.OutputRuntime.OpenXrBackend.SynchronousResourceUploadBlockDepth);
             renderer.LogSynchronousResourceUploadBlock(reason);
         }
 
@@ -30,8 +31,8 @@ public unsafe partial class VulkanRenderer
             _disposed = true;
             _threadState.SynchronousUploadBlockDepth = _previousThreadDepth;
 
-            if (Interlocked.Decrement(ref _renderer._openXrBackend.SynchronousResourceUploadBlockDepth) < 0)
-                Volatile.Write(ref _renderer._openXrBackend.SynchronousResourceUploadBlockDepth, 0);
+            if (Interlocked.Decrement(ref _renderer.OutputRuntime.OpenXrBackend.SynchronousResourceUploadBlockDepth) < 0)
+                Volatile.Write(ref _renderer.OutputRuntime.OpenXrBackend.SynchronousResourceUploadBlockDepth, 0);
         }
     }
 }

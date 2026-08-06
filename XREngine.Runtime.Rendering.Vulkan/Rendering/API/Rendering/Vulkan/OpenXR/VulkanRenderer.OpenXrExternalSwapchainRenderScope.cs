@@ -4,7 +4,8 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private sealed class OpenXrExternalSwapchainRenderScope : IDisposable
+
+    internal sealed class OpenXrExternalSwapchainRenderScope : IDisposable
     {
         private readonly VulkanRenderer _renderer;
         private readonly VulkanOpenXrThreadExecutionState _threadState;
@@ -19,18 +20,18 @@ public unsafe partial class VulkanRenderer
             in VulkanOpenXrFrameContext frameContext)
         {
             _renderer = renderer;
-            _threadState = renderer._openXrBackend.CurrentThreadExecutionState;
+            _threadState = renderer.OutputRuntime.OpenXrBackend.CurrentThreadExecutionState;
             _previousFrameContext = _threadState.FrameContext;
             _previousNativeTargetContext = _threadState.NativeTargetContext;
             _previousThreadDepth = _threadState.ExternalSwapchainDepth;
-            _previousGlobalRegion = renderer._openXrBackend.ExternalSwapchainTargetRegion;
+            _previousGlobalRegion = renderer.OutputRuntime.OpenXrBackend.ExternalSwapchainTargetRegion;
 
             _threadState.FrameContext = frameContext;
             _threadState.NativeTargetContext = default;
             _threadState.ExternalSwapchainDepth = _previousThreadDepth + 1;
 
-            Interlocked.Increment(ref renderer._openXrBackend.ExternalSwapchainRenderDepth);
-            renderer._openXrBackend.ExternalSwapchainTargetRegion = frameContext.TargetRegion;
+            Interlocked.Increment(ref renderer.OutputRuntime.OpenXrBackend.ExternalSwapchainRenderDepth);
+            renderer.OutputRuntime.OpenXrBackend.ExternalSwapchainTargetRegion = frameContext.TargetRegion;
         }
 
         public void Dispose()
@@ -43,14 +44,14 @@ public unsafe partial class VulkanRenderer
             _threadState.NativeTargetContext = _previousNativeTargetContext;
             _threadState.ExternalSwapchainDepth = _previousThreadDepth;
 
-            if (Interlocked.Decrement(ref _renderer._openXrBackend.ExternalSwapchainRenderDepth) <= 0)
+            if (Interlocked.Decrement(ref _renderer.OutputRuntime.OpenXrBackend.ExternalSwapchainRenderDepth) <= 0)
             {
-                Volatile.Write(ref _renderer._openXrBackend.ExternalSwapchainRenderDepth, 0);
-                _renderer._openXrBackend.ExternalSwapchainTargetRegion = default;
+                Volatile.Write(ref _renderer.OutputRuntime.OpenXrBackend.ExternalSwapchainRenderDepth, 0);
+                _renderer.OutputRuntime.OpenXrBackend.ExternalSwapchainTargetRegion = default;
             }
             else
             {
-                _renderer._openXrBackend.ExternalSwapchainTargetRegion = _previousGlobalRegion;
+                _renderer.OutputRuntime.OpenXrBackend.ExternalSwapchainTargetRegion = _previousGlobalRegion;
             }
         }
     }

@@ -197,7 +197,7 @@ Subtasks:
 
 - [x] **C1.** Introduce `DrawMetadata`, `TransformGpu`, `BoundsGpu`, `MaterialStateGpu` POD structs. All blittable, `LayoutKind.Sequential`. `GPUIndirectRenderCommand` remains only as a compact compatibility envelope for downstream command builders while the rest of the pipeline consumes SoA buffers.
 - [x] **C2.** Add `TransformID`, `SkinID`, `StateClassID` allocators to `GPUScene` with stable ID semantics (recycled on remove, never silently shifted).
-- [x] **C3.** Migrate culling kernels (`bvh_frustum_cull.comp`, `GPURenderCullingSoA.comp`, `GPURenderHiZSoACulling.comp`) to read `DrawMetadata` + `BoundsBuffer` instead of fat command structs.
+- [x] **C3.** Migrate active culling kernels (`bvh_frustum_cull.comp`, `GPURenderCulling.comp`, `GPURenderHiZSoACulling.comp`) to read `DrawMetadata` + `BoundsBuffer` instead of fat command structs.
 - [x] **C4.** Migrate `GPURenderMaterialScatter.comp` to read `DrawMetadata.StateClassID` and write into per-StateClass indirect buffers (not per-MaterialID).
 - [x] **C5.** Wire `StateClassID` derivation from CPU material/pipeline registry. Document the rule (opaque-deferred, opaque-forward, alpha-tested, shadow, transparent + small set of true exceptions). (Report §"shader permutation strategy".)
 - [x] **C6.** Remove `GPUIndirectRenderCommand.WorldMatrix` / `PrevWorldMatrix`. Vertex shaders fetch from `TransformBuffer[TransformID]`. (Report §"data model refactor".)

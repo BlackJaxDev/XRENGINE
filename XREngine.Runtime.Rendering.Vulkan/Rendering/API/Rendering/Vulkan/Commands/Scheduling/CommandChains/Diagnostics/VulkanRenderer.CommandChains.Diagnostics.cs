@@ -27,8 +27,8 @@ public unsafe partial class VulkanRenderer
     private void TraceCommandChainSchedule(
         CommandChainSchedule schedule,
         List<RenderPacket> packets,
-        FrameOp[] staticOps,
-        FrameOp[] volatileOps,
+        FrameOperationStream staticOps,
+        FrameOperationStream volatileOps,
         List<string>? commandChainTraceRows)
     {
         long now = Stopwatch.GetTimestamp();
@@ -51,9 +51,9 @@ public unsafe partial class VulkanRenderer
             .Append(" packets=")
             .Append(packets.Count)
             .Append(" staticOps=")
-            .Append(staticOps.Length)
+            .Append(staticOps.Count)
             .Append(" volatileOps=")
-            .Append(volatileOps.Length)
+            .Append(volatileOps.Count)
             .Append(" dirtyRows=")
             .Append(commandChainTraceRows?.Count ?? 0);
 
@@ -89,7 +89,7 @@ public unsafe partial class VulkanRenderer
                 .Append(" passName=")
                 .Append(sourceOp is null ? "<unknown>" : TryGetPassName(sourceOp) ?? "<unnamed>")
                 .Append(" target=")
-                .Append(packet.TargetName)
+                .Append(packet.GetDiagnosticTargetName())
                 .Append(" view=")
                 .Append(packet.ViewKey.Kind)
                 .Append(" op=")
@@ -125,14 +125,16 @@ public unsafe partial class VulkanRenderer
         string passName = sourceOp is null ? "<unknown>" : TryGetPassName(sourceOp) ?? "<unnamed>";
         string opDescription = sourceOp is null ? "<unknown>" : DescribeCommandChainTraceOp(sourceOp);
 
-        return $"#{packetIndex} state={chain.State} reason={chain.DirtyReason} pass={packet.PassIndex} passName={passName} target={packet.TargetName} view={packet.ViewKey.Kind}:{packet.ViewKey.ViewIndex} op={opDescription} draws={packet.DrawCount} dispatches={packet.DispatchCount} volatility={packet.Volatility}{dirtyDetails}";
+        return $"#{packetIndex} state={chain.State} reason={chain.DirtyReason} pass={packet.PassIndex} passName={passName} target={packet.GetDiagnosticTargetName()} view={packet.ViewKey.Kind}:{packet.ViewKey.ViewIndex} op={opDescription} draws={packet.DrawCount} dispatches={packet.DispatchCount} volatility={packet.Volatility}{dirtyDetails}";
     }
 
-    private static FrameOp? ResolveCommandChainTraceSourceOp(RenderPacket packet, FrameOp[] staticOps, FrameOp[] volatileOps)
+    private static FrameOp? ResolveCommandChainTraceSourceOp(RenderPacket packet, FrameOperationStream staticOps, FrameOperationStream volatileOps)
     {
-        FrameOp[] sourceOps = packet.DynamicOverlay ? volatileOps : staticOps;
+        FrameOperationStream sourceOps = packet.DynamicOverlay ? volatileOps : staticOps;
         int index = packet.SourceStartIndex;
-        return index >= 0 && index < sourceOps.Length ? sourceOps[index] : null;
+        return index >= 0 && index < sourceOps.Count
+            ? sourceOps.GetPayloadForPrimaryDispatch(index)
+            : null;
     }
 
     private static string DescribeCommandChainTraceOp(FrameOp op)

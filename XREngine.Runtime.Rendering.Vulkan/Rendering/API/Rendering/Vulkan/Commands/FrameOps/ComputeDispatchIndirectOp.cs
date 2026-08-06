@@ -24,7 +24,7 @@ internal sealed record ComputeDispatchIndirectOp(
 
     internal override int RecordPrimary(
         VulkanRenderer renderer,
-        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
+        scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
         if (TryRecordSecondaryBucket(

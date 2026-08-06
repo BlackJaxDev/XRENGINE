@@ -2,12 +2,21 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private VulkanDesktopFrameCoordinator? _desktopFrameCoordinator;
+    /// <summary>
+    /// Gets the output-owned state selected during bootstrap. Bootstrap still
+    /// constructs the target driver in this transition cut; consumers use this
+    /// authority rather than retaining their own target references.
+    /// </summary>
+    private VulkanOutputRuntime OutputRuntime => _outputRuntime;
 
-    private VulkanDesktopFrameCoordinator DesktopFrameCoordinator
-        => _desktopFrameCoordinator ??= new VulkanDesktopFrameCoordinator(this);
+    private VulkanFrameLoop FrameLoop => _frameLoop;
 
+    // Compatibility constant for frame resources that are still renderer-owned.
+    // The authoritative desktop loop uses the same value internally.
     private const int MAX_FRAMES_IN_FLIGHT = 2;
+
+    private VulkanDesktopWsiTargetDriver DesktopWsiOutput
+        => OutputRuntime.RequireDesktopWsiTarget();
 
     internal ulong VulkanFrameCounter
         => AcceptedDesktopFrameAttemptCount;
@@ -17,29 +26,32 @@ public unsafe partial class VulkanRenderer
     /// coordinator. Reentrant rejected callbacks are not counted.
     /// </summary>
     internal ulong AcceptedDesktopFrameAttemptCount
-        => DesktopFrameCoordinator.AcceptedAttemptCount;
+        => FrameLoop.AcceptedAttemptCount;
 
     /// <summary>
     /// Gets the most recently selected desktop in-flight slot.
     /// </summary>
     internal int CurrentDesktopFrameSlot
-        => DesktopFrameCoordinator.CurrentFrameSlot;
+        => FrameLoop.CurrentFrameSlot;
 
     /// <summary>
     /// Gets whether at least one accepted desktop frame tick reached an
     /// observed completion/skip publication point.
     /// </summary>
     internal bool HasObservedDesktopFrameTick
-        => DesktopFrameCoordinator.HasObservedTick;
+        => FrameLoop.HasObservedTick;
 
     internal long LastDesktopFrameTickObservedTimestamp
-        => DesktopFrameCoordinator.LastObservedTickTimestamp;
+        => FrameLoop.LastObservedTickTimestamp;
 
     /// <summary>
     /// Captures one coherent observation of the active desktop attempt.
     /// </summary>
     internal DesktopFrameActivitySnapshot CaptureDesktopFrameActivity()
-        => DesktopFrameCoordinator.CaptureActivity();
+        => FrameLoop.CaptureActivity();
+
+    internal VulkanOutputRuntimeSnapshot CaptureOutputRuntimeSnapshot()
+        => OutputRuntime.CaptureSnapshot();
 
     /// <summary>
     /// Captures the active immutable attempt identity when present, or a named
@@ -57,17 +69,9 @@ public unsafe partial class VulkanRenderer
                 CurrentDesktopFrameSlot);
     }
 
-    private bool TryEnterDesktopFrameAttempt(out DesktopFrameIdentity identity)
-        => DesktopFrameCoordinator.TryEnter(out identity);
-
-    private void ExitDesktopFrameAttempt(in DesktopFrameIdentity identity)
-        => DesktopFrameCoordinator.Exit(in identity);
-
     private void AdvanceDesktopFrameSlot(int completedFrameSlot)
-        => DesktopFrameCoordinator.AdvanceFrameSlot(
-            completedFrameSlot,
-            MAX_FRAMES_IN_FLIGHT);
+        => FrameLoop.AdvanceFrameSlot(completedFrameSlot);
 
     private void RecordDesktopFrameTickObserved(long timestamp)
-        => DesktopFrameCoordinator.RecordObservedTick(timestamp);
+        => FrameLoop.RecordObservedTick(timestamp);
 }

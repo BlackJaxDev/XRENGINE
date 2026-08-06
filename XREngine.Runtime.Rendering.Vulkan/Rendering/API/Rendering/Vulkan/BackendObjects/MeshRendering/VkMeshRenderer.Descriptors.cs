@@ -42,10 +42,9 @@ internal unsafe partial class VkMeshRenderer
 
 	private ulong _descriptorAllocationUsageSerial;
 
-	private static readonly ThreadLocal<DescriptorWriteScratch?> DescriptorWriteScratchWorkspace = new();
-
-	internal static void ReleaseCurrentThreadDescriptorScratch()
-		=> DescriptorWriteScratchWorkspace.Value = null;
+	// Descriptor writes are serialized per mesh renderer. Keep the reusable
+	// workspace with that owner instead of leaking it through thread-local state.
+	private readonly DescriptorWriteScratch _descriptorWriteScratch = new();
 
 	/// <summary>
 	/// Ensures the descriptor sets for one frame/draw slot are allocated and current.
@@ -807,9 +806,9 @@ internal unsafe partial class VkMeshRenderer
 		hash.Add(bindingSnapshot.DescriptorSetLayoutSignature);
 		hash.Add(snapshotResourceSignature);
 		hash.Add(cachedBufferResourceSignature);
-		if (Renderer.MeshFrameDataArenaEnabled)
+		if (Renderer.IsMappedFrameArenaEnabled)
 		{
-			hash.Add(Renderer.MeshFrameDataReservationGeneration);
+			hash.Add(Renderer.MappedFrameArena?.Generation ?? 0UL);
 		}
 		else
 		{

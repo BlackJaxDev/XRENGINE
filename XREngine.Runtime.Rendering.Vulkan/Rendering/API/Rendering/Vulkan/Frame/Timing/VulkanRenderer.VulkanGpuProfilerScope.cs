@@ -4,7 +4,8 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private readonly struct VulkanGpuProfilerScope : IDisposable
+
+    internal readonly struct VulkanGpuProfilerScope : IDisposable
     {
         private readonly VulkanRenderer? _renderer;
         private readonly CommandBuffer _commandBuffer;

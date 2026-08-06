@@ -4,47 +4,47 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private bool _queryOcclusionPreciseAdvertised;
-    private bool _queryOcclusionPreciseEnabled;
-    private bool _queryPipelineStatisticsAdvertised;
-    private bool _queryPipelineStatisticsEnabled;
-    private bool _queryInheritedQueriesAdvertised;
-    private bool _queryInheritedQueriesEnabled;
-    private bool _queryHostResetAdvertised;
-    private bool _queryMeshShaderQueriesEnabled;
-    private bool _queryPrimitivesGeneratedAdvertised;
-    private bool _queryPrimitivesGeneratedEnabled;
-    private bool _queryPrimitivesGeneratedNonZeroStreamsEnabled;
+    private ref bool _queryOcclusionPreciseAdvertised => ref ResourceRuntime.Queries.OcclusionPreciseAdvertised;
+    private ref bool _queryOcclusionPreciseEnabled => ref ResourceRuntime.Queries.OcclusionPreciseEnabled;
+    private ref bool _queryPipelineStatisticsAdvertised => ref ResourceRuntime.Queries.PipelineStatisticsAdvertised;
+    private ref bool _queryPipelineStatisticsEnabled => ref ResourceRuntime.Queries.PipelineStatisticsEnabled;
+    private ref bool _queryInheritedQueriesAdvertised => ref ResourceRuntime.Queries.InheritedQueriesAdvertised;
+    private ref bool _queryInheritedQueriesEnabled => ref ResourceRuntime.Queries.InheritedQueriesEnabled;
+    private ref bool _queryHostResetAdvertised => ref ResourceRuntime.Queries.HostResetAdvertised;
+    private ref bool _queryMeshShaderQueriesEnabled => ref ResourceRuntime.Queries.MeshShaderQueriesEnabled;
+    private ref bool _queryPrimitivesGeneratedAdvertised => ref ResourceRuntime.Queries.PrimitivesGeneratedAdvertised;
+    private ref bool _queryPrimitivesGeneratedEnabled => ref ResourceRuntime.Queries.PrimitivesGeneratedEnabled;
+    private ref bool _queryPrimitivesGeneratedNonZeroStreamsEnabled => ref ResourceRuntime.Queries.PrimitivesGeneratedNonZeroStreamsEnabled;
 
-    internal VulkanQueryCapabilities QueryCapabilities { get; private set; }
+    internal ref VulkanQueryCapabilities QueryCapabilities => ref ResourceRuntime.Queries.Capabilities;
 
     private void RefreshVulkanQueryCapabilities()
     {
-        if (_physicalDevice.Handle == 0)
+        if (_deviceContext.PhysicalDevice.Handle == 0)
         {
             QueryCapabilities = VulkanQueryCapabilities.Unsupported;
             return;
         }
 
-        Api!.GetPhysicalDeviceProperties(_physicalDevice, out PhysicalDeviceProperties properties);
-        uint graphicsFamily = FamilyQueueIndices.GraphicsFamilyIndex ?? 0u;
+        Api!.GetPhysicalDeviceProperties(_deviceContext.PhysicalDevice, out PhysicalDeviceProperties properties);
+        uint graphicsFamily = _deviceContext.QueueFamilies.GraphicsFamilyIndex ?? 0u;
         uint familyCount = 0u;
-        Api.GetPhysicalDeviceQueueFamilyProperties(_physicalDevice, ref familyCount, null);
+        Api.GetPhysicalDeviceQueueFamilyProperties(_deviceContext.PhysicalDevice, ref familyCount, null);
         uint timestampValidBits = 0u;
         QueueFlags graphicsQueueFlags = 0;
         if (graphicsFamily < familyCount)
         {
             QueueFamilyProperties* families = stackalloc QueueFamilyProperties[checked((int)familyCount)];
-            Api.GetPhysicalDeviceQueueFamilyProperties(_physicalDevice, ref familyCount, families);
+            Api.GetPhysicalDeviceQueueFamilyProperties(_deviceContext.PhysicalDevice, ref familyCount, families);
             timestampValidBits = families[graphicsFamily].TimestampValidBits;
             graphicsQueueFlags = families[graphicsFamily].QueueFlags;
         }
 
-        bool transformFeedbackExtensionEnabled = _enabledDeviceExtensions.Contains("VK_EXT_transform_feedback", StringComparer.Ordinal);
-        bool primitivesGeneratedExtensionAdvertised = _availableDeviceExtensions.Contains("VK_EXT_primitives_generated_query", StringComparer.Ordinal);
-        bool primitivesGeneratedExtensionEnabled = _enabledDeviceExtensions.Contains("VK_EXT_primitives_generated_query", StringComparer.Ordinal);
-        bool meshShaderExtensionEnabled = _enabledDeviceExtensions.Contains("VK_EXT_mesh_shader", StringComparer.Ordinal);
-        bool accelerationStructureExtensionEnabled = _enabledDeviceExtensions.Contains("VK_KHR_acceleration_structure", StringComparer.Ordinal);
+        bool transformFeedbackExtensionEnabled = _deviceContext.EnabledDeviceExtensions.Contains("VK_EXT_transform_feedback");
+        bool primitivesGeneratedExtensionAdvertised = _deviceContext.AvailableDeviceExtensions.Contains("VK_EXT_primitives_generated_query");
+        bool primitivesGeneratedExtensionEnabled = _deviceContext.EnabledDeviceExtensions.Contains("VK_EXT_primitives_generated_query");
+        bool meshShaderExtensionEnabled = _deviceContext.EnabledDeviceExtensions.Contains("VK_EXT_mesh_shader");
+        bool accelerationStructureExtensionEnabled = _deviceContext.EnabledDeviceExtensions.Contains("VK_KHR_acceleration_structure");
 
         QueryCapabilities = new(
             _queryOcclusionPreciseAdvertised,
@@ -68,7 +68,7 @@ public unsafe partial class VulkanRenderer
             transformFeedbackExtensionEnabled,
             _extTransformFeedback is not null,
             SupportsTransformFeedbackQueries,
-            Math.Max(_transformFeedbackProperties.MaxTransformFeedbackStreams, 1u),
+            Math.Max(_deviceContext.MutableCapabilities._transformFeedbackProperties.MaxTransformFeedbackStreams, 1u),
             primitivesGeneratedExtensionAdvertised,
             primitivesGeneratedExtensionEnabled,
             _queryPrimitivesGeneratedEnabled,

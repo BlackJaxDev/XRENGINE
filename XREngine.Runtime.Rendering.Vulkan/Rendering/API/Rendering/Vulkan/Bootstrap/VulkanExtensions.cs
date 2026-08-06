@@ -17,7 +17,6 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         private const string ExtSwapchainColorspaceExtensionName = "VK_EXT_swapchain_colorspace";
 
-        private bool _supportsSwapchainColorspace;
         /// <summary>
         /// The KHR_draw_indirect_count extension handle, loaded at device creation if available.
         /// </summary>
@@ -57,67 +56,51 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>
         /// Indicates whether VK_KHR_draw_indirect_count extension is supported and loaded.
         /// </summary>
-        private bool _supportsDrawIndirectCount;
         /// <summary>
         /// Indicates whether indirect-count commands are dispatched through the Vulkan 1.2 core entry point.
         /// </summary>
-        private bool _usesCoreDrawIndirectCountCommands;
         /// <summary>
         /// Indicates whether the logical device enabled the core multi-draw-indirect feature.
         /// </summary>
-        private bool _supportsMultiDrawIndirect;
         /// <summary>
         /// Indicates whether the logical device enabled nonzero firstInstance values for indirect draws.
         /// </summary>
-        private bool _supportsDrawIndirectFirstInstance;
         /// <summary>
         /// Indicates whether the Vulkan task shader feature is supported.
         /// </summary>
-        private bool _supportsVulkanTaskShaderFeature;
         /// <summary>
         /// Indicates whether the Vulkan mesh shader feature is supported.
         /// </summary>
-        private bool _supportsVulkanMeshShaderFeature;
         /// <summary>
         /// Indicates whether the Vulkan mesh task indirect count feature is supported.
         /// </summary>
-        private bool _supportsVulkanMeshTaskIndirectCount;
         /// <summary>
         /// Indicates whether the descriptor indexing feature is supported.
         /// </summary>
-        private bool _supportsDescriptorIndexing;
         /// <summary>
         /// Indicates whether the runtime descriptor array feature is supported.
         /// </summary>
-        private bool _supportsRuntimeDescriptorArray;
         /// <summary>
         /// Indicates whether the descriptor binding partially bound feature is supported.
         /// </summary>
-        private bool _supportsDescriptorBindingPartiallyBound;
         /// <summary>
         /// Indicates whether the descriptor binding update-after-bind feature is supported.
         /// </summary>
-        private bool _supportsDescriptorBindingUpdateAfterBind;
         /// <summary>
         /// Indicates whether the descriptor binding storage image update-after-bind feature is supported.
         /// </summary>
-        private bool _supportsDescriptorBindingStorageImageUpdateAfterBind;
         /// <summary>
         /// Indicates whether variable descriptor counts are supported.
         /// </summary>
-        private bool _supportsDescriptorBindingVariableDescriptorCount;
         /// <summary>
         /// Indicates whether shaders can non-uniformly index sampled-image descriptor arrays.
         /// </summary>
-        private bool _supportsShaderSampledImageArrayNonUniformIndexing;
         /// <summary>
         /// Indicates whether the external memory Win32 feature is supported.
         /// </summary>
-        private bool _supportsExternalMemoryWin32;
         /// <summary>
         /// Indicates whether the external semaphore Win32 feature is supported.
         /// </summary>
-        private bool _supportsExternalSemaphoreWin32;
         /// <summary>
         /// Indicates whether the NV memory decompression feature is supported.
         /// </summary>
@@ -131,391 +114,331 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>
         /// Indicates whether the buffer device address feature is supported.
         /// </summary>
-        private bool _supportsBufferDeviceAddress;
         /// <summary>
         /// Indicates whether the NV memory decompression feature is supported.
         /// </summary>
-        private bool _supportsNvMemoryDecompression;
         /// <summary>
         /// Indicates whether the NV copy memory indirect feature is supported.
         /// </summary>
-        private bool _supportsNvCopyMemoryIndirect;
         /// <summary>
         /// Indicates whether the dynamic rendering feature is supported.
         /// </summary>
-        private bool _supportsDynamicRendering;
         /// <summary>
         /// Indicates whether the index type uint8 feature is supported.
         /// </summary>
-        private bool _supportsIndexTypeUint8;
         /// <summary>
         /// Indicates whether the synchronization2 feature is supported.
         /// </summary>
-        private bool _supportsSynchronization2;
         /// <summary>
         /// Indicates whether the depth clip control feature is supported.
         /// </summary>
-        private bool _supportsDepthClipControl;
         /// <summary>
         /// Indicates whether the graphics pipeline library feature is supported.
         /// </summary>
-        private bool _supportsGraphicsPipelineLibrary;
         /// <summary>
         /// Indicates whether the transform feedback feature is supported.
         /// </summary>
-        private bool _supportsTransformFeedback;
         /// <summary>
         /// Indicates whether the transform feedback geometry streams feature is supported.
         /// </summary>
-        private bool _supportsTransformFeedbackGeometryStreams;
         /// <summary>
         /// Indicates whether the transform feedback queries feature is supported.
         /// </summary>
-        private bool _supportsTransformFeedbackQueries;
         /// <summary>
         /// Indicates whether the transform feedback draw feature is supported.
         /// </summary>
-        private bool _supportsTransformFeedbackDraw;
         /// <summary>
         /// Indicates whether the host query reset feature is supported.
         /// </summary>
-        private bool _supportsHostQueryReset;
         /// <summary>
         /// Indicates whether the Vulkan fragment shading rate feature is supported.
         /// </summary>
-        private bool _supportsVulkanFragmentShadingRate;
         /// <summary>
         /// Indicates whether the Vulkan fragment shading rate attachment feature is supported.
         /// </summary>
-        private bool _supportsVulkanFragmentShadingRateAttachment;
         /// <summary>
         /// Indicates whether the Vulkan fragment density map feature is supported.
         /// </summary>
-        private bool _supportsVulkanFragmentDensityMap;
         /// <summary>
         /// Indicates whether the Vulkan fragment density map dynamic feature is supported.
         /// </summary>
-        private bool _supportsVulkanFragmentDensityMapDynamic;
         /// <summary>
         /// Indicates whether the fragment stores and atomics feature is supported.
         /// </summary>
-        private bool _supportsFragmentStoresAndAtomics;
         /// <summary>
         /// Indicates whether the vertex pipeline stores and atomics feature is supported.
         /// </summary>
-        private bool _supportsVertexPipelineStoresAndAtomics;
         /// <summary>
         /// Indicates whether the geometry shader feature is supported.
         /// </summary>
-        private bool _supportsGeometryShader;
         /// <summary>
         /// Indicates whether Vulkan 1.4 is supported.
         /// </summary>
-        private bool _supportsVulkan14;
         /// <summary>
         /// Indicates whether the dynamic rendering local read feature is supported.
         /// </summary>
-        private bool _supportsDynamicRenderingLocalRead;
         /// <summary>
         /// Indicates whether the dynamic rendering local read storage resources feature is supported.
         /// </summary>
-        private bool _supportsDynamicRenderingLocalReadStorageResources;
         /// <summary>
         /// Indicates whether the dynamic rendering local read color attachments feature is supported.
         /// </summary>
-        private bool _supportsDynamicRenderingLocalReadColorAttachments;
         /// <summary>
         /// Indicates whether the dynamic rendering local read depth stencil attachments feature is supported.
         /// </summary>
-        private bool _supportsDynamicRenderingLocalReadDepthStencilAttachments;
         /// <summary>
         /// Indicates whether the dynamic rendering local read multisampled attachments feature is supported.
         /// </summary>
-        private bool _supportsDynamicRenderingLocalReadMultisampledAttachments;
         /// <summary>
         /// Indicates whether the maintenance4 feature is supported.
         /// </summary>
-        private bool _supportsMaintenance4;
         /// <summary>
         /// Indicates whether the maintenance5 feature is supported.
         /// </summary>
-        private bool _supportsMaintenance5;
         /// <summary>
         /// Indicates whether the extended flags feature is supported.
         /// </summary>
-        private bool _supportsExtendedFlags;
         /// <summary>
         /// Indicates whether the descriptor heap feature is supported.
         /// </summary>
-        private bool _supportsDescriptorHeap;
         /// <summary>
         /// Indicates whether the shader object feature is supported.
         /// </summary>
-        private bool _supportsShaderObject;
         /// <summary>
         /// Indicates whether the memory budget feature is supported.
         /// </summary>
-        private bool _supportsMemoryBudget;
         /// <summary>
         /// Indicates whether the memory priority feature is supported.
         /// </summary>
-        private bool _supportsMemoryPriority;
         /// <summary>
         /// Indicates whether the acceleration structure feature is supported.
         /// </summary>
-        private bool _supportsAccelerationStructure;
         /// <summary>
         /// Indicates whether the ray tracing pipeline feature is supported.
         /// </summary>
-        private bool _supportsRayTracingPipeline;
         /// <summary>
         /// Indicates whether the ray query feature is supported.
         /// </summary>
-        private bool _supportsRayQuery;
         /// <summary>
         /// Indicates whether the device generated commands feature is supported.
         /// </summary>
-        private bool _supportsDeviceGeneratedCommands;
 
         /// <summary>
         /// Indicates the properties of the transform feedback feature.
         /// </summary>
-        private PhysicalDeviceTransformFeedbackPropertiesEXT _transformFeedbackProperties;
         /// <summary>
         /// Indicates the properties of the Vulkan 1.4 feature set.
         /// </summary>
-        private PhysicalDeviceVulkan14Properties _vulkan14Properties;
         /// <summary>
         /// Indicates the properties of the shader object feature.
         /// </summary>
-        private PhysicalDeviceShaderObjectPropertiesEXT _shaderObjectProperties;
         /// <summary>
         /// Indicates the properties of the fragment shading rate feature.
         /// </summary>
-        private PhysicalDeviceFragmentShadingRatePropertiesKHR _fragmentShadingRateProperties;
-        /// <summary>
-        /// Indicates the color attachment counts for render passes.
-        /// </summary>
-        private readonly Dictionary<ulong, uint> _renderPassColorAttachmentCounts = new();
-        /// <summary>
-        /// Indicates the color attachment formats for render passes.
-        /// </summary>
-        private readonly Dictionary<ulong, Format[]> _renderPassColorAttachmentFormats = new();
-        /// <summary>
-        /// Indicates the semantic signatures for render passes.
-        /// </summary>
-        private readonly Dictionary<ulong, string> _renderPassSemanticSignatures = new();
-        /// <summary>
-        /// Indicates whether a format supports color blending.
-        /// </summary>
-        private readonly Dictionary<Format, bool> _formatColorBlendSupport = new();
         /// <summary>
         /// Indicates the NV memory decompression methods supported by the device.
         /// </summary>
-        private MemoryDecompressionMethodFlagsNV _nvMemoryDecompressionMethods;
         /// <summary>
         /// Indicates the maximum memory decompression indirect count supported by the device.
         /// </summary>
-        private ulong _nvMaxMemoryDecompressionIndirectCount;
         /// <summary>
         /// Indicates the supported queues for NV copy memory indirect operations.
         /// </summary>
-        private ulong _nvCopyMemoryIndirectSupportedQueues;
 
         /// <summary>
         /// Indicates whether the device supports NV memory decompression through the VK_NV_memory_decompression extension.
         /// </summary>
         private bool IsCapabilityEnabled(EVulkanDeviceCapability capability, bool bootstrapValue)
-            => _deviceCapabilities.IsInitialized
-                ? _deviceCapabilities.Supports(capability)
+            => _deviceContext.CapabilitiesPublished
+                ? _deviceContext.Capabilities.Supports(capability)
                 : bootstrapValue;
 
-        public bool SupportsNvMemoryDecompression => IsCapabilityEnabled(EVulkanDeviceCapability.NvMemoryDecompression, _supportsNvMemoryDecompression) && _nvMemoryDecompression is not null;
+        public bool SupportsNvMemoryDecompression => IsCapabilityEnabled(EVulkanDeviceCapability.NvMemoryDecompression, _deviceContext.MutableCapabilities._supportsNvMemoryDecompression) && _nvMemoryDecompression is not null;
         /// <summary>
         /// Indicates whether the device supports NV copy memory indirect operations through the VK_NV_copy_memory_indirect extension.
         /// </summary>
-        public bool SupportsNvCopyMemoryIndirect => IsCapabilityEnabled(EVulkanDeviceCapability.NvCopyMemoryIndirect, _supportsNvCopyMemoryIndirect) && _nvCopyMemoryIndirect is not null;
+        public bool SupportsNvCopyMemoryIndirect => IsCapabilityEnabled(EVulkanDeviceCapability.NvCopyMemoryIndirect, _deviceContext.MutableCapabilities._supportsNvCopyMemoryIndirect) && _nvCopyMemoryIndirect is not null;
         /// <summary>
         /// Indicates whether the device supports external memory on Win32 through the VK_KHR_external_memory_win32 extension.
         /// </summary>
-        public bool SupportsExternalMemoryWin32 => _supportsExternalMemoryWin32 && _khrExternalMemoryWin32 is not null;
+        public bool SupportsExternalMemoryWin32 => _deviceContext.MutableCapabilities._supportsExternalMemoryWin32 && _khrExternalMemoryWin32 is not null;
         /// <summary>
         /// Indicates whether the device supports external semaphores on Win32 through the VK_KHR_external_semaphore_win32 extension.
         /// </summary>
-        public bool SupportsExternalSemaphoreWin32 => _supportsExternalSemaphoreWin32 && _khrExternalSemaphoreWin32 is not null;
+        public bool SupportsExternalSemaphoreWin32 => _deviceContext.MutableCapabilities._supportsExternalSemaphoreWin32 && _khrExternalSemaphoreWin32 is not null;
         /// <summary>
         /// Indicates whether the device supports buffer device addresses.
         /// </summary>
-        public bool SupportsBufferDeviceAddress => IsCapabilityEnabled(EVulkanDeviceCapability.BufferDeviceAddress, _supportsBufferDeviceAddress);
+        public bool SupportsBufferDeviceAddress => IsCapabilityEnabled(EVulkanDeviceCapability.BufferDeviceAddress, _deviceContext.MutableCapabilities._supportsBufferDeviceAddress);
         /// <summary>
         /// Indicates whether the device supports Vulkan mesh task indirect count.
         /// </summary>
-        public bool SupportsVulkanMeshTaskIndirectCount => IsCapabilityEnabled(EVulkanDeviceCapability.MeshShader, _supportsVulkanMeshShaderFeature) && _supportsVulkanMeshTaskIndirectCount && _extMeshShader is not null;
+        public bool SupportsVulkanMeshTaskIndirectCount => IsCapabilityEnabled(EVulkanDeviceCapability.MeshShader, _deviceContext.MutableCapabilities._supportsVulkanMeshShaderFeature) && _deviceContext.MutableCapabilities._supportsVulkanMeshTaskIndirectCount && _extMeshShader is not null;
         /// <summary>
         /// Indicates whether the device supports dynamic rendering.
         /// </summary>
-        public bool SupportsDynamicRendering => IsCapabilityEnabled(EVulkanDeviceCapability.DynamicRendering, _supportsDynamicRendering);
+        public bool SupportsDynamicRendering => IsCapabilityEnabled(EVulkanDeviceCapability.DynamicRendering, _deviceContext.MutableCapabilities._supportsDynamicRendering);
         /// <summary>
         /// Indicates whether the device supports the index type uint8.
         /// </summary>
-        public bool SupportsIndexTypeUint8 => IsCapabilityEnabled(EVulkanDeviceCapability.IndexTypeUint8, _supportsIndexTypeUint8);
+        public bool SupportsIndexTypeUint8 => IsCapabilityEnabled(EVulkanDeviceCapability.IndexTypeUint8, _deviceContext.MutableCapabilities._supportsIndexTypeUint8);
         /// <summary>
         /// Indicates whether the device supports the synchronization2 feature.
         /// </summary>
-        public bool SupportsSynchronization2 => IsCapabilityEnabled(EVulkanDeviceCapability.Synchronization2, _supportsSynchronization2);
+        public bool SupportsSynchronization2 => IsCapabilityEnabled(EVulkanDeviceCapability.Synchronization2, _deviceContext.MutableCapabilities._supportsSynchronization2);
         /// <summary>
         /// Indicates whether the device supports depth clip control.
         /// </summary>
-        public bool SupportsDepthClipControl => IsCapabilityEnabled(EVulkanDeviceCapability.DepthClipControl, _supportsDepthClipControl);
+        public bool SupportsDepthClipControl => IsCapabilityEnabled(EVulkanDeviceCapability.DepthClipControl, _deviceContext.MutableCapabilities._supportsDepthClipControl);
         /// <summary>
         /// Indicates whether the device supports graphics pipeline library.
         /// </summary>
-        public bool SupportsGraphicsPipelineLibrary => IsCapabilityEnabled(EVulkanDeviceCapability.GraphicsPipelineLibrary, _supportsGraphicsPipelineLibrary);
+        public bool SupportsGraphicsPipelineLibrary => IsCapabilityEnabled(EVulkanDeviceCapability.GraphicsPipelineLibrary, _deviceContext.MutableCapabilities._supportsGraphicsPipelineLibrary);
         /// <summary>
         /// Indicates whether the device supports transform feedback.
         /// </summary>
-        public bool SupportsTransformFeedback => IsCapabilityEnabled(EVulkanDeviceCapability.TransformFeedback, _supportsTransformFeedback) && _extTransformFeedback is not null;
+        public bool SupportsTransformFeedback => IsCapabilityEnabled(EVulkanDeviceCapability.TransformFeedback, _deviceContext.MutableCapabilities._supportsTransformFeedback) && _extTransformFeedback is not null;
         /// <summary>
         /// Indicates whether the device supports transform feedback geometry streams.
         /// </summary>
-        public bool SupportsTransformFeedbackGeometryStreams => SupportsTransformFeedback && _supportsTransformFeedbackGeometryStreams;
+        public bool SupportsTransformFeedbackGeometryStreams => SupportsTransformFeedback && _deviceContext.MutableCapabilities._supportsTransformFeedbackGeometryStreams;
         /// <summary>
         /// Indicates whether the device supports transform feedback queries.
         /// </summary>
-        public bool SupportsTransformFeedbackQueries => SupportsTransformFeedback && _supportsTransformFeedbackQueries;
+        public bool SupportsTransformFeedbackQueries => SupportsTransformFeedback && _deviceContext.MutableCapabilities._supportsTransformFeedbackQueries;
         /// <summary>
         /// Indicates whether the device supports transform feedback draw.
         /// </summary>
-        public bool SupportsTransformFeedbackDraw => SupportsTransformFeedback && _supportsTransformFeedbackDraw;
+        public bool SupportsTransformFeedbackDraw => SupportsTransformFeedback && _deviceContext.MutableCapabilities._supportsTransformFeedbackDraw;
         /// <summary>
         /// Core-1.2 hostQueryReset feature: query pools may be reset from the CPU via vkResetQueryPool.
         /// </summary>
-        public bool SupportsHostQueryReset => IsCapabilityEnabled(EVulkanDeviceCapability.HostQueryReset, _supportsHostQueryReset);
+        public bool SupportsHostQueryReset => IsCapabilityEnabled(EVulkanDeviceCapability.HostQueryReset, _deviceContext.MutableCapabilities._supportsHostQueryReset);
         /// <summary>
         /// Indicates whether the device supports Vulkan fragment shading rate.
         /// </summary>
-        public bool SupportsVulkanFragmentShadingRate => IsCapabilityEnabled(EVulkanDeviceCapability.FragmentShadingRate, _supportsVulkanFragmentShadingRate);
+        public bool SupportsVulkanFragmentShadingRate => IsCapabilityEnabled(EVulkanDeviceCapability.FragmentShadingRate, _deviceContext.MutableCapabilities._supportsVulkanFragmentShadingRate);
         /// <summary>
         /// Indicates whether the device supports Vulkan fragment shading rate attachment.
         /// </summary>
-        public bool SupportsVulkanFragmentShadingRateAttachment => _supportsVulkanFragmentShadingRateAttachment;
+        public bool SupportsVulkanFragmentShadingRateAttachment => _deviceContext.MutableCapabilities._supportsVulkanFragmentShadingRateAttachment;
         /// <summary>
         /// Gets the fragment shading rate properties of the physical device.
         /// </summary>
-        public PhysicalDeviceFragmentShadingRatePropertiesKHR FragmentShadingRateProperties => _fragmentShadingRateProperties;
+        public PhysicalDeviceFragmentShadingRatePropertiesKHR FragmentShadingRateProperties => _deviceContext.MutableCapabilities._fragmentShadingRateProperties;
         /// <summary>
         /// Indicates whether the device supports Vulkan fragment density map.
         /// </summary>
-        public bool SupportsVulkanFragmentDensityMap => IsCapabilityEnabled(EVulkanDeviceCapability.FragmentDensityMap, _supportsVulkanFragmentDensityMap);
+        public bool SupportsVulkanFragmentDensityMap => IsCapabilityEnabled(EVulkanDeviceCapability.FragmentDensityMap, _deviceContext.MutableCapabilities._supportsVulkanFragmentDensityMap);
         /// <summary>
         /// Indicates whether the device supports dynamic Vulkan fragment density map.
         /// </summary>
-        public bool SupportsVulkanFragmentDensityMapDynamic => _supportsVulkanFragmentDensityMapDynamic;
+        public bool SupportsVulkanFragmentDensityMapDynamic => _deviceContext.MutableCapabilities._supportsVulkanFragmentDensityMapDynamic;
         /// <summary>
         /// Gets the transform feedback properties of the physical device.
         /// </summary>
-        public PhysicalDeviceTransformFeedbackPropertiesEXT TransformFeedbackProperties => _transformFeedbackProperties;
+        public PhysicalDeviceTransformFeedbackPropertiesEXT TransformFeedbackProperties => _deviceContext.MutableCapabilities._transformFeedbackProperties;
         /// <summary>
         /// Indicates whether the device supports fragment stores and atomics.
         /// </summary>
-        public bool SupportsFragmentStoresAndAtomics => IsCapabilityEnabled(EVulkanDeviceCapability.FragmentStoresAndAtomics, _supportsFragmentStoresAndAtomics);
+        public bool SupportsFragmentStoresAndAtomics => IsCapabilityEnabled(EVulkanDeviceCapability.FragmentStoresAndAtomics, _deviceContext.MutableCapabilities._supportsFragmentStoresAndAtomics);
         /// <summary>
         /// Indicates whether the device supports vertex pipeline stores and atomics.
         /// </summary>
-        public bool SupportsVertexPipelineStoresAndAtomics => IsCapabilityEnabled(EVulkanDeviceCapability.VertexPipelineStoresAndAtomics, _supportsVertexPipelineStoresAndAtomics);
+        public bool SupportsVertexPipelineStoresAndAtomics => IsCapabilityEnabled(EVulkanDeviceCapability.VertexPipelineStoresAndAtomics, _deviceContext.MutableCapabilities._supportsVertexPipelineStoresAndAtomics);
         /// <summary>
         /// Indicates whether the device supports geometry shader.
         /// </summary>
-        public bool SupportsGeometryShader => IsCapabilityEnabled(EVulkanDeviceCapability.GeometryShader, _supportsGeometryShader);
+        public bool SupportsGeometryShader => IsCapabilityEnabled(EVulkanDeviceCapability.GeometryShader, _deviceContext.MutableCapabilities._supportsGeometryShader);
         /// <summary>
         /// Indicates whether the device supports Vulkan 1.4.
         /// </summary>
-        public bool SupportsVulkan14 => IsCapabilityEnabled(EVulkanDeviceCapability.Vulkan14, _supportsVulkan14);
+        public bool SupportsVulkan14 => IsCapabilityEnabled(EVulkanDeviceCapability.Vulkan14, _deviceContext.MutableCapabilities._supportsVulkan14);
         /// <summary>
         /// Indicates whether the device supports dynamic rendering local read.
         /// </summary>
-        public bool SupportsDynamicRenderingLocalRead => IsCapabilityEnabled(EVulkanDeviceCapability.DynamicRenderingLocalRead, _supportsDynamicRenderingLocalRead);
+        public bool SupportsDynamicRenderingLocalRead => IsCapabilityEnabled(EVulkanDeviceCapability.DynamicRenderingLocalRead, _deviceContext.MutableCapabilities._supportsDynamicRenderingLocalRead);
         /// <summary>
         /// Indicates whether the device supports dynamic rendering local read storage resources.
         /// </summary>
-        public bool SupportsDynamicRenderingLocalReadStorageResources => SupportsDynamicRenderingLocalRead && _supportsDynamicRenderingLocalReadStorageResources;
+        public bool SupportsDynamicRenderingLocalReadStorageResources => SupportsDynamicRenderingLocalRead && _deviceContext.MutableCapabilities._supportsDynamicRenderingLocalReadStorageResources;
         /// <summary>
         /// Indicates whether the device supports dynamic rendering local read color attachments.
         /// </summary>
-        public bool SupportsDynamicRenderingLocalReadColorAttachments => SupportsDynamicRenderingLocalRead && _supportsDynamicRenderingLocalReadColorAttachments;
+        public bool SupportsDynamicRenderingLocalReadColorAttachments => SupportsDynamicRenderingLocalRead && _deviceContext.MutableCapabilities._supportsDynamicRenderingLocalReadColorAttachments;
         /// <summary>
         /// Indicates whether the device supports dynamic rendering local read depth stencil attachments.
         /// </summary>
-        public bool SupportsDynamicRenderingLocalReadDepthStencilAttachments => SupportsDynamicRenderingLocalRead && _supportsDynamicRenderingLocalReadDepthStencilAttachments;
+        public bool SupportsDynamicRenderingLocalReadDepthStencilAttachments => SupportsDynamicRenderingLocalRead && _deviceContext.MutableCapabilities._supportsDynamicRenderingLocalReadDepthStencilAttachments;
         /// <summary>
         /// Indicates whether the device supports dynamic rendering local read multisampled attachments.
         /// </summary>
-        public bool SupportsDynamicRenderingLocalReadMultisampledAttachments => SupportsDynamicRenderingLocalRead && _supportsDynamicRenderingLocalReadMultisampledAttachments;
+        public bool SupportsDynamicRenderingLocalReadMultisampledAttachments => SupportsDynamicRenderingLocalRead && _deviceContext.MutableCapabilities._supportsDynamicRenderingLocalReadMultisampledAttachments;
         /// <summary>
         /// Indicates whether the device supports maintenance 4.
         /// </summary>
-        public bool SupportsMaintenance4 => IsCapabilityEnabled(EVulkanDeviceCapability.Maintenance4, _supportsMaintenance4);
+        public bool SupportsMaintenance4 => IsCapabilityEnabled(EVulkanDeviceCapability.Maintenance4, _deviceContext.MutableCapabilities._supportsMaintenance4);
         /// <summary>
         /// Indicates whether the device supports maintenance 5.
         /// </summary>
-        public bool SupportsMaintenance5 => IsCapabilityEnabled(EVulkanDeviceCapability.Maintenance5, _supportsMaintenance5);
+        public bool SupportsMaintenance5 => IsCapabilityEnabled(EVulkanDeviceCapability.Maintenance5, _deviceContext.MutableCapabilities._supportsMaintenance5);
         /// <summary>
         /// Indicates whether the device supports extended flags.
         /// </summary>
-        public bool SupportsExtendedFlags => _supportsExtendedFlags;
+        public bool SupportsExtendedFlags => _deviceContext.MutableCapabilities._supportsExtendedFlags;
         /// <summary>
         /// Indicates whether the device supports descriptor heap.
         /// </summary>
-        public bool SupportsDescriptorHeap => IsCapabilityEnabled(EVulkanDeviceCapability.DescriptorHeap, _supportsDescriptorHeap);
+        public bool SupportsDescriptorHeap => IsCapabilityEnabled(EVulkanDeviceCapability.DescriptorHeap, _deviceContext.MutableCapabilities._supportsDescriptorHeap);
         /// <summary>
         /// Indicates whether the device supports shader object.
         /// </summary>
-        public bool SupportsShaderObject => IsCapabilityEnabled(EVulkanDeviceCapability.ShaderObject, _supportsShaderObject);
+        public bool SupportsShaderObject => IsCapabilityEnabled(EVulkanDeviceCapability.ShaderObject, _deviceContext.MutableCapabilities._supportsShaderObject);
         /// <summary>
         /// Indicates whether the device supports memory budget.
         /// </summary>
-        public bool SupportsMemoryBudget => IsCapabilityEnabled(EVulkanDeviceCapability.MemoryBudget, _supportsMemoryBudget);
+        public bool SupportsMemoryBudget => IsCapabilityEnabled(EVulkanDeviceCapability.MemoryBudget, _deviceContext.MutableCapabilities._supportsMemoryBudget);
         /// <summary>
         /// Indicates whether the device supports memory priority.
         /// </summary>
-        public bool SupportsMemoryPriority => IsCapabilityEnabled(EVulkanDeviceCapability.MemoryPriority, _supportsMemoryPriority);
+        public bool SupportsMemoryPriority => IsCapabilityEnabled(EVulkanDeviceCapability.MemoryPriority, _deviceContext.MutableCapabilities._supportsMemoryPriority);
         /// <summary>
         /// Indicates whether the device supports acceleration structure.
         /// </summary>
-        public bool SupportsAccelerationStructure => IsCapabilityEnabled(EVulkanDeviceCapability.AccelerationStructure, _supportsAccelerationStructure);
+        public bool SupportsAccelerationStructure => IsCapabilityEnabled(EVulkanDeviceCapability.AccelerationStructure, _deviceContext.MutableCapabilities._supportsAccelerationStructure);
         /// <summary>
         /// Indicates whether the device supports ray tracing pipeline.
         /// </summary>
-        public bool SupportsRayTracingPipeline => IsCapabilityEnabled(EVulkanDeviceCapability.RayTracingPipeline, _supportsRayTracingPipeline);
+        public bool SupportsRayTracingPipeline => IsCapabilityEnabled(EVulkanDeviceCapability.RayTracingPipeline, _deviceContext.MutableCapabilities._supportsRayTracingPipeline);
         /// <summary>
         /// Indicates whether the device supports ray query.
         /// </summary>
-        public bool SupportsRayQuery => IsCapabilityEnabled(EVulkanDeviceCapability.RayQuery, _supportsRayQuery);
+        public bool SupportsRayQuery => IsCapabilityEnabled(EVulkanDeviceCapability.RayQuery, _deviceContext.MutableCapabilities._supportsRayQuery);
         /// <summary>
         /// Indicates whether the device supports device generated commands.
         /// </summary>
-        public bool SupportsDeviceGeneratedCommands => IsCapabilityEnabled(EVulkanDeviceCapability.DeviceGeneratedCommands, _supportsDeviceGeneratedCommands);
+        public bool SupportsDeviceGeneratedCommands => IsCapabilityEnabled(EVulkanDeviceCapability.DeviceGeneratedCommands, _deviceContext.MutableCapabilities._supportsDeviceGeneratedCommands);
         /// <summary>
         /// Indicates the memory decompression methods supported by the device.
         /// </summary>
-        public MemoryDecompressionMethodFlagsNV NvMemoryDecompressionMethods => _nvMemoryDecompressionMethods;
+        public MemoryDecompressionMethodFlagsNV NvMemoryDecompressionMethods => _deviceContext.MutableCapabilities._nvMemoryDecompressionMethods;
         /// <summary>
         /// Indicates the maximum memory decompression indirect count supported by the device.
         /// </summary>
-        public ulong NvMaxMemoryDecompressionIndirectCount => _nvMaxMemoryDecompressionIndirectCount;
+        public ulong NvMaxMemoryDecompressionIndirectCount => _deviceContext.MutableCapabilities._nvMaxMemoryDecompressionIndirectCount;
         /// <summary>
         /// Indicates the supported queues for copy memory indirect operations.
         /// </summary>
-        public ulong NvCopyMemoryIndirectSupportedQueues => _nvCopyMemoryIndirectSupportedQueues;
+        public ulong NvCopyMemoryIndirectSupportedQueues => _deviceContext.MutableCapabilities._nvCopyMemoryIndirectSupportedQueues;
 
         /// <summary>
         /// Indicates whether the device should use core dynamic rendering commands based on the Vulkan instance API version.
         /// </summary>
-        private bool UseCoreDynamicRenderingCommands => _vulkanInstanceApiVersion >= Vk.Version13;
+        private bool UseCoreDynamicRenderingCommands => _deviceContext.InstanceApiVersion >= Vk.Version13;
         /// <summary>
         /// Indicates whether the device should use core synchronization 2 commands based on the Vulkan instance API version.
         /// </summary>
-        private bool UseCoreSynchronization2Commands => _vulkanInstanceApiVersion >= Vk.Version13;
+        private bool UseCoreSynchronization2Commands => _deviceContext.InstanceApiVersion >= Vk.Version13;
 
         /// <summary>
         /// Begins dynamic rendering for the specified command buffer with the provided rendering information.
@@ -716,10 +639,10 @@ namespace XREngine.Rendering.Vulkan
                 return;
 
             RegisterVulkanResource(ObjectType.RenderPass, renderPass.Handle, "RenderPass");
-            _renderPassColorAttachmentCounts[renderPass.Handle] = colorAttachmentCount;
-            _renderPassColorAttachmentFormats.Remove(renderPass.Handle);
+            ResourceRuntime.RenderPassColorAttachmentCounts[renderPass.Handle] = colorAttachmentCount;
+            ResourceRuntime.RenderPassColorAttachmentFormats.Remove(renderPass.Handle);
             if (!string.IsNullOrWhiteSpace(semanticSignature))
-                _renderPassSemanticSignatures[renderPass.Handle] = semanticSignature!;
+                ResourceRuntime.RenderPassSemanticSignatures[renderPass.Handle] = semanticSignature!;
         }
 
         /// <summary>
@@ -734,10 +657,10 @@ namespace XREngine.Rendering.Vulkan
                 return;
 
             RegisterVulkanResource(ObjectType.RenderPass, renderPass.Handle, "RenderPass");
-            _renderPassColorAttachmentCounts[renderPass.Handle] = (uint)colorAttachmentFormats.Length;
-            _renderPassColorAttachmentFormats[renderPass.Handle] = colorAttachmentFormats.ToArray();
+            ResourceRuntime.RenderPassColorAttachmentCounts[renderPass.Handle] = (uint)colorAttachmentFormats.Length;
+            ResourceRuntime.RenderPassColorAttachmentFormats[renderPass.Handle] = colorAttachmentFormats.ToArray();
             if (!string.IsNullOrWhiteSpace(semanticSignature))
-                _renderPassSemanticSignatures[renderPass.Handle] = semanticSignature!;
+                ResourceRuntime.RenderPassSemanticSignatures[renderPass.Handle] = semanticSignature!;
         }
 
         /// <summary>
@@ -749,9 +672,9 @@ namespace XREngine.Rendering.Vulkan
             if (renderPass.Handle == 0)
                 return;
 
-            _renderPassColorAttachmentCounts.Remove(renderPass.Handle);
-            _renderPassColorAttachmentFormats.Remove(renderPass.Handle);
-            _renderPassSemanticSignatures.Remove(renderPass.Handle);
+            ResourceRuntime.RenderPassColorAttachmentCounts.Remove(renderPass.Handle);
+            ResourceRuntime.RenderPassColorAttachmentFormats.Remove(renderPass.Handle);
+            ResourceRuntime.RenderPassSemanticSignatures.Remove(renderPass.Handle);
         }
 
         /// <summary>
@@ -762,7 +685,7 @@ namespace XREngine.Rendering.Vulkan
         internal uint GetRenderPassColorAttachmentCount(RenderPass renderPass)
         {
             if (renderPass.Handle != 0 &&
-                _renderPassColorAttachmentCounts.TryGetValue(renderPass.Handle, out uint count))
+                ResourceRuntime.RenderPassColorAttachmentCounts.TryGetValue(renderPass.Handle, out uint count))
                 return count;
 
             Debug.VulkanWarningEvery(
@@ -771,7 +694,7 @@ namespace XREngine.Rendering.Vulkan
                 "[Vulkan] GetRenderPassColorAttachmentCount fallback to 1 for render pass 0x{0:X} (handle={1}). Registered passes: {2}",
                 renderPass.Handle,
                 renderPass.Handle,
-                _renderPassColorAttachmentCounts.Count);
+                ResourceRuntime.RenderPassColorAttachmentCounts.Count);
 
             return 1u;
         }
@@ -784,7 +707,7 @@ namespace XREngine.Rendering.Vulkan
         /// <returns>The format of the specified color attachment, or Format.Undefined if not found.</returns>
         internal Format GetRenderPassColorAttachmentFormat(RenderPass renderPass, uint attachmentIndex)
             => renderPass.Handle != 0 &&
-                _renderPassColorAttachmentFormats.TryGetValue(renderPass.Handle, out Format[]? formats) &&
+                ResourceRuntime.RenderPassColorAttachmentFormats.TryGetValue(renderPass.Handle, out Format[]? formats) &&
                 attachmentIndex < formats.Length
                     ? formats[attachmentIndex]
                     : Format.Undefined;
@@ -799,12 +722,12 @@ namespace XREngine.Rendering.Vulkan
             if (format == Format.Undefined || VkFormatConversions.IsDepthStencilFormat(format))
                 return false;
 
-            if (_formatColorBlendSupport.TryGetValue(format, out bool supported))
+            if (ResourceRuntime.FormatColorBlendSupport.TryGetValue(format, out bool supported))
                 return supported;
 
             Api!.GetPhysicalDeviceFormatProperties(PhysicalDevice, format, out FormatProperties properties);
             supported = (properties.OptimalTilingFeatures & FormatFeatureFlags.ColorAttachmentBlendBit) != 0;
-            _formatColorBlendSupport[format] = supported;
+            ResourceRuntime.FormatColorBlendSupport[format] = supported;
             return supported;
         }
 
@@ -816,7 +739,7 @@ namespace XREngine.Rendering.Vulkan
         internal string GetRenderPassSemanticSignature(RenderPass renderPass)
         {
             if (renderPass.Handle != 0 &&
-                _renderPassSemanticSignatures.TryGetValue(renderPass.Handle, out string? signature) &&
+                ResourceRuntime.RenderPassSemanticSignatures.TryGetValue(renderPass.Handle, out string? signature) &&
                 !string.IsNullOrWhiteSpace(signature))
             {
                 return signature;
@@ -826,15 +749,9 @@ namespace XREngine.Rendering.Vulkan
         }
 
         /// <summary>
-        /// The list of required Vulkan device extensions for the application.
-        /// </summary>
-        private static readonly string[] CommonRequiredDeviceExtensions = [];
-        private readonly string[] _requiredDeviceExtensions;
-
-        /// <summary>
         /// Optional extensions that will be enabled if supported by the device.
         /// </summary>
-        private readonly string[] _optionalDeviceExtensions =
+        private static readonly string[] OptionalDeviceExtensions =
         [
             "VK_KHR_multiview",
             "VK_KHR_external_memory",
@@ -930,17 +847,17 @@ namespace XREngine.Rendering.Vulkan
         /// <returns>An array of strings representing the required Vulkan instance extensions.</returns>
         private string[] GetRequiredExtensions()
         {
-            string[] extensions = _targetDriver.GetRequiredInstanceExtensions();
-            _supportsSwapchainColorspace =
-                _targetDriver.RequiresSwapchainOutput &&
+            string[] extensions = OutputRuntime.TargetDriver.GetRequiredInstanceExtensions();
+            _deviceContext.MutableCapabilities._supportsSwapchainColorspace =
+                OutputRuntime.TargetDriver.RequiresSwapchainOutput &&
                 IsInstanceExtensionAvailable(ExtSwapchainColorspaceExtensionName);
-            if (_supportsSwapchainColorspace)
+            if (_deviceContext.MutableCapabilities._supportsSwapchainColorspace)
                 extensions = [.. extensions, ExtSwapchainColorspaceExtensionName];
-            _surfacePresentScalingInstanceExtensionsEnabled =
-                _targetDriver.RequiresSwapchainOutput &&
+            _deviceContext.MutableCapabilities._surfacePresentScalingInstanceExtensionsEnabled =
+                OutputRuntime.TargetDriver.RequiresSwapchainOutput &&
                 IsInstanceExtensionAvailable(GetSurfaceCapabilities2ExtensionName) &&
                 IsInstanceExtensionAvailable(SurfaceMaintenance1ExtensionName);
-            if (_surfacePresentScalingInstanceExtensionsEnabled)
+            if (_deviceContext.MutableCapabilities._surfacePresentScalingInstanceExtensionsEnabled)
             {
                 extensions =
                 [
@@ -952,18 +869,18 @@ namespace XREngine.Rendering.Vulkan
             var openXrRequirements = OpenXRAPI.GetRequestedVulkanRuntimeRequirements();
             if (openXrRequirements.InstanceExtensions.Length > 0)
                 extensions = [.. extensions, .. openXrRequirements.InstanceExtensions];
-            if (_streamlineRequiredInstanceExtensions.Length > 0)
+            if (_outputRuntime._streamlineRequiredInstanceExtensions.Length > 0)
             {
-                foreach (string extension in _streamlineRequiredInstanceExtensions)
+                foreach (string extension in _outputRuntime._streamlineRequiredInstanceExtensions)
                 {
                     if (!IsInstanceExtensionAvailable(extension))
                         throw new NotSupportedException($"Streamline requires unavailable Vulkan instance extension '{extension}'.");
                 }
 
-                extensions = [.. extensions, .. _streamlineRequiredInstanceExtensions];
+                extensions = [.. extensions, .. _outputRuntime._streamlineRequiredInstanceExtensions];
             }
 
-            if (EnableValidationLayers || _diagnosticOptions.EnableDebugUtils)
+            if (EnableValidationLayers || _frameTelemetry._diagnosticOptions.EnableDebugUtils)
                 extensions = [.. extensions, ExtDebugUtils.ExtensionName];
 
             return [.. extensions

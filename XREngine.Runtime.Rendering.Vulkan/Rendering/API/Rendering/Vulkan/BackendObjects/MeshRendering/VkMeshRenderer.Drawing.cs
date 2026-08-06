@@ -155,7 +155,7 @@ internal unsafe partial class VkMeshRenderer
 			bool pipelineReady;
 			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.EnsurePipeline"))
 			{
-				pipelineReady = EnsurePipeline(material, topology, drawCopy, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, out pipeline);
+				pipelineReady = EnsurePipeline(material, topology, drawCopy, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, allowPipelineCreation: false, out pipeline);
 			}
 			if (!pipelineReady)
 			{
@@ -274,7 +274,7 @@ internal unsafe partial class VkMeshRenderer
 			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.EnsurePipeline"))
 			{
 				pipelineReady = vertexCount > 0 &&
-					EnsurePipeline(material, fallbackTopology, drawCopy, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, out pipeline);
+					EnsurePipeline(material, fallbackTopology, drawCopy, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, allowPipelineCreation: false, out pipeline);
 			}
 			if (pipelineReady)
 			{
@@ -559,6 +559,7 @@ internal unsafe partial class VkMeshRenderer
 						passMetadata,
 						depthStencilReadOnly,
 						pipelineName,
+						allowPipelineCreation: true,
 						out Pipeline fallbackPipeline))
 				{
 					reason = $"pipeline pending for {fallbackTopology}";
@@ -593,8 +594,7 @@ internal unsafe partial class VkMeshRenderer
 			{
 				return false;
 			}
-			Renderer.TryCaptureCpuDirectDynamicData(
-				this,
+			TryCaptureCpuDirectDynamicData(
 				frameIndex,
 				drawUniformSlot,
 				draw,
@@ -661,7 +661,7 @@ internal unsafe partial class VkMeshRenderer
 					preparedDescriptorHeapPushDwordCount =
 						heapLayout.PushDwordCount;
 					preparedDescriptorHeapPushDwords =
-						ArrayPool<uint>.Shared.Rent(
+						_preparedUIntArrays.Rent(
 							preparedDescriptorHeapPushDwordCount);
 					descriptorHeapPushData.Dwords.AsSpan(
 						0,
@@ -690,7 +690,7 @@ internal unsafe partial class VkMeshRenderer
 				primitiveCount,
 				frameIndex,
 				drawUniformSlot,
-				Renderer.MeshFrameDataReservationGeneration,
+				Renderer.MappedFrameArena?.Generation ?? 0UL,
 				preparedFrameDataPayloadHandles,
 				preparedFrameDataPayloadHandleCount,
 				CreatePerDrawPushConstants(material, draw),
@@ -711,12 +711,12 @@ internal unsafe partial class VkMeshRenderer
 			if (preparedDescriptorBindings is not null || preparedDynamicOffsets is not null)
 				ReturnPreparedDescriptorBindings(preparedDescriptorBindings, preparedDynamicOffsets);
 			if (preparedDescriptorHeapPushDwords is not null)
-				ArrayPool<uint>.Shared.Return(preparedDescriptorHeapPushDwords);
+				_preparedUIntArrays.Return(preparedDescriptorHeapPushDwords);
 			if (preparedFrameDataPayloadHandles is not null)
 			{
-				ArrayPool<VulkanPreparedFrameDataPayloadHandle>.Shared.Return(
+				_preparedFrameDataPayloadArrays.Return(
 					preparedFrameDataPayloadHandles,
-					clearArray: true);
+					clear: true);
 			}
 		}
 	}
@@ -765,6 +765,7 @@ internal unsafe partial class VkMeshRenderer
 				passMetadata,
 				depthStencilReadOnly,
 				pipelineName,
+				allowPipelineCreation: true,
 				out Pipeline pipeline))
 		{
 			reason = $"pipeline pending for {topology}";
@@ -917,20 +918,20 @@ internal unsafe partial class VkMeshRenderer
 	internal static void ReturnPreparedMeshDrawStateBuffers(
 		in VulkanPreparedMeshDrawState recordingState)
 	{
-		ReturnRentedVertexBufferSnapshot(
+		recordingState.OwnerIdentity.ReturnRentedVertexBufferSnapshot(
 			recordingState.VertexBuffers,
 			recordingState.VertexBindings);
-		ReturnPreparedDescriptorBindings(
+		recordingState.OwnerIdentity.ReturnPreparedDescriptorBindings(
 			recordingState.DescriptorBindings,
 			recordingState.DynamicOffsets);
 		if (recordingState.DescriptorHeapPushDwords is not null)
-			ArrayPool<uint>.Shared.Return(
+			recordingState.OwnerIdentity._preparedUIntArrays.Return(
 				recordingState.DescriptorHeapPushDwords);
 		if (recordingState.FrameDataPayloadHandles is not null)
 		{
-			ArrayPool<VulkanPreparedFrameDataPayloadHandle>.Shared.Return(
+			recordingState.OwnerIdentity._preparedFrameDataPayloadArrays.Return(
 				recordingState.FrameDataPayloadHandles,
-				clearArray: true);
+				clear: true);
 		}
 	}
 
@@ -965,10 +966,8 @@ internal unsafe partial class VkMeshRenderer
 		if (candidateCount == 0)
 			return true;
 
-		handles =
-			ArrayPool<VulkanPreparedFrameDataPayloadHandle>.Shared.Rent(
-				candidateCount);
-		ulong arenaGeneration = Renderer.MeshFrameDataReservationGeneration;
+		handles = _preparedFrameDataPayloadArrays.Rent(candidateCount);
+		ulong arenaGeneration = Renderer.MappedFrameArena?.Generation ?? 0UL;
 		ulong materialGeneration = ComputeMaterialPublicationGeneration(
 			material.BindingLayoutVersion,
 			material.BindingValueVersion,
@@ -1129,10 +1128,9 @@ internal unsafe partial class VkMeshRenderer
 			return true;
 
 		preparedBindings =
-			ArrayPool<VulkanPreparedDescriptorSetBinding>.Shared.Rent(
-				preparedBindingCount);
+			_preparedDescriptorBindingArrays.Rent(preparedBindingCount);
 		if (totalDynamicOffsetCount > 0)
-			dynamicOffsets = ArrayPool<uint>.Shared.Rent(totalDynamicOffsetCount);
+			dynamicOffsets = _preparedUIntArrays.Rent(totalDynamicOffsetCount);
 
 		int preparedBindingIndex = 0;
 		int dynamicOffsetIndex = 0;
@@ -1198,7 +1196,7 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		if (!renderer.TryAcquireMeshFrameDataRecordingLease(
+		if (!renderer.TryAcquireMappedFrameArenaRecordingLease(
 				commandBuffer,
 				recordingState.OwnerIdentity,
 				recordingState.DrawUniformSlot,
@@ -1250,15 +1248,14 @@ internal unsafe partial class VkMeshRenderer
 		return true;
 	}
 
-	private static void ReturnPreparedDescriptorBindings(
+	private void ReturnPreparedDescriptorBindings(
 		VulkanPreparedDescriptorSetBinding[]? preparedBindings,
 		uint[]? dynamicOffsets)
 	{
 		if (preparedBindings is not null)
-			ArrayPool<VulkanPreparedDescriptorSetBinding>.Shared.Return(
-				preparedBindings);
+			_preparedDescriptorBindingArrays.Return(preparedBindings, clear: true);
 		if (dynamicOffsets is not null)
-			ArrayPool<uint>.Shared.Return(dynamicOffsets);
+			_preparedUIntArrays.Return(dynamicOffsets);
 	}
 
 	internal bool RecordIndirectDrawState(
@@ -1301,7 +1298,7 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		if (!EnsurePipeline(material, PrimitiveTopology.TriangleList, draw, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, out var pipeline))
+		if (!EnsurePipeline(material, PrimitiveTopology.TriangleList, draw, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, allowPipelineCreation: false, out var pipeline))
 			return false;
 
 		Renderer.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
@@ -1325,6 +1322,7 @@ internal unsafe partial class VkMeshRenderer
 	}
 
 	internal readonly record struct IndirectDrawRecordingState(
+		VkMeshRenderer OwnerIdentity,
 		VkRenderProgram Program,
 		Pipeline Pipeline,
 		PipelineLayout PipelineLayout,
@@ -1371,7 +1369,7 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		if (!EnsurePipeline(material, PrimitiveTopology.TriangleList, draw, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, out var pipeline))
+		if (!EnsurePipeline(material, PrimitiveTopology.TriangleList, draw, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, allowPipelineCreation: true, out var pipeline))
 		{
 			reason = "pipeline pending";
 			return false;
@@ -1418,7 +1416,7 @@ internal unsafe partial class VkMeshRenderer
 				int descriptorSlotIndex = ResolveDescriptorFrameIndex(frameIndex, _descriptorSets.Length);
 				UpdateEngineUniformBuffersForDraw(frameIndex, drawUniformSlot, draw);
 				UpdateAutoUniformBuffersForDraw(frameIndex, drawUniformSlot, material, draw);
-				Renderer.TryCaptureCpuDirectDynamicData(this, frameIndex, drawUniformSlot, draw, ResolvePassMask(passIndex));
+				TryCaptureCpuDirectDynamicData(frameIndex, drawUniformSlot, draw, ResolvePassMask(passIndex));
 
 				descriptorSets = _descriptorSets[descriptorSlotIndex];
 				if (descriptorSets.Length == 0)
@@ -1438,6 +1436,7 @@ internal unsafe partial class VkMeshRenderer
 			}
 
 			recordingState = new IndirectDrawRecordingState(
+				this,
 				program,
 				pipeline,
 				program.PipelineLayout,
@@ -1450,7 +1449,7 @@ internal unsafe partial class VkMeshRenderer
 				indexType,
 				(int)Math.Min(imageIndex, int.MaxValue),
 				drawUniformSlot,
-				Renderer.MeshFrameDataReservationGeneration,
+				Renderer.MappedFrameArena?.Generation ?? 0UL,
 				CreatePerDrawPushConstants(material, draw));
 
 			vertexBuffers = null;
@@ -1515,7 +1514,9 @@ internal unsafe partial class VkMeshRenderer
 	}
 
 	internal static void ReturnIndirectDrawRecordingStateBuffers(in IndirectDrawRecordingState recordingState)
-		=> ReturnRentedVertexBufferSnapshot(recordingState.VertexBuffers, recordingState.VertexBindings);
+		=> recordingState.OwnerIdentity?.ReturnRentedVertexBufferSnapshot(
+			recordingState.VertexBuffers,
+			recordingState.VertexBindings);
 
 	private bool TryRentVertexBufferSnapshot(
 		out VkBufferHandle[]? vertexBuffers,
@@ -1533,8 +1534,8 @@ internal unsafe partial class VkMeshRenderer
 			if (vertexBufferCount == 0)
 				return true;
 
-			vertexBuffers = ArrayPool<VkBufferHandle>.Shared.Rent(vertexBufferCount);
-			vertexBindings = ArrayPool<uint>.Shared.Rent(vertexBufferCount);
+			vertexBuffers = _preparedVertexBufferArrays.Rent(vertexBufferCount);
+			vertexBindings = _preparedUIntArrays.Rent(vertexBufferCount);
 
 			for (int i = 0; i < vertexBufferCount; i++)
 			{
@@ -1574,12 +1575,12 @@ internal unsafe partial class VkMeshRenderer
 		}
 	}
 
-	private static void ReturnRentedVertexBufferSnapshot(VkBufferHandle[]? vertexBuffers, uint[]? vertexBindings)
+	private void ReturnRentedVertexBufferSnapshot(VkBufferHandle[]? vertexBuffers, uint[]? vertexBindings)
 	{
 		if (vertexBuffers is not null)
-			ArrayPool<VkBufferHandle>.Shared.Return(vertexBuffers, clearArray: true);
+			_preparedVertexBufferArrays.Return(vertexBuffers, clear: true);
 		if (vertexBindings is not null)
-			ArrayPool<uint>.Shared.Return(vertexBindings, clearArray: true);
+			_preparedUIntArrays.Return(vertexBindings);
 	}
 
 	private void NotifyDrawUniforms(XRMaterial material, XRRenderProgram programData, in PendingMeshDraw draw)
@@ -1656,7 +1657,7 @@ internal unsafe partial class VkMeshRenderer
 		string programName = _program.Data?.Name ?? "UnnamedProgram";
 		string materialName = material.Name ?? "UnnamedMaterial";
 		int imageIndex = Math.Max(frameDataImageIndex, 0);
-		Renderer.TryCaptureCpuDirectDynamicData(this, imageIndex, drawUniformSlot, draw, ResolvePassMask(passIndex));
+		TryCaptureCpuDirectDynamicData(imageIndex, drawUniformSlot, draw, ResolvePassMask(passIndex));
 
 		bool requiresDescriptors = _program.DescriptorSetLayouts.Count > 0 && _program.DescriptorBindings.Count > 0;
 		if (!requiresDescriptors)
@@ -1711,7 +1712,7 @@ internal unsafe partial class VkMeshRenderer
 
 		UpdateEngineUniformBuffersForDraw(imageIndex, drawUniformSlot, draw);
 		UpdateAutoUniformBuffersForDraw(imageIndex, drawUniformSlot, material, draw);
-		Renderer.TryCaptureCpuDirectDynamicData(this, imageIndex, drawUniformSlot, draw, ResolvePassMask(passIndex));
+		TryCaptureCpuDirectDynamicData(imageIndex, drawUniformSlot, draw, ResolvePassMask(passIndex));
 
 		DescriptorSet[] sets = _descriptorSets[descriptorSlotIndex];
 		if (sets.Length == 0)
@@ -1774,7 +1775,7 @@ internal unsafe partial class VkMeshRenderer
 		int drawUniformSlot,
 		ulong sealedFrameDataGeneration = 0)
 	{
-		if (!Renderer.TryAcquireMeshFrameDataRecordingLease(
+		if (!Renderer.TryAcquireMappedFrameArenaRecordingLease(
 				commandBuffer,
 				this,
 				drawUniformSlot,
@@ -2098,6 +2099,7 @@ internal unsafe partial class VkMeshRenderer
 					passMetadata,
 					depthStencilReadOnly,
 					pipelineName,
+					allowPipelineCreation: true,
 					out _);
 			}
 
@@ -2114,6 +2116,7 @@ internal unsafe partial class VkMeshRenderer
 					passMetadata,
 					depthStencilReadOnly,
 					pipelineName,
+					allowPipelineCreation: true,
 					out _);
 			}
 
@@ -2130,6 +2133,7 @@ internal unsafe partial class VkMeshRenderer
 					passMetadata,
 					depthStencilReadOnly,
 					pipelineName,
+					allowPipelineCreation: true,
 					out _);
 			}
 
@@ -2158,6 +2162,7 @@ internal unsafe partial class VkMeshRenderer
 						passMetadata,
 						depthStencilReadOnly,
 						pipelineName,
+						allowPipelineCreation: true,
 						out _);
 				}
 			}
@@ -2214,7 +2219,7 @@ internal unsafe partial class VkMeshRenderer
 				return false;
 			}
 
-			if (!Renderer.MeshFrameDataArenaEnabled ||
+			if (!Renderer.IsMappedFrameArenaEnabled ||
 				Renderer.IsDescriptorHeapDrawBindingActive ||
 				_program is null ||
 				!ReferenceEquals(_program, draw.PreparedProgram))
@@ -2225,8 +2230,8 @@ internal unsafe partial class VkMeshRenderer
 
 			int frameIndex = unchecked(
 				(int)Math.Min(imageIndex, int.MaxValue));
-			using VulkanRenderer.VulkanCpuStageScope autoUniformStage =
-				new(EVulkanCpuStage.FrameDataAutoUniformUpload);
+			using VulkanCpuStageScope autoUniformStage =
+				new(Renderer.FrameTelemetry, EVulkanCpuStage.FrameDataAutoUniformUpload);
 			UpdateAutoUniformBuffersForDraw(
 				frameIndex,
 				drawUniformSlot,
@@ -2258,7 +2263,7 @@ internal unsafe partial class VkMeshRenderer
 	private string? DescribeOwnerOnlyReusableFrameDataRefreshBlockerNoLock(
 		in PendingMeshDraw draw)
 	{
-		if (!Renderer.MeshFrameDataArenaEnabled)
+		if (!Renderer.IsMappedFrameArenaEnabled)
 			return "mesh frame-data arena disabled";
 		if (Renderer.IsDescriptorHeapDrawBindingActive)
 			return "descriptor-heap draw binding";
@@ -2437,8 +2442,8 @@ internal unsafe partial class VkMeshRenderer
 		bool capturedDescriptorResources =
 			descriptorResourcesCapturedByFrameSignature ||
 			draw.ProgramBindingSnapshot is not null;
-        using (VulkanRenderer.VulkanCpuStageScope descriptorStage =
-               new(EVulkanCpuStage.FrameDataDescriptorValidation))
+        using (VulkanCpuStageScope descriptorStage =
+               new(Renderer.FrameTelemetry, EVulkanCpuStage.FrameDataDescriptorValidation))
         {
             bool descriptorSetsReusable = CanReuseRecordedDescriptorSets(
                 material,
@@ -2488,15 +2493,15 @@ internal unsafe partial class VkMeshRenderer
             }
         }
 
-        using (VulkanRenderer.VulkanCpuStageScope engineUniformStage =
-               new(EVulkanCpuStage.FrameDataEngineUniformUpload))
+        using (VulkanCpuStageScope engineUniformStage =
+               new(Renderer.FrameTelemetry, EVulkanCpuStage.FrameDataEngineUniformUpload))
         {
             UpdateEngineUniformBuffersForDraw(frameIndex, drawUniformSlot, draw);
         }
         if (refreshMaterialUniforms)
         {
-            using VulkanRenderer.VulkanCpuStageScope autoUniformStage =
-                new(EVulkanCpuStage.FrameDataAutoUniformUpload);
+            using VulkanCpuStageScope autoUniformStage =
+                new(Renderer.FrameTelemetry, EVulkanCpuStage.FrameDataAutoUniformUpload);
             UpdateAutoUniformBuffersForDraw(frameIndex, drawUniformSlot, material, draw);
         }
         return true;

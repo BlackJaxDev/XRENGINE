@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -15,6 +15,16 @@ namespace XREngine.Rendering.Vulkan
     public unsafe partial class VulkanRenderer
     {
         private void StoreFrameOpSignatureDebugParts(PrimaryCommandArtifactOwner variant, FrameOp[] ops)
+        {
+            if (!FrameOpSignatureDiffDiagnosticsEnabled)
+                return;
+
+            variant.SignatureDebugParts = CaptureFrameOpSignatureDebugParts(ops);
+        }
+
+        private void StoreFrameOpSignatureDebugParts(
+            PrimaryCommandArtifactOwner variant,
+            FrameOperationSequence ops)
         {
             if (!FrameOpSignatureDiffDiagnosticsEnabled)
                 return;
@@ -151,6 +161,48 @@ namespace XREngine.Rendering.Vulkan
                         break;
                     case TextureUploadFrameOp upload:
                         AddTextureUploadSignaturePart(parts, i, opType, upload);
+                        break;
+                }
+            }
+
+            return [.. parts];
+        }
+
+        private static FrameOpSignatureDebugPart[] CaptureFrameOpSignatureDebugParts(
+            FrameOperationSequence ops)
+        {
+            List<FrameOpSignatureDebugPart> parts = new(Math.Max(ops.Length * 5, 8));
+            for (int index = 0; index < ops.Length; index++)
+            {
+                FrameOp op = ops[index];
+                string opType = op.GetType().Name;
+                AddFrameOpBaseSignaturePart(parts, index, opType, op);
+
+                switch (op)
+                {
+                    case ClearOp clear:
+                        AddClearSignaturePart(parts, index, opType, clear);
+                        break;
+                    case MeshDrawOp draw:
+                        AddMeshDrawSignatureParts(parts, index, opType, draw);
+                        break;
+                    case QueryOp query:
+                        AddQuerySignaturePart(parts, index, opType, query);
+                        break;
+                    case BlitOp blit:
+                        AddBlitSignaturePart(parts, index, opType, blit);
+                        break;
+                    case IndirectDrawOp indirect:
+                        AddIndirectDrawSignaturePart(parts, index, opType, indirect);
+                        break;
+                    case MeshTaskDispatchIndirectCountOp meshTask:
+                        AddMeshTaskSignaturePart(parts, index, opType, meshTask);
+                        break;
+                    case MemoryBarrierOp barrier:
+                        AddMemoryBarrierSignaturePart(parts, index, opType, barrier);
+                        break;
+                    case PublishFramebufferForSamplingOp publish:
+                        AddPublishFramebufferForSamplingSignaturePart(parts, index, opType, publish);
                         break;
                 }
             }
@@ -535,21 +587,21 @@ namespace XREngine.Rendering.Vulkan
                 opType,
                 $"{prefix}.samplerUnits",
                 HashSamplerUnitBindingLayout(snapshot.Samplers, snapshot.SamplerNamesByUnit),
-                $"count={snapshot.Samplers.Count} descriptor=0x{HashSamplerUnitBindings(snapshot.Samplers, snapshot.SamplerNamesByUnit, pipeline):X16} stableDescriptor=0x{unchecked((ulong)HashSamplerUnitBindingsStable(snapshot.Samplers, snapshot.SamplerNamesByUnit, pipeline)):X16} keys=[{SampleKeys(snapshot.Samplers.Keys)}]");
+                $"count={snapshot.Samplers.Count} descriptor=0x{HashSamplerUnitBindings(snapshot.Samplers, snapshot.SamplerNamesByUnit, snapshot.DescriptorSignatures, pipeline):X16} stableDescriptor=0x{unchecked((ulong)HashSamplerUnitBindingsStable(snapshot.Samplers, snapshot.SamplerNamesByUnit, snapshot.DescriptorSignatures, pipeline)):X16} keys=[{SampleKeys(snapshot.Samplers.Keys)}]");
             AddSignaturePart(
                 parts,
                 opIndex,
                 opType,
                 $"{prefix}.samplerNames",
                 HashSamplerNameBindingLayout(snapshot.SamplersByName),
-                $"count={snapshot.SamplersByName.Count} descriptor=0x{HashSamplerNameBindings(snapshot.SamplersByName, pipeline):X16} stableDescriptor=0x{unchecked((ulong)HashSamplerNameBindingsStable(snapshot.SamplersByName, pipeline)):X16} keys=[{SampleKeys(snapshot.SamplersByName.Keys)}]");
+                $"count={snapshot.SamplersByName.Count} descriptor=0x{HashSamplerNameBindings(snapshot.SamplersByName, snapshot.DescriptorSignatures, pipeline):X16} stableDescriptor=0x{unchecked((ulong)HashSamplerNameBindingsStable(snapshot.SamplersByName, snapshot.DescriptorSignatures, pipeline)):X16} keys=[{SampleKeys(snapshot.SamplersByName.Keys)}]");
             AddSignaturePart(
                 parts,
                 opIndex,
                 opType,
                 $"{prefix}.images",
                 HashImageBindingLayout(snapshot.Images),
-                $"count={snapshot.Images.Count} descriptor=0x{unchecked((ulong)HashImageBindings(snapshot.Images)):X16} stableDescriptor=0x{unchecked((ulong)HashImageBindingsStable(snapshot.Images)):X16} keys=[{SampleKeys(snapshot.Images.Keys)}]");
+                $"count={snapshot.Images.Count} descriptor=0x{unchecked((ulong)HashImageBindings(snapshot.Images, snapshot.DescriptorSignatures)):X16} stableDescriptor=0x{unchecked((ulong)HashImageBindingsStable(snapshot.Images, snapshot.DescriptorSignatures)):X16} keys=[{SampleKeys(snapshot.Images.Keys)}]");
             AddSignaturePart(
                 parts,
                 opIndex,
@@ -606,6 +658,7 @@ namespace XREngine.Rendering.Vulkan
         private static int HashSamplerUnitBindingsStable(
             Dictionary<uint, XRTexture> samplers,
             Dictionary<uint, string> samplerNamesByUnit,
+            VulkanTextureDescriptorSignaturePlan descriptorSignatures,
             XRRenderPipelineInstance? pipeline)
         {
             HashCode hash = new();
@@ -617,13 +670,16 @@ namespace XREngine.Rendering.Vulkan
                     IsMutableFrameSourceSamplerNameForSignatureDebug(samplerName, pipeline);
                 hash.Add(mutableFrameSource
                     ? FrameSourceMutableDescriptorSignature
-                    : ComputeTextureDescriptorSignature(pair.Value));
+                    : ComputeTextureDescriptorSignature(pair.Value, descriptorSignatures));
             }
 
             return hash.ToHashCode();
         }
 
-        private static int HashSamplerNameBindingsStable(Dictionary<string, XRTexture> samplers, XRRenderPipelineInstance? pipeline)
+        private static int HashSamplerNameBindingsStable(
+            Dictionary<string, XRTexture> samplers,
+            VulkanTextureDescriptorSignaturePlan descriptorSignatures,
+            XRRenderPipelineInstance? pipeline)
         {
             HashCode hash = new();
             hash.Add(samplers.Count);
@@ -632,7 +688,7 @@ namespace XREngine.Rendering.Vulkan
                 hash.Add(pair.Key, StringComparer.Ordinal);
                 hash.Add(IsMutableFrameSourceSamplerNameForSignatureDebug(pair.Key, pipeline)
                     ? FrameSourceMutableDescriptorSignature
-                    : ComputeTextureDescriptorSignature(pair.Value));
+                    : ComputeTextureDescriptorSignature(pair.Value, descriptorSignatures));
             }
 
             return hash.ToHashCode();
@@ -649,7 +705,9 @@ namespace XREngine.Rendering.Vulkan
                 texture is not null;
         }
 
-        private static int HashImageBindingsStable(Dictionary<uint, ProgramImageBinding> images)
+        private static int HashImageBindingsStable(
+            Dictionary<uint, ProgramImageBinding> images,
+            VulkanTextureDescriptorSignaturePlan descriptorSignatures)
         {
             HashCode hash = new();
             hash.Add(images.Count);
@@ -658,7 +716,7 @@ namespace XREngine.Rendering.Vulkan
                 ProgramImageBinding binding = pair.Value;
                 hash.Add(pair.Key);
                 hash.Add(binding.Texture.GetHashCode());
-                hash.Add(ComputeTextureDescriptorSignature(binding.Texture));
+                hash.Add(ComputeTextureDescriptorSignature(binding.Texture, descriptorSignatures));
                 hash.Add(binding.Level);
                 hash.Add(binding.Layered);
                 hash.Add(binding.Layer);

@@ -23,7 +23,7 @@ internal sealed record QueryOp(
 
     internal override int RecordPrimary(
         VulkanRenderer renderer,
-        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
+        scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
         if (TryRecordSecondaryBucket(
@@ -93,7 +93,7 @@ internal sealed record QueryOp(
 
     private int RecordInlineQueryOperation(
         VulkanRenderer renderer,
-        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
+        scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo,
         bool begin)
     {
@@ -159,7 +159,7 @@ internal sealed record QueryOp(
     }
 
     private static void BeginInlineQuery(
-        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
+        scoped ref PrimaryCommandBufferRecordingState recordingState,
         QueryOp operation,
         int operationIndex,
         int passIndex)
@@ -210,7 +210,7 @@ internal sealed record QueryOp(
     }
 
     private static void EndInlineQuery(
-        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
+        scoped ref PrimaryCommandBufferRecordingState recordingState,
         QueryOp operation,
         int operationIndex,
         int passIndex)

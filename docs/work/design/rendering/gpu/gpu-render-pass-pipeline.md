@@ -12,7 +12,7 @@
 - `Compute/GPURenderResetCounters.comp` – clears counters, overflow flags, and stats each frame.
 - `Compute/GPURenderCopyCommands.comp` – current culling path (full copy + visible-count write).
 - `Compute/GPURenderIndirect.comp` – generates indirect draw commands and updates draw counts.
-- Additional compute stages (`GPURenderCulling.comp`, `GPURenderExtractSoA.comp`, `GPURenderCullingSoA.comp`) load during initialization but remain disabled until true GPU culling/SoA paths are enabled.
+- GPU culling consumes canonical `DrawMetadata` and `BoundsBuffer` directly; the unused SoA extraction compatibility stages were removed.
 - Graphics shaders are supplied per `XRMaterial` (e.g., red box raster shader, skybox shader) and combined by `HybridRenderingManager`.
 
 ## Primary Components

@@ -28,14 +28,11 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     internal const uint DescriptorSetTierCount = 4;
 
-    private readonly object _descriptorSetLayoutCacheLock = new();
-    private readonly Dictionary<ulong, List<CachedDescriptorSetLayout>> _descriptorSetLayoutsByHash = new();
-    private readonly Dictionary<ulong, CachedDescriptorSetLayout> _descriptorSetLayoutsByHandle = new();
 
     /// <summary>
     /// Indicates whether the Vulkan renderer supports descriptor indexing.
     /// </summary>
-    internal bool SupportsDescriptorIndexing => DeviceCapabilities.Supports(EVulkanDeviceCapability.DescriptorIndexing);
+    internal bool SupportsDescriptorIndexing => _deviceContext.Capabilities.Supports(EVulkanDeviceCapability.DescriptorIndexing);
 
     /// <summary>
     /// Tries to acquire a cached descriptor set layout for the specified set index and bindings.
@@ -60,9 +57,9 @@ public unsafe partial class VulkanRenderer
         DescriptorLayoutBindingSignature[] signature = BuildLayoutSignature(setIndex, bindings);
         ulong schemaHash = ComputeLayoutSchemaHash(signature);
 
-        lock (_descriptorSetLayoutCacheLock)
+        lock (_resourceRuntime.Descriptors._descriptorSetLayoutCacheLock)
         {
-            if (_descriptorSetLayoutsByHash.TryGetValue(schemaHash, out List<CachedDescriptorSetLayout>? bucket))
+            if (_resourceRuntime.Descriptors._descriptorSetLayoutsByHash.TryGetValue(schemaHash, out List<CachedDescriptorSetLayout>? bucket))
             {
                 foreach (CachedDescriptorSetLayout cached in bucket)
                 {
@@ -94,8 +91,8 @@ public unsafe partial class VulkanRenderer
 
             bucket ??= [];
             bucket.Add(created);
-            _descriptorSetLayoutsByHash[schemaHash] = bucket;
-            _descriptorSetLayoutsByHandle[layout.Handle] = created;
+            _resourceRuntime.Descriptors._descriptorSetLayoutsByHash[schemaHash] = bucket;
+            _resourceRuntime.Descriptors._descriptorSetLayoutsByHandle[layout.Handle] = created;
             return true;
         }
     }
@@ -109,12 +106,12 @@ public unsafe partial class VulkanRenderer
         if (layout.Handle == 0)
             return;
 
-        lock (_descriptorSetLayoutCacheLock)
+        lock (_resourceRuntime.Descriptors._descriptorSetLayoutCacheLock)
         {
-            if (!_descriptorSetLayoutsByHandle.TryGetValue(layout.Handle, out CachedDescriptorSetLayout? cached))
+            if (!_resourceRuntime.Descriptors._descriptorSetLayoutsByHandle.TryGetValue(layout.Handle, out CachedDescriptorSetLayout? cached))
             {
                 if (TryBeginDestroyDescriptorSetLayout(layout, "DescriptorLayoutCache.UncachedRelease"))
-                    Api!.DestroyDescriptorSetLayout(device, layout, null);
+                    Api!.DestroyDescriptorSetLayout(_deviceContext.Device, layout, null);
                 return;
             }
 
@@ -122,16 +119,16 @@ public unsafe partial class VulkanRenderer
             if (cached.RefCount > 0)
                 return;
 
-            _descriptorSetLayoutsByHandle.Remove(layout.Handle);
-            if (_descriptorSetLayoutsByHash.TryGetValue(cached.SchemaHash, out List<CachedDescriptorSetLayout>? bucket))
+            _resourceRuntime.Descriptors._descriptorSetLayoutsByHandle.Remove(layout.Handle);
+            if (_resourceRuntime.Descriptors._descriptorSetLayoutsByHash.TryGetValue(cached.SchemaHash, out List<CachedDescriptorSetLayout>? bucket))
             {
                 bucket.Remove(cached);
                 if (bucket.Count == 0)
-                    _descriptorSetLayoutsByHash.Remove(cached.SchemaHash);
+                    _resourceRuntime.Descriptors._descriptorSetLayoutsByHash.Remove(cached.SchemaHash);
             }
 
             if (TryBeginDestroyDescriptorSetLayout(cached.Layout, "DescriptorLayoutCache.Release"))
-                Api!.DestroyDescriptorSetLayout(device, cached.Layout, null);
+                Api!.DestroyDescriptorSetLayout(_deviceContext.Device, cached.Layout, null);
         }
     }
 
@@ -140,19 +137,19 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     private void DestroyCachedDescriptorSetLayouts()
     {
-        lock (_descriptorSetLayoutCacheLock)
+        lock (_resourceRuntime.Descriptors._descriptorSetLayoutCacheLock)
         {
-            foreach (CachedDescriptorSetLayout cached in _descriptorSetLayoutsByHandle.Values)
+            foreach (CachedDescriptorSetLayout cached in _resourceRuntime.Descriptors._descriptorSetLayoutsByHandle.Values)
             {
                 if (cached.Layout.Handle != 0)
                 {
                     if (TryBeginDestroyDescriptorSetLayout(cached.Layout, "DescriptorLayoutCache.DestroyAll"))
-                        Api!.DestroyDescriptorSetLayout(device, cached.Layout, null);
+                        Api!.DestroyDescriptorSetLayout(_deviceContext.Device, cached.Layout, null);
                 }
             }
 
-            _descriptorSetLayoutsByHash.Clear();
-            _descriptorSetLayoutsByHandle.Clear();
+            _resourceRuntime.Descriptors._descriptorSetLayoutsByHash.Clear();
+            _resourceRuntime.Descriptors._descriptorSetLayoutsByHandle.Clear();
         }
     }
 
@@ -299,7 +296,7 @@ public unsafe partial class VulkanRenderer
                     DescriptorBindingFlags flagsForBinding = 0;
                     bool isVariableDescriptorBinding = VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(setIndex, layoutBindings[i]);
 
-                    if (_supportsDescriptorBindingPartiallyBound)
+                    if (_deviceContext.MutableCapabilities._supportsDescriptorBindingPartiallyBound)
                         flagsForBinding |= DescriptorBindingFlags.PartiallyBoundBit;
 
                     // Vulkan forbids mixing any dynamic buffer descriptor with any
@@ -340,7 +337,7 @@ public unsafe partial class VulkanRenderer
                             PNext = &bindingFlagsInfo
                         };
 
-                        if (Api!.CreateDescriptorSetLayout(device, ref layoutInfo, null, out layout) != Result.Success)
+                        if (Api!.CreateDescriptorSetLayout(_deviceContext.Device, ref layoutInfo, null, out layout) != Result.Success)
                             return false;
                     }
                 }
@@ -357,7 +354,7 @@ public unsafe partial class VulkanRenderer
                     PBindings = bindingsPtr,
                 };
 
-                if (Api!.CreateDescriptorSetLayout(device, ref layoutInfo, null, out layout) != Result.Success)
+                if (Api!.CreateDescriptorSetLayout(_deviceContext.Device, ref layoutInfo, null, out layout) != Result.Success)
                     return false;
             }
 
@@ -377,7 +374,7 @@ public unsafe partial class VulkanRenderer
     /// <returns>True if the descriptor type can use the update-after-bind feature; otherwise, false.</returns>
     private bool CanUseUpdateAfterBind(DescriptorType descriptorType)
     {
-        if (!_supportsDescriptorBindingUpdateAfterBind)
+        if (!_deviceContext.MutableCapabilities._supportsDescriptorBindingUpdateAfterBind)
             return false;
 
         return descriptorType switch
@@ -385,7 +382,7 @@ public unsafe partial class VulkanRenderer
             DescriptorType.SampledImage or DescriptorType.CombinedImageSampler or DescriptorType.Sampler => true,
             DescriptorType.UniformBuffer => true,
             DescriptorType.StorageBuffer => true,
-            DescriptorType.StorageImage => _supportsDescriptorBindingStorageImageUpdateAfterBind,
+            DescriptorType.StorageImage => _deviceContext.MutableCapabilities._supportsDescriptorBindingStorageImageUpdateAfterBind,
             _ => false,
         };
     }

@@ -46,7 +46,7 @@ internal sealed record BlitOp(
 
     internal override int RecordPrimary(
         VulkanRenderer renderer,
-        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
+        scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
         if (ColorBit && (InFbo is null || OutFbo is null))

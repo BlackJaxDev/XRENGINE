@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>
         /// The Vulkan descriptor set layout associated with this renderer.
         /// </summary>
-        private DescriptorSetLayout descriptorSetLayout;
+        private ref DescriptorSetLayout descriptorSetLayout => ref ResourceRuntime.Descriptors.RootSetLayout;
 
         /// <summary>
         /// Destroys the Vulkan descriptor set layout associated with this renderer, if it exists.
@@ -16,7 +16,7 @@ namespace XREngine.Rendering.Vulkan
         private void DestroyDescriptorSetLayout()
         {
             if (TryBeginDestroyDescriptorSetLayout(descriptorSetLayout, "Swapchain.DescriptorSetLayout"))
-                Api!.DestroyDescriptorSetLayout(device, descriptorSetLayout, null);
+                Api!.DestroyDescriptorSetLayout(_deviceContext.Device, descriptorSetLayout, null);
             descriptorSetLayout = default;
         }
 
@@ -44,7 +44,7 @@ namespace XREngine.Rendering.Vulkan
 
             fixed (DescriptorSetLayout* descriptorSetLayoutPtr = &descriptorSetLayout)
             {
-                if (Api!.CreateDescriptorSetLayout(device, ref layoutInfo, null, descriptorSetLayoutPtr) != Result.Success)
+                if (Api!.CreateDescriptorSetLayout(_deviceContext.Device, ref layoutInfo, null, descriptorSetLayoutPtr) != Result.Success)
                     throw new Exception("failed to create descriptor set layout!");
             }
 

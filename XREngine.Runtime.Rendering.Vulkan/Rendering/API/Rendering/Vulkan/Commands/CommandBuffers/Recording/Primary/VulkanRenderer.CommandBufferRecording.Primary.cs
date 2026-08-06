@@ -37,7 +37,7 @@ namespace XREngine.Rendering.Vulkan
 
             using VulkanMeshFrameDataManifestRecordingScope frameDataManifestScope = new(frameDataManifest);
             using VulkanCpuStageScope primaryCommandEncodingStage =
-                new(EVulkanCpuStage.PrimaryCommandEncoding);
+                new(_frameTelemetry, EVulkanCpuStage.PrimaryCommandEncoding);
             PreparePrimaryCommandEncoding(ref recordingState);
             using FrameOpResourcePlannerRecordingScope frameOpResourcePlannerRecordingScope =
                 EnterFrameOpResourcePlannerRecordingScope();

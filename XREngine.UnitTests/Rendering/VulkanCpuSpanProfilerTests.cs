@@ -11,14 +11,15 @@ public sealed class VulkanCpuSpanProfilerTests
     [Test]
     public void TargetedCapture_RetainsOnlyWarmedSelectedStageWithParentage()
     {
+        VulkanFrameTelemetry telemetry = new();
         VulkanCpuSpanProfiler.Configure([EVulkanCpuStage.PrimaryRecording, EVulkanCpuStage.SecondaryRecording], 8);
         VulkanCpuSpanProfiler.WarmCurrentThread();
         VulkanCpuSpanProfiler.Arm();
         try
         {
-            using (VulkanRenderer.VulkanCpuStageScope primary = new(EVulkanCpuStage.PrimaryRecording))
+            using (VulkanCpuStageScope primary = new(telemetry, EVulkanCpuStage.PrimaryRecording))
             {
-                using VulkanRenderer.VulkanCpuStageScope secondary = new(EVulkanCpuStage.SecondaryRecording);
+                using VulkanCpuStageScope secondary = new(telemetry, EVulkanCpuStage.SecondaryRecording);
             }
         }
         finally

@@ -7,32 +7,17 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private string[] _streamlineRequiredInstanceExtensions = [];
-    private string[] _streamlineRequiredDeviceExtensions = [];
-    private string[] _streamlineRequiredFeatures12 = [];
-    private string[] _streamlineRequiredFeatures13 = [];
-    private NvidiaDlssManager.Native.StreamlineQueueRequirements _streamlineQueueRequirements;
-    private uint _streamlineMinimumApiVersion = Vk.Version11;
-    private uint _streamlineGraphicsQueueIndex;
-    private uint _streamlineGraphicsQueueFamily;
-    private uint _streamlineComputeQueueIndex;
-    private uint _streamlineComputeQueueFamily;
-    private uint _streamlineOpticalFlowQueueIndex;
-    private uint _streamlineOpticalFlowQueueFamily;
-    private bool _streamlineDlssProvisioned;
-    private bool _streamlineFrameGenerationProvisioned;
-
-    internal uint StreamlineGraphicsQueueIndex => _streamlineGraphicsQueueIndex;
-    internal uint StreamlineGraphicsQueueFamily => _streamlineGraphicsQueueFamily;
-    internal uint StreamlineComputeQueueIndex => _streamlineComputeQueueIndex;
-    internal uint StreamlineComputeQueueFamily => _streamlineComputeQueueFamily;
-    internal uint StreamlineOpticalFlowQueueIndex => _streamlineOpticalFlowQueueIndex;
-    internal uint StreamlineOpticalFlowQueueFamily => _streamlineOpticalFlowQueueFamily;
-    internal bool StreamlineUsesNativeOpticalFlow => _streamlineQueueRequirements.OpticalFlowQueues > 0;
-    internal bool StreamlineDlssProvisioned => _streamlineDlssProvisioned;
-    public bool StreamlineFrameGenerationProvisioned => _streamlineFrameGenerationProvisioned;
+    internal uint StreamlineGraphicsQueueIndex => _outputRuntime._streamlineGraphicsQueueIndex;
+    internal uint StreamlineGraphicsQueueFamily => _outputRuntime._streamlineGraphicsQueueFamily;
+    internal uint StreamlineComputeQueueIndex => _outputRuntime._streamlineComputeQueueIndex;
+    internal uint StreamlineComputeQueueFamily => _outputRuntime._streamlineComputeQueueFamily;
+    internal uint StreamlineOpticalFlowQueueIndex => _outputRuntime._streamlineOpticalFlowQueueIndex;
+    internal uint StreamlineOpticalFlowQueueFamily => _outputRuntime._streamlineOpticalFlowQueueFamily;
+    internal bool StreamlineUsesNativeOpticalFlow => _outputRuntime._streamlineQueueRequirements.OpticalFlowQueues > 0;
+    internal bool StreamlineDlssProvisioned => _outputRuntime._streamlineDlssProvisioned;
+    public bool StreamlineFrameGenerationProvisioned => _outputRuntime._streamlineFrameGenerationProvisioned;
     private bool IsStreamlineFrameGenerationRequested
-        => _streamlineFrameGenerationProvisioned && NvidiaDlssManager.IsFrameGenerationRequested;
+        => _outputRuntime._streamlineFrameGenerationProvisioned && NvidiaDlssManager.IsFrameGenerationRequested;
 
     /// <summary>
     /// Resolves all Vulkan instance, device, feature, and queue requirements before Vulkan objects are created.
@@ -54,9 +39,9 @@ public unsafe partial class VulkanRenderer
         // RenderDoc capture fail during startup even when DLSS and DLSS-G are off.
         // Explicit requests remain authoritative below and still surface any
         // incompatibility instead of silently falling back.
-        bool provisionRuntimeToggles = !_diagnosticOptions.RenderDocFriendly
+        bool provisionRuntimeToggles = !_frameTelemetry._diagnosticOptions.RenderDocFriendly
             && ShouldProvisionStreamlineRuntimeToggles();
-        if (_diagnosticOptions.RenderDocFriendly
+        if (_frameTelemetry._diagnosticOptions.RenderDocFriendly
             && !dlssRequested
             && !frameGenerationRequested
             && (NvidiaDlssManager.RequiredRuntimeDllsAvailable
@@ -118,11 +103,11 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     private void ValidateStreamlineSelectedPhysicalDevice()
     {
-        if (!_streamlineFrameGenerationProvisioned)
+        if (!_outputRuntime._streamlineFrameGenerationProvisioned)
             return;
 
         if (NvidiaDlssManager.Native.TryCheckFrameGenerationSupport(
-                _physicalDevice.Handle,
+                _deviceContext.PhysicalDevice.Handle,
                 out string failureReason))
         {
             return;
@@ -137,42 +122,42 @@ public unsafe partial class VulkanRenderer
         Debug.RenderingWarning(
             "[Vulkan] Optional DLSS-G runtime-toggle provisioning disabled for the selected physical device. Reason={0}",
             failureReason);
-        ResolveStreamlineVulkanRequirements(_streamlineDlssProvisioned, includeFrameGeneration: false);
+        ResolveStreamlineVulkanRequirements(_outputRuntime._streamlineDlssProvisioned, includeFrameGeneration: false);
     }
 
     private void ResolveStreamlineVulkanRequirements(bool includeDlss, bool includeFrameGeneration)
     {
-        _streamlineDlssProvisioned = includeDlss;
-        _streamlineFrameGenerationProvisioned = includeFrameGeneration;
+        _outputRuntime._streamlineDlssProvisioned = includeDlss;
+        _outputRuntime._streamlineFrameGenerationProvisioned = includeFrameGeneration;
 
         if (!includeDlss && !includeFrameGeneration)
         {
-            _streamlineRequiredInstanceExtensions = [];
-            _streamlineRequiredDeviceExtensions = [];
-            _streamlineRequiredFeatures12 = [];
-            _streamlineRequiredFeatures13 = [];
-            _streamlineQueueRequirements = default;
-            _streamlineMinimumApiVersion = Vk.Version11;
+            _outputRuntime._streamlineRequiredInstanceExtensions = [];
+            _outputRuntime._streamlineRequiredDeviceExtensions = [];
+            _outputRuntime._streamlineRequiredFeatures12 = [];
+            _outputRuntime._streamlineRequiredFeatures13 = [];
+            _outputRuntime._streamlineQueueRequirements = default;
+            _outputRuntime._streamlineMinimumApiVersion = Vk.Version11;
             return;
         }
 
         if (!NvidiaDlssManager.Native.TryGetRequiredVulkanRequirements(
                 includeDlss,
                 includeFrameGeneration,
-                out _streamlineRequiredInstanceExtensions,
-                out _streamlineRequiredDeviceExtensions,
-                out _streamlineRequiredFeatures12,
-                out _streamlineRequiredFeatures13,
-                out _streamlineQueueRequirements,
+                out _outputRuntime._streamlineRequiredInstanceExtensions,
+                out _outputRuntime._streamlineRequiredDeviceExtensions,
+                out _outputRuntime._streamlineRequiredFeatures12,
+                out _outputRuntime._streamlineRequiredFeatures13,
+                out _outputRuntime._streamlineQueueRequirements,
                 out string failureReason))
         {
             throw new InvalidOperationException(
                 $"Requested NVIDIA DLSS Vulkan requirements could not be resolved before device creation: {failureReason}");
         }
 
-        _streamlineMinimumApiVersion = _streamlineRequiredFeatures13.Length > 0
+        _outputRuntime._streamlineMinimumApiVersion = _outputRuntime._streamlineRequiredFeatures13.Length > 0
             ? Vk.Version13
-            : _streamlineRequiredFeatures12.Length > 0
+            : _outputRuntime._streamlineRequiredFeatures12.Length > 0
                 ? Vk.Version12
                 : Vk.Version11;
 
@@ -180,13 +165,13 @@ public unsafe partial class VulkanRenderer
             "[Vulkan] Streamline requirements prepared. DLSS={0} DLSS-G={1} InstanceExtensions=[{2}] DeviceExtensions=[{3}] Features12=[{4}] Features13=[{5}] ExtraQueues=G{6}/C{7}/OF{8}",
             includeDlss,
             includeFrameGeneration,
-            string.Join(",", _streamlineRequiredInstanceExtensions),
-            string.Join(",", _streamlineRequiredDeviceExtensions),
-            string.Join(",", _streamlineRequiredFeatures12),
-            string.Join(",", _streamlineRequiredFeatures13),
-            _streamlineQueueRequirements.GraphicsQueues,
-            _streamlineQueueRequirements.ComputeQueues,
-            _streamlineQueueRequirements.OpticalFlowQueues);
+            string.Join(",", _outputRuntime._streamlineRequiredInstanceExtensions),
+            string.Join(",", _outputRuntime._streamlineRequiredDeviceExtensions),
+            string.Join(",", _outputRuntime._streamlineRequiredFeatures12),
+            string.Join(",", _outputRuntime._streamlineRequiredFeatures13),
+            _outputRuntime._streamlineQueueRequirements.GraphicsQueues,
+            _outputRuntime._streamlineQueueRequirements.ComputeQueues,
+            _outputRuntime._streamlineQueueRequirements.OpticalFlowQueues);
     }
 
     internal static bool ShouldProvisionOptionalStreamlineFrameGeneration(
@@ -219,13 +204,13 @@ public unsafe partial class VulkanRenderer
     }
 
     private bool HasStreamlineVulkanRequirements
-        => _streamlineRequiredInstanceExtensions.Length > 0
-            || _streamlineRequiredDeviceExtensions.Length > 0
-            || _streamlineRequiredFeatures12.Length > 0
-            || _streamlineRequiredFeatures13.Length > 0
-            || _streamlineQueueRequirements.GraphicsQueues > 0
-            || _streamlineQueueRequirements.ComputeQueues > 0
-            || _streamlineQueueRequirements.OpticalFlowQueues > 0;
+        => _outputRuntime._streamlineRequiredInstanceExtensions.Length > 0
+            || _outputRuntime._streamlineRequiredDeviceExtensions.Length > 0
+            || _outputRuntime._streamlineRequiredFeatures12.Length > 0
+            || _outputRuntime._streamlineRequiredFeatures13.Length > 0
+            || _outputRuntime._streamlineQueueRequirements.GraphicsQueues > 0
+            || _outputRuntime._streamlineQueueRequirements.ComputeQueues > 0
+            || _outputRuntime._streamlineQueueRequirements.OpticalFlowQueues > 0;
 
     /// <summary>
     /// Determines whether Streamline's aggregate Vulkan feature requirements can be expressed

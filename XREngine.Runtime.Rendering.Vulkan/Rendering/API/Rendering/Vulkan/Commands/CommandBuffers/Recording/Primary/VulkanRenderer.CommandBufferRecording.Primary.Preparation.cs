@@ -61,7 +61,7 @@ namespace XREngine.Rendering.Vulkan
                     : ResolveSwapchainRecordingTarget(
                         recordingState.ImageIndex,
                         recordingState.OpenXrTargetContext);
-            recordingState.SwapchainRecordExtent = recordingState.SwapchainTarget.IsValid ? recordingState.SwapchainTarget.Extent : swapChainExtent;
+            recordingState.SwapchainRecordExtent = recordingState.SwapchainTarget.IsValid ? recordingState.SwapchainTarget.Extent : OutputRuntime.Desktop.Extent;
             recordingState.ImageWasEverPresentedAtRecordStart = recordingState.SwapchainTarget.ImageEverPresentedAtRecordStart;
             recordingState.InitialSwapchainColorLayout = recordingState.SwapchainTarget.IsValid
                 ? recordingState.SwapchainTarget.InitialColorLayout
@@ -110,8 +110,8 @@ namespace XREngine.Rendering.Vulkan
             meshDrawSlotsByRenderer.Clear();
             meshDrawSlotsByRenderer.EnsureCapacity(Math.Max(1, recordingState.RecordingScratch.RecordMeshDrawSlotCapacityHint));
             frameDataManifest = recordingState.RecordingScratch.MeshFrameDataManifest;
-            ulong frameDataGeneration = MeshFrameDataReservationGeneration;
-            using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.PrimaryFrameDataManifest))
+            ulong frameDataGeneration = MappedFrameArena?.Generation ?? 0UL;
+            using (VulkanCpuStageScope cpuStage = new(_frameTelemetry, EVulkanCpuStage.PrimaryFrameDataManifest))
             {
                 frameDataManifest.Begin(frameDataGeneration, recordingState.RecordingScratch.RecordMeshDrawSlotCapacityHint);
                 if (!TryRegisterFrameWideMeshFrameDataRequirements(
@@ -173,7 +173,7 @@ namespace XREngine.Rendering.Vulkan
             bool warmupPreviouslyCompleted = pipelineVariantManifest.WarmupCompleted;
             bool graphicsPipelinesReady = true;
             int deferredPipelineDrawCount = 0;
-            using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.PrimaryPrewarm))
+            using (VulkanCpuStageScope cpuStage = new(_frameTelemetry, EVulkanCpuStage.PrimaryPrewarm))
             {
                 string firstGraphicsPipelinePendingReason = string.Empty;
                 string firstDeferredPipelineReason = string.Empty;
@@ -262,7 +262,7 @@ namespace XREngine.Rendering.Vulkan
 
                     int pipelinePassIndex = EnsureValidPassIndex(
                         recordingState.Ops[opIndex].PassIndex,
-                        recordingState.Ops[opIndex].GetType().Name,
+                        GetFrameOpDiagnosticName(recordingState.Ops[opIndex]),
                         recordingState.Ops[opIndex].Context.PassMetadata);
                     if (pipelinePassIndex == int.MinValue)
                         continue;
@@ -395,8 +395,8 @@ namespace XREngine.Rendering.Vulkan
             }
 
             if (!frameDataManifest.TrySeal(
-                    MeshFrameDataReservationGeneration,
-                    MeshFrameDataReservedBytes))
+                    MappedFrameArena?.Generation ?? 0UL,
+                    MappedFrameArena?.ReservedBytes ?? 0UL))
             {
                 frameDataManifest.End();
                 recordingState.RecordingDeferredReason =
@@ -423,7 +423,7 @@ namespace XREngine.Rendering.Vulkan
                 scratch.PrimaryReusableFrameDataRefreshRequests;
             FrameOpSignatureHasher stableMeshHash = new();
             stableMeshHash.Add(0x53454346);
-            stableMeshHash.Add(MeshFrameDataReservationGeneration);
+            stableMeshHash.Add(MappedFrameArena?.Generation ?? 0UL);
             int meshRequestCount = 0;
             bool supportsDirectOwnerOnlyRefresh = true;
 
@@ -482,7 +482,7 @@ namespace XREngine.Rendering.Vulkan
             _lastReusableFrameDataRefreshFailureReason = null;
             bool refreshed;
             using (VulkanCpuStageScope cpuStage =
-                   new(EVulkanCpuStage.FrameDataRefresh))
+                   new(_frameTelemetry, EVulkanCpuStage.FrameDataRefresh))
             {
                 refreshed = TryRefreshReusableCommandBufferFrameData(
                     recordingState.FrameDataImageIndex,

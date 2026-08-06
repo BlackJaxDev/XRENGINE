@@ -8,7 +8,7 @@ public unsafe partial class VulkanRenderer
         in VkMeshRenderer.DescriptorAllocationKey key,
         XRMaterial material,
         out VkMeshRenderer.DescriptorAllocation allocation)
-        => _descriptorManager.TryAcquireSharedMeshDescriptorAllocation(
+        => ResourceRuntime.Descriptors.TryAcquireSharedMeshDescriptorAllocation(
             key,
             material,
             out allocation);
@@ -18,8 +18,8 @@ public unsafe partial class VulkanRenderer
         VkMeshRenderer.DescriptorAllocation allocation,
         out bool published)
     {
-        using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.DescriptorPublication);
-        return _descriptorManager.PublishSharedMeshDescriptorAllocation(
+        using VulkanCpuStageScope cpuStage = new(_frameTelemetry, EVulkanCpuStage.DescriptorPublication);
+        return ResourceRuntime.Descriptors.PublishSharedMeshDescriptorAllocation(
             key,
             allocation,
             out published);
@@ -28,5 +28,5 @@ public unsafe partial class VulkanRenderer
     internal bool ReleaseSharedMeshDescriptorAllocation(
         in VkMeshRenderer.DescriptorAllocationKey key,
         VkMeshRenderer.DescriptorAllocation allocation)
-        => _descriptorManager.ReleaseSharedMeshDescriptorAllocation(key, allocation);
+        => ResourceRuntime.Descriptors.ReleaseSharedMeshDescriptorAllocation(key, allocation);
 }

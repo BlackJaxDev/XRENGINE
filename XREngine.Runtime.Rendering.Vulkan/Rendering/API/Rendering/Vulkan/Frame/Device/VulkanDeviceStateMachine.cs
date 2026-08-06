@@ -1,5 +1,7 @@
 using System.Threading;
 
+using XREngine.Rendering.Vulkan.DeviceBootstrap;
+
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
@@ -7,18 +9,18 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanDeviceStateMachine
 {
-    private int _state = (int)VulkanRenderer.EVulkanDeviceState.Healthy;
+    private int _state = (int)EVulkanDeviceState.Healthy;
 
     /// <summary>
     /// Gets the current state of the Vulkan device.
     /// </summary>
-    public VulkanRenderer.EVulkanDeviceState State =>
-        (VulkanRenderer.EVulkanDeviceState)Volatile.Read(ref _state);
+    public EVulkanDeviceState State =>
+        (EVulkanDeviceState)Volatile.Read(ref _state);
 
     /// <summary>
     /// Gets a value indicating whether the Vulkan device is operational (i.e., in a healthy state).
     /// </summary>
-    public bool IsOperational => State == VulkanRenderer.EVulkanDeviceState.Healthy;
+    public bool IsOperational => State == EVulkanDeviceState.Healthy;
 
     /// <summary>
     /// Attempts to transition the Vulkan device state to begin collecting loss data.
@@ -28,12 +30,14 @@ internal sealed class VulkanDeviceStateMachine
     {
         if (Interlocked.CompareExchange(
                 ref _state,
-                (int)VulkanRenderer.EVulkanDeviceState.LossDetected,
-                (int)VulkanRenderer.EVulkanDeviceState.Healthy) != (int)VulkanRenderer.EVulkanDeviceState.Healthy)
+                (int)EVulkanDeviceState.LossDetected,
+                (int)EVulkanDeviceState.Healthy) != (int)EVulkanDeviceState.Healthy)
             return false;
 
-        Volatile.Write(ref _state, (int)VulkanRenderer.EVulkanDeviceState.CollectingFaultData);
-        return true;
+        return Interlocked.CompareExchange(
+                   ref _state,
+                   (int)EVulkanDeviceState.CollectingFaultData,
+                   (int)EVulkanDeviceState.LossDetected) == (int)EVulkanDeviceState.LossDetected;
     }
 
     /// <summary>
@@ -44,13 +48,23 @@ internal sealed class VulkanDeviceStateMachine
     /// </remarks>
     public void CompleteLossCollection()
     {
-        if (State != VulkanRenderer.EVulkanDeviceState.Disposed)
-            Volatile.Write(ref _state, (int)VulkanRenderer.EVulkanDeviceState.Quiesced);
+        while (true)
+        {
+            int state = Volatile.Read(ref _state);
+            if (state == (int)EVulkanDeviceState.Disposed)
+                return;
+
+            if (Interlocked.CompareExchange(
+                    ref _state,
+                    (int)EVulkanDeviceState.Quiesced,
+                    state) == state)
+                return;
+        }
     }
 
     /// <summary>
     /// Disposes the Vulkan device state machine, transitioning its state to disposed.
     /// </summary>
     public void Dispose()
-        => Volatile.Write(ref _state, (int)VulkanRenderer.EVulkanDeviceState.Disposed);
+        => Volatile.Write(ref _state, (int)EVulkanDeviceState.Disposed);
 }

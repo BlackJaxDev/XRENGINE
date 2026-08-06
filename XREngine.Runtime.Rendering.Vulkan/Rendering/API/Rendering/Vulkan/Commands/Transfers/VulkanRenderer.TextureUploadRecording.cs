@@ -16,7 +16,8 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
-        private readonly VulkanTextureUploadPublicationState _textureUploadPublicationState = new();
+        private VulkanTextureUploadPublicationState _textureUploadPublicationState
+            => ResourceRuntime.Uploads.PublicationState;
 
         private bool TryRecordTextureUploadCommandBuffer(
             uint imageIndex,
@@ -123,7 +124,7 @@ namespace XREngine.Rendering.Vulkan
             VulkanImportedTextureUploadRequest request = upload.Request;
             if (!upload.ShouldPublish())
             {
-                _textureUploadService.RecordState(
+                ResourceRuntime.Uploads.RecordState(
                     request,
                     VulkanTextureUploadGenerationState.Canceled,
                     "request became stale or canceled before command recording");
@@ -132,14 +133,14 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            _textureUploadService.RecordState(
+            ResourceRuntime.Uploads.RecordState(
                 request,
                 VulkanTextureUploadGenerationState.UploadRecording,
                 $"recording {upload.StagingResources.Length} mip copies token={upload.PublicationToken}");
 
             if (!upload.TryValidateCopyRegions(out string? validationFailure))
             {
-                _textureUploadService.RecordState(
+                ResourceRuntime.Uploads.RecordState(
                     request,
                     VulkanTextureUploadGenerationState.Failed,
                     validationFailure);
@@ -230,11 +231,11 @@ namespace XREngine.Rendering.Vulkan
                 1,
                 &uploadEndBarrier);
 
-            _textureUploadService.RecordState(
+            ResourceRuntime.Uploads.RecordState(
                 request,
                 VulkanTextureUploadGenerationState.Uploaded,
                 $"recorded {upload.StagingResources.Length} mip copies");
-            _textureUploadService.RecordState(
+            ResourceRuntime.Uploads.RecordState(
                 request,
                 VulkanTextureUploadGenerationState.DescriptorPublishPending,
                 $"publicationToken={upload.PublicationToken}; waiting for recorded command buffer completion");
@@ -353,7 +354,7 @@ namespace XREngine.Rendering.Vulkan
                 bool completed;
                 try
                 {
-                    completed = HasTimelineValueCompleted(_graphicsTimelineSemaphore, pending.TimelineValue);
+                    completed = HasTimelineValueCompleted(_commandRuntime.Synchronization._graphicsTimelineSemaphore, pending.TimelineValue);
                 }
                 catch (InvalidOperationException)
                 {
@@ -373,7 +374,7 @@ namespace XREngine.Rendering.Vulkan
             string reason)
         {
             VulkanImportedTextureUploadRequest request = upload.Request;
-            _textureUploadService.RecordState(
+            ResourceRuntime.Uploads.RecordState(
                 request,
                 VulkanTextureUploadGenerationState.Canceled,
                 reason);
@@ -392,7 +393,7 @@ namespace XREngine.Rendering.Vulkan
             if (!upload.ShouldPublish())
             {
                 upload.Texture.ReleasePreparedImportedUploadResources(upload);
-                _textureUploadService.RecordState(
+                ResourceRuntime.Uploads.RecordState(
                     request,
                     VulkanTextureUploadGenerationState.Canceled,
                     $"request became stale before {uploadSource} descriptor publication");
@@ -400,11 +401,11 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            _textureUploadService.RecordState(
+            ResourceRuntime.Uploads.RecordState(
                 request,
                 VulkanTextureUploadGenerationState.Uploaded,
                 $"{uploadSource} recorded upload completed");
-            _textureUploadService.RecordState(
+            ResourceRuntime.Uploads.RecordState(
                 request,
                 VulkanTextureUploadGenerationState.DescriptorPublishPending,
                 $"publicationToken={upload.PublicationToken}");
@@ -430,11 +431,11 @@ namespace XREngine.Rendering.Vulkan
                 "publicationToOldResourceRetirementEnqueue",
                 TextureRuntimeDiagnostics.ElapsedMilliseconds(publicationStart));
 
-            _textureUploadService.RecordState(
+            ResourceRuntime.Uploads.RecordState(
                 request,
                 VulkanTextureUploadGenerationState.Published,
                 $"publicationToken={upload.PublicationToken}");
-            _textureUploadService.RecordState(
+            ResourceRuntime.Uploads.RecordState(
                 request,
                 VulkanTextureUploadGenerationState.Retired,
                 "old texture and staging resources enqueued for frame-slot retirement");

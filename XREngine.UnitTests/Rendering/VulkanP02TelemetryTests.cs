@@ -237,8 +237,7 @@ public sealed class VulkanP02TelemetryTests
     public void PrimaryReuseMiss_ReusesPreparedCommandChainFastSignatureDuringLowering()
     {
         string recordingSource = SourceContractWorkspace.ReadVulkanRendererSource();
-        string loweringSource = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string loweringSource = SourceContractWorkspace.ReadVulkanSourcesContaining("ulong? preparedFastScheduleSignature = null");
 
         recordingSource.ShouldContain(
             "out state.PreparedCommandChainFastScheduleSignature");
@@ -255,8 +254,7 @@ public sealed class VulkanP02TelemetryTests
     [Test]
     public void PacketLowering_ReusesPreparedMeshDrawPackets()
     {
-        string loweringSource = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string loweringSource = SourceContractWorkspace.ReadVulkanSourcesContaining("_commandChainDrawPacketScratch[0] = firstDraw;");
 
         loweringSource.ShouldContain("_commandChainDrawPacketScratch[0] = firstDraw;");
         loweringSource.ShouldContain("_commandChainDrawPacketScratch[runCount] = candidateDraw;");
@@ -269,8 +267,7 @@ public sealed class VulkanP02TelemetryTests
     public void NormalRecordingPath_UsesNumericDecisionReasonsWithoutFormattingDiagnosticStrings()
     {
         string source = SourceContractWorkspace.ReadVulkanRendererSource();
-        string lowering = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string lowering = SourceContractWorkspace.ReadVulkanSourcesContaining("if (traceCommandChains || CommandChainValidationEnabled)");
 
         source.ShouldContain("string? dirtyReason = VulkanFrameDiagnosticsTraceEnabled");
         source.ShouldContain("EVulkanCommandBufferDecisionReason.DescriptorGeneration");

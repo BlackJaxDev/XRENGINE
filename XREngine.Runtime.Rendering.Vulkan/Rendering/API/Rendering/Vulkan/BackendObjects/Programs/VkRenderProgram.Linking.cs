@@ -47,7 +47,7 @@ internal unsafe partial class VkRenderProgram
         if (IsLinked)
             DestroyLayouts();
 
-        if (!Renderer.IsLogicalDeviceReady)
+        if (!Renderer.DeviceContext.IsReady)
         {
             BackendContext.Pipelines.QueueProgramLinkUntilDeviceReady(this);
             return false;

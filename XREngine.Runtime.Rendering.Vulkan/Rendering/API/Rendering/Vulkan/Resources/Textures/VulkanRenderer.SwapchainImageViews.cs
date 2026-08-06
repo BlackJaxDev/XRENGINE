@@ -4,36 +4,35 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private ImageView[]? swapChainImageViews;
 
     private void DestroyImageViews()
     {
-        if (swapChainImageViews is null)
+        if (OutputRuntime.Desktop.ImageViews is null)
             return;
 
-        foreach (var imageView in swapChainImageViews)
+        foreach (var imageView in OutputRuntime.Desktop.ImageViews)
         {
             if (imageView.Handle != 0 && TryBeginDestroyImageView(imageView, "DestroySwapchainImageViews"))
-                Api!.DestroyImageView(device, imageView, null);
+                Api!.DestroyImageView(_deviceContext.Device, imageView, null);
         }
 
-        swapChainImageViews = null;
+        OutputRuntime.Desktop.ImageViews = null;
     }
 
     private void CreateImageViews()
     {
-        swapChainImageViews = new ImageView[swapChainImages!.Length];
+        OutputRuntime.Desktop.ImageViews = new ImageView[OutputRuntime.Desktop.Images!.Length];
 
-        for (int i = 0; i < swapChainImages.Length; i++)
+        for (int i = 0; i < OutputRuntime.Desktop.Images.Length; i++)
         {
-            SetDebugObjectName(ObjectType.Image, swapChainImages[i].Handle, $"Swapchain.ColorImage[{i}]");
+            SetDebugObjectName(ObjectType.Image, OutputRuntime.Desktop.Images[i].Handle, $"Swapchain.ColorImage[{i}]");
 
             ImageViewCreateInfo createInfo = new()
             {
                 SType = StructureType.ImageViewCreateInfo,
-                Image = swapChainImages[i],
+                Image = OutputRuntime.Desktop.Images[i],
                 ViewType = ImageViewType.Type2D,
-                Format = swapChainImageFormat,
+                Format = OutputRuntime.Desktop.ImageFormat,
                 Components =
                 {
                     R = ComponentSwizzle.Identity,
@@ -52,11 +51,11 @@ public unsafe partial class VulkanRenderer
 
             };
 
-            if (Api!.CreateImageView(device, ref createInfo, null, out swapChainImageViews[i]) != Result.Success)
+            if (Api!.CreateImageView(_deviceContext.Device, ref createInfo, null, out OutputRuntime.Desktop.ImageViews[i]) != Result.Success)
                 throw new Exception("Failed to create image views.");
 
-            TrackLiveImageView(swapChainImageViews[i], in createInfo, "Swapchain.Color");
-            SetDebugObjectName(ObjectType.ImageView, swapChainImageViews[i].Handle, $"Swapchain.ColorView[{i}]");
+            TrackLiveImageView(OutputRuntime.Desktop.ImageViews[i], in createInfo, "Swapchain.Color");
+            SetDebugObjectName(ObjectType.ImageView, OutputRuntime.Desktop.ImageViews[i].Handle, $"Swapchain.ColorView[{i}]");
         }
     }
 }

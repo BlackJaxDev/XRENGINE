@@ -1,17 +1,15 @@
 using Silk.NET.Vulkan;
 
-namespace XREngine.Rendering.Vulkan
+namespace XREngine.Rendering.Vulkan;
+
+internal sealed class PrimaryCommandArtifactOwner(
+    CommandBuffer primaryCommandBuffer,
+    CommandBuffer dynamicUiSecondaryCommandBuffer,
+    CommandPool primaryCommandPool,
+    CommandPool dynamicUiSecondaryCommandPool,
+    bool ownsPrimaryCommandBuffer,
+    bool ownsDynamicUiSecondaryCommandBuffer)
 {
-    public unsafe partial class VulkanRenderer
-    {
-        private sealed class PrimaryCommandArtifactOwner(
-            CommandBuffer primaryCommandBuffer,
-            CommandBuffer dynamicUiSecondaryCommandBuffer,
-            CommandPool primaryCommandPool,
-            CommandPool dynamicUiSecondaryCommandPool,
-            bool ownsPrimaryCommandBuffer,
-            bool ownsDynamicUiSecondaryCommandBuffer)
-        {
             public CommandBuffer PrimaryCommandBuffer { get; } = primaryCommandBuffer;
             public CommandBuffer DynamicUiSecondaryCommandBuffer { get; set; } = dynamicUiSecondaryCommandBuffer;
             public CommandPool PrimaryCommandPool { get; } = primaryCommandPool;
@@ -57,9 +55,6 @@ namespace XREngine.Rendering.Vulkan
                 PrimaryFrameDataRefreshState { get; } = new();
             public VulkanReusableFrameDataRefreshState
                 DynamicUiFrameDataRefreshState { get; } = new();
-        }
-
-    }
 }
 
 

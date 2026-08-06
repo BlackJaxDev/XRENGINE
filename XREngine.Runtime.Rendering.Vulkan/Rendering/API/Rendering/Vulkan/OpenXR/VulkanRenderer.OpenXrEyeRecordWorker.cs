@@ -4,7 +4,8 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private sealed class OpenXrEyeRecordWorker : IDisposable
+
+    internal sealed class OpenXrEyeRecordWorker : IDisposable
     {
         private readonly int _workerIndex;
         private readonly AutoResetEvent _workAvailable = new(false);

@@ -30,7 +30,7 @@ namespace XREngine.Rendering.Vulkan
                     overlayCommandBuffer;
             }
             ulong signalValue = Math.Max(
-                _graphicsTimelineValue + 1,
+                _commandRuntime.Synchronization._graphicsTimelineValue + 1,
                 attempt.AcquireTimelineValue + 1);
             long stageStartTimestamp = Stopwatch.GetTimestamp();
             Result submitResult;
@@ -72,16 +72,16 @@ namespace XREngine.Rendering.Vulkan
             attempt.TransitionAcquireOwnership(
                 EVulkanDesktopAcquireOwnership
                     .ConsumedByRecoveryImagePendingPresent);
-            _graphicsTimelineValue = Math.Max(
-                _graphicsTimelineValue,
+            _commandRuntime.Synchronization._graphicsTimelineValue = Math.Max(
+                _commandRuntime.Synchronization._graphicsTimelineValue,
                 signalValue);
-            _frameSlotTimelineValues![attempt.FrameSlot] =
+            _commandRuntime.Synchronization._frameSlotTimelineValues![attempt.FrameSlot] =
                 signalValue;
-            if (_swapchainImageTimelineValues is not null &&
+            if (OutputRuntime.Desktop.ImageTimelineValues is not null &&
                 attempt.ImageIndex <
-                _swapchainImageTimelineValues.Length)
+                OutputRuntime.Desktop.ImageTimelineValues.Length)
             {
-                _swapchainImageTimelineValues[attempt.ImageIndex] =
+                OutputRuntime.Desktop.ImageTimelineValues[attempt.ImageIndex] =
                     signalValue;
             }
 

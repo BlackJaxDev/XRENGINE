@@ -6,12 +6,13 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private readonly object _computeDescriptorCacheLock = new();
+    private object _computeDescriptorCacheLock => ResourceRuntime.Descriptors.Compute.Gate;
 
     /// <summary>
     /// Represents the array of compute descriptor image caches, one for each swapchain image.
     /// </summary>
-    private ComputeDescriptorImageCache[]? _computeDescriptorCaches;
+    private ref ComputeDescriptorImageCache[]? _computeDescriptorCaches
+        => ref ResourceRuntime.Descriptors.Compute.Caches;
 
     /// <summary>
     /// Initializes the compute descriptor caches for the specified number of images.
@@ -202,6 +203,36 @@ public unsafe partial class VulkanRenderer
     }
 
     /// <summary>
+    /// Retrieves descriptor sets that were fully prepared before command recording.
+    /// This lookup never allocates descriptor pools or descriptor sets.
+    /// </summary>
+    internal bool TryGetPreparedComputeDescriptorSets(
+        uint imageIndex,
+        ulong schemaKey,
+        ulong bindingKey,
+        out DescriptorSet[] descriptorSets)
+    {
+        descriptorSets = Array.Empty<DescriptorSet>();
+
+        if (bindingKey == 0UL)
+            return false;
+
+        lock (_computeDescriptorCacheLock)
+        {
+            if (_computeDescriptorCaches is null || imageIndex >= _computeDescriptorCaches.Length)
+                return false;
+
+            ComputeDescriptorImageCache? cache = _computeDescriptorCaches[imageIndex];
+            if (cache is null)
+                return false;
+
+            return cache.CachedSets.TryGetValue(
+                new ComputeDescriptorCacheKey(schemaKey, bindingKey),
+                out descriptorSets!);
+        }
+    }
+
+    /// <summary>
     /// Attempts to allocate a batch of compute descriptor sets from the available descriptor pool blocks, creating a new pool block if necessary.
     /// </summary>
     /// <param name="cache">The cache containing the descriptor pool blocks for the current image.</param>
@@ -326,7 +357,7 @@ public unsafe partial class VulkanRenderer
                 MaxSets = allocationCapacity * (uint)layouts.Length
             };
 
-            if (Api!.CreateDescriptorPool(device, ref poolInfo, null, out DescriptorPool descriptorPool) != Result.Success)
+            if (Api!.CreateDescriptorPool(_deviceContext.Device, ref poolInfo, null, out DescriptorPool descriptorPool) != Result.Success)
                 return false;
 
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolCreate();
@@ -370,7 +401,7 @@ public unsafe partial class VulkanRenderer
                 PSetLayouts = layoutPtr
             };
 
-            Result result = Api!.AllocateDescriptorSets(device, ref allocInfo, setPtr);
+            Result result = Api!.AllocateDescriptorSets(_deviceContext.Device, ref allocInfo, setPtr);
             if (result == Result.Success)
             {
                 RegisterVulkanDescriptorSets(

@@ -680,20 +680,6 @@ namespace XREngine.Rendering.Commands
             private set => SetField(ref _exactTransparentVisibleCommandCount, value);
         }
 
-        // SoA double buffers & related
-        private XRDataBuffer? _soaBoundingSpheresA;
-        private XRDataBuffer? _soaMetadataA;
-        private XRDataBuffer? _soaBoundingSpheresB;
-        private XRDataBuffer? _soaMetadataB;
-        private bool _useBufferAForRender = true;
-        private XRRenderProgram? _extractSoAComputeShader;
-        private XRRenderProgram? _soACullingComputeShader;
-        //private XRRenderProgram? HiZSoACullingComputeShader;
-        //private XRRenderProgram? _gatherProgram;
-        private XRDataBuffer? _soaIndexList;
-        //public int HiZMaxMip { get; set; } = 0;
-        //private XRTexture? _hiZDepthPyramid;
-
         // Key-index radix buffers
         //private XRDataBuffer? _keyIndexBufferA;
         //private XRDataBuffer? _keyIndexBufferB;

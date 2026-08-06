@@ -27,7 +27,7 @@ public unsafe partial class VulkanRenderer
             StringComparison.OrdinalIgnoreCase) == false;
         VulkanPipelinePrewarmDatabase database =
             VulkanPipelinePrewarmDatabase.LoadOrCreate(filePath, deviceProfile);
-        _pipelineManager.ConfigurePrewarmDatabase(database, filePath, captureEnabled);
+        ResourceRuntime.PipelineManager.ConfigurePrewarmDatabase(database, filePath, captureEnabled);
 
         Debug.Vulkan(
             "[Vulkan] Pipeline prewarm database loaded (path={0}, entries={1}, capture={2}).",
@@ -38,30 +38,30 @@ public unsafe partial class VulkanRenderer
 
     private void SaveVulkanPipelinePrewarmDatabase()
     {
-        if (!_pipelineManager.PrewarmCaptureEnabled ||
-            _pipelineManager.PrewarmDatabase is null ||
-            !_pipelineManager.PrewarmDatabase.Dirty ||
-            string.IsNullOrWhiteSpace(_pipelineManager.PrewarmDatabaseFilePath))
+        if (!ResourceRuntime.PipelineManager.PrewarmCaptureEnabled ||
+            ResourceRuntime.PipelineManager.PrewarmDatabase is null ||
+            !ResourceRuntime.PipelineManager.PrewarmDatabase.Dirty ||
+            string.IsNullOrWhiteSpace(ResourceRuntime.PipelineManager.PrewarmDatabaseFilePath))
         {
             return;
         }
 
         try
         {
-            _pipelineManager.PrewarmDatabase.Save(_pipelineManager.PrewarmDatabaseFilePath);
+            ResourceRuntime.PipelineManager.PrewarmDatabase.Save(ResourceRuntime.PipelineManager.PrewarmDatabaseFilePath);
             Debug.Vulkan(
                 "[Vulkan] Pipeline prewarm database saved ({0} entries).",
-                _pipelineManager.PrewarmDatabase.EntryCount);
+                ResourceRuntime.PipelineManager.PrewarmDatabase.EntryCount);
         }
         catch (Exception ex)
         {
-            Debug.VulkanWarning($"[Vulkan] Failed to save pipeline prewarm database '{_pipelineManager.PrewarmDatabaseFilePath}': {ex.Message}");
+            Debug.VulkanWarning($"[Vulkan] Failed to save pipeline prewarm database '{ResourceRuntime.PipelineManager.PrewarmDatabaseFilePath}': {ex.Message}");
         }
     }
 
     private void QueueVulkanPipelinePrewarmDatabaseAutoSave()
     {
-        if (!_pipelineManager.TryBeginPrewarmAutoSave(
+        if (!ResourceRuntime.PipelineManager.TryBeginPrewarmAutoSave(
                 VulkanPipelinePrewarmAutoSaveEntryThreshold,
                 out VulkanPipelinePrewarmDatabase database,
                 out string path))
@@ -82,7 +82,7 @@ public unsafe partial class VulkanRenderer
             }
             finally
             {
-                if (_pipelineManager.CompletePrewarmAutoSave(VulkanPipelinePrewarmAutoSaveEntryThreshold))
+                if (ResourceRuntime.PipelineManager.CompletePrewarmAutoSave(VulkanPipelinePrewarmAutoSaveEntryThreshold))
                     QueueVulkanPipelinePrewarmDatabaseAutoSave();
             }
         });
@@ -152,7 +152,7 @@ public unsafe partial class VulkanRenderer
             colorWriteMask,
             profileName);
 
-        bool shouldAutoSave = _pipelineManager.RecordPrewarmEntry(
+        bool shouldAutoSave = ResourceRuntime.PipelineManager.RecordPrewarmEntry(
             entry,
             countForAutoSave: true,
             out bool knownAtStartup);
@@ -181,7 +181,7 @@ public unsafe partial class VulkanRenderer
             programPipelineHash,
             profileName);
 
-        _pipelineManager.RecordPrewarmEntry(
+        ResourceRuntime.PipelineManager.RecordPrewarmEntry(
             entry,
             countForAutoSave: false,
             out bool knownAtStartup);

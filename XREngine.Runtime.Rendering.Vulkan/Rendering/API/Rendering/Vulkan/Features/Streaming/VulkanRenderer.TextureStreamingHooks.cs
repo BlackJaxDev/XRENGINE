@@ -7,11 +7,8 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private readonly VulkanTextureUploadService _textureUploadService = new();
-    private readonly object _textureUploadContextSync = new();
-
-    internal VulkanTextureUploadService TextureUploadService => _textureUploadService;
-    internal object TextureUploadContextSync => _textureUploadContextSync;
+    internal VulkanTextureUploadService TextureUploadService => ResourceRuntime.Uploads;
+    internal object TextureUploadContextSync => ResourceRuntime.TextureUploadContextSync;
 
     internal void RecordTextureUploadProgress(in TextureUploadTelemetry telemetry)
     {
@@ -34,7 +31,7 @@ public unsafe partial class VulkanRenderer
 
             VulkanImportedTexturePendingUpload upload = uploadOp.Upload;
             upload.Texture.ReleasePreparedImportedUploadResources(upload);
-            _textureUploadService.RecordState(
+            ResourceRuntime.Uploads.RecordState(
                 upload.Request,
                 VulkanTextureUploadGenerationState.Canceled,
                 reason);
@@ -62,7 +59,7 @@ public unsafe partial class VulkanRenderer
         Action? onCanceled,
         Action<Exception>? onError,
         CancellationToken cancellationToken)
-        => _textureUploadService.TryScheduleImportedTextureUpload(
+        => ResourceRuntime.Uploads.TryScheduleImportedTextureUpload(
             this,
             texture,
             residentData,

@@ -46,8 +46,8 @@ public unsafe partial class VulkanRenderer
             Buffer = dstBuffer,
         };
 
-        ulong srcAddress = Api!.GetBufferDeviceAddress(device, &srcInfo);
-        ulong dstAddress = Api.GetBufferDeviceAddress(device, &dstInfo);
+        ulong srcAddress = Api!.GetBufferDeviceAddress(_deviceContext.Device, &srcInfo);
+        ulong dstAddress = Api.GetBufferDeviceAddress(_deviceContext.Device, &dstInfo);
         if (srcAddress == 0 || dstAddress == 0)
             return false;
 

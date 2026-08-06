@@ -289,7 +289,7 @@ public unsafe partial class VulkanRenderer
 
         bool drainedFrameOps = false;
 
-        int desktopSwapchainImageCount = swapChainImages?.Length ?? 0;
+        int desktopSwapchainImageCount = OutputRuntime.Desktop.Images?.Length ?? 0;
         VulkanOpenXrFrameContext frameContext = CreateOpenXrEyeFrameContext(in request);
         using IDisposable externalScope = EnterOpenXrExternalSwapchainRenderScope(in frameContext);
         int openXrFrameDataSlotCount = ResolveOpenXrFrameDataSlotCount(desktopSwapchainImageCount);
@@ -308,9 +308,22 @@ public unsafe partial class VulkanRenderer
             {
                 EnsureOpenXrFrameDataSlotCapacity(openXrFrameDataSlotCount);
                 EnsureDescriptorFrameSlotFrameCountFloor(openXrFrameDataSlotCount);
-                WaitForOpenXrFrameDataSlot(recordImageIndex, "eye swapchain render");
+                bool frameDataSlotCompletionProven =
+                    WaitForOpenXrFrameDataSlot(
+                        recordImageIndex,
+                        "eye swapchain render");
                 DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
                 DrainCompletedRecordedTextureUploadPublications();
+
+                if (MappedFrameArena is { } arena &&
+                    !arena.TryResetFrameSlot(
+                        recordImageIndex,
+                        arena.Generation,
+                        frameDataSlotCompletionProven))
+                {
+                    throw new InvalidOperationException(
+                        $"OpenXR mapped frame-data slot {recordImageIndex} could not be reopened before eye recording.");
+                }
             }
 
             if (ShouldDeferOpenXrEyeRenderingWork(out string resourceWorkReason))
@@ -334,7 +347,7 @@ public unsafe partial class VulkanRenderer
                     depthTarget,
                     recordImageIndex,
                     openXrCommandChainImageIndex);
-                _openXrBackend.CurrentThreadExecutionState.NativeTargetContext =
+                OutputRuntime.OpenXrBackend.CurrentThreadExecutionState.NativeTargetContext =
                     targetContext;
             }
 
@@ -352,7 +365,6 @@ public unsafe partial class VulkanRenderer
                     return false;
                 }
 
-                ResetDynamicUniformRingBuffer(recordImageIndex);
                 FrameOp[] ops;
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.EmitFrameOps"))
                     ops = CaptureFrameOpsExcludingTextureUploads(request.EmitFrameOps, out _);
@@ -456,7 +468,7 @@ public unsafe partial class VulkanRenderer
                     frameContext,
                     targetContext,
                     CloneFrameOpsForPreparedOpenXrEye(ops),
-                    _openXrBackend.EyeFrameDataRefreshRequests[
+                    OutputRuntime.OpenXrBackend.EyeFrameDataRefreshRequests[
                         ResolveOpenXrEyeUploadPublicationBufferIndex(
                             targetContext.OpenXrViewIndex)].Publish(
                             _commandBufferRecordingScratch.Value!
@@ -513,7 +525,7 @@ public unsafe partial class VulkanRenderer
         VulkanOpenXrFrameContext frameContext = prepared.FrameContext;
         using IDisposable externalScope =
             EnterOpenXrExternalSwapchainRenderScope(in frameContext);
-        _openXrBackend.CurrentThreadExecutionState.NativeTargetContext =
+        OutputRuntime.OpenXrBackend.CurrentThreadExecutionState.NativeTargetContext =
             targetContext;
         using ThreadRenderStateScope renderStateScope = EnterThreadRenderStateScope(
             CreateOpenXrEyeRenderStateTracker(in targetContext));
@@ -642,35 +654,35 @@ public unsafe partial class VulkanRenderer
         => (int)Math.Min(openXrViewIndex, (uint)(OpenXrEyeResourcePlannerStateCount - 1));
 
     private List<VulkanImportedTexturePendingUpload> GetOpenXrEyeRecordedTextureUploads(uint openXrViewIndex)
-        => _openXrBackend.EyeRecordedTextureUploadsForSubmit[ResolveOpenXrEyeUploadPublicationBufferIndex(openXrViewIndex)];
+        => OutputRuntime.OpenXrBackend.EyeRecordedTextureUploadsForSubmit[ResolveOpenXrEyeUploadPublicationBufferIndex(openXrViewIndex)];
 
     private void ClearOpenXrEyeRecordedTextureUploads()
     {
-        for (int i = 0; i < _openXrBackend.EyeRecordedTextureUploadsForSubmit.Length; i++)
-            _openXrBackend.EyeRecordedTextureUploadsForSubmit[i].Clear();
+        for (int i = 0; i < OutputRuntime.OpenXrBackend.EyeRecordedTextureUploadsForSubmit.Length; i++)
+            OutputRuntime.OpenXrBackend.EyeRecordedTextureUploadsForSubmit[i].Clear();
     }
 
     private int CountOpenXrEyeRecordedTextureUploads()
     {
         int count = 0;
-        for (int i = 0; i < _openXrBackend.EyeRecordedTextureUploadsForSubmit.Length; i++)
-            count += _openXrBackend.EyeRecordedTextureUploadsForSubmit[i].Count;
+        for (int i = 0; i < OutputRuntime.OpenXrBackend.EyeRecordedTextureUploadsForSubmit.Length; i++)
+            count += OutputRuntime.OpenXrBackend.EyeRecordedTextureUploadsForSubmit[i].Count;
         return count;
     }
 
     private CommandPool GetOrCreateOpenXrEyeCommandPool(uint openXrViewIndex)
     {
         int poolIndex = ResolveOpenXrEyeUploadPublicationBufferIndex(openXrViewIndex);
-        lock (_openXrBackend.EyeCommandPoolsLock)
+        lock (OutputRuntime.OpenXrBackend.EyeCommandPoolsLock)
         {
-            CommandPool existing = _openXrBackend.EyeCommandPools[poolIndex];
+            CommandPool existing = OutputRuntime.OpenXrBackend.EyeCommandPools[poolIndex];
             if (existing.Handle != 0)
                 return existing;
 
-            uint graphicsFamily = FamilyQueueIndices.GraphicsFamilyIndex
+            uint graphicsFamily = _deviceContext.QueueFamilies.GraphicsFamilyIndex
                 ?? throw new InvalidOperationException("Graphics queue family is not available.");
             CommandPool created = CreateCommandPoolForFamily(graphicsFamily);
-            _openXrBackend.EyeCommandPools[poolIndex] = created;
+            OutputRuntime.OpenXrBackend.EyeCommandPools[poolIndex] = created;
             SetDebugObjectName(
                 ObjectType.CommandPool,
                 unchecked((ulong)created.Handle),
@@ -681,30 +693,30 @@ public unsafe partial class VulkanRenderer
 
     private void DestroyOpenXrEyeCommandPools()
     {
-        lock (_openXrBackend.EyeCommandPoolsLock)
+        lock (OutputRuntime.OpenXrBackend.EyeCommandPoolsLock)
         {
-            for (int i = 0; i < _openXrBackend.EyeCommandPools.Length; i++)
+            for (int i = 0; i < OutputRuntime.OpenXrBackend.EyeCommandPools.Length; i++)
             {
-                CommandPool pool = _openXrBackend.EyeCommandPools[i];
+                CommandPool pool = OutputRuntime.OpenXrBackend.EyeCommandPools[i];
                 if (pool.Handle == 0)
                     continue;
 
                 DestroyCommandPoolHostSynchronized(pool);
-                _openXrBackend.EyeCommandPools[i] = default;
+                OutputRuntime.OpenXrBackend.EyeCommandPools[i] = default;
             }
         }
     }
 
     private void PublishOpenXrEyeRecordedTextureUploadsAfterCompletedSubmit(string uploadSource)
     {
-        for (int i = 0; i < _openXrBackend.EyeRecordedTextureUploadsForSubmit.Length; i++)
-            PublishRecordedTextureUploadsAfterCompletedSubmit(_openXrBackend.EyeRecordedTextureUploadsForSubmit[i], uploadSource);
+        for (int i = 0; i < OutputRuntime.OpenXrBackend.EyeRecordedTextureUploadsForSubmit.Length; i++)
+            PublishRecordedTextureUploadsAfterCompletedSubmit(OutputRuntime.OpenXrBackend.EyeRecordedTextureUploadsForSubmit[i], uploadSource);
     }
 
     private void CancelOpenXrEyeRecordedTextureUploads(string reason)
     {
-        for (int i = 0; i < _openXrBackend.EyeRecordedTextureUploadsForSubmit.Length; i++)
-            CancelRecordedTextureUploads(_openXrBackend.EyeRecordedTextureUploadsForSubmit[i], reason);
+        for (int i = 0; i < OutputRuntime.OpenXrBackend.EyeRecordedTextureUploadsForSubmit.Length; i++)
+            CancelRecordedTextureUploads(OutputRuntime.OpenXrBackend.EyeRecordedTextureUploadsForSubmit[i], reason);
     }
 
     internal OpenXrEyeRenderTargetContext CreateOpenXrEyeRenderTargetContext(
@@ -821,7 +833,7 @@ public unsafe partial class VulkanRenderer
         }
 
         ulong cacheKey = BuildOpenXrPrimaryCommandBufferCacheKey(commandChainImageIndex, targetContext);
-        lock (_openXrBackend.PrimaryCommandArtifactOwnersLock)
+        lock (OutputRuntime.OpenXrBackend.PrimaryCommandArtifactOwnersLock)
         {
             if (!OpenXrPrimaryCommandArtifactOwners.TryGetValue(cacheKey, out PrimaryCommandArtifactOwner? variant))
             {
@@ -1017,8 +1029,9 @@ public unsafe partial class VulkanRenderer
         }
         FramePlan framePlan = pairedLogicalPlan;
         ulong logicalViewId = GetSingleOpenXrLogicalViewId(ops);
-        ops = framePlan.GetNativeStaticOperationsForLogicalView(logicalViewId, ops);
-        if (ops.Length == 0)
+        FrameOperationSequence recordingOps =
+            framePlan.GetNativeStaticOperationsForLogicalView(logicalViewId, ops);
+        if (recordingOps.Length == 0)
         {
             Debug.VulkanWarningEvery(
                 "OpenXR.Vulkan.EmptyPairedLogicalPlanSlice",
@@ -1027,7 +1040,7 @@ public unsafe partial class VulkanRenderer
                 logicalViewId);
             return default;
         }
-        _commandRecorder.EnterRecordingScope();
+        _commandRuntime.Recorder.EnterRecordingScope();
         int recordedSwapchainWriteCount = 0;
         bool queryFrameOpsRequireRerecord = false;
         ImageLayout swapchainLayoutAfterCommandBuffer;
@@ -1040,14 +1053,14 @@ public unsafe partial class VulkanRenderer
                     "[OpenXrVulkan] record primary target=({0}) targetSlot={1} ops={2}",
                     DescribeOpenXrEyeRenderTargetContext(in targetContext),
                     OpenXrExternalSwapchainTargetImageIndex,
-                    ops.Length);
+                    recordingOps.Length);
             }
 
             if (!TryRecordCommandBuffer(
                 imageIndex: OpenXrExternalSwapchainTargetImageIndex,
                 variant.PrimaryCommandBuffer,
                 dynamicUiBatchTextSecondaryCommandBuffer: default,
-                ops,
+                recordingOps,
                 dynamicUiBatchTextOpCount: 0,
                 commandChainSchedule,
                 preserveSwapchainForOverlay: false,
@@ -1083,7 +1096,7 @@ public unsafe partial class VulkanRenderer
         }
         finally
         {
-            _commandRecorder.ExitRecordingScope();
+            _commandRuntime.Recorder.ExitRecordingScope();
         }
 
         bool wasDirty = variant.Dirty;
@@ -1138,7 +1151,7 @@ public unsafe partial class VulkanRenderer
         variant.GpuProfilerFrameSlot = gpuPipelineProfilingActive ? commandBufferImageSlot : -1;
         variant.LastUsedFrameId = VulkanFrameCounter;
         CaptureVulkanGpuProfilerVariantScopes(commandBufferImageSlot, variant);
-        StoreFrameOpSignatureDebugParts(variant, ops);
+        StoreFrameOpSignatureDebugParts(variant, recordingOps);
         if (queryFrameOpsRequireRerecord)
             MarkPrimaryCommandArtifactOwnerTransient(variant, "query draw was not recorded");
         UpdateVulkanGpuProfilerCommandBufferState(
@@ -1180,7 +1193,7 @@ public unsafe partial class VulkanRenderer
     /// Publishes one immutable logical DAG for both eyes before either native
     /// image is recorded. Per-eye target handles stay outside this publication.
     /// </summary>
-    private static bool TryCreatePairedOpenXrLogicalPlan(
+    private bool TryCreatePairedOpenXrLogicalPlan(
         in OpenXrPreparedEyeCommandBufferInput firstEye,
         in OpenXrPreparedEyeCommandBufferInput secondEye,
         out FramePlan plan)
@@ -1200,7 +1213,7 @@ public unsafe partial class VulkanRenderer
         CopyTargetNeutralLogicalOperations(secondEye.Ops, combined, firstEye.Ops.Length);
         try
         {
-            plan = FramePlanBuilder.GetCurrentThread().BuildAndSeal(
+            plan = _framePlanner.FramePlanBuilder.BuildAndSeal(
                 frameSlot: 0,
                 firstEye.PlannerRevision,
                 ComputeFrameOpsSignature(combined),
@@ -1283,7 +1296,7 @@ public unsafe partial class VulkanRenderer
         CommandPool ownerPool,
         string allocationLabel)
     {
-        lock (_openXrBackend.PrimaryCommandArtifactOwnersLock)
+        lock (OutputRuntime.OpenXrBackend.PrimaryCommandArtifactOwnersLock)
         {
             if (OpenXrPrimaryCommandArtifactOwners.TryGetValue(targetSlotKey, out PrimaryCommandArtifactOwner? owner))
             {

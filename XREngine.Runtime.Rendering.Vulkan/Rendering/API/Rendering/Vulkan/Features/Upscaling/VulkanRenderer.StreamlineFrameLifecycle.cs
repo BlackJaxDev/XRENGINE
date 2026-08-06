@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Vulkan
     {
         private void MarkDlssFrameGenerationPclMarker(NvidiaDlssManager.Native.StreamlinePclMarker marker)
         {
-            if (!_streamlineFrameGenerationSwapchainActive)
+            if (!OutputRuntime.Desktop.StreamlineFrameGenerationActive)
                 return;
 
             uint frameIndex = unchecked((uint)Math.Min(uint.MaxValue, AcceptedDesktopFrameAttemptCount));

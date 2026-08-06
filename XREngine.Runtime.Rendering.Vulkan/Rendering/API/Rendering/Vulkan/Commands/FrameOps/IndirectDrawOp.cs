@@ -38,7 +38,7 @@ internal sealed record IndirectDrawOp(
 
     internal override int RecordPrimary(
         VulkanRenderer renderer,
-        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
+        scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
         int commandChainRunCount =
@@ -109,7 +109,7 @@ internal sealed record IndirectDrawOp(
         in VulkanIndirectSecondaryRecordingContract secondaryRecordingContract =
             default)
     {
-        bool frameOwned = TryRentForCurrentFrame(out IndirectDrawOp? reusable);
+        bool frameOwned = TryRentForCurrentFrame(context, out IndirectDrawOp? reusable);
         if (reusable is null)
         {
             IndirectDrawOp created = new(
@@ -127,7 +127,7 @@ internal sealed record IndirectDrawOp(
                 bindlessMaterialTextures,
                 context,
                 secondaryRecordingContract);
-            return frameOwned ? RetainForCurrentFrame(created) : created;
+            return frameOwned ? RetainForCurrentFrame(created, context) : created;
         }
 
         reusable.Reset(

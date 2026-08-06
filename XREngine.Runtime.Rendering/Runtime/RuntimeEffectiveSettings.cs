@@ -92,7 +92,6 @@ internal sealed class RuntimeEffectiveSettings
         }
         set => _zeroReadbackMaterialDrawPath = value;
     }
-    public EGpuCullingDataLayout GpuCullingDataLayout { get; set; } = EGpuCullingDataLayout.AoSHot;
     private EOcclusionCullingMode _gpuOcclusionCullingMode = EOcclusionCullingMode.GpuHiZ;
     public EOcclusionCullingMode GpuOcclusionCullingMode
     {

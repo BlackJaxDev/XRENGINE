@@ -195,14 +195,40 @@ internal unsafe partial class VkRenderProgram
         ulong reusableDescriptorBindingKey,
         out DescriptorPool descriptorPool,
         out DescriptorSet[] boundDescriptorSets,
-        out List<(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)> tempUniformBuffers)
+        out IReadOnlyList<(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)> tempUniformBuffers)
     {
         descriptorPool = default;
-        boundDescriptorSets = [];
-        tempUniformBuffers = [];
+        boundDescriptorSets = Array.Empty<DescriptorSet>();
+        tempUniformBuffers = Array.Empty<(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)>();
 
         if (_descriptorSetLayouts.Length == 0 || _programDescriptorBindings.Count == 0)
             return false;
+
+        if (reusableDescriptorBindingKey != 0UL && !Renderer.IsDescriptorHeapDrawBindingActive)
+        {
+            ulong preparedSchemaFingerprint = ComputeComputeDescriptorSchemaFingerprint();
+            if (!Renderer.TryGetPreparedComputeDescriptorSets(
+                    imageIndex,
+                    preparedSchemaFingerprint,
+                    reusableDescriptorBindingKey,
+                    out DescriptorSet[] preparedDescriptorSets))
+            {
+                RecordComputeDescriptorFailure(
+                    default,
+                    "prepared descriptor sets were not published before recording",
+                    skippedDispatch: true);
+                return false;
+            }
+
+            Renderer.BindDescriptorSetsTracked(
+                commandBuffer,
+                PipelineBindPoint.Compute,
+                _pipelineLayout,
+                0,
+                preparedDescriptorSets);
+            boundDescriptorSets = preparedDescriptorSets;
+            return true;
+        }
 
         Dictionary<DescriptorType, uint> poolSizeCounts = new();
         foreach (DescriptorBindingInfo binding in _programDescriptorBindings)
@@ -378,65 +404,35 @@ internal unsafe partial class VkRenderProgram
             return true;
         }
 
-        bool cacheable = tempUniformBuffers.Count == 0;
-        DescriptorSet[] descriptorSets;
-        bool shouldUpdateDescriptorData = true;
+        ulong schemaFingerprint = ComputeComputeDescriptorSchemaFingerprint();
+        ulong bindingFingerprint = ComputeComputeDescriptorBindingFingerprint(pendingWriteArray, bufferArray, imageArray, texelArray);
+        ulong cacheBindingFingerprint = reusableDescriptorBindingKey == 0UL ? bindingFingerprint : reusableDescriptorBindingKey;
+        DescriptorSetLayout[] layoutArray = _descriptorSetLayouts.ToArray();
 
-        if (cacheable)
+        if (!Renderer.TryGetOrCreateComputeDescriptorSets(
+            imageIndex,
+            schemaFingerprint,
+            cacheBindingFingerprint,
+            layoutArray,
+            poolSizes,
+            _descriptorSetsRequireUpdateAfterBind,
+            out DescriptorSet[] descriptorSets,
+            out bool isNewAllocation))
         {
-            ulong schemaFingerprint = ComputeComputeDescriptorSchemaFingerprint();
-            ulong bindingFingerprint = ComputeComputeDescriptorBindingFingerprint(pendingWriteArray, bufferArray, imageArray, texelArray);
-            ulong cacheBindingFingerprint = reusableDescriptorBindingKey == 0UL ? bindingFingerprint : reusableDescriptorBindingKey;
-            DescriptorSetLayout[] layoutArray = _descriptorSetLayouts.ToArray();
-
-            if (!Renderer.TryGetOrCreateComputeDescriptorSets(
-                imageIndex,
-                schemaFingerprint,
-                cacheBindingFingerprint,
-                layoutArray,
-                poolSizes,
-                _descriptorSetsRequireUpdateAfterBind,
-                out descriptorSets,
-                out bool isNewAllocation))
-            {
-                WarnComputeOnce("Failed to acquire cached Vulkan compute descriptor sets.");
-                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
-                    Data.Name,
-                    "descriptor-set",
-                    "<cached-compute>",
-                    0,
-                    0,
-                    skippedDraw: false,
-                    skippedDispatch: true,
-                    "failed to acquire cached compute descriptor sets");
-                return false;
-            }
-
-            shouldUpdateDescriptorData = isNewAllocation || reusableDescriptorBindingKey != 0UL;
-        }
-        else
-        {
-            if (!Renderer.TryAllocateTransientComputeDescriptorSets(
-                imageIndex,
-                _descriptorSetLayouts,
-                poolSizes,
-                _descriptorSetsRequireUpdateAfterBind,
-                out descriptorSets))
-            {
-                WarnComputeOnce("Failed to allocate transient Vulkan compute descriptor sets.");
-                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
-                    Data.Name,
-                    "descriptor-set",
-                    "<transient-compute>",
-                    0,
-                    0,
-                    skippedDraw: false,
-                    skippedDispatch: true,
-                    "failed to allocate transient compute descriptor sets");
-                return false;
-            }
+            WarnComputeOnce("Failed to acquire cached Vulkan compute descriptor sets.");
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
+                Data.Name,
+                "descriptor-set",
+                "<cached-compute>",
+                0,
+                0,
+                skippedDraw: false,
+                skippedDispatch: true,
+                "failed to acquire cached compute descriptor sets");
+            return false;
         }
 
+        bool shouldUpdateDescriptorData = isNewAllocation || reusableDescriptorBindingKey != 0UL;
         if (shouldUpdateDescriptorData)
             UpdateComputeDescriptorSets(descriptorSets, pendingWriteArray, bufferArray, imageArray, texelArray);
 

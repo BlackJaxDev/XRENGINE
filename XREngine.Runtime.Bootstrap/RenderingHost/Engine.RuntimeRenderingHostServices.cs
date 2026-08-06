@@ -1206,43 +1206,10 @@ internal sealed class EngineRuntimeRenderingHostServices :
     public void RecordRenderVulkanFrameGpuCommandBufferTime(TimeSpan elapsed)
         => RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanFrameGpuCommandBufferTime(elapsed);
 
-    public void RecordRenderVulkanFrameLifecycleTiming(
-        TimeSpan waitFence,
-        TimeSpan acquireImage,
-        TimeSpan recordCommandBuffer,
-        TimeSpan submit,
-        TimeSpan trim,
-        TimeSpan present,
-        TimeSpan total)
-        => RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanFrameLifecycleTiming(
-            waitFence,
-            acquireImage,
-            recordCommandBuffer,
-            submit,
-            trim,
-            present,
-            total);
-
-    public void RecordRenderVulkanFrameLifecycleDetailTiming(
-        TimeSpan sampleTimingQueries,
-        TimeSpan drainRetiredResources,
-        TimeSpan acquireBridgeSubmit,
-        TimeSpan waitSwapchainImage,
-        TimeSpan resetDynamicUniformRing,
-        TimeSpan snapshotImGuiOverlay,
-        TimeSpan recordSceneCommandBuffer,
-        TimeSpan recordImGuiOverlay,
-        TimeSpan recordDynamicUiTextOverlay)
-        => RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanFrameLifecycleDetailTiming(
-            sampleTimingQueries,
-            drainRetiredResources,
-            acquireBridgeSubmit,
-            waitSwapchainImage,
-            resetDynamicUniformRing,
-            snapshotImGuiOverlay,
-            recordSceneCommandBuffer,
-            recordImGuiOverlay,
-            recordDynamicUiTextOverlay);
+    public void PublishRenderVulkanFrameTelemetry(
+        in VulkanFrameTelemetryPublication publication,
+        ReadOnlySpan<VulkanCpuStageTelemetry> cpuStages)
+        => RuntimeEngine.Rendering.Stats.Vulkan.PublishVulkanFrameTelemetry(publication, cpuStages);
 
     public void RecordRenderVulkanFrameOpCensus(
         int totalCount,
@@ -1300,9 +1267,6 @@ internal sealed class EngineRuntimeRenderingHostServices :
             CompiledPlanCacheHits: reusedClean ? 1 : 0,
             CompiledPlanCacheMisses: recorded ? 1 : 0));
     }
-
-    public void RecordRenderVulkanCpuStage(EVulkanCpuStage stage, TimeSpan elapsed, long allocatedBytes)
-        => RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCpuStage(stage, elapsed, allocatedBytes);
 
     public void RecordRenderVulkanCommandBuffersDirty(string? reason)
         => RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBuffersDirty(reason);

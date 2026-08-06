@@ -54,17 +54,17 @@ public sealed class VulkanCpuDirectDynamicDataTests
     public void CpuDirectDynamicDataUsesMappedFrameSlotsAndTracksChangedByteRanges()
     {
         string arena = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanDynamicUniformRingBuffer.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanMappedFrameArena.cs");
         string uniforms = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
         string dynamicData = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VulkanCpuDirectDynamicData.cs");
 
-        arena.ShouldContain("TryCaptureCpuDirectDynamicData");
-        arena.ShouldContain("TryReserveMeshFrameDataRange(");
-        arena.ShouldContain("WriteIfChanged(offset, dynamicData)");
-        arena.ShouldContain("_dirtyRange.Include(offset, size)");
-        uniforms.ShouldContain("Renderer.TryCaptureCpuDirectDynamicData(this, frameIndex, drawUniformSlot, draw");
+        arena.ShouldContain("internal bool TryReserve(");
+        arena.ShouldContain("internal bool TryWriteIfChanged<T>");
+        arena.ShouldContain("chunk.DirtyRange.Include(slice.Offset, slice.Length)");
+        uniforms.ShouldContain("private bool TryCaptureCpuDirectDynamicData(");
+        uniforms.ShouldContain("arena.TryWriteIfChanged(slice, dynamicData)");
         dynamicData.ShouldContain("uint TransformId)");
     }
 

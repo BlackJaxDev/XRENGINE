@@ -23,31 +23,31 @@ namespace XREngine.Rendering.Vulkan
             ShaderStageFlags.FragmentBit |
             ShaderStageFlags.ComputeBit;
 
-        private CommandBuffer[]? _commandBuffers;
-        private CommandBuffer[]? _activeCommandBuffers;
-        private VulkanPrimaryCommandPlan[]? _primaryCommandPlans;
-        private PrimaryCommandArtifactOwner[]? _primaryCommandArtifactOwners;
-        private CommandBuffer[]? _dynamicUiBatchTextSecondaryCommandBuffers;
-        private CommandBuffer[]? _dynamicUiBatchTextOverlayCommandBuffers;
-        private int[]? _dynamicUiBatchTextSecondaryOpCounts;
-        private ulong[]? _dynamicUiBatchTextSecondarySignatures;
-        private ulong[]? _commandBufferFrameOpSignatures;
-        private ulong[]? _commandBufferPlannerRevisions;
-        private ComputeTransientResources[]? _computeTransientResources;
-        private List<DeferredSecondaryCommandBuffer>[]? _deferredSecondaryCommandBuffers;
-        private readonly object _oneTimeCommandPoolsLock = new();
-        private readonly Dictionary<nint, OneTimeCommandOwner> _oneTimeCommandPools = new();
-        private readonly object _oneTimeSubmitLock = new();
-        private readonly object _commandBindStateLock = new();
-        private readonly Dictionary<ulong, CommandBufferBindState> _commandBindStates = new();
-        private readonly Dictionary<ulong, int> _commandBufferImageIndices = new();
-        private long _commandBufferRecordingGeneration;
-        private readonly object _ownedCommandChainSecondaryPoolsLock = new();
-        private readonly Dictionary<ulong, OwnedCommandChainSecondaryPool> _ownedCommandChainSecondaryPools = new();
-        private bool _enableSecondaryCommandBuffers = true;
-        private bool _enableComputeSecondaryCommandBuffers = true;
-        private bool _enableTransferSecondaryCommandBuffers = true;
-        private bool _enableQuerySecondaryCommandBuffers = true;
+        private ref CommandBuffer[]? _commandBuffers => ref _commandRuntime.CommandBuffers.Buffers;
+        private ref CommandBuffer[]? _activeCommandBuffers => ref _commandRuntime.CommandBuffers.ActiveBuffers;
+        private ref VulkanPrimaryCommandPlan[]? _primaryCommandPlans => ref _commandRuntime.CommandBuffers.PrimaryPlans;
+        private ref PrimaryCommandArtifactOwner[]? _primaryCommandArtifactOwners => ref _commandRuntime.CommandBuffers.PrimaryOwners;
+        private ref CommandBuffer[]? _dynamicUiBatchTextSecondaryCommandBuffers => ref _commandRuntime.CommandBuffers.DynamicUiSecondaries;
+        private ref CommandBuffer[]? _dynamicUiBatchTextOverlayCommandBuffers => ref _commandRuntime.CommandBuffers.DynamicUiOverlays;
+        private ref int[]? _dynamicUiBatchTextSecondaryOpCounts => ref _commandRuntime.CommandBuffers.DynamicUiOpCounts;
+        private ref ulong[]? _dynamicUiBatchTextSecondarySignatures => ref _commandRuntime.CommandBuffers.DynamicUiSignatures;
+        private ref ulong[]? _commandBufferFrameOpSignatures => ref _commandRuntime.CommandBuffers.FrameOpSignatures;
+        private ref ulong[]? _commandBufferPlannerRevisions => ref _commandRuntime.CommandBuffers.PlannerRevisions;
+        private ref ComputeTransientResources[]? _computeTransientResources => ref _commandRuntime.CommandBuffers.ComputeTransientResources;
+        private ref List<DeferredSecondaryCommandBuffer>[]? _deferredSecondaryCommandBuffers => ref _commandRuntime.CommandBuffers.DeferredSecondaries;
+        private object _oneTimeCommandPoolsLock => _commandRuntime.CommandBuffers.OneTimePoolsGate;
+        private Dictionary<nint, OneTimeCommandOwner> _oneTimeCommandPools => _commandRuntime.CommandBuffers.OneTimePools;
+        private object _oneTimeSubmitLock => _commandRuntime.CommandBuffers.OneTimeSubmitGate;
+        private object _commandBindStateLock => _commandRuntime.CommandBuffers.BindStateGate;
+        private Dictionary<ulong, CommandBufferBindState> _commandBindStates => _commandRuntime.CommandBuffers.BindStates;
+        private Dictionary<ulong, int> _commandBufferImageIndices => _commandRuntime.CommandBuffers.ImageIndices;
+        private ref long _commandBufferRecordingGeneration => ref _commandRuntime.CommandBuffers.RecordingGeneration;
+        private object _ownedCommandChainSecondaryPoolsLock => _commandRuntime.CommandBuffers.OwnedSecondaryPoolsGate;
+        private Dictionary<ulong, OwnedCommandChainSecondaryPool> _ownedCommandChainSecondaryPools => _commandRuntime.CommandBuffers.OwnedSecondaryPools;
+        private ref bool _enableSecondaryCommandBuffers => ref _commandRuntime.CommandBuffers.EnableSecondary;
+        private ref bool _enableComputeSecondaryCommandBuffers => ref _commandRuntime.CommandBuffers.EnableComputeSecondary;
+        private ref bool _enableTransferSecondaryCommandBuffers => ref _commandRuntime.CommandBuffers.EnableTransferSecondary;
+        private ref bool _enableQuerySecondaryCommandBuffers => ref _commandRuntime.CommandBuffers.EnableQuerySecondary;
         private static bool? ComputeSecondaryCommandBuffersOverride
             => XREnvironment.GetBooleanOverride(
                 XREngineEnvironmentVariables
@@ -112,24 +112,23 @@ namespace XREngine.Rendering.Vulkan
             XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||
             XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw;
 
-        private FrameOpSignatureDebugPart[][]? _commandBufferFrameOpSignatureDebugParts;
-        private int _frameOpSignatureDiffLogCount;
-        private string? _vulkanDiagnosticBaseWindowTitle;
-        private string? _vulkanDiagnosticLastTitle;
-        private int _vulkanLastFrameDroppedDrawOps;
-        private int _vulkanLastFrameDroppedOps;
-        private readonly ThreadLocal<CommandBufferRecordingScratch> _commandBufferRecordingScratch =
-            new(static () => new CommandBufferRecordingScratch());
-        private readonly VulkanFrameWideMeshFrameDataReservationManifest _frameWideMeshFrameDataManifest = new();
-        private long _observedMeshFrameDataManifestGeneration;
+        private ref FrameOpSignatureDebugPart[][]? _commandBufferFrameOpSignatureDebugParts => ref _commandRuntime.CommandBuffers.SignatureDebugParts;
+        private ref int _frameOpSignatureDiffLogCount => ref _commandRuntime.CommandBuffers.SignatureDiffLogCount;
+        private ref string? _vulkanDiagnosticBaseWindowTitle => ref _commandRuntime.CommandBuffers.DiagnosticBaseWindowTitle;
+        private ref string? _vulkanDiagnosticLastTitle => ref _commandRuntime.CommandBuffers.DiagnosticLastTitle;
+        private ref int _vulkanLastFrameDroppedDrawOps => ref _commandRuntime.CommandBuffers.LastFrameDroppedDrawOps;
+        private ref int _vulkanLastFrameDroppedOps => ref _commandRuntime.CommandBuffers.LastFrameDroppedOps;
+        private ThreadLocal<CommandBufferRecordingScratch> _commandBufferRecordingScratch => _commandRuntime.CommandBuffers.RecordingScratch;
+        private VulkanFrameWideMeshFrameDataReservationManifest _frameWideMeshFrameDataManifest => _commandRuntime.CommandBuffers.FrameWideMeshDataManifest;
+        private ref long _observedMeshFrameDataManifestGeneration => ref _commandRuntime.CommandBuffers.ObservedMeshFrameDataManifestGeneration;
         public ulong MeshFrameDataManifestGeneration => _frameWideMeshFrameDataManifest.Generation;
         public long MeshFrameDataManifestPublicationCount => _frameWideMeshFrameDataManifest.PublicationCount;
         public long MeshFrameDataManifestLateRegistrationCount => _frameWideMeshFrameDataManifest.LateRegistrationCount;
         public int MeshFrameDataManifestRendererCount => _frameWideMeshFrameDataManifest.PublishedRendererCount;
         public int MeshFrameDataManifestFamilyCount => _frameWideMeshFrameDataManifest.PublishedFamilyCount;
         public bool MeshFrameDataManifestIsSealed => _frameWideMeshFrameDataManifest.IsSealed;
-        private bool _lastEnsureCommandBufferRecordedPrimary;
-        internal int DescriptorFrameSlotFrameCount => _descriptorManager.FrameSlotCount;
+        private ref bool _lastEnsureCommandBufferRecordedPrimary => ref _commandRuntime.CommandBuffers.LastEnsureRecordedPrimary;
+        internal int DescriptorFrameSlotFrameCount => ResourceRuntime.Descriptors.FrameSlotCount;
 
 
         /// <summary>
@@ -147,18 +146,18 @@ namespace XREngine.Rendering.Vulkan
         internal bool CanUpdateCompletedDescriptorFrameSlot(int frameDataSlot)
         {
             if (frameDataSlot < 0 || frameDataSlot >= DescriptorFrameSlotFrameCount ||
-                _graphicsTimelineSemaphore.Handle == 0)
+                _commandRuntime.Synchronization._graphicsTimelineSemaphore.Handle == 0)
             {
                 return false;
             }
 
             ulong completionValue;
-            if (_swapchainImageTimelineValues is { } swapchainImageValues &&
+            if (OutputRuntime.Desktop.ImageTimelineValues is { } swapchainImageValues &&
                 (uint)frameDataSlot < (uint)swapchainImageValues.Length)
             {
                 completionValue = swapchainImageValues[frameDataSlot];
             }
-            else if (_frameSlotTimelineValues is { } frameSlotValues &&
+            else if (_commandRuntime.Synchronization._frameSlotTimelineValues is { } frameSlotValues &&
                 (uint)frameDataSlot < (uint)frameSlotValues.Length)
             {
                 completionValue = frameSlotValues[frameDataSlot];
@@ -169,23 +168,23 @@ namespace XREngine.Rendering.Vulkan
             }
 
             return completionValue == 0 ||
-                HasTimelineValueCompleted(_graphicsTimelineSemaphore, completionValue);
+                HasTimelineValueCompleted(_commandRuntime.Synchronization._graphicsTimelineSemaphore, completionValue);
         }
 
         private bool EnsureDescriptorFrameSlotFrameCountFloor(int frameSlotCount)
         {
-            if (!_descriptorManager.EnsureFrameSlotCountFloor(frameSlotCount))
+            if (!ResourceRuntime.Descriptors.EnsureFrameSlotCountFloor(frameSlotCount))
                 return false;
 
             MarkCommandBuffersDirty();
             MarkOpenXrPrimaryCommandArtifactOwnersDirty();
             return true;
         }
-        private string? _lastReusableFrameDataRefreshFailureReason;
+        private ref string? _lastReusableFrameDataRefreshFailureReason => ref _commandRuntime.CommandBuffers.LastReusableFrameDataRefreshFailureReason;
         internal static bool BloomVulkanDiagnosticsEnabled
             => XREnvironment.IsEnabled(XREngineEnvironmentVariables.BloomDiag);
 
-        private readonly Dictionary<ulong, CameraPoseReuseState> _cameraPoseReuseStates = new(8);
+        private Dictionary<ulong, CameraPoseReuseState> _cameraPoseReuseStates => _commandRuntime.CommandBuffers.CameraPoseReuseStates;
 
         private bool TryGetCommandBufferDiagnosticMetadata(
             uint imageIndex,
@@ -812,7 +811,7 @@ namespace XREngine.Rendering.Vulkan
             _commandBufferFrameOpSignatures = null;
             _commandBufferFrameOpSignatureDebugParts = null;
             _commandBufferPlannerRevisions = null;
-            _commandScheduler.ReleaseScheduleCache();
+            _commandRuntime.ReleaseScheduleCache();
         }
 
         private void DestroyCommandBufferVariants()
@@ -880,7 +879,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             _commandChainCaches = null;
-            _commandScheduler.ReleaseScheduleCache();
+            _commandRuntime.ReleaseScheduleCache();
         }
 
         private void DestroyExternalCommandChainCaches()
@@ -1181,7 +1180,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             EnsureComputeDescriptorCacheCapacity(frameDataSlotCount);
-            EnsureDynamicUniformRingBufferCapacity(frameDataSlotCount);
+            EnsureMappedFrameArenaFrameSlotCapacity(frameDataSlotCount);
             EnsureFrameTimingSlotCapacity(frameDataSlotCount);
         }
 
@@ -1465,7 +1464,7 @@ namespace XREngine.Rendering.Vulkan
                             PSetLayouts = layoutPtr,
                         };
 
-                        Result allocResult = Api!.AllocateDescriptorSets(device, ref allocInfo, setPtr);
+                        Result allocResult = Api!.AllocateDescriptorSets(_deviceContext.Device, ref allocInfo, setPtr);
                         if (allocResult == Result.Success)
                         {
                             RegisterVulkanDescriptorSets(
@@ -1542,7 +1541,7 @@ namespace XREngine.Rendering.Vulkan
                         PPoolSizes = poolSizesPtr,
                     };
 
-                    if (Api!.CreateDescriptorPool(device, ref poolInfo, null, out DescriptorPool descriptorPool) != Result.Success)
+                    if (Api!.CreateDescriptorPool(_deviceContext.Device, ref poolInfo, null, out DescriptorPool descriptorPool) != Result.Success)
                         return false;
 
                     RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolCreate();

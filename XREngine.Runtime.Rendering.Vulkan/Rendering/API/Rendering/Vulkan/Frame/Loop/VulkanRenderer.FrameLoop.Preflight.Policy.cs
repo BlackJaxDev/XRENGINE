@@ -6,15 +6,12 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
-        private long _resourceCatchUpStartedAt;
-        private ulong _resourceCatchUpBlockedFrames;
-
         private void DrainSkippedResizeFrameOps(string reason)
         {
             FrameOp[] droppedOps = DrainFrameOps(out _);
             FailUnsubmittedSubmissionMarkers(droppedOps);
-            var liveFramebufferSize = DesktopWsiTarget.EffectiveFramebufferSize;
-            var resizeExtents = DesktopWsiTarget.ResizeExtents;
+            var liveFramebufferSize = DesktopWsiOutput.EffectiveFramebufferSize;
+            var resizeExtents = DesktopWsiOutput.ResizeExtents;
 
             Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.ResizeSkip",
@@ -24,8 +21,8 @@ namespace XREngine.Rendering.Vulkan
                 droppedOps.Length,
                 liveFramebufferSize.X,
                 liveFramebufferSize.Y,
-                swapChainExtent.Width,
-                swapChainExtent.Height,
+                OutputRuntime.Desktop.Extent.Width,
+                OutputRuntime.Desktop.Extent.Height,
                 resizeExtents.PresentationExtent.X,
                 resizeExtents.PresentationExtent.Y,
                 resizeExtents.PipelineOutputExtent.X,
@@ -138,8 +135,7 @@ namespace XREngine.Rendering.Vulkan
                 return true;
             }
 
-            _resourceCatchUpStartedAt = 0;
-            _resourceCatchUpBlockedFrames = 0;
+            _frameLoop.ResetResourceCatchUpProgress();
             return false;
         }
 
@@ -150,11 +146,8 @@ namespace XREngine.Rendering.Vulkan
             string reason)
         {
             long now = Stopwatch.GetTimestamp();
-            if (_resourceCatchUpStartedAt == 0)
-                _resourceCatchUpStartedAt = now;
-
-            ulong blockedFrames = ++_resourceCatchUpBlockedFrames;
-            TimeSpan elapsed = Stopwatch.GetElapsedTime(_resourceCatchUpStartedAt, now);
+            (ulong blockedFrames, TimeSpan elapsed) =
+                _frameLoop.RecordResourceCatchUpProgress(now);
             Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.ResourceCatchUpProgress.{viewport.Index}",
                 TimeSpan.FromMilliseconds(250),
@@ -162,8 +155,8 @@ namespace XREngine.Rendering.Vulkan
                 viewport.Index,
                 blockedFrames,
                 elapsed.TotalMilliseconds,
-                swapChainExtent.Width,
-                swapChainExtent.Height,
+                OutputRuntime.Desktop.Extent.Width,
+                OutputRuntime.Desktop.Extent.Height,
                 activeGeneration?.Key.ToString() ?? "<none>",
                 pendingGeneration?.Key.ToString() ?? "<none>",
                 pendingGeneration?.Status.ToString() ?? "<none>",

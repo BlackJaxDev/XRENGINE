@@ -1017,23 +1017,44 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_requested_draws", RuntimeEngine.Rendering.Stats.Vulkan.VulkanRequestedDraws, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_consumed_draws", RuntimeEngine.Rendering.Stats.Vulkan.VulkanConsumedDraws, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_oom_fallback_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanOomFallbackCount, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_total_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameTotalMs, ref first);
+            VulkanFrameTelemetryPublication vulkanFrame = RuntimeEngine.Rendering.Stats.Vulkan.LatestVulkanFrameTelemetry;
+            AppendNumberField(s_lineBuilder, "vulkan_frame_authority_id", vulkanFrame.AuthorityId, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_publication_sequence", vulkanFrame.PublicationSequence, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_engine_frame_number", vulkanFrame.Identity.EngineFrameNumber, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_render_frame_number", vulkanFrame.Identity.RenderFrameNumber, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_slot", vulkanFrame.Identity.FrameSlot, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_output_index", vulkanFrame.Identity.Output.OutputIndex, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_output_generation", vulkanFrame.Identity.Output.OutputGeneration, ref first);
+            AppendStringField(s_lineBuilder, "vulkan_frame_outcome", vulkanFrame.Outcome.ToString(), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_total_ms", vulkanFrame.TotalElapsed.TotalMilliseconds, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_gpu_command_buffer_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_wait_fence_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameWaitFenceMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_sample_timing_queries_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameSampleTimingQueriesMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_drain_retired_resources_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameDrainRetiredResourcesMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_acquire_image_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameAcquireImageMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_acquire_bridge_submit_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameAcquireBridgeSubmitMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_wait_swapchain_image_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameWaitSwapchainImageMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_reset_dynamic_uniform_ring_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameResetDynamicUniformRingMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_record_command_buffer_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameRecordCommandBufferMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_snapshot_imgui_overlay_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameSnapshotImGuiOverlayMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_record_scene_command_buffer_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameRecordSceneCommandBufferMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_record_imgui_overlay_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameRecordImGuiOverlayMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_record_dynamic_ui_text_overlay_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameRecordDynamicUiTextOverlayMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_submit_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameSubmitMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_trim_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameTrimMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_present_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFramePresentMs, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "frame_pacing", vulkanFrame.FramePacing, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "snapshot_handoff", vulkanFrame.SnapshotHandoff, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "completion_maintenance", vulkanFrame.CompletionMaintenance, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "output_acquire", vulkanFrame.OutputAcquire, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "plan_build", vulkanFrame.PlanBuild, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "resource_prepare", vulkanFrame.ResourcePrepare, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "work_schedule", vulkanFrame.WorkSchedule, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "command_record", vulkanFrame.CommandRecord, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "submit_prepare", vulkanFrame.SubmitPrepare, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "queue_submit", vulkanFrame.QueueSubmit, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "output_complete", vulkanFrame.OutputComplete, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "frame_settlement", vulkanFrame.FrameSettlement, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_wait_fence_ms", vulkanFrame.Detail.WaitFrameSlot.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_sample_timing_queries_ms", vulkanFrame.Detail.SampleTimingQueries.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_drain_retired_resources_ms", vulkanFrame.Detail.DrainRetiredResources.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_acquire_image_ms", vulkanFrame.Detail.AcquireImage.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_acquire_bridge_submit_ms", vulkanFrame.Detail.AcquireBridgeSubmit.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_wait_swapchain_image_ms", vulkanFrame.Detail.WaitSwapchainImage.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_reset_dynamic_uniform_ring_ms", vulkanFrame.Detail.ResetDynamicUniformRing.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_record_command_buffer_ms", vulkanFrame.Detail.RecordCommandBuffer.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_snapshot_imgui_overlay_ms", vulkanFrame.Detail.SnapshotImGuiOverlay.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_record_scene_command_buffer_ms", vulkanFrame.Detail.RecordSceneCommandBuffer.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_record_imgui_overlay_ms", vulkanFrame.Detail.RecordImGuiOverlay.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_record_dynamic_ui_text_overlay_ms", vulkanFrame.Detail.RecordDynamicUiTextOverlay.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_submit_ms", vulkanFrame.Detail.SubmitQueue.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_trim_ms", vulkanFrame.Detail.TrimStaging.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_present_ms", vulkanFrame.Detail.PresentQueue.TotalMilliseconds, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_op_total_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameOpTotalCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_op_clear_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameOpClearCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_op_mesh_draw_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameOpMeshDrawCount, ref first);
@@ -1239,6 +1260,7 @@ public static partial class Engine
             AppendVulkanCpuStageFields(s_lineBuilder, "frame_data_auto_uniform_upload", EVulkanCpuStage.FrameDataAutoUniformUpload, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "queue_lock_acquisition", EVulkanCpuStage.QueueLockAcquisition, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "auxiliary_fence_wait", EVulkanCpuStage.AuxiliaryFenceWait, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "worker_wait", EVulkanCpuStage.WorkerWait, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "context_pass_transitions", EVulkanCpuStage.ContextPassTransitions, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "barrier_planning_emission", EVulkanCpuStage.BarrierPlanningEmission, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "op_dispatch", EVulkanCpuStage.OpDispatch, ref first);
@@ -1631,14 +1653,29 @@ public static partial class Engine
             EVulkanCpuStage stage,
             ref bool first)
         {
-            AppendNumberField(builder, $"vulkan_cpu_{name}_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageMs(stage), ref first);
-            AppendNumberField(builder, $"vulkan_cpu_{name}_allocated_bytes", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageAllocatedBytes(stage), ref first);
-            AppendNumberField(builder, $"vulkan_cpu_{name}_allocation_high_water_bytes", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageAllocationHighWaterBytes(stage), ref first);
-            AppendNumberField(builder, $"vulkan_cpu_{name}_boundary_allocated_bytes", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageBoundaryAllocatedBytes(stage), ref first);
-            AppendNumberField(builder, $"vulkan_cpu_{name}_boundary_allocation_high_water_bytes", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageBoundaryAllocationHighWaterBytes(stage), ref first);
-            AppendNumberField(builder, $"vulkan_cpu_{name}_process_invocation_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageInvocationCount(stage), ref first);
-            AppendNumberField(builder, $"vulkan_cpu_{name}_process_elapsed_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageCumulativeMs(stage), ref first);
-            AppendNumberField(builder, $"vulkan_cpu_{name}_process_peak_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStagePeakMs(stage), ref first);
+            VulkanCpuStageTelemetry telemetry = RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanCpuStageTelemetry(stage);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_ms", telemetry.Elapsed.TotalMilliseconds, ref first);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_allocated_bytes", telemetry.AllocatedBytes, ref first);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_allocation_high_water_bytes", telemetry.AllocationHighWaterBytes, ref first);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_boundary_allocated_bytes", telemetry.BoundaryAllocatedBytes, ref first);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_boundary_allocation_high_water_bytes", telemetry.BoundaryAllocationHighWaterBytes, ref first);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_process_invocation_count", telemetry.InvocationCount, ref first);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_process_elapsed_ms", telemetry.CumulativeElapsed.TotalMilliseconds, ref first);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_process_peak_ms", telemetry.PeakElapsed.TotalMilliseconds, ref first);
+        }
+
+        private static void AppendVulkanFrameStageFields(
+            StringBuilder builder,
+            string name,
+            VulkanFrameStageTiming stage,
+            ref bool first)
+        {
+            string prefix = $"vulkan_frame_stage_{name}";
+            AppendNumberField(builder, $"{prefix}_ms", stage.Elapsed.TotalMilliseconds, ref first);
+            AppendNumberField(builder, $"{prefix}_interval_count", stage.IntervalCount, ref first);
+            AppendStringField(builder, $"{prefix}_interval_class", stage.IntervalClass.ToString(), ref first);
+            AppendStringField(builder, $"{prefix}_outcome", stage.Outcome.ToString(), ref first);
+            AppendStringField(builder, $"{prefix}_wait_reason", stage.WaitReason.ToString(), ref first);
         }
 
         private static void AppendVulkanSecondaryRecordingFields(

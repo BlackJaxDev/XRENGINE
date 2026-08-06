@@ -4,7 +4,14 @@ namespace XREngine.Rendering.Vulkan;
 
 internal unsafe partial class VkMeshRenderer
 {
-    private readonly struct AutoUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, uint size, void* mappedPtr, ulong offset = 0, bool ownsBuffer = true)
+    private readonly struct AutoUniformBuffer(
+        Silk.NET.Vulkan.Buffer buffer,
+        DeviceMemory memory,
+        uint size,
+        void* mappedPtr,
+        ulong offset = 0,
+        bool ownsBuffer = true,
+        VulkanMappedFrameSlice mappedSlice = default)
     {
         public Silk.NET.Vulkan.Buffer Buffer { get; } = buffer;
         public DeviceMemory Memory { get; } = memory;
@@ -12,5 +19,7 @@ internal unsafe partial class VkMeshRenderer
         public void* MappedPtr { get; } = mappedPtr;
         public ulong Offset { get; } = offset;
         public bool OwnsBuffer { get; } = ownsBuffer;
+        public VulkanMappedFrameSlice MappedSlice { get; } = mappedSlice;
+        public bool UsesMappedFrameArena => MappedSlice.IsValid;
     }
 }

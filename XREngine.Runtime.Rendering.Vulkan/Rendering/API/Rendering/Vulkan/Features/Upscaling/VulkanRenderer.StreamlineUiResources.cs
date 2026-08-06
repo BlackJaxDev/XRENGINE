@@ -6,10 +6,10 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private Image[]? _streamlineUiImages;
-    private DeviceMemory[]? _streamlineUiImageMemories;
-    private ImageView[]? _streamlineUiImageViews;
-    private bool[]? _streamlineUiImagesInitialized;
+    private ref Image[]? _streamlineUiImages => ref OutputRuntime.StreamlineUi.Images;
+    private ref DeviceMemory[]? _streamlineUiImageMemories => ref OutputRuntime.StreamlineUi.ImageMemories;
+    private ref ImageView[]? _streamlineUiImageViews => ref OutputRuntime.StreamlineUi.ImageViews;
+    private ref bool[]? _streamlineUiImagesInitialized => ref OutputRuntime.StreamlineUi.ImagesInitialized;
 
     /// <summary>
     /// Creates one transparent UI color/alpha target per proxy-swapchain image.
@@ -17,10 +17,10 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     private void CreateStreamlineUiResources()
     {
-        if (!_streamlineFrameGenerationSwapchainActive || swapChainImages is null)
+        if (!OutputRuntime.Desktop.StreamlineFrameGenerationActive || OutputRuntime.Desktop.Images is null)
             return;
 
-        int imageCount = swapChainImages.Length;
+        int imageCount = OutputRuntime.Desktop.Images.Length;
         _streamlineUiImages = new Image[imageCount];
         _streamlineUiImageMemories = new DeviceMemory[imageCount];
         _streamlineUiImageViews = new ImageView[imageCount];
@@ -44,10 +44,10 @@ public unsafe partial class VulkanRenderer
         {
             SType = StructureType.ImageCreateInfo,
             ImageType = ImageType.Type2D,
-            Extent = new Extent3D(swapChainExtent.Width, swapChainExtent.Height, 1),
+            Extent = new Extent3D(OutputRuntime.Desktop.Extent.Width, OutputRuntime.Desktop.Extent.Height, 1),
             MipLevels = 1,
             ArrayLayers = 1,
-            Format = swapChainImageFormat,
+            Format = OutputRuntime.Desktop.ImageFormat,
             Tiling = ImageTiling.Optimal,
             InitialLayout = ImageLayout.Undefined,
             Usage = ImageUsageFlags.ColorAttachmentBit |
@@ -63,11 +63,11 @@ public unsafe partial class VulkanRenderer
 
         ClearTrackedImageLayouts(image);
         VulkanMemoryAllocation allocation = AllocateImageMemoryWithFallback(image, MemoryPropertyFlags.DeviceLocalBit);
-        _imageAllocationTracker.Allocations[image.Handle] = allocation;
+        ResourceRuntime.Allocations.Images.Allocations[image.Handle] = allocation;
 
-        if (Api!.BindImageMemory(device, image, allocation.Memory, allocation.Offset) != Result.Success)
+        if (Api!.BindImageMemory(_deviceContext.Device, image, allocation.Memory, allocation.Offset) != Result.Success)
         {
-            _imageAllocationTracker.Allocations.TryRemove(image.Handle, out _);
+            ResourceRuntime.Allocations.Images.Allocations.TryRemove(image.Handle, out _);
             DestroyVulkanImageImmediateTracked(image, "Streamline.UIColorAndAlpha.BindFailure");
             FreeMemoryAllocation(allocation);
             throw new InvalidOperationException($"Failed to bind Streamline UI color/alpha image memory {imageIndex}.");
@@ -78,7 +78,7 @@ public unsafe partial class VulkanRenderer
             SType = StructureType.ImageViewCreateInfo,
             Image = image,
             ViewType = ImageViewType.Type2D,
-            Format = swapChainImageFormat,
+            Format = OutputRuntime.Desktop.ImageFormat,
             SubresourceRange = new ImageSubresourceRange
             {
                 AspectMask = ImageAspectFlags.ColorBit,
@@ -89,9 +89,9 @@ public unsafe partial class VulkanRenderer
             },
         };
 
-        if (Api.CreateImageView(device, ref viewInfo, null, out ImageView view) != Result.Success)
+        if (Api.CreateImageView(_deviceContext.Device, ref viewInfo, null, out ImageView view) != Result.Success)
         {
-            _imageAllocationTracker.Allocations.TryRemove(image.Handle, out _);
+            ResourceRuntime.Allocations.Images.Allocations.TryRemove(image.Handle, out _);
             DestroyVulkanImageImmediateTracked(image, "Streamline.UIColorAndAlpha.ViewFailure");
             FreeMemoryAllocation(allocation);
             throw new InvalidOperationException($"Failed to create Streamline UI color/alpha image view {imageIndex}.");
@@ -155,14 +155,14 @@ public unsafe partial class VulkanRenderer
             _streamlineUiImageMemories[imageIndex],
             view,
             ImageLayout.General,
-            swapChainImageFormat,
+            OutputRuntime.Desktop.ImageFormat,
             ImageUsageFlags.ColorAttachmentBit |
             ImageUsageFlags.SampledBit |
             ImageUsageFlags.TransferSrcBit |
             ImageUsageFlags.TransferDstBit,
             ImageAspectFlags.ColorBit,
-            swapChainExtent.Width,
-            swapChainExtent.Height,
+            OutputRuntime.Desktop.Extent.Width,
+            OutputRuntime.Desktop.Extent.Height,
             null);
         return true;
     }

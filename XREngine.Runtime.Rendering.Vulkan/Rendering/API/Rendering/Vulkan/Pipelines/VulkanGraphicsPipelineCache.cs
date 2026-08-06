@@ -6,20 +6,18 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private readonly VulkanPipelineManager _pipelineManager = new();
-
     internal ulong SharedGraphicsPipelineGeneration
-        => _pipelineManager.SharedGraphicsPipelineGeneration;
+        => ResourceRuntime.PipelineManager.SharedGraphicsPipelineGeneration;
 
     internal bool TryGetSharedGraphicsPipeline(
         in VkMeshRenderer.PipelineKey key,
         out Pipeline pipeline)
-        => _pipelineManager.TryGetSharedGraphicsPipeline(key, out pipeline);
+        => ResourceRuntime.PipelineManager.TryGetSharedGraphicsPipeline(key, out pipeline);
 
     internal Pipeline StoreSharedGraphicsPipeline(
         in VkMeshRenderer.PipelineKey key,
         Pipeline pipeline)
-        => _pipelineManager.StoreSharedGraphicsPipeline(key, pipeline);
+        => ResourceRuntime.PipelineManager.StoreSharedGraphicsPipeline(key, pipeline);
 
     internal Pipeline StoreOrRetireSharedGraphicsPipeline(
         in VkMeshRenderer.PipelineKey key,
@@ -34,11 +32,11 @@ public unsafe partial class VulkanRenderer
 
     private void DestroySharedGraphicsPipelines()
     {
-        Pipeline[] pipelines = _pipelineManager.DrainSharedGraphicsPipelines();
+        Pipeline[] pipelines = ResourceRuntime.PipelineManager.DrainSharedGraphicsPipelines();
         if (pipelines.Length == 0)
             return;
 
-        if (Api is null || device.Handle == 0)
+        if (Api is null || _deviceContext.Device.Handle == 0)
             return;
 
         int destroyed = 0;
@@ -47,7 +45,7 @@ public unsafe partial class VulkanRenderer
             if (pipeline.Handle == 0)
                 continue;
 
-            Api.DestroyPipeline(device, pipeline, null);
+            Api.DestroyPipeline(_deviceContext.Device, pipeline, null);
             CompleteVulkanResourceDestruction(ObjectType.Pipeline, pipeline.Handle);
             destroyed++;
         }

@@ -56,15 +56,15 @@ public sealed class VulkanCoreHardeningPhase5Tests
             "internal void ClearTrackedImageLayouts(");
         string submit = SliceBetween(
             synchronization,
-            "private Result SubmitToQueueTracked(",
+            "private VulkanSubmissionReceipt SubmitToQueueTrackedCore(",
             "internal Result WaitForQueueIdleTracked(");
 
         recording.ShouldContain("_recordedImageLayoutsByCommandBuffer");
         recording.ShouldContain("RecordImageAspectState(recorded");
         recording.ShouldNotContain("_trackedImageSubresourceStates[");
-        submit.ShouldContain("if (result == Result.Success)");
+        submit.ShouldContain("if (submissionAccepted)");
         submit.ShouldContain("PublishRecordedImageLayouts(");
-        submit.IndexOf("if (result == Result.Success)", StringComparison.Ordinal)
+        submit.IndexOf("if (submissionAccepted)", StringComparison.Ordinal)
             .ShouldBeLessThan(submit.IndexOf("PublishRecordedImageLayouts", StringComparison.Ordinal));
     }
 

@@ -7,11 +7,6 @@ public unsafe partial class VulkanRenderer
 {
     internal const string Phase524bInjectedDesktopRejectionStage = "InjectedPhase524bDesktopRejection";
 
-    private readonly Phase524bDesktopRejectionInjection _phase524bDesktopRejectionInjection = new();
-    private Phase524bDesktopRejectionDecision _phase524bPendingDesktopRejection;
-    private static readonly object s_phase524bDesktopRejectionEvidenceLock = new();
-    private static OpenXrSmokeDesktopRejectionEvidence s_phase524bDesktopRejectionEvidence = new();
-
     /// <summary>
     /// Selects the only legal presentation behavior after desktop rendering was rejected.
     /// An acquired image may be re-presented only when it contains a completed final write from
@@ -58,9 +53,9 @@ public unsafe partial class VulkanRenderer
 
     public static void ResetPhase524bDesktopRejectionEvidence(bool injectionRequested)
     {
-        lock (s_phase524bDesktopRejectionEvidenceLock)
+        lock (VulkanOutputRuntime.Phase524bDesktopRejectionEvidenceLock)
         {
-            s_phase524bDesktopRejectionEvidence = new OpenXrSmokeDesktopRejectionEvidence
+            VulkanOutputRuntime.Phase524bDesktopRejectionEvidence = new OpenXrSmokeDesktopRejectionEvidence
             {
                 Injected = injectionRequested,
                 Diagnostic = injectionRequested
@@ -72,8 +67,8 @@ public unsafe partial class VulkanRenderer
 
     public static OpenXrSmokeDesktopRejectionEvidence CapturePhase524bDesktopRejectionEvidence()
     {
-        lock (s_phase524bDesktopRejectionEvidenceLock)
-            return ClonePhase524bDesktopRejectionEvidence(s_phase524bDesktopRejectionEvidence);
+        lock (VulkanOutputRuntime.Phase524bDesktopRejectionEvidenceLock)
+            return ClonePhase524bDesktopRejectionEvidence(VulkanOutputRuntime.Phase524bDesktopRejectionEvidence);
     }
 
     private bool TryPreparePhase524bInjectedDesktopRejection(
@@ -83,9 +78,9 @@ public unsafe partial class VulkanRenderer
         bool enabled = IsTrueEnvironmentValue(
             Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanPhase524bInjectDesktopRejection));
         bool imageHasCompletedContent =
-            _swapchainImageHasValidPresentedContent is not null &&
-            imageIndex < _swapchainImageHasValidPresentedContent.Length &&
-            _swapchainImageHasValidPresentedContent[imageIndex] &&
+            OutputRuntime.Desktop.ImageHasValidPresentedContent is not null &&
+            imageIndex < OutputRuntime.Desktop.ImageHasValidPresentedContent.Length &&
+            OutputRuntime.Desktop.ImageHasValidPresentedContent[imageIndex] &&
             IsSwapchainImageEverPresented(imageIndex);
         bool desktopOwned =
             context.ContextKind == EVulkanFrameOpContextKind.MainViewport &&
@@ -98,7 +93,7 @@ public unsafe partial class VulkanRenderer
         if (enabled && imageHasCompletedContent && desktopOwned)
             sampleSucceeded = TryReadPhase524bDesktopExposure(in context, out exposure, out diagnostic);
 
-        Phase524bDesktopRejectionDecision decision = _phase524bDesktopRejectionInjection.Observe(
+        Phase524bDesktopRejectionDecision decision = _outputRuntime._phase524bDesktopRejectionInjection.Observe(
             enabled,
             imageHasCompletedContent && desktopOwned,
             sampleSucceeded,
@@ -107,14 +102,14 @@ public unsafe partial class VulkanRenderer
 
         if (enabled && decision.Action == EPhase524bDesktopRejectionAction.Wait && !string.IsNullOrWhiteSpace(diagnostic))
         {
-            lock (s_phase524bDesktopRejectionEvidenceLock)
-                s_phase524bDesktopRejectionEvidence.Diagnostic = diagnostic;
+            lock (VulkanOutputRuntime.Phase524bDesktopRejectionEvidenceLock)
+                VulkanOutputRuntime.Phase524bDesktopRejectionEvidence.Diagnostic = diagnostic;
         }
 
         if (decision.Action != EPhase524bDesktopRejectionAction.Reject)
             return false;
 
-        _phase524bPendingDesktopRejection = decision;
+        _outputRuntime._phase524bPendingDesktopRejection = decision;
         return true;
     }
 
@@ -163,7 +158,7 @@ public unsafe partial class VulkanRenderer
         bool presentAccepted,
         ulong renderFrameId)
     {
-        Phase524bDesktopRejectionDecision sample = _phase524bPendingDesktopRejection;
+        Phase524bDesktopRejectionDecision sample = _outputRuntime._phase524bPendingDesktopRejection;
         bool exposureFinite = double.IsFinite(sample.Exposure);
         bool historyFinite = double.IsFinite(sample.ExposureHistory);
         var evidence = new OpenXrSmokeDesktopRejectionEvidence
@@ -193,8 +188,8 @@ public unsafe partial class VulkanRenderer
             Diagnostic = sample.Diagnostic,
         };
 
-        lock (s_phase524bDesktopRejectionEvidenceLock)
-            s_phase524bDesktopRejectionEvidence = evidence;
+        lock (VulkanOutputRuntime.Phase524bDesktopRejectionEvidenceLock)
+            VulkanOutputRuntime.Phase524bDesktopRejectionEvidence = evidence;
     }
 
     private static bool IsTrueEnvironmentValue(string? value)

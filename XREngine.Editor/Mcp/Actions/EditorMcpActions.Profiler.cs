@@ -6,6 +6,7 @@ using XREngine;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.Occlusion;
+using XREngine.Rendering.Vulkan;
 using GpuDrivenStats = XREngine.RuntimeEngine.Rendering.Stats.GpuDriven;
 using GpuPipelineStats = XREngine.RuntimeEngine.Rendering.Stats.GpuPipelineProfiler;
 using OcclusionTelemetry = XREngine.Rendering.Occlusion.OcclusionTelemetry;
@@ -67,6 +68,7 @@ namespace XREngine.Editor.Mcp
         [Description("Return the latest render-profiler counters, including Vulkan frame lifecycle timings and command-buffer cache state.")]
         public static Task<McpToolResponse> GetRenderProfilerStatsAsync(McpToolContext context)
         {
+            VulkanFrameTelemetryPublication vulkanFrame = VulkanStats.LatestVulkanFrameTelemetry;
             return Task.FromResult(new McpToolResponse(
                 "Retrieved render profiler stats.",
                 new
@@ -243,23 +245,49 @@ namespace XREngine.Editor.Mcp
                     {
                         frame_lifecycle = new
                         {
-                            total_ms = VulkanStats.VulkanFrameTotalMs,
+                            authority_id = vulkanFrame.AuthorityId,
+                            publication_sequence = vulkanFrame.PublicationSequence,
+                            engine_frame_number = vulkanFrame.Identity.EngineFrameNumber,
+                            render_frame_number = vulkanFrame.Identity.RenderFrameNumber,
+                            frame_slot = vulkanFrame.Identity.FrameSlot,
+                            output_index = vulkanFrame.Identity.Output.OutputIndex,
+                            output_generation = vulkanFrame.Identity.Output.OutputGeneration,
+                            outcome = vulkanFrame.Outcome.ToString(),
+                            total_ms = vulkanFrame.TotalElapsed.TotalMilliseconds,
                             gpu_command_buffer_ms = VulkanStats.VulkanFrameGpuCommandBufferMs,
-                            wait_fence_ms = VulkanStats.VulkanFrameWaitFenceMs,
-                            sample_timing_queries_ms = VulkanStats.VulkanFrameSampleTimingQueriesMs,
-                            drain_retired_resources_ms = VulkanStats.VulkanFrameDrainRetiredResourcesMs,
-                            acquire_image_ms = VulkanStats.VulkanFrameAcquireImageMs,
-                            acquire_bridge_submit_ms = VulkanStats.VulkanFrameAcquireBridgeSubmitMs,
-                            wait_swapchain_image_ms = VulkanStats.VulkanFrameWaitSwapchainImageMs,
-                            reset_dynamic_uniform_ring_ms = VulkanStats.VulkanFrameResetDynamicUniformRingMs,
-                            record_command_buffer_ms = VulkanStats.VulkanFrameRecordCommandBufferMs,
-                            snapshot_imgui_overlay_ms = VulkanStats.VulkanFrameSnapshotImGuiOverlayMs,
-                            record_scene_command_buffer_ms = VulkanStats.VulkanFrameRecordSceneCommandBufferMs,
-                            record_imgui_overlay_ms = VulkanStats.VulkanFrameRecordImGuiOverlayMs,
-                            record_dynamic_ui_text_overlay_ms = VulkanStats.VulkanFrameRecordDynamicUiTextOverlayMs,
-                            submit_ms = VulkanStats.VulkanFrameSubmitMs,
-                            trim_ms = VulkanStats.VulkanFrameTrimMs,
-                            present_ms = VulkanStats.VulkanFramePresentMs,
+                            stages = new
+                            {
+                                frame_pacing = VulkanFrameStage(vulkanFrame.FramePacing),
+                                snapshot_handoff = VulkanFrameStage(vulkanFrame.SnapshotHandoff),
+                                completion_maintenance = VulkanFrameStage(vulkanFrame.CompletionMaintenance),
+                                output_acquire = VulkanFrameStage(vulkanFrame.OutputAcquire),
+                                plan_build = VulkanFrameStage(vulkanFrame.PlanBuild),
+                                resource_prepare = VulkanFrameStage(vulkanFrame.ResourcePrepare),
+                                work_schedule = VulkanFrameStage(vulkanFrame.WorkSchedule),
+                                command_record = VulkanFrameStage(vulkanFrame.CommandRecord),
+                                submit_prepare = VulkanFrameStage(vulkanFrame.SubmitPrepare),
+                                queue_submit = VulkanFrameStage(vulkanFrame.QueueSubmit),
+                                output_complete = VulkanFrameStage(vulkanFrame.OutputComplete),
+                                frame_settlement = VulkanFrameStage(vulkanFrame.FrameSettlement),
+                            },
+                            detail = new
+                            {
+                                wait_frame_slot_ms = vulkanFrame.Detail.WaitFrameSlot.TotalMilliseconds,
+                                sample_timing_queries_ms = vulkanFrame.Detail.SampleTimingQueries.TotalMilliseconds,
+                                drain_retired_resources_ms = vulkanFrame.Detail.DrainRetiredResources.TotalMilliseconds,
+                                acquire_image_ms = vulkanFrame.Detail.AcquireImage.TotalMilliseconds,
+                                acquire_bridge_submit_ms = vulkanFrame.Detail.AcquireBridgeSubmit.TotalMilliseconds,
+                                wait_swapchain_image_ms = vulkanFrame.Detail.WaitSwapchainImage.TotalMilliseconds,
+                                reset_dynamic_uniform_ring_ms = vulkanFrame.Detail.ResetDynamicUniformRing.TotalMilliseconds,
+                                record_command_buffer_ms = vulkanFrame.Detail.RecordCommandBuffer.TotalMilliseconds,
+                                snapshot_imgui_overlay_ms = vulkanFrame.Detail.SnapshotImGuiOverlay.TotalMilliseconds,
+                                record_scene_command_buffer_ms = vulkanFrame.Detail.RecordSceneCommandBuffer.TotalMilliseconds,
+                                record_imgui_overlay_ms = vulkanFrame.Detail.RecordImGuiOverlay.TotalMilliseconds,
+                                record_dynamic_ui_text_overlay_ms = vulkanFrame.Detail.RecordDynamicUiTextOverlay.TotalMilliseconds,
+                                submit_ms = vulkanFrame.Detail.SubmitQueue.TotalMilliseconds,
+                                trim_ms = vulkanFrame.Detail.TrimStaging.TotalMilliseconds,
+                                present_ms = vulkanFrame.Detail.PresentQueue.TotalMilliseconds,
+                            },
                         },
                         cpu_stages = new
                         {
@@ -314,6 +342,7 @@ namespace XREngine.Editor.Mcp
                             mesh_draw_publisher_state = VulkanCpuStage(EVulkanCpuStage.MeshDrawPublisherState),
                             mesh_draw_artifact_eligibility = VulkanCpuStage(EVulkanCpuStage.MeshDrawArtifactEligibility),
                             mesh_draw_artifact_lookup = VulkanCpuStage(EVulkanCpuStage.MeshDrawArtifactLookup),
+                            worker_wait = VulkanCpuStage(EVulkanCpuStage.WorkerWait),
                         },
                         command_buffer_cache = new
                         {
@@ -779,16 +808,29 @@ namespace XREngine.Editor.Mcp
         }
 
         private static object VulkanCpuStage(EVulkanCpuStage stage)
+        {
+            VulkanCpuStageTelemetry telemetry = VulkanStats.GetVulkanCpuStageTelemetry(stage);
+            return new
+            {
+                elapsed_ms = telemetry.Elapsed.TotalMilliseconds,
+                allocated_bytes = telemetry.AllocatedBytes,
+                allocation_high_water_bytes = telemetry.AllocationHighWaterBytes,
+                boundary_allocated_bytes = telemetry.BoundaryAllocatedBytes,
+                boundary_allocation_high_water_bytes = telemetry.BoundaryAllocationHighWaterBytes,
+                process_invocation_count = telemetry.InvocationCount,
+                process_elapsed_ms = telemetry.CumulativeElapsed.TotalMilliseconds,
+                process_peak_ms = telemetry.PeakElapsed.TotalMilliseconds,
+            };
+        }
+
+        private static object VulkanFrameStage(VulkanFrameStageTiming stage)
             => new
             {
-                elapsed_ms = VulkanStats.VulkanCpuStageMs(stage),
-                allocated_bytes = VulkanStats.VulkanCpuStageAllocatedBytes(stage),
-                allocation_high_water_bytes = VulkanStats.VulkanCpuStageAllocationHighWaterBytes(stage),
-                boundary_allocated_bytes = VulkanStats.VulkanCpuStageBoundaryAllocatedBytes(stage),
-                boundary_allocation_high_water_bytes = VulkanStats.VulkanCpuStageBoundaryAllocationHighWaterBytes(stage),
-                process_invocation_count = VulkanStats.VulkanCpuStageInvocationCount(stage),
-                process_elapsed_ms = VulkanStats.VulkanCpuStageCumulativeMs(stage),
-                process_peak_ms = VulkanStats.VulkanCpuStagePeakMs(stage),
+                elapsed_ms = stage.Elapsed.TotalMilliseconds,
+                interval_count = stage.IntervalCount,
+                interval_class = stage.IntervalClass.ToString(),
+                outcome = stage.Outcome.ToString(),
+                wait_reason = stage.WaitReason.ToString(),
             };
 
         private static object VulkanFrequencyPublication(int frequency)

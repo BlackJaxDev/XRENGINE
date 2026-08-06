@@ -17,39 +17,27 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 public unsafe partial class VulkanRenderer
 {
-    private readonly VulkanSynchronizationThreadWorkspace _synchronizationThreadWorkspace = new();
 
     /// <summary>
     /// Gets allocation-reducing synchronization scratch for the calling thread.
     /// </summary>
     private VulkanSynchronizationThreadState SynchronizationThreadContext
-        => _synchronizationThreadWorkspace.Current;
+        => _commandRuntime.Synchronization._synchronizationThreadWorkspace.Current;
 
     /// <summary>
     /// Releases synchronization scratch retained by the calling thread.
     /// </summary>
     private void ReleaseCurrentThreadSynchronizationScratch()
-        => _synchronizationThreadWorkspace.ReleaseCurrentThread();
+        => _commandRuntime.Synchronization._synchronizationThreadWorkspace.ReleaseCurrentThread();
 
     private const int VulkanQueueOperationHistoryCapacity = 64;
-    private EVulkanSynchronizationBackend _activeSynchronizationBackend = EVulkanSynchronizationBackend.Legacy;
-    private readonly object _vulkanImageLayoutLock = new();
-    private readonly Dictionary<VulkanTrackedImageSubresource, VulkanImageSubresourceState> _trackedImageSubresourceStates = new();
-    private readonly Dictionary<ulong, (ulong ResourceGeneration, EVulkanExternalImageOwnership Ownership)>
-        _externalImageOwnershipByHandle = new();
-    private readonly Dictionary<ulong, VulkanRecordedImageLayoutState> _recordedImageLayoutsByCommandBuffer = new();
-    private readonly VulkanQueueOperationRecord[] _vulkanQueueOperationHistory = new VulkanQueueOperationRecord[VulkanQueueOperationHistoryCapacity];
-    private long _vulkanQueueOperationSerial;
-
     /// <summary>
     /// Gets whether queue submission and barrier emission use Vulkan
     /// synchronization2 structures and entry points.
     /// </summary>
     private bool UsesSynchronization2
-        => _activeSynchronizationBackend == EVulkanSynchronizationBackend.Sync2;
+        => _commandRuntime.Synchronization._activeSynchronizationBackend == EVulkanSynchronizationBackend.Sync2;
 
-    private readonly Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> _submissionImageStateScratch = new(64);
-    private readonly List<VulkanQueueSemaphoreRequirement> _submissionQueueSemaphoreRequirements = new(8);
 
     /// <summary>
     /// Debug-only assertion that fires when <c>AllCommandsBit</c> is used in a barrier.
@@ -89,7 +77,7 @@ public unsafe partial class VulkanRenderer
         EVulkanSynchronizationBackend requestedBackend = RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.SyncBackend;
         if (requestedBackend == EVulkanSynchronizationBackend.Sync2 && SupportsSynchronization2)
         {
-            _activeSynchronizationBackend = EVulkanSynchronizationBackend.Sync2;
+            _commandRuntime.Synchronization._activeSynchronizationBackend = EVulkanSynchronizationBackend.Sync2;
         }
         else
         {
@@ -99,10 +87,10 @@ public unsafe partial class VulkanRenderer
                     "[Vulkan] SyncBackend requested Sync2, but synchronization2 is unavailable. Falling back to legacy submit/barrier path.");
             }
 
-            _activeSynchronizationBackend = EVulkanSynchronizationBackend.Legacy;
+            _commandRuntime.Synchronization._activeSynchronizationBackend = EVulkanSynchronizationBackend.Legacy;
         }
 
-        Debug.Vulkan("[Vulkan] Synchronization backend initialized: {0}", _activeSynchronizationBackend);
+        Debug.Vulkan("[Vulkan] Synchronization backend initialized: {0}", _commandRuntime.Synchronization._activeSynchronizationBackend);
     }
 
     /// <summary>
@@ -319,14 +307,25 @@ public unsafe partial class VulkanRenderer
         Fence fence,
         VulkanSubmissionDiagnosticContext diagnosticContext = default,
         [CallerMemberName] string? caller = null)
-        => SubmitToQueueTrackedCore(
+        => SubmitToQueueTrackedReceipt(
             queue,
             ref submitInfo,
             fence,
             diagnosticContext,
-            out _,
-            out _,
-            caller);
+            caller).Result;
+
+    /// <summary>
+    /// Submits queue work while retaining the irrevocable native acceptance
+    /// outcome when post-submit publication degrades.
+    /// </summary>
+    private VulkanSubmissionReceipt SubmitToQueueTrackedReceipt(
+        Queue queue,
+        ref SubmitInfo submitInfo,
+        Fence fence,
+        VulkanSubmissionDiagnosticContext diagnosticContext = default,
+        [CallerMemberName] string? caller = null)
+        => SubmitToQueueTrackedCore(
+            queue, ref submitInfo, fence, diagnosticContext, out _, out _, caller);
 
     /// <summary>
     /// Submits tracked queue work for target drivers that do not construct a
@@ -349,7 +348,7 @@ public unsafe partial class VulkanRenderer
     /// attempted and whether fault injection rejected the submission.
     /// </summary>
     /// <returns>The Vulkan queue-submit or validation result.</returns>
-    private Result SubmitToQueueTrackedWithDisposition(
+    private VulkanSubmissionReceipt SubmitToQueueTrackedWithDisposition(
         Queue queue,
         ref SubmitInfo submitInfo,
         Fence fence,
@@ -372,7 +371,7 @@ public unsafe partial class VulkanRenderer
     /// failure cleanup.
     /// </summary>
     /// <returns>The final submission result.</returns>
-    private Result SubmitToQueueTrackedCore(
+    private VulkanSubmissionReceipt SubmitToQueueTrackedCore(
         Queue queue,
         ref SubmitInfo submitInfo,
         Fence fence,
@@ -390,11 +389,11 @@ public unsafe partial class VulkanRenderer
             lock (_oneTimeSubmitLock)
                 RecordVulkanQueueOperation("submit-rejected", queue, Result.ErrorDeviceLost, 0, caller);
             ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: false);
-            return Result.ErrorDeviceLost;
+            return VulkanSubmissionReceipt.Rejected(Result.ErrorDeviceLost);
         }
 
         using VulkanQueueOperationLease queueOperation =
-            VulkanQueueOperationLease.TryEnter(_oneTimeSubmitLock, _deviceStateMachine);
+            VulkanQueueOperationLease.TryEnter(_oneTimeSubmitLock, _deviceContext.StateMachine, _frameTelemetry);
         if (!queueOperation.Acquired)
         {
             RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
@@ -402,12 +401,12 @@ public unsafe partial class VulkanRenderer
             lock (_oneTimeSubmitLock)
                 RecordVulkanQueueOperation("submit-rejected", queue, Result.ErrorDeviceLost, 0, caller);
             ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: false);
-            return Result.ErrorDeviceLost;
+            return VulkanSubmissionReceipt.Rejected(Result.ErrorDeviceLost);
         }
 
-        using (VulkanCpuStageScope preparationStage = new(EVulkanCpuStage.SubmissionPreparation))
+        using (VulkanCpuStageScope preparationStage = new(_frameTelemetry, EVulkanCpuStage.SubmissionPreparation))
         {
-            using VulkanCpuStageScope diagnosticsStage = new(EVulkanCpuStage.SubmissionDiagnostics);
+            using VulkanCpuStageScope diagnosticsStage = new(_frameTelemetry, EVulkanCpuStage.SubmissionDiagnostics);
             diagnosticContext = CompleteSubmissionDiagnosticContext(
                 queue, ref submitInfo, fence, diagnosticContext, caller);
         }
@@ -416,10 +415,10 @@ public unsafe partial class VulkanRenderer
 
         bool imageStateValid;
         string imageStateFailure;
-        using (VulkanCpuStageScope preparationStage = new(EVulkanCpuStage.SubmissionPreparation))
+        using (VulkanCpuStageScope preparationStage = new(_frameTelemetry, EVulkanCpuStage.SubmissionPreparation))
         {
             using VulkanCpuStageScope imageStateStage =
-                new(EVulkanCpuStage.SubmissionImageStateValidation);
+                new(_frameTelemetry, EVulkanCpuStage.SubmissionImageStateValidation);
             imageStateValid = ValidateOrderedCommandBufferImageStateContracts(
                 queue,
                 ref submitInfo,
@@ -444,15 +443,15 @@ public unsafe partial class VulkanRenderer
                 diagnosticContext.SubmissionSerial,
                 caller);
             ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: false);
-            return Result.ErrorValidationFailedExt;
+            return VulkanSubmissionReceipt.Rejected(Result.ErrorValidationFailedExt);
         }
 
         bool resourceLifetimesValid;
         string lifetimeFailure;
-        using (VulkanCpuStageScope preparationStage = new(EVulkanCpuStage.SubmissionPreparation))
+        using (VulkanCpuStageScope preparationStage = new(_frameTelemetry, EVulkanCpuStage.SubmissionPreparation))
         {
             using VulkanCpuStageScope resourceLifetimeStage =
-                new(EVulkanCpuStage.SubmissionResourceLifetimeValidation);
+                new(_frameTelemetry, EVulkanCpuStage.SubmissionResourceLifetimeValidation);
             resourceLifetimesValid = ValidateVulkanSubmissionResourceLifetimes(
                 ref submitInfo,
                 in diagnosticContext,
@@ -471,7 +470,7 @@ public unsafe partial class VulkanRenderer
                     diagnosticContext.SubmissionSerial,
                     caller);
                 ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: false);
-                return Result.ErrorValidationFailedExt;
+                return VulkanSubmissionReceipt.Rejected(Result.ErrorValidationFailedExt);
             }
 
             RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
@@ -490,10 +489,13 @@ public unsafe partial class VulkanRenderer
                 diagnosticContext.SubmissionSerial,
                 caller);
             ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: false);
-            return Result.ErrorValidationFailedExt;
+            return VulkanSubmissionReceipt.Rejected(Result.ErrorValidationFailedExt);
         }
 
-        Result result;
+        Result result = default;
+        bool submissionAccepted = false;
+        bool lifetimePinsTransferred = false;
+        bool postSubmissionPublicationSucceeded = true;
         try
         {
             if (diagnosticContext.OpenXrStrictSpsFaultInjectionStage ==
@@ -507,55 +509,94 @@ public unsafe partial class VulkanRenderer
                     diagnosticContext.SubmissionSerial,
                     caller);
                 ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: false);
-                return Result.ErrorValidationFailedExt;
+                return VulkanSubmissionReceipt.Rejected(Result.ErrorValidationFailedExt);
             }
 
             queueDispatchAttempted = true;
-            using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.QueueSubmit))
+            try
             {
-                result = UsesSynchronization2
-                    ? SubmitToQueueSync2(queue, ref submitInfo, fence)
-                    : Api!.QueueSubmit(queue, 1, ref submitInfo, fence);
-            }
-
-            RecordVulkanQueueOperation("submit", queue, result, diagnosticContext.SubmissionSerial, caller);
-            if (result == Result.Success)
-            {
-                ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: true);
-                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanQueueSubmit();
-                using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.SubmissionPublication))
+                using (VulkanCpuStageScope cpuStage = new(_frameTelemetry, EVulkanCpuStage.QueueSubmit))
                 {
-                    VulkanLifetimeSubmission lifetimeSubmission =
-                        RecordSuccessfulVulkanSubmissionLifetime(queue, ref submitInfo, fence, diagnosticContext);
-                    PublishRecordedImageLayouts(
-                        queue,
-                        ref submitInfo,
-                        lifetimeSubmission);
-                    AdvanceCompletedImageLayouts();
+                    result = UsesSynchronization2
+                        ? SubmitToQueueSync2(queue, ref submitInfo, fence)
+                        : Api!.QueueSubmit(queue, 1, ref submitInfo, fence);
+                    // Set before the stage scope disposes: its telemetry is
+                    // never allowed to hide accepted native work.
+                    submissionAccepted = result == Result.Success;
                 }
             }
-            else if (result == Result.ErrorDeviceLost)
+            catch (Exception exception) when (submissionAccepted)
             {
-                ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: false);
-                MarkDeviceLost(
-                    $"vkQueueSubmit:{caller ?? "<unknown>"}:{result}; " +
-                    $"QueueSubmit returned ErrorDeviceLost in {caller ?? "<unknown>"} " +
-                    $"(waits={submitInfo.WaitSemaphoreCount}, signals={submitInfo.SignalSemaphoreCount}, commandBuffers={submitInfo.CommandBufferCount}, fence=0x{fence.Handle:X})",
-                    "vkQueueSubmit",
-                    result);
+                postSubmissionPublicationSucceeded = false;
+                try
+                {
+                    Debug.VulkanWarning("[Vulkan] Queue submission stage telemetry degraded: caller={0} error={1}",
+                        caller ?? "<unknown>", exception.Message);
+                }
+                catch { }
             }
-            else
+
+            try
             {
-                ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: false);
+                RecordVulkanQueueOperation("submit", queue, result, diagnosticContext.SubmissionSerial, caller);
+                if (submissionAccepted)
+                {
+                    ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: true);
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanQueueSubmit();
+                    using (VulkanCpuStageScope cpuStage = new(_frameTelemetry, EVulkanCpuStage.SubmissionPublication))
+                    {
+                        VulkanLifetimeSubmission lifetimeSubmission =
+                            RecordSuccessfulVulkanSubmissionLifetime(queue, ref submitInfo, fence, diagnosticContext);
+                        lifetimePinsTransferred = true;
+                        PublishRecordedImageLayouts(
+                            queue,
+                            ref submitInfo,
+                            lifetimeSubmission);
+                        AdvanceCompletedImageLayouts();
+                    }
+                }
+                else if (result == Result.ErrorDeviceLost)
+                {
+                    ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: false);
+                    MarkDeviceLost(
+                        $"vkQueueSubmit:{caller ?? "<unknown>"}:{result}; " +
+                        $"QueueSubmit returned ErrorDeviceLost in {caller ?? "<unknown>"} " +
+                        $"(waits={submitInfo.WaitSemaphoreCount}, signals={submitInfo.SignalSemaphoreCount}, commandBuffers={submitInfo.CommandBufferCount}, fence=0x{fence.Handle:X})",
+                        "vkQueueSubmit", result);
+                }
+                else
+                    ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: false);
+            }
+            catch (Exception exception)
+            {
+                postSubmissionPublicationSucceeded = false;
+                try
+                {
+                    Debug.VulkanWarning("[Vulkan] Queue submission publication degraded: caller={0} accepted={1} error={2}",
+                        caller ?? "<unknown>", submissionAccepted, exception.Message);
+                }
+                catch { }
             }
         }
         finally
         {
-            using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.SubmissionPublication);
-            ReleaseVulkanSubmissionResourceLifetimePins(ref submitInfo);
+            if (!submissionAccepted || lifetimePinsTransferred)
+            {
+                try
+                {
+                    using VulkanCpuStageScope cpuStage = new(_frameTelemetry, EVulkanCpuStage.SubmissionPublication);
+                    ReleaseVulkanSubmissionResourceLifetimePins(ref submitInfo);
+                }
+                catch (Exception exception)
+                {
+                    postSubmissionPublicationSucceeded = false;
+                    try { Debug.VulkanWarning("[Vulkan] Queue submission pin-release degraded: caller={0} error={1}", caller ?? "<unknown>", exception.Message); }
+                    catch { }
+                }
+            }
         }
 
-        return result;
+        return new VulkanSubmissionReceipt(result, submissionAccepted, lifetimePinsTransferred, postSubmissionPublicationSucceeded);
     }
 
     /// <summary>
@@ -575,7 +616,7 @@ public unsafe partial class VulkanRenderer
         }
 
         using VulkanQueueOperationLease queueOperation =
-            VulkanQueueOperationLease.TryEnter(_oneTimeSubmitLock, _deviceStateMachine);
+            VulkanQueueOperationLease.TryEnter(_oneTimeSubmitLock, _deviceContext.StateMachine, _frameTelemetry);
         if (!queueOperation.Acquired)
         {
             lock (_oneTimeSubmitLock)
@@ -625,7 +666,7 @@ public unsafe partial class VulkanRenderer
         }
 
         using VulkanQueueOperationLease queueOperation =
-            VulkanQueueOperationLease.TryEnter(_oneTimeSubmitLock, _deviceStateMachine);
+            VulkanQueueOperationLease.TryEnter(_oneTimeSubmitLock, _deviceContext.StateMachine, _frameTelemetry);
         if (!queueOperation.Acquired)
         {
             result = Result.ErrorDeviceLost;
@@ -636,7 +677,7 @@ public unsafe partial class VulkanRenderer
         }
 
         bool dispatched;
-        if (_streamlineFrameGenerationSwapchainActive)
+        if (OutputRuntime.Desktop.StreamlineFrameGenerationActive)
         {
             dispatched = NvidiaDlssManager.Native.TryQueueProxyPresent(
                 this,
@@ -647,7 +688,7 @@ public unsafe partial class VulkanRenderer
         }
         else
         {
-            result = khrSwapChain!.QueuePresent(queue, ref presentInfo);
+            result = OutputRuntime.Desktop.SwapchainExtension!.QueuePresent(queue, ref presentInfo);
             failureReason = string.Empty;
             dispatched = true;
         }
@@ -675,14 +716,14 @@ public unsafe partial class VulkanRenderer
         ulong submissionSerial,
         string? caller)
     {
-        long serial = Interlocked.Increment(ref _vulkanQueueOperationSerial);
+        long serial = Interlocked.Increment(ref _commandRuntime.Synchronization._vulkanQueueOperationSerial);
         int index = unchecked((int)((serial - 1) % VulkanQueueOperationHistoryCapacity));
-        _vulkanQueueOperationHistory[index] = new VulkanQueueOperationRecord(
+        _commandRuntime.Synchronization._vulkanQueueOperationHistory[index] = new VulkanQueueOperationRecord(
             unchecked((ulong)serial),
             operation,
             unchecked((ulong)queue.Handle),
             result,
-            DeviceState,
+            _deviceContext.State,
             submissionSerial,
             Environment.CurrentManagedThreadId,
             caller);
@@ -696,7 +737,7 @@ public unsafe partial class VulkanRenderer
     {
         lock (_oneTimeSubmitLock)
         {
-            long latestSerial = Volatile.Read(ref _vulkanQueueOperationSerial);
+            long latestSerial = Volatile.Read(ref _commandRuntime.Synchronization._vulkanQueueOperationSerial);
             if (latestSerial <= 0)
                 return string.Empty;
 
@@ -706,7 +747,7 @@ public unsafe partial class VulkanRenderer
             for (long serial = latestSerial; serial > 0 && emitted < maxEntries && latestSerial - serial < available; serial--)
             {
                 int index = unchecked((int)((serial - 1) % VulkanQueueOperationHistoryCapacity));
-                VulkanQueueOperationRecord operation = _vulkanQueueOperationHistory[index];
+                VulkanQueueOperationRecord operation = _commandRuntime.Synchronization._vulkanQueueOperationHistory[index];
                 if (operation.Serial != unchecked((ulong)serial))
                     continue;
 
@@ -909,17 +950,16 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        MemoryBarrier2[] memoryBarrierArray = memoryBarrierCount > 0
-            ? ArrayPool<MemoryBarrier2>.Shared.Rent((int)memoryBarrierCount)
-            : Array.Empty<MemoryBarrier2>();
-        BufferMemoryBarrier2[] bufferBarrierArray = bufferBarrierCount > 0
-            ? ArrayPool<BufferMemoryBarrier2>.Shared.Rent((int)bufferBarrierCount)
-            : Array.Empty<BufferMemoryBarrier2>();
-        ImageMemoryBarrier2[] imageBarrierArray = imageBarrierCount > 0
-            ? ArrayPool<ImageMemoryBarrier2>.Shared.Rent((int)imageBarrierCount)
-            : Array.Empty<ImageMemoryBarrier2>();
+        VulkanNativeScratchReservation<MemoryBarrier2> memoryBarrierReservation =
+            SynchronizationThreadContext.MemoryBarrier2Scratch.Reserve((int)memoryBarrierCount);
+        VulkanNativeScratchReservation<BufferMemoryBarrier2> bufferBarrierReservation =
+            SynchronizationThreadContext.BufferMemoryBarrier2Scratch.Reserve((int)bufferBarrierCount);
+        VulkanNativeScratchReservation<ImageMemoryBarrier2> imageBarrierReservation =
+            SynchronizationThreadContext.ImageMemoryBarrier2Scratch.Reserve((int)imageBarrierCount);
+        Span<MemoryBarrier2> memoryBarrierArray = memoryBarrierReservation.Span;
+        Span<BufferMemoryBarrier2> bufferBarrierArray = bufferBarrierReservation.Span;
+        Span<ImageMemoryBarrier2> imageBarrierArray = imageBarrierReservation.Span;
 
-        try
         {
             PipelineStageFlags2 srcStages2 = NormalizePipelineStages2(srcStageMask);
             PipelineStageFlags2 dstStages2 = NormalizePipelineStages2(dstStageMask);
@@ -993,15 +1033,6 @@ public unsafe partial class VulkanRenderer
 
                 CmdPipelineBarrier2Compat(commandBuffer, &dependencyInfo);
             }
-        }
-        finally
-        {
-            if (memoryBarrierCount > 0)
-                ArrayPool<MemoryBarrier2>.Shared.Return(memoryBarrierArray, clearArray: true);
-            if (bufferBarrierCount > 0)
-                ArrayPool<BufferMemoryBarrier2>.Shared.Return(bufferBarrierArray, clearArray: true);
-            if (imageBarrierCount > 0)
-                ArrayPool<ImageMemoryBarrier2>.Shared.Return(imageBarrierArray, clearArray: true);
         }
 
         RecordImageBarrierLayouts(
@@ -1086,9 +1117,9 @@ public unsafe partial class VulkanRenderer
         }
 
         ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
-        lock (_vulkanImageLayoutLock)
+        lock (_commandRuntime.Synchronization._vulkanImageLayoutLock)
         {
-            if (!_recordedImageLayoutsByCommandBuffer.TryGetValue(
+            if (!_commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(
                     commandBufferHandle,
                     out VulkanRecordedImageLayoutState? recorded))
             {
@@ -1097,7 +1128,7 @@ public unsafe partial class VulkanRenderer
                     RecordingGeneration =
                         ResolveCommandBufferRecordingGeneration(commandBuffer),
                 };
-                _recordedImageLayoutsByCommandBuffer[commandBufferHandle] =
+                _commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer[commandBufferHandle] =
                     recorded;
             }
 
@@ -1175,9 +1206,9 @@ public unsafe partial class VulkanRenderer
 
         ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
         ulong resourceGeneration = GetCurrentVulkanResourceGeneration(ObjectType.Image, image.Handle);
-        lock (_vulkanImageLayoutLock)
+        lock (_commandRuntime.Synchronization._vulkanImageLayoutLock)
         {
-            if (!_recordedImageLayoutsByCommandBuffer.TryGetValue(
+            if (!_commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(
                     commandBufferHandle,
                     out VulkanRecordedImageLayoutState? recorded))
             {
@@ -1185,7 +1216,7 @@ public unsafe partial class VulkanRenderer
                 {
                     RecordingGeneration = ResolveCommandBufferRecordingGeneration(commandBuffer),
                 };
-                _recordedImageLayoutsByCommandBuffer[commandBufferHandle] = recorded;
+                _commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer[commandBufferHandle] = recorded;
             }
 
             uint levelCount = Math.Max(range.LevelCount, 1u);
@@ -1225,12 +1256,12 @@ public unsafe partial class VulkanRenderer
         }
 
         ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
-        bool contended = !Monitor.TryEnter(_vulkanImageLayoutLock);
+        bool contended = !Monitor.TryEnter(_commandRuntime.Synchronization._vulkanImageLayoutLock);
         if (contended)
-            Monitor.Enter(_vulkanImageLayoutLock);
+            Monitor.Enter(_commandRuntime.Synchronization._vulkanImageLayoutLock);
         try
         {
-            if (!_recordedImageLayoutsByCommandBuffer.TryGetValue(
+            if (!_commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(
                     commandBufferHandle,
                     out VulkanRecordedImageLayoutState? recorded))
             {
@@ -1238,7 +1269,7 @@ public unsafe partial class VulkanRenderer
                 {
                     RecordingGeneration = batch.RecordingGeneration,
                 };
-                _recordedImageLayoutsByCommandBuffer[commandBufferHandle] = recorded;
+                _commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer[commandBufferHandle] = recorded;
             }
 
             for (int deltaIndex = batch.PublishedImageDeltaCount; deltaIndex < batch.ImageAccessDeltas.Count; deltaIndex++)
@@ -1279,7 +1310,7 @@ public unsafe partial class VulkanRenderer
         }
         finally
         {
-            Monitor.Exit(_vulkanImageLayoutLock);
+            Monitor.Exit(_commandRuntime.Synchronization._vulkanImageLayoutLock);
         }
 
         batch.PublishedImageDeltaCount = batch.ImageAccessDeltas.Count;
@@ -1298,11 +1329,11 @@ public unsafe partial class VulkanRenderer
         if (imageHandle == 0)
             return;
 
-        lock (_vulkanImageLayoutLock)
+        lock (_commandRuntime.Synchronization._vulkanImageLayoutLock)
         {
-            RemoveImageKeys(_trackedImageSubresourceStates, imageHandle);
-            _externalImageOwnershipByHandle.Remove(imageHandle);
-            foreach (VulkanRecordedImageLayoutState recorded in _recordedImageLayoutsByCommandBuffer.Values)
+            RemoveImageKeys(_commandRuntime.Synchronization._trackedImageSubresourceStates, imageHandle);
+            _commandRuntime.Synchronization._externalImageOwnershipByHandle.Remove(imageHandle);
+            foreach (VulkanRecordedImageLayoutState recorded in _commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer.Values)
             {
                 RemoveImageKeys(recorded.EntrySubresources, imageHandle);
                 RemoveImageKeys(recorded.SecondaryDescriptorRequirements, imageHandle);
@@ -1318,12 +1349,12 @@ public unsafe partial class VulkanRenderer
     /// <returns>The number of globally tracked subresources that were removed.</returns>
     private int ClearAllTrackedImageLayouts()
     {
-        lock (_vulkanImageLayoutLock)
+        lock (_commandRuntime.Synchronization._vulkanImageLayoutLock)
         {
-            int count = _trackedImageSubresourceStates.Count;
-            _trackedImageSubresourceStates.Clear();
-            _externalImageOwnershipByHandle.Clear();
-            _recordedImageLayoutsByCommandBuffer.Clear();
+            int count = _commandRuntime.Synchronization._trackedImageSubresourceStates.Count;
+            _commandRuntime.Synchronization._trackedImageSubresourceStates.Clear();
+            _commandRuntime.Synchronization._externalImageOwnershipByHandle.Clear();
+            _commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer.Clear();
             return count;
         }
     }
@@ -1382,7 +1413,7 @@ public unsafe partial class VulkanRenderer
         if (!recorded.Subresources.ContainsKey(key) &&
             !recorded.EntrySubresources.ContainsKey(key))
         {
-            if (_trackedImageSubresourceStates.TryGetValue(
+            if (_commandRuntime.Synchronization._trackedImageSubresourceStates.TryGetValue(
                     key,
                     out VulkanImageSubresourceState? submittedState))
             {
@@ -1414,11 +1445,11 @@ public unsafe partial class VulkanRenderer
         {
             if (recorded.Subresources.TryGetValue(key, out VulkanImageAccessState priorRecorded))
                 resolvedQueueFamily = priorRecorded.QueueFamilyIndex;
-            else if (_trackedImageSubresourceStates.TryGetValue(key, out VulkanImageSubresourceState? priorSubmitted))
+            else if (_commandRuntime.Synchronization._trackedImageSubresourceStates.TryGetValue(key, out VulkanImageSubresourceState? priorSubmitted))
                 resolvedQueueFamily = priorSubmitted.Submitted.QueueFamilyIndex;
         }
 
-        ulong serial = unchecked((ulong)Interlocked.Increment(ref _vulkanImageLayoutTransitionSerial));
+        ulong serial = unchecked((ulong)Interlocked.Increment(ref _frameTelemetry._vulkanImageLayoutTransitionSerial));
         EVulkanExternalImageOwnership externalOwnership =
             ResolveRecordedExternalImageOwnership_NoLock(
                 recorded,
@@ -1442,7 +1473,7 @@ public unsafe partial class VulkanRenderer
     /// Resolves external ownership for a recorded subresource from the newest
     /// command-buffer, submitted, or image-wide ownership state.
     /// </summary>
-    /// <remarks>The caller must hold <c>_vulkanImageLayoutLock</c>.</remarks>
+    /// <remarks>The caller must hold <c>_commandRuntime.Synchronization._vulkanImageLayoutLock</c>.</remarks>
     private EVulkanExternalImageOwnership ResolveRecordedExternalImageOwnership_NoLock(
         VulkanRecordedImageLayoutState recorded,
         VulkanTrackedImageSubresource key,
@@ -1455,14 +1486,14 @@ public unsafe partial class VulkanRenderer
             return recordedState.ExternalOwnership;
         }
 
-        if (_trackedImageSubresourceStates.TryGetValue(
+        if (_commandRuntime.Synchronization._trackedImageSubresourceStates.TryGetValue(
                 key,
                 out VulkanImageSubresourceState? submittedState))
         {
             return submittedState.Submitted.ExternalOwnership;
         }
 
-        return _externalImageOwnershipByHandle.TryGetValue(
+        return _commandRuntime.Synchronization._externalImageOwnershipByHandle.TryGetValue(
                 key.ImageHandle,
                 out var externalState) &&
             (externalState.ResourceGeneration == 0 ||
@@ -1492,16 +1523,16 @@ public unsafe partial class VulkanRenderer
             range.BaseMipLevel,
             range.BaseArrayLayer,
             aspect);
-        lock (_vulkanImageLayoutLock)
+        lock (_commandRuntime.Synchronization._vulkanImageLayoutLock)
         {
-            if (_trackedImageSubresourceStates.TryGetValue(
+            if (_commandRuntime.Synchronization._trackedImageSubresourceStates.TryGetValue(
                     key,
                     out VulkanImageSubresourceState? state))
             {
                 return state.Submitted.ExternalOwnership;
             }
 
-            return _externalImageOwnershipByHandle.TryGetValue(
+            return _commandRuntime.Synchronization._externalImageOwnershipByHandle.TryGetValue(
                     image.Handle,
                     out var externalState) &&
                 (externalState.ResourceGeneration == 0 ||
@@ -1527,9 +1558,9 @@ public unsafe partial class VulkanRenderer
         ulong resourceGeneration = GetCurrentVulkanResourceGeneration(
             ObjectType.Image,
             image.Handle);
-        lock (_vulkanImageLayoutLock)
+        lock (_commandRuntime.Synchronization._vulkanImageLayoutLock)
         {
-            _externalImageOwnershipByHandle[image.Handle] = (
+            _commandRuntime.Synchronization._externalImageOwnershipByHandle[image.Handle] = (
                 resourceGeneration,
                 EVulkanExternalImageOwnership.OpenXrRuntimeAcquired);
 
@@ -1636,7 +1667,7 @@ public unsafe partial class VulkanRenderer
                         mip,
                         layer,
                         aspect);
-                    if (_trackedImageSubresourceStates.TryGetValue(
+                    if (_commandRuntime.Synchronization._trackedImageSubresourceStates.TryGetValue(
                             key,
                             out VulkanImageSubresourceState? state))
                     {
@@ -1659,7 +1690,7 @@ public unsafe partial class VulkanRenderer
         if (image.Handle == 0)
             return false;
 
-        lock (_vulkanImageLayoutLock)
+        lock (_commandRuntime.Synchronization._vulkanImageLayoutLock)
             return TryGetImageLayout_NoLock(null, image, range, completed: false, out layout);
     }
 
@@ -1684,9 +1715,9 @@ public unsafe partial class VulkanRenderer
         }
 
         ulong handle = unchecked((ulong)commandBuffer.Handle);
-        lock (_vulkanImageLayoutLock)
+        lock (_commandRuntime.Synchronization._vulkanImageLayoutLock)
         {
-            _recordedImageLayoutsByCommandBuffer.TryGetValue(handle, out VulkanRecordedImageLayoutState? recorded);
+            _commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(handle, out VulkanRecordedImageLayoutState? recorded);
             return TryGetImageLayout_NoLock(recorded, image, range, completed: false, out layout);
         }
     }
@@ -1709,9 +1740,9 @@ public unsafe partial class VulkanRenderer
             return true;
 
         ulong handle = unchecked((ulong)commandBuffer.Handle);
-        lock (_vulkanImageLayoutLock)
+        lock (_commandRuntime.Synchronization._vulkanImageLayoutLock)
         {
-            _recordedImageLayoutsByCommandBuffer.TryGetValue(handle, out VulkanRecordedImageLayoutState? recorded);
+            _commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(handle, out VulkanRecordedImageLayoutState? recorded);
             return TryGetImageAccessState_NoLock(recorded, image, range, completed: false, out state);
         }
     }
@@ -1719,7 +1750,7 @@ public unsafe partial class VulkanRenderer
     /// <summary>
     /// Merges access state across every requested subresource and aspect.
     /// </summary>
-    /// <remarks>The caller must hold <c>_vulkanImageLayoutLock</c>.</remarks>
+    /// <remarks>The caller must hold <c>_commandRuntime.Synchronization._vulkanImageLayoutLock</c>.</remarks>
     private bool TryGetImageAccessState_NoLock(
         VulkanRecordedImageLayoutState? recorded,
         Image image,
@@ -1754,7 +1785,7 @@ public unsafe partial class VulkanRenderer
     /// Merges one aspect's recorded, entry, submitted, or completed access state
     /// into an aggregate range state.
     /// </summary>
-    /// <remarks>The caller must hold <c>_vulkanImageLayoutLock</c>.</remarks>
+    /// <remarks>The caller must hold <c>_commandRuntime.Synchronization._vulkanImageLayoutLock</c>.</remarks>
     private bool TryMergeImageAspectAccessState_NoLock(
         VulkanRecordedImageLayoutState? recorded,
         ulong imageHandle,
@@ -1778,7 +1809,7 @@ public unsafe partial class VulkanRenderer
         {
             current = entryState;
         }
-        else if (_trackedImageSubresourceStates.TryGetValue(key, out VulkanImageSubresourceState? submittedState))
+        else if (_commandRuntime.Synchronization._trackedImageSubresourceStates.TryGetValue(key, out VulkanImageSubresourceState? submittedState))
         {
             current = completed ? submittedState.Completed : submittedState.Submitted;
         }
@@ -1822,7 +1853,7 @@ public unsafe partial class VulkanRenderer
     /// <summary>
     /// Resolves a common layout across every requested subresource and aspect.
     /// </summary>
-    /// <remarks>The caller must hold <c>_vulkanImageLayoutLock</c>.</remarks>
+    /// <remarks>The caller must hold <c>_commandRuntime.Synchronization._vulkanImageLayoutLock</c>.</remarks>
     private bool TryGetImageLayout_NoLock(
         VulkanRecordedImageLayoutState? recorded,
         Image image,
@@ -1856,7 +1887,7 @@ public unsafe partial class VulkanRenderer
     /// <summary>
     /// Merges one aspect's layout into a range-wide common-layout candidate.
     /// </summary>
-    /// <remarks>The caller must hold <c>_vulkanImageLayoutLock</c>.</remarks>
+    /// <remarks>The caller must hold <c>_commandRuntime.Synchronization._vulkanImageLayoutLock</c>.</remarks>
     private bool TryMergeImageAspectState_NoLock(
         VulkanRecordedImageLayoutState? recorded,
         ulong imageHandle,
@@ -1880,7 +1911,7 @@ public unsafe partial class VulkanRenderer
         {
             state = entryState;
         }
-        else if (_trackedImageSubresourceStates.TryGetValue(key, out VulkanImageSubresourceState? submittedState))
+        else if (_commandRuntime.Synchronization._trackedImageSubresourceStates.TryGetValue(key, out VulkanImageSubresourceState? submittedState))
         {
             state = completed ? submittedState.Completed : submittedState.Submitted;
         }
@@ -1908,12 +1939,12 @@ public unsafe partial class VulkanRenderer
             return;
 
         ulong handle = unchecked((ulong)commandBuffer.Handle);
-        lock (_vulkanImageLayoutLock)
+        lock (_commandRuntime.Synchronization._vulkanImageLayoutLock)
         {
-            if (!_recordedImageLayoutsByCommandBuffer.TryGetValue(handle, out VulkanRecordedImageLayoutState? recorded))
+            if (!_commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(handle, out VulkanRecordedImageLayoutState? recorded))
             {
                 recorded = new VulkanRecordedImageLayoutState();
-                _recordedImageLayoutsByCommandBuffer[handle] = recorded;
+                _commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer[handle] = recorded;
             }
 
             recorded.Subresources.Clear();
@@ -1941,16 +1972,16 @@ public unsafe partial class VulkanRenderer
 
         ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
         ulong predecessorHandle = unchecked((ulong)predecessor.Handle);
-        lock (_vulkanImageLayoutLock)
+        lock (_commandRuntime.Synchronization._vulkanImageLayoutLock)
         {
-            if (!_recordedImageLayoutsByCommandBuffer.TryGetValue(
+            if (!_commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(
                     predecessorHandle,
                     out VulkanRecordedImageLayoutState? predecessorState))
             {
                 return;
             }
 
-            if (!_recordedImageLayoutsByCommandBuffer.TryGetValue(
+            if (!_commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(
                     commandBufferHandle,
                     out VulkanRecordedImageLayoutState? recorded))
             {
@@ -1958,7 +1989,7 @@ public unsafe partial class VulkanRenderer
                 {
                     RecordingGeneration = ResolveCommandBufferRecordingGeneration(commandBuffer),
                 };
-                _recordedImageLayoutsByCommandBuffer[commandBufferHandle] = recorded;
+                _commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer[commandBufferHandle] = recorded;
             }
 
             recorded.EntrySubresources.Clear();
@@ -1986,7 +2017,7 @@ public unsafe partial class VulkanRenderer
         out string failureReason)
     {
         failureReason = string.Empty;
-        _submissionQueueSemaphoreRequirements.Clear();
+        _commandRuntime.Synchronization._submissionQueueSemaphoreRequirements.Clear();
         if (submitInfo.CommandBufferCount == 0 || submitInfo.PCommandBuffers is null)
             return true;
 
@@ -1995,24 +2026,24 @@ public unsafe partial class VulkanRenderer
         ulong completedGraphicsSequence;
         ulong completedTransferSequence;
         ulong completedOtherSequence;
-        lock (_resourceLifetimeTracker.SyncRoot)
+        lock (ResourceRuntime.Lifetime.Tracker.SyncRoot)
         {
             completedGraphicsSequence =
-                _resourceLifetimeTracker.CompletedGraphicsSequence;
+                ResourceRuntime.Lifetime.Tracker.CompletedGraphicsSequence;
             completedTransferSequence =
-                _resourceLifetimeTracker.CompletedTransferSequence;
+                ResourceRuntime.Lifetime.Tracker.CompletedTransferSequence;
             completedOtherSequence =
-                _resourceLifetimeTracker.CompletedOtherSequence;
+                ResourceRuntime.Lifetime.Tracker.CompletedOtherSequence;
         }
 
-        lock (_vulkanImageLayoutLock)
+        lock (_commandRuntime.Synchronization._vulkanImageLayoutLock)
         {
-            _submissionImageStateScratch.Clear();
+            _commandRuntime.Synchronization._submissionImageStateScratch.Clear();
             for (int commandIndex = 0; commandIndex < submitInfo.CommandBufferCount; commandIndex++)
             {
                 ulong handle = unchecked((ulong)submitInfo.PCommandBuffers[commandIndex].Handle);
                 if (handle == 0 ||
-                    !_recordedImageLayoutsByCommandBuffer.TryGetValue(handle, out VulkanRecordedImageLayoutState? recorded))
+                    !_commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(handle, out VulkanRecordedImageLayoutState? recorded))
                 {
                     continue;
                 }
@@ -2020,9 +2051,9 @@ public unsafe partial class VulkanRenderer
                 foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> pair in recorded.EntrySubresources)
                 {
                     VulkanImageAccessState actual;
-                    if (!_submissionImageStateScratch.TryGetValue(pair.Key, out actual))
+                    if (!_commandRuntime.Synchronization._submissionImageStateScratch.TryGetValue(pair.Key, out actual))
                     {
-                        if (!_trackedImageSubresourceStates.TryGetValue(pair.Key, out VulkanImageSubresourceState? submitted))
+                        if (!_commandRuntime.Synchronization._trackedImageSubresourceStates.TryGetValue(pair.Key, out VulkanImageSubresourceState? submitted))
                         {
                             RecordPrimaryImageEntryStateMismatch(
                                 new VulkanImageEntryStateMismatch(
@@ -2042,7 +2073,7 @@ public unsafe partial class VulkanRenderer
                     }
 
                     VulkanImageAccessState expected = pair.Value;
-                    if (_trackedImageSubresourceStates.TryGetValue(
+                    if (_commandRuntime.Synchronization._trackedImageSubresourceStates.TryGetValue(
                             pair.Key,
                             out VulkanImageSubresourceState? trackedState) &&
                         trackedState.PendingQueueOwnershipRelease is
@@ -2096,7 +2127,7 @@ public unsafe partial class VulkanRenderer
                 }
 
                 foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> pair in recorded.TouchedSubresources)
-                    _submissionImageStateScratch[pair.Key] = pair.Value;
+                    _commandRuntime.Synchronization._submissionImageStateScratch[pair.Key] = pair.Value;
             }
         }
 
@@ -2215,7 +2246,7 @@ public unsafe partial class VulkanRenderer
             mipLevel,
             arrayLayer,
             aspect);
-        _trackedImageSubresourceStates.TryGetValue(
+        _commandRuntime.Synchronization._trackedImageSubresourceStates.TryGetValue(
             key,
             out VulkanImageSubresourceState? trackedState);
 
@@ -2289,10 +2320,10 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        if (!_submissionQueueSemaphoreRequirements.Contains(
+        if (!_commandRuntime.Synchronization._submissionQueueSemaphoreRequirements.Contains(
                 semaphoreRequirement))
         {
-            _submissionQueueSemaphoreRequirements.Add(
+            _commandRuntime.Synchronization._submissionQueueSemaphoreRequirements.Add(
                 semaphoreRequirement);
         }
         if (SubmissionSatisfiesQueueSemaphoreRequirement(
@@ -2408,26 +2439,26 @@ public unsafe partial class VulkanRenderer
     /// <returns><see cref="Vk.QueueFamilyIgnored"/> for an unknown queue.</returns>
     private uint ResolveVulkanQueueFamilyIndex(Queue queue)
     {
-        QueueFamilyIndices families = FamilyQueueIndices;
-        if (queue.Handle == graphicsQueue.Handle ||
-            queue.Handle == secondaryGraphicsQueue.Handle)
+        QueueFamilyIndices families = _deviceContext.QueueFamilies;
+        if (queue.Handle == _deviceContext.GraphicsQueue.Handle ||
+            queue.Handle == _deviceContext.SecondaryGraphicsQueue.Handle)
         {
             return families.GraphicsFamilyIndex ??
                    Vk.QueueFamilyIgnored;
         }
-        if (queue.Handle == computeQueue.Handle)
+        if (queue.Handle == _deviceContext.ComputeQueue.Handle)
         {
             return families.ComputeFamilyIndex ??
                    families.GraphicsFamilyIndex ??
                    Vk.QueueFamilyIgnored;
         }
-        if (queue.Handle == transferQueue.Handle)
+        if (queue.Handle == _deviceContext.TransferQueue.Handle)
         {
             return families.TransferFamilyIndex ??
                    families.GraphicsFamilyIndex ??
                    Vk.QueueFamilyIgnored;
         }
-        if (queue.Handle == presentQueue.Handle)
+        if (queue.Handle == _deviceContext.PresentQueue.Handle)
         {
             return families.PresentFamilyIndex ??
                    families.GraphicsFamilyIndex ??
@@ -2446,8 +2477,8 @@ public unsafe partial class VulkanRenderer
         if (commandBuffer.Handle == 0)
             return;
 
-        lock (_vulkanImageLayoutLock)
-            _recordedImageLayoutsByCommandBuffer.Remove(unchecked((ulong)commandBuffer.Handle));
+        lock (_commandRuntime.Synchronization._vulkanImageLayoutLock)
+            _commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer.Remove(unchecked((ulong)commandBuffer.Handle));
     }
 
     /// <summary>
@@ -2470,22 +2501,22 @@ public unsafe partial class VulkanRenderer
             if (_commandBufferTrackingBatches.TryGetValue(secondaryHandle, out VulkanCommandBufferTrackingBatch? secondaryBatch))
                 FlushCommandBufferImageAccessBatch(secondaries[i], secondaryBatch);
         }
-        lock (_vulkanImageLayoutLock)
+        lock (_commandRuntime.Synchronization._vulkanImageLayoutLock)
         {
-            if (!_recordedImageLayoutsByCommandBuffer.TryGetValue(primaryHandle, out VulkanRecordedImageLayoutState? primaryState))
+            if (!_commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(primaryHandle, out VulkanRecordedImageLayoutState? primaryState))
             {
                 primaryState = new VulkanRecordedImageLayoutState
                 {
                     RecordingGeneration = ResolveCommandBufferRecordingGeneration(primary),
                 };
-                _recordedImageLayoutsByCommandBuffer[primaryHandle] = primaryState;
+                _commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer[primaryHandle] = primaryState;
             }
 
             for (int i = 0; i < secondaries.Length; i++)
             {
                 ulong secondaryHandle = unchecked((ulong)secondaries[i].Handle);
                 if (secondaryHandle == 0 ||
-                    !_recordedImageLayoutsByCommandBuffer.TryGetValue(secondaryHandle, out VulkanRecordedImageLayoutState? secondaryState))
+                    !_commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(secondaryHandle, out VulkanRecordedImageLayoutState? secondaryState))
                 {
                     continue;
                 }
@@ -2604,9 +2635,9 @@ public unsafe partial class VulkanRenderer
         requirements.Clear();
         try
         {
-            lock (_vulkanImageLayoutLock)
+            lock (_commandRuntime.Synchronization._vulkanImageLayoutLock)
             {
-                if (_recordedImageLayoutsByCommandBuffer.TryGetValue(
+                if (_commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(
                         unchecked((ulong)secondary.Handle),
                         out VulkanRecordedImageLayoutState? secondaryState))
                 {
@@ -2646,11 +2677,11 @@ public unsafe partial class VulkanRenderer
             return false;
 
         ulong secondaryHandle = unchecked((ulong)secondary.Handle);
-        lock (_resourceLifetimeTracker.SyncRoot)
+        lock (ResourceRuntime.Lifetime.Tracker.SyncRoot)
         {
-            lock (_vulkanImageLayoutLock)
+            lock (_commandRuntime.Synchronization._vulkanImageLayoutLock)
             {
-                if (!_recordedImageLayoutsByCommandBuffer.TryGetValue(
+                if (!_commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(
                         secondaryHandle,
                         out VulkanRecordedImageLayoutState? recorded) ||
                     recorded.SecondaryDescriptorPayloadGenerations.Count == 0)
@@ -2661,7 +2692,7 @@ public unsafe partial class VulkanRenderer
                 foreach (KeyValuePair<ulong, ulong> payload in
                          recorded.SecondaryDescriptorPayloadGenerations)
                 {
-                    if (!_resourceLifetimeTracker.PublishedDescriptorSets.TryGetValue(
+                    if (!ResourceRuntime.Lifetime.Tracker.PublishedDescriptorSets.TryGetValue(
                             payload.Key,
                             out VulkanPublishedDescriptorSetSnapshot? current) ||
                         current.Generation != payload.Value)
@@ -2688,9 +2719,9 @@ public unsafe partial class VulkanRenderer
         if (descriptorSet.Handle == 0)
             return false;
 
-        lock (_resourceLifetimeTracker.SyncRoot)
+        lock (ResourceRuntime.Lifetime.Tracker.SyncRoot)
         {
-            if (!_resourceLifetimeTracker.PublishedDescriptorSets.TryGetValue(
+            if (!ResourceRuntime.Lifetime.Tracker.PublishedDescriptorSets.TryGetValue(
                     descriptorSet.Handle,
                     out VulkanPublishedDescriptorSetSnapshot? snapshot) ||
                 snapshot.Generation == 0UL)
@@ -2723,7 +2754,7 @@ public unsafe partial class VulkanRenderer
         requirements.Clear();
         try
         {
-            lock (_vulkanImageLayoutLock)
+            lock (_commandRuntime.Synchronization._vulkanImageLayoutLock)
             {
                 for (int secondaryIndex = 0;
                      secondaryIndex < secondaryCount;
@@ -2731,7 +2762,7 @@ public unsafe partial class VulkanRenderer
                 {
                     CommandBuffer secondary = secondaryBuffers[secondaryIndex];
                     if (secondary.Handle == 0 ||
-                        !_recordedImageLayoutsByCommandBuffer.TryGetValue(
+                        !_commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(
                             unchecked((ulong)secondary.Handle),
                             out VulkanRecordedImageLayoutState? secondaryState))
                     {
@@ -2817,11 +2848,12 @@ public unsafe partial class VulkanRenderer
         if (requirements.Count == 0)
             return;
 
-        ImageMemoryBarrier[] barriers = ArrayPool<ImageMemoryBarrier>.Shared.Rent(requirements.Count);
+        VulkanNativeScratchReservation<ImageMemoryBarrier> barrierReservation =
+            SynchronizationThreadContext.ImageMemoryBarrierScratch.Reserve(requirements.Count);
+        Span<ImageMemoryBarrier> barriers = barrierReservation.Span;
         int barrierCount = 0;
         PipelineStageFlags sourceStages = PipelineStageFlags.None;
         PipelineStageFlags destinationStages = PipelineStageFlags.None;
-        try
         {
             foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> requirement in
                      requirements)
@@ -2912,10 +2944,6 @@ public unsafe partial class VulkanRenderer
                     nameof(TransitionSecondaryDescriptorImagesForExecution));
             }
         }
-        finally
-        {
-            ArrayPool<ImageMemoryBarrier>.Shared.Return(barriers, clearArray: true);
-        }
     }
 
     /// <summary>
@@ -2973,13 +3001,13 @@ public unsafe partial class VulkanRenderer
 
         uint submissionQueueFamilyIndex =
             ResolveVulkanQueueFamilyIndex(queue);
-        lock (_vulkanImageLayoutLock)
+        lock (_commandRuntime.Synchronization._vulkanImageLayoutLock)
         {
             for (int commandIndex = 0; commandIndex < submitInfo.CommandBufferCount; commandIndex++)
             {
                 ulong commandBufferHandle = unchecked((ulong)submitInfo.PCommandBuffers[commandIndex].Handle);
                 if (commandBufferHandle == 0 ||
-                    !_recordedImageLayoutsByCommandBuffer.TryGetValue(commandBufferHandle, out VulkanRecordedImageLayoutState? recorded))
+                    !_commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(commandBufferHandle, out VulkanRecordedImageLayoutState? recorded))
                 {
                     continue;
                 }
@@ -2998,10 +3026,10 @@ public unsafe partial class VulkanRenderer
                         continue;
                     }
 
-                    if (!_trackedImageSubresourceStates.TryGetValue(pair.Key, out VulkanImageSubresourceState? state))
+                    if (!_commandRuntime.Synchronization._trackedImageSubresourceStates.TryGetValue(pair.Key, out VulkanImageSubresourceState? state))
                     {
                         state = new VulkanImageSubresourceState();
-                        _trackedImageSubresourceStates[pair.Key] = state;
+                        _commandRuntime.Synchronization._trackedImageSubresourceStates[pair.Key] = state;
                     }
 
                     VulkanImageAccessState publishedState = pair.Value;
@@ -3038,7 +3066,7 @@ public unsafe partial class VulkanRenderer
                     if (publishedState.ExternalOwnership !=
                         EVulkanExternalImageOwnership.EngineOwned)
                     {
-                        _externalImageOwnershipByHandle[pair.Key.ImageHandle] = (
+                        _commandRuntime.Synchronization._externalImageOwnershipByHandle[pair.Key.ImageHandle] = (
                             publishedState.ResourceGeneration,
                             publishedState.ExternalOwnership);
                     }
@@ -3068,16 +3096,16 @@ public unsafe partial class VulkanRenderer
         ulong completedGraphics;
         ulong completedTransfer;
         ulong completedOther;
-        lock (_resourceLifetimeTracker.SyncRoot)
+        lock (ResourceRuntime.Lifetime.Tracker.SyncRoot)
         {
-            completedGraphics = _resourceLifetimeTracker.CompletedGraphicsSequence;
-            completedTransfer = _resourceLifetimeTracker.CompletedTransferSequence;
-            completedOther = _resourceLifetimeTracker.CompletedOtherSequence;
+            completedGraphics = ResourceRuntime.Lifetime.Tracker.CompletedGraphicsSequence;
+            completedTransfer = ResourceRuntime.Lifetime.Tracker.CompletedTransferSequence;
+            completedOther = ResourceRuntime.Lifetime.Tracker.CompletedOtherSequence;
         }
 
-        lock (_vulkanImageLayoutLock)
+        lock (_commandRuntime.Synchronization._vulkanImageLayoutLock)
         {
-            foreach (VulkanImageSubresourceState state in _trackedImageSubresourceStates.Values)
+            foreach (VulkanImageSubresourceState state in _commandRuntime.Synchronization._trackedImageSubresourceStates.Values)
             {
                 if (state.GraphicsSequence <= completedGraphics &&
                     state.TransferSequence <= completedTransfer &&
@@ -3171,9 +3199,9 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        lock (_vulkanImageLayoutLock)
+        lock (_commandRuntime.Synchronization._vulkanImageLayoutLock)
         {
-            if (!_recordedImageLayoutsByCommandBuffer.TryGetValue(
+            if (!_commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(
                     unchecked((ulong)commandBuffer.Handle),
                     out VulkanRecordedImageLayoutState? recorded))
             {
@@ -3228,9 +3256,9 @@ public unsafe partial class VulkanRenderer
             return true;
         }
 
-        lock (_vulkanImageLayoutLock)
+        lock (_commandRuntime.Synchronization._vulkanImageLayoutLock)
         {
-            if (!_recordedImageLayoutsByCommandBuffer.TryGetValue(
+            if (!_commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(
                     unchecked((ulong)commandBuffer.Handle),
                     out VulkanRecordedImageLayoutState? recorded))
             {
@@ -3262,7 +3290,7 @@ public unsafe partial class VulkanRenderer
 
             foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> pair in recorded.EntrySubresources)
             {
-                if (!_trackedImageSubresourceStates.TryGetValue(
+                if (!_commandRuntime.Synchronization._trackedImageSubresourceStates.TryGetValue(
                         pair.Key,
                         out VulkanImageSubresourceState? submittedState))
                 {
@@ -3368,12 +3396,12 @@ public unsafe partial class VulkanRenderer
         }
 
         hash.Add(physicalGroupCount);
-        lock (_vulkanImageLayoutLock)
+        lock (_commandRuntime.Synchronization._vulkanImageLayoutLock)
         {
             VulkanRecordedImageLayoutState? recorded = null;
             if (commandBuffer.Handle != 0)
             {
-                _recordedImageLayoutsByCommandBuffer.TryGetValue(
+                _commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(
                     unchecked((ulong)commandBuffer.Handle),
                     out recorded);
             }
@@ -3386,8 +3414,8 @@ public unsafe partial class VulkanRenderer
             }
             else
             {
-                hash.Add(_trackedImageSubresourceStates.Count);
-                foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageSubresourceState> pair in _trackedImageSubresourceStates)
+                hash.Add(_commandRuntime.Synchronization._trackedImageSubresourceStates.Count);
+                foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageSubresourceState> pair in _commandRuntime.Synchronization._trackedImageSubresourceStates)
                     AddImageAccessStateSignature(ref hash, pair.Key, pair.Value.Submitted);
             }
         }

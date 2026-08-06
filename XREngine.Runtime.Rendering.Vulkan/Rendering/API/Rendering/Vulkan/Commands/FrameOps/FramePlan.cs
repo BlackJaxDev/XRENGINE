@@ -7,8 +7,8 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class FramePlan
 {
-    private FrameOp[] _operations = Array.Empty<FrameOp>();
-    private FrameOp[] _dynamicOverlayOperations = Array.Empty<FrameOp>();
+    private FrameOperationStream _operations = new();
+    private FrameOperationStream _dynamicOverlayOperations = new();
     private OutputRequest[] _outputs = Array.Empty<OutputRequest>();
     private RenderOutputDagNodeDescriptor[] _outputExecutionNodes =
         Array.Empty<RenderOutputDagNodeDescriptor>();
@@ -33,6 +33,10 @@ internal sealed class FramePlan
     internal bool IsSealed { get; private set; }
     internal int OperationCount => _operationCount;
     internal int DynamicOverlayOperationCount => _dynamicOverlayOperationCount;
+    /// <summary>Canonical numeric static stream for planners and schedulers.</summary>
+    internal FrameOperationStream StaticOperations => _operations;
+    /// <summary>Canonical numeric dynamic-overlay stream for planners and schedulers.</summary>
+    internal FrameOperationStream DynamicOverlayOperations => _dynamicOverlayOperations;
     internal int OutputCount => _outputCount;
     /// <summary>
     /// Number of output/resource DAG nodes in the validated deterministic order
@@ -49,51 +53,30 @@ internal sealed class FramePlan
         }
     }
     /// <summary>
-    /// Returns an isolated native-recording snapshot. The plan-owned backing
-    /// array is never exposed, so native recording cannot alter plan order.
+    /// Returns the sealed numeric stream directly to native recording. The
+    /// stream exposes indexed reads only, so the recorder cannot alter the
+    /// plan-owned order or materialize a per-frame compatibility array.
     /// </summary>
-    internal FrameOp[] GetNativeStaticOperationsForRecording()
+    internal FrameOperationSequence GetNativeStaticOperationsForRecording()
     {
         EnsureSealed();
-        return _operations[.._operationCount];
+        return new FrameOperationSequence(_operations);
     }
 
-    internal FrameOp[] GetNativeDynamicOverlayOperationsForRecording()
+    internal FrameOperationSequence GetNativeDynamicOverlayOperationsForRecording()
     {
         EnsureSealed();
-        return _dynamicOverlayOperations[.._dynamicOverlayOperationCount];
-    }
-
-    /// <summary>
-    /// Materializes one logical-view slice for a native target recorder without
-    /// exposing the plan-owned stream. A paired OpenXR publication therefore
-    /// has one logical DAG while each acquired image records only its own view.
-    /// </summary>
-    internal FrameOp[] GetNativeStaticOperationsForLogicalView(ulong logicalViewId)
-    {
-        EnsureSealed();
-        if (logicalViewId == 0UL)
-            throw new InvalidOperationException("A paired-eye frame plan requires a non-zero logical view identity.");
-
-        int count = 0;
-        for (int index = 0; index < _operationCount; index++)
-            if (_operations[index].Context.LogicalViewId == logicalViewId)
-                count++;
-
-        FrameOp[] snapshot = new FrameOp[count];
-        int destination = 0;
-        for (int index = 0; index < _operationCount; index++)
-            if (_operations[index].Context.LogicalViewId == logicalViewId)
-                snapshot[destination++] = _operations[index];
-        return snapshot;
+        return new FrameOperationSequence(_dynamicOverlayOperations);
     }
 
     /// <summary>
-    /// Binds a target-neutral logical slice to the caller's already prepared
-    /// native eye operations. Native context is copied only into this isolated
-    /// recording snapshot; it is never retained by the shared plan.
+    /// Validates the caller's already prepared native eye operations against a
+    /// target-neutral logical slice, then exposes the prepared array through a
+    /// read-only recording sequence. The caller already owns this per-eye
+    /// capture, so cloning it again would add transient work without improving
+    /// plan isolation.
     /// </summary>
-    internal FrameOp[] GetNativeStaticOperationsForLogicalView(
+    internal FrameOperationSequence GetNativeStaticOperationsForLogicalView(
         ulong logicalViewId,
         FrameOp[] nativeOperations)
     {
@@ -103,10 +86,9 @@ internal sealed class FramePlan
             throw new InvalidOperationException("A paired-eye frame plan requires a non-empty logical view slice.");
 
         int nativeIndex = 0;
-        FrameOp[] snapshot = new FrameOp[nativeOperations.Length];
         for (int planIndex = 0; planIndex < _operationCount; planIndex++)
         {
-            FrameOp logicalOperation = _operations[planIndex];
+            FrameOp logicalOperation = _operations.GetPayloadForPrimaryDispatch(planIndex);
             if (logicalOperation.Context.LogicalViewId != logicalViewId)
                 continue;
             if (nativeIndex >= nativeOperations.Length ||
@@ -116,13 +98,12 @@ internal sealed class FramePlan
                 throw new InvalidOperationException("Native eye operations do not match the shared logical plan slice.");
             }
 
-            snapshot[nativeIndex] = nativeOperations[nativeIndex].CreateSealedPlanSnapshot();
             nativeIndex++;
         }
 
         if (nativeIndex != nativeOperations.Length)
             throw new InvalidOperationException("Native eye operation count does not match the shared logical plan slice.");
-        return snapshot;
+        return new FrameOperationSequence(nativeOperations);
     }
 
     internal FramePlan(ViewSetPlan viewSet)
@@ -137,10 +118,8 @@ internal sealed class FramePlan
         ulong descriptorVersionSignature,
         ulong staticOperationSignature,
         ulong dynamicOverlaySignature,
-        FrameOp[] operations,
-        int operationCount,
-        FrameOp[] dynamicOverlayOperations,
-        int dynamicOverlayOperationCount,
+        FrameOperationStream operations,
+        FrameOperationStream dynamicOverlayOperations,
         OutputRequest[] outputs,
         int outputCount,
         RenderOutputDagNodeDescriptor[] outputExecutionNodes,
@@ -162,9 +141,9 @@ internal sealed class FramePlan
             StaticOperationSignature = staticOperationSignature;
             DynamicOverlaySignature = dynamicOverlaySignature;
             _operations = operations;
-            _operationCount = operationCount;
             _dynamicOverlayOperations = dynamicOverlayOperations;
-            _dynamicOverlayOperationCount = dynamicOverlayOperationCount;
+            _operationCount = operations.Count;
+            _dynamicOverlayOperationCount = dynamicOverlayOperations.Count;
             _outputs = outputs;
             _outputCount = outputCount;
             _outputExecutionNodes = outputExecutionNodes;
@@ -262,7 +241,7 @@ internal sealed class FramePlan
     /// this publication, rather than a producer-owned or subsequently rebuilt
     /// operation array.
     /// </summary>
-    internal bool TryValidateNativeRecording(FrameOp[] operations, out string reason)
+    internal bool TryValidateNativeRecording(FrameOperationSequence operations, out string reason)
     {
         if (!IsSealed)
         {
@@ -273,7 +252,7 @@ internal sealed class FramePlan
         if (_operationCount == operations.Length)
         {
             for (int index = 0; index < _operationCount; index++)
-                if (!ReferenceEquals(_operations[index], operations[index]))
+                if (!ReferenceEquals(_operations.GetPayloadForPrimaryDispatch(index), operations[index]))
                 {
                     reason = "operation stream does not match the immutable frame-plan snapshot";
                     return false;
@@ -289,7 +268,7 @@ internal sealed class FramePlan
         return true;
     }
 
-    private bool MatchesSingleLogicalViewSnapshot(FrameOp[] operations)
+    private bool MatchesSingleLogicalViewSnapshot(FrameOperationSequence operations)
     {
         if (operations.Length == 0)
             return false;
@@ -301,7 +280,7 @@ internal sealed class FramePlan
         int nativeIndex = 0;
         for (int planIndex = 0; planIndex < _operationCount; planIndex++)
         {
-            FrameOp planOperation = _operations[planIndex];
+            FrameOp planOperation = _operations.GetPayloadForPrimaryDispatch(planIndex);
             if (planOperation.Context.LogicalViewId != logicalViewId)
                 continue;
             if (nativeIndex >= operations.Length ||
@@ -314,14 +293,14 @@ internal sealed class FramePlan
         return nativeIndex == operations.Length;
     }
 
-    private static void LeaseOperations(FrameOp[] operations, int count, bool acquire)
+    private static void LeaseOperations(FrameOperationStream operations, int count, bool acquire)
     {
         for (int index = 0; index < count; index++)
         {
             if (acquire)
-                operations[index].AcquireFramePlanLease();
+                operations.GetPayloadForPrimaryDispatch(index).AcquireFramePlanLease();
             else
-                operations[index].ReleaseFramePlanLease();
+                operations.GetPayloadForPrimaryDispatch(index).ReleaseFramePlanLease();
         }
     }
 
@@ -331,7 +310,7 @@ internal sealed class FramePlan
         if ((uint)index >= (uint)_operationCount)
             throw new ArgumentOutOfRangeException(nameof(index));
 
-        return ref _operations[index];
+        return ref _operations.GetPayloadForPrimaryDispatch(index);
     }
 
     internal ref readonly FrameOp GetDynamicOverlayOperation(int index)
@@ -340,7 +319,7 @@ internal sealed class FramePlan
         if ((uint)index >= (uint)_dynamicOverlayOperationCount)
             throw new ArgumentOutOfRangeException(nameof(index));
 
-        return ref _dynamicOverlayOperations[index];
+        return ref _dynamicOverlayOperations.GetPayloadForPrimaryDispatch(index);
     }
 
     internal ref readonly OutputRequest GetOutput(int index)

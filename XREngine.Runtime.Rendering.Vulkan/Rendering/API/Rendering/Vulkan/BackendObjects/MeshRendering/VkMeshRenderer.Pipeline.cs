@@ -665,6 +665,7 @@ internal unsafe partial class VkMeshRenderer
 		IReadOnlyCollection<RenderPassMetadata>? passMetadata,
 		bool depthStencilReadOnly,
 		string pipelineName,
+		bool allowPipelineCreation,
 		out Pipeline pipeline)
 	{
 		pipeline = default;
@@ -756,6 +757,16 @@ internal unsafe partial class VkMeshRenderer
 			_pipelines[key] = pipeline;
 			_pipelineDirty = false;
 			return true;
+		}
+
+		// The pre-recording warmup pass is the only path permitted to compile a
+		// graphics pipeline. Recording may consume a cached handle, but a cache
+		// miss must defer the frame so it cannot inject shader/pipeline work into
+		// the primary command-buffer hot path.
+		if (!allowPipelineCreation)
+		{
+			_pipelineDirty = true;
+			return false;
 		}
 
 		PipelineInputAssemblyStateCreateInfo inputAssembly = new()

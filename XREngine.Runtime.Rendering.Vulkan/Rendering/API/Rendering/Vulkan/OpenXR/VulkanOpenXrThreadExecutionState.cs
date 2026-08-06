@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed class VulkanOpenXrThreadExecutionState
 {
     internal VulkanOpenXrFrameContext FrameContext;
-    internal VulkanRenderer.OpenXrEyeRenderTargetContext NativeTargetContext;
+    internal OpenXrEyeRenderTargetContext NativeTargetContext;
     internal int ExternalSwapchainDepth;
     internal int SynchronousUploadBlockDepth;
     internal VulkanOpenXrViewResourcePlannerContextKey ResourcePlannerKey;

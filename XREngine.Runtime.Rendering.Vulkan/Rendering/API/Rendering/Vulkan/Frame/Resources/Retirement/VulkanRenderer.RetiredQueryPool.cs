@@ -2,10 +2,7 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
-    {
-        internal readonly record struct RetiredQueryPool(
-            QueryPool QueryPool,
-            VulkanRetirementTicket Ticket);
-    }
+    internal readonly record struct RetiredQueryPool(
+        QueryPool QueryPool,
+        VulkanRetirementTicket Ticket);
 }

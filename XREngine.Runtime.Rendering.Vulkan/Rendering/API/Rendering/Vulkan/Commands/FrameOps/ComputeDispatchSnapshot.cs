@@ -14,6 +14,7 @@ internal sealed class ComputeDispatchSnapshot
     private ulong _liveFrameSourcePersistentEngineResourceSignature;
     private ulong _publishedImageResourceSignature;
     private ulong _publishedBufferResourceSignature;
+    internal VulkanTextureDescriptorSignaturePlan DescriptorSignatures { get; } = new();
 
     public Dictionary<string, ProgramUniformValue> Uniforms { get; private set; }
     internal Dictionary<string, VulkanRuntimeUniformPublication>
@@ -261,6 +262,7 @@ internal sealed class ComputeDispatchSnapshot
         copy.TypedPublicationGenerations = TypedPublicationGenerations;
         copy._publishedImageResourceSignature = _publishedImageResourceSignature;
         copy._publishedBufferResourceSignature = _publishedBufferResourceSignature;
+        copy.DescriptorSignatures.CopyFrom(DescriptorSignatures);
         return copy;
     }
 
@@ -271,6 +273,7 @@ internal sealed class ComputeDispatchSnapshot
     /// owns their current values.
     /// </summary>
     internal ComputeDispatchSnapshot CreatePersistentProgramBindingArtifact(
+        VulkanRenderer renderer,
         EUniformRequirements retainedEngineRequirements)
     {
         Dictionary<string, ProgramUniformValue> retainedUniforms =
@@ -310,7 +313,7 @@ internal sealed class ComputeDispatchSnapshot
 
         artifact.SetMaterialUniformBindings(MaterialUniformBindings);
         artifact.EnableMaterialBindingFastPath();
-        artifact.PublishBindingLayoutSignatures();
+        artifact.PublishBindingLayoutSignatures(renderer);
         return artifact;
     }
 
@@ -351,6 +354,7 @@ internal sealed class ComputeDispatchSnapshot
         _liveFrameSourceResourceSignatureScopeIdentity = 0;
         _liveFrameSourceExactSamplerResourceSignature = 0UL;
         _liveFrameSourcePersistentEngineResourceSignature = 0UL;
+        DescriptorSignatures.Clear();
     }
 
     /// <summary>
@@ -440,9 +444,11 @@ internal sealed class ComputeDispatchSnapshot
         samplerResourceHash.Add(VulkanRenderer.HashSamplerUnitBindings(
             Samplers,
             SamplerNamesByUnit,
+            DescriptorSignatures,
             includeMutableFrameSourceDescriptors: true));
         samplerResourceHash.Add(VulkanRenderer.HashSamplerNameBindings(
             SamplersByName,
+            DescriptorSignatures,
             includeMutableFrameSourceDescriptors: true));
         exactSamplerResourceSignature = samplerResourceHash.ToHash();
 
@@ -460,8 +466,9 @@ internal sealed class ComputeDispatchSnapshot
     /// into the copy above so command-buffer signature validation does not
     /// rescan every uniform name and type later in the same frame.
     /// </summary>
-    internal void PublishBindingLayoutSignatures()
+    internal void PublishBindingLayoutSignatures(VulkanRenderer renderer)
     {
+        DescriptorSignatures.Capture(renderer, Samplers, SamplersByName, Images);
         XRRenderPipelineInstance? pipeline =
             RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         SamplerUnitBindingLayoutSignature = VulkanRenderer.HashSamplerUnitBindingLayout(Samplers, SamplerNamesByUnit);
@@ -474,9 +481,11 @@ internal sealed class ComputeDispatchSnapshot
         samplerResourceHash.Add(VulkanRenderer.HashSamplerUnitBindings(
             Samplers,
             SamplerNamesByUnit,
+            DescriptorSignatures,
             includeMutableFrameSourceDescriptors: true));
         samplerResourceHash.Add(VulkanRenderer.HashSamplerNameBindings(
             SamplersByName,
+            DescriptorSignatures,
             includeMutableFrameSourceDescriptors: true));
         ExactSamplerResourceSignature = samplerResourceHash.ToHash();
         RuntimeUniformNameSignature = HashUniformNames(Uniforms);
@@ -488,7 +497,7 @@ internal sealed class ComputeDispatchSnapshot
                 EUniformRequirements.Lights |
                 EUniformRequirements.AmbientOcclusion);
         _publishedImageResourceSignature =
-            VulkanRenderer.HashImageBindings(Images);
+            VulkanRenderer.HashImageBindings(Images, DescriptorSignatures);
         _publishedBufferResourceSignature =
             VulkanRenderer.HashBufferBindings(Buffers);
         FrameOpSignatureHasher persistentEngineResources = new();

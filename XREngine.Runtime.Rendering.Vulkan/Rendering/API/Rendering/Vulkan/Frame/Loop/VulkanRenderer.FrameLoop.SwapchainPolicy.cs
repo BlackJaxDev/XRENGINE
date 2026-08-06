@@ -13,42 +13,36 @@ namespace XREngine.Rendering.Vulkan
         private static readonly TimeSpan InteractiveSwapchainRecreateMinInterval =
             TimeSpan.FromMilliseconds(16);
 
-        private long _swapchainRecreateRequestedAt;
-        private long _swapchainResizeLastChangedAt;
-        private uint _pendingSurfaceWidth;
-        private uint _pendingSurfaceHeight;
-        private long _lastInteractiveSwapchainRecreateTimestamp;
-
         private void ScheduleSwapchainRecreate(string reason)
         {
             long now = Stopwatch.GetTimestamp();
             bool wasInvalidated = _frameBufferInvalidated;
             _frameBufferInvalidated = true;
 
-            if (!wasInvalidated || _swapchainRecreateRequestedAt == 0)
-                _swapchainRecreateRequestedAt = now;
+            if (!wasInvalidated || _outputRuntime._desktopSwapchainPolicy.RecreateRequestedAt == 0)
+                _outputRuntime._desktopSwapchainPolicy.RecreateRequestedAt = now;
 
             Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.RecreateScheduled",
                 TimeSpan.FromSeconds(1),
                 "[Vulkan] Scheduled debounced swapchain recreate. Reason={0} RequestedAtTicks={1} WasInvalidated={2}",
                 reason,
-                _swapchainRecreateRequestedAt,
+                _outputRuntime._desktopSwapchainPolicy.RecreateRequestedAt,
                 wasInvalidated);
         }
 
         private bool TryRecreateSwapchainNow(string reason)
         {
             long recreateStart = Stopwatch.GetTimestamp();
-            uint previousWidth = swapChainExtent.Width;
-            uint previousHeight = swapChainExtent.Height;
+            uint previousWidth = OutputRuntime.Desktop.Extent.Width;
+            uint previousHeight = OutputRuntime.Desktop.Extent.Height;
             Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.RecreateImmediate",
                 TimeSpan.FromSeconds(1),
                 "[Vulkan] Recreating swapchain immediately. Reason={0}",
                 reason);
 
-            if (!DesktopWsiTarget.RecreateFinalOutput(this))
+            if (!DesktopWsiOutput.RecreateFinalOutput(this))
             {
                 TimeSpan failedElapsed = Stopwatch.GetElapsedTime(recreateStart);
                 Debug.VulkanEvery(
@@ -59,21 +53,18 @@ namespace XREngine.Rendering.Vulkan
                     failedElapsed.TotalMilliseconds,
                     previousWidth,
                     previousHeight,
-                    swapChainExtent.Width,
-                    swapChainExtent.Height);
+                    OutputRuntime.Desktop.Extent.Width,
+                    OutputRuntime.Desktop.Extent.Height);
                 ScheduleSwapchainRecreate($"{reason}; surface not presentable yet");
                 return false;
             }
 
             TimeSpan elapsed = Stopwatch.GetElapsedTime(recreateStart);
             _frameBufferInvalidated = false;
-            _swapchainRecreateRequestedAt = 0;
-            _swapchainResizeLastChangedAt = 0;
-            _pendingSurfaceWidth = 0;
-            _pendingSurfaceHeight = 0;
+            _outputRuntime._desktopSwapchainPolicy.ResetAfterRecreate();
             ResetImGuiFrameMarker();
 
-            var liveFramebufferSize = DesktopWsiTarget.EffectiveFramebufferSize;
+            var liveFramebufferSize = DesktopWsiOutput.EffectiveFramebufferSize;
             Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.RecreateResult",
                 TimeSpan.FromMilliseconds(500),
@@ -82,12 +73,12 @@ namespace XREngine.Rendering.Vulkan
                 elapsed.TotalMilliseconds,
                 previousWidth,
                 previousHeight,
-                swapChainExtent.Width,
-                swapChainExtent.Height,
+                OutputRuntime.Desktop.Extent.Width,
+                OutputRuntime.Desktop.Extent.Height,
                 liveFramebufferSize.X,
                 liveFramebufferSize.Y,
-                (int)liveFramebufferSize.X - (int)swapChainExtent.Width,
-                (int)liveFramebufferSize.Y - (int)swapChainExtent.Height);
+                (int)liveFramebufferSize.X - (int)OutputRuntime.Desktop.Extent.Width,
+                (int)liveFramebufferSize.Y - (int)OutputRuntime.Desktop.Extent.Height);
             return true;
         }
 
@@ -96,21 +87,21 @@ namespace XREngine.Rendering.Vulkan
         {
             if (attempt.LiveSurfaceValid)
             {
-                if (_pendingSurfaceWidth != attempt.LiveSurfaceWidth ||
-                    _pendingSurfaceHeight != attempt.LiveSurfaceHeight)
+                if (_outputRuntime._desktopSwapchainPolicy.PendingSurfaceWidth != attempt.LiveSurfaceWidth ||
+                    _outputRuntime._desktopSwapchainPolicy.PendingSurfaceHeight != attempt.LiveSurfaceHeight)
                 {
-                    _pendingSurfaceWidth = attempt.LiveSurfaceWidth;
-                    _pendingSurfaceHeight = attempt.LiveSurfaceHeight;
-                    _swapchainResizeLastChangedAt =
+                    _outputRuntime._desktopSwapchainPolicy.PendingSurfaceWidth = attempt.LiveSurfaceWidth;
+                    _outputRuntime._desktopSwapchainPolicy.PendingSurfaceHeight = attempt.LiveSurfaceHeight;
+                    _outputRuntime._desktopSwapchainPolicy.ResizeLastChangedAt =
                         Stopwatch.GetTimestamp();
                 }
 
                 return;
             }
 
-            _pendingSurfaceWidth = 0;
-            _pendingSurfaceHeight = 0;
-            _swapchainResizeLastChangedAt = 0;
+            _outputRuntime._desktopSwapchainPolicy.PendingSurfaceWidth = 0;
+            _outputRuntime._desktopSwapchainPolicy.PendingSurfaceHeight = 0;
+            _outputRuntime._desktopSwapchainPolicy.ResizeLastChangedAt = 0;
         }
 
         private void ApplyDesktopSwapchainExtentPolicy(
@@ -128,8 +119,8 @@ namespace XREngine.Rendering.Vulkan
                         "[Vulkan] Presenting through validated WSI scaling during interactive resize. LiveSurface={0}x{1} Swapchain={2}x{3}.",
                         attempt.LiveSurfaceWidth,
                         attempt.LiveSurfaceHeight,
-                        swapChainExtent.Width,
-                        swapChainExtent.Height);
+                        OutputRuntime.Desktop.Extent.Width,
+                        OutputRuntime.Desktop.Extent.Height);
                 }
                 else
                 {
@@ -149,19 +140,19 @@ namespace XREngine.Rendering.Vulkan
                     attempt.LiveWindowHeight,
                     attempt.LiveSurfaceWidth,
                     attempt.LiveSurfaceHeight,
-                    swapChainExtent.Width,
-                    swapChainExtent.Height,
+                    OutputRuntime.Desktop.Extent.Width,
+                    OutputRuntime.Desktop.Extent.Height,
                     attempt.InteractiveResize,
                     attempt.CanPresentMismatchedSwapchainExtent);
                 return;
             }
 
-            if (_pendingSurfaceWidth == swapChainExtent.Width &&
-                _pendingSurfaceHeight == swapChainExtent.Height)
+            if (_outputRuntime._desktopSwapchainPolicy.PendingSurfaceWidth == OutputRuntime.Desktop.Extent.Width &&
+                _outputRuntime._desktopSwapchainPolicy.PendingSurfaceHeight == OutputRuntime.Desktop.Extent.Height)
             {
-                _pendingSurfaceWidth = 0;
-                _pendingSurfaceHeight = 0;
-                _swapchainResizeLastChangedAt = 0;
+                _outputRuntime._desktopSwapchainPolicy.PendingSurfaceWidth = 0;
+                _outputRuntime._desktopSwapchainPolicy.PendingSurfaceHeight = 0;
+                _outputRuntime._desktopSwapchainPolicy.ResizeLastChangedAt = 0;
             }
         }
 
@@ -175,17 +166,17 @@ namespace XREngine.Rendering.Vulkan
             }
 
             bool hasPendingSurfaceSize =
-                _pendingSurfaceWidth > 0 &&
-                _pendingSurfaceHeight > 0;
+                _outputRuntime._desktopSwapchainPolicy.PendingSurfaceWidth > 0 &&
+                _outputRuntime._desktopSwapchainPolicy.PendingSurfaceHeight > 0;
             bool pendingMatchesLive =
                 !hasPendingSurfaceSize ||
-                (_pendingSurfaceWidth == attempt.LiveSurfaceWidth &&
-                 _pendingSurfaceHeight == attempt.LiveSurfaceHeight);
+                (_outputRuntime._desktopSwapchainPolicy.PendingSurfaceWidth == attempt.LiveSurfaceWidth &&
+                 _outputRuntime._desktopSwapchainPolicy.PendingSurfaceHeight == attempt.LiveSurfaceHeight);
             bool resizeSettled =
                 !hasPendingSurfaceSize ||
-                (_swapchainResizeLastChangedAt != 0 &&
+                (_outputRuntime._desktopSwapchainPolicy.ResizeLastChangedAt != 0 &&
                  Stopwatch.GetElapsedTime(
-                     _swapchainResizeLastChangedAt) >=
+                     _outputRuntime._desktopSwapchainPolicy.ResizeLastChangedAt) >=
                  SwapchainResizeSettleDelay);
 
             if (attempt.InteractiveResize)
@@ -195,7 +186,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     TryRecreateSwapchainNow(
                         "Interactive resize presentation extent");
-                    _lastInteractiveSwapchainRecreateTimestamp =
+                    _outputRuntime._desktopSwapchainPolicy.LastInteractiveRecreateTimestamp =
                         Stopwatch.GetTimestamp();
                     UpdateAttemptSwapchainExtentMatch(ref attempt);
                     return;
@@ -205,19 +196,19 @@ namespace XREngine.Rendering.Vulkan
                     $"Vulkan.Frame.{GetHashCode()}.RecreateDeferredForInteractiveResize",
                     TimeSpan.FromSeconds(1),
                     "[Vulkan] Deferring interactive swapchain recreate. Pending={0}x{1} Live={2}x{3} Swapchain={4}x{5} PendingMatchesLive={6}",
-                    _pendingSurfaceWidth,
-                    _pendingSurfaceHeight,
+                    _outputRuntime._desktopSwapchainPolicy.PendingSurfaceWidth,
+                    _outputRuntime._desktopSwapchainPolicy.PendingSurfaceHeight,
                     attempt.LiveSurfaceWidth,
                     attempt.LiveSurfaceHeight,
-                    swapChainExtent.Width,
-                    swapChainExtent.Height,
+                    OutputRuntime.Desktop.Extent.Width,
+                    OutputRuntime.Desktop.Extent.Height,
                     pendingMatchesLive);
                 return;
             }
 
             if (pendingMatchesLive && resizeSettled)
             {
-                _lastInteractiveSwapchainRecreateTimestamp = 0;
+                _outputRuntime._desktopSwapchainPolicy.LastInteractiveRecreateTimestamp = 0;
                 TryRecreateSwapchainNow(
                     "Debounce elapsed before frame acquire (resize settled)");
                 UpdateAttemptSwapchainExtentMatch(ref attempt);
@@ -228,8 +219,8 @@ namespace XREngine.Rendering.Vulkan
                 $"Vulkan.Frame.{GetHashCode()}.RecreateDeferredForResizeSettle",
                 TimeSpan.FromSeconds(1),
                 "[Vulkan] Debounce elapsed but resize is still active. Deferring swapchain recreate. Pending={0}x{1} Live={2}x{3} Settled={4}",
-                _pendingSurfaceWidth,
-                _pendingSurfaceHeight,
+                _outputRuntime._desktopSwapchainPolicy.PendingSurfaceWidth,
+                _outputRuntime._desktopSwapchainPolicy.PendingSurfaceHeight,
                 attempt.LiveSurfaceWidth,
                 attempt.LiveSurfaceHeight,
                 resizeSettled);
@@ -240,8 +231,8 @@ namespace XREngine.Rendering.Vulkan
         {
             attempt.SurfaceMatchesSwapchain =
                 attempt.LiveSurfaceValid &&
-                attempt.LiveSurfaceWidth == swapChainExtent.Width &&
-                attempt.LiveSurfaceHeight == swapChainExtent.Height;
+                attempt.LiveSurfaceWidth == OutputRuntime.Desktop.Extent.Width &&
+                attempt.LiveSurfaceHeight == OutputRuntime.Desktop.Extent.Height;
         }
 
         private bool ShouldRunSwapchainRecreate(bool interactiveResize)
@@ -252,15 +243,15 @@ namespace XREngine.Rendering.Vulkan
             if (interactiveResize)
                 return true;
 
-            if (_swapchainRecreateRequestedAt == 0)
+            if (_outputRuntime._desktopSwapchainPolicy.RecreateRequestedAt == 0)
                 return true;
 
-            return Stopwatch.GetElapsedTime(_swapchainRecreateRequestedAt) >= SwapchainRecreateDebounce;
+            return Stopwatch.GetElapsedTime(_outputRuntime._desktopSwapchainPolicy.RecreateRequestedAt) >= SwapchainRecreateDebounce;
         }
 
         private bool ShouldRunInteractiveSwapchainRecreate()
         {
-            long last = _lastInteractiveSwapchainRecreateTimestamp;
+            long last = _outputRuntime._desktopSwapchainPolicy.LastInteractiveRecreateTimestamp;
             return last == 0 ||
                 Stopwatch.GetElapsedTime(last) >= InteractiveSwapchainRecreateMinInterval;
         }
@@ -287,7 +278,7 @@ namespace XREngine.Rendering.Vulkan
         internal bool ShouldKeepDesktopPresentScalingSwapchainCore(Result result, bool interactiveResize)
             => result == Result.SuboptimalKhr &&
                 interactiveResize &&
-                _swapchainPresentScalingActive;
+                OutputRuntime.Desktop.PresentScalingActive;
 
     }
 }

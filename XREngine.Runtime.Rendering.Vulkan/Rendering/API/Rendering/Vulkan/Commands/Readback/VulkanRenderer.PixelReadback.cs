@@ -706,7 +706,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (!TryResolveBlitImage(
                     frameBuffer,
-                    _lastPresentedImageIndex,
+                    OutputRuntime.Desktop.LastPresentedImageIndex,
                     GetReadBufferMode(),
                     wantColor: false,
                     wantDepth: true,

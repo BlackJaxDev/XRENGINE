@@ -23,16 +23,28 @@ internal abstract class VkObject<T> : VkObjectBase
     public void RemoveCachedObject(uint id)
         => BackendContext.Registry.Remove<T>(id);
 
-        //We want to set the property instead of the field here just in case subclasses override it.
-        //It will never be set to null because the constructor requires a non-null value.
-#pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider declaring as nullable.
-    public VkObject(VulkanRenderer renderer, T data) : base(renderer)
-#pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider declaring as nullable.
+    // Assign through the property so subclass hooks and wrapper links remain consistent.
+    public VkObject(VulkanRenderer renderer, T data) : base(renderer.BackendObjectContext, renderer)
         => Data = data;
+
+    protected VkObject(
+        VulkanBackendObjectContext backendContext,
+        IRenderApiWrapperOwner owner,
+        T data) : base(backendContext, owner)
+        => Data = data;
+
+    /// <summary>
+    /// Transitional compatibility for wrapper families that still need renderer-owned
+    /// behavior. New wrappers should consume explicit backend facilities instead.
+    /// </summary>
+    protected VulkanRenderer Renderer => Owner as VulkanRenderer
+        ?? throw new InvalidOperationException("Vulkan wrapper owner is not a VulkanRenderer.");
 
     protected override GenericRenderObject Data_Internal => Data;
 
-    private T _data;
+    // Both constructors assign through the virtual Data property so wrapper links
+    // are established consistently; the field is never observed before that assignment.
+    private T _data = null!;
     private bool _dataLinked;
     public virtual T Data
     {

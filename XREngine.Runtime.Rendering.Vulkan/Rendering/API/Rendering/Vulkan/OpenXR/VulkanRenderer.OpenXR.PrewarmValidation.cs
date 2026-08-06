@@ -33,7 +33,7 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        int openXrFrameDataSlotCount = ResolveOpenXrFrameDataSlotCount(swapChainImages?.Length ?? 0);
+        int openXrFrameDataSlotCount = ResolveOpenXrFrameDataSlotCount(OutputRuntime.Desktop.Images?.Length ?? 0);
 
         uint prewarmViewIndex = ResolveOpenXrExternalSwapchainViewIndex(resourcePlannerStateIndex);
         using IDisposable externalScope = EnterOpenXrExternalSwapchainRenderScope(
@@ -43,7 +43,7 @@ public unsafe partial class VulkanRenderer
             ResolveOpenXrExternalSwapchainTargetName(prewarmViewIndex));
         using ThreadRenderStateScope renderStateScope = EnterThreadRenderStateScope(
             CreateOpenXrPrewarmRenderStateTracker(extent));
-        _openXrBackend.ExternalSwapchainPrewarmDepth++;
+        OutputRuntime.OpenXrBackend.ExternalSwapchainPrewarmDepth++;
 
         try
         {
@@ -115,7 +115,7 @@ public unsafe partial class VulkanRenderer
                 }
                 PrewarmOpenXrFrameOpResources(
                     ops,
-                    ResolveOpenXrRecordImageIndex(resourcePlannerStateIndex, swapChainImages?.Length ?? 0));
+                    ResolveOpenXrRecordImageIndex(resourcePlannerStateIndex, OutputRuntime.Desktop.Images?.Length ?? 0));
             }
         }
         catch (Exception ex)
@@ -131,7 +131,7 @@ public unsafe partial class VulkanRenderer
         }
         finally
         {
-            _openXrBackend.ExternalSwapchainPrewarmDepth--;
+            OutputRuntime.OpenXrBackend.ExternalSwapchainPrewarmDepth--;
         }
     }
 
@@ -160,8 +160,8 @@ public unsafe partial class VulkanRenderer
             extent.Height,
             BuildOpenXrExternalSwapchainPlannerTargetIdentity(prewarmViewIndex),
             ResolveOpenXrExternalSwapchainTargetName(prewarmViewIndex));
-        _openXrBackend.ExternalSwapchainPrewarmDepth++;
-        int openXrFrameDataSlotCount = ResolveOpenXrFrameDataSlotCount(swapChainImages?.Length ?? 0);
+        OutputRuntime.OpenXrBackend.ExternalSwapchainPrewarmDepth++;
+        int openXrFrameDataSlotCount = ResolveOpenXrFrameDataSlotCount(OutputRuntime.Desktop.Images?.Length ?? 0);
 
         try
         {
@@ -233,7 +233,7 @@ public unsafe partial class VulkanRenderer
                 }
                 PrewarmOpenXrFrameOpResources(
                     ops,
-                    ResolveOpenXrRecordImageIndex(resourcePlannerStateIndex, swapChainImages?.Length ?? 0));
+                    ResolveOpenXrRecordImageIndex(resourcePlannerStateIndex, OutputRuntime.Desktop.Images?.Length ?? 0));
             }
         }
         catch (Exception ex)
@@ -249,7 +249,7 @@ public unsafe partial class VulkanRenderer
         }
         finally
         {
-            _openXrBackend.ExternalSwapchainPrewarmDepth--;
+            OutputRuntime.OpenXrBackend.ExternalSwapchainPrewarmDepth--;
         }
     }
 
@@ -654,7 +654,7 @@ public unsafe partial class VulkanRenderer
             registry.DescriptorRevision,
             plannerState.ResourcePlannerRevision,
             RuntimeHelpers.GetHashCode(allocator));
-        if (_openXrBackend.ResourceRegistryWrapperRefreshStamps.TryGetValue(registry, out VulkanOpenXrResourceRegistryWrapperRefreshStamp previousStamp) &&
+        if (OutputRuntime.OpenXrBackend.ResourceRegistryWrapperRefreshStamps.TryGetValue(registry, out VulkanOpenXrResourceRegistryWrapperRefreshStamp previousStamp) &&
             previousStamp == refreshStamp)
         {
             return true;
@@ -700,7 +700,7 @@ public unsafe partial class VulkanRenderer
                 vkRenderBuffer.RefreshIfStale();
         }
 
-        _openXrBackend.ResourceRegistryWrapperRefreshStamps[registry] = refreshStamp;
+        OutputRuntime.OpenXrBackend.ResourceRegistryWrapperRefreshStamps[registry] = refreshStamp;
         return true;
     }
 

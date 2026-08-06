@@ -14,7 +14,7 @@ namespace XREngine.Rendering.Vulkan
     {
         /// <summary>The active memory allocator (legacy per-resource or block suballocator).</summary>
         internal IVulkanMemoryAllocator MemoryAllocator
-            => _bufferResourceManager.MemoryAllocator
+            => ResourceRuntime.Allocations.Buffers.MemoryAllocator
                 ?? throw new InvalidOperationException("Memory allocator not initialized.");
 
         /// <summary>
@@ -23,20 +23,20 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         internal ulong GetBufferAllocationOffset(Buffer buffer)
         {
-            if (_bufferResourceManager.Allocations.TryGetValue(buffer.Handle, out VulkanMemoryAllocation alloc))
+            if (ResourceRuntime.Allocations.Buffers.Allocations.TryGetValue(buffer.Handle, out VulkanMemoryAllocation alloc))
                 return alloc.Offset;
 
-            return _bufferResourceManager.LegacyAllocations.TryGetValue(buffer.Handle, out VulkanMemoryAllocation legacyAlloc)
+            return ResourceRuntime.Allocations.Buffers.LegacyAllocations.TryGetValue(buffer.Handle, out VulkanMemoryAllocation legacyAlloc)
                 ? legacyAlloc.Offset
                 : 0;
         }
 
         private bool TryGetBufferMemoryAllocation(Buffer buffer, out VulkanMemoryAllocation allocation)
         {
-            if (_bufferResourceManager.Allocations.TryGetValue(buffer.Handle, out allocation))
+            if (ResourceRuntime.Allocations.Buffers.Allocations.TryGetValue(buffer.Handle, out allocation))
                 return true;
 
-            return _bufferResourceManager.LegacyAllocations.TryGetValue(buffer.Handle, out allocation);
+            return ResourceRuntime.Allocations.Buffers.LegacyAllocations.TryGetValue(buffer.Handle, out allocation);
         }
 
         internal bool TryMapBufferMemory(
@@ -47,7 +47,7 @@ namespace XREngine.Rendering.Vulkan
             out void* mappedPtr)
         {
             mappedPtr = null;
-            if (!IsDeviceOperational)
+            if (!_deviceContext.IsOperational)
                 return false;
 
             ulong mappedLength = Math.Max(length, 1UL);
@@ -56,7 +56,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 bool mapped = MemoryAllocator.TryMap(
                     Api!,
-                    device,
+                    _deviceContext.Device,
                     allocation,
                     bufferOffset,
                     mappedLength,
@@ -68,7 +68,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             void* localPtr = null;
-            Result result = Api!.MapMemory(device, memory, bufferOffset, mappedLength, 0, &localPtr);
+            Result result = Api!.MapMemory(_deviceContext.Device, memory, bufferOffset, mappedLength, 0, &localPtr);
             if (result != Result.Success)
             {
                 RecordAllocatorNativeFailure("vkMapMemory.Buffer", result);
@@ -83,11 +83,11 @@ namespace XREngine.Rendering.Vulkan
         {
             if (TryGetBufferMemoryAllocation(buffer, out VulkanMemoryAllocation allocation))
             {
-                MemoryAllocator.Unmap(Api!, device, allocation);
+                MemoryAllocator.Unmap(Api!, _deviceContext.Device, allocation);
                 return;
             }
 
-            Api!.UnmapMemory(device, memory);
+            Api!.UnmapMemory(_deviceContext.Device, memory);
         }
 
         internal void* MapBufferMemoryOrThrow(
@@ -107,7 +107,7 @@ namespace XREngine.Rendering.Vulkan
         /// Returns the suballocation offset for a tracked image, or 0 if untracked (legacy).
         /// </summary>
         internal ulong GetImageAllocationOffset(Image image)
-            => _imageAllocationTracker.Allocations.TryGetValue(image.Handle, out VulkanMemoryAllocation alloc) ? alloc.Offset : 0;
+            => ResourceRuntime.Allocations.Images.Allocations.TryGetValue(image.Handle, out VulkanMemoryAllocation alloc) ? alloc.Offset : 0;
 
         /// <summary>
         /// Vulkan data buffer with best practices: staging, synchronization, descriptor integration, lifetime, mapping, error handling, and multi-frame support.
@@ -190,7 +190,7 @@ namespace XREngine.Rendering.Vulkan
             if (_deviceLost)
                 return false;
 
-            QueueFamilyIndices queueFamilies = FamilyQueueIndices;
+            QueueFamilyIndices queueFamilies = _deviceContext.QueueFamilies;
             uint graphicsFamily = queueFamilies.GraphicsFamilyIndex ?? 0u;
             uint transferFamily = queueFamilies.TransferFamilyIndex ?? graphicsFamily;
             bool dedicatedTransferFamily = transferFamily != graphicsFamily;
@@ -241,7 +241,7 @@ namespace XREngine.Rendering.Vulkan
         {
             ThrowIfPersistentResourceAllocationDuringRecording(operation);
 
-            if (IsDeviceOperational)
+            if (_deviceContext.IsOperational)
                 return;
 
             Debug.VulkanWarningEvery(
@@ -265,8 +265,8 @@ namespace XREngine.Rendering.Vulkan
             ulong requestedSize = bufferSize;
             ulong allocationSize = Math.Max(requestedSize, 1UL);
 
-            if (_stagingManager.CanPool(stagingUsage, stagingProps))
-                return _stagingManager.Acquire(this, allocationSize, stagingUsage, stagingProps, dataPtr);
+            if (ResourceRuntime.Allocations.Staging.CanPool(stagingUsage, stagingProps))
+                return ResourceRuntime.Allocations.Staging.Acquire(this, allocationSize, stagingUsage, stagingProps, dataPtr);
 
             (Buffer stagingBuffer, DeviceMemory stagingMemory) = CreateBufferRaw(allocationSize, stagingUsage, stagingProps, enableDeviceAddress);
 
@@ -306,7 +306,7 @@ namespace XREngine.Rendering.Vulkan
             };
 
             ThrowIfDeviceLostForResourceCreation("vkCreateBuffer.CreateBufferRaw");
-            if (Api!.CreateBuffer(device, ref bufferInfo, null, out Buffer buffer) != Result.Success)
+            if (Api!.CreateBuffer(_deviceContext.Device, ref bufferInfo, null, out Buffer buffer) != Result.Success)
                 throw new Exception("Failed to create Vulkan buffer.");
             TrackLiveBuffer(buffer);
 
@@ -317,19 +317,19 @@ namespace XREngine.Rendering.Vulkan
 
             // Route through the selected allocator backend.
             VulkanMemoryAllocation allocation = AllocateBufferMemoryWithFallback(buffer, properties);
-            _bufferResourceManager.Allocations[buffer.Handle] = allocation;
+            ResourceRuntime.Allocations.Buffers.Allocations[buffer.Handle] = allocation;
 
             RecordAllocationTelemetry(properties, (long)allocation.Size);
             RecordBufferAllocationDiagnostics(buffer, usage, properties, allocation, bufferSize, enableDeviceAddress, "Allocator");
 
-            Result bindResult = Api.BindBufferMemory(device, buffer, allocation.Memory, allocation.Offset);
+            Result bindResult = Api.BindBufferMemory(_deviceContext.Device, buffer, allocation.Memory, allocation.Offset);
             if (bindResult != Result.Success)
             {
                 RecordAllocatorNativeFailure("vkBindBufferMemory.AllocatorBuffer", bindResult);
-                _bufferResourceManager.Allocations.TryRemove(buffer.Handle, out _);
+                ResourceRuntime.Allocations.Buffers.Allocations.TryRemove(buffer.Handle, out _);
                 FreeMemoryAllocation(allocation);
                 if (TryBeginDestroyBuffer(buffer, "CreateBufferRaw.BindFailure"))
-                    Api.DestroyBuffer(device, buffer, null);
+                    Api.DestroyBuffer(_deviceContext.Device, buffer, null);
                 throw new Exception($"Failed to bind Vulkan buffer memory ({bindResult}).");
             }
 
@@ -344,10 +344,10 @@ namespace XREngine.Rendering.Vulkan
 
         internal bool TryGetTrackedBufferAllocation(Buffer buffer, out VulkanMemoryAllocation allocation)
         {
-            if (buffer.Handle != 0 && _bufferResourceManager.Allocations.TryGetValue(buffer.Handle, out allocation))
+            if (buffer.Handle != 0 && ResourceRuntime.Allocations.Buffers.Allocations.TryGetValue(buffer.Handle, out allocation))
                 return true;
 
-            if (buffer.Handle != 0 && _bufferResourceManager.LegacyAllocations.TryGetValue(buffer.Handle, out allocation))
+            if (buffer.Handle != 0 && ResourceRuntime.Allocations.Buffers.LegacyAllocations.TryGetValue(buffer.Handle, out allocation))
                 return true;
 
             allocation = VulkanMemoryAllocation.Null;
@@ -380,7 +380,7 @@ namespace XREngine.Rendering.Vulkan
             };
 
             ThrowIfDeviceLostForResourceCreation("vkCreateBuffer.CreateDedicatedBufferRaw");
-            if (Api!.CreateBuffer(device, ref bufferInfo, null, out Buffer buffer) != Result.Success)
+            if (Api!.CreateBuffer(_deviceContext.Device, ref bufferInfo, null, out Buffer buffer) != Result.Success)
                 throw new Exception("Failed to create dedicated Vulkan buffer.");
             TrackLiveBuffer(buffer);
 
@@ -399,7 +399,7 @@ namespace XREngine.Rendering.Vulkan
             // Re-admit immediately before the raw allocation, rather than relying
             // on its caller's earlier creation check.
             ThrowIfDeviceLostForResourceCreation("CreateBufferRawLegacy");
-            MemoryRequirements memoryRequirements = Api!.GetBufferMemoryRequirements(device, buffer);
+            MemoryRequirements memoryRequirements = Api!.GetBufferMemoryRequirements(_deviceContext.Device, buffer);
             MemoryAllocateInfo memoryInfo = new()
             {
                 SType = StructureType.MemoryAllocateInfo,
@@ -418,12 +418,12 @@ namespace XREngine.Rendering.Vulkan
                 memoryInfo.PNext = &memoryAllocateFlagsInfo;
 
             ThrowIfDeviceLostForResourceCreation("vkAllocateMemory.CreateBufferRawLegacy");
-            Result allocationResult = Api.AllocateMemory(device, ref memoryInfo, null, out DeviceMemory memory);
+            Result allocationResult = Api.AllocateMemory(_deviceContext.Device, ref memoryInfo, null, out DeviceMemory memory);
             if (allocationResult != Result.Success)
             {
                 RecordAllocatorNativeFailure("vkAllocateMemory.CreateBufferRawLegacy", allocationResult);
                 if (TryBeginDestroyBuffer(buffer, "CreateBufferRawLegacy.AllocateFailure"))
-                    Api.DestroyBuffer(device, buffer, null);
+                    Api.DestroyBuffer(_deviceContext.Device, buffer, null);
                 string description = enableDeviceAddress ? "device-address" : "dedicated";
                 throw new Exception($"Failed to allocate Vulkan buffer memory ({description}).");
             }
@@ -437,7 +437,7 @@ namespace XREngine.Rendering.Vulkan
                 memoryInfo.MemoryTypeIndex,
                 properties,
                 -1);
-            _bufferResourceManager.LegacyAllocations[buffer.Handle] = allocation;
+            ResourceRuntime.Allocations.Buffers.LegacyAllocations[buffer.Handle] = allocation;
             RecordBufferAllocationDiagnostics(
                 buffer,
                 usage,
@@ -447,14 +447,14 @@ namespace XREngine.Rendering.Vulkan
                 enableDeviceAddress,
                 enableDeviceAddress ? "LegacyDeviceAddress" : "Dedicated");
 
-            Result bindResult = Api.BindBufferMemory(device, buffer, memory, 0);
+            Result bindResult = Api.BindBufferMemory(_deviceContext.Device, buffer, memory, 0);
             if (bindResult != Result.Success)
             {
                 RecordAllocatorNativeFailure("vkBindBufferMemory.CreateBufferRawLegacy", bindResult);
-                _bufferResourceManager.LegacyAllocations.TryRemove(buffer.Handle, out _);
-                Api.FreeMemory(device, memory, null);
+                ResourceRuntime.Allocations.Buffers.LegacyAllocations.TryRemove(buffer.Handle, out _);
+                Api.FreeMemory(_deviceContext.Device, memory, null);
                 if (TryBeginDestroyBuffer(buffer, "CreateBufferRawLegacy.BindFailure"))
-                    Api.DestroyBuffer(device, buffer, null);
+                    Api.DestroyBuffer(_deviceContext.Device, buffer, null);
                 throw new Exception($"Failed to bind Vulkan buffer memory ({bindResult}).");
             }
 
@@ -566,7 +566,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             if (buffer.HasValue && buffer.Value.Handle != 0)
-                _stagingManager.TryForget(buffer.Value, memory.GetValueOrDefault());
+                ResourceRuntime.Allocations.Staging.TryForget(buffer.Value, memory.GetValueOrDefault());
 
             if (buffer.HasValue && buffer.Value.Handle != 0)
             {
@@ -576,7 +576,7 @@ namespace XREngine.Rendering.Vulkan
                 if (!TryBeginDestroyBuffer(buffer.Value, "DestroyBufferRaw"))
                     return;
 
-                Api!.DestroyBuffer(device, buffer.Value, null);
+                Api!.DestroyBuffer(_deviceContext.Device, buffer.Value, null);
             }
 
             // Untracked memory (device-address, legacy, or staging pool) — free directly.
@@ -592,11 +592,11 @@ namespace XREngine.Rendering.Vulkan
             destroyedBuffer = false;
             freedMemory = false;
 
-            if (_bufferResourceManager.Allocations.TryRemove(buffer.Handle, out VulkanMemoryAllocation allocation))
+            if (ResourceRuntime.Allocations.Buffers.Allocations.TryRemove(buffer.Handle, out VulkanMemoryAllocation allocation))
             {
                 if (TryBeginDestroyBuffer(buffer, "TrackedAllocatorBuffer"))
                 {
-                    Api!.DestroyBuffer(device, buffer, null);
+                    Api!.DestroyBuffer(_deviceContext.Device, buffer, null);
                     destroyedBuffer = true;
                     FreeMemoryAllocation(allocation);
                     freedMemory = true;
@@ -604,11 +604,11 @@ namespace XREngine.Rendering.Vulkan
                 return true;
             }
 
-            if (_bufferResourceManager.LegacyAllocations.TryRemove(buffer.Handle, out VulkanMemoryAllocation legacyAllocation))
+            if (ResourceRuntime.Allocations.Buffers.LegacyAllocations.TryRemove(buffer.Handle, out VulkanMemoryAllocation legacyAllocation))
             {
                 if (TryBeginDestroyBuffer(buffer, "TrackedLegacyBuffer"))
                 {
-                    Api!.DestroyBuffer(device, buffer, null);
+                    Api!.DestroyBuffer(_deviceContext.Device, buffer, null);
                     destroyedBuffer = true;
                     FreeLegacyBufferMemory(legacyAllocation);
                     freedMemory = legacyAllocation.Memory.Handle != 0;
@@ -623,7 +623,7 @@ namespace XREngine.Rendering.Vulkan
         {
             if (buffer.Handle != 0)
             {
-                _bufferResourceManager.LiveHandles[buffer.Handle] = 0;
+                ResourceRuntime.Allocations.Buffers.LiveHandles[buffer.Handle] = 0;
                 RegisterVulkanResource(ObjectType.Buffer, buffer.Handle, owner);
             }
         }
@@ -640,7 +640,7 @@ namespace XREngine.Rendering.Vulkan
             if (allocation.Memory.Handle == 0)
                 throw new ArgumentException("A tracked buffer allocation requires bound Vulkan memory.", nameof(allocation));
 
-            _bufferResourceManager.Allocations[buffer.Handle] = allocation;
+            ResourceRuntime.Allocations.Buffers.Allocations[buffer.Handle] = allocation;
         }
 
         private bool TryBeginDestroyBuffer(Buffer buffer, string owner)
@@ -655,7 +655,7 @@ namespace XREngine.Rendering.Vulkan
             if (!IsVulkanRetirementReady(ticket))
                 return false;
 
-            if (_bufferResourceManager.LiveHandles.TryRemove(buffer.Handle, out _))
+            if (ResourceRuntime.Allocations.Buffers.LiveHandles.TryRemove(buffer.Handle, out _))
             {
                 UnregisterVulkanDeviceAddressRange(buffer);
                 CompleteVulkanResourceDestruction(ObjectType.Buffer, buffer.Handle);
@@ -673,12 +673,12 @@ namespace XREngine.Rendering.Vulkan
 
         private bool TryFreeTrackedLegacyBufferMemory(DeviceMemory memory)
         {
-            foreach (var pair in _bufferResourceManager.LegacyAllocations.ToArray())
+            foreach (var pair in ResourceRuntime.Allocations.Buffers.LegacyAllocations.ToArray())
             {
                 if (pair.Value.Memory.Handle != memory.Handle)
                     continue;
 
-                if (!_bufferResourceManager.LegacyAllocations.TryRemove(pair.Key, out VulkanMemoryAllocation allocation))
+                if (!ResourceRuntime.Allocations.Buffers.LegacyAllocations.TryRemove(pair.Key, out VulkanMemoryAllocation allocation))
                     return false;
 
                 FreeLegacyBufferMemory(allocation);
@@ -691,7 +691,7 @@ namespace XREngine.Rendering.Vulkan
         private void FreeLegacyBufferMemory(VulkanMemoryAllocation allocation)
         {
             if (allocation.Memory.Handle != 0)
-                Api!.FreeMemory(device, allocation.Memory, null);
+                Api!.FreeMemory(_deviceContext.Device, allocation.Memory, null);
         }
 
         /// <summary>
@@ -706,7 +706,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (MemoryAllocator is VulkanLegacyAllocator)
             {
-                Api!.FreeMemory(device, memory, null);
+                Api!.FreeMemory(_deviceContext.Device, memory, null);
                 return true;
             }
 
@@ -761,7 +761,7 @@ namespace XREngine.Rendering.Vulkan
                 Size = flushSize
             };
 
-            if (Api!.FlushMappedMemoryRanges(device, 1, ref v) != Result.Success)
+            if (Api!.FlushMappedMemoryRanges(_deviceContext.Device, 1, ref v) != Result.Success)
                 throw new Exception("Failed to flush Vulkan buffer memory.");
         }
 
@@ -772,7 +772,7 @@ namespace XREngine.Rendering.Vulkan
 
         private bool TryGetTrackedMemoryAllocation(DeviceMemory memory, ulong offset, out VulkanMemoryAllocation allocation)
         {
-            foreach (KeyValuePair<ulong, VulkanMemoryAllocation> pair in _bufferResourceManager.Allocations)
+            foreach (KeyValuePair<ulong, VulkanMemoryAllocation> pair in ResourceRuntime.Allocations.Buffers.Allocations)
             {
                 VulkanMemoryAllocation candidate = pair.Value;
                 if (candidate.Memory.Handle != memory.Handle)
@@ -786,7 +786,7 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            foreach (KeyValuePair<ulong, VulkanMemoryAllocation> pair in _imageAllocationTracker.Allocations)
+            foreach (KeyValuePair<ulong, VulkanMemoryAllocation> pair in ResourceRuntime.Allocations.Images.Allocations)
             {
                 VulkanMemoryAllocation candidate = pair.Value;
                 if (candidate.Memory.Handle != memory.Handle)
@@ -800,7 +800,7 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            foreach (KeyValuePair<ulong, VulkanMemoryAllocation> pair in _bufferResourceManager.LegacyAllocations)
+            foreach (KeyValuePair<ulong, VulkanMemoryAllocation> pair in ResourceRuntime.Allocations.Buffers.LegacyAllocations)
             {
                 VulkanMemoryAllocation candidate = pair.Value;
                 if (candidate.Memory.Handle != memory.Handle)
@@ -843,7 +843,7 @@ namespace XREngine.Rendering.Vulkan
             out ulong flushOffset,
             out ulong flushSize)
         {
-            ulong atomSize = _nonCoherentAtomSize == 0 ? 1UL : _nonCoherentAtomSize;
+            ulong atomSize = _deviceContext.NonCoherentAtomSize == 0 ? 1UL : _deviceContext.NonCoherentAtomSize;
             flushOffset = (offset / atomSize) * atomSize;
             ulong flushEnd = AlignUp(offset + length, atomSize);
 
@@ -923,7 +923,7 @@ namespace XREngine.Rendering.Vulkan
                 Size = invalidateSize
             };
 
-            if (Api!.InvalidateMappedMemoryRanges(device, 1, ref v) != Result.Success)
+            if (Api!.InvalidateMappedMemoryRanges(_deviceContext.Device, 1, ref v) != Result.Success)
                 throw new Exception("Failed to invalidate Vulkan buffer memory.");
         }
 
@@ -1054,17 +1054,17 @@ namespace XREngine.Rendering.Vulkan
             heapFlags = 0;
             memoryTypeFlags = 0;
 
-            if (Api is null || device.Handle == 0 || buffer.Handle == 0)
+            if (Api is null || _deviceContext.Device.Handle == 0 || buffer.Handle == 0)
                 return;
 
-            Api.GetBufferMemoryRequirements(device, buffer, out MemoryRequirements requirements);
+            Api.GetBufferMemoryRequirements(_deviceContext.Device, buffer, out MemoryRequirements requirements);
             requirementsSize = requirements.Size;
             alignment = Math.Max(requirements.Alignment, 1UL);
 
-            if (_physicalDevice.Handle == 0)
+            if (_deviceContext.PhysicalDevice.Handle == 0)
                 return;
 
-            Api.GetPhysicalDeviceMemoryProperties(_physicalDevice, out PhysicalDeviceMemoryProperties memoryProperties);
+            Api.GetPhysicalDeviceMemoryProperties(_deviceContext.PhysicalDevice, out PhysicalDeviceMemoryProperties memoryProperties);
             if (allocation.MemoryTypeIndex >= memoryProperties.MemoryTypeCount)
                 return;
 

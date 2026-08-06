@@ -230,7 +230,7 @@ internal unsafe partial class VkMeshRenderer
 		ComputeDispatchSnapshot? bindingSnapshot,
 		bool recordDescriptorTableGeneration)
 	{
-		DescriptorWriteScratch scratch = DescriptorWriteScratchWorkspace.Value ??= new DescriptorWriteScratch();
+		DescriptorWriteScratch scratch = _descriptorWriteScratch;
 		scratch.Clear();
 		List<WriteDescriptorSet> writes = scratch.Writes;
 		List<DescriptorBufferInfo> bufferInfos = scratch.BufferInfos;

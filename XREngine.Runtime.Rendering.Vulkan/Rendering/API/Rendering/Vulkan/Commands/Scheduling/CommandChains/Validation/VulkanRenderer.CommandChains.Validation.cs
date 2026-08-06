@@ -39,6 +39,17 @@ public unsafe partial class VulkanRenderer
         FrameOp[] staticOps,
         int dynamicOverlayOpCount,
         IReadOnlyDictionary<CommandChainKey, CommandChain>? chains = null)
+        => ValidatePrimaryCommandChainSchedule(
+            schedule,
+            new FrameOperationSequence(staticOps),
+            dynamicOverlayOpCount,
+            chains);
+
+    internal static void ValidatePrimaryCommandChainSchedule(
+        CommandChainSchedule schedule,
+        FrameOperationSequence staticOps,
+        int dynamicOverlayOpCount,
+        IReadOnlyDictionary<CommandChainKey, CommandChain>? chains = null)
     {
         ReadOnlySpan<RenderPassChainGroup> groups = schedule.Groups.Span;
         int groupIndex = 0;

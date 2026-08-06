@@ -98,10 +98,10 @@ public unsafe partial class VulkanRenderer
                 new InvalidOperationException(
                     "No valid render-graph pass index could be resolved."));
             Debug.VulkanWarningEvery(
-                $"Vulkan.OpDroppedNoPass.{operation.GetType().Name}",
+                $"Vulkan.OpDroppedNoPass.{GetFrameOpDiagnosticName(operation)}",
                 TimeSpan.FromSeconds(1),
                 "[Vulkan] Dropping op '{0}' because no valid render-graph pass index could be resolved.",
-                operation.GetType().Name);
+                GetFrameOpDiagnosticName(operation));
             return false;
         }
 
@@ -113,7 +113,7 @@ public unsafe partial class VulkanRenderer
                 $"Vulkan.SkipUiPipeline.{GetHashCode()}",
                 TimeSpan.FromSeconds(1),
                 "[Vulkan] Skipping UI pipeline op {0} pass={1} pipe={2} due to XRE_SKIP_UI_PIPELINE=1.",
-                operation.GetType().Name,
+                GetFrameOpDiagnosticName(operation),
                 passIndex,
                 operation.Context.PipelineIdentity);
             return false;
@@ -272,7 +272,7 @@ public unsafe partial class VulkanRenderer
         try
         {
             using VulkanCpuStageScope transitionStage =
-                new(EVulkanCpuStage.ContextPassTransitions);
+                new(_frameTelemetry, EVulkanCpuStage.ContextPassTransitions);
             EndActiveRenderPass(ref recordingState);
 
             if (recordingState.PassIndexLabelActive)
@@ -289,7 +289,7 @@ public unsafe partial class VulkanRenderer
             }
 
             using (VulkanCpuStageScope barrierStage =
-                   new(EVulkanCpuStage.BarrierPlanningEmission))
+                   new(_frameTelemetry, EVulkanCpuStage.BarrierPlanningEmission))
             {
                 int emittedQueueOwnershipTransfers =
                     EmitPassBarriers(ref recordingState, passIndex);
@@ -354,7 +354,7 @@ public unsafe partial class VulkanRenderer
         try
         {
             using VulkanCpuStageScope operationDispatchStage =
-                new(EVulkanCpuStage.OpDispatch);
+                new(_frameTelemetry, EVulkanCpuStage.OpDispatch);
             System.Diagnostics.Debug.Assert(
                 HasPrimaryPlanAction(
                     primaryNode.Actions,
@@ -405,7 +405,7 @@ public unsafe partial class VulkanRenderer
             $"Vulkan.FrameOpError.{GetHashCode()}",
             TimeSpan.FromSeconds(1),
             "[Vulkan] Frame op recording failed for {0}: {1}: {2}{3}{4}",
-            operation.GetType().Name,
+            GetFrameOpDiagnosticName(operation),
             exception.GetType().Name,
             exception.Message,
             operationContext,

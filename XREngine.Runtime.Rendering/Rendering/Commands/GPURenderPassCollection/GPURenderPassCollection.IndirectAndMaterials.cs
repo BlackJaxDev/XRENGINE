@@ -132,8 +132,6 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            _useBufferAForRender = !_useBufferAForRender;
-
             QueueAsyncGpuTriangleStatsReadback();
             PostRenderDiagnostics(scene);
 

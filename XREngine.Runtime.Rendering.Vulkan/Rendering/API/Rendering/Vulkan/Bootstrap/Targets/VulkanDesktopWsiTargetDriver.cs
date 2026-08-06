@@ -32,17 +32,17 @@ internal sealed unsafe class VulkanDesktopWsiTargetDriver : IVulkanRendererTarge
         return SilkMarshal.PtrToStringArray((nint)extensionNames, checked((int)extensionCount));
     }
 
-    public void CreateInstanceResources(VulkanRenderer renderer)
-        => renderer.CreateDesktopSurface();
+    public void CreateInstanceResources(VulkanTargetSurfaceAuthority surfaces)
+        => surfaces.CreateDesktopSurface();
 
-    public void InitializeFinalOutput(VulkanRenderer renderer)
-        => renderer.CreateDesktopFinalOutput();
+    public void InitializeFinalOutput(VulkanTargetOutputContext output)
+        => output.CreateDesktopFinalOutput();
 
-    public void DestroyFinalOutput(VulkanRenderer renderer)
-        => renderer.DestroyDesktopFinalOutput();
+    public void DestroyFinalOutput(VulkanTargetOutputContext output)
+        => output.DestroyDesktopFinalOutput();
 
-    public void DestroyInstanceResources(VulkanRenderer renderer)
-        => renderer.DestroyDesktopSurface();
+    public void DestroyInstanceResources(VulkanTargetSurfaceAuthority surfaces)
+        => surfaces.DestroyDesktopSurface();
 
     public bool RecreateFinalOutput(VulkanRenderer renderer)
         => renderer.RecreateDesktopSwapchainCore();

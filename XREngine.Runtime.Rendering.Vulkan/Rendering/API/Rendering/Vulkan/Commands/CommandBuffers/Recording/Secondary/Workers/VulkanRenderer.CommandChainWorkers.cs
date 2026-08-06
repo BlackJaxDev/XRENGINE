@@ -12,14 +12,22 @@ public unsafe partial class VulkanRenderer
     // hardware-specific threshold tuning above this correctness floor.
     private const int MinParallelCommandChainRecordJobs = 2;
     private const int CommandChainWorkerWaitTimeoutMilliseconds = 2_000;
-    private readonly object _commandChainRecordingWorkersLock = new();
-    private readonly ManualResetEventSlim _commandChainRecordingWorkersIdle = new(initialState: true);
-    private readonly CountdownEvent _commandChainRecordingWorkerCountdown = new(initialCount: 1);
-    private CommandChainRecordingBatch _commandChainRecordingBatch = new();
-    private CommandChainRecordingWorkerState[]? _commandChainRecordingWorkers;
-    private int _commandChainRecordingWorkerGeneration;
-    private int _activeCommandChainRecordingWorkerCount;
-    private int _commandChainRecordingWorkersFaulted;
+    private object _commandChainRecordingWorkersLock => _commandRuntime.Workers.Gate;
+    private ManualResetEventSlim _commandChainRecordingWorkersIdle => _commandRuntime.Workers.Idle;
+    private CountdownEvent _commandChainRecordingWorkerCountdown => _commandRuntime.Workers.Countdown;
+    private VulkanCommandChainRecordingBatch _commandChainRecordingBatch
+    {
+        get => _commandRuntime.Workers.Batch;
+        set => _commandRuntime.Workers.Batch = value;
+    }
+    private CommandChainRecordingWorkerState[]? _commandChainRecordingWorkers
+    {
+        get => _commandRuntime.Workers.WorkerStates;
+        set => _commandRuntime.Workers.WorkerStates = value;
+    }
+    private ref int _commandChainRecordingWorkerGeneration => ref _commandRuntime.Workers.Generation;
+    private ref int _activeCommandChainRecordingWorkerCount => ref _commandRuntime.Workers.ActiveWorkerCount;
+    private ref int _commandChainRecordingWorkersFaulted => ref _commandRuntime.Workers.Faulted;
 
 
 
@@ -86,7 +94,7 @@ public unsafe partial class VulkanRenderer
     }
 
     private static VulkanCommandChainWorkerEligibilityResult AssignCommandChainRecordingWorker(
-        CommandChainRecordingBatch batch,
+        VulkanCommandChainRecordingBatch batch,
         CommandChain chain,
         int workerCount)
     {
@@ -108,7 +116,7 @@ public unsafe partial class VulkanRenderer
 
     private static EVulkanCommandChainWorkerEligibility
         EvaluatePreparedCommandChainWorkerEncodability(
-            CommandChainRecordingBatch batch,
+            VulkanCommandChainRecordingBatch batch,
             CommandChain chain)
     {
         int preparedStartIndex = chain.SourceStartIndex - batch.StartIndex;
@@ -134,7 +142,7 @@ public unsafe partial class VulkanRenderer
     }
 
     private static ref readonly VkPreparedMeshDraw GetPreparedCommandChainDraw(
-        CommandChainRecordingBatch batch,
+        VulkanCommandChainRecordingBatch batch,
         int chainIndex,
         int drawIndex)
     {
@@ -212,7 +220,7 @@ public unsafe partial class VulkanRenderer
     }
 
     private CommandChainWorkerTiming DispatchCommandChainRecordingWorkers(
-        CommandChainRecordingBatch batch,
+        VulkanCommandChainRecordingBatch batch,
         CommandChainRecordingWorkerState[] workers,
         int workerCount)
     {
@@ -231,6 +239,7 @@ public unsafe partial class VulkanRenderer
             return default;
 
         batch.ResetTiming();
+        batch.WorkerProcedure = ExecuteCommandChainRecordingWorker;
         batch.DispatchTimestamp = dispatchStart;
         for (int jobIndex = 0; jobIndex < batch.JobCount; jobIndex++)
         {
@@ -256,19 +265,28 @@ public unsafe partial class VulkanRenderer
         }
 
         long waitStart = Stopwatch.GetTimestamp();
-        bool completed = _commandChainRecordingWorkerCountdown.Wait(
-            TimeSpan.FromMilliseconds(CommandChainWorkerWaitTimeoutMilliseconds));
+        bool completed;
+        using (VulkanCpuStageScope workerWaitStage =
+               new(_frameTelemetry, EVulkanCpuStage.WorkerWait))
+        {
+            completed = _commandChainRecordingWorkerCountdown.Wait(
+                TimeSpan.FromMilliseconds(CommandChainWorkerWaitTimeoutMilliseconds));
+        }
         bool timedOut = !completed;
         if (timedOut)
         {
             Volatile.Write(ref batch.CancelRequested, 1);
             Interlocked.Exchange(ref _commandChainRecordingWorkersFaulted, 1);
-            completed = _commandChainRecordingWorkerCountdown.Wait(
-                TimeSpan.FromMilliseconds(CommandChainWorkerWaitTimeoutMilliseconds));
+            using (VulkanCpuStageScope workerWaitStage =
+                   new(_frameTelemetry, EVulkanCpuStage.WorkerWait))
+            {
+                completed = _commandChainRecordingWorkerCountdown.Wait(
+                    TimeSpan.FromMilliseconds(CommandChainWorkerWaitTimeoutMilliseconds));
+            }
             if (!completed)
             {
                 batch.Abandoned = true;
-                _commandChainRecordingBatch = new CommandChainRecordingBatch();
+                _commandChainRecordingBatch = new VulkanCommandChainRecordingBatch();
             }
         }
 
@@ -276,6 +294,7 @@ public unsafe partial class VulkanRenderer
         {
             _commandChainRecordingWorkersIdle.Set();
             Volatile.Write(ref _activeCommandChainRecordingWorkerCount, 0);
+            batch.WorkerProcedure = null;
         }
 
         if (timedOut)
@@ -326,10 +345,11 @@ public unsafe partial class VulkanRenderer
             Stopwatch.GetElapsedTime(waitStart));
     }
 
-    private void RunCommandChainRecordingWorker(CommandChainRecordingWorkerState worker)
+    private void ExecuteCommandChainRecordingWorker(
+        CommandChainRecordingWorkerState worker)
     {
-        using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.SecondaryRecording);
-        CommandChainRecordingBatch? batch = worker.Batch;
+        using VulkanCpuStageScope cpuStage = new(_frameTelemetry, EVulkanCpuStage.SecondaryRecording);
+        VulkanCommandChainRecordingBatch? batch = worker.Batch;
         if (batch is null)
             return;
 
@@ -438,7 +458,7 @@ public unsafe partial class VulkanRenderer
             for (int i = 0; i < workers.Length; i++)
             {
                 CommandChainRecordingWorkerState worker = new(i);
-                worker.Start(this);
+                worker.Start();
                 workers[i] = worker;
             }
 
@@ -451,7 +471,7 @@ public unsafe partial class VulkanRenderer
         CommandChainRecordingWorkerState[] workers,
         int frameSlotCount)
     {
-        uint graphicsFamily = FamilyQueueIndices.GraphicsFamilyIndex
+        uint graphicsFamily = _deviceContext.QueueFamilies.GraphicsFamilyIndex
             ?? throw new InvalidOperationException("Graphics queue family is not available.");
         for (int workerIndex = 0; workerIndex < workers.Length; workerIndex++)
         {
@@ -535,7 +555,6 @@ public unsafe partial class VulkanRenderer
             CommandChainRecordingWorkerState worker = _commandChainRecordingWorkers[i];
             worker.WorkAvailable.Dispose();
             worker.Thread = null;
-            worker.Owner = null;
         }
 
         DestroyCommandChainRecordingWorkerPoolsLocked();

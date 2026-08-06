@@ -2,12 +2,13 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private readonly struct OpenXrResourcePlannerThreadScope : IDisposable
+
+    internal readonly struct OpenXrResourcePlannerThreadScope : IDisposable
     {
         private readonly VulkanRenderer _renderer;
         private readonly VulkanOpenXrViewResourcePlannerContextKey _contextKey;
-        private readonly ThreadResourcePlannerRuntimeStateScope _threadScope;
-        private readonly ThreadFrameOpResourcePlannerSwitchingStateScope _frameOpThreadScope;
+        private readonly VulkanRenderer.ThreadResourcePlannerRuntimeStateScope _threadScope;
+        private readonly VulkanRenderer.ThreadFrameOpResourcePlannerSwitchingStateScope _frameOpThreadScope;
         private readonly VulkanOpenXrThreadExecutionState _executionState;
         private readonly VulkanOpenXrViewResourcePlannerContextKey _previousScopeKey;
         private readonly int _previousScopeDepth;
@@ -19,7 +20,7 @@ public unsafe partial class VulkanRenderer
         {
             _renderer = renderer;
             _contextKey = contextKey;
-            _executionState = renderer._openXrBackend.CurrentThreadExecutionState;
+            _executionState = renderer.OutputRuntime.OpenXrBackend.CurrentThreadExecutionState;
             _previousScopeKey = _executionState.ResourcePlannerKey;
             _previousScopeDepth = _executionState.ResourcePlannerDepth;
             bool reentrant = _previousScopeDepth > 0 &&
@@ -34,22 +35,22 @@ public unsafe partial class VulkanRenderer
                 return;
             }
 
-            ResourcePlannerRuntimeState openXrState;
-            lock (renderer._openXrBackend.ResourcePlannerStatesLock)
+            VulkanRenderer.ResourcePlannerRuntimeState openXrState;
+            lock (renderer.OutputRuntime.OpenXrBackend.ResourcePlannerStatesLock)
             {
-                openXrState = renderer.OpenXrResourcePlannerStates.TryGetValue(_contextKey, out ResourcePlannerRuntimeState existingState)
+                openXrState = renderer.OpenXrResourcePlannerStates.TryGetValue(_contextKey, out VulkanRenderer.ResourcePlannerRuntimeState existingState)
                     ? existingState
-                    : ResourcePlannerRuntimeState.CreateEmpty();
+                    : VulkanRenderer.ResourcePlannerRuntimeState.CreateEmpty();
             }
-            openXrState.FrameOpResourcePlannerSwitchingState ??= new FrameOpResourcePlannerSwitchingState();
+            openXrState.FrameOpResourcePlannerSwitchingState ??= new VulkanRenderer.FrameOpResourcePlannerSwitchingState();
             _threadScope = renderer.EnterThreadResourcePlannerRuntimeStateScope(in openXrState);
             _frameOpThreadScope = renderer.EnterThreadFrameOpResourcePlannerSwitchingStateScope(
                 openXrState.FrameOpResourcePlannerSwitchingState);
-            if (OpenXrVulkanTraceEnabled)
+        if (OpenXrVulkanTraceEnabled)
             {
                 Debug.Vulkan(
                     "[OpenXrVulkan] enter thread planner context {0}",
-                    DescribeOpenXrResourcePlannerContextKey(in _contextKey));
+                DescribeOpenXrResourcePlannerContextKey(in _contextKey));
             }
         }
 
@@ -61,18 +62,18 @@ public unsafe partial class VulkanRenderer
                 return;
             }
 
-            ResourcePlannerRuntimeState state = _threadScope.CaptureCurrent(_renderer);
+            VulkanRenderer.ResourcePlannerRuntimeState state = _threadScope.CaptureCurrent(_renderer);
             state.FrameOpResourcePlannerSwitchingState = _frameOpThreadScope.CaptureCurrent(_renderer);
-            if (_renderer.IsDeviceOperational)
+            if (_renderer.DeviceContext.IsOperational)
             {
-                lock (_renderer._openXrBackend.ResourcePlannerStatesLock)
+                lock (_renderer.OutputRuntime.OpenXrBackend.ResourcePlannerStatesLock)
                     _renderer.OpenXrResourcePlannerStates[_contextKey] = state;
             }
-            if (OpenXrVulkanTraceEnabled)
+        if (OpenXrVulkanTraceEnabled)
             {
                 Debug.Vulkan(
                     "[OpenXrVulkan] leave thread planner context {0}",
-                    DescribeOpenXrResourcePlannerContextKey(in _contextKey));
+                DescribeOpenXrResourcePlannerContextKey(in _contextKey));
             }
             _frameOpThreadScope.Dispose();
             _threadScope.Dispose();

@@ -67,7 +67,7 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
 
     internal override int RecordPrimary(
         VulkanRenderer renderer,
-        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
+        scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
         if (VulkanRenderer.CommandRecordingDiagnosticsEnabled &&
@@ -173,14 +173,14 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
         in FrameOpContext context,
         bool preserveSubmissionOrder)
     {
-        bool frameOwned = TryRentForCurrentFrame(out MeshDrawOp? reusable);
+        bool frameOwned = TryRentForCurrentFrame(context, out MeshDrawOp? reusable);
         if (reusable is null)
         {
             MeshDrawOp created = new(passIndex, target, draw, context)
             {
                 PreserveSubmissionOrder = preserveSubmissionOrder,
             };
-            return frameOwned ? RetainForCurrentFrame(created) : created;
+            return frameOwned ? RetainForCurrentFrame(created, context) : created;
         }
 
         reusable.Reset(

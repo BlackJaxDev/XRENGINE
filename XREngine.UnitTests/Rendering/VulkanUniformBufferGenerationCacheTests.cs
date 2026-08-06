@@ -129,7 +129,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
         string secondary = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
         string arena = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanDynamicUniformRingBuffer.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanRenderer.MappedFrameArena.cs");
 
         AssertOrdered(primary,
             "frameDataManifest.Begin(",
@@ -197,13 +197,15 @@ public sealed class VulkanUniformBufferGenerationCacheTests
         string renderer = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
         string arena = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanDynamicUniformRingBuffer.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanMappedFrameArena.cs") +
+            ReadWorkspaceFile(
+                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanRenderer.MappedFrameArena.cs");
 
-        uniforms.ShouldContain("TryReserveMeshFrameDataRange");
-        uniforms.ShouldContain("TryGetMeshFrameDataArenaRange");
+        uniforms.ShouldContain("arena.TryReserve(");
+        uniforms.ShouldContain("arena.TryGetSlice(");
         uniforms.ShouldContain("ownsBuffer: false");
         renderer.ShouldNotContain("VulkanUniformBufferGenerationCache");
-        arena.ShouldContain("DynamicUniformRingBufferCapacity = 32 * 1024 * 1024");
+        arena.ShouldContain("MappedFrameArenaInitialCapacity = 32 * 1024 * 1024");
         File.Exists(Path.Combine(ResolveRepoRoot(),
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VulkanUniformBufferGenerationCache.cs"))
             .ShouldBeFalse();
@@ -213,14 +215,15 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     public void UniformArenaExhaustionAndInvalidLifetimeFailExplicitly()
     {
         string arena = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanDynamicUniformRingBuffer.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanMappedFrameArena.cs") +
+            ReadWorkspaceFile(
+                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanRenderer.MappedFrameArena.cs");
         string uniforms = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
 
         AssertOrdered(
             arena,
-            "if (aligned > DynamicUniformRingBufferCapacity || size > DynamicUniformRingBufferCapacity - aligned)",
-            "RecordVulkanDynamicUniformExhaustion();",
+            "if (aligned > _capacity || size > _capacity - aligned)",
             "return false;");
         AssertOrdered(
             arena,
@@ -230,10 +233,10 @@ public sealed class VulkanUniformBufferGenerationCacheTests
             "return false;");
         arena.ShouldContain("could not acquire frame-data generation");
         uniforms.ShouldContain(
-            "if (!Renderer.TryReserveMeshFrameDataRange(this, name, isAutoUniform: false, drawSlot, size, out ulong offset))");
+            "if (!arena.TryReserve(this, name, isAutoUniform: false, drawSlot, size, out VulkanMappedFrameReservation reservation))");
         uniforms.ShouldContain(
-            "if (!Renderer.TryReserveMeshFrameDataRange(this, name, isAutoUniform: true, drawSlot, size, out ulong offset))");
-        uniforms.ShouldContain("if (!Renderer.TryGetMeshFrameDataArenaRange(");
+            "if (!arena.TryReserve(this, name, isAutoUniform: true, drawSlot, size, out VulkanMappedFrameReservation reservation))");
+        uniforms.ShouldContain("if (!arena.TryGetSlice(");
         uniforms.ShouldNotContain("ownsBuffer: true");
     }
 
@@ -673,8 +676,8 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     {
         string recording = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
-        string lowering = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string lowering = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "InvalidateCommandChainSecondaryCommandBuffersForFrameDataLayoutChange()");
 
         recording.ShouldContain("if (registered && manifestLayoutChanged)\n                ObserveMeshFrameDataManifestGeneration(manifestGeneration);");
         recording.ShouldContain("InvalidateCommandChainSecondaryCommandBuffersForFrameDataLayoutChange()");
@@ -940,9 +943,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     }
 
     private static string ReadWorkspaceFile(string relativePath)
-        => File.ReadAllText(Path.Combine(
-            ResolveRepoRoot(),
-            relativePath.Replace('/', Path.DirectorySeparatorChar))).Replace("\r\n", "\n");
+        => SourceContractWorkspace.ReadFile(relativePath);
 
     private static string ResolveRepoRoot()
     {

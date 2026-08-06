@@ -32,7 +32,7 @@ namespace XREngine.Rendering.Vulkan
                 FrameOp operation = operations[index];
                 int resolvedPassIndex = EnsureValidPassIndex(
                     operation.PassIndex,
-                    operation.GetType().Name,
+                    GetFrameOpDiagnosticName(operation),
                     operation.Context.PassMetadata);
 
                 // If the resolved pass index is different from the current pass index, update the operation's PassIndex.
@@ -45,14 +45,14 @@ namespace XREngine.Rendering.Vulkan
         /// Validates a sealed frame-plan stream at recording time without
         /// rewriting it. Recording must consume the publication verbatim.
         /// </summary>
-        private void ValidatePrimaryPlanPassIndicesForRecording(FrameOp[] operations)
+        private void ValidatePrimaryPlanPassIndicesForRecording(FrameOperationSequence operations)
         {
             for (int index = 0; index < operations.Length; index++)
             {
                 FrameOp operation = operations[index];
                 int resolvedPassIndex = EnsureValidPassIndex(
                     operation.PassIndex,
-                    operation.GetType().Name,
+                    GetFrameOpDiagnosticName(operation),
                     operation.Context.PassMetadata);
                 if (resolvedPassIndex != operation.PassIndex)
                 {
@@ -89,6 +89,32 @@ namespace XREngine.Rendering.Vulkan
             };
 
         /// <summary>
+        /// Returns an interned diagnostic label without runtime type inspection
+        /// or enum formatting on the planning and recording paths.
+        /// </summary>
+        private static string GetFrameOpDiagnosticName(FrameOp op)
+            => op switch
+            {
+                BlitOp => "Blit",
+                ClearOp => "Clear",
+                TransformFeedbackOp => "TransformFeedback",
+                MeshDrawOp => "MeshDraw",
+                IndirectDrawOp => "IndirectDraw",
+                MeshTaskDispatchIndirectCountOp => "MeshTaskDispatch",
+                ComputeDispatchOp => "ComputeDispatch",
+                ComputeDispatchIndirectOp => "ComputeDispatchIndirect",
+                BufferCopyOp => "BufferCopy",
+                SubmissionMarkerOp => "SubmissionMarker",
+                MemoryBarrierOp => "MemoryBarrier",
+                PublishFramebufferForSamplingOp => "PublishFramebufferForSampling",
+                DlssUpscaleOp => "DlssUpscale",
+                DlssFrameGenerationOp => "DlssFrameGeneration",
+                TextureUploadFrameOp => "TextureUpload",
+                QueryOp => "Query",
+                _ => "Unknown"
+            };
+
+        /// <summary>
         /// Collects the mesh frame data requirements for recording based on the provided frame operations and updates the renderer family draw slots and family strides accordingly.
         /// </summary>
         /// <param name="ops">The array of frame operations to process.</param>
@@ -98,7 +124,7 @@ namespace XREngine.Rendering.Vulkan
         /// <param name="familyStrides">The dictionary mapping family keys to strides.</param>
         /// <param name="append">Whether to append to the existing data or clear it first.</param>
         internal static void CollectMeshFrameDataRequirementsForRecording(
-            FrameOp[] ops,
+            FrameOperationSequence ops,
             int frameDataSlot,
             EVulkanMeshFrameDataStreamKind streamKind,
             Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> rendererFamilyDrawSlots,
@@ -179,8 +205,8 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private bool TryRegisterFrameWideMeshFrameDataRequirements(
-            FrameOp[] primaryOps,
-            FrameOp[] secondaryOps,
+            FrameOperationSequence primaryOps,
+            FrameOperationSequence secondaryOps,
             int frameDataSlot,
             bool sealAfterRegister,
             Dictionary<VkMeshRenderer, int> requirements,
@@ -245,7 +271,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void BuildReusableFrameDataRefreshRequests(
-            FrameOp[] operations,
+            FrameOperationSequence operations,
             int frameDataSlot,
             EVulkanMeshFrameDataStreamKind streamKind,
             bool dynamicUi,
@@ -263,7 +289,7 @@ namespace XREngine.Rendering.Vulkan
                 scratch.ReusableMeshDrawSlotCapacityHint);
             FrameOpSignatureHasher stableMeshHash = new();
             stableMeshHash.Add((int)streamKind);
-            stableMeshHash.Add(MeshFrameDataReservationGeneration);
+            stableMeshHash.Add(MappedFrameArena?.Generation ?? 0UL);
             int meshRequestCount = 0;
             bool supportsDirectOwnerOnlyRefresh = true;
 

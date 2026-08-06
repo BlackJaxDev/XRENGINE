@@ -1,6 +1,6 @@
 # Vulkan Core Hardening And Recording Code Changes TODO
 
-Last Updated: 2026-08-05
+Last Updated: 2026-08-06
 Owner: Rendering
 Status: Active
 
@@ -123,7 +123,7 @@ resource generations even when those outputs share a window or frame.
 - [x] Remove obsolete primary-command variant caches and cache-only scheduling
   branches once packet reuse owns their responsibility.
 
-#### Phase 1-3 Closeout Status (2026-08-05)
+#### Phase 1-3 Closeout Status (2026-08-06)
 
 Implementation is complete for the first three phases. Independent strict
 source audits passed Phase 1 at 8/8 items and Phases 2-3 at 18/18 items. The
@@ -132,69 +132,353 @@ Vulkan renderer project builds with warnings treated as errors (0 warnings,
 answered MCP `ping` after the oversized prepared-command value-type startup
 failure was fixed.
 
-Remaining work is validation and test migration, not an unchecked Phase 1-3
-implementation item:
+The remaining closeout work is complete:
 
-1. Re-run the named Vulkan editor session from the final source revision, inspect
-   `log_vulkan.log` and `log_rendering.log`, and capture two camera views once a
-   live transfer-readable viewport image is available. The latest capture attempt
-   returned the intended typed failure and did not use a CPU or OS-window fallback.
-2. After explicit approval to modify tests, migrate the existing Vulkan unit-test
-   call sites for the removed schedule-cache authority and the required
-   `CommandChainKey.ChainOrdinal`, then run `Test-VulkanPhase3-Regression`.
-3. Re-run the full solution build after that test migration. The renderer and
-   broker projects compile now; the current full-solution failure is confined to
-   those stale Vulkan unit-test source references.
+1. The final named `vulkan-core-phase4` editor session ran with Vulkan and
+   `StandardValidation`. Its profiler snapshot reported zero validation errors
+   and zero pending retired resources. `log_vulkan.log` and
+   `log_rendering.log` contained no VUID, device-loss, submission-rejection,
+   lifetime-rejection, fatal, or unhandled-exception match, including shutdown.
+2. Two materially different camera views exercised the viewport capture path.
+   Both returned the intended typed Vulkan failure because no live
+   transfer-readable color image was available, and explicitly confirmed that
+   no CPU or OS-window fallback was used.
+3. The stale Vulkan unit-test call sites were migrated for the removed
+   schedule-cache authority and required `CommandChainKey.ChainOrdinal`.
+   `Test-VulkanPhase3-Regression` passed all 110 tests.
+4. `dotnet build .\XRENGINE.slnx --no-restore -warnaserror` completed with zero
+   warnings and zero errors.
 
 ### 4. Collapse The Runtime Surface And Remove Hot-Path Work
 
-- [ ] Pre-resolve pass, resource, material, pipeline, and descriptor decisions
+Phase 4 uses hierarchical completion. A checked child records one independently
+validated vertical slice. Its parent remains open until every child and the
+parent's final integration gate pass. This makes progress visible without
+treating partial authority extraction as completion of the seven-authority end
+state.
+
+#### 4.0 Compact Planning And Stable-Frame Work
+
+- [x] Pre-resolve pass, resource, material, pipeline, and descriptor decisions
   into compact plan data; defer diagnostic string construction until emission.
-- [ ] Move required pipeline/shader creation and planner warnings out of primary
+  - [x] Pre-resolve resource, material, pipeline, and descriptor choices into
+    immutable plan records consumed directly by recording.
+- [x] Move required pipeline/shader creation and planner warnings out of primary
   recording.
-- [ ] Use frame-indexed upload/storage arenas, stable bindings and offsets, and
-  capacity growth with subrange updates for camera, transform, material,
-  skinning, debug-line, and indirect data.
-- [ ] Remove per-frame attachment-layout arrays, UI split arrays, graph sorting,
-  and other repeated/superlinear plan construction.
-- [ ] Add allocation and timing scopes for plan build, recording, queue-lock
+  - [x] Prewarm every required engine pipeline and shader variant before its
+    first production recording use.
+  - [x] Publish typed planner outcomes and defer warning formatting until cold
+    diagnostics or export.
+- [x] Remove per-frame attachment-layout arrays, UI split arrays, graph sorting,
+  and other repeated or superlinear plan construction.
+- [x] Make stable-frame work proportional to changed or visible content rather
+  than registered resources, cache size, or historical frame operations.
+  - [x] Remove steady-state full scans, string parsing/hashing, reflection,
+    repeated graph sorting, and cache-wide dirty propagation.
+  - [x] Demonstrate proportional scaling with stable-frame counters and matched
+    representative workloads.
+- [x] Keep the normal hot path free of LINQ, closures, boxing, strings,
+  expected-status exceptions, `Task` creation, collection growth, and
+  contention-heavy global atomics.
+  - [x] Use fixed frame-slot arenas and persistent worker-owned storage for all
+    remaining normal-path transient work.
+  - [x] Pass the warmed zero-managed-allocation and observer-overhead gates.
+
+#### 4.1 Extract The Seven Runtime Authorities
+
+> **Status on 2026-08-06:** state ownership has been consolidated, but behavior
+> ownership and the runtime baseline are not complete. `VulkanRenderer` has the
+> intended seven authority-root instance fields, while 207 partial declarations
+> still contain renderer implementation behavior. The seven-field result must
+> not be treated as completion of this section.
+>
+> **Execution rule:** restore the Vulkan runtime baseline in blocker 4.1.0
+> before performing more authority moves. Then close 4.1.1 through 4.1.6 in
+> dependency order; 4.1.7 is the final proof. The parent checkbox may be checked
+> only when every blocker below meets its stated exit condition.
+
+- [ ] **4.1.0 Restore a working Vulkan runtime baseline before continuing the
+  extraction.** The latest isolated Vulkan run repeatedly fails resource
+  generation with `InvalidOperationException: Vulkan image-view/descriptor
+  payload for 'BloomBlurTexture' changed before generation commit` at
+  `VulkanRenderResourceGenerationTransaction.Commit()` in
+  `VulkanRenderer.ResourcePlannerContext.cs`; the active pipeline generation
+  remains absent and the window is white. An earlier attempt in the same session
+  also recorded a null-reference failure during pending-generation
+  materialization.
+  - [ ] Fix the resource-generation identity/lifetime instability which lets the
+    `BloomBlurTexture` image-view or descriptor payload change between prepare
+    and commit. Do not suppress or retry past the invariant failure.
+  - [ ] Validate the fix through a Vulkan Unit Testing World run: the initial
+    generation commits, a non-white scene is visible in screenshots from two
+    camera positions, and the Vulkan/rendering logs contain no repeating
+    generation exception, retry-backoff loop, or validation error.
+- [ ] **4.1.1 Cut the frame loop's facade callback spine.**
+  - [x] Delete `IVulkanDesktopFramePhaseService` and the stateful desktop frame
+    coordinator; `VulkanFrameLoop` owns admission, settlement, and ordered phase
+    sequencing.
+  - [ ] Replace `VulkanFrameLoop.Render(VulkanRenderer renderer, double delta)`
+    and every phase call it makes back into the facade with typed authority
+    inputs and renderer-free phase owners.
+  - Exit condition: `Frame/Loop/Authority` contains no `VulkanRenderer`
+    reference, and the facade performs one one-way call into `VulkanFrameLoop`
+    without being passed as an argument or callback target.
+- [ ] **4.1.2 Cut the output authority's retained facade and finish output
+  behavior ownership.**
+  - [x] Move output mutable state, target identities, and surface authority into
+    `VulkanOutputRuntime` and renderer-free surface contracts.
+  - [ ] Remove `VulkanTargetOutputContext._renderer`, its
+    `VulkanTargetOutputContext(VulkanRenderer)` constructor, and its 32 direct
+    `_renderer.*` forwarding calls; replace the catch-all context with the
+    narrow device, resource, command, and telemetry capabilities each target
+    operation actually needs.
+  - [ ] Remove `VulkanRenderer` from
+    `VulkanOutputRuntime.InitializeTargetFinalOutput(...)` and from
+    `VulkanDesktopWsiTargetDriver.RecreateFinalOutput(...)`,
+    `ShouldKeepPresentScalingSwapchain(...)`, `AcquireFrameTarget(...)`, and
+    `PresentFrameTarget(...)`.
+  - [ ] Rehome remaining desktop, presentationless, OpenXR, mirror, capture,
+    probe, shadow, preview, readback, and ImGui lifecycle methods from
+    `VulkanRenderer.*` partials into `VulkanOutputRuntime` or focused typed
+    adapters.
+  - Exit condition: output authorities, target drivers, and output adapters
+    neither accept nor retain `VulkanRenderer`, and no output lifecycle method is
+    implemented on a renderer partial.
+- [ ] **4.1.3 Remove renderer-backed resource wrappers and finish resource
+  behavior ownership.**
+  - [x] Move resource mutable state, registries, descriptor state, pipeline
+    caches, lifetime tracking, and allocator state to resource/device
+    authorities.
+  - [ ] Remove the transitional `VkObject(VulkanRenderer renderer, T data)`
+    constructor and `VkObject<T>.Renderer` accessor. Convert wrapper operations
+    to `VulkanBackendObjectContext` plus narrow resource/command contracts.
+  - [ ] Rehome wrapper, registry, allocation, upload, descriptor, pipeline,
+    pinning, retirement, and readback implementation still present in
+    `VulkanRenderer.*` partials.
+  - [ ] Move `VulkanGraphicsPipelineCompileJob`,
+    `VulkanPipelineManifestCacheKey`, and `VulkanPipelineVariantManifest` out of
+    the renderer so `VulkanPipelineManager` no longer names renderer-nested
+    contracts.
+  - Exit condition: no `VkObject`-derived type reaches operations through a
+    renderer backlink, `VulkanPipelineManager` contains no `VulkanRenderer`
+    reference, and resource implementation lives under the resource authority.
+- [ ] **4.1.4 Move command execution, recording, and workers behind frozen
+  command-runtime inputs.**
+  - [x] Move command mutable state, worker synchronization, workspaces, and
+    caches into `VulkanCommandRuntime`.
+  - [ ] Remove the `VulkanRenderer` parameters from
+    `VulkanCommandRecorder.Begin(...)` and `Record(...)`.
+  - [ ] Replace `CommandChainRecordingBatch.WorkerProcedure` and the bound
+    renderer worker method with a command-runtime worker procedure over an
+    immutable prepared recording context. Move tracked reset/end, binding
+    state, descriptor/local-read inheritance, and device admission into that
+    context or its owning command services.
+  - [ ] Rehome scheduling, frame operations, primary/secondary recording,
+    barriers, queue submission, receipts, and OpenXR recording workers that are
+    still implemented by `VulkanRenderer.*` partials.
+  - Exit condition: command authorities and workers neither accept nor retain
+    `VulkanRenderer`; workers consume only frozen prepared inputs; command
+    recording, synchronization, submission, and settlement behavior is owned by
+    `VulkanCommandRuntime` and focused command services.
+- [ ] **4.1.5 Replace opaque authority state and renderer-nested planner
+  contracts with concrete types.**
+  - [x] Replace the planner's former type-keyed state bag with a concrete
+    `MutableState` owner and remove duplicate planner/cache state.
+  - [ ] Replace `VulkanCommandRuntime._threadWorkspaces` and
+    `GetThreadWorkspace<...>()`, which currently use
+    `Dictionary<Type, object>`, with explicitly owned typed workspaces.
+  - [ ] Replace `VulkanFramePlanner.PublishResourcePlannerGeneration(object)`
+    with a concrete generation contract.
+  - [ ] Move `PooledExternalResourcePlannerReadbackScope`,
+    `FrameOpResourcePlannerSwitchingState`, `QueueOwnershipConfigCacheEntry`,
+    `MergedFrameOpRegistryCacheEntry`, `FrameOpRegistryCacheSource`, and
+    `ActivePassMetadataFilterCacheEntry` out of `VulkanRenderer`; update
+    `VulkanFramePlanner.MutableState` to use the independent types.
+  - Exit condition: authorities contain no type-keyed `object` service/state bag,
+    opaque generation publication, all-authorities context, or
+    `VulkanRenderer.*` contract type.
+- [ ] **4.1.6 Rehome the remaining renderer implementation and create the final
+  facade.** This is a semantic migration, not a file rename.
+  - [x] Establish exactly seven authority-root instance fields on
+    `VulkanRenderer`: device, output, frame loop, planner, resources, commands,
+    and telemetry.
+  - [x] Complete `VulkanDeviceContext` as the sole native device, capability,
+    validation, debug-messenger, presentation-probe, and typed device-fault
+    authority with no renderer backlink.
+  - [x] Complete `VulkanFrameTelemetry` as the typed lifecycle outcome and
+    bounded publication owner used by profiler, MCP, trace, counter, and export
+    consumers.
+  - [ ] After blockers 4.1.1 through 4.1.5 are closed, move every remaining
+    implementation member out of all 207 `VulkanRenderer` partial declarations
+    and delete those declarations.
+  - [ ] Create one non-partial `VulkanRenderer` facade of at most 500 physical
+    lines which owns only public API translation, authority construction, and
+    one-way composition. Generated code may not hide renderer state or excluded
+    implementation behavior.
+  - Exit condition: the inventory reports exactly one non-partial
+    `VulkanRenderer` declaration, zero partial declarations, seven authority-root
+    fields, and no subsystem implementation member on the facade.
+- [ ] **4.1.7 Prove dependency direction and close Phase 4.1.**
+  - [x] Maintain the declaring-type-aware inventory in
+    `Tools/Reports/Get-VulkanCoreArchitectureInventory.ps1`.
+  - [x] Current inventory reports zero unapproved authority-to-authority edges,
+    zero ambient renderer lookups, zero ordinary hot-path thread-static files,
+    and no device/validation backlink.
+  - [ ] Remove the six currently reported authority renderer-backlink files:
+    `VulkanDesktopWsiTargetDriver.cs`, `VulkanCommandRecorder.cs`,
+    `VulkanFrameLoop.cs`, `VulkanOutputRuntime.cs`,
+    `VulkanPipelineManager.cs`, and `VulkanFramePlanner.cs`.
+  - [ ] Classify and eliminate the 99 current facade-callback candidate files.
+    If a candidate is a lexical false positive, tighten the inventory rule and
+    document the allowed edge; do not waive a real retained reference, facade
+    parameter, callback interface, or call back into the facade.
+  - [ ] Run the final inventory and archive its summary with the Phase 4
+    validation evidence.
+  - Exit condition: zero unapproved authority dependency edges, zero authority
+    renderer backlinks, zero unresolved facade-callback candidates, zero
+    ambient lookup/thread-static escape hatches, and a passing Vulkan runtime
+    baseline from blocker 4.1.0.
+
+#### 4.2 Make Frame Settlement Explicit
+
+- [x] Add allocation and timing scopes for plan build, recording, queue-lock
   wait, native submission, and worker wait.
-- [ ] Replace the stateful `VulkanRenderer` partial-class implementation with
-  the seven explicit authorities in the target architecture and one non-partial
-  facade that owns API translation and composition only.
 - [ ] Make the acquire-to-settlement frame loop one readable orchestration spine
   with typed phase outcomes and exactly-once ownership settlement on every
   return, exception, resize, output-unavailable, and device-loss path.
-- [ ] Inventory hand-written/generated source separately, dependency direction,
+  - [x] Publish typed frame/output identity, stage outcomes, wait reasons, and
+    unreached-stage state through `VulkanFrameTelemetry`.
+  - [x] Return `VulkanSubmissionReceipt` immediately after accepted native queue
+    work and before fallible telemetry or publication work.
+  - [x] Settle presentationless accepted command-buffer lifetime before command
+    pool reset and defer accepted incomplete OpenXR fences.
+  - [ ] Express acquire, plan, prepare, schedule, record, submit, output
+    completion, and settlement in one readable orchestration spine.
+  - [ ] Prove exactly-once settlement and one terminal typed outcome for every
+    early return, exception, resize, unavailable output, and injected device
+    loss.
+
+#### 4.3 Finish Frame-Slot And Native-Memory Arenas
+
+- [ ] Use frame-indexed upload/storage arenas, stable bindings and offsets, and
+  capacity growth with subrange updates for camera, transform, material,
+  skinning, debug-line, and indirect data.
+  - [x] Introduce the persistently mapped mesh `VulkanMappedFrameArena` with
+    typed aligned slices, generation checks, and explicit writable, prepared,
+    submitted, and reusable states.
+  - [x] Validate mapped mesh slices against device ownership and
+    `nonCoherentAtomSize`, including recorded flush expansion.
+  - [ ] Migrate camera, transform, material, skinning, debug-line, indirect,
+    upload, staging, and readback consumers to the canonical frame-slot arenas.
+  - [ ] Add bounded capacity growth and dirty-subrange publication for every
+    migrated stream.
+Native-boundary transient arrays, mapped-memory safety, and final unsafe-code
+containment are tracked once in section 4.5 to avoid duplicate completion boxes.
+
+#### 4.4 Meet Structural And Unsafe-Code Gates
+
+- [x] Inventory hand-written/generated source separately, dependency direction,
   file/line counts, partials, fields, largest files/methods, directory depth, and
-  duplicated authorities before each consolidation phase.
-- [ ] Reduce the hand-written Vulkan core from the 2026-08-05 baseline of 858
-  files / 170,048 lines to at most 550 files / 125,000 lines, and reduce the
-  acquire-to-settlement lifecycle spine to at most 40 files / 20,000 lines.
-- [ ] Keep `VulkanRenderer` in one hand-written non-partial file of at most 500
-  physical lines; generated interop may not own renderer state or hide behavior
-  excluded from the structural audit.
+  duplicated authorities before each consolidation phase. Evidence includes the
+  reproducible 2026-08-06 pre-extraction baseline and post-cut inventories after
+  the initial, device-capability, and native-lifetime vertical slices.
+- [ ] Reduce the hand-written Vulkan core from the reproducible 2026-08-06
+  Phase-4 baseline of 890 files / 178,506 physical lines to at most 550 files /
+  125,000 lines, and reduce the acquire-to-settlement lifecycle spine to at most
+  40 files / 20,000 lines.
+  - [x] Reduce renderer partial declarations from 320 after the device-capability
+    cut to 308 after the native-lifetime cut.
+  - [x] Reduce type-wide unsafe files from 378 to 372 over the same cut.
+  - [ ] Meet the final file, line, partial, lifecycle-spine, and unsafe budgets.
 - [ ] Keep the main frame orchestration method at most 100 logical lines. Split
   any hand-written file above 1,500 physical lines or method above 150 logical
   lines unless a documented ownership exception is approved before cutover.
 - [ ] Consolidate or delete duplicate planners, schedulers, profilers, caches,
   descriptor/lifetime models, forwarding shims, compatibility branches, and
-  one-method partials as their consumers migrate. Do not preserve two production
-  authorities or meet counts by combining unrelated top-level types.
-- [ ] Enforce dependency direction from facade/frame orchestration toward
-  output, planning, resource, command, device, and telemetry owners; forbid
-  ambient facade callbacks, service-location, and ordinary hot-path thread-static
-  state.
-- [ ] Make stable-frame work proportional to changed or visible content rather
-  than registered resources, cache size, or historical frame operations; remove
-  steady-state full scans, string parsing/hashing, reflection, repeated graph
-  sorting, and cache-wide dirty propagation.
-- [ ] Keep the normal hot path free of LINQ, closures, boxing, strings,
-  expected-status exceptions, `Task` creation, collection growth, and
-  contention-heavy global atomics; use fixed frame-slot arenas and persistent
-  worker-owned storage.
+  one-method partials as their consumers migrate.
+  - [x] Remove the nested queue-family selector/type authority and lift the KHR
+    device-fault records, fault-injection stage, and submission diagnostic
+    context out of renderer partials.
+  - [ ] Delete every remaining duplicate authority and forwarding shim with its
+    final consumer. Never preserve two production authorities or meet counts by
+    combining unrelated top-level types.
 
-#### 4.1 Make Hot Data Layout And Unsafe Boundaries Explicit
+#### Phase 4 Implementation Status (2026-08-06)
+
+The hierarchy above distinguishes validated slices from final gates. Checked
+children are complete and evidence-backed; an unchecked parent is not a claim
+that its checked children are unfinished. The final seven-authority, frame-loop,
+arena, hot-path, structural, and unsafe-code parents remain open until all of
+their children and promotion evidence pass.
+
+The pre-extraction structural baseline is generated by
+`Tools/Reports/Get-VulkanCoreArchitectureInventory.ps1`; its ignored evidence is
+under `Build/_AgentValidation/mcp-sessions/vulkan-core-phase4/reports/`. The
+inventory separates generated source, identifies partial and unsafe facade
+surface, ambient facade callbacks, thread-static state, authority matches,
+directory depth, and largest files. It supersedes the older unreproducible
+858-file baseline that predated the current Phase 1-3 source.
+
+The durable per-frame/per-draw stream baseline is
+[`vulkan-hot-data-layout-inventory.md`](../../inventory/rendering/vulkan-hot-data-layout-inventory.md).
+It records current element sizes/layout, managed state, producer/consumer field
+access, copies and compatibility conversions, mutation frequency, and generation
+ownership for GPUScene, indirect, planning, packet, prepared-draw, descriptor,
+graph/barrier, worker, upload, mapped, and native-scratch streams.
+
+Phase 4 is being migrated in vertical ownership cuts. The first validated cut
+is now implemented: `VulkanDeviceContext` owns the monotonic device-state
+machine, configuration/probe data, and first typed native device fault;
+`VulkanFrameTelemetry` owns typed lifecycle-stage publication; desktop planning
+and packetization consume a numeric operation stream; `RenderPacket` stores
+numeric ranges into a frame-owned payload arena; mapped mesh frame data uses an
+atom-aware `VulkanMappedFrameArena`; native barrier arrays use reusable typed
+scratch; and accepted queue submissions return a `VulkanSubmissionReceipt`
+before fallible publication work. Presentationless fence waits now settle the
+accepted command-buffer lifetime before pool reset.
+
+The next validated device-capability cut is also complete. `VulkanDeviceContext`
+is now the sole mutable authority for selected physical-device identity and its
+immutable capability snapshot, queue-family selection and queue handles,
+available/enabled extension publication, alignment limits, logical-device
+identity, OpenXR creation identity, and final device capabilities. Native device
+success is committed before enabled extensions become authoritative; queues and
+capabilities publish through explicit exactly-once gates. Renderer facade
+members are read-only behavioral projections, and the old nested queue-family
+type/selector authority was removed. Focused tests passed 50/50, the real
+presentationless clear/readback/hash smoke passed without skipping, the full
+warnings-as-errors build passed, and a final validation-enabled Vulkan session
+and clean shutdown produced no validation or device-loss signature.
+
+The third validated device-context cut now owns the Vulkan instance and enabled
+instance-extension authority, API/OpenXR bootstrap identity, debug-utils loader
+and messenger lifetime, native callback registration, bounded validation
+aggregation, output-supplied presentation probing, required/optional device
+extension policy, submission-diagnostic snapshot, and KHR/EXT device-fault
+capability plus KHR function-table state. Presentation queries propagate native
+failure results instead of treating query failure as unsupported presentation.
+The callback sink retains no renderer reference; device-address binding payloads
+cross into renderer-level resource correlation only through a bounded drained
+record stream on the cold device-loss path. Surface teardown now occurs while
+the debug messenger remains active, followed by messenger and instance teardown.
+The Phase 3 regression passed 110/110, focused ownership and diagnostics coverage
+passed 25/25, the solution warning-as-error build passed, and three clean
+validation-enabled Vulkan runs reported zero validation messages/errors and no
+shutdown fault signature.
+
+This is a substantial Phase 4 vertical slice, not completion of the complete
+seven-authority target. Bounded native device-fault report retrieval and
+persistence, dense typed per-kind operation payloads, prepared-draw flattening, resource,
+planning, command, output, and frame-loop authority extraction, OpenXR runtime
+validation, facade collapse, and the final file/line/unsafe budgets remain open.
+The latest inventory is 926 hand-written files / 181,668 physical lines, 308
+renderer partial declarations, 372 type-wide unsafe files, 101
+ambient facade-callback files, and two thread-static files. This records the
+effect of splitting native contracts into one-type-per-file focused owners while
+removing twelve renderer partials and six type-wide unsafe files from the prior
+cut; it does not satisfy the final structural reduction gate.
+
+#### 4.5 Make Hot Data Layout And Unsafe Boundaries Explicit
 
 The [target architecture's data-layout contract](../../design/rendering/vulkan-render-loop-target-architecture.md#data-layout-and-native-memory-boundary)
 is mandatory. SoA is used for field-wise bulk stages, compact AoS for records
@@ -205,14 +489,14 @@ defines the shared scalar oracle, width-selection policy, candidate order, and
 promotion gates; it does not authorize SIMD in branch-heavy lifecycle, graph,
 descriptor, barrier, or native command code.
 
-- [ ] Add a reproducible hot-data inventory containing every per-frame/per-draw
+- [x] Add a reproducible hot-data inventory containing every per-frame/per-draw
   stream, current element size/alignment, managed-reference fields, arrays or
   pooled buffers per element, producer/consumer stages, fields touched by each
   consumer, bytes copied/converted, mutation frequency, and owning generation.
 - [ ] Establish a layout decision record for every changed stream. Compare the
   existing AoS with candidate SoA, compact AoS/hot-cold, and—only when useful—
   AoSoA layouts at representative counts before selecting the canonical form.
-- [ ] Preserve exact ABI/layout checks for `DrawMetadata`, `BoundsGpu`,
+- [x] Preserve exact ABI/layout checks for `DrawMetadata`, `BoundsGpu`,
   `GPUIndirectRenderCommandHot`, shader structs, and native Vulkan records. Treat
   the current 64-byte metadata, 64-byte bounds, and 80-byte hot command as a
   measured baseline, not an immutable contract.
@@ -224,7 +508,7 @@ descriptor, barrier, or native command code.
   through one storage owner and generation transaction. Use typed aligned ranges
   in shared backing allocations where appropriate; do not add a wrapper, source
   file, Vulkan allocation, or descriptor binding for every individual column.
-- [ ] Remove `GPURenderExtractSoA.comp`, its scratch buffers, and the uncalled
+- [x] Remove `GPURenderExtractSoA.comp`, its scratch buffers, and the uncalled
   `SoACull` compatibility path unless a real consumer and a whole-stage win are
   demonstrated first. Do not pay a conversion merely to label a path SoA.
 - [ ] Replace unconditional broad hot-command conversion with direct
@@ -236,7 +520,11 @@ descriptor, barrier, or native command code.
 - [ ] Lower polymorphic `FrameOp` objects exactly once into an opcode/payload
   index stream plus dense per-kind draw, dispatch, copy, clear, barrier, and
   output payload arrays before sorting, planning, or worker scheduling.
-- [ ] Replace `RenderPacket`-owned draw/dispatch arrays and hot diagnostic target
+  - [x] Convert desktop operation ingress, ordering, planning keys, and
+    packetization to numeric operation headers and stable numeric identities.
+  - [ ] Replace the remaining per-kind `FrameOp` reference sidecars with dense
+    typed payload arrays and remove the compatibility object path.
+- [x] Replace `RenderPacket`-owned draw/dispatch arrays and hot diagnostic target
   strings with compact numeric headers and `start/count` ranges into frame-owned
   arenas. Resolve names only in diagnostics/exporters.
 - [ ] Replace `VulkanPreparedMeshDrawState` and `VkPreparedMeshDraw` per-draw
@@ -270,6 +558,11 @@ descriptor, barrier, or native command code.
   mapped upload/uniform/staging/readback memory, descriptor bytes, and validated
   binary decoding. Expose typed offset/length/alignment/generation slices and
   acquire raw pointers only at the final boundary.
+  - [x] Replace native barrier pooled arrays with reusable typed
+    `VulkanNativeScratchArena` reservations.
+  - [ ] Add equivalent focused owners for every remaining ABI array, `pNext`
+    chain, mapped upload/staging/readback path, descriptor byte stream, and
+    validated binary decoder.
 - [ ] Remove type-wide `unsafe` from the renderer facade and ordinary planning,
   graph, scheduling, and lifecycle owners. Prefer safe `Span<T>`/
   `ReadOnlySpan<T>` and measured vector APIs; every retained pointer loop must
@@ -282,6 +575,9 @@ descriptor, barrier, or native command code.
   `minMemoryMapAlignment`, and `nonCoherentAtomSize`; record flush/invalidate
   expansion rather than confusing CPU cache-line alignment with Vulkan memory
   visibility.
+  The completed mapped mesh-frame slice is credited once in section 4.3.
+  - [ ] Apply the same ownership, minimum-alignment, atom-size, flush, and
+    invalidate contract to every remaining mapped-memory owner.
 - [ ] Add allocation-free telemetry for elements and bytes read/written per hot
   stream, compatibility/conversion bytes, native scratch reservations/high-water
   marks, dirty descriptor ranges, graph edges, prepared-draw side-stream bytes,

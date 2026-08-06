@@ -176,13 +176,13 @@ namespace XREngine.Rendering.Vulkan
                     recordingState.SwapchainInColorAttachmentLayout = true;
                     recordingState.SwapchainClearedThisFrame = true;
                 }
-                else if (swapChainFramebuffers is not null && recordingState.ImageIndex < swapChainFramebuffers.Length)
+                else if (OutputRuntime.Desktop.Framebuffers is not null && recordingState.ImageIndex < OutputRuntime.Desktop.Framebuffers.Length)
                 {
                     RenderPassBeginInfo renderPassInfo = new()
                     {
                         SType = StructureType.RenderPassBeginInfo,
-                        RenderPass = _renderPassLoad,
-                        Framebuffer = swapChainFramebuffers[recordingState.ImageIndex],
+                        RenderPass = ResourceRuntime.SwapchainLoadRenderPass,
+                        Framebuffer = OutputRuntime.Desktop.Framebuffers[recordingState.ImageIndex],
                         RenderArea = new Rect2D
                         {
                             Offset = new Offset2D(0, 0),

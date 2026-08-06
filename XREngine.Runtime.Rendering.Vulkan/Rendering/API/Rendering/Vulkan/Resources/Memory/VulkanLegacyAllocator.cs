@@ -10,9 +10,9 @@ namespace XREngine.Rendering.Vulkan;
 /// Each buffer/image receives its own dedicated <see cref="DeviceMemory"/>.
 /// This is the baseline. The block suballocator provides the modern path.
 /// </summary>
-internal sealed unsafe class VulkanLegacyAllocator(VulkanRenderer renderer) : IVulkanMemoryAllocator
+internal sealed unsafe class VulkanLegacyAllocator(VulkanDeviceContext deviceContext) : IVulkanMemoryAllocator
 {
-    private readonly VulkanRenderer _renderer = renderer;
+    private readonly VulkanDeviceContext _deviceContext = deviceContext;
     private int _activeVkAllocationCount;
     private long _totalAllocatedBytes;
 
@@ -65,7 +65,7 @@ internal sealed unsafe class VulkanLegacyAllocator(VulkanRenderer renderer) : IV
         allocation = VulkanMemoryAllocation.Null;
         result = Result.Success;
 
-        uint memoryTypeIndex = _renderer.ResolveMemoryType(memReqs.MemoryTypeBits, requiredProperties);
+        uint memoryTypeIndex = ResolveMemoryType(api, memReqs.MemoryTypeBits, requiredProperties);
 
         MemoryAllocateInfo allocInfo = new()
         {
@@ -94,6 +94,31 @@ internal sealed unsafe class VulkanLegacyAllocator(VulkanRenderer renderer) : IV
             BlockId: -1);
 
         return true;
+    }
+
+    private uint ResolveMemoryType(Vk api, uint typeFilter, MemoryPropertyFlags properties)
+    {
+        if (_deviceContext.TryFindMemoryType(api, typeFilter, properties, out uint exactIndex))
+            return exactIndex;
+
+        bool prefersReadbackFallback =
+            (properties & (MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCachedBit)) ==
+            (MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCachedBit);
+        if (prefersReadbackFallback &&
+            _deviceContext.TryFindMemoryType(
+                api,
+                typeFilter,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+                out uint coherentIndex))
+        {
+            Debug.VulkanWarningEvery(
+                "Vulkan.ReadbackMemoryTypeFallback",
+                TimeSpan.FromSeconds(10),
+                "[Vulkan] Host-cached readback memory unavailable; falling back to host-coherent staging memory.");
+            return coherentIndex;
+        }
+
+        return _deviceContext.FindMemoryType(api, typeFilter, properties);
     }
 
     public void Free(Vk api, Device device, VulkanMemoryAllocation allocation)

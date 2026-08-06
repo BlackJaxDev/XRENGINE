@@ -132,10 +132,12 @@ public sealed class VulkanArchitectureLifecycleGuardTests
             null,
             false,
             true,
+            null!,
             null,
             null,
             false,
-            VulkanRenderGraphPlan.Empty);
+            VulkanRenderGraphPlan.Empty,
+            null);
         recorder.Prepare(ref warmup).ShouldBeTrue();
 
         int prepared = 0;
@@ -151,10 +153,12 @@ public sealed class VulkanArchitectureLifecycleGuardTests
                 null,
                 false,
                 true,
+                null!,
                 null,
                 null,
                 false,
-                VulkanRenderGraphPlan.Empty);
+                VulkanRenderGraphPlan.Empty,
+                null);
             if (recorder.Prepare(ref context))
                 prepared++;
         }

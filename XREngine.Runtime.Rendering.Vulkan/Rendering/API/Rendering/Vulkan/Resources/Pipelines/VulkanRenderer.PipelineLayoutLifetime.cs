@@ -12,12 +12,11 @@ public unsafe partial class VulkanRenderer
         VulkanRetirementTicket Ticket,
         string Owner);
 
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, string> _livePipelineLayoutHandles = new();
     internal void TrackLivePipelineLayout(PipelineLayout pipelineLayout, string owner = "unknown")
     {
         if (pipelineLayout.Handle != 0)
         {
-            _livePipelineLayoutHandles[pipelineLayout.Handle] = owner;
+            ResourceRuntime.Lifetime.LivePipelineLayoutHandles[pipelineLayout.Handle] = owner;
             RegisterVulkanResource(ObjectType.PipelineLayout, pipelineLayout.Handle, owner);
         }
     }
@@ -27,31 +26,31 @@ public unsafe partial class VulkanRenderer
         if (pipelineLayout.Handle == 0)
             return false;
 
-        if (_livePipelineLayoutHandles.TryRemove(pipelineLayout.Handle, out string? trackedOwner))
+        if (ResourceRuntime.Lifetime.LivePipelineLayoutHandles.TryRemove(pipelineLayout.Handle, out string? trackedOwner))
         {
             VulkanRetirementTicket ticket = CaptureVulkanRetirementTicket(
                 ObjectType.PipelineLayout,
                 pipelineLayout.Handle,
                 owner);
-            lock (_resourceRetirementQueue.SyncRoot)
+            lock (ResourceRuntime.Lifetime.Retirement.SyncRoot)
             {
-                if (_resourceRetirementQueue.AllPipelineLayoutHandles.Contains(pipelineLayout.Handle))
+                if (ResourceRuntime.Lifetime.Retirement.AllPipelineLayoutHandles.Contains(pipelineLayout.Handle))
                 {
-                    _livePipelineLayoutHandles[pipelineLayout.Handle] = trackedOwner ?? owner;
+                    ResourceRuntime.Lifetime.LivePipelineLayoutHandles[pipelineLayout.Handle] = trackedOwner ?? owner;
                     return false;
                 }
             }
 
             if (!IsVulkanRetirementReady(ticket))
             {
-                _livePipelineLayoutHandles[pipelineLayout.Handle] = trackedOwner ?? owner;
+                ResourceRuntime.Lifetime.LivePipelineLayoutHandles[pipelineLayout.Handle] = trackedOwner ?? owner;
                 int frameSlot = CurrentDesktopFrameSlot;
-                lock (_resourceRetirementQueue.SyncRoot)
+                lock (ResourceRuntime.Lifetime.Retirement.SyncRoot)
                 {
-                    if (_resourceRetirementQueue.AllPipelineLayoutHandles.Add(pipelineLayout.Handle))
+                    if (ResourceRuntime.Lifetime.Retirement.AllPipelineLayoutHandles.Add(pipelineLayout.Handle))
                     {
-                        _resourceRetirementQueue.PipelineLayoutHandles[frameSlot].Add(pipelineLayout.Handle);
-                        _resourceRetirementQueue.PipelineLayouts[frameSlot].Add(new RetiredPipelineLayout(
+                        ResourceRuntime.Lifetime.Retirement.PipelineLayoutHandles[frameSlot].Add(pipelineLayout.Handle);
+                        ResourceRuntime.Lifetime.Retirement.PipelineLayouts[frameSlot].Add(new RetiredPipelineLayout(
                             pipelineLayout,
                             ticket,
                             trackedOwner ?? owner));
@@ -87,14 +86,14 @@ public unsafe partial class VulkanRenderer
 
     private void DrainRetiredPipelineLayouts(int frameSlot, int maxItems)
     {
-        if (Api is null || device.Handle == 0)
+        if (Api is null || _deviceContext.Device.Handle == 0)
             return;
 
         RetiredPipelineLayout[] retired;
         int remaining;
-        lock (_resourceRetirementQueue.SyncRoot)
+        lock (ResourceRuntime.Lifetime.Retirement.SyncRoot)
         {
-            List<RetiredPipelineLayout> list = _resourceRetirementQueue.PipelineLayouts[frameSlot];
+            List<RetiredPipelineLayout> list = ResourceRuntime.Lifetime.Retirement.PipelineLayouts[frameSlot];
             int capacity = GetRetiredResourceDrainCount(list.Count, maxItems);
             if (capacity == 0)
                 return;
@@ -111,9 +110,9 @@ public unsafe partial class VulkanRenderer
 
                 ready.Add(candidate);
                 list.RemoveAt(i);
-                _resourceRetirementQueue.PipelineLayoutHandles[frameSlot].Remove(candidate.PipelineLayout.Handle);
-                _resourceRetirementQueue.AllPipelineLayoutHandles.Remove(candidate.PipelineLayout.Handle);
-                _livePipelineLayoutHandles.TryRemove(candidate.PipelineLayout.Handle, out _);
+                ResourceRuntime.Lifetime.Retirement.PipelineLayoutHandles[frameSlot].Remove(candidate.PipelineLayout.Handle);
+                ResourceRuntime.Lifetime.Retirement.AllPipelineLayoutHandles.Remove(candidate.PipelineLayout.Handle);
+                ResourceRuntime.Lifetime.LivePipelineLayoutHandles.TryRemove(candidate.PipelineLayout.Handle, out _);
             }
 
             retired = [.. ready];
@@ -127,7 +126,7 @@ public unsafe partial class VulkanRenderer
             if (entry.PipelineLayout.Handle == 0)
                 continue;
 
-            Api.DestroyPipelineLayout(device, entry.PipelineLayout, null);
+            Api.DestroyPipelineLayout(_deviceContext.Device, entry.PipelineLayout, null);
             CompleteVulkanResourceDestruction(
                 ObjectType.PipelineLayout,
                 entry.PipelineLayout.Handle);
@@ -137,9 +136,9 @@ public unsafe partial class VulkanRenderer
     private void DestroyRemainingTrackedPipelineLayouts()
     {
         int destroyedLayouts = 0;
-        foreach (KeyValuePair<ulong, string> pair in _livePipelineLayoutHandles.ToArray())
+        foreach (KeyValuePair<ulong, string> pair in ResourceRuntime.Lifetime.LivePipelineLayoutHandles.ToArray())
         {
-            if (!_livePipelineLayoutHandles.TryRemove(pair.Key, out string? owner))
+            if (!ResourceRuntime.Lifetime.LivePipelineLayoutHandles.TryRemove(pair.Key, out string? owner))
                 continue;
 
             PipelineLayout pipelineLayout = new() { Handle = pair.Key };
@@ -147,7 +146,7 @@ public unsafe partial class VulkanRenderer
                 "[Vulkan] Destroying remaining tracked pipeline layout 0x{0:X} owner={1} during renderer shutdown.",
                 pair.Key,
                 owner);
-            Api!.DestroyPipelineLayout(device, pipelineLayout, null);
+            Api!.DestroyPipelineLayout(_deviceContext.Device, pipelineLayout, null);
             CompleteVulkanResourceDestruction(ObjectType.PipelineLayout, pair.Key);
             destroyedLayouts++;
         }

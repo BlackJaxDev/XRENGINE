@@ -11,14 +11,14 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
-        private readonly VulkanReadbackTaskTracker _readbackTasks = new();
+        private VulkanReadbackTaskTracker _readbackTasks => _commandRuntime.CommandBuffers.ReadbackTasks;
 
         // =========== Render Parameters ===========
 
-        private ulong _materialUniformFrameTimeFrameId = ulong.MaxValue;
-        internal float _materialUniformUpdateDeltaLive;
-        internal float _materialUniformSecondsLive;
-        internal float _materialUniformDeltaSecondsLive;
+        private ref ulong _materialUniformFrameTimeFrameId => ref _commandRuntime.CommandBuffers.MaterialUniformFrameTimeFrameId;
+        internal ref float _materialUniformUpdateDeltaLive => ref _commandRuntime.CommandBuffers.MaterialUniformUpdateDeltaLive;
+        internal ref float _materialUniformSecondsLive => ref _commandRuntime.CommandBuffers.MaterialUniformSecondsLive;
+        internal ref float _materialUniformDeltaSecondsLive => ref _commandRuntime.CommandBuffers.MaterialUniformDeltaSecondsLive;
 
         /// <summary>
         /// Captures the time uniforms once for the current engine render frame.
@@ -37,10 +37,10 @@ namespace XREngine.Rendering.Vulkan
             _materialUniformFrameTimeFrameId = frameId;
         }
 
-        private XRMaterial? _vulkanShadowBindingSourceMaterial;
-        private XRRenderProgram? _vulkanShadowBindingProgram;
-        private ulong _vulkanShadowBindingSourceLayoutVersion = ulong.MaxValue;
-        private MaterialShadowBindingPlan? _vulkanShadowBindingPlan;
+        private ref XRMaterial? _vulkanShadowBindingSourceMaterial => ref _commandRuntime.CommandBuffers.ShadowBindingSourceMaterial;
+        private ref XRRenderProgram? _vulkanShadowBindingProgram => ref _commandRuntime.CommandBuffers.ShadowBindingProgram;
+        private ref ulong _vulkanShadowBindingSourceLayoutVersion => ref _commandRuntime.CommandBuffers.ShadowBindingSourceLayoutVersion;
+        private ref MaterialShadowBindingPlan? _vulkanShadowBindingPlan => ref _commandRuntime.CommandBuffers.ShadowBindingPlan;
 
         public override void ApplyRenderParameters(RenderingParameters parameters)
         {

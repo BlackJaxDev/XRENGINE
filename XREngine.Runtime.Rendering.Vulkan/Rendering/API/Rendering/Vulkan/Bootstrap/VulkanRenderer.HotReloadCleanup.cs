@@ -2,8 +2,6 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private bool _threadLocalScratchDisposed;
-
     /// <summary>
     /// Releases managed caches whose storage is associated with renderer worker threads.
     /// Collectible backend generations must not leave backend objects in reusable thread-local
@@ -16,19 +14,16 @@ public unsafe partial class VulkanRenderer
         ReleaseCurrentThreadFrameOpCaptureCaches();
         ReleaseCurrentThreadSynchronizationScratch();
         _renderGraphCompiler.ReleaseCaches();
-        PassMetadataSignatureCache.Clear();
-        PooledExternalResourcePlannerReadbackScope.ReleaseCurrentThreadPool();
-        FrameOp.ReleaseCurrentThreadPools();
-        VkMeshRenderer.ReleaseCurrentThreadDescriptorScratch();
-        VkRenderProgram.ReleaseCurrentThreadBindingCaptureWorkspace();
+        VulkanFramePlanner.PassMetadataSignatureCache.Clear();
+        ReleasePooledExternalResourcePlannerReadbackScopes();
 
-        if (_threadLocalScratchDisposed)
+        if (_commandRuntime.ThreadLocalScratchDisposed)
             return;
 
-        _threadLocalScratchDisposed = true;
+        _commandRuntime.ThreadLocalScratchDisposed = true;
         _commandBufferRecordingScratch.Dispose();
-        _resourceLifetimeTracker.ChangedDescriptorSetsScratch.Dispose();
-        _resourceLifetimeTracker.DescriptorReferencesScratch.Dispose();
-        _resourceLifetimeTracker.DescriptorPinnedReferencesScratch.Dispose();
+        ResourceRuntime.Lifetime.Tracker.ChangedDescriptorSetsScratch.Dispose();
+        ResourceRuntime.Lifetime.Tracker.DescriptorReferencesScratch.Dispose();
+        ResourceRuntime.Lifetime.Tracker.DescriptorPinnedReferencesScratch.Dispose();
     }
 }

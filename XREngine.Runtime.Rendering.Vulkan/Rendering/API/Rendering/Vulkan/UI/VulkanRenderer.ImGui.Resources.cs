@@ -19,7 +19,7 @@ namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     private void DestroyImGuiDrawBuffers()
-        => DestroyImGuiDrawBuffers(ref _imguiResources.DrawBuffers);
+        => DestroyImGuiDrawBuffers(ref _outputRuntime._imguiResources.DrawBuffers);
 
     private void DestroyImGuiDrawBuffers(ref VulkanImGuiDrawBufferSet[] drawBuffers)
     {
@@ -52,29 +52,29 @@ public unsafe partial class VulkanRenderer
         if (Api is null)
             return;
 
-        if (_imguiResources.Pipeline.Handle != 0)
-            RetirePipeline(_imguiResources.Pipeline);
-        _imguiResources.Pipeline = default;
+        if (_outputRuntime._imguiResources.Pipeline.Handle != 0)
+            RetirePipeline(_outputRuntime._imguiResources.Pipeline);
+        _outputRuntime._imguiResources.Pipeline = default;
 
-        if (_imguiResources.PipelineLayout.Handle != 0)
+        if (_outputRuntime._imguiResources.PipelineLayout.Handle != 0)
         {
-            PipelineLayout pipelineLayout = _imguiResources.PipelineLayout;
-            _imguiResources.PipelineLayout = default;
+            PipelineLayout pipelineLayout = _outputRuntime._imguiResources.PipelineLayout;
+            _outputRuntime._imguiResources.PipelineLayout = default;
             if (TryBeginDestroyPipelineLayout(pipelineLayout, "ImGui.DestroyPipelineResources"))
             {
-                Api.DestroyPipelineLayout(device, pipelineLayout, null);
+                Api.DestroyPipelineLayout(_deviceContext.Device, pipelineLayout, null);
             }
         }
 
-        if (_imguiResources.VertShader.Handle != 0)
-            Api.DestroyShaderModule(device, _imguiResources.VertShader, null);
-        _imguiResources.VertShader = default;
+        if (_outputRuntime._imguiResources.VertShader.Handle != 0)
+            Api.DestroyShaderModule(_deviceContext.Device, _outputRuntime._imguiResources.VertShader, null);
+        _outputRuntime._imguiResources.VertShader = default;
 
-        if (_imguiResources.FragShader.Handle != 0)
-            Api.DestroyShaderModule(device, _imguiResources.FragShader, null);
-        _imguiResources.FragShader = default;
+        if (_outputRuntime._imguiResources.FragShader.Handle != 0)
+            Api.DestroyShaderModule(_deviceContext.Device, _outputRuntime._imguiResources.FragShader, null);
+        _outputRuntime._imguiResources.FragShader = default;
 
-        _imguiResources.PipelineSignature = 0;
+        _outputRuntime._imguiResources.PipelineSignature = 0;
     }
 
     private void DestroyImGuiFontResources()
@@ -83,40 +83,40 @@ public unsafe partial class VulkanRenderer
             return;
 
         RetireImageResources(new RetiredImageResources(
-            _imguiResources.FontImage,
-            _imguiResources.FontImageMemory,
-            _imguiResources.FontImageView,
+            _outputRuntime._imguiResources.FontImage,
+            _outputRuntime._imguiResources.FontImageMemory,
+            _outputRuntime._imguiResources.FontImageView,
             [],
-            _imguiResources.FontSampler,
+            _outputRuntime._imguiResources.FontSampler,
             0));
-        _imguiResources.FontSampler = default;
-        _imguiResources.FontImageView = default;
-        _imguiResources.FontImage = default;
-        _imguiResources.FontImageMemory = default;
+        _outputRuntime._imguiResources.FontSampler = default;
+        _outputRuntime._imguiResources.FontImageView = default;
+        _outputRuntime._imguiResources.FontImage = default;
+        _outputRuntime._imguiResources.FontImageMemory = default;
 
-        if (_imguiResources.DescriptorPool.Handle != 0)
-            RetireDescriptorPool(_imguiResources.DescriptorPool);
-        _imguiResources.DescriptorPool = default;
+        if (_outputRuntime._imguiResources.DescriptorPool.Handle != 0)
+            RetireDescriptorPool(_outputRuntime._imguiResources.DescriptorPool);
+        _outputRuntime._imguiResources.DescriptorPool = default;
 
-        if (_imguiResources.DescriptorSetLayout.Handle != 0 &&
-            TryBeginDestroyDescriptorSetLayout(_imguiResources.DescriptorSetLayout, "ImGui.DescriptorSetLayout"))
+        if (_outputRuntime._imguiResources.DescriptorSetLayout.Handle != 0 &&
+            TryBeginDestroyDescriptorSetLayout(_outputRuntime._imguiResources.DescriptorSetLayout, "ImGui.DescriptorSetLayout"))
         {
-            Api.DestroyDescriptorSetLayout(device, _imguiResources.DescriptorSetLayout, null);
+            Api.DestroyDescriptorSetLayout(_deviceContext.Device, _outputRuntime._imguiResources.DescriptorSetLayout, null);
         }
-        _imguiResources.DescriptorSetLayout = default;
+        _outputRuntime._imguiResources.DescriptorSetLayout = default;
 
-        _imguiResources.FontDescriptorSet = default;
-        _imguiTextureRegistry.DescriptorSets.Clear();
-        _imguiTextureRegistry.DescriptorHeapPushData.Clear();
-        _imguiTextureRegistry.Registrations.Clear();
-        _imguiTextureRegistry.TexturesById.Clear();
-        _imguiTextureRegistry.NextTextureId = 2;
-        _imguiResources.FontReady = false;
+        _outputRuntime._imguiResources.FontDescriptorSet = default;
+        _outputRuntime._imguiTextureRegistry.DescriptorSets.Clear();
+        _outputRuntime._imguiTextureRegistry.DescriptorHeapPushData.Clear();
+        _outputRuntime._imguiTextureRegistry.Registrations.Clear();
+        _outputRuntime._imguiTextureRegistry.TexturesById.Clear();
+        _outputRuntime._imguiTextureRegistry.NextTextureId = 2;
+        _outputRuntime._imguiResources.FontReady = false;
     }
 
     private void EnsureImGuiFontResources()
     {
-        if (_imguiResources.FontReady)
+        if (_outputRuntime._imguiResources.FontReady)
             return;
 
         ImGuiIOPtr io = ImGui.GetIO();
@@ -156,12 +156,12 @@ public unsafe partial class VulkanRenderer
                     ImageExtent = new Extent3D((uint)width, (uint)height, 1)
                 };
 
-                CmdCopyBufferToImageTracked(scope.CommandBuffer, stagingBuffer, _imguiResources.FontImage, ImageLayout.TransferDstOptimal, 1, &copyRegion);
+                CmdCopyBufferToImageTracked(scope.CommandBuffer, stagingBuffer, _outputRuntime._imguiResources.FontImage, ImageLayout.TransferDstOptimal, 1, &copyRegion);
                 TransitionImGuiFontImage(scope.CommandBuffer, ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
             }
 
             CreateImGuiFontDescriptorResources();
-            _imguiResources.FontReady = true;
+            _outputRuntime._imguiResources.FontReady = true;
         }
         finally
         {
@@ -186,28 +186,28 @@ public unsafe partial class VulkanRenderer
             SharingMode = SharingMode.Exclusive
         };
 
-        if (CreateVulkanImageTracked(ref imageInfo, out _imguiResources.FontImage, "ImGui.FontAtlas") != Result.Success)
+        if (CreateVulkanImageTracked(ref imageInfo, out _outputRuntime._imguiResources.FontImage, "ImGui.FontAtlas") != Result.Success)
             throw new InvalidOperationException("Failed to create ImGui font image.");
 
-        ClearTrackedImageLayouts(_imguiResources.FontImage);
-        VulkanMemoryAllocation allocation = AllocateImageMemoryWithFallback(_imguiResources.FontImage, MemoryPropertyFlags.DeviceLocalBit);
-        _imageAllocationTracker.Allocations[_imguiResources.FontImage.Handle] = allocation;
-        _imguiResources.FontImageMemory = allocation.Memory;
+        ClearTrackedImageLayouts(_outputRuntime._imguiResources.FontImage);
+        VulkanMemoryAllocation allocation = AllocateImageMemoryWithFallback(_outputRuntime._imguiResources.FontImage, MemoryPropertyFlags.DeviceLocalBit);
+        ResourceRuntime.Allocations.Images.Allocations[_outputRuntime._imguiResources.FontImage.Handle] = allocation;
+        _outputRuntime._imguiResources.FontImageMemory = allocation.Memory;
 
-        if (Api.BindImageMemory(device, _imguiResources.FontImage, _imguiResources.FontImageMemory, allocation.Offset) != Result.Success)
+        if (Api.BindImageMemory(_deviceContext.Device, _outputRuntime._imguiResources.FontImage, _outputRuntime._imguiResources.FontImageMemory, allocation.Offset) != Result.Success)
         {
-            _imageAllocationTracker.Allocations.TryRemove(_imguiResources.FontImage.Handle, out _);
-            DestroyVulkanImageImmediateTracked(_imguiResources.FontImage, "ImGui.FontAtlas.BindFailure");
+            ResourceRuntime.Allocations.Images.Allocations.TryRemove(_outputRuntime._imguiResources.FontImage.Handle, out _);
+            DestroyVulkanImageImmediateTracked(_outputRuntime._imguiResources.FontImage, "ImGui.FontAtlas.BindFailure");
             FreeMemoryAllocation(allocation);
-            _imguiResources.FontImage = default;
-            _imguiResources.FontImageMemory = default;
+            _outputRuntime._imguiResources.FontImage = default;
+            _outputRuntime._imguiResources.FontImageMemory = default;
             throw new InvalidOperationException("Failed to bind ImGui font image memory.");
         }
 
         ImageViewCreateInfo viewInfo = new()
         {
             SType = StructureType.ImageViewCreateInfo,
-            Image = _imguiResources.FontImage,
+            Image = _outputRuntime._imguiResources.FontImage,
             ViewType = ImageViewType.Type2D,
             Format = Format.R8G8B8A8Unorm,
             SubresourceRange = new ImageSubresourceRange
@@ -220,16 +220,16 @@ public unsafe partial class VulkanRenderer
             }
         };
 
-        if (Api.CreateImageView(device, ref viewInfo, null, out _imguiResources.FontImageView) != Result.Success)
+        if (Api.CreateImageView(_deviceContext.Device, ref viewInfo, null, out _outputRuntime._imguiResources.FontImageView) != Result.Success)
         {
-            _imageAllocationTracker.Allocations.TryRemove(_imguiResources.FontImage.Handle, out _);
-            DestroyVulkanImageImmediateTracked(_imguiResources.FontImage, "ImGui.FontAtlas.ViewFailure");
+            ResourceRuntime.Allocations.Images.Allocations.TryRemove(_outputRuntime._imguiResources.FontImage.Handle, out _);
+            DestroyVulkanImageImmediateTracked(_outputRuntime._imguiResources.FontImage, "ImGui.FontAtlas.ViewFailure");
             FreeMemoryAllocation(allocation);
-            _imguiResources.FontImage = default;
-            _imguiResources.FontImageMemory = default;
+            _outputRuntime._imguiResources.FontImage = default;
+            _outputRuntime._imguiResources.FontImageMemory = default;
             throw new InvalidOperationException("Failed to create ImGui font image view.");
         }
-        TrackLiveImageView(_imguiResources.FontImageView, in viewInfo, "ImGui.FontAtlas");
+        TrackLiveImageView(_outputRuntime._imguiResources.FontImageView, in viewInfo, "ImGui.FontAtlas");
 
         SamplerCreateInfo samplerInfo = new()
         {
@@ -251,10 +251,10 @@ public unsafe partial class VulkanRenderer
             UnnormalizedCoordinates = Vk.False
         };
 
-        if (Api.CreateSampler(device, ref samplerInfo, null, out _imguiResources.FontSampler) != Result.Success)
+        if (Api.CreateSampler(_deviceContext.Device, ref samplerInfo, null, out _outputRuntime._imguiResources.FontSampler) != Result.Success)
             throw new InvalidOperationException("Failed to create ImGui font sampler.");
 
-        RegisterLiveSampler(_imguiResources.FontSampler, in samplerInfo);
+        RegisterLiveSampler(_outputRuntime._imguiResources.FontSampler, in samplerInfo);
     }
 
     private void CreateImGuiFontDescriptorResources()
@@ -275,9 +275,9 @@ public unsafe partial class VulkanRenderer
             PBindings = &samplerBinding
         };
 
-        if (Api!.CreateDescriptorSetLayout(device, ref layoutInfo, null, out _imguiResources.DescriptorSetLayout) != Result.Success)
+        if (Api!.CreateDescriptorSetLayout(_deviceContext.Device, ref layoutInfo, null, out _outputRuntime._imguiResources.DescriptorSetLayout) != Result.Success)
             throw new InvalidOperationException("Failed to create ImGui descriptor set layout.");
-        TrackLiveDescriptorSetLayout(_imguiResources.DescriptorSetLayout, "ImGui.DescriptorSetLayout");
+        TrackLiveDescriptorSetLayout(_outputRuntime._imguiResources.DescriptorSetLayout, "ImGui.DescriptorSetLayout");
 
         DescriptorPoolSize poolSize = new()
         {
@@ -294,43 +294,43 @@ public unsafe partial class VulkanRenderer
             Flags = DescriptorPoolCreateFlags.FreeDescriptorSetBit
         };
 
-        if (Api.CreateDescriptorPool(device, ref poolInfo, null, out _imguiResources.DescriptorPool) != Result.Success)
+        if (Api.CreateDescriptorPool(_deviceContext.Device, ref poolInfo, null, out _outputRuntime._imguiResources.DescriptorPool) != Result.Success)
             throw new InvalidOperationException("Failed to create ImGui descriptor pool.");
 
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolCreate();
 
-        DescriptorSetLayout descriptorLayout = _imguiResources.DescriptorSetLayout;
+        DescriptorSetLayout descriptorLayout = _outputRuntime._imguiResources.DescriptorSetLayout;
         DescriptorSetAllocateInfo allocInfo = new()
         {
             SType = StructureType.DescriptorSetAllocateInfo,
-            DescriptorPool = _imguiResources.DescriptorPool,
+            DescriptorPool = _outputRuntime._imguiResources.DescriptorPool,
             DescriptorSetCount = 1,
             PSetLayouts = &descriptorLayout
         };
 
-        if (Api.AllocateDescriptorSets(device, ref allocInfo, out _imguiResources.FontDescriptorSet) != Result.Success)
+        if (Api.AllocateDescriptorSets(_deviceContext.Device, ref allocInfo, out _outputRuntime._imguiResources.FontDescriptorSet) != Result.Success)
             throw new InvalidOperationException("Failed to allocate ImGui descriptor set.");
 
         RegisterVulkanDescriptorSet(
-            _imguiResources.DescriptorPool,
-            _imguiResources.FontDescriptorSet,
+            _outputRuntime._imguiResources.DescriptorPool,
+            _outputRuntime._imguiResources.FontDescriptorSet,
             usesUpdateAfterBind: false,
             "ImGui.Font.DescriptorSet");
-        SetDebugDescriptorSetName(_imguiResources.FontDescriptorSet, "ImGui.Font.DescriptorSet");
+        SetDebugDescriptorSetName(_outputRuntime._imguiResources.FontDescriptorSet, "ImGui.Font.DescriptorSet");
         RecordVulkanDescriptorTableGeneration("ImGui.FontDescriptorSet.Allocated");
-        _imguiTextureRegistry.DescriptorSets[(nint)1] = _imguiResources.FontDescriptorSet;
+        _outputRuntime._imguiTextureRegistry.DescriptorSets[(nint)1] = _outputRuntime._imguiResources.FontDescriptorSet;
 
         DescriptorImageInfo imageInfo = new()
         {
-            Sampler = _imguiResources.FontSampler,
-            ImageView = _imguiResources.FontImageView,
+            Sampler = _outputRuntime._imguiResources.FontSampler,
+            ImageView = _outputRuntime._imguiResources.FontImageView,
             ImageLayout = ImageLayout.ShaderReadOnlyOptimal
         };
 
         WriteDescriptorSet write = new()
         {
             SType = StructureType.WriteDescriptorSet,
-            DstSet = _imguiResources.FontDescriptorSet,
+            DstSet = _outputRuntime._imguiResources.FontDescriptorSet,
             DstBinding = 0,
             DstArrayElement = 0,
             DescriptorType = DescriptorType.CombinedImageSampler,
@@ -352,7 +352,7 @@ public unsafe partial class VulkanRenderer
             NewLayout = newLayout,
             SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
             DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-            Image = _imguiResources.FontImage,
+            Image = _outputRuntime._imguiResources.FontImage,
             SubresourceRange = new ImageSubresourceRange
             {
                 AspectMask = ImageAspectFlags.ColorBit,
@@ -392,17 +392,17 @@ public unsafe partial class VulkanRenderer
     {
         HashCode pipelineKeyHash = new();
         pipelineKeyHash.Add(UseDynamicRenderingRenderTargets);
-        pipelineKeyHash.Add(_renderPass.Handle);
-        pipelineKeyHash.Add((int)swapChainImageFormat);
-        pipelineKeyHash.Add((int)swapChainImageColorSpace);
+        pipelineKeyHash.Add(ResourceRuntime.SwapchainRenderPass.Handle);
+        pipelineKeyHash.Add((int)OutputRuntime.Desktop.ImageFormat);
+        pipelineKeyHash.Add((int)OutputRuntime.Desktop.ImageColorSpace);
         pipelineKeyHash.Add((int)_swapchainDepthFormat);
         ulong currentPipelineSignature = unchecked((ulong)pipelineKeyHash.ToHashCode());
 
-        if (_imguiResources.Pipeline.Handle != 0 && _imguiResources.PipelineSignature == currentPipelineSignature)
+        if (_outputRuntime._imguiResources.Pipeline.Handle != 0 && _outputRuntime._imguiResources.PipelineSignature == currentPipelineSignature)
             return;
 
         DestroyImGuiPipelineResources();
-        _imguiResources.PipelineSignature = currentPipelineSignature;
+        _outputRuntime._imguiResources.PipelineSignature = currentPipelineSignature;
 
         const string vertSource = "#version 450\n"
             + "layout(push_constant) uniform PushConstants { vec2 scale; vec2 translate; } pc;\n"
@@ -463,9 +463,9 @@ public unsafe partial class VulkanRenderer
                 PCode = (uint*)fsPtr
             };
 
-            if (Api!.CreateShaderModule(device, ref vsInfo, null, out _imguiResources.VertShader) != Result.Success)
+            if (Api!.CreateShaderModule(_deviceContext.Device, ref vsInfo, null, out _outputRuntime._imguiResources.VertShader) != Result.Success)
                 throw new InvalidOperationException("Failed to create ImGui vertex shader module.");
-            if (Api.CreateShaderModule(device, ref fsInfo, null, out _imguiResources.FragShader) != Result.Success)
+            if (Api.CreateShaderModule(_deviceContext.Device, ref fsInfo, null, out _outputRuntime._imguiResources.FragShader) != Result.Success)
                 throw new InvalidOperationException("Failed to create ImGui fragment shader module.");
         }
 
@@ -476,7 +476,7 @@ public unsafe partial class VulkanRenderer
             Size = (uint)Marshal.SizeOf<VulkanImGuiPushConstants>()
         };
 
-        DescriptorSetLayout descriptorLayoutForPipeline = _imguiResources.DescriptorSetLayout;
+        DescriptorSetLayout descriptorLayoutForPipeline = _outputRuntime._imguiResources.DescriptorSetLayout;
         PipelineLayoutCreateInfo layoutInfo = new()
         {
             SType = StructureType.PipelineLayoutCreateInfo,
@@ -486,23 +486,23 @@ public unsafe partial class VulkanRenderer
             PPushConstantRanges = &pushRange
         };
 
-        if (Api.CreatePipelineLayout(device, ref layoutInfo, null, out _imguiResources.PipelineLayout) != Result.Success)
+        if (Api.CreatePipelineLayout(_deviceContext.Device, ref layoutInfo, null, out _outputRuntime._imguiResources.PipelineLayout) != Result.Success)
             throw new InvalidOperationException("Failed to create ImGui pipeline layout.");
-        TrackLivePipelineLayout(_imguiResources.PipelineLayout, "ImGui.PipelineLayout");
+        TrackLivePipelineLayout(_outputRuntime._imguiResources.PipelineLayout, "ImGui.PipelineLayout");
 
         PipelineShaderStageCreateInfo* stages = stackalloc PipelineShaderStageCreateInfo[2];
         stages[0] = new PipelineShaderStageCreateInfo
         {
             SType = StructureType.PipelineShaderStageCreateInfo,
             Stage = ShaderStageFlags.VertexBit,
-            Module = _imguiResources.VertShader,
+            Module = _outputRuntime._imguiResources.VertShader,
             PName = (byte*)Silk.NET.Core.Native.SilkMarshal.StringToPtr("main"),
         };
         stages[1] = new PipelineShaderStageCreateInfo
         {
             SType = StructureType.PipelineShaderStageCreateInfo,
             Stage = ShaderStageFlags.FragmentBit,
-            Module = _imguiResources.FragShader,
+            Module = _outputRuntime._imguiResources.FragShader,
             PName = (byte*)Silk.NET.Core.Native.SilkMarshal.StringToPtr("main"),
         };
 
@@ -680,15 +680,15 @@ public unsafe partial class VulkanRenderer
                 PDepthStencilState = &depthStencil,
                 PColorBlendState = &colorBlendState,
                 PDynamicState = &dynamicState,
-                Layout = _imguiResources.PipelineLayout,
-                RenderPass = UseDynamicRenderingRenderTargets ? default : _renderPass,
+                Layout = _outputRuntime._imguiResources.PipelineLayout,
+                RenderPass = UseDynamicRenderingRenderTargets ? default : ResourceRuntime.SwapchainRenderPass,
                 Subpass = 0,
             };
 
             if (UseDynamicRenderingRenderTargets)
             {
                 Format* colorFormats = stackalloc Format[(int)kDynRenderColorSlots];
-                colorFormats[0] = swapChainImageFormat;
+                colorFormats[0] = OutputRuntime.Desktop.ImageFormat;
 
                 PipelineRenderingCreateInfo renderingInfo = new()
                 {
@@ -712,10 +712,10 @@ public unsafe partial class VulkanRenderer
                 pipelineInfo.PNext = &imguiHeapFlags2;
             }
 
-            if (Api.CreateGraphicsPipelines(device, default, 1, ref pipelineInfo, null, out _imguiResources.Pipeline) != Result.Success)
+            if (Api.CreateGraphicsPipelines(_deviceContext.Device, default, 1, ref pipelineInfo, null, out _outputRuntime._imguiResources.Pipeline) != Result.Success)
                 throw new InvalidOperationException("Failed to create ImGui graphics pipeline.");
 
-            RegisterVulkanPipeline(_imguiResources.Pipeline, "ImGui.Pipeline");
+            RegisterVulkanPipeline(_outputRuntime._imguiResources.Pipeline, "ImGui.Pipeline");
         }
         finally
         {
@@ -726,14 +726,14 @@ public unsafe partial class VulkanRenderer
 
     private int EnsureImGuiDrawBufferSlot(uint imageIndex)
     {
-        int requiredSlots = Math.Max(MAX_FRAMES_IN_FLIGHT, swapChainImages?.Length ?? 0);
-        return EnsureImGuiDrawBufferSlot(ref _imguiResources.DrawBuffers, imageIndex, requiredSlots);
+        int requiredSlots = Math.Max(MAX_FRAMES_IN_FLIGHT, OutputRuntime.Desktop.Images?.Length ?? 0);
+        return EnsureImGuiDrawBufferSlot(ref _outputRuntime._imguiResources.DrawBuffers, imageIndex, requiredSlots);
     }
 
     private int EnsureImGuiDrawBuffers(uint imageIndex, ulong vertexBytes, ulong indexBytes)
     {
         int bufferSlot = EnsureImGuiDrawBufferSlot(imageIndex);
-        ref VulkanImGuiDrawBufferSet buffers = ref _imguiResources.DrawBuffers[bufferSlot];
+        ref VulkanImGuiDrawBufferSet buffers = ref _outputRuntime._imguiResources.DrawBuffers[bufferSlot];
         EnsureImGuiDrawBuffers(ref buffers, vertexBytes, indexBytes);
         return bufferSlot;
     }

@@ -5,17 +5,14 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private readonly object _samplerLifetimeLock = new();
-    private readonly HashSet<ulong> _liveSamplerHandles = [];
-    private readonly Dictionary<ulong, SamplerCreateInfo> _descriptorHeapSamplerCreateInfos = [];
-
     internal void RegisterLiveSampler(Sampler sampler)
     {
         if (sampler.Handle == 0)
             return;
 
-        lock (_samplerLifetimeLock)
-            _liveSamplerHandles.Add(sampler.Handle);
+        VulkanDescriptorManager descriptors = ResourceRuntime.Descriptors;
+        lock (descriptors.SamplerLifetimeLock)
+            descriptors.LiveSamplerHandles.Add(sampler.Handle);
         RegisterVulkanResource(ObjectType.Sampler, sampler.Handle, "Sampler");
     }
 
@@ -24,10 +21,11 @@ public unsafe partial class VulkanRenderer
         if (sampler.Handle == 0)
             return;
 
-        lock (_samplerLifetimeLock)
+        VulkanDescriptorManager descriptors = ResourceRuntime.Descriptors;
+        lock (descriptors.SamplerLifetimeLock)
         {
-            _liveSamplerHandles.Add(sampler.Handle);
-            _descriptorHeapSamplerCreateInfos[sampler.Handle] = createInfo with { PNext = null };
+            descriptors.LiveSamplerHandles.Add(sampler.Handle);
+            descriptors.DescriptorHeapSamplerCreateInfos[sampler.Handle] = createInfo with { PNext = null };
         }
         RegisterVulkanResource(ObjectType.Sampler, sampler.Handle, "Sampler");
     }
@@ -37,10 +35,11 @@ public unsafe partial class VulkanRenderer
         if (sampler.Handle == 0)
             return;
 
-        lock (_samplerLifetimeLock)
+        VulkanDescriptorManager descriptors = ResourceRuntime.Descriptors;
+        lock (descriptors.SamplerLifetimeLock)
         {
-            _liveSamplerHandles.Remove(sampler.Handle);
-            _descriptorHeapSamplerCreateInfos.Remove(sampler.Handle);
+            descriptors.LiveSamplerHandles.Remove(sampler.Handle);
+            descriptors.DescriptorHeapSamplerCreateInfos.Remove(sampler.Handle);
         }
     }
 
@@ -49,17 +48,19 @@ public unsafe partial class VulkanRenderer
         if (sampler.Handle == 0)
             return false;
 
-            lock (_samplerLifetimeLock)
-            return _liveSamplerHandles.Contains(sampler.Handle);
+        VulkanDescriptorManager descriptors = ResourceRuntime.Descriptors;
+        lock (descriptors.SamplerLifetimeLock)
+            return descriptors.LiveSamplerHandles.Contains(sampler.Handle);
     }
 
     internal bool TryGetDescriptorHeapSamplerCreateInfo(Sampler sampler, out SamplerCreateInfo createInfo)
     {
         if (sampler.Handle != 0)
         {
-            lock (_samplerLifetimeLock)
+            VulkanDescriptorManager descriptors = ResourceRuntime.Descriptors;
+            lock (descriptors.SamplerLifetimeLock)
             {
-                if (_descriptorHeapSamplerCreateInfos.TryGetValue(sampler.Handle, out createInfo))
+                if (descriptors.DescriptorHeapSamplerCreateInfos.TryGetValue(sampler.Handle, out createInfo))
                     return true;
             }
         }
@@ -71,14 +72,15 @@ public unsafe partial class VulkanRenderer
     private void DestroyRemainingTrackedSamplers()
     {
         ulong[] handles;
-        lock (_samplerLifetimeLock)
+        VulkanDescriptorManager descriptors = ResourceRuntime.Descriptors;
+        lock (descriptors.SamplerLifetimeLock)
         {
-            if (_liveSamplerHandles.Count == 0)
+            if (descriptors.LiveSamplerHandles.Count == 0)
                 return;
 
-            handles = [.. _liveSamplerHandles];
-            _liveSamplerHandles.Clear();
-            _descriptorHeapSamplerCreateInfos.Clear();
+            handles = [.. descriptors.LiveSamplerHandles];
+            descriptors.LiveSamplerHandles.Clear();
+            descriptors.DescriptorHeapSamplerCreateInfos.Clear();
         }
 
         for (int i = 0; i < handles.Length; i++)
@@ -87,7 +89,7 @@ public unsafe partial class VulkanRenderer
             Debug.Vulkan(
                 "[Vulkan] Destroying remaining tracked sampler 0x{0:X} during renderer shutdown.",
                 handles[i]);
-            Api!.DestroySampler(device, sampler, null);
+            Api!.DestroySampler(_deviceContext.Device, sampler, null);
             CompleteVulkanResourceDestruction(ObjectType.Sampler, handles[i]);
         }
 

@@ -740,26 +740,23 @@ public unsafe partial class VulkanRenderer
     // walks every pass, usage, dependency, and schema once per draw while constructing planner
     // keys; a clean command-chain replay can consequently spend more CPU hashing than drawing.
     private const int MaxPassMetadataSignatureCacheEntries = 128;
-    private static readonly ConcurrentDictionary<IReadOnlyCollection<RenderPassMetadata>, RenderPassMetadataSignatureCacheEntry>
-        PassMetadataSignatureCache = new(ReferenceEqualityComparer.Instance);
-
     private static int ComputePassMetadataSignature(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
     {
         if (passMetadata is null || passMetadata.Count == 0)
             return 0;
 
         int revisionStamp = ComputePassMetadataRevisionStamp(passMetadata);
-        if (!PassMetadataSignatureCache.TryGetValue(
+        if (!VulkanFramePlanner.PassMetadataSignatureCache.TryGetValue(
                 passMetadata,
                 out RenderPassMetadataSignatureCacheEntry? cacheEntry))
         {
             // Count acquires every ConcurrentDictionary partition lock. Keep that
             // maintenance work off the steady hit path, where this method runs once
             // for every captured draw context.
-            if (PassMetadataSignatureCache.Count >= MaxPassMetadataSignatureCacheEntries)
-                PassMetadataSignatureCache.Clear();
+            if (VulkanFramePlanner.PassMetadataSignatureCache.Count >= MaxPassMetadataSignatureCacheEntries)
+                VulkanFramePlanner.PassMetadataSignatureCache.Clear();
 
-            cacheEntry = PassMetadataSignatureCache.GetOrAdd(
+            cacheEntry = VulkanFramePlanner.PassMetadataSignatureCache.GetOrAdd(
                 passMetadata,
                 static _ => new RenderPassMetadataSignatureCacheEntry());
         }

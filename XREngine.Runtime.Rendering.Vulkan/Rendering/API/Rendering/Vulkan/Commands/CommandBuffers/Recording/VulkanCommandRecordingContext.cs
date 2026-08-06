@@ -12,14 +12,14 @@ internal ref struct VulkanCommandRecordingContext(
     uint imageIndex,
     CommandBuffer commandBuffer,
     CommandBuffer dynamicUiSecondaryCommandBuffer,
-    FrameOp[] operations,
+    FrameOperationSequence operations,
     int dynamicUiOperationCount,
     CommandChainSchedule? commandChainSchedule,
     bool preserveSwapchainForOverlay,
     bool transitionSwapchainToPresent,
     VulkanPrimaryCommandPlan primaryCommandPlan,
     uint? frameDataImageIndexOverride,
-    VulkanRenderer.OpenXrEyeRenderTargetContext? openXrTargetContext,
+    OpenXrEyeRenderTargetContext? openXrTargetContext,
     bool excludeDesktopSwapchainBarriers,
     VulkanRenderGraphPlan renderGraphPlan,
     FramePlan? framePlan)
@@ -27,14 +27,14 @@ internal ref struct VulkanCommandRecordingContext(
     public readonly uint ImageIndex = imageIndex;
     public readonly CommandBuffer CommandBuffer = commandBuffer;
     public readonly CommandBuffer DynamicUiSecondaryCommandBuffer = dynamicUiSecondaryCommandBuffer;
-    public readonly FrameOp[] Operations = operations;
+    public readonly FrameOperationSequence Operations = operations;
     public readonly int DynamicUiOperationCount = dynamicUiOperationCount;
     public readonly CommandChainSchedule? CommandChainSchedule = commandChainSchedule;
     public readonly bool PreserveSwapchainForOverlay = preserveSwapchainForOverlay;
     public readonly bool TransitionSwapchainToPresent = transitionSwapchainToPresent;
     public readonly VulkanPrimaryCommandPlan PrimaryCommandPlan = primaryCommandPlan;
     public readonly uint? FrameDataImageIndexOverride = frameDataImageIndexOverride;
-    public readonly VulkanRenderer.OpenXrEyeRenderTargetContext? OpenXrTargetContext = openXrTargetContext;
+    public readonly OpenXrEyeRenderTargetContext? OpenXrTargetContext = openXrTargetContext;
     public readonly bool ExcludeDesktopSwapchainBarriers = excludeDesktopSwapchainBarriers;
     public readonly VulkanRenderGraphPlan RenderGraphPlan = renderGraphPlan;
     public readonly FramePlan? FramePlan = framePlan;

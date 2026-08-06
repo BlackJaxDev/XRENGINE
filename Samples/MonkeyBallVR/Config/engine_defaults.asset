@@ -102,7 +102,6 @@ EnableVulkanPrimaryCommandBufferReuse: true
 EnableVulkanDescriptorIndexing: true
 EnableVulkanBindlessMaterialTable: true
 ValidateVulkanDescriptorContracts: true
-GpuCullingDataLayout: AoSHot
 GpuSortDomainPolicy: OpaqueFrontToBackTransparentBackToFront
 GpuOcclusionCullingMode: CpuQueryAsync
 MeshLodStreamingDrainIntervalFrames: 4

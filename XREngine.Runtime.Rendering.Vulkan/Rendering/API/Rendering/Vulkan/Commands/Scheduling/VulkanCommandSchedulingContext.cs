@@ -9,12 +9,13 @@ namespace XREngine.Rendering.Vulkan;
 internal ref struct VulkanCommandSchedulingContext<TVariant>(
     uint imageIndex,
     bool preserveSwapchainForOverlay,
-    VulkanRenderGraphPlan renderGraphPlan)
+    RenderGraph.VulkanFramePlanningSnapshot planningSnapshot)
     where TVariant : class
 {
     public uint ImageIndex { get; } = imageIndex;
     public bool PreserveSwapchainForOverlay { get; } = preserveSwapchainForOverlay;
-    public VulkanRenderGraphPlan RenderGraphPlan { get; } = renderGraphPlan;
+    public RenderGraph.VulkanFramePlanningSnapshot PlanningSnapshot { get; } = planningSnapshot;
+    public VulkanRenderGraphPlan RenderGraphPlan => PlanningSnapshot.RenderGraphPlan;
 
     public string RecordingDeferredReason = string.Empty;
     public Silk.NET.Vulkan.CommandBuffer DynamicUiSecondaryCommandBuffer = default;

@@ -45,6 +45,25 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
     private bool _indexBuffersSkippedForShaderGeneratedVertices;
 
     private readonly Dictionary<PipelineKey, Pipeline> _pipelines = new();
+    private readonly VulkanPersistentArrayPool<uint> _preparedUIntArrays = new();
+    private readonly VulkanPersistentArrayPool<Silk.NET.Vulkan.Buffer> _preparedVertexBufferArrays = new();
+    private readonly VulkanPersistentArrayPool<VulkanPreparedDescriptorSetBinding> _preparedDescriptorBindingArrays = new();
+    private readonly VulkanPersistentArrayPool<VulkanPreparedFrameDataPayloadHandle> _preparedFrameDataPayloadArrays = new();
+    private readonly VulkanPersistentArrayPool<Viewport> _preparedViewportArrays = new();
+    private readonly VulkanPersistentArrayPool<Rect2D> _preparedScissorArrays = new();
+    private readonly VulkanPersistentArrayPool<byte> _preparedByteArrays = new();
+
+    internal Viewport[] RentPreparedViewportArray(int count)
+        => _preparedViewportArrays.Rent(count);
+
+    internal Rect2D[] RentPreparedScissorArray(int count)
+        => _preparedScissorArrays.Rent(count);
+
+    internal void ReturnPreparedViewportArray(Viewport[] buffer)
+        => _preparedViewportArrays.Return(buffer);
+
+    internal void ReturnPreparedScissorArray(Rect2D[] buffer)
+        => _preparedScissorArrays.Return(buffer);
 
     internal VulkanFrameDrawStats EstimateFrameDrawStats(in PendingMeshDraw draw)
     {
@@ -176,7 +195,8 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
         Renderer.DrainVulkanPipelineCompileJobsForOwner(this);
         DestroyPipelines();
         DestroyGeneratedPrograms();
-        Renderer.ReleaseMeshFrameDataReservations(this);
+        Renderer.MappedFrameArena?.ReleaseReservations(this);
+        Renderer.RemoveMeshFrameDataManifestRenderer(this);
         RemoveCachedObject(BindingId);
     }
 
@@ -206,7 +226,8 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
         Renderer.DrainVulkanPipelineCompileJobsForOwner(this);
         DestroyPipelines();
         DestroyGeneratedPrograms();
-        Renderer.ReleaseMeshFrameDataReservations(this);
+        Renderer.MappedFrameArena?.ReleaseReservations(this);
+        Renderer.RemoveMeshFrameDataManifestRenderer(this);
         lock (_bufferStateSync)
         {
             _bufferCache.Clear();
@@ -303,8 +324,8 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
 
     private void OnRenderRequested(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo)
     {
-        using VulkanRenderer.VulkanCpuStageScope preparationStage =
-            new(EVulkanCpuStage.MeshDrawPreparation);
+        using VulkanCpuStageScope preparationStage =
+            new(Renderer.FrameTelemetry, EVulkanCpuStage.MeshDrawPreparation);
 
         if (!IsActive)
             Generate();
@@ -555,8 +576,8 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
         {
             bool prepared;
             string prepareReason;
-            using (VulkanRenderer.VulkanCpuStageScope resourcePreparationStage =
-                   new(EVulkanCpuStage.MeshDrawResourcePreparation))
+            using (VulkanCpuStageScope resourcePreparationStage =
+                   new(Renderer.FrameTelemetry, EVulkanCpuStage.MeshDrawResourcePreparation))
             {
                 prepared = TryPrepareForDrawEnqueue(
                     effectiveMaterial,
@@ -581,8 +602,8 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
                 return;
             }
 
-            using (VulkanRenderer.VulkanCpuStageScope bindingSnapshotStage =
-                   new(EVulkanCpuStage.MeshDrawBindingPreparation))
+            using (VulkanCpuStageScope bindingSnapshotStage =
+                   new(Renderer.FrameTelemetry, EVulkanCpuStage.MeshDrawBindingPreparation))
             {
                 programBindingSnapshot =
                     CaptureProgramBindingSnapshot(
@@ -721,8 +742,8 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
                 p3.W);
         }
 
-        using (VulkanRenderer.VulkanCpuStageScope enqueueStage =
-               new(EVulkanCpuStage.MeshDrawEnqueue))
+        using (VulkanCpuStageScope enqueueStage =
+               new(Renderer.FrameTelemetry, EVulkanCpuStage.MeshDrawEnqueue))
         {
             Renderer.EnqueueFrameOp(MeshDrawOp.Rent(
                 Renderer.EnsureValidPassIndex(passIndex, "MeshDraw", context.PassMetadata),
@@ -1007,8 +1028,8 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
         long publisherScopeStart = measureAllocationBreakdown
             ? GC.GetAllocatedBytesForCurrentThread()
             : 0;
-        using (VulkanRenderer.VulkanCpuStageScope publisherStateStage =
-               new(EVulkanCpuStage.MeshDrawPublisherState))
+        using (VulkanCpuStageScope publisherStateStage =
+               new(Renderer.FrameTelemetry, EVulkanCpuStage.MeshDrawPublisherState))
         {
             materialBindingPublishers =
                 material.BindingPublishers.CaptureSnapshot();
@@ -1036,8 +1057,8 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
         long eligibilityScopeStart = measureAllocationBreakdown
             ? GC.GetAllocatedBytesForCurrentThread()
             : 0;
-        using (VulkanRenderer.VulkanCpuStageScope eligibilityStage =
-               new(EVulkanCpuStage.MeshDrawArtifactEligibility))
+        using (VulkanCpuStageScope eligibilityStage =
+               new(Renderer.FrameTelemetry, EVulkanCpuStage.MeshDrawArtifactEligibility))
         {
             if (!useMaterialPayloadFastPath)
             {
@@ -1086,8 +1107,8 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
                 : 0;
             long lookupScopeStart = artifactKeyAndGenerationEnd;
             bool artifactFound;
-            using (VulkanRenderer.VulkanCpuStageScope lookupStage =
-                   new(EVulkanCpuStage.MeshDrawArtifactLookup))
+            using (VulkanCpuStageScope lookupStage =
+                   new(Renderer.FrameTelemetry, EVulkanCpuStage.MeshDrawArtifactLookup))
             {
                 artifactFound =
                     program.TryGetPersistentProgramBindingArtifact(
@@ -1239,8 +1260,8 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
         try
         {
             program.ClearBindings();
-            using (VulkanRenderer.VulkanCpuStageScope materialBindingsStage =
-                   new(EVulkanCpuStage.MeshDrawMaterialBindings))
+            using (VulkanCpuStageScope materialBindingsStage =
+                   new(Renderer.FrameTelemetry, EVulkanCpuStage.MeshDrawMaterialBindings))
             {
                 if (useMaterialPayloadFastPath)
                 {
@@ -1337,8 +1358,8 @@ internal unsafe partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.
             }
 
             ComputeDispatchSnapshot snapshot;
-            using (VulkanRenderer.VulkanCpuStageScope snapshotCopyStage =
-                   new(EVulkanCpuStage.MeshDrawBindingSnapshotCopy))
+            using (VulkanCpuStageScope snapshotCopyStage =
+                   new(Renderer.FrameTelemetry, EVulkanCpuStage.MeshDrawBindingSnapshotCopy))
             {
                 snapshot = program.CaptureComputeSnapshot();
             }
