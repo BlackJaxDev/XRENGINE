@@ -282,6 +282,7 @@ public unsafe partial class VulkanRenderer
 
         ResourcePlannerRuntimeState previousState = CaptureResourcePlannerRuntimeState();
         ResourcePlannerRuntimeState pendingState = ResourcePlannerRuntimeState.CreateEmpty();
+        VulkanPreparedResourceGenerationManifest? preparedManifest = null;
         FrameOpContext context = CreateFrameOpContext(pipeline, viewport) with
         {
             ResourceRegistry = generation.Registry,
@@ -299,36 +300,54 @@ public unsafe partial class VulkanRenderer
         {
             try
             {
-                UpdateResourcePlannerFromContext(context);
+                UpdateResourcePlannerFromContext(context, deferReusedImageMetadataCommit: true);
                 pendingState = scope.CaptureCurrent(this);
                 pendingState.LastActiveFrameOpContext = context;
 
                 if (!ValidatePreparedResourceAllocator(pendingState.ResourcePlanner, pendingState.ResourceAllocator, out failureReason))
                 {
-                    _ = pendingState.ResourceAllocator.TryRetirePhysicalResources(this, immediate: true);
+                    _ = pendingState.ResourceAllocator.TryRetirePhysicalResources(
+                        this,
+                        exceptImageGroups: pendingState.ResourceAllocator.CapturePendingReusedImageGroups(),
+                        immediate: true);
                     return false;
                 }
 
-                foreach (RenderFrameBufferResource record in generation.Registry.FrameBufferRecords.Values)
+                if (!TryCapturePreparedResourceGenerationManifest(
+                    generation,
+                    pendingState,
+                    previousState,
+                    out preparedManifest,
+                    out failureReason))
                 {
-                    if (record.Instance is not null && record.HasAttachments)
-                        GetOrCreateAPIRenderObject(record.Instance, generateNow: true);
+                    RestorePreparedGenerationFramebufferWrappers(preparedManifest, previousState);
+                    _ = pendingState.ResourceAllocator.TryRetirePhysicalResources(
+                        this,
+                        exceptImageGroups: pendingState.ResourceAllocator.CapturePendingReusedImageGroups(),
+                        immediate: true);
+                    return false;
                 }
 
                 pendingState = scope.CaptureCurrent(this);
                 pendingState.LastActiveFrameOpContext = context;
+                pendingState.PreparedGenerationManifest = preparedManifest;
                 transaction = new VulkanRenderResourceGenerationTransaction(
                     this,
                     previousState,
                     pendingState,
-                    BuildFrameOpPlannerStateKey(context));
+                    BuildFrameOpPlannerStateKey(context),
+                    preparedManifest!);
                 return true;
             }
             catch (Exception ex)
             {
+                RestorePreparedGenerationFramebufferWrappers(preparedManifest, previousState);
                 pendingState = scope.CaptureCurrent(this);
                 if (!pendingState.ResourceAllocator.IsRetired)
-                    _ = pendingState.ResourceAllocator.TryRetirePhysicalResources(this, immediate: true);
+                    _ = pendingState.ResourceAllocator.TryRetirePhysicalResources(
+                        this,
+                        exceptImageGroups: pendingState.ResourceAllocator.CapturePendingReusedImageGroups(),
+                        immediate: true);
                 failureReason = $"Vulkan generation preparation failed: {ex.Message}";
                 return false;
             }
@@ -370,11 +389,191 @@ public unsafe partial class VulkanRenderer
         return true;
     }
 
+    private bool TryCapturePreparedResourceGenerationManifest(
+        RenderResourceGeneration generation,
+        in ResourcePlannerRuntimeState pendingState,
+        in ResourcePlannerRuntimeState previousState,
+        out VulkanPreparedResourceGenerationManifest? manifest,
+        out string? failureReason)
+    {
+        List<VulkanPreparedResourceGenerationManifest.ImageEntry> images = [];
+        List<VulkanPreparedResourceGenerationManifest.FrameBufferEntry> frameBuffers = [];
+        List<VulkanPreparedResourceGenerationManifest.BufferEntry> buffers = [];
+
+        foreach ((string name, RenderTextureResource record) in generation.Registry.TextureRecords)
+        {
+            if (record.Instance is null ||
+                !pendingState.ResourceAllocator.TryGetPhysicalGroupForResource(name, out VulkanPhysicalImageGroup? physicalGroup) ||
+                physicalGroup?.IsAllocated != true)
+            {
+                continue;
+            }
+
+            if (GetOrCreateAPIRenderObject(record.Instance, generateNow: true) is not IVkImageDescriptorSource source ||
+                !source.TryGetDescriptorSnapshot(
+                    requestedViewType: null,
+                    requestedAspectMask: null,
+                    "pending Vulkan resource generation",
+                    allowSynchronousUpload: true,
+                    out VkImageDescriptorSnapshot snapshot) ||
+                !snapshot.IsReady ||
+                !snapshot.UsesAllocatorImage ||
+                snapshot.Image.Handle != physicalGroup.Image.Handle)
+            {
+                manifest = null;
+                failureReason = $"Vulkan image-view/descriptor payload for '{name}' was not ready for the pending generation.";
+                return false;
+            }
+
+            images.Add(new(
+                name,
+                record.Instance,
+                source,
+                snapshot,
+                GetCurrentVulkanResourceGeneration(ObjectType.Image, snapshot.Image.Handle),
+                GetCurrentVulkanResourceGeneration(ObjectType.ImageView, snapshot.View.Handle),
+                GetCurrentVulkanResourceGeneration(ObjectType.Sampler, snapshot.Sampler.Handle)));
+        }
+
+        foreach ((string name, RenderFrameBufferResource record) in generation.Registry.FrameBufferRecords)
+        {
+            if (record.Instance is null || !record.HasAttachments)
+                continue;
+
+            VkFrameBuffer? wrapper =
+                GetOrCreateAPIRenderObject(record.Instance, generateNow: true) as VkFrameBuffer;
+            if (wrapper is null ||
+                !wrapper.TryCaptureRecordedRenderTargetSnapshot(out VulkanRecordedRenderTargetSnapshot snapshot))
+            {
+                // Every wrapper prepared before the failing entry has already
+                // switched its cached native attachments to the pending planner
+                // state. Restore the complete partial transaction immediately;
+                // no manifest is published on this failure path.
+                if (wrapper is not null || frameBuffers.Count != 0)
+                {
+                    using ThreadResourcePlannerRuntimeStateScope restoreScope =
+                        EnterThreadResourcePlannerRuntimeStateScope(in previousState);
+                    for (int preparedIndex = 0; preparedIndex < frameBuffers.Count; preparedIndex++)
+                        frameBuffers[preparedIndex].Wrapper.EnsureCurrent();
+                    wrapper?.EnsureCurrent();
+                }
+                manifest = null;
+                failureReason = $"Vulkan framebuffer/dynamic-attachment snapshot for '{name}' was incomplete for the pending generation.";
+                return false;
+            }
+
+            frameBuffers.Add(new(name, record.Instance, wrapper, snapshot));
+        }
+
+        foreach (VulkanPhysicalBufferGroup group in pendingState.ResourceAllocator.EnumeratePhysicalBufferGroups())
+        {
+            if (!group.IsAllocated || group.Buffer.Handle == 0)
+                continue;
+
+            buffers.Add(new(
+                group.Buffer,
+                GetCurrentVulkanResourceGeneration(ObjectType.Buffer, group.Buffer.Handle),
+                group.SizeInBytes));
+        }
+
+        manifest = new VulkanPreparedResourceGenerationManifest(
+            generation.Registry,
+            generation.Registry.DescriptorSignature,
+            images.ToArray(),
+            frameBuffers.ToArray(),
+            buffers.ToArray(),
+            _resourceLifetimeTracker.CaptureRetirementWatermark());
+        failureReason = null;
+        return true;
+    }
+
+    private bool TryValidatePreparedResourceGenerationManifest(
+        VulkanPreparedResourceGenerationManifest manifest,
+        out string? failureReason)
+    {
+        // A staged generation may have prepared descriptors while work from the
+        // preceding generation was still in flight. Do not publish and retire the
+        // previous allocator until the watermark captured with this manifest has
+        // completed; otherwise the ticket would be a dead diagnostic capture.
+        if (!IsVulkanRetirementReady(manifest.DependencyTicket))
+        {
+            failureReason = "The pending Vulkan resource generation still has in-flight preparation dependencies.";
+            return false;
+        }
+
+        if (manifest.Registry.DescriptorSignature != manifest.DescriptorSignature)
+        {
+            failureReason = "The pending Vulkan resource registry descriptor payload changed before commit.";
+            return false;
+        }
+
+        for (int i = 0; i < manifest.ImageCount; i++)
+        {
+            VulkanPreparedResourceGenerationManifest.ImageEntry entry = manifest.GetImage(i);
+            if (!TryGetAPIRenderObject(entry.Texture, out var apiObject) ||
+                !ReferenceEquals(apiObject, entry.Source) ||
+                !entry.Source.TryGetDescriptorSnapshot(
+                    requestedViewType: null,
+                    requestedAspectMask: null,
+                    "pending Vulkan resource generation commit",
+                    allowSynchronousUpload: false,
+                    out VkImageDescriptorSnapshot current) ||
+                current != entry.Snapshot ||
+                GetCurrentVulkanResourceGeneration(ObjectType.Image, current.Image.Handle) != entry.ImageGeneration ||
+                GetCurrentVulkanResourceGeneration(ObjectType.ImageView, current.View.Handle) != entry.ViewGeneration ||
+                GetCurrentVulkanResourceGeneration(ObjectType.Sampler, current.Sampler.Handle) != entry.SamplerGeneration)
+            {
+                failureReason = $"Vulkan image-view/descriptor payload for '{entry.Name}' changed before generation commit.";
+                return false;
+            }
+        }
+
+        for (int i = 0; i < manifest.FrameBufferCount; i++)
+        {
+            VulkanPreparedResourceGenerationManifest.FrameBufferEntry entry = manifest.GetFrameBuffer(i);
+            if (!TryGetAPIRenderObject(entry.FrameBuffer, out var apiObject) ||
+                !ReferenceEquals(apiObject, entry.Wrapper) ||
+                !entry.Wrapper.TryCaptureRecordedRenderTargetSnapshot(out VulkanRecordedRenderTargetSnapshot current) ||
+                current != entry.Snapshot)
+            {
+                failureReason = $"Vulkan framebuffer/dynamic-attachment payload for '{entry.Name}' changed before generation commit.";
+                return false;
+            }
+        }
+
+        for (int i = 0; i < manifest.BufferCount; i++)
+        {
+            VulkanPreparedResourceGenerationManifest.BufferEntry entry = manifest.GetBuffer(i);
+            if (GetCurrentVulkanResourceGeneration(ObjectType.Buffer, entry.Buffer.Handle) != entry.Generation)
+            {
+                failureReason = $"Vulkan buffer 0x{entry.Buffer.Handle:X} changed before generation commit.";
+                return false;
+            }
+        }
+
+        failureReason = null;
+        return true;
+    }
+
+    private void RestorePreparedGenerationFramebufferWrappers(
+        VulkanPreparedResourceGenerationManifest? manifest,
+        in ResourcePlannerRuntimeState previousState)
+    {
+        if (manifest is null || manifest.FrameBufferCount == 0)
+            return;
+
+        using ThreadResourcePlannerRuntimeStateScope scope =
+            EnterThreadResourcePlannerRuntimeStateScope(in previousState);
+        for (int i = 0; i < manifest.FrameBufferCount; i++)
+            manifest.GetFrameBuffer(i).Wrapper.EnsureCurrent();
+    }
+
     private sealed class VulkanRenderResourceGenerationTransaction(
         VulkanRenderer renderer,
         ResourcePlannerRuntimeState previousState,
         ResourcePlannerRuntimeState pendingState,
-        VulkanFrameOpPlannerStateKey pendingKey) : IRenderResourceGenerationTransaction
+        VulkanFrameOpPlannerStateKey pendingKey,
+        VulkanPreparedResourceGenerationManifest preparedManifest) : IRenderResourceGenerationTransaction
     {
         private bool _committed;
 
@@ -383,20 +582,39 @@ public unsafe partial class VulkanRenderer
             if (_committed)
                 return;
 
-            pendingState.ResourceAllocator.CommitReusedPhysicalImageMetadata();
-            renderer.RestoreResourcePlannerRuntimeState(pendingState);
-            FrameOpResourcePlannerSwitchingState switchingState = renderer.ActiveFrameOpResourcePlannerSwitchingState;
+            HashSet<VulkanPhysicalImageGroup>? reusedImageGroups =
+                pendingState.ResourceAllocator.CapturePendingReusedImageGroups();
+            using (ThreadResourcePlannerRuntimeStateScope validationScope =
+                   renderer.EnterThreadResourcePlannerRuntimeStateScope(in pendingState))
+            {
+                if (!renderer.TryValidatePreparedResourceGenerationManifest(preparedManifest, out string? failureReason))
+                    throw new InvalidOperationException(failureReason);
+            }
+
+            FrameOpResourcePlannerSwitchingState switchingState =
+                CloneFrameOpResourcePlannerSwitchingState(
+                    renderer.ActiveFrameOpResourcePlannerSwitchingState);
+            pendingState.FrameOpResourcePlannerSwitchingState = switchingState;
+            pendingState.PreparedGenerationManifest = preparedManifest;
             switchingState.States[pendingKey] = pendingState;
             renderer.MarkFrameOpResourcePlannerStateUsed(switchingState, pendingKey);
+            renderer.PruneFrameOpResourcePlannerStatesToCapacity(switchingState);
+            renderer.PublishResourcePlannerRuntimeState(pendingState, commitReusedImageMetadata: true);
             _committed = true;
 
             try
             {
-                renderer.PruneFrameOpResourcePlannerStatesToCapacity(switchingState);
                 if (!ReferenceEquals(previousState.ResourceAllocator, pendingState.ResourceAllocator) &&
                     !IsAllocatorOwnedByFrameOpPlannerState(switchingState, previousState.ResourceAllocator))
                 {
-                    _ = previousState.ResourceAllocator.TryRetirePhysicalResources(renderer);
+                    // Validation established that this exact preparation watermark
+                    // is complete. Retire only after that dependency boundary.
+                    if (!renderer.IsVulkanRetirementReady(preparedManifest.DependencyTicket))
+                        throw new InvalidOperationException("Prepared Vulkan resource generation dependencies regressed before retirement.");
+
+                    _ = previousState.ResourceAllocator.TryRetirePhysicalResources(
+                        renderer,
+                        exceptImageGroups: reusedImageGroups);
                 }
             }
             catch (Exception ex)
@@ -411,7 +629,13 @@ public unsafe partial class VulkanRenderer
         public void Dispose()
         {
             if (!_committed && !pendingState.ResourceAllocator.IsRetired)
-                _ = pendingState.ResourceAllocator.TryRetirePhysicalResources(renderer, immediate: true);
+            {
+                renderer.RestorePreparedGenerationFramebufferWrappers(preparedManifest, previousState);
+                _ = pendingState.ResourceAllocator.TryRetirePhysicalResources(
+                    renderer,
+                    exceptImageGroups: pendingState.ResourceAllocator.CapturePendingReusedImageGroups(),
+                    immediate: true);
+            }
         }
     }
 
@@ -499,11 +723,13 @@ public unsafe partial class VulkanRenderer
     private FrameOpContext CompleteFrameOpContext(in FrameOpContext context)
     {
         bool stereoEnabled = ResolveFrameOpContextStereoEnabled(context);
+        EVulkanFrameOpContextKind contextKind = ResolveFrameOpContextKind(context);
         FrameOpContext complete = context with
         {
             OutputFrameBufferIdentity = ComputeOutputFrameBufferIdentity(context.OutputFrameBufferName),
-            ContextKind = ResolveFrameOpContextKind(context),
+            ContextKind = contextKind,
             ContextId = _renderGraphRuntime.NextFrameContextId(),
+            LogicalViewId = ResolveFrameOpLogicalViewId(context, contextKind),
             SubmissionQueueFamily = ResolveFrameOpSubmissionQueueFamily(context.PassMetadata),
             StereoEnabled = stereoEnabled,
             MultiviewEnabled = ResolveFrameOpContextMultiviewEnabled(context, stereoEnabled),
@@ -513,6 +739,36 @@ public unsafe partial class VulkanRenderer
         };
 
         return RefreshFrameOpContextRecordingFingerprint(complete);
+    }
+
+    private ulong ResolveFrameOpLogicalViewId(
+        in FrameOpContext context,
+        EVulkanFrameOpContextKind contextKind)
+    {
+        if (contextKind is EVulkanFrameOpContextKind.OpenXrEye or EVulkanFrameOpContextKind.OpenXrMirror)
+        {
+            uint openXrViewIndex = _openXrBackend.CurrentThreadExecutionState.FrameContext.ViewIndex;
+            ulong frameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
+            if (frameId != 0UL &&
+                RenderFrameViewSetPublication.TryGet(frameId, out RenderFrameViewSet views))
+            {
+                for (int index = 0; index < views.ViewCount; index++)
+                {
+                    RenderFrameViewDescriptor view = views.GetView(index);
+                    if (view.OpenXrViewIndex == openXrViewIndex)
+                        return view.EffectiveHistoryKey;
+                }
+            }
+        }
+
+        FrameOpSignatureHasher hash = new();
+        hash.Add(0x4C4F474943564945UL);
+        hash.Add((int)contextKind);
+        hash.Add(context.PipelineIdentity);
+        hash.Add(context.ViewportIdentity);
+        hash.Add(context.OutputFrameBufferIdentity);
+        ulong result = hash.ToHash();
+        return result == 0UL ? 1UL : result;
     }
 
     private FrameOpContext RefreshFrameOpContextRecordingFingerprint(in FrameOpContext context)
@@ -592,6 +848,7 @@ public unsafe partial class VulkanRenderer
         hash.Add(context.ViewportIdentity);
         hash.Add(context.OutputFrameBufferIdentity);
         hash.Add(context.OutputTargetIdentity);
+        hash.Add(context.LogicalViewId);
         hash.Add(context.OutputTargetName);
         hash.Add(context.DisplayWidth);
         hash.Add(context.DisplayHeight);

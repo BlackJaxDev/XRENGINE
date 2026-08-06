@@ -64,8 +64,11 @@ internal static class VulkanShaderReflection
         for (int i = 0; i < reflectedBindings.Count; i++)
         {
             DescriptorBindingInfo reflected = reflectedBindings[i];
-            DescriptorBindingInfo source = FindMatchingSourceBinding(sourceBindings, reflected.Set, reflected.Binding);
-            if (string.IsNullOrWhiteSpace(source.Name) && source.ExpectedImageViewType is null)
+            if (!TryFindMatchingSourceBinding(
+                    sourceBindings,
+                    reflected.Set,
+                    reflected.Binding,
+                    out DescriptorBindingInfo source))
                 continue;
 
             DescriptorBindingInfo merged = reflected;
@@ -74,6 +77,12 @@ internal static class VulkanShaderReflection
 
             if (merged.ExpectedImageViewType is null && source.ExpectedImageViewType is not null)
                 merged = merged with { ExpectedImageViewType = source.ExpectedImageViewType };
+
+            // The authored source declaration owns optional/required policy. SPIR-V
+            // reflection supplies the native shape and defaults to required when no
+            // source declaration is available.
+            if (merged.Requirement != source.Requirement)
+                merged = merged with { Requirement = source.Requirement };
 
             if (merged.Equals(reflected))
                 continue;
@@ -85,19 +94,24 @@ internal static class VulkanShaderReflection
         return mergedBindings ?? reflectedBindings;
     }
 
-    private static DescriptorBindingInfo FindMatchingSourceBinding(
+    private static bool TryFindMatchingSourceBinding(
         IReadOnlyList<DescriptorBindingInfo> sourceBindings,
         uint set,
-        uint binding)
+        uint binding,
+        out DescriptorBindingInfo bindingInfo)
     {
         for (int i = 0; i < sourceBindings.Count; i++)
         {
             DescriptorBindingInfo source = sourceBindings[i];
             if (source.Set == set && source.Binding == binding)
-                return source;
+            {
+                bindingInfo = source;
+                return true;
+            }
         }
 
-        return default;
+        bindingInfo = default;
+        return false;
     }
 
     private static IReadOnlyList<DescriptorBindingInfo> ExtractBindingsFromSource(string? source, ShaderStageFlags stage)
@@ -130,7 +144,15 @@ internal static class VulkanShaderReflection
             string name = ExtractResourceName(declaration);
             ImageViewType? expectedImageViewType = ResolveExpectedImageViewTypeFromDeclaration(declaration);
 
-            bindings.Add(new DescriptorBindingInfo(set, binding, descriptorType, stage, arraySize == 0 ? 1u : arraySize, name, expectedImageViewType));
+            bindings.Add(new DescriptorBindingInfo(
+                set,
+                binding,
+                descriptorType,
+                stage,
+                arraySize == 0 ? 1u : arraySize,
+                name,
+                expectedImageViewType,
+                DescriptorBindingInfo.ClassifyRequirement(descriptorType, name)));
         }
 
         return bindings;
@@ -547,7 +569,14 @@ internal static class VulkanShaderReflection
                 if (string.IsNullOrEmpty(name) && _names.TryGetValue(elementTypeId, out string? typeName) && !string.IsNullOrEmpty(typeName))
                     name = typeName;
 
-                bindings.Add(new DescriptorBindingInfo(set, binding, descriptorType, _stage, descriptorCount == 0 ? 1u : descriptorCount, name, expectedImageViewType));
+                bindings.Add(new DescriptorBindingInfo(
+                    set,
+                    binding,
+                    descriptorType,
+                    _stage,
+                descriptorCount == 0 ? 1u : descriptorCount,
+                name,
+                expectedImageViewType));
             }
 
             return bindings;

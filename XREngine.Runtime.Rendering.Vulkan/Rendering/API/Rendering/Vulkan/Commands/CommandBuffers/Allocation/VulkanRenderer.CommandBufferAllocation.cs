@@ -102,7 +102,7 @@ namespace XREngine.Rendering.Vulkan
                 _commandBuffers.Length != _dynamicUiBatchTextOverlayCommandBuffers.Length ||
                 _commandBuffers.Length != _imguiOverlayCommandBuffers.Length)
             {
-                _commandBufferVariants = null;
+                _primaryCommandArtifactOwners = null;
                 _activeCommandBuffers = null;
                 return;
             }
@@ -115,7 +115,7 @@ namespace XREngine.Rendering.Vulkan
                 Array.Resize(
                     ref _primaryCommandPlans,
                     _commandBuffers.Length);
-            _commandBufferVariants = new List<CommandBufferCacheVariant>[_commandBuffers.Length];
+            _primaryCommandArtifactOwners = new PrimaryCommandArtifactOwner[_commandBuffers.Length];
             for (int i = 0; i < _commandBuffers.Length; i++)
             {
                 uint imageIndex = unchecked((uint)i);
@@ -129,16 +129,14 @@ namespace XREngine.Rendering.Vulkan
                 SetDebugObjectName(ObjectType.CommandBuffer, unchecked((ulong)_imguiOverlayCommandBuffers[i].Handle), $"ImGuiOverlay.Primary[{i}]");
                 _activeCommandBuffers[i] = _commandBuffers[i];
                 _primaryCommandPlans[i] ??= new VulkanPrimaryCommandPlan();
-                _commandBufferVariants[i] =
-                [
-                    new CommandBufferCacheVariant(
+                _primaryCommandArtifactOwners[i] =
+                    new PrimaryCommandArtifactOwner(
                         _commandBuffers[i],
                         _dynamicUiBatchTextSecondaryCommandBuffers[i],
                         commandPool,
                         commandPool,
                         ownsPrimaryCommandBuffer: false,
-                        ownsDynamicUiSecondaryCommandBuffer: false)
-                ];
+                        ownsDynamicUiSecondaryCommandBuffer: false);
             }
         }
 
@@ -171,7 +169,7 @@ namespace XREngine.Rendering.Vulkan
                 _commandBufferDirtyFlags.Length == swapChainFramebuffers.Length;
         }
 
-        private CommandBufferCacheVariant GetOrCreateCommandBufferVariant(
+        private PrimaryCommandArtifactOwner GetOrCreatePrimaryCommandArtifactOwner(
             uint imageIndex,
             ulong frameOpsSignature,
             ulong dynamicUiBatchTextSignature,
@@ -183,143 +181,20 @@ namespace XREngine.Rendering.Vulkan
             in CommandRecordingDependencySignature currentDependencySignature,
             FrameOp[] frameOpsForDiagnostics)
         {
-            if (_commandBufferVariants is null || imageIndex >= _commandBufferVariants.Length)
-                throw new InvalidOperationException("Command buffer variants are not initialised correctly.");
+            if (_primaryCommandArtifactOwners is null || imageIndex >= _primaryCommandArtifactOwners.Length)
+                throw new InvalidOperationException("Primary command artifact owners are not initialised correctly.");
 
             int variantImageIndex = unchecked((int)Math.Min(imageIndex, int.MaxValue));
-            List<CommandBufferCacheVariant> variants = _commandBufferVariants[variantImageIndex];
-            bool useCommandChainKey = commandChainSchedule is not null;
-            bool hasDynamicUiBatchTextOverlay = dynamicUiBatchTextOpCount > 0;
-
-            CommandBufferCacheVariant? reusableDirtyMatch = null;
-            for (int i = 0; i < variants.Count; i++)
-            {
-                CommandBufferCacheVariant variant = variants[i];
-                bool logicalKeyMatches;
-                if (useCommandChainKey)
-                {
-                    logicalKeyMatches =
-                        variant.CommandChainScheduleSignature == commandChainSchedule!.StructuralSignature &&
-                        variant.CommandChainPrimaryGroupSignature == commandChainPrimaryGroupSignature &&
-                        variant.CommandChainPrimaryGroupCount == commandChainPrimaryGroupCount &&
-                        variant.FrameOpsSignature == frameOpsSignature &&
-                        variant.DynamicUiSignature == dynamicUiBatchTextSignature &&
-                        variant.PreserveSwapchainForOverlay == preserveSwapchainForOverlay &&
-                        (variant.DynamicUiOpCount > 0) == hasDynamicUiBatchTextOverlay;
-                }
-                else
-                {
-                    logicalKeyMatches =
-                        variant.FrameOpsSignature == frameOpsSignature &&
-                        variant.DynamicUiSignature == dynamicUiBatchTextSignature &&
-                        variant.PreserveSwapchainForOverlay == preserveSwapchainForOverlay;
-                }
-
-                if (logicalKeyMatches)
-                {
-                    CommandRecordingDependencyMismatch dependencyMismatch =
-                        useCommandChainKey
-                            ? variant.RecordedDependencySignature.CompareCommandChainPrimary(
-                                currentDependencySignature)
-                            : variant.RecordedDependencySignature.Compare(currentDependencySignature);
-                    if (!ShouldPreserveCleanVariantForAttachmentMismatch(
-                            variant.Dirty,
-                            dependencyMismatch))
-                    {
-                        return variant;
-                    }
-
-                    // Desktop render-target instances rotate independently of the logical frame-op
-                    // stream. Preserve the clean primary for its concrete attachment and keep
-                    // searching so the cache can retain one variant per rotating attachment.
-                    continue;
-                }
-
-                if (reusableDirtyMatch is null &&
-                    variant.Dirty &&
-                    variant.FrameOpsSignature == ulong.MaxValue)
-                    reusableDirtyMatch = variant;
-            }
-
-            if (reusableDirtyMatch is not null)
-                return reusableDirtyMatch;
-
-            if (variants.Count < PrimaryCommandBufferVariantCapacity)
-            {
-                CommandBuffer primary = AllocateCommandBuffer(CommandBufferLevel.Primary, "primary command buffer variant");
-                CommandBuffer dynamicUiSecondary = AllocateCommandBuffer(CommandBufferLevel.Secondary, "dynamic UI text secondary command buffer variant");
-                RegisterCommandBufferImageIndex(primary, imageIndex);
-                RegisterCommandBufferImageIndex(dynamicUiSecondary, imageIndex);
-
-                CommandBufferCacheVariant variant = new(
-                    primary,
-                    dynamicUiSecondary,
-                    commandPool,
-                    commandPool,
-                    ownsPrimaryCommandBuffer: true,
-                    ownsDynamicUiSecondaryCommandBuffer: true);
-                variants.Add(variant);
-                return variant;
-            }
-
-            CommandBufferCacheVariant evicted = variants[0];
-            for (int i = 1; i < variants.Count; i++)
-                if (variants[i].LastUsedFrameId < evicted.LastUsedFrameId)
-                    evicted = variants[i];
-
-            LogFrameOpSignatureVariantEvictionDiff(imageIndex, evicted, frameOpsSignature, frameOpsForDiagnostics);
-            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
-                reusedClean: false,
-                recorded: false,
-                forcedDirty: false,
-                frameOpSignatureDirty: false,
-                plannerDirty: false,
-                profilerDirty: false,
-                dirtyReason: null,
-                detailReasons: EVulkanCommandBufferDecisionReason.Evicted,
-                structuralSignature: evicted.RecordedGenerations.Structural,
-                descriptorGeneration: evicted.RecordedGenerations.Descriptor,
-                swapchainSlot: unchecked((int)imageIndex));
-            evicted.Dirty = true;
-            evicted.DirtyReason = "variant eviction";
-            evicted.FrameOpsSignature = ulong.MaxValue;
-            evicted.DynamicUiSignature = ulong.MaxValue;
-            evicted.DynamicUiOpCount = -1;
-            evicted.DynamicUiSecondaryRecorded = false;
-            evicted.PreserveSwapchainForOverlay = false;
-            evicted.RecordedFrameOpContextFingerprint = ulong.MaxValue;
-            evicted.RecordedFrameOpContextId = 0;
-            evicted.RecordedGenerations = default;
-            evicted.RecordedDependencySignature = default;
-            evicted.RecordedSwapchainFinalLayout = ImageLayout.PresentSrcKhr;
-            evicted.RecordedSwapchainWriteCount = 0;
-            evicted.RecordedSwapchainRefreshFromLastPresentSource = false;
-            evicted.RecordedImageLayoutStartSignature = ulong.MaxValue;
-            evicted.RecordedImageLayoutEndSignature = ulong.MaxValue;
-            evicted.RecordedImageLayoutEndState = null;
-            evicted.CommandChainScheduleSignature = ulong.MaxValue;
-            evicted.CommandChainPrimaryGroupSignature = ulong.MaxValue;
-            evicted.CommandChainPrimaryIdentityComponents = default;
-            evicted.RecordedSecondaryArtifactSequence.Clear();
-            evicted.CommandChainPrimarySkeletonSignature = ulong.MaxValue;
-            evicted.CommandChainPrimaryGroupCount = -1;
-            evicted.PlannerRevision = ulong.MaxValue;
-            evicted.GpuProfilerActive = false;
-            evicted.GpuProfilerFrameSlot = -1;
-            evicted.GpuProfilerScopes = null;
-            evicted.GpuProfilerQueryCount = 0;
-            evicted.SignatureDebugParts = null;
-            RegisterCommandBufferImageIndex(evicted.PrimaryCommandBuffer, imageIndex);
-            RegisterCommandBufferImageIndex(evicted.DynamicUiSecondaryCommandBuffer, imageIndex);
-            return evicted;
+            // A frame slot owns one primary artifact for its current output
+            // target generation. It is lifetime storage, not an LRU cache:
+            // dependency validation decides whether that artifact can execute
+            // again, and an output rotation re-records this owner in place.
+            PrimaryCommandArtifactOwner owner = _primaryCommandArtifactOwners[variantImageIndex]
+                ?? throw new InvalidOperationException("Primary command artifact owner is missing.");
+            RegisterCommandBufferImageIndex(owner.PrimaryCommandBuffer, imageIndex);
+            RegisterCommandBufferImageIndex(owner.DynamicUiSecondaryCommandBuffer, imageIndex);
+            return owner;
         }
-
-        internal static bool ShouldPreserveCleanVariantForAttachmentMismatch(
-            bool variantDirty,
-            in CommandRecordingDependencyMismatch dependencyMismatch)
-            => !variantDirty &&
-               dependencyMismatch.RequiresRecording &&
-               dependencyMismatch.Field == CommandRecordingDependencyField.OutputPassAttachment;
 
         private CommandBuffer AllocateCommandBuffer(CommandBufferLevel level, string label)
             => AllocateCommandBuffer(level, label, commandPool);
@@ -344,7 +219,7 @@ namespace XREngine.Rendering.Vulkan
             return commandBuffer;
         }
 
-        private void SetActiveCommandBufferVariant(uint imageIndex, CommandBufferCacheVariant variant)
+        private void SetActivePrimaryCommandArtifactOwner(uint imageIndex, PrimaryCommandArtifactOwner variant)
         {
             if (_activeCommandBuffers is null || imageIndex >= _activeCommandBuffers.Length)
                 return;
@@ -353,7 +228,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private bool IsCommandBufferVariantGpuProfilerStateDirty(
-            CommandBufferCacheVariant variant,
+            PrimaryCommandArtifactOwner variant,
             bool profilingActive,
             int frameSlot)
         {
@@ -364,7 +239,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private bool IsCommandBufferVariantImageLayoutStateDirty(
-            CommandBufferCacheVariant variant,
+            PrimaryCommandArtifactOwner variant,
             ulong imageLayoutStartSignature)
             => IsCommandBufferVariantImageLayoutStateDirty(
                 variant,
@@ -372,7 +247,7 @@ namespace XREngine.Rendering.Vulkan
                 out _);
 
         private bool IsCommandBufferVariantImageLayoutStateDirty(
-            CommandBufferCacheVariant variant,
+            PrimaryCommandArtifactOwner variant,
             ulong imageLayoutStartSignature,
             out VulkanImageEntryStateMismatch mismatch)
         {
@@ -419,30 +294,23 @@ namespace XREngine.Rendering.Vulkan
                 reason);
         }
 
-        private void MarkCommandBufferVariantsDirty(string? reason = null)
+        private void MarkPrimaryCommandArtifactOwnersDirty(string? reason = null)
         {
-            if (_commandBufferVariants is null)
+            if (_primaryCommandArtifactOwners is null)
                 return;
 
-            for (int i = 0; i < _commandBufferVariants.Length; i++)
-                MarkCommandBufferVariantsDirty(unchecked((uint)i), reason);
+            for (int i = 0; i < _primaryCommandArtifactOwners.Length; i++)
+                MarkPrimaryCommandArtifactOwnersDirty(unchecked((uint)i), reason);
         }
 
-        private void MarkCommandBufferVariantsDirty(uint imageIndex, string? reason = null)
+        private void MarkPrimaryCommandArtifactOwnersDirty(uint imageIndex, string? reason = null)
         {
-            if (_commandBufferVariants is null || imageIndex >= _commandBufferVariants.Length)
+            if (_primaryCommandArtifactOwners is null || imageIndex >= _primaryCommandArtifactOwners.Length)
                 return;
 
-            List<CommandBufferCacheVariant>? variants = _commandBufferVariants[imageIndex];
-            if (variants is null)
-                return;
-
-            string dirtyReason = string.IsNullOrWhiteSpace(reason) ? "variant invalidated" : reason;
-            foreach (CommandBufferCacheVariant variant in variants)
-            {
-                variant.Dirty = true;
-                variant.DirtyReason = dirtyReason;
-            }
+            PrimaryCommandArtifactOwner owner = _primaryCommandArtifactOwners[imageIndex];
+            owner.Dirty = true;
+            owner.DirtyReason = string.IsNullOrWhiteSpace(reason) ? "owner invalidated" : reason;
         }
 
 
@@ -465,54 +333,46 @@ namespace XREngine.Rendering.Vulkan
             int exactChainsDirtied = 0;
             int unrelatedVariantsPreserved = 0;
 
-            if (_commandBufferVariants is not null)
+            if (_primaryCommandArtifactOwners is not null)
             {
-                for (int imageIndex = 0; imageIndex < _commandBufferVariants.Length; imageIndex++)
+                for (int imageIndex = 0; imageIndex < _primaryCommandArtifactOwners.Length; imageIndex++)
                 {
-                    List<CommandBufferCacheVariant> variants = _commandBufferVariants[imageIndex];
-                    for (int variantIndex = 0; variantIndex < variants.Count; variantIndex++)
+                    PrimaryCommandArtifactOwner variant = _primaryCommandArtifactOwners[imageIndex];
+                    bool dependent = ContainsCommandBufferHandle(
+                            dependentCommandBuffers,
+                            unchecked((ulong)variant.PrimaryCommandBuffer.Handle)) ||
+                        ContainsCommandBufferHandle(
+                            dependentCommandBuffers,
+                            unchecked((ulong)variant.DynamicUiSecondaryCommandBuffer.Handle));
+                    if (!dependent)
                     {
-                        CommandBufferCacheVariant variant = variants[variantIndex];
-                        bool dependent = ContainsCommandBufferHandle(
-                                dependentCommandBuffers,
-                                unchecked((ulong)variant.PrimaryCommandBuffer.Handle)) ||
-                            ContainsCommandBufferHandle(
-                                dependentCommandBuffers,
-                                unchecked((ulong)variant.DynamicUiSecondaryCommandBuffer.Handle));
-                        if (!dependent)
-                        {
-                            unrelatedVariantsPreserved++;
-                            continue;
-                        }
-
-                        if (!variant.Dirty)
-                            exactVariantsDirtied++;
-                        variant.Dirty = true;
-                        variant.DirtyReason = reason;
+                        unrelatedVariantsPreserved++;
+                        continue;
                     }
+
+                    if (!variant.Dirty)
+                        exactVariantsDirtied++;
+                    variant.Dirty = true;
+                    variant.DirtyReason = reason;
                 }
             }
 
-            lock (_openXrBackend.PrimaryCommandBufferVariantsLock)
+            lock (_openXrBackend.PrimaryCommandArtifactOwnersLock)
             {
-                foreach (List<CommandBufferCacheVariant> variants in OpenXrPrimaryCommandBufferVariants.Values)
+                foreach (PrimaryCommandArtifactOwner owner in OpenXrPrimaryCommandArtifactOwners.Values)
                 {
-                    for (int variantIndex = 0; variantIndex < variants.Count; variantIndex++)
+                    if (!ContainsCommandBufferHandle(
+                            dependentCommandBuffers,
+                            unchecked((ulong)owner.PrimaryCommandBuffer.Handle)))
                     {
-                        CommandBufferCacheVariant variant = variants[variantIndex];
-                        if (!ContainsCommandBufferHandle(
-                                dependentCommandBuffers,
-                                unchecked((ulong)variant.PrimaryCommandBuffer.Handle)))
-                        {
-                            unrelatedVariantsPreserved++;
-                            continue;
-                        }
-
-                        if (!variant.Dirty)
-                            exactVariantsDirtied++;
-                        variant.Dirty = true;
-                        variant.DirtyReason = reason;
+                        unrelatedVariantsPreserved++;
+                        continue;
                     }
+
+                    if (!owner.Dirty)
+                        exactVariantsDirtied++;
+                    owner.Dirty = true;
+                    owner.DirtyReason = reason;
                 }
             }
 

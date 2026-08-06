@@ -59,6 +59,7 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
 
     public void InitializeFinalOutput(VulkanRenderer renderer)
     {
+        renderer.ThrowIfVulkanDeviceOperationNotAdmitted("HeadlessWsi.InitializeFinalOutput");
         _renderer = renderer;
         if (!renderer.VulkanApi.TryGetDeviceExtension(
                 renderer.Instance,
@@ -100,7 +101,10 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
 
         for (int i = 0; i < _imageViews.Length; i++)
             if (_imageViews[i].Handle != 0)
-                api.DestroyImageView(device, _imageViews[i], null);
+            {
+                if (renderer.TryBeginDestroyImageView(_imageViews[i], "HeadlessWsiTarget.SwapchainColorView"))
+                    api.DestroyImageView(device, _imageViews[i], null);
+            }
         _imageViews = [];
         _images = [];
         _imagePresented = [];
@@ -121,6 +125,7 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
         out CommandBuffer commandBuffer)
     {
         VulkanRenderer renderer = RequireRenderer();
+        renderer.ThrowIfVulkanDeviceOperationNotAdmitted("HeadlessWsi.AcquireFrameTarget");
         Vk api = renderer.VulkanApi;
         Device device = renderer.Device;
         int slotIndex = _nextSlot;
@@ -181,13 +186,16 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
                 api.ResetFences(device, 1, in fence),
                 "reset headless WSI frame fence");
             ThrowIfDeviceFailure(
-                ResetCommandPoolTracked(api, device, slot.CommandPool),
+                renderer.ResetVulkanCommandPoolTracked(
+                    slot.CommandPool,
+                    "HeadlessWsi.AcquireFrameTarget"),
                 "reset headless WSI command pool");
             CommandBufferBeginInfo begin = new()
             {
                 SType = StructureType.CommandBufferBeginInfo,
                 Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
             };
+            renderer.ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.HeadlessWsi.Frame");
             ThrowIfDeviceFailure(
                 api.BeginCommandBuffer(slot.CommandBuffer, in begin),
                 "begin headless WSI command buffer");
@@ -204,9 +212,13 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
     public void EndFrameRecording(
         in VulkanFrameTargetLease lease,
         CommandBuffer commandBuffer)
-        => ThrowIfDeviceFailure(
-            RequireRenderer().VulkanApi.EndCommandBuffer(commandBuffer),
+    {
+        VulkanRenderer renderer = RequireRenderer();
+        renderer.ThrowIfVulkanDeviceOperationNotAdmitted("HeadlessWsi.EndFrameRecording");
+        ThrowIfDeviceFailure(
+            renderer.VulkanApi.EndCommandBuffer(commandBuffer),
             "end headless WSI command buffer");
+    }
 
     public void NotifyFrameSubmitted(in VulkanFrameTargetLease lease)
     {
@@ -221,6 +233,7 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
         }
 
         VulkanRenderer renderer = RequireRenderer();
+        renderer.ThrowIfVulkanDeviceOperationNotAdmitted("HeadlessWsi.CompleteFrameTarget");
         Semaphore renderFinished = lease.SubmissionSignalSemaphore;
         uint imageIndex = lease.ImageIndex;
         SwapchainKHR swapchain = _swapchain;
@@ -249,12 +262,18 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
             return;
 
         VulkanRenderer renderer = RequireRenderer();
+        if (!renderer.TryAdmitVulkanDeviceOperation("HeadlessWsi.AbortFrameTarget", out _))
+        {
+            _deviceLost = true;
+            return;
+        }
         int slotIndex = ResolveSlotIndex(in lease);
         VulkanHeadlessWsiFrameSlot slot = _slots[slotIndex];
         Vk api = renderer.VulkanApi;
         Device device = renderer.Device;
-        _ = api.ResetCommandPool(device, slot.CommandPool, 0);
-        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResetCommandPoolCall();
+        _ = renderer.ResetVulkanCommandPoolTracked(
+            slot.CommandPool,
+            "HeadlessWsi.AbortFrameTarget");
 
         PipelineStageFlags waitStage = lease.SubmissionWaitStage;
         Semaphore waitSemaphore = lease.SubmissionWaitSemaphore;
@@ -274,12 +293,13 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
                 ? &signalSemaphore
                 : null,
         };
+        Result recoverySubmitResult = renderer.SubmitToQueueTracked(
+            renderer.GraphicsQueue,
+            ref recoverySubmit,
+            lease.CompletionFence,
+            caller: "HeadlessWsi.AbortFrameTarget");
         ThrowIfDeviceFailure(
-            api.QueueSubmit(
-                renderer.GraphicsQueue,
-                1,
-                in recoverySubmit,
-                lease.CompletionFence),
+            recoverySubmitResult,
             "consume rejected headless WSI acquisition");
         CompleteFrameTarget(in lease);
     }
@@ -294,6 +314,7 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
 
     private void CreateSwapchain(VulkanRenderer renderer)
     {
+        renderer.ThrowIfVulkanDeviceOperationNotAdmitted("HeadlessWsi.CreateSwapchain");
         KhrSurface surfaceApi = renderer.RequireSurfaceApi();
         Vk api = renderer.VulkanApi;
         PhysicalDevice physicalDevice = renderer.PhysicalDevice;
@@ -371,7 +392,13 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
         _imageViews = new ImageView[_images.Length];
         _imagePresented = new bool[_images.Length];
         for (int i = 0; i < _images.Length; i++)
-            _imageViews[i] = CreateImageView(api, device, _images[i], format.Format, ImageAspectFlags.ColorBit);
+            _imageViews[i] = CreateImageView(
+                api,
+                device,
+                _images[i],
+                format.Format,
+                ImageAspectFlags.ColorBit,
+                $"Swapchain.Color.HeadlessWsi[{i}]");
     }
 
     private SurfaceFormatKHR ChooseSurfaceFormat(
@@ -464,6 +491,7 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
         VulkanRenderer renderer,
         int slotIndex)
     {
+        renderer.ThrowIfVulkanDeviceOperationNotAdmitted("HeadlessWsi.CreateFrameSlot");
         Vk api = renderer.VulkanApi;
         Device device = renderer.Device;
         CommandPool commandPool = default;
@@ -480,7 +508,12 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
                 QueueFamilyIndex = renderer.FamilyQueueIndices.GraphicsFamilyIndex!.Value,
                 Flags = CommandPoolCreateFlags.ResetCommandBufferBit,
             };
-            ThrowIfDeviceFailure(api.CreateCommandPool(device, in poolInfo, null, out commandPool), "create headless WSI command pool");
+            ThrowIfDeviceFailure(
+                renderer.CreateVulkanCommandPoolTracked(
+                    ref poolInfo,
+                    out commandPool,
+                    "HeadlessWsi.CommandPool"),
+                "create headless WSI command pool");
             CommandBufferAllocateInfo allocate = new()
             {
                 SType = StructureType.CommandBufferAllocateInfo,
@@ -488,11 +521,10 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
                 Level = CommandBufferLevel.Primary,
                 CommandBufferCount = 1,
             };
-            Result allocateCommandBufferResult =
-                api.AllocateCommandBuffers(device, in allocate, out CommandBuffer commandBuffer);
-            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAllocateCommandBuffersCall(
-                allocate.CommandBufferCount,
-                allocateCommandBufferResult == Result.Success);
+            Result allocateCommandBufferResult = renderer.AllocateVulkanCommandBufferTracked(
+                ref allocate,
+                out CommandBuffer commandBuffer,
+                "HeadlessWsi.CommandBuffer");
             ThrowIfDeviceFailure(
                 allocateCommandBufferResult,
                 "allocate headless WSI command buffer");
@@ -508,7 +540,8 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
                 device,
                 depthImage,
                 depthFormat,
-                VulkanFixedOutputFormatResolver.DepthAspect(depthFormat));
+                VulkanFixedOutputFormatResolver.DepthAspect(depthFormat),
+                $"HeadlessWsi.DepthView[{slotIndex}]");
             return new(
                 commandPool,
                 commandBuffer,
@@ -537,6 +570,7 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
         VulkanRenderer renderer,
         int count)
     {
+        renderer.ThrowIfVulkanDeviceOperationNotAdmitted("HeadlessWsi.CreateRenderFinishedSemaphores");
         Semaphore[] semaphores = new Semaphore[count];
         SemaphoreCreateInfo create = new() { SType = StructureType.SemaphoreCreateInfo };
         try
@@ -568,6 +602,7 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
         int slotIndex,
         out VulkanMemoryAllocation allocation)
     {
+        renderer.ThrowIfVulkanDeviceOperationNotAdmitted("HeadlessWsi.CreateDepthImage");
         Vk api = renderer.VulkanApi;
         Device device = renderer.Device;
         allocation = default;
@@ -611,8 +646,10 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
         Device device,
         Image image,
         Format format,
-        ImageAspectFlags aspect)
+        ImageAspectFlags aspect,
+        string owner)
     {
+        RequireRenderer().ThrowIfVulkanDeviceOperationNotAdmitted("vkCreateImageView.HeadlessWsi");
         ImageViewCreateInfo info = new()
         {
             SType = StructureType.ImageViewCreateInfo,
@@ -622,6 +659,7 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
             SubresourceRange = new ImageSubresourceRange(aspect, 0, 1, 0, _output.Layers),
         };
         ThrowIfDeviceFailure(api.CreateImageView(device, in info, null, out ImageView view), "create headless WSI image view");
+        RequireRenderer().TrackLiveImageView(view, in info, owner);
         return view;
     }
 
@@ -648,7 +686,10 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
         Vk api = renderer.VulkanApi;
         Device device = renderer.Device;
         if (slot.DepthView.Handle != 0)
-            api.DestroyImageView(device, slot.DepthView, null);
+        {
+            if (renderer.TryBeginDestroyImageView(slot.DepthView, "HeadlessWsiTarget.DepthView"))
+                api.DestroyImageView(device, slot.DepthView, null);
+        }
         if (slot.DepthImage.Handle != 0)
             renderer.DestroyVulkanImageImmediateTracked(slot.DepthImage, "HeadlessWsiTarget.Depth");
         renderer.FreeMemoryAllocation(slot.DepthAllocation);
@@ -657,22 +698,12 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
         if (slot.Fence.Handle != 0)
             api.DestroyFence(device, slot.Fence, null);
         if (slot.CommandPool.Handle != 0)
-            api.DestroyCommandPool(device, slot.CommandPool, null);
+            renderer.DestroyCommandPoolHostSynchronized(slot.CommandPool);
     }
 
     private VulkanRenderer RequireRenderer()
         => _renderer
             ?? throw new InvalidOperationException("The headless WSI target generation is not initialized.");
-
-    private static Result ResetCommandPoolTracked(
-        Vk api,
-        Device device,
-        CommandPool commandPool)
-    {
-        Result result = api.ResetCommandPool(device, commandPool, 0);
-        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResetCommandPoolCall();
-        return result;
-    }
 
     private int ResolveSlotIndex(in VulkanFrameTargetLease lease)
     {
@@ -706,7 +737,10 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
         if (result == Result.Success)
             return;
         if (result == Result.ErrorDeviceLost)
+        {
             _deviceLost = true;
+            _renderer?.MarkDeviceLost($"Headless WSI target {operation} returned ErrorDeviceLost", operation, result);
+        }
         throw new InvalidOperationException($"Vulkan failed to {operation}: {result}.");
     }
 }

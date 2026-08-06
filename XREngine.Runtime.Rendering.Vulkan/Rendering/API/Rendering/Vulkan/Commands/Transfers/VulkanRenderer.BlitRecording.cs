@@ -27,6 +27,70 @@ namespace XREngine.Rendering.Vulkan
             uint imageIndex,
             BlitOp op,
             in SwapchainRecordingTarget swapchainTarget)
+            => RecordBlitOp(
+                commandBuffer,
+                imageIndex,
+                op,
+                in swapchainTarget,
+                exactColorSource: null);
+
+        /// <summary>
+        /// Blits an already-published presentation source without resolving a
+        /// managed framebuffer or texture wrapper again. The tuple's captured
+        /// native image and extent remain authoritative for the whole path.
+        /// </summary>
+        private bool RecordPresentationSourceBlit(
+            CommandBuffer commandBuffer,
+            uint imageIndex,
+            in VulkanPresentationSourceTuple source,
+            in SwapchainRecordingTarget swapchainTarget,
+            int passIndex,
+            in FrameOpContext context)
+        {
+            BlitOp operation = new(
+                passIndex,
+                null,
+                null,
+                0,
+                0,
+                source.Width,
+                source.Height,
+                0,
+                0,
+                swapchainTarget.Extent.Width,
+                swapchainTarget.Extent.Height,
+                EReadBufferMode.ColorAttachment0,
+                ColorBit: true,
+                DepthBit: false,
+                StencilBit: false,
+                LinearFilter: true,
+                context);
+            BlitImageInfo exactSource = new(
+                source.Image,
+                source.Format,
+                source.Aspect,
+                baseArrayLayer: 0,
+                layerCount: 1,
+                mipLevel: 0,
+                new Extent2D(source.Width, source.Height),
+                source.ExpectedLayout,
+                PipelineStageFlags.FragmentShaderBit,
+                AccessFlags.ShaderReadBit,
+                samples: source.Samples);
+            return RecordBlitOp(
+                commandBuffer,
+                imageIndex,
+                operation,
+                in swapchainTarget,
+                exactSource);
+        }
+
+        private bool RecordBlitOp(
+            CommandBuffer commandBuffer,
+            uint imageIndex,
+            BlitOp op,
+            in SwapchainRecordingTarget swapchainTarget,
+            BlitImageInfo? exactColorSource)
         {
             bool ExecuteSingleBlit(in BlitImageInfo source, in BlitImageInfo destination, Filter filter)
             {
@@ -208,8 +272,12 @@ namespace XREngine.Rendering.Vulkan
 
             bool copiedAny = false;
 
+            BlitImageInfo colorSource = exactColorSource ?? default;
+            bool colorSourceReady = exactColorSource.HasValue
+                ? colorSource.IsValid
+                : TryResolveBlitImage(op.InFbo, imageIndex, op.ReadBufferMode, wantColor: true, wantDepth: false, wantStencil: false, out colorSource, isSource: true, in swapchainTarget);
             if (op.ColorBit &&
-                TryResolveBlitImage(op.InFbo, imageIndex, op.ReadBufferMode, wantColor: true, wantDepth: false, wantStencil: false, out var colorSource, isSource: true, in swapchainTarget) &&
+                colorSourceReady &&
                 TryResolveBlitImage(op.OutFbo, imageIndex, EReadBufferMode.ColorAttachment0, wantColor: true, wantDepth: false, wantStencil: false, out var colorDestination, isSource: false, in swapchainTarget))
             {
                 copiedAny |= ExecuteSingleBlit(colorSource, colorDestination, op.LinearFilter ? Filter.Linear : Filter.Nearest);

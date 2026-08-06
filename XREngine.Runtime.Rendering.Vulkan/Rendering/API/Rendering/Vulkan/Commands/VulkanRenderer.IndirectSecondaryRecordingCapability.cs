@@ -1,3 +1,5 @@
+using Silk.NET.Vulkan;
+
 namespace XREngine.Rendering.Vulkan;
 
 public partial class VulkanRenderer :
@@ -50,8 +52,8 @@ public partial class VulkanRenderer :
         _pendingProducerCompleteIndirectStream = new(
             indirectBuffer,
             parameterBuffer,
-            ComputeCommandBufferDataBufferSignature(boundIndirect),
-            ComputeCommandBufferDataBufferSignature(boundParameter));
+            CaptureProducerCompleteIndirectBufferIdentity(boundIndirect),
+            CaptureProducerCompleteIndirectBufferIdentity(boundParameter));
         return true;
     }
 
@@ -72,6 +74,19 @@ public partial class VulkanRenderer :
             buffer.IsReadyForRendering &&
             !buffer.HasPendingUpload;
 
+    private ulong CaptureProducerCompleteIndirectBufferIdentity(VkDataBuffer? buffer)
+    {
+        if (buffer?.BufferHandle is not { } nativeBuffer || nativeBuffer.Handle == 0UL)
+            return 0UL;
+
+        FrameOpSignatureHasher hash = new();
+        hash.Add(nativeBuffer.Handle);
+        hash.Add(GetCurrentVulkanResourceGeneration(ObjectType.Buffer, nativeBuffer.Handle));
+        hash.Add(buffer.AllocatedByteSize);
+        hash.Add((ulong)buffer.LastUsageFlags);
+        return hash.ToHash();
+    }
+
     private VulkanIndirectSecondaryRecordingContract
         CaptureIndirectSecondaryRecordingContract(
             VkDataBuffer indirectBuffer,
@@ -87,7 +102,12 @@ public partial class VulkanRenderer :
             return new(
                 EVulkanIndirectSecondaryEligibility.MutableCurrentFrame,
                 0,
-                0);
+                0,
+                drawCount,
+                stride,
+                byteOffset,
+                countByteOffset,
+                useCount);
         }
 
         if (!ReferenceEquals(pending.IndirectBuffer, indirectBuffer.Data) ||
@@ -98,7 +118,12 @@ public partial class VulkanRenderer :
             return new(
                 EVulkanIndirectSecondaryEligibility.BufferIdentityChanged,
                 pending.IndirectBufferIdentity,
-                pending.ParameterBufferIdentity);
+                pending.ParameterBufferIdentity,
+                drawCount,
+                stride,
+                byteOffset,
+                countByteOffset,
+                useCount);
         }
 
         if (!IsProducerCompleteIndirectBuffer(indirectBuffer) ||
@@ -109,20 +134,30 @@ public partial class VulkanRenderer :
             return new(
                 EVulkanIndirectSecondaryEligibility.ProducerIncomplete,
                 pending.IndirectBufferIdentity,
-                pending.ParameterBufferIdentity);
+                pending.ParameterBufferIdentity,
+                drawCount,
+                stride,
+                byteOffset,
+                countByteOffset,
+                useCount);
         }
 
         ulong indirectIdentity =
-            ComputeCommandBufferDataBufferSignature(indirectBuffer);
+            CaptureProducerCompleteIndirectBufferIdentity(indirectBuffer);
         ulong parameterIdentity =
-            ComputeCommandBufferDataBufferSignature(parameterBuffer);
+            CaptureProducerCompleteIndirectBufferIdentity(parameterBuffer);
         if (indirectIdentity != pending.IndirectBufferIdentity ||
             parameterIdentity != pending.ParameterBufferIdentity)
         {
             return new(
                 EVulkanIndirectSecondaryEligibility.BufferIdentityChanged,
                 pending.IndirectBufferIdentity,
-                pending.ParameterBufferIdentity);
+                pending.ParameterBufferIdentity,
+                drawCount,
+                stride,
+                byteOffset,
+                countByteOffset,
+                useCount);
         }
 
         if (!IsIndirectSecondaryRangeValid(
@@ -137,13 +172,23 @@ public partial class VulkanRenderer :
             return new(
                 EVulkanIndirectSecondaryEligibility.InvalidRange,
                 indirectIdentity,
-                parameterIdentity);
+                parameterIdentity,
+                drawCount,
+                stride,
+                byteOffset,
+                countByteOffset,
+                useCount);
         }
 
         return new(
             EVulkanIndirectSecondaryEligibility.EligibleProducerComplete,
             indirectIdentity,
-            parameterIdentity);
+            parameterIdentity,
+            drawCount,
+            stride,
+            byteOffset,
+            countByteOffset,
+            useCount);
     }
 
     private EVulkanIndirectSecondaryEligibility
@@ -168,10 +213,10 @@ public partial class VulkanRenderer :
             return EVulkanIndirectSecondaryEligibility.ProducerIncomplete;
         }
 
-        if (ComputeCommandBufferDataBufferSignature(
+        if (CaptureProducerCompleteIndirectBufferIdentity(
                 operation.IndirectBuffer) !=
                 contract.IndirectBufferIdentity ||
-            ComputeCommandBufferDataBufferSignature(
+            CaptureProducerCompleteIndirectBufferIdentity(
                 operation.ParameterBuffer) !=
                 contract.ParameterBufferIdentity)
         {

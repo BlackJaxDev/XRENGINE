@@ -21,8 +21,28 @@ public unsafe partial class VulkanRenderer
         bool writeMatched,
         bool writeSucceeded)
     {
-        if (!_finalPresentationLedger.Enabled ||
-            !string.Equals(bindingName, "SourceTexture", StringComparison.Ordinal))
+        if (!string.Equals(bindingName, "SourceTexture", StringComparison.Ordinal))
+            return;
+
+        if (writeMatched && writeSucceeded)
+        {
+            VulkanPresentationSourceTuple current =
+                _windowPresentSource.Capture();
+            _ = _windowPresentSource.TryBindDescriptor(
+                current.LogicalEpoch,
+                imageInfo,
+                descriptorSet,
+                GetCurrentVulkanResourceGeneration(
+                    ObjectType.DescriptorSet,
+                    descriptorSet.Handle),
+                descriptorSlot,
+                resourceSignature,
+                commandBuffer,
+                ResolveCommandBufferRecordingGeneration(commandBuffer),
+                out _);
+        }
+
+        if (!_finalPresentationLedger.Enabled)
             return;
 
         _finalPresentationLedger.ObserveDescriptor(

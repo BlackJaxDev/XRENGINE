@@ -14,6 +14,14 @@ internal sealed record MemoryBarrierOp(
         scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
+        if (TryRecordSecondaryBucket(
+                renderer,
+                ref recordingState,
+                in recordingInfo,
+                "MemoryBarrier",
+                out int lastOperationIndex))
+            return lastOperationIndex;
+
         renderer.CmdBeginLabel(recordingState.CommandBuffer, "MemoryBarrier");
         renderer.EmitMemoryBarrierMask(recordingState.CommandBuffer, Mask);
         renderer.CmdEndLabel(recordingState.CommandBuffer);

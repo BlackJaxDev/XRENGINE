@@ -18,6 +18,7 @@ internal sealed class BrokerRunRecord
     private string _actualModel = string.Empty;
     private int _retryCount;
     private DateTimeOffset _updatedUtc;
+    private string _progressMessage = "queued";
 
     public BrokerRunRecord(string runId, AgentRunRequest request)
     {
@@ -40,6 +41,16 @@ internal sealed class BrokerRunRecord
         lock (_sync)
         {
             _status = AgentRunStatus.Running;
+            _progressMessage = "orchestration_started";
+            _updatedUtc = DateTimeOffset.UtcNow;
+        }
+    }
+
+    public void UpdateStatus(string message)
+    {
+        lock (_sync)
+        {
+            _progressMessage = string.IsNullOrWhiteSpace(message) ? "running" : message;
             _updatedUtc = DateTimeOffset.UtcNow;
         }
     }
@@ -84,6 +95,9 @@ internal sealed class BrokerRunRecord
                 _providerAttempts.Add(diagnostic);
             if (!string.IsNullOrWhiteSpace(diagnostic.ActualModel))
                 _actualModel = diagnostic.ActualModel;
+            _progressMessage = string.IsNullOrWhiteSpace(diagnostic.LastProviderEventType)
+                ? diagnostic.Outcome
+                : diagnostic.LastProviderEventType;
             _updatedUtc = DateTimeOffset.UtcNow;
         }
     }
@@ -103,6 +117,7 @@ internal sealed class BrokerRunRecord
         {
             _result = result;
             _status = result.Status;
+            _progressMessage = result.Status.ToString();
             if (!string.IsNullOrWhiteSpace(result.ActualModel))
                 _actualModel = result.ActualModel;
             _usage = result.Usage;
@@ -124,14 +139,23 @@ internal sealed class BrokerRunRecord
     {
         lock (_sync)
         {
+            DateTimeOffset observedUtc = DateTimeOffset.UtcNow;
             return new AgentRunSnapshot
             {
                 RunId = RunId,
                 Status = _status,
                 CreatedUtc = CreatedUtc,
                 UpdatedUtc = _updatedUtc,
+                ObservedUtc = observedUtc,
+                ElapsedMilliseconds = Math.Max(
+                    0L,
+                    (long)(observedUtc - CreatedUtc).TotalMilliseconds),
+                ProgressMessage = _progressMessage,
                 RequestedModel = Request.RequestedModel,
                 ActualModel = _actualModel,
+                RequestedReasoningEffort = Request.ReasoningEffort,
+                RequestedTextVerbosity = Request.TextVerbosity,
+                MaxOutputTokens = Request.Budget.MaxOutputTokens,
                 EditorSession = Request.EditorSession,
                 UseBackgroundMode = Request.UseBackgroundMode,
                 IncrementalText = _incrementalText.ToString(),

@@ -420,7 +420,10 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
         if (result is not (Result.Success or Result.NotReady))
         {
             if (result == Result.ErrorDeviceLost)
-                Renderer.MarkDeviceLost("vkGetQueryPoolResults returned ErrorDeviceLost");
+                Renderer.MarkDeviceLost(
+                    "vkGetQueryPoolResults returned ErrorDeviceLost",
+                    "vkGetQueryPoolResults",
+                    result);
             return new(
                 result == Result.ErrorDeviceLost ? ERenderQueryReadStatus.DeviceLost : ERenderQueryReadStatus.ApiError,
                 epoch.Ticket,

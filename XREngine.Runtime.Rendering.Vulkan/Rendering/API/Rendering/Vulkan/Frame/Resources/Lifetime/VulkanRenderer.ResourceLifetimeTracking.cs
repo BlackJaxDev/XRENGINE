@@ -15,6 +15,27 @@ public unsafe partial class VulkanRenderer
     internal ulong GetCurrentVulkanResourceGeneration(ObjectType type, ulong handle)
         => _resourceLifetimeTracker.GetPublishedGeneration(ResourceKey(type, handle));
 
+    internal bool TryGetBufferViewBackingBuffer(
+        BufferView bufferView,
+        out Silk.NET.Vulkan.Buffer buffer)
+    {
+        lock (_resourceLifetimeTracker.SyncRoot)
+        {
+            if (bufferView.Handle != 0 &&
+                _resourceLifetimeTracker.BufferViewBackingBuffers.TryGetValue(
+                    bufferView.Handle,
+                    out ulong handle) &&
+                handle != 0)
+            {
+                buffer = new Silk.NET.Vulkan.Buffer(handle);
+                return true;
+            }
+        }
+
+        buffer = default;
+        return false;
+    }
+
 
 
     internal void RegisterVulkanResource(
@@ -35,6 +56,7 @@ public unsafe partial class VulkanRenderer
         Image* image,
         string owner)
     {
+        ThrowIfVulkanDeviceOperationNotAdmitted("vkCreateImage." + owner);
         ThrowIfPersistentResourceAllocationDuringRecording(owner);
         Result result = Api!.CreateImage(device, ref createInfo, null, image);
         if (result == Result.Success && image is not null)
@@ -165,6 +187,9 @@ public unsafe partial class VulkanRenderer
                     $"Command buffer 0x{handle:X} cannot be reset while queued for submission.");
             }
 
+            if (!IsVulkanCommandBufferPoolOwnershipAvailable_NoLock(handle, lifetime, out string poolFailureReason))
+                throw new InvalidOperationException(poolFailureReason);
+
             ReleaseVulkanCommandBufferDependencies_NoLock(handle, lifetime);
             lifetime.FrameDataLease.EvictCachedVariant();
             lifetime.FrameDataLease.Reset();
@@ -211,6 +236,12 @@ public unsafe partial class VulkanRenderer
                 lifetime.QueuedSubmissionCount != 0)
             {
                 reason = "command buffer occupies the submission gateway";
+                return false;
+            }
+
+            if (lifetime is not null &&
+                !IsVulkanCommandBufferPoolOwnershipAvailable_NoLock(handle, lifetime, out reason))
+            {
                 return false;
             }
 
@@ -279,7 +310,10 @@ public unsafe partial class VulkanRenderer
             }
 
             if (_resourceLifetimeTracker.CommandBufferLifetimes.Remove(handle, out lifetime))
+            {
                 ReleaseVulkanCommandBufferDependencies_NoLock(handle, lifetime);
+                RemoveVulkanCommandBufferPoolOwnership_NoLock(handle, lifetime);
+            }
             if (destroyed && _resourceLifetimeTracker.ResourceLifetimes.TryGetValue(
                     ResourceKey(ObjectType.CommandBuffer, handle),
                     out VulkanResourceLifetimeRecord? record))
@@ -406,6 +440,9 @@ public unsafe partial class VulkanRenderer
             _resourceLifetimeTracker.CommandBufferLifetimes[commandBufferHandle] = commandLifetime;
         }
 
+        if (!IsVulkanCommandBufferPoolOwnershipAvailable_NoLock(commandBufferHandle, commandLifetime, out failureReason))
+            return false;
+
         if (commandLifetime.QueuedSubmissionCount != 0 && !allowQueuedSubmission)
         {
             failureReason =
@@ -459,6 +496,101 @@ public unsafe partial class VulkanRenderer
                 VulkanResourceLifetimeKey attachmentKey = attachmentKeys[i];
                 if (attachmentKey.IsValid &&
                     !TryTrackVulkanCommandBufferResource_NoLock(
+                        commandBufferHandle,
+                        attachmentKey,
+                        "Framebuffer.Attachment",
+                        out failureReason,
+                        allowQueuedSubmission))
+                {
+                    return false;
+                }
+            }
+        }
+
+        failureReason = string.Empty;
+        return true;
+    }
+
+    /// <summary>
+    /// Validates the complete dependency expansion without publishing any pins.
+    /// The caller holds the lifetime lock, so a successful validation followed by
+    /// publication is transactional with respect to resource retirement.
+    /// </summary>
+    private bool TryValidateVulkanCommandBufferResource_NoLock(
+        ulong commandBufferHandle,
+        VulkanResourceLifetimeKey key,
+        string owner,
+        out string failureReason,
+        bool allowQueuedSubmission = false)
+    {
+        if (_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(
+                key,
+                out VulkanResourceLifetimeRecord? resource) &&
+            (resource.State & (EVulkanResourceLifetimeState.PendingRetirement |
+                               EVulkanResourceLifetimeState.Destroyed)) != 0)
+        {
+            failureReason =
+                $"Command buffer 0x{commandBufferHandle:X} attempted to record retired Vulkan resource {key} generation {resource.Generation} owned by {resource.Owner}; requested by {owner}.";
+            return false;
+        }
+
+        if (_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(
+                commandBufferHandle,
+                out VulkanCommandBufferLifetimeRecord? commandLifetime) &&
+            commandLifetime.QueuedSubmissionCount != 0 &&
+            !allowQueuedSubmission)
+        {
+            failureReason =
+                $"Command buffer 0x{commandBufferHandle:X} attempted to record {key} while queued for submission.";
+            return false;
+        }
+
+        if (commandLifetime is not null &&
+            !IsVulkanCommandBufferPoolOwnershipAvailable_NoLock(commandBufferHandle, commandLifetime, out failureReason))
+        {
+            return false;
+        }
+
+        if (key.Type == ObjectType.ImageView &&
+            _resourceLifetimeTracker.ImageViewBackingImages.TryGetValue(
+                key.Handle,
+                out ulong backingImageHandle) &&
+            backingImageHandle != 0 &&
+            !TryValidateVulkanCommandBufferResource_NoLock(
+                commandBufferHandle,
+                ResourceKey(ObjectType.Image, backingImageHandle),
+                "CommandBufferDependency.BackingImage",
+                out failureReason,
+                allowQueuedSubmission))
+        {
+            return false;
+        }
+
+        if (key.Type == ObjectType.BufferView &&
+            _resourceLifetimeTracker.BufferViewBackingBuffers.TryGetValue(
+                key.Handle,
+                out ulong backingBufferHandle) &&
+            backingBufferHandle != 0 &&
+            !TryValidateVulkanCommandBufferResource_NoLock(
+                commandBufferHandle,
+                ResourceKey(ObjectType.Buffer, backingBufferHandle),
+                "CommandBufferDependency.BackingBuffer",
+                out failureReason,
+                allowQueuedSubmission))
+        {
+            return false;
+        }
+
+        if (key.Type == ObjectType.Framebuffer &&
+            _resourceLifetimeTracker.FramebufferAttachments.TryGetValue(
+                key.Handle,
+                out VulkanResourceLifetimeKey[]? attachmentKeys))
+        {
+            for (int i = 0; i < attachmentKeys.Length; i++)
+            {
+                VulkanResourceLifetimeKey attachmentKey = attachmentKeys[i];
+                if (attachmentKey.IsValid &&
+                    !TryValidateVulkanCommandBufferResource_NoLock(
                         commandBufferHandle,
                         attachmentKey,
                         "Framebuffer.Attachment",
@@ -533,6 +665,89 @@ public unsafe partial class VulkanRenderer
 
         commandLifetime.Dependencies.Clear();
         commandLifetime.TouchedDependencies.Clear();
+    }
+
+    /// <summary>
+    /// Records the allocation owner once. This deliberately does not add a normal
+    /// command-recording dependency: those are released on reset, while a pool
+    /// remains the native owner of a cached command buffer across every reset.
+    /// </summary>
+    private void RegisterVulkanCommandBufferPoolOwnership_NoLock(
+        ulong commandBufferHandle,
+        VulkanCommandBufferLifetimeRecord lifetime,
+        CommandPool commandPool)
+    {
+        VulkanResourceLifetimeKey poolKey = ResourceKey(ObjectType.CommandPool, commandPool.Handle);
+        VulkanResourceLifetimeRecord pool = GetOrRegisterVulkanResource_NoLock(
+            poolKey,
+            "CommandBuffer.AllocationPool");
+        if ((pool.State & (EVulkanResourceLifetimeState.PendingRetirement | EVulkanResourceLifetimeState.Destroyed)) != 0)
+        {
+            throw new InvalidOperationException(
+                $"Cannot allocate command buffer 0x{commandBufferHandle:X} from retiring command pool {poolKey} generation {pool.Generation}.");
+        }
+
+        if (lifetime.AllocatingCommandPool.IsValid &&
+            (lifetime.AllocatingCommandPool != poolKey ||
+             lifetime.AllocatingCommandPoolGeneration != pool.Generation))
+        {
+            throw new InvalidOperationException(
+                $"Command buffer 0x{commandBufferHandle:X} was unexpectedly reallocated from {poolKey} generation {pool.Generation} while still owned by " +
+                $"{lifetime.AllocatingCommandPool} generation {lifetime.AllocatingCommandPoolGeneration}.");
+        }
+
+        lifetime.AllocatingCommandPool = poolKey;
+        lifetime.AllocatingCommandPoolGeneration = pool.Generation;
+        if (!_resourceLifetimeTracker.CommandBuffersByPool.TryGetValue(poolKey, out HashSet<ulong>? children))
+        {
+            children = [];
+            _resourceLifetimeTracker.CommandBuffersByPool[poolKey] = children;
+        }
+        children.Add(commandBufferHandle);
+    }
+
+    private bool IsVulkanCommandBufferPoolOwnershipAvailable_NoLock(
+        ulong commandBufferHandle,
+        VulkanCommandBufferLifetimeRecord lifetime,
+        out string failureReason)
+    {
+        if (!lifetime.AllocatingCommandPool.IsValid)
+        {
+            failureReason = string.Empty;
+            return true;
+        }
+
+        if (!_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(
+                lifetime.AllocatingCommandPool,
+                out VulkanResourceLifetimeRecord? pool) ||
+            pool.Generation != lifetime.AllocatingCommandPoolGeneration ||
+            (pool.State & (EVulkanResourceLifetimeState.PendingRetirement | EVulkanResourceLifetimeState.Destroyed)) != 0)
+        {
+            failureReason =
+                $"Command buffer 0x{commandBufferHandle:X} cannot be recorded because its allocating command pool " +
+                $"{lifetime.AllocatingCommandPool} generation {lifetime.AllocatingCommandPoolGeneration} is retiring or destroyed.";
+            return false;
+        }
+
+        failureReason = string.Empty;
+        return true;
+    }
+
+    private void RemoveVulkanCommandBufferPoolOwnership_NoLock(
+        ulong commandBufferHandle,
+        VulkanCommandBufferLifetimeRecord lifetime)
+    {
+        VulkanResourceLifetimeKey poolKey = lifetime.AllocatingCommandPool;
+        if (poolKey.IsValid &&
+            _resourceLifetimeTracker.CommandBuffersByPool.TryGetValue(poolKey, out HashSet<ulong>? children))
+        {
+            children.Remove(commandBufferHandle);
+            if (children.Count == 0)
+                _resourceLifetimeTracker.CommandBuffersByPool.Remove(poolKey);
+        }
+
+        lifetime.AllocatingCommandPool = default;
+        lifetime.AllocatingCommandPoolGeneration = 0;
     }
 
     private void MergeVulkanSecondaryCommandBufferDependencies(
@@ -626,36 +841,46 @@ public unsafe partial class VulkanRenderer
         CommandBuffer* commandBuffers,
         string owner = "CommandBuffer.Allocation")
     {
-        Result result = AllocateCommandBuffersHostSynchronized(ref allocateInfo, commandBuffers);
-        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAllocateCommandBuffersCall(
-            allocateInfo.CommandBufferCount,
-            result == Result.Success);
-        if (result != Result.Success || commandBuffers is null)
-            return result;
-
-        for (int i = 0; i < allocateInfo.CommandBufferCount; i++)
+        ThrowIfVulkanDeviceOperationNotAdmitted("vkAllocateCommandBuffers." + owner);
+        // Native allocation and persistent pool-child registration are one atomic
+        // operation with respect to command-pool retirement.
+        lock (_commandPoolsLock)
         {
-            CommandBuffer commandBuffer = commandBuffers[i];
-            ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
-            RegisterVulkanResource(
-                ObjectType.CommandBuffer,
-                commandBufferHandle,
-                owner);
+            Result result = AllocateCommandBuffersHostSynchronized(ref allocateInfo, commandBuffers);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAllocateCommandBuffersCall(
+                allocateInfo.CommandBufferCount,
+                result == Result.Success);
+            if (result != Result.Success || commandBuffers is null)
+                return result;
 
-            lock (_resourceLifetimeTracker.SyncRoot)
+            for (int i = 0; i < allocateInfo.CommandBufferCount; i++)
             {
-                if (!_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(
-                        commandBufferHandle,
-                        out VulkanCommandBufferLifetimeRecord? lifetime))
-                {
-                    lifetime = new VulkanCommandBufferLifetimeRecord();
-                    _resourceLifetimeTracker.CommandBufferLifetimes[commandBufferHandle] = lifetime;
-                }
-                lifetime.Level = allocateInfo.Level;
-            }
-        }
+                CommandBuffer commandBuffer = commandBuffers[i];
+                ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+                RegisterVulkanResource(
+                    ObjectType.CommandBuffer,
+                    commandBufferHandle,
+                    owner);
 
-        return result;
+                lock (_resourceLifetimeTracker.SyncRoot)
+                {
+                    if (!_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(
+                            commandBufferHandle,
+                            out VulkanCommandBufferLifetimeRecord? lifetime))
+                    {
+                        lifetime = new VulkanCommandBufferLifetimeRecord();
+                        _resourceLifetimeTracker.CommandBufferLifetimes[commandBufferHandle] = lifetime;
+                    }
+                    lifetime.Level = allocateInfo.Level;
+                    RegisterVulkanCommandBufferPoolOwnership_NoLock(
+                        commandBufferHandle,
+                        lifetime,
+                        allocateInfo.CommandPool);
+                }
+            }
+
+            return result;
+        }
     }
 
     private Result AllocateVulkanCommandBuffersTracked(
@@ -677,28 +902,31 @@ public unsafe partial class VulkanRenderer
         if (commandPool.Handle == 0 || commandBufferCount == 0 || commandBuffers is null)
             return;
 
-        for (int i = 0; i < commandBufferCount; i++)
+        lock (_commandPoolsLock)
         {
-            CommandBuffer commandBuffer = commandBuffers[i];
-            if (commandBuffer.Handle == 0)
-                continue;
-
-            ulong handle = unchecked((ulong)commandBuffer.Handle);
-            VulkanRetirementTicket ticket = CaptureVulkanRetirementTicket(
-                ObjectType.CommandBuffer,
-                handle,
-                owner);
-            if (!IsVulkanCommandBufferRetirementReady(commandBuffer, ticket))
+            for (int i = 0; i < commandBufferCount; i++)
             {
-                RetireCommandBuffer(commandPool, commandBuffer);
-                commandBuffers[i] = default;
-                continue;
-            }
+                CommandBuffer commandBuffer = commandBuffers[i];
+                if (commandBuffer.Handle == 0)
+                    continue;
 
-            FreeCommandBuffersHostSynchronized(commandPool, 1, &commandBuffer);
-            RemoveCommandBufferBindState(commandBuffers[i]);
-            CompleteVulkanResourceDestruction(ObjectType.CommandBuffer, handle);
-            commandBuffers[i] = default;
+                ulong handle = unchecked((ulong)commandBuffer.Handle);
+                VulkanRetirementTicket ticket = CaptureVulkanRetirementTicket(
+                    ObjectType.CommandBuffer,
+                    handle,
+                    owner);
+                if (!IsVulkanCommandBufferRetirementReady(commandBuffer, ticket))
+                {
+                    RetireCommandBuffer(commandPool, commandBuffer);
+                    commandBuffers[i] = default;
+                    continue;
+                }
+
+                FreeCommandBuffersHostSynchronized(commandPool, 1, &commandBuffer);
+                RemoveCommandBufferBindState(commandBuffers[i]);
+                CompleteVulkanResourceDestruction(ObjectType.CommandBuffer, handle);
+                commandBuffers[i] = default;
+            }
         }
     }
 
@@ -1614,6 +1842,10 @@ public unsafe partial class VulkanRenderer
         DescriptorSet descriptorSet,
         VulkanPublishedDescriptorSetSnapshot snapshot)
     {
+        RecordSecondaryDescriptorPayloadGeneration(
+            commandBuffer,
+            descriptorSet.Handle,
+            snapshot.Generation);
         FlushPendingSecondaryImageAccesses(commandBuffer);
         bool recordedAny = false;
         for (int i = 0; i < snapshot.ImageReferences.Length; i++)
@@ -1642,6 +1874,10 @@ public unsafe partial class VulkanRenderer
         DescriptorSet descriptorSet,
         VulkanDescriptorSetLifetimeRecord setState)
     {
+        RecordSecondaryDescriptorPayloadGeneration(
+            commandBuffer,
+            descriptorSet.Handle,
+            setState.Generation);
         FlushPendingSecondaryImageAccesses(commandBuffer);
         bool recordedAny = false;
         foreach (((uint binding, uint element), VulkanDescriptorImageReference reference) in setState.ImageReferences)
@@ -1662,6 +1898,38 @@ public unsafe partial class VulkanRenderer
                 commandBuffer,
                 descriptorSet.Handle,
                 setState.Generation);
+    }
+
+    /// <summary>
+    /// Publishes the exact native descriptor-set content generation used while
+    /// recording a secondary. The primary uses this proof before trusting the
+    /// secondary's frozen descriptor image/layout requirements.
+    /// </summary>
+    private void RecordSecondaryDescriptorPayloadGeneration(
+        CommandBuffer commandBuffer,
+        ulong descriptorSetHandle,
+        ulong descriptorGeneration)
+    {
+        if (commandBuffer.Handle == 0 || descriptorSetHandle == 0)
+            return;
+
+        ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+        lock (_vulkanImageLayoutLock)
+        {
+            if (!_recordedImageLayoutsByCommandBuffer.TryGetValue(
+                    commandBufferHandle,
+                    out VulkanRecordedImageLayoutState? recorded))
+            {
+                recorded = new VulkanRecordedImageLayoutState
+                {
+                    RecordingGeneration = ResolveCommandBufferRecordingGeneration(commandBuffer),
+                };
+                _recordedImageLayoutsByCommandBuffer[commandBufferHandle] = recorded;
+            }
+
+            recorded.SecondaryDescriptorPayloadGenerations[descriptorSetHandle] =
+                descriptorGeneration;
+        }
     }
 
     private void FlushPendingSecondaryImageAccesses(CommandBuffer commandBuffer)
@@ -2642,7 +2910,10 @@ public unsafe partial class VulkanRenderer
 
             RecordFirstFailingVulkanApi($"vkWaitForFences:{reason}:{waitResult}");
             if (waitResult == Result.ErrorDeviceLost)
-                MarkDeviceLost($"WaitForFences for tracked submission ({reason}) returned ErrorDeviceLost");
+                MarkDeviceLost(
+                    $"WaitForFences for tracked submission ({reason}) returned ErrorDeviceLost",
+                    "vkWaitForFences.TrackedSubmission",
+                    waitResult);
             else
                 Debug.VulkanWarning(
                     "[Vulkan] Waiting for tracked submission {0}/{1} ({2}) failed: {3}.",
@@ -3023,6 +3294,142 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Converts every currently allocated child into a retirement generation before
+    /// its pool can be destroyed. Vulkan destroys these children implicitly with
+    /// the pool, but their own submitted work and CPU recording owners remain
+    /// independently relevant until that point.
+    /// </summary>
+    private VulkanRetirementTicket CaptureCommandPoolChildRetirementTicket(
+        CommandPool commandPool,
+        VulkanRetirementTicket ticket)
+    {
+        if (commandPool.Handle == 0)
+            return ticket;
+
+        VulkanResourceLifetimeKey poolKey = ResourceKey(ObjectType.CommandPool, commandPool.Handle);
+        ulong poolGeneration;
+        CommandBuffer[] children;
+        lock (_resourceLifetimeTracker.SyncRoot)
+        {
+            if (!_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(
+                    poolKey,
+                    out VulkanResourceLifetimeRecord? pool) ||
+                pool.Generation == 0 ||
+                !_resourceLifetimeTracker.CommandBuffersByPool.TryGetValue(poolKey, out HashSet<ulong>? ownedChildren))
+            {
+                return ticket;
+            }
+
+            poolGeneration = pool.Generation;
+            children = new CommandBuffer[ownedChildren.Count];
+            int index = 0;
+            foreach (ulong childHandle in ownedChildren)
+            {
+                if (_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(
+                        childHandle,
+                        out VulkanCommandBufferLifetimeRecord? child) &&
+                    child.AllocatingCommandPool == poolKey &&
+                    child.AllocatingCommandPoolGeneration == poolGeneration)
+                {
+                    children[index++] = new CommandBuffer { Handle = unchecked((nint)childHandle) };
+                }
+            }
+
+            if (index != children.Length)
+                Array.Resize(ref children, index);
+        }
+
+        for (int i = 0; i < children.Length; i++)
+        {
+            CommandBuffer child = children[i];
+            VulkanRetirementTicket childTicket = CaptureVulkanRetirementTicket(
+                ObjectType.CommandBuffer,
+                unchecked((ulong)child.Handle),
+                $"CommandPool.Child.0x{commandPool.Handle:X}");
+            ticket = ticket.Merge(childTicket);
+        }
+
+        return ticket;
+    }
+
+    /// <summary>
+    /// The merged pool ticket covers every child GPU completion point. This check
+    /// covers the separate CPU-side recording and submission-gateway owners.
+    /// </summary>
+    private bool AreCommandPoolChildrenRetirementReady(CommandPool commandPool)
+    {
+        if (commandPool.Handle == 0)
+            return true;
+
+        VulkanResourceLifetimeKey poolKey = ResourceKey(ObjectType.CommandPool, commandPool.Handle);
+        CommandBuffer[] children;
+        lock (_resourceLifetimeTracker.SyncRoot)
+        {
+            if (!_resourceLifetimeTracker.CommandBuffersByPool.TryGetValue(poolKey, out HashSet<ulong>? ownedChildren) ||
+                ownedChildren.Count == 0)
+            {
+                return true;
+            }
+
+            children = new CommandBuffer[ownedChildren.Count];
+            int index = 0;
+            foreach (ulong childHandle in ownedChildren)
+            {
+                if (_resourceLifetimeTracker.CommandBufferLifetimes.ContainsKey(childHandle))
+                    children[index++] = new CommandBuffer { Handle = unchecked((nint)childHandle) };
+            }
+            if (index != children.Length)
+                Array.Resize(ref children, index);
+        }
+
+        for (int i = 0; i < children.Length; i++)
+            // A separately retired child must drain through vkFreeCommandBuffers
+            // first. Otherwise its queued retirement entry could later free a
+            // handle that vkDestroyCommandPool has already invalidated.
+            if (IsCommandBufferPendingRetirement(children[i]) ||
+                !IsVulkanCommandBufferRetirementReady(children[i], VulkanRetirementTicket.None))
+                return false;
+
+        return true;
+    }
+
+    /// <summary>
+    /// Called immediately after native pool destruction. The Vulkan API has now
+    /// freed the children implicitly, so retire their cached bind state and exact
+    /// ownership relations before publishing the pool as destroyed.
+    /// </summary>
+    private void CompleteCommandPoolChildDestructions(CommandPool commandPool)
+    {
+        if (commandPool.Handle == 0)
+            return;
+
+        VulkanResourceLifetimeKey poolKey = ResourceKey(ObjectType.CommandPool, commandPool.Handle);
+        CommandBuffer[] children;
+        lock (_resourceLifetimeTracker.SyncRoot)
+        {
+            if (!_resourceLifetimeTracker.CommandBuffersByPool.TryGetValue(poolKey, out HashSet<ulong>? ownedChildren) ||
+                ownedChildren.Count == 0)
+            {
+                return;
+            }
+
+            children = new CommandBuffer[ownedChildren.Count];
+            int index = 0;
+            foreach (ulong childHandle in ownedChildren)
+                children[index++] = new CommandBuffer { Handle = unchecked((nint)childHandle) };
+        }
+
+        for (int i = 0; i < children.Length; i++)
+        {
+            CommandBuffer child = children[i];
+            RemoveCommandBufferBindState(child);
+            CompleteVulkanResourceDestruction(
+                ObjectType.CommandBuffer,
+                unchecked((ulong)child.Handle));
+        }
+    }
+
     private bool TryBeginDestroyVulkanResourceGeneration(
         ObjectType type,
         ulong handle,
@@ -3353,12 +3760,17 @@ public unsafe partial class VulkanRenderer
             if (type == ObjectType.CommandBuffer)
             {
                 if (_resourceLifetimeTracker.CommandBufferLifetimes.Remove(handle, out VulkanCommandBufferLifetimeRecord? lifetime))
+                {
                     ReleaseVulkanCommandBufferDependencies_NoLock(handle, lifetime);
+                    RemoveVulkanCommandBufferPoolOwnership_NoLock(handle, lifetime);
+                }
             }
             if (type == ObjectType.Framebuffer)
                 _resourceLifetimeTracker.FramebufferAttachments.Remove(handle);
             if (type == ObjectType.DescriptorPool)
                 RemoveDescriptorSetsOwnedByPool_NoLock(handle, forced);
+            if (type == ObjectType.CommandPool)
+                _resourceLifetimeTracker.CommandBuffersByPool.Remove(key);
         }
     }
 
@@ -3596,7 +4008,8 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    internal VulkanResourceLifetimeSnapshot GetVulkanResourceLifetimeSnapshot()
+    internal VulkanResourceLifetimeSnapshot GetVulkanResourceLifetimeSnapshot(
+        bool includeExactLiveResourceGenerations = false)
     {
         lock (_resourceLifetimeTracker.SyncRoot)
         {
@@ -3610,6 +4023,8 @@ public unsafe partial class VulkanRenderer
             long oldestTimestamp = 0;
             ulong oldestRetirementSerial = 0;
             VulkanResourceLifetimeRecord? oldestPendingResource = null;
+            List<VulkanPinnedResourceGeneration>? exactLiveResourceGenerations =
+                includeExactLiveResourceGenerations ? [] : null;
 
             foreach (VulkanResourceLifetimeRecord resource in _resourceLifetimeTracker.ResourceLifetimes.Values)
             {
@@ -3618,7 +4033,12 @@ public unsafe partial class VulkanRenderer
                 if ((state & EVulkanResourceLifetimeState.Destroyed) != 0)
                     destroyed++;
                 else
+                {
                     live++;
+                    exactLiveResourceGenerations?.Add(new VulkanPinnedResourceGeneration(
+                        resource.Key,
+                        resource.Generation));
+                }
                 if ((state & EVulkanResourceLifetimeState.Recorded) != 0)
                     recorded++;
                 if ((state & EVulkanResourceLifetimeState.Submitted) != 0)
@@ -3742,7 +4162,8 @@ public unsafe partial class VulkanRenderer
                 oldestAgeMilliseconds,
                 oldestGenerationAge,
                 Volatile.Read(ref _resourceLifetimeTracker.ForcedResourceDestructionCount),
-                _resourceLifetimeTracker.DeviceLost);
+                _resourceLifetimeTracker.DeviceLost,
+                exactLiveResourceGenerations?.ToArray() ?? []);
         }
     }
 

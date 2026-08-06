@@ -250,7 +250,7 @@ public unsafe partial class VulkanRenderer
             0,
             new ComputeDispatchPushConstants(0u, 0u, 0u, 0u));
 
-        if (!op.Program.TryBuildAndBindComputeDescriptorSets(commandBuffer, imageIndex, op.Snapshot, 0, out _, out var tempBuffers))
+        if (!op.Program.TryBuildAndBindComputeDescriptorSets(commandBuffer, imageIndex, op.Snapshot, 0, out _, out DescriptorSet[] boundDescriptorSets, out var tempBuffers))
         {
             foreach ((Buffer buffer, DeviceMemory memory) in tempBuffers)
                 DestroyBuffer(buffer, memory);
@@ -258,6 +258,9 @@ public unsafe partial class VulkanRenderer
             throw new InvalidOperationException(
                 $"Descriptor binding failed for indirect compute program '{op.Program.Data.Name ?? "UnnamedProgram"}'.");
         }
+
+        _commandBufferRecordingScratch.Value!.PreparedComputePayload =
+            new VulkanPreparedComputePayload(boundDescriptorSets);
 
         RegisterComputeTransientUniformBuffers(imageIndex, tempBuffers);
         TrackVulkanCommandBufferResource(

@@ -34,8 +34,8 @@ public unsafe partial class VulkanRenderer
         XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw;
 
     private readonly VulkanOpenXrBackend _openXrBackend = new();
-    private Dictionary<ulong, List<CommandBufferCacheVariant>> OpenXrPrimaryCommandBufferVariants =>
-        _openXrBackend.GetPrimaryCommandBufferVariants<CommandBufferCacheVariant>();
+    private Dictionary<ulong, PrimaryCommandArtifactOwner> OpenXrPrimaryCommandArtifactOwners =>
+        _openXrBackend.GetPrimaryCommandArtifactOwners<PrimaryCommandArtifactOwner>();
     private Dictionary<VulkanOpenXrViewResourcePlannerContextKey, ResourcePlannerRuntimeState> OpenXrResourcePlannerStates =>
         _openXrBackend.GetResourcePlannerStates<VulkanOpenXrViewResourcePlannerContextKey, ResourcePlannerRuntimeState>();
 
@@ -124,15 +124,12 @@ public unsafe partial class VulkanRenderer
             string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(value, "on", StringComparison.OrdinalIgnoreCase));
 
-    internal void MarkOpenXrPrimaryCommandBufferVariantsDirty()
+    internal void MarkOpenXrPrimaryCommandArtifactOwnersDirty()
     {
-        lock (_openXrBackend.PrimaryCommandBufferVariantsLock)
+        lock (_openXrBackend.PrimaryCommandArtifactOwnersLock)
         {
-            foreach (List<CommandBufferCacheVariant> variants in OpenXrPrimaryCommandBufferVariants.Values)
-            {
-                for (int i = 0; i < variants.Count; i++)
-                    variants[i].Dirty = true;
-            }
+            foreach (PrimaryCommandArtifactOwner owner in OpenXrPrimaryCommandArtifactOwners.Values)
+                owner.Dirty = true;
         }
     }
 
@@ -143,20 +140,16 @@ public unsafe partial class VulkanRenderer
         if (!recorded.OwnedByOpenXrPrimaryCache || recorded.CommandBuffer.Handle == 0)
             return;
 
-        lock (_openXrBackend.PrimaryCommandBufferVariantsLock)
+        lock (_openXrBackend.PrimaryCommandArtifactOwnersLock)
         {
-            foreach (List<CommandBufferCacheVariant> variants in OpenXrPrimaryCommandBufferVariants.Values)
+            foreach (PrimaryCommandArtifactOwner owner in OpenXrPrimaryCommandArtifactOwners.Values)
             {
-                for (int i = 0; i < variants.Count; i++)
-                {
-                    CommandBufferCacheVariant variant = variants[i];
-                    if (variant.PrimaryCommandBuffer.Handle != recorded.CommandBuffer.Handle)
-                        continue;
+                if (owner.PrimaryCommandBuffer.Handle != recorded.CommandBuffer.Handle)
+                    continue;
 
-                    variant.Dirty = true;
-                    variant.DirtyReason = reason;
-                    return;
-                }
+                owner.Dirty = true;
+                owner.DirtyReason = reason;
+                return;
             }
         }
     }
@@ -229,7 +222,7 @@ public unsafe partial class VulkanRenderer
 
     internal VulkanOpenXrDiagnosticsSnapshot CaptureOpenXrDiagnostics()
         => _openXrBackend.CaptureDiagnostics<
-            CommandBufferCacheVariant,
+            PrimaryCommandArtifactOwner,
             VulkanOpenXrViewResourcePlannerContextKey,
             ResourcePlannerRuntimeState>();
 

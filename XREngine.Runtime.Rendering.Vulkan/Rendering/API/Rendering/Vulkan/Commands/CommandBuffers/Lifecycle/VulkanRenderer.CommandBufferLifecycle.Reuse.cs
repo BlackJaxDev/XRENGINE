@@ -6,55 +6,16 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
-        private bool TryReuseLastSwapchainWriter(
-            scoped ref VulkanCommandSchedulingContext<CommandBufferCacheVariant> context,
-            scoped ref CommandBufferLifecycleState state,
-            out CommandBuffer commandBuffer)
-        {
-            commandBuffer = default;
-            if (state.RequiresTrackedPresentSourceRefresh ||
-                state.HasStaticFrameOperations ||
-                state.HasDynamicUiOperations ||
-                state.PreserveSwapchainForOverlay ||
-                state.ImageForcedDirty)
-            {
-                return false;
-            }
-
-            if (!TryReuseLastSwapchainWriterVariant(
-                    state.ImageIndex,
-                    state.FrameOpContextFingerprint,
-                    state.FrameOpContextId,
-                    state.PlannerRevision,
-                    state.ImageLayoutStartSignature,
-                    state.SwapchainImageEverPresentedAtRecord,
-                    state.GpuPipelineProfilingActive,
-                    state.CommandBufferImageSlot,
-                    out commandBuffer,
-                    out context.SwapchainLayoutAfterCommandBuffer))
-            {
-                return false;
-            }
-
-            context.CommandBufferDirtyGenerationAfterRecord =
-                SnapshotCommandBufferDirtyGeneration();
-            return true;
-        }
-
         private bool TryReusePreparedCommandChain(
-            scoped ref VulkanCommandSchedulingContext<CommandBufferCacheVariant> context,
+            scoped ref VulkanCommandSchedulingContext<PrimaryCommandArtifactOwner> context,
             scoped ref CommandBufferLifecycleState state,
             out CommandBuffer commandBuffer)
         {
             commandBuffer = default;
-            bool hasMutableGpuDrivenFrameOperations =
-                state.HasStaticFrameOperations &&
-                HasMutableGpuDrivenFrameOps(state.FrameOperations);
             bool hasMutableFrameSourceBindings =
                 state.HasStaticFrameOperations &&
                 HasMutableFrameSourceSamplerBindings(state.FrameOperations);
             if (!VulkanPrimaryCommandBufferReuseEnabled ||
-                hasMutableGpuDrivenFrameOperations ||
                 hasMutableFrameSourceBindings ||
                 state.ImageForcedDirty ||
                 state.GpuPipelineProfilingActive)
@@ -84,7 +45,7 @@ namespace XREngine.Rendering.Vulkan
                     out commandBuffer,
                     out context.DynamicUiSecondaryCommandBuffer,
                     out context.DynamicUiOverlayOperationCount,
-                    out CommandBufferCacheVariant? dynamicUiOverlayVariant,
+                    out PrimaryCommandArtifactOwner? dynamicUiOverlayVariant,
                     out context.SwapchainLayoutAfterCommandBuffer,
                     out state.PreparedCommandChainFastScheduleSignature,
                     out state.HasPreparedCommandChainFastScheduleSignature))
@@ -209,7 +170,13 @@ namespace XREngine.Rendering.Vulkan
                 state.CurrentDependencySignature =
                     CaptureCommandChainPrimaryPreparedBindingDependencies(
                         state.CurrentDependencySignature,
-                        state.FrameOperations);
+                        state.FrameOperations) with
+                    {
+                        RenderTargetSnapshot =
+                            state.CommandChainSchedule.DependencySignature.RenderTargetSnapshot,
+                        RecordedPacketKey =
+                            state.CommandChainSchedule.DependencySignature.RecordedPacketKey,
+                    };
             }
             state.CommandChainPrimarySkeletonSignature =
                 state.CommandChainSchedule is null
@@ -221,7 +188,7 @@ namespace XREngine.Rendering.Vulkan
         private void SelectCommandBufferVariant(
             scoped ref CommandBufferLifecycleState state)
         {
-            state.Variant = GetOrCreateCommandBufferVariant(
+            state.Variant = GetOrCreatePrimaryCommandArtifactOwner(
                 state.ImageIndex,
                 state.FrameOperationsSignature,
                 state.DynamicUiSignature,
@@ -234,7 +201,7 @@ namespace XREngine.Rendering.Vulkan
                 state.FrameOperations);
             if (state.ImageForcedDirty)
             {
-                MarkCommandBufferVariantsDirty(
+                MarkPrimaryCommandArtifactOwnersDirty(
                     state.ImageIndex,
                     "image-forced-dirty");
             }
@@ -260,7 +227,7 @@ namespace XREngine.Rendering.Vulkan
         private void EvaluateCommandBufferVariantDirtyState(
             scoped ref CommandBufferLifecycleState state)
         {
-            CommandBufferCacheVariant variant = state.Variant;
+            PrimaryCommandArtifactOwner variant = state.Variant;
             bool frameOperationsRequireFreshPrimary =
                 _commandScheduler.RequiresFreshPrimary(
                     state.HasStaticFrameOperations,
@@ -592,10 +559,10 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private CommandBuffer PublishReusedCommandBufferVariant(
-            scoped ref VulkanCommandSchedulingContext<CommandBufferCacheVariant> context,
+            scoped ref VulkanCommandSchedulingContext<PrimaryCommandArtifactOwner> context,
             scoped ref CommandBufferLifecycleState state)
         {
-            CommandBufferCacheVariant variant = state.Variant;
+            PrimaryCommandArtifactOwner variant = state.Variant;
             StoreFrameOpSignatureDebugParts(
                 variant,
                 state.FrameOperations);
@@ -623,7 +590,7 @@ namespace XREngine.Rendering.Vulkan
             variant.RecordedFrameOpContextId = state.FrameOpContextId;
             variant.LastUsedFrameId = VulkanFrameCounter;
             variant.DirtyReason = null;
-            SetActiveCommandBufferVariant(state.ImageIndex, variant);
+            SetActivePrimaryCommandArtifactOwner(state.ImageIndex, variant);
             RestoreRecordedImageLayoutEndState(variant);
             PrepareVulkanGpuProfilerReusableSubmission(
                 state.CommandBufferImageSlot,
@@ -675,9 +642,9 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private static void PublishDynamicUiSchedulingOutputs(
-            scoped ref VulkanCommandSchedulingContext<CommandBufferCacheVariant> context,
+            scoped ref VulkanCommandSchedulingContext<PrimaryCommandArtifactOwner> context,
             scoped ref CommandBufferLifecycleState state,
-            CommandBufferCacheVariant variant,
+            PrimaryCommandArtifactOwner variant,
             bool dynamicUiSecondaryReady)
         {
             if (!dynamicUiSecondaryReady)

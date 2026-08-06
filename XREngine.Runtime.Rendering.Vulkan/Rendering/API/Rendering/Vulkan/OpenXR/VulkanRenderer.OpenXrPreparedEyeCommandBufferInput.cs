@@ -11,5 +11,6 @@ public unsafe partial class VulkanRenderer
         FrameOpContext PlannerContext,
         ulong FrameOpsSignature,
         ulong PlannerRevision,
-        CommandChainSchedule? CommandChainSchedule);
+        CommandChainSchedule? CommandChainSchedule,
+        FramePlan? PairedLogicalPlan = null);
 }

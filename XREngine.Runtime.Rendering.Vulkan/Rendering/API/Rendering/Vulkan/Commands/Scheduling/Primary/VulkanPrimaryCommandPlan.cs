@@ -411,7 +411,9 @@ internal sealed class VulkanPrimaryCommandPlan
             EVulkanPrimaryPlanNodeKind.MeshDraw or
             EVulkanPrimaryPlanNodeKind.IndirectDraw or
             EVulkanPrimaryPlanNodeKind.ComputeDispatch or
+            EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect or
             EVulkanPrimaryPlanNodeKind.BufferCopy or
+            EVulkanPrimaryPlanNodeKind.MemoryBarrier or
             EVulkanPrimaryPlanNodeKind.Query;
 
     /// <summary>
@@ -472,7 +474,9 @@ internal sealed class VulkanPrimaryCommandPlan
             MeshDrawOp or
             IndirectDrawOp or
             ComputeDispatchOp or
+            ComputeDispatchIndirectOp or
             BufferCopyOp or
+            MemoryBarrierOp or
             QueryOp)
         {
             actions |= EVulkanPrimaryPlanAction.ExecuteSecondaryRange;

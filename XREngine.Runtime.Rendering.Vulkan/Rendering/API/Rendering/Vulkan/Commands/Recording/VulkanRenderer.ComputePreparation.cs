@@ -32,8 +32,6 @@ public unsafe partial class VulkanRenderer
                         ResolveCommandChainInlineOperationIndex(
                             operations,
                             operationIndex);
-                    dispatch.SetReusableDescriptorBindingOrdinal(
-                        descriptorBindingOrdinal);
                     reusableDescriptorKey =
                         ComputeReusableComputeDescriptorBindingKey(
                             dispatch,

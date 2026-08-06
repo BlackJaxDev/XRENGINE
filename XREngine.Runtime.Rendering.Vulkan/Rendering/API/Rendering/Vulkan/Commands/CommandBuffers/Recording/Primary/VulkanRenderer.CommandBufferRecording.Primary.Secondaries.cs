@@ -347,13 +347,27 @@ namespace XREngine.Rendering.Vulkan
                     }
 
                     recordingStatePrepared[i] = true;
+
+                    // The primary owns image-layout transitions. Do this while
+                    // preparation still owns the descriptor publication selected
+                    // for this draw, before any secondary render scope begins.
+                    indirectOp.MeshRenderer.TryTransitionPreparedDescriptorImagesForSampling(
+                        recordingState.CommandBuffer,
+                        indirectOp.Draw,
+                        uniformSlots[i],
+                        recordingState.CommandBufferImageSlot,
+                        indirectOp.Target);
                 }
 
                 Dictionary<CommandChainKey, CommandChain> commandChainCache = GetCommandChainCache(recordingState.FrameDataImageIndex);
                 for (int i = 0; i < runCount; i++)
                 {
                     IndirectDrawOp indirectOp = (IndirectDrawOp)recordingState.Ops[startIndex + i];
-                    int primaryOwnedChainOrdinal = HashCode.Combine(startIndex, i, recordingState.CommandBuffer.Handle, 0x494E4452);
+                    // This chain owns a frozen indirect packet, not the transient
+                    // primary that happens to execute it this frame. Keep its key
+                    // stable across primary re-records so a producer-complete
+                    // command/count topology can retain the secondary artifact.
+                    int primaryOwnedChainOrdinal = int.MinValue + startIndex + i;
                     CommandChainKey chainKey = new(
                         recordingState.CommandBufferImageSlot,
                         BuildRenderViewKey(indirectOp, dynamicOverlay: false),
@@ -389,6 +403,25 @@ namespace XREngine.Rendering.Vulkan
 
                 for (int i = 0; i < runCount; i++)
                 {
+                    IndirectDrawOp indirectOp =
+                        (IndirectDrawOp)recordingState.Ops[startIndex + i];
+                    CommandChain chain = secondaryChains[i];
+                    VulkanPreparedCommandChainKey preparedKey =
+                        CapturePreparedIndirectCommandChainKey(
+                            chain,
+                            recordingStates[i]);
+                    if (CanReuseIndirectCommandChainSecondary(
+                            chain,
+                            indirectOp,
+                            uniformSlots[i],
+                            in preparedKey,
+                            in secondaryInheritance))
+                    {
+                        chain.State = CommandChainState.Reused;
+                        chain.DirtyReason = CommandChainDirtyReason.None;
+                        continue;
+                    }
+
                     Exception? recordingError = RecordIndirectCommandChainSecondary(
                         recordingState.Ops,
                         startIndex,
@@ -579,6 +612,7 @@ namespace XREngine.Rendering.Vulkan
                     PInheritanceInfo = &inheritanceInfo
                 };
 
+                ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.PrimarySecondaryRange");
                 if (Api!.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
                     throw new Exception("Failed to begin Vulkan indirect secondary command buffer.");
 
@@ -615,6 +649,13 @@ namespace XREngine.Rendering.Vulkan
                     inheritance.LocalReadSignature,
                     inheritance.RenderingFlags);
                 MarkCommandChainSecondaryCommandBufferRecorded(chain);
+                chain.RecordedIndirectSecondaryContract =
+                    indirectOp.SecondaryRecordingContract;
+                chain.PreparedKey = CapturePreparedIndirectCommandChainKey(
+                    chain,
+                    recordingStates[relativeIndex]);
+                chain.RecordedUniformSlotSignature =
+                    unchecked((ulong)(uint)uniformSlots[relativeIndex]);
                 return null;
             }
             catch (Exception ex)
@@ -623,6 +664,91 @@ namespace XREngine.Rendering.Vulkan
                 secondaryBuffers[relativeIndex] = default;
                 return ex;
             }
+        }
+
+        private bool CanReuseIndirectCommandChainSecondary(
+            CommandChain chain,
+            IndirectDrawOp operation,
+            int uniformSlot,
+            scoped in VulkanPreparedCommandChainKey preparedKey,
+            scoped in VulkanRecordedCommandInheritance inheritance)
+            => !FreshSerialRecordingEnabled &&
+                chain.SecondaryCommandBufferExecutable &&
+                preparedKey.IsComplete &&
+                chain.PreparedKey.IsComplete &&
+                chain.PreparedKey == preparedKey &&
+                chain.RecordedIndirectSecondaryContract ==
+                    operation.SecondaryRecordingContract &&
+                chain.RecordedUniformSlotSignature == unchecked((ulong)(uint)uniformSlot) &&
+                CommandChainSecondaryInheritanceMatches(
+                    chain,
+                    inheritance.DynamicRendering,
+                    inheritance.RenderPass,
+                    inheritance.Framebuffer,
+                    inheritance.DynamicRenderingFormats,
+                    inheritance.DepthStencilReadOnly,
+                    inheritance.Samples,
+                    inheritance.LocalReadSignature,
+                    inheritance.RenderingFlags);
+
+        /// <summary>
+        /// Captures exactly the pipeline, layout, and published descriptor sets
+        /// chosen during indirect-draw preparation. Reuse must not substitute
+        /// live renderer state after the primary has transitioned those images.
+        /// </summary>
+        private VulkanPreparedCommandChainKey CapturePreparedIndirectCommandChainKey(
+            CommandChain chain,
+            in VkMeshRenderer.IndirectDrawRecordingState state)
+        {
+            if (state.Program is null ||
+                state.Program.BindingId == 0u ||
+                state.Program.LinkGeneration == 0UL ||
+                state.Pipeline.Handle == 0UL ||
+                state.PipelineLayout.Handle == 0UL)
+            {
+                return VulkanPreparedCommandChainKey.Incomplete;
+            }
+
+            ulong pipelineGeneration = GetCurrentVulkanResourceGeneration(
+                ObjectType.Pipeline,
+                state.Pipeline.Handle);
+            ulong layoutGeneration = GetCurrentVulkanResourceGeneration(
+                ObjectType.PipelineLayout,
+                state.PipelineLayout.Handle);
+            if (pipelineGeneration == 0UL || layoutGeneration == 0UL)
+                return VulkanPreparedCommandChainKey.Incomplete;
+
+            FrameOpSignatureHasher pipelineHash = new();
+            pipelineHash.Add(state.Program.BindingId);
+            pipelineHash.Add(state.Program.LinkGeneration);
+            pipelineHash.Add(state.Pipeline.Handle);
+            pipelineHash.Add(pipelineGeneration);
+            pipelineHash.Add(state.PipelineLayout.Handle);
+            pipelineHash.Add(layoutGeneration);
+
+            DescriptorSet[]? descriptorSets = state.DescriptorSets;
+            int descriptorSetCount = descriptorSets?.Length ?? 0;
+            VulkanRecordedDescriptorSetIdentityBuffer exactDescriptorSets =
+                CaptureRecordedDescriptorSetIdentities(descriptorSets, null);
+            if (!exactDescriptorSets.IsComplete)
+                return VulkanPreparedCommandChainKey.Incomplete;
+
+            // Heap push payloads do not name stable native descriptor sets.
+            if (state.DescriptorHeapPushData is not null)
+                return VulkanPreparedCommandChainKey.Incomplete;
+
+            RecordedPacketKey preparedPacketKey =
+                chain.DependencySignature.RecordedPacketKey with
+                {
+                    DescriptorSets = exactDescriptorSets,
+                };
+
+            return new VulkanPreparedCommandChainKey(
+                pipelineHash.ToHash(),
+                ComputeRecordedDescriptorSetIdentityHash(exactDescriptorSets),
+                descriptorSetCount,
+                preparedPacketKey,
+                IsComplete: preparedPacketKey.IsComplete);
         }
 
         private bool TryGetScheduledCommandChainForOp(scoped ref PrimaryCommandBufferRecordingState recordingState, int opIndex, out CommandChain chain, out CommandChainKey key)
@@ -744,6 +870,8 @@ namespace XREngine.Rendering.Vulkan
             CommandChainRecordingBatch batch = _commandChainRecordingBatch;
             batch.EnsureCapacity(runCount);
             batch.PreparedFrame.Begin(recordingState.CommandBufferImageSlot, VulkanFrameCounter);
+            if (recordingState.FramePlan is { } framePlan)
+                batch.PreparedFrame.AttachFramePlan(framePlan);
             batch.PreparedFrame.AddPrimaryPlan(recordingState.PrimaryCommandPlan);
             CommandBuffer[] secondaryBuffers = batch.SecondaryBuffers;
             CommandChain[] secondaryChains = batch.Chains;
@@ -772,15 +900,59 @@ namespace XREngine.Rendering.Vulkan
                 {
                     return false;
                 }
+
+                // Preparation resolves the actual pipeline/layout and descriptor
+                // payloads. Every candidate, including a cached executable
+                // secondary, must pass through it before reuse is considered.
+                for (int i = 0; i < runCount; i++)
+                {
+                    int opIndex = startIndex + i;
+                    _ = TryGetScheduledCommandChainForOp(
+                        ref recordingState,
+                        opIndex,
+                        out CommandChain chain,
+                        out _);
+                    if (opIndex != chain.SourceStartIndex)
+                        continue;
+
+                    if (chain.SourceCount > runCount - i)
+                        return false;
+
+                    secondaryChains[secondaryCount++] = chain;
+                }
+
+                if (secondaryCount == 0)
+                    return false;
+
+                int preparedMeshDrawCount;
+                using (VulkanCpuStageScope preparedDrawStage =
+                       new(EVulkanCpuStage.PreparedDrawConstruction))
+                {
+                    if (!TryPrepareScheduledMeshCommandChainDraws(
+                            ref recordingState,
+                            startIndex,
+                            passIndex,
+                            batch,
+                            secondaryChains,
+                            secondaryCount,
+                            uniformSlots,
+                            inheritedRenderPass,
+                            inheritedDynamicRendering,
+                            inheritedDynamicRenderingFormats,
+                            inheritedDepthStencilReadOnly,
+                            out preparedMeshDrawCount))
+                    {
+                        return false;
+                    }
+                }
+
+                secondaryCount = 0;
                 for (int i = 0; i < runCount; i++)
                 {
                     int opIndex = startIndex + i;
                     _ = TryGetScheduledCommandChainForOp(ref recordingState, opIndex, out CommandChain chain, out _);
                     if (opIndex != chain.SourceStartIndex)
                         continue;
-
-                    if (chain.SourceCount > runCount - i)
-                        return false;
 
                     secondaryChains[secondaryCount] = chain;
 
@@ -875,12 +1047,31 @@ namespace XREngine.Rendering.Vulkan
                         }
                     }
 
+                    // Seal and compare exactly once after preparation and any
+                    // frame-data refresh that can publish descriptor contents.
+                    // An incomplete key is never a reuse candidate.
+                    VulkanPreparedCommandChainKey preparedKey =
+                        CapturePreparedMeshCommandChainKey(
+                            batch.PreparedFrame,
+                            chain,
+                            startIndex);
+                    needsRecording |= !preparedKey.IsComplete ||
+                        !chain.PreparedKey.IsComplete ||
+                        chain.PreparedKey != preparedKey;
+
                     if (needsRecording)
                     {
+                        chain.PreparedKey = preparedKey;
                         recordJobChainIndices[recordJobCount++] = secondaryCount;
                     }
                     else
                     {
+                        PublishPreparedCommandChainAuthority(
+                            chain,
+                            chain.PreparedAuthority is { } authority &&
+                            authority.PreparedKey == preparedKey
+                                ? authority
+                                : new VulkanPreparedCommandChainAuthority(preparedKey));
                         chain.WorkerEligibility =
                             EVulkanCommandChainWorkerEligibility.NotEvaluated;
                         CommandBuffer reusable = chain.SecondaryCommandBuffer;
@@ -898,10 +1089,9 @@ namespace XREngine.Rendering.Vulkan
 
                 if (recordJobCount == 0)
                 {
-                    // Every secondary is already executable. Do not materialize
-                    // placeholder prepared draws or initialize worker state for
-                    // an empty recording batch; both scale with every caster in
-                    // every cascade even though no draw command will be encoded.
+                    // Every secondary matched its post-preparation key. The
+                    // prepared payload remains owned by this batch until the
+                    // merge completes, but no worker encoder is needed.
                     using VulkanCpuStageScope mergeStage =
                         new(EVulkanCpuStage.SecondaryMerge);
                     long mergeStart = Stopwatch.GetTimestamp();
@@ -918,6 +1108,13 @@ namespace XREngine.Rendering.Vulkan
                                 inheritedSamples,
                                 inheritedLocalReadSignature,
                                 inheritedRenderingFlags))
+                        {
+                            MarkCommandChainSecondaryCommandBufferInvalid(chain);
+                            return false;
+                        }
+
+                        if (!HasCurrentSecondaryDescriptorPayloadRequirements(
+                                chain.SecondaryCommandBuffer))
                         {
                             MarkCommandChainSecondaryCommandBufferInvalid(chain);
                             return false;
@@ -985,29 +1182,6 @@ namespace XREngine.Rendering.Vulkan
                             reusedChains: secondaryCount,
                             mergeTime: Stopwatch.GetElapsedTime(mergeStart));
                     return true;
-                }
-
-                int preparedMeshDrawCount;
-                using (VulkanCpuStageScope preparedDrawStage =
-                       new(EVulkanCpuStage.PreparedDrawConstruction))
-                {
-                    if (!TryPrepareScheduledMeshCommandChainDraws(
-                            ref recordingState,
-                            startIndex,
-                            passIndex,
-                            batch,
-                            secondaryChains,
-                            secondaryBuffers,
-                            secondaryCount,
-                            uniformSlots,
-                            inheritedRenderPass,
-                            inheritedDynamicRendering,
-                            inheritedDynamicRenderingFormats,
-                            inheritedDepthStencilReadOnly,
-                            out preparedMeshDrawCount))
-                    {
-                        return false;
-                    }
                 }
 
                 batch.ChainCount = secondaryCount;
@@ -1102,8 +1276,20 @@ namespace XREngine.Rendering.Vulkan
                      chainIndex++)
                 {
                     CommandChain chain = secondaryChains[chainIndex];
+                    RenderPacket? packet = chain.PacketSnapshot;
+                    if (packet is null)
+                    {
+                        throw new InvalidOperationException(
+                            "Scheduled mesh command chain has no sealed packet snapshot.");
+                    }
                     int preparedDrawStartIndex =
                         chain.SourceStartIndex - startIndex;
+                    int packetIndex = batch.PreparedFrame.RetainPacket(packet);
+                    VulkanPreparedCommandChainAuthority authority =
+                        chain.PreparedAuthority is { } publishedAuthority &&
+                        publishedAuthority.PreparedKey == chain.PreparedKey
+                            ? publishedAuthority
+                            : new VulkanPreparedCommandChainAuthority(chain.PreparedKey);
                     int preparedChainIndex =
                         batch.PreparedFrame.AddCommandChain(
                             new VulkanPreparedCommandChain(
@@ -1111,8 +1297,10 @@ namespace XREngine.Rendering.Vulkan
                                 chain.SourceStartIndex,
                                 chain.SourceCount,
                                 preparedDrawStartIndex,
+                                packetIndex,
+                                batch.PreparedFrame.Generation,
+                                authority,
                                 preparedInheritance,
-                                chain.DependencySignature,
                                 chain.RecordedArtifact.CreateReference(),
                                 chain.WorkerEligibility));
                     if (preparedChainIndex != chainIndex)
@@ -1171,7 +1359,9 @@ namespace XREngine.Rendering.Vulkan
                                 inheritedDepthStencilReadOnly,
                                 inheritedSamples,
                                 inheritedLocalReadSignature,
-                                inheritedRenderingFlags))
+                                inheritedRenderingFlags) &&
+                            HasCurrentSecondaryDescriptorPayloadRequirements(
+                                chain.SecondaryCommandBuffer))
                         {
                             continue;
                         }
@@ -1284,13 +1474,189 @@ namespace XREngine.Rendering.Vulkan
             return true;
         }
 
+        /// <summary>
+        /// Seals the native state that a prepared mesh chain would encode. This
+        /// deliberately reads only prepared draw payloads; live renderer state is
+        /// not allowed to stand in for the pipelines or descriptor sets selected
+        /// by preparation.
+        /// </summary>
+        private VulkanPreparedCommandChainKey CapturePreparedMeshCommandChainKey(
+            VulkanPreparedFrameRecording preparedFrame,
+            CommandChain chain,
+            int scheduledStartIndex)
+        {
+            FrameOpSignatureHasher pipelineHash = new();
+            VulkanRecordedDescriptorSetIdentityBuffer exactDescriptorSets = default;
+            exactDescriptorSets.Initialize(0);
+            bool complete = chain.SourceCount > 0;
+            int descriptorSetCount = 0;
+            for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
+            {
+                int preparedIndex =
+                    chain.SourceStartIndex - scheduledStartIndex + drawIndex;
+                if (!preparedFrame.ContainsMeshDrawRangeForOwnerValidation(
+                        preparedIndex,
+                        1))
+                {
+                    return VulkanPreparedCommandChainKey.Incomplete;
+                }
+
+                ref readonly VkPreparedMeshDraw preparedDraw =
+                    ref preparedFrame.GetMeshDrawForOwnerValidation(preparedIndex);
+                VulkanPreparedMeshDrawState state = preparedDraw.RecordingState;
+                VkRenderProgram program = state.Program;
+                PipelineLayout layout = state.PipelineLayout;
+                if (program is null ||
+                    program.BindingId == 0u ||
+                    program.LinkGeneration == 0UL ||
+                    layout.Handle == 0UL)
+                {
+                    return VulkanPreparedCommandChainKey.Incomplete;
+                }
+
+                ulong layoutGeneration = GetCurrentVulkanResourceGeneration(
+                    ObjectType.PipelineLayout,
+                    layout.Handle);
+                if (layoutGeneration == 0UL || state.PrimitiveCount <= 0)
+                    return VulkanPreparedCommandChainKey.Incomplete;
+
+                pipelineHash.Add(program.BindingId);
+                pipelineHash.Add(program.LinkGeneration);
+                pipelineHash.Add(layout.Handle);
+                pipelineHash.Add(layoutGeneration);
+                pipelineHash.Add(state.PrimitiveCount);
+                for (int primitiveIndex = 0;
+                     primitiveIndex < state.PrimitiveCount;
+                     primitiveIndex++)
+                {
+                    Pipeline pipeline = state.GetPrimitive(primitiveIndex).Pipeline;
+                    ulong pipelineGeneration = pipeline.Handle == 0UL
+                        ? 0UL
+                        : GetCurrentVulkanResourceGeneration(
+                            ObjectType.Pipeline,
+                            pipeline.Handle);
+                    if (pipeline.Handle == 0UL || pipelineGeneration == 0UL)
+                        return VulkanPreparedCommandChainKey.Incomplete;
+
+                    pipelineHash.Add(pipeline.Handle);
+                    pipelineHash.Add(pipelineGeneration);
+                }
+
+                if (state.UsesDescriptorHeap ||
+                    state.DescriptorBindingCount < 0 ||
+                    (state.DescriptorBindingCount > 0 &&
+                     state.DescriptorBindings is null))
+                {
+                    complete = false;
+                    continue;
+                }
+
+                VulkanRecordedDescriptorSetIdentityBuffer drawDescriptorSets =
+                    CaptureRecordedDescriptorSetIdentities(
+                        null,
+                        state.DescriptorBindings.AsSpan(0, state.DescriptorBindingCount));
+                if (!drawDescriptorSets.IsComplete ||
+                    !AppendRecordedDescriptorSetIdentities(ref exactDescriptorSets, drawDescriptorSets))
+                {
+                    complete = false;
+                    continue;
+                }
+                for (int bindingIndex = 0;
+                     bindingIndex < state.DescriptorBindingCount;
+                     bindingIndex++)
+                {
+                    descriptorSetCount++;
+                }
+            }
+
+            RecordedPacketKey preparedPacketKey =
+                chain.DependencySignature.RecordedPacketKey with { DescriptorSets = exactDescriptorSets };
+
+            return new VulkanPreparedCommandChainKey(
+                pipelineHash.ToHash(),
+                ComputeRecordedDescriptorSetIdentityHash(exactDescriptorSets),
+                descriptorSetCount,
+                preparedPacketKey,
+                complete && preparedPacketKey.IsComplete);
+        }
+
+        private VulkanRecordedDescriptorSetIdentityBuffer CaptureRecordedDescriptorSetIdentities(
+            DescriptorSet[]? descriptorSets,
+            ReadOnlySpan<VulkanPreparedDescriptorSetBinding> bindings)
+        {
+            int count = descriptorSets?.Length ?? bindings.Length;
+            VulkanRecordedDescriptorSetIdentityBuffer result = default;
+            result.Initialize(count);
+            if (!result.IsComplete)
+                return result;
+
+            lock (_resourceLifetimeTracker.SyncRoot)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    DescriptorSet set = descriptorSets is null ? bindings[i].DescriptorSet : descriptorSets[i];
+                    uint setIndex = descriptorSets is null ? bindings[i].SetIndex : unchecked((uint)i);
+                    if (set.Handle == 0 ||
+                        !_resourceLifetimeTracker.PublishedDescriptorSets.TryGetValue(set.Handle, out VulkanPublishedDescriptorSetSnapshot? published) ||
+                        !_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(ResourceKey(ObjectType.DescriptorSet, set.Handle), out VulkanResourceLifetimeRecord? lifetime))
+                    { result.Invalidate(); return result; }
+
+                    VulkanRecordedDescriptorResourceIdentityBuffer resources = default;
+                    int required = published.References.Length + published.ImageReferences.Length;
+                    foreach (VulkanResourceLifetimeKey key in published.References)
+                        if (key.Type == ObjectType.ImageView &&
+                            _resourceLifetimeTracker.ImageViewBackingImages.ContainsKey(key.Handle))
+                            required++;
+                    resources.Initialize(required);
+                    if (!resources.IsComplete) { result.Invalidate(); return result; }
+                    int resourceIndex = 0;
+                    foreach (VulkanResourceLifetimeKey key in published.References)
+                    {
+                        if (!_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource)) { result.Invalidate(); return result; }
+                        resources.Set(resourceIndex++, new(key.Type, key.Handle, resource.Generation, ImageLayout.Undefined));
+                        if (key.Type == ObjectType.ImageView &&
+                            _resourceLifetimeTracker.ImageViewBackingImages.TryGetValue(key.Handle, out ulong backingImageHandle))
+                        {
+                            VulkanResourceLifetimeKey backingKey = ResourceKey(ObjectType.Image, backingImageHandle);
+                            if (backingImageHandle == 0 || !_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(backingKey, out VulkanResourceLifetimeRecord? backing)) { result.Invalidate(); return result; }
+                            resources.Set(resourceIndex++, new(ObjectType.Image, backingImageHandle, backing.Generation, ImageLayout.Undefined));
+                        }
+                    }
+                    foreach (VulkanPublishedDescriptorImageReference image in published.ImageReferences)
+                    {
+                        ulong viewHandle = image.Reference.View.Handle;
+                        if (!_resourceLifetimeTracker.ResourceLifetimes.TryGetValue(ResourceKey(ObjectType.ImageView, viewHandle), out VulkanResourceLifetimeRecord? view)) { result.Invalidate(); return result; }
+                        resources.Set(resourceIndex++, new(ObjectType.ImageView, viewHandle, view.Generation, image.Reference.Layout));
+                    }
+                    result.Set(i, new(setIndex, set.Handle, lifetime.Generation, published.Generation, published.Generation, resources));
+                }
+            }
+            return result;
+        }
+
+        private static bool AppendRecordedDescriptorSetIdentities(ref VulkanRecordedDescriptorSetIdentityBuffer destination, in VulkanRecordedDescriptorSetIdentityBuffer source)
+        {
+            int prior = destination.Count;
+            if (prior + source.Count > VulkanRecordedDescriptorSetIdentityBuffer.Capacity) { destination.Invalidate(); return false; }
+            destination.Initialize(prior + source.Count);
+            for (int i = 0; i < source.Count; i++) destination.Set(prior + i, source.Get(i));
+            return destination.IsComplete;
+        }
+
+        private static ulong ComputeRecordedDescriptorSetIdentityHash(in VulkanRecordedDescriptorSetIdentityBuffer sets)
+        {
+            FrameOpSignatureHasher hash = new();
+            hash.Add(sets.Count); hash.Add(sets.IsComplete);
+            for (int i = 0; i < sets.Count; i++) { VulkanRecordedDescriptorSetIdentity set = sets.Get(i); hash.Add(set.SetIndex); hash.Add(set.DescriptorSetHandle); hash.Add(set.DescriptorSetLifetimeGeneration); hash.Add(set.PayloadGeneration); hash.Add(set.PublicationGeneration); }
+            return hash.ToHash();
+        }
+
         private bool TryPrepareScheduledMeshCommandChainDraws(
             scoped ref PrimaryCommandBufferRecordingState recordingState,
             int startIndex,
             int passIndex,
             CommandChainRecordingBatch batch,
             CommandChain[] secondaryChains,
-            CommandBuffer[] secondaryBuffers,
             int secondaryCount,
             int[] uniformSlots,
             RenderPass inheritedRenderPass,
@@ -1314,10 +1680,6 @@ namespace XREngine.Rendering.Vulkan
             for (int chainIndex = 0; chainIndex < secondaryCount; chainIndex++)
             {
                 CommandChain chain = secondaryChains[chainIndex];
-                bool needsRecording = secondaryBuffers[chainIndex].Handle == 0;
-                if (!needsRecording)
-                    continue;
-
                 for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
                 {
                     int opIndex = chain.SourceStartIndex + drawIndex;
@@ -1559,6 +1921,7 @@ namespace XREngine.Rendering.Vulkan
                     PInheritanceInfo = &inheritanceInfo
                 };
 
+                ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.PreparedCommandChain");
                 if (Api!.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
                     throw new Exception("Failed to begin Vulkan mesh command-chain secondary command buffer.");
 

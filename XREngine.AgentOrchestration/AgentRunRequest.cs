@@ -15,6 +15,12 @@ public sealed record AgentRunRequest
 
     public string ReasoningEffort { get; init; } = "medium";
 
+    /// <summary>
+    /// Requested Responses API text verbosity. This shapes visible response
+    /// length but never increases the run's hard output-token budget.
+    /// </summary>
+    public string TextVerbosity { get; init; } = "medium";
+
     public AgentEvidencePacket EvidencePacket { get; init; } = new();
 
     /// <summary>

@@ -24,7 +24,69 @@ public unsafe partial class VulkanRenderer
         HashSet<int>? activePassIndices = null,
         HashSet<string>? activeFrameBufferNames = null,
         int activeResourceSetSignature = 0,
-        bool constrainToActivePassSet = false)
+        bool constrainToActivePassSet = false,
+        bool deferReusedImageMetadataCommit = false)
+    {
+        // Build the next global generation in a thread-local staging state. This
+        // prevents the render thread from publishing planner, allocator, barriers,
+        // graph and signatures one field at a time while worker readers retain the
+        // previously published generation.
+        if (!HasThreadResourcePlannerRuntimeState)
+        {
+            ResourcePlannerRuntimeState previousState = CaptureResourcePlannerRuntimeState();
+            ResourcePlannerRuntimeState pendingState;
+            using (ThreadResourcePlannerRuntimeStateScope scope = EnterThreadResourcePlannerRuntimeStateScope(in previousState))
+            {
+                UpdateResourcePlannerFromContextCore(
+                    context,
+                    activePassIndices,
+                    activeFrameBufferNames,
+                    activeResourceSetSignature,
+                    constrainToActivePassSet,
+                    deferReusedImageMetadataCommit: true);
+                pendingState = scope.CaptureCurrent(this);
+            }
+
+            if (ReferenceEquals(pendingState.ResourcePlanner, previousState.ResourcePlanner) &&
+                ReferenceEquals(pendingState.ResourceAllocator, previousState.ResourceAllocator) &&
+                ReferenceEquals(pendingState.BarrierPlanner, previousState.BarrierPlanner) &&
+                ReferenceEquals(pendingState.CompiledRenderGraph, previousState.CompiledRenderGraph) &&
+                pendingState.ResourcePlannerSignature == previousState.ResourcePlannerSignature &&
+                pendingState.ResourceAllocationSignature == previousState.ResourceAllocationSignature &&
+                pendingState.ResourcePlannerRevision == previousState.ResourcePlannerRevision &&
+                pendingState.FailedResourcePlannerSignature == previousState.FailedResourcePlannerSignature &&
+                pendingState.FailedResourceAllocationSignature == previousState.FailedResourceAllocationSignature &&
+                pendingState.FailedResourceAllocationTimestamp == previousState.FailedResourceAllocationTimestamp &&
+                pendingState.HasResourcePlannerFastPathKey == previousState.HasResourcePlannerFastPathKey &&
+                pendingState.HasBarrierPlanFastPathKey == previousState.HasBarrierPlanFastPathKey)
+            {
+                return;
+            }
+
+            PublishResourcePlannerRuntimeState(pendingState, commitReusedImageMetadata: true);
+            _renderGraphRuntime.PublishPlan(
+                pendingState.ResourcePlannerRevision,
+                pendingState.CompiledRenderGraph,
+                pendingState.BarrierPlanner);
+            return;
+        }
+
+        UpdateResourcePlannerFromContextCore(
+            context,
+            activePassIndices,
+            activeFrameBufferNames,
+            activeResourceSetSignature,
+            constrainToActivePassSet,
+            deferReusedImageMetadataCommit);
+    }
+
+    private void UpdateResourcePlannerFromContextCore(
+        in FrameOpContext context,
+        HashSet<int>? activePassIndices,
+        HashSet<string>? activeFrameBufferNames,
+        int activeResourceSetSignature,
+        bool constrainToActivePassSet,
+        bool deferReusedImageMetadataCommit)
     {
         if (!IsDeviceOperational)
             return;
@@ -130,7 +192,8 @@ public unsafe partial class VulkanRenderer
         if (pendingAllocator is not null)
         {
             ActiveResourceAllocator = pendingAllocator;
-            pendingAllocator.CommitReusedPhysicalImageMetadata();
+            if (!deferReusedImageMetadataCommit)
+                pendingAllocator.CommitReusedPhysicalImageMetadata();
         }
 
         CommitPhysicalAllocatorPlan(
@@ -148,7 +211,13 @@ public unsafe partial class VulkanRenderer
         ActiveResourcePlannerSignatureBreakdown = signatureBreakdown;
         ActiveResourcePlannerRevision++;
         if (!HasThreadResourcePlannerRuntimeState)
-            _renderGraphRuntime.PublishPlan();
+        {
+            ResourcePlannerRuntimeState currentState = CaptureResourcePlannerRuntimeState();
+            _renderGraphRuntime.PublishPlan(
+                currentState.ResourcePlannerRevision,
+                currentState.CompiledRenderGraph,
+                currentState.BarrierPlanner);
+        }
         RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
             new FrameOutputWorkTelemetry(
                 PhysicalPlanGenerations: 1,

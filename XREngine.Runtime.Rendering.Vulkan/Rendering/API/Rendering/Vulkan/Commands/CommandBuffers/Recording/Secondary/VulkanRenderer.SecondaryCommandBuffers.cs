@@ -16,7 +16,7 @@ namespace XREngine.Rendering.Vulkan
     {
         private bool TryEnsureMutableDynamicUiSecondaryCommandBuffer(
             uint imageIndex,
-            CommandBufferCacheVariant variant,
+            PrimaryCommandArtifactOwner variant,
             out CommandBuffer secondaryCommandBuffer)
         {
             secondaryCommandBuffer = variant.DynamicUiSecondaryCommandBuffer;
@@ -70,12 +70,13 @@ namespace XREngine.Rendering.Vulkan
 
         private bool RecordDynamicUiBatchTextSecondaryCommandBuffer(
             uint imageIndex,
-            CommandBufferCacheVariant variant,
+            PrimaryCommandArtifactOwner variant,
             FrameOp[] dynamicUiBatchTextOps,
             ulong dynamicUiBatchTextSignature,
             bool forceRecord = false,
             bool includeDepthAttachment = true)
         {
+            forceRecord |= FreshSerialRecordingEnabled;
             if (dynamicUiBatchTextOps.Length == 0)
             {
                 variant.DynamicUiOpCount = 0;
@@ -331,6 +332,7 @@ namespace XREngine.Rendering.Vulkan
             int recordedDrawCount = 0;
             try
             {
+                ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.DynamicUiSecondary");
                 if (Api!.BeginCommandBuffer(secondaryCommandBuffer, ref beginInfo) != Result.Success)
                     throw new Exception("Failed to begin dynamic UI text secondary command buffer.");
 
@@ -464,7 +466,7 @@ namespace XREngine.Rendering.Vulkan
             int dynamicUiBatchTextOpCount,
             ImageLayout initialSwapchainLayout,
             CommandBuffer predecessorCommandBuffer,
-            CommandBufferCacheVariant? dynamicUiBatchTextVariant,
+            PrimaryCommandArtifactOwner? dynamicUiBatchTextVariant,
             FrameOp[] dynamicUiBatchTextOps,
             ulong dynamicUiBatchTextSignature,
             out CommandBuffer overlayCommandBuffer)
@@ -535,6 +537,7 @@ namespace XREngine.Rendering.Vulkan
                     Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
                 };
 
+                ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.ImGuiSecondary");
                 if (Api.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
                     throw new InvalidOperationException("Failed to begin dynamic UI text overlay command buffer.");
 
@@ -695,13 +698,24 @@ namespace XREngine.Rendering.Vulkan
             CommandChain chain = batch.Chains[chainIndex];
             ref readonly VulkanPreparedCommandChain preparedChain =
                 ref batch.PreparedFrame.GetCommandChain(chainIndex);
-            if (!preparedChain.Matches(chain))
+            RenderPacket packet = batch.PreparedFrame.GetPacketForEncoding(preparedChain);
+            if (!preparedChain.Matches(chain, packet))
             {
                 throw new InvalidOperationException(
                     $"Prepared Vulkan command-chain input became stale before encoding. " +
                     $"key={preparedChain.Key} source={preparedChain.SourceStartIndex}+" +
                     $"{preparedChain.SourceCount} artifactGeneration=" +
                     $"{preparedChain.WritableArtifact.ArtifactGeneration}.");
+            }
+
+            // Read and validate the frame-slot-owned packet before touching
+            // native state. Prepared draws remain the encoder's compact data
+            // stream, while this packet is the immutable authority that bound
+            // the stream to its exact native dependency key.
+            if (packet.DrawCount != preparedChain.SourceCount)
+            {
+                throw new InvalidOperationException(
+                    "Prepared mesh command-chain packet draw range does not match the scheduled source range.");
             }
 
             VulkanRecordedCommandInheritance inheritance =
@@ -802,6 +816,7 @@ namespace XREngine.Rendering.Vulkan
             // render thread. Workers consume only immutable prepared draw state and have
             // no planner scope to inspect or publish.
 
+            ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.PreparedWorkerSecondary");
             if (Api.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
                 throw new InvalidOperationException("Failed to begin Vulkan worker mesh command-chain secondary command buffer.");
 
@@ -867,6 +882,7 @@ namespace XREngine.Rendering.Vulkan
                 inheritance.Samples,
                 inheritance.LocalReadSignature,
                 inheritance.RenderingFlags);
+            PublishPreparedCommandChainAuthority(chain, preparedChain.Authority);
             MarkCommandChainSecondaryCommandBufferRecorded(chain);
         }
 
@@ -875,6 +891,8 @@ namespace XREngine.Rendering.Vulkan
             uint imageIndex,
             HashSet<nint> executedCommandChainSecondaryHandles,
             FrameOp[] ops,
+            CommandChainKey[]? scheduledKeysByOpIndex,
+            Dictionary<CommandChainKey, CommandChain>? scheduledCache,
             int startIndex,
             VulkanSecondaryRecordingBucket bucket,
             int resolvedPassIndex,
@@ -897,23 +915,19 @@ namespace XREngine.Rendering.Vulkan
             if (!contract.IsEligible)
                 return false;
 
-            if (CommandChainsEnabledForCurrentRecording)
-            {
-                ExecutePrimaryOwnedSecondaryCommandBufferBatch(
+            if (CommandChainsEnabledForCurrentRecording &&
+                TryExecutePrimaryOwnedSecondaryCommandBufferBatch(
                     primaryCommandBuffer,
                     label,
                     imageIndex,
                     ops,
+                    scheduledKeysByOpIndex,
+                    scheduledCache,
                     startIndex,
                     bucket.Count,
                     executedCommandChainSecondaryHandles,
-                    contract.QueryInheritance,
-                    (relativeIndex, secondary) =>
-                    {
-                        int opIndex = startIndex + relativeIndex;
-                        FrameOp runOp = ops[opIndex];
-                        RecordFrameOpInSecondary(secondary, imageIndex, runOp, opIndex);
-                    });
+                    contract.QueryInheritance))
+            {
                 return true;
             }
 
@@ -926,25 +940,36 @@ namespace XREngine.Rendering.Vulkan
                     label,
                     imageIndex,
                     contract.QueryInheritance,
-                    secondary => RecordFrameOpInSecondary(secondary, imageIndex, runOp, opIndex));
+                    secondary => RecordFrameOpInSecondary(secondary, imageIndex, runOp, opIndex, packet: null));
             }
 
             return true;
         }
 
-        private void ExecutePrimaryOwnedSecondaryCommandBufferBatch(
+        private bool TryExecutePrimaryOwnedSecondaryCommandBufferBatch(
             CommandBuffer primaryCommandBuffer,
             string label,
             uint imageIndex,
             FrameOp[] ops,
+            CommandChainKey[]? scheduledKeysByOpIndex,
+            Dictionary<CommandChainKey, CommandChain>? scheduledCache,
             int startIndex,
             int count,
             HashSet<nint> executedCommandChainSecondaryHandles,
-            VulkanQuerySecondaryInheritanceContract queryInheritance,
-            Action<int, CommandBuffer> recorder)
+            VulkanQuerySecondaryInheritanceContract queryInheritance)
         {
-            if (count <= 0)
-                return;
+            if (count <= 0 || scheduledKeysByOpIndex is null || scheduledCache is null)
+                return false;
+            for (int i = 0; i < count; i++)
+            {
+                int opIndex = startIndex + i;
+                if ((uint)opIndex >= (uint)scheduledKeysByOpIndex.Length ||
+                    scheduledKeysByOpIndex[opIndex].ChainOrdinal == -1 ||
+                    !scheduledCache.TryGetValue(scheduledKeysByOpIndex[opIndex], out CommandChain? scheduled) ||
+                    scheduled.SourceStartIndex != opIndex || scheduled.SourceCount != 1 ||
+                    scheduled.PacketSnapshot is not { IsSealed: true })
+                    return false;
+            }
 
             bool primaryLabelActive = false;
             if (CanRecordCommandBufferDebugLabels)
@@ -954,26 +979,13 @@ namespace XREngine.Rendering.Vulkan
 
             CommandBuffer[] secondaryBuffers = ArrayPool<CommandBuffer>.Shared.Rent(count);
             CommandChain[] secondaryChains = ArrayPool<CommandChain>.Shared.Rent(count);
-            Exception? firstError = null;
-            object errorLock = new();
 
             try
             {
-                Dictionary<CommandChainKey, CommandChain> commandChainCache = GetCommandChainCache(imageIndex);
-                int commandBufferImageSlot = unchecked((int)Math.Min(imageIndex, int.MaxValue));
                 for (int i = 0; i < count; i++)
                 {
-                    FrameOp op = ops[startIndex + i];
-                    int primaryOwnedChainOrdinal = HashCode.Combine(startIndex, i, primaryCommandBuffer.Handle, 0x53454342);
-                    CommandChainKey chainKey = new(
-                        commandBufferImageSlot,
-                        BuildRenderViewKey(op, dynamicOverlay: false),
-                        op.PassIndex,
-                        ResolveCommandChainTargetIdentity(op),
-                        0UL,
-                        false,
-                        primaryOwnedChainOrdinal);
-                    CommandChain chain = GetOrCreateCommandChain(commandChainCache, chainKey);
+                    int opIndex = startIndex + i;
+                    CommandChain chain = scheduledCache[scheduledKeysByOpIndex[opIndex]];
                     if (!TryEnsureMutableCommandChainSecondaryCommandBuffer(chain, imageIndex, executedCommandChainSecondaryHandles, out CommandBuffer secondary))
                         throw new InvalidOperationException("Failed to allocate Vulkan primary-owned secondary command buffer.");
 
@@ -985,9 +997,27 @@ namespace XREngine.Rendering.Vulkan
                 {
                     CommandChain chain = secondaryChains[relativeIndex];
                     CommandBuffer secondary = secondaryBuffers[relativeIndex];
+                    RenderPacket packet = chain.PacketSnapshot!;
+                    FrameOp op = ops[packet.SourceStartIndex];
 
                     try
                     {
+                        // Fixed explicit memory barriers have no mutable native
+                        // payload. Their schedule identity and mask are the full
+                        // prepared key, so retain the executable artifact.
+                        ulong preparedSignature = ComputeNonGraphicsSecondaryPreparedSignature(op);
+                        if (op is MemoryBarrierOp &&
+                            chain.StructuralSignature == preparedSignature &&
+                            chain.RecordedArtifact.IsExecutable)
+                            return;
+
+                        if (op is ComputeDispatchOp or ComputeDispatchIndirectOp &&
+                            TryCapturePreparedNonGraphicsComputeKey(op, chain, out VulkanPreparedCommandChainKey currentKey) &&
+                            chain.PreparedKey.IsComplete &&
+                            chain.PreparedKey == currentKey &&
+                            chain.RecordedArtifact.IsExecutable)
+                            return;
+
                         MarkCommandChainSecondaryCommandBufferInvalid(chain);
                         ResetVulkanCommandBufferTracked(secondary);
 
@@ -1014,33 +1044,56 @@ namespace XREngine.Rendering.Vulkan
 
                         beginInfo.PInheritanceInfo = &inheritanceInfo;
 
+                        ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.CommandChainSecondary");
                         if (Api!.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
                             throw new Exception("Failed to begin Vulkan primary-owned secondary command buffer.");
 
                         ResetCommandBufferBindState(secondary);
                         MarkCommandChainSecondaryRecording(chain, secondary);
-                        recorder(relativeIndex, secondary);
+                        CommandBufferRecordingScratch recordingScratch =
+                            _commandBufferRecordingScratch.Value!;
+                        recordingScratch.PreparedComputePayload = null;
+                        int opIndex = packet.SourceStartIndex;
+                        RecordFrameOpInSecondary(
+                            secondary,
+                            imageIndex,
+                            op,
+                            opIndex,
+                            packet);
+                        if (op is ComputeDispatchOp or ComputeDispatchIndirectOp)
+                            chain.PreparedComputePayload =
+                                recordingScratch.PreparedComputePayload;
 
                         if (EndCommandBufferTracked(secondary) != Result.Success)
                             throw new Exception("Failed to end Vulkan primary-owned secondary command buffer.");
 
+                        chain.StructuralSignature = preparedSignature;
+                        if (op is ComputeDispatchOp or ComputeDispatchIndirectOp &&
+                            TryCapturePreparedNonGraphicsComputeKey(op, chain, out VulkanPreparedCommandChainKey preparedKey))
+                        {
+                            VulkanPreparedCommandChainAuthority authority =
+                                chain.PreparedAuthority is { } currentAuthority &&
+                                currentAuthority.PreparedKey == preparedKey
+                                    ? currentAuthority
+                                    : new VulkanPreparedCommandChainAuthority(preparedKey);
+                            PublishPreparedCommandChainAuthority(chain, authority);
+                        }
+                        else if (op is ComputeDispatchOp or ComputeDispatchIndirectOp)
+                            chain.PreparedKey = VulkanPreparedCommandChainKey.Incomplete;
                         MarkCommandChainSecondaryCommandBufferRecorded(chain);
                     }
                     catch (Exception ex)
                     {
-                        lock (errorLock)
-                            firstError ??= ex;
-
                         DestroyCommandChainSecondaryCommandBuffer(chain);
                         secondaryBuffers[relativeIndex] = default;
+                        throw new InvalidOperationException(
+                            $"Failed to record scheduled non-graphics secondary at relative index {relativeIndex}.",
+                            ex);
                     }
                 }
 
                 for (int i = 0; i < count; i++)
                     RecordSecondaryAt(i);
-
-                if (firstError is not null)
-                    throw firstError;
 
                 fixed (CommandBuffer* secondaryPtr = secondaryBuffers)
                     CmdExecuteCommandsTracked(primaryCommandBuffer, (uint)count, secondaryPtr);
@@ -1049,6 +1102,7 @@ namespace XREngine.Rendering.Vulkan
                     if (secondaryBuffers[i].Handle != 0)
                         executedCommandChainSecondaryHandles.Add(secondaryBuffers[i].Handle);
                 }
+                return true;
             }
             finally
             {
@@ -1059,6 +1113,80 @@ namespace XREngine.Rendering.Vulkan
                 if (primaryLabelActive)
                     CmdEndLabel(primaryCommandBuffer);
             }
+        }
+
+        private static ulong ComputeNonGraphicsSecondaryPreparedSignature(FrameOp operation)
+        {
+            FrameOpSignatureHasher hash = new();
+            hash.Add(operation.PassIndex);
+            hash.Add((int)operation.Kind);
+            switch (operation)
+            {
+                case MemoryBarrierOp barrier: hash.Add((int)barrier.Mask); break;
+                case ComputeDispatchOp dispatch:
+                    hash.Add(dispatch.Program?.BindingId ?? 0u); hash.Add(dispatch.Program?.LinkGeneration ?? 0UL);
+                    hash.Add(dispatch.GroupsX); hash.Add(dispatch.GroupsY); hash.Add(dispatch.GroupsZ); break;
+                case ComputeDispatchIndirectOp indirect:
+                    hash.Add(indirect.Program?.BindingId ?? 0u); hash.Add(indirect.Program?.LinkGeneration ?? 0UL);
+                    hash.Add(ComputeCommandBufferDataBufferSignature(indirect.ArgumentOwner));
+                    hash.Add(indirect.ArgumentBuffer.Handle);
+                    hash.Add(indirect.ArgumentOffset);
+                    break;
+            }
+            return hash.ToHash();
+        }
+
+        private bool TryCapturePreparedNonGraphicsComputeKey(
+            FrameOp operation,
+            CommandChain chain,
+            out VulkanPreparedCommandChainKey key)
+        {
+            key = VulkanPreparedCommandChainKey.Incomplete;
+            VulkanPreparedComputePayload? payload = chain.PreparedComputePayload;
+            VkRenderProgram? program = operation switch
+            {
+                ComputeDispatchOp direct => direct.Program,
+                ComputeDispatchIndirectOp indirect => indirect.Program,
+                _ => null,
+            };
+            if (!payload.HasValue || program is null ||
+                program.ComputePipeline.Handle == 0 || program.PipelineLayout.Handle == 0)
+                return false;
+
+            VulkanRecordedDescriptorSetIdentityBuffer sets =
+                CaptureRecordedDescriptorSetIdentities(payload.Value.DescriptorSets, default);
+            if (!sets.IsComplete)
+                return false;
+            ulong pipelineGeneration = GetCurrentVulkanResourceGeneration(ObjectType.Pipeline, program.ComputePipeline.Handle);
+            ulong layoutGeneration = GetCurrentVulkanResourceGeneration(ObjectType.PipelineLayout, program.PipelineLayout.Handle);
+            if (pipelineGeneration == 0 || layoutGeneration == 0)
+                return false;
+            FrameOpSignatureHasher pipeline = new();
+            pipeline.Add(program.BindingId); pipeline.Add(program.LinkGeneration);
+            pipeline.Add(program.ComputePipeline.Handle); pipeline.Add(pipelineGeneration);
+            pipeline.Add(program.PipelineLayout.Handle); pipeline.Add(layoutGeneration);
+            DescriptorBindingSnapshot descriptorSnapshot =
+                CreateDescriptorSnapshot(operation);
+            ResourcePlanSnapshot resourceSnapshot = new(
+                Revision: chain.ResourcePlanRevision,
+                PhysicalImageSignature: 0UL,
+                FramebufferSignature: 0UL,
+                PipelineGeneration: ResolvePipelineGeneration(operation),
+                RenderArea: 0UL,
+                QueueFamily: operation.Context.SubmissionQueueFamily,
+                NativeTarget: default);
+            RecordedPacketKey packetKey = CaptureRecordedPacketKey(
+                operation,
+                nativeTarget: default,
+                descriptorSnapshot,
+                resourceSnapshot) with
+            {
+                DescriptorSets = sets,
+            };
+            key = new VulkanPreparedCommandChainKey(
+                pipeline.ToHash(), ComputeRecordedDescriptorSetIdentityHash(sets), sets.Count,
+                packetKey, IsComplete: packetKey.IsComplete);
+            return key.IsComplete;
         }
 
         internal static bool TryGetSecondaryBucketForStart(
@@ -1084,14 +1212,28 @@ namespace XREngine.Rendering.Vulkan
             return false;
         }
 
-        private void RecordFrameOpInSecondary(CommandBuffer secondaryCommandBuffer, uint imageIndex, FrameOp runOp, int opIndex)
+        private void RecordFrameOpInSecondary(
+            CommandBuffer secondaryCommandBuffer,
+            uint imageIndex,
+            FrameOp runOp,
+            int opIndex,
+            RenderPacket? packet)
         {
+            if (packet is not null &&
+                (!packet.IsSealed || packet.SourceStartIndex != opIndex || packet.SourceCount != 1))
+                throw new InvalidOperationException("Non-graphics secondary recording received a stale render-packet snapshot.");
             using var pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(runOp.Context.PipelineInstance);
             using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(runOp.Context);
             switch (runOp)
             {
                 case ComputeDispatchOp computeDispatchOp:
                     RecordComputeDispatchOp(secondaryCommandBuffer, imageIndex, computeDispatchOp, opIndex);
+                    break;
+                case ComputeDispatchIndirectOp computeDispatchIndirectOp:
+                    RecordComputeDispatchIndirectOp(secondaryCommandBuffer, imageIndex, computeDispatchIndirectOp);
+                    break;
+                case MemoryBarrierOp memoryBarrierOp:
+                    EmitMemoryBarrierMask(secondaryCommandBuffer, memoryBarrierOp.Mask);
                     break;
                 case BufferCopyOp bufferCopyOp:
                     RecordBufferCopyOp(secondaryCommandBuffer, bufferCopyOp);
@@ -1189,6 +1331,7 @@ namespace XREngine.Rendering.Vulkan
                     &inheritedSamplerHeapInfo,
                     &inheritedResourceHeapInfo);
 
+                ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.ScheduledSecondary");
                 if (Api!.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
                     throw new Exception("Failed to begin Vulkan secondary command buffer.");
 

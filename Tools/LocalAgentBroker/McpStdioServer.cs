@@ -159,6 +159,9 @@ internal sealed class McpStdioServer(
             status = AgentRunStatus.Queued,
             requestedModel = request.RequestedModel,
             actualModel = string.Empty,
+            requestedReasoningEffort = request.ReasoningEffort,
+            requestedTextVerbosity = request.TextVerbosity,
+            maxOutputTokens = request.Budget.MaxOutputTokens,
             useBackgroundMode = request.UseBackgroundMode,
             message = "Run queued. Poll get_agent_run until status is terminal.",
         };
@@ -201,7 +204,7 @@ internal sealed class McpStdioServer(
             ["serverInfo"] = new JsonObject
             {
                 ["name"] = "XREngine.LocalAgentBroker",
-                ["version"] = "0.3.0",
+                ["version"] = "0.5.0",
             },
             ["capabilities"] = new JsonObject
             {

@@ -14,6 +14,7 @@ namespace XREngine.Rendering.Vulkan
         private const int RetiredPipelineDrainLimitPerFrame = 8;
         private const int RetiredQueryPoolDrainLimitPerFrame = 32;
         private const int RetiredCommandBufferDrainLimitPerFrame = 128;
+        private const int RetiredCommandPoolDrainLimitPerFrame = 16;
         private const int RetiredBufferViewDrainLimitPerFrame = 64;
         private const int RetiredFramebufferDrainLimitPerFrame = 64;
         private const int RetiredBufferDrainLimitPerFrame = 256;
@@ -34,6 +35,73 @@ namespace XREngine.Rendering.Vulkan
                 resourceKind,
                 frameSlot,
                 remaining);
+        }
+
+        private void RetireCommandPool(
+            CommandPool commandPool,
+            in VulkanRetirementTicket ticket)
+        {
+            int frameSlot = CurrentDesktopFrameSlot;
+            lock (_resourceRetirementQueue.SyncRoot)
+            {
+                VulkanResourceRetirementQueue.TryEnqueueUniqueNoLock(
+                    frameSlot,
+                    commandPool.Handle,
+                    new RetiredCommandPool(commandPool, ticket),
+                    _resourceRetirementQueue.CommandPools,
+                    _resourceRetirementQueue.CommandPoolHandles,
+                    _resourceRetirementQueue.AllCommandPoolHandles);
+            }
+        }
+
+        private void DrainRetiredCommandPools(
+            int frameSlot,
+            int maxItems = RetiredCommandPoolDrainLimitPerFrame)
+        {
+            List<RetiredCommandPool> list =
+                _resourceRetirementQueue.CommandPools[frameSlot];
+            int remaining;
+            RetiredCommandPool[] ready;
+            lock (_resourceRetirementQueue.SyncRoot)
+            {
+                int capacity = GetRetiredResourceDrainCount(list.Count, maxItems);
+                if (capacity == 0)
+                    return;
+
+                List<RetiredCommandPool> drain = new(capacity);
+                for (int index = 0; index < list.Count && drain.Count < capacity;)
+                {
+                    RetiredCommandPool candidate = list[index];
+                    if (!IsVulkanRetirementReady(candidate.Ticket) ||
+                        !AreCommandPoolChildrenRetirementReady(candidate.CommandPool))
+                    {
+                        index++;
+                        continue;
+                    }
+
+                    drain.Add(candidate);
+                    list.RemoveAt(index);
+                    VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
+                        frameSlot,
+                        candidate.CommandPool.Handle,
+                        _resourceRetirementQueue.CommandPoolHandles,
+                        _resourceRetirementQueue.AllCommandPoolHandles);
+                }
+
+                ready = [.. drain];
+                remaining = list.Count;
+            }
+
+            ReportRetiredResourceBacklog("command pools", frameSlot, remaining);
+            for (int index = 0; index < ready.Length; index++)
+            {
+                CommandPool pool = ready[index].CommandPool;
+                DestroyCommandPoolNativeHostSynchronized(pool);
+                CompleteCommandPoolChildDestructions(pool);
+                CompleteVulkanResourceDestruction(
+                    ObjectType.CommandPool,
+                    pool.Handle);
+            }
         }
 
         internal void RetirePipeline(Pipeline pipeline)
@@ -578,7 +646,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             int commandChainSecondaryCount = InvalidateCommandChainSecondaryCommandBuffersForDescriptorReferenceRelease();
-            MarkOpenXrPrimaryCommandBufferVariantsDirty();
+            MarkOpenXrPrimaryCommandArtifactOwnersDirty();
             MarkCommandBuffersDirty();
 
             Debug.VulkanEvery(
@@ -1387,6 +1455,8 @@ namespace XREngine.Rendering.Vulkan
                 for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
                     DrainRetiredCommandBuffers(i, int.MaxValue);
                 for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+                    DrainRetiredCommandPools(i, int.MaxValue);
+                for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
                     DrainRetiredDescriptorSets(i, int.MaxValue);
                 for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
                     DrainRetiredDescriptorPools(i, int.MaxValue);
@@ -1394,6 +1464,8 @@ namespace XREngine.Rendering.Vulkan
                     DrainRetiredPipelines(i, int.MaxValue);
                 for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
                     DrainRetiredPipelineLayouts(i, int.MaxValue);
+                for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+                    DrainRetiredDescriptorSetLayouts(i, int.MaxValue);
                 for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
                     DrainRetiredQueryPools(i, int.MaxValue);
                 for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
@@ -1440,6 +1512,8 @@ namespace XREngine.Rendering.Vulkan
             for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
                 DrainRetiredCommandBuffers(i, int.MaxValue);
             for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+                DrainRetiredCommandPools(i, int.MaxValue);
+            for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
                 DrainRetiredDescriptorSets(i, int.MaxValue);
             for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
                 DrainRetiredDescriptorPools(i, int.MaxValue);
@@ -1447,6 +1521,8 @@ namespace XREngine.Rendering.Vulkan
                 DrainRetiredPipelines(i, int.MaxValue);
             for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
                 DrainRetiredPipelineLayouts(i, int.MaxValue);
+            for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+                DrainRetiredDescriptorSetLayouts(i, int.MaxValue);
             for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
                 DrainRetiredQueryPools(i, int.MaxValue);
             for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)

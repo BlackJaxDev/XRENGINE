@@ -41,7 +41,15 @@ namespace XREngine.Rendering.Vulkan
             PreparePrimaryCommandEncoding(ref recordingState);
             using FrameOpResourcePlannerRecordingScope frameOpResourcePlannerRecordingScope =
                 EnterFrameOpResourcePlannerRecordingScope();
-            _ = TryActivateFrameOpResourcePlannerState(recordingState.InitialContext);
+            FrameOpResourcePlannerSwitchingState plannerSwitchingState =
+                ActiveFrameOpResourcePlannerSwitchingState;
+            if (plannerSwitchingState.ActiveKeys.Count > 0 &&
+                FrameOpContextHasPlannerResources(recordingState.InitialContext) &&
+                !TryActivateFrameOpResourcePlannerState(recordingState.InitialContext))
+            {
+                throw new VulkanPlanPreconditionException(
+                    "Primary command encoding could not activate the sealed planner state for its initial frame-op context.");
+            }
             InitializePrimaryCommandEncodingState(ref recordingState);
 
             try
@@ -52,6 +60,12 @@ namespace XREngine.Rendering.Vulkan
 
                 if (!EndPrimaryCommandBuffer(ref recordingState))
                     return false;
+            }
+            catch (VulkanPlanPreconditionException exception)
+            {
+                recordingState.RecordingDeferredReason = exception.Message;
+                _ = TryAbandonCommandBufferRecording(recordingState.CommandBuffer);
+                return false;
             }
             finally
             {

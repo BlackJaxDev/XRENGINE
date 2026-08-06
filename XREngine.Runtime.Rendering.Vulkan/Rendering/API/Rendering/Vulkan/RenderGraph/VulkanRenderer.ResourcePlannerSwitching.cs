@@ -75,19 +75,21 @@ public unsafe partial class VulkanRenderer
 
         if (VulkanFrameDiagnosticsTraceEnabled)
         {
+            ResourcePlannerRuntimeState plannerState = CaptureResourcePlannerRuntimeState();
             Debug.Vulkan(
                 "[VulkanResourcePlanner] Lazy physical-image rebuild resource='{0}' registry=0x{1:X8} owner={2} revision={3} textures={4} buffers={5}.",
                 resourceName,
                 ResolveFrameOpContextResourceRegistrySignature(context),
-                ResourceAllocator.OwnershipId,
-                ResourcePlannerRevision,
-                ResourceAllocator.LogicalTextureAllocations.Count,
-                ResourceAllocator.LogicalBufferAllocations.Count);
+                plannerState.ResourceAllocator.OwnershipId,
+                plannerState.ResourcePlannerRevision,
+                plannerState.ResourceAllocator.LogicalTextureAllocations.Count,
+                plannerState.ResourceAllocator.LogicalBufferAllocations.Count);
         }
 
         UpdateResourcePlannerFromContext(context);
 
-        if (ResourceAllocator.TryGetPhysicalGroupForResource(resourceName, out group) &&
+        ResourcePlannerRuntimeState updatedPlannerState = CaptureResourcePlannerRuntimeState();
+        if (updatedPlannerState.ResourceAllocator.TryGetPhysicalGroupForResource(resourceName, out group) &&
             group is not null)
         {
             if (!group.TryEnsureAllocated(this, out string allocationFailureReason))
@@ -123,15 +125,8 @@ public unsafe partial class VulkanRenderer
         }
 
         FrameOpContext primary = SelectPrimaryPlannerContext(ops);
-        RenderResourceRegistry? mergedRegistry = BuildMergedFrameOpRegistry(ops, primary, frameOpsSignature);
-        FrameOpContext plannerContext = mergedRegistry is null
-            ? primary
-            : RefreshFrameOpContextRecordingFingerprint(primary with
-            {
-                ResourceRegistry = mergedRegistry,
-                DescriptorGeneration = ResolveFrameOpContextDescriptorGeneration(mergedRegistry),
-                ResourceRegistrySignatureSnapshot = ComputeResourceRegistrySignature(mergedRegistry),
-            });
+        RejectMixedFrameOpPlannerContexts(ops);
+        FrameOpContext plannerContext = primary;
 
         plannerContext = RefreshPlannerExtentsFromLiveContext(plannerContext, ops);
 
@@ -300,15 +295,9 @@ public unsafe partial class VulkanRenderer
 
         if (keys.Count > 1)
         {
-            Debug.VulkanEvery(
-                $"Vulkan.ResourcePlanner.MergedPhysicalPlan.{GetHashCode()}",
-                TimeSpan.FromSeconds(1),
-                "[VulkanResourcePlanner] Recording {0} frame-op contexts against one merged physical allocation plan. Revision={1}",
-                keys.Count,
-                ResourcePlannerRevision);
             keys.Clear();
-            PruneFrameOpResourcePlannerStatesToCapacity(switchingState);
-            return ResourcePlannerRevision;
+            throw new VulkanPlanPreconditionException(
+                "Frame-plan preparation rejected mixed Vulkan planner contexts; independent partitions are required.");
         }
 
         VulkanFrameOpPlannerStateKey key = keys[0];
@@ -336,6 +325,222 @@ public unsafe partial class VulkanRenderer
         }
 
         return preparedState.ResourcePlannerRevision;
+    }
+
+    private bool TryValidateFrameOpPlannerContextSet(
+        FrameOp[] operations,
+        out string failureReason)
+    {
+        failureReason = string.Empty;
+        if (!FrameOpResourcePlannerSwitchingEnabled || operations.Length == 0)
+            return true;
+
+        List<VulkanFrameOpPlannerStateKey> keys = _frameOpPlannerStateKeyScratch;
+        keys.Clear();
+        CollectFrameOpPlannerStateKeys(operations, keys);
+        int contextCount = keys.Count;
+        keys.Clear();
+        if (contextCount <= MaxFrameOpResourcePlannerSwitchingStates)
+            return true;
+
+        failureReason =
+            $"frame-plan rejected: {contextCount} Vulkan planner contexts exceed the bounded independent-plan capacity {MaxFrameOpResourcePlannerSwitchingStates}";
+        RecordFrameOpPlannerContextRejection(contextCount, failureReason);
+        return false;
+    }
+
+    private void RejectMixedFrameOpPlannerContexts(FrameOp[] operations)
+    {
+        if (!FrameOpResourcePlannerSwitchingEnabled || operations.Length == 0)
+            return;
+
+        List<VulkanFrameOpPlannerStateKey> keys = _frameOpPlannerStateKeyScratch;
+        keys.Clear();
+        CollectFrameOpPlannerStateKeys(operations, keys);
+        int contextCount = keys.Count;
+        keys.Clear();
+        if (contextCount <= 1)
+            return;
+
+        throw new VulkanPlanPreconditionException(
+            $"Frame-plan preparation rejected {contextCount} mixed Vulkan planner contexts; independent partitions are required.");
+    }
+
+    private bool TryPrepareIndependentFrameOpResourcePlannerStates(
+        FrameOp[] operations,
+        ulong frameOperationsSignature,
+        string refreshReason,
+        out bool handled,
+        out ulong plannerRevision,
+        out string failureReason)
+    {
+        handled = false;
+        plannerRevision = CaptureResourcePlannerRuntimeState().ResourcePlannerRevision;
+        failureReason = string.Empty;
+        if (!FrameOpResourcePlannerSwitchingEnabled || operations.Length == 0)
+            return true;
+
+        List<VulkanFrameOpPlannerStateKey> keys = _frameOpPlannerStateKeyScratch;
+        keys.Clear();
+        CollectFrameOpPlannerStateKeys(operations, keys);
+        if (keys.Count <= 1)
+        {
+            keys.Clear();
+            return true;
+        }
+
+        handled = true;
+        if (keys.Count > MaxFrameOpResourcePlannerSwitchingStates)
+        {
+            failureReason =
+                $"frame-plan rejected: {keys.Count} Vulkan planner contexts exceed independent-plan capacity {MaxFrameOpResourcePlannerSwitchingStates}";
+            keys.Clear();
+            return false;
+        }
+
+        // Preserve the sorted key set while the shared scratch list is reused by
+        // the single-context preparation helpers. The bounded renderer-owned
+        // buffer avoids a per-frame array allocation.
+        int planKeyCount = keys.Count;
+        for (int keyIndex = 0; keyIndex < planKeyCount; keyIndex++)
+            _frameOpPlannerPartitionKeyBuffer[keyIndex] = keys[keyIndex];
+        keys.Clear();
+        ResourcePlannerRuntimeState previousState = CaptureResourcePlannerRuntimeState();
+        FrameOpResourcePlannerSwitchingState switchingState =
+            ActiveFrameOpResourcePlannerSwitchingState;
+        InvalidatePreparedFrameOpResourcePlan(switchingState);
+
+        for (int keyIndex = 0; keyIndex < planKeyCount; keyIndex++)
+        {
+            VulkanFrameOpPlannerStateKey key =
+                _frameOpPlannerPartitionKeyBuffer[keyIndex];
+            FrameOp[] partition = GetFrameOpPlannerPartition(
+                operations,
+                frameOperationsSignature,
+                key);
+            ulong partitionSignature = ComputeFrameOpPlannerPartitionSignature(
+                frameOperationsSignature,
+                key);
+
+            using FrameOpResourcePlannerPreparationScope preparationScope =
+                new(this, partition);
+            FrameOpContext plannerContext =
+                PrepareResourcePlannerForFrameOps(partition, partitionSignature);
+            if (TryDescribeRecentResourceAllocationFailure(out failureReason) ||
+                !TryRefreshFrameOpResourceWrappers(
+                    partition,
+                    plannerContext,
+                    refreshReason,
+                    AllowSynchronousResourceUploads,
+                    out failureReason))
+            {
+                RestoreUsableFrameOpPlannerState(previousState);
+                return false;
+            }
+
+            preparationScope.PublishCurrentState();
+            _ = PrepareFrameOpResourcePlannerStatesForFrameOps(
+                partition,
+                partitionSignature);
+            if (!switchingState.States.ContainsKey(key))
+            {
+                failureReason =
+                    $"frame-plan preparation did not publish context-local planner state pipe={key.PipelineIdentity} viewport={key.ViewportIdentity}";
+                RestoreUsableFrameOpPlannerState(previousState);
+                return false;
+            }
+        }
+
+        switchingState.ActiveKeys.Clear();
+        for (int keyIndex = 0; keyIndex < planKeyCount; keyIndex++)
+        {
+            VulkanFrameOpPlannerStateKey key =
+                _frameOpPlannerPartitionKeyBuffer[keyIndex];
+            switchingState.ActiveKeys.Add(key);
+            MarkFrameOpResourcePlannerStateUsed(switchingState, key);
+        }
+
+        ResetActiveFrameOpResourcePlannerState(switchingState);
+        switchingState.SwitchingActive = false;
+        switchingState.RecordingScopeActive = false;
+        plannerRevision = ComputeActiveFrameOpResourcePlannerStatesSignature();
+        RestoreUsableFrameOpPlannerState(previousState);
+        AssertFrameOpPlannerAllocatorOwnership(switchingState);
+        return true;
+    }
+
+    private void RestoreUsableFrameOpPlannerState(in ResourcePlannerRuntimeState state)
+    {
+        RestoreResourcePlannerRuntimeState(
+            state.ResourceAllocator is not null && state.ResourceAllocator.IsRetired
+                ? ResourcePlannerRuntimeState.CreateEmpty()
+                : state);
+    }
+
+    private FrameOp[] GetFrameOpPlannerPartition(
+        FrameOp[] operations,
+        ulong frameOperationsSignature,
+        in VulkanFrameOpPlannerStateKey key)
+    {
+        if (_frameOpPlannerPartitionSignature != frameOperationsSignature)
+        {
+            _frameOpPlannerPartitionCache.Clear();
+            _frameOpPlannerPartitionSignature = frameOperationsSignature;
+        }
+
+        if (_frameOpPlannerPartitionCache.TryGetValue(key, out FrameOp[]? cached))
+            return cached;
+
+        int count = 0;
+        for (int index = 0; index < operations.Length; index++)
+            if (FrameOpContextMatchesPlannerStateKey(operations[index].Context, key))
+                count++;
+
+        FrameOp[] partition = new FrameOp[count];
+        int writeIndex = 0;
+        for (int index = 0; index < operations.Length; index++)
+        {
+            FrameOp operation = operations[index];
+            if (FrameOpContextMatchesPlannerStateKey(operation.Context, key))
+                partition[writeIndex++] = operation;
+        }
+
+        _frameOpPlannerPartitionCache[key] = partition;
+        return partition;
+    }
+
+    private static ulong ComputeFrameOpPlannerPartitionSignature(
+        ulong frameOperationsSignature,
+        in VulkanFrameOpPlannerStateKey key)
+    {
+        FrameOpSignatureHasher hash = new();
+        hash.Add(frameOperationsSignature);
+        hash.Add((int)key.ContextKind);
+        hash.Add(key.PipelineIdentity);
+        hash.Add(key.ViewportIdentity);
+        hash.Add(key.DisplayWidth);
+        hash.Add(key.DisplayHeight);
+        hash.Add(key.InternalWidth);
+        hash.Add(key.InternalHeight);
+        hash.Add(key.OutputFrameBufferIdentity);
+        hash.Add(key.OutputTargetIdentity);
+        hash.Add(key.ResourceRegistrySignature);
+        hash.Add(key.PassMetadataSignature);
+        hash.Add(key.ResourceGeneration);
+        hash.Add(key.SubmissionQueueFamily);
+        return hash.ToHash();
+    }
+
+    private void RecordFrameOpPlannerContextRejection(
+        int contextCount,
+        string reason)
+    {
+        Debug.VulkanWarningEvery(
+            $"Vulkan.ResourcePlanner.IncompatibleContextSet.{GetHashCode()}",
+            TimeSpan.FromSeconds(1),
+            "[VulkanResourcePlanner] Rejecting frame before recording. Contexts={0} Reason={1}",
+            contextCount,
+            reason);
     }
 
     private static void ResetActiveFrameOpResourcePlannerState(FrameOpResourcePlannerSwitchingState switchingState)
@@ -1012,9 +1217,11 @@ public unsafe partial class VulkanRenderer
             context.InternalHeight,
             context.OutputFrameBufferIdentity,
             ResolveResourcePlanOutputTargetIdentity(context),
+            context.LogicalViewId,
             ResolveFrameOpContextResourceRegistrySignature(context),
             ComputePassMetadataSignature(context.PassMetadata),
             context.ResourceGeneration,
+            context.DescriptorGeneration,
             context.SubmissionQueueFamily);
 
     internal static VulkanInteractiveResizePlannerContextKey BuildInteractiveResizePlannerContextKey(
@@ -1059,9 +1266,11 @@ public unsafe partial class VulkanRenderer
             context.InternalHeight == key.InternalHeight &&
             context.OutputFrameBufferIdentity == key.OutputFrameBufferIdentity &&
             ResolveResourcePlanOutputTargetIdentity(context) == key.OutputTargetIdentity &&
+            context.LogicalViewId == key.LogicalViewId &&
             ResolveFrameOpContextResourceRegistrySignature(context) == key.ResourceRegistrySignature &&
             ComputePassMetadataSignature(context.PassMetadata) == key.PassMetadataSignature &&
             context.ResourceGeneration == key.ResourceGeneration &&
+            context.DescriptorGeneration == key.DescriptorGeneration &&
             context.SubmissionQueueFamily == key.SubmissionQueueFamily;
 
     private static bool FrameOpContextMatchesPlannerStateKeyIgnoringRegistry(
@@ -1076,8 +1285,10 @@ public unsafe partial class VulkanRenderer
             context.InternalHeight == key.InternalHeight &&
             context.OutputFrameBufferIdentity == key.OutputFrameBufferIdentity &&
             ResolveResourcePlanOutputTargetIdentity(context) == key.OutputTargetIdentity &&
+            context.LogicalViewId == key.LogicalViewId &&
             ComputePassMetadataSignature(context.PassMetadata) == key.PassMetadataSignature &&
             context.ResourceGeneration == key.ResourceGeneration &&
+            context.DescriptorGeneration == key.DescriptorGeneration &&
             context.SubmissionQueueFamily == key.SubmissionQueueFamily;
 
     private static int ComputeOutputFrameBufferIdentity(string? outputFrameBufferName)
@@ -1169,8 +1380,25 @@ public unsafe partial class VulkanRenderer
 
         uint displayWidth = live.DisplayWidth > 0 ? live.DisplayWidth : context.DisplayWidth;
         uint displayHeight = live.DisplayHeight > 0 ? live.DisplayHeight : context.DisplayHeight;
-        uint internalWidth = live.InternalWidth > 0 ? live.InternalWidth : context.InternalWidth;
-        uint internalHeight = live.InternalHeight > 0 ? live.InternalHeight : context.InternalHeight;
+        // A swapchain-target operation may refresh its display dimensions from
+        // the acquired target, but its internal render allocation belongs to
+        // the captured pipeline/viewport context. Never borrow the ambient
+        // live viewport's internal extent for a different planner owner.
+        bool exactPlannerOwner =
+            ReferenceEquals(context.PipelineInstance, live.PipelineInstance) &&
+            context.ViewportIdentity == live.ViewportIdentity &&
+            context.OutputTargetIdentity == live.OutputTargetIdentity &&
+            context.OutputFrameBufferIdentity == live.OutputFrameBufferIdentity;
+        uint internalWidth = exactPlannerOwner && live.InternalWidth > 0
+            ? live.InternalWidth
+            : context.PipelineInstance?.ResourceInternalWidth is uint pipelineInternalWidth && pipelineInternalWidth > 0
+                ? pipelineInternalWidth
+                : context.InternalWidth;
+        uint internalHeight = exactPlannerOwner && live.InternalHeight > 0
+            ? live.InternalHeight
+            : context.PipelineInstance?.ResourceInternalHeight is uint pipelineInternalHeight && pipelineInternalHeight > 0
+                ? pipelineInternalHeight
+                : context.InternalHeight;
 
         if (displayWidth == context.DisplayWidth &&
             displayHeight == context.DisplayHeight &&

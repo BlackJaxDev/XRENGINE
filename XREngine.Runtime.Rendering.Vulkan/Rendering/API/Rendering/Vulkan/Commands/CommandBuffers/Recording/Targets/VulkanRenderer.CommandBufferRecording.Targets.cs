@@ -19,10 +19,8 @@ namespace XREngine.Rendering.Vulkan
     {
         private bool HasLastWindowPresentSourceForSwapchainRefresh()
         {
-            XRFrameBuffer? sourceFrameBuffer = _lastWindowPresentFrameBuffer;
-            return sourceFrameBuffer is not null &&
-                   sourceFrameBuffer.Width > 0 &&
-                   sourceFrameBuffer.Height > 0;
+            VulkanPresentationSourceTuple source = _windowPresentSource.Capture();
+            return source.IsComplete && source.Width > 0 && source.Height > 0;
         }
 
         private bool IsSwapchainImageEverPresented(uint imageIndex)
@@ -190,8 +188,20 @@ namespace XREngine.Rendering.Vulkan
             bool transitionSwapchainToPresent = true,
             uint? frameDataImageIndexOverride = null,
             OpenXrEyeRenderTargetContext? openXrTargetContext = null,
-            bool excludeDesktopSwapchainBarriers = false)
+            bool excludeDesktopSwapchainBarriers = false,
+            FramePlan? framePlan = null)
         {
+            if (!TryValidateNativeRecordingFramePlan(
+                    framePlan,
+                    ops,
+                    out recordingDeferredReason))
+            {
+                recordedSwapchainWriteCount = 0;
+                recordedSwapchainFinalLayout = ImageLayout.Undefined;
+                queryFrameOpsRequireRerecord = false;
+                return false;
+            }
+
             VulkanCommandRecordingContext context = new(
                 imageIndex,
                 commandBuffer,
@@ -205,7 +215,8 @@ namespace XREngine.Rendering.Vulkan
                 frameDataImageIndexOverride,
                 openXrTargetContext,
                 excludeDesktopSwapchainBarriers,
-                _renderGraphRuntime.CurrentPlan);
+                _renderGraphRuntime.CurrentPlan,
+                framePlan);
 
             if (!_commandRecorder.Prepare(ref context))
             {
@@ -222,6 +233,27 @@ namespace XREngine.Rendering.Vulkan
             recordingDeferredReason = context.RecordingDeferredReason;
             queryFrameOpsRequireRerecord = context.QueryFrameOpsRequireRerecord;
             return recorded;
+        }
+
+        private static bool TryValidateNativeRecordingFramePlan(
+            FramePlan? framePlan,
+            FrameOp[] operations,
+            out string reason)
+        {
+            if (framePlan is null)
+            {
+                reason = "Native command recording requires a sealed frame plan: no frame plan was supplied.";
+                return false;
+            }
+
+            if (framePlan.TryValidateNativeRecording(operations, out string framePlanReason))
+            {
+                reason = string.Empty;
+                return true;
+            }
+
+            reason = $"Native command recording requires a sealed frame plan: {framePlanReason}";
+            return false;
         }
 
     }

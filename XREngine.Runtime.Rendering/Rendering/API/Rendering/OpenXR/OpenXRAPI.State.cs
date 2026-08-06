@@ -366,6 +366,7 @@ public unsafe partial class OpenXRAPI
     private SessionState _sessionState = SessionState.Unknown;
     private OpenXrRuntimeState _runtimeState = OpenXrRuntimeState.DesktopOnly;
     private OpenXrRuntimeLossReason _runtimeLossReason = OpenXrRuntimeLossReason.None;
+    private OpenXrRuntimeLossRecord? _lastRuntimeLossRecord;
     private DateTime _nextProbeUtc = DateTime.MinValue;
     private TimeSpan _probeInterval = TimeSpan.FromSeconds(1.5);
     private readonly TimeSpan _maximumProbeRetryInterval = TimeSpan.FromSeconds(30);
@@ -383,6 +384,7 @@ public unsafe partial class OpenXRAPI
     private IXrGraphicsBinding? _graphicsBinding;
 
     public OpenXrRuntimeState RuntimeState => _runtimeState;
+    internal OpenXrRuntimeLossRecord? LastRuntimeLossRecord => _lastRuntimeLossRecord;
     public bool IsSessionRunning => Volatile.Read(ref _sessionRunning) != 0;
     public string? RuntimeFailureReason => _runtimeFailureReason;
 

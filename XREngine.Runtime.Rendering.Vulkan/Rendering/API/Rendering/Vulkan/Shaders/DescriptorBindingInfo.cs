@@ -25,5 +25,21 @@ internal readonly record struct DescriptorBindingInfo(
     ShaderStageFlags StageFlags,
     uint Count,
     string Name,
-    ImageViewType? ExpectedImageViewType = null);
+    ImageViewType? ExpectedImageViewType = null,
+    EVulkanDescriptorBindingRequirement Requirement =
+        EVulkanDescriptorBindingRequirement.Required)
+{
+    internal static EVulkanDescriptorBindingRequirement ClassifyRequirement(
+        DescriptorType descriptorType,
+        string? name)
+        => descriptorType is DescriptorType.StorageBuffer or
+                DescriptorType.StorageBufferDynamic &&
+            name is ("LightProbePositions" or
+                "LightProbeTetrahedra" or
+                "LightProbeParameters" or
+                "LightProbeGridCells" or
+                "LightProbeGridIndices")
+                ? EVulkanDescriptorBindingRequirement.Optional
+                : EVulkanDescriptorBindingRequirement.Required;
+}
 

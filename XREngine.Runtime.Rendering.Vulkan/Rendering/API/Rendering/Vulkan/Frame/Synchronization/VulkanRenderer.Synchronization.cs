@@ -329,6 +329,22 @@ public unsafe partial class VulkanRenderer
             caller);
 
     /// <summary>
+    /// Submits tracked queue work for target drivers that do not construct a
+    /// renderer-private diagnostic context.
+    /// </summary>
+    internal Result SubmitToQueueTracked(
+        Queue queue,
+        ref SubmitInfo submitInfo,
+        Fence fence,
+        string? caller)
+        => SubmitToQueueTracked(
+            queue,
+            ref submitInfo,
+            fence,
+            default,
+            caller);
+
+    /// <summary>
     /// Submits tracked queue work while reporting whether native dispatch was
     /// attempted and whether fault injection rejected the submission.
     /// </summary>
@@ -367,6 +383,16 @@ public unsafe partial class VulkanRenderer
     {
         queueDispatchAttempted = false;
         injectedFailureStage = EOpenXrStrictSpsFaultInjectionStage.None;
+        if (!TryAdmitVulkanDeviceOperation("vkQueueSubmit", out _))
+        {
+            RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
+                new FrameOutputWorkTelemetry(SubmissionRejections: 1));
+            lock (_oneTimeSubmitLock)
+                RecordVulkanQueueOperation("submit-rejected", queue, Result.ErrorDeviceLost, 0, caller);
+            ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: false);
+            return Result.ErrorDeviceLost;
+        }
+
         using VulkanQueueOperationLease queueOperation =
             VulkanQueueOperationLease.TryEnter(_oneTimeSubmitLock, _deviceStateMachine);
         if (!queueOperation.Acquired)
@@ -511,10 +537,12 @@ public unsafe partial class VulkanRenderer
             else if (result == Result.ErrorDeviceLost)
             {
                 ResolveSubmissionMarkers(ref submitInfo, submissionSucceeded: false);
-                RecordFirstFailingVulkanApi($"vkQueueSubmit:{caller ?? "<unknown>"}:{result}");
                 MarkDeviceLost(
+                    $"vkQueueSubmit:{caller ?? "<unknown>"}:{result}; " +
                     $"QueueSubmit returned ErrorDeviceLost in {caller ?? "<unknown>"} " +
-                    $"(waits={submitInfo.WaitSemaphoreCount}, signals={submitInfo.SignalSemaphoreCount}, commandBuffers={submitInfo.CommandBufferCount}, fence=0x{fence.Handle:X})");
+                    $"(waits={submitInfo.WaitSemaphoreCount}, signals={submitInfo.SignalSemaphoreCount}, commandBuffers={submitInfo.CommandBufferCount}, fence=0x{fence.Handle:X})",
+                    "vkQueueSubmit",
+                    result);
             }
             else
             {
@@ -539,6 +567,13 @@ public unsafe partial class VulkanRenderer
         Queue queue,
         [CallerMemberName] string? caller = null)
     {
+        if (!TryAdmitVulkanDeviceOperation("vkQueueWaitIdle", out _))
+        {
+            lock (_oneTimeSubmitLock)
+                RecordVulkanQueueOperation("wait-idle-rejected", queue, Result.ErrorDeviceLost, 0, caller);
+            return Result.ErrorDeviceLost;
+        }
+
         using VulkanQueueOperationLease queueOperation =
             VulkanQueueOperationLease.TryEnter(_oneTimeSubmitLock, _deviceStateMachine);
         if (!queueOperation.Acquired)
@@ -556,8 +591,11 @@ public unsafe partial class VulkanRenderer
         }
         else if (result == Result.ErrorDeviceLost)
         {
-            RecordFirstFailingVulkanApi($"vkQueueWaitIdle:{caller ?? "<unknown>"}:{result}");
-            MarkDeviceLost($"QueueWaitIdle returned ErrorDeviceLost in {caller ?? "<unknown>"}");
+            MarkDeviceLost(
+                $"vkQueueWaitIdle:{caller ?? "<unknown>"}:{result}; " +
+                $"QueueWaitIdle returned ErrorDeviceLost in {caller ?? "<unknown>"}",
+                "vkQueueWaitIdle",
+                result);
         }
 
         return result;
@@ -578,6 +616,14 @@ public unsafe partial class VulkanRenderer
         out string failureReason,
         [CallerMemberName] string? caller = null)
     {
+        if (!TryAdmitVulkanDeviceOperation("vkQueuePresentKHR", out failureReason))
+        {
+            result = Result.ErrorDeviceLost;
+            lock (_oneTimeSubmitLock)
+                RecordVulkanQueueOperation("present-rejected", queue, result, 0, caller);
+            return false;
+        }
+
         using VulkanQueueOperationLease queueOperation =
             VulkanQueueOperationLease.TryEnter(_oneTimeSubmitLock, _deviceStateMachine);
         if (!queueOperation.Acquired)
@@ -609,8 +655,11 @@ public unsafe partial class VulkanRenderer
         RecordVulkanQueueOperation("present", queue, result, 0, caller);
         if (result == Result.ErrorDeviceLost)
         {
-            RecordFirstFailingVulkanApi($"vkQueuePresentKHR:{caller ?? "<unknown>"}:{result}");
-            MarkDeviceLost($"QueuePresent returned ErrorDeviceLost in {caller ?? "<unknown>"}");
+            MarkDeviceLost(
+                $"vkQueuePresentKHR:{caller ?? "<unknown>"}:{result}; " +
+                $"QueuePresent returned ErrorDeviceLost in {caller ?? "<unknown>"}",
+                "vkQueuePresentKHR",
+                result);
         }
 
         return dispatched;
@@ -1870,6 +1919,7 @@ public unsafe partial class VulkanRenderer
             recorded.Subresources.Clear();
             recorded.EntrySubresources.Clear();
             recorded.SecondaryDescriptorRequirements.Clear();
+            recorded.SecondaryDescriptorPayloadGenerations.Clear();
             recorded.TouchedSubresources.Clear();
             recorded.QueueOwnershipTransfers.Clear();
             recorded.EntryStateIncomplete = false;
@@ -1913,6 +1963,7 @@ public unsafe partial class VulkanRenderer
 
             recorded.EntrySubresources.Clear();
             recorded.SecondaryDescriptorRequirements.Clear();
+            recorded.SecondaryDescriptorPayloadGenerations.Clear();
             recorded.QueueOwnershipTransfers.Clear();
             recorded.EntryStateIncomplete = predecessorState.EntryStateIncomplete;
             recorded.EntryStateFailure = predecessorState.EntryStateFailure;
@@ -2584,6 +2635,75 @@ public unsafe partial class VulkanRenderer
     }
 
     /// <summary>
+    /// Determines whether a secondary's frozen descriptor-image requirements were
+    /// captured from the exact descriptor payloads that remain published for this
+    /// submission. Update-after-bind can retain a descriptor-set handle while its
+    /// image/view/layout payload changes, so handle identity alone is insufficient.
+    /// </summary>
+    private bool HasCurrentSecondaryDescriptorPayloadRequirements(CommandBuffer secondary)
+    {
+        if (secondary.Handle == 0)
+            return false;
+
+        ulong secondaryHandle = unchecked((ulong)secondary.Handle);
+        lock (_resourceLifetimeTracker.SyncRoot)
+        {
+            lock (_vulkanImageLayoutLock)
+            {
+                if (!_recordedImageLayoutsByCommandBuffer.TryGetValue(
+                        secondaryHandle,
+                        out VulkanRecordedImageLayoutState? recorded) ||
+                    recorded.SecondaryDescriptorPayloadGenerations.Count == 0)
+                {
+                    return false;
+                }
+
+                foreach (KeyValuePair<ulong, ulong> payload in
+                         recorded.SecondaryDescriptorPayloadGenerations)
+                {
+                    if (!_resourceLifetimeTracker.PublishedDescriptorSets.TryGetValue(
+                            payload.Key,
+                            out VulkanPublishedDescriptorSetSnapshot? current) ||
+                        current.Generation != payload.Value)
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reads the publication generation of one descriptor set while preserving
+    /// the lifetime tracker's synchronization boundary. Prepared secondary keys
+    /// use this instead of a renderer-wide descriptor generation.
+    /// </summary>
+    private bool TryGetPublishedDescriptorSetGeneration(
+        DescriptorSet descriptorSet,
+        out ulong generation)
+    {
+        generation = 0UL;
+        if (descriptorSet.Handle == 0)
+            return false;
+
+        lock (_resourceLifetimeTracker.SyncRoot)
+        {
+            if (!_resourceLifetimeTracker.PublishedDescriptorSets.TryGetValue(
+                    descriptorSet.Handle,
+                    out VulkanPublishedDescriptorSetSnapshot? snapshot) ||
+                snapshot.Generation == 0UL)
+            {
+                return false;
+            }
+
+            generation = snapshot.Generation;
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Establishes the union of descriptor image entry requirements for a
     /// scheduled secondary-command-buffer run. Material textures are commonly
     /// shared by many mesh packets, so collecting them under one layout lock
@@ -2974,7 +3094,7 @@ public unsafe partial class VulkanRenderer
     /// buffer variant.
     /// </summary>
     private void CaptureCommandBufferVariantImageLayoutEndState(
-        CommandBufferCacheVariant variant)
+        PrimaryCommandArtifactOwner variant)
     {
         ulong signature = ComputeImageLayoutStateSignature(variant.PrimaryCommandBuffer);
         variant.RecordedImageLayoutEndSignature = signature;
@@ -2990,7 +3110,7 @@ public unsafe partial class VulkanRenderer
     /// command-buffer-local state before a successful submission.
     /// </summary>
     private void RestoreRecordedImageLayoutEndState(
-        CommandBufferCacheVariant variant)
+        PrimaryCommandArtifactOwner variant)
     {
         VulkanImageLayoutStateSnapshot? snapshot = variant.RecordedImageLayoutEndState;
         if (snapshot is null)
@@ -3226,12 +3346,14 @@ public unsafe partial class VulkanRenderer
     private ulong ComputeImageLayoutStateSignature(
         CommandBuffer commandBuffer = default)
     {
+        ResourcePlannerRuntimeState plannerState = CaptureResourcePlannerRuntimeState();
+        VulkanResourceAllocator allocator = plannerState.ResourceAllocator;
         FrameOpSignatureHasher hash = new();
-        hash.Add(ResourceAllocatorIdentity);
-        hash.Add(ResourcePlannerRevision);
+        hash.Add(RuntimeHelpers.GetHashCode(allocator));
+        hash.Add(plannerState.ResourcePlannerRevision);
 
         int physicalGroupCount = 0;
-        foreach (VulkanPhysicalImageGroup group in ResourceAllocator.EnumeratePhysicalGroups())
+        foreach (VulkanPhysicalImageGroup group in allocator.EnumeratePhysicalGroups())
         {
             if (!group.IsAllocated)
                 continue;

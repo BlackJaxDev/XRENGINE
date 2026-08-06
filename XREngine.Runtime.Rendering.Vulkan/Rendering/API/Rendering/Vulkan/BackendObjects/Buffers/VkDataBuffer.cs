@@ -400,7 +400,7 @@ namespace XREngine.Rendering.Vulkan
                         if (!Renderer.VulkanPrimaryCommandBufferReuseEnabled)
                         {
                             Renderer.MarkCommandBuffersDirty("VkDataBufferRecreated");
-                            Renderer.MarkOpenXrPrimaryCommandBufferVariantsDirty();
+                            Renderer.MarkOpenXrPrimaryCommandArtifactOwnersDirty();
                         }
                     }
 

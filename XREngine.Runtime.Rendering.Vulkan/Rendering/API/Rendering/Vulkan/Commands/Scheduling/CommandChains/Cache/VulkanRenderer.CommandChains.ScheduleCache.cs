@@ -138,44 +138,6 @@ public unsafe partial class VulkanRenderer
             CommandChainStabilityGuardEnvVar);
     }
 
-    private bool TryGetCachedCommandChainSchedule(
-        uint imageIndex,
-        ulong fastScheduleSignature,
-        out CommandChainSchedule? schedule,
-        out CommandChainLoweringStats stats)
-    {
-        schedule = null;
-        stats = default;
-        if (!CanReuseCachedCommandChainSchedule(
-                CommandChainBenchmarkForceRerecord,
-                CommandChainValidationEnabled,
-                CommandChainTraceEnabled,
-                IsRenderingExternalSwapchainTarget))
-            return false;
-
-        if (!TryGetIndexedCommandChainCacheSlot(imageIndex, out int slot))
-            return false;
-
-        if (!_commandScheduler.TryGetCachedSchedule(slot, fastScheduleSignature, out schedule))
-            return false;
-
-        CommandChainSchedule cachedSchedule = schedule!;
-        int chainCount = CountCommandChains(cachedSchedule);
-        stats = new CommandChainLoweringStats(
-            VisibilityPackets: cachedSchedule.Groups.Length,
-            RenderPackets: chainCount,
-            ChainsScheduled: chainCount,
-            ChainsRecorded: 0,
-            ChainsReused: chainCount,
-            ChainsFrameDataRefreshed: 0,
-            VolatileChainsRecorded: 0,
-            SecondaryCommandBuffers: chainCount,
-            FirstStructuralDirtyReason: null,
-            FirstDescriptorGenerationMismatch: null,
-            FirstResourcePlanRevisionMismatch: null);
-        return true;
-    }
-
     private void CacheCommandChainSchedule(
         uint imageIndex,
         ulong fastScheduleSignature,
@@ -190,17 +152,7 @@ public unsafe partial class VulkanRenderer
         _commandScheduler.CacheSchedule(
             slot,
             _commandBuffers?.Length ?? 0,
-            fastScheduleSignature,
             schedule);
-    }
-
-    private static int CountCommandChains(CommandChainSchedule schedule)
-    {
-        int count = 0;
-        ReadOnlySpan<RenderPassChainGroup> groups = schedule.Groups.Span;
-        for (int i = 0; i < groups.Length; i++)
-            count += groups[i].ChainKeys.Length;
-        return count;
     }
 
     private static ulong ComputeCommandChainFastScheduleSignature(

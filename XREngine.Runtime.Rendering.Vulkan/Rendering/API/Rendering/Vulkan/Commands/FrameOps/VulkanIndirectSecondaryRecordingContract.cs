@@ -7,7 +7,12 @@ namespace XREngine.Rendering.Vulkan;
 internal readonly record struct VulkanIndirectSecondaryRecordingContract(
     EVulkanIndirectSecondaryEligibility Eligibility,
     ulong IndirectBufferIdentity,
-    ulong ParameterBufferIdentity)
+    ulong ParameterBufferIdentity,
+    uint DrawCount,
+    uint Stride,
+    nuint ByteOffset,
+    nuint CountByteOffset,
+    bool UseCount)
 {
     public bool IsEligible =>
         Eligibility ==

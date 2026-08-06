@@ -17,93 +17,6 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
-        private bool TryReuseLastSwapchainWriterVariant(
-            uint imageIndex,
-            ulong frameOpContextFingerprint,
-            ulong frameOpContextId,
-            ulong plannerRevision,
-            ulong imageLayoutStartSignature,
-            bool swapchainImageEverPresented,
-            bool gpuPipelineProfilingActive,
-            int commandBufferImageSlot,
-            out CommandBuffer commandBuffer,
-            out ImageLayout swapchainLayoutAfterCommandBuffer)
-        {
-            commandBuffer = default;
-            swapchainLayoutAfterCommandBuffer = ImageLayout.PresentSrcKhr;
-
-            if (_commandBufferVariants is null ||
-                imageIndex >= _commandBufferVariants.Length)
-            {
-                return false;
-            }
-
-            List<CommandBufferCacheVariant> variants = _commandBufferVariants[imageIndex];
-            CommandBufferCacheVariant? best = null;
-            for (int i = 0; i < variants.Count; i++)
-            {
-                CommandBufferCacheVariant variant = variants[i];
-                if (variant.Dirty ||
-                    variant.RecordedSwapchainWriteCount <= 0 ||
-                    variant.RecordedSwapchainFinalLayout != ImageLayout.PresentSrcKhr ||
-                    !TryValidateCommandBufferVariantContext(
-                        imageIndex,
-                        variant,
-                        frameOpContextFingerprint,
-                        frameOpContextId,
-                        "last-swapchain-writer") ||
-                    variant.PlannerRevision != plannerRevision ||
-                    IsCommandBufferVariantImageLayoutStateDirty(variant, imageLayoutStartSignature) ||
-                    variant.RecordedSwapchainImageEverPresented != swapchainImageEverPresented ||
-                    variant.PreserveSwapchainForOverlay ||
-                    variant.PrimaryCommandBuffer.Handle == 0 ||
-                    IsCommandBufferVariantGpuProfilerStateDirty(variant, gpuPipelineProfilingActive, commandBufferImageSlot))
-                {
-                    continue;
-                }
-
-                if (best is null || variant.LastUsedFrameId > best.LastUsedFrameId)
-                    best = variant;
-            }
-
-            if (best is null)
-                return false;
-
-            best.LastUsedFrameId = VulkanFrameCounter;
-            best.DirtyReason = null;
-            SetActiveCommandBufferVariant(imageIndex, best);
-            RestoreRecordedImageLayoutEndState(best);
-            PrepareVulkanGpuProfilerReusableSubmission(
-                commandBufferImageSlot,
-                best,
-                gpuPipelineProfilingActive);
-            UpdateVulkanGpuProfilerCommandBufferState(
-                imageIndex,
-                gpuPipelineProfilingActive,
-                commandBufferImageSlot);
-
-            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
-                reusedClean: true,
-                recorded: false,
-                forcedDirty: false,
-                frameOpSignatureDirty: false,
-                plannerDirty: false,
-                profilerDirty: false,
-                dirtyReason: null);
-            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(
-                primaryCommandBuffersReused: 1);
-
-            EnsureCommandBufferVariantContextBeforeSubmit(
-                imageIndex,
-                best,
-                frameOpContextFingerprint,
-                frameOpContextId,
-                "last-swapchain-writer");
-            commandBuffer = best.PrimaryCommandBuffer;
-            swapchainLayoutAfterCommandBuffer = best.RecordedSwapchainFinalLayout;
-            return true;
-        }
-
         private static bool HasQueryFrameOps(FrameOp[] ops)
         {
             for (int i = 0; i < ops.Length; i++)
@@ -115,7 +28,7 @@ namespace XREngine.Rendering.Vulkan
             return false;
         }
 
-        private static void MarkCommandBufferVariantTransient(CommandBufferCacheVariant variant, string reason)
+        private static void MarkPrimaryCommandArtifactOwnerTransient(PrimaryCommandArtifactOwner variant, string reason)
         {
             // The command buffer recorded immediately before this call is still the current
             // submit candidate. Transient means "record again next time"; erasing its recorded
@@ -125,7 +38,7 @@ namespace XREngine.Rendering.Vulkan
             variant.DirtyReason = reason;
         }
 
-        private static void MarkCommandBufferVariantDirtyAfterConcurrentInvalidation(CommandBufferCacheVariant variant)
+        private static void MarkPrimaryCommandArtifactOwnerDirtyAfterConcurrentInvalidation(PrimaryCommandArtifactOwner variant)
         {
             variant.Dirty = true;
             variant.DirtyReason = "concurrent invalidation during primary record";
@@ -721,7 +634,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private string DescribePrimaryReuseMiss(
-            CommandBufferCacheVariant variant,
+            PrimaryCommandArtifactOwner variant,
             in CommandBufferGenerationDomains current,
             in CommandRecordingDependencyMismatch dependencyMismatch,
             bool forcedDirty,
@@ -812,7 +725,7 @@ namespace XREngine.Rendering.Vulkan
                $"global=(recorded=0x{recordedGlobalSignature:X16},current=0x{currentGlobalSignature:X16})";
 
         private static string DescribePrimaryCommandChainReuseMiss(
-            CommandBufferCacheVariant variant,
+            PrimaryCommandArtifactOwner variant,
             PrimaryCommandBufferDirtyReason reasons,
             ulong scheduleSignature,
             ulong groupSignature,
@@ -873,13 +786,13 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private static bool IsCommandBufferVariantFrameOpContextDirty(
-            CommandBufferCacheVariant variant,
+            PrimaryCommandArtifactOwner variant,
             ulong frameOpContextFingerprint)
             => variant.RecordedFrameOpContextFingerprint != frameOpContextFingerprint;
 
         private bool TryValidateCommandBufferVariantContext(
             uint imageIndex,
-            CommandBufferCacheVariant variant,
+            PrimaryCommandArtifactOwner variant,
             ulong frameOpContextFingerprint,
             ulong frameOpContextId,
             string reusePath)
@@ -898,7 +811,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void EnsureCommandBufferVariantContextBeforeSubmit(
             uint imageIndex,
-            CommandBufferCacheVariant variant,
+            PrimaryCommandArtifactOwner variant,
             ulong frameOpContextFingerprint,
             ulong frameOpContextId,
             string submitPath)
@@ -921,7 +834,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void LogCommandBufferFrameOpContextMismatch(
             uint imageIndex,
-            CommandBufferCacheVariant variant,
+            PrimaryCommandArtifactOwner variant,
             ulong frameOpContextFingerprint,
             ulong frameOpContextId,
             string reusePath)

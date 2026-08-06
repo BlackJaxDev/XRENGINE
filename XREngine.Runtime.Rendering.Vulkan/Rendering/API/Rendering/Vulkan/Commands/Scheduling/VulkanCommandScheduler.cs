@@ -9,7 +9,6 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed class VulkanCommandScheduler
 {
     private CommandChainSchedule?[]? _scheduleCache;
-    private ulong[]? _scheduleFastSignatures;
     private ulong _scheduleGeneration;
 
     public VulkanCommandSchedulingContext<TVariant> Capture<TVariant>(
@@ -66,28 +65,6 @@ internal sealed class VulkanCommandScheduler
         return generation;
     }
 
-    public bool TryGetCachedSchedule(
-        int slot,
-        ulong fastSignature,
-        out CommandChainSchedule? schedule)
-    {
-        schedule = null;
-        if (_scheduleCache is null ||
-            _scheduleFastSignatures is null ||
-            (uint)slot >= (uint)_scheduleCache.Length ||
-            (uint)slot >= (uint)_scheduleFastSignatures.Length)
-        {
-            return false;
-        }
-
-        schedule = _scheduleCache[slot];
-        if (schedule is not null && _scheduleFastSignatures[slot] == fastSignature)
-            return true;
-
-        schedule = null;
-        return false;
-    }
-
     public CommandChainSchedule? GetReusableSchedule(int slot, int slotCount)
     {
         EnsureScheduleCache(slotCount);
@@ -99,7 +76,6 @@ internal sealed class VulkanCommandScheduler
     public void CacheSchedule(
         int slot,
         int slotCount,
-        ulong fastSignature,
         CommandChainSchedule schedule)
     {
         EnsureScheduleCache(slotCount);
@@ -107,13 +83,10 @@ internal sealed class VulkanCommandScheduler
             return;
 
         _scheduleCache[slot] = schedule;
-        _scheduleFastSignatures![slot] = fastSignature;
     }
 
     public void InvalidateScheduleCache()
     {
-        if (_scheduleFastSignatures is not null)
-            Array.Clear(_scheduleFastSignatures);
         if (_scheduleCache is not null)
             Array.Clear(_scheduleCache);
     }
@@ -121,7 +94,6 @@ internal sealed class VulkanCommandScheduler
     public void ReleaseScheduleCache()
     {
         _scheduleCache = null;
-        _scheduleFastSignatures = null;
     }
 
     public int ResolveParallelRecordingBucket(
@@ -139,14 +111,11 @@ internal sealed class VulkanCommandScheduler
     {
         int count = Math.Max(slotCount, 1);
         if (_scheduleCache is not null &&
-            _scheduleFastSignatures is not null &&
-            _scheduleCache.Length == count &&
-            _scheduleFastSignatures.Length == count)
+            _scheduleCache.Length == count)
         {
             return;
         }
 
         _scheduleCache = new CommandChainSchedule?[count];
-        _scheduleFastSignatures = new ulong[count];
     }
 }

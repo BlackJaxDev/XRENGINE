@@ -27,8 +27,11 @@ public unsafe partial class VulkanRenderer
     /// The render loop checks this flag to short-circuit immediately instead of looping
     /// forever with cascading failures.
     /// </summary>
-    private volatile bool _deviceLost;
     private readonly VulkanDeviceStateMachine _deviceStateMachine = new();
+    // All legacy field-style checks read the atomic device-state authority. This
+    // closes the admission window between the winning loss CAS and diagnostic
+    // collection without requiring every hot path to take the transition lock.
+    private bool _deviceLost => !_deviceStateMachine.IsOperational;
     private long _deviceLossFalloutCount;
     private string? _deviceLostReason;
     public override bool IsDeviceLost => _deviceLost;
@@ -41,10 +44,39 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     internal bool IsDeviceOperational => device.Handle != 0 && _deviceStateMachine.IsOperational;
 
-    internal void MarkDeviceLost(string? reason = null)
+    /// <summary>
+    /// Admits a native device operation only while the logical device is healthy.
+    /// New recording, submission, waiting, allocation, mapping, descriptor update,
+    /// and publication paths must use this single state authority.
+    /// </summary>
+    internal bool TryAdmitVulkanDeviceOperation(string operation, out string failureReason)
     {
-        RecordFirstFailingVulkanApi(reason);
+        if (IsDeviceOperational)
+        {
+            failureReason = string.Empty;
+            return true;
+        }
 
+        failureReason =
+            $"Cannot start Vulkan operation '{operation}' while device state is {DeviceState}.";
+        return false;
+    }
+
+    /// <summary>
+    /// Throws when a caller attempts to begin a native operation after admission
+    /// has closed because the device is unavailable or terminal.
+    /// </summary>
+    internal void ThrowIfVulkanDeviceOperationNotAdmitted(string operation)
+    {
+        if (!TryAdmitVulkanDeviceOperation(operation, out string failureReason))
+            throw new InvalidOperationException(failureReason);
+    }
+
+    internal void MarkDeviceLost(
+        string? reason = null,
+        string? operation = null,
+        Result result = Result.ErrorDeviceLost)
+    {
         bool firstObservation;
         lock (_oneTimeSubmitLock)
         {
@@ -53,7 +85,7 @@ public unsafe partial class VulkanRenderer
                 firstObservation = _deviceStateMachine.TryBeginLossCollection();
                 if (firstObservation)
                 {
-                    _deviceLost = true;
+                    CaptureFirstDeviceLossRecord(operation, result, reason);
                     FailAllSubmissionMarkers();
                     NotifyVulkanResourceLifetimeDeviceLost();
 
@@ -100,9 +132,44 @@ public unsafe partial class VulkanRenderer
 
     private InvalidOperationException CreateDeviceLostException(string operation, Result result)
     {
-        MarkDeviceLost($"{operation} returned {result}");
+        MarkDeviceLost($"{operation} returned {result}", operation, result);
         return new InvalidOperationException(
             $"Vulkan device lost during {operation} ({result}). Reason={DeviceLostReason ?? "<unknown>"}. The logical device is terminal and the renderer/window must be recreated before Vulkan can render again.");
+    }
+
+    /// <summary>
+    /// Captures original failure evidence before loss fallout clears timeline
+    /// state. Only the device-state CAS winner reaches this method.
+    /// </summary>
+    private void CaptureFirstDeviceLossRecord(
+        string? operation,
+        Result result,
+        string? reason)
+    {
+        string? provisionalOperation = Volatile.Read(ref _firstFailingVulkanApi);
+        string resolvedOperation = !string.IsNullOrWhiteSpace(operation)
+            ? operation
+            : !string.IsNullOrWhiteSpace(provisionalOperation)
+                ? provisionalOperation
+                : !string.IsNullOrWhiteSpace(reason)
+                    ? reason
+                    : "<unknown>";
+        string resolvedReason = string.IsNullOrWhiteSpace(reason)
+            ? "<unknown>"
+            : reason;
+        // Earlier operation sites may have observed an error concurrently, but
+        // only this state-transition winner defines the terminal device-loss
+        // diagnosis. Replace the provisional marker with the CAS-owned record.
+        Interlocked.Exchange(ref _firstFailingVulkanApi, $"{resolvedOperation}:{result}");
+
+        VulkanDeviceLossRecord record = new(
+            resolvedOperation,
+            result,
+            resolvedReason,
+            DateTimeOffset.UtcNow,
+            SnapshotLastVulkanSubmissionDiagnosticContext(),
+            GetVulkanResourceLifetimeSnapshot(includeExactLiveResourceGenerations: true));
+        _ = Interlocked.CompareExchange(ref _firstDeviceLossRecord, record, null);
     }
 
     private void EnsureSwapchainTimelineState()
@@ -121,6 +188,9 @@ public unsafe partial class VulkanRenderer
 
     private bool HasTimelineValueCompleted(Semaphore semaphore, ulong value)
     {
+        if (!TryAdmitVulkanDeviceOperation(nameof(HasTimelineValueCompleted), out _))
+            return false;
+
         if (semaphore.Handle == 0 || value == 0)
             return true;
 
@@ -131,7 +201,10 @@ public unsafe partial class VulkanRenderer
         Result result = Api!.GetSemaphoreCounterValue(device, semaphore, &currentValue);
         if (result == Result.ErrorDeviceLost)
         {
-            MarkDeviceLost($"GetSemaphoreCounterValue for timeline value {value} returned {result}");
+            MarkDeviceLost(
+                $"GetSemaphoreCounterValue for timeline value {value} returned {result}",
+                "vkGetSemaphoreCounterValue",
+                result);
 
             throw new InvalidOperationException(
                 $"Vulkan device lost while checking timeline value {value}. Reason={DeviceLostReason ?? "<unknown>"}. Timeline state has been reset.");
@@ -148,6 +221,9 @@ public unsafe partial class VulkanRenderer
 
     private bool TryWaitForTimelineValue(Semaphore semaphore, ulong value, ulong timeoutNanoseconds)
     {
+        if (!TryAdmitVulkanDeviceOperation(nameof(TryWaitForTimelineValue), out _))
+            return false;
+
         if (semaphore.Handle == 0 || value == 0)
             return true;
 
@@ -179,7 +255,10 @@ public unsafe partial class VulkanRenderer
 
         if (waitResult == Result.ErrorDeviceLost)
         {
-            MarkDeviceLost($"WaitSemaphores for timeline value {value} returned {waitResult}");
+            MarkDeviceLost(
+                $"WaitSemaphores for timeline value {value} returned {waitResult}",
+                "vkWaitSemaphores",
+                waitResult);
 
             throw new InvalidOperationException(
                 $"Vulkan device lost while waiting for timeline value {value}. Reason={DeviceLostReason ?? "<unknown>"}. Timeline state has been reset.");

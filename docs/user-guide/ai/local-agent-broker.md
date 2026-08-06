@@ -53,6 +53,9 @@ The supported exact model IDs are:
 - `gpt-5.6-terra`
 - `gpt-5.6-sol`
 
+The broker rejects aliases and provider-reported dated snapshot suffixes: both
+the requested and actual model must be the same exact approved model ID.
+
 Check the [current OpenAI model catalog](https://developers.openai.com/api/docs/models)
 and the API project's model access before a live run. The broker never silently
 substitutes another tier.
@@ -68,7 +71,8 @@ The fixed MCP surface contains five orchestration tools:
 - `start_agent_run` validates a request, starts the paid worker asynchronously,
   and returns a run ID promptly.
 - `get_agent_run` returns incremental text/evidence/usage, retry count, bounded
-  provider-attempt diagnostics, and the terminal result for one run.
+  provider-attempt diagnostics, current observation/progress metadata, and the
+  terminal result for one run.
 - `cancel_agent_run` cooperatively cancels a queued or running worker and its
   pending editor tool call.
 - `list_agent_runs` returns bounded metadata for active and recently retained
@@ -76,6 +80,41 @@ The fixed MCP surface contains five orchestration tools:
 
 The broker itself does not start or stop the editor. The named session manager
 owns editor process lifecycle and validates PID ownership.
+
+### Run Status And Progress Contract
+
+`get_agent_run` is the authoritative snapshot for one run; `list_agent_runs`
+returns the same status fields in compact form. Both responses include:
+
+- `updatedUtc`: the most recent time the broker changed retained run state;
+- `observedUtc`: the time this response was produced. It advances on every poll,
+  including when the provider has produced no text or tool result;
+- `elapsedMilliseconds`: non-negative wall-clock time from run creation through
+  `observedUtc`; and
+- `progressMessage`: the latest informational broker/provider stage. It is not a
+  percent-complete estimate and does not replace the authoritative `status`.
+
+New runs begin with `queued`; orchestration changes this to
+`orchestration_started`. A streaming Responses call publishes
+`provider_stream_connected` once the SSE connection is established. While the
+stream advances, the broker periodically records the provider's latest event
+type (after the first provider event and then at bounded intervals), even if no
+text delta is available. A terminal snapshot replaces `progressMessage` with
+the terminal status. Continue polling until `status` is `completed`, `failed`,
+or `cancelled`; use elapsed/observed time to distinguish a quiet healthy stream
+from a stale caller or transport.
+
+### Response Controls And Output Budget
+
+`start_agent_run` accepts `text_verbosity` as `low`, `medium`, or `high`; it
+defaults to `medium`. The broker sends this as the Responses API `text.verbosity`
+control and preserves `reasoning_effort` separately. Start, get, and list
+responses retain both requested controls and the requested `max_output_tokens`
+hard budget. That budget covers visible output and reasoning tokens, so the
+broker never automatically raises it or retries an incomplete response with a
+larger budget. When a response ends incomplete because `max_output_tokens` was
+reached, start a new explicitly authorized bounded run with a higher budget or
+with lower reasoning effort/text verbosity.
 
 ## One-Time Installation
 
@@ -258,6 +297,7 @@ A reasoning-only request has no editor session or tool policy entries:
   ],
   "requested_model": "gpt-5.6-sol",
   "reasoning_effort": "max",
+  "text_verbosity": "medium",
   "use_background_mode": false,
   "evidence_packet": {
     "relevant_files_and_symbols": [],
@@ -443,7 +483,9 @@ named by `XRE_LOCAL_AGENT_BROKER_EDITOR_AUTH_ENV`.
 - **Mutation result is rejected:** the worker must perform a later read-back or
   capture. A successful mutating call alone is not a successful run.
 - **Run remains queued/running:** poll the retained run ID within its elapsed
-  budget; cancel it if the result is no longer needed.
+  budget. `observedUtc` must advance on each poll; use `progressMessage` and
+  `updatedUtc` to see the latest broker/provider stage, then cancel the run if
+  the result is no longer needed.
 - **A long stream ends before completion:** after accepting the temporary
   storage/ZDR tradeoff, rerun the newly bounded slice with
   `use_background_mode: true`; do not silently enable it for unrelated runs.

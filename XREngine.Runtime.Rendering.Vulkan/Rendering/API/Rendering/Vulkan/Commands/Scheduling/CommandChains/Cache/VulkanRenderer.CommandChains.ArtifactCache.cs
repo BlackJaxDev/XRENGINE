@@ -182,7 +182,7 @@ public unsafe partial class VulkanRenderer
         _commandScheduler.InvalidateScheduleCache();
 
         if (invalidated > 0)
-            MarkOpenXrPrimaryCommandBufferVariantsDirty();
+            MarkOpenXrPrimaryCommandArtifactOwnersDirty();
 
         return invalidated;
     }
@@ -236,6 +236,7 @@ public unsafe partial class VulkanRenderer
                 break;
 
             DestroyCommandChainSecondaryCommandBuffer(oldest);
+            oldest.ReleasePacketSnapshot();
             cache.Remove(oldestKey);
             scheduledCount--;
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(

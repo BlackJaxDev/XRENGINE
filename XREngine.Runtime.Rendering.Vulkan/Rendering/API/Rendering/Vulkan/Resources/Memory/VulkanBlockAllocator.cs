@@ -50,35 +50,37 @@ internal sealed unsafe class VulkanBlockAllocator : IVulkanMemoryAllocator
     public VulkanMemoryAllocation AllocateForBuffer(
         Vk api, Device device, Buffer buffer, MemoryPropertyFlags requiredProperties)
     {
-        if (!TryAllocateForBuffer(api, device, buffer, requiredProperties, out VulkanMemoryAllocation allocation))
-            throw new VulkanOutOfMemoryException("Failed to suballocate Vulkan buffer memory.", requiredProperties);
+        if (!TryAllocateForBuffer(api, device, buffer, requiredProperties, out VulkanMemoryAllocation allocation, out Result result))
+            throw new VulkanOutOfMemoryException($"Failed to suballocate Vulkan buffer memory ({result}).", requiredProperties);
         return allocation;
     }
 
     public VulkanMemoryAllocation AllocateForImage(
         Vk api, Device device, Image image, MemoryPropertyFlags requiredProperties)
     {
-        if (!TryAllocateForImage(api, device, image, requiredProperties, out VulkanMemoryAllocation allocation))
-            throw new VulkanOutOfMemoryException("Failed to suballocate Vulkan image memory.", requiredProperties);
+        if (!TryAllocateForImage(api, device, image, requiredProperties, out VulkanMemoryAllocation allocation, out Result result))
+            throw new VulkanOutOfMemoryException($"Failed to suballocate Vulkan image memory ({result}).", requiredProperties);
         return allocation;
     }
 
     public bool TryAllocateForBuffer(
         Vk api, Device device, Buffer buffer,
         MemoryPropertyFlags requiredProperties,
-        out VulkanMemoryAllocation allocation)
+        out VulkanMemoryAllocation allocation,
+        out Result result)
     {
         api.GetBufferMemoryRequirements(device, buffer, out MemoryRequirements memReqs);
-        return TrySuballocate(api, device, memReqs, requiredProperties, isImage: false, out allocation);
+        return TrySuballocate(api, device, memReqs, requiredProperties, isImage: false, out allocation, out result);
     }
 
     public bool TryAllocateForImage(
         Vk api, Device device, Image image,
         MemoryPropertyFlags requiredProperties,
-        out VulkanMemoryAllocation allocation)
+        out VulkanMemoryAllocation allocation,
+        out Result result)
     {
         api.GetImageMemoryRequirements(device, image, out MemoryRequirements memReqs);
-        return TrySuballocate(api, device, memReqs, requiredProperties, isImage: true, out allocation);
+        return TrySuballocate(api, device, memReqs, requiredProperties, isImage: true, out allocation, out result);
     }
 
     private bool TrySuballocate(
@@ -86,16 +88,18 @@ internal sealed unsafe class VulkanBlockAllocator : IVulkanMemoryAllocator
         MemoryRequirements memReqs,
         MemoryPropertyFlags requiredProperties,
         bool isImage,
-        out VulkanMemoryAllocation allocation)
+        out VulkanMemoryAllocation allocation,
+        out Result result)
     {
         allocation = VulkanMemoryAllocation.Null;
+        result = Result.Success;
         uint memoryTypeIndex = _renderer.ResolveMemoryType(memReqs.MemoryTypeBits, requiredProperties);
         ulong alignment = Math.Max(memReqs.Alignment, 1UL);
         ulong size = memReqs.Size;
 
         // Very large allocations get dedicated memory.
         if (size >= _dedicatedThreshold)
-            return TryDedicatedAllocation(api, device, memReqs, memoryTypeIndex, requiredProperties, out allocation);
+            return TryDedicatedAllocation(api, device, memReqs, memoryTypeIndex, requiredProperties, out allocation, out result);
 
         var poolKey = (memoryTypeIndex, isImage);
 
@@ -121,11 +125,12 @@ internal sealed unsafe class VulkanBlockAllocator : IVulkanMemoryAllocator
 
             // No room — allocate a new block.
             ulong blockSize = Math.Max(_defaultBlockSize, size + alignment);
-            if (!TryAllocateBlock(api, device, blockSize, memoryTypeIndex, out MemoryBlock? newBlock))
+            if (!TryAllocateBlock(api, device, blockSize, memoryTypeIndex, out MemoryBlock? newBlock, out result))
             {
                 // OOM on block allocation — try with exactly the requested size.
-                if (blockSize > size + alignment &&
-                    TryAllocateBlock(api, device, size + alignment, memoryTypeIndex, out newBlock))
+                bool outOfMemory = result is Result.ErrorOutOfDeviceMemory or Result.ErrorOutOfHostMemory;
+                if (outOfMemory && blockSize > size + alignment &&
+                    TryAllocateBlock(api, device, size + alignment, memoryTypeIndex, out newBlock, out result))
                 {
                     // Smaller block succeeded.
                 }
@@ -155,9 +160,11 @@ internal sealed unsafe class VulkanBlockAllocator : IVulkanMemoryAllocator
         MemoryRequirements memReqs,
         uint memoryTypeIndex,
         MemoryPropertyFlags properties,
-        out VulkanMemoryAllocation allocation)
+        out VulkanMemoryAllocation allocation,
+        out Result result)
     {
         allocation = VulkanMemoryAllocation.Null;
+        result = Result.Success;
 
         MemoryAllocateInfo allocInfo = new()
         {
@@ -166,7 +173,7 @@ internal sealed unsafe class VulkanBlockAllocator : IVulkanMemoryAllocator
             MemoryTypeIndex = memoryTypeIndex,
         };
 
-        Result result = api.AllocateMemory(device, ref allocInfo, null, out DeviceMemory memory);
+        result = api.AllocateMemory(device, ref allocInfo, null, out DeviceMemory memory);
         if (result == Result.ErrorOutOfDeviceMemory || result == Result.ErrorOutOfHostMemory)
             return false;
         if (result != Result.Success)
@@ -197,7 +204,8 @@ internal sealed unsafe class VulkanBlockAllocator : IVulkanMemoryAllocator
     private bool TryAllocateBlock(
         Vk api, Device device,
         ulong blockSize, uint memoryTypeIndex,
-        out MemoryBlock? block)
+        out MemoryBlock? block,
+        out Result result)
     {
         block = null;
 
@@ -208,7 +216,7 @@ internal sealed unsafe class VulkanBlockAllocator : IVulkanMemoryAllocator
             MemoryTypeIndex = memoryTypeIndex,
         };
 
-        Result result = api.AllocateMemory(device, ref allocInfo, null, out DeviceMemory memory);
+        result = api.AllocateMemory(device, ref allocInfo, null, out DeviceMemory memory);
         if (result != Result.Success)
             return false;
 
@@ -267,12 +275,17 @@ internal sealed unsafe class VulkanBlockAllocator : IVulkanMemoryAllocator
         VulkanMemoryAllocation allocation,
         ulong offset,
         ulong length,
-        out void* mappedPtr)
+        out void* mappedPtr,
+        out Result result)
     {
         _ = length;
         mappedPtr = null;
+        result = Result.Success;
         if (allocation.IsNull)
+        {
+            result = Result.ErrorMemoryMapFailed;
             return false;
+        }
 
         lock (_lock)
         {
@@ -280,7 +293,7 @@ internal sealed unsafe class VulkanBlockAllocator : IVulkanMemoryAllocator
             if (!_mappedBlocks.TryGetValue(memoryHandle, out MappedMemoryBlock? mappedBlock))
             {
                 void* basePtr = null;
-                Result result = api.MapMemory(device, allocation.Memory, 0, Vk.WholeSize, 0, &basePtr);
+                result = api.MapMemory(device, allocation.Memory, 0, Vk.WholeSize, 0, &basePtr);
                 if (result != Result.Success)
                     return false;
 

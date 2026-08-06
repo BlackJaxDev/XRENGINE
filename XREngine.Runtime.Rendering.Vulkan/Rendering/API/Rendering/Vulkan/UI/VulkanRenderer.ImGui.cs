@@ -50,7 +50,10 @@ public unsafe partial class VulkanRenderer
         if (result == Result.ErrorDeviceLost)
         {
             RecordFirstFailingVulkanApi($"vkQueuePresentKHR:{nameof(PresentImGuiViewport)}:{result}");
-            MarkDeviceLost($"QueuePresent returned ErrorDeviceLost in {nameof(PresentImGuiViewport)}");
+            MarkDeviceLost(
+                $"QueuePresent returned ErrorDeviceLost in {nameof(PresentImGuiViewport)}",
+                $"vkQueuePresentKHR.{nameof(PresentImGuiViewport)}",
+                result);
         }
 
         return result;

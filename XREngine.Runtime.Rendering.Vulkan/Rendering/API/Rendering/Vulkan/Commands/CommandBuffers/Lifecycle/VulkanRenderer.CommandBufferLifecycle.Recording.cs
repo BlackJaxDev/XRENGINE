@@ -6,7 +6,7 @@ namespace XREngine.Rendering.Vulkan
     public unsafe partial class VulkanRenderer
     {
         private bool TryPrepareCommandBufferVariantForRecording(
-            scoped ref VulkanCommandSchedulingContext<CommandBufferCacheVariant> context,
+            scoped ref VulkanCommandSchedulingContext<PrimaryCommandArtifactOwner> context,
             scoped ref CommandBufferLifecycleState state)
         {
             if (TryPrepareComputeFrameOpsForRecording(
@@ -108,7 +108,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private bool TryRecordCommandBufferVariant(
-            scoped ref VulkanCommandSchedulingContext<CommandBufferCacheVariant> context,
+            scoped ref VulkanCommandSchedulingContext<PrimaryCommandArtifactOwner> context,
             scoped ref CommandBufferLifecycleState state)
         {
             _lastEnsureCommandBufferRecordedPrimary = true;
@@ -170,7 +170,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private bool TryRecordDirtyPrimaryCommandBuffer(
-            scoped ref VulkanCommandSchedulingContext<CommandBufferCacheVariant> context,
+            scoped ref VulkanCommandSchedulingContext<PrimaryCommandArtifactOwner> context,
             scoped ref CommandBufferLifecycleState state)
         {
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
@@ -197,7 +197,8 @@ namespace XREngine.Rendering.Vulkan
                         out state.RecordedSwapchainWriteCount,
                         out context.SwapchainLayoutAfterCommandBuffer,
                         out context.RecordingDeferredReason,
-                        out state.QueryFrameOperationsRequireRerecord);
+                        out state.QueryFrameOperationsRequireRerecord,
+                        framePlan: state.SealedFramePlan);
                     if (primaryRecorded)
                     {
                         bool primaryImageEntryValid =
@@ -216,6 +217,14 @@ namespace XREngine.Rendering.Vulkan
                             context.RecordingDeferredReason = string.Empty;
                             return true;
                         }
+
+                        // The native primary reached vkEndCommandBuffer, so it owns
+                        // recorded dependency pins even though it has not been
+                        // published to a submit path. Settle that exact recording
+                        // before any retry or return; otherwise its lifetime lease
+                        // survives without an outer handle that can release it.
+                        DiscardRejectedPrimaryCommandBuffer(
+                            state.Variant.PrimaryCommandBuffer);
 
                         if (recordingAttempt + 1 >=
                             _commandScheduler.RecordingAttemptLimit)
@@ -236,6 +245,25 @@ namespace XREngine.Rendering.Vulkan
                             TimeSpan.FromSeconds(1),
                             "[Vulkan] Retrying primary command recording because a recorded dependency changed during command encoding: {0}",
                             context.RecordingDeferredReason);
+                        continue;
+                    }
+
+                    if (recordingAttempt + 1 <
+                            _commandScheduler.RecordingAttemptLimit &&
+                        IsPlanPreconditionRecordingFailure(
+                            context.RecordingDeferredReason) &&
+                        TryReplanCommandBufferAfterPreconditionFailure(
+                            ref context,
+                            ref state))
+                    {
+                        state.ResealFramePlan();
+                        CaptureCommandBufferDependencies(ref state);
+                        Debug.VulkanWarningEvery(
+                            $"Vulkan.Primary.RetryPlanPrecondition.{GetHashCode()}",
+                            TimeSpan.FromSeconds(1),
+                            "[Vulkan] Rebuilt the immutable context-local frame plan after recording precondition failure: {0}",
+                            context.RecordingDeferredReason);
+                        context.RecordingDeferredReason = string.Empty;
                         continue;
                     }
 
@@ -279,8 +307,58 @@ namespace XREngine.Rendering.Vulkan
             return false;
         }
 
+        private void DiscardRejectedPrimaryCommandBuffer(CommandBuffer commandBuffer)
+        {
+            if (!TryAbandonCommandBufferRecording(commandBuffer))
+            {
+                throw new InvalidOperationException(
+                    $"Recorded primary command buffer 0x{unchecked((ulong)commandBuffer.Handle):X} could not be abandoned after dependency validation failed.");
+            }
+
+            if (ResetVulkanCommandBufferTracked(commandBuffer) != Result.Success)
+            {
+                throw new InvalidOperationException(
+                    $"Recorded primary command buffer 0x{unchecked((ulong)commandBuffer.Handle):X} could not be reset after dependency validation failed.");
+            }
+        }
+
+        private bool TryReplanCommandBufferAfterPreconditionFailure(
+            scoped ref VulkanCommandSchedulingContext<PrimaryCommandArtifactOwner> context,
+            scoped ref CommandBufferLifecycleState state)
+        {
+            FrameOp[] plannerOperations = state.HasStaticFrameOperations
+                ? state.FrameOperations
+                : state.DynamicUiOperations;
+            if (plannerOperations.Length == 0)
+                return false;
+
+            // The native attempt has already been abandoned by the primary
+            // recorder. Temporarily leave the logical recording scope so the
+            // planner may publish a replacement snapshot, then re-enter before
+            // the next bounded encoding attempt.
+            _commandRecorder.ExitRecordingScope();
+            try
+            {
+                using FrameOpResourcePlannerPreparationScope preparationScope =
+                    new(this, plannerOperations);
+                return TryPrepareCommandBufferResources(
+                    ref context,
+                    ref state,
+                    in preparationScope);
+            }
+            finally
+            {
+                _commandRecorder.EnterRecordingScope();
+            }
+        }
+
+        private static bool IsPlanPreconditionRecordingFailure(string? reason)
+            => reason?.StartsWith(
+                "frame-plan precondition failed",
+                StringComparison.Ordinal) == true;
+
         private bool TryValidateRecordedCommandChainDependencies(
-            scoped ref VulkanCommandSchedulingContext<CommandBufferCacheVariant> context,
+            scoped ref VulkanCommandSchedulingContext<PrimaryCommandArtifactOwner> context,
             scoped ref CommandBufferLifecycleState state)
         {
             if (state.CommandChainSchedule is null ||
@@ -338,7 +416,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private bool TryValidateRecordedPrimaryImageEntryDependencies(
-            scoped ref VulkanCommandSchedulingContext<CommandBufferCacheVariant> context,
+            scoped ref VulkanCommandSchedulingContext<PrimaryCommandArtifactOwner> context,
             scoped ref CommandBufferLifecycleState state)
         {
             if (!TryGetRecordedImageEntryStateMismatch(
@@ -363,10 +441,10 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private CommandBuffer PublishRecordedCommandBufferVariant(
-            scoped ref VulkanCommandSchedulingContext<CommandBufferCacheVariant> context,
+            scoped ref VulkanCommandSchedulingContext<PrimaryCommandArtifactOwner> context,
             scoped ref CommandBufferLifecycleState state)
         {
-            CommandBufferCacheVariant variant = state.Variant;
+            PrimaryCommandArtifactOwner variant = state.Variant;
             _commandBufferDirtyFlags![state.ImageIndex] = false;
             variant.Dirty = false;
             variant.DirtyReason = null;
@@ -440,7 +518,7 @@ namespace XREngine.Rendering.Vulkan
             StoreFrameOpSignatureDebugParts(
                 variant,
                 state.FrameOperations);
-            SetActiveCommandBufferVariant(state.ImageIndex, variant);
+            SetActivePrimaryCommandArtifactOwner(state.ImageIndex, variant);
             UpdateVulkanGpuProfilerCommandBufferState(
                 state.ImageIndex,
                 state.GpuPipelineProfilingActive,
@@ -448,14 +526,14 @@ namespace XREngine.Rendering.Vulkan
 
             if (state.HasTextureUploadFrameOperations)
             {
-                MarkCommandBufferVariantTransient(
+                MarkPrimaryCommandArtifactOwnerTransient(
                     variant,
                     "transient texture upload");
             }
 
             if (state.QueryFrameOperationsRequireRerecord)
             {
-                MarkCommandBufferVariantTransient(
+                MarkPrimaryCommandArtifactOwnerTransient(
                     variant,
                     "query draw was not recorded");
             }
@@ -470,7 +548,7 @@ namespace XREngine.Rendering.Vulkan
             if (HaveCommandBuffersDirtiedSince(
                     state.EnsureStartDirtyGeneration))
             {
-                MarkCommandBufferVariantDirtyAfterConcurrentInvalidation(
+                MarkPrimaryCommandArtifactOwnerDirtyAfterConcurrentInvalidation(
                     variant);
             }
 

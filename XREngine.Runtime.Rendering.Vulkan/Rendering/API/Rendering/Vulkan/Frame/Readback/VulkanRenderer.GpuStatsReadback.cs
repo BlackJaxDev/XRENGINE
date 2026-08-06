@@ -126,6 +126,7 @@ public unsafe partial class VulkanRenderer
             SType = StructureType.CommandBufferBeginInfo,
             Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
         };
+        ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.GpuStatsReadback");
         if (Api.BeginCommandBuffer(slot.CommandBuffer, in beginInfo) != Result.Success)
             return false;
 
@@ -180,7 +181,10 @@ public unsafe partial class VulkanRenderer
         if (submitResult != Result.Success)
         {
             if (submitResult == Result.ErrorDeviceLost)
-                MarkDeviceLost();
+                MarkDeviceLost(
+                    "GPU statistics readback submit returned ErrorDeviceLost",
+                    "vkQueueSubmit.GpuStatsReadback",
+                    submitResult);
             return false;
         }
 
@@ -268,7 +272,10 @@ public unsafe partial class VulkanRenderer
         if (fenceResult != Result.Success)
         {
             if (fenceResult == Result.ErrorDeviceLost)
-                MarkDeviceLost();
+                MarkDeviceLost(
+                    "GPU statistics readback fence status returned ErrorDeviceLost",
+                    "vkGetFenceStatus.GpuStatsReadback",
+                    fenceResult);
             return false;
         }
 

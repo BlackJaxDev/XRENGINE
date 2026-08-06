@@ -1280,7 +1280,7 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private static bool IsDescriptorTransitionOwnedByScheduledMeshChain(
+        private bool IsDescriptorTransitionOwnedByScheduledMeshChain(
             int opIndex,
             CommandChainKey[]? keysByOpIndex,
             Dictionary<CommandChainKey, CommandChain>? commandChainCache)
@@ -1303,7 +1303,9 @@ namespace XREngine.Rendering.Vulkan
                    chain.SourceStartIndex >= 0 &&
                    chain.SourceCount > 0 &&
                    opIndex >= chain.SourceStartIndex &&
-                   opIndex < chain.SourceStartIndex + chain.SourceCount;
+                   opIndex < chain.SourceStartIndex + chain.SourceCount &&
+                   HasCurrentSecondaryDescriptorPayloadRequirements(
+                       chain.SecondaryCommandBuffer);
         }
 
         internal bool TransitionPublishedDescriptorSetImagesForSampling(

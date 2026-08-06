@@ -4,7 +4,7 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
-        private sealed class CommandBufferCacheVariant(
+        private sealed class PrimaryCommandArtifactOwner(
             CommandBuffer primaryCommandBuffer,
             CommandBuffer dynamicUiSecondaryCommandBuffer,
             CommandPool primaryCommandPool,
@@ -61,3 +61,5 @@ namespace XREngine.Rendering.Vulkan
 
     }
 }
+
+

@@ -53,12 +53,27 @@ namespace XREngine.Rendering.Vulkan
             ulong mappedLength = Math.Max(length, 1UL);
 
             if (TryGetBufferMemoryAllocation(buffer, out VulkanMemoryAllocation allocation))
-                return MemoryAllocator.TryMap(Api!, device, allocation, bufferOffset, mappedLength, out mappedPtr);
+            {
+                bool mapped = MemoryAllocator.TryMap(
+                    Api!,
+                    device,
+                    allocation,
+                    bufferOffset,
+                    mappedLength,
+                    out mappedPtr,
+                    out Result allocationMapResult);
+                if (!mapped)
+                    RecordAllocatorNativeFailure("vkMapMemory.AllocatorBuffer", allocationMapResult);
+                return mapped;
+            }
 
             void* localPtr = null;
             Result result = Api!.MapMemory(device, memory, bufferOffset, mappedLength, 0, &localPtr);
             if (result != Result.Success)
+            {
+                RecordAllocatorNativeFailure("vkMapMemory.Buffer", result);
                 return false;
+            }
 
             mappedPtr = localPtr;
             return true;
@@ -290,6 +305,7 @@ namespace XREngine.Rendering.Vulkan
                 SharingMode = SharingMode.Exclusive
             };
 
+            ThrowIfDeviceLostForResourceCreation("vkCreateBuffer.CreateBufferRaw");
             if (Api!.CreateBuffer(device, ref bufferInfo, null, out Buffer buffer) != Result.Success)
                 throw new Exception("Failed to create Vulkan buffer.");
             TrackLiveBuffer(buffer);
@@ -309,6 +325,7 @@ namespace XREngine.Rendering.Vulkan
             Result bindResult = Api.BindBufferMemory(device, buffer, allocation.Memory, allocation.Offset);
             if (bindResult != Result.Success)
             {
+                RecordAllocatorNativeFailure("vkBindBufferMemory.AllocatorBuffer", bindResult);
                 _bufferResourceManager.Allocations.TryRemove(buffer.Handle, out _);
                 FreeMemoryAllocation(allocation);
                 if (TryBeginDestroyBuffer(buffer, "CreateBufferRaw.BindFailure"))
@@ -362,6 +379,7 @@ namespace XREngine.Rendering.Vulkan
                 SharingMode = SharingMode.Exclusive
             };
 
+            ThrowIfDeviceLostForResourceCreation("vkCreateBuffer.CreateDedicatedBufferRaw");
             if (Api!.CreateBuffer(device, ref bufferInfo, null, out Buffer buffer) != Result.Success)
                 throw new Exception("Failed to create dedicated Vulkan buffer.");
             TrackLiveBuffer(buffer);
@@ -377,6 +395,10 @@ namespace XREngine.Rendering.Vulkan
             ulong bufferSize,
             bool enableDeviceAddress = true)
         {
+            // This path can be reached after a successful native buffer create.
+            // Re-admit immediately before the raw allocation, rather than relying
+            // on its caller's earlier creation check.
+            ThrowIfDeviceLostForResourceCreation("CreateBufferRawLegacy");
             MemoryRequirements memoryRequirements = Api!.GetBufferMemoryRequirements(device, buffer);
             MemoryAllocateInfo memoryInfo = new()
             {
@@ -395,8 +417,11 @@ namespace XREngine.Rendering.Vulkan
             if (enableDeviceAddress)
                 memoryInfo.PNext = &memoryAllocateFlagsInfo;
 
-            if (Api.AllocateMemory(device, ref memoryInfo, null, out DeviceMemory memory) != Result.Success)
+            ThrowIfDeviceLostForResourceCreation("vkAllocateMemory.CreateBufferRawLegacy");
+            Result allocationResult = Api.AllocateMemory(device, ref memoryInfo, null, out DeviceMemory memory);
+            if (allocationResult != Result.Success)
             {
+                RecordAllocatorNativeFailure("vkAllocateMemory.CreateBufferRawLegacy", allocationResult);
                 if (TryBeginDestroyBuffer(buffer, "CreateBufferRawLegacy.AllocateFailure"))
                     Api.DestroyBuffer(device, buffer, null);
                 string description = enableDeviceAddress ? "device-address" : "dedicated";
@@ -425,6 +450,7 @@ namespace XREngine.Rendering.Vulkan
             Result bindResult = Api.BindBufferMemory(device, buffer, memory, 0);
             if (bindResult != Result.Success)
             {
+                RecordAllocatorNativeFailure("vkBindBufferMemory.CreateBufferRawLegacy", bindResult);
                 _bufferResourceManager.LegacyAllocations.TryRemove(buffer.Handle, out _);
                 Api.FreeMemory(device, memory, null);
                 if (TryBeginDestroyBuffer(buffer, "CreateBufferRawLegacy.BindFailure"))
@@ -593,13 +619,28 @@ namespace XREngine.Rendering.Vulkan
             return false;
         }
 
-        private void TrackLiveBuffer(Buffer buffer)
+        internal void TrackLiveBuffer(Buffer buffer, string owner = "Buffer.Allocation")
         {
             if (buffer.Handle != 0)
             {
                 _bufferResourceManager.LiveHandles[buffer.Handle] = 0;
-                RegisterVulkanResource(ObjectType.Buffer, buffer.Handle, "Buffer.Allocation");
+                RegisterVulkanResource(ObjectType.Buffer, buffer.Handle, owner);
             }
+        }
+
+        /// <summary>
+        /// Associates an allocator-backed buffer created by a target driver with the
+        /// renderer's tracked destruction path. The live handle must already have
+        /// been registered through <see cref="TrackLiveBuffer(Buffer, string)"/>.
+        /// </summary>
+        internal void TrackExternalBufferAllocation(Buffer buffer, in VulkanMemoryAllocation allocation)
+        {
+            if (buffer.Handle == 0)
+                throw new ArgumentException("A tracked buffer allocation requires a live Vulkan buffer.", nameof(buffer));
+            if (allocation.Memory.Handle == 0)
+                throw new ArgumentException("A tracked buffer allocation requires bound Vulkan memory.", nameof(allocation));
+
+            _bufferResourceManager.Allocations[buffer.Handle] = allocation;
         }
 
         private bool TryBeginDestroyBuffer(Buffer buffer, string owner)

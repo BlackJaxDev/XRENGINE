@@ -406,6 +406,8 @@ namespace XREngine.Rendering.Commands
             if (existing.PassIndex != incoming.PassIndex ||
                 existing.DeclarationOrder != incoming.DeclarationOrder ||
                 existing.Stage != incoming.Stage ||
+                existing.RequiresPipelineReady != incoming.RequiresPipelineReady ||
+                existing.SecondaryCachePolicy != incoming.SecondaryCachePolicy ||
                 !string.Equals(existing.Name, incoming.Name, StringComparison.Ordinal))
             {
                 return false;

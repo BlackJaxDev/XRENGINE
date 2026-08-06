@@ -6,7 +6,7 @@ namespace XREngine.Rendering.Vulkan
     public unsafe partial class VulkanRenderer
     {
         private void ResetCommandBufferLifecycle(
-            scoped ref VulkanCommandSchedulingContext<CommandBufferCacheVariant> context)
+            scoped ref VulkanCommandSchedulingContext<PrimaryCommandArtifactOwner> context)
         {
             _lastEnsureCommandBufferRecordedPrimary = false;
             context.RecordingDeferredReason = string.Empty;
@@ -23,7 +23,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private bool TryInitializeCommandBufferLifecycle(
-            scoped ref VulkanCommandSchedulingContext<CommandBufferCacheVariant> context,
+            scoped ref VulkanCommandSchedulingContext<PrimaryCommandArtifactOwner> context,
             out CommandBufferLifecycleState state)
         {
             state = default;
@@ -100,7 +100,7 @@ namespace XREngine.Rendering.Vulkan
             if (state.GpuProfilerCommandBufferStateDirty)
             {
                 ClearVulkanGpuProfilerPendingQueries();
-                MarkCommandBufferVariantsDirty(
+                MarkPrimaryCommandArtifactOwnersDirty(
                     imageIndex,
                     "gpu-profiler-command-buffer-state");
             }
@@ -111,6 +111,7 @@ namespace XREngine.Rendering.Vulkan
         private void PrepareCommandBufferFrameOperations(
             scoped ref CommandBufferLifecycleState state)
         {
+            ResourcePlannerRuntimeState plannerState = CaptureResourcePlannerRuntimeState();
             using (VulkanCpuStageScope cpuStage =
                    new(EVulkanCpuStage.FrameOpPreparation))
             {
@@ -145,7 +146,7 @@ namespace XREngine.Rendering.Vulkan
                         state.FrameOperations = _frameOperationScheduler
                             .SortFrameOpsCore(
                                 state.FrameOperations,
-                                CompiledRenderGraph);
+                                plannerState.CompiledRenderGraph);
                     }
                     using (VulkanCpuStageScope cohortStage =
                            new(EVulkanCpuStage.FrameOpCohort))
@@ -167,7 +168,7 @@ namespace XREngine.Rendering.Vulkan
                     using (VulkanCpuStageScope signatureStage =
                            new(EVulkanCpuStage.FrameOpSignature))
                     {
-                        NormalizePrimaryPlanPassIndices(state.FrameOperations);
+                        NormalizePrimaryPlanPassIndicesForPublication(state.FrameOperations);
                         state.FrameOperationsSignature =
                             ComputeFrameOpsSignature(state.FrameOperations);
                         state.DynamicUiSignature = state.HasDynamicUiOperations
@@ -187,7 +188,7 @@ namespace XREngine.Rendering.Vulkan
                                 state.PreserveSwapchainForOverlay,
                                 TransitionSwapchainToPresent: true,
                                 ReleaseExternalImageOwnership: false),
-                            BarrierPlanner);
+                            plannerState.BarrierPlanner);
 
                         FrameOpSignatureHasher primaryReuseIdentity = new();
                         primaryReuseIdentity.Add(
@@ -213,7 +214,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private bool TryRegisterCommandBufferFrameDataManifest(
-            scoped ref VulkanCommandSchedulingContext<CommandBufferCacheVariant> context,
+            scoped ref VulkanCommandSchedulingContext<PrimaryCommandArtifactOwner> context,
             scoped ref CommandBufferLifecycleState state)
         {
             bool registered;
@@ -241,7 +242,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private CommandBuffer SchedulePreparedCommandBufferLifecycle(
-            scoped ref VulkanCommandSchedulingContext<CommandBufferCacheVariant> context,
+            scoped ref VulkanCommandSchedulingContext<PrimaryCommandArtifactOwner> context,
             scoped ref CommandBufferLifecycleState state)
         {
             FrameOp[] plannerPreparationOperations =
@@ -260,22 +261,37 @@ namespace XREngine.Rendering.Vulkan
                 return default;
             }
 
+            // Finish every operation mutation before publishing its immutable
+            // frame-plan storage. The primary plan is rebuilt from that final
+            // DAG ordering below; it must not force a reset/reseal cycle.
+            NormalizePrimaryPlanPassIndicesForPublication(state.FrameOperations);
+            state.FrameOperationsSignature = ComputeFrameOpsSignature(state.FrameOperations);
+            state.DynamicUiSignature = state.HasDynamicUiOperations
+                ? ComputeFrameOpsSignature(state.DynamicUiOperations)
+                : 0UL;
+
+            // Publish only after resource planning has selected the coherent
+            // revision and captured its generation-visible contexts.
+            state.SealFramePlan();
+            RebuildPrimaryPlanForFramePlanOrder(ref state);
+            if (!state.IsSealedFramePlanCurrent())
+            {
+                _ = DeferCommandBufferLifecycle(
+                    ref context,
+                    ref state,
+                    "sealed frame-plan publication became incoherent before command recording");
+                return default;
+            }
+
             CaptureCommandBufferDependencies(ref state);
             RecordCommandBufferTextureUploads(ref context, ref state);
             CaptureCommandBufferReuseInputs(ref state);
 
-            if (TryReuseLastSwapchainWriter(
+            if (!FreshSerialRecordingEnabled &&
+                TryReusePreparedCommandChain(
                     ref context,
                     ref state,
                     out CommandBuffer reusedCommandBuffer))
-            {
-                return reusedCommandBuffer;
-            }
-
-            if (TryReusePreparedCommandChain(
-                    ref context,
-                    ref state,
-                    out reusedCommandBuffer))
             {
                 return reusedCommandBuffer;
             }
@@ -284,7 +300,15 @@ namespace XREngine.Rendering.Vulkan
             SelectCommandBufferVariant(ref state);
             EvaluateCommandBufferVariantDirtyState(ref state);
 
-            if (!state.Dirty &&
+            if (FreshSerialRecordingEnabled)
+            {
+                state.Dirty = true;
+                state.ForcedDirty = true;
+                state.ForcedVariantDirtyReason = "FreshSerial recording mode";
+            }
+
+            if (!FreshSerialRecordingEnabled &&
+                !state.Dirty &&
                 TryRefreshReusableCommandBufferVariant(ref state) &&
                 TryPrepareReusableCommandBufferQueries(ref state) &&
                 TryPrepareReusableCommandBufferDynamicUi(ref state))
@@ -310,6 +334,29 @@ namespace XREngine.Rendering.Vulkan
                 ref state);
         }
 
+        /// <summary>
+        /// The frame plan lowers the output DAG into the operation arrays that
+        /// every scheduler and recorder consumes. Rebuild the index-based primary
+        /// plan after that ordering change so primary node ranges cannot retain
+        /// the pre-DAG source indices.
+        /// </summary>
+        private void RebuildPrimaryPlanForFramePlanOrder(
+            scoped ref CommandBufferLifecycleState state)
+        {
+            if (!state.HasStaticFrameOperations)
+                return;
+
+            ulong normalizedSignature = ComputeFrameOpsSignature(state.FrameOperations);
+            state.PrimaryCommandPlan.Build(
+                state.FrameOperations,
+                normalizedSignature,
+                new VulkanPrimaryPlanTerminalContext(
+                    state.PreserveSwapchainForOverlay,
+                    TransitionSwapchainToPresent: true,
+                    ReleaseExternalImageOwnership: false),
+                BarrierPlanner);
+        }
+
         private void ClassifyPreparedCommandBufferFrameOperations(
             scoped ref CommandBufferLifecycleState state)
         {
@@ -322,7 +369,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private bool TryPrepareCommandBufferResources(
-            scoped ref VulkanCommandSchedulingContext<CommandBufferCacheVariant> context,
+            scoped ref VulkanCommandSchedulingContext<PrimaryCommandArtifactOwner> context,
             scoped ref CommandBufferLifecycleState state,
             in FrameOpResourcePlannerPreparationScope plannerPreparationScope)
         {
@@ -338,6 +385,17 @@ namespace XREngine.Rendering.Vulkan
                 new(EVulkanCpuStage.ResourcePlanning);
             bool hasPlannerOperations = plannerOperations.Length > 0;
             if (hasPlannerOperations &&
+                !TryValidateFrameOpPlannerContextSet(
+                    plannerOperations,
+                    out string contextSetFailureReason))
+            {
+                return DeferCommandBufferLifecycle(
+                    ref context,
+                    ref state,
+                    contextSetFailureReason);
+            }
+
+            if (hasPlannerOperations &&
                 TryDescribeRecentResourceAllocationFailure(
                     out string prePlanFailureReason))
             {
@@ -345,6 +403,32 @@ namespace XREngine.Rendering.Vulkan
                     ref context,
                     ref state,
                     prePlanFailureReason);
+            }
+
+            if (hasPlannerOperations)
+            {
+                string independentRefreshReason = state.HasStaticFrameOperations
+                    ? "Vulkan context-local command plan resource refresh"
+                    : "Vulkan context-local dynamic UI plan resource refresh";
+                if (!TryPrepareIndependentFrameOpResourcePlannerStates(
+                        plannerOperations,
+                        plannerFrameOperationsSignature,
+                        independentRefreshReason,
+                        out bool independentPlanHandled,
+                        out ulong independentPlannerRevision,
+                        out string independentPlanFailureReason))
+                {
+                    return DeferCommandBufferLifecycle(
+                        ref context,
+                        ref state,
+                        independentPlanFailureReason);
+                }
+
+                if (independentPlanHandled)
+                {
+                    state.PlannerRevision = independentPlannerRevision;
+                    return true;
+                }
             }
 
             if (hasPlannerOperations &&
@@ -519,7 +603,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void RecordCommandBufferTextureUploads(
-            scoped ref VulkanCommandSchedulingContext<CommandBufferCacheVariant> context,
+            scoped ref VulkanCommandSchedulingContext<PrimaryCommandArtifactOwner> context,
             scoped ref CommandBufferLifecycleState state)
         {
             BeginRecordedTextureUploadSubmitBatch();
@@ -561,7 +645,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private bool DeferCommandBufferLifecycle(
-            scoped ref VulkanCommandSchedulingContext<CommandBufferCacheVariant> context,
+            scoped ref VulkanCommandSchedulingContext<PrimaryCommandArtifactOwner> context,
             scoped ref CommandBufferLifecycleState state,
             string reason)
         {

@@ -199,7 +199,10 @@ public unsafe partial class VulkanRenderer
             return false;
         if (result == Result.ErrorDeviceLost)
         {
-            MarkDeviceLost("Swapchain retirement marker fence reported device loss");
+            MarkDeviceLost(
+                "Swapchain retirement marker fence reported device loss",
+                "vkGetFenceStatus.SwapchainRetirement",
+                result);
             return false;
         }
 

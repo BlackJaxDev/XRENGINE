@@ -27,6 +27,7 @@ namespace XREngine.Rendering.Vulkan.RenderGraph;
 /// <param name="OutputFrameBufferIdentity">The identity of the output frame buffer.</param>
 /// <param name="ContextKind">The kind of the frame operation context.</param>
 /// <param name="ContextId">The unique identifier for the context.</param>
+/// <param name="LogicalViewId">Stable logical view/history identity, independent of acquired target slots.</param>
 /// <param name="RecordingFingerprint">The recording fingerprint for the frame operation.</param>
 /// <param name="SubmissionQueueFamily">The submission queue family index.</param>
 /// <param name="StereoEnabled">Indicates whether stereo rendering is enabled.</param>
@@ -35,6 +36,8 @@ namespace XREngine.Rendering.Vulkan.RenderGraph;
 /// <param name="DescriptorGeneration">The descriptor generation number.</param>
 /// <param name="OutputFrameBuffer">The output frame buffer.</param>
 /// <param name="ResourceRegistrySignatureSnapshot">The immutable registry descriptor signature captured for this operation.</param>
+/// <param name="OutputProducerDependencySetId">Optional semantic output-resource set produced by this context.</param>
+/// <param name="OutputConsumerDependencySetId">Optional semantic output-resource set required before this context may execute.</param>
 internal readonly record struct FrameOpContext(
     int PipelineIdentity,
     int ViewportIdentity,
@@ -52,6 +55,7 @@ internal readonly record struct FrameOpContext(
     int OutputFrameBufferIdentity = 0,
     EVulkanFrameOpContextKind ContextKind = EVulkanFrameOpContextKind.Unknown,
     ulong ContextId = 0,
+    ulong LogicalViewId = 0,
     ulong RecordingFingerprint = ulong.MaxValue,
     uint SubmissionQueueFamily = 0,
     bool StereoEnabled = false,
@@ -59,7 +63,9 @@ internal readonly record struct FrameOpContext(
     ulong ResourceGeneration = 0,
     ulong DescriptorGeneration = 0,
     XRFrameBuffer? OutputFrameBuffer = null,
-    int? ResourceRegistrySignatureSnapshot = null)
+    int? ResourceRegistrySignatureSnapshot = null,
+    ulong OutputProducerDependencySetId = 0,
+    ulong OutputConsumerDependencySetId = 0)
 {
     public int SchedulingIdentity => OutputTargetIdentity == 0
         ? HashCode.Combine(PipelineIdentity, ViewportIdentity)

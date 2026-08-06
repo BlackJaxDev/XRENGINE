@@ -9,11 +9,13 @@ public sealed class RenderOutputDag
     private readonly RenderOutputDagNodeDescriptor[] _nodes;
     private readonly RenderOutputDagNodeStatus[] _status;
     private readonly bool[] _active;
+    private readonly ulong[] _reservedOutputKeys;
     private readonly Edge[] _edges;
     private int _slotCount;
     private int _activeCount;
     private int _edgeCount;
     private uint _frameIndex;
+    private ERenderOutputDagCompilationFailure _buildFailure;
 
     public RenderOutputDag(int nodeCapacity, int edgeCapacity)
     {
@@ -24,31 +26,46 @@ public sealed class RenderOutputDag
         _nodes = new RenderOutputDagNodeDescriptor[nodeCapacity];
         _status = new RenderOutputDagNodeStatus[nodeCapacity];
         _active = new bool[nodeCapacity];
+        _reservedOutputKeys = new ulong[nodeCapacity];
         _edges = new Edge[edgeCapacity];
     }
 
     public int NodeCount => _activeCount;
     public int EdgeCount => _edgeCount;
+    /// <summary>Number of persistent node slots required by compilation scratch storage.</summary>
+    public int SlotCount => _slotCount;
 
     public void BeginFrame(uint frameIndex)
     {
         _frameIndex = frameIndex;
+        // Node keys include output/resource revisions. Clear only this frame's
+        // activity/edges: stable keys retain their cache and resumable status,
+        // while inactive slots are available for a revised resource key.
+        Array.Clear(_active);
         _activeCount = 0;
         _edgeCount = 0;
-        for (int i = 0; i < _slotCount; i++)
-        {
-            _active[i] = false;
-            RenderOutputDagNodeStatus status = _status[i];
-            uint age = !status.HasCompletedResult
-                ? status.ContentAgeFrames
-                : frameIndex - status.LastCompletedFrame;
-            _status[i] = status with
-            {
-                State = ERenderOutputNodeState.Pending,
-                ContentAgeFrames = age,
-                AuthorizedReuse = false,
-            };
-        }
+        _reservedOutputKeyCount = 0;
+        _buildFailure = ERenderOutputDagCompilationFailure.None;
+    }
+
+    private int _reservedOutputKeyCount;
+
+    /// <summary>
+    /// Reserves every current output before lowering begins. This prevents a
+    /// newly introduced output from recycling a stable cache slot belonging to
+    /// a later output in the same frame.
+    /// </summary>
+    public bool ReserveOutputKey(ulong stableOutputKey)
+    {
+        if (stableOutputKey == 0UL)
+            return false;
+        for (int i = 0; i < _reservedOutputKeyCount; i++)
+            if (_reservedOutputKeys[i] == stableOutputKey)
+                return true;
+        if (_reservedOutputKeyCount >= _reservedOutputKeys.Length)
+            return false;
+        _reservedOutputKeys[_reservedOutputKeyCount++] = stableOutputKey;
+        return true;
     }
 
     public int AddNode(in RenderOutputDagNodeDescriptor descriptor)
@@ -58,9 +75,16 @@ public sealed class RenderOutputDag
         int slot = FindNode(descriptor.StableNodeKey);
         if (slot < 0)
         {
-            if (_slotCount >= _nodes.Length)
+            slot = FindReusableSlot();
+            if (slot < 0)
+            {
+                _buildFailure = ERenderOutputDagCompilationFailure.DestinationCapacity;
                 return -1;
-            slot = _slotCount++;
+            }
+
+            _status[slot] = default;
+            if (slot == _slotCount)
+                _slotCount++;
         }
 
         _nodes[slot] = descriptor;
@@ -76,8 +100,16 @@ public sealed class RenderOutputDag
     {
         ValidateActiveNode(prerequisiteNode);
         ValidateActiveNode(dependentNode);
-        if (prerequisiteNode == dependentNode || _edgeCount >= _edges.Length)
+        if (prerequisiteNode == dependentNode)
+        {
+            _buildFailure = ERenderOutputDagCompilationFailure.Cycle;
             return false;
+        }
+        if (_edgeCount >= _edges.Length)
+        {
+            _buildFailure = ERenderOutputDagCompilationFailure.DestinationCapacity;
+            return false;
+        }
         _edges[_edgeCount++] = new(prerequisiteNode, dependentNode);
         return true;
     }
@@ -158,12 +190,102 @@ public sealed class RenderOutputDag
         return true;
     }
 
+    /// <summary>
+    /// Copies a stable topological order for the active frame graph. Nodes with
+    /// no dependency relationship are ordered by stable node key, then slot, so
+    /// equivalent output sets always lower to the same execution sequence.
+    /// </summary>
+    public bool TryCompileDeterministicOrder(
+        Span<int> destination,
+        Span<int> indegreeScratch,
+        out int count,
+        out ERenderOutputDagCompilationFailure failure)
+    {
+        count = 0;
+        failure = _buildFailure;
+        if (failure != ERenderOutputDagCompilationFailure.None)
+            return false;
+        if (destination.Length < _activeCount || indegreeScratch.Length < _slotCount)
+        {
+            failure = ERenderOutputDagCompilationFailure.DestinationCapacity;
+            return false;
+        }
+
+        for (int slot = 0; slot < _slotCount; slot++)
+            indegreeScratch[slot] = _active[slot] ? 0 : -1;
+
+        for (int edgeIndex = 0; edgeIndex < _edgeCount; edgeIndex++)
+        {
+            Edge edge = _edges[edgeIndex];
+            if ((uint)edge.Prerequisite >= (uint)_slotCount ||
+                (uint)edge.Dependent >= (uint)_slotCount ||
+                !_active[edge.Prerequisite] ||
+                !_active[edge.Dependent])
+            {
+                failure = ERenderOutputDagCompilationFailure.MissingPrerequisite;
+                return false;
+            }
+
+            indegreeScratch[edge.Dependent]++;
+        }
+
+        while (count < _activeCount)
+        {
+            int selected = -1;
+            for (int slot = 0; slot < _slotCount; slot++)
+            {
+                if (indegreeScratch[slot] != 0)
+                    continue;
+                if (selected < 0 ||
+                    _nodes[slot].StableNodeKey < _nodes[selected].StableNodeKey ||
+                    (_nodes[slot].StableNodeKey == _nodes[selected].StableNodeKey && slot < selected))
+                {
+                    selected = slot;
+                }
+            }
+
+            if (selected < 0)
+            {
+                failure = ERenderOutputDagCompilationFailure.Cycle;
+                return false;
+            }
+
+            destination[count++] = selected;
+            indegreeScratch[selected] = -1;
+            for (int edgeIndex = 0; edgeIndex < _edgeCount; edgeIndex++)
+            {
+                Edge edge = _edges[edgeIndex];
+                if (edge.Prerequisite == selected)
+                    indegreeScratch[edge.Dependent]--;
+            }
+        }
+
+        return true;
+    }
+
     private int FindNode(ulong stableNodeKey)
     {
         for (int i = 0; i < _slotCount; i++)
             if (_nodes[i].StableNodeKey == stableNodeKey)
                 return i;
         return -1;
+    }
+
+    private int FindReusableSlot()
+    {
+        for (int i = 0; i < _slotCount; i++)
+            if (!_active[i] && !IsReservedOutputKey(_nodes[i].StableOutputKey))
+                return i;
+
+        return _slotCount < _nodes.Length ? _slotCount : -1;
+    }
+
+    private bool IsReservedOutputKey(ulong stableOutputKey)
+    {
+        for (int i = 0; i < _reservedOutputKeyCount; i++)
+            if (_reservedOutputKeys[i] == stableOutputKey)
+                return true;
+        return false;
     }
 
     private void ValidateActiveNode(int nodeIndex)

@@ -20,6 +20,8 @@ namespace XREngine.Rendering.Vulkan;
 
 internal unsafe partial class VkRenderProgram
 {
+    internal Pipeline ComputePipeline => _computePipeline;
+
     public Pipeline CreateComputePipeline(ref ComputePipelineCreateInfo pipelineInfo, PipelineCache pipelineCache = default)
     {
         if (!Link())
@@ -192,9 +194,11 @@ internal unsafe partial class VkRenderProgram
         ComputeDispatchSnapshot snapshot,
         ulong reusableDescriptorBindingKey,
         out DescriptorPool descriptorPool,
+        out DescriptorSet[] boundDescriptorSets,
         out List<(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)> tempUniformBuffers)
     {
         descriptorPool = default;
+        boundDescriptorSets = [];
         tempUniformBuffers = [];
 
         if (_descriptorSetLayouts.Length == 0 || _programDescriptorBindings.Count == 0)
@@ -443,6 +447,8 @@ internal unsafe partial class VkRenderProgram
             0,
             descriptorSets);
 
+        boundDescriptorSets = descriptorSets;
+
         return true;
     }
 
@@ -563,7 +569,7 @@ internal unsafe partial class VkRenderProgram
         return hash;
     }
 
-    private static ulong ComputeComputeDescriptorBindingFingerprint(
+    private ulong ComputeComputeDescriptorBindingFingerprint(
         PendingDescriptorWrite[] writes,
         DescriptorBufferInfo[] buffers,
         DescriptorImageInfo[] images,
@@ -594,6 +600,7 @@ internal unsafe partial class VkRenderProgram
                         {
                             DescriptorBufferInfo info = buffers[index];
                             Mix(ref hash, info.Buffer.Handle);
+                            Mix(ref hash, Renderer.GetCurrentVulkanResourceGeneration(ObjectType.Buffer, info.Buffer.Handle));
                             Mix(ref hash, info.Offset);
                             Mix(ref hash, info.Range);
                             break;
@@ -602,7 +609,19 @@ internal unsafe partial class VkRenderProgram
                         {
                             DescriptorImageInfo info = images[index];
                             Mix(ref hash, info.ImageView.Handle);
+                            Mix(ref hash, Renderer.GetCurrentVulkanResourceGeneration(ObjectType.ImageView, info.ImageView.Handle));
+                            if (Renderer.TryGetImageViewBackingImage(info.ImageView, out Image backingImage))
+                            {
+                                Mix(ref hash, backingImage.Handle);
+                                Mix(ref hash, Renderer.GetCurrentVulkanResourceGeneration(ObjectType.Image, backingImage.Handle));
+                            }
+                            else
+                            {
+                                Mix(ref hash, 0UL);
+                                Mix(ref hash, 0UL);
+                            }
                             Mix(ref hash, info.Sampler.Handle);
+                            Mix(ref hash, Renderer.GetCurrentVulkanResourceGeneration(ObjectType.Sampler, info.Sampler.Handle));
                             Mix(ref hash, (ulong)info.ImageLayout);
                             break;
                         }
@@ -610,6 +629,17 @@ internal unsafe partial class VkRenderProgram
                         {
                             BufferView view = texelViews[index];
                             Mix(ref hash, view.Handle);
+                            Mix(ref hash, Renderer.GetCurrentVulkanResourceGeneration(ObjectType.BufferView, view.Handle));
+                            if (Renderer.TryGetBufferViewBackingBuffer(view, out Silk.NET.Vulkan.Buffer backingBuffer))
+                            {
+                                Mix(ref hash, backingBuffer.Handle);
+                                Mix(ref hash, Renderer.GetCurrentVulkanResourceGeneration(ObjectType.Buffer, backingBuffer.Handle));
+                            }
+                            else
+                            {
+                                Mix(ref hash, 0UL);
+                                Mix(ref hash, 0UL);
+                            }
                             break;
                         }
                 }
@@ -714,7 +744,8 @@ internal unsafe partial class VkRenderProgram
             }
         }
 
-        if (binding.DescriptorType == DescriptorType.UniformBuffer &&
+        if (binding.Requirement == EVulkanDescriptorBindingRequirement.Optional &&
+            binding.DescriptorType == DescriptorType.UniformBuffer &&
             TryGetOrUpdateComputeFallbackUniformBuffer(imageIndex, binding, dispatchKey, out bufferInfo))
         {
             RecordComputeDescriptorFallback(binding);
@@ -839,12 +870,19 @@ internal unsafe partial class VkRenderProgram
                 continue;
             }
 
-            if (!TryGetOrUpdateComputeFallbackUniformBuffer(
-                imageIndex,
-                binding,
-                reusableDescriptorBindingKey,
-                out _))
+            if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
             {
+                RecordComputeDescriptorFailure(binding, "required uniform buffer is unresolved during pre-native preparation", skippedDispatch: true);
+                return false;
+            }
+
+            if (!TryGetOrUpdateComputeFallbackUniformBuffer(
+                    imageIndex,
+                    binding,
+                    reusableDescriptorBindingKey,
+                    out _))
+            {
+                RecordComputeDescriptorFailure(binding, "optional fallback uniform buffer preparation failed", skippedDispatch: true);
                 return false;
             }
         }
@@ -881,6 +919,12 @@ internal unsafe partial class VkRenderProgram
                 if (!TryUpdateExistingComputeAutoUniformBuffer(imageIndex, binding, snapshot, block, reusableDescriptorBindingKey))
                     return false;
                 continue;
+            }
+
+            if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
+            {
+                RecordComputeDescriptorFailure(binding, "required uniform buffer is unresolved during frame-data refresh", skippedDispatch: true);
+                return false;
             }
 
             if (!HasExistingComputeFallbackUniformBuffer(imageIndex, binding, reusableDescriptorBindingKey))
@@ -1226,6 +1270,9 @@ internal unsafe partial class VkRenderProgram
 
         if (!snapshot.Samplers.TryGetValue(binding.Binding, out XRTexture? texture))
         {
+            if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
+                return false;
+
             // Fallback for shaders that only bind a single sampler but use non-zero binding in source.
             texture = snapshot.Samplers.Count == 1 ? snapshot.Samplers.Values.First() : null;
             if (texture is null)
@@ -1246,6 +1293,9 @@ internal unsafe partial class VkRenderProgram
 
         if (!snapshot.Samplers.TryGetValue(binding.Binding, out XRTexture? texture))
         {
+            if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
+                return false;
+
             texture = snapshot.Samplers.Count == 1 ? snapshot.Samplers.Values.First() : null;
             if (texture is null)
                 return false;
@@ -1361,9 +1411,15 @@ internal unsafe partial class VkRenderProgram
 
         if (sampler.Handle != 0)
         {
+            if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
+                return false;
+
             WarnComputeOnce($"Compute texture for binding '{binding.Name}' references a retired Vulkan sampler. Using placeholder sampler.");
             RecordComputeDescriptorFallback(binding);
         }
+
+        if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
+            return false;
 
         sampler = Renderer.GetPlaceholderSampler();
         if (sampler.Handle != 0 && Renderer.IsLiveSampler(sampler))

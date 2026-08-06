@@ -121,6 +121,7 @@ public unsafe partial class VulkanRenderer
         using (VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.CommandChainPacketLowering))
         {
             BuildCommandChainRenderPackets(
+                imageIndex,
                 staticOps,
                 volatileOps,
                 resourcePlanRevision,
@@ -187,6 +188,7 @@ public unsafe partial class VulkanRenderer
         string? firstDescriptorMismatch = null;
         string? firstResourcePlanMismatch = null;
         EVulkanCommandBufferDecisionReason secondaryDecisionReasons = EVulkanCommandBufferDecisionReason.None;
+        CommandChain? lastScheduledChain = null;
 
         for (int i = 0; i < packets.Count; i++)
         {
@@ -321,7 +323,7 @@ public unsafe partial class VulkanRenderer
             chain.FramebufferSignature = packet.ResourcePlanSnapshot.FramebufferSignature;
             chain.DescriptorGeneration = packet.DescriptorSnapshot.DescriptorGeneration;
             chain.PipelineGeneration = packet.ResourcePlanSnapshot.PipelineGeneration;
-            chain.DependencySignature = BuildCommandChainDependencySignature(packet, key);
+            chain.DependencySignature = BuildCurrentCommandChainDependencySignature(packet, chain);
             chain.DrawCount = packet.DrawCount;
             chain.DispatchCount = packet.DispatchCount;
             chain.InstanceCountSignature = ComputePacketInstanceCountSignature(packet);
@@ -330,6 +332,8 @@ public unsafe partial class VulkanRenderer
             chain.SourceStartIndex = packet.SourceStartIndex;
             chain.SourceCount = packet.SourceCount;
             chain.LastRecordedFrameSlot = unchecked((int)Math.Min(imageIndex, int.MaxValue));
+            chain.PublishPacketSnapshot(packet);
+            lastScheduledChain = chain;
 
             currentGroupKeys.Add(key);
             currentGroupSignature = MixSignature(currentGroupSignature, packet.StructuralSignature);
@@ -358,17 +362,19 @@ public unsafe partial class VulkanRenderer
         int visibilityPacketCount = CountDistinctViewKeys(packets);
         RenderPacket lastPacket = packets[^1];
         CommandRecordingDependencySignature scheduleDependencySignature =
-            BuildCommandChainDependencySignature(
-                lastPacket,
-                new CommandChainKey(
-                    unchecked((int)Math.Min(imageIndex, int.MaxValue)),
-                    lastPacket.ViewKey,
-                    lastPacket.PassIndex,
-                    lastPacket.TargetIdentity,
-                    ResolveCommandChainDescriptorBindingVariant(
-                        lastPacket.DescriptorSnapshot),
-                    lastPacket.DynamicOverlay,
-                    0)) with
+            (lastScheduledChain is null
+                ? BuildCommandChainDependencySignature(
+                    lastPacket,
+                    new CommandChainKey(
+                        unchecked((int)Math.Min(imageIndex, int.MaxValue)),
+                        lastPacket.ViewKey,
+                        lastPacket.PassIndex,
+                        lastPacket.TargetIdentity,
+                        ResolveCommandChainDescriptorBindingVariant(
+                            lastPacket.DescriptorSnapshot),
+                        lastPacket.DynamicOverlay,
+                        0))
+                : BuildCurrentCommandChainDependencySignature(lastPacket, lastScheduledChain)) with
             {
                 OutputPassAttachment = scheduleSignature,
                 ResourcePlanGeneration = resourcePlanRevision,

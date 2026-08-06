@@ -89,6 +89,8 @@ public unsafe partial class VulkanRenderer
             EVulkanSecondaryCommandFamily.Compute =>
                 queueFamilies.GraphicsFamilyIndex.HasValue &&
                 queueFamilies.GraphicsFamilySupportsCompute,
+            EVulkanSecondaryCommandFamily.Synchronization =>
+                queueFamilies.GraphicsFamilyIndex.HasValue,
             EVulkanSecondaryCommandFamily.Transfer =>
                 queueFamilies.GraphicsFamilyIndex.HasValue &&
                 queueFamilies.GraphicsFamilySupportsTransfer,
@@ -123,7 +125,12 @@ public unsafe partial class VulkanRenderer
             {
                 EVulkanSecondaryCommandFamily.Compute =>
                     operation is ComputeDispatchOp dispatch &&
-                    IsComputeSecondaryOperationValid(dispatch, bucket),
+                    IsComputeSecondaryOperationValid(dispatch, bucket) ||
+                    operation is ComputeDispatchIndirectOp indirect &&
+                    IsComputeIndirectSecondaryOperationValid(indirect, bucket),
+                EVulkanSecondaryCommandFamily.Synchronization =>
+                    operation is MemoryBarrierOp barrier &&
+                    IsExplicitFixedMemoryBarrier(barrier, bucket),
                 EVulkanSecondaryCommandFamily.Transfer =>
                     operation is BufferCopyOp copy &&
                     IsTransferSecondaryOperationValid(copy, bucket),
@@ -154,6 +161,9 @@ public unsafe partial class VulkanRenderer
         {
             EVulkanSecondaryCommandFamily.Compute =>
                 ComputeSecondaryCommandBuffersEnabled,
+            // Only MemoryBarrierOp is admitted to this family. Render-graph,
+            // image-layout, and queue-transfer barriers remain primary-owned.
+            EVulkanSecondaryCommandFamily.Synchronization => true,
             EVulkanSecondaryCommandFamily.Transfer =>
                 TransferSecondaryCommandBuffersEnabled,
             EVulkanSecondaryCommandFamily.Query =>
@@ -278,6 +288,20 @@ public unsafe partial class VulkanRenderer
            operation.GroupsZ > 0 &&
            operation.Program is not null &&
            operation.Snapshot is not null;
+
+    private static bool IsComputeIndirectSecondaryOperationValid(
+        ComputeDispatchIndirectOp operation,
+        in VulkanSecondaryRecordingBucket bucket)
+        => operation.PassIndex == bucket.PassIndex &&
+           operation.Program is not null &&
+           operation.Snapshot is not null &&
+           operation.ArgumentOwner is not null &&
+           operation.ArgumentBuffer.Handle != 0UL;
+
+    private static bool IsExplicitFixedMemoryBarrier(
+        MemoryBarrierOp operation,
+        in VulkanSecondaryRecordingBucket bucket)
+        => operation.PassIndex == bucket.PassIndex && operation.Mask != 0;
 
     private static bool IsTransferSecondaryOperationValid(
         BufferCopyOp operation,

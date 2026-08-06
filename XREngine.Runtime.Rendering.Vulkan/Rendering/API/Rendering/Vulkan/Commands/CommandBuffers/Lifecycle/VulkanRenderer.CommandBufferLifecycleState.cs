@@ -46,12 +46,22 @@ namespace XREngine.Rendering.Vulkan
             public bool GpuPipelineProfilingActive;
             public bool GpuProfilerCommandBufferStateDirty;
 
+            /// <summary>
+            /// Mutable producer stream until <see cref="SealFramePlan"/> replaces
+            /// it with frame-slot-owned immutable storage.
+            /// </summary>
             public FrameOp[] FrameOperations;
             public ulong RawFrameOpsSignature;
             public FrameOp[] DynamicUiOperations;
             public bool HasFrameOperations;
             public ulong FrameOperationsSignature;
             public ulong DynamicUiSignature;
+            /// <summary>
+            /// Immutable frame-slot-owned lowering of the final static and dynamic
+            /// operation arrays. It is available to later lifecycle/recording
+            /// stages without re-reading mutable producer collections.
+            /// </summary>
+            public FramePlan? SealedFramePlan;
             public CommandBufferRecordingScratch Scratch;
             public VulkanPrimaryCommandPlan PrimaryCommandPlan;
             public bool HasQueryFrameOperations;
@@ -74,7 +84,7 @@ namespace XREngine.Rendering.Vulkan
             public int CommandChainPrimaryGroupCount;
             public bool AllPreparedDrawBindingsUseSecondaryBuffers;
             public ulong CommandChainPrimarySkeletonSignature;
-            public CommandBufferCacheVariant Variant;
+            public PrimaryCommandArtifactOwner Variant;
             public string? ForcedVariantDirtyReason;
             public bool Dirty;
             public bool ForcedDirty;
@@ -92,6 +102,41 @@ namespace XREngine.Rendering.Vulkan
             public readonly bool DelayDynamicUiOverlayRecording =>
                 PreserveSwapchainForOverlay && HasDynamicUiOperations;
             public readonly bool UsingCommandChains => CommandChainSchedule is not null;
+
+            public void SealFramePlan()
+            {
+                if (SealedFramePlan is not null)
+                    return;
+
+                SealedFramePlan = FramePlanBuilder.GetCurrentThread().BuildAndSeal(
+                    CommandBufferImageSlot,
+                    PlannerRevision,
+                    FrameOperationsSignature,
+                    DynamicUiSignature,
+                    FrameOperations,
+                    DynamicUiOperations);
+                FrameOperations = SealedFramePlan.GetNativeStaticOperationsForRecording();
+                DynamicUiOperations = SealedFramePlan.GetNativeDynamicOverlayOperationsForRecording();
+            }
+
+            /// <summary>
+            /// Replaces the old publication after the resource planner has
+            /// produced a different coherent revision. Existing asynchronous
+            /// consumers keep their leased plan slot; the builder selects a new
+            /// slot when necessary.
+            /// </summary>
+            public void ResealFramePlan()
+            {
+                SealedFramePlan = null;
+                SealFramePlan();
+            }
+
+            public readonly bool IsSealedFramePlanCurrent()
+                => SealedFramePlan is { } plan && plan.MatchesPublication(
+                    RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId,
+                    PlannerRevision,
+                    FrameOperationsSignature,
+                    DynamicUiSignature);
         }
     }
 }

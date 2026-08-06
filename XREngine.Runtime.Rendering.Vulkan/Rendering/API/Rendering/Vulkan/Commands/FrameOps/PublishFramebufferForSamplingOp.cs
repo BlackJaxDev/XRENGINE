@@ -15,7 +15,16 @@ internal sealed record PublishFramebufferForSamplingOp(
     /// <summary>
     /// Gets the framebuffer that is being published for sampling.
     /// </summary>
-    public XRFrameBuffer FrameBuffer { get; internal set; } = FrameBuffer;
+    private XRFrameBuffer _frameBuffer = FrameBuffer;
+    public XRFrameBuffer FrameBuffer
+    {
+        get => _frameBuffer;
+        internal set
+        {
+            ThrowIfSealedForFramePlan();
+            _frameBuffer = value;
+        }
+    }
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.PublishFramebufferForSampling;
 
     internal override int RecordPrimary(

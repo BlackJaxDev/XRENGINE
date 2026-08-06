@@ -12,14 +12,14 @@ namespace XREngine.Rendering.Vulkan
             out int dynamicUiBatchTextOverlayOpCount,
             out FrameOp[] dynamicUiBatchTextOverlayOps,
             out ulong dynamicUiBatchTextOverlaySignature,
-            out CommandBufferCacheVariant? dynamicUiBatchTextOverlayVariant,
+            out PrimaryCommandArtifactOwner? dynamicUiBatchTextOverlayVariant,
             out CommandBuffer textureUploadCommandBuffer,
             out CommandPool textureUploadCommandPool,
             out ImageLayout swapchainLayoutAfterCommandBuffer,
             out long commandBufferDirtyGenerationAfterRecord)
         {
-            VulkanCommandSchedulingContext<CommandBufferCacheVariant> schedulingContext =
-                _commandScheduler.Capture<CommandBufferCacheVariant>(
+            VulkanCommandSchedulingContext<PrimaryCommandArtifactOwner> schedulingContext =
+                _commandScheduler.Capture<PrimaryCommandArtifactOwner>(
                     imageIndex,
                     preserveSwapchainForOverlay,
                     _renderGraphRuntime.CurrentPlan);
@@ -48,7 +48,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private CommandBuffer ScheduleCommandBufferLifecycle(
-            scoped ref VulkanCommandSchedulingContext<CommandBufferCacheVariant> context)
+            scoped ref VulkanCommandSchedulingContext<PrimaryCommandArtifactOwner> context)
         {
             ResetCommandBufferLifecycle(ref context);
             if (!TryInitializeCommandBufferLifecycle(

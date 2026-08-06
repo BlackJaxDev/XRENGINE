@@ -30,6 +30,12 @@ internal sealed record IndirectDrawOp(
     public VulkanIndirectSecondaryRecordingContract SecondaryRecordingContract { get; private set; } = SecondaryRecordingContract;
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.IndirectDraw;
 
+    internal override FrameOp CreateSealedPlanSnapshot()
+    {
+        ThrowIfSealedForFramePlan();
+        return SealPlanSnapshot(this with { Draw = Draw.CreateSealedCopy() });
+    }
+
     internal override int RecordPrimary(
         VulkanRenderer renderer,
         scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,

@@ -15,9 +15,24 @@ public sealed record AgentRunListItem
 
     public DateTimeOffset UpdatedUtc { get; init; }
 
+    /// <summary>Time at which this list item was produced by the broker.</summary>
+    public DateTimeOffset ObservedUtc { get; init; }
+
+    /// <summary>Non-negative wall-clock duration from run creation to observation.</summary>
+    public long ElapsedMilliseconds { get; init; }
+
+    /// <summary>Latest informational broker or provider progress stage.</summary>
+    public string ProgressMessage { get; init; } = string.Empty;
+
     public string RequestedModel { get; init; } = string.Empty;
 
     public string ActualModel { get; init; } = string.Empty;
+
+    public string RequestedReasoningEffort { get; init; } = string.Empty;
+
+    public string RequestedTextVerbosity { get; init; } = string.Empty;
+
+    public int MaxOutputTokens { get; init; }
 
     public string? EditorSession { get; init; }
 

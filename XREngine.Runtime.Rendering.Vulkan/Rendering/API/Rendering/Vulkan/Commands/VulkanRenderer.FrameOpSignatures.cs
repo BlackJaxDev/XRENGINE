@@ -14,7 +14,7 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
-        private void StoreFrameOpSignatureDebugParts(CommandBufferCacheVariant variant, FrameOp[] ops)
+        private void StoreFrameOpSignatureDebugParts(PrimaryCommandArtifactOwner variant, FrameOp[] ops)
         {
             if (!FrameOpSignatureDiffDiagnosticsEnabled)
                 return;
@@ -24,7 +24,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void LogFrameOpSignatureDiff(
             uint imageIndex,
-            CommandBufferCacheVariant variant,
+            PrimaryCommandArtifactOwner variant,
             ulong currentSignature,
             FrameOp[] ops)
         {
@@ -46,7 +46,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void LogFrameOpSignatureVariantEvictionDiff(
             uint imageIndex,
-            CommandBufferCacheVariant evicted,
+            PrimaryCommandArtifactOwner evicted,
             ulong currentSignature,
             FrameOp[] ops)
         {
@@ -63,7 +63,7 @@ namespace XREngine.Rendering.Vulkan
                 : BuildFrameOpSignatureDiffSummary(evicted.SignatureDebugParts, currentParts);
 
             Debug.Vulkan(
-                $"[Vulkan] Frame-op variant cache eviction image={imageIndex} previous=0x{evicted.FrameOpsSignature:X16} current=0x{currentSignature:X16} ops={ops.Length} variants={PrimaryCommandBufferVariantCapacity}: {summary}");
+                $"[Vulkan] Frame-op primary artifact replacement image={imageIndex} previous=0x{evicted.FrameOpsSignature:X16} current=0x{currentSignature:X16} ops={ops.Length}: {summary}");
         }
 
         private static string BuildFrameOpSignatureDiffSummary(FrameOpSignatureDebugPart[] previous, FrameOpSignatureDebugPart[] current)

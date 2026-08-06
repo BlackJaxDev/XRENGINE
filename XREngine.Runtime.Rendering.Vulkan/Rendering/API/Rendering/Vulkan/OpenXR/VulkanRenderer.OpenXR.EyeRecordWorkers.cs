@@ -34,6 +34,14 @@ public unsafe partial class VulkanRenderer
                 if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(secondEye, out OpenXrPreparedEyeCommandBufferInput preparedSecondEye))
                     return false;
 
+                if (!TryCreatePairedOpenXrLogicalPlan(
+                        in preparedFirstEye,
+                        in preparedSecondEye,
+                        out FramePlan pairedLogicalPlan))
+                    return false;
+                preparedFirstEye = preparedFirstEye with { PairedLogicalPlan = pairedLogicalPlan };
+                preparedSecondEye = preparedSecondEye with { PairedLogicalPlan = pairedLogicalPlan };
+
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.WorkerRecord"))
                 {
                     workerBatch = DispatchOpenXrEyeRecordWorkers(preparedFirstEye, preparedSecondEye);

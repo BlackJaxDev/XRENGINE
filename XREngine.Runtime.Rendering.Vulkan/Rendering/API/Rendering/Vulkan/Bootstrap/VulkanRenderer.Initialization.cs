@@ -167,7 +167,30 @@ namespace XREngine.Rendering.Vulkan
             ulong offset,
             ulong length,
             out void* mapped)
-            => MemoryAllocator.TryMap(Api!, device, allocation, offset, length, out mapped);
+        {
+            bool mappedSuccessfully = MemoryAllocator.TryMap(
+                Api!,
+                device,
+                allocation,
+                offset,
+                length,
+                out mapped,
+                out Result result);
+            if (!mappedSuccessfully)
+                RecordAllocatorNativeFailure("vkMapMemory.Allocator", result);
+            return mappedSuccessfully;
+        }
+
+        private void RecordAllocatorNativeFailure(string operation, Result result)
+        {
+            if (result != Result.ErrorDeviceLost)
+                return;
+
+            MarkDeviceLost(
+                $"{operation} returned ErrorDeviceLost",
+                operation,
+                result);
+        }
 
         internal void UnmapMemoryAllocation(VulkanMemoryAllocation allocation)
             => MemoryAllocator.Unmap(Api!, device, allocation);
@@ -229,8 +252,9 @@ namespace XREngine.Rendering.Vulkan
             DestroyFrameBufferRenderPasses();
             DestroyDescriptorSetLayout();
             DestroyRetainedAutoExposureHistory("renderer shutdown");
-            ResourceAllocator.DestroyPhysicalImages(this);
-            ResourceAllocator.DestroyPhysicalBuffers(this);
+            VulkanResourceAllocator resourceAllocator = CaptureResourcePlannerRuntimeState().ResourceAllocator;
+            resourceAllocator.DestroyPhysicalImages(this);
+            resourceAllocator.DestroyPhysicalBuffers(this);
             _stagingManager.Destroy(this);
             DestroyDynamicUniformRingBuffers();
 
@@ -451,7 +475,11 @@ namespace XREngine.Rendering.Vulkan
 
         private void AllocateMemory(MemoryAllocateInfo allocInfo, DeviceMemory* memPtr)
         {
+            // Allocation admission must be checked at the native call boundary: a
+            // device-loss transition can occur after a caller passed its create gate.
+            ThrowIfDeviceLostForResourceCreation("vkAllocateMemory");
             Result result = Api!.AllocateMemory(device, ref allocInfo, null, memPtr);
+            RecordAllocatorNativeFailure("vkAllocateMemory", result);
             if (result == Result.ErrorOutOfDeviceMemory || result == Result.ErrorOutOfHostMemory)
             {
                 Debug.VulkanWarning(
@@ -472,8 +500,11 @@ namespace XREngine.Rendering.Vulkan
             Buffer buffer, MemoryPropertyFlags requiredProperties)
         {
             IVulkanMemoryAllocator alloc = MemoryAllocator;
-            if (alloc.TryAllocateForBuffer(Api!, device, buffer, requiredProperties, out VulkanMemoryAllocation allocation))
+            ThrowIfDeviceLostForResourceCreation("AllocateBufferMemoryWithFallback.Initial");
+            if (alloc.TryAllocateForBuffer(Api!, device, buffer, requiredProperties, out VulkanMemoryAllocation allocation, out Result initialResult))
                 return allocation;
+            RecordAllocatorNativeFailure("vkAllocateMemory.AllocatorBuffer.Initial", initialResult);
+            ThrowIfDeviceLostForResourceCreation("vkAllocateMemory.AllocatorBuffer.Initial");
 
             // OOM — attempt fallback to host-visible if the original was device-local.
             if (requiredProperties.HasFlag(MemoryPropertyFlags.DeviceLocalBit))
@@ -481,11 +512,14 @@ namespace XREngine.Rendering.Vulkan
                 MemoryPropertyFlags fallback = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
                 Debug.VulkanWarning(
                     $"[Vulkan] OOM for buffer (requested {requiredProperties}). Falling back to {fallback}.");
-                if (alloc.TryAllocateForBuffer(Api!, device, buffer, fallback, out allocation))
+                ThrowIfDeviceLostForResourceCreation("AllocateBufferMemoryWithFallback.Fallback");
+                if (alloc.TryAllocateForBuffer(Api!, device, buffer, fallback, out allocation, out Result fallbackResult))
                 {
                     RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanOomFallback();
                     return allocation;
                 }
+                RecordAllocatorNativeFailure("vkAllocateMemory.AllocatorBuffer.Fallback", fallbackResult);
+                ThrowIfDeviceLostForResourceCreation("vkAllocateMemory.AllocatorBuffer.Fallback");
             }
 
             throw new VulkanOutOfMemoryException(
@@ -531,23 +565,29 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            if (alloc.TryAllocateForImage(Api!, device, image, requiredProperties, out allocation))
+            ThrowIfDeviceLostForResourceCreation("TryAllocateImageMemoryWithFallback.Initial");
+            if (alloc.TryAllocateForImage(Api!, device, image, requiredProperties, out allocation, out Result initialResult))
             {
                 failureReason = string.Empty;
                 return true;
             }
+            RecordAllocatorNativeFailure("vkAllocateMemory.AllocatorImage.Initial", initialResult);
+            ThrowIfDeviceLostForResourceCreation("vkAllocateMemory.AllocatorImage.Initial");
 
             // If lazy was requested, retry without it (device-local only).
             if (requiredProperties.HasFlag(MemoryPropertyFlags.LazilyAllocatedBit))
             {
                 MemoryPropertyFlags withoutLazy = requiredProperties & ~MemoryPropertyFlags.LazilyAllocatedBit;
-                if (alloc.TryAllocateForImage(Api!, device, image, withoutLazy, out allocation))
+                ThrowIfDeviceLostForResourceCreation("TryAllocateImageMemoryWithFallback.WithoutLazy");
+                if (alloc.TryAllocateForImage(Api!, device, image, withoutLazy, out allocation, out Result withoutLazyResult))
                 {
                     Debug.VulkanWarning(
                         $"[Vulkan] Image allocation requested {requiredProperties} but lazy allocation failed; falling back to {withoutLazy}.");
                     failureReason = string.Empty;
                     return true;
                 }
+                RecordAllocatorNativeFailure("vkAllocateMemory.AllocatorImage.WithoutLazy", withoutLazyResult);
+                ThrowIfDeviceLostForResourceCreation("vkAllocateMemory.AllocatorImage.WithoutLazy");
             }
 
             if (requiredProperties.HasFlag(MemoryPropertyFlags.DeviceLocalBit))
@@ -1013,9 +1053,66 @@ namespace XREngine.Rendering.Vulkan
         }
         public override void TrackWindowPresentSource(XRTexture? colorTexture, XRFrameBuffer? sourceFrameBuffer)
         {
+            XRFrameBuffer? resolvedFrameBuffer =
+                sourceFrameBuffer ?? ResolveWindowPresentFallbackFrameBuffer(colorTexture);
+            FrameOpContext context = CaptureFrameOpContext();
+            VkImageDescriptorSnapshot snapshot = default;
+            bool snapshotReady =
+                colorTexture is not null &&
+                GetOrCreateAPIRenderObject(
+                    colorTexture,
+                    generateNow: false) is IVkImageDescriptorSource source &&
+                source.TryGetDescriptorSnapshot(
+                    requestedViewType: null,
+                    requestedAspectMask: null,
+                    "window presentation source publication",
+                    allowSynchronousUpload: false,
+                    out snapshot);
+
+            _ = _windowPresentSource.PublishLogical(
+                new VulkanPresentationSourceTuple(
+                    LogicalEpoch: 0,
+                    colorTexture,
+                    resolvedFrameBuffer,
+                    context,
+                    DescriptorResourceEpoch:
+                        snapshotReady ? snapshot.Generation : 0,
+                    snapshotReady ? snapshot.Image : default,
+                    ImageAllocationGeneration: snapshotReady
+                        ? GetCurrentVulkanResourceGeneration(
+                            ObjectType.Image,
+                            snapshot.Image.Handle)
+                        : 0,
+                    snapshotReady ? snapshot.View : default,
+                    ImageViewGeneration: snapshotReady
+                        ? GetCurrentVulkanResourceGeneration(
+                            ObjectType.ImageView,
+                            snapshot.View.Handle)
+                        : 0,
+                    snapshotReady ? snapshot.Sampler : default,
+                    SamplerGeneration: snapshotReady
+                        ? GetCurrentVulkanResourceGeneration(
+                            ObjectType.Sampler,
+                            snapshot.Sampler.Handle)
+                        : 0,
+                    snapshotReady ? snapshot.Format : default,
+                    snapshotReady ? snapshot.Aspect : default,
+                    snapshotReady ? snapshot.Samples : default,
+                    snapshotReady ? snapshot.TrackedLayout : ImageLayout.Undefined,
+                    resolvedFrameBuffer?.Width ?? 0,
+                    resolvedFrameBuffer?.Height ?? 0,
+                    DescriptorSet: default,
+                    DescriptorSetGeneration: 0,
+                    DescriptorSlot: -1,
+                    DescriptorPublicationGeneration: 0,
+                    OwningCommandArtifact: default,
+                    OwningCommandArtifactGeneration: 0));
+
+            // Transitional readback consumers are migrated separately, but all
+            // command selection and submission consume the tuple above.
             _lastWindowPresentColorTexture = colorTexture;
-            _lastWindowPresentFrameBuffer = sourceFrameBuffer ?? ResolveWindowPresentFallbackFrameBuffer(colorTexture);
-            _lastWindowPresentFrameOpContext = CaptureFrameOpContext();
+            _lastWindowPresentFrameBuffer = resolvedFrameBuffer;
+            _lastWindowPresentFrameOpContext = context;
         }
 
         public override RenderTextureSamplingState GetTextureShaderSamplingState(
@@ -1207,7 +1304,10 @@ namespace XREngine.Rendering.Vulkan
                 }
                 else if (result == Result.ErrorDeviceLost)
                 {
-                    MarkDeviceLost("DeviceWaitIdle returned ErrorDeviceLost");
+                    MarkDeviceLost(
+                        "DeviceWaitIdle returned ErrorDeviceLost",
+                        "vkDeviceWaitIdle",
+                        result);
                     Debug.VulkanWarning("[Vulkan] DeviceWaitIdle returned ErrorDeviceLost. Device state is irrecoverable.");
                 // Don't throw — allow callers (e.g. RecreateSwapChain) to proceed with
                 // teardown/recreation even after the device is lost, rather than getting

@@ -156,6 +156,7 @@ void main()
 
             var builder = context.GetOrCreateSyntheticPass($"DebugOverlay_{SourceTextureName}_to_{destination}");
             builder.WithStage(ERenderGraphPassStage.Graphics);
+            builder.KeepSecondaryDynamic(ERenderPassSecondaryCachePolicy.DynamicDebug);
             builder.SampleTexture(MakeTextureResource(SourceTextureName));
             builder.UseColorAttachment(MakeFboColorResource(destination), ERenderGraphAccess.ReadWrite, ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
         }

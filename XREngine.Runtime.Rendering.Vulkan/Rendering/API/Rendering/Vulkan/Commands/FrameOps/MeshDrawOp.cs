@@ -33,6 +33,7 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
     internal void SetDescriptorBindingSnapshot(
         in DescriptorBindingSnapshot snapshot)
     {
+        ThrowIfSealedForFramePlan();
         _descriptorBindingSnapshot = snapshot;
         _hasDescriptorBindingSnapshot = true;
     }
@@ -45,9 +46,24 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
     /// (observed as VUID-vkCmdBeginQuery-queryPool-01922 and
     /// VUID-vkEndCommandBuffer-commandBuffer-00061).
     /// </summary>
-    internal bool PreserveSubmissionOrder { get; set; }
+    private bool _preserveSubmissionOrder;
+    internal bool PreserveSubmissionOrder
+    {
+        get => _preserveSubmissionOrder;
+        set
+        {
+            ThrowIfSealedForFramePlan();
+            _preserveSubmissionOrder = value;
+        }
+    }
 
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.MeshDraw;
+
+    internal override FrameOp CreateSealedPlanSnapshot()
+    {
+        ThrowIfSealedForFramePlan();
+        return SealPlanSnapshot(this with { Draw = Draw.CreateSealedCopy() });
+    }
 
     internal override int RecordPrimary(
         VulkanRenderer renderer,

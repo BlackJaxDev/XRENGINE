@@ -7,6 +7,7 @@ namespace XREngine.Rendering.Vulkan;
 /// renderer generation.
 /// </summary>
 internal sealed class VulkanBackendObjectContext(
+    VulkanRenderer renderer,
     VulkanDeviceContext deviceContext,
     VulkanBackendObjectRegistry registry,
     VulkanResourceLifetimeTracker lifetime,
@@ -16,6 +17,7 @@ internal sealed class VulkanBackendObjectContext(
     public Device Device => deviceContext.Device;
     public PhysicalDevice PhysicalDevice => deviceContext.PhysicalDevice;
     public bool IsLogicalDeviceReady => deviceContext.IsReady;
+    public bool IsDeviceOperational => renderer.IsDeviceOperational;
     public VulkanBackendObjectRegistry Registry { get; } = registry;
     public VulkanBindingAllocator BindingAllocator => Registry.BindingAllocator;
     public VulkanResourceLifetimeTracker Lifetime { get; } = lifetime;

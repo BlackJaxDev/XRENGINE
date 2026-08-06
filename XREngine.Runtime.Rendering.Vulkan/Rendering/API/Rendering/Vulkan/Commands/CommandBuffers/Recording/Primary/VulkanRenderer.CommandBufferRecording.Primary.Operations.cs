@@ -56,6 +56,9 @@ public unsafe partial class VulkanRenderer
             }
             catch (Exception exception)
             {
+                if (exception is VulkanPlanPreconditionException)
+                    throw;
+
                 HandlePrimaryOperationRecordingFailure(
                     ref recordingState,
                     operation,
@@ -216,7 +219,12 @@ public unsafe partial class VulkanRenderer
         }
 
         if (recordingState.ActiveContext.PipelineInstance is null)
-            return;
+        {
+            string missingPipelineReason =
+                "frame-plan precondition failed during recording: an operation requiring planner context has no pipeline instance.";
+            recordingState.RecordingDeferredReason = missingPipelineReason;
+            throw new VulkanPlanPreconditionException(missingPipelineReason);
+        }
 
         if (!recordingState.HasPlannerContext)
         {
@@ -230,14 +238,12 @@ public unsafe partial class VulkanRenderer
                 recordingState.ActiveContext))
             return;
 
-        Debug.VulkanWarningEvery(
-            $"Vulkan.ResourcePlanner.ContextChangeDuringRecord.{recordingState.ActiveContext.PipelineIdentity}.{recordingState.ActiveContext.ViewportIdentity}",
-            TimeSpan.FromSeconds(2),
-            "[VulkanResourcePlanner] Keeping pre-recorded physical plan during command-buffer recording despite context change. OldPipe={0} NewPipe={1} OldVp={2} NewVp={3}.",
-            recordingState.PlannerContext.PipelineIdentity,
-            recordingState.ActiveContext.PipelineIdentity,
-            recordingState.PlannerContext.ViewportIdentity,
-            recordingState.ActiveContext.ViewportIdentity);
+        string reason =
+            $"frame-plan precondition failed during recording: planner context changed " +
+            $"from pipe={recordingState.PlannerContext.PipelineIdentity}/vp={recordingState.PlannerContext.ViewportIdentity} " +
+            $"to pipe={recordingState.ActiveContext.PipelineIdentity}/vp={recordingState.ActiveContext.ViewportIdentity}";
+        recordingState.RecordingDeferredReason = reason;
+        throw new VulkanPlanPreconditionException(reason);
     }
 
     private void TransitionToPrimaryOperationPass(

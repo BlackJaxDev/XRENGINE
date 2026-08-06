@@ -38,6 +38,7 @@ namespace XREngine.Rendering.Vulkan
                 SType = StructureType.CommandBufferBeginInfo,
                 Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
             };
+            ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.FrameRecovery");
             if (Api!.BeginCommandBuffer(commandBuffer, ref beginInfo) !=
                 Result.Success)
             {

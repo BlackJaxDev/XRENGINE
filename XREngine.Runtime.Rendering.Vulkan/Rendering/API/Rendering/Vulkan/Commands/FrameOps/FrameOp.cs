@@ -4,9 +4,40 @@ namespace XREngine.Rendering.Vulkan;
 
 internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpContext Context)
 {
-    public int PassIndex { get; internal set; } = PassIndex;
-    public XRFrameBuffer? Target { get; internal set; } = Target;
-    public FrameOpContext Context { get; internal set; } = Context;
+    private int _framePlanLeaseCount;
+    private bool _isSealedForFramePlan;
+    private int _passIndex = PassIndex;
+    private XRFrameBuffer? _target = Target;
+    private FrameOpContext _context = Context;
+
+    public int PassIndex
+    {
+        get => _passIndex;
+        internal set
+        {
+            ThrowIfSealedForFramePlan();
+            _passIndex = value;
+        }
+    }
+    public XRFrameBuffer? Target
+    {
+        get => _target;
+        internal set
+        {
+            ThrowIfSealedForFramePlan();
+            _target = value;
+        }
+    }
+    public FrameOpContext Context
+    {
+        get => _context;
+        internal set
+        {
+            ThrowIfSealedForFramePlan();
+            _context = value;
+        }
+    }
+    internal FrameOpResourceUseList ResourceUses { get; private set; }
     public abstract EVulkanPrimaryPlanNodeKind Kind { get; }
 
     /// <summary>
@@ -46,6 +77,8 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
                 recordingState.FrameDataImageIndex,
                 recordingState.ExecutedCommandChainSecondaryHandles,
                 recordingState.Ops,
+                recordingState.ScheduledCommandChainKeysByOpIndex,
+                recordingState.ScheduledCommandChainCache,
                 recordingInfo.OperationIndex,
                 bucket,
                 recordingInfo.PassIndex,
@@ -83,12 +116,75 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
         }
 
         List<T> pool = FramePool<T>.Items ??= [];
-        int slot = FramePool<T>.Cursor++;
-        if (slot < pool.Count)
-            reusable = pool[slot];
+        int slot = FramePool<T>.Cursor;
+        while (slot < pool.Count)
+        {
+            T candidate = pool[slot++];
+            if (candidate.IsPinnedByFramePlan)
+                continue;
+
+            reusable = candidate;
+            break;
+        }
+
+        // Reserving an absent slot prevents the object just appended by
+        // RetainForCurrentFrame from being rented again later this frame.
+        FramePool<T>.Cursor = reusable is null ? slot + 1 : slot;
 
         return true;
     }
+
+    /// <summary>
+    /// Prevents a current-frame pool entry from being reset for a later frame
+    /// while a prepared worker still owns a sealed frame-plan reference.
+    /// </summary>
+    internal void AcquireFramePlanLease()
+        => Interlocked.Increment(ref _framePlanLeaseCount);
+
+    internal void ReleaseFramePlanLease()
+    {
+        int remaining = Interlocked.Decrement(ref _framePlanLeaseCount);
+        if (remaining < 0)
+        {
+            Interlocked.Increment(ref _framePlanLeaseCount);
+            throw new InvalidOperationException("Frame-operation lease underflow.");
+        }
+    }
+
+    internal void SetResourceUses(in FrameOpResourceUseList resourceUses)
+    {
+        ThrowIfSealedForFramePlan();
+        ResourceUses = resourceUses;
+    }
+
+    /// <summary>
+    /// Copies this frame-local producer operation into the plan-owned immutable
+    /// stream. The plan never retains a pooled producer instance.
+    /// </summary>
+    internal virtual FrameOp CreateSealedPlanSnapshot()
+    {
+        ThrowIfSealedForFramePlan();
+        return SealPlanSnapshot(this with { });
+    }
+
+    /// <summary>Marks an already detached operation copy immutable for plan ownership.</summary>
+    protected T SealPlanSnapshot<T>(T snapshot)
+        where T : FrameOp
+    {
+        snapshot._isSealedForFramePlan = true;
+        return snapshot;
+    }
+
+    protected void ThrowIfSealedForFramePlan()
+    {
+        if (_isSealedForFramePlan)
+            throw new InvalidOperationException("A sealed frame-plan operation cannot be mutated.");
+    }
+
+    internal bool IsSealedForFramePlan => _isSealedForFramePlan;
+
+    private bool IsPinnedByFramePlan
+        => Volatile.Read(ref _framePlanLeaseCount) != 0;
 
     protected static T RetainForCurrentFrame<T>(T created)
         where T : FrameOp

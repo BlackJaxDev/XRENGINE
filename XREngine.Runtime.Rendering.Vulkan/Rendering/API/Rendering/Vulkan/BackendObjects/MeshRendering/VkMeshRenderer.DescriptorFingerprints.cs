@@ -85,10 +85,10 @@ internal unsafe partial class VkMeshRenderer
 		int descriptorOwnerSlot,
 		bool usesSharedMaterialTier)
 	{
-		// Vulkan handles are deliberately excluded. Replacing the backing image,
-		// view, sampler, or buffer for the same engine binding is descriptor content
-		// publication, not a new descriptor-set identity. The per-slot resource
-		// fingerprint below decides when the completed slot must be rewritten.
+		// This key describes the logical binding schema only. Physical identity is
+		// captured by ComputeDescriptorResourceFingerprint using native handles and
+		// lifetime generations; managed object identity must never represent a Vulkan
+		// allocation.
 		FrameOpSignatureHasher hash = new();
 		hash.Add(descriptorOwnerSlot);
 		for (int bindingIndex = 0; bindingIndex < bindings.Count; bindingIndex++)
@@ -102,6 +102,7 @@ internal unsafe partial class VkMeshRenderer
 			hash.Add((int)binding.DescriptorType);
 			hash.Add(binding.Name);
 			hash.Add(binding.ExpectedImageViewType.HasValue);
+			hash.Add((int)binding.Requirement);
 			if (binding.ExpectedImageViewType is { } expectedViewType)
 				hash.Add((int)expectedViewType);
 
@@ -117,26 +118,8 @@ internal unsafe partial class VkMeshRenderer
 				continue;
 			}
 
-			uint descriptorCount = VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding);
-			bool bindless = VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(binding);
-			for (int arrayIndex = 0; arrayIndex < descriptorCount; arrayIndex++)
-			{
-				MaterialTextureBindingResolution resolution = MaterialTextureBindingResolver.Resolve(
-					material,
-					binding.Name,
-					(int)binding.Binding,
-					arrayIndex,
-					bindless,
-					_program,
-					static (program, samplerName) =>
-						program is not null && program.TryGetSamplerTexture(samplerName, out XRTexture? namedTexture)
-							? namedTexture
-							: null);
-				XRTexture? texture = resolution.Texture;
-				hash.Add(texture is not null);
-				if (texture is not null)
-					hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(texture));
-			}
+			hash.Add(VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding));
+			hash.Add(VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(binding));
 		}
 
 		return hash.ToHash();
@@ -164,6 +147,7 @@ internal unsafe partial class VkMeshRenderer
 			hash.Add(binding.Binding);
 			hash.Add((int)binding.DescriptorType);
 			hash.Add(descriptorCount);
+			hash.Add((int)binding.Requirement);
 			switch (binding.DescriptorType)
 			{
 				case DescriptorType.UniformBuffer:
@@ -181,6 +165,9 @@ internal unsafe partial class VkMeshRenderer
 						if (!resolved)
 							continue;
 						hash.Add(info.Buffer.Handle);
+						hash.Add(Renderer.GetCurrentVulkanResourceGeneration(
+							ObjectType.Buffer,
+							info.Buffer.Handle));
 						hash.Add(info.Offset);
 						hash.Add(info.Range);
 					}
@@ -214,7 +201,27 @@ internal unsafe partial class VkMeshRenderer
 						if (!resolved)
 							continue;
 						hash.Add(info.ImageView.Handle);
+						hash.Add(Renderer.GetCurrentVulkanResourceGeneration(
+							ObjectType.ImageView,
+							info.ImageView.Handle));
+						if (Renderer.TryGetImageViewBackingImage(
+								info.ImageView,
+								out Image backingImage))
+						{
+							hash.Add(backingImage.Handle);
+							hash.Add(Renderer.GetCurrentVulkanResourceGeneration(
+								ObjectType.Image,
+								backingImage.Handle));
+						}
+						else
+						{
+							hash.Add(0UL);
+							hash.Add(0UL);
+						}
 						hash.Add(info.Sampler.Handle);
+						hash.Add(Renderer.GetCurrentVulkanResourceGeneration(
+							ObjectType.Sampler,
+							info.Sampler.Handle));
 						hash.Add((int)info.ImageLayout);
 					}
 					break;
@@ -226,7 +233,21 @@ internal unsafe partial class VkMeshRenderer
 						bool resolved = TryResolveTexelBuffer(binding, material, out BufferView view, arrayIndex);
 						hash.Add(resolved);
 						if (resolved)
+						{
 							hash.Add(view.Handle);
+							hash.Add(Renderer.GetCurrentVulkanResourceGeneration(
+								ObjectType.BufferView,
+								view.Handle));
+							if (Renderer.TryGetBufferViewBackingBuffer(
+									view,
+									out Silk.NET.Vulkan.Buffer backingBuffer))
+							{
+								hash.Add(backingBuffer.Handle);
+								hash.Add(Renderer.GetCurrentVulkanResourceGeneration(
+									ObjectType.Buffer,
+									backingBuffer.Handle));
+							}
+						}
 					}
 					break;
 			}
@@ -683,7 +704,7 @@ internal unsafe partial class VkMeshRenderer
 		string name)
 		=> snapshot?.SamplersByName.ContainsKey(name) == true;
 
-	private static bool FrameSourceDescriptorWriteMatches(
+	private bool FrameSourceDescriptorWriteMatches(
 		DescriptorAllocation? allocation,
 		int descriptorSlotIndex,
 		DescriptorBindingInfo binding,
@@ -705,7 +726,7 @@ internal unsafe partial class VkMeshRenderer
 			previousSignature == ComputeDescriptorImageInfoSignature(binding.DescriptorType, imageInfos);
 	}
 
-	private static void RecordFrameSourceDescriptorWriteSignature(
+	private void RecordFrameSourceDescriptorWriteSignature(
 		DescriptorAllocation? allocation,
 		int descriptorSlotIndex,
 		DescriptorBindingInfo binding,
@@ -727,7 +748,7 @@ internal unsafe partial class VkMeshRenderer
 			ComputeDescriptorImageInfoSignature(binding.DescriptorType, imageInfos);
 	}
 
-	private static ulong ComputeDescriptorImageInfoSignature(
+	private ulong ComputeDescriptorImageInfoSignature(
 		DescriptorType descriptorType,
 		ReadOnlySpan<DescriptorImageInfo> imageInfos)
 	{
@@ -739,7 +760,24 @@ internal unsafe partial class VkMeshRenderer
 			DescriptorImageInfo info = imageInfos[i];
 			hash.Add((int)info.ImageLayout);
 			hash.Add(info.ImageView.Handle);
+			hash.Add(Renderer.GetCurrentVulkanResourceGeneration(
+				ObjectType.ImageView,
+				info.ImageView.Handle));
+			if (Renderer.TryGetImageViewBackingImage(info.ImageView, out Image image))
+			{
+				hash.Add(image.Handle);
+				hash.Add(Renderer.GetCurrentVulkanResourceGeneration(
+					ObjectType.Image,
+					image.Handle));
+			}
+			else
+			{
+				hash.Add(0UL);
+			}
 			hash.Add(info.Sampler.Handle);
+			hash.Add(Renderer.GetCurrentVulkanResourceGeneration(
+				ObjectType.Sampler,
+				info.Sampler.Handle));
 		}
 
 		return hash.ToHash();

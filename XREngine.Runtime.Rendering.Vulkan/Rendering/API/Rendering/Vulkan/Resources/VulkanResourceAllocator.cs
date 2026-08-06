@@ -25,7 +25,11 @@ internal sealed class VulkanResourceAllocator
     private readonly Dictionary<VulkanAliasGroupKey, VulkanImageAliasGroup> _aliasGroups = new();
     private readonly Dictionary<VulkanAliasGroupKey, VulkanPhysicalImageGroup> _physicalGroups = new();
     private readonly Dictionary<string, VulkanPhysicalImageGroup> _resourceToPhysicalGroup = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<VulkanPhysicalImageGroup, VulkanImageAllocation[]> _pendingReusedImageMetadata = new();
+    // Logical aliases are generation metadata, not physical-image state. A physical
+    // group can be borrowed by two allocator generations, so publishing a pending
+    // generation must never rewrite metadata observed by the older generation.
+    private readonly Dictionary<VulkanPhysicalImageGroup, VulkanImageAllocation[]> _logicalResourcesByPhysicalGroup = new();
+    private readonly HashSet<VulkanPhysicalImageGroup> _borrowedPhysicalImageGroups = [];
 
     private readonly Dictionary<string, VulkanBufferAllocation> _logicalBufferAllocations = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<VulkanBufferAliasGroupKey, VulkanBufferAliasGroup> _bufferAliasGroups = new();
@@ -71,7 +75,8 @@ internal sealed class VulkanResourceAllocator
         _aliasGroups.Clear();
         _physicalGroups.Clear();
         _resourceToPhysicalGroup.Clear();
-        _pendingReusedImageMetadata.Clear();
+        _logicalResourcesByPhysicalGroup.Clear();
+        _borrowedPhysicalImageGroups.Clear();
 
         _logicalBufferAllocations.Clear();
         _bufferAliasGroups.Clear();
@@ -174,6 +179,9 @@ internal sealed class VulkanResourceAllocator
             _physicalBufferGroups[group.Key] = physicalGroup;
         }
 
+        foreach (VulkanPhysicalImageGroup group in _physicalGroups.Values)
+            _logicalResourcesByPhysicalGroup[group] = group.LogicalResources.ToArray();
+
         LogDeferredLightingPhysicalPlan(passMetadata, planner);
     }
 
@@ -201,10 +209,16 @@ internal sealed class VulkanResourceAllocator
                 continue;
             }
 
-            VulkanImageAllocation[] logicalResources = pendingGroup.LogicalResources.ToArray();
-            _pendingReusedImageMetadata[previousGroup] = logicalResources;
+            VulkanImageAllocation[] logicalResources = _logicalResourcesByPhysicalGroup.TryGetValue(
+                pendingGroup,
+                out VulkanImageAllocation[]? generationLogicalResources)
+                ? generationLogicalResources
+                : pendingGroup.LogicalResources.ToArray();
             _physicalGroups[pair.Key] = previousGroup;
             ReplacePhysicalGroupReferences(pendingGroup, previousGroup);
+            _logicalResourcesByPhysicalGroup.Remove(pendingGroup);
+            _logicalResourcesByPhysicalGroup[previousGroup] = logicalResources;
+            _borrowedPhysicalImageGroups.Add(previousGroup);
 
             reusedGroups ??= new HashSet<VulkanPhysicalImageGroup>();
             reusedGroups.Add(previousGroup);
@@ -216,11 +230,20 @@ internal sealed class VulkanResourceAllocator
 
     public void CommitReusedPhysicalImageMetadata()
     {
-        foreach ((VulkanPhysicalImageGroup group, VulkanImageAllocation[] logicalResources) in _pendingReusedImageMetadata)
-            group.ReplaceLogicalResources(logicalResources);
-
-        _pendingReusedImageMetadata.Clear();
+        // The allocator owns generation-specific alias metadata. Physical groups
+        // intentionally retain their original construction metadata while shared.
+        _borrowedPhysicalImageGroups.Clear();
     }
+
+    /// <summary>
+    /// Captures the active physical groups borrowed by this pending allocator.
+    /// A failed pending generation must exclude these groups from retirement: they
+    /// are still owned by the published allocator until the generation commits.
+    /// </summary>
+    internal HashSet<VulkanPhysicalImageGroup>? CapturePendingReusedImageGroups()
+        => _borrowedPhysicalImageGroups.Count == 0
+            ? null
+            : new HashSet<VulkanPhysicalImageGroup>(_borrowedPhysicalImageGroups);
 
     private void ReplacePhysicalGroupReferences(
         VulkanPhysicalImageGroup pendingGroup,

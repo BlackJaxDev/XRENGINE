@@ -272,6 +272,7 @@ void main()
 
         var builder = context.GetOrCreateSyntheticPass($"ForwardPlusDebugOverlay_to_{destination}");
         builder.WithStage(ERenderGraphPassStage.Graphics);
+        builder.KeepSecondaryDynamic(ERenderPassSecondaryCachePolicy.DynamicDebug);
         builder.ReadWriteBuffer("ForwardPlusTileLightCounts");
         builder.UseColorAttachment(MakeFboColorResource(destination), ERenderGraphAccess.ReadWrite, ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
     }

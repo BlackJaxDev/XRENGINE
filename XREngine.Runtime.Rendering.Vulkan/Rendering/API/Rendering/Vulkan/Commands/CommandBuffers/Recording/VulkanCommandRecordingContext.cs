@@ -21,7 +21,8 @@ internal ref struct VulkanCommandRecordingContext(
     uint? frameDataImageIndexOverride,
     VulkanRenderer.OpenXrEyeRenderTargetContext? openXrTargetContext,
     bool excludeDesktopSwapchainBarriers,
-    VulkanRenderGraphPlan renderGraphPlan)
+    VulkanRenderGraphPlan renderGraphPlan,
+    FramePlan? framePlan)
 {
     public readonly uint ImageIndex = imageIndex;
     public readonly CommandBuffer CommandBuffer = commandBuffer;
@@ -36,6 +37,7 @@ internal ref struct VulkanCommandRecordingContext(
     public readonly VulkanRenderer.OpenXrEyeRenderTargetContext? OpenXrTargetContext = openXrTargetContext;
     public readonly bool ExcludeDesktopSwapchainBarriers = excludeDesktopSwapchainBarriers;
     public readonly VulkanRenderGraphPlan RenderGraphPlan = renderGraphPlan;
+    public readonly FramePlan? FramePlan = framePlan;
 
     public int RecordedSwapchainWriteCount = 0;
     public ImageLayout RecordedSwapchainFinalLayout = ImageLayout.Undefined;

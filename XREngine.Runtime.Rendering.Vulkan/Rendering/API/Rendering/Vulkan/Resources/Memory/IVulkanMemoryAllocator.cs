@@ -37,7 +37,8 @@ internal unsafe interface IVulkanMemoryAllocator : IDisposable
         Device device,
         Buffer buffer,
         MemoryPropertyFlags requiredProperties,
-        out VulkanMemoryAllocation allocation);
+        out VulkanMemoryAllocation allocation,
+        out Result result);
 
     /// <summary>
     /// Attempts to allocate memory for an image. Returns false on OOM instead of throwing.
@@ -47,7 +48,8 @@ internal unsafe interface IVulkanMemoryAllocator : IDisposable
         Device device,
         Image image,
         MemoryPropertyFlags requiredProperties,
-        out VulkanMemoryAllocation allocation);
+        out VulkanMemoryAllocation allocation,
+        out Result result);
 
     /// <summary>Frees a previously-made allocation.</summary>
     void Free(Vk api, Device device, VulkanMemoryAllocation allocation);
@@ -61,7 +63,8 @@ internal unsafe interface IVulkanMemoryAllocator : IDisposable
         VulkanMemoryAllocation allocation,
         ulong offset,
         ulong length,
-        out void* mappedPtr);
+        out void* mappedPtr,
+        out Result result);
 
     /// <summary>Unmaps a previously mapped allocation.</summary>
     void Unmap(Vk api, Device device, VulkanMemoryAllocation allocation);

@@ -41,6 +41,7 @@ namespace XREngine.Rendering.Vulkan
             public bool ImageWasEverPresentedAtRecordStart;
             public CommandBufferRecordingScratch RecordingScratch;
             public VulkanPrimaryCommandPlan PrimaryCommandPlan;
+            public FramePlan? FramePlan;
             public int[] MeshDrawUniformSlotsByOpIndex;
             public bool[]
                 ScheduledCommandChainFrameDataRefreshedByOpIndex;

@@ -37,7 +37,7 @@ public unsafe partial class VulkanRenderer
 
         for (int i = 0; i < _commandBufferDirtyFlags.Length; i++)
             _commandBufferDirtyFlags[i] = true;
-        MarkCommandBufferVariantsDirty(reason);
+        MarkPrimaryCommandArtifactOwnersDirty(reason);
 
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBuffersDirty(reason);
         TrackCommandBufferDirtyReason(reason, _commandBufferDirtyFlags.Length);

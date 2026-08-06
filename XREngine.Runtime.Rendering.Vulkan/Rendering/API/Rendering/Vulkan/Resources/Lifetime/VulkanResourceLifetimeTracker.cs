@@ -23,6 +23,13 @@ internal sealed class VulkanResourceLifetimeTracker
     internal ConcurrentDictionary<VulkanRenderer.VulkanResourceLifetimeKey, ulong> PublishedResourceGenerations { get; } = new();
     internal Dictionary<VulkanRenderer.VulkanResourceLifetimeKey, VulkanRenderer.VulkanResourceLifetimeRecord> ResourceLifetimes { get; } = new();
     internal Dictionary<ulong, VulkanRenderer.VulkanCommandBufferLifetimeRecord> CommandBufferLifetimes { get; } = new();
+    /// <summary>
+    /// Persistent allocation ownership, separate from a command buffer's transient
+    /// recording dependencies. Destroying a command pool implicitly frees every
+    /// child, so the pool must retain this relation until that native destruction
+    /// has settled every child generation.
+    /// </summary>
+    internal Dictionary<VulkanRenderer.VulkanResourceLifetimeKey, HashSet<ulong>> CommandBuffersByPool { get; } = new();
     internal Dictionary<VulkanRenderer.VulkanResourceLifetimeKey, HashSet<ulong>> ResourceCommandBufferDependencies { get; } = new();
     internal Dictionary<ulong, VulkanRenderer.VulkanDescriptorSetLifetimeRecord> DescriptorSetLifetimes { get; } = new();
     internal Dictionary<ulong, List<VkRenderQuery>> RenderQueriesByPool { get; } = new();

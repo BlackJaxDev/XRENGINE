@@ -103,11 +103,48 @@ snapshot. `get_agent_run` is the authoritative incremental/terminal view.
 The snapshot and nested terminal result both retain provider attempts, retry
 count, and the earliest observed actual model, including cancellation paths.
 
+Broker server version `0.4.0` adds live status metadata to both
+`get_agent_run` and `list_agent_runs`:
+
+- `ObservedUtc` is sampled while the snapshot is produced, so it advances on
+  every poll independently of provider output.
+- `ElapsedMilliseconds` is the non-negative wall-clock interval from
+  `CreatedUtc` to `ObservedUtc`; it is a diagnostic duration, not provider CPU
+  time or a budget override.
+- `ProgressMessage` is the latest informational stage. It is not durable
+  evidence, a completion percentage, or a substitute for terminal
+  `AgentRunStatus`.
+
+`UpdatedUtc` remains the last retained-state mutation. This distinction lets a
+client identify a quiet but actively observable stream without treating a poll
+as a provider-progress event. The terminal result remains authoritative once
+the status becomes `Completed`, `Failed`, or `Cancelled`.
+
+For streamed Responses calls, the model client emits
+`provider_stream_connected` after obtaining the SSE stream. It then emits a
+bounded in-progress provider-attempt diagnostic after the first parsed provider
+event and every 32 events thereafter. The broker projects the latest provider
+event type into `ProgressMessage`, including event-only periods with no text
+delta. Background responses continue to expose their normal polling
+diagnostics; neither path reports speculative percentage completion.
+
+Broker server version `0.5.0` retains requested Responses controls in both
+`get_agent_run` and `list_agent_runs`: `RequestedReasoningEffort`,
+`RequestedTextVerbosity`, and `MaxOutputTokens`. `text_verbosity` accepts
+`low`, `medium`, or `high` and defaults to `medium`. The broker serializes it
+as `text: { verbosity: ... }`; reasoning effort remains separately serialized
+as `reasoning: { effort: ... }` for the exact selected GPT-5.6 worker model.
+`max_output_tokens` remains a hard combined visible-output and reasoning-token
+budget and is never raised automatically. If the provider terminates an
+incomplete response with `max_output_tokens`, the terminal failure advises a
+later explicitly authorized run to use a higher output budget or lower
+reasoning/verbosity rather than spending beyond the original authorization.
+
 The supported exact model IDs are `gpt-5.6-luna`, `gpt-5.6-terra`, and
 `gpt-5.6-sol`. Route advice implements the repository policy but has no launch
-side effect. A provider-reported model may include a dated snapshot suffix of
-the exact requested model; any other model is classified as substitution and
-fails the run. Re-check the
+side effect. Both the requested and provider-reported model must match the same
+exact ID; aliases and dated snapshot suffixes are terminal substitution failures
+rather than silently accepted replacements. Re-check the
 [current GPT-5.6 guidance](https://developers.openai.com/api/docs/guides/latest-model)
 before distribution.
 

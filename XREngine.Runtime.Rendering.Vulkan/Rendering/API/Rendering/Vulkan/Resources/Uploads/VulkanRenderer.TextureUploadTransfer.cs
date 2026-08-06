@@ -77,6 +77,7 @@ public unsafe partial class VulkanRenderer
                 Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
             };
 
+            ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.TextureUploadTransfer");
             Result beginResult = Api!.BeginCommandBuffer(commandBuffer, ref beginInfo);
             if (beginResult != Result.Success)
             {
@@ -120,7 +121,10 @@ public unsafe partial class VulkanRenderer
             if (submitResult != Result.Success)
             {
                 if (submitResult == Result.ErrorDeviceLost)
-                    MarkDeviceLost();
+                    MarkDeviceLost(
+                        "Texture upload transfer queue submit returned ErrorDeviceLost",
+                        "vkQueueSubmit.TextureUploadTransfer",
+                        submitResult);
 
                 failureReason = $"transfer queue submit failed ({submitResult})";
                 return false;
@@ -179,7 +183,10 @@ public unsafe partial class VulkanRenderer
             return true;
 
         if (result == Result.ErrorDeviceLost)
-            MarkDeviceLost();
+            MarkDeviceLost(
+                "Texture upload transfer fence status returned ErrorDeviceLost",
+                "vkGetFenceStatus.TextureUploadTransfer",
+                result);
 
         failureReason = $"transfer upload fence status failed ({result})";
         return false;

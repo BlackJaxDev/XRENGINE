@@ -6,19 +6,22 @@ public unsafe partial class VulkanRenderer
         => new(this);
 
     private VulkanPreparedWorkerPlannerStamp CapturePreparedWorkerPlannerStamp()
-        => new(
-            _resourcePlanner,
-            _resourceAllocator,
-            _barrierPlanner,
-            _compiledRenderGraph,
-            _resourcePlannerSignature,
-            _resourceAllocationSignature,
-            _resourcePlannerRevision,
-            _renderGraphRuntime.FailedPlannerSignature,
-            _renderGraphRuntime.FailedAllocationSignature,
-            _renderGraphRuntime.FailedAllocationTimestamp,
-            _hasResourcePlannerFastPathKey,
-            _hasBarrierPlanFastPathKey,
-            _renderGraphRuntime.LastActiveFrameOpContext);
+    {
+        ResourcePlannerRuntimeState state = CaptureResourcePlannerRuntimeState();
+        return new(
+            state.ResourcePlanner,
+            state.ResourceAllocator,
+            state.BarrierPlanner,
+            state.CompiledRenderGraph,
+            state.ResourcePlannerSignature,
+            state.ResourceAllocationSignature,
+            state.ResourcePlannerRevision,
+            state.FailedResourcePlannerSignature,
+            state.FailedResourceAllocationSignature,
+            state.FailedResourceAllocationTimestamp,
+            state.HasResourcePlannerFastPathKey,
+            state.HasBarrierPlanFastPathKey,
+            state.LastActiveFrameOpContext);
+    }
 
 }

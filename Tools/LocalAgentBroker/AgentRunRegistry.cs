@@ -45,6 +45,8 @@ internal sealed class AgentRunRegistry : IAsyncDisposable
             throw new ArgumentException(
                 $"requested_model must be exactly one of: {string.Join(", ", AgentModelCatalog.Models)}");
         }
+        if (!AgentModelCatalog.SupportsResponseControls(request.RequestedModel))
+            throw new ArgumentException("The exact requested_model does not support broker response controls.");
         if (string.IsNullOrWhiteSpace(_configuration.ReadApiKey()))
         {
             throw new InvalidOperationException(
@@ -98,8 +100,14 @@ internal sealed class AgentRunRegistry : IAsyncDisposable
                 Status = snapshot.Status,
                 CreatedUtc = snapshot.CreatedUtc,
                 UpdatedUtc = snapshot.UpdatedUtc,
+                ObservedUtc = snapshot.ObservedUtc,
+                ElapsedMilliseconds = snapshot.ElapsedMilliseconds,
+                ProgressMessage = snapshot.ProgressMessage,
                 RequestedModel = snapshot.RequestedModel,
                 ActualModel = snapshot.ActualModel,
+                RequestedReasoningEffort = snapshot.RequestedReasoningEffort,
+                RequestedTextVerbosity = snapshot.RequestedTextVerbosity,
+                MaxOutputTokens = snapshot.MaxOutputTokens,
                 EditorSession = snapshot.EditorSession,
                 UseBackgroundMode = snapshot.UseBackgroundMode,
                 AttemptCount = snapshot.ProviderAttempts.Count,

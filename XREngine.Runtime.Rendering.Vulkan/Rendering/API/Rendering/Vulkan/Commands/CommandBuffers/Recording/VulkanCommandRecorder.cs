@@ -53,17 +53,18 @@ internal sealed class VulkanCommandRecorder
     /// <summary>
     /// Begins recording commands into the specified Vulkan command buffer.
     /// </summary>
-    /// <param name="api">The Vulkan API instance used to begin the command buffer.</param>
+    /// <param name="renderer">The renderer that owns device-loss admission and the Vulkan API.</param>
     /// <param name="commandBuffer">The Vulkan command buffer to begin recording.</param>
     /// <exception cref="InvalidOperationException">Thrown if beginning the command buffer fails.</exception>
-    public void Begin(Vk api, CommandBuffer commandBuffer)
+    public void Begin(VulkanRenderer renderer, CommandBuffer commandBuffer)
     {
         CommandBufferBeginInfo beginInfo = new()
         {
             SType = StructureType.CommandBufferBeginInfo,
         };
 
-        if (api.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
+        renderer.ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.Primary");
+        if (renderer.VulkanApi.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
             throw new InvalidOperationException("Failed to begin recording command buffer.");
     }
 
