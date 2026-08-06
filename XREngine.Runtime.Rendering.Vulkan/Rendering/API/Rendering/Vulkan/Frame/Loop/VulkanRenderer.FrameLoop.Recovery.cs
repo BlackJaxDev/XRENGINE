@@ -330,24 +330,16 @@ namespace XREngine.Rendering.Vulkan
             CommandBuffer commandBuffer)
         {
             if (commandBuffer.Handle == 0 ||
-                _commandBufferVariants is null ||
-                attempt.ImageIndex >= _commandBufferVariants.Length)
+                _primaryCommandArtifactOwners is null ||
+                attempt.ImageIndex >= _primaryCommandArtifactOwners.Length)
             {
                 return 0;
             }
 
-            var variants = _commandBufferVariants[attempt.ImageIndex];
-            for (int i = 0; i < variants.Count; i++)
-            {
-                CommandBufferCacheVariant variant = variants[i];
-                if (variant.PrimaryCommandBuffer.Handle ==
-                    commandBuffer.Handle)
-                {
-                    return variant.RecordedSwapchainWriteCount;
-                }
-            }
-
-            return 0;
+            PrimaryCommandArtifactOwner owner = _primaryCommandArtifactOwners[attempt.ImageIndex];
+            return owner.PrimaryCommandBuffer.Handle == commandBuffer.Handle
+                ? owner.RecordedSwapchainWriteCount
+                : 0;
         }
 
         private bool TryRecoverRejectedDesktopImage(

@@ -32,60 +32,60 @@ resource generations even when those outputs share a window or frame.
 
 ### 1. Contain Device Loss And Make Resource Lifetime Explicit
 
-- [ ] Make device-loss transition first-writer-wins and stop all new recording,
+- [x] Make device-loss transition first-writer-wins and stop all new recording,
   submission, waits, allocation, mapping, descriptor updates, and planner
   publication after it is confirmed.
-- [ ] Preserve the original failing Vulkan/OpenXR call, result, frame operation,
+- [x] Preserve the original failing Vulkan/OpenXR call, result, frame operation,
   submission context, and in-flight resource generations for diagnostics.
-- [ ] Make resource retirement timeline/fence-safe for images, views,
+- [x] Make resource retirement timeline/fence-safe for images, views,
   framebuffers, descriptors, buffers, command pools, and plans.
-- [ ] Replace physical resources through one generation transaction: prepare
+- [x] Replace physical resources through one generation transaction: prepare
   the new allocation, image views, framebuffer attachments, descriptor payloads,
   layout requirements, and command dependencies; publish them atomically; then
   retire the previous generation only after every owning frame slot and timeline
   dependency completes.
-- [ ] Give every native image, image view, framebuffer/dynamic-rendering
+- [x] Give every native image, image view, framebuffer/dynamic-rendering
   attachment, sampler, descriptor payload, and recorded command artifact an
   explicit allocation/publication generation. Do not use managed-object hashes,
   resource names, or stable logical wrappers as physical-lifetime identity.
-- [ ] Ensure retirement cannot wait on a frame that was rejected for a planner,
+- [x] Ensure retirement cannot wait on a frame that was rejected for a planner,
   viewport, collect, or publication-generation mismatch; cancellation and
   supersession must release or transfer all completion dependencies explicitly.
-- [ ] Add descriptor fingerprints that include every binding identity, resource
+- [x] Add descriptor fingerprints that include every binding identity, resource
   allocation generation, expected layout, image view, and sampler.
-- [ ] Replace placeholder descriptor behavior with explicit required-binding
+- [x] Replace placeholder descriptor behavior with explicit required-binding
   failures and bounded diagnostic counters.
 
 ### 2. Build Immutable Context-Local Frame, View, And Output Plans
 
-- [ ] Introduce immutable `FramePlan`, `ViewSetPlan`, `OutputRequest`,
+- [x] Introduce immutable `FramePlan`, `ViewSetPlan`, `OutputRequest`,
   `RenderPacket`, `RecordedPacketKey`, and `FramePlanBuilder` types; lower the
   existing `FrameOp` stream into these plans while preserving frame-slot
   ownership.
-- [ ] Build one immutable logical view set after OpenXR locates views; key
+- [x] Build one immutable logical view set after OpenXR locates views; key
   temporal state by logical-view identity rather than batch position or
   swapchain image.
-- [ ] Route desktop, OpenXR, mirror, capture, probe, shadow, UI-preview, and
+- [x] Route desktop, OpenXR, mirror, capture, probe, shadow, UI-preview, and
   diagnostic outputs through the same output and view-family plan.
-- [ ] Make resource-planner state context-local. Its key must include pipeline,
+- [x] Make resource-planner state context-local. Its key must include pipeline,
   logical view, output target, resource registry/generation, display extent, and
   internal extent; a swapchain-targeting operation must never copy internal
   dimensions or allocator state from whichever unrelated pipeline is currently
   live on the render thread.
-- [ ] Replace the multi-context "merged physical plan" fallback with either a
+- [x] Replace the multi-context "merged physical plan" fallback with either a
   genuinely merged immutable allocation plan that preserves each context's
   registry and extents, or independently activated per-context planner states.
   If neither is available, reject or defer the frame before recording rather
   than warning and continuing with the first context's plan.
-- [ ] Treat a planner-context change during command recording as a failed plan
+- [x] Treat a planner-context change during command recording as a failed plan
   precondition. Abort and re-plan against one immutable snapshot; never continue
   recording shadow, main-view, UI-preview, capture, or presentation operations
   against a pre-recorded plan owned by another context.
-- [ ] Compile explicit resource dependencies into a deterministic render-pass
+- [x] Compile explicit resource dependencies into a deterministic render-pass
   DAG; centralize primary-owned operations and reject invalid graph dataflow.
-- [ ] Version plans, resources, attachments, and publications so resize,
+- [x] Version plans, resources, attachments, and publications so resize,
   topology, descriptor, and allocation changes invalidate only affected work.
-- [ ] Publish the final presentation source as one immutable tuple containing
+- [x] Publish the final presentation source as one immutable tuple containing
   logical resource epoch, native allocation/view generation, image, image view,
   sampler, expected layout, descriptor set/slot generation, output extent, and
   owning command artifact. Re-resolve nothing between validation, descriptor
@@ -94,34 +94,57 @@ resource generations even when those outputs share a window or frame.
 
 ### 3. Make Command Recording Snapshot-Driven And Reusable
 
-- [ ] Add `FreshSerial` recording mode and retain comparable recording scopes,
+- [x] Add `FreshSerial` recording mode and retain comparable recording scopes,
   counters, and miss reasons without hot-path allocation.
-- [ ] Record from immutable `RenderPacket` snapshots with frame-local tracking,
+- [x] Record from immutable `RenderPacket` snapshots with frame-local tracking,
   persistent per-thread command pools, scratch storage, and capacity-backed
   collections.
-- [ ] Replace the primary-reuse hard-off gate with generation-complete
+- [x] Replace the primary-reuse hard-off gate with generation-complete
   `RecordedPacketKey` dependency validation.
-- [ ] Make `RecordedPacketKey` and secondary-chain dependencies include exact
+- [x] Make `RecordedPacketKey` and secondary-chain dependencies include exact
   native image-allocation generation, image-view generation,
   framebuffer/dynamic-rendering attachment identity, render area and extent,
   descriptor payload/publication generation, sampler generation, and pipeline
   layout generation. Remove placeholder `RenderArea=0` and logical target/name
   hashes from fields that claim to represent physical resources.
-- [ ] Couple in-place descriptor-set updates to recorded-artifact ownership. A
+- [x] Couple in-place descriptor-set updates to recorded-artifact ownership. A
   descriptor payload that changes image/view/layout under a stable set handle
   must also republish the secondary's descriptor-image requirements or
   invalidate and re-record every dependent artifact before submission.
-- [ ] Retain live descriptor-image transition/preflight for mutable frame-source
+- [x] Retain live descriptor-image transition/preflight for mutable frame-source
   bindings until a scheduled secondary proves that its frozen requirements were
   produced from the exact descriptor payload generation being submitted. Never
   skip the live scan solely because a reusable chain exists.
-- [ ] Cache only stable secondary command ranges; keep UI, text, debug,
+- [x] Cache only stable secondary command ranges; keep UI, text, debug,
   dynamic-resource, and output-sensitive ranges dynamic.
-- [ ] Record stable GPU-driven dispatch, barrier, indirect-draw, and count
+- [x] Record stable GPU-driven dispatch, barrier, indirect-draw, and count
   topology once; update only bounded data ranges for changing visibility and
   counts.
-- [ ] Remove obsolete primary-command variant caches and cache-only scheduling
+- [x] Remove obsolete primary-command variant caches and cache-only scheduling
   branches once packet reuse owns their responsibility.
+
+#### Phase 1-3 Closeout Status (2026-08-05)
+
+Implementation is complete for the first three phases. Independent strict
+source audits passed Phase 1 at 8/8 items and Phases 2-3 at 18/18 items. The
+Vulkan renderer project builds with warnings treated as errors (0 warnings,
+0 errors), and a named isolated Vulkan editor session started successfully and
+answered MCP `ping` after the oversized prepared-command value-type startup
+failure was fixed.
+
+Remaining work is validation and test migration, not an unchecked Phase 1-3
+implementation item:
+
+1. Re-run the named Vulkan editor session from the final source revision, inspect
+   `log_vulkan.log` and `log_rendering.log`, and capture two camera views once a
+   live transfer-readable viewport image is available. The latest capture attempt
+   returned the intended typed failure and did not use a CPU or OS-window fallback.
+2. After explicit approval to modify tests, migrate the existing Vulkan unit-test
+   call sites for the removed schedule-cache authority and the required
+   `CommandChainKey.ChainOrdinal`, then run `Test-VulkanPhase3-Regression`.
+3. Re-run the full solution build after that test migration. The renderer and
+   broker projects compile now; the current full-solution failure is confined to
+   those stale Vulkan unit-test source references.
 
 ### 4. Collapse The Runtime Surface And Remove Hot-Path Work
 

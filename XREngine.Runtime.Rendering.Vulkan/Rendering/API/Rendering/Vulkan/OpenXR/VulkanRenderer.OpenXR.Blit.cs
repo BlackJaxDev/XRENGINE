@@ -409,6 +409,7 @@ public unsafe partial class VulkanRenderer
                 Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
             };
 
+            ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.OpenXR.Blit");
             Result beginResult = Api!.BeginCommandBuffer(commandBuffer, ref beginInfo);
             if (beginResult != Result.Success)
             {

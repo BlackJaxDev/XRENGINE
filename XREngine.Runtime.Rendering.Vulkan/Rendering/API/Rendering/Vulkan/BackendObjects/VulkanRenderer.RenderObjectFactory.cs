@@ -12,6 +12,7 @@ namespace XREngine.Rendering.Vulkan
             _backendObjectRegistry;
         internal VulkanBackendObjectContext BackendObjectContext =>
             _backendObjectContext ??= new VulkanBackendObjectContext(
+                this,
                 _deviceContext,
                 _backendObjectRegistry,
                 _resourceLifetimeTracker,

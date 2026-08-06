@@ -20,6 +20,10 @@ public sealed class RenderOutputGraphPlanner
 
     public RenderOutputDag Graph => _graph;
 
+    /// <summary>Reserves an output before lowering the frame's complete request set.</summary>
+    public bool Reserve(in RenderOutputRequest request)
+        => EnsureFrame(request.FrameId) && _graph.ReserveOutputKey(request.OutputId);
+
     public int Plan(
         in RenderOutputRequest request,
         bool isDue,
@@ -40,7 +44,7 @@ public sealed class RenderOutputGraphPlanner
         int terminalNode = request.OutputKind switch
         {
             EFrameOutputKind.OpenXREyeSubmit or EFrameOutputKind.OpenVRSubmit =>
-                AddXrSceneNode(request.OutputKind, request.ViewFamilyId, publicationNode),
+                AddXrSceneNode(request, publicationNode),
             EFrameOutputKind.DesktopMirror => AddDesktopOutput(
                 request, xrSourceKind, independentDesktopScene, publicationNode),
             EFrameOutputKind.DesktopScene or EFrameOutputKind.EditorScenePanel =>
@@ -84,6 +88,39 @@ public sealed class RenderOutputGraphPlanner
         return false;
     }
 
+    /// <summary>
+    /// Connects two already-planned outputs through an explicit dataflow edge.
+    /// Callers must have matched the dependent consumer set to exactly one
+    /// producer set before invoking this method.
+    /// </summary>
+    public bool TryAddOutputDependency(
+        in RenderOutputRequest prerequisite,
+        in RenderOutputRequest dependent,
+        out string? failureReason)
+    {
+        failureReason = null;
+        if (prerequisite.ProducerDependencySetId == 0UL ||
+            dependent.ConsumerDependencySetId == 0UL ||
+            prerequisite.ProducerDependencySetId != dependent.ConsumerDependencySetId)
+        {
+            failureReason = "output producer/consumer dependency IDs do not match";
+            return false;
+        }
+        if (!_graph.TryGetNodeIndex(GetTerminalNodeKey(prerequisite), out int prerequisiteNode) ||
+            !_graph.TryGetNodeIndex(GetTerminalNodeKey(dependent), out int dependentNode))
+        {
+            failureReason = "output dependency references an unplanned terminal node";
+            return false;
+        }
+        if (!_graph.AddDependency(prerequisiteNode, dependentNode))
+        {
+            failureReason = "output dependency is cyclic or exceeds DAG edge capacity";
+            return false;
+        }
+
+        return true;
+    }
+
     private bool EnsureFrame(ulong frameId)
     {
         if (_frameId == frameId)
@@ -116,7 +153,19 @@ public sealed class RenderOutputGraphPlanner
     {
         int eyeNode = independentDesktopScene
             ? -1
-            : AddXrSceneNode(xrSourceKind, GetXrFamilyKey(xrSourceKind), publicationNode);
+            : AddXrSceneNode(
+                RenderOutputRequest.CreateDefault(
+                    EVrOutputViewKind.LeftEye,
+                    xrSourceKind,
+                    request.FrameId) with
+                {
+                    OutputId = request.OutputId,
+                    ViewFamilyId = GetXrFamilyKey(xrSourceKind),
+                    Target = request.Target,
+                    ProducerDependencySetId = request.ProducerDependencySetId,
+                    ConsumerDependencySetId = request.ConsumerDependencySetId,
+                },
+                publicationNode);
         return AuxiliaryOutputGraphBuilder.AddDesktopMirror(
             _graph,
             GetTerminalNodeKey(request),
@@ -191,20 +240,22 @@ public sealed class RenderOutputGraphPlanner
         return node;
     }
 
-    private int AddXrSceneNode(EFrameOutputKind kind, ulong familyKey, int publicationNode)
+    private int AddXrSceneNode(
+        in RenderOutputRequest request,
+        int publicationNode)
     {
-        ulong key = GetXrSceneNodeKey(kind);
+        ulong key = GetXrSceneNodeKey(request);
         int node = _graph.AddNode(new(
             key,
-            familyKey,
+            request.OutputId,
             ERenderOutputDagNodeKind.SceneView,
             ERenderOutputDataClass.ViewDependent,
-            familyKey,
-            familyKey,
+            request.ViewFamilyId,
+            request.Target.CompatibilityKey,
             0u,
             Cacheable: false,
             Resumable: false,
-            kind == EFrameOutputKind.OpenXREyeSubmit ? "OpenXR eye family" : "OpenVR eye family"));
+            request.OutputKind == EFrameOutputKind.OpenXREyeSubmit ? "OpenXR eye family" : "OpenVR eye family"));
         if (node >= 0)
             _graph.AddDependency(publicationNode, node);
         return node;
@@ -241,22 +292,38 @@ public sealed class RenderOutputGraphPlanner
         => request.OutputKind switch
         {
             EFrameOutputKind.OpenXREyeSubmit or EFrameOutputKind.OpenVRSubmit =>
-                GetXrSceneNodeKey(request.OutputKind),
+                GetXrSceneNodeKey(request),
             EFrameOutputKind.LightProbeCapture or EFrameOutputKind.ReflectionProbeCapture or
                 EFrameOutputKind.ImageBasedLighting => GetProbeNodeBase(request) + 0x800UL,
             EFrameOutputKind.Diagnostic => GetOutputNodeKey(request),
-            _ => TerminalNodeDomain ^ request.OutputId,
+            _ => TerminalNodeDomain ^ GetVersionedOutputIdentity(request),
         };
 
     private static ulong GetProbeNodeBase(in RenderOutputRequest request)
-        => ProbeNodeDomain ^ request.OutputId;
+        => ProbeNodeDomain ^ GetVersionedOutputIdentity(request);
 
     private static ulong GetOutputNodeKey(in RenderOutputRequest request)
-        => OutputNodeDomain ^ request.OutputId;
+        => OutputNodeDomain ^ GetVersionedOutputIdentity(request);
 
-    private static ulong GetXrSceneNodeKey(EFrameOutputKind kind)
-        => XrSceneNodeDomain | ((ulong)(uint)kind + 1UL);
+    private static ulong GetXrSceneNodeKey(in RenderOutputRequest request)
+        => XrSceneNodeDomain ^ GetVersionedOutputIdentity(request);
 
     private static ulong GetXrFamilyKey(EFrameOutputKind kind)
         => XrSceneNodeDomain ^ (0x100UL + (ulong)(uint)kind);
+
+    private static ulong GetVersionedOutputIdentity(in RenderOutputRequest request)
+    {
+        ulong hash = request.OutputId;
+        Add(ref hash, request.Target.CompatibilityKey);
+        Add(ref hash, request.ProducerDependencySetId);
+        Add(ref hash, request.ConsumerDependencySetId);
+        Add(ref hash, (ulong)(uint)request.OutputKind);
+        return hash == 0UL ? 1UL : hash;
+    }
+
+    private static void Add(ref ulong hash, ulong value)
+    {
+        hash ^= value;
+        hash *= 1099511628211UL;
+    }
 }

@@ -217,6 +217,54 @@ internal sealed class ComputeDispatchSnapshot
         => _materialUniformBindings = payload;
 
     /// <summary>
+    /// Produces a detached binding snapshot for a sealed frame plan. The capture
+    /// workspace is deliberately mutable and reused by producers, so retaining
+    /// any of its dictionaries would permit post-seal descriptor changes.
+    /// </summary>
+    internal ComputeDispatchSnapshot CreateSealedCopy()
+    {
+        ComputeDispatchSnapshot copy = new(
+            new Dictionary<string, ProgramUniformValue>(Uniforms, StringComparer.Ordinal),
+            new Dictionary<uint, XRTexture>(Samplers),
+            new Dictionary<uint, string>(SamplerNamesByUnit),
+            new Dictionary<string, XRTexture>(SamplersByName, StringComparer.Ordinal),
+            new Dictionary<uint, ProgramImageBinding>(Images),
+            new Dictionary<uint, VulkanComputeBufferBinding>(Buffers),
+            new Dictionary<string, VulkanComputeBufferBinding>(BuffersByName, StringComparer.Ordinal));
+
+        foreach ((string name, VulkanRuntimeUniformPublication publication) in RuntimeUniformPublications)
+            copy.RuntimeUniformPublications.Add(name, publication);
+        foreach (string name in MutableLegacyUniformNames)
+            copy.MutableLegacyUniformNames.Add(name);
+        foreach (string name in RequiredSamplerNames)
+            copy.RequiredSamplerNames.Add(name);
+
+        copy._materialUniformBindings = _materialUniformBindings;
+        copy.AllowsMaterialBindingFastPath = AllowsMaterialBindingFastPath;
+        copy.HasPublishedBindingLayoutSignatures = HasPublishedBindingLayoutSignatures;
+        copy.UniformBindingLayoutSignature = UniformBindingLayoutSignature;
+        copy.SamplerUnitBindingLayoutSignature = SamplerUnitBindingLayoutSignature;
+        copy.SamplerNameBindingLayoutSignature = SamplerNameBindingLayoutSignature;
+        copy.ImageBindingLayoutSignature = ImageBindingLayoutSignature;
+        copy.BufferBindingLayoutSignature = BufferBindingLayoutSignature;
+        copy.RequiredSamplerPolicySignature = RequiredSamplerPolicySignature;
+        copy.DescriptorSetLayoutSignature = DescriptorSetLayoutSignature;
+        copy.ExactSamplerResourceSignature = ExactSamplerResourceSignature;
+        copy.RuntimeUniformNameSignature = RuntimeUniformNameSignature;
+        copy.RuntimeUniformValueSignature = RuntimeUniformValueSignature;
+        copy.PersistentEngineUniformSignature = PersistentEngineUniformSignature;
+        copy.PersistentEngineResourceSignature = PersistentEngineResourceSignature;
+        copy.HasMutableFrameSourceSamplerBindings = HasMutableFrameSourceSamplerBindings;
+        copy.MutableLegacyUniformNameSignature = MutableLegacyUniformNameSignature;
+        copy.MutableLegacyUniformValueSignature = MutableLegacyUniformValueSignature;
+        copy.RuntimeUniformPublicationLayoutSignature = RuntimeUniformPublicationLayoutSignature;
+        copy.TypedPublicationGenerations = TypedPublicationGenerations;
+        copy._publishedImageResourceSignature = _publishedImageResourceSignature;
+        copy._publishedBufferResourceSignature = _publishedBufferResourceSignature;
+        return copy;
+    }
+
+    /// <summary>
     /// Creates an owning cross-frame artifact containing only generation-owned
     /// typed values and material sampler references. Frame/view/pass engine
     /// values are deliberately omitted because <see cref="PendingMeshDraw"/>

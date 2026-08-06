@@ -519,14 +519,25 @@ internal unsafe partial class VkRenderProgram
     {
         HashCode item = new();
         item.Add(name, StringComparer.Ordinal);
-        item.Add(texture?.GetHashCode() ?? 0);
         if (texture is not null && Renderer.GetOrCreateAPIRenderObject(texture, generateNow: false) is IVkImageDescriptorSource source)
         {
             item.Add(source.IsDescriptorReady);
             item.Add(source.DescriptorGeneration);
             item.Add(source.DescriptorImage.Handle);
+            item.Add(Renderer.GetCurrentVulkanResourceGeneration(
+                ObjectType.Image,
+                source.DescriptorImage.Handle));
             item.Add(source.DescriptorView.Handle);
+            item.Add(Renderer.GetCurrentVulkanResourceGeneration(
+                ObjectType.ImageView,
+                source.DescriptorView.Handle));
             item.Add(source.DescriptorSampler.Handle);
+            item.Add(Renderer.GetCurrentVulkanResourceGeneration(
+                ObjectType.Sampler,
+                source.DescriptorSampler.Handle));
+            item.Add(Renderer.ResolveDescriptorImageLayout(
+                source,
+                DescriptorType.CombinedImageSampler));
             item.Add(source.DescriptorViewType);
             item.Add(source.DescriptorFormat);
             item.Add(source.DescriptorAspect);
@@ -547,7 +558,6 @@ internal unsafe partial class VkRenderProgram
     {
         HashCode item = new();
         item.Add(binding);
-        item.Add(buffer?.GetHashCode() ?? 0);
         if (buffer is null)
         {
             item.Add(0UL);
@@ -563,6 +573,10 @@ internal unsafe partial class VkRenderProgram
         if (Renderer.GetOrCreateAPIRenderObject(buffer, generateNow: false) is VkDataBuffer vkBuffer)
         {
             item.Add(vkBuffer.BufferHandle?.Handle ?? 0UL);
+            item.Add(Renderer.GetCurrentVulkanResourceGeneration(
+                ObjectType.Buffer,
+                vkBuffer.BufferHandle?.Handle ?? 0UL));
+            item.Add(0UL);
             item.Add(vkBuffer.AllocatedByteSize);
         }
         else

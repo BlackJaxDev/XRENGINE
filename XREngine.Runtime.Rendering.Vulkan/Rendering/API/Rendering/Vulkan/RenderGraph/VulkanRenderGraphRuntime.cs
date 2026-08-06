@@ -14,12 +14,8 @@ internal sealed class VulkanRenderGraphRuntime
     private long _frameContextId;
     private int _frozenPlanReaders;
 
-    public FrameOpContext? LastActiveFrameOpContext { get; set; }
     public VulkanInteractiveResizePlannerExtentCache InteractiveResizeExtentCache { get; } =
         new(MaxInteractiveResizeExtentSnapshots);
-    public ulong FailedPlannerSignature { get; set; } = ulong.MaxValue;
-    public ulong FailedAllocationSignature { get; set; } = ulong.MaxValue;
-    public long FailedAllocationTimestamp { get; set; }
     public ulong FrozenResourcePlanRevision { get; private set; }
     public Dictionary<string, XRDataBuffer> TrackedBuffersByName { get; } =
         new(StringComparer.OrdinalIgnoreCase);
@@ -27,14 +23,6 @@ internal sealed class VulkanRenderGraphRuntime
 
     public VulkanRenderGraphCompiler Compiler { get; } = new();
     public VulkanFrameOperationScheduler FrameScheduler { get; } = new();
-    public VulkanResourcePlanner ResourcePlanner { get; set; } = new();
-    public VulkanResourceAllocator ResourceAllocator { get; set; } = new();
-    public VulkanBarrierPlanner BarrierPlanner { get; set; } = new();
-    public VulkanCompiledRenderGraph CompiledGraph { get; set; } =
-        VulkanCompiledRenderGraph.Empty;
-    public ulong PlannerSignature { get; set; } = ulong.MaxValue;
-    public ulong AllocationSignature { get; set; } = ulong.MaxValue;
-    public ulong Revision { get; set; }
     public VulkanRenderGraphPlan CurrentPlan { get; private set; } = VulkanRenderGraphPlan.Empty;
     public ulong NextFrameContextId()
         => unchecked((ulong)Interlocked.Increment(ref _frameContextId));
@@ -58,13 +46,16 @@ internal sealed class VulkanRenderGraphRuntime
     /// Publishes copied barrier arrays only when a planner generation is rebuilt;
     /// steady-state recording reads <see cref="CurrentPlan"/> allocation-free.
     /// </summary>
-    public void PublishPlan()
+    public void PublishPlan(
+        ulong revision,
+        VulkanCompiledRenderGraph compiledGraph,
+        VulkanBarrierPlanner barrierPlanner)
     {
         ulong barrierGeneration = unchecked(++_publishedBarrierGeneration);
         CurrentPlan = new VulkanRenderGraphPlan(
-            Revision,
-            CompiledGraph,
-            VulkanBarrierPlan.Capture(barrierGeneration, BarrierPlanner));
+            revision,
+            compiledGraph,
+            VulkanBarrierPlan.Capture(barrierGeneration, barrierPlanner));
     }
 
     public void ReleaseCaches()

@@ -575,7 +575,7 @@ internal unsafe partial class VkMeshRenderer
 			signature);
 	}
 
-	private static ulong ComputeDescriptorBufferInfoSignature(
+	private ulong ComputeDescriptorBufferInfoSignature(
 		DescriptorType descriptorType,
 		List<DescriptorBufferInfo> bufferInfos,
 		int start,
@@ -588,6 +588,9 @@ internal unsafe partial class VkMeshRenderer
 		{
 			DescriptorBufferInfo info = bufferInfos[start + i];
 			hash.Add(info.Buffer.Handle);
+			hash.Add(Renderer.GetCurrentVulkanResourceGeneration(
+				ObjectType.Buffer,
+				info.Buffer.Handle));
 			hash.Add(info.Offset);
 			hash.Add(info.Range);
 		}
@@ -595,7 +598,7 @@ internal unsafe partial class VkMeshRenderer
 		return hash.ToHash();
 	}
 
-	private static ulong ComputeDescriptorTexelBufferSignature(
+	private ulong ComputeDescriptorTexelBufferSignature(
 		DescriptorType descriptorType,
 		List<BufferView> bufferViews,
 		int start,
@@ -605,7 +608,28 @@ internal unsafe partial class VkMeshRenderer
 		hash.Add((int)descriptorType);
 		hash.Add(count);
 		for (int i = 0; i < count; i++)
-			hash.Add(bufferViews[start + i].Handle);
+		{
+			BufferView view = bufferViews[start + i];
+			hash.Add(view.Handle);
+			hash.Add(Renderer.GetCurrentVulkanResourceGeneration(
+				ObjectType.BufferView,
+				view.Handle));
+			if (Renderer.TryGetDescriptorHeapBufferViewCreateInfo(view, out BufferViewCreateInfo createInfo))
+			{
+				hash.Add(createInfo.Buffer.Handle);
+				hash.Add(Renderer.GetCurrentVulkanResourceGeneration(
+					ObjectType.Buffer,
+					createInfo.Buffer.Handle));
+				hash.Add((int)createInfo.Format);
+				hash.Add(createInfo.Offset);
+				hash.Add(createInfo.Range);
+			}
+			else
+			{
+				// An untracked view must never compare equal to a prior tracked payload.
+				hash.Add(0UL);
+			}
+		}
 
 		return hash.ToHash();
 	}

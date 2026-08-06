@@ -453,8 +453,6 @@ public unsafe partial class VulkanRenderer
                         "eye mirror render");
                 }
 
-                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordMirror.PlanAndSchedule.Sort"))
-                    ops = _frameOperationScheduler.SortFrameOpsCore(ops, CompiledRenderGraph);
                 if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                 {
                     Debug.VulkanWarningEvery(
@@ -466,6 +464,9 @@ public unsafe partial class VulkanRenderer
                 }
 
                 FrameOpContext plannerContext = PrepareResourcePlannerForFrameOps(ops);
+                ResourcePlannerRuntimeState plannerState = CaptureResourcePlannerRuntimeState();
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordMirror.PlanAndSchedule.Sort"))
+                    ops = _frameOperationScheduler.SortFrameOpsCore(ops, plannerState.CompiledRenderGraph);
                 if (TryDescribeRecentResourceAllocationFailure(out string postPlanFailureReason))
                 {
                     Debug.VulkanWarningEvery(
@@ -500,7 +501,7 @@ public unsafe partial class VulkanRenderer
                 {
                     return false;
                 }
-                ulong plannerRevision = ResourcePlannerRevision;
+                ulong plannerRevision = plannerState.ResourcePlannerRevision;
                 ulong frameOpsSignature;
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordMirror.PlanAndSchedule.Signature"))
                 {
@@ -602,6 +603,13 @@ public unsafe partial class VulkanRenderer
         out CommandBuffer commandBuffer)
     {
         commandBuffer = default;
+        if (FreshSerialRecordingEnabled)
+        {
+            if (OpenXrVulkanTraceEnabled)
+                RecordOpenXrPrimaryReuseMiss("openxr-mirror-primary-miss:fresh-serial");
+            return false;
+        }
+
         if (!OpenXrVulkanPrimaryReuseEnabled)
         {
             if (OpenXrVulkanTraceEnabled)
@@ -610,14 +618,14 @@ public unsafe partial class VulkanRenderer
         }
 
         ulong cacheKey = BuildOpenXrMirrorPrimaryCommandBufferCacheKey(commandChainImageIndex, request);
-        lock (_openXrBackend.PrimaryCommandBufferVariantsLock)
+        lock (_openXrBackend.PrimaryCommandArtifactOwnersLock)
         {
-            if (!OpenXrPrimaryCommandBufferVariants.TryGetValue(cacheKey, out List<CommandBufferCacheVariant>? variants))
+            if (!OpenXrPrimaryCommandArtifactOwners.TryGetValue(cacheKey, out PrimaryCommandArtifactOwner? variant))
             {
                 if (OpenXrVulkanTraceEnabled)
-                    RecordOpenXrPrimaryReuseMiss($"openxr-mirror-primary-miss:no-variants key=0x{cacheKey:X16}");
+                    RecordOpenXrPrimaryReuseMiss($"openxr-mirror-primary-miss:no-owner key=0x{cacheKey:X16}");
                 else
-                    RecordOpenXrPrimaryReuseMiss("openxr-mirror-primary-miss:no-variants");
+                    RecordOpenXrPrimaryReuseMiss("openxr-mirror-primary-miss:no-owner");
                 return false;
             }
 
@@ -648,10 +656,7 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
-            for (int i = 0; i < variants.Count; i++)
-            {
-                CommandBufferCacheVariant variant = variants[i];
-                bool imageEntryStateDirty =
+            bool imageEntryStateDirty =
                     IsCommandBufferVariantImageLayoutStateDirty(
                         variant,
                         imageLayoutStartSignature,
@@ -674,7 +679,8 @@ public unsafe partial class VulkanRenderer
                     variant.CommandChainPrimaryGroupCount != (commandChainSchedule is null ? -1 : commandChainPrimaryGroupCount) ||
                     IsCommandBufferVariantGpuProfilerStateDirty(variant, gpuPipelineProfilingActive, commandBufferImageSlot))
                 {
-                    continue;
+                    RecordOpenXrPrimaryReuseMiss("openxr-mirror-primary-miss:owner-stale");
+                    return false;
                 }
 
                 _lastReusableFrameDataRefreshFailureReason = null;
@@ -748,51 +754,7 @@ public unsafe partial class VulkanRenderer
                         commandBuffer.Handle);
                 }
 
-                return true;
-            }
-
-            string compactMissReason = ClassifyOpenXrPrimaryVariantMismatch(
-                variants,
-                true,
-                requiresExactFrameOps,
-                usingCommandChains,
-                frameOpsSignature,
-                frameOpContextFingerprint,
-                plannerRevision,
-                imageLayoutStartSignature,
-                ContainsQueryFrameOp(ops),
-                false,
-                false,
-                commandChainSchedule,
-                commandChainPrimaryGroupSignature,
-                commandChainPrimaryGroupCount,
-                gpuPipelineProfilingActive,
-                commandBufferImageSlot);
-            if (OpenXrVulkanTraceEnabled)
-            {
-                RecordOpenXrPrimaryReuseMiss(
-                    $"openxr-mirror-primary-miss:no-matching-variant key=0x{cacheKey:X16} variants={variants.Count} first={DescribeOpenXrPrimaryVariantMismatch(
-                        variants,
-                        requiresExactFrameOps,
-                        usingCommandChains,
-                        frameOpsSignature,
-                        frameOpContextFingerprint,
-                        frameOpContextId,
-                        plannerRevision,
-                        imageLayoutStartSignature,
-                        false,
-                        false,
-                        commandChainSchedule,
-                        commandChainPrimaryGroupSignature,
-                        commandChainPrimaryGroupCount,
-                        gpuPipelineProfilingActive,
-                        commandBufferImageSlot)}");
-            }
-            else
-            {
-                RecordOpenXrPrimaryReuseMiss(compactMissReason);
-            }
-            return false;
+            return true;
         }
     }
 
@@ -809,10 +771,8 @@ public unsafe partial class VulkanRenderer
         CommandChainSchedule? commandChainSchedule)
     {
         ulong cacheKey = BuildOpenXrMirrorPrimaryCommandBufferCacheKey(commandChainImageIndex, request);
-        CommandBufferCacheVariant variant = GetOrCreateOpenXrPrimaryCommandBufferVariant(
+        PrimaryCommandArtifactOwner variant = GetOrCreateOpenXrPrimaryCommandBufferOwner(
             cacheKey,
-            commandChainSchedule,
-            commandChainImageIndex,
             recordImageIndex);
 
         bool gpuPipelineProfilingActive =
@@ -829,6 +789,15 @@ public unsafe partial class VulkanRenderer
             out commandChainPrimaryGroupCount);
 
         long recordStart = Stopwatch.GetTimestamp();
+        FramePlan framePlan = FramePlanBuilder.GetCurrentThread().BuildAndSeal(
+            checked((int)recordImageIndex),
+            plannerRevision,
+            frameOpsSignature,
+            dynamicOverlaySignature: 0UL,
+            operations: ops,
+            dynamicOverlayOperations: Array.Empty<FrameOp>(),
+            openXrViewIndex: request.OpenXrViewIndex);
+        ops = framePlan.GetNativeStaticOperationsForRecording();
         _commandRecorder.EnterRecordingScope();
         bool queryFrameOpsRequireRerecord = false;
         try
@@ -867,7 +836,8 @@ public unsafe partial class VulkanRenderer
                 queryFrameOpsRequireRerecord: out queryFrameOpsRequireRerecord,
                 transitionSwapchainToPresent: false,
                 frameDataImageIndexOverride: recordImageIndex,
-                excludeDesktopSwapchainBarriers: true))
+                excludeDesktopSwapchainBarriers: true,
+                framePlan: framePlan))
             {
                 CancelRecordedTextureUploadSubmitBatch(
                     $"OpenXR eye mirror command buffer recording deferred: {recordingDeferredReason}");
@@ -914,7 +884,7 @@ public unsafe partial class VulkanRenderer
             CaptureVulkanGpuProfilerVariantScopes(commandBufferImageSlot, variant);
             StoreFrameOpSignatureDebugParts(variant, ops);
             if (queryFrameOpsRequireRerecord)
-                MarkCommandBufferVariantTransient(variant, "query draw was not recorded");
+                MarkPrimaryCommandArtifactOwnerTransient(variant, "query draw was not recorded");
             UpdateVulkanGpuProfilerCommandBufferState(
                 recordImageIndex,
                 gpuPipelineProfilingActive,

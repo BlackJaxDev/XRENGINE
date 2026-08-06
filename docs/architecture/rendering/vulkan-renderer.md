@@ -437,6 +437,7 @@ recording. `Vulkan.CommandRecording.Mode` controls the policy:
 | `Auto` (default) | Uses the validated hybrid primary/secondary path for desktop targets and retains the safety quarantines below. |
 | `Inline` | Records frame operations directly into the primary command buffer. Use this only for correctness or performance bisection. |
 | `Hybrid` | Explicitly requests the supported hybrid path. Safety-quarantined targets still remain inline. |
+| `FreshSerial` | Records every command artifact serially from the current immutable packet plan, bypassing primary and secondary reuse while retaining the same scopes, counters, and miss diagnostics for deterministic correctness/performance comparison. |
 
 `XRE_VULKAN_COMMAND_CHAINS=0/1` is a process-level diagnostic override. `0`
 forces inline recording and `1` forces the hybrid request. The explicit `1`

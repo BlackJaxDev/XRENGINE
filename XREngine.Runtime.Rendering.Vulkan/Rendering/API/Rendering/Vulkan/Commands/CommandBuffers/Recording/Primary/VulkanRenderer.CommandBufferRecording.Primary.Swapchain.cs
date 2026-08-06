@@ -261,13 +261,21 @@ namespace XREngine.Rendering.Vulkan
 
         private bool TryRefreshUnwrittenSwapchainFromLastWindowPresentSource(scoped ref PrimaryCommandBufferRecordingState recordingState)
         {
-            XRFrameBuffer? sourceFrameBuffer = _lastWindowPresentFrameBuffer;
-            string? unavailableReason = sourceFrameBuffer is null
-                ? $"no tracked source framebuffer; colorTexture='{_lastWindowPresentColorTexture?.Name ?? "<null>"}'"
+            VulkanPresentationSourceTuple presentationSource =
+                _windowPresentSource.Capture();
+            XRFrameBuffer? sourceFrameBuffer = presentationSource.FrameBuffer;
+            string? unavailableReason = !presentationSource.HasLogicalSource
+                ? "no published presentation source"
                 : !recordingState.SwapchainTarget.IsValid
                     ? "swapchain target is invalid"
-                    : sourceFrameBuffer.Width == 0 || sourceFrameBuffer.Height == 0
-                        ? $"tracked source framebuffer '{sourceFrameBuffer.Name ?? "<unnamed fbo>"}' has zero size {sourceFrameBuffer.Width}x{sourceFrameBuffer.Height}"
+                    : !TryValidatePresentationSourceForSubmission(
+                        presentationSource,
+                        recordingState.CommandBuffer,
+                        recordingState.ImageIndex,
+                        out string tupleFailure)
+                        ? tupleFailure
+                    : presentationSource.Width == 0 || presentationSource.Height == 0
+                        ? $"published native source has zero size {presentationSource.Width}x{presentationSource.Height}"
                         : recordingState.SwapchainRecordExtent.Width == 0 || recordingState.SwapchainRecordExtent.Height == 0
                             ? $"swapchain record extent is zero {recordingState.SwapchainRecordExtent.Width}x{recordingState.SwapchainRecordExtent.Height}"
                             : null;
@@ -281,71 +289,27 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            if (sourceFrameBuffer is null)
-                return false;
-
             EnsureSwapchainColorAttachmentLayoutForBlit(ref recordingState);
 
             int passIndex = recordingState.ActivePassIndex != int.MinValue
                 ? recordingState.ActivePassIndex
                 : VulkanBarrierPlanner.SwapchainPassIndex;
-            FrameOpContext blitContext = _lastWindowPresentFrameOpContext ?? (recordingState.HasActiveContext ? recordingState.ActiveContext : recordingState.InitialContext);
-            BlitOp replayBlit = new(
-                passIndex,
-                sourceFrameBuffer,
-                null,
-                0,
-                0,
-                sourceFrameBuffer.Width,
-                sourceFrameBuffer.Height,
-                0,
-                0,
-                recordingState.SwapchainRecordExtent.Width,
-                recordingState.SwapchainRecordExtent.Height,
-                EReadBufferMode.ColorAttachment0,
-                ColorBit: true,
-                DepthBit: false,
-                StencilBit: false,
-                LinearFilter: true,
-                blitContext);
-
+            FrameOpContext blitContext = presentationSource.LogicalEpoch != 0
+                ? presentationSource.Context
+                : recordingState.HasActiveContext
+                    ? recordingState.ActiveContext
+                    : recordingState.InitialContext;
             bool blitRecorded;
             CmdBeginLabel(recordingState.CommandBuffer, "RefreshSwapchainFromLastPresentSource");
             using (EnterFrameOpResourcePlannerReadbackScope(blitContext))
             {
-                bool canResolveRefreshSource = TryResolveBlitImage(
-                    sourceFrameBuffer,
+                blitRecorded = RecordPresentationSourceBlit(
+                    recordingState.CommandBuffer,
                     recordingState.ImageIndex,
-                    EReadBufferMode.ColorAttachment0,
-                    wantColor: true,
-                    wantDepth: false,
-                    wantStencil: false,
-                    out _,
-                    isSource: true);
-                bool canResolveRefreshDestination = TryResolveBlitImage(
-                    null,
-                    recordingState.ImageIndex,
-                    EReadBufferMode.ColorAttachment0,
-                    wantColor: true,
-                    wantDepth: false,
-                    wantStencil: false,
-                    out _,
-                    isSource: false,
-                    in recordingState.SwapchainTarget);
-                if (!canResolveRefreshSource || !canResolveRefreshDestination)
-                {
-                    Debug.VulkanEvery(
-                        $"Vulkan.LastPresentRefresh.ResolveFailure.{GetHashCode()}",
-                        TimeSpan.FromSeconds(1),
-                        "[Vulkan] Unable to refresh unwritten swapchain image from last present source: resolve source={0} destination={1} sourceFbo='{2}' colorTexture='{3}' imageIndex={4}.",
-                        canResolveRefreshSource,
-                        canResolveRefreshDestination,
-                        sourceFrameBuffer.Name ?? "<unnamed fbo>",
-                        _lastWindowPresentColorTexture?.Name ?? "<null>",
-                        recordingState.ImageIndex);
-                }
-
-                blitRecorded = RecordBlitOp(recordingState.CommandBuffer, recordingState.ImageIndex, replayBlit, in recordingState.SwapchainTarget);
+                    presentationSource,
+                    in recordingState.SwapchainTarget,
+                    passIndex,
+                    blitContext);
             }
             CmdEndLabel(recordingState.CommandBuffer);
             if (!blitRecorded)
@@ -354,7 +318,7 @@ namespace XREngine.Rendering.Vulkan
                     $"Vulkan.LastPresentRefresh.BlitRejected.{GetHashCode()}",
                     TimeSpan.FromSeconds(1),
                     "[Vulkan] Unable to refresh unwritten swapchain image from last present source: blit from '{0}' was not recorded.",
-                    sourceFrameBuffer.Name ?? "<unnamed fbo>");
+                    sourceFrameBuffer?.Name ?? presentationSource.ColorTexture?.Name ?? "<native source>");
                 return false;
             }
 
@@ -367,7 +331,7 @@ namespace XREngine.Rendering.Vulkan
             recordingState.SceneSwapchainWriters++;
             MarkSwapchainStaticWriter(ref recordingState,
                 "LastPresentSourceBlit",
-                $"refreshed acquired swapchain image from '{sourceFrameBuffer.Name ?? "<unnamed fbo>"}'",
+                $"refreshed acquired swapchain image from '{sourceFrameBuffer?.Name ?? presentationSource.ColorTexture?.Name ?? "<native source>"}'",
                 passIndex,
                 recordingState.Ops.Length,
                 blitContext.PipelineIdentity);

@@ -384,6 +384,9 @@ public unsafe partial class VulkanRenderer
                 DrainRetiredCommandBuffers(i, int.MaxValue);
         for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
+                DrainRetiredCommandPools(i, int.MaxValue);
+        for (int i = 0; i < frameSlotCount; i++)
+            if (drainableSlots[i])
                 DrainRetiredDescriptorSets(i, int.MaxValue);
         for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
@@ -394,6 +397,9 @@ public unsafe partial class VulkanRenderer
         for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
                 DrainRetiredPipelineLayouts(i, int.MaxValue);
+        for (int i = 0; i < frameSlotCount; i++)
+            if (drainableSlots[i])
+                DrainRetiredDescriptorSetLayouts(i, int.MaxValue);
         for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
                 DrainRetiredQueryPools(i, int.MaxValue);
@@ -1034,44 +1040,40 @@ public unsafe partial class VulkanRenderer
     }
     private void DestroyOpenXrPrimaryCommandBufferCache()
     {
-        lock (_openXrBackend.PrimaryCommandBufferVariantsLock)
+        lock (_openXrBackend.PrimaryCommandArtifactOwnersLock)
         {
-            if (OpenXrPrimaryCommandBufferVariants.Count != 0)
+            if (OpenXrPrimaryCommandArtifactOwners.Count != 0)
             {
-                foreach (List<CommandBufferCacheVariant> variants in OpenXrPrimaryCommandBufferVariants.Values)
+                foreach (PrimaryCommandArtifactOwner variant in OpenXrPrimaryCommandArtifactOwners.Values)
                 {
-                    for (int i = 0; i < variants.Count; i++)
+                    CommandBuffer primary = variant.PrimaryCommandBuffer;
+                    if (primary.Handle != 0)
                     {
-                        CommandBufferCacheVariant variant = variants[i];
-                        CommandBuffer primary = variant.PrimaryCommandBuffer;
-                        if (primary.Handle != 0)
+                        if (variant.OwnsPrimaryCommandBuffer && !_deviceLost)
                         {
-                            if (variant.OwnsPrimaryCommandBuffer && !_deviceLost)
-                            {
-                                CommandPool ownerPool = variant.PrimaryCommandPool.Handle != 0
-                                    ? variant.PrimaryCommandPool
-                                    : commandPool;
-                                FreeVulkanCommandBufferTracked(ownerPool, ref primary, "OpenXR.PrimaryCache");
-                            }
-                            RemoveCommandBufferBindState(variant.PrimaryCommandBuffer);
+                            CommandPool ownerPool = variant.PrimaryCommandPool.Handle != 0
+                                ? variant.PrimaryCommandPool
+                                : commandPool;
+                            FreeVulkanCommandBufferTracked(ownerPool, ref primary, "OpenXR.PrimaryOwner");
                         }
+                        RemoveCommandBufferBindState(variant.PrimaryCommandBuffer);
+                    }
 
-                        CommandBuffer dynamicSecondary = variant.DynamicUiSecondaryCommandBuffer;
-                        if (dynamicSecondary.Handle != 0)
+                    CommandBuffer dynamicSecondary = variant.DynamicUiSecondaryCommandBuffer;
+                    if (dynamicSecondary.Handle != 0)
+                    {
+                        if (variant.OwnsDynamicUiSecondaryCommandBuffer && !_deviceLost)
                         {
-                            if (variant.OwnsDynamicUiSecondaryCommandBuffer && !_deviceLost)
-                            {
-                                CommandPool ownerPool = variant.DynamicUiSecondaryCommandPool.Handle != 0
-                                    ? variant.DynamicUiSecondaryCommandPool
-                                    : commandPool;
-                                FreeVulkanCommandBufferTracked(ownerPool, ref dynamicSecondary, "OpenXR.DynamicSecondaryCache");
-                            }
-                            RemoveCommandBufferBindState(variant.DynamicUiSecondaryCommandBuffer);
+                            CommandPool ownerPool = variant.DynamicUiSecondaryCommandPool.Handle != 0
+                                ? variant.DynamicUiSecondaryCommandPool
+                                : commandPool;
+                            FreeVulkanCommandBufferTracked(ownerPool, ref dynamicSecondary, "OpenXR.DynamicSecondaryOwner");
                         }
+                        RemoveCommandBufferBindState(variant.DynamicUiSecondaryCommandBuffer);
                     }
                 }
 
-                OpenXrPrimaryCommandBufferVariants.Clear();
+                OpenXrPrimaryCommandArtifactOwners.Clear();
             }
         }
 

@@ -16,6 +16,14 @@ public unsafe partial class VulkanRenderer
         /// <summary>Descriptor image states a primary must establish for a secondary.</summary>
         public readonly Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> SecondaryDescriptorRequirements = new(8);
 
+        /// <summary>
+        /// Exact descriptor payload publications from which
+        /// <see cref="SecondaryDescriptorRequirements"/> was captured. A secondary
+        /// may skip the logical descriptor scan only while every referenced native
+        /// descriptor set still publishes this generation.
+        /// </summary>
+        public readonly Dictionary<ulong, ulong> SecondaryDescriptorPayloadGenerations = new(4);
+
         /// <summary>The newest state recorded for each touched subresource.</summary>
         public readonly Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> Subresources = new(32);
 

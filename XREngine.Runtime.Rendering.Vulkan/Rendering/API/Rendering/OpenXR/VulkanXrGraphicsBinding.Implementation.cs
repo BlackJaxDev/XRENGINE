@@ -848,24 +848,11 @@ Target:                 new RenderFrameViewTargetDescriptor(
             VkImage eyeImage = new(images[imageIndex].Image);
             if (!OpenXrVulkanMirrorFbo)
             {
-                bool directRendered = renderer.TryRenderOpenXrEyeSwapchain(
-                    eyeImage,
-                    (VkFormat)selectedFormat,
-                    extent,
-                    resourcePlannerStateIndex: (int)viewIndex,
-                    openXrViewIndex: viewIndex,
-                    openXrImageIndex: imageIndex,
-                    foveation: CreateOpenXrEyeFoveationContext(viewIndex),
-                    emitFrameOps: () =>
-                    {
-                        eyeViewport.Render(null, _openXrFrameWorld, eyeCamera, shadowPass: false, forcedMaterial: null);
-                    });
-                if (!directRendered)
-                    return false;
-
-                PublishVulkanEyeSwapchain(renderer, eyeImage, (VkFormat)selectedFormat, extent, viewIndex, imageIndex, width, height);
-                MarkVulkanEyeResourceWarmupComplete(viewIndex);
-                return true;
+                // This callback is only the legacy per-eye fallback invoked
+                // after batch handling declined the frame. It cannot obtain
+                // the partner operation stream, therefore it must not record
+                // a target-specific cold eye without PairedLogicalPlan.
+                return DeferVulkanSequentialEyeToPairedCoordinator(viewIndex, imageIndex);
             }
 
             int eyeTargetIndex = IsLeftEyeLikeOpenXrView(viewIndex) ? 0 : 1;
@@ -1226,8 +1213,16 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 RecordStrictSinglePassStereoSequentialFallbackAttempt(
                     "VulkanBatch.ModeResolution",
                     $"strict request resolved to illegal effective mode {modeResolution.EffectiveMode}");
+                return false;
             }
-            return false;
+
+            // Sequential view mode changes native submission policy, not the
+            // logical planning contract. Keep both eyes in this coordinator so
+            // the shared paired plan is sealed before either eye records.
+            Debug.VulkanEvery(
+                $"OpenXR.Vulkan.SequentialViews.UsePairedCoordinator.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] Routing sequential Vulkan views through the paired-eye coordinator; individual cold-eye recording is disabled.");
         }
 
         if (!TryPlanVulkanOpenXrViewBatches(
@@ -2511,6 +2506,23 @@ Target:                 new RenderFrameViewTargetDescriptor(
             viewIndex,
             imageIndex,
             reason);
+        return false;
+    }
+
+    /// <summary>
+    /// Reports the typed rendering disposition used when the legacy sequential
+    /// callback lacks the second eye required for immutable paired planning.
+    /// Returning false makes the frame lifecycle submit no projection layer
+    /// rather than silently recording a divergent one-eye plan.
+    /// </summary>
+    private bool DeferVulkanSequentialEyeToPairedCoordinator(uint viewIndex, uint imageIndex)
+    {
+        Debug.VulkanWarningEvery(
+            $"OpenXR.VulkanEyeRender.PairedPlanRequired.{GetHashCode()}",
+            TimeSpan.FromSeconds(1),
+            "[OpenXR] Deferring Vulkan eye {0} image {1}: sequential callback has no paired logical plan. The batch coordinator must own both eyes.",
+            viewIndex,
+            imageIndex);
         return false;
     }
 }

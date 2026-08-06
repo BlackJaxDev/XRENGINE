@@ -29,7 +29,7 @@ namespace XREngine.Rendering.Vulkan
                 ResetSubmissionMarkersForCommandBuffer(recordingState.CommandBuffer);
                 CleanupComputeTransientResources(recordingState.FrameDataImageIndex);
 
-                _commandRecorder.Begin(Api!, recordingState.CommandBuffer);
+                _commandRecorder.Begin(this, recordingState.CommandBuffer);
 
                 BeginFrameTimingQueries(recordingState.CommandBuffer, recordingState.CommandBufferImageSlot);
                 BeginVulkanGpuProfilerQueries(recordingState.CommandBuffer, recordingState.CommandBufferImageSlot);

@@ -13,6 +13,22 @@ namespace XREngine.Rendering.Vulkan
         private EDesktopFrameFlow SubmitDesktopFrame(
             ref VulkanFrameAttempt attempt)
         {
+            if (!TryValidatePresentationSourceForSubmission(
+                    attempt.PresentationSource,
+                    attempt.SceneCommandBuffer,
+                    attempt.ImageIndex,
+                    out string presentationSourceFailure))
+            {
+                MarkCommandBuffersDirty(presentationSourceFailure);
+                SettleRejectedDesktopCommandArtifacts(
+                    ref attempt,
+                    $"submit precondition failed: {presentationSourceFailure}");
+                return HandleDesktopRecordingDeferred(
+                    ref attempt,
+                    $"submit precondition failed: {presentationSourceFailure}",
+                    recoveryOverlaySnapshot: null);
+            }
+
             ThrowIfDesktopFrameFaultInjected(
                 EVulkanDesktopFrameFaultPoint.Submission);
             _graphicsTimelineValue = Math.Max(
@@ -174,6 +190,7 @@ namespace XREngine.Rendering.Vulkan
                 EVulkanDesktopAcquireOwnership
                     .ConsumedBySubmissionImagePendingPresent);
             attempt.Submitted = true;
+            attempt.CommandArtifactsSettled = true;
             attempt.AdvanceTo(EDesktopFramePhase.Submitted);
             MarkFrameTimingSubmitted(
                 unchecked((int)Math.Min(
@@ -314,6 +331,9 @@ namespace XREngine.Rendering.Vulkan
                 $"graphics frame submit failed with {submitResult}");
             MarkCommandBuffersDirty(
                 $"graphics frame submit rejected with {submitResult}");
+            SettleRejectedDesktopCommandArtifacts(
+                ref attempt,
+                $"graphics frame submit rejected with {submitResult}");
             if (TryRecoverRejectedDesktopImage(
                     ref attempt,
                     commandBufferDirtyFlagSet: true,
@@ -341,6 +361,67 @@ namespace XREngine.Rendering.Vulkan
                 EDesktopFrameRecoveryAction.RecreateSwapchain);
             throw new InvalidOperationException(
                 $"Failed to submit draw command buffer ({submitResult}).");
+        }
+
+        /// <summary>
+        /// Transfers every unsubmitted artifact owned by this attempt to the exact
+        /// invalidation/reset queue. The queue retains ownership when a worker or CPU
+        /// recording lease has not settled yet; otherwise the immediate drain resets
+        /// the artifact and releases its recorded resource generations now.
+        /// </summary>
+        private void SettleRejectedDesktopCommandArtifacts(
+            ref VulkanFrameAttempt attempt,
+            string reason)
+        {
+            if (attempt.CommandArtifactsSettled)
+                return;
+
+            Span<ulong> handles = stackalloc ulong[3];
+            int count = 0;
+            count = AddRejectedArtifactHandle(
+                handles,
+                count,
+                attempt.SceneCommandBuffer);
+            if (attempt.HasImGuiOverlayCommandBuffer)
+            {
+                count = AddRejectedArtifactHandle(
+                    handles,
+                    count,
+                    attempt.ImGuiOverlayCommandBuffer);
+            }
+            if (attempt.HasDynamicTextOverlayCommandBuffer)
+            {
+                count = AddRejectedArtifactHandle(
+                    handles,
+                    count,
+                    attempt.DynamicTextOverlayCommandBuffer);
+            }
+
+            if (count != 0)
+            {
+                _ = InvalidateCachedCommandBuffersByHandle(
+                    handles[..count],
+                    reason);
+                if (!IsDeviceLost)
+                    DrainInvalidatedCommandBufferRecordings(count);
+            }
+
+            attempt.CommandArtifactsSettled = true;
+        }
+
+        private static int AddRejectedArtifactHandle(
+            Span<ulong> handles,
+            int count,
+            CommandBuffer commandBuffer)
+        {
+            ulong handle = unchecked((ulong)commandBuffer.Handle);
+            if (handle == 0)
+                return count;
+            for (int i = 0; i < count; i++)
+                if (handles[i] == handle)
+                    return count;
+            handles[count] = handle;
+            return count + 1;
         }
     }
 }

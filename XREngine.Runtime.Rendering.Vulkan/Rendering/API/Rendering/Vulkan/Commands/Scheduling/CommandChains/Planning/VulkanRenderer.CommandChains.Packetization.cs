@@ -16,6 +16,7 @@ namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     private void BuildCommandChainRenderPackets(
+        uint targetImageIndex,
         FrameOp[] staticOps,
         FrameOp[] volatileOps,
         ulong resourcePlanRevision,
@@ -28,13 +29,14 @@ public unsafe partial class VulkanRenderer
         // visibility changed; actual Vulkan recording belongs on the persistent
         // command-chain workers instead.
         if (excludeStaticQueryBrackets)
-            LowerFrameOpsToRenderPacketsExcludingQueryBrackets(staticOps, resourcePlanRevision, packets);
+            LowerFrameOpsToRenderPacketsExcludingQueryBrackets(targetImageIndex, staticOps, resourcePlanRevision, packets);
         else
-            LowerFrameOpsToRenderPackets(staticOps, dynamicOverlay: false, resourcePlanRevision, packets);
-        LowerFrameOpsToRenderPackets(volatileOps, dynamicOverlay: true, resourcePlanRevision, packets);
+            LowerFrameOpsToRenderPackets(targetImageIndex, staticOps, dynamicOverlay: false, resourcePlanRevision, packets);
+        LowerFrameOpsToRenderPackets(targetImageIndex, volatileOps, dynamicOverlay: true, resourcePlanRevision, packets);
     }
 
     private void LowerFrameOpsToRenderPacketsExcludingQueryBrackets(
+        uint targetImageIndex,
         FrameOp[] ops,
         ulong resourcePlanRevision,
         List<RenderPacket> packets)
@@ -54,6 +56,7 @@ public unsafe partial class VulkanRenderer
             if (queryBracketDepth == 0)
             {
                 int consumed = TryLowerCompatibleMeshPacket(
+                    targetImageIndex,
                     ops,
                     i,
                     dynamicOverlay: false,
@@ -64,7 +67,7 @@ public unsafe partial class VulkanRenderer
                     i += consumed - 1;
                 else if (IsSchedulableCommandChainFrameOp(ops[i], dynamicOverlay: false))
                     packets.Add(CreateRenderPacket(
-                        ops[i], i, dynamicOverlay: false, resourcePlanRevision, preparedMeshDraw));
+                        targetImageIndex, ops[i], i, dynamicOverlay: false, resourcePlanRevision, preparedMeshDraw));
             }
         }
 
@@ -79,6 +82,7 @@ public unsafe partial class VulkanRenderer
     }
 
     private void LowerFrameOpsToRenderPackets(
+        uint targetImageIndex,
         FrameOp[] ops,
         bool dynamicOverlay,
         ulong resourcePlanRevision,
@@ -87,6 +91,7 @@ public unsafe partial class VulkanRenderer
         for (int i = 0; i < ops.Length; i++)
         {
             int consumed = TryLowerCompatibleMeshPacket(
+                targetImageIndex,
                 ops,
                 i,
                 dynamicOverlay,
@@ -97,11 +102,12 @@ public unsafe partial class VulkanRenderer
                 i += consumed - 1;
             else if (IsSchedulableCommandChainFrameOp(ops[i], dynamicOverlay))
                 packets.Add(CreateRenderPacket(
-                    ops[i], i, dynamicOverlay, resourcePlanRevision, preparedMeshDraw));
+                    targetImageIndex, ops[i], i, dynamicOverlay, resourcePlanRevision, preparedMeshDraw));
         }
     }
 
     private int TryLowerCompatibleMeshPacket(
+        uint targetImageIndex,
         FrameOp[] ops,
         int startIndex,
         bool dynamicOverlay,
@@ -183,11 +189,20 @@ public unsafe partial class VulkanRenderer
             : default;
 
         string targetName = ResolveCommandChainTargetName(first);
+        VulkanRecordedRenderTargetSnapshot nativeTarget =
+            CaptureRecordedRenderTargetSnapshot(first, targetImageIndex);
         ResourcePlanSnapshot resourceSnapshot = new(
             resourcePlanRevision,
-            unchecked((ulong)targetIdentity),
-            unchecked((ulong)targetName.GetHashCode(StringComparison.Ordinal)),
-            pipelineGenerationHash.ToHash());
+            nativeTarget.AttachmentCount > 0
+                ? nativeTarget.GetAttachment(0).ImageGeneration
+                : 0UL,
+            nativeTarget.FramebufferGeneration,
+            pipelineGenerationHash.ToHash(),
+            ResourcePlanSnapshot.PackRenderArea(
+                nativeTarget.Width,
+                nativeTarget.Height),
+            first.Context.SubmissionQueueFamily,
+            nativeTarget);
         RenderPacket packet = RentRenderPacket();
         packet.Reset(
             viewKey,
@@ -204,6 +219,14 @@ public unsafe partial class VulkanRenderer
             startIndex,
             runCount,
             dynamicOverlay: false);
+        packet.SetRecordedPacketKey(CaptureRecordedPacketKey(
+            ops,
+            startIndex,
+            runCount,
+            nativeTarget,
+            descriptorSnapshot,
+            resourceSnapshot));
+        packet.Seal();
         packets.Add(packet);
         return runCount;
     }
@@ -262,6 +285,7 @@ public unsafe partial class VulkanRenderer
     }
 
     private RenderPacket CreateRenderPacket(
+        uint targetImageIndex,
         FrameOp op,
         int opIndex,
         bool dynamicOverlay,
@@ -294,11 +318,20 @@ public unsafe partial class VulkanRenderer
         int targetIdentity = ResolveCommandChainTargetIdentity(op);
         string targetName = ResolveCommandChainTargetName(op);
         DescriptorBindingSnapshot descriptorSnapshot = CreateDescriptorSnapshot(op);
+        VulkanRecordedRenderTargetSnapshot nativeTarget =
+            CaptureRecordedRenderTargetSnapshot(op, targetImageIndex);
         ResourcePlanSnapshot resourceSnapshot = new(
             resourcePlanRevision,
-            unchecked((ulong)targetIdentity),
-            unchecked((ulong)targetName.GetHashCode(StringComparison.Ordinal)),
-            ResolvePipelineGeneration(op));
+            nativeTarget.AttachmentCount > 0
+                ? nativeTarget.GetAttachment(0).ImageGeneration
+                : 0UL,
+            nativeTarget.FramebufferGeneration,
+            ResolvePipelineGeneration(op),
+            ResourcePlanSnapshot.PackRenderArea(
+                nativeTarget.Width,
+                nativeTarget.Height),
+            op.Context.SubmissionQueueFamily,
+            nativeTarget);
 
         RenderPacket packet = RentRenderPacket();
         packet.Reset(
@@ -318,17 +351,686 @@ public unsafe partial class VulkanRenderer
             opIndex,
             1,
             dynamicOverlay);
+        packet.SetRecordedPacketKey(CaptureRecordedPacketKey(
+            op,
+            nativeTarget,
+            descriptorSnapshot,
+            resourceSnapshot));
+        packet.Seal();
         return packet;
+    }
+
+    private VulkanRecordedRenderTargetSnapshot CaptureRecordedRenderTargetSnapshot(
+        FrameOp op,
+        uint targetImageIndex)
+    {
+        XRFrameBuffer? target = op.Target ?? op.Context.OutputFrameBuffer;
+        if (target is not null)
+        {
+            return TryGetAPIRenderObject(target, out var apiObject) &&
+                   apiObject is VkFrameBuffer frameBuffer &&
+                   frameBuffer.TryCaptureRecordedRenderTargetSnapshot(
+                       out VulkanRecordedRenderTargetSnapshot explicitSnapshot)
+                ? explicitSnapshot
+                : default;
+        }
+
+        if (IsRenderingExternalSwapchainTarget)
+        {
+            OpenXrEyeRenderTargetContext openXrTarget =
+                _openXrBackend.CurrentThreadExecutionState.NativeTargetContext;
+            if (!openXrTarget.IsValid)
+                return default;
+
+            VulkanRecordedRenderTargetSnapshot openXrSnapshot = default;
+            openXrSnapshot.Initialize(
+                framebufferHandle: 0UL,
+                framebufferGeneration: 0UL,
+                openXrTarget.Extent.Width,
+                openXrTarget.Extent.Height,
+                viewMask: 0u,
+                attachmentCount: 2);
+            openXrSnapshot.SetAttachment(
+                0,
+                new VulkanNativeAttachmentIdentity(
+                    openXrTarget.Image.Handle,
+                    GetCurrentVulkanResourceGeneration(
+                        ObjectType.Image,
+                        openXrTarget.Image.Handle),
+                    openXrTarget.ImageView.Handle,
+                    GetCurrentVulkanResourceGeneration(
+                        ObjectType.ImageView,
+                        openXrTarget.ImageView.Handle),
+                    ImageLayout.ColorAttachmentOptimal));
+            openXrSnapshot.SetAttachment(
+                1,
+                new VulkanNativeAttachmentIdentity(
+                    openXrTarget.DepthImage.Handle,
+                    GetCurrentVulkanResourceGeneration(
+                        ObjectType.Image,
+                        openXrTarget.DepthImage.Handle),
+                    openXrTarget.DepthView.Handle,
+                    GetCurrentVulkanResourceGeneration(
+                        ObjectType.ImageView,
+                        openXrTarget.DepthView.Handle),
+                    ImageLayout.DepthStencilAttachmentOptimal));
+            return openXrSnapshot;
+        }
+
+        if (swapChainImages is null ||
+            swapChainImageViews is null ||
+            targetImageIndex >= swapChainImages.Length ||
+            targetImageIndex >= swapChainImageViews.Length)
+        {
+            return default;
+        }
+
+        Image colorImage = swapChainImages[targetImageIndex];
+        ImageView colorView = swapChainImageViews[targetImageIndex];
+        VulkanSwapchainDepthResources? depth = CurrentSwapchainDepthResources;
+        int attachmentCount = depth is null ? 1 : 2;
+        Framebuffer framebuffer = !UseDynamicRenderingRenderTargets &&
+                                  swapChainFramebuffers is not null &&
+                                  targetImageIndex < swapChainFramebuffers.Length
+            ? swapChainFramebuffers[targetImageIndex]
+            : default;
+        VulkanRecordedRenderTargetSnapshot snapshot = default;
+        snapshot.Initialize(
+            framebuffer.Handle,
+            framebuffer.Handle == 0UL
+                ? 0UL
+                : GetCurrentVulkanResourceGeneration(
+                    ObjectType.Framebuffer,
+                    framebuffer.Handle),
+            swapChainExtent.Width,
+            swapChainExtent.Height,
+            op.Context.MultiviewEnabled ? 0b11u : 0u,
+            attachmentCount);
+        snapshot.SetAttachment(
+            0,
+            new VulkanNativeAttachmentIdentity(
+                colorImage.Handle,
+                GetCurrentVulkanResourceGeneration(
+                    ObjectType.Image,
+                    colorImage.Handle),
+                colorView.Handle,
+                GetCurrentVulkanResourceGeneration(
+                    ObjectType.ImageView,
+                    colorView.Handle),
+                ImageLayout.ColorAttachmentOptimal));
+        if (depth is { } depthTarget)
+        {
+            snapshot.SetAttachment(
+                1,
+                new VulkanNativeAttachmentIdentity(
+                    depthTarget.Image.Handle,
+                    GetCurrentVulkanResourceGeneration(
+                        ObjectType.Image,
+                        depthTarget.Image.Handle),
+                    depthTarget.View.Handle,
+                    GetCurrentVulkanResourceGeneration(
+                        ObjectType.ImageView,
+                        depthTarget.View.Handle),
+                    ImageLayout.DepthStencilAttachmentOptimal));
+        }
+
+        return snapshot;
+    }
+
+    private RecordedPacketKey CaptureRecordedPacketKey(
+        FrameOp op,
+        in VulkanRecordedRenderTargetSnapshot nativeTarget,
+        in DescriptorBindingSnapshot descriptorSnapshot,
+        in ResourcePlanSnapshot resourceSnapshot)
+    {
+        Span<VulkanRecordedBufferIdentity> vertexScratch =
+            stackalloc VulkanRecordedBufferIdentity[VulkanRecordedBufferIdentityBuffer.Capacity];
+        Span<VulkanRecordedBufferIdentity> auxiliaryScratch =
+            stackalloc VulkanRecordedBufferIdentity[VulkanRecordedBufferIdentityBuffer.Capacity];
+        Span<VulkanRecordedProgramIdentity> programScratch =
+            stackalloc VulkanRecordedProgramIdentity[VulkanRecordedProgramIdentityBuffer.Capacity];
+        int vertexCount = 0;
+        int auxiliaryCount = 0;
+        bool vertexOverflow = false;
+        bool auxiliaryOverflow = false;
+        VulkanRecordedBufferIdentity indexBuffer = default;
+        int programCount = 0;
+        bool programOverflow = false;
+        CaptureRecordedPacketOperationDependencies(
+            op,
+            ref indexBuffer,
+            vertexScratch,
+            ref vertexCount,
+            ref vertexOverflow,
+            auxiliaryScratch,
+            ref auxiliaryCount,
+            ref auxiliaryOverflow,
+            programScratch,
+            ref programCount,
+            ref programOverflow);
+        return CreateRecordedPacketKey(
+            ResolveRenderPacketExecutionDomain(op),
+            nativeTarget,
+            descriptorSnapshot,
+            resourceSnapshot,
+            vertexScratch,
+            vertexCount,
+            vertexOverflow,
+            auxiliaryScratch,
+            auxiliaryCount,
+            auxiliaryOverflow,
+            indexBuffer,
+            programScratch,
+            programCount,
+            programOverflow);
+    }
+
+    private RecordedPacketKey CaptureRecordedPacketKey(
+        FrameOp[] ops,
+        int startIndex,
+        int count,
+        in VulkanRecordedRenderTargetSnapshot nativeTarget,
+        in DescriptorBindingSnapshot descriptorSnapshot,
+        in ResourcePlanSnapshot resourceSnapshot)
+        => CaptureRecordedPacketKey(
+            ops.AsSpan(startIndex, count),
+            nativeTarget,
+            descriptorSnapshot,
+            resourceSnapshot);
+
+    private RecordedPacketKey CaptureRecordedPacketKey(
+        ReadOnlySpan<FrameOp> ops,
+        in VulkanRecordedRenderTargetSnapshot nativeTarget,
+        in DescriptorBindingSnapshot descriptorSnapshot,
+        in ResourcePlanSnapshot resourceSnapshot)
+    {
+        Span<VulkanRecordedBufferIdentity> vertexScratch =
+            stackalloc VulkanRecordedBufferIdentity[VulkanRecordedBufferIdentityBuffer.Capacity];
+        Span<VulkanRecordedBufferIdentity> auxiliaryScratch =
+            stackalloc VulkanRecordedBufferIdentity[VulkanRecordedBufferIdentityBuffer.Capacity];
+        Span<VulkanRecordedProgramIdentity> programScratch =
+            stackalloc VulkanRecordedProgramIdentity[VulkanRecordedProgramIdentityBuffer.Capacity];
+        int vertexCount = 0;
+        int auxiliaryCount = 0;
+        bool vertexOverflow = false;
+        bool auxiliaryOverflow = false;
+        VulkanRecordedBufferIdentity indexBuffer = default;
+        int programCount = 0;
+        bool programOverflow = false;
+
+        for (int i = 0; i < ops.Length; i++)
+        {
+            CaptureRecordedPacketOperationDependencies(
+                ops[i],
+                ref indexBuffer,
+                vertexScratch,
+                ref vertexCount,
+                ref vertexOverflow,
+                auxiliaryScratch,
+                ref auxiliaryCount,
+                ref auxiliaryOverflow,
+                programScratch,
+                ref programCount,
+                ref programOverflow);
+        }
+
+        return CreateRecordedPacketKey(
+            ops.Length == 0
+                ? RenderPacketExecutionDomain.GraphicsRendering
+                : ResolveRenderPacketExecutionDomain(ops[0]),
+            nativeTarget,
+            descriptorSnapshot,
+            resourceSnapshot,
+            vertexScratch,
+            vertexCount,
+            vertexOverflow,
+            auxiliaryScratch,
+            auxiliaryCount,
+            auxiliaryOverflow,
+            indexBuffer,
+            programScratch,
+            programCount,
+            programOverflow);
+    }
+
+    private RecordedPacketKey CreateRecordedPacketKey(
+        RenderPacketExecutionDomain executionDomain,
+        in VulkanRecordedRenderTargetSnapshot nativeTarget,
+        in DescriptorBindingSnapshot descriptorSnapshot,
+        in ResourcePlanSnapshot resourceSnapshot,
+        Span<VulkanRecordedBufferIdentity> vertexScratch,
+        int vertexCount,
+        bool vertexOverflow,
+        Span<VulkanRecordedBufferIdentity> auxiliaryScratch,
+        int auxiliaryCount,
+        bool auxiliaryOverflow,
+        in VulkanRecordedBufferIdentity indexBuffer,
+        Span<VulkanRecordedProgramIdentity> programScratch,
+        int programCount,
+        bool programOverflow)
+    {
+        VulkanRecordedBufferIdentityBuffer vertexBuffers =
+            FinalizeRecordedBufferIdentities(vertexScratch, vertexCount, vertexOverflow);
+        VulkanRecordedBufferIdentityBuffer auxiliaryBuffers =
+            FinalizeRecordedBufferIdentities(auxiliaryScratch, auxiliaryCount, auxiliaryOverflow);
+        VulkanRecordedProgramIdentityBuffer programs =
+            FinalizeRecordedProgramIdentities(programScratch, programCount, programOverflow);
+
+        // Descriptor handles and payloads are only selected during binding
+        // preparation. Never authorize reuse from the old aggregate fingerprint:
+        // a later prepared key replaces this incomplete placeholder.
+        VulkanRecordedDescriptorSetIdentityBuffer descriptorSets = default;
+        if (descriptorSnapshot.DescriptorSetCount == 0)
+            descriptorSets.Initialize(0);
+
+        return new RecordedPacketKey(
+            executionDomain,
+            nativeTarget,
+            resourceSnapshot.RenderArea,
+            resourceSnapshot.QueueFamily,
+            descriptorSets,
+            programs,
+            indexBuffer,
+            vertexBuffers,
+            auxiliaryBuffers);
+    }
+
+    private static RenderPacketExecutionDomain ResolveRenderPacketExecutionDomain(
+        FrameOp operation)
+        => operation switch
+        {
+            ComputeDispatchOp or ComputeDispatchIndirectOp =>
+                RenderPacketExecutionDomain.StandaloneCompute,
+            MemoryBarrierOp =>
+                RenderPacketExecutionDomain.StandaloneSynchronization,
+            BufferCopyOp or TextureUploadFrameOp =>
+                RenderPacketExecutionDomain.StandaloneTransfer,
+            _ => RenderPacketExecutionDomain.GraphicsRendering,
+        };
+
+    private void CaptureRecordedPacketOperationDependencies(
+        FrameOp op,
+        ref VulkanRecordedBufferIdentity indexBuffer,
+        Span<VulkanRecordedBufferIdentity> vertexScratch,
+        ref int vertexCount,
+        ref bool vertexOverflow,
+        Span<VulkanRecordedBufferIdentity> auxiliaryScratch,
+        ref int auxiliaryCount,
+        ref bool auxiliaryOverflow,
+        Span<VulkanRecordedProgramIdentity> programScratch,
+        ref int programCount,
+        ref bool programOverflow)
+    {
+        switch (op)
+        {
+            case MeshDrawOp draw:
+                AddRecordedProgramIdentity(
+                    CaptureRecordedProgramIdentity(draw.Draw.PreparedProgram, default),
+                    programScratch,
+                    ref programCount,
+                    ref programOverflow);
+                CaptureMeshBufferDependencies(
+                    draw.Draw.Renderer,
+                    ref indexBuffer,
+                    vertexScratch,
+                    ref vertexCount,
+                    ref vertexOverflow,
+                    auxiliaryScratch,
+                    ref auxiliaryCount,
+                    ref auxiliaryOverflow);
+                break;
+            case IndirectDrawOp indirect:
+                AddRecordedProgramIdentity(
+                    CaptureRecordedProgramIdentity(indirect.Draw.PreparedProgram, default),
+                    programScratch,
+                    ref programCount,
+                    ref programOverflow);
+                AddRecordedProgramIdentity(
+                    CaptureRecordedProgramIdentity(
+                        indirect.BindlessMaterialTextures?.Program,
+                        default),
+                    programScratch,
+                    ref programCount,
+                    ref programOverflow);
+                CaptureMeshBufferDependencies(
+                    indirect.MeshRenderer,
+                    ref indexBuffer,
+                    vertexScratch,
+                    ref vertexCount,
+                    ref vertexOverflow,
+                    auxiliaryScratch,
+                    ref auxiliaryCount,
+                    ref auxiliaryOverflow);
+                AddRecordedBufferIdentity(
+                    CaptureRecordedBufferIdentity(
+                        indirect.IndirectBuffer,
+                        EVulkanRecordedBufferBindingKind.Indirect,
+                        0u,
+                        (ulong)indirect.ByteOffset,
+                        ResolveRecordedRange(
+                            indirect.IndirectBuffer,
+                            (ulong)indirect.ByteOffset)),
+                    auxiliaryScratch,
+                    ref auxiliaryCount,
+                    ref auxiliaryOverflow);
+                AddRecordedBufferIdentity(
+                    CaptureRecordedBufferIdentity(
+                        indirect.ParameterBuffer,
+                        EVulkanRecordedBufferBindingKind.IndirectCount,
+                        0u,
+                        (ulong)indirect.CountByteOffset,
+                        ResolveRecordedRange(
+                            indirect.ParameterBuffer,
+                            (ulong)indirect.CountByteOffset)),
+                    auxiliaryScratch,
+                    ref auxiliaryCount,
+                    ref auxiliaryOverflow);
+                break;
+            case ComputeDispatchOp compute:
+                AddRecordedProgramIdentity(
+                    CaptureRecordedProgramIdentity(
+                        compute.Program,
+                        compute.Program.ComputePipeline),
+                    programScratch,
+                    ref programCount,
+                    ref programOverflow);
+                CaptureComputeBufferDependencies(
+                    compute.Snapshot,
+                    auxiliaryScratch,
+                    ref auxiliaryCount,
+                    ref auxiliaryOverflow);
+                break;
+            case ComputeDispatchIndirectOp computeIndirect:
+                AddRecordedProgramIdentity(
+                    CaptureRecordedProgramIdentity(
+                        computeIndirect.Program,
+                        computeIndirect.Program.ComputePipeline),
+                    programScratch,
+                    ref programCount,
+                    ref programOverflow);
+                AddRecordedBufferIdentity(
+                    CaptureRecordedBufferIdentity(
+                        computeIndirect.ArgumentOwner,
+                        EVulkanRecordedBufferBindingKind.DispatchArguments,
+                        0u,
+                        0UL,
+                        computeIndirect.ArgumentOwner.AllocatedByteSize),
+                    auxiliaryScratch,
+                    ref auxiliaryCount,
+                    ref auxiliaryOverflow);
+                CaptureComputeBufferDependencies(
+                    computeIndirect.Snapshot,
+                    auxiliaryScratch,
+                    ref auxiliaryCount,
+                    ref auxiliaryOverflow);
+                break;
+            case MeshTaskDispatchIndirectCountOp meshTask:
+                AddRecordedProgramIdentity(
+                    CaptureRecordedProgramIdentity(
+                        meshTask.BindlessMaterialTextures?.Program,
+                        default),
+                    programScratch,
+                    ref programCount,
+                    ref programOverflow);
+                AddRecordedBufferIdentity(
+                    CaptureRecordedBufferIdentity(
+                        meshTask.IndirectBuffer,
+                        EVulkanRecordedBufferBindingKind.Indirect,
+                        0u,
+                        (ulong)meshTask.ByteOffset,
+                        ResolveRecordedRange(
+                            meshTask.IndirectBuffer,
+                            (ulong)meshTask.ByteOffset)),
+                    auxiliaryScratch,
+                    ref auxiliaryCount,
+                    ref auxiliaryOverflow);
+                AddRecordedBufferIdentity(
+                    CaptureRecordedBufferIdentity(
+                        meshTask.CountBuffer,
+                        EVulkanRecordedBufferBindingKind.IndirectCount,
+                        0u,
+                        (ulong)meshTask.CountByteOffset,
+                        ResolveRecordedRange(
+                            meshTask.CountBuffer,
+                            (ulong)meshTask.CountByteOffset)),
+                    auxiliaryScratch,
+                    ref auxiliaryCount,
+                    ref auxiliaryOverflow);
+                break;
+        }
+    }
+
+    private void CaptureMeshBufferDependencies(
+        VkMeshRenderer meshRenderer,
+        ref VulkanRecordedBufferIdentity indexBuffer,
+        Span<VulkanRecordedBufferIdentity> vertexScratch,
+        ref int vertexCount,
+        ref bool vertexOverflow,
+        Span<VulkanRecordedBufferIdentity> auxiliaryScratch,
+        ref int auxiliaryCount,
+        ref bool auxiliaryOverflow)
+    {
+        Span<VulkanRecordedBufferIdentity> capturedVertices =
+            stackalloc VulkanRecordedBufferIdentity[VulkanRecordedBufferIdentityBuffer.Capacity];
+        Span<VulkanRecordedBufferIdentity> capturedIndices =
+            stackalloc VulkanRecordedBufferIdentity[3];
+        meshRenderer.CaptureRecordedBufferBindings(
+            capturedVertices,
+            out int capturedVertexCount,
+            out bool verticesComplete,
+            capturedIndices,
+            out int capturedIndexCount,
+            out bool indicesComplete);
+
+        vertexOverflow |= !verticesComplete;
+        auxiliaryOverflow |= !indicesComplete;
+        for (int i = 0; i < capturedVertexCount; i++)
+            AddRecordedBufferIdentity(
+                capturedVertices[i],
+                vertexScratch,
+                ref vertexCount,
+                ref vertexOverflow);
+
+        for (int i = 0; i < capturedIndexCount; i++)
+        {
+            VulkanRecordedBufferIdentity capturedIndex = capturedIndices[i];
+            if (!indexBuffer.IsBound)
+                indexBuffer = capturedIndex;
+            AddRecordedBufferIdentity(
+                capturedIndex,
+                auxiliaryScratch,
+                ref auxiliaryCount,
+                ref auxiliaryOverflow);
+        }
+    }
+
+    private void CaptureComputeBufferDependencies(
+        ComputeDispatchSnapshot snapshot,
+        Span<VulkanRecordedBufferIdentity> scratch,
+        ref int count,
+        ref bool overflow)
+    {
+        foreach (KeyValuePair<uint, VulkanComputeBufferBinding> pair in snapshot.Buffers)
+        {
+            VulkanComputeBufferBinding binding = pair.Value;
+            AddRecordedBufferIdentity(
+                CaptureRecordedBufferIdentity(
+                    binding.Buffer.Handle,
+                    EVulkanRecordedBufferBindingKind.Descriptor,
+                    pair.Key,
+                    0UL,
+                    binding.Range),
+                scratch,
+                ref count,
+                ref overflow);
+        }
+    }
+
+    private VulkanRecordedBufferIdentity CaptureRecordedBufferIdentity(
+        VkDataBuffer? buffer,
+        EVulkanRecordedBufferBindingKind kind,
+        uint binding,
+        ulong offset,
+        ulong range)
+        => CaptureRecordedBufferIdentity(
+            buffer?.BufferHandle?.Handle ?? 0UL,
+            kind,
+            binding,
+            offset,
+            range);
+
+    private VulkanRecordedBufferIdentity CaptureRecordedBufferIdentity(
+        ulong bufferHandle,
+        EVulkanRecordedBufferBindingKind kind,
+        uint binding,
+        ulong offset,
+        ulong range)
+        => new(
+            kind,
+            binding,
+            bufferHandle,
+            bufferHandle == 0UL
+                ? 0UL
+                : GetCurrentVulkanResourceGeneration(ObjectType.Buffer, bufferHandle),
+            offset,
+            range);
+
+    private static ulong ResolveRecordedRange(VkDataBuffer? buffer, ulong offset)
+    {
+        ulong allocatedSize = buffer?.AllocatedByteSize ?? 0UL;
+        return offset < allocatedSize ? allocatedSize - offset : 0UL;
+    }
+
+    private static void AddRecordedBufferIdentity(
+        in VulkanRecordedBufferIdentity identity,
+        Span<VulkanRecordedBufferIdentity> scratch,
+        ref int count,
+        ref bool overflow)
+    {
+        if (!identity.IsBound)
+            return;
+
+        if (count >= scratch.Length)
+        {
+            overflow = true;
+            return;
+        }
+
+        scratch[count++] = identity;
+    }
+
+    private static VulkanRecordedBufferIdentityBuffer FinalizeRecordedBufferIdentities(
+        Span<VulkanRecordedBufferIdentity> scratch,
+        int count,
+        bool overflow)
+    {
+        if (overflow)
+        {
+            VulkanRecordedBufferIdentityBuffer incomplete = default;
+            incomplete.Invalidate();
+            return incomplete;
+        }
+
+        scratch[..count].Sort(static (left, right) =>
+        {
+            int kindComparison = left.Kind.CompareTo(right.Kind);
+            if (kindComparison != 0)
+                return kindComparison;
+
+            int bindingComparison = left.Binding.CompareTo(right.Binding);
+            if (bindingComparison != 0)
+                return bindingComparison;
+
+            int offsetComparison = left.Offset.CompareTo(right.Offset);
+            if (offsetComparison != 0)
+                return offsetComparison;
+
+            return left.BufferHandle.CompareTo(right.BufferHandle);
+        });
+
+        VulkanRecordedBufferIdentityBuffer result = default;
+        result.Initialize(count);
+        for (int i = 0; i < count; i++)
+            result.Set(i, scratch[i]);
+        return result;
+    }
+
+    private VulkanRecordedProgramIdentity CaptureRecordedProgramIdentity(
+        VkRenderProgram? program,
+        Pipeline pipeline)
+    {
+        ulong layoutHandle = program?.PipelineLayout.Handle ?? 0UL;
+        ulong pipelineHandle = pipeline.Handle;
+        return new VulkanRecordedProgramIdentity(
+            program?.BindingId ?? 0u,
+            program?.LinkGeneration ?? 0UL,
+            layoutHandle,
+            layoutHandle == 0UL
+                ? 0UL
+                : GetCurrentVulkanResourceGeneration(
+                    ObjectType.PipelineLayout,
+                    layoutHandle),
+            pipelineHandle,
+            pipelineHandle == 0UL
+                ? 0UL
+                : GetCurrentVulkanResourceGeneration(
+                    ObjectType.Pipeline,
+                    pipelineHandle));
+    }
+
+    private static void AddRecordedProgramIdentity(
+        in VulkanRecordedProgramIdentity identity,
+        Span<VulkanRecordedProgramIdentity> scratch,
+        ref int count,
+        ref bool overflow)
+    {
+        if (identity.ProgramBindingId == 0u)
+            return;
+
+        if (count >= scratch.Length)
+        {
+            overflow = true;
+            return;
+        }
+
+        scratch[count++] = identity;
+    }
+
+    private static VulkanRecordedProgramIdentityBuffer FinalizeRecordedProgramIdentities(
+        Span<VulkanRecordedProgramIdentity> scratch,
+        int count,
+        bool overflow)
+    {
+        VulkanRecordedProgramIdentityBuffer result = default;
+        if (overflow)
+        {
+            result.Invalidate();
+            return result;
+        }
+
+        result.Initialize(count);
+        for (int i = 0; i < count; i++)
+            result.Set(i, scratch[i]);
+        return result;
     }
 
     private RenderPacket RentRenderPacket()
     {
-        int index = _commandChainPacketPoolCursor++;
-        if ((uint)index < (uint)_commandChainPacketPool.Count)
-            return _commandChainPacketPool[index];
+        while ((uint)_commandChainPacketPoolCursor <
+               (uint)_commandChainPacketPool.Count)
+        {
+            RenderPacket reusablePacket =
+                _commandChainPacketPool[_commandChainPacketPoolCursor++];
+            if (reusablePacket.IsLeased)
+                continue;
+
+            reusablePacket.PrepareForReuse();
+            return reusablePacket;
+        }
 
         RenderPacket packet = new();
         _commandChainPacketPool.Add(packet);
+        _commandChainPacketPoolCursor = _commandChainPacketPool.Count;
         return packet;
     }
 
@@ -406,8 +1108,8 @@ public unsafe partial class VulkanRenderer
         List<RenderPacket> parallelPackets)
     {
         List<RenderPacket> sequential = new(staticOps.Length + volatileOps.Length);
-        LowerFrameOpsToRenderPackets(staticOps, dynamicOverlay: false, resourcePlanRevision, sequential);
-        LowerFrameOpsToRenderPackets(volatileOps, dynamicOverlay: true, resourcePlanRevision, sequential);
+        LowerFrameOpsToRenderPackets(0u, staticOps, dynamicOverlay: false, resourcePlanRevision, sequential);
+        LowerFrameOpsToRenderPackets(0u, volatileOps, dynamicOverlay: true, resourcePlanRevision, sequential);
         if (sequential.Count != parallelPackets.Count)
             throw new InvalidOperationException($"Parallel command-chain packet build produced {parallelPackets.Count} packets; sequential produced {sequential.Count}.");
 
@@ -436,17 +1138,7 @@ public unsafe partial class VulkanRenderer
 
     internal static RenderPacketVolatility ClassifyRenderPacketVolatility(FrameOp op, bool dynamicOverlay)
     {
-        if (dynamicOverlay || IsUiBatchTextDrawOp(op))
-            return RenderPacketVolatility.DynamicCommand;
-
-        // Late debug geometry uses ordinary mesh draws whose vertex/frame data may
-        // change while their command topology remains cacheable. Keeping these two
-        // draws inline made every camera update re-record the entire mixed primary,
-        // and allowed their mutable state to contaminate unrelated render passes.
-        if (IsReusableLateDebugOverlayDraw(op))
-            return RenderPacketVolatility.FrameDataOnly;
-
-        if (IsOverlayLikePass(op))
+        if (IsExplicitDynamicCommandRange(op, dynamicOverlay))
             return RenderPacketVolatility.DynamicCommand;
 
         return op switch
@@ -457,10 +1149,12 @@ public unsafe partial class VulkanRenderer
             IndirectDrawOp => RenderPacketVolatility.FrameDataOnly,
             MeshTaskDispatchIndirectCountOp => RenderPacketVolatility.FrameDataOnly,
             ComputeDispatchOp => RenderPacketVolatility.FrameDataOnly,
-            ComputeDispatchIndirectOp => RenderPacketVolatility.DynamicCommand,
-            BufferCopyOp => RenderPacketVolatility.DynamicCommand,
+            // Frozen packet buffer/range identities make the command topology
+            // reusable; GPU-produced bytes and indirect counts refresh in place.
+            ComputeDispatchIndirectOp => RenderPacketVolatility.FrameDataOnly,
+            BufferCopyOp => RenderPacketVolatility.FrameDataOnly,
             SubmissionMarkerOp => RenderPacketVolatility.DynamicCommand,
-            MemoryBarrierOp => RenderPacketVolatility.StaticStructural,
+            MemoryBarrierOp => RenderPacketVolatility.FrameDataOnly,
             PublishFramebufferForSamplingOp => RenderPacketVolatility.StaticStructural,
             TransformFeedbackOp => RenderPacketVolatility.DynamicCommand,
             DlssUpscaleOp => RenderPacketVolatility.DynamicCommand,
@@ -476,23 +1170,85 @@ public unsafe partial class VulkanRenderer
     /// inline or dedicated-secondary paths and must not occupy this cache.
     /// </summary>
     internal static bool IsSchedulableCommandChainFrameOp(FrameOp op, bool dynamicOverlay)
-        => !dynamicOverlay &&
-            op is MeshDrawOp draw &&
-            draw.Context.PipelineInstance?.Pipeline is not UserInterfaceRenderPipeline &&
-            ClassifyRenderPacketVolatility(op, dynamicOverlay) == RenderPacketVolatility.FrameDataOnly;
+    {
+        if (ClassifyRenderPacketVolatility(op, dynamicOverlay) !=
+            RenderPacketVolatility.FrameDataOnly)
+            return false;
 
-    private static bool IsReusableLateDebugOverlayDraw(FrameOp op)
-        => op is MeshDrawOp &&
-            string.Equals(
-                TryGetPassName(op),
-                "LateDebugOverlay",
-                StringComparison.Ordinal);
+        return op switch
+        {
+            MeshDrawOp draw => IsStableSecondaryCommandRange(draw, dynamicOverlay),
+            ComputeDispatchOp or ComputeDispatchIndirectOp or MemoryBarrierOp =>
+                !IsExplicitDynamicCommandRange(op, dynamicOverlay),
+            // Indirect/count graphics draws retain their dedicated inheritance-
+            // aware persistent secondary path.
+            IndirectDrawOp => false,
+            _ => false,
+        };
+    }
+
+    /// <summary>
+    /// Stable secondary admission is semantic and generation-backed. Pass names
+    /// are diagnostics only: they are neither unique nor a physical-lifetime
+    /// contract, and parsing them here previously admitted output-sensitive
+    /// work when a pipeline renamed a pass.
+    /// </summary>
+    private static bool IsStableSecondaryCommandRange(
+        MeshDrawOp draw,
+        bool dynamicOverlay)
+        => !IsExplicitDynamicCommandRange(draw, dynamicOverlay) &&
+           draw.Draw.ProgramBindingSnapshot?.HasMutableFrameSourceSamplerBindings != true;
+
+    private static bool IsExplicitDynamicCommandRange(
+        FrameOp op,
+        bool dynamicOverlay)
+    {
+        if (dynamicOverlay || IsUiBatchTextDrawOp(op))
+            return true;
+
+        if (op.Context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline)
+            return true;
+
+        if (ResolveSecondaryCachePolicy(op) !=
+            ERenderPassSecondaryCachePolicy.Stable)
+        {
+            return true;
+        }
+
+        return op.Context.ContextKind is
+            EVulkanFrameOpContextKind.OpenXrMirror or
+            EVulkanFrameOpContextKind.SceneCapture or
+            EVulkanFrameOpContextKind.LightProbeCapture or
+            EVulkanFrameOpContextKind.UiPreview or
+            EVulkanFrameOpContextKind.DiagnosticCapture;
+    }
+
+    private static ERenderPassSecondaryCachePolicy ResolveSecondaryCachePolicy(
+        FrameOp op)
+    {
+        if (op.Context.PassMetadata is not { Count: > 0 } metadata)
+            return ERenderPassSecondaryCachePolicy.Stable;
+
+        foreach (RenderPassMetadata pass in metadata)
+        {
+            if (pass.PassIndex == op.PassIndex)
+                return pass.SecondaryCachePolicy;
+        }
+
+        return ERenderPassSecondaryCachePolicy.Stable;
+    }
 
     private static bool IsOverlayLikePass(FrameOp op)
     {
         string? name = TryGetPassName(op);
         return !string.IsNullOrWhiteSpace(name) &&
             (name.Contains("UI", StringComparison.OrdinalIgnoreCase) ||
+             name.Contains("Text", StringComparison.OrdinalIgnoreCase) ||
+             name.Contains("Debug", StringComparison.OrdinalIgnoreCase) ||
+             name.Contains("Dynamic", StringComparison.OrdinalIgnoreCase) ||
+             name.Contains("Output", StringComparison.OrdinalIgnoreCase) ||
+             name.Contains("Present", StringComparison.OrdinalIgnoreCase) ||
+             name.Contains("Swapchain", StringComparison.OrdinalIgnoreCase) ||
              name.Contains("Overlay", StringComparison.OrdinalIgnoreCase) ||
              name.Contains("Profiler", StringComparison.OrdinalIgnoreCase) ||
              name.Contains("Gizmo", StringComparison.OrdinalIgnoreCase) ||
@@ -766,7 +1522,7 @@ public unsafe partial class VulkanRenderer
             descriptorGeneration,
             setCount,
             descriptorSetSignature);
-        if (!hasMutableFrameSourceBindings)
+        if (!hasMutableFrameSourceBindings && !draw.IsSealedForFramePlan)
             draw.SetDescriptorBindingSnapshot(descriptorSnapshot);
         return descriptorSnapshot;
     }
@@ -986,10 +1742,21 @@ public unsafe partial class VulkanRenderer
                 hash.Add(meshTask.Stride);
                 break;
             case ComputeDispatchOp compute:
-                hash.Add(compute.Program.GetHashCode());
+                hash.Add(compute.Program.BindingId);
+                hash.Add(compute.Program.LinkGeneration);
                 hash.Add(compute.GroupsX);
                 hash.Add(compute.GroupsY);
                 hash.Add(compute.GroupsZ);
+                break;
+            case ComputeDispatchIndirectOp computeIndirect:
+                hash.Add(computeIndirect.Program.BindingId);
+                hash.Add(computeIndirect.Program.LinkGeneration);
+                hash.Add(ComputeCommandBufferDataBufferSignature(computeIndirect.ArgumentOwner));
+                hash.Add(computeIndirect.ArgumentBuffer.Handle);
+                hash.Add(computeIndirect.ArgumentOffset);
+                break;
+            case MemoryBarrierOp barrier:
+                hash.Add((int)barrier.Mask);
                 break;
             case TextureUploadFrameOp upload:
                 hash.Add(upload.Upload.PublicationToken);

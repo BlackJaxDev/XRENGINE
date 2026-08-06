@@ -62,6 +62,8 @@ public unsafe partial class VulkanRenderer
         injectedFailureStage = EOpenXrStrictSpsFaultInjectionStage.None;
         if (commandBuffers is null || commandBufferCount == 0)
             return false;
+        if (!TryAdmitVulkanDeviceOperation("OpenXR.SubmitAndWait", out _))
+            return false;
 
         FenceCreateInfo fenceCreateInfo = new()
         {
@@ -69,8 +71,14 @@ public unsafe partial class VulkanRenderer
             Flags = 0,
         };
 
-        if (Api!.CreateFence(device, ref fenceCreateInfo, null, out Fence fence) != Result.Success)
+        ThrowIfVulkanDeviceOperationNotAdmitted("vkCreateFence.OpenXR");
+        Result createFenceResult = Api!.CreateFence(device, ref fenceCreateInfo, null, out Fence fence);
+        if (createFenceResult != Result.Success)
+        {
+            if (createFenceResult == Result.ErrorDeviceLost)
+                MarkDeviceLost("OpenXR Vulkan submit fence creation returned ErrorDeviceLost", "vkCreateFence.OpenXR", createFenceResult);
             throw new InvalidOperationException("Failed to create OpenXR Vulkan submit fence.");
+        }
 
         SetDebugObjectName(ObjectType.Fence, fence.Handle, "OpenXR.SubmitAndWaitFence");
 
@@ -117,7 +125,7 @@ public unsafe partial class VulkanRenderer
             if (submitResult != Result.Success)
             {
                 if (submitResult == Result.ErrorDeviceLost)
-                    MarkDeviceLost("OpenXR Vulkan eye submit returned ErrorDeviceLost");
+                    MarkDeviceLost("OpenXR Vulkan eye submit returned ErrorDeviceLost", "vkQueueSubmit.OpenXR", submitResult);
 
                 Debug.VulkanWarning($"[OpenXR] Vulkan eye QueueSubmit failed: {submitResult}");
                 return false;
@@ -125,6 +133,8 @@ public unsafe partial class VulkanRenderer
 
             long waitStart = Stopwatch.GetTimestamp();
             Result waitResult;
+            if (!TryAdmitVulkanDeviceOperation("vkWaitForFences.OpenXR", out _))
+                return false;
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.SubmitFenceWait"))
             using (VulkanCpuStageScope fenceWaitStage =
                 new(EVulkanCpuStage.AuxiliaryFenceWait))
@@ -141,8 +151,7 @@ public unsafe partial class VulkanRenderer
             {
                 if (waitResult == Result.ErrorDeviceLost)
                 {
-                    RecordFirstFailingVulkanApi($"vkWaitForFences:OpenXR.Vulkan.SubmitFenceWait:{waitResult}");
-                    MarkDeviceLost("OpenXR Vulkan eye fence wait returned ErrorDeviceLost");
+                    MarkDeviceLost("OpenXR Vulkan eye fence wait returned ErrorDeviceLost", "vkWaitForFences.OpenXR", waitResult);
                 }
 
                 Debug.VulkanWarning($"[OpenXR] Vulkan eye fence wait failed: {waitResult}");

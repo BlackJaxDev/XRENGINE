@@ -83,6 +83,23 @@ internal readonly record struct PendingMeshDraw(
     ulong PreparedProgramLinkGeneration,
     ComputeDispatchSnapshot? ProgramBindingSnapshot)
 {
+    /// <summary>
+    /// Detaches every producer-owned mutable collection before a frame plan is
+    /// sealed. Renderer, material, and camera references are logical owners;
+    /// native binding dictionaries and indexed viewport arrays are snapshot data.
+    /// </summary>
+    internal PendingMeshDraw CreateSealedCopy()
+        => this with
+        {
+            IndexedViewports = IndexedViewports is null
+                ? null
+                : (Viewport[])IndexedViewports.Clone(),
+            IndexedScissors = IndexedScissors is null
+                ? null
+                : (Rect2D[])IndexedScissors.Clone(),
+            ProgramBindingSnapshot = ProgramBindingSnapshot?.CreateSealedCopy(),
+        };
+
     internal VulkanAutoUniformPublicationSnapshot AutoUniformPublication
     {
         get;

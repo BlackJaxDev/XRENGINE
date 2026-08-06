@@ -146,6 +146,7 @@ public unsafe partial class VulkanRenderer
             Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
         };
 
+        ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.ImGuiOverlay");
         if (Api.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
             throw new InvalidOperationException("Failed to begin ImGui overlay command buffer.");
 

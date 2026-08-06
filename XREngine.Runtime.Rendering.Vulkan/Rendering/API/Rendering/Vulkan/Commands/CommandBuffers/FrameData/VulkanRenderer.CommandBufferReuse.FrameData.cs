@@ -39,7 +39,7 @@ namespace XREngine.Rendering.Vulkan
             out CommandBuffer commandBuffer,
             out CommandBuffer dynamicUiBatchTextSecondaryCommandBuffer,
             out int dynamicUiBatchTextOverlayOpCount,
-            out CommandBufferCacheVariant? dynamicUiBatchTextOverlayVariant,
+            out PrimaryCommandArtifactOwner? dynamicUiBatchTextOverlayVariant,
             out ImageLayout swapchainLayoutAfterCommandBuffer,
             out ulong preparedFastScheduleSignature,
             out bool hasPreparedFastScheduleSignature)
@@ -56,8 +56,8 @@ namespace XREngine.Rendering.Vulkan
             using VulkanCpuStageScope commandBufferReuseStage = new(EVulkanCpuStage.CommandBufferReuse);
 
             if (!CommandChainsEnabledForCurrentRecording ||
-                _commandBufferVariants is null ||
-                imageIndex >= _commandBufferVariants.Length)
+                _primaryCommandArtifactOwners is null ||
+                imageIndex >= _primaryCommandArtifactOwners.Length)
             {
                 return false;
             }
@@ -113,7 +113,15 @@ namespace XREngine.Rendering.Vulkan
             CommandRecordingDependencySignature currentPrimaryDependencySignature =
                 CaptureCommandChainPrimaryPreparedBindingDependencies(
                     currentDependencySignature,
-                    ops);
+                    ops) with
+                {
+                    // The primary executes packet-owned secondaries. Carry their
+                    // complete native key through the primary cache comparison so
+                    // a variant cannot bypass descriptor/target/buffer generation
+                    // validation merely because its topology is unchanged.
+                    RenderTargetSnapshot = cachedSchedule.DependencySignature.RenderTargetSnapshot,
+                    RecordedPacketKey = cachedSchedule.DependencySignature.RecordedPacketKey,
+                };
             ReadOnlySpan<CommandChainKey> scheduledCommandChainKeys =
                 PrepareReusableCommandChainKeysByOpIndex(
                     cachedSchedule,
@@ -121,12 +129,9 @@ namespace XREngine.Rendering.Vulkan
                     ops.Length,
                     frameDataScratch);
 
-            List<CommandBufferCacheVariant> variants = _commandBufferVariants[imageIndex];
+            PrimaryCommandArtifactOwner variant = _primaryCommandArtifactOwners[imageIndex];
             bool hasDynamicUiBatchTextOverlay = dynamicUiBatchTextOpCount > 0;
-            for (int i = 0; i < variants.Count; i++)
-            {
-                CommandBufferCacheVariant variant = variants[i];
-                CommandRecordingDependencyMismatch dependencyMismatch =
+            CommandRecordingDependencyMismatch dependencyMismatch =
                     variant.RecordedDependencySignature.CompareCommandChainPrimary(
                         currentPrimaryDependencySignature);
                 if (dependencyMismatch.RequiresRecording && VulkanFrameDiagnosticsTraceEnabled)
@@ -167,7 +172,7 @@ namespace XREngine.Rendering.Vulkan
                         IsDynamicUiBatchTextSecondaryDirty(variant, dynamicUiBatchTextSignature)) ||
                     IsCommandBufferVariantGpuProfilerStateDirty(variant, gpuPipelineProfilingActive, commandBufferImageSlot))
                 {
-                    continue;
+                    return false;
                 }
 
                 bool refreshedReusableFrameData;
@@ -276,7 +281,7 @@ namespace XREngine.Rendering.Vulkan
                 variant.LastUsedFrameId = VulkanFrameCounter;
                 variant.DirtyReason = null;
                 StoreFrameOpSignatureDebugParts(variant, ops);
-                SetActiveCommandBufferVariant(imageIndex, variant);
+                SetActivePrimaryCommandArtifactOwner(imageIndex, variant);
                 RestoreRecordedImageLayoutEndState(variant);
                 PrepareVulkanGpuProfilerReusableSubmission(
                     commandBufferImageSlot,
@@ -316,9 +321,6 @@ namespace XREngine.Rendering.Vulkan
                 }
                 swapchainLayoutAfterCommandBuffer = variant.RecordedSwapchainFinalLayout;
                 return true;
-            }
-
-            return false;
         }
 
         private bool TryRefreshReusableCommandBufferFrameData(
@@ -709,13 +711,13 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private static bool IsDynamicUiBatchTextSecondaryDirty(
-            CommandBufferCacheVariant variant,
+            PrimaryCommandArtifactOwner variant,
             ulong dynamicUiBatchTextSignature)
             => variant.DynamicUiSignature != dynamicUiBatchTextSignature ||
                (dynamicUiBatchTextSignature != 0 && !variant.DynamicUiSecondaryRecorded);
 
         private static bool IsDynamicUiBatchTextPrimaryStructureDirty(
-            CommandBufferCacheVariant variant,
+            PrimaryCommandArtifactOwner variant,
             int dynamicUiBatchTextOpCount)
             => (variant.DynamicUiOpCount > 0) != (dynamicUiBatchTextOpCount > 0);
 

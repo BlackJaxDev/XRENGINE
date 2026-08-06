@@ -26,6 +26,8 @@ public unsafe partial class VulkanRenderer
     private readonly VulkanCommandScheduler _commandScheduler = new();
     private readonly VulkanCommandRecorder _commandRecorder = new();
     private readonly VulkanFrameOperationQueue _frameOperationQueue = new();
+    private ResourcePlannerRuntimeGeneration _publishedResourcePlannerGeneration =
+        new(ResourcePlannerRuntimeState.CreateEmpty());
 
     /// <summary>
     /// Allocation-free state installed only for the duration of a worker recording scope.
@@ -93,46 +95,20 @@ public unsafe partial class VulkanRenderer
         CommandThreadContext.BoundReadFrameBuffer = null;
         CommandThreadContext.ReadBufferMode = default;
     }
-    private VulkanResourcePlanner _resourcePlanner
-    {
-        get => _renderGraphRuntime.ResourcePlanner;
-        set => _renderGraphRuntime.ResourcePlanner = value;
-    }
-    private VulkanResourceAllocator _resourceAllocator
-    {
-        get => _renderGraphRuntime.ResourceAllocator;
-        set => _renderGraphRuntime.ResourceAllocator = value;
-    }
-    private VulkanBarrierPlanner _barrierPlanner
-    {
-        get => _renderGraphRuntime.BarrierPlanner;
-        set => _renderGraphRuntime.BarrierPlanner = value;
-    }
-    private VulkanCompiledRenderGraph _compiledRenderGraph
-    {
-        get => _renderGraphRuntime.CompiledGraph;
-        set => _renderGraphRuntime.CompiledGraph = value;
-    }
-    private ulong _resourcePlannerSignature
-    {
-        get => _renderGraphRuntime.PlannerSignature;
-        set => _renderGraphRuntime.PlannerSignature = value;
-    }
-    private ulong _resourceAllocationSignature
-    {
-        get => _renderGraphRuntime.AllocationSignature;
-        set => _renderGraphRuntime.AllocationSignature = value;
-    }
-    private ResourcePlannerFastPathKey _resourcePlannerFastPathKey;
-    private bool _hasResourcePlannerFastPathKey;
-    private BarrierPlanFastPathKey _barrierPlanFastPathKey;
-    private bool _hasBarrierPlanFastPathKey;
-    private ResourcePlannerSignatureBreakdown _resourcePlannerSignatureBreakdown;
-    private ulong _resourcePlannerRevision
-    {
-        get => _renderGraphRuntime.Revision;
-        set => _renderGraphRuntime.Revision = value;
-    }
+    private ResourcePlannerRuntimeState PublishedResourcePlannerRuntimeState
+        => Volatile.Read(ref _publishedResourcePlannerGeneration).State;
+    private VulkanResourcePlanner _resourcePlanner => PublishedResourcePlannerRuntimeState.ResourcePlanner;
+    private VulkanResourceAllocator _resourceAllocator => PublishedResourcePlannerRuntimeState.ResourceAllocator;
+    private VulkanBarrierPlanner _barrierPlanner => PublishedResourcePlannerRuntimeState.BarrierPlanner;
+    private VulkanCompiledRenderGraph _compiledRenderGraph => PublishedResourcePlannerRuntimeState.CompiledRenderGraph;
+    private ulong _resourcePlannerSignature => PublishedResourcePlannerRuntimeState.ResourcePlannerSignature;
+    private ulong _resourceAllocationSignature => PublishedResourcePlannerRuntimeState.ResourceAllocationSignature;
+    private ResourcePlannerFastPathKey _resourcePlannerFastPathKey => PublishedResourcePlannerRuntimeState.ResourcePlannerFastPathKey;
+    private bool _hasResourcePlannerFastPathKey => PublishedResourcePlannerRuntimeState.HasResourcePlannerFastPathKey;
+    private BarrierPlanFastPathKey _barrierPlanFastPathKey => PublishedResourcePlannerRuntimeState.BarrierPlanFastPathKey;
+    private bool _hasBarrierPlanFastPathKey => PublishedResourcePlannerRuntimeState.HasBarrierPlanFastPathKey;
+    private ResourcePlannerSignatureBreakdown _resourcePlannerSignatureBreakdown => PublishedResourcePlannerRuntimeState.ResourcePlannerSignatureBreakdown;
+    private ulong _resourcePlannerRevision => PublishedResourcePlannerRuntimeState.ResourcePlannerRevision;
     private readonly FrameOpResourcePlannerSwitchingState _frameOpResourcePlannerSwitchingState = new();
     private VulkanStateTracker ActiveState =>
         ReferenceEquals(CommandThreadContext.RenderStateOwner, this) &&
@@ -146,7 +122,8 @@ public unsafe partial class VulkanRenderer
         ReferenceEquals(CommandThreadContext.FrameOpResourcePlannerSwitchingStateOwner, this) &&
         CommandThreadContext.FrameOpResourcePlannerSwitchingState is not null
             ? CommandThreadContext.FrameOpResourcePlannerSwitchingState
-            : _frameOpResourcePlannerSwitchingState;
+            : PublishedResourcePlannerRuntimeState.FrameOpResourcePlannerSwitchingState ??
+              _frameOpResourcePlannerSwitchingState;
 
     private void ThrowIfPersistentResourceAllocationDuringRecording(string operation)
     {
@@ -234,14 +211,16 @@ public unsafe partial class VulkanRenderer
         get => ResourcePlanner;
         set
         {
-            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState threadState))
             {
-                state.ResourcePlanner = value;
-                StoreThreadResourcePlannerRuntimeState(in state);
+                threadState.ResourcePlanner = value;
+                StoreThreadResourcePlannerRuntimeState(in threadState);
                 return;
             }
 
-            _resourcePlanner = value;
+            ResourcePlannerRuntimeState publishedState = PublishedResourcePlannerRuntimeState;
+            publishedState.ResourcePlanner = value;
+            PublishResourcePlannerRuntimeState(publishedState, commitReusedImageMetadata: false);
         }
     }
     private VulkanResourceAllocator ActiveResourceAllocator
@@ -249,15 +228,18 @@ public unsafe partial class VulkanRenderer
         get => ResourceAllocator;
         set
         {
-            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState threadState))
             {
-                state.ResourceAllocator = value;
-                state.AllocatorOwnershipId = value.OwnershipId;
-                StoreThreadResourcePlannerRuntimeState(in state);
+                threadState.ResourceAllocator = value;
+                threadState.AllocatorOwnershipId = value.OwnershipId;
+                StoreThreadResourcePlannerRuntimeState(in threadState);
                 return;
             }
 
-            _resourceAllocator = value;
+            ResourcePlannerRuntimeState publishedState = PublishedResourcePlannerRuntimeState;
+            publishedState.ResourceAllocator = value;
+            publishedState.AllocatorOwnershipId = value.OwnershipId;
+            PublishResourcePlannerRuntimeState(publishedState, commitReusedImageMetadata: false);
         }
     }
     private VulkanBarrierPlanner ActiveBarrierPlanner
@@ -265,14 +247,16 @@ public unsafe partial class VulkanRenderer
         get => BarrierPlanner;
         set
         {
-            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState threadState))
             {
-                state.BarrierPlanner = value;
-                StoreThreadResourcePlannerRuntimeState(in state);
+                threadState.BarrierPlanner = value;
+                StoreThreadResourcePlannerRuntimeState(in threadState);
                 return;
             }
 
-            _barrierPlanner = value;
+            ResourcePlannerRuntimeState publishedState = PublishedResourcePlannerRuntimeState;
+            publishedState.BarrierPlanner = value;
+            PublishResourcePlannerRuntimeState(publishedState, commitReusedImageMetadata: false);
         }
     }
     private VulkanCompiledRenderGraph ActiveCompiledRenderGraph
@@ -280,31 +264,35 @@ public unsafe partial class VulkanRenderer
         get => CompiledRenderGraph;
         set
         {
-            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState threadState))
             {
-                state.CompiledRenderGraph = value;
-                StoreThreadResourcePlannerRuntimeState(in state);
+                threadState.CompiledRenderGraph = value;
+                StoreThreadResourcePlannerRuntimeState(in threadState);
                 return;
             }
 
-            _compiledRenderGraph = value;
+            ResourcePlannerRuntimeState publishedState = PublishedResourcePlannerRuntimeState;
+            publishedState.CompiledRenderGraph = value;
+            PublishResourcePlannerRuntimeState(publishedState, commitReusedImageMetadata: false);
         }
     }
     internal FrameOpContext? ActiveLastActiveFrameOpContext
     {
         get => HasThreadResourcePlannerRuntimeState
             ? CommandThreadContext.ResourcePlannerRuntimeState!.Value.LastActiveFrameOpContext
-            : _renderGraphRuntime.LastActiveFrameOpContext;
+            : PublishedResourcePlannerRuntimeState.LastActiveFrameOpContext;
         set
         {
-            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState threadState))
             {
-                state.LastActiveFrameOpContext = value;
-                StoreThreadResourcePlannerRuntimeState(in state);
+                threadState.LastActiveFrameOpContext = value;
+                StoreThreadResourcePlannerRuntimeState(in threadState);
                 return;
             }
 
-            _renderGraphRuntime.LastActiveFrameOpContext = value;
+            ResourcePlannerRuntimeState publishedState = PublishedResourcePlannerRuntimeState;
+            publishedState.LastActiveFrameOpContext = value;
+            PublishResourcePlannerRuntimeState(publishedState, commitReusedImageMetadata: false);
         }
     }
     private ulong ActiveResourcePlannerSignature
@@ -314,14 +302,16 @@ public unsafe partial class VulkanRenderer
             : _resourcePlannerSignature;
         set
         {
-            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState threadState))
             {
-                state.ResourcePlannerSignature = value;
-                StoreThreadResourcePlannerRuntimeState(in state);
+                threadState.ResourcePlannerSignature = value;
+                StoreThreadResourcePlannerRuntimeState(in threadState);
                 return;
             }
 
-            _resourcePlannerSignature = value;
+            ResourcePlannerRuntimeState publishedState = PublishedResourcePlannerRuntimeState;
+            publishedState.ResourcePlannerSignature = value;
+            PublishResourcePlannerRuntimeState(publishedState, commitReusedImageMetadata: false);
         }
     }
     private ulong ActiveResourceAllocationSignature
@@ -331,65 +321,73 @@ public unsafe partial class VulkanRenderer
             : _resourceAllocationSignature;
         set
         {
-            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState threadState))
             {
-                state.ResourceAllocationSignature = value;
-                StoreThreadResourcePlannerRuntimeState(in state);
+                threadState.ResourceAllocationSignature = value;
+                StoreThreadResourcePlannerRuntimeState(in threadState);
                 return;
             }
 
-            _resourceAllocationSignature = value;
+            ResourcePlannerRuntimeState publishedState = PublishedResourcePlannerRuntimeState;
+            publishedState.ResourceAllocationSignature = value;
+            PublishResourcePlannerRuntimeState(publishedState, commitReusedImageMetadata: false);
         }
     }
     private ulong ActiveFailedResourcePlannerSignature
     {
         get => HasThreadResourcePlannerRuntimeState
             ? CommandThreadContext.ResourcePlannerRuntimeState!.Value.FailedResourcePlannerSignature
-            : _renderGraphRuntime.FailedPlannerSignature;
+            : PublishedResourcePlannerRuntimeState.FailedResourcePlannerSignature;
         set
         {
-            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState threadState))
             {
-                state.FailedResourcePlannerSignature = value;
-                StoreThreadResourcePlannerRuntimeState(in state);
+                threadState.FailedResourcePlannerSignature = value;
+                StoreThreadResourcePlannerRuntimeState(in threadState);
                 return;
             }
 
-            _renderGraphRuntime.FailedPlannerSignature = value;
+            ResourcePlannerRuntimeState publishedState = PublishedResourcePlannerRuntimeState;
+            publishedState.FailedResourcePlannerSignature = value;
+            PublishResourcePlannerRuntimeState(publishedState, commitReusedImageMetadata: false);
         }
     }
     private ulong ActiveFailedResourceAllocationSignature
     {
         get => HasThreadResourcePlannerRuntimeState
             ? CommandThreadContext.ResourcePlannerRuntimeState!.Value.FailedResourceAllocationSignature
-            : _renderGraphRuntime.FailedAllocationSignature;
+            : PublishedResourcePlannerRuntimeState.FailedResourceAllocationSignature;
         set
         {
-            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState threadState))
             {
-                state.FailedResourceAllocationSignature = value;
-                StoreThreadResourcePlannerRuntimeState(in state);
+                threadState.FailedResourceAllocationSignature = value;
+                StoreThreadResourcePlannerRuntimeState(in threadState);
                 return;
             }
 
-            _renderGraphRuntime.FailedAllocationSignature = value;
+            ResourcePlannerRuntimeState publishedState = PublishedResourcePlannerRuntimeState;
+            publishedState.FailedResourceAllocationSignature = value;
+            PublishResourcePlannerRuntimeState(publishedState, commitReusedImageMetadata: false);
         }
     }
     private long ActiveFailedResourceAllocationTimestamp
     {
         get => HasThreadResourcePlannerRuntimeState
             ? CommandThreadContext.ResourcePlannerRuntimeState!.Value.FailedResourceAllocationTimestamp
-            : _renderGraphRuntime.FailedAllocationTimestamp;
+            : PublishedResourcePlannerRuntimeState.FailedResourceAllocationTimestamp;
         set
         {
-            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState threadState))
             {
-                state.FailedResourceAllocationTimestamp = value;
-                StoreThreadResourcePlannerRuntimeState(in state);
+                threadState.FailedResourceAllocationTimestamp = value;
+                StoreThreadResourcePlannerRuntimeState(in threadState);
                 return;
             }
 
-            _renderGraphRuntime.FailedAllocationTimestamp = value;
+            ResourcePlannerRuntimeState publishedState = PublishedResourcePlannerRuntimeState;
+            publishedState.FailedResourceAllocationTimestamp = value;
+            PublishResourcePlannerRuntimeState(publishedState, commitReusedImageMetadata: false);
         }
     }
     private ResourcePlannerFastPathKey ActiveResourcePlannerFastPathKey
@@ -399,14 +397,16 @@ public unsafe partial class VulkanRenderer
             : _resourcePlannerFastPathKey;
         set
         {
-            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState threadState))
             {
-                state.ResourcePlannerFastPathKey = value;
-                StoreThreadResourcePlannerRuntimeState(in state);
+                threadState.ResourcePlannerFastPathKey = value;
+                StoreThreadResourcePlannerRuntimeState(in threadState);
                 return;
             }
 
-            _resourcePlannerFastPathKey = value;
+            ResourcePlannerRuntimeState publishedState = PublishedResourcePlannerRuntimeState;
+            publishedState.ResourcePlannerFastPathKey = value;
+            PublishResourcePlannerRuntimeState(publishedState, commitReusedImageMetadata: false);
         }
     }
     private bool ActiveHasResourcePlannerFastPathKey
@@ -416,14 +416,16 @@ public unsafe partial class VulkanRenderer
             : _hasResourcePlannerFastPathKey;
         set
         {
-            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState threadState))
             {
-                state.HasResourcePlannerFastPathKey = value;
-                StoreThreadResourcePlannerRuntimeState(in state);
+                threadState.HasResourcePlannerFastPathKey = value;
+                StoreThreadResourcePlannerRuntimeState(in threadState);
                 return;
             }
 
-            _hasResourcePlannerFastPathKey = value;
+            ResourcePlannerRuntimeState publishedState = PublishedResourcePlannerRuntimeState;
+            publishedState.HasResourcePlannerFastPathKey = value;
+            PublishResourcePlannerRuntimeState(publishedState, commitReusedImageMetadata: false);
         }
     }
     private BarrierPlanFastPathKey ActiveBarrierPlanFastPathKey
@@ -433,14 +435,16 @@ public unsafe partial class VulkanRenderer
             : _barrierPlanFastPathKey;
         set
         {
-            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState threadState))
             {
-                state.BarrierPlanFastPathKey = value;
-                StoreThreadResourcePlannerRuntimeState(in state);
+                threadState.BarrierPlanFastPathKey = value;
+                StoreThreadResourcePlannerRuntimeState(in threadState);
                 return;
             }
 
-            _barrierPlanFastPathKey = value;
+            ResourcePlannerRuntimeState publishedState = PublishedResourcePlannerRuntimeState;
+            publishedState.BarrierPlanFastPathKey = value;
+            PublishResourcePlannerRuntimeState(publishedState, commitReusedImageMetadata: false);
         }
     }
     private bool ActiveHasBarrierPlanFastPathKey
@@ -450,14 +454,16 @@ public unsafe partial class VulkanRenderer
             : _hasBarrierPlanFastPathKey;
         set
         {
-            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState threadState))
             {
-                state.HasBarrierPlanFastPathKey = value;
-                StoreThreadResourcePlannerRuntimeState(in state);
+                threadState.HasBarrierPlanFastPathKey = value;
+                StoreThreadResourcePlannerRuntimeState(in threadState);
                 return;
             }
 
-            _hasBarrierPlanFastPathKey = value;
+            ResourcePlannerRuntimeState publishedState = PublishedResourcePlannerRuntimeState;
+            publishedState.HasBarrierPlanFastPathKey = value;
+            PublishResourcePlannerRuntimeState(publishedState, commitReusedImageMetadata: false);
         }
     }
     private ResourcePlannerSignatureBreakdown ActiveResourcePlannerSignatureBreakdown
@@ -467,14 +473,16 @@ public unsafe partial class VulkanRenderer
             : _resourcePlannerSignatureBreakdown;
         set
         {
-            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState threadState))
             {
-                state.ResourcePlannerSignatureBreakdown = value;
-                StoreThreadResourcePlannerRuntimeState(in state);
+                threadState.ResourcePlannerSignatureBreakdown = value;
+                StoreThreadResourcePlannerRuntimeState(in threadState);
                 return;
             }
 
-            _resourcePlannerSignatureBreakdown = value;
+            ResourcePlannerRuntimeState publishedState = PublishedResourcePlannerRuntimeState;
+            publishedState.ResourcePlannerSignatureBreakdown = value;
+            PublishResourcePlannerRuntimeState(publishedState, commitReusedImageMetadata: false);
         }
     }
     private ulong ActiveResourcePlannerRevision
@@ -482,14 +490,16 @@ public unsafe partial class VulkanRenderer
         get => ResourcePlannerRevision;
         set
         {
-            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState threadState))
             {
-                state.ResourcePlannerRevision = value;
-                StoreThreadResourcePlannerRuntimeState(in state);
+                threadState.ResourcePlannerRevision = value;
+                StoreThreadResourcePlannerRuntimeState(in threadState);
                 return;
             }
 
-            _resourcePlannerRevision = value;
+            ResourcePlannerRuntimeState publishedState = PublishedResourcePlannerRuntimeState;
+            publishedState.ResourcePlannerRevision = value;
+            PublishResourcePlannerRuntimeState(publishedState, commitReusedImageMetadata: false);
         }
     }
     private bool IsCommandChainResourcePlanFrozen => _renderGraphRuntime.IsResourcePlanFrozen;
@@ -504,6 +514,7 @@ public unsafe partial class VulkanRenderer
     private XRTexture? _lastWindowPresentFallbackFrameBufferTexture;
     private XRFrameBuffer? _lastWindowPresentFallbackFrameBuffer;
     private FrameOpContext? _lastWindowPresentFrameOpContext;
+    private readonly VulkanPresentationSourcePublication _windowPresentSource = new();
     private VulkanPhysicalImageGroup? _retainedAutoExposureHistoryGroup;
     private ulong _lastResourcePlanReplacementRevision;
     private ulong _lastResourcePlanReplacementSignature;
@@ -632,6 +643,12 @@ public unsafe partial class VulkanRenderer
         public bool HasPreparedPlan;
     }
 
+    private readonly Dictionary<VulkanFrameOpPlannerStateKey, FrameOp[]> _frameOpPlannerPartitionCache =
+        new(VulkanFrameOpPlannerStateKeyComparer.Instance);
+    private readonly VulkanFrameOpPlannerStateKey[] _frameOpPlannerPartitionKeyBuffer =
+        new VulkanFrameOpPlannerStateKey[MaxFrameOpResourcePlannerSwitchingStates];
+    private ulong _frameOpPlannerPartitionSignature;
+
     private struct ResourcePlannerRuntimeState
     {
         public VulkanResourcePlanner ResourcePlanner;
@@ -652,6 +669,7 @@ public unsafe partial class VulkanRenderer
         public ulong ResourcePlannerRevision;
         public long AllocatorOwnershipId;
         public FrameOpResourcePlannerSwitchingState? FrameOpResourcePlannerSwitchingState;
+        public VulkanPreparedResourceGenerationManifest? PreparedGenerationManifest;
 
         public static ResourcePlannerRuntimeState CreateEmpty()
         {
@@ -1041,7 +1059,16 @@ public unsafe partial class VulkanRenderer
             _active = true;
 
             bool usesSingleKeyState = TryGetSingleFrameOpPlannerStateKey(ops, out VulkanFrameOpPlannerStateKey initialKey);
-            switchingState.MergedPlanActive = !usesSingleKeyState;
+            if (!usesSingleKeyState)
+            {
+                // Incompatible contexts are prepared independently by the frame-plan
+                // path. Never restore or publish the historical merged preparation
+                // state: it carries the first context's extents and allocator into
+                // unrelated outputs.
+                return;
+            }
+
+            switchingState.MergedPlanActive = false;
             _usesSingleKeyState = usesSingleKeyState;
             _initialKey = initialKey;
             ResourcePlannerRuntimeState keyedState = default;
@@ -1196,33 +1223,15 @@ public unsafe partial class VulkanRenderer
     {
         if (HasThreadResourcePlannerRuntimeState)
         {
-            ResourcePlannerRuntimeState state =
+            ResourcePlannerRuntimeState threadState =
                 CommandThreadContext.ResourcePlannerRuntimeState!.Value;
-            state.FrameOpResourcePlannerSwitchingState = ActiveFrameOpResourcePlannerSwitchingState;
-            return state;
+            threadState.FrameOpResourcePlannerSwitchingState = ActiveFrameOpResourcePlannerSwitchingState;
+            return threadState;
         }
 
-        return new()
-        {
-            ResourcePlanner = _resourcePlanner,
-            ResourceAllocator = _resourceAllocator,
-            BarrierPlanner = _barrierPlanner,
-            CompiledRenderGraph = _compiledRenderGraph,
-            LastActiveFrameOpContext = _renderGraphRuntime.LastActiveFrameOpContext,
-            ResourcePlannerSignature = _resourcePlannerSignature,
-            ResourceAllocationSignature = _resourceAllocationSignature,
-            FailedResourcePlannerSignature = _renderGraphRuntime.FailedPlannerSignature,
-            FailedResourceAllocationSignature = _renderGraphRuntime.FailedAllocationSignature,
-            FailedResourceAllocationTimestamp = _renderGraphRuntime.FailedAllocationTimestamp,
-            ResourcePlannerFastPathKey = _resourcePlannerFastPathKey,
-            HasResourcePlannerFastPathKey = _hasResourcePlannerFastPathKey,
-            BarrierPlanFastPathKey = _barrierPlanFastPathKey,
-            HasBarrierPlanFastPathKey = _hasBarrierPlanFastPathKey,
-            ResourcePlannerSignatureBreakdown = _resourcePlannerSignatureBreakdown,
-            ResourcePlannerRevision = _resourcePlannerRevision,
-            AllocatorOwnershipId = _resourceAllocator.OwnershipId,
-            FrameOpResourcePlannerSwitchingState = _frameOpResourcePlannerSwitchingState,
-        };
+        ResourcePlannerRuntimeState state = PublishedResourcePlannerRuntimeState;
+        state.FrameOpResourcePlannerSwitchingState ??= _frameOpResourcePlannerSwitchingState;
+        return state;
     }
 
     private void RestoreResourcePlannerRuntimeState(in ResourcePlannerRuntimeState state)
@@ -1236,22 +1245,89 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        _resourcePlanner = state.ResourcePlanner;
-        _resourceAllocator = state.ResourceAllocator;
-        _barrierPlanner = state.BarrierPlanner;
-        _compiledRenderGraph = state.CompiledRenderGraph;
-        _renderGraphRuntime.LastActiveFrameOpContext = state.LastActiveFrameOpContext;
-        _resourcePlannerSignature = state.ResourcePlannerSignature;
-        _resourceAllocationSignature = state.ResourceAllocationSignature;
-        _renderGraphRuntime.FailedPlannerSignature = state.FailedResourcePlannerSignature;
-        _renderGraphRuntime.FailedAllocationSignature = state.FailedResourceAllocationSignature;
-        _renderGraphRuntime.FailedAllocationTimestamp = state.FailedResourceAllocationTimestamp;
-        _resourcePlannerFastPathKey = state.ResourcePlannerFastPathKey;
-        _hasResourcePlannerFastPathKey = state.HasResourcePlannerFastPathKey;
-        _barrierPlanFastPathKey = state.BarrierPlanFastPathKey;
-        _hasBarrierPlanFastPathKey = state.HasBarrierPlanFastPathKey;
-        _resourcePlannerSignatureBreakdown = state.ResourcePlannerSignatureBreakdown;
-        _resourcePlannerRevision = state.ResourcePlannerRevision;
+        lock (_renderGraphRuntime.PlannerReadbackGate)
+            RestoreResourcePlannerRuntimeStateCore(in state);
+    }
+
+    private static FrameOpResourcePlannerSwitchingState CloneFrameOpResourcePlannerSwitchingState(
+        FrameOpResourcePlannerSwitchingState source)
+    {
+        FrameOpResourcePlannerSwitchingState clone = new()
+        {
+            UsageSerial = source.UsageSerial,
+            SwitchingActive = source.SwitchingActive,
+            MergedPlanActive = source.MergedPlanActive,
+            RecordingScopeActive = source.RecordingScopeActive,
+            HasActiveKey = source.HasActiveKey,
+            ActiveKey = source.ActiveKey,
+            HasActiveContext = source.HasActiveContext,
+            ActiveContext = source.ActiveContext,
+            PreparationState = source.PreparationState,
+            HasPreparationState = source.HasPreparationState,
+            PreparedFrameOpsSignature = source.PreparedFrameOpsSignature,
+            PreparedPlanRevision = source.PreparedPlanRevision,
+            HasPreparedPlan = source.HasPreparedPlan,
+        };
+        foreach ((VulkanFrameOpPlannerStateKey key, ResourcePlannerRuntimeState state) in source.States)
+            clone.States[key] = state;
+        foreach ((VulkanFrameOpPlannerStateKey key, ulong serial) in source.LastUsedSerials)
+            clone.LastUsedSerials[key] = serial;
+        foreach (VulkanFrameOpPlannerStateKey key in source.ActiveKeys)
+            clone.ActiveKeys.Add(key);
+        return clone;
+    }
+
+    /// <summary>
+    /// Publishes every member of a planner generation under one gate. Reused image
+    /// metadata belongs to that same generation, so it is committed in the same
+    /// critical section rather than mutating the currently published generation
+    /// before its replacement is visible.
+    /// </summary>
+    private void PublishResourcePlannerRuntimeState(
+        in ResourcePlannerRuntimeState state,
+        bool commitReusedImageMetadata)
+    {
+        if (!_deviceStateMachine.IsOperational)
+        {
+            throw new InvalidOperationException(
+                $"Cannot publish Vulkan resource-planner generation while device state is {DeviceState}.");
+        }
+
+        AssertResourcePlannerRuntimeStateCanBeRestored(state);
+        if (HasThreadResourcePlannerRuntimeState)
+        {
+            ResourcePlannerRuntimeState next = state;
+            next.FrameOpResourcePlannerSwitchingState = ActiveFrameOpResourcePlannerSwitchingState;
+            CommandThreadContext.ResourcePlannerRuntimeState = next;
+            return;
+        }
+
+        lock (_renderGraphRuntime.PlannerReadbackGate)
+        {
+            if (commitReusedImageMetadata)
+                state.ResourceAllocator.CommitReusedPhysicalImageMetadata();
+
+            RestoreResourcePlannerRuntimeStateCore(in state);
+        }
+    }
+
+    /// <summary>
+    /// Immutable publication envelope. Readers acquire one reference and therefore
+    /// cannot observe a planner, allocator, barrier plan, graph and signatures
+    /// assembled from different generations.
+    /// </summary>
+    private sealed class ResourcePlannerRuntimeGeneration(ResourcePlannerRuntimeState state)
+    {
+        public ResourcePlannerRuntimeState State { get; } = state;
+    }
+
+    private void RestoreResourcePlannerRuntimeStateCore(in ResourcePlannerRuntimeState state)
+    {
+        ResourcePlannerRuntimeState publishedState = state;
+        publishedState.FrameOpResourcePlannerSwitchingState ??= _frameOpResourcePlannerSwitchingState;
+        Volatile.Write(
+            ref _publishedResourcePlannerGeneration,
+            new ResourcePlannerRuntimeGeneration(publishedState));
     }
 
     private readonly record struct PhysicalAllocationPlan(

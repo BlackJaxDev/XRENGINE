@@ -78,10 +78,10 @@ public unsafe partial class VulkanRenderer
     }
 
     /// <summary>
-    /// Discards a recording that did not reach <see cref="EndCommandBufferTracked"/>.
-    /// Vulkan permits a non-pending recording command buffer to be reset, but the
-    /// engine-side batch and frame-data lease must stop reporting it as recording
-    /// before the next reset attempt.
+    /// Discards a non-pending command-buffer recording, including one that reached
+    /// <see cref="EndCommandBufferTracked"/> but was rejected before submission.
+    /// The engine-side batch and frame-data lease must release their recorded
+    /// dependencies before the next reset attempt.
     /// </summary>
     private bool TryAbandonCommandBufferRecording(CommandBuffer commandBuffer)
     {
@@ -101,8 +101,6 @@ public unsafe partial class VulkanRenderer
 
             lock (batch)
             {
-                if (!batch.IsRecording)
-                    return false;
                 if (batch.QueuedSubmissionCount != 0)
                 {
                     throw new InvalidOperationException(
@@ -119,6 +117,7 @@ public unsafe partial class VulkanRenderer
                     out VulkanCommandBufferLifetimeRecord? lifetime))
             {
                 lifetime.FrameDataLease.AbandonRecording();
+                ReleaseVulkanCommandBufferDependencies_NoLock(handle, lifetime);
             }
         }
 
@@ -382,6 +381,7 @@ public unsafe partial class VulkanRenderer
         if (handle == 0)
             return result;
 
+        bool discarded = result != Result.Success || !trackingPublished;
         lock (_resourceLifetimeTracker.SyncRoot)
         {
             if (_commandBufferTrackingBatches.TryGetValue(handle, out VulkanCommandBufferTrackingBatch? batch))
@@ -395,9 +395,18 @@ public unsafe partial class VulkanRenderer
                 if (result == Result.Success && trackingPublished)
                     lifetime.FrameDataLease.CompleteRecording(cacheVariant);
                 else
+                {
                     lifetime.FrameDataLease.AbandonRecording();
+                    ReleaseVulkanCommandBufferDependencies_NoLock(handle, lifetime);
+                }
             }
+
+            if (discarded)
+                _commandBufferTrackingBatches.TryRemove(handle, out _);
         }
+
+        if (discarded)
+            ResetRecordedImageLayoutState(commandBuffer);
 
         return result;
     }
@@ -409,58 +418,99 @@ public unsafe partial class VulkanRenderer
         if (handle == 0 || !_commandBufferTrackingBatches.TryGetValue(handle, out VulkanCommandBufferTrackingBatch? batch))
             return true;
 
-        if (batch.Dependencies.Count == 0 &&
-            batch.PublishedImageDeltaCount == batch.ImageAccessDeltas.Count)
-        {
-            return true;
-        }
-
-        int newUniqueDependencies = batch.Dependencies.Count;
-        int newCompactImageRanges = batch.ImageAccessDeltas.Count - batch.PublishedImageDeltaCount;
-
+        int newUniqueDependencies = 0;
+        int newCompactImageRanges = 0;
         bool lifetimeLockContended = !Monitor.TryEnter(_resourceLifetimeTracker.SyncRoot);
         if (lifetimeLockContended)
             Monitor.Enter(_resourceLifetimeTracker.SyncRoot);
         try
         {
-            if (!_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(handle, out VulkanCommandBufferLifetimeRecord? lifetime))
+            lock (batch)
             {
-                lifetime = new VulkanCommandBufferLifetimeRecord();
-                _resourceLifetimeTracker.CommandBufferLifetimes[handle] = lifetime;
-            }
-
-            foreach (VulkanResourceLifetimeKey key in batch.Dependencies)
-            {
-                if (!TryTrackVulkanCommandBufferResource_NoLock(
-                    handle,
-                    key,
-                    "CommandBuffer.LocalBatch",
-                    out failureReason,
-                    allowQueuedSubmission: true))
+                if (!_commandBufferTrackingBatches.TryGetValue(
+                        handle,
+                        out VulkanCommandBufferTrackingBatch? currentBatch) ||
+                    !ReferenceEquals(batch, currentBatch))
                 {
-                    return false;
+                    return true;
                 }
-            }
 
-            lifetime.RefreshTouchedDependencies();
-            batch.Dependencies.Clear();
+                if (batch.Dependencies.Count == 0 &&
+                    batch.PublishedImageDeltaCount == batch.ImageAccessDeltas.Count)
+                {
+                    return true;
+                }
+
+                newUniqueDependencies = batch.Dependencies.Count;
+                newCompactImageRanges =
+                    batch.ImageAccessDeltas.Count - batch.PublishedImageDeltaCount;
+
+                if (!_resourceLifetimeTracker.CommandBufferLifetimes.TryGetValue(
+                        handle,
+                        out VulkanCommandBufferLifetimeRecord? lifetime))
+                {
+                    lifetime = new VulkanCommandBufferLifetimeRecord();
+                    _resourceLifetimeTracker.CommandBufferLifetimes[handle] = lifetime;
+                }
+
+                foreach (VulkanResourceLifetimeKey key in batch.Dependencies)
+                {
+                    if (!TryValidateVulkanCommandBufferResource_NoLock(
+                            handle,
+                            key,
+                            "CommandBuffer.LocalBatch",
+                            out failureReason,
+                            allowQueuedSubmission: true))
+                    {
+                        return false;
+                    }
+                }
+
+                foreach (VulkanResourceLifetimeKey key in batch.Dependencies)
+                {
+                    // Validation and publication occur under the same lifetime lock;
+                    // this second pass therefore cannot partially fail.
+                    if (!TryTrackVulkanCommandBufferResource_NoLock(
+                            handle,
+                            key,
+                            "CommandBuffer.LocalBatch",
+                            out failureReason,
+                            allowQueuedSubmission: true))
+                    {
+                        throw new InvalidOperationException(
+                            $"Validated Vulkan dependency {key} failed transactional publication: {failureReason}");
+                    }
+                }
+
+                lifetime.RefreshTouchedDependencies();
+                batch.Dependencies.Clear();
+            }
         }
         finally
         {
             Monitor.Exit(_resourceLifetimeTracker.SyncRoot);
         }
 
-        bool layoutLockContended = FlushCommandBufferImageAccessBatch(commandBuffer, batch);
+        bool layoutLockContended;
+        int dependencyBinds;
+        int imageAccessWrites;
+        lock (batch)
+        {
+            layoutLockContended = FlushCommandBufferImageAccessBatch(commandBuffer, batch);
+            dependencyBinds = batch.DependencyBindCount - batch.ReportedDependencyBindCount;
+            imageAccessWrites = batch.ImageAccessWriteCount - batch.ReportedImageAccessWriteCount;
+            batch.ReportedDependencyBindCount = batch.DependencyBindCount;
+            batch.ReportedImageAccessWriteCount = batch.ImageAccessWriteCount;
+        }
+
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanTrackingBatch(
-            dependencyBinds: batch.DependencyBindCount - batch.ReportedDependencyBindCount,
-            uniqueDependencies: newUniqueDependencies,
-            imageAccessWrites: batch.ImageAccessWriteCount - batch.ReportedImageAccessWriteCount,
-            compactImageRanges: newCompactImageRanges);
+            dependencyBinds,
+            newUniqueDependencies,
+            imageAccessWrites,
+            newCompactImageRanges);
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanTrackingContention(
             lifetimeLockContended ? 1 : 0,
             layoutLockContended ? 1 : 0);
-        batch.ReportedDependencyBindCount = batch.DependencyBindCount;
-        batch.ReportedImageAccessWriteCount = batch.ImageAccessWriteCount;
         return true;
     }
 

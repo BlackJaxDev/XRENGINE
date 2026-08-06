@@ -22,13 +22,13 @@ internal static class BrokerMcpToolCatalog
         new McpToolSpec
         {
             Name = "start_agent_run",
-            Description = "Start one bounded OpenAI Responses API worker. Omit editor_session for reasoning-only work, or name a local editor MCP session for controlled editor tools. Returns a run ID immediately. Optional background mode temporarily stores provider response state for polling.",
+            Description = "Start one bounded OpenAI Responses API worker with exact model, reasoning, text-verbosity, and output-token controls. Omit editor_session for reasoning-only work, or name a local editor MCP session for controlled editor tools. Returns a run ID immediately. Optional background mode temporarily stores provider response state for polling.",
             InputSchema = StartRunSchema(),
         },
         new McpToolSpec
         {
             Name = "get_agent_run",
-            Description = "Get incremental text, evidence, usage, exact model, provider-attempt diagnostics, and terminal result for one run.",
+            Description = "Get incremental text, evidence, usage, requested response controls, exact model, provider-attempt diagnostics, observed time, elapsed time, progress stage, and terminal result for one run.",
             IsReadOnly = true,
             InputSchema = ObjectSchema(
                 required: ["run_id"],
@@ -45,7 +45,7 @@ internal static class BrokerMcpToolCatalog
         new McpToolSpec
         {
             Name = "list_agent_runs",
-            Description = "List bounded metadata for active and recently retained runs.",
+            Description = "List bounded metadata, including observed time, elapsed time, and latest progress stage, for active and recently retained runs.",
             IsReadOnly = true,
             InputSchema = ObjectSchema(
                 required: [],
@@ -78,6 +78,13 @@ internal static class BrokerMcpToolCatalog
                 ["type"] = "string",
                 ["enum"] = new JsonArray("none", "low", "medium", "high", "xhigh", "max"),
                 ["default"] = "medium",
+            }),
+            ("text_verbosity", new JsonObject
+            {
+                ["type"] = "string",
+                ["enum"] = new JsonArray("low", "medium", "high"),
+                ["default"] = "medium",
+                ["description"] = "Responses API visible-text verbosity. max_output_tokens remains the hard combined visible-output and reasoning-token budget.",
             }),
             ("use_background_mode", new JsonObject
             {

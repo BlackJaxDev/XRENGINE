@@ -130,6 +130,8 @@ public unsafe partial class VulkanRenderer
             if (_rendererReady || _disposed)
                 return;
 
+            _renderer.ThrowIfVulkanDeviceOperationNotAdmitted("ImGuiViewport.CreateRendererResources");
+
             if (Window.VkSurface is null)
                 throw new NotSupportedException("The detached ImGui window does not expose Vulkan surface services.");
 
@@ -280,6 +282,9 @@ public unsafe partial class VulkanRenderer
 
         private bool TryCreateSwapchainResources()
         {
+            if (!_renderer.TryAdmitVulkanDeviceOperation("ImGuiViewport.CreateSwapchainResources", out _))
+                return false;
+
             Vector2D<int> framebufferSize = Window.FramebufferSize;
             if (framebufferSize.X <= 0 || framebufferSize.Y <= 0)
                 return false;
@@ -479,6 +484,7 @@ public unsafe partial class VulkanRenderer
 
         private ImageView CreateImageView(Image image)
         {
+            _renderer.ThrowIfVulkanDeviceOperationNotAdmitted("vkCreateImageView.ImGuiViewport");
             ImageViewCreateInfo createInfo = new()
             {
                 SType = StructureType.ImageViewCreateInfo,
@@ -500,11 +506,16 @@ public unsafe partial class VulkanRenderer
             ThrowIfFailed(
                 _renderer.Api!.CreateImageView(_renderer.device, in createInfo, null, out ImageView view),
                 "create detached-window swapchain image view");
+            _renderer.TrackLiveImageView(
+                view,
+                in createInfo,
+                $"Swapchain.Color.ImGuiViewport[{ViewportId:X8}]");
             return view;
         }
 
         private void CreateCommandResources(uint graphicsFamily)
         {
+            _renderer.ThrowIfVulkanDeviceOperationNotAdmitted("ImGuiViewport.CreateCommandResources");
             _commandPool = _renderer.CreateCommandPoolForFamily(graphicsFamily);
             _commandBuffers = new CommandBuffer[FramesInFlight];
             CommandBufferAllocateInfo allocateInfo = new()
@@ -526,6 +537,7 @@ public unsafe partial class VulkanRenderer
 
         private void CreateSynchronizationResources()
         {
+            _renderer.ThrowIfVulkanDeviceOperationNotAdmitted("ImGuiViewport.CreateSynchronizationResources");
             _frameFences = new Fence[FramesInFlight];
             _frameFenceSubmitted = new bool[FramesInFlight];
             _imageAvailableSemaphores = new Semaphore[FramesInFlight];
@@ -564,6 +576,12 @@ public unsafe partial class VulkanRenderer
 
         private void RecreateSwapchainResources()
         {
+            if (!_renderer.TryAdmitVulkanDeviceOperation("ImGuiViewport.RecreateSwapchainResources", out _))
+            {
+                _rendererReady = false;
+                return;
+            }
+
             WaitForViewportQueuesIdle();
             DestroySwapchainResources();
             _rendererReady = TryCreateSwapchainResources();
@@ -572,10 +590,17 @@ public unsafe partial class VulkanRenderer
 
         private void RenderSnapshot(VulkanImGuiFrameSnapshot snapshot)
         {
+            if (!_renderer.TryAdmitVulkanDeviceOperation("ImGuiViewport.RenderSnapshot", out _))
+            {
+                _resizeRequested = true;
+                return;
+            }
+
             int frameSlot = _frameSlot;
             Fence frameFence = _frameFences[frameSlot];
             if (_frameFenceSubmitted[frameSlot])
             {
+                _renderer.ThrowIfVulkanDeviceOperationNotAdmitted("vkWaitForFences.ImGuiViewport");
                 ThrowIfFailed(
                     _renderer.Api!.WaitForFences(_renderer.device, 1, in frameFence, true, ulong.MaxValue),
                     "wait for detached-window frame fence");
@@ -680,6 +705,7 @@ public unsafe partial class VulkanRenderer
             int frameSlot,
             VulkanImGuiFrameSnapshot snapshot)
         {
+            _renderer.ThrowIfVulkanDeviceOperationNotAdmitted("ImGuiViewport.RecordCommandBuffer");
             _renderer.EnsureImGuiFontResources();
             _renderer.EnsureImGuiPipeline();
 
@@ -691,6 +717,7 @@ public unsafe partial class VulkanRenderer
                 SType = StructureType.CommandBufferBeginInfo,
                 Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
             };
+            _renderer.ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.ImGuiViewport");
             ThrowIfFailed(
                 _renderer.Api!.BeginCommandBuffer(commandBuffer, in beginInfo),
                 "begin detached-window command buffer");
@@ -799,7 +826,10 @@ public unsafe partial class VulkanRenderer
 
             foreach (ImageView view in _imageViews)
                 if (view.Handle != 0)
-                    _renderer.Api.DestroyImageView(_renderer.device, view, null);
+                {
+                    if (_renderer.TryBeginDestroyImageView(view, "ImGuiViewport.DestroySwapchainResources"))
+                        _renderer.Api.DestroyImageView(_renderer.device, view, null);
+                }
             foreach (Image image in _images)
                 _renderer.ClearTrackedImageLayouts(image);
             if (_swapchain.Handle != 0 && _renderer.khrSwapChain is not null)
@@ -920,10 +950,14 @@ public unsafe partial class VulkanRenderer
         private static Vector2D<int> ToWindowPosition(Vector2 position)
             => new((int)MathF.Round(position.X), (int)MathF.Round(position.Y));
 
-        private static void ThrowIfFailed(Result result, string operation)
+        private void ThrowIfFailed(Result result, string operation)
         {
-            if (result != Result.Success)
-                throw new InvalidOperationException($"Failed to {operation}: {result}.");
+            if (result == Result.Success)
+                return;
+
+            if (result == Result.ErrorDeviceLost)
+                _renderer.MarkDeviceLost($"Detached ImGui viewport failed to {operation}", operation, result);
+            throw new InvalidOperationException($"Failed to {operation}: {result}.");
         }
     }
 }

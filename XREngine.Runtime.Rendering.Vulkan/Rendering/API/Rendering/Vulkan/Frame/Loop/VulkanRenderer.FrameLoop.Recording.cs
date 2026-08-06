@@ -38,7 +38,7 @@ namespace XREngine.Rendering.Vulkan
                 int dynamicTextOverlayOpCount;
                 FrameOp[] dynamicTextOverlayOps;
                 ulong dynamicTextOverlaySignature;
-                CommandBufferCacheVariant? dynamicTextOverlayVariant;
+                PrimaryCommandArtifactOwner? dynamicTextOverlayVariant;
 
                 stageStartTimestamp = Stopwatch.GetTimestamp();
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
@@ -117,6 +117,7 @@ namespace XREngine.Rendering.Vulkan
 
                 attempt.ScenePrimaryRecordedThisFrame =
                     _lastEnsureCommandBufferRecordedPrimary;
+                attempt.PresentationSource = _windowPresentSource.Capture();
                 if (RecordDesktopImGuiOverlay(
                         ref attempt,
                         imguiOverlaySnapshot) !=
@@ -310,7 +311,7 @@ namespace XREngine.Rendering.Vulkan
             int overlayOpCount,
             FrameOp[] overlayOps,
             ulong overlaySignature,
-            CommandBufferCacheVariant? overlayVariant)
+            PrimaryCommandArtifactOwner? overlayVariant)
         {
             long stageStartTimestamp = Stopwatch.GetTimestamp();
             try
@@ -363,8 +364,26 @@ namespace XREngine.Rendering.Vulkan
         private EDesktopFrameFlow ValidateDesktopRecording(
             ref VulkanFrameAttempt attempt)
         {
+            if (!TryValidatePresentationSourceForSubmission(
+                    attempt.PresentationSource,
+                    attempt.SceneCommandBuffer,
+                    attempt.ImageIndex,
+                    out string presentationSourceFailure))
+            {
+                MarkCommandBuffersDirty(presentationSourceFailure);
+                SettleRejectedDesktopCommandArtifacts(
+                    ref attempt,
+                    $"recording validation failed: {presentationSourceFailure}");
+                return HandleDesktopRecordingDeferred(
+                    ref attempt,
+                    presentationSourceFailure,
+                    recoveryOverlaySnapshot: null);
+            }
+
             FrameOpContext? phase524bContext =
-                _lastWindowPresentFrameOpContext ??
+                attempt.PresentationSource.LogicalEpoch != 0
+                    ? attempt.PresentationSource.Context
+                    : _lastWindowPresentFrameOpContext ??
                 ActiveLastActiveFrameOpContext;
             if (phase524bContext.HasValue &&
                 TryPreparePhase524bInjectedDesktopRejection(
@@ -409,6 +428,9 @@ namespace XREngine.Rendering.Vulkan
             }
             else if (dirtyFlag || generationChanged)
             {
+                SettleRejectedDesktopCommandArtifacts(
+                    ref attempt,
+                    $"command buffer dirtied before submit: flag={dirtyFlag} generationChanged={generationChanged}");
                 if (TryRecoverRejectedDesktopImage(
                         ref attempt,
                         dirtyFlag,
@@ -442,6 +464,82 @@ namespace XREngine.Rendering.Vulkan
 
             attempt.AdvanceTo(EDesktopFramePhase.Validated);
             return EDesktopFrameFlow.Continue;
+        }
+
+        private bool TryValidatePresentationSourceForSubmission(
+            in VulkanPresentationSourceTuple source,
+            CommandBuffer sceneCommandBuffer,
+            uint descriptorSlot,
+            out string failureReason)
+        {
+            failureReason = string.Empty;
+            VulkanPresentationSourceTuple published =
+                _windowPresentSource.Capture();
+            if (!source.Equals(published))
+            {
+                failureReason =
+                    $"final presentation source publication changed before submit (recorded epoch={source.LogicalEpoch}, current epoch={published.LogicalEpoch})";
+                return false;
+            }
+
+            if (source.DescriptorResourceEpoch != published.DescriptorResourceEpoch ||
+                source.DescriptorPublicationGeneration != published.DescriptorPublicationGeneration)
+            {
+                failureReason =
+                    $"final presentation descriptor publication changed before submit (epoch={source.LogicalEpoch})";
+                return false;
+            }
+
+            if (!source.HasLogicalSource)
+                return true;
+
+            if (!source.IsComplete)
+            {
+                failureReason =
+                    $"final presentation source epoch {source.LogicalEpoch} is incomplete";
+                return false;
+            }
+
+            if (source.OwningCommandArtifact.Handle != sceneCommandBuffer.Handle)
+            {
+                failureReason =
+                    $"final presentation source epoch {source.LogicalEpoch} was not recorded by the selected scene primary";
+                return false;
+            }
+
+            if (source.DescriptorSlot != checked((int)descriptorSlot))
+            {
+                failureReason =
+                    $"final presentation source epoch {source.LogicalEpoch} uses descriptor slot {source.DescriptorSlot}, not acquired slot {descriptorSlot}";
+                return false;
+            }
+
+            bool generationsCurrent =
+                GetCurrentVulkanResourceGeneration(
+                    ObjectType.Image,
+                    source.Image.Handle) ==
+                    source.ImageAllocationGeneration &&
+                GetCurrentVulkanResourceGeneration(
+                    ObjectType.ImageView,
+                    source.ImageView.Handle) ==
+                    source.ImageViewGeneration &&
+                GetCurrentVulkanResourceGeneration(
+                    ObjectType.Sampler,
+                    source.Sampler.Handle) ==
+                    source.SamplerGeneration &&
+                GetCurrentVulkanResourceGeneration(
+                    ObjectType.DescriptorSet,
+                    source.DescriptorSet.Handle) ==
+                    source.DescriptorSetGeneration &&
+                ResolveCommandBufferRecordingGeneration(
+                    source.OwningCommandArtifact) ==
+                    source.OwningCommandArtifactGeneration;
+            if (generationsCurrent)
+                return true;
+
+            failureReason =
+                $"final presentation source epoch {source.LogicalEpoch} references a superseded native generation";
+            return false;
         }
 
         private void RecoverDesktopRecordingException(

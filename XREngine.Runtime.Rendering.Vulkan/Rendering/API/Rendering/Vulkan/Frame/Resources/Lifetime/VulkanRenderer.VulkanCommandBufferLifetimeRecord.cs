@@ -12,6 +12,8 @@ public unsafe partial class VulkanRenderer
         public int QueuedSubmissionCount;
         public VulkanFrameDataGenerationLease FrameDataLease;
         public CommandBufferLevel Level;
+        public VulkanResourceLifetimeKey AllocatingCommandPool;
+        public ulong AllocatingCommandPoolGeneration;
 
         public void RefreshTouchedDependencies()
         {

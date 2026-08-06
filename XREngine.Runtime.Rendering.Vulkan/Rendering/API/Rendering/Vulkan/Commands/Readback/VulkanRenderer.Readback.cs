@@ -404,6 +404,12 @@ namespace XREngine.Rendering.Vulkan
 
             // Async fallback: read from swapchain depth image via fence + background poll.
 
+            if (!TryAdmitVulkanDeviceOperation("Readback.Depth", out _))
+            {
+                depthCallback?.Invoke(1.0f);
+                return;
+            }
+
             VulkanSwapchainDepthResources? resources = CurrentSwapchainDepthResources;
             if (resources is null)
             {
@@ -451,8 +457,18 @@ namespace XREngine.Rendering.Vulkan
                 Flags = 0, // Start unsignaled
             };
 
-            if (Api!.CreateFence(device, ref fenceInfo, null, out Fence fence) != Result.Success)
+            if (!TryAdmitVulkanDeviceOperation("vkCreateFence.Readback.Depth", out _))
             {
+                FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "Readback.DeviceLost");
+                DestroyBuffer(stagingBuffer, stagingMemory);
+                depthCallback?.Invoke(1.0f);
+                return;
+            }
+            Result createFenceResult = Api!.CreateFence(device, ref fenceInfo, null, out Fence fence);
+            if (createFenceResult != Result.Success)
+            {
+                if (createFenceResult == Result.ErrorDeviceLost)
+                    MarkDeviceLost("Depth readback fence creation returned ErrorDeviceLost", "vkCreateFence.Readback.Depth", createFenceResult);
                 FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "Readback.RecordFailure");
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 depthCallback?.Invoke(1.0f);
@@ -466,8 +482,19 @@ namespace XREngine.Rendering.Vulkan
                 Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
             };
 
-            if (Api!.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
+            if (!TryAdmitVulkanDeviceOperation("vkBeginCommandBuffer.Readback.Depth", out _))
             {
+                Api!.DestroyFence(device, fence, null);
+                FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "Readback.DeviceLost");
+                DestroyBuffer(stagingBuffer, stagingMemory);
+                depthCallback?.Invoke(1.0f);
+                return;
+            }
+            Result beginCommandBufferResult = Api!.BeginCommandBuffer(commandBuffer, ref beginInfo);
+            if (beginCommandBufferResult != Result.Success)
+            {
+                if (beginCommandBufferResult == Result.ErrorDeviceLost)
+                    MarkDeviceLost("Depth readback command recording returned ErrorDeviceLost", "vkBeginCommandBuffer.Readback.Depth", beginCommandBufferResult);
                 Api.DestroyFence(device, fence, null);
                 FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "Readback.BeginFailure");
                 DestroyBuffer(stagingBuffer, stagingMemory);
@@ -542,7 +569,25 @@ namespace XREngine.Rendering.Vulkan
                 PipelineStageFlags.EarlyFragmentTestsBit,
                 0, 0, null, 0, null, 1, &toAttachmentBarrier);
 
-            Api!.EndCommandBuffer(commandBuffer);
+            if (!TryAdmitVulkanDeviceOperation("vkEndCommandBuffer.Readback.Depth", out _))
+            {
+                Api!.DestroyFence(device, fence, null);
+                FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "Readback.DeviceLost");
+                DestroyBuffer(stagingBuffer, stagingMemory);
+                depthCallback?.Invoke(1.0f);
+                return;
+            }
+            Result endCommandBufferResult = Api!.EndCommandBuffer(commandBuffer);
+            if (endCommandBufferResult != Result.Success)
+            {
+                if (endCommandBufferResult == Result.ErrorDeviceLost)
+                    MarkDeviceLost("Depth readback command recording returned ErrorDeviceLost", "vkEndCommandBuffer.Readback.Depth", endCommandBufferResult);
+                Api.DestroyFence(device, fence, null);
+                FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "Readback.EndFailure");
+                DestroyBuffer(stagingBuffer, stagingMemory);
+                depthCallback?.Invoke(1.0f);
+                return;
+            }
 
             // Submit with fence
             SubmitInfo submitInfo = new()
@@ -561,7 +606,10 @@ namespace XREngine.Rendering.Vulkan
             if (depthSubmitResult != Result.Success)
             {
                 if (depthSubmitResult == Result.ErrorDeviceLost)
-                    MarkDeviceLost("Depth readback QueueSubmit returned ErrorDeviceLost");
+                    MarkDeviceLost(
+                        "Depth readback QueueSubmit returned ErrorDeviceLost",
+                        "vkQueueSubmit.Readback.Depth",
+                        depthSubmitResult);
 
                 Api!.DestroyFence(device, fence, null);
                 FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "Readback.SubmitFailure");
@@ -583,6 +631,11 @@ namespace XREngine.Rendering.Vulkan
                 bool submissionCompleted = false;
                 try
                 {
+                    if (!TryAdmitVulkanDeviceOperation("vkWaitForFences.Readback.Depth", out _))
+                    {
+                        depthCallback?.Invoke(1.0f);
+                        return;
+                    }
                     // Poll the fence with a timeout to avoid blocking indefinitely
                     const ulong timeoutNs = 5_000_000_000; // 5 seconds
                     var result = api!.WaitForFences(dev, 1, ref fence, true, timeoutNs);
@@ -590,7 +643,7 @@ namespace XREngine.Rendering.Vulkan
                     if (result != Result.Success)
                     {
                         if (result == Result.ErrorDeviceLost)
-                            MarkDeviceLost("Depth readback WaitForFences returned ErrorDeviceLost");
+                            MarkDeviceLost("Depth readback WaitForFences returned ErrorDeviceLost", "vkWaitForFences.Readback.Depth", result);
 
                         depthCallback?.Invoke(1.0f);
                         return;

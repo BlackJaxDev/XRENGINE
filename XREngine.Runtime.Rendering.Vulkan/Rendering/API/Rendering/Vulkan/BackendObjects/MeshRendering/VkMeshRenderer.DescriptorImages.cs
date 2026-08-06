@@ -35,6 +35,7 @@ internal unsafe partial class VkMeshRenderer
 	{
 		imageInfo = default;
 		bool requiresReadyDescriptor =
+			binding.Requirement == EVulkanDescriptorBindingRequirement.Required ||
 			snapshot?.IsSamplerReadyRequired(binding.Name) == true;
 		bool bindless = VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(binding);
 		MaterialTextureBindingResolution textureBinding = snapshot is not null

@@ -32,9 +32,11 @@ namespace XREngine.Rendering.Vulkan
 
             DrainInvalidatedCommandBufferRecordings();
             DrainRetiredSwapchainGenerations();
+            DrainRetiredCommandPools(frameSlot);
             DrainRetiredDescriptorPools();
             DrainRetiredPipelines();
             DrainRetiredPipelineLayouts();
+            DrainRetiredDescriptorSetLayouts();
             DrainRetiredBuffers();
             DrainRetiredFramebuffers();
             DrainRetiredImages();

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using Silk.NET.Vulkan;
 using XREngine;
 using XREngine.Data;
@@ -60,7 +61,7 @@ public unsafe partial class VulkanRenderer
 
     internal void EnqueueFrameOp(FrameOp op)
     {
-        FrameOp validatedOp = EnsureValidFrameOpPassIndex(op);
+        FrameOp validatedOp = LowerFrameOpResourceUse(EnsureValidFrameOpPassIndex(op));
         PublishFrameOpDrawStats(validatedOp);
 
         FrameOpCapture? capture = _frameOperationQueue.CurrentThread.Capture;
@@ -81,6 +82,292 @@ public unsafe partial class VulkanRenderer
 
         using (_frameOperationQueue.SyncRoot.EnterScope())
             _frameOperationQueue.Pending.Add(validatedOp);
+    }
+
+    /// <summary>
+    /// Captures the logical resource sets used by an operation before it enters
+    /// the shared frame queue. The identities describe framebuffer attachments,
+    /// not submission order or managed framebuffer names, so output planning can
+    /// derive producer-to-consumer edges before native command recording.
+    /// </summary>
+    private static FrameOp LowerFrameOpResourceUse(FrameOp op)
+    {
+        FrameOpResourceUseList uses = default;
+        XRFrameBuffer? output = GetOutputFrameBuffer(op);
+        XRFrameBuffer? input = op is BlitOp { InFbo: { } source } ? source : null;
+
+        FrameOpContext context = op.Context with
+        {
+            OutputProducerDependencySetId = ComputeOutputResourceSetId(output, op.Context),
+            OutputConsumerDependencySetId = input is null
+                ? 0UL
+                : ComputeOutputResourceSetId(input, op.Context),
+        };
+        op.Context = context;
+        AddTypedOperationUses(ref uses, op, output, input, context.ResourceGeneration);
+
+        ComputeDispatchSnapshot? bindings = op switch
+        {
+            ComputeDispatchOp compute => compute.Snapshot,
+            ComputeDispatchIndirectOp computeIndirect => computeIndirect.Snapshot,
+            MeshDrawOp draw => draw.Draw.ProgramBindingSnapshot,
+            IndirectDrawOp draw => draw.Draw.ProgramBindingSnapshot,
+            _ => null,
+        };
+        if (bindings is not null)
+            AddDescriptorReadUses(ref uses, bindings, context.ResourceGeneration);
+        AddDlssUses(ref uses, op, context.ResourceGeneration);
+        op.SetResourceUses(uses);
+        return op;
+    }
+
+    private static XRFrameBuffer? GetOutputFrameBuffer(FrameOp op)
+        => op switch
+        {
+            BlitOp blit => blit.OutFbo,
+            ClearOp clear => clear.Target ?? clear.Context.OutputFrameBuffer,
+            MeshDrawOp draw => draw.Target ?? draw.Context.OutputFrameBuffer,
+            IndirectDrawOp draw => draw.Target ?? draw.Context.OutputFrameBuffer,
+            MeshTaskDispatchIndirectCountOp meshTask => meshTask.Target ?? meshTask.Context.OutputFrameBuffer,
+            TransformFeedbackOp transformFeedback => transformFeedback.Target ?? transformFeedback.Context.OutputFrameBuffer,
+            _ => null,
+        };
+
+    private static void AddTypedOperationUses(
+        ref FrameOpResourceUseList uses,
+        FrameOp op,
+        XRFrameBuffer? output,
+        XRFrameBuffer? input,
+        ulong version)
+    {
+        switch (op)
+        {
+            case ClearOp clear:
+                AddFrameBufferUses(ref uses, output, version, EFrameOpResourceAccess.Write,
+                    clear.ClearColor, clear.ClearDepth, clear.ClearStencil);
+                break;
+            case BlitOp blit:
+                AddFrameBufferUses(ref uses, input, version,
+                    EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported,
+                    blit.ColorBit, blit.DepthBit, blit.StencilBit);
+                AddFrameBufferUses(ref uses, output, version, EFrameOpResourceAccess.Write,
+                    blit.ColorBit, blit.DepthBit, blit.StencilBit);
+                break;
+            case MeshDrawOp:
+                AddFrameBufferUses(ref uses, output, version, EFrameOpResourceAccess.Write);
+                break;
+            case TransformFeedbackOp transformFeedback:
+                AddFrameBufferUses(ref uses, output, version, EFrameOpResourceAccess.Write);
+                AddBufferUse(
+                    ref uses,
+                    transformFeedback.TransformFeedback.Data.FeedbackBuffer,
+                    version,
+                    EFrameOpResourceAccess.Write | EFrameOpResourceAccess.Imported);
+                if (transformFeedback.CounterBuffer is not null)
+                    AddBufferUse(
+                        ref uses,
+                        transformFeedback.CounterBuffer,
+                        version,
+                        transformFeedback.Operation == EXRTransformFeedbackOperation.DrawIndirectByteCount
+                            ? EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported
+                            : EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Write | EFrameOpResourceAccess.Imported);
+                break;
+            case IndirectDrawOp indirect:
+                AddFrameBufferUses(ref uses, output, version, EFrameOpResourceAccess.Write);
+                AddBufferUse(ref uses, indirect.IndirectBuffer, version,
+                    EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported);
+                if (indirect.ParameterBuffer is not null)
+                    AddBufferUse(ref uses, indirect.ParameterBuffer, version,
+                        EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported);
+                break;
+            case MeshTaskDispatchIndirectCountOp meshTask:
+                AddFrameBufferUses(ref uses, output, version, EFrameOpResourceAccess.Write);
+                AddBufferUse(ref uses, meshTask.IndirectBuffer, version,
+                    EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported);
+                AddBufferUse(ref uses, meshTask.CountBuffer, version,
+                    EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported);
+                break;
+            case PublishFramebufferForSamplingOp publish:
+                AddFrameBufferUses(ref uses, publish.FrameBuffer, version,
+                    EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported);
+                break;
+            case BufferCopyOp copy:
+                AddBufferUse(ref uses, copy.SourceOwner, version,
+                    EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported);
+                AddBufferUse(ref uses, copy.DestinationOwner, version,
+                    EFrameOpResourceAccess.Write);
+                break;
+            case ComputeDispatchIndirectOp indirect:
+                AddBufferUse(ref uses, indirect.ArgumentOwner, version,
+                    EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported);
+                break;
+            case TextureUploadFrameOp upload:
+                AddTextureUploadUse(ref uses, upload.Upload, version);
+                break;
+        }
+    }
+
+    private static void AddFrameBufferUses(
+        ref FrameOpResourceUseList uses,
+        XRFrameBuffer? frameBuffer,
+        ulong version,
+        EFrameOpResourceAccess access,
+        bool includeColor = true,
+        bool includeDepth = true,
+        bool includeStencil = true)
+    {
+        if (frameBuffer?.Targets is not { Length: > 0 } targets)
+            return;
+        for (int index = 0; index < targets.Length; index++)
+        {
+            EFrameBufferAttachment attachment = targets[index].Attachment;
+            bool isColor = attachment is >= EFrameBufferAttachment.ColorAttachment0 and <= EFrameBufferAttachment.ColorAttachment31 ||
+                attachment is EFrameBufferAttachment.Back or EFrameBufferAttachment.Front or EFrameBufferAttachment.Left or EFrameBufferAttachment.Right or
+                EFrameBufferAttachment.FrontLeft or EFrameBufferAttachment.FrontRight or EFrameBufferAttachment.BackLeft or EFrameBufferAttachment.BackRight;
+            bool isDepth = attachment is EFrameBufferAttachment.DepthAttachment or EFrameBufferAttachment.DepthStencilAttachment;
+            bool isStencil = attachment is EFrameBufferAttachment.StencilAttachment or EFrameBufferAttachment.DepthStencilAttachment;
+            if ((!isColor || !includeColor) && (!isDepth || !includeDepth) && (!isStencil || !includeStencil))
+                continue;
+            uses.Add(
+                ComputeResourceIdentity(targets[index].Target),
+                version,
+                access);
+        }
+    }
+
+    private static void AddDescriptorReadUses(
+        ref FrameOpResourceUseList uses,
+        ComputeDispatchSnapshot snapshot,
+        ulong version)
+    {
+        foreach (XRTexture texture in snapshot.Samplers.Values)
+            uses.Add(
+                ComputeResourceIdentity(texture),
+                version,
+                EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported);
+        foreach (XRTexture texture in snapshot.SamplersByName.Values)
+            uses.Add(
+                ComputeResourceIdentity(texture),
+                version,
+                EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported);
+        foreach (ProgramImageBinding binding in snapshot.Images.Values)
+        {
+            EFrameOpResourceAccess access = binding.Access switch
+            {
+                XRRenderProgram.EImageAccess.ReadOnly => EFrameOpResourceAccess.Read,
+                XRRenderProgram.EImageAccess.WriteOnly => EFrameOpResourceAccess.Write,
+                _ => EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Write,
+            };
+            uses.Add(
+                ComputeResourceIdentity(binding.Texture),
+                version,
+                access | EFrameOpResourceAccess.Imported);
+        }
+        foreach (VulkanComputeBufferBinding binding in snapshot.Buffers.Values)
+            AddComputeBufferUse(ref uses, binding, version);
+        foreach (VulkanComputeBufferBinding binding in snapshot.BuffersByName.Values)
+            AddComputeBufferUse(ref uses, binding, version);
+    }
+
+    private static void AddComputeBufferUse(
+        ref FrameOpResourceUseList uses,
+        in VulkanComputeBufferBinding binding,
+        ulong version)
+    {
+        // Compute buffers are storage bindings unless reflection has narrowed
+        // them to a read-only usage. Conservatively retain both sides of the
+        // dependency so producers cannot be scheduled after a dispatch.
+        EFrameOpResourceAccess access =
+            (binding.UsageFlags & Silk.NET.Vulkan.BufferUsageFlags.StorageBufferBit) != 0
+                ? EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Write | EFrameOpResourceAccess.Imported
+                : EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported;
+        AddBufferUse(ref uses, binding.Data, version, access);
+    }
+
+    private static void AddBufferUse(
+        ref FrameOpResourceUseList uses,
+        object buffer,
+        ulong version,
+        EFrameOpResourceAccess access)
+        => uses.Add(ComputeResourceIdentity(buffer), version, access);
+
+    private static void AddTextureUploadUse(
+        ref FrameOpResourceUseList uses,
+        VulkanImportedTexturePendingUpload upload,
+        ulong version)
+        => uses.Add(ComputeResourceIdentity(upload.Texture), version, EFrameOpResourceAccess.Write);
+
+    private static void AddDlssUses(
+        ref FrameOpResourceUseList uses,
+        FrameOp op,
+        ulong version)
+    {
+        if (op is not DlssUpscaleOp dlss)
+        {
+            if (op is not DlssFrameGenerationOp frameGeneration)
+                return;
+            AddStreamlineUse(ref uses, frameGeneration.Depth, version, EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported);
+            AddStreamlineUse(ref uses, frameGeneration.Motion, version, EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported);
+            AddStreamlineUse(ref uses, frameGeneration.HudlessColor, version, EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported);
+            return;
+        }
+        AddStreamlineUse(ref uses, dlss.SourceColor, version, EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported);
+        AddStreamlineUse(ref uses, dlss.Depth, version, EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported);
+        AddStreamlineUse(ref uses, dlss.Motion, version, EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported);
+        AddStreamlineUse(ref uses, dlss.OutputColor, version, EFrameOpResourceAccess.Write);
+        if (dlss.Exposure is { } exposure)
+            AddStreamlineUse(ref uses, exposure, version, EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported);
+    }
+
+    private static void AddStreamlineUse(
+        ref FrameOpResourceUseList uses,
+        in VulkanStreamlineImage image,
+        ulong version,
+        EFrameOpResourceAccess access)
+    {
+        if (image.Image.Handle != 0UL)
+            uses.Add(image.Image.Handle, version, access);
+    }
+
+    private static ulong ComputeResourceIdentity(object resource)
+    {
+        FrameOpSignatureHasher hash = new();
+        hash.Add(0x46524D4F50524553UL);
+        hash.Add(RuntimeHelpers.GetHashCode(resource));
+        hash.Add(resource.GetType().GetHashCode());
+        ulong result = hash.ToHash();
+        return result == 0UL ? 1UL : result;
+    }
+
+    private static ulong ComputeOutputResourceSetId(
+        XRFrameBuffer? frameBuffer,
+        in FrameOpContext context)
+    {
+        FrameOpSignatureHasher hash = new();
+        hash.Add(0x46524D45534F5552UL);
+        if (frameBuffer?.Targets is { Length: > 0 } targets)
+        {
+            for (int index = 0; index < targets.Length; index++)
+            {
+                var attachment = targets[index];
+                hash.Add(RuntimeHelpers.GetHashCode(attachment.Target));
+                hash.Add((int)attachment.Attachment);
+                hash.Add(attachment.MipLevel);
+                hash.Add(attachment.LayerIndex);
+            }
+        }
+        else
+        {
+            // Default/OpenXR presentation targets have no managed framebuffer
+            // attachment list. Their target identity is still the resource
+            // contract captured by the render context, never an order token.
+            hash.Add(context.OutputTargetIdentity);
+            hash.Add(context.OutputFrameBufferIdentity);
+            hash.Add((int)context.ContextKind);
+        }
+
+        ulong result = hash.ToHash();
+        return result == 0UL ? 1UL : result;
     }
 
     /// <summary>

@@ -45,6 +45,7 @@ namespace XREngine.Rendering.Vulkan
                     Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
                 };
 
+                ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.TextureUploadRecording");
                 if (Api!.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
                     throw new Exception("Failed to begin texture upload command buffer.");
 
@@ -319,7 +320,7 @@ namespace XREngine.Rendering.Vulkan
             // these staging resources. They cannot remain reusable after the
             // canceled upload retires those buffers, images, or descriptors.
             _ = InvalidateCommandChainSecondaryCommandBuffersForDescriptorReferenceRelease();
-            MarkOpenXrPrimaryCommandBufferVariantsDirty();
+            MarkOpenXrPrimaryCommandArtifactOwnersDirty();
             MarkCommandBuffersDirty(reason);
 
             for (int i = 0; i < uploads.Count; i++)

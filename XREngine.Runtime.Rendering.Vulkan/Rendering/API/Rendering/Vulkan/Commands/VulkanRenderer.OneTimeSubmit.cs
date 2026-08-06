@@ -42,8 +42,7 @@ namespace XREngine.Rendering.Vulkan
 
         private CommandBuffer CommandsStart(bool useTransferQueue)
         {
-            if (_deviceLost)
-                throw new InvalidOperationException("Cannot allocate a Vulkan one-shot command buffer after the device was lost.");
+            ThrowIfVulkanDeviceOperationNotAdmitted("OneTimeSubmit.CommandsStart");
 
             CommandPool pool = useTransferQueue
                 ? GetThreadTransferCommandPool()
@@ -70,6 +69,7 @@ namespace XREngine.Rendering.Vulkan
                 Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
             };
 
+            ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.OneTimeSubmit");
             Result beginResult = Api!.BeginCommandBuffer(commandBuffer, ref beginInfo);
             if (beginResult != Result.Success)
             {
@@ -86,7 +86,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void CommandsStop(CommandBuffer commandBuffer, bool useTransferQueue)
         {
-            if (_deviceLost)
+            if (!TryAdmitVulkanDeviceOperation("OneTimeSubmit.CommandsStop", out _))
             {
                 RemoveCommandBufferBindState(commandBuffer);
                 return;
@@ -131,7 +131,10 @@ namespace XREngine.Rendering.Vulkan
                 if (submitResult != Result.Success)
                 {
                     if (submitResult == Result.ErrorDeviceLost)
-                        MarkDeviceLost();
+                        MarkDeviceLost(
+                            "One-shot queue submit returned ErrorDeviceLost",
+                            "vkQueueSubmit.OneTimeSubmit",
+                            submitResult);
 
                     Debug.VulkanWarning($"[Vulkan] One-shot QueueSubmit failed (result={submitResult}). Skipping command buffer free.");
                     if (submitFence.Handle != 0 && submitResult != Result.ErrorDeviceLost)
@@ -142,6 +145,12 @@ namespace XREngine.Rendering.Vulkan
 
                 if (submitFence.Handle != 0)
                 {
+                    if (!TryAdmitVulkanDeviceOperation("vkWaitForFences", out _))
+                    {
+                        RemoveCommandBufferBindState(commandBuffer);
+                        return;
+                    }
+
                     Result waitResult;
                     using (VulkanCpuStageScope fenceWaitStage =
                         new(EVulkanCpuStage.AuxiliaryFenceWait))
@@ -157,7 +166,10 @@ namespace XREngine.Rendering.Vulkan
                     if (waitSucceeded)
                         NotifyVulkanFenceCompleted(submitFence);
                     if (waitResult == Result.ErrorDeviceLost)
-                        MarkDeviceLost();
+                        MarkDeviceLost(
+                            "One-shot vkWaitForFences returned ErrorDeviceLost",
+                            "vkWaitForFences",
+                            waitResult);
                     if (!waitSucceeded)
                         Debug.VulkanWarning($"[Vulkan] WaitForFences for one-shot submit failed (result={waitResult}). Command buffer will not be freed to avoid use-after-free.");
                 }

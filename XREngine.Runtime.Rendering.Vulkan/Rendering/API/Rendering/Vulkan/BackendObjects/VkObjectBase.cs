@@ -58,7 +58,7 @@ internal abstract class VkObjectBase(VulkanRenderer renderer) :
         if (IsActive || _generationFailed)
             return;
 
-        if (!BackendContext.IsLogicalDeviceReady)
+        if (!BackendContext.IsLogicalDeviceReady || !BackendContext.IsDeviceOperational)
             return;
 
         PreGenerated();

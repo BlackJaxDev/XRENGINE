@@ -400,15 +400,14 @@ namespace XREngine.Rendering.Vulkan
                 0,
                 new ComputeDispatchPushConstants(op.GroupsX, op.GroupsY, op.GroupsZ, 0u));
 
-            int descriptorBindingOrdinal =
-                op.ReusableDescriptorBindingOrdinal >= 0
-                    ? op.ReusableDescriptorBindingOrdinal
-                    : opIndex;
+            // The prepared operation index is sidecar state owned by this
+            // recording pass; never write it back into the sealed frame plan.
+            int descriptorBindingOrdinal = opIndex;
             ulong reusableDescriptorKey =
                 ComputeReusableComputeDescriptorBindingKey(
                     op,
                     descriptorBindingOrdinal);
-            if (!op.Program.TryBuildAndBindComputeDescriptorSets(commandBuffer, imageIndex, op.Snapshot, reusableDescriptorKey, out _, out var tempBuffers))
+            if (!op.Program.TryBuildAndBindComputeDescriptorSets(commandBuffer, imageIndex, op.Snapshot, reusableDescriptorKey, out _, out DescriptorSet[] boundDescriptorSets, out var tempBuffers))
             {
                 foreach ((Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) in tempBuffers)
                     DestroyBuffer(buffer, memory);
@@ -431,6 +430,9 @@ namespace XREngine.Rendering.Vulkan
                     "compute dispatch skipped because descriptor binding failed");
                 throw new InvalidOperationException($"Descriptor binding failed for compute program '{op.Program.Data.Name ?? "UnnamedProgram"}'.");
             }
+
+            _commandBufferRecordingScratch.Value!.PreparedComputePayload =
+                new VulkanPreparedComputePayload(boundDescriptorSets);
 
             RegisterComputeTransientUniformBuffers(imageIndex, tempBuffers);
             Api!.CmdDispatch(commandBuffer, op.GroupsX, op.GroupsY, op.GroupsZ);

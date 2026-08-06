@@ -801,9 +801,12 @@ namespace XREngine.Rendering.Vulkan
 
         private void AddTextureDescriptorResourceFingerprint(ref HashCode hash, XRTexture? texture)
         {
-            hash.Add(texture?.GetHashCode() ?? 0);
             if (texture is null)
             {
+                // Preserve a stable null sentinel without treating a managed
+                // wrapper identity as a native descriptor identity.
+                hash.Add(0UL);
+                hash.Add(0UL);
                 hash.Add(0UL);
                 return;
             }
@@ -815,8 +818,18 @@ namespace XREngine.Rendering.Vulkan
                 hash.Add(imageSource.IsDescriptorReady);
                 hash.Add(imageSource.DescriptorGeneration);
                 hash.Add(imageSource.DescriptorImage.Handle);
+                hash.Add(Renderer.GetCurrentVulkanResourceGeneration(
+                    ObjectType.Image,
+                    imageSource.DescriptorImage.Handle));
                 hash.Add(imageSource.DescriptorView.Handle);
+                hash.Add(Renderer.GetCurrentVulkanResourceGeneration(
+                    ObjectType.ImageView,
+                    imageSource.DescriptorView.Handle));
                 hash.Add(imageSource.DescriptorSampler.Handle);
+                hash.Add(Renderer.GetCurrentVulkanResourceGeneration(
+                    ObjectType.Sampler,
+                    imageSource.DescriptorSampler.Handle));
+                hash.Add(Renderer.ResolveDescriptorImageLayout(imageSource, DescriptorType.SampledImage));
                 hash.Add(imageSource.DescriptorViewType);
                 hash.Add(imageSource.DescriptorFormat);
                 hash.Add(imageSource.DescriptorAspect);
@@ -830,6 +843,23 @@ namespace XREngine.Rendering.Vulkan
             if (apiObject is IVkTexelBufferDescriptorSource texelSource)
             {
                 hash.Add(texelSource.DescriptorBufferView.Handle);
+                hash.Add(Renderer.GetCurrentVulkanResourceGeneration(
+                    ObjectType.BufferView,
+                    texelSource.DescriptorBufferView.Handle));
+                if (Renderer.TryGetBufferViewBackingBuffer(
+                        texelSource.DescriptorBufferView,
+                        out Silk.NET.Vulkan.Buffer backingBuffer))
+                {
+                    hash.Add(backingBuffer.Handle);
+                    hash.Add(Renderer.GetCurrentVulkanResourceGeneration(
+                        ObjectType.Buffer,
+                        backingBuffer.Handle));
+                }
+                else
+                {
+                    hash.Add(0UL);
+                    hash.Add(0UL);
+                }
                 hash.Add(texelSource.DescriptorBufferFormat);
             }
             else
@@ -1256,6 +1286,12 @@ namespace XREngine.Rendering.Vulkan
             imageInfo = default;
             if (!TryResolveBoundTexture(program, binding, arrayIndex, out XRTexture? texture) || texture is null)
             {
+                if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
+                {
+                    RecordDescriptorFailure(binding, "required material texture is missing");
+                    return false;
+                }
+
                 imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
                 if (imageInfo.ImageView.Handle != 0)
                 {
@@ -1351,6 +1387,9 @@ namespace XREngine.Rendering.Vulkan
                 static name => string.Concat("material descriptor '", name, "'"));
             if (!source.TryEnsureDescriptorReadyForUse(readinessReason, allowSynchronousTextureUpload))
             {
+                if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
+                    return false;
+
                 imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
                 if (imageInfo.ImageView.Handle != 0)
                 {
@@ -1388,6 +1427,9 @@ namespace XREngine.Rendering.Vulkan
                 {
                     if (!Renderer.IsLiveImageViewBackedByLiveImage(aspectView))
                     {
+                        if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
+                            return false;
+
                         imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
                         if (imageInfo.ImageView.Handle != 0)
                         {
@@ -1419,6 +1461,9 @@ namespace XREngine.Rendering.Vulkan
             ImageView descriptorView = ResolveDescriptorView(binding, source);
             if (descriptorView.Handle == 0)
             {
+                if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
+                    return false;
+
                 imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
                 if (imageInfo.ImageView.Handle != 0)
                 {
@@ -1433,6 +1478,9 @@ namespace XREngine.Rendering.Vulkan
 
             if (!Renderer.IsLiveImageViewBackedByLiveImage(descriptorView))
             {
+                if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
+                    return false;
+
                 imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
                 if (imageInfo.ImageView.Handle != 0)
                 {
@@ -1469,9 +1517,15 @@ namespace XREngine.Rendering.Vulkan
 
             if (sampler.Handle != 0)
             {
+                if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
+                    return false;
+
                 WarnOnce($"Material texture for binding '{binding.Name}' references a retired Vulkan sampler. Using placeholder sampler.");
                 RecordDescriptorFallback(binding);
             }
+
+            if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
+                return false;
 
             sampler = Renderer.GetPlaceholderSampler();
             if (sampler.Handle != 0 && Renderer.IsLiveSampler(sampler))

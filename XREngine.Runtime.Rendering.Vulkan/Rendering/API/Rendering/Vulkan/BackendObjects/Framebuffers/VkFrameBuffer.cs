@@ -50,6 +50,77 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
 
     internal uint AttachmentCount => (uint)(_attachmentSignature?.Length ?? 0);
 
+    /// <summary>
+    /// Captures the exact native objects inherited by command recording without
+    /// creating API wrappers or allocating per-frame storage.
+    /// </summary>
+    internal bool TryCaptureRecordedRenderTargetSnapshot(
+        out VulkanRecordedRenderTargetSnapshot snapshot)
+    {
+        snapshot = default;
+        if (!IsGenerated ||
+            _attachmentViews is null ||
+            _attachmentTargets is null ||
+            _attachmentSignature is null ||
+            _attachmentViews.Length != _attachmentTargets.Length ||
+            _attachmentViews.Length != _attachmentSignature.Length ||
+            _attachmentViews.Length > VulkanRecordedRenderTargetSnapshot.MaxAttachmentCount)
+        {
+            return false;
+        }
+
+        ulong framebufferGeneration = _frameBuffer.Handle == 0
+            ? 0UL
+            : Renderer.GetCurrentVulkanResourceGeneration(
+                ObjectType.Framebuffer,
+                _frameBuffer.Handle);
+        snapshot.Initialize(
+            _frameBuffer.Handle,
+            framebufferGeneration,
+            FramebufferWidth,
+            FramebufferHeight,
+            MultiviewViewMask,
+            _attachmentViews.Length);
+
+        for (int i = 0; i < _attachmentViews.Length; i++)
+        {
+            AttachmentTargetInfo targetInfo = _attachmentTargets[i];
+            if (!TryResolveRecordedAttachmentImage(targetInfo.Target, out Image image))
+                return false;
+
+            ImageView view = _attachmentViews[i];
+            VulkanNativeAttachmentIdentity identity = new(
+                image.Handle,
+                Renderer.GetCurrentVulkanResourceGeneration(ObjectType.Image, image.Handle),
+                view.Handle,
+                Renderer.GetCurrentVulkanResourceGeneration(ObjectType.ImageView, view.Handle),
+                _attachmentSignature[i].ReferenceLayout);
+            snapshot.SetAttachment(i, identity);
+        }
+
+        return snapshot.IsComplete;
+    }
+
+    private bool TryResolveRecordedAttachmentImage(
+        IFrameBufferAttachement target,
+        out Image image)
+    {
+        image = default;
+        object? apiObject = target switch
+        {
+            XRTexture texture when Renderer.TryGetAPIRenderObject(texture, out var textureObject) => textureObject,
+            XRRenderBuffer renderBuffer when Renderer.TryGetAPIRenderObject(renderBuffer, out var renderBufferObject) => renderBufferObject,
+            _ => null,
+        };
+        image = apiObject switch
+        {
+            IVkImageDescriptorSource source => source.DescriptorImage,
+            VkRenderBuffer renderBuffer => renderBuffer.Image,
+            _ => default,
+        };
+        return image.Handle != 0;
+    }
+
     internal void EnsureCurrent()
     {
         if (!IsActive)

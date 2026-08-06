@@ -26,12 +26,20 @@ public unsafe partial class VulkanRenderer
     private readonly VulkanImageLayoutTransitionBreadcrumb[] _vulkanImageLayoutTransitions = new VulkanImageLayoutTransitionBreadcrumb[VulkanImageLayoutTransitionCapacity];
     private long _vulkanDescriptorTableGeneration;
     private string? _firstFailingVulkanApi;
+    private VulkanDeviceLossRecord? _firstDeviceLossRecord;
     private readonly object _vulkanDeviceAddressDiagnosticsLock = new();
     private readonly VulkanDeviceAddressRange[] _vulkanDeviceAddressRanges = new VulkanDeviceAddressRange[VulkanDeviceAddressRangeCapacity];
     private readonly VulkanDeviceAddressBindingEvent[] _vulkanDeviceAddressBindingEvents = new VulkanDeviceAddressBindingEvent[VulkanDeviceAddressBindingEventCapacity];
     private long _vulkanDeviceAddressBindingEventSerial;
     private readonly object _vulkanNvCheckpointMarkerLock = new();
     private readonly VulkanNvCheckpointMarker[] _vulkanNvCheckpointMarkers = new VulkanNvCheckpointMarker[VulkanNvCheckpointMarkerCapacity];
+
+    /// <summary>
+    /// Gets the immutable record published by the thread that won the device-loss
+    /// transition. Later fallout must not overwrite the original failure evidence.
+    /// </summary>
+    private VulkanDeviceLossRecord? FirstDeviceLossRecord
+        => Volatile.Read(ref _firstDeviceLossRecord);
 
     /// <summary>
     /// Creates a diagnostic context for a swapchain submission.
@@ -369,6 +377,28 @@ public unsafe partial class VulkanRenderer
 
         if (!context.IsEmpty)
             builder.Append("; ").Append(DescribeVulkanSubmissionDiagnosticContext(context));
+
+        VulkanDeviceLossRecord? firstLoss = FirstDeviceLossRecord;
+        if (firstLoss is not null)
+        {
+            builder.Append("; FirstLoss operation=").Append(firstLoss.Operation)
+                .Append(" result=").Append(firstLoss.Result)
+                .Append(" observedUtc=").Append(firstLoss.ObservedAtUtc.ToString("O"));
+            if (!firstLoss.Submission.IsEmpty)
+                builder.Append(" firstLossSubmission=")
+                    .Append(DescribeVulkanSubmissionDiagnosticContext(firstLoss.Submission));
+
+            VulkanResourceLifetimeSnapshot lifetime = firstLoss.ResourceLifetime;
+            builder.Append(" firstLossLifetime=live/").Append(lifetime.LiveResourceCount)
+                .Append(" recorded/").Append(lifetime.RecordedResourceCount)
+                .Append(" submitted/").Append(lifetime.SubmittedResourceCount)
+                .Append(" inFlight/").Append(lifetime.InFlightSubmissionCount)
+                .Append(" pendingRetirement/").Append(lifetime.PendingRetirementCount)
+                .Append(" sequences=gfx:").Append(lifetime.LastGraphicsSequence)
+                .Append('/').Append(lifetime.CompletedGraphicsSequence)
+                .Append(" transfer:").Append(lifetime.LastTransferSequence)
+                .Append('/').Append(lifetime.CompletedTransferSequence);
+        }
 
         string breadcrumbs = DescribeVulkanCrashBreadcrumbTail();
         if (!string.IsNullOrWhiteSpace(breadcrumbs))

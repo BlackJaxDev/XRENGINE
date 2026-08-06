@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Silk.NET.Vulkan;
@@ -80,69 +81,78 @@ public unsafe partial class VulkanRenderer
         if (totalSize == 0)
             return false;
 
-        void* data = NativeMemory.Alloc(totalSize);
+        if (totalSize > int.MaxValue)
+            return false;
+
+        // Descriptor template updates run on the publication path. Reuse a
+        // pooled managed backing store instead of allocating/freeing native
+        // memory for every template invocation.
+        byte[] data = ArrayPool<byte>.Shared.Rent((int)totalSize);
         try
         {
-            for (int i = 0; i < writes.Length; i++)
-                CopyDescriptorTemplateData(writes[i], (byte*)data + entries[i].Offset);
-
-            if (!TryGetOrCreateDescriptorUpdateTemplate(
-                descriptorSetLayout,
-                bindPoint,
-                pipelineLayout,
-                setIndex,
-                entries,
-                signature,
-                out DescriptorUpdateTemplate updateTemplate))
-                return false;
-
-            if (!IsDeviceOperational)
-                return false;
-
-            ulong[]? dependentCommandBuffers;
-            int dependentCommandBufferCount;
-            bool invalidatesRecordedCommandBuffers;
-            VulkanDescriptorUpdateInvalidation firstInvalidation;
-            fixed (WriteDescriptorSet* writePtr = writes)
+            fixed (byte* dataPtr = data)
             {
-                lock (_resourceLifetimeTracker.SyncRoot)
+                for (int i = 0; i < writes.Length; i++)
+                    CopyDescriptorTemplateData(writes[i], dataPtr + entries[i].Offset);
+
+                if (!TryGetOrCreateDescriptorUpdateTemplate(
+                    descriptorSetLayout,
+                    bindPoint,
+                    pipelineLayout,
+                    setIndex,
+                    entries,
+                    signature,
+                    out DescriptorUpdateTemplate updateTemplate))
+                    return false;
+
+                if (!IsDeviceOperational)
+                    return false;
+
+                ulong[]? dependentCommandBuffers;
+                int dependentCommandBufferCount;
+                bool invalidatesRecordedCommandBuffers;
+                VulkanDescriptorUpdateInvalidation firstInvalidation;
+                fixed (WriteDescriptorSet* writePtr = writes)
                 {
-                    if (!TryPrevalidateVulkanDescriptorWrites_NoLock(
+                    lock (_resourceLifetimeTracker.SyncRoot)
+                    {
+                        if (!TryPrevalidateVulkanDescriptorWrites_NoLock(
+                                unchecked((uint)writes.Length),
+                                writePtr,
+                                out _))
+                        {
+                            return false;
+                        }
+
+                        ValidateAndRecordVulkanDescriptorWrites(
+                            unchecked((uint)writes.Length),
+                            writePtr);
+                        Api!.UpdateDescriptorSetWithTemplate(
+                            device,
+                            descriptorSet,
+                            updateTemplate,
+                            dataPtr);
+                        invalidatesRecordedCommandBuffers = TryCaptureDescriptorUpdateInvalidations_NoLock(
                             unchecked((uint)writes.Length),
                             writePtr,
-                            out _))
-                    {
-                        return false;
+                            out dependentCommandBuffers,
+                            out dependentCommandBufferCount,
+                            out firstInvalidation);
                     }
-
-                    ValidateAndRecordVulkanDescriptorWrites(
-                        unchecked((uint)writes.Length),
-                        writePtr);
-                    Api!.UpdateDescriptorSetWithTemplate(
-                        device,
-                        descriptorSet,
-                        updateTemplate,
-                        data);
-                    invalidatesRecordedCommandBuffers = TryCaptureDescriptorUpdateInvalidations_NoLock(
-                        unchecked((uint)writes.Length),
-                        writePtr,
-                        out dependentCommandBuffers,
-                        out dependentCommandBufferCount,
-                        out firstInvalidation);
                 }
-            }
 
-            PublishDescriptorSetContentUpdate(
-                invalidatesRecordedCommandBuffers,
-                dependentCommandBuffers,
-                dependentCommandBufferCount,
-                firstInvalidation,
-                "vkUpdateDescriptorSetWithTemplate");
-            return true;
+                PublishDescriptorSetContentUpdate(
+                    invalidatesRecordedCommandBuffers,
+                    dependentCommandBuffers,
+                    dependentCommandBufferCount,
+                    firstInvalidation,
+                    "vkUpdateDescriptorSetWithTemplate");
+                return true;
+            }
         }
         finally
         {
-            NativeMemory.Free(data);
+            ArrayPool<byte>.Shared.Return(data);
         }
     }
 

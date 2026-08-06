@@ -12,6 +12,10 @@ internal sealed class VulkanPreparedFrameRecording
     private VkPreparedMeshDraw[] _meshDraws = new VkPreparedMeshDraw[64];
     private VulkanPreparedCommandChain[] _commandChains =
         new VulkanPreparedCommandChain[16];
+    // Prepared chains retain their packet snapshots independently from the
+    // schedule cache. The cache may replace a chain's publication while a
+    // worker still encodes this frame-slot payload.
+    private RenderPacket[] _packets = new RenderPacket[16];
     private int _primaryPlanNodeCount;
     private int _meshDrawCount;
     private int _commandChainCount;
@@ -24,7 +28,13 @@ internal sealed class VulkanPreparedFrameRecording
     internal ulong PrimaryPlanIdentity { get; private set; }
     internal int MeshDrawCount => _meshDrawCount;
     internal int CommandChainCount => _commandChainCount;
+    internal int PacketCount { get; private set; }
     internal bool IsFrozen { get; private set; }
+    /// <summary>
+    /// Optional immutable frame-plan publication for consumers that need the
+    /// complete lowered operation/output snapshot alongside prepared draws.
+    /// </summary>
+    internal FramePlan? FramePlan { get; private set; }
 
     internal void Begin(int frameSlot, ulong generation)
     {
@@ -50,6 +60,32 @@ internal sealed class VulkanPreparedFrameRecording
         _primaryPlanNodeCount = plan.Count;
         PrimaryPlanIdentity = plan.Identity;
         _hasPrimaryPlan = true;
+    }
+
+    /// <summary>
+    /// Associates the frame-slot-owned plan built by lifecycle preparation with
+    /// this prepared recording. The caller must not attach a plan from another
+    /// frame slot or an unsealed plan.
+    /// </summary>
+    internal void AttachFramePlan(FramePlan framePlan)
+    {
+        ArgumentNullException.ThrowIfNull(framePlan);
+        if (IsFrozen)
+            throw new InvalidOperationException("Prepared Vulkan frame recording is frozen.");
+        if (!framePlan.IsSealed)
+            throw new InvalidOperationException("Only sealed frame plans may be attached to prepared recording.");
+        if (framePlan.FrameSlot != FrameSlot)
+        {
+            throw new InvalidOperationException(
+                $"Frame plan slot {framePlan.FrameSlot} does not match prepared recording slot {FrameSlot}.");
+        }
+
+        if (ReferenceEquals(FramePlan, framePlan))
+            return;
+
+        FramePlan?.ReleaseLease();
+        framePlan.AcquireLease();
+        FramePlan = framePlan;
     }
 
     internal int AddMeshDraw(in VkPreparedMeshDraw draw)
@@ -99,7 +135,10 @@ internal sealed class VulkanPreparedFrameRecording
         if (IsFrozen)
             throw new InvalidOperationException(
                 "Prepared Vulkan frame recording is frozen.");
-        if (commandChain.SourceCount <= 0 ||
+        if (commandChain.PreparedFrameGeneration != Generation ||
+            commandChain.PacketIndex < 0 ||
+            commandChain.PacketIndex >= PacketCount ||
+            commandChain.SourceCount <= 0 ||
             commandChain.PreparedDrawStartIndex < 0 ||
             commandChain.PreparedDrawStartIndex >
                 _meshDrawCount - commandChain.SourceCount)
@@ -112,6 +151,26 @@ internal sealed class VulkanPreparedFrameRecording
         EnsureCommandChainCapacity(_commandChainCount + 1);
         int index = _commandChainCount++;
         _commandChains[index] = commandChain;
+        return index;
+    }
+
+    /// <summary>
+    /// Retains a sealed packet for the lifetime of this prepared frame. Native
+    /// encoders may only consume this retained authority, never a live chain
+    /// publication that can be superseded by a subsequent schedule build.
+    /// </summary>
+    internal int RetainPacket(RenderPacket packet)
+    {
+        ArgumentNullException.ThrowIfNull(packet);
+        if (IsFrozen)
+            throw new InvalidOperationException("Prepared Vulkan frame recording is frozen.");
+        if (!packet.IsSealed)
+            throw new InvalidOperationException("Prepared command chains require a sealed packet snapshot.");
+
+        EnsurePacketCapacity(PacketCount + 1);
+        int index = PacketCount++;
+        packet.AcquireLease();
+        _packets[index] = packet;
         return index;
     }
 
@@ -157,6 +216,34 @@ internal sealed class VulkanPreparedFrameRecording
         return ref _commandChains[index];
     }
 
+    internal RenderPacket GetPacketForEncoding(
+        scoped in VulkanPreparedCommandChain commandChain)
+    {
+        if (!IsFrozen)
+            throw new InvalidOperationException("Prepared Vulkan frame recording must be frozen before consumption.");
+        if (commandChain.PreparedFrameGeneration != Generation ||
+            (uint)commandChain.PacketIndex >= (uint)PacketCount)
+        {
+            throw new InvalidOperationException("Prepared command-chain packet ownership is stale.");
+        }
+
+        RenderPacket packet = _packets[commandChain.PacketIndex];
+        RecordedPacketKey preparedPacketKey = packet.RecordedPacketKey with
+        {
+            DescriptorSets = commandChain.Authority.PreparedKey.RecordedPacketKey.DescriptorSets,
+        };
+        if (!packet.IsSealed ||
+            !preparedPacketKey.IsComplete ||
+            preparedPacketKey != commandChain.Authority.PreparedKey.RecordedPacketKey ||
+            packet.SourceStartIndex != commandChain.SourceStartIndex ||
+            packet.SourceCount != commandChain.SourceCount)
+        {
+            throw new InvalidOperationException("Prepared command-chain packet no longer matches its frozen native key or source range.");
+        }
+
+        return packet;
+    }
+
     internal ref readonly VkPreparedMeshDraw GetMeshDrawForOwnerValidation(
         int index)
     {
@@ -186,16 +273,25 @@ internal sealed class VulkanPreparedFrameRecording
 
         if (_commandChainCount > 0)
             Array.Clear(_commandChains, 0, _commandChainCount);
+        if (PacketCount > 0)
+        {
+            for (int index = 0; index < PacketCount; index++)
+                _packets[index].ReleaseLease();
+            Array.Clear(_packets, 0, PacketCount);
+        }
         if (_primaryPlanNodeCount > 0)
             Array.Clear(_primaryPlanNodes, 0, _primaryPlanNodeCount);
 
         _primaryPlanNodeCount = 0;
         _meshDrawCount = 0;
         _commandChainCount = 0;
+        PacketCount = 0;
         _hasPrimaryPlan = false;
         FrameSlot = -1;
         Generation = 0;
         PrimaryPlanIdentity = 0;
+        FramePlan?.ReleaseLease();
+        FramePlan = null;
         IsFrozen = false;
     }
 
@@ -224,5 +320,14 @@ internal sealed class VulkanPreparedFrameRecording
 
         int capacity = Math.Max(required, _commandChains.Length * 2);
         Array.Resize(ref _commandChains, capacity);
+    }
+
+    private void EnsurePacketCapacity(int required)
+    {
+        if (_packets.Length >= required)
+            return;
+
+        int capacity = Math.Max(required, _packets.Length * 2);
+        Array.Resize(ref _packets, capacity);
     }
 }

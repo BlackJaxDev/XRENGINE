@@ -22,8 +22,26 @@ internal sealed record BlitOp(
     FrameOpContext Context) 
     : FrameOp(PassIndex, OutFbo, Context)
 {
-    public XRFrameBuffer? InFbo { get; internal set; } = InFbo;
-    public XRFrameBuffer? OutFbo { get; internal set; } = OutFbo;
+    private XRFrameBuffer? _inFbo = InFbo;
+    private XRFrameBuffer? _outFbo = OutFbo;
+    public XRFrameBuffer? InFbo
+    {
+        get => _inFbo;
+        internal set
+        {
+            ThrowIfSealedForFramePlan();
+            _inFbo = value;
+        }
+    }
+    public XRFrameBuffer? OutFbo
+    {
+        get => _outFbo;
+        internal set
+        {
+            ThrowIfSealedForFramePlan();
+            _outFbo = value;
+        }
+    }
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.Blit;
 
     internal override int RecordPrimary(

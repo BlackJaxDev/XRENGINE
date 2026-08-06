@@ -246,6 +246,7 @@ internal unsafe sealed class VkRenderBuffer(VulkanRenderer api, XRRenderBuffer d
 
     private void CreateImageView()
     {
+        Renderer.ThrowIfVulkanDeviceOperationNotAdmitted("vkCreateImageView.VkRenderBuffer.View");
         RetireView();
 
         Format viewFormat = Format;

@@ -15,9 +15,36 @@ public sealed record AgentRunSnapshot
 
     public DateTimeOffset UpdatedUtc { get; init; }
 
+    /// <summary>
+    /// Time at which this snapshot was observed. Unlike <see cref="UpdatedUtc"/>,
+    /// this advances on every poll even while the provider has emitted no text.
+    /// </summary>
+    public DateTimeOffset ObservedUtc { get; init; }
+
+    /// <summary>
+    /// Non-negative wall-clock duration from run creation through
+    /// <see cref="ObservedUtc"/>.
+    /// </summary>
+    public long ElapsedMilliseconds { get; init; }
+
+    /// <summary>
+    /// Latest broker or provider progress signal. This is an informational stage,
+    /// not a completion percentage or a terminal result.
+    /// </summary>
+    public string ProgressMessage { get; init; } = string.Empty;
+
     public string RequestedModel { get; init; } = string.Empty;
 
     public string ActualModel { get; init; } = string.Empty;
+
+    /// <summary>Requested provider controls retained with the run for auditability.</summary>
+    public string RequestedReasoningEffort { get; init; } = string.Empty;
+
+    /// <summary>Requested Responses API visible-text verbosity.</summary>
+    public string RequestedTextVerbosity { get; init; } = string.Empty;
+
+    /// <summary>Hard run-wide Responses API output-token budget.</summary>
+    public int MaxOutputTokens { get; init; }
 
     public string? EditorSession { get; init; }
 

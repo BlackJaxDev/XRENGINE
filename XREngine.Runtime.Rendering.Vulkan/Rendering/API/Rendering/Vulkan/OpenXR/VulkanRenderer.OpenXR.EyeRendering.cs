@@ -143,6 +143,14 @@ public unsafe partial class VulkanRenderer
                     return false;
             }
 
+            if (!TryCreatePairedOpenXrLogicalPlan(
+                    in firstPrepared,
+                    in secondPrepared,
+                    out FramePlan pairedLogicalPlan))
+                return false;
+            firstPrepared = firstPrepared with { PairedLogicalPlan = pairedLogicalPlan };
+            secondPrepared = secondPrepared with { PairedLogicalPlan = pairedLogicalPlan };
+
             // Preparing the second eye can grow shared mesh-renderer descriptor/
             // uniform capacity. Re-prewarm both complete op streams only after
             // both reservations are known and before either command buffer is
@@ -326,6 +334,8 @@ public unsafe partial class VulkanRenderer
                     depthTarget,
                     recordImageIndex,
                     openXrCommandChainImageIndex);
+                _openXrBackend.CurrentThreadExecutionState.NativeTargetContext =
+                    targetContext;
             }
 
             using ThreadRenderStateScope renderStateScope = EnterThreadRenderStateScope(
@@ -369,8 +379,6 @@ public unsafe partial class VulkanRenderer
                 FrameOpContext plannerContext;
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule"))
                 {
-                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule.Sort"))
-                        ops = _frameOperationScheduler.SortFrameOpsCore(ops, CompiledRenderGraph);
                     if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                     {
                         Debug.VulkanWarningEvery(
@@ -382,6 +390,9 @@ public unsafe partial class VulkanRenderer
                     }
 
                     plannerContext = PrepareResourcePlannerForFrameOps(ops);
+                    ResourcePlannerRuntimeState plannerState = CaptureResourcePlannerRuntimeState();
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule.Sort"))
+                        ops = _frameOperationScheduler.SortFrameOpsCore(ops, plannerState.CompiledRenderGraph);
                     if (TryDescribeRecentResourceAllocationFailure(out string postPlanFailureReason))
                     {
                         Debug.VulkanWarningEvery(
@@ -413,7 +424,7 @@ public unsafe partial class VulkanRenderer
                     {
                         return false;
                     }
-                    plannerRevision = ResourcePlannerRevision;
+                    plannerRevision = plannerState.ResourcePlannerRevision;
                     using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule.Signature"))
                     {
                         frameOpsSignature = ComputeFrameOpsSignature(ops);
@@ -502,6 +513,8 @@ public unsafe partial class VulkanRenderer
         VulkanOpenXrFrameContext frameContext = prepared.FrameContext;
         using IDisposable externalScope =
             EnterOpenXrExternalSwapchainRenderScope(in frameContext);
+        _openXrBackend.CurrentThreadExecutionState.NativeTargetContext =
+            targetContext;
         using ThreadRenderStateScope renderStateScope = EnterThreadRenderStateScope(
             CreateOpenXrEyeRenderStateTracker(in targetContext));
         VulkanOpenXrViewResourcePlannerContextKey plannerContextKey =
@@ -578,7 +591,8 @@ public unsafe partial class VulkanRenderer
                             frameOpContextId,
                             prepared.PlannerRevision,
                             imageLayoutStartSignature,
-                            prepared.CommandChainSchedule);
+                            prepared.CommandChainSchedule,
+                            prepared.PairedLogicalPlan);
                         if (commandBuffer.Handle == 0)
                             return false;
                     }
@@ -780,6 +794,13 @@ public unsafe partial class VulkanRenderer
         out CommandBuffer commandBuffer)
     {
         commandBuffer = default;
+        if (FreshSerialRecordingEnabled)
+        {
+            if (OpenXrVulkanTraceEnabled)
+                RecordOpenXrPrimaryReuseMiss("openxr-primary-miss:fresh-serial");
+            return false;
+        }
+
         if (!OpenXrVulkanPrimaryReuseEnabled)
         {
             if (OpenXrVulkanTraceEnabled)
@@ -800,14 +821,14 @@ public unsafe partial class VulkanRenderer
         }
 
         ulong cacheKey = BuildOpenXrPrimaryCommandBufferCacheKey(commandChainImageIndex, targetContext);
-        lock (_openXrBackend.PrimaryCommandBufferVariantsLock)
+        lock (_openXrBackend.PrimaryCommandArtifactOwnersLock)
         {
-            if (!OpenXrPrimaryCommandBufferVariants.TryGetValue(cacheKey, out List<CommandBufferCacheVariant>? variants))
+            if (!OpenXrPrimaryCommandArtifactOwners.TryGetValue(cacheKey, out PrimaryCommandArtifactOwner? variant))
             {
                 if (OpenXrVulkanTraceEnabled)
-                    RecordOpenXrPrimaryReuseMiss($"openxr-primary-miss:no-variants key=0x{cacheKey:X16}");
+                    RecordOpenXrPrimaryReuseMiss($"openxr-primary-miss:no-owner key=0x{cacheKey:X16}");
                 else
-                    RecordOpenXrPrimaryReuseMiss("openxr-primary-miss:no-variants");
+                    RecordOpenXrPrimaryReuseMiss("openxr-primary-miss:no-owner");
                 return false;
             }
 
@@ -817,6 +838,14 @@ public unsafe partial class VulkanRenderer
             int commandBufferImageSlot = unchecked((int)Math.Min(recordImageIndex, int.MaxValue));
             bool usingCommandChains = commandChainSchedule is not null;
             bool requiresExactFrameOps = true;
+            CommandRecordingDependencySignature currentPacketDependency =
+                commandChainSchedule?.DependencySignature ?? default;
+            if (usingCommandChains && !currentPacketDependency.RecordedPacketKey.IsComplete)
+            {
+                if (OpenXrVulkanTraceEnabled)
+                    RecordOpenXrPrimaryReuseMiss("openxr-primary-miss:incomplete-packet-key");
+                return false;
+            }
             if (!TryComputeOpenXrPrimaryCommandBufferGroupSignature(
                     commandChainImageIndex,
                     commandChainSchedule,
@@ -837,18 +866,21 @@ public unsafe partial class VulkanRenderer
             }
 
             bool swapchainImageEverPresented = IsSwapchainImageEverPresented(OpenXrExternalSwapchainTargetImageIndex);
-            for (int i = 0; i < variants.Count; i++)
-            {
-                CommandBufferCacheVariant variant = variants[i];
-                bool imageEntryStateDirty =
+            bool imageEntryStateDirty =
                     IsCommandBufferVariantImageLayoutStateDirty(
                         variant,
                         imageLayoutStartSignature,
                         out VulkanImageEntryStateMismatch imageEntryStateMismatch);
                 if (imageEntryStateDirty)
                     RecordPrimaryImageEntryStateMismatch(imageEntryStateMismatch);
+                CommandRecordingDependencyMismatch packetDependencyMismatch =
+                    usingCommandChains
+                        ? variant.RecordedDependencySignature.CompareCommandChainPrimary(
+                            currentPacketDependency)
+                        : CommandRecordingDependencyMismatch.None;
                 if (variant.Dirty ||
                     variant.PrimaryCommandBuffer.Handle == 0 ||
+                    packetDependencyMismatch.RequiresRecording ||
                     (requiresExactFrameOps && variant.FrameOpsSignature != frameOpsSignature) ||
                     !TryValidateCommandBufferVariantContext(
                         recordImageIndex,
@@ -864,7 +896,8 @@ public unsafe partial class VulkanRenderer
                     variant.CommandChainPrimaryGroupCount != (commandChainSchedule is null ? -1 : commandChainPrimaryGroupCount) ||
                     IsCommandBufferVariantGpuProfilerStateDirty(variant, gpuPipelineProfilingActive, commandBufferImageSlot))
                 {
-                    continue;
+                    RecordOpenXrPrimaryReuseMiss("openxr-primary-miss:owner-stale");
+                    return false;
                 }
 
                 _lastReusableFrameDataRefreshFailureReason = null;
@@ -932,51 +965,7 @@ public unsafe partial class VulkanRenderer
                         commandBuffer.Handle);
                 }
 
-                return true;
-            }
-
-            string compactMissReason = ClassifyOpenXrPrimaryVariantMismatch(
-                variants,
-                false,
-                requiresExactFrameOps,
-                usingCommandChains,
-                frameOpsSignature,
-                frameOpContextFingerprint,
-                plannerRevision,
-                imageLayoutStartSignature,
-                ContainsQueryFrameOp(ops),
-                true,
-                swapchainImageEverPresented,
-                commandChainSchedule,
-                commandChainPrimaryGroupSignature,
-                commandChainPrimaryGroupCount,
-                gpuPipelineProfilingActive,
-                commandBufferImageSlot);
-            if (OpenXrVulkanTraceEnabled)
-            {
-                RecordOpenXrPrimaryReuseMiss(
-                    $"openxr-primary-miss:no-matching-variant key=0x{cacheKey:X16} variants={variants.Count} first={DescribeOpenXrPrimaryVariantMismatch(
-                        variants,
-                        requiresExactFrameOps,
-                        usingCommandChains,
-                        frameOpsSignature,
-                        frameOpContextFingerprint,
-                        frameOpContextId,
-                        plannerRevision,
-                        imageLayoutStartSignature,
-                        true,
-                        swapchainImageEverPresented,
-                        commandChainSchedule,
-                        commandChainPrimaryGroupSignature,
-                        commandChainPrimaryGroupCount,
-                        gpuPipelineProfilingActive,
-                        commandBufferImageSlot)}");
-            }
-            else
-            {
-                RecordOpenXrPrimaryReuseMiss(compactMissReason);
-            }
-            return false;
+            return true;
         }
     }
 
@@ -991,13 +980,12 @@ public unsafe partial class VulkanRenderer
         ulong frameOpContextId,
         ulong plannerRevision,
         ulong imageLayoutStartSignature,
-        CommandChainSchedule? commandChainSchedule)
+        CommandChainSchedule? commandChainSchedule,
+        FramePlan? pairedLogicalPlan)
     {
         ulong cacheKey = BuildOpenXrPrimaryCommandBufferCacheKey(commandChainImageIndex, targetContext);
-        CommandBufferCacheVariant variant = GetOrCreateOpenXrPrimaryCommandBufferVariant(
+        PrimaryCommandArtifactOwner variant = GetOrCreateOpenXrPrimaryCommandBufferOwner(
             cacheKey,
-            commandChainSchedule,
-            commandChainImageIndex,
             recordImageIndex,
             targetContext);
 
@@ -1019,6 +1007,26 @@ public unsafe partial class VulkanRenderer
         }
 
         long recordStart = Stopwatch.GetTimestamp();
+        if (pairedLogicalPlan is null)
+        {
+            Debug.VulkanWarningEvery(
+                "OpenXR.Vulkan.MissingPairedLogicalPlan",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] Rejecting eye recording because no shared paired-eye logical plan was published.");
+            return default;
+        }
+        FramePlan framePlan = pairedLogicalPlan;
+        ulong logicalViewId = GetSingleOpenXrLogicalViewId(ops);
+        ops = framePlan.GetNativeStaticOperationsForLogicalView(logicalViewId, ops);
+        if (ops.Length == 0)
+        {
+            Debug.VulkanWarningEvery(
+                "OpenXR.Vulkan.EmptyPairedLogicalPlanSlice",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] Rejecting eye recording because the shared logical plan has no operations for view {0}.",
+                logicalViewId);
+            return default;
+        }
         _commandRecorder.EnterRecordingScope();
         int recordedSwapchainWriteCount = 0;
         bool queryFrameOpsRequireRerecord = false;
@@ -1050,7 +1058,8 @@ public unsafe partial class VulkanRenderer
                 queryFrameOpsRequireRerecord: out queryFrameOpsRequireRerecord,
                 transitionSwapchainToPresent: false,
                 frameDataImageIndexOverride: recordImageIndex,
-                openXrTargetContext: targetContext))
+                openXrTargetContext: targetContext,
+                framePlan: framePlan))
             {
                 CancelRecordedTextureUploadSubmitBatch(
                     $"OpenXR eye command buffer recording deferred: {recordingDeferredReason}");
@@ -1093,6 +1102,8 @@ public unsafe partial class VulkanRenderer
         variant.RecordedImageLayoutStartSignature = imageLayoutStartSignature;
         CaptureCommandBufferVariantImageLayoutEndState(variant);
         variant.CommandChainScheduleSignature = commandChainSchedule?.StructuralSignature ?? ulong.MaxValue;
+        variant.RecordedDependencySignature =
+            commandChainSchedule?.DependencySignature ?? default;
         if (commandChainSchedule is not null)
         {
             Dictionary<CommandChainKey, CommandChain> commandChainCache =
@@ -1129,7 +1140,7 @@ public unsafe partial class VulkanRenderer
         CaptureVulkanGpuProfilerVariantScopes(commandBufferImageSlot, variant);
         StoreFrameOpSignatureDebugParts(variant, ops);
         if (queryFrameOpsRequireRerecord)
-            MarkCommandBufferVariantTransient(variant, "query draw was not recorded");
+            MarkPrimaryCommandArtifactOwnerTransient(variant, "query draw was not recorded");
         UpdateVulkanGpuProfilerCommandBufferState(
             recordImageIndex,
             gpuPipelineProfilingActive,
@@ -1165,72 +1176,119 @@ public unsafe partial class VulkanRenderer
         return variant.PrimaryCommandBuffer;
     }
 
-    private CommandBufferCacheVariant GetOrCreateOpenXrPrimaryCommandBufferVariant(
-        ulong cacheKey,
-        CommandChainSchedule? commandChainSchedule,
-        uint commandChainImageIndex,
+    /// <summary>
+    /// Publishes one immutable logical DAG for both eyes before either native
+    /// image is recorded. Per-eye target handles stay outside this publication.
+    /// </summary>
+    private static bool TryCreatePairedOpenXrLogicalPlan(
+        in OpenXrPreparedEyeCommandBufferInput firstEye,
+        in OpenXrPreparedEyeCommandBufferInput secondEye,
+        out FramePlan plan)
+    {
+        plan = null!;
+        if (firstEye.Ops.Length == 0 || secondEye.Ops.Length == 0 ||
+            firstEye.PlannerRevision != secondEye.PlannerRevision)
+            return false;
+
+        ulong firstViewId = GetSingleOpenXrLogicalViewId(firstEye.Ops);
+        ulong secondViewId = GetSingleOpenXrLogicalViewId(secondEye.Ops);
+        if (firstViewId == 0UL || secondViewId == 0UL || firstViewId == secondViewId)
+            return false;
+
+        FrameOp[] combined = new FrameOp[firstEye.Ops.Length + secondEye.Ops.Length];
+        CopyTargetNeutralLogicalOperations(firstEye.Ops, combined, 0);
+        CopyTargetNeutralLogicalOperations(secondEye.Ops, combined, firstEye.Ops.Length);
+        try
+        {
+            plan = FramePlanBuilder.GetCurrentThread().BuildAndSeal(
+                frameSlot: 0,
+                firstEye.PlannerRevision,
+                ComputeFrameOpsSignature(combined),
+                dynamicOverlaySignature: 0UL,
+                combined,
+                Array.Empty<FrameOp>());
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Debug.VulkanWarningEvery(
+                "OpenXR.Vulkan.PairedLogicalPlanFailed",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] Rejecting paired-eye recording because the shared logical plan could not be sealed: {0}",
+                ex.Message);
+            plan = null!;
+            return false;
+        }
+    }
+
+    private static ulong GetSingleOpenXrLogicalViewId(FrameOp[] operations)
+    {
+        if (operations.Length == 0)
+            return 0UL;
+
+        ulong logicalViewId = operations[0].Context.LogicalViewId;
+        if (logicalViewId == 0UL)
+            return 0UL;
+        for (int index = 1; index < operations.Length; index++)
+            if (operations[index].Context.LogicalViewId != logicalViewId)
+                return 0UL;
+        return logicalViewId;
+    }
+
+    private static void CopyTargetNeutralLogicalOperations(
+        FrameOp[] source,
+        FrameOp[] destination,
+        int destinationIndex)
+    {
+        for (int index = 0; index < source.Length; index++)
+        {
+            FrameOp operation = source[index];
+            FrameOpContext context = operation.Context with
+            {
+                OutputTargetIdentity = 0,
+                OutputTargetName = null,
+                OutputFrameBufferIdentity = 0,
+                OutputFrameBufferName = null,
+                OutputFrameBuffer = null,
+            };
+            destination[destinationIndex + index] = operation with { Context = context };
+        }
+    }
+
+    private PrimaryCommandArtifactOwner GetOrCreateOpenXrPrimaryCommandBufferOwner(
+        ulong targetSlotKey,
         uint recordImageIndex)
-        => GetOrCreateOpenXrPrimaryCommandBufferVariant(
-            cacheKey,
-            commandChainSchedule,
-            commandChainImageIndex,
+        => GetOrCreateOpenXrPrimaryCommandBufferOwner(
+            targetSlotKey,
             recordImageIndex,
             commandPool,
-            "OpenXR mirror primary command buffer variant");
+            "OpenXR mirror primary command buffer owner");
 
-    private CommandBufferCacheVariant GetOrCreateOpenXrPrimaryCommandBufferVariant(
-        ulong cacheKey,
-        CommandChainSchedule? commandChainSchedule,
-        uint commandChainImageIndex,
+    private PrimaryCommandArtifactOwner GetOrCreateOpenXrPrimaryCommandBufferOwner(
+        ulong targetSlotKey,
         uint recordImageIndex,
         in OpenXrEyeRenderTargetContext targetContext)
     {
         CommandPool eyeCommandPool = GetOrCreateOpenXrEyeCommandPool(targetContext.OpenXrViewIndex);
-        return GetOrCreateOpenXrPrimaryCommandBufferVariant(
-            cacheKey,
-            commandChainSchedule,
-            commandChainImageIndex,
+        return GetOrCreateOpenXrPrimaryCommandBufferOwner(
+            targetSlotKey,
             recordImageIndex,
             eyeCommandPool,
-            $"OpenXR eye primary command buffer variant eye={targetContext.OpenXrViewIndex}");
+            $"OpenXR eye primary command buffer owner eye={targetContext.OpenXrViewIndex}");
     }
 
-    private CommandBufferCacheVariant GetOrCreateOpenXrPrimaryCommandBufferVariant(
-        ulong cacheKey,
-        CommandChainSchedule? commandChainSchedule,
-        uint commandChainImageIndex,
+    private PrimaryCommandArtifactOwner GetOrCreateOpenXrPrimaryCommandBufferOwner(
+        ulong targetSlotKey,
         uint recordImageIndex,
         CommandPool ownerPool,
         string allocationLabel)
     {
-        lock (_openXrBackend.PrimaryCommandBufferVariantsLock)
+        lock (_openXrBackend.PrimaryCommandArtifactOwnersLock)
         {
-            if (!OpenXrPrimaryCommandBufferVariants.TryGetValue(cacheKey, out List<CommandBufferCacheVariant>? variants))
+            if (OpenXrPrimaryCommandArtifactOwners.TryGetValue(targetSlotKey, out PrimaryCommandArtifactOwner? owner))
             {
-                variants = [];
-                OpenXrPrimaryCommandBufferVariants[cacheKey] = variants;
-            }
-
-            ulong scheduleSignature = commandChainSchedule?.StructuralSignature ?? ulong.MaxValue;
-            ulong groupSignature = ulong.MaxValue;
-            int groupCount = -1;
-            _ = TryComputeOpenXrPrimaryCommandBufferGroupSignature(
-                commandChainImageIndex,
-                commandChainSchedule,
-                requireReusableChains: false,
-                out groupSignature,
-                out groupCount);
-
-            for (int i = 0; i < variants.Count; i++)
-            {
-                CommandBufferCacheVariant variant = variants[i];
-                if (variant.CommandChainScheduleSignature == scheduleSignature &&
-                    variant.CommandChainPrimaryGroupSignature == groupSignature &&
-                    variant.CommandChainPrimaryGroupCount == groupCount)
-                {
-                    RegisterCommandBufferImageIndex(variant.PrimaryCommandBuffer, recordImageIndex);
-                    return variant;
-                }
+                RegisterCommandBufferImageIndex(owner.PrimaryCommandBuffer, recordImageIndex);
+                return owner;
             }
 
             CommandBuffer primary = AllocateCommandBuffer(
@@ -1238,15 +1296,15 @@ public unsafe partial class VulkanRenderer
                 allocationLabel,
                 ownerPool);
             RegisterCommandBufferImageIndex(primary, recordImageIndex);
-            CommandBufferCacheVariant created = new(
+            owner = new PrimaryCommandArtifactOwner(
                 primary,
                 dynamicUiSecondaryCommandBuffer: default,
                 ownerPool,
                 dynamicUiSecondaryCommandPool: default,
                 ownsPrimaryCommandBuffer: true,
                 ownsDynamicUiSecondaryCommandBuffer: false);
-            variants.Add(created);
-            return created;
+            OpenXrPrimaryCommandArtifactOwners.Add(targetSlotKey, owner);
+            return owner;
         }
     }
 
@@ -1287,7 +1345,6 @@ public unsafe partial class VulkanRenderer
         hash.Add(request.Extent.Width);
         hash.Add(request.Extent.Height);
         hash.Add(request.OpenXrViewIndex);
-        hash.Add(request.ViewBatchStructuralIdentity);
         return unchecked((ulong)hash.ToHashCode());
     }
 
@@ -1383,126 +1440,6 @@ public unsafe partial class VulkanRenderer
         }
 
         return "all-reusable";
-    }
-
-    private string ClassifyOpenXrPrimaryVariantMismatch(
-        List<CommandBufferCacheVariant> variants,
-        bool mirror,
-        bool requiresExactFrameOps,
-        bool usingCommandChains,
-        ulong frameOpsSignature,
-        ulong frameOpContextFingerprint,
-        ulong plannerRevision,
-        ulong imageLayoutStartSignature,
-        bool hasQueryFrameOps,
-        bool compareSwapchainImageEverPresented,
-        bool swapchainImageEverPresented,
-        CommandChainSchedule? commandChainSchedule,
-        ulong commandChainPrimaryGroupSignature,
-        int commandChainPrimaryGroupCount,
-        bool gpuPipelineProfilingActive,
-        int commandBufferImageSlot)
-    {
-        if (variants.Count == 0)
-            return mirror ? "openxr-mirror-primary-miss:no-variants" : "openxr-primary-miss:no-variants";
-
-        CommandBufferCacheVariant variant = variants[0];
-        if (variant.Dirty)
-            return mirror ? "openxr-mirror-primary-miss:dirty" : "openxr-primary-miss:dirty";
-        if (variant.PrimaryCommandBuffer.Handle == 0)
-            return mirror ? "openxr-mirror-primary-miss:empty-handle" : "openxr-primary-miss:empty-handle";
-        if (requiresExactFrameOps && variant.FrameOpsSignature != frameOpsSignature)
-        {
-            if (hasQueryFrameOps)
-                return mirror ? "openxr-mirror-primary-miss:frame-ops-query" : "openxr-primary-miss:frame-ops-query";
-
-            return mirror ? "openxr-mirror-primary-miss:frame-ops" : "openxr-primary-miss:frame-ops";
-        }
-        if (IsCommandBufferVariantFrameOpContextDirty(variant, frameOpContextFingerprint))
-            return mirror ? "openxr-mirror-primary-miss:context" : "openxr-primary-miss:context";
-        if (!usingCommandChains && variant.PlannerRevision != plannerRevision)
-            return mirror ? "openxr-mirror-primary-miss:planner" : "openxr-primary-miss:planner";
-        if (IsCommandBufferVariantImageLayoutStateDirty(variant, imageLayoutStartSignature))
-            return mirror ? "openxr-mirror-primary-miss:image-layout" : "openxr-primary-miss:image-layout";
-        if (compareSwapchainImageEverPresented && variant.RecordedSwapchainImageEverPresented != swapchainImageEverPresented)
-            return mirror ? "openxr-mirror-primary-miss:swapchain-presented" : "openxr-primary-miss:swapchain-presented";
-
-        ulong scheduleSignature = commandChainSchedule?.StructuralSignature ?? ulong.MaxValue;
-        ulong groupSignature = commandChainSchedule is null ? ulong.MaxValue : commandChainPrimaryGroupSignature;
-        int groupCount = commandChainSchedule is null ? -1 : commandChainPrimaryGroupCount;
-        if (variant.CommandChainScheduleSignature != scheduleSignature)
-            return mirror ? "openxr-mirror-primary-miss:schedule" : "openxr-primary-miss:schedule";
-        if (variant.CommandChainPrimaryGroupSignature != groupSignature)
-            return mirror ? "openxr-mirror-primary-miss:group" : "openxr-primary-miss:group";
-        if (variant.CommandChainPrimaryGroupCount != groupCount)
-            return mirror ? "openxr-mirror-primary-miss:group-count" : "openxr-primary-miss:group-count";
-        if (variant.GpuProfilerActive != gpuPipelineProfilingActive ||
-            (gpuPipelineProfilingActive && variant.GpuProfilerFrameSlot != commandBufferImageSlot))
-        {
-            return mirror ? "openxr-mirror-primary-miss:profiler" : "openxr-primary-miss:profiler";
-        }
-
-        return mirror ? "openxr-mirror-primary-miss:unknown" : "openxr-primary-miss:unknown";
-    }
-
-    private string DescribeOpenXrPrimaryVariantMismatch(
-        List<CommandBufferCacheVariant> variants,
-        bool requiresExactFrameOps,
-        bool usingCommandChains,
-        ulong frameOpsSignature,
-        ulong frameOpContextFingerprint,
-        ulong frameOpContextId,
-        ulong plannerRevision,
-        ulong imageLayoutStartSignature,
-        bool compareSwapchainImageEverPresented,
-        bool swapchainImageEverPresented,
-        CommandChainSchedule? commandChainSchedule,
-        ulong commandChainPrimaryGroupSignature,
-        int commandChainPrimaryGroupCount,
-        bool gpuPipelineProfilingActive,
-        int commandBufferImageSlot)
-    {
-        if (variants.Count == 0)
-            return "none";
-
-        CommandBufferCacheVariant variant = variants[0];
-        if (variant.Dirty)
-            return $"dirty:{variant.DirtyReason ?? "unknown"}";
-        if (variant.PrimaryCommandBuffer.Handle == 0)
-            return "empty-handle";
-        if (requiresExactFrameOps && variant.FrameOpsSignature != frameOpsSignature)
-            return $"frame-ops recorded=0x{variant.FrameOpsSignature:X16} current=0x{frameOpsSignature:X16}";
-        if (IsCommandBufferVariantFrameOpContextDirty(variant, frameOpContextFingerprint))
-            return $"context recordedId={variant.RecordedFrameOpContextId} recorded=0x{variant.RecordedFrameOpContextFingerprint:X16} currentId={frameOpContextId} current=0x{frameOpContextFingerprint:X16}";
-        if (!usingCommandChains && variant.PlannerRevision != plannerRevision)
-            return $"planner recorded={variant.PlannerRevision} current={plannerRevision}";
-        if (IsCommandBufferVariantImageLayoutStateDirty(
-                variant,
-                imageLayoutStartSignature,
-                out VulkanImageEntryStateMismatch imageEntryStateMismatch))
-        {
-            return DescribePrimaryImageEntryStateMismatch(
-                imageEntryStateMismatch,
-                variant.RecordedImageLayoutStartSignature,
-                imageLayoutStartSignature);
-        }
-        if (compareSwapchainImageEverPresented && variant.RecordedSwapchainImageEverPresented != swapchainImageEverPresented)
-            return $"swapchain-presented recorded={variant.RecordedSwapchainImageEverPresented} current={swapchainImageEverPresented}";
-
-        ulong scheduleSignature = commandChainSchedule?.StructuralSignature ?? ulong.MaxValue;
-        ulong groupSignature = commandChainSchedule is null ? ulong.MaxValue : commandChainPrimaryGroupSignature;
-        int groupCount = commandChainSchedule is null ? -1 : commandChainPrimaryGroupCount;
-        if (variant.CommandChainScheduleSignature != scheduleSignature)
-            return $"schedule recorded=0x{variant.CommandChainScheduleSignature:X16} current=0x{scheduleSignature:X16}";
-        if (variant.CommandChainPrimaryGroupSignature != groupSignature)
-            return $"group recorded=0x{variant.CommandChainPrimaryGroupSignature:X16} current=0x{groupSignature:X16}";
-        if (variant.CommandChainPrimaryGroupCount != groupCount)
-            return $"group-count recorded={variant.CommandChainPrimaryGroupCount} current={groupCount}";
-        if (variant.GpuProfilerActive != gpuPipelineProfilingActive ||
-            (gpuPipelineProfilingActive && variant.GpuProfilerFrameSlot != commandBufferImageSlot))
-            return $"profiler recorded=({variant.GpuProfilerActive},{variant.GpuProfilerFrameSlot}) current=({gpuPipelineProfilingActive},{commandBufferImageSlot})";
-
-        return "unknown";
     }
 
     private static ulong ComputeOpenXrPrimaryCommandBufferGroupHandleSignature(

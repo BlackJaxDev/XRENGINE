@@ -154,6 +154,7 @@ public unsafe partial class VulkanRenderer
                 SType = StructureType.CommandBufferBeginInfo,
                 Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
             };
+            ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.ScreenshotReadback");
             Result beginResult = Api.BeginCommandBuffer(slot.CommandBuffer, in beginInfo);
             if (beginResult != Result.Success)
             {
@@ -197,7 +198,10 @@ public unsafe partial class VulkanRenderer
             if (submitResult != Result.Success)
             {
                 if (submitResult == Result.ErrorDeviceLost)
-                    MarkDeviceLost("Vulkan screenshot readback submission returned ErrorDeviceLost");
+                    MarkDeviceLost(
+                        "Vulkan screenshot readback submission returned ErrorDeviceLost",
+                        "vkQueueSubmit.ScreenshotReadback",
+                        submitResult);
 
                 return RejectPreparedScreenshotReadback(
                     slot,
@@ -812,7 +816,7 @@ public unsafe partial class VulkanRenderer
         {
             string error = $"vkGetFenceStatus failed for Vulkan screenshot readback slot {slotIndex} ({fenceResult}).";
             if (fenceResult == Result.ErrorDeviceLost)
-                MarkDeviceLost(error);
+                MarkDeviceLost(error, "vkGetFenceStatus.ScreenshotReadback", fenceResult);
             else if (Interlocked.CompareExchange(
                          ref slot.State,
                          (int)EVulkanScreenshotReadbackSlotState.Abandoned,

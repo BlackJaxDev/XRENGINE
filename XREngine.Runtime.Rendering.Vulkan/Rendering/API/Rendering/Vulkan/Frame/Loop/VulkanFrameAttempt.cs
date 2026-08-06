@@ -47,9 +47,11 @@ internal ref struct VulkanFrameAttempt
     public long SceneCommandBufferDirtyGeneration;
     public int SceneSwapchainWriteCount;
     public int RecoverySwapchainWriteCount;
+    public VulkanPresentationSourceTuple PresentationSource;
 
     public bool CollectReleased;
     public bool Submitted;
+    public bool CommandArtifactsSettled;
     public bool Presented;
     public bool SlotCompleted;
     public Exception? DeferredFailure;

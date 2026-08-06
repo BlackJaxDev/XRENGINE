@@ -29,7 +29,9 @@ internal readonly record struct CommandRecordingDependencySignature(
     int FrameSlotVariant,
     ulong DescriptorPublicationGeneration,
     ulong DataPublicationGeneration,
-    ulong VolatileSuffixGeneration)
+    ulong VolatileSuffixGeneration,
+    VulkanRecordedRenderTargetSnapshot RenderTargetSnapshot = default,
+    RecordedPacketKey RecordedPacketKey = default)
 {
     /// <summary>
     /// Captures the identity components of this dependency signature,
@@ -49,6 +51,7 @@ internal readonly record struct CommandRecordingDependencySignature(
         resourceGenerations.Add(SamplerAllocationGeneration);
         resourceGenerations.Add(DescriptorLayoutGeneration);
         resourceGenerations.Add(DescriptorSetGeneration);
+        RecordedPacketKey.AddIdentityComponents(ref resourceGenerations);
 
         FrameOpSignatureHasher renderScopeInheritance = new();
         renderScopeInheritance.Add(OutputPassAttachment);
@@ -127,9 +130,15 @@ internal readonly record struct CommandRecordingDependencySignature(
         in CommandRecordingDependencySignature current,
         bool commandChainPrimaryTopologyValidatedSeparately)
     {
+        if (RecordedPacketKey != current.RecordedPacketKey)
+            return Binding(CommandRecordingDependencyField.RecordedPacketKey);
+
         if (!commandChainPrimaryTopologyValidatedSeparately &&
             OutputPassAttachment != current.OutputPassAttachment)
             return Structural(CommandRecordingDependencyField.OutputPassAttachment);
+
+        if (RenderTargetSnapshot != current.RenderTargetSnapshot)
+            return Binding(CommandRecordingDependencyField.RenderTargetSnapshot);
 
         if (!commandChainPrimaryTopologyValidatedSeparately &&
             RenderArea != current.RenderArea)

@@ -279,6 +279,7 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
             return;
 
         var graphics = context.GetOrCreateSyntheticPass(RenderGraphPassName, ERenderGraphPassStage.Graphics)
+            .KeepSecondaryDynamic(ERenderPassSecondaryCachePolicy.DynamicDebug)
             .UseEngineDescriptors()
             .UseMaterialDescriptors()
             .DependsOn(compute.PassIndex);

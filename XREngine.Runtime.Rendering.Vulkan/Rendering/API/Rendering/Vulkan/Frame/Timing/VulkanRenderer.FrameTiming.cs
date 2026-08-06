@@ -599,7 +599,7 @@ public unsafe partial class VulkanRenderer
         _vulkanGpuProfilerQueryReady[frameSlot] = _vulkanGpuProfilerPendingScopes[frameSlot].Count > 0;
     }
 
-    private void CaptureVulkanGpuProfilerVariantScopes(int frameSlot, CommandBufferCacheVariant variant)
+    private void CaptureVulkanGpuProfilerVariantScopes(int frameSlot, PrimaryCommandArtifactOwner variant)
     {
         if (!IsVulkanGpuProfilerCommandBufferInstrumentationEnabled ||
             !_vulkanGpuProfilerEnabled ||
@@ -630,7 +630,7 @@ public unsafe partial class VulkanRenderer
 
     private void PrepareVulkanGpuProfilerReusableSubmission(
         int frameSlot,
-        CommandBufferCacheVariant variant,
+        PrimaryCommandArtifactOwner variant,
         bool profilingActive)
     {
         if (_vulkanGpuProfilerPendingScopes is not null &&

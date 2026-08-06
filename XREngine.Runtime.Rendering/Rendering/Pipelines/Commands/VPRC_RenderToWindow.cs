@@ -416,6 +416,7 @@ void main()
 
         context.GetOrCreateSyntheticPass(BuildRenderGraphPassName())
             .WithStage(ERenderGraphPassStage.Graphics)
+            .KeepSecondaryDynamic(ERenderPassSecondaryCachePolicy.OutputSensitive)
             .SampleTexture(source)
             .UseColorAttachment(RenderGraphResourceNames.OutputRenderTarget, ERenderGraphAccess.ReadWrite, ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
     }

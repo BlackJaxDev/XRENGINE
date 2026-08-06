@@ -22,44 +22,48 @@ internal sealed unsafe class VulkanLegacyAllocator(VulkanRenderer renderer) : IV
     public VulkanMemoryAllocation AllocateForBuffer(
         Vk api, Device device, Buffer buffer, MemoryPropertyFlags requiredProperties)
     {
-        if (!TryAllocateForBuffer(api, device, buffer, requiredProperties, out VulkanMemoryAllocation allocation))
-            throw new VulkanOutOfMemoryException("Failed to allocate Vulkan buffer memory.", requiredProperties);
+        if (!TryAllocateForBuffer(api, device, buffer, requiredProperties, out VulkanMemoryAllocation allocation, out Result result))
+            throw new VulkanOutOfMemoryException($"Failed to allocate Vulkan buffer memory ({result}).", requiredProperties);
         return allocation;
     }
 
     public VulkanMemoryAllocation AllocateForImage(
         Vk api, Device device, Image image, MemoryPropertyFlags requiredProperties)
     {
-        if (!TryAllocateForImage(api, device, image, requiredProperties, out VulkanMemoryAllocation allocation))
-            throw new VulkanOutOfMemoryException("Failed to allocate Vulkan image memory.", requiredProperties);
+        if (!TryAllocateForImage(api, device, image, requiredProperties, out VulkanMemoryAllocation allocation, out Result result))
+            throw new VulkanOutOfMemoryException($"Failed to allocate Vulkan image memory ({result}).", requiredProperties);
         return allocation;
     }
 
     public bool TryAllocateForBuffer(
         Vk api, Device device, Buffer buffer,
         MemoryPropertyFlags requiredProperties,
-        out VulkanMemoryAllocation allocation)
+        out VulkanMemoryAllocation allocation,
+        out Result result)
     {
         api.GetBufferMemoryRequirements(device, buffer, out MemoryRequirements memReqs);
-        return TryAllocateCore(api, device, memReqs, requiredProperties, out allocation);
+        return TryAllocateCore(api, device, memReqs, requiredProperties, out allocation, out result);
     }
 
     public bool TryAllocateForImage(
         Vk api, Device device, Image image,
         MemoryPropertyFlags requiredProperties,
-        out VulkanMemoryAllocation allocation)
+        out VulkanMemoryAllocation allocation,
+        out Result result)
     {
         api.GetImageMemoryRequirements(device, image, out MemoryRequirements memReqs);
-        return TryAllocateCore(api, device, memReqs, requiredProperties, out allocation);
+        return TryAllocateCore(api, device, memReqs, requiredProperties, out allocation, out result);
     }
 
     private bool TryAllocateCore(
         Vk api, Device device,
         MemoryRequirements memReqs,
         MemoryPropertyFlags requiredProperties,
-        out VulkanMemoryAllocation allocation)
+        out VulkanMemoryAllocation allocation,
+        out Result result)
     {
         allocation = VulkanMemoryAllocation.Null;
+        result = Result.Success;
 
         uint memoryTypeIndex = _renderer.ResolveMemoryType(memReqs.MemoryTypeBits, requiredProperties);
 
@@ -70,7 +74,7 @@ internal sealed unsafe class VulkanLegacyAllocator(VulkanRenderer renderer) : IV
             MemoryTypeIndex = memoryTypeIndex,
         };
 
-        Result result = api.AllocateMemory(device, ref allocInfo, null, out DeviceMemory memory);
+        result = api.AllocateMemory(device, ref allocInfo, null, out DeviceMemory memory);
 
         if (result == Result.ErrorOutOfDeviceMemory || result == Result.ErrorOutOfHostMemory)
             return false;
@@ -108,14 +112,19 @@ internal sealed unsafe class VulkanLegacyAllocator(VulkanRenderer renderer) : IV
         VulkanMemoryAllocation allocation,
         ulong offset,
         ulong length,
-        out void* mappedPtr)
+        out void* mappedPtr,
+        out Result result)
     {
         mappedPtr = null;
+        result = Result.Success;
         if (allocation.IsNull)
+        {
+            result = Result.ErrorMemoryMapFailed;
             return false;
+        }
 
         void* localPtr = null;
-        Result result = api.MapMemory(device, allocation.Memory, allocation.Offset + offset, length, 0, &localPtr);
+        result = api.MapMemory(device, allocation.Memory, allocation.Offset + offset, length, 0, &localPtr);
         if (result != Result.Success)
             return false;
 

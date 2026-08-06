@@ -73,6 +73,7 @@ namespace XREngine.Rendering.Vulkan
             public int RecordPipelineNameCapacityHint { get; set; } = 1;
             public int RecordMeshDrawSlotCapacityHint { get; set; } = 1;
             public int RecordFboLayoutCapacityHint { get; set; } = 1;
+            public VulkanPreparedComputePayload? PreparedComputePayload { get; set; }
             private int[] _primaryMeshDrawUniformSlotsByOpIndex = [];
             private bool[]
                 _primaryScheduledCommandChainFrameDataRefreshedByOpIndex = [];

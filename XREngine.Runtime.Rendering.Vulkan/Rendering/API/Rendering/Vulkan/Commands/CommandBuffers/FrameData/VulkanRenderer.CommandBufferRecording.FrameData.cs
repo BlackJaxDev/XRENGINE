@@ -18,11 +18,10 @@ namespace XREngine.Rendering.Vulkan
     public unsafe partial class VulkanRenderer
     {
         /// <summary>
-        /// Normalizes the pass indices of the provided frame operations to ensure they are valid and consistent with the pass metadata.
-        /// This method updates the PassIndex of each operation if it is found to be invalid or inconsistent.
+        /// Normalizes producer-owned pass indices before a frame plan is sealed.
         /// </summary>
         /// <param name="operations">The array of frame operations whose pass indices need to be normalized.</param>
-        private void NormalizePrimaryPlanPassIndices(FrameOp[] operations)
+        private void NormalizePrimaryPlanPassIndicesForPublication(FrameOp[] operations)
         {
             // The pass index of each operation must be valid and consistent with the pass metadata.
             // If an operation's pass index is invalid, it will be adjusted to a valid value based on the pass metadata.
@@ -39,6 +38,27 @@ namespace XREngine.Rendering.Vulkan
                 // If the resolved pass index is different from the current pass index, update the operation's PassIndex.
                 if (resolvedPassIndex != operation.PassIndex)
                     operation.PassIndex = resolvedPassIndex;
+            }
+        }
+
+        /// <summary>
+        /// Validates a sealed frame-plan stream at recording time without
+        /// rewriting it. Recording must consume the publication verbatim.
+        /// </summary>
+        private void ValidatePrimaryPlanPassIndicesForRecording(FrameOp[] operations)
+        {
+            for (int index = 0; index < operations.Length; index++)
+            {
+                FrameOp operation = operations[index];
+                int resolvedPassIndex = EnsureValidPassIndex(
+                    operation.PassIndex,
+                    operation.GetType().Name,
+                    operation.Context.PassMetadata);
+                if (resolvedPassIndex != operation.PassIndex)
+                {
+                    throw new InvalidOperationException(
+                        $"Sealed frame-plan operation {index} has pass index {operation.PassIndex}, but recording requires {resolvedPassIndex}.");
+                }
             }
         }
 
@@ -516,7 +536,7 @@ namespace XREngine.Rendering.Vulkan
                 return;
 
             int secondaryCount = InvalidateCommandChainSecondaryCommandBuffersForFrameDataLayoutChange();
-            MarkOpenXrPrimaryCommandBufferVariantsDirty();
+            MarkOpenXrPrimaryCommandArtifactOwnersDirty();
             MarkCommandBuffersDirty("mesh frame-data layout generation changed");
             Debug.Vulkan(
                 "[Vulkan] Mesh frame-data layout generation advanced from {0} to {1}; invalidated {2} cached command-chain secondaries with baked dynamic offsets.",

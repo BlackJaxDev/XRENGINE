@@ -647,11 +647,13 @@ public unsafe partial class VulkanRenderer
         if (!visitedRegistries.Add(registry))
             return true;
 
+        ResourcePlannerRuntimeState plannerState = CaptureResourcePlannerRuntimeState();
+        VulkanResourceAllocator allocator = plannerState.ResourceAllocator;
         VulkanOpenXrResourceRegistryWrapperRefreshStamp refreshStamp = new(
             registry.InstanceRevision,
             registry.DescriptorRevision,
-            ResourcePlannerRevision,
-            ResourceAllocatorIdentity);
+            plannerState.ResourcePlannerRevision,
+            RuntimeHelpers.GetHashCode(allocator));
         if (_openXrBackend.ResourceRegistryWrapperRefreshStamps.TryGetValue(registry, out VulkanOpenXrResourceRegistryWrapperRefreshStamp previousStamp) &&
             previousStamp == refreshStamp)
         {
@@ -675,7 +677,7 @@ public unsafe partial class VulkanRenderer
             // defer every frame after a DLSS/DLSS-G resource-generation change.
             if ((texture.FrameBufferAttachment.HasValue || texture.RequiresStorageUsage) &&
                 (string.IsNullOrWhiteSpace(texture.Name) ||
-                 !ResourceAllocator.TryGetPhysicalGroupForResource(texture.Name, out VulkanPhysicalImageGroup? physicalGroup) ||
+                 !allocator.TryGetPhysicalGroupForResource(texture.Name, out VulkanPhysicalImageGroup? physicalGroup) ||
                  physicalGroup?.IsAllocated != true))
             {
                 continue;

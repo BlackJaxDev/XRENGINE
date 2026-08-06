@@ -22,5 +22,6 @@ public unsafe partial class VulkanRenderer
         long OldestPendingRetirementAgeMilliseconds,
         ulong OldestPendingRetirementGenerationAge,
         long ForcedDestructionCount,
-        bool DeviceLost);
+        bool DeviceLost,
+        VulkanPinnedResourceGeneration[] ExactLiveResourceGenerations);
 }

@@ -33,6 +33,7 @@ namespace XREngine.Rendering.Vulkan
             recordingState.OpenXrTargetContext = context.OpenXrTargetContext;
             recordingState.ExcludeDesktopSwapchainBarriers = context.ExcludeDesktopSwapchainBarriers;
             recordingState.PrimaryCommandPlan = context.PrimaryCommandPlan;
+            recordingState.FramePlan = context.FramePlan;
         }
 
         private void InitializePrimaryCommandBufferRecordingState(
@@ -75,7 +76,7 @@ namespace XREngine.Rendering.Vulkan
             // reuse their already-compiled graphics pipelines. It also ensures
             // the primary plan is built from the final sorted operation order.
             PreparePrimaryOperationSchedule(ref recordingState);
-            NormalizePrimaryPlanPassIndices(recordingState.Ops);
+            ValidatePrimaryPlanPassIndicesForRecording(recordingState.Ops);
             recordingState.PrimaryCommandPlan.Build(
                 recordingState.Ops,
                 ComputeFrameOpsSignature(recordingState.Ops),

@@ -189,6 +189,13 @@ public unsafe partial class VulkanRenderer
         if (write.DstSet.Handle == 0 || write.DescriptorCount == 0)
             return false;
 
+        // UPDATE_AFTER_BIND preserves the native set handle, but an image/view/layout
+        // payload change would otherwise leave cached secondary descriptor-image
+        // requirements describing the old payload. Invalidate only the command
+        // buffers that actually bind this set; buffer-only UAB writes remain safe.
+        if (IsLifetimeTrackedImageDescriptorType(write.DescriptorType))
+            return true;
+
         return !_resourceLifetimeTracker.DescriptorSetLifetimes.TryGetValue(
                 write.DstSet.Handle,
                 out VulkanDescriptorSetLifetimeRecord? setState) ||
@@ -222,7 +229,7 @@ public unsafe partial class VulkanRenderer
 
             VulkanExactInvalidationResult result = InvalidateCachedCommandBuffersByHandle(
                 dependentCommandBuffers.AsSpan(0, dependentCommandBufferCount),
-                $"{updateKind} changed a descriptor set without UPDATE_AFTER_BIND");
+                $"{updateKind} changed a descriptor payload required by a recorded command buffer");
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanExactResourceInvalidation(
                 result.ExactVariantsDirtied,
                 result.ExactCommandChainsDirtied,

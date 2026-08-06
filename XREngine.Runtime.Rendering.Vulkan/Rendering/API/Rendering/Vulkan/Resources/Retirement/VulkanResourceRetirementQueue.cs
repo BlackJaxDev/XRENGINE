@@ -27,10 +27,14 @@ internal sealed class VulkanResourceRetirementQueue
         PipelineHandles = CreateSets<ulong>(frameSlotCount);
         PipelineLayouts = CreateLists<VulkanRenderer.RetiredPipelineLayout>(frameSlotCount);
         PipelineLayoutHandles = CreateSets<ulong>(frameSlotCount);
+        DescriptorSetLayouts = CreateLists<VulkanRenderer.RetiredDescriptorSetLayout>(frameSlotCount);
+        DescriptorSetLayoutHandles = CreateSets<ulong>(frameSlotCount);
         QueryPools = CreateLists<VulkanRenderer.RetiredQueryPool>(frameSlotCount);
         QueryPoolHandles = CreateSets<ulong>(frameSlotCount);
         CommandBuffers = CreateLists<RetiredCommandBuffer>(frameSlotCount);
         CommandBufferHandles = CreateSets<ulong>(frameSlotCount);
+        CommandPools = CreateLists<RetiredCommandPool>(frameSlotCount);
+        CommandPoolHandles = CreateSets<ulong>(frameSlotCount);
         BufferViews = CreateLists<RetiredBufferView>(frameSlotCount);
         BufferViewHandles = CreateSets<ulong>(frameSlotCount);
         Images = CreateLists<VulkanRenderer.RetiredImageResourceEntry>(frameSlotCount);
@@ -66,6 +70,9 @@ internal sealed class VulkanResourceRetirementQueue
     internal List<VulkanRenderer.RetiredPipelineLayout>[] PipelineLayouts { get; }
     internal HashSet<ulong>[] PipelineLayoutHandles { get; }
     internal HashSet<ulong> AllPipelineLayoutHandles { get; } = [];
+    internal List<VulkanRenderer.RetiredDescriptorSetLayout>[] DescriptorSetLayouts { get; }
+    internal HashSet<ulong>[] DescriptorSetLayoutHandles { get; }
+    internal HashSet<ulong> AllDescriptorSetLayoutHandles { get; } = [];
 
     internal List<VulkanRenderer.RetiredQueryPool>[] QueryPools { get; }
     internal HashSet<ulong>[] QueryPoolHandles { get; }
@@ -74,6 +81,10 @@ internal sealed class VulkanResourceRetirementQueue
     internal List<RetiredCommandBuffer>[] CommandBuffers { get; }
     internal HashSet<ulong>[] CommandBufferHandles { get; }
     internal HashSet<ulong> AllCommandBufferHandles { get; } = [];
+
+    internal List<RetiredCommandPool>[] CommandPools { get; }
+    internal HashSet<ulong>[] CommandPoolHandles { get; }
+    internal HashSet<ulong> AllCommandPoolHandles { get; } = [];
 
     internal List<RetiredBufferView>[] BufferViews { get; }
     internal HashSet<ulong>[] BufferViewHandles { get; }

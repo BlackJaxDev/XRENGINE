@@ -22,12 +22,11 @@ namespace XREngine.Rendering.Vulkan
             ShaderStageFlags.GeometryBit |
             ShaderStageFlags.FragmentBit |
             ShaderStageFlags.ComputeBit;
-        private const int PrimaryCommandBufferVariantCapacity = 64;
 
         private CommandBuffer[]? _commandBuffers;
         private CommandBuffer[]? _activeCommandBuffers;
         private VulkanPrimaryCommandPlan[]? _primaryCommandPlans;
-        private List<CommandBufferCacheVariant>[]? _commandBufferVariants;
+        private PrimaryCommandArtifactOwner[]? _primaryCommandArtifactOwners;
         private CommandBuffer[]? _dynamicUiBatchTextSecondaryCommandBuffers;
         private CommandBuffer[]? _dynamicUiBatchTextOverlayCommandBuffers;
         private int[]? _dynamicUiBatchTextSecondaryOpCounts;
@@ -179,7 +178,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
 
             MarkCommandBuffersDirty();
-            MarkOpenXrPrimaryCommandBufferVariantsDirty();
+            MarkOpenXrPrimaryCommandArtifactOwnersDirty();
             return true;
         }
         private string? _lastReusableFrameDataRefreshFailureReason;
@@ -200,24 +199,18 @@ namespace XREngine.Rendering.Vulkan
             frameOpContextId = 0;
             resourceGeneration = 0;
             descriptorGeneration = 0;
-            if (_commandBufferVariants is null || imageIndex >= (uint)_commandBufferVariants.Length)
+            if (_primaryCommandArtifactOwners is null || imageIndex >= (uint)_primaryCommandArtifactOwners.Length)
                 return false;
 
-            List<CommandBufferCacheVariant> variants = _commandBufferVariants[imageIndex];
-            for (int i = 0; i < variants.Count; i++)
-            {
-                CommandBufferCacheVariant variant = variants[i];
-                if (variant.PrimaryCommandBuffer.Handle != commandBuffer.Handle)
-                    continue;
+            PrimaryCommandArtifactOwner owner = _primaryCommandArtifactOwners[imageIndex];
+            if (owner.PrimaryCommandBuffer.Handle != commandBuffer.Handle)
+                return false;
 
-                plannerRevision = variant.PlannerRevision == ulong.MaxValue ? 0 : variant.PlannerRevision;
-                frameOpContextId = variant.RecordedFrameOpContextId;
-                resourceGeneration = variant.RecordedResourceGeneration;
-                descriptorGeneration = variant.RecordedDescriptorGeneration;
-                return true;
-            }
-
-            return false;
+            plannerRevision = owner.PlannerRevision == ulong.MaxValue ? 0 : owner.PlannerRevision;
+            frameOpContextId = owner.RecordedFrameOpContextId;
+            resourceGeneration = owner.RecordedResourceGeneration;
+            descriptorGeneration = owner.RecordedDescriptorGeneration;
+            return true;
         }
 
         internal void ResetCommandBufferBindState(CommandBuffer commandBuffer)
@@ -728,7 +721,7 @@ namespace XREngine.Rendering.Vulkan
         private void DestroyCommandBuffers()
         {
             if (_commandBuffers is null &&
-                _commandBufferVariants is null &&
+                _primaryCommandArtifactOwners is null &&
                 _dynamicUiBatchTextSecondaryCommandBuffers is null &&
                 _dynamicUiBatchTextOverlayCommandBuffers is null &&
                 _imguiOverlayCommandBuffers is null &&
@@ -759,7 +752,7 @@ namespace XREngine.Rendering.Vulkan
         private void DestroySwapchainCommandBuffers(bool cancelCommandChainWorkers)
         {
             if (_commandBuffers is null &&
-                _commandBufferVariants is null &&
+                _primaryCommandArtifactOwners is null &&
                 _dynamicUiBatchTextSecondaryCommandBuffers is null &&
                 _dynamicUiBatchTextOverlayCommandBuffers is null &&
                 _imguiOverlayCommandBuffers is null &&
@@ -824,37 +817,29 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyCommandBufferVariants()
         {
-            if (_commandBufferVariants is null)
+            if (_primaryCommandArtifactOwners is null)
                 return;
 
-            foreach (List<CommandBufferCacheVariant>? variants in _commandBufferVariants)
+            foreach (PrimaryCommandArtifactOwner variant in _primaryCommandArtifactOwners)
             {
-                if (variants is null)
-                    continue;
-
-                foreach (CommandBufferCacheVariant variant in variants)
+                CommandBuffer primary = variant.PrimaryCommandBuffer;
+                if (primary.Handle != 0)
                 {
-                    CommandBuffer primary = variant.PrimaryCommandBuffer;
-                    if (primary.Handle != 0)
-                    {
-                        if (variant.OwnsPrimaryCommandBuffer && !_deviceLost)
-                            FreeVulkanCommandBufferTracked(commandPool, ref primary, "CommandBuffers.DestroyVariantPrimary");
-                        RemoveCommandBufferBindState(primary);
-                    }
-
-                    CommandBuffer secondary = variant.DynamicUiSecondaryCommandBuffer;
-                    if (secondary.Handle != 0)
-                    {
-                        if (variant.OwnsDynamicUiSecondaryCommandBuffer && !_deviceLost)
-                            FreeVulkanCommandBufferTracked(commandPool, ref secondary, "CommandBuffers.DestroyVariantSecondary");
-                        RemoveCommandBufferBindState(secondary);
-                    }
+                    if (variant.OwnsPrimaryCommandBuffer && !_deviceLost)
+                        FreeVulkanCommandBufferTracked(commandPool, ref primary, "CommandBuffers.DestroyPrimaryOwner");
+                    RemoveCommandBufferBindState(primary);
                 }
 
-                variants.Clear();
+                CommandBuffer secondary = variant.DynamicUiSecondaryCommandBuffer;
+                if (secondary.Handle != 0)
+                {
+                    if (variant.OwnsDynamicUiSecondaryCommandBuffer && !_deviceLost)
+                        FreeVulkanCommandBufferTracked(commandPool, ref secondary, "CommandBuffers.DestroyPrimaryOwnerSecondary");
+                    RemoveCommandBufferBindState(secondary);
+                }
             }
 
-            _commandBufferVariants = null;
+            _primaryCommandArtifactOwners = null;
             _activeCommandBuffers = null;
         }
 
@@ -885,7 +870,10 @@ namespace XREngine.Rendering.Vulkan
                         continue;
 
                     foreach (CommandChain chain in cache.Values)
+                    {
                         DestroyCommandChainSecondaryCommandBuffer(chain);
+                        chain.ReleasePacketSnapshot();
+                    }
 
                     cache.Clear();
                 }
@@ -902,7 +890,10 @@ namespace XREngine.Rendering.Vulkan
                 foreach (Dictionary<CommandChainKey, CommandChain> cache in _externalCommandChainCaches.Values)
                 {
                     foreach (CommandChain chain in cache.Values)
+                    {
                         DestroyCommandChainSecondaryCommandBuffer(chain);
+                        chain.ReleasePacketSnapshot();
+                    }
 
                     cache.Clear();
                 }

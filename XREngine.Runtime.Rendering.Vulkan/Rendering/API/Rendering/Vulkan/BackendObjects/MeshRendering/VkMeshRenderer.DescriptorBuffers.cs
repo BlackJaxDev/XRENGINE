@@ -335,16 +335,14 @@ internal unsafe partial class VkMeshRenderer
 					: name);
 
 	private static bool IsOptionalPipelineStorageBuffer(DescriptorBindingInfo binding)
-		=> binding.DescriptorType is DescriptorType.StorageBuffer or DescriptorType.StorageBufferDynamic &&
-		   binding.Name is ("LightProbePositions" or
-			   "LightProbeTetrahedra" or
-			   "LightProbeParameters" or
-			   "LightProbeGridCells" or
-			   "LightProbeGridIndices");
+		=> binding.Requirement == EVulkanDescriptorBindingRequirement.Optional;
 
 	private bool TryResolveFallbackDescriptorBuffer(DescriptorBindingInfo binding, int frameIndex, int drawUniformSlot, out DescriptorBufferInfo bufferInfo)
 	{
 		bufferInfo = default;
+		if (binding.Requirement != EVulkanDescriptorBindingRequirement.Optional)
+			return false;
+
 		uint requiredSize = Math.Max(FallbackDescriptorUniformSize, Math.Max(binding.Count, 1u) * 16u);
 		if (!EnsureEngineUniformBuffer(FallbackDescriptorUniformName, requiredSize))
 			return false;

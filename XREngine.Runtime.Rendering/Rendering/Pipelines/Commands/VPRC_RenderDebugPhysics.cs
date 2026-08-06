@@ -42,6 +42,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
 
             var builder = context.GetOrCreateSyntheticPass(RenderGraphPassName, ERenderGraphPassStage.Graphics)
+                .KeepSecondaryDynamic(ERenderPassSecondaryCachePolicy.DynamicDebug)
                 .UseEngineDescriptors()
                 .UseMaterialDescriptors();
 

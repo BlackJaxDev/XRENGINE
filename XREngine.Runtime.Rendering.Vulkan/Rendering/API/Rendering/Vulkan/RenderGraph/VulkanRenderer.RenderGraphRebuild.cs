@@ -34,11 +34,12 @@ public unsafe partial class VulkanRenderer
         if (ActiveHasBarrierPlanFastPathKey && barrierKey.Matches(ActiveBarrierPlanFastPathKey))
             return;
 
-        BarrierPlanner.Rebuild(
+        ResourcePlannerRuntimeState plannerState = CaptureResourcePlannerRuntimeState();
+        plannerState.BarrierPlanner.Rebuild(
             planningInputs.ActivePassMetadata,
-            ResourcePlanner,
-            ResourceAllocator,
-            CompiledRenderGraph.Synchronization,
+            plannerState.ResourcePlanner,
+            plannerState.ResourceAllocator,
+            plannerState.CompiledRenderGraph.Synchronization,
             planningInputs.QueueOwnership);
         ActiveBarrierPlanFastPathKey = barrierKey;
         ActiveHasBarrierPlanFastPathKey = true;
@@ -222,6 +223,8 @@ public unsafe partial class VulkanRenderer
             return pass;
 
         RenderPassMetadata filtered = new(pass.PassIndex, pass.Name, pass.Stage, pass.DeclarationOrder);
+        filtered.UpdatePipelineReadiness(pass.RequiresPipelineReady);
+        filtered.UpdateSecondaryCachePolicy(pass.SecondaryCachePolicy);
         foreach (RenderPassResourceUsage usage in activeUsages)
             filtered.AddUsage(usage);
 

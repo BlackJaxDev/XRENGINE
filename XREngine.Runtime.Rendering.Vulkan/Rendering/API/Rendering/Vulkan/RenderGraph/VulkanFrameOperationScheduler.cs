@@ -516,7 +516,11 @@ internal sealed class VulkanFrameOperationScheduler
         switch (op)
         {
             case ComputeDispatchOp:
+            case ComputeDispatchIndirectOp:
                 family = EVulkanSecondaryCommandFamily.Compute;
+                return true;
+            case MemoryBarrierOp:
+                family = EVulkanSecondaryCommandFamily.Synchronization;
                 return true;
             case BufferCopyOp:
                 family = EVulkanSecondaryCommandFamily.Transfer;

@@ -81,12 +81,6 @@ public unsafe partial class VulkanRenderer
         => (HashCode.Combine(rendererIdentity, materialIdentity) & int.MaxValue) %
            ShadowCommandChainBucketCount;
 
-    // GPU-zero-readback argument streams remain primary-owned after a reproducible
-    // watchdog reset in the Sponza cohort. Only explicitly producer-complete streams
-    // with frozen buffer/range identities may enter the secondary path.
-    internal const bool MutableIndirectCommandChainSecondaryRecordingSafe =
-        false;
-
     private static bool? CommandChainsEnvironmentOverride
         => XREnvironment.GetBooleanOverride(CommandChainsEnvVar);
     private static bool CommandChainsSingleThread
@@ -118,16 +112,6 @@ public unsafe partial class VulkanRenderer
            secondaryNeedsRecording ||
            uniformSlotMappingChanged;
 
-    internal static bool CanReuseCachedCommandChainSchedule(
-        bool benchmarkForcedRerecord,
-        bool validationEnabled,
-        bool traceEnabled,
-        bool renderingExternalSwapchainTarget)
-        => !benchmarkForcedRerecord &&
-           !validationEnabled &&
-           !traceEnabled &&
-           !renderingExternalSwapchainTarget;
-
     internal static bool ResolveCommandChainStabilityGuardEnabled(
         bool traceEnabled,
         bool validationEnabled,
@@ -138,12 +122,17 @@ public unsafe partial class VulkanRenderer
            !benchmarkForcedRerecord &&
            !explicitlyDisabled;
     private bool CommandChainsRequested =>
+        !FreshSerialRecordingEnabled &&
         ResolveCommandChainsRequested(
             RuntimeRenderingHostServices.Settings.VulkanCommandRecordingMode,
             CommandChainsEnvironmentOverride);
+    private bool FreshSerialRecordingEnabled =>
+        RuntimeRenderingHostServices.Settings.VulkanCommandRecordingMode ==
+        EVulkanCommandRecordingMode.FreshSerial;
     private static bool CommandChainsExplicitlyRequested =>
         CommandChainsEnvironmentOverride == true;
     private bool CommandChainsEnabledForCurrentRecording =>
+        !FreshSerialRecordingEnabled &&
         !IsRenderingExternalSwapchainTarget &&
         ((CommandChainsRequested && !ShouldBypassCommandChainsForOpenXrIndependentDesktop) ||
          ShouldUseCommandChainsForOpenXrIndependentDesktop);
