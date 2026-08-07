@@ -16,6 +16,8 @@ public unsafe partial class VulkanRenderer
     internal bool StreamlineUsesNativeOpticalFlow => _outputRuntime._streamlineQueueRequirements.OpticalFlowQueues > 0;
     internal bool StreamlineDlssProvisioned => _outputRuntime._streamlineDlssProvisioned;
     public bool StreamlineFrameGenerationProvisioned => _outputRuntime._streamlineFrameGenerationProvisioned;
+    internal VulkanStreamlineDeviceBinding StreamlineDeviceBinding
+        => _outputRuntime.CaptureStreamlineDeviceBinding(_deviceContext);
     private bool IsStreamlineFrameGenerationRequested
         => _outputRuntime._streamlineFrameGenerationProvisioned && NvidiaDlssManager.IsFrameGenerationRequested;
 

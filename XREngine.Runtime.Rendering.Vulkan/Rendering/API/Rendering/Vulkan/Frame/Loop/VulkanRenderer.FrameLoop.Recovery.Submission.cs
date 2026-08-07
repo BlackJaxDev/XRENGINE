@@ -4,7 +4,7 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanFrameLoop
     {
         private bool TrySubmitRejectedDesktopAbort(
             ref VulkanFrameAttempt attempt,
@@ -89,12 +89,17 @@ namespace XREngine.Rendering.Vulkan
                 ref attempt,
                 signalValue,
                 "rejected desktop recovery frame");
-            DeferSecondaryCommandBufferFree(
+            _commandRuntime.DeferSecondaryCommandBufferFree(
+                Api,
+                _deviceContext.Device,
+                ResourceRuntime,
+                attempt.FrameSlot,
                 attempt.ImageIndex,
                 commandPool,
-                commandBuffer);
+                commandBuffer,
+                "FrameLoop.RecoverySecondary");
             RuntimeRenderingHostServices.Scheduling
-                .MarkRenderFrameReadyForCollect(XRWindow);
+                .MarkRenderFrameReadyForCollect(DesktopWsiOutput.Window);
             attempt.CollectReleased = true;
             return true;
         }

@@ -10,6 +10,7 @@ internal sealed partial class VulkanDeviceContext
     private RendererNativeCallbackBridge.VulkanDebugRegistration? _debugRegistration;
     private DebugUtilsMessengerEXT _debugMessenger;
 
+    public Vk Api { get; private set; } = null!;
     public Instance Instance { get; private set; }
     public VulkanInstanceExtensionSet EnabledInstanceExtensions { get; private set; } =
         VulkanInstanceExtensionSet.Empty;
@@ -21,12 +22,14 @@ internal sealed partial class VulkanDeviceContext
     public bool HasDebugMessenger => _debugMessenger.Handle != 0;
 
     public void AttachInstance(
+        Vk api,
         Instance instance,
         IEnumerable<string> enabledExtensions,
         uint apiVersion,
         bool createdThroughOpenXr,
         OpenXrVulkanEnable2BootstrapContext? openXrBootstrapContext)
     {
+        ArgumentNullException.ThrowIfNull(api);
         if (instance.Handle == 0)
             throw new ArgumentException("A valid Vulkan instance is required.", nameof(instance));
         ArgumentNullException.ThrowIfNull(enabledExtensions);
@@ -37,6 +40,7 @@ internal sealed partial class VulkanDeviceContext
         if (createdThroughOpenXr != (openXrBootstrapContext is not null))
             throw new InvalidOperationException("OpenXR instance creation identity and bootstrap ownership disagree.");
 
+        Api = api;
         Instance = instance;
         EnabledInstanceExtensions = new VulkanInstanceExtensionSet(enabledExtensions);
         InstanceApiVersion = apiVersion;

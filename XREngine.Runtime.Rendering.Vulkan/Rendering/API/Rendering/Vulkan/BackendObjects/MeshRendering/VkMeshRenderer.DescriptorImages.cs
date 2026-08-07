@@ -365,7 +365,7 @@ internal unsafe partial class VkMeshRenderer
 			return true;
 
 		sampler = snapshot.Sampler;
-		if (sampler.Handle != 0 && Renderer.IsLiveSampler(sampler))
+		if (sampler.Handle != 0 && BackendContext.Descriptors.IsLiveSampler(sampler))
 			return true;
 
 		if (requiresReadyDescriptor)
@@ -382,7 +382,7 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		sampler = Renderer.GetPlaceholderSampler();
-		if (sampler.Handle != 0 && Renderer.IsLiveSampler(sampler))
+		if (sampler.Handle != 0 && BackendContext.Descriptors.IsLiveSampler(sampler))
 		{
 			WarnOnce($"Texture for descriptor binding '{binding.Name}' has no Vulkan sampler. Using placeholder sampler.");
 			RecordDescriptorFallback(binding);

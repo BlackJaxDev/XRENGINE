@@ -19,7 +19,7 @@ namespace XREngine.Rendering.Vulkan
     {
         private readonly VulkanDeviceContext _deviceContext;
         private readonly VulkanOutputRuntime _outputRuntime;
-        private readonly VulkanFrameLoop _frameLoop = new();
+        private readonly VulkanFrameLoop _frameLoop;
         private readonly VulkanFramePlanner _framePlanner = new();
         private readonly VulkanResourceRuntime _resourceRuntime = new(MAX_FRAMES_IN_FLIGHT);
         private readonly VulkanCommandRuntime _commandRuntime = new();
@@ -44,6 +44,13 @@ namespace XREngine.Rendering.Vulkan
                     targetDriver.RequiresSwapchainOutput,
                     targetDriver.RequiredDeviceExtensions,
                     OptionalDeviceExtensions));
+            _frameLoop = new VulkanFrameLoop(
+                _deviceContext,
+                _outputRuntime,
+                _framePlanner,
+                _resourceRuntime,
+                _commandRuntime,
+                _frameTelemetry);
             ResourceRuntime.BackendObjectContext?.PublishDeviceContext(_deviceContext);
             _framePlanner.PublishResourcePlannerGeneration(
                 new ResourcePlannerRuntimeGeneration(ResourcePlannerRuntimeState.CreateEmpty()));
@@ -87,7 +94,14 @@ namespace XREngine.Rendering.Vulkan
             CreateCommandPool();
 
             CreateDescriptorSetLayout();
-            OutputRuntime.InitializeTargetFinalOutput(this);
+            OutputRuntime.InitializeTargetFinalOutput(
+                VulkanApi,
+                _deviceContext,
+                _commandRuntime,
+                _resourceRuntime,
+                _frameTelemetry);
+            if (OutputRuntime.TargetDriver is VulkanDesktopWsiTargetDriver)
+                CreateDesktopFinalOutput();
 
             //CreateTestModel();
             //CreateUniformBuffers();
@@ -260,6 +274,8 @@ namespace XREngine.Rendering.Vulkan
             DisposeImGuiResources();
             DestroyOpenXrRenderingResources();
             DestroyFrameOpResourcePlannerStates();
+            if (OutputRuntime.TargetDriver is VulkanDesktopWsiTargetDriver)
+                DestroyDesktopFinalOutput();
             OutputRuntime.DestroyTargetFinalOutput();
             // FBO render passes are NOT destroyed during swapchain recreation
             // (they are swapchain-independent). Clean them up here at full shutdown.

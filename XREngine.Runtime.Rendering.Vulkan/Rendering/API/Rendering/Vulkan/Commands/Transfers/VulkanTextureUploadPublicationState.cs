@@ -21,4 +21,21 @@ internal sealed class VulkanTextureUploadPublicationState
                 "The Vulkan texture-upload recording batch is unavailable.");
 
     public List<PendingRecordedTextureUploadPublication> PendingTimelinePublications { get; } = [];
+
+    internal void QueueRecordedForTimeline(
+        ulong timelineValue,
+        string uploadSource)
+    {
+        List<VulkanImportedTexturePendingUpload> recorded = RecordedForSubmit;
+        for (int index = 0; index < recorded.Count; index++)
+        {
+            PendingTimelinePublications.Add(
+                new PendingRecordedTextureUploadPublication(
+                    recorded[index],
+                    timelineValue,
+                    uploadSource));
+        }
+
+        recorded.Clear();
+    }
 }

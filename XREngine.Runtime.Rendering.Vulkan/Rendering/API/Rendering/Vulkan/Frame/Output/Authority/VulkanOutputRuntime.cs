@@ -47,6 +47,7 @@ internal sealed class VulkanOutputRuntime
     internal SurfaceKHR Surface;
     private VulkanTargetOutputContext? _targetOutputContext;
     private long _explicitTargetFrameNumber;
+    private int _imguiFrameMarkerResetRequested;
 
     internal VulkanOutputRuntime(IVulkanRendererTargetDriver targetDriver)
     {
@@ -69,17 +70,91 @@ internal sealed class VulkanOutputRuntime
     internal VulkanStreamlineUiOutputState StreamlineUi { get; }
     internal VulkanPresentationSourceState PresentationSource { get; }
 
+    internal void RequestImGuiFrameMarkerReset()
+        => Interlocked.Exchange(ref _imguiFrameMarkerResetRequested, 1);
+
+    internal bool ConsumeImGuiFrameMarkerResetRequest()
+        => Interlocked.Exchange(ref _imguiFrameMarkerResetRequested, 0) != 0;
+
+    internal void RecordPhase524bInjectedDesktopRejection(
+        in FrameOpContext context,
+        in RejectedDesktopFramePolicyDecision policy,
+        bool presentAccepted,
+        ulong renderFrameId)
+    {
+        Phase524bDesktopRejectionDecision sample =
+            _phase524bPendingDesktopRejection;
+        OpenXrSmokeDesktopRejectionEvidence evidence = new()
+        {
+            Injected = true,
+            Observed = true,
+            Policy = policy.Disposition.ToString(),
+            SkippedPresent = !policy.ShouldPresent,
+            PresentedLastCompletedImage = policy.ShouldPresent,
+            PresentAccepted = presentAccepted,
+            ClearedTargetPublished = false,
+            PipelineName = context.PipelineInstance?.DebugName ?? "<unknown>",
+            PipelineInstanceId = context.PipelineIdentity,
+            OutputId = unchecked((ulong)(uint)context.ViewportIdentity),
+            RenderFrameId = renderFrameId,
+            ManifestFrameId = 0UL,
+            Exposure = sample.Exposure,
+            ExposureHistory = sample.ExposureHistory,
+            ExposureFinite = double.IsFinite(sample.Exposure),
+            ExposureHistoryFinite = double.IsFinite(sample.ExposureHistory),
+            ExposureNonZeroRequired = true,
+            ExposureHistoryNonZeroRequired = true,
+            ExposureOwnerMatchesDesktop =
+                context.ContextKind == EVulkanFrameOpContextKind.MainViewport &&
+                context.PipelineIdentity != 0 &&
+                context.ResourceRegistry?.TextureRecords.ContainsKey(
+                    DefaultRenderPipeline.AutoExposureTextureName) == true,
+            Diagnostic = sample.Diagnostic,
+        };
+
+        lock (Phase524bDesktopRejectionEvidenceLock)
+            Phase524bDesktopRejectionEvidence = evidence;
+    }
+
+    internal VulkanStreamlineDeviceBinding CaptureStreamlineDeviceBinding(
+        VulkanDeviceContext deviceContext)
+        => new(
+            deviceContext.Device,
+            deviceContext.Instance,
+            deviceContext.PhysicalDevice,
+            _streamlineComputeQueueIndex,
+            _streamlineComputeQueueFamily,
+            _streamlineGraphicsQueueIndex,
+            _streamlineGraphicsQueueFamily,
+            _streamlineOpticalFlowQueueIndex,
+            _streamlineOpticalFlowQueueFamily,
+            _streamlineQueueRequirements.OpticalFlowQueues > 0,
+            _streamlineDlssProvisioned,
+            _streamlineFrameGenerationProvisioned,
+            Desktop.StreamlineFrameGenerationIncludesDlss);
+
     /// <summary>Creates target-owned instance resources through the narrow WSI surface authority.</summary>
     internal void CreateTargetInstanceResources(Vk api, VulkanDeviceContext deviceContext, Silk.NET.Windowing.IWindow? window)
         => TargetDriver.CreateInstanceResources(new VulkanTargetSurfaceAuthority(api, deviceContext, this, window));
 
     /// <summary>Initializes the selected target's final output with its scoped native access.</summary>
-    internal void InitializeTargetFinalOutput(VulkanRenderer renderer)
+    internal void InitializeTargetFinalOutput(
+        Vk api,
+        VulkanDeviceContext deviceContext,
+        VulkanCommandRuntime commandRuntime,
+        VulkanResourceRuntime resourceRuntime,
+        VulkanFrameTelemetry telemetry)
     {
         if (_targetOutputContext is not null)
             throw new InvalidOperationException("The Vulkan target output context is already initialized.");
 
-        VulkanTargetOutputContext context = new(renderer);
+        VulkanTargetOutputContext context = new(
+            api,
+            deviceContext,
+            commandRuntime,
+            resourceRuntime,
+            telemetry,
+            this);
         _targetOutputContext = context;
         try
         {
@@ -131,4 +206,12 @@ internal sealed class VulkanOutputRuntime
         => TargetDriver as IVulkanExplicitFrameTargetDriver
             ?? throw new InvalidOperationException(
                 $"Vulkan target '{TargetDriver.ExecutionMode}' does not expose explicit target-frame submission.");
+
+    internal void DestroyBufferRaw(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)
+    {
+        VulkanTargetOutputContext context = _targetOutputContext
+            ?? throw new InvalidOperationException(
+                "The Vulkan target output context is not initialized.");
+        context.DestroyBufferRaw(buffer, memory);
+    }
 }

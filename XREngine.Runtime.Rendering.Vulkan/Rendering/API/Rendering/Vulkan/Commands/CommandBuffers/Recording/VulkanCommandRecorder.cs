@@ -3,8 +3,7 @@ using Silk.NET.Vulkan;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Command-emission authority. The renderer facade supplies native services while
-/// this owner transports one explicit recording context through the operation.
+/// Command-emission authority over explicit native and device-lifetime inputs.
 /// </summary>
 internal sealed class VulkanCommandRecorder
 {
@@ -53,18 +52,27 @@ internal sealed class VulkanCommandRecorder
     /// <summary>
     /// Begins recording commands into the specified Vulkan command buffer.
     /// </summary>
-    /// <param name="renderer">The renderer that owns device-loss admission and the Vulkan API.</param>
+    /// <param name="api">The Vulkan API used to begin recording.</param>
+    /// <param name="deviceState">The device-lifetime admission authority.</param>
     /// <param name="commandBuffer">The Vulkan command buffer to begin recording.</param>
     /// <exception cref="InvalidOperationException">Thrown if beginning the command buffer fails.</exception>
-    public void Begin(VulkanRenderer renderer, CommandBuffer commandBuffer)
+    public void Begin(
+        Vk api,
+        VulkanDeviceStateMachine deviceState,
+        CommandBuffer commandBuffer)
     {
         CommandBufferBeginInfo beginInfo = new()
         {
             SType = StructureType.CommandBufferBeginInfo,
         };
 
-        renderer.ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.Primary");
-        if (renderer.VulkanApi.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
+        if (!deviceState.IsOperational)
+        {
+            throw new InvalidOperationException(
+                $"Cannot start Vulkan operation 'vkBeginCommandBuffer.Primary' while device state is {deviceState.State}.");
+        }
+
+        if (api.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
             throw new InvalidOperationException("Failed to begin recording command buffer.");
     }
 

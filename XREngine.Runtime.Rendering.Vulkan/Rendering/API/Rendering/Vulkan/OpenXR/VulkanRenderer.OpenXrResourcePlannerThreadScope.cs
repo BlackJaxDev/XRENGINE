@@ -35,12 +35,12 @@ public unsafe partial class VulkanRenderer
                 return;
             }
 
-            VulkanRenderer.ResourcePlannerRuntimeState openXrState;
+            ResourcePlannerRuntimeState openXrState;
             lock (renderer.OutputRuntime.OpenXrBackend.ResourcePlannerStatesLock)
             {
-                openXrState = renderer.OpenXrResourcePlannerStates.TryGetValue(_contextKey, out VulkanRenderer.ResourcePlannerRuntimeState existingState)
+                openXrState = renderer.OpenXrResourcePlannerStates.TryGetValue(_contextKey, out ResourcePlannerRuntimeState existingState)
                     ? existingState
-                    : VulkanRenderer.ResourcePlannerRuntimeState.CreateEmpty();
+                    : ResourcePlannerRuntimeState.CreateEmpty();
             }
             openXrState.FrameOpResourcePlannerSwitchingState ??= new VulkanRenderer.FrameOpResourcePlannerSwitchingState();
             _threadScope = renderer.EnterThreadResourcePlannerRuntimeStateScope(in openXrState);
@@ -62,7 +62,7 @@ public unsafe partial class VulkanRenderer
                 return;
             }
 
-            VulkanRenderer.ResourcePlannerRuntimeState state = _threadScope.CaptureCurrent(_renderer);
+            ResourcePlannerRuntimeState state = _threadScope.CaptureCurrent(_renderer);
             state.FrameOpResourcePlannerSwitchingState = _frameOpThreadScope.CaptureCurrent(_renderer);
             if (_renderer.DeviceContext.IsOperational)
             {

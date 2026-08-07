@@ -10,89 +10,97 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed unsafe class VulkanTargetOutputContext
 {
-    private readonly VulkanRenderer _renderer;
+    private readonly VulkanTargetOutputServices _services;
 
-    internal VulkanTargetOutputContext(VulkanRenderer renderer)
-        => _renderer = renderer;
+    internal VulkanTargetOutputContext(
+        Vk api,
+        VulkanDeviceContext deviceContext,
+        VulkanCommandRuntime commandRuntime,
+        VulkanResourceRuntime resourceRuntime,
+        VulkanFrameTelemetry telemetry,
+        VulkanOutputRuntime outputRuntime)
+        => _services = new VulkanTargetOutputServices(
+            api,
+            deviceContext,
+            commandRuntime,
+            resourceRuntime,
+            telemetry,
+            outputRuntime);
 
-    internal Vk VulkanApi => _renderer.VulkanApi;
-    internal Instance Instance => _renderer.Instance;
-    internal PhysicalDevice PhysicalDevice => _renderer.PhysicalDevice;
-    internal Device Device => _renderer.Device;
-    internal Queue GraphicsQueue => _renderer.GraphicsQueue;
-    internal Queue PresentQueue => _renderer.PresentQueue;
-    internal SurfaceKHR TargetSurface => _renderer.TargetSurface;
-    internal VulkanDeviceContext DeviceContext => _renderer.DeviceContext;
-
-    internal void CreateDesktopFinalOutput()
-        => _renderer.CreateDesktopFinalOutput();
-
-    internal void DestroyDesktopFinalOutput()
-        => _renderer.DestroyDesktopFinalOutput();
+    internal Vk VulkanApi => _services.VulkanApi;
+    internal Instance Instance => _services.Instance;
+    internal PhysicalDevice PhysicalDevice => _services.PhysicalDevice;
+    internal Device Device => _services.Device;
+    internal Queue GraphicsQueue => _services.GraphicsQueue;
+    internal Queue PresentQueue => _services.PresentQueue;
+    internal SurfaceKHR TargetSurface => _services.TargetSurface;
+    internal VulkanDeviceContext DeviceContext => _services.DeviceContext;
 
     internal KhrSurface RequireSurfaceApi()
-        => _renderer.RequireSurfaceApi();
+        => _services.RequireSurfaceApi();
 
     internal void ThrowIfVulkanDeviceOperationNotAdmitted(string operation)
-        => _renderer.ThrowIfVulkanDeviceOperationNotAdmitted(operation);
+    {
+        _services.ThrowIfVulkanDeviceOperationNotAdmitted(operation);
+    }
 
     internal bool TryAdmitVulkanDeviceOperation(string operation, out string failureReason)
-        => _renderer.TryAdmitVulkanDeviceOperation(operation, out failureReason);
+        => _services.TryAdmitVulkanDeviceOperation(operation, out failureReason);
 
     internal void NotifyVulkanFenceCompleted(Fence fence)
-        => _renderer.NotifyVulkanFenceCompleted(fence);
+        => _services.NotifyVulkanFenceCompleted(fence);
 
     internal Result CreateVulkanCommandPoolTracked(ref CommandPoolCreateInfo createInfo, out CommandPool pool, string owner)
-        => _renderer.CreateVulkanCommandPoolTracked(ref createInfo, out pool, owner);
+        => _services.CreateVulkanCommandPoolTracked(ref createInfo, out pool, owner);
 
     internal Result AllocateVulkanCommandBufferTracked(ref CommandBufferAllocateInfo allocateInfo, out CommandBuffer commandBuffer, string owner)
-        => _renderer.AllocateVulkanCommandBufferTracked(ref allocateInfo, out commandBuffer, owner);
+        => _services.AllocateVulkanCommandBufferTracked(ref allocateInfo, out commandBuffer, owner);
 
     internal Result ResetVulkanCommandPoolTracked(CommandPool pool, string owner)
-        => _renderer.ResetVulkanCommandPoolTracked(pool, owner);
+        => _services.ResetVulkanCommandPoolTracked(pool, owner);
 
     internal void DestroyCommandPoolHostSynchronized(CommandPool pool)
-        => _renderer.DestroyCommandPoolHostSynchronized(pool);
+        => _services.DestroyCommandPoolHostSynchronized(pool);
 
     internal Result CreateVulkanImageTracked(ref ImageCreateInfo createInfo, out Image image, string owner)
-        => _renderer.CreateVulkanImageTracked(ref createInfo, out image, owner);
+        => _services.CreateVulkanImageTracked(ref createInfo, out image, owner);
 
     internal void DestroyVulkanImageImmediateTracked(Image image, string owner)
-        => _renderer.DestroyVulkanImageImmediateTracked(image, owner);
+        => _services.DestroyVulkanImageImmediateTracked(image, owner);
 
     internal VulkanMemoryAllocation AllocateImageMemoryWithFallback(Image image, MemoryPropertyFlags requiredProperties)
-        => _renderer.AllocateImageMemoryWithFallback(image, requiredProperties);
+        => _services.AllocateImageMemoryWithFallback(image, requiredProperties);
 
     internal VulkanMemoryAllocation AllocateBufferMemoryWithFallback(Buffer buffer, MemoryPropertyFlags requiredProperties)
-        => _renderer.AllocateBufferMemoryWithFallback(buffer, requiredProperties);
+        => _services.AllocateBufferMemoryWithFallback(buffer, requiredProperties);
 
     internal void FreeMemoryAllocation(VulkanMemoryAllocation allocation)
-        => _renderer.FreeMemoryAllocation(allocation);
+        => _services.FreeMemoryAllocation(allocation);
 
     internal void TrackLiveBuffer(Buffer buffer, string owner)
-        => _renderer.TrackLiveBuffer(buffer, owner);
+        => _services.TrackLiveBuffer(buffer, owner);
 
     internal void TrackExternalBufferAllocation(Buffer buffer, in VulkanMemoryAllocation allocation)
-        => _renderer.TrackExternalBufferAllocation(buffer, in allocation);
+        => _services.TrackExternalBufferAllocation(buffer, in allocation);
 
     internal void DestroyBufferRaw(Buffer? buffer, DeviceMemory? memory)
-        => _renderer.DestroyBufferRaw(buffer, memory);
+        => _services.DestroyBufferRaw(buffer, memory);
 
     internal bool TryBeginDestroyImageView(ImageView imageView, string owner)
-        => _renderer.TryBeginDestroyImageView(imageView, owner);
+        => _services.TryBeginDestroyImageView(imageView, owner);
 
     internal void TrackLiveImageView(ImageView imageView, in ImageViewCreateInfo createInfo, string owner)
-        => _renderer.TrackLiveImageView(imageView, in createInfo, owner);
+        => _services.TrackLiveImageView(imageView, in createInfo, owner);
 
     internal Result SubmitToQueueTracked(Queue queue, ref SubmitInfo submitInfo, Fence fence, string caller)
-        => _renderer.SubmitToQueueTracked(queue, ref submitInfo, fence, caller);
+        => _services.SubmitToQueueTracked(queue, ref submitInfo, fence, caller);
 
     internal bool TryMapMemoryAllocation(VulkanMemoryAllocation allocation, ulong offset, ulong length, out void* mapped)
-        => _renderer.TryMapMemoryAllocation(allocation, offset, length, out mapped);
+        => _services.TryMapMemoryAllocation(allocation, offset, length, out mapped);
 
     internal void UnmapMemoryAllocation(VulkanMemoryAllocation allocation)
-        => _renderer.UnmapMemoryAllocation(allocation);
+        => _services.UnmapMemoryAllocation(allocation);
 
     internal void MarkDeviceLost(string reason, string operation, Result result)
-        => _renderer.MarkDeviceLost(reason, operation, result);
+        => _services.MarkDeviceLost(reason, operation, result);
 }

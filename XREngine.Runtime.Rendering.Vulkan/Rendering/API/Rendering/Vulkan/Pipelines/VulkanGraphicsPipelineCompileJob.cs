@@ -1,0 +1,15 @@
+using System.Diagnostics;
+using System.Threading.Tasks;
+
+namespace XREngine.Rendering.Vulkan;
+
+internal sealed class VulkanGraphicsPipelineCompileJob(
+    VkMeshRenderer.GraphicsPipelineBuildRequest request,
+    Task<VulkanGraphicsPipelineCompileResult> task)
+{
+    public VkMeshRenderer.GraphicsPipelineBuildRequest Request { get; } = request;
+    public Task<VulkanGraphicsPipelineCompileResult> Task { get; } = task;
+    public Task PublicationTask { get; set; } = global::System.Threading.Tasks.Task.CompletedTask;
+    public long QueuedTimestamp { get; } = Stopwatch.GetTimestamp();
+    public int WatchdogState;
+}

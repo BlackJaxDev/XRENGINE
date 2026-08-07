@@ -1415,7 +1415,7 @@ internal unsafe partial class VkRenderProgram
             return true;
 
         sampler = source.DescriptorSampler;
-        if (sampler.Handle != 0 && Renderer.IsLiveSampler(sampler))
+        if (sampler.Handle != 0 && BackendContext.Descriptors.IsLiveSampler(sampler))
             return true;
 
         if (sampler.Handle != 0)
@@ -1431,7 +1431,7 @@ internal unsafe partial class VkRenderProgram
             return false;
 
         sampler = Renderer.GetPlaceholderSampler();
-        if (sampler.Handle != 0 && Renderer.IsLiveSampler(sampler))
+        if (sampler.Handle != 0 && BackendContext.Descriptors.IsLiveSampler(sampler))
         {
             WarnComputeOnce($"Compute texture for binding '{binding.Name}' has no Vulkan sampler. Using placeholder sampler.");
             RecordComputeDescriptorFallback(binding);

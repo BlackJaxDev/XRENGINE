@@ -11,7 +11,7 @@ public unsafe partial class VulkanRenderer
         => new(type, handle);
 
     internal ulong GetCurrentVulkanResourceGeneration(ObjectType type, ulong handle)
-        => ResourceRuntime.Lifetime.Tracker.GetPublishedGeneration(ResourceKey(type, handle));
+        => ResourceRuntime.GetPublishedGeneration(type, handle);
 
     internal bool TryGetBufferViewBackingBuffer(
         BufferView bufferView,

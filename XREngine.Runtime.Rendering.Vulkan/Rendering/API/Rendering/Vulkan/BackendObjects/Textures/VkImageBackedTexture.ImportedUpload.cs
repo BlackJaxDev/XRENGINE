@@ -560,7 +560,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (Api!.CreateSampler(Device, ref samplerInfo, null, out Sampler created) != Result.Success)
             throw new Exception("Failed to create synchronized imported texture sampler.");
 
-        Renderer.RegisterLiveSampler(created, in samplerInfo);
+        BackendContext.RegisterSampler(created, in samplerInfo, nameof(VkImageBackedTexture<TTexture>));
         return created;
     }
 

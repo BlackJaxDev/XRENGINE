@@ -1279,7 +1279,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     Api!.DestroySampler(_deviceContext.Device, r.Sampler, null);
                     CompleteVulkanResourceDestruction(ObjectType.Sampler, r.Sampler.Handle);
-                    UnregisterLiveSampler(r.Sampler);
+                    ResourceRuntime.Descriptors.UnregisterLiveSampler(r.Sampler);
                     destroyedSamplers++;
                 }
                 if (r.PrimaryView.Handle != 0)

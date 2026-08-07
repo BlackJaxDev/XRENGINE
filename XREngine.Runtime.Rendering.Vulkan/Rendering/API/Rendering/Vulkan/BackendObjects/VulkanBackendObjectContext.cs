@@ -21,11 +21,25 @@ internal sealed class VulkanBackendObjectContext(
     public PhysicalDevice PhysicalDevice => RequireDeviceContext().PhysicalDevice;
     public bool IsLogicalDeviceReady => _deviceContext?.IsReady == true;
     public bool IsDeviceOperational => _deviceContext?.IsOperational == true;
+    public bool Supports(EVulkanDeviceCapability capability)
+        => _deviceContext?.Capabilities.Supports(capability) == true;
     public VulkanBackendObjectRegistry Registry { get; } = registry;
     public VulkanBindingAllocator BindingAllocator => Registry.BindingAllocator;
     public VulkanResourceLifetimeTracker Lifetime { get; } = lifetime;
     public VulkanDescriptorManager Descriptors { get; } = descriptors;
     public VulkanPipelineManager Pipelines { get; } = pipelines;
+
+    public void RegisterSampler(Sampler sampler, in SamplerCreateInfo createInfo, string owner)
+    {
+        if (sampler.Handle == 0)
+            return;
+
+        Descriptors.RegisterLiveSampler(sampler, in createInfo);
+        Lifetime.RegisterResource(
+            new VulkanResourceLifetimeKey(ObjectType.Sampler, sampler.Handle),
+            owner,
+            externallyOwned: false);
+    }
 
     /// <summary>
     /// Completes staged bootstrap when wrappers are requested by the base renderer

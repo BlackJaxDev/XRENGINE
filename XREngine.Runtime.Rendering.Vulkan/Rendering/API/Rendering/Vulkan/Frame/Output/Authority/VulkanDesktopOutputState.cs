@@ -24,6 +24,11 @@ internal sealed class VulkanDesktopOutputState
     internal Semaphore[]? PresentBridgeSemaphores;
     internal ulong[]? ImageTimelineValues;
     internal bool[]? ImageEverPresented;
+
+    internal bool IsImageEverPresented(uint imageIndex)
+        => ImageEverPresented is not null &&
+           imageIndex < ImageEverPresented.Length &&
+           ImageEverPresented[imageIndex];
     internal bool[]? ImageHasValidPresentedContent;
     internal uint LastPresentedImageIndex;
     internal bool StreamlineFrameGenerationActive;
@@ -38,4 +43,23 @@ internal sealed class VulkanDesktopOutputState
     internal bool Maintenance1Enabled;
     internal bool PresentScalingActive;
     internal SurfacePresentScalingCapabilitiesEXT PresentScalingCapabilities;
-}
+
+    internal bool IsPresentScalingExtentSupported(
+        uint swapchainWidth,
+        uint swapchainHeight)
+    {
+        if (!PresentScalingActive ||
+            swapchainWidth == 0 ||
+            swapchainHeight == 0)
+        {
+            return false;
+        }
+
+        Extent2D min = PresentScalingCapabilities.MinScaledImageExtent;
+        Extent2D max = PresentScalingCapabilities.MaxScaledImageExtent;
+        return swapchainWidth >= min.Width &&
+            swapchainHeight >= min.Height &&
+            swapchainWidth <= max.Width &&
+            swapchainHeight <= max.Height;
+    }
+        }

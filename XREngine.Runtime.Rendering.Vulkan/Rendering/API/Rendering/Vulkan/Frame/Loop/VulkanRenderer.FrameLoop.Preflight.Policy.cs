@@ -4,12 +4,13 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanFrameLoop
     {
         private void DrainSkippedResizeFrameOps(string reason)
         {
-            FrameOp[] droppedOps = DrainFrameOps(out _);
-            FailUnsubmittedSubmissionMarkers(droppedOps);
+            FrameOp[] droppedOps = _framePlanner.Operations.DrainPending();
+            VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
+                droppedOps);
             var liveFramebufferSize = DesktopWsiOutput.EffectiveFramebufferSize;
             var resizeExtents = DesktopWsiOutput.ResizeExtents;
 
@@ -36,7 +37,7 @@ namespace XREngine.Rendering.Vulkan
         {
             reason = string.Empty;
 
-            var viewports = XRWindow.Viewports;
+            var viewports = DesktopWsiOutput.Window.Viewports;
             for (int i = 0; i < viewports.Count; i++)
             {
                 XRViewport viewport = viewports[i];
@@ -135,7 +136,7 @@ namespace XREngine.Rendering.Vulkan
                 return true;
             }
 
-            _frameLoop.ResetResourceCatchUpProgress();
+            ResetResourceCatchUpProgress();
             return false;
         }
 
@@ -147,7 +148,7 @@ namespace XREngine.Rendering.Vulkan
         {
             long now = Stopwatch.GetTimestamp();
             (ulong blockedFrames, TimeSpan elapsed) =
-                _frameLoop.RecordResourceCatchUpProgress(now);
+                RecordResourceCatchUpProgress(now);
             Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.ResourceCatchUpProgress.{viewport.Index}",
                 TimeSpan.FromMilliseconds(250),

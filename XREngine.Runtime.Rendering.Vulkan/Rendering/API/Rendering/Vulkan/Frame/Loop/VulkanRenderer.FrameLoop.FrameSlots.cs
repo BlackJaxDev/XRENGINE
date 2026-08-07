@@ -3,7 +3,7 @@ using System.Diagnostics;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanFrameLoop
     {
         internal EDesktopFrameFlow PrepareDesktopFrameSlot(ref VulkanFrameAttempt attempt)
         {
@@ -49,20 +49,43 @@ namespace XREngine.Rendering.Vulkan
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.FrameLifecycle.DrainRetiredResources"))
             {
-                DrainInvalidatedCommandBufferRecordings();
+                _commandRuntime.DrainInvalidatedCommandBufferRecordings(
+                    Api, ResourceRuntime);
                 DrainRetiredSwapchainGenerations();
-                DrainRetiredCommandBuffers(attempt.FrameSlot);
-                DrainRetiredCommandPools(attempt.FrameSlot);
-                DrainRetiredDescriptorSets(attempt.FrameSlot);
-                DrainRetiredDescriptorPools();
-                DrainRetiredPipelines();
-                DrainRetiredPipelineLayouts();
-                DrainRetiredDescriptorSetLayouts();
-                DrainRetiredQueryPools(attempt.FrameSlot);
-                DrainRetiredBufferViews(attempt.FrameSlot);
-                DrainRetiredBuffers();
-                DrainRetiredFramebuffers();
-                DrainRetiredImages();
+                _commandRuntime.DrainRetiredCommandBuffers(
+                    Api,
+                    _deviceContext.Device,
+                    ResourceRuntime,
+                    attempt.FrameSlot);
+                _commandRuntime.DrainRetiredCommandPools(
+                    Api,
+                    _deviceContext.Device,
+                    ResourceRuntime,
+                    attempt.FrameSlot);
+                ResourceRuntime.DrainRetiredDescriptorSets(
+                    Api, _deviceContext.Device, attempt.FrameSlot);
+                ResourceRuntime.DrainRetiredDescriptorPools(
+                    Api, _deviceContext.Device, attempt.FrameSlot);
+                ResourceRuntime.DrainRetiredPipelines(
+                    Api, _deviceContext.Device, attempt.FrameSlot);
+                ResourceRuntime.DrainRetiredPipelineLayouts(
+                    Api, _deviceContext.Device, attempt.FrameSlot);
+                ResourceRuntime.DrainRetiredDescriptorSetLayouts(
+                    Api, _deviceContext.Device, attempt.FrameSlot);
+                ResourceRuntime.DrainRetiredQueryPools(
+                    Api, _deviceContext.Device, attempt.FrameSlot);
+                ResourceRuntime.DrainRetiredBufferViews(
+                    Api, _deviceContext.Device, attempt.FrameSlot);
+                ResourceRuntime.DrainRetiredBuffers(
+                    Api,
+                    _deviceContext.Device,
+                    OutputRuntime,
+                    _frameTelemetry,
+                    attempt.FrameSlot);
+                ResourceRuntime.DrainRetiredFramebuffers(
+                    Api, _deviceContext.Device, attempt.FrameSlot);
+                ResourceRuntime.DrainRetiredImages(
+                    Api, _deviceContext.Device, attempt.FrameSlot);
                 DrainCompletedRecordedTextureUploadPublications();
             }
 
@@ -113,7 +136,10 @@ namespace XREngine.Rendering.Vulkan
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.FrameLifecycle.SampleTimingQueries"))
             {
-                SampleFrameTimingQueries(
+                _frameTelemetry.SampleFrameTimingQueries(
+                    Api,
+                    _deviceContext.Device,
+                    ResourceRuntime,
                     unchecked((int)Math.Min(attempt.ImageIndex, int.MaxValue)));
             }
 

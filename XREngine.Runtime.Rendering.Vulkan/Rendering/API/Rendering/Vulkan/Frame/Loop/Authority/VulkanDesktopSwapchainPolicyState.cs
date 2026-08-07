@@ -7,6 +7,7 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanDesktopSwapchainPolicyState
 {
+    internal bool FrameBufferInvalidated;
     internal long RecreateRequestedAt;
     internal long ResizeLastChangedAt;
     internal uint PendingSurfaceWidth;
@@ -15,6 +16,7 @@ internal sealed class VulkanDesktopSwapchainPolicyState
 
     internal void ResetAfterRecreate()
     {
+        FrameBufferInvalidated = false;
         RecreateRequestedAt = 0;
         ResizeLastChangedAt = 0;
         PendingSurfaceWidth = 0;

@@ -88,7 +88,7 @@ internal unsafe class VkSampler(VulkanRenderer api, XRSampler data) : VkObject<X
             UnnormalizedCoordinates = Vk.False,
         };
 
-        if (Data.EnableAnisotropy && Renderer.SamplerAnisotropyEnabled)
+        if (Data.EnableAnisotropy && BackendContext.Supports(EVulkanDeviceCapability.Anisotropy))
         {
             Api!.GetPhysicalDeviceProperties(PhysicalDevice, out PhysicalDeviceProperties props);
             if (props.Limits.MaxSamplerAnisotropy > 1f)
@@ -101,7 +101,7 @@ internal unsafe class VkSampler(VulkanRenderer api, XRSampler data) : VkObject<X
         if (Api!.CreateSampler(Device, ref samplerInfo, null, out _sampler) != Result.Success)
             throw new Exception("Failed to create Vulkan sampler.");
 
-        Renderer.RegisterLiveSampler(_sampler, in samplerInfo);
+        BackendContext.RegisterSampler(_sampler, in samplerInfo, nameof(VkSampler));
     }
 
     private void DestroySampler()
