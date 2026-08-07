@@ -269,7 +269,10 @@ internal sealed class VulkanPreparedFrameRecording
         if (_meshDrawCount > 0)
         {
             for (int index = 0; index < _meshDrawCount; index++)
-                _meshDraws[index].Release();
+            {
+                if (_meshDraws[index].OwnerIdentity is not null)
+                    _meshDraws[index].Release();
+            }
             Array.Clear(_meshDraws, 0, _meshDrawCount);
         }
 
