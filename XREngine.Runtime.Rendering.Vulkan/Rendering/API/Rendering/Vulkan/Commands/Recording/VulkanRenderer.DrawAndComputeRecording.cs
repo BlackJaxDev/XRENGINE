@@ -418,7 +418,7 @@ namespace XREngine.Rendering.Vulkan
                     skippedDraw: false,
                     skippedDispatch: true,
                     "compute dispatch skipped because descriptor binding failed");
-                throw new InvalidOperationException($"Descriptor binding failed for compute program '{op.Program.Data.Name ?? "UnnamedProgram"}'.");
+                return;
             }
 
             _commandBufferRecordingScratch.Value!.PreparedComputePayload =

@@ -213,6 +213,14 @@ internal unsafe partial class VkRenderProgram
                     reusableDescriptorBindingKey,
                     out DescriptorSet[] preparedDescriptorSets))
             {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.ComputeDispatch.PreparedDescriptorsMissing.{GetHashCode()}.{imageIndex}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Prepared compute descriptors are unavailable for '{0}'. image={1} schema=0x{2:X16} binding=0x{3:X16}.",
+                    Data.Name ?? "UnnamedProgram",
+                    imageIndex,
+                    preparedSchemaFingerprint,
+                    reusableDescriptorBindingKey);
                 RecordComputeDescriptorFailure(
                     default,
                     "prepared descriptor sets were not published before recording",
@@ -940,11 +948,17 @@ internal unsafe partial class VkRenderProgram
             Renderer.ResolveMeshDescriptorViewFamilyIdentity(),
             out _,
             out ulong resourceSignature);
+        ulong schemaFingerprint = ComputeComputeDescriptorSchemaFingerprint();
         if (snapshot.HasPublishedBindingLayoutSignatures &&
             _reusableComputeDescriptorResourceSignatures.TryGetValue(
                 refreshKey,
                 out ulong publishedResourceSignature) &&
-            publishedResourceSignature == resourceSignature)
+            publishedResourceSignature == resourceSignature &&
+            Renderer.TryGetPreparedComputeDescriptorSets(
+                imageIndex,
+                schemaFingerprint,
+                reusableDescriptorBindingKey,
+                out _))
         {
             return true;
         }
@@ -1035,7 +1049,6 @@ internal unsafe partial class VkRenderProgram
         if (hasUnresolvedBinding || pendingWrites.Count == 0)
             return false;
 
-        ulong schemaFingerprint = ComputeComputeDescriptorSchemaFingerprint();
         DescriptorSetLayout[] layoutArray = _descriptorSetLayouts.ToArray();
         if (!Renderer.TryGetOrCreateComputeDescriptorSets(
             imageIndex,
