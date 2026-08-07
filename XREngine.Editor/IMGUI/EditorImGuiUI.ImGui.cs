@@ -1546,6 +1546,9 @@ public static partial class EditorImGuiUI
             float centeredX = regionMinX + (regionWidth - textSize.X) * 0.5f;
             float minX = regionMinX + style.WindowPadding.X;
             float maxX = regionMaxX - style.WindowPadding.X - textSize.X;
+            if (maxX < minX)
+                return;
+
             if (centeredX < minX)
                 centeredX = minX;
             else if (centeredX > maxX)

@@ -472,7 +472,7 @@ void main()
         if (viewport is not null)
             return viewport.Region;
 
-        var framebufferSize = targetWindow.EffectiveFramebufferSize;
+        var framebufferSize = targetWindow.RenderFramebufferSize;
         return new BoundingRectangle(0, 0, framebufferSize.X, framebufferSize.Y);
     }
 

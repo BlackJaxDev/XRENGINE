@@ -256,8 +256,12 @@ namespace XREngine.Components
         public void ResizeScreenSpace(Vector2 size)
         {
             var canvasTransform = GetCanvasTransformOrNull(true);
-            if (canvasTransform?.DrawSpace == ECanvasDrawSpace.Screen)
-                canvasTransform.SetSize(size);
+            if (canvasTransform?.DrawSpace != ECanvasDrawSpace.Screen)
+                return;
+
+            canvasTransform.SetSize(size);
+            if (canvasTransform.IsLayoutInvalidated && !canvasTransform.IsUpdatingLayout)
+                UpdateLayout();
         }
 
         public void ResizeCameraSpace(XRCamera camera, XRCameraParameters parameters)

@@ -161,50 +161,32 @@ public unsafe partial class VulkanRenderer
             return context;
         }
 
-        if (TryResolveExternalSwapchainTargetExtent(out _))
-            return context;
-
-        CaptureInteractiveResizePlannerExtents(
-            context,
-            out VulkanInteractiveResizePlannerExtentSnapshot snapshot,
-            out bool captured,
-            out bool reportCapacityExceeded);
-        VulkanInteractiveResizePlannerContextKey key = BuildInteractiveResizePlannerContextKey(context);
-        if (reportCapacityExceeded)
+        // The window viewport and ImGui snapshot intentionally follow the live client
+        // extent, but the scene source stays on its active resource generation until the
+        // drag settles. Feeding live dimensions into the planner here reallocates that
+        // source behind a still-valid command package and produces out-of-order recovery
+        // presents.
+        if (TryResolveExternalSwapchainTargetExtent(out _) ||
+            context.PipelineInstance?.ActiveGeneration is not { } activeGeneration)
         {
-            Debug.VulkanWarning(
-                "[VulkanResourcePlanner] Interactive-resize extent cache reached its {0}-context capacity. " +
-                "Preserving existing frozen extents; additional context {1} pipeline={2} viewport={3} " +
-                "outputFbo=0x{4:X8} output=0x{5:X8} will use live extents.",
-                _framePlanner.InteractiveResizeExtentCache.Capacity,
-                key.ContextKind,
-                key.PipelineIdentity,
-                key.ViewportIdentity,
-                key.OutputFrameBufferIdentity,
-                key.OutputTargetIdentity);
+            return context;
         }
 
-        if (captured)
+        ResourceGenerationKey key = activeGeneration.Key;
+        if (context.DisplayWidth == key.DisplayWidth &&
+            context.DisplayHeight == key.DisplayHeight &&
+            context.InternalWidth == key.InternalWidth &&
+            context.InternalHeight == key.InternalHeight)
         {
-            Debug.Vulkan(
-                "[VulkanResourcePlanner] Freezing render-resource extents for context {0} pipeline={1} viewport={2} outputFbo=0x{3:X8} output=0x{4:X8} at {5}x{6}/{7}x{8}.",
-                key.ContextKind,
-                key.PipelineIdentity,
-                key.ViewportIdentity,
-                key.OutputFrameBufferIdentity,
-                key.OutputTargetIdentity,
-                snapshot.DisplayWidth,
-                snapshot.DisplayHeight,
-                snapshot.InternalWidth,
-                snapshot.InternalHeight);
+            return context;
         }
 
         return RefreshFrameOpContextRecordingFingerprint(context with
         {
-            DisplayWidth = snapshot.DisplayWidth,
-            DisplayHeight = snapshot.DisplayHeight,
-            InternalWidth = snapshot.InternalWidth,
-            InternalHeight = snapshot.InternalHeight
+            DisplayWidth = key.DisplayWidth,
+            DisplayHeight = key.DisplayHeight,
+            InternalWidth = key.InternalWidth,
+            InternalHeight = key.InternalHeight,
         });
     }
 
@@ -335,6 +317,21 @@ public unsafe partial class VulkanRenderer
                 pendingState = scope.CaptureCurrent(this);
                 pendingState.LastActiveFrameOpContext = context;
                 pendingState.PreparedGenerationManifest = preparedManifest;
+
+                if (!TryPreserveTrackedAutoExposureHistory(pendingState.ResourceAllocator))
+                {
+                    VulkanResourceAllocator? historyAllocator =
+                        ResolveAutoExposureHistoryAllocator(
+                            previousState.ResourceAllocator,
+                            pendingState.ResourceAllocator);
+                    if (historyAllocator is not null)
+                    {
+                        _ = PreserveAutoExposureHistory(
+                            historyAllocator,
+                            pendingState.ResourceAllocator);
+                    }
+                }
+
                 transaction = new VulkanRenderResourceGenerationTransaction(
                     this,
                     previousState,
@@ -518,8 +515,7 @@ public unsafe partial class VulkanRenderer
             generation.Registry.DescriptorSignature,
             images.ToArray(),
             frameBuffers.ToArray(),
-            buffers.ToArray(),
-            ResourceRuntime.Lifetime.Tracker.CaptureRetirementWatermark());
+            buffers.ToArray());
         failureReason = null;
         return true;
     }
@@ -528,16 +524,6 @@ public unsafe partial class VulkanRenderer
         VulkanPreparedResourceGenerationManifest manifest,
         out string? failureReason)
     {
-        // A staged generation may have prepared descriptors while work from the
-        // preceding generation was still in flight. Do not publish and retire the
-        // previous allocator until the watermark captured with this manifest has
-        // completed; otherwise the ticket would be a dead diagnostic capture.
-        if (!IsVulkanRetirementReady(manifest.DependencyTicket))
-        {
-            failureReason = "The pending Vulkan resource generation still has in-flight preparation dependencies.";
-            return false;
-        }
-
         if (manifest.Registry.DescriptorSignature != manifest.DescriptorSignature)
         {
             failureReason = "The pending Vulkan resource registry descriptor payload changed before commit.";
@@ -659,11 +645,6 @@ public unsafe partial class VulkanRenderer
                 if (!ReferenceEquals(previousState.ResourceAllocator, pendingState.ResourceAllocator) &&
                     !IsAllocatorOwnedByFrameOpPlannerState(switchingState, previousState.ResourceAllocator))
                 {
-                    // Validation established that this exact preparation watermark
-                    // is complete. Retire only after that dependency boundary.
-                    if (!renderer.IsVulkanRetirementReady(preparedManifest.DependencyTicket))
-                        throw new InvalidOperationException("Prepared Vulkan resource generation dependencies regressed before retirement.");
-
                     _ = previousState.ResourceAllocator.TryRetirePhysicalResources(
                         renderer,
                         exceptImageGroups: reusedImageGroups);

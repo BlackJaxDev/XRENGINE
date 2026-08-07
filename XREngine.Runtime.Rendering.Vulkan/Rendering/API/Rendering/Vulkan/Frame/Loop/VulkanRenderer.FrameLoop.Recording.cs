@@ -117,7 +117,9 @@ namespace XREngine.Rendering.Vulkan
 
                 attempt.ScenePrimaryRecordedThisFrame =
                     _lastEnsureCommandBufferRecordedPrimary;
-                attempt.PresentationSource = _windowPresentSource.Capture();
+                attempt.PresentationSource =
+                    _windowPresentSource.CaptureForDescriptorSlot(
+                        checked((int)attempt.ImageIndex));
                 if (RecordDesktopImGuiOverlay(
                         ref attempt,
                         imguiOverlaySnapshot) !=
@@ -474,7 +476,8 @@ namespace XREngine.Rendering.Vulkan
         {
             failureReason = string.Empty;
             VulkanPresentationSourceTuple published =
-                _windowPresentSource.Capture();
+                _windowPresentSource.CaptureForDescriptorSlot(
+                    checked((int)descriptorSlot));
             if (!source.Equals(published))
             {
                 failureReason =
@@ -514,31 +517,71 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
+            ulong currentImageGeneration = GetCurrentVulkanResourceGeneration(
+                ObjectType.Image,
+                source.Image.Handle);
+            ulong currentImageViewGeneration = GetCurrentVulkanResourceGeneration(
+                ObjectType.ImageView,
+                source.ImageView.Handle);
+            ulong currentSamplerGeneration = GetCurrentVulkanResourceGeneration(
+                ObjectType.Sampler,
+                source.Sampler.Handle);
+            ulong currentDescriptorSetGeneration = GetCurrentVulkanResourceGeneration(
+                ObjectType.DescriptorSet,
+                source.DescriptorSet.Handle);
+            ulong currentCommandGeneration = ResolveCommandBufferRecordingGeneration(
+                source.OwningCommandArtifact);
             bool generationsCurrent =
-                GetCurrentVulkanResourceGeneration(
-                    ObjectType.Image,
-                    source.Image.Handle) ==
-                    source.ImageAllocationGeneration &&
-                GetCurrentVulkanResourceGeneration(
-                    ObjectType.ImageView,
-                    source.ImageView.Handle) ==
-                    source.ImageViewGeneration &&
-                GetCurrentVulkanResourceGeneration(
-                    ObjectType.Sampler,
-                    source.Sampler.Handle) ==
-                    source.SamplerGeneration &&
-                GetCurrentVulkanResourceGeneration(
-                    ObjectType.DescriptorSet,
-                    source.DescriptorSet.Handle) ==
-                    source.DescriptorSetGeneration &&
-                ResolveCommandBufferRecordingGeneration(
-                    source.OwningCommandArtifact) ==
-                    source.OwningCommandArtifactGeneration;
+                currentImageGeneration == source.ImageAllocationGeneration &&
+                currentImageViewGeneration == source.ImageViewGeneration &&
+                currentSamplerGeneration == source.SamplerGeneration &&
+                currentDescriptorSetGeneration == source.DescriptorSetGeneration &&
+                currentCommandGeneration == source.OwningCommandArtifactGeneration;
             if (generationsCurrent)
                 return true;
 
             failureReason =
                 $"final presentation source epoch {source.LogicalEpoch} references a superseded native generation";
+            return false;
+        }
+
+        /// <summary>
+        /// Validates a completed source for a recovery blit into an acquired swapchain image.
+        /// The blit consumes the captured native image directly, so a later re-record of the
+        /// command buffer that originally sampled it must not invalidate the replay source.
+        /// </summary>
+        private bool TryValidatePresentationSourceForReplay(
+            in VulkanPresentationSourceTuple source,
+            out string failureReason)
+        {
+            failureReason = string.Empty;
+            if (!source.HasLogicalSource || source.LogicalEpoch == 0 ||
+                source.Image.Handle == 0 || source.ImageView.Handle == 0 ||
+                source.Sampler.Handle == 0 || source.ExpectedLayout == ImageLayout.Undefined ||
+                source.Width == 0 || source.Height == 0)
+            {
+                failureReason = $"final presentation source epoch {source.LogicalEpoch} is not replayable";
+                return false;
+            }
+
+            ulong currentImageGeneration = GetCurrentVulkanResourceGeneration(
+                ObjectType.Image,
+                source.Image.Handle);
+            ulong currentImageViewGeneration = GetCurrentVulkanResourceGeneration(
+                ObjectType.ImageView,
+                source.ImageView.Handle);
+            ulong currentSamplerGeneration = GetCurrentVulkanResourceGeneration(
+                ObjectType.Sampler,
+                source.Sampler.Handle);
+            if (currentImageGeneration == source.ImageAllocationGeneration &&
+                currentImageViewGeneration == source.ImageViewGeneration &&
+                currentSamplerGeneration == source.SamplerGeneration)
+            {
+                return true;
+            }
+
+            failureReason =
+                $"final presentation replay source epoch {source.LogicalEpoch} references a superseded native image generation";
             return false;
         }
 

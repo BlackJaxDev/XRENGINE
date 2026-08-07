@@ -170,6 +170,9 @@ public unsafe partial class VulkanRenderer
 
     private void EnsureSwapchainTimelineState()
     {
+        SettleMappedFrameArenaSlotsBeforeResettingSwapchainTimelineState(
+            OutputRuntime.Desktop.ImageTimelineValues);
+
         if (OutputRuntime.Desktop.Images is null)
         {
             OutputRuntime.Desktop.ImageTimelineValues = null;
@@ -180,6 +183,42 @@ public unsafe partial class VulkanRenderer
             OutputRuntime.Desktop.ImageTimelineValues = new ulong[OutputRuntime.Desktop.Images.Length];
         else
             Array.Clear(OutputRuntime.Desktop.ImageTimelineValues, 0, OutputRuntime.Desktop.ImageTimelineValues.Length);
+    }
+
+    /// <summary>
+    /// Preserves the completion proof for desktop image-indexed frame-data chunks while a
+    /// swapchain is recreated. The new swapchain starts with no image ownership, but the
+    /// mapped arena may still have a submitted chunk for the retired image at that index.
+    /// </summary>
+    private void SettleMappedFrameArenaSlotsBeforeResettingSwapchainTimelineState(
+        ulong[]? imageTimelineValues)
+    {
+        if (imageTimelineValues is null || MappedFrameArena is not { } arena)
+            return;
+
+        ulong generation = arena.Generation;
+        if (generation == 0)
+            return;
+
+        int slotCount = Math.Min(imageTimelineValues.Length, arena.FrameSlotCount);
+        for (int slotIndex = 0; slotIndex < slotCount; slotIndex++)
+        {
+            ulong completionValue = imageTimelineValues[slotIndex];
+            if (completionValue == 0)
+                continue;
+
+            WaitForTimelineValue(
+                _commandRuntime.Synchronization._graphicsTimelineSemaphore,
+                completionValue);
+            if (!arena.TryResetFrameSlot(
+                    unchecked((uint)slotIndex),
+                    generation,
+                    submissionCompletionProven: true))
+            {
+                throw new InvalidOperationException(
+                    $"Mapped frame-data slot {slotIndex} could not be settled before swapchain timeline state was reset.");
+            }
+        }
     }
 
     private bool HasTimelineValueCompleted(Semaphore semaphore, ulong value)

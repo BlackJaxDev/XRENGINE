@@ -262,16 +262,14 @@ namespace XREngine.Rendering.Vulkan
         private bool TryRefreshUnwrittenSwapchainFromLastWindowPresentSource(scoped ref PrimaryCommandBufferRecordingState recordingState)
         {
             VulkanPresentationSourceTuple presentationSource =
-                _windowPresentSource.Capture();
+                _windowPresentSource.CaptureAnyCompleteBinding();
             XRFrameBuffer? sourceFrameBuffer = presentationSource.FrameBuffer;
             string? unavailableReason = !presentationSource.HasLogicalSource
                 ? "no published presentation source"
                 : !recordingState.SwapchainTarget.IsValid
                     ? "swapchain target is invalid"
-                    : !TryValidatePresentationSourceForSubmission(
+                    : !TryValidatePresentationSourceForReplay(
                         presentationSource,
-                        recordingState.CommandBuffer,
-                        recordingState.ImageIndex,
                         out string tupleFailure)
                         ? tupleFailure
                     : presentationSource.Width == 0 || presentationSource.Height == 0

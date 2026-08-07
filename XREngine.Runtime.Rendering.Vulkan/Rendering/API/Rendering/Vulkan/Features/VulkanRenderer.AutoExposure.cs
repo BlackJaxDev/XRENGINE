@@ -154,6 +154,11 @@ public unsafe partial class VulkanRenderer
             exposureLayoutManagedByRenderGraph = vkExposure.UsesAllocatorImage;
             if (exposureLayoutManagedByRenderGraph)
             {
+                VulkanPhysicalImageGroup? activeExposureGroup =
+                    vkExposure.TryResolvePhysicalGroup(ensureAllocated: false);
+                if (IsUsableAutoExposureHistoryGroup(activeExposureGroup))
+                    _activeAutoExposureHistoryGroup = activeExposureGroup;
+
                 Debug.VulkanEvery(
                     "Vulkan.AutoExposure.PlannerExposureGraphBarriers",
                     TimeSpan.FromSeconds(30),

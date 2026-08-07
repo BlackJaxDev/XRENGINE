@@ -115,6 +115,11 @@ namespace XREngine.Rendering
         private int _effectiveFramebufferHeight;
         private int _effectiveWindowWidth;
         private int _effectiveWindowHeight;
+        private int _renderSurfaceLatchActive;
+        private int _renderSurfaceFramebufferWidth;
+        private int _renderSurfaceFramebufferHeight;
+        private int _renderSurfaceWindowWidth;
+        private int _renderSurfaceWindowHeight;
         private int _interactiveResizeInProgress;
         private int _interactiveResizeRenderActive;
         private int _interactiveResizeRenderQueued;
@@ -276,6 +281,46 @@ namespace XREngine.Rendering
                     return new Vector2D<int>(width, height);
 
                 return GetCurrentWindowSize();
+            }
+        }
+
+        /// <summary>
+        /// Returns the framebuffer extent latched at the start of the current render frame.
+        /// Native resize callbacks may continue publishing newer extents while the frame is
+        /// recorded, but those must apply to the next frame as one coherent unit.
+        /// </summary>
+        public Vector2D<int> RenderFramebufferSize
+        {
+            get
+            {
+                if (Volatile.Read(ref _renderSurfaceLatchActive) != 0)
+                {
+                    int width = Volatile.Read(ref _renderSurfaceFramebufferWidth);
+                    int height = Volatile.Read(ref _renderSurfaceFramebufferHeight);
+                    if (width > 0 && height > 0)
+                        return new Vector2D<int>(width, height);
+                }
+
+                return EffectiveFramebufferSize;
+            }
+        }
+
+        /// <summary>
+        /// Returns the client extent latched with <see cref="RenderFramebufferSize"/>.
+        /// </summary>
+        public Vector2D<int> RenderWindowSize
+        {
+            get
+            {
+                if (Volatile.Read(ref _renderSurfaceLatchActive) != 0)
+                {
+                    int width = Volatile.Read(ref _renderSurfaceWindowWidth);
+                    int height = Volatile.Read(ref _renderSurfaceWindowHeight);
+                    if (width > 0 && height > 0)
+                        return new Vector2D<int>(width, height);
+                }
+
+                return EffectiveWindowSize;
             }
         }
 
@@ -900,6 +945,11 @@ namespace XREngine.Rendering
             foreach (XRViewport viewport in Viewports)
                 viewport.SetPresentationOutputExtent(width, height);
 
+            // WSI present scaling keeps the prior swapchain generation visible while
+            // the final full-internal resize waits for the drag to settle.
+            if (!IsInteractiveResizeInProgress)
+                Renderer.FrameBufferInvalidated();
+
             InteractiveResizeDiagnostics.RecordResizeQueued(reason);
         }
 
@@ -1179,7 +1229,20 @@ namespace XREngine.Rendering
                 (!ExtentMatches(extents.PresentationExtent, snapshot.FramebufferExtent) ||
                  !ExtentMatches(extents.PipelineOutputExtent, snapshot.FramebufferExtent)))
             {
-                ApplyInteractivePresentationResize(snapshot.FramebufferExtent, snapshot.ClientExtent, "native-snapshot-consumed-output");
+                if (snapshot.IsInteractiveResize)
+                {
+                    QueueInteractivePresentationResize(
+                        snapshot.FramebufferExtent,
+                        snapshot.ClientExtent,
+                        "native-snapshot-consumed-output");
+                }
+                else
+                {
+                    ApplyInteractivePresentationResize(
+                        snapshot.FramebufferExtent,
+                        snapshot.ClientExtent,
+                        "native-snapshot-consumed-output");
+                }
             }
 
             if (!WindowResizeController.NeedsFullInternalResize(snapshot, extents))
@@ -1409,17 +1472,14 @@ namespace XREngine.Rendering
             if (width <= 0 || height <= 0)
                 return;
 
-            uint viewportWidth = (uint)width;
-            uint viewportHeight = (uint)height;
-            foreach (XRViewport viewport in Viewports)
-                viewport.SetPresentationOutputExtent(viewportWidth, viewportHeight);
-
-            RecordPresentationAndOutputExtent(new Vector2D<int>(width, height));
+            ApplyInteractivePresentationResize(
+                new Vector2D<int>(width, height),
+                "interactive-presentation-resize-queued");
         }
 
         private void PrepareWindowBackbufferRenderArea()
         {
-            Vector2D<int> framebufferSize = EffectiveFramebufferSize;
+            Vector2D<int> framebufferSize = RenderFramebufferSize;
             if (framebufferSize.X <= 0 || framebufferSize.Y <= 0)
                 return;
 
@@ -2402,14 +2462,7 @@ namespace XREngine.Rendering
 
             if (Volatile.Read(ref _interactiveResizeInProgress) != 0)
             {
-                if (_interactiveResizeStrategy.Kind == EInteractiveWindowResizeStrategy.Win32ModalLoopTimer)
-                {
-                    QueueInteractivePresentationResize(obj, "framebuffer-callback-live-coalesced");
-                    _interactiveResizeStrategy.OnFramebufferResizeQueued(obj);
-                    return;
-                }
-
-                ApplyInteractivePresentationResize(obj, "framebuffer-callback-live");
+                QueueInteractivePresentationResize(obj, "framebuffer-callback-live");
                 _interactiveResizeStrategy.OnFramebufferResizeQueued(obj);
                 return;
             }
@@ -2994,8 +3047,8 @@ namespace XREngine.Rendering
 
         private bool HasRenderableHostSurface()
         {
-            var framebufferSize = EffectiveFramebufferSize;
-            var windowSize = Window.Size;
+            Vector2D<int> framebufferSize = RenderFramebufferSize;
+            Vector2D<int> windowSize = RenderWindowSize;
 
             int width = Math.Max(framebufferSize.X, windowSize.X);
             int height = Math.Max(framebufferSize.Y, windowSize.Y);
@@ -3031,6 +3084,7 @@ namespace XREngine.Rendering
 
             using var frameSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.RenderFrame");
             AbstractRenderer frameRenderer = _renderer;
+            LatchRenderSurface();
 
             try
             {
@@ -3206,7 +3260,7 @@ namespace XREngine.Rendering
                 if (RuntimeEngine.StartupPresentationEnabled)
                 {
                     using var startupPresentationSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.StartupPresentationMarker");
-                    var framebufferSize = EffectiveFramebufferSize;
+                    Vector2D<int> framebufferSize = RenderFramebufferSize;
                     var fullRegion = new BoundingRectangle(0, 0, framebufferSize.X, framebufferSize.Y);
                     int markerWidth = Math.Min(96, framebufferSize.X);
                     int markerHeight = Math.Min(96, framebufferSize.Y);
@@ -3314,6 +3368,7 @@ namespace XREngine.Rendering
             }
             finally
             {
+                ReleaseRenderSurfaceLatch();
                 frameRenderer.Active = false;
                 if (ReferenceEquals(AbstractRenderer.Current, frameRenderer))
                     AbstractRenderer.Current = null;
@@ -3484,7 +3539,7 @@ namespace XREngine.Rendering
 
                 if (mirrorByComposition)
                 {
-                    var fb = EffectiveFramebufferSize;
+                    Vector2D<int> fb = RenderFramebufferSize;
                     uint targetWidth = (uint)Math.Max(1, fb.X);
                     uint targetHeight = (uint)Math.Max(1, fb.Y);
                     long mirrorStart = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -3505,6 +3560,26 @@ namespace XREngine.Rendering
                 }
             }
         }
+
+        private void LatchRenderSurface()
+        {
+            WindowSurfaceSnapshot snapshot = LatestWindowSurfaceSnapshot;
+            Vector2D<int> framebufferSize = snapshot.HasValidFramebufferExtent
+                ? snapshot.FramebufferExtent
+                : EffectiveFramebufferSize;
+            Vector2D<int> windowSize = snapshot.HasValidClientExtent
+                ? snapshot.ClientExtent
+                : EffectiveWindowSize;
+
+            Volatile.Write(ref _renderSurfaceFramebufferWidth, Math.Max(framebufferSize.X, 1));
+            Volatile.Write(ref _renderSurfaceFramebufferHeight, Math.Max(framebufferSize.Y, 1));
+            Volatile.Write(ref _renderSurfaceWindowWidth, Math.Max(windowSize.X, 1));
+            Volatile.Write(ref _renderSurfaceWindowHeight, Math.Max(windowSize.Y, 1));
+            Volatile.Write(ref _renderSurfaceLatchActive, 1);
+        }
+
+        private void ReleaseRenderSurfaceLatch()
+            => Volatile.Write(ref _renderSurfaceLatchActive, 0);
 
         private void RenderDesktopMirrorUiOverlays()
         {

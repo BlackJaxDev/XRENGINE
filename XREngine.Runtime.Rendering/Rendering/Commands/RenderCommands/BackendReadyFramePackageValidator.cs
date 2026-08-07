@@ -54,8 +54,11 @@ public static class BackendReadyFramePackageValidator
             identity.InternalWidth != context.InternalWidth ||
             identity.InternalHeight != context.InternalHeight)
         {
-            return BackendReadyFramePackageValidationResult.Reject(
-                EBackendReadyFramePackageValidationFailure.ViewportMismatch);
+            if (!context.AllowViewportResizeLag)
+            {
+                return BackendReadyFramePackageValidationResult.Reject(
+                    EBackendReadyFramePackageValidationFailure.ViewportMismatch);
+            }
         }
 
         return BackendReadyFramePackageValidationResult.Success;

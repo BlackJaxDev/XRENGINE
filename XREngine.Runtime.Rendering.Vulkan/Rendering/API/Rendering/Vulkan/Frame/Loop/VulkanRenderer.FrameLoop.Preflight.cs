@@ -41,7 +41,6 @@ namespace XREngine.Rendering.Vulkan
                     OutputRuntime.Desktop.Extent.Height);
 
             ApplyDesktopSwapchainExtentPolicy(ref attempt);
-            ServiceDesktopSwapchainRecreatePolicy(ref attempt);
 
             if (!attempt.LiveSurfaceValid)
             {
@@ -50,6 +49,18 @@ namespace XREngine.Rendering.Vulkan
                     EVulkanDesktopPreflightStatus.ZeroSurface,
                     "Live surface size is zero");
             }
+
+                    if (TryGetViewportResourceBlocker(
+                        attempt.InteractiveResize,
+                        out string resourceMismatchReason))
+                    {
+                    return StopDesktopFrameForPreflightStatus(
+                        ref attempt,
+                        EVulkanDesktopPreflightStatus.ResourceMismatch,
+                        resourceMismatchReason);
+                    }
+
+                    ServiceDesktopSwapchainRecreatePolicy(ref attempt);
 
             if (_frameBufferInvalidated ||
                 (!attempt.SurfaceMatchesSwapchain &&
@@ -63,16 +74,6 @@ namespace XREngine.Rendering.Vulkan
                     ref attempt,
                     EVulkanDesktopPreflightStatus.ResizePending,
                     reason);
-            }
-
-            if (TryGetViewportResourceBlocker(
-                    attempt.InteractiveResize,
-                    out string resourceMismatchReason))
-            {
-                return StopDesktopFrameForPreflightStatus(
-                    ref attempt,
-                    EVulkanDesktopPreflightStatus.ResourceMismatch,
-                    resourceMismatchReason);
             }
 
             bool frameGenerationProxyRequired = _outputRuntime._streamlineFrameGenerationProvisioned;

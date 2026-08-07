@@ -6,11 +6,12 @@ namespace XREngine.Rendering.Vulkan
     public unsafe partial class VulkanRenderer
     {
         private void PrepareRejectedDesktopAbortCommand(
-        ref VulkanFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             in RejectedDesktopFramePolicyDecision policy,
             bool imageWasEverPresented,
             out CommandPool commandPool,
-            out CommandBuffer commandBuffer)
+            out CommandBuffer commandBuffer,
+            out bool replayedPresentationSource)
         {
             commandPool = GetThreadCommandPool();
             commandBuffer = AllocateCommandBuffer(
@@ -24,15 +25,18 @@ namespace XREngine.Rendering.Vulkan
                 ref attempt,
                 commandBuffer,
                 in policy,
-                imageWasEverPresented);
+                imageWasEverPresented,
+                out replayedPresentationSource);
         }
 
         private void BeginRejectedDesktopTransition(
-        ref VulkanFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             CommandBuffer commandBuffer,
             in RejectedDesktopFramePolicyDecision policy,
-            bool imageWasEverPresented)
+            bool imageWasEverPresented,
+            out bool replayedPresentationSource)
         {
+            replayedPresentationSource = false;
             CommandBufferBeginInfo beginInfo = new()
             {
                 SType = StructureType.CommandBufferBeginInfo,
@@ -47,7 +51,14 @@ namespace XREngine.Rendering.Vulkan
             }
 
             ResetCommandBufferBindState(commandBuffer);
-            if (policy.ShouldClearBeforePresent)
+            if (policy.Disposition == ERejectedDesktopFrameDisposition.PresentLastCompletedContent)
+            {
+                replayedPresentationSource = TryRecordRejectedDesktopPresentationReplay(
+                    ref attempt,
+                    commandBuffer);
+            }
+
+            if (!replayedPresentationSource && policy.ShouldClearBeforePresent)
             {
                 RecordRejectedDesktopInitializationClear(
                     attempt.ImageIndex,
@@ -62,6 +73,79 @@ namespace XREngine.Rendering.Vulkan
                 throw new InvalidOperationException(
                     "Failed to end swapchain abort-present transition command buffer.");
             }
+        }
+
+        private bool TryRecordRejectedDesktopPresentationReplay(
+            ref VulkanFrameAttempt attempt,
+            CommandBuffer commandBuffer)
+        {
+            VulkanPresentationSourceTuple source =
+                _windowPresentSource.CaptureAnyCompleteBinding();
+            if (!TryValidatePresentationSourceForReplay(source, out string unavailableReason))
+            {
+                Debug.VulkanEvery(
+                    $"Vulkan.Frame.{GetHashCode()}.RecoveryReplayUnavailable",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Rejected-frame presentation replay is unavailable for image {0}: {1}.",
+                    attempt.ImageIndex,
+                    unavailableReason);
+                return false;
+            }
+
+            SwapchainRecordingTarget target = ResolveSwapchainRecordingTarget(
+                attempt.ImageIndex,
+                openXrTargetContext: null);
+            if (!target.IsValid)
+                return false;
+
+            bool recorded = RecordPresentationSourceBlit(
+                commandBuffer,
+                attempt.ImageIndex,
+                source,
+                in target,
+                VulkanBarrierPlanner.SwapchainPassIndex,
+                source.Context);
+            if (!recorded)
+                return false;
+
+            TransitionRejectedDesktopReplayTargetToPresent(commandBuffer, in target);
+            return true;
+        }
+
+        private void TransitionRejectedDesktopReplayTargetToPresent(
+            CommandBuffer commandBuffer,
+            in SwapchainRecordingTarget target)
+        {
+            ImageMemoryBarrier toPresent = new()
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit,
+                DstAccessMask = 0,
+                OldLayout = ImageLayout.ColorAttachmentOptimal,
+                NewLayout = ImageLayout.PresentSrcKhr,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = target.Image,
+                SubresourceRange = new ImageSubresourceRange
+                {
+                    AspectMask = ImageAspectFlags.ColorBit,
+                    BaseMipLevel = 0,
+                    LevelCount = 1,
+                    BaseArrayLayer = 0,
+                    LayerCount = 1,
+                },
+            };
+            CmdPipelineBarrierTracked(
+                commandBuffer,
+                PipelineStageFlags.ColorAttachmentOutputBit,
+                PipelineStageFlags.BottomOfPipeBit,
+                0,
+                0,
+                null,
+                0,
+                null,
+                1,
+                &toPresent);
         }
 
         private void RecordRejectedDesktopInitializationClear(

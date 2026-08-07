@@ -596,13 +596,19 @@ public unsafe partial class VulkanRenderer
         staleKeys.Clear();
     }
 
-    private VulkanPhysicalImageGroup? PreserveAutoExposureHistory(VulkanResourceAllocator oldAllocator)
+    private VulkanPhysicalImageGroup? _activeAutoExposureHistoryGroup;
+
+    private VulkanPhysicalImageGroup? PreserveAutoExposureHistory(
+        VulkanResourceAllocator oldAllocator,
+        VulkanResourceAllocator? newAllocator = null)
     {
         if (ShouldSkipAutoExposureHistoryPreserve())
             return null;
 
         bool hasOldGroup = TryGetAutoExposurePhysicalGroup(oldAllocator, out VulkanPhysicalImageGroup? oldGroup);
-        bool hasNewGroup = TryGetAutoExposurePhysicalGroup(ResourceAllocator, out VulkanPhysicalImageGroup? newGroup);
+        bool hasNewGroup = TryGetAutoExposurePhysicalGroup(
+            newAllocator ?? ResourceAllocator,
+            out VulkanPhysicalImageGroup? newGroup);
         if (hasOldGroup && hasNewGroup && ReferenceEquals(oldGroup, newGroup))
             return null;
 
@@ -626,6 +632,54 @@ public unsafe partial class VulkanRenderer
 
         if (hasOldGroup && IsUsableAutoExposureHistoryGroup(oldGroup))
             return RetainAutoExposureHistory(oldGroup!);
+
+        return null;
+    }
+
+    private bool TryPreserveTrackedAutoExposureHistory(VulkanResourceAllocator newAllocator)
+    {
+        if (ShouldSkipAutoExposureHistoryPreserve() ||
+            !TryGetAutoExposurePhysicalGroup(newAllocator, out VulkanPhysicalImageGroup? newGroup) ||
+            newGroup is null)
+        {
+            return false;
+        }
+
+        return TryCopyAutoExposureHistory(
+            _activeAutoExposureHistoryGroup,
+            newGroup,
+            "tracked-active-plan");
+    }
+
+    private VulkanResourceAllocator? ResolveAutoExposureHistoryAllocator(
+        VulkanResourceAllocator preferredAllocator,
+        VulkanResourceAllocator excludedAllocator)
+    {
+        if (!ReferenceEquals(preferredAllocator, excludedAllocator) &&
+            TryGetAutoExposurePhysicalGroup(preferredAllocator, out _))
+        {
+            return preferredAllocator;
+        }
+
+        FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
+        foreach (VulkanFrameOpPlannerStateKey key in switchingState.ActiveKeys)
+        {
+            if (switchingState.States.TryGetValue(key, out ResourcePlannerRuntimeState state) &&
+                !ReferenceEquals(state.ResourceAllocator, excludedAllocator) &&
+                TryGetAutoExposurePhysicalGroup(state.ResourceAllocator, out _))
+            {
+                return state.ResourceAllocator;
+            }
+        }
+
+        foreach (ResourcePlannerRuntimeState state in switchingState.States.Values)
+        {
+            if (!ReferenceEquals(state.ResourceAllocator, excludedAllocator) &&
+                TryGetAutoExposurePhysicalGroup(state.ResourceAllocator, out _))
+            {
+                return state.ResourceAllocator;
+            }
+        }
 
         return null;
     }
@@ -727,7 +781,17 @@ public unsafe partial class VulkanRenderer
             PipelineStageFlags.TransferBit,
             autoExposureStages);
 
-        oldGroup.LastKnownLayout = ImageLayout.TransferSrcOptimal;
+        TransitionPhysicalGroupForCopy(
+            scope.CommandBuffer,
+            oldGroup,
+            ImageLayout.TransferSrcOptimal,
+            oldLayout,
+            AccessFlags.TransferReadBit,
+            AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
+            PipelineStageFlags.TransferBit,
+            autoExposureStages);
+
+        oldGroup.LastKnownLayout = oldLayout;
         newGroup.LastKnownLayout = newRestoreLayout;
         Debug.VulkanEvery(
             $"Vulkan.AutoExposure.HistoryPreserve.{sourceLabel}",
@@ -773,7 +837,6 @@ public unsafe partial class VulkanRenderer
 
     private bool ShouldSkipAutoExposureHistoryPreserve()
         => IsDeviceLost ||
-           ActiveResourcePlannerRevision == 0 ||
            RuntimeRenderingHostServices.Presentation.IsInVR;
 
     private static bool IsUsableAutoExposureHistoryGroup(VulkanPhysicalImageGroup? group)

@@ -71,7 +71,7 @@ public unsafe partial class VulkanRenderer
 
         if (!HasRenderableImGuiSnapshot(drawData))
         {
-            _outputRuntime._imguiDrawData.Recycle(drawData);
+            _outputRuntime._imguiDrawData.Discard(drawData);
             drawData = null;
             return false;
         }
@@ -94,7 +94,7 @@ public unsafe partial class VulkanRenderer
                 drawData.FramebufferHeight,
                 OutputRuntime.Desktop.Extent.Width,
                 OutputRuntime.Desktop.Extent.Height);
-            _outputRuntime._imguiDrawData.Recycle(drawData);
+            _outputRuntime._imguiDrawData.Discard(drawData);
             drawData = null;
             return false;
         }
