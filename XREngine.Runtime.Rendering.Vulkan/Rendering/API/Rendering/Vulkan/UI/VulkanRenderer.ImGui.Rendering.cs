@@ -33,9 +33,7 @@ public unsafe partial class VulkanRenderer
             imageIndex >= _outputRuntime._imguiResources.OverlayCommandBuffers.Length ||
             OutputRuntime.Desktop.Images is null ||
             imageIndex >= OutputRuntime.Desktop.Images.Length)
-        {
             return false;
-        }
 
         bool useDynamicRendering = UseDynamicRenderingRenderTargets &&
             OutputRuntime.Desktop.ImageViews is not null &&
@@ -45,9 +43,7 @@ public unsafe partial class VulkanRenderer
             (OutputRuntime.Desktop.Framebuffers is null ||
              imageIndex >= OutputRuntime.Desktop.Framebuffers.Length ||
              ResourceRuntime.SwapchainLoadRenderPass.Handle == 0))
-        {
             return false;
-        }
 
         CommandBuffer commandBuffer = _outputRuntime._imguiResources.OverlayCommandBuffers[imageIndex];
         return commandBuffer.Handle != 0;
@@ -125,9 +121,7 @@ public unsafe partial class VulkanRenderer
 
         if (!CanRecordImGuiOverlayCommandBuffer(imageIndex) ||
             !HasRenderableImGuiSnapshot(drawData))
-        {
             return false;
-        }
 
         EnsureImGuiFontResources();
         EnsureImGuiPipeline();
@@ -245,9 +239,7 @@ public unsafe partial class VulkanRenderer
                 out Image uiImage,
                 out ImageView uiView,
                 out ImageLayout oldLayout))
-        {
             return;
-        }
 
         TransitionStreamlineUiImage(
             commandBuffer,
@@ -315,17 +307,13 @@ public unsafe partial class VulkanRenderer
                 if (drawCommand.HasUserCallback || drawCommand.TextureId <= 1 ||
                     !_outputRuntime._imguiTextureRegistry.TexturesById.TryGetValue(drawCommand.TextureId, out XRTexture? texture) ||
                     GetOrCreateAPIRenderObject(texture, generateNow: false) is not IVkImageDescriptorSource source)
-                {
                     continue;
-                }
 
                 ImageView view = ResolveImGuiDescriptorView(source);
                 if (view.Handle == 0 ||
                     !TryGetDescriptorHeapImageViewCreateInfo(view, out ImageViewCreateInfo viewInfo) ||
                     viewInfo.Image.Handle == 0)
-                {
                     continue;
-                }
 
                 ImageLayout descriptorLayout = ResolveDescriptorImageLayout(
                     source,
@@ -506,13 +494,10 @@ public unsafe partial class VulkanRenderer
         ulong vertexBytes = (ulong)(drawData.TotalVertexCount * sizeof(ImDrawVert));
         ulong indexBytes = (ulong)(drawData.TotalIndexCount * sizeof(ushort));
 
-        void* mappedVertex = null;
-        void* mappedIndex = null;
-
-        if (!TryMapBufferMemory(buffers.VertexBuffer, buffers.VertexBufferMemory, 0, vertexBytes, out mappedVertex))
+        if (!TryMapBufferMemory(buffers.VertexBuffer, buffers.VertexBufferMemory, 0, vertexBytes, out void* mappedVertex))
             throw new InvalidOperationException("Failed to map ImGui vertex buffer.");
 
-        if (!TryMapBufferMemory(buffers.IndexBuffer, buffers.IndexBufferMemory, 0, indexBytes, out mappedIndex))
+        if (!TryMapBufferMemory(buffers.IndexBuffer, buffers.IndexBufferMemory, 0, indexBytes, out void* mappedIndex))
         {
             UnmapBufferMemory(buffers.VertexBuffer, buffers.VertexBufferMemory);
             throw new InvalidOperationException("Failed to map ImGui index buffer.");
@@ -675,5 +660,4 @@ public unsafe partial class VulkanRenderer
 
     private static bool IsLinearSrgbSwapchainColorSpace(ColorSpaceKHR colorSpace)
         => colorSpace is ColorSpaceKHR.SpaceExtendedSrgbLinearExt;
-
 }

@@ -45,34 +45,26 @@ namespace XREngine.Rendering.Vulkan
             ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.FrameRecovery");
             if (Api!.BeginCommandBuffer(commandBuffer, ref beginInfo) !=
                 Result.Success)
-            {
                 throw new InvalidOperationException(
                     "Failed to begin swapchain abort-present transition command buffer.");
-            }
 
             ResetCommandBufferBindState(commandBuffer);
             if (policy.Disposition == ERejectedDesktopFrameDisposition.PresentLastCompletedContent)
-            {
                 replayedPresentationSource = TryRecordRejectedDesktopPresentationReplay(
                     ref attempt,
                     commandBuffer);
-            }
 
             if (!replayedPresentationSource && policy.ShouldClearBeforePresent)
-            {
                 RecordRejectedDesktopInitializationClear(
                     attempt.ImageIndex,
                     commandBuffer,
                     imageWasEverPresented);
-            }
 
             if (EndCommandBufferTracked(
                     commandBuffer,
                     cacheVariant: false) != Result.Success)
-            {
                 throw new InvalidOperationException(
                     "Failed to end swapchain abort-present transition command buffer.");
-            }
         }
 
         private bool TryRecordRejectedDesktopPresentationReplay(
@@ -279,9 +271,7 @@ namespace XREngine.Rendering.Vulkan
                 commandBuffer.Handle == 0 ||
                 commandPool.Handle == 0 ||
                 _deviceLost)
-            {
                 return;
-            }
 
             _commandRuntime.FreeTrackedCommandBuffer(
                 Api,
