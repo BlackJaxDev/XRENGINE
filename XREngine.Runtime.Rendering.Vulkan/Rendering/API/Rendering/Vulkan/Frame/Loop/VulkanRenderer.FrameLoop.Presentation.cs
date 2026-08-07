@@ -7,11 +7,8 @@ using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanFrameLoop
     {
-        public override bool IsBackendReplacementFrameReady
-            => Volatile.Read(ref _outputRuntime._hasPresentedCompleteSceneFrame) != 0;
-
         internal EDesktopFrameFlow PresentSubmittedDesktopFrame(
             ref VulkanFrameAttempt attempt)
         {
@@ -20,9 +17,7 @@ namespace XREngine.Rendering.Vulkan
             // resources visible without introducing a second engine-wide frame graph.
             _outputRuntime._imguiBackend?.RenderPendingViewports();
 
-            VulkanDesktopPresentDispatchOutcome dispatch =
-                DesktopWsiOutput.PresentFrameTarget(
-                this,
+            VulkanDesktopPresentDispatchOutcome dispatch = QueueDesktopPresentCore(
                 ref attempt,
                 "Vulkan.FrameLifecycle.QueuePresent",
                 disableFrameGenerationReason: null);
@@ -163,7 +158,7 @@ namespace XREngine.Rendering.Vulkan
                         ref presentInfo,
                         out result,
                         out string failureReason,
-                        caller: nameof(RenderFrameCallback));
+                        caller: "RenderFrameCallback");
                 if (!dispatched)
                 {
                     if (result == Result.ErrorDeviceLost)
@@ -275,8 +270,7 @@ namespace XREngine.Rendering.Vulkan
                 case Result.Success:
                     return null;
                 case Result.SuboptimalKhr:
-                    if (!DesktopWsiOutput.ShouldKeepPresentScalingSwapchain(
-                            this,
+                    if (!ShouldKeepDesktopPresentScalingSwapchainCore(
                             result,
                             attempt.InteractiveResize))
                     {

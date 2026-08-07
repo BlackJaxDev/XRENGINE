@@ -6,7 +6,7 @@ public unsafe partial class VulkanRenderer
     internal readonly struct PreparedCommandChainEncodingScope : IDisposable
     {
         private readonly VulkanRenderer _renderer;
-        private readonly VulkanCommandThreadContext<VulkanStateTracker, VulkanRenderer.ResourcePlannerRuntimeState, VulkanRenderer.FrameOpResourcePlannerSwitchingState, XRFrameBuffer, EReadBufferMode> _threadContext;
+        private readonly VulkanCommandThreadContext<VulkanStateTracker, ResourcePlannerRuntimeState, VulkanRenderer.FrameOpResourcePlannerSwitchingState, XRFrameBuffer, EReadBufferMode> _threadContext;
         private readonly VulkanPreparedWorkerPlannerStamp _plannerStamp;
 
         internal PreparedCommandChainEncodingScope(VulkanRenderer renderer)

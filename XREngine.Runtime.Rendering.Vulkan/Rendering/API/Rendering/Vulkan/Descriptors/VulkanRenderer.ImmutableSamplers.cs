@@ -89,7 +89,8 @@ public unsafe partial class VulkanRenderer
         if (Api!.CreateSampler(_deviceContext.Device, ref info, null, out Sampler handle) == Result.Success)
         {
             canonicalImmutableSamplers[index] = handle;
-            RegisterLiveSampler(handle, in info);
+            ResourceRuntime.Descriptors.RegisterLiveSampler(handle, in info);
+            RegisterVulkanResource(ObjectType.Sampler, handle.Handle, "CanonicalImmutableSampler");
         }
         else
             Debug.VulkanWarning($"[Vulkan] Failed to create canonical immutable sampler '{sampler}'.");
@@ -107,7 +108,7 @@ public unsafe partial class VulkanRenderer
             if (canonicalImmutableSamplers[i].Handle == 0)
                 continue;
 
-            UnregisterLiveSampler(canonicalImmutableSamplers[i]);
+            ResourceRuntime.Descriptors.UnregisterLiveSampler(canonicalImmutableSamplers[i]);
             Api!.DestroySampler(_deviceContext.Device, canonicalImmutableSamplers[i], null);
             CompleteVulkanResourceDestruction(
                 ObjectType.Sampler,

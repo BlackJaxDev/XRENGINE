@@ -4,7 +4,7 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanFrameLoop
     {
         private static readonly TimeSpan SwapchainRecreateDebounce =
             TimeSpan.FromMilliseconds(16);
@@ -42,7 +42,7 @@ namespace XREngine.Rendering.Vulkan
                 "[Vulkan] Recreating swapchain immediately. Reason={0}",
                 reason);
 
-            if (!DesktopWsiOutput.RecreateFinalOutput(this))
+            if (!RecreateDesktopSwapchainCore())
             {
                 TimeSpan failedElapsed = Stopwatch.GetElapsedTime(recreateStart);
                 Debug.VulkanEvery(
@@ -62,7 +62,7 @@ namespace XREngine.Rendering.Vulkan
             TimeSpan elapsed = Stopwatch.GetElapsedTime(recreateStart);
             _frameBufferInvalidated = false;
             _outputRuntime._desktopSwapchainPolicy.ResetAfterRecreate();
-            ResetImGuiFrameMarker();
+            _outputRuntime.RequestImGuiFrameMarkerReset();
 
             var liveFramebufferSize = DesktopWsiOutput.EffectiveFramebufferSize;
             Debug.VulkanEvery(
@@ -270,7 +270,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            return IsSwapchainPresentScalingExtentSupported(
+            return OutputRuntime.Desktop.IsPresentScalingExtentSupported(
                 swapchainWidth,
                 swapchainHeight);
         }

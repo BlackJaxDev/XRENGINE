@@ -413,7 +413,7 @@ public unsafe partial class VulkanRenderer
         for (uint i = 0; i < descriptorCount; i++)
         {
             Sampler sampler = imageInfos[i].Sampler;
-            if (!TryGetDescriptorHeapSamplerCreateInfo(sampler, out samplers[i]))
+            if (!ResourceRuntime.Descriptors.TryGetSamplerCreateInfo(sampler, out samplers[i]))
             {
                 reason = $"sampler 0x{sampler.Handle:X} has no descriptor heap create-info metadata.";
                 return false;

@@ -17,6 +17,7 @@ internal sealed unsafe class VulkanDesktopWsiTargetDriver : IVulkanRendererTarge
     public bool RequiresPresentQueue => true;
     public bool RequiresSwapchainOutput => true;
     public bool SupportsStreamlinePresentation => true;
+    internal XRWindow Window => _window;
     public IReadOnlyList<string> RequiredDeviceExtensions { get; } = [KhrSwapchain.ExtensionName];
     public Vector2D<int> EffectiveFramebufferSize => _window.RenderFramebufferSize;
     public WindowResizeExtents ResizeExtents => _window.ResizeExtents;
@@ -36,22 +37,15 @@ internal sealed unsafe class VulkanDesktopWsiTargetDriver : IVulkanRendererTarge
         => surfaces.CreateDesktopSurface();
 
     public void InitializeFinalOutput(VulkanTargetOutputContext output)
-        => output.CreateDesktopFinalOutput();
+    {
+    }
 
     public void DestroyFinalOutput(VulkanTargetOutputContext output)
-        => output.DestroyDesktopFinalOutput();
+    {
+    }
 
     public void DestroyInstanceResources(VulkanTargetSurfaceAuthority surfaces)
         => surfaces.DestroyDesktopSurface();
-
-    public bool RecreateFinalOutput(VulkanRenderer renderer)
-        => renderer.RecreateDesktopSwapchainCore();
-
-    public bool ShouldKeepPresentScalingSwapchain(
-        VulkanRenderer renderer,
-        Result result,
-        bool interactiveResize)
-        => renderer.ShouldKeepDesktopPresentScalingSwapchainCore(result, interactiveResize);
 
     public VulkanDesktopPreflightOutcome ClassifyPreflight(EVulkanDesktopPreflightStatus status)
         => VulkanDesktopFramePolicy.ClassifyPreflight(status);
@@ -62,18 +56,4 @@ internal sealed unsafe class VulkanDesktopWsiTargetDriver : IVulkanRendererTarge
     public VulkanDesktopPresentOutcome ClassifyPresent(Result result)
         => VulkanDesktopFramePolicy.ClassifyPresent(result);
 
-    public EDesktopFrameFlow AcquireFrameTarget(
-        VulkanRenderer renderer,
-        ref VulkanFrameAttempt attempt)
-        => renderer.AcquireDesktopSwapchainImageCore(ref attempt);
-
-    public VulkanDesktopPresentDispatchOutcome PresentFrameTarget(
-        VulkanRenderer renderer,
-        ref VulkanFrameAttempt attempt,
-        string profileScope,
-        string? disableFrameGenerationReason)
-        => renderer.QueueDesktopPresentCore(
-            ref attempt,
-            profileScope,
-            disableFrameGenerationReason);
 }

@@ -14,17 +14,6 @@ public unsafe partial class VulkanRenderer
     private const double VulkanPipelineCompileQuarantineSeconds = 10.0;
 
 
-    internal sealed class VulkanGraphicsPipelineCompileJob(
-        VkMeshRenderer.GraphicsPipelineBuildRequest request,
-        Task<VulkanGraphicsPipelineCompileResult> task)
-    {
-        public VkMeshRenderer.GraphicsPipelineBuildRequest Request { get; } = request;
-        public Task<VulkanGraphicsPipelineCompileResult> Task { get; } = task;
-        public Task PublicationTask { get; set; } = global::System.Threading.Tasks.Task.CompletedTask;
-        public long QueuedTimestamp { get; } = Stopwatch.GetTimestamp();
-        public int WatchdogState;
-    }
-
     internal bool IsVulkanPipelineAsyncCompilationEnabled
         => RuntimeEngine.Rendering.Settings.AsyncProgramCompilation &&
            _deviceContext.IsReady &&

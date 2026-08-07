@@ -38,6 +38,101 @@ internal sealed class VulkanResourceLifetimeTracker
     internal ConcurrentDictionary<ulong, VulkanPublishedDescriptorSetSnapshot> PublishedDescriptorSets { get; } = new();
     internal Dictionary<ulong, ulong> ImageViewBackingImages { get; } = new();
     internal Dictionary<ulong, ulong> BufferViewBackingBuffers { get; } = new();
+
+    internal VulkanResourceLifetimeSnapshot CaptureSnapshot(
+        bool includeExactLiveResourceGenerations)
+    {
+        lock (SyncRoot)
+        {
+            int live = 0;
+            int recorded = 0;
+            int submitted = 0;
+            int completed = 0;
+            int external = 0;
+            int pending = 0;
+            int destroyed = 0;
+            long oldestTimestamp = 0;
+            ulong oldestRetirementSerial = 0;
+            List<VulkanPinnedResourceGeneration>? exactLiveResourceGenerations =
+                includeExactLiveResourceGenerations ? [] : null;
+
+            foreach (VulkanResourceLifetimeRecord resource in ResourceLifetimes.Values)
+            {
+                EVulkanResourceLifetimeState state = resource.State;
+                if ((state & EVulkanResourceLifetimeState.Destroyed) != 0)
+                    destroyed++;
+                else
+                {
+                    live++;
+                    exactLiveResourceGenerations?.Add(
+                        new VulkanPinnedResourceGeneration(
+                            resource.Key,
+                            resource.Generation));
+                }
+
+                if ((state & EVulkanResourceLifetimeState.Recorded) != 0)
+                    recorded++;
+                if ((state & EVulkanResourceLifetimeState.Submitted) != 0)
+                    submitted++;
+                if ((state & EVulkanResourceLifetimeState.Completed) != 0)
+                    completed++;
+                if ((state & EVulkanResourceLifetimeState.External) != 0)
+                    external++;
+                if ((state & EVulkanResourceLifetimeState.PendingRetirement) == 0)
+                    continue;
+
+                pending++;
+                long timestamp = resource.RetirementTicket.EnqueuedTimestamp;
+                if (timestamp != 0 &&
+                    (oldestTimestamp == 0 || timestamp < oldestTimestamp))
+                {
+                    oldestTimestamp = timestamp;
+                }
+                if (resource.RetirementSerial != 0 &&
+                    (oldestRetirementSerial == 0 ||
+                     resource.RetirementSerial < oldestRetirementSerial))
+                {
+                    oldestRetirementSerial = resource.RetirementSerial;
+                }
+            }
+
+            long oldestAgeMilliseconds = oldestTimestamp == 0
+                ? 0
+                : (long)Math.Max(
+                    0,
+                    Stopwatch.GetElapsedTime(oldestTimestamp).TotalMilliseconds);
+            ulong latestRetirementSerial = unchecked(
+                (ulong)Math.Max(0, Volatile.Read(ref RetirementSerial)));
+            ulong oldestGenerationAge = oldestRetirementSerial == 0
+                ? 0
+                : latestRetirementSerial - oldestRetirementSerial + 1;
+
+            return new VulkanResourceLifetimeSnapshot(
+                live,
+                recorded,
+                submitted,
+                completed,
+                external,
+                pending,
+                destroyed,
+                CommandBufferLifetimes.Count,
+                DescriptorSetLifetimes.Count,
+                LifetimeSubmissions.Count,
+                LastGraphicsSequence,
+                CompletedGraphicsSequence,
+                LastTransferSequence,
+                CompletedTransferSequence,
+                LastOtherSequence,
+                CompletedOtherSequence,
+                oldestAgeMilliseconds,
+                oldestGenerationAge,
+                Volatile.Read(ref ForcedResourceDestructionCount),
+                DeviceLost,
+                exactLiveResourceGenerations is null
+                    ? []
+                    : [.. exactLiveResourceGenerations]);
+        }
+    }
     internal Dictionary<ulong, VulkanResourceLifetimeKey[]> FramebufferAttachments { get; } = new();
 
     /// <summary>

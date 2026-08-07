@@ -163,6 +163,7 @@ public unsafe partial class VulkanRenderer
             try
             {
                 _deviceContext.AttachInstance(
+                    Api,
                     createdInstance,
                     extensions,
                     requestedApiVersion,

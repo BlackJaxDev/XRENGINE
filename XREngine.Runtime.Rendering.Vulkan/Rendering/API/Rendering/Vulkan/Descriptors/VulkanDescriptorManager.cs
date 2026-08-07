@@ -62,6 +62,77 @@ internal sealed class VulkanDescriptorManager
     internal long SnapshotDescriptorSetContentUpdateGeneration()
         => Volatile.Read(ref _descriptorSetContentUpdateGeneration);
 
+    internal void RegisterLiveSampler(Sampler sampler)
+    {
+        if (sampler.Handle == 0)
+            return;
+
+        lock (SamplerLifetimeLock)
+            LiveSamplerHandles.Add(sampler.Handle);
+    }
+
+    internal void RegisterLiveSampler(Sampler sampler, in SamplerCreateInfo createInfo)
+    {
+        if (sampler.Handle == 0)
+            return;
+
+        lock (SamplerLifetimeLock)
+        {
+            LiveSamplerHandles.Add(sampler.Handle);
+            DescriptorHeapSamplerCreateInfos[sampler.Handle] = createInfo with { PNext = null };
+        }
+    }
+
+    internal void UnregisterLiveSampler(Sampler sampler)
+    {
+        if (sampler.Handle == 0)
+            return;
+
+        lock (SamplerLifetimeLock)
+        {
+            LiveSamplerHandles.Remove(sampler.Handle);
+            DescriptorHeapSamplerCreateInfos.Remove(sampler.Handle);
+        }
+    }
+
+    internal bool IsLiveSampler(Sampler sampler)
+    {
+        if (sampler.Handle == 0)
+            return false;
+
+        lock (SamplerLifetimeLock)
+            return LiveSamplerHandles.Contains(sampler.Handle);
+    }
+
+    internal bool TryGetSamplerCreateInfo(Sampler sampler, out SamplerCreateInfo createInfo)
+    {
+        if (sampler.Handle != 0)
+        {
+            lock (SamplerLifetimeLock)
+            {
+                if (DescriptorHeapSamplerCreateInfos.TryGetValue(sampler.Handle, out createInfo))
+                    return true;
+            }
+        }
+
+        createInfo = default;
+        return false;
+    }
+
+    internal ulong[] TakeLiveSamplerHandles()
+    {
+        lock (SamplerLifetimeLock)
+        {
+            if (LiveSamplerHandles.Count == 0)
+                return [];
+
+            ulong[] handles = [.. LiveSamplerHandles];
+            LiveSamplerHandles.Clear();
+            DescriptorHeapSamplerCreateInfos.Clear();
+            return handles;
+        }
+    }
+
     internal bool HaveDescriptorSetContentsUpdatedSince(long generation)
         => Volatile.Read(ref _descriptorSetContentUpdateGeneration) != generation;
 

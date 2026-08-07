@@ -5,7 +5,7 @@ using XREngine.Rendering.DLSS;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanFrameLoop
     {
         private const ulong BlockingAcquireTimeoutNanoseconds = ulong.MaxValue;
         private const ulong InteractiveResizeAcquireTimeoutNanoseconds = 0UL;
@@ -29,7 +29,8 @@ namespace XREngine.Rendering.Vulkan
                 if (OutputRuntime.Desktop.StreamlineFrameGenerationActive)
                 {
                     if (!NvidiaDlssManager.Native.TryAcquireProxyNextImage(
-                            this,
+                            _outputRuntime.CaptureStreamlineDeviceBinding(
+                                _deviceContext),
                             OutputRuntime.Desktop.Swapchain,
                             acquireTimeoutNanoseconds,
                             attempt.AcquireSemaphore,
@@ -91,8 +92,7 @@ namespace XREngine.Rendering.Vulkan
                 case Result.Success:
                     break;
                 case Result.SuboptimalKhr:
-                    if (!DesktopWsiOutput.ShouldKeepPresentScalingSwapchain(
-                            this,
+                    if (!ShouldKeepDesktopPresentScalingSwapchainCore(
                             attempt.AcquireResult,
                             attempt.InteractiveResize))
                     {

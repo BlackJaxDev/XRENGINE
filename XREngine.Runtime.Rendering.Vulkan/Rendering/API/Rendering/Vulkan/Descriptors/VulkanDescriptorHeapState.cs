@@ -32,4 +32,16 @@ internal sealed class VulkanDescriptorHeapState
     internal ulong FrameCopies;
     internal ulong LastFrameWrites;
     internal ulong LastFrameCopies;
+
+    internal void BeginFrame(ulong frameNumber)
+    {
+        if (FrameNumber == frameNumber)
+            return;
+
+        LastFrameWrites = FrameWrites;
+        LastFrameCopies = FrameCopies;
+        FrameWrites = 0;
+        FrameCopies = 0;
+        FrameNumber = frameNumber;
+    }
 }

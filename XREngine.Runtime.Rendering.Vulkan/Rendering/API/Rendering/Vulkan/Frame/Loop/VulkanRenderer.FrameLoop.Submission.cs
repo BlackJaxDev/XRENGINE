@@ -6,7 +6,7 @@ using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanFrameLoop
     {
         private const uint DesktopSubmitCommandBufferCapacity = 4;
 
@@ -19,7 +19,7 @@ namespace XREngine.Rendering.Vulkan
                     attempt.ImageIndex,
                     out string presentationSourceFailure))
             {
-                MarkCommandBuffersDirty(presentationSourceFailure);
+                _commandRuntime.CommandBuffers.MarkDirty(presentationSourceFailure);
                 SettleRejectedDesktopCommandArtifacts(
                     ref attempt,
                     $"submit precondition failed: {presentationSourceFailure}");
@@ -129,7 +129,7 @@ namespace XREngine.Rendering.Vulkan
             if (!mappedFrameSlotPrepared)
             {
                 CompleteMappedFrameArenaDeviceLossObservation();
-                MarkCommandBuffersDirty(
+                _commandRuntime.CommandBuffers.MarkDirty(
                     $"mapped frame-data slot {attempt.ImageIndex} was not writable/flushable for generation {mappedFrameGeneration}");
                 SettleRejectedDesktopCommandArtifacts(
                     ref attempt,
@@ -180,7 +180,7 @@ namespace XREngine.Rendering.Vulkan
                                 ? _commandBufferFrameOpSignatures[
                                     attempt.ImageIndex]
                                 : 0UL;
-                        _ = TryGetCommandBufferDiagnosticMetadata(
+                        _ = _commandRuntime.CommandBuffers.TryGetDiagnosticMetadata(
                             attempt.ImageIndex,
                             attempt.SceneCommandBuffer,
                             out ulong plannerRevision,
@@ -188,7 +188,7 @@ namespace XREngine.Rendering.Vulkan
                             out ulong resourceGeneration,
                             out ulong descriptorGeneration);
                         VulkanSubmissionDiagnosticContext diagnosticContext =
-                            CreateSwapchainSubmissionDiagnosticContext(
+                            CreateDesktopSubmissionDiagnosticContext(
                                 "SwapchainDraw",
                                 attempt.ImageIndex,
                                 attempt.FrameNumber,
@@ -206,7 +206,7 @@ namespace XREngine.Rendering.Vulkan
                             ref submitInfo,
                             default,
                             diagnosticContext,
-                            caller: nameof(RenderFrameCallback));
+                            caller: "RenderFrameCallback");
                         if (submitResult == Result.Success)
                         {
                             // The queue owns this frame as soon as vkQueueSubmit accepts it. Set
@@ -248,7 +248,7 @@ namespace XREngine.Rendering.Vulkan
                     submitResult);
             }
 
-            MarkFrameTimingSubmitted(
+            _frameTelemetry.MarkFrameTimingSubmitted(
                 unchecked((int)Math.Min(
                     attempt.ImageIndex,
                     int.MaxValue)));
@@ -281,7 +281,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             RuntimeRenderingHostServices.Scheduling
-                .MarkRenderFrameReadyForCollect(XRWindow);
+                .MarkRenderFrameReadyForCollect(DesktopWsiOutput.Window);
             attempt.CollectReleased = true;
 
             stageStartTimestamp = Stopwatch.GetTimestamp();
@@ -290,7 +290,7 @@ namespace XREngine.Rendering.Vulkan
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                            "Vulkan.FrameLifecycle.TrimStaging"))
                 {
-                    ResourceRuntime.Allocations.Staging.Trim(this);
+                    ResourceRuntime.Allocations.Staging.Trim(OutputRuntime);
                 }
             }
             catch (Exception ex)
@@ -345,13 +345,18 @@ namespace XREngine.Rendering.Vulkan
 
             attempt.TransitionUploadOwnership(
                 EVulkanDesktopUploadOwnership.SubmittedDeferredFree);
-            QueueRecordedTextureUploadsForTimeline(
+            ResourceRuntime.Uploads.PublicationState.QueueRecordedForTimeline(
                 signalValue,
                 uploadSource);
-            DeferSecondaryCommandBufferFree(
+            _commandRuntime.DeferSecondaryCommandBufferFree(
+                Api,
+                _deviceContext.Device,
+                ResourceRuntime,
+                attempt.FrameSlot,
                 attempt.ImageIndex,
                 attempt.TextureUploadCommandPool,
-                attempt.TextureUploadCommandBuffer);
+                attempt.TextureUploadCommandBuffer,
+                "FrameLoop.TextureUploadSecondary");
             attempt.TextureUploadCommandBuffer = default;
             attempt.TextureUploadCommandPool = default;
             attempt.TransitionUploadOwnership(
@@ -385,7 +390,7 @@ namespace XREngine.Rendering.Vulkan
             ReleaseUnsubmittedDesktopUpload(
                 ref attempt,
                 $"graphics frame submit failed with {submitResult}");
-            MarkCommandBuffersDirty(
+            _commandRuntime.CommandBuffers.MarkDirty(
                 $"graphics frame submit rejected with {submitResult}");
             SettleRejectedDesktopCommandArtifacts(
                 ref attempt,
@@ -455,11 +460,16 @@ namespace XREngine.Rendering.Vulkan
 
             if (count != 0)
             {
-                _ = InvalidateCachedCommandBuffersByHandle(
+                _ = _commandRuntime.InvalidateCachedCommandBuffers(
                     handles[..count],
-                    reason);
+                    reason,
+                    OutputRuntime,
+                    _frameTelemetry);
                 if (!IsDeviceLost)
-                    DrainInvalidatedCommandBufferRecordings(count);
+                    _commandRuntime.DrainInvalidatedCommandBufferRecordings(
+                        Api,
+                        ResourceRuntime,
+                        count);
             }
 
             attempt.CommandArtifactsSettled = true;

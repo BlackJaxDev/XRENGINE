@@ -4,7 +4,7 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanFrameLoop
     {
         private bool PresentRejectedDesktopImageAndFinalize(
             ref VulkanFrameAttempt attempt,
@@ -18,12 +18,10 @@ namespace XREngine.Rendering.Vulkan
             int clearedLayoutCount,
             bool recoveryFrameWritten)
         {
-            VulkanDesktopPresentDispatchOutcome dispatch =
-                DesktopWsiOutput.PresentFrameTarget(
-                    this,
-                    ref attempt,
-                    "Vulkan.FrameLifecycle.DirtyAbortQueuePresent",
-                    $"presenting rejected Vulkan frame {attempt.FrameNumber} ({rejectionStage})");
+            VulkanDesktopPresentDispatchOutcome dispatch = QueueDesktopPresentCore(
+                ref attempt,
+                "Vulkan.FrameLifecycle.DirtyAbortQueuePresent",
+                $"presenting rejected Vulkan frame {attempt.FrameNumber} ({rejectionStage})");
             Result presentResult = dispatch.Result;
             if (!dispatch.Dispatched &&
                 presentResult != Result.ErrorDeviceLost)

@@ -1512,7 +1512,7 @@ namespace XREngine.Rendering.Vulkan
                 return true;
 
             sampler = source.DescriptorSampler;
-            if (sampler.Handle != 0 && Renderer.IsLiveSampler(sampler))
+            if (sampler.Handle != 0 && BackendContext.Descriptors.IsLiveSampler(sampler))
                 return true;
 
             if (sampler.Handle != 0)
@@ -1528,7 +1528,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
 
             sampler = Renderer.GetPlaceholderSampler();
-            if (sampler.Handle != 0 && Renderer.IsLiveSampler(sampler))
+            if (sampler.Handle != 0 && BackendContext.Descriptors.IsLiveSampler(sampler))
             {
                 WarnOnce($"Material texture for binding '{binding.Name}' has no Vulkan sampler. Using placeholder sampler.");
                 RecordDescriptorFallback(binding);

@@ -14,6 +14,25 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanTextureUploadService
 {
+    internal void CancelRecordedSubmitBatch(bool deviceLost, string reason)
+    {
+        List<VulkanImportedTexturePendingUpload> recorded =
+            PublicationState.RecordedForSubmit;
+        for (int index = 0; index < recorded.Count; index++)
+        {
+            VulkanImportedTexturePendingUpload upload = recorded[index];
+            RecordState(
+                upload.Request,
+                VulkanTextureUploadGenerationState.Canceled,
+                reason);
+            if (!deviceLost)
+                upload.Texture.ReleasePreparedImportedUploadResources(upload);
+            InvokeTextureUploadCanceled(upload);
+        }
+
+        recorded.Clear();
+    }
+
     private void PublishCompletedImportedTextureUpload(
         VulkanRenderer renderer,
         VulkanImportedTexturePendingUpload upload,

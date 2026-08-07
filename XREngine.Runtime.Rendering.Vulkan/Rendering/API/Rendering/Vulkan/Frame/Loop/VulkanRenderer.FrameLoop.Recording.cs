@@ -5,7 +5,7 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanFrameLoop
     {
         internal EDesktopFrameFlow RecordDesktopFrame(
             ref VulkanFrameAttempt attempt)
@@ -82,7 +82,7 @@ namespace XREngine.Rendering.Vulkan
                         }
                     }
                     catch (InvalidOperationException ex)
-                        when (IsTransientResourceRetirementRecordingFailure(ex))
+                        when (VulkanRecordingFailurePolicy.IsTransientResourceRetirement(ex))
                     {
                         return HandleDesktopRecordingResourceRetired(
                             ref attempt,
@@ -174,7 +174,7 @@ namespace XREngine.Rendering.Vulkan
                 "[Vulkan] Scene command-buffer recording deferred; a separately recorded texture-upload batch will remain eligible for the recovery submit. {0}",
                 reason);
             bool swapchainAttachmentRetired =
-                IsSwapchainResourceRetirementRecordingFailure(reason);
+                VulkanRecordingFailurePolicy.IsSwapchainResourceRetirement(reason);
             if (TryRecoverRejectedDesktopImage(
                     ref attempt,
                     commandBufferDirtyFlagSet: false,
@@ -222,7 +222,7 @@ namespace XREngine.Rendering.Vulkan
             ReleaseUnsubmittedDesktopUpload(
                 ref attempt,
                 "command buffer resource generation retired during recording");
-            MarkCommandBuffersDirty(
+            _commandRuntime.CommandBuffers.MarkDirty(
                 "command buffer resource generation retired during recording");
 
             if (TryRecoverRejectedDesktopImage(
@@ -372,7 +372,7 @@ namespace XREngine.Rendering.Vulkan
                     attempt.ImageIndex,
                     out string presentationSourceFailure))
             {
-                MarkCommandBuffersDirty(presentationSourceFailure);
+                _commandRuntime.CommandBuffers.MarkDirty(presentationSourceFailure);
                 SettleRejectedDesktopCommandArtifacts(
                     ref attempt,
                     $"recording validation failed: {presentationSourceFailure}");
@@ -399,7 +399,7 @@ namespace XREngine.Rendering.Vulkan
                         recordedSwapchainWriteCount:
                             attempt.SceneSwapchainWriteCount,
                         rejectionStage:
-                            Phase524bInjectedDesktopRejectionStage,
+                            VulkanRejectedDesktopFramePolicy.InjectedRejectionStage,
                         rejectedSubmitResult: null))
                 {
                     return EDesktopFrameFlow.Completed;
@@ -415,7 +415,7 @@ namespace XREngine.Rendering.Vulkan
                 (uint)_commandBufferDirtyFlags.Length &&
                 _commandBufferDirtyFlags[attempt.ImageIndex];
             bool generationChanged =
-                HaveCommandBuffersDirtiedSince(
+                _commandRuntime.CommandBuffers.HaveDirtiedSince(
                     attempt.SceneCommandBufferDirtyGeneration);
             if (attempt.ScenePrimaryRecordedThisFrame &&
                 dirtyFlag &&
@@ -517,20 +517,20 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            ulong currentImageGeneration = GetCurrentVulkanResourceGeneration(
+            ulong currentImageGeneration = ResourceRuntime.GetPublishedGeneration(
                 ObjectType.Image,
                 source.Image.Handle);
-            ulong currentImageViewGeneration = GetCurrentVulkanResourceGeneration(
+            ulong currentImageViewGeneration = ResourceRuntime.GetPublishedGeneration(
                 ObjectType.ImageView,
                 source.ImageView.Handle);
-            ulong currentSamplerGeneration = GetCurrentVulkanResourceGeneration(
+            ulong currentSamplerGeneration = ResourceRuntime.GetPublishedGeneration(
                 ObjectType.Sampler,
                 source.Sampler.Handle);
-            ulong currentDescriptorSetGeneration = GetCurrentVulkanResourceGeneration(
+            ulong currentDescriptorSetGeneration = ResourceRuntime.GetPublishedGeneration(
                 ObjectType.DescriptorSet,
                 source.DescriptorSet.Handle);
-            ulong currentCommandGeneration = ResolveCommandBufferRecordingGeneration(
-                source.OwningCommandArtifact);
+            ulong currentCommandGeneration = _commandRuntime.CommandBuffers
+                .ResolveRecordingGeneration(source.OwningCommandArtifact);
             bool generationsCurrent =
                 currentImageGeneration == source.ImageAllocationGeneration &&
                 currentImageViewGeneration == source.ImageViewGeneration &&
@@ -542,46 +542,6 @@ namespace XREngine.Rendering.Vulkan
 
             failureReason =
                 $"final presentation source epoch {source.LogicalEpoch} references a superseded native generation";
-            return false;
-        }
-
-        /// <summary>
-        /// Validates a completed source for a recovery blit into an acquired swapchain image.
-        /// The blit consumes the captured native image directly, so a later re-record of the
-        /// command buffer that originally sampled it must not invalidate the replay source.
-        /// </summary>
-        private bool TryValidatePresentationSourceForReplay(
-            in VulkanPresentationSourceTuple source,
-            out string failureReason)
-        {
-            failureReason = string.Empty;
-            if (!source.HasLogicalSource || source.LogicalEpoch == 0 ||
-                source.Image.Handle == 0 || source.ImageView.Handle == 0 ||
-                source.Sampler.Handle == 0 || source.ExpectedLayout == ImageLayout.Undefined ||
-                source.Width == 0 || source.Height == 0)
-            {
-                failureReason = $"final presentation source epoch {source.LogicalEpoch} is not replayable";
-                return false;
-            }
-
-            ulong currentImageGeneration = GetCurrentVulkanResourceGeneration(
-                ObjectType.Image,
-                source.Image.Handle);
-            ulong currentImageViewGeneration = GetCurrentVulkanResourceGeneration(
-                ObjectType.ImageView,
-                source.ImageView.Handle);
-            ulong currentSamplerGeneration = GetCurrentVulkanResourceGeneration(
-                ObjectType.Sampler,
-                source.Sampler.Handle);
-            if (currentImageGeneration == source.ImageAllocationGeneration &&
-                currentImageViewGeneration == source.ImageViewGeneration &&
-                currentSamplerGeneration == source.SamplerGeneration)
-            {
-                return true;
-            }
-
-            failureReason =
-                $"final presentation replay source epoch {source.LogicalEpoch} references a superseded native image generation";
             return false;
         }
 

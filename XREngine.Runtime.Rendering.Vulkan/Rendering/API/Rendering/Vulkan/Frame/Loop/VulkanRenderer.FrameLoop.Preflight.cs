@@ -3,14 +3,14 @@ using System.Diagnostics;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanFrameLoop
     {
         internal EDesktopFrameFlow RunDesktopFramePreflight(ref VulkanFrameAttempt attempt)
         {
             attempt.InteractiveResize = DesktopWsiOutput.IsInteractiveResizeInProgress;
 
             var liveFramebufferSize = DesktopWsiOutput.EffectiveFramebufferSize;
-            var liveWindowSize = Window.Size;
+            var liveWindowSize = DesktopWsiOutput.Window.Window.Size;
             attempt.LiveFramebufferWidth = liveFramebufferSize.X;
             attempt.LiveFramebufferHeight = liveFramebufferSize.Y;
             attempt.LiveWindowWidth = liveWindowSize.X;

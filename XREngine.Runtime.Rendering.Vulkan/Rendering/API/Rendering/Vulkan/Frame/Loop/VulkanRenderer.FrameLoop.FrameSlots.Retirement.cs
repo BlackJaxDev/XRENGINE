@@ -2,7 +2,7 @@ using System;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanFrameLoop
     {
         private bool TryWaitCurrentFrameSlotAndDrainRetiredResources(
             int frameSlot,
@@ -27,19 +27,46 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 WaitForTimelineValue(_commandRuntime.Synchronization._graphicsTimelineSemaphore, slotWaitValue);
-                SampleFrameTimingQueries(frameSlot);
+                _frameTelemetry.SampleFrameTimingQueries(
+                    Api,
+                    _deviceContext.Device,
+                    ResourceRuntime,
+                    frameSlot);
             }
 
-            DrainInvalidatedCommandBufferRecordings();
+            _commandRuntime.DrainInvalidatedCommandBufferRecordings(
+                Api, ResourceRuntime);
             DrainRetiredSwapchainGenerations();
-            DrainRetiredCommandPools(frameSlot);
-            DrainRetiredDescriptorPools();
-            DrainRetiredPipelines();
-            DrainRetiredPipelineLayouts();
-            DrainRetiredDescriptorSetLayouts();
-            DrainRetiredBuffers();
-            DrainRetiredFramebuffers();
-            DrainRetiredImages();
+            _commandRuntime.DrainRetiredCommandBuffers(
+                Api,
+                _deviceContext.Device,
+                ResourceRuntime,
+                frameSlot);
+            _commandRuntime.DrainRetiredCommandPools(
+                Api,
+                _deviceContext.Device,
+                ResourceRuntime,
+                frameSlot);
+            ResourceRuntime.DrainRetiredDescriptorSets(
+                Api, _deviceContext.Device, frameSlot);
+            ResourceRuntime.DrainRetiredDescriptorPools(
+                Api, _deviceContext.Device, frameSlot);
+            ResourceRuntime.DrainRetiredPipelines(
+                Api, _deviceContext.Device, frameSlot);
+            ResourceRuntime.DrainRetiredPipelineLayouts(
+                Api, _deviceContext.Device, frameSlot);
+            ResourceRuntime.DrainRetiredDescriptorSetLayouts(
+                Api, _deviceContext.Device, frameSlot);
+            ResourceRuntime.DrainRetiredBuffers(
+                Api,
+                _deviceContext.Device,
+                OutputRuntime,
+                _frameTelemetry,
+                frameSlot);
+            ResourceRuntime.DrainRetiredFramebuffers(
+                Api, _deviceContext.Device, frameSlot);
+            ResourceRuntime.DrainRetiredImages(
+                Api, _deviceContext.Device, frameSlot);
             return true;
         }
 

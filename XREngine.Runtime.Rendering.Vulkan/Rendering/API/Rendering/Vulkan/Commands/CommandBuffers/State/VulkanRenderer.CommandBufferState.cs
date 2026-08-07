@@ -227,16 +227,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private ulong ResolveCommandBufferRecordingGeneration(CommandBuffer commandBuffer)
-        {
-            if (commandBuffer.Handle == 0)
-                return 0;
-
-            ulong key = unchecked((ulong)commandBuffer.Handle);
-            lock (_commandBindStateLock)
-                return _commandBindStates.TryGetValue(key, out CommandBufferBindState state)
-                    ? state.RecordingGeneration
-                    : 0;
-        }
+            => _commandRuntime.CommandBuffers.ResolveRecordingGeneration(commandBuffer);
 
         private void InvalidateDescriptorHeapBindingState(CommandBuffer commandBuffer)
         {

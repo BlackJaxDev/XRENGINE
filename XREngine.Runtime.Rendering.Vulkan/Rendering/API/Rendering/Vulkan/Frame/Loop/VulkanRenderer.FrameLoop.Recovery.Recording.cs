@@ -3,7 +3,7 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanFrameLoop
     {
         private void PrepareRejectedDesktopAbortCommand(
             ref VulkanFrameAttempt attempt,
@@ -18,7 +18,7 @@ namespace XREngine.Rendering.Vulkan
                 CommandBufferLevel.Primary,
                 "swapchain abort present transition command buffer",
                 commandPool);
-            RegisterCommandBufferImageIndex(
+            _commandRuntime.CommandBuffers.RegisterImageIndex(
                 commandBuffer,
                 attempt.ImageIndex);
             BeginRejectedDesktopTransition(
@@ -81,7 +81,9 @@ namespace XREngine.Rendering.Vulkan
         {
             VulkanPresentationSourceTuple source =
                 _windowPresentSource.CaptureAnyCompleteBinding();
-            if (!TryValidatePresentationSourceForReplay(source, out string unavailableReason))
+                if (!ResourceRuntime.TryValidatePresentationSourceForReplay(
+                    source,
+                    out string unavailableReason))
             {
                 Debug.VulkanEvery(
                     $"Vulkan.Frame.{GetHashCode()}.RecoveryReplayUnavailable",
@@ -281,11 +283,15 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            FreeVulkanCommandBufferTracked(
+            _commandRuntime.FreeTrackedCommandBuffer(
+                Api,
+                _deviceContext.Device,
+                ResourceRuntime,
+                CurrentFrameSlot,
                 commandPool,
                 ref commandBuffer,
                 "FrameLoop.AbortPresent");
-            RemoveCommandBufferBindState(commandBuffer);
+            _commandRuntime.RemoveCommandBufferState(commandBuffer);
         }
     }
 }

@@ -60,6 +60,9 @@ public unsafe partial class VulkanRenderer
 
     private VulkanImGuiBackend GetOrCreateImGuiBackend()
     {
+        if (_outputRuntime.ConsumeImGuiFrameMarkerResetRequest())
+            ResetImGuiFrameMarker();
+
         if (_outputRuntime._imguiBackend is not null && !ImGuiContextTracker.IsAlive(_outputRuntime._imguiBackend.ContextHandle))
         {
             _outputRuntime._imguiBackend.Dispose();

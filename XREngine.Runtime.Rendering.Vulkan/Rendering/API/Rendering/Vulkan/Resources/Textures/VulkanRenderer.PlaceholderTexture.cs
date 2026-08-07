@@ -219,7 +219,8 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        RegisterLiveSampler(_placeholderSampler, in samplerInfo);
+        ResourceRuntime.Descriptors.RegisterLiveSampler(_placeholderSampler, in samplerInfo);
+        RegisterVulkanResource(ObjectType.Sampler, _placeholderSampler.Handle, "PlaceholderTexture.Sampler");
         _placeholderTextureReady = true;
     }
 

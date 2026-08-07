@@ -268,7 +268,7 @@ namespace XREngine.Rendering.Vulkan
                 ? "no published presentation source"
                 : !recordingState.SwapchainTarget.IsValid
                     ? "swapchain target is invalid"
-                    : !TryValidatePresentationSourceForReplay(
+                    : !ResourceRuntime.TryValidatePresentationSourceForReplay(
                         presentationSource,
                         out string tupleFailure)
                         ? tupleFailure

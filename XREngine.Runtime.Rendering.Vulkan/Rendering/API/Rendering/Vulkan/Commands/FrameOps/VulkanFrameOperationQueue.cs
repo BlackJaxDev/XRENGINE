@@ -31,6 +31,23 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
     public void ReleaseCurrentThread()
         => CurrentThread.Reset();
 
+    internal FrameOp[] DrainPending()
+    {
+        using (SyncRoot.EnterScope())
+        {
+            if (Pending.Count == 0)
+                return [];
+
+            int operationCount = Pending.Count;
+            if (DrainedFrameOpsBuffer.Length != operationCount)
+                DrainedFrameOpsBuffer = new FrameOp[operationCount];
+
+            Pending.CopyTo(DrainedFrameOpsBuffer);
+            Pending.Clear();
+            return DrainedFrameOpsBuffer;
+        }
+    }
+
     public void Dispose()
         => _threadWorkspace.Dispose();
 

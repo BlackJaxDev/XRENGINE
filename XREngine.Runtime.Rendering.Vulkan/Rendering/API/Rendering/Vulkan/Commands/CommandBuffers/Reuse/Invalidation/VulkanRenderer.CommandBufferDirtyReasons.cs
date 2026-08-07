@@ -22,65 +22,13 @@ public unsafe partial class VulkanRenderer
     private ref long _lastCommandBufferDirtyTimestamp => ref _commandRuntime.CommandBuffers.LastDirtyTimestamp;
 
     private long SnapshotCommandBufferDirtyGeneration()
-        => Volatile.Read(ref _commandBufferDirtyGeneration);
+        => _commandRuntime.CommandBuffers.SnapshotDirtyGeneration();
 
     private bool HaveCommandBuffersDirtiedSince(long generation)
-        => Volatile.Read(ref _commandBufferDirtyGeneration) != generation;
+        => _commandRuntime.CommandBuffers.HaveDirtiedSince(generation);
 
     internal void MarkCommandBuffersDirty([CallerMemberName] string? reason = null)
-    {
-        Volatile.Write(ref _lastCommandBufferDirtyTimestamp, Stopwatch.GetTimestamp());
-        Interlocked.Increment(ref _commandBufferDirtyGeneration);
-
-        if (_commandBufferDirtyFlags is null)
-            return;
-
-        for (int i = 0; i < _commandBufferDirtyFlags.Length; i++)
-            _commandBufferDirtyFlags[i] = true;
-        MarkPrimaryCommandArtifactOwnersDirty(reason);
-
-        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBuffersDirty(reason);
-        TrackCommandBufferDirtyReason(reason, _commandBufferDirtyFlags.Length);
-    }
-
-    private void TrackCommandBufferDirtyReason(string? reason, int swapchainImageCount)
-    {
-        string key = string.IsNullOrWhiteSpace(reason) ? "<unknown>" : reason;
-        string? summary = null;
-        lock (_commandBufferDirtyReasonLock)
-        {
-            _commandBufferDirtyReasons.TryGetValue(key, out int count);
-            _commandBufferDirtyReasons[key] = count + 1;
-
-            long now = Stopwatch.GetTimestamp();
-            if (_lastCommandBufferDirtyReasonLogTimestamp == 0)
-            {
-                _lastCommandBufferDirtyReasonLogTimestamp = now;
-                return;
-            }
-
-            if (Stopwatch.GetElapsedTime(_lastCommandBufferDirtyReasonLogTimestamp, now) < TimeSpan.FromSeconds(1))
-                return;
-
-            StringBuilder builder = new();
-            foreach (KeyValuePair<string, int> pair in _commandBufferDirtyReasons.OrderByDescending(static p => p.Value))
-            {
-                if (builder.Length > 0)
-                    builder.Append(", ");
-
-                builder.Append(pair.Key).Append('=').Append(pair.Value);
-            }
-
-            summary = builder.ToString();
-            _commandBufferDirtyReasons.Clear();
-            _lastCommandBufferDirtyReasonLogTimestamp = now;
-        }
-
-        Debug.Vulkan(
-            "[Vulkan] Command buffers marked dirty over the last second. SwapchainImages={0} Reasons={1}",
-            swapchainImageCount,
-            summary);
-    }
+        => _commandRuntime.CommandBuffers.MarkDirty(reason);
 
     internal void MarkCommandBuffersDirtyForLegacyMeshState([CallerMemberName] string? reason = null)
     {

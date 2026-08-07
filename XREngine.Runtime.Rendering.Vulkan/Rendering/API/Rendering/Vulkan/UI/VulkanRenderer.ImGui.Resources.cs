@@ -254,7 +254,11 @@ public unsafe partial class VulkanRenderer
         if (Api.CreateSampler(_deviceContext.Device, ref samplerInfo, null, out _outputRuntime._imguiResources.FontSampler) != Result.Success)
             throw new InvalidOperationException("Failed to create ImGui font sampler.");
 
-        RegisterLiveSampler(_outputRuntime._imguiResources.FontSampler, in samplerInfo);
+        ResourceRuntime.Descriptors.RegisterLiveSampler(_outputRuntime._imguiResources.FontSampler, in samplerInfo);
+        RegisterVulkanResource(
+            ObjectType.Sampler,
+            _outputRuntime._imguiResources.FontSampler.Handle,
+            "ImGui.FontSampler");
     }
 
     private void CreateImGuiFontDescriptorResources()

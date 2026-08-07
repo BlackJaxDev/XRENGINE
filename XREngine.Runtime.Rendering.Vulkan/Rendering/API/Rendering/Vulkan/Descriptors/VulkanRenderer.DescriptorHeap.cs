@@ -671,18 +671,6 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    internal void BeginDescriptorHeapFrame(ulong frameNumber)
-    {
-        if (_descriptorHeapFrameNumber == frameNumber)
-            return;
-
-        _descriptorHeapLastFrameWrites = _descriptorHeapFrameWrites;
-        _descriptorHeapLastFrameCopies = _descriptorHeapFrameCopies;
-        _descriptorHeapFrameWrites = 0;
-        _descriptorHeapFrameCopies = 0;
-        _descriptorHeapFrameNumber = frameNumber;
-    }
-
     internal bool TryPushDescriptorHeapData(CommandBuffer commandBuffer, uint offset, void* data, uint byteCount, out string reason)
     {
         reason = string.Empty;

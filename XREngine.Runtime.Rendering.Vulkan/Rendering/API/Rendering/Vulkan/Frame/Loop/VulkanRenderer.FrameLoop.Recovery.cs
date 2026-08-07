@@ -6,7 +6,7 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanFrameLoop
     {
         private void ResolveDesktopAcquireBySwapchainRecreation(
             ref VulkanFrameAttempt attempt,
@@ -165,7 +165,7 @@ namespace XREngine.Rendering.Vulkan
             try
             {
                 RuntimeRenderingHostServices.Scheduling
-                    .MarkRenderFrameReadyForCollect(XRWindow);
+                    .MarkRenderFrameReadyForCollect(DesktopWsiOutput.Window);
                 attempt.CollectReleased = true;
             }
             catch (Exception collectFailure)
@@ -179,12 +179,10 @@ namespace XREngine.Rendering.Vulkan
         private void PresentRecoveredDesktopFrameAfterUnexpectedFailure(
             ref VulkanFrameAttempt attempt)
         {
-            VulkanDesktopPresentDispatchOutcome dispatch =
-                DesktopWsiOutput.PresentFrameTarget(
-                    this,
-                    ref attempt,
-                    "Vulkan.FrameLifecycle.RecoveryFailureQueuePresent",
-                    "settling a recovered desktop frame after an auxiliary failure");
+            VulkanDesktopPresentDispatchOutcome dispatch = QueueDesktopPresentCore(
+                ref attempt,
+                "Vulkan.FrameLifecycle.RecoveryFailureQueuePresent",
+                "settling a recovered desktop frame after an auxiliary failure");
             Result result = dispatch.Result;
             if (!dispatch.Dispatched && result != Result.ErrorDeviceLost)
             {
@@ -236,7 +234,9 @@ namespace XREngine.Rendering.Vulkan
             ref VulkanFrameAttempt attempt,
             string reason)
         {
-            CancelRecordedTextureUploadSubmitBatch(reason);
+            ResourceRuntime.Uploads.CancelRecordedSubmitBatch(
+                IsDeviceLost,
+                reason);
 
             if (attempt.TextureUploadCommandBuffer.Handle == 0 ||
                 attempt.UploadOwnership is
@@ -251,13 +251,17 @@ namespace XREngine.Rendering.Vulkan
                 attempt.TextureUploadCommandBuffer;
             if (attempt.TextureUploadCommandPool.Handle != 0 && !_deviceLost)
             {
-                FreeVulkanCommandBufferTracked(
+                _commandRuntime.FreeTrackedCommandBuffer(
+                    Api,
+                    _deviceContext.Device,
+                    ResourceRuntime,
+                    attempt.FrameSlot,
                     attempt.TextureUploadCommandPool,
                     ref uploadCommandBuffer,
                     "FrameLoop.UploadAbort");
             }
 
-            RemoveCommandBufferBindState(
+            _commandRuntime.RemoveCommandBufferState(
                 attempt.TextureUploadCommandBuffer);
             attempt.TextureUploadCommandBuffer = default;
             attempt.TextureUploadCommandPool = default;

@@ -222,6 +222,63 @@ internal unsafe sealed class VulkanStagingManager
         }
     }
 
+    public void Trim(VulkanOutputRuntime outputRuntime)
+    {
+        lock (_sync)
+        {
+            _trimFrameCounter++;
+
+            ulong idleBytes = 0;
+            for (int index = 0; index < _entries.Count; index++)
+            {
+                if (!_entries[index].InUse)
+                    idleBytes += _entries[index].Size;
+            }
+
+            bool overEntryBudget = _entries.Count > MaxPoolEntries;
+            bool overIdleBytesBudget = idleBytes > IdleBytesWatermark;
+            bool intervalReached = _trimFrameCounter >= TrimIntervalFrames;
+            if (!overEntryBudget && !overIdleBytesBudget && !intervalReached)
+                return;
+
+            _trimFrameCounter = 0;
+            List<StagingBufferEntry>? evicted = null;
+            for (int index = _entries.Count - 1; index >= 0; index--)
+            {
+                StagingBufferEntry entry = _entries[index];
+                if (entry.InUse)
+                {
+                    entry.IdleFrames = 0;
+                    continue;
+                }
+
+                entry.IdleFrames++;
+                if (entry.IdleFrames < IdleFramesBeforeEviction &&
+                    _entries.Count <= MaxPoolEntries &&
+                    idleBytes <= IdleBytesWatermark)
+                {
+                    continue;
+                }
+
+                evicted ??= [];
+                evicted.Add(entry);
+                _entries.RemoveAt(index);
+                idleBytes = idleBytes > entry.Size
+                    ? idleBytes - entry.Size
+                    : 0;
+            }
+
+            if (evicted is null)
+                return;
+
+            for (int index = 0; index < evicted.Count; index++)
+            {
+                StagingBufferEntry entry = evicted[index];
+                outputRuntime.DestroyBufferRaw(entry.Buffer, entry.Memory);
+            }
+        }
+    }
+
     private StagingBufferEntry? TryTakeReusable(
         ulong requestedSize,
         BufferUsageFlags usage,

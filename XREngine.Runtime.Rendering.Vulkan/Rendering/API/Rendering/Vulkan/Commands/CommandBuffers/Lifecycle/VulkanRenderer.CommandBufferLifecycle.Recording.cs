@@ -270,9 +270,9 @@ namespace XREngine.Rendering.Vulkan
 
                     if (!_commandRuntime.Scheduler.ShouldRetryRecording(
                             recordingAttempt,
-                            IsTransientResourceRetirementRecordingFailure(
+                            VulkanRecordingFailurePolicy.IsTransientResourceRetirement(
                                 context.RecordingDeferredReason),
-                            IsSwapchainResourceRetirementRecordingFailure(
+                            VulkanRecordingFailurePolicy.IsSwapchainResourceRetirement(
                                 context.RecordingDeferredReason)))
                     {
                         break;

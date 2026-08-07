@@ -719,7 +719,7 @@ internal unsafe partial class VkMeshRenderer
 				return false;
 			}
 
-			if (requireSampler && !Renderer.IsLiveSampler(info.Sampler))
+			if (requireSampler && !BackendContext.Descriptors.IsLiveSampler(info.Sampler))
 			{
 				WarnOnce($"Skipping descriptor update for mesh '{Mesh?.Name ?? "?"}' because write[{writeIndex}].image[{i}] references a retired sampler.");
 				return false;
