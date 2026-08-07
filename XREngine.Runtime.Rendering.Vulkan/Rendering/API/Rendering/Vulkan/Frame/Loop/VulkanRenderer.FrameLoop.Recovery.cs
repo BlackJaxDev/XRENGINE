@@ -398,7 +398,8 @@ namespace XREngine.Rendering.Vulkan
                     in policy,
                     imageWasEverPresented,
                     out abortCommandPool,
-                    out abortCommandBuffer);
+                    out abortCommandBuffer,
+                    out bool replayedPresentationSource);
                 bool hasRecoveryOverlay =
                     TryRecordRejectedDesktopRecoveryOverlay(
                         ref attempt,
@@ -411,7 +412,7 @@ namespace XREngine.Rendering.Vulkan
                         ? recoveryOverlayCommandBuffer
                         : default;
                 attempt.RecoverySwapchainWriteCount =
-                    policy.ShouldClearBeforePresent || hasRecoveryOverlay
+                    replayedPresentationSource || policy.ShouldClearBeforePresent || hasRecoveryOverlay
                         ? 1
                         : 0;
                 if (!TrySubmitRejectedDesktopAbort(

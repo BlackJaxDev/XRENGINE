@@ -571,11 +571,6 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         // Honor any internal resolution request from the pipeline before executing commands.
         if (viewport is not null)
         {
-            // Keep the last complete internal resource generation while the native window is
-            // being dragged. The viewport's presentation region still follows every WM_SIZING
-            // position, so camera/UI layout remains live, but changing the internal resolution
-            // here would invalidate that stable generation before the interactive-resize
-            // resource freeze can reuse it.
             if (viewport.AllowAutomaticInternalResolution &&
                 !ShouldDeferResourceGenerationForInteractiveWindowResize(viewport))
             {
@@ -689,6 +684,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             Pipeline?.PassMetadata is RenderPassMetadataSnapshot snapshot
                 ? snapshot.RevisionStamp
                 : 0;
+        bool allowViewportResizeLag =
+            viewport?.Window?.IsInteractiveResizeInProgress == true &&
+            ActiveGeneration is { } activeGeneration &&
+            identity.ViewportWidth == checked((int)activeGeneration.Key.DisplayWidth) &&
+            identity.ViewportHeight == checked((int)activeGeneration.Key.DisplayHeight) &&
+            identity.InternalWidth == checked((int)activeGeneration.Key.InternalWidth) &&
+            identity.InternalHeight == checked((int)activeGeneration.Key.InternalHeight);
         BackendReadyFramePackageValidationContext context = new(
             RuntimeRenderingHostServices.FrameTiming.ConsumedCollectGeneration,
             Pipeline?.CommandGeneration ?? 0UL,
@@ -698,7 +700,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             viewport?.Width ?? identity.ViewportWidth,
             viewport?.Height ?? identity.ViewportHeight,
             viewport?.InternalWidth ?? identity.InternalWidth,
-            viewport?.InternalHeight ?? identity.InternalHeight);
+            viewport?.InternalHeight ?? identity.InternalHeight,
+            allowViewportResizeLag);
         BackendReadyFramePackageValidationResult result =
             BackendReadyFramePackageValidator.Validate(package, in context);
         bool accepted = result.Accepted;
@@ -757,7 +760,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         if (Pipeline is null || viewport is null)
             return true;
 
-        if (ShouldDeferResourceGenerationForInteractiveWindowResize(viewport) && ActiveGeneration is not null)
+        if (ShouldDeferResourceGenerationForInteractiveWindowResize(viewport) &&
+            ActiveGeneration is not null)
         {
             DiscardPendingGeneration("InteractiveResize");
             return true;
@@ -933,11 +937,6 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             resolvedInternalHeight);
     }
 
-    /// <summary>
-    /// Determines whether resource generation should be deferred during an interactive window resize operation. This is used to avoid unnecessary resource regeneration while the user is actively resizing the window, which can lead to performance issues or visual artifacts. The method checks if the viewport does not render to an external swapchain target and if the associated window is currently undergoing an interactive resize.
-    /// </summary>
-    /// <param name="viewport">The viewport to check for interactive window resize.</param>
-    /// <returns>True if resource generation should be deferred; otherwise, false.</returns>
     private static bool ShouldDeferResourceGenerationForInteractiveWindowResize(XRViewport viewport)
         => !viewport.RendersToExternalSwapchainTarget &&
            viewport.Window?.IsInteractiveResizeInProgress == true;
@@ -1752,6 +1751,17 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             EGpuFenceStatus fenceStatus = retired.PollRetirementFence();
             if (!force && fenceStatus == EGpuFenceStatus.Pending)
                 return;
+
+            XRViewport? viewport = RenderState.WindowViewport ?? LastWindowViewport;
+            if (!force &&
+                fenceStatus == EGpuFenceStatus.Failed &&
+                viewport?.Window?.IsInteractiveResizeInProgress == true)
+            {
+                // The active generation remains the drag-time presentation source.
+                // A failed generic fence must not globally release descriptor references
+                // underneath it; defer the destructive cleanup until the resize settles.
+                return;
+            }
 
             if (fenceStatus == EGpuFenceStatus.Failed)
             {

@@ -1082,7 +1082,7 @@ namespace XREngine.Rendering.Vulkan
                     allowSynchronousUpload: false,
                     out snapshot);
 
-            _ = _windowPresentSource.PublishLogical(
+            VulkanPresentationSourceTuple published = _windowPresentSource.PublishLogical(
                 new VulkanPresentationSourceTuple(
                     LogicalEpoch: 0,
                     colorTexture,
@@ -1119,13 +1119,15 @@ namespace XREngine.Rendering.Vulkan
                     DescriptorSlot: -1,
                     DescriptorPublicationGeneration: 0,
                     OwningCommandArtifact: default,
-                    OwningCommandArtifactGeneration: 0));
+                    OwningCommandArtifactGeneration: 0),
+                retainEquivalentCurrentSource:
+                    DesktopWsiOutput.IsInteractiveResizeInProgress);
 
             // Transitional readback consumers are migrated separately, but all
             // command selection and submission consume the tuple above.
-            _lastWindowPresentColorTexture = colorTexture;
-            _lastWindowPresentFrameBuffer = resolvedFrameBuffer;
-            _lastWindowPresentFrameOpContext = context;
+            _lastWindowPresentColorTexture = published.ColorTexture;
+            _lastWindowPresentFrameBuffer = published.FrameBuffer;
+            _lastWindowPresentFrameOpContext = published.Context;
         }
 
         public override RenderTextureSamplingState GetTextureShaderSamplingState(

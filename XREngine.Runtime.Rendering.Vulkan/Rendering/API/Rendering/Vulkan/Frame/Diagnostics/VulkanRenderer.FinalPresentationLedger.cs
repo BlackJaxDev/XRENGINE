@@ -28,7 +28,7 @@ public unsafe partial class VulkanRenderer
         if (writeSucceeded)
         {
             VulkanPresentationSourceTuple current =
-                _windowPresentSource.Capture();
+                _windowPresentSource.CaptureLogical();
             _ = _windowPresentSource.TryBindDescriptor(
                 current.LogicalEpoch,
                 imageInfo,

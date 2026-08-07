@@ -441,13 +441,7 @@ namespace XREngine.Rendering
             Vector2 displayPos = Vector2.Zero;
             Vector2 framebufferScale = Vector2.One;
 
-            bool interactiveResize = viewport?.Window?.IsInteractiveResizeInProgress == true;
-
-            // Canvas ActualSize is layout-produced and can lag the Win32 modal resize loop.
-            // ImGui needs the live viewport/window size here so it relays out instead of
-            // rendering old logical coordinates into the new framebuffer scale.
-            if (!interactiveResize &&
-                canvas?.TryGetImGuiDisplayMetrics(viewport, camera, out displaySize, out displayPos, out framebufferScale) == true)
+            if (canvas?.TryGetImGuiDisplayMetrics(viewport, camera, out displaySize, out displayPos, out framebufferScale) == true)
             {
             }
             else if (viewport is not null)
@@ -458,8 +452,8 @@ namespace XREngine.Rendering
                 var hostWindow = viewport.Window?.Window;
                 if (hostWindow is not null)
                 {
-                    var logicalSize = viewport.Window?.EffectiveWindowSize ?? hostWindow.Size;
-                    var framebufferSize = viewport.Window?.EffectiveFramebufferSize ?? hostWindow.FramebufferSize;
+                    var logicalSize = viewport.Window?.RenderWindowSize ?? hostWindow.Size;
+                    var framebufferSize = viewport.Window?.RenderFramebufferSize ?? hostWindow.FramebufferSize;
                     var scaleSourceFramebufferSize = framebufferSize;
                     if (scaleSourceFramebufferSize.X <= 0 || scaleSourceFramebufferSize.Y <= 0)
                         scaleSourceFramebufferSize = hostWindow.FramebufferSize;

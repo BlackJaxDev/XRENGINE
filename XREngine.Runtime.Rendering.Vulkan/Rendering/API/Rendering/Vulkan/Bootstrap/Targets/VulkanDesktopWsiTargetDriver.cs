@@ -18,7 +18,7 @@ internal sealed unsafe class VulkanDesktopWsiTargetDriver : IVulkanRendererTarge
     public bool RequiresSwapchainOutput => true;
     public bool SupportsStreamlinePresentation => true;
     public IReadOnlyList<string> RequiredDeviceExtensions { get; } = [KhrSwapchain.ExtensionName];
-    public Vector2D<int> EffectiveFramebufferSize => _window.EffectiveFramebufferSize;
+    public Vector2D<int> EffectiveFramebufferSize => _window.RenderFramebufferSize;
     public WindowResizeExtents ResizeExtents => _window.ResizeExtents;
     public bool IsInteractiveResizeInProgress => _window.IsInteractiveResizeInProgress;
     public bool PreferHdrOutput => _window.PreferHDROutput;

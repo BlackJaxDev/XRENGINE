@@ -13,8 +13,7 @@ internal sealed class VulkanPreparedResourceGenerationManifest(
     int descriptorSignature,
     VulkanPreparedResourceGenerationManifest.ImageEntry[] images,
     VulkanPreparedResourceGenerationManifest.FrameBufferEntry[] frameBuffers,
-    VulkanPreparedResourceGenerationManifest.BufferEntry[] buffers,
-    VulkanRetirementTicket dependencyTicket)
+    VulkanPreparedResourceGenerationManifest.BufferEntry[] buffers)
 {
     private readonly ImageEntry[] _images = images;
     private readonly FrameBufferEntry[] _frameBuffers = frameBuffers;
@@ -42,12 +41,6 @@ internal sealed class VulkanPreparedResourceGenerationManifest(
 
     public RenderResourceRegistry Registry { get; } = registry;
     public int DescriptorSignature { get; } = descriptorSignature;
-    /// <summary>
-    /// Completion watermark captured after preparation. Commit validation must
-    /// observe it complete before it can publish the replacement and retire the
-    /// allocator generation that supplied the prior descriptor payload.
-    /// </summary>
-    public VulkanRetirementTicket DependencyTicket { get; } = dependencyTicket;
     public int ImageCount => _images.Length;
     public int FrameBufferCount => _frameBuffers.Length;
     public int BufferCount => _buffers.Length;

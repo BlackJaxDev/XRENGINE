@@ -18,10 +18,7 @@ namespace XREngine.Rendering.Vulkan
     public unsafe partial class VulkanRenderer
     {
         private bool HasLastWindowPresentSourceForSwapchainRefresh()
-        {
-            VulkanPresentationSourceTuple source = _windowPresentSource.Capture();
-            return source.IsComplete && source.Width > 0 && source.Height > 0;
-        }
+            => _windowPresentSource.HasAnyCompleteBinding();
 
         private bool IsSwapchainImageEverPresented(uint imageIndex)
             => OutputRuntime.Desktop.ImageEverPresented is not null &&
