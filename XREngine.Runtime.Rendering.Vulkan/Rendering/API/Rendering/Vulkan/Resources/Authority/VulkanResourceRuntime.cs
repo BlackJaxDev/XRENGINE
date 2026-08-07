@@ -667,6 +667,13 @@ internal sealed class VulkanResourceRuntime
             bufferViews: ready.Count);
     }
 
+    /// <summary>
+    /// Drains retired framebuffers for the specified frame slot, destroying them if they are ready for retirement.
+    /// </summary>
+    /// <param name="api">The Vulkan API instance.</param>
+    /// <param name="device">The Vulkan device.</param>
+    /// <param name="frameSlot">The frame slot for which to drain retired framebuffers.</param>
+    /// <param name="maxItems">The maximum number of framebuffers to drain in this call.</param>
     internal unsafe void DrainRetiredFramebuffers(
         Vk api,
         Device device,
@@ -715,6 +722,15 @@ internal sealed class VulkanResourceRuntime
             framebuffers: destroyed);
     }
 
+    /// <summary>
+    /// Drains retired buffers for the specified frame slot, destroying them if they are ready for retirement.
+    /// </summary>
+    /// <param name="api">The Vulkan API instance.</param>
+    /// <param name="device">The Vulkan device.</param>
+    /// <param name="outputRuntime">The Vulkan output runtime.</param>
+    /// <param name="telemetry">The Vulkan frame telemetry instance.</param>
+    /// <param name="frameSlot">The frame slot for which to drain retired buffers.</param>
+    /// <param name="maxItems">The maximum number of buffers to drain in this call.</param>
     internal unsafe void DrainRetiredBuffers(
         Vk api,
         Device device,
@@ -757,9 +773,11 @@ internal sealed class VulkanResourceRuntime
             }
         }
 
+        // Track the number of destroyed buffers, freed memories, and pooled buffers for telemetry.
         int destroyedBuffers = 0;
         int freedMemories = 0;
         int pooledBuffers = 0;
+        // Drain the ready buffers, destroying or pooling them as appropriate.
         for (int index = 0; index < ready.Count; index++)
         {
             Silk.NET.Vulkan.Buffer buffer = ready[index].Buffer;
@@ -845,6 +863,13 @@ internal sealed class VulkanResourceRuntime
             Allocations.Staging.Trim(outputRuntime);
     }
 
+    /// <summary>
+    /// Drains retired images for the specified frame slot, destroying them if they are ready for retirement.
+    /// </summary>
+    /// <param name="api">The Vulkan API instance.</param>
+    /// <param name="device">The Vulkan device.</param>
+    /// <param name="frameSlot">The frame slot for which to drain retired images.</param>
+    /// <param name="maxItems">The maximum number of images to drain in this call.</param>
     internal unsafe void DrainRetiredImages(
         Vk api,
         Device device,
