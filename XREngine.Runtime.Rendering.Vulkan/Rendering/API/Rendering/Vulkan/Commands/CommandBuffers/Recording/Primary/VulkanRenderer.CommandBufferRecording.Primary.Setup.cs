@@ -42,9 +42,9 @@ namespace XREngine.Rendering.Vulkan
                 recordingState.RecordingScratch.PreparedInlineQueries.Clear();
                 recordingState.RecordingScratch.BegunInlineQueries.Clear();
 
-                if (CanRecordCommandBufferDebugLabels)
+                if (_deviceContext.CanRecordCommandBufferDebugLabels)
                 {
-                    CmdBeginLabel(recordingState.CommandBuffer, recordingState.FrameDataImageIndex == recordingState.ImageIndex
+                    _deviceContext.CmdBeginLabel(recordingState.CommandBuffer, recordingState.FrameDataImageIndex == recordingState.ImageIndex
                         ? $"FrameCmd[{recordingState.ImageIndex}]"
                         : $"FrameCmd[target={recordingState.ImageIndex} frame={recordingState.FrameDataImageIndex}]");
                 }
@@ -103,7 +103,7 @@ namespace XREngine.Rendering.Vulkan
             // Ensure swapchain resources are transitioned appropriately before any rendering.
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.FrameStartBarriers"))
             {
-                CmdBeginLabel(recordingState.CommandBuffer, "SwapchainBarriers");
+                _deviceContext.CmdBeginLabel(recordingState.CommandBuffer, "SwapchainBarriers");
                 if (recordingState.SwapchainTarget.IsValid)
                 {
                     VulkanBarrierPlan barrierPlan = recordingState.RenderGraphPlan.Barriers;
@@ -117,7 +117,7 @@ namespace XREngine.Rendering.Vulkan
                     EmitPlannedImageBarriers(recordingState.CommandBuffer, swapchainImageBarriers);
                     EmitPlannedBufferBarriers(recordingState.CommandBuffer, swapchainBufferBarriers);
                 }
-                CmdEndLabel(recordingState.CommandBuffer);
+                _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
 
                 // Every physical image transition is frozen into RenderGraphPlan.Barriers.
                 // Encoding must not enumerate a live resource allocator to synthesize

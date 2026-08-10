@@ -87,7 +87,7 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
     }
 
     internal override int RecordPrimary(
-        VulkanCommandRuntime renderer,
+        VulkanCommandRuntime commandRuntime,
         scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
@@ -125,18 +125,18 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
             recordingInfo.OperationIndex >=
             recordingState.MeshSecondaryFallbackEndIndex)
         {
-            int commandChainRunCount = renderer.CountContiguousMeshCommandChainRun(
+            int commandChainRunCount = commandRuntime.CountContiguousMeshCommandChainRun(
                 ref recordingState,
                 recordingInfo.OperationIndex,
                 this,
                 recordingInfo.PassIndex);
-            if (renderer.TryExecuteScheduledMeshCommandChainSecondaryRun(
+            if (commandRuntime.TryExecuteScheduledMeshCommandChainSecondaryRun(
                     ref recordingState,
                     recordingInfo.OperationIndex,
                     commandChainRunCount,
                     recordingInfo.PassIndex,
                     this) ||
-                renderer.TryExecuteMeshCommandChainSecondaryRun(
+                commandRuntime.TryExecuteMeshCommandChainSecondaryRun(
                     ref recordingState,
                     recordingInfo.OperationIndex,
                     commandChainRunCount,
@@ -156,7 +156,7 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
                 recordingInfo.OperationIndex + commandChainRunCount);
         }
 
-        int inlineDrawUniformSlot = renderer.GetMeshDrawUniformSlot(
+        int inlineDrawUniformSlot = commandRuntime.GetMeshDrawUniformSlot(
             ref recordingState,
             recordingInfo.OperationIndex,
             Draw.Renderer,
@@ -168,21 +168,21 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
         if (recordingInfo.BeginsRendering &&
             !recordingState.RenderScope.MatchesTarget(Target))
         {
-            renderer.EndActiveRenderPass(ref recordingState);
+            commandRuntime.EndActiveRenderPass(ref recordingState);
             Draw.Renderer.TryTransitionPreparedDescriptorImagesForSampling(
                 recordingState.CommandBuffer,
                 Draw,
                 inlineDrawUniformSlot,
                 recordingState.CommandBufferImageSlot,
                 Target);
-            renderer.BeginRenderPassForTarget(
+            commandRuntime.BeginRenderPassForTarget(
                 ref recordingState,
                 Target,
                 recordingInfo.PassIndex,
                 recordingState.ActiveContext);
         }
 
-        bool recordedInlineDraw = renderer.RecordMeshDrawIntoCommandBuffer(
+        bool recordedInlineDraw = commandRuntime.RecordMeshDrawIntoCommandBuffer(
             ref recordingState,
             recordingState.CommandBuffer,
             this,

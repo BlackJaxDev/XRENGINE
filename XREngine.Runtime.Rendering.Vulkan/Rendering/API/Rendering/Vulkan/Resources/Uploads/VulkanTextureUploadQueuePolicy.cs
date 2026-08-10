@@ -98,7 +98,7 @@ internal sealed partial class VulkanTextureUploadService
         }
     }
 
-    internal void CancelAllQueuedWork(VulkanRenderer renderer, string reason)
+    internal void CancelAllQueuedWork(VulkanCommandRuntime commandRuntime, string reason)
     {
         VulkanImportedTextureUploadJob[] canceledJobs;
         lock (_prepQueueSync)
@@ -132,7 +132,7 @@ internal sealed partial class VulkanTextureUploadService
             job.OnCanceled?.Invoke();
         }
 
-        CancelSubmittedTransfers(renderer, reason);
+        CancelSubmittedTransfers(commandRuntime, reason);
         Interlocked.Exchange(ref _prepDrainScheduled, 0);
         Interlocked.Exchange(ref _transferDrainScheduled, 0);
     }
@@ -238,7 +238,7 @@ internal sealed partial class VulkanTextureUploadService
             _ => 0,
         };
 
-    private void LogCompatibilityPathState(VulkanRenderer renderer)
+    private void LogCompatibilityPathState(VulkanCommandRuntime commandRuntime)
     {
         if (RenderDiagnosticsFlags.VkTextureUploadPrepWorker
             && Interlocked.Exchange(ref _workerPrepCompatLogged, 1) == 0)
@@ -248,7 +248,7 @@ internal sealed partial class VulkanTextureUploadService
         }
 
         if (RenderDiagnosticsFlags.VkTextureUploadTransferQueue
-            && !renderer.CommandRuntime.HasDedicatedTextureUploadTransferQueue
+            && !commandRuntime.HasDedicatedTextureUploadTransferQueue
             && Interlocked.Exchange(ref _transferQueueCompatLogged, 1) == 0)
         {
             XREngine.Debug.Vulkan(

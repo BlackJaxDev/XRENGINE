@@ -287,7 +287,7 @@ namespace XREngine.Rendering.Vulkan
                         $"Dynamic-UI frame-data reservation failed before secondary recording at slot {drawSlot}: {reason}");
                 }
 
-                int pipelinePassIndex = EnsureValidPassIndex(
+                int pipelinePassIndex = VulkanCommandRuntime.EnsureValidPassIndex(
                     drawOp.PassIndex,
                     "MeshDraw",
                     drawOp.Context.PassMetadata);
@@ -360,7 +360,7 @@ namespace XREngine.Rendering.Vulkan
                     if (dynamicUiBatchTextOps[i] is not MeshDrawOp drawOp)
                         continue;
 
-                    int opPassIndex = EnsureValidPassIndex(drawOp.PassIndex, "MeshDraw", drawOp.Context.PassMetadata);
+                    int opPassIndex = VulkanCommandRuntime.EnsureValidPassIndex(drawOp.PassIndex, "MeshDraw", drawOp.Context.PassMetadata);
                     if (opPassIndex == int.MinValue)
                         continue;
 
@@ -566,9 +566,9 @@ namespace XREngine.Rendering.Vulkan
             }
 
             bool primaryLabelActive = false;
-            if (CanRecordCommandBufferDebugLabels)
+            if (_deviceContext.CanRecordCommandBufferDebugLabels)
             {
-                primaryLabelActive = CmdBeginLabel(primaryCommandBuffer, $"{label}PrimaryOwned");
+                primaryLabelActive = _deviceContext.CmdBeginLabel(primaryCommandBuffer, $"{label}PrimaryOwned");
             }
 
             CommandBufferRecordingScratch batchScratch = _commandBufferRecordingScratch.Value!;
@@ -706,7 +706,7 @@ namespace XREngine.Rendering.Vulkan
                 Array.Clear(secondaryBuffers, 0, count);
                 Array.Clear(secondaryChains, 0, count);
                 if (primaryLabelActive)
-                    CmdEndLabel(primaryCommandBuffer);
+                    _deviceContext.CmdEndLabel(primaryCommandBuffer);
             }
         }
 

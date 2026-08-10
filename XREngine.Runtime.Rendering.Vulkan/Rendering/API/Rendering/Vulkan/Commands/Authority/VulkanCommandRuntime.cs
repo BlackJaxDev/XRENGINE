@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Diagnostics;
+using System.Text;
 using Silk.NET.Vulkan;
 using XREngine.Rendering.Resources;
 
@@ -16,11 +17,9 @@ internal sealed unsafe partial class VulkanCommandRuntime
     private VulkanDeviceContext? _configuredDeviceContext;
     private VulkanResourceRuntime? _configuredResourceRuntime;
     private VulkanFrameTelemetry? _configuredFrameTelemetry;
-    private VulkanTrackedCommandEncoder? _primaryCommandEncoder;
     private VulkanQueryCommandService? _queryCommandService;
     private CommandChainSchedule?[]? _scheduleCache;
-    private readonly Dictionary<Type, object> _threadWorkspaces = [];
-    private readonly object _threadWorkspacesGate = new();
+    private readonly VulkanCommandThreadWorkspace _threadWorkspace;
     private readonly VulkanFrameOperationScheduler _primaryOperationScheduler = new();
 
     internal VulkanProducerCompleteIndirectStream? PendingProducerCompleteIndirectStream { get; set; }
@@ -37,6 +36,65 @@ internal sealed unsafe partial class VulkanCommandRuntime
     public VulkanDynamicUiBatchTextOverlayRecorder DynamicUiOverlayRecorder { get; } = new();
     public VulkanOpenXrCommandRecordingService OpenXrRecording { get; } = new();
     public VulkanOpenXrEyeWorkerCommandService OpenXrEyeWorkers { get; } = new();
+
+    internal VulkanCommandRuntime()
+        => _threadWorkspace = new VulkanCommandThreadWorkspace(this);
+
+    internal void InitializeSynchronizationBackend(bool supportsSynchronization2)
+    {
+        EVulkanSynchronizationBackend requested = RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.SyncBackend;
+        Synchronization._activeSynchronizationBackend = requested == EVulkanSynchronizationBackend.Sync2 && supportsSynchronization2
+            ? EVulkanSynchronizationBackend.Sync2
+            : EVulkanSynchronizationBackend.Legacy;
+        if (requested == EVulkanSynchronizationBackend.Sync2 && !supportsSynchronization2)
+            Debug.VulkanWarning("[Vulkan] SyncBackend requested Sync2, but synchronization2 is unavailable. Falling back to legacy submit/barrier path.");
+        Debug.Vulkan("[Vulkan] Synchronization backend initialized: {0}", Synchronization._activeSynchronizationBackend);
+    }
+
+    internal void ReleaseCurrentThreadSynchronizationScratch()
+        => Synchronization._synchronizationThreadWorkspace.ReleaseCurrentThread();
+
+    internal static unsafe TimelineSemaphoreSubmitInfo* FindTimelineSemaphoreSubmitInfo(void* pNext)
+    {
+        BaseInStructure* current = (BaseInStructure*)pNext;
+        while (current is not null)
+        {
+            if (current->SType == StructureType.TimelineSemaphoreSubmitInfo)
+                return (TimelineSemaphoreSubmitInfo*)current;
+            current = current->PNext;
+        }
+        return null;
+    }
+
+    internal string DescribeVulkanQueueOperationTail(int maxEntries = 8)
+    {
+        lock (CommandBuffers.OneTimeSubmitGate)
+        {
+            long latest = Volatile.Read(ref Synchronization._vulkanQueueOperationSerial);
+            if (latest <= 0)
+                return string.Empty;
+            int available = (int)Math.Min(latest, 64);
+            int emitted = 0;
+            StringBuilder builder = new("QueueOperationTail");
+            for (long serial = latest; serial > 0 && emitted < maxEntries && latest - serial < available; serial--)
+            {
+                VulkanQueueOperationRecord operation = Synchronization._vulkanQueueOperationHistory[
+                    unchecked((int)((serial - 1) % 64))];
+                if (operation.Serial != unchecked((ulong)serial))
+                    continue;
+                builder.Append(" [#").Append(operation.Serial).Append(' ').Append(operation.Operation)
+                    .Append(" queue=0x").Append(operation.QueueHandle.ToString("X"))
+                    .Append(" result=").Append(operation.Result).Append(" state=").Append(operation.DeviceState)
+                    .Append(" submit=").Append(operation.SubmissionSerial).Append(" thread=").Append(operation.ThreadId)
+                    .Append(" caller=").Append(operation.Caller ?? "<unknown>").Append(']');
+                emitted++;
+            }
+            return emitted == 0 ? string.Empty : builder.ToString();
+        }
+    }
+
+    /// <summary>Gets this runtime's explicitly typed command-thread workspace.</summary>
+    internal VulkanCommandThreadWorkspace ThreadWorkspace => _threadWorkspace;
 
     /// <summary>
     /// Publishes the stable authorities used by native command encoding. Output
@@ -64,34 +122,56 @@ internal sealed unsafe partial class VulkanCommandRuntime
         _configuredDeviceContext = deviceContext;
         _configuredResourceRuntime = resourceRuntime;
         _configuredFrameTelemetry = telemetry;
-        resourceRuntime.ConfigureLifetimeCommandRuntime(this);
+        resourceRuntime.Images.ConfigureCommandRuntime(this);
+        resourceRuntime.Samplers.ConfigureCommandRuntime(this);
         _queryCommandService ??= new VulkanQueryCommandService(this);
         resourceRuntime.Queries.BindCommands(_queryCommandService);
         OpenXrRecording.Configure(this, resourceRuntime, deviceContext);
         OpenXrEyeWorkers.Configure(this, OpenXrRecording, deviceContext);
     }
 
-    private VulkanDeviceContext DeviceContext
+    internal VulkanDeviceContext DeviceContext
         => _configuredDeviceContext ?? throw new InvalidOperationException(
             "The Vulkan command runtime has not been configured for primary recording.");
 
-    private VulkanResourceRuntime ResourceRuntime
+    internal VulkanResourceRuntime ResourceRuntime
         => _configuredResourceRuntime ?? throw new InvalidOperationException(
             "The Vulkan command runtime has not been configured for primary recording.");
 
-    private VulkanFrameTelemetry FrameTelemetry
+    internal VulkanFrameTelemetry FrameTelemetry
         => _configuredFrameTelemetry ?? throw new InvalidOperationException(
             "The Vulkan command runtime has not been configured for primary recording.");
 
-    private VulkanTrackedCommandEncoder PrimaryCommandEncoder
-        => _primaryCommandEncoder ??= new VulkanTrackedCommandEncoder(
-            DeviceContext.Api,
-            DeviceContext,
-            this,
-            ResourceRuntime,
-            FrameTelemetry);
+    internal bool IsDeviceOperational => DeviceContext.IsOperational;
 
-    private Vk Api => DeviceContext.Api;
+    /// <summary>
+    /// Resolves the planner generation for the current command scope. The
+    /// planner publication reader receives only the returned immutable value;
+    /// it never retains this runtime's thread workspace.
+    /// </summary>
+    internal ResourcePlannerRuntimeGeneration ResolveResourcePlannerRuntimeGeneration(
+        ResourcePlannerRuntimeGeneration publishedGeneration)
+    {
+        ArgumentNullException.ThrowIfNull(publishedGeneration);
+        if (!ThreadWorkspace.TryGetCurrent(out VulkanCommandThreadContext context))
+            return publishedGeneration;
+
+        if (!ReferenceEquals(context.ResourcePlannerRuntimeStateOwner, this))
+            return publishedGeneration;
+
+        return context.ResourcePlannerRuntimeGeneration ?? throw new InvalidOperationException(
+            "The Vulkan command planner scope has no immutable runtime generation.");
+    }
+
+    private VulkanTrackedCommandEncoder PrimaryCommandEncoder => new(this);
+
+    internal VulkanProgramRecordingRequest CreateProgramRecordingRequest(CommandBuffer commandBuffer)
+        => new(this, commandBuffer);
+
+    internal bool TryPushProgramDescriptorHeapData(CommandBuffer commandBuffer, VkRenderProgram program, DescriptorHeapPushDataPayload payload)
+        => PrimaryCommandEncoder.TryPushDescriptorHeapProgramData(commandBuffer, program, payload.Dwords, payload.Dwords.Length);
+
+    internal Vk Api => DeviceContext.Api;
     private Vk VulkanApi => Api;
     private VulkanCommandRuntime _commandRuntime => this;
     private VulkanDeviceContext _deviceContext => DeviceContext;
@@ -125,7 +205,6 @@ internal sealed unsafe partial class VulkanCommandRuntime
     /// </summary>
     internal void ResetBindState(VulkanTrackedCommandEncoder encoder, CommandBuffer commandBuffer)
     {
-        ArgumentNullException.ThrowIfNull(encoder);
         ulong handle = unchecked((ulong)commandBuffer.Handle);
         if (handle == 0)
             return;
@@ -392,7 +471,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             {
                 Handle = unchecked((nint)handle),
             };
-            if (!resourceRuntime.CanResetCommandBuffer(this, commandBuffer))
+            if (!resourceRuntime.CanResetCommandBuffer(commandBuffer))
                 continue;
 
             Result result = api.ResetCommandBuffer(commandBuffer, 0);
@@ -426,7 +505,6 @@ internal sealed unsafe partial class VulkanCommandRuntime
             {
                 RetiredCommandBuffer candidate = list[index];
                 if (!resourceRuntime.IsCommandBufferRetirementReady(
-                        this,
                         candidate.CommandBuffer,
                         candidate.Ticket))
                 {
@@ -491,9 +569,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
                 RetiredCommandPool candidate = list[index];
                 if (!resourceRuntime.Lifetime.Tracker.IsRetirementReady(
                         candidate.Ticket) ||
-                    !resourceRuntime.AreCommandPoolChildrenRetirementReady(
-                        this,
-                        candidate.CommandPool))
+                    !resourceRuntime.AreCommandPoolChildrenRetirementReady(candidate.CommandPool))
                 {
                     index++;
                     continue;
@@ -514,9 +590,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             CommandPool pool = ready[index].CommandPool;
             lock (Pools.Gate)
                 api.DestroyCommandPool(device, pool, null);
-            resourceRuntime.CompleteCommandPoolChildDestructions(
-                this,
-                pool);
+            resourceRuntime.CompleteCommandPoolChildDestructions(pool);
             resourceRuntime.CompleteCommandPoolDestruction(pool);
         }
     }
@@ -536,11 +610,9 @@ internal sealed unsafe partial class VulkanCommandRuntime
         CommandBuffer retiring = commandBuffer;
         VulkanRetirementTicket ticket =
             resourceRuntime.PrepareCommandBufferRetirement(
-                this,
                 retiring,
                 owner);
         if (!resourceRuntime.IsCommandBufferRetirementReady(
-                this,
                 retiring,
                 ticket))
         {
@@ -583,10 +655,10 @@ internal sealed unsafe partial class VulkanCommandRuntime
     {
         VulkanCommandChainRecordingBatch? batch = worker.Batch;
         VulkanPreparedWorkerRecordingContext? context = batch?.PreparedWorkerContext;
-        if (batch is null || context?.Telemetry is null)
+        if (batch is null || context is null)
             return;
 
-        using VulkanCpuStageScope cpuStage = new(context.Telemetry, EVulkanCpuStage.SecondaryRecording);
+        using VulkanCpuStageScope cpuStage = new(FrameTelemetry, EVulkanCpuStage.SecondaryRecording);
         long workerStart = Stopwatch.GetTimestamp();
         Interlocked.Increment(ref batch.WorkersStarted);
         UpdateMinimum(ref batch.FirstWorkerStartTimestamp, workerStart);
@@ -738,26 +810,6 @@ internal sealed unsafe partial class VulkanCommandRuntime
     }
 
     public void ReleaseScheduleCache() => _scheduleCache = null;
-
-    public VulkanCommandThreadWorkspace<TRenderState, TPlannerState, TSwitchingState, TFrameBuffer, TReadBuffer>
-        GetThreadWorkspace<TRenderState, TPlannerState, TSwitchingState, TFrameBuffer, TReadBuffer>()
-        where TRenderState : class
-        where TPlannerState : struct
-        where TSwitchingState : class
-        where TFrameBuffer : class
-        where TReadBuffer : struct
-    {
-        Type key = typeof(VulkanCommandThreadWorkspace<TRenderState, TPlannerState, TSwitchingState, TFrameBuffer, TReadBuffer>);
-        lock (_threadWorkspacesGate)
-        {
-            if (_threadWorkspaces.TryGetValue(key, out object? workspace))
-                return (VulkanCommandThreadWorkspace<TRenderState, TPlannerState, TSwitchingState, TFrameBuffer, TReadBuffer>)workspace;
-
-            var created = new VulkanCommandThreadWorkspace<TRenderState, TPlannerState, TSwitchingState, TFrameBuffer, TReadBuffer>();
-            _threadWorkspaces.Add(key, created);
-            return created;
-        }
-    }
 
     public int ResolveParallelRecordingBucket(
         in VulkanMeshFrameDataRendererFamilyKey rendererFamily,

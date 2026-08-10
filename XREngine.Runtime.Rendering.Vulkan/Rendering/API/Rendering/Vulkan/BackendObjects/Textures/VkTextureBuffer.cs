@@ -44,7 +44,7 @@ internal unsafe sealed class VkTextureBuffer(VulkanBackendObjectContext backendC
     {
         if (_view.Handle != 0)
         {
-            BackendContext.Buffers.RetireBufferView(BackendContext, _view, nameof(VkTextureBuffer));
+            BackendContext.Resources.Buffers.RetireBufferView(BackendContext, _view, nameof(VkTextureBuffer));
             _view = default;
         }
 
@@ -197,7 +197,7 @@ internal unsafe sealed class VkTextureBuffer(VulkanBackendObjectContext backendC
         if (Api!.CreateBufferView(Device, ref createInfo, null, out _view) != Result.Success)
             throw new Exception($"Failed to create Vulkan buffer view for texture buffer '{Data.Name ?? "<unnamed>"}'.");
 
-        BackendContext.Buffers.RegisterBufferView(BackendContext, _view, in createInfo, nameof(VkTextureBuffer));
+        BackendContext.Resources.Buffers.RegisterBufferView(BackendContext, _view, in createInfo, nameof(VkTextureBuffer));
     }
 
     /// <summary>

@@ -135,10 +135,6 @@ namespace XREngine.Rendering
             hostContext.Target.Validate();
             _hostContext = hostContext;
             BackendGeneration = hostContext.BackendGeneration;
-
-            // The cache belongs to the renderer generation, not to a desktop window.
-            using (_roCacheLock.EnterScope())
-                _renderObjectCache = RuntimeRenderObjectServices.Current?.CreateObjectsForOwner(this) ?? [];
         }
 
         /// <summary>Compatibility constructor for existing desktop renderer implementations.</summary>
@@ -620,6 +616,25 @@ namespace XREngine.Rendering
         private readonly Lock _roCacheLock = new();
         private readonly ConcurrentDictionary<GenericRenderObject, AbstractRenderAPIObject> _renderObjectCache = [];
         public IReadOnlyDictionary<GenericRenderObject, AbstractRenderAPIObject> RenderObjectCache => _renderObjectCache;
+
+        /// <summary>
+        /// Creates wrappers for render objects that predate this renderer generation.
+        /// Derived renderers must call this only after their backend-specific wrapper
+        /// factory dependencies are fully initialized.
+        /// </summary>
+        protected void InitializeRenderObjectCache()
+        {
+            ConcurrentDictionary<GenericRenderObject, AbstractRenderAPIObject>? initialObjects =
+                RuntimeRenderObjectServices.Current?.CreateObjectsForOwner(this);
+            if (initialObjects is null || ReferenceEquals(initialObjects, _renderObjectCache))
+                return;
+
+            using (_roCacheLock.EnterScope())
+            {
+                foreach (KeyValuePair<GenericRenderObject, AbstractRenderAPIObject> pair in initialObjects)
+                    _renderObjectCache.TryAdd(pair.Key, pair.Value);
+            }
+        }
 
         /// <summary>
         /// Gets or creates a new API-specific render object linked to this window renderer from a generic render object.

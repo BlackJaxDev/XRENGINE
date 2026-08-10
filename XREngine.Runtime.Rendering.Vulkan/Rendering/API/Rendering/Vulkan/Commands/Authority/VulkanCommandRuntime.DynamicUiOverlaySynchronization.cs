@@ -109,7 +109,7 @@ internal sealed partial class VulkanCommandRuntime
                 {
                     VulkanTrackedImageSubresource key = requirement.Key;
                     VulkanImageAccessState required = requirement.Value;
-                    ulong generation = encoder.ResourceRuntime.GetPublishedGeneration(ObjectType.Image, key.ImageHandle);
+                    ulong generation = ResourceRuntime.GetPublishedGeneration(ObjectType.Image, key.ImageHandle);
                     if (required.ResourceGeneration != 0 && generation != required.ResourceGeneration)
                     {
                         throw new InvalidOperationException(
@@ -239,7 +239,7 @@ internal sealed partial class VulkanCommandRuntime
         VulkanImageAccessState prior;
         if (!TryGetRecordedImageAccessState(commandBuffer, image, in range, out prior))
         {
-            ulong generation = encoder.ResourceRuntime.GetPublishedGeneration(ObjectType.Image, image.Handle);
+            ulong generation = ResourceRuntime.GetPublishedGeneration(ObjectType.Image, image.Handle);
             prior = ResolveOverlayImageAccessState(oldLayout, range.AspectMask, generation, 0);
         }
         VulkanImageAccessState next = ResolveOverlayImageAccessState(

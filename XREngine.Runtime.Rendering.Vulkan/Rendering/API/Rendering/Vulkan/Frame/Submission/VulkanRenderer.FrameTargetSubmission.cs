@@ -5,10 +5,10 @@ using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed unsafe partial class VulkanFrameLoop
 {
     private string FrameExecutionLabel
-        => ExecutionMode switch
+        => TargetExecutionMode switch
         {
             RenderExecutionMode.DesktopWsi => "DesktopWsi",
             RenderExecutionMode.Presentationless => "Presentationless",
@@ -19,7 +19,7 @@ public unsafe partial class VulkanRenderer
         };
 
     private string FrameSubmissionProfileName
-        => ExecutionMode switch
+        => TargetExecutionMode switch
         {
             RenderExecutionMode.DesktopWsi =>
                 "Vulkan.FrameLifecycle.DesktopWsi.Submit",
@@ -35,7 +35,7 @@ public unsafe partial class VulkanRenderer
         };
 
     private string FrameSubmissionKind
-        => ExecutionMode switch
+        => TargetExecutionMode switch
         {
             RenderExecutionMode.Presentationless =>
                 "PresentationlessFrame",
@@ -46,7 +46,7 @@ public unsafe partial class VulkanRenderer
         };
 
     private string FrameSubmissionTraceKey
-        => ExecutionMode switch
+        => TargetExecutionMode switch
         {
             RenderExecutionMode.Presentationless =>
                 "Vulkan.FrameTarget.Presentationless.Submit",
@@ -63,11 +63,11 @@ public unsafe partial class VulkanRenderer
     /// Executes an explicit target frame through the same allocation-free queue
     /// submission primitive used by the desktop production frame loop.
     /// </summary>
-    private void ExecuteExplicitTargetFrame(
+    internal void ExecuteExplicitTargetFrame(
         Action<Vk, CommandBuffer, VulkanRenderFrameTarget> record)
     {
         ArgumentNullException.ThrowIfNull(record);
-        IVulkanExplicitFrameTargetDriver target = OutputRuntime.RequireExplicitFrameTarget();
+        IVulkanExplicitFrameTargetDriver target = RequireExplicitFrameTarget();
         VulkanFrameTargetLease lease = default;
         bool acquired = false;
         bool submitted = false;
@@ -104,7 +104,7 @@ public unsafe partial class VulkanRenderer
                 EVulkanFrameWaitReason.Driver);
 
             long recordStart = Stopwatch.GetTimestamp();
-            record(VulkanApi, commandBuffer, lease.Target);
+            record(Api, commandBuffer, lease.Target);
             target.EndFrameRecording(in lease, commandBuffer);
             frameTrace.RecordStage(
                 EVulkanFrameStage.CommandRecord,
@@ -112,13 +112,6 @@ public unsafe partial class VulkanRenderer
                 EVulkanFrameIntervalClass.Work,
                 EVulkanFrameOutcome.Completed);
 
-            VulkanSubmissionDiagnosticContext diagnosticContext =
-                CreateFrameTargetSubmissionDiagnosticContext(
-                    FrameSubmissionKind,
-                    FrameExecutionLabel,
-                    in lease,
-                    frameNumber,
-                    signalTimelineValue: 0);
             CommandBuffer* commandBuffers = stackalloc CommandBuffer[1]
             {
                 commandBuffer,
@@ -137,8 +130,7 @@ public unsafe partial class VulkanRenderer
                     commandBufferCount: 1,
                     signalGraphicsTimeline: false,
                     graphicsTimelineSignalValue: 0,
-                    diagnosticContext,
-                    caller: nameof(SubmitExplicitTargetFrame));
+                    caller: nameof(ExecuteExplicitTargetFrame));
                 if (result == Result.Success)
                 {
                     // Queue acceptance transfers output ownership immediately. Publish it before
@@ -175,9 +167,8 @@ public unsafe partial class VulkanRenderer
             if (result != Result.Success)
             {
                 if (result == Result.ErrorDeviceLost)
-                    throw CreateDeviceLostException(
-                        $"{FrameExecutionLabel} QueueSubmit",
-                        result);
+                    throw new InvalidOperationException(
+                        $"{FrameExecutionLabel} QueueSubmit returned {result}.");
 
                 throw new InvalidOperationException(
                     $"Vulkan {FrameExecutionLabel} queue submission failed ({result}).");
@@ -216,7 +207,6 @@ public unsafe partial class VulkanRenderer
         uint commandBufferCount,
         bool signalGraphicsTimeline,
         ulong graphicsTimelineSignalValue,
-        in VulkanSubmissionDiagnosticContext diagnosticContext,
         string caller)
     {
         Semaphore* waitSemaphores = stackalloc Semaphore[1];
@@ -288,11 +278,13 @@ public unsafe partial class VulkanRenderer
 
         lock (_oneTimeSubmitLock)
         {
-            return SubmitToQueueTracked(
+            return _commandRuntime.SubmitToQueueTracked(
+                Api,
+                _deviceContext,
+                _telemetry,
                 _deviceContext.GraphicsQueue,
                 ref submitInfo,
                 lease.CompletionFence,
-                diagnosticContext,
                 caller);
         }
     }

@@ -44,7 +44,7 @@ internal sealed partial class VulkanDescriptorManager
                 DescriptorCount = 1,
                 PImageInfo = &imageInfo,
             };
-            context.DescriptorLifetime.UpdateDescriptorSets(1, &write);
+            context.Resources.DescriptorLifetime.UpdateDescriptorSets(1, &write);
             state.WritesLastFlush = 1;
             state.WritesTotal++;
             slot.Dirty = false;
@@ -57,8 +57,8 @@ internal sealed partial class VulkanDescriptorManager
         out DescriptorImageInfo imageInfo)
     {
         imageInfo = default;
-        if (context.GetOrCreateAPIRenderObject(texture, generateNow: context.AllowSynchronousResourceUploads) is not IVkImageDescriptorSource source ||
-            !source.TryEnsureDescriptorReadyForUse("streamed texture publication", context.AllowSynchronousResourceUploads))
+        if (WrapperLookup.GetOrCreate(texture, generateNow: context.Resources.AllowSynchronousResourceUploads) is not IVkImageDescriptorSource source ||
+            !source.TryEnsureDescriptorReadyForUse("streamed texture publication", context.Resources.AllowSynchronousResourceUploads))
         {
             return false;
         }
@@ -66,12 +66,12 @@ internal sealed partial class VulkanDescriptorManager
         ImageView view = source.DescriptorViewType == ImageViewType.Type2D
             ? source.DescriptorView
             : source.GetDescriptorView(ImageViewType.Type2D);
-        if (view.Handle == 0 || !context.Images.IsAvailableForDescriptor(view))
+        if (view.Handle == 0 || !context.Resources.Images.IsAvailableForDescriptor(view))
             return false;
 
         Sampler sampler = source.DescriptorSampler;
         if (sampler.Handle == 0 || !IsLiveSampler(sampler))
-            sampler = context.FallbackTexture.GetSampler();
+            sampler = context.Resources.FallbackTexture.GetSampler();
         if (sampler.Handle == 0 || !IsLiveSampler(sampler))
             return false;
 

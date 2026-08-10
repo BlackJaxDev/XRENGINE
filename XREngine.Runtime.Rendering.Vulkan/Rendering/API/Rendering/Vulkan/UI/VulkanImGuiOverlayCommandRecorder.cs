@@ -33,7 +33,7 @@ internal sealed unsafe class VulkanImGuiOverlayCommandRecorder
         if (reset != Result.Success)
             throw new InvalidOperationException($"Failed to reset ImGui overlay command buffer: {reset}.");
 
-        encoder.CommandRuntime.ResetBindState(encoder, input.OverlayCommandBuffer);
+        encoder.Runtime.ResetBindState(encoder, input.OverlayCommandBuffer);
         bool trackingStarted = true;
         try
         {
@@ -42,15 +42,15 @@ internal sealed unsafe class VulkanImGuiOverlayCommandRecorder
                 SType = StructureType.CommandBufferBeginInfo,
                 Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
             };
-            encoder.CommandRuntime.BeginRecording(
-                encoder.Api,
-                encoder.DeviceContext.StateMachine,
+            encoder.Runtime.BeginRecording(
+                encoder.Runtime.Api,
+                encoder.Runtime.DeviceContext.StateMachine,
                 input.OverlayCommandBuffer,
                 "vkBeginCommandBuffer.ImGuiOverlay");
-            if (encoder.Api.BeginCommandBuffer(input.OverlayCommandBuffer, ref begin) != Result.Success)
+            if (encoder.Runtime.Api.BeginCommandBuffer(input.OverlayCommandBuffer, ref begin) != Result.Success)
                 throw new InvalidOperationException("Failed to begin ImGui overlay command buffer.");
 
-            encoder.CommandRuntime.SeedRecordedImageLayoutState(
+            encoder.Runtime.SeedRecordedImageLayoutState(
                 input.OverlayCommandBuffer,
                 input.PredecessorCommandBuffer);
 
@@ -108,7 +108,7 @@ internal sealed unsafe class VulkanImGuiOverlayCommandRecorder
             LevelCount = 1,
             LayerCount = 1,
         };
-        encoder.CommandRuntime.EmitImageTransition(
+        encoder.Runtime.EmitImageTransition(
             encoder, telemetry, input.OverlayCommandBuffer, image, in range,
             initialLayout, ImageLayout.ColorAttachmentOptimal);
 
@@ -136,7 +136,7 @@ internal sealed unsafe class VulkanImGuiOverlayCommandRecorder
         RenderSnapshot(encoder, drawBuffers, in input);
         EndDynamicRendering(encoder, input.OverlayCommandBuffer, input.PreferKhrDynamicRendering);
 
-        encoder.CommandRuntime.EmitImageTransition(
+        encoder.Runtime.EmitImageTransition(
             encoder, telemetry, input.OverlayCommandBuffer, image, in range,
             ImageLayout.ColorAttachmentOptimal, finalLayout);
     }
@@ -175,7 +175,7 @@ internal sealed unsafe class VulkanImGuiOverlayCommandRecorder
             return;
 
         Viewport viewport = new() { Width = width, Height = height, MaxDepth = 1f };
-        encoder.Api.CmdSetViewport(input.OverlayCommandBuffer, 0, 1, &viewport);
+        encoder.Runtime.Api.CmdSetViewport(input.OverlayCommandBuffer, 0, 1, &viewport);
         Vector2 scale = input.Snapshot.FramebufferScale * new Vector2(
             width / (float)input.Snapshot.FramebufferWidth,
             height / (float)input.Snapshot.FramebufferHeight);
@@ -211,8 +211,8 @@ internal sealed unsafe class VulkanImGuiOverlayCommandRecorder
                     Offset = new Offset2D((int)minX, (int)minY),
                     Extent = new Extent2D((uint)(maxX - minX), (uint)(maxY - minY)),
                 };
-                encoder.Api.CmdSetScissor(input.OverlayCommandBuffer, 0, 1, &scissor);
-                encoder.Api.CmdDrawIndexed(input.OverlayCommandBuffer, command.ElemCount, 1,
+                encoder.Runtime.Api.CmdSetScissor(input.OverlayCommandBuffer, 0, 1, &scissor);
+                encoder.Runtime.Api.CmdDrawIndexed(input.OverlayCommandBuffer, command.ElemCount, 1,
                     command.IdxOffset + indexOffset, (int)(command.VtxOffset + vertexOffset), 0);
             }
             indexOffset += (uint)list.IndexCount;
@@ -222,19 +222,19 @@ internal sealed unsafe class VulkanImGuiOverlayCommandRecorder
 
     private static void BeginDynamicRendering(VulkanTrackedCommandEncoder encoder, CommandBuffer commandBuffer, RenderingInfo* info, bool preferKhr)
     {
-        if (!preferKhr && encoder.DeviceContext.InstanceApiVersion >= Vk.Version13)
-            encoder.Api.CmdBeginRendering(commandBuffer, info);
+        if (!preferKhr && encoder.Runtime.DeviceContext.InstanceApiVersion >= Vk.Version13)
+            encoder.Runtime.Api.CmdBeginRendering(commandBuffer, info);
         else
-            (encoder.DeviceContext.ExtensionFunctions.KhrDynamicRendering ?? throw new InvalidOperationException("VK_KHR_dynamic_rendering is unavailable."))
+            (encoder.Runtime.DeviceContext.ExtensionFunctions.KhrDynamicRendering ?? throw new InvalidOperationException("VK_KHR_dynamic_rendering is unavailable."))
                 .CmdBeginRendering(commandBuffer, info);
     }
 
     private static void EndDynamicRendering(VulkanTrackedCommandEncoder encoder, CommandBuffer commandBuffer, bool preferKhr)
     {
-        if (!preferKhr && encoder.DeviceContext.InstanceApiVersion >= Vk.Version13)
-            encoder.Api.CmdEndRendering(commandBuffer);
+        if (!preferKhr && encoder.Runtime.DeviceContext.InstanceApiVersion >= Vk.Version13)
+            encoder.Runtime.Api.CmdEndRendering(commandBuffer);
         else
-            (encoder.DeviceContext.ExtensionFunctions.KhrDynamicRendering ?? throw new InvalidOperationException("VK_KHR_dynamic_rendering is unavailable."))
+            (encoder.Runtime.DeviceContext.ExtensionFunctions.KhrDynamicRendering ?? throw new InvalidOperationException("VK_KHR_dynamic_rendering is unavailable."))
                 .CmdEndRendering(commandBuffer);
     }
 }

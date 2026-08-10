@@ -12,6 +12,12 @@ internal unsafe class VkFrameBuffer(
     VulkanBackendObjectContext backendContext,
     XRFrameBuffer data) : VkObject<XRFrameBuffer>(backendContext, data)
 {
+    private VulkanProgramCommandOperations? _commandOperations;
+    private VulkanProgramCommandOperations CommandOperations => _commandOperations ?? throw new InvalidOperationException("Framebuffer command operations have not been bound.");
+
+    protected override void BindOperationPorts(VulkanWrapperPortBinding binding)
+        => _commandOperations = binding.TryGetProgramCommandOperations();
+
     private Framebuffer _frameBuffer = default;
     private RenderPass _renderPass = default;
     private FrameBufferAttachmentSignature[]? _attachmentSignature;
@@ -164,7 +170,7 @@ internal unsafe class VkFrameBuffer(
             if (!hasLayoutOverrides)
                 return _attachmentSignature;
 
-            // No metadata but we have layout overrides — apply them to the base signature.
+            // No metadata but we have layout overrides ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â apply them to the base signature.
             return ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!, preserveTrackedClearLoads);
         }
 
@@ -234,7 +240,7 @@ internal unsafe class VkFrameBuffer(
         if (planned.Length == 0 || SignatureEquals(_attachmentSignature, planned))
             return _renderPass;
 
-        return BackendContext.Framebuffers.GetOrCreateRenderPass(BackendContext.Api, Device, planned);
+        return BackendContext.Resources.Framebuffers.GetOrCreateRenderPass(BackendContext.Api, Device, planned);
     }
 
     internal bool UsesReadOnlyDepthStencilForPass(
@@ -642,7 +648,7 @@ internal unsafe class VkFrameBuffer(
     {
         if (!IsActive) return;
         PreDeleted();
-        // Defer actual VkFramebuffer destruction — the handle may still be
+        // Defer actual VkFramebuffer destruction ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â the handle may still be
         // referenced by an in-flight command buffer.  The retirement queue
         // delays VkDestroyFramebuffer until the frame slot's timeline fence
         // signals that the GPU is done with it.
@@ -736,7 +742,7 @@ internal unsafe class VkFrameBuffer(
                 multiviewViewMask);
         }
 
-        RenderPass renderPass = BackendContext.Framebuffers.GetOrCreateRenderPass(BackendContext.Api, Device, signatures);
+        RenderPass renderPass = BackendContext.Resources.Framebuffers.GetOrCreateRenderPass(BackendContext.Api, Device, signatures);
         Framebuffer frameBuffer = default;
 
         fixed (ImageView* viewsPtr = views)
@@ -756,7 +762,7 @@ internal unsafe class VkFrameBuffer(
                 throw new Exception("Failed to create framebuffer.");
         }
 
-        BackendContext.Framebuffers.RegisterFramebuffer(
+        BackendContext.Resources.Framebuffers.RegisterFramebuffer(
             frameBuffer,
             views,
             $"Framebuffer.{Data?.Name ?? "<unnamed>"}");
@@ -812,14 +818,14 @@ internal unsafe class VkFrameBuffer(
             if (frameBuffer.Handle == 0 || !retiredHandles.Add(frameBuffer.Handle))
                 continue;
 
-            BackendContext.Framebuffers.RetireFramebuffer(frameBuffer, $"Framebuffer.{Data?.Name ?? "<unnamed>"}");
+            BackendContext.Resources.Framebuffers.RetireFramebuffer(frameBuffer, $"Framebuffer.{Data?.Name ?? "<unnamed>"}");
         }
 
         if (_cachedFrameBufferStates.Count == 0 &&
             _frameBuffer.Handle != 0 &&
             retiredHandles.Add(_frameBuffer.Handle))
         {
-            BackendContext.Framebuffers.RetireFramebuffer(_frameBuffer, $"Framebuffer.{Data?.Name ?? "<unnamed>"}");
+            BackendContext.Resources.Framebuffers.RetireFramebuffer(_frameBuffer, $"Framebuffer.{Data?.Name ?? "<unnamed>"}");
         }
 
         _cachedFrameBufferStates.Clear();
@@ -1691,7 +1697,7 @@ internal unsafe class VkFrameBuffer(
 
     private AttachmentSource ResolveRenderBufferAttachment(XRRenderBuffer renderBuffer)
     {
-        if (BackendContext.GetOrCreateAPIRenderObject(renderBuffer) is not VkRenderBuffer vkRenderBuffer)
+        if (WrapperLookup.GetOrCreate(renderBuffer) is not VkRenderBuffer vkRenderBuffer)
             throw new InvalidOperationException("Render buffer is not backed by a Vulkan object.");
 
         vkRenderBuffer.Generate();
@@ -1712,7 +1718,7 @@ internal unsafe class VkFrameBuffer(
 
     private AttachmentSource ResolveTextureAttachment(IFrameBufferAttachement textureAttachment, XRTexture texture, EFrameBufferAttachment attachment, int mipLevel, int layerIndex)
     {
-        if (BackendContext.GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkFrameBufferAttachmentSource source)
+        if (WrapperLookup.GetOrCreate(texture, generateNow: true) is not IVkFrameBufferAttachmentSource source)
             throw new InvalidOperationException($"Texture '{texture.Name ?? texture.GetDescribingName()}' is not backed by a Vulkan texture.");
 
         bool depthStencilAttachment = attachment is EFrameBufferAttachment.DepthAttachment
@@ -1931,7 +1937,7 @@ internal unsafe class VkFrameBuffer(
         // The reference layout is the layout the attachment holds WHILE the framebuffer
         // is bound for rendering. Depth/stencil attachments must be writable during
         // rendering so the geometry passes that populate them (deferred GBuffer, forward
-        // opaque/masked) can clear and write depth — even when the texture is also sampled
+        // opaque/masked) can clear and write depth ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â even when the texture is also sampled
         // by later passes through a DepthView alias. Forcing a read-only reference layout
         // here silently drops every depth write, which leaves the shared depth buffer empty
         // and lets the forward skybox overwrite all deferred geometry.
@@ -2079,26 +2085,26 @@ internal unsafe class VkFrameBuffer(
     private void BindForReading()
     {
         Generate();
-        BackendContext.ProgramServices.SetBoundFrameBufferState(
+        CommandOperations.SetBoundFrameBufferState(
             EFramebufferTarget.ReadFramebuffer,
             Data);
     }
 
     private void UnbindFromReading()
-        => BackendContext.ProgramServices.SetBoundFrameBufferState(
+        => CommandOperations.SetBoundFrameBufferState(
             EFramebufferTarget.ReadFramebuffer,
             null);
 
     private void BindForWriting()
     {
         Generate();
-        BackendContext.ProgramServices.SetBoundFrameBufferState(
+        CommandOperations.SetBoundFrameBufferState(
             EFramebufferTarget.DrawFramebuffer,
             Data);
     }
 
     private void UnbindFromWriting()
-        => BackendContext.ProgramServices.SetBoundFrameBufferState(
+        => CommandOperations.SetBoundFrameBufferState(
             EFramebufferTarget.DrawFramebuffer,
             null);
 

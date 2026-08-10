@@ -70,7 +70,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             _extentOverride = group.ResolvedExtent;
             _formatOverride = group.Format;
             Usage = group.Usage;
-            // Preserve storage usage if the abstract texture requires it —
+            // Preserve storage usage if the abstract texture requires it â€”
             // the resource planner may not know about out-of-graph compute dispatches.
             if (Data.RequiresStorageUsage)
                 Usage |= ImageUsageFlags.StorageBit;
@@ -85,7 +85,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             return;
         }
 
-        // No physical group available — create a dedicated image.
+        // No physical group available â€” create a dedicated image.
         // Adjust usage before creating: add storage bit if the engine texture requests it,
         // and swap color-attachment for depth-stencil-attachment when the format is depth/stencil.
         if (Data.RequiresStorageUsage)
@@ -140,7 +140,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             retiredAttachmentViews = [];
         }
 
-        BackendContext.Images.RetireOwnedResources(new RetiredImageResources(
+        BackendContext.Resources.Images.RetireOwnedResources(new RetiredImageResources(
             _image,
             _memory,
             _view,
@@ -180,7 +180,43 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     private bool RefreshPhysicalGroupImageIfStaleNoLock()
     {
         if (_physicalGroup is null)
-            return true;
+        {
+            if (!TryResolvePhysicalGroup(
+                    ensureAllocated: true,
+                    out VulkanPhysicalImageGroup? newlyPlannedGroup,
+                    out string? adoptionFailureReason))
+            {
+                LogPhysicalGroupRefreshFailure(adoptionFailureReason);
+                return false;
+            }
+
+            if (newlyPlannedGroup is null)
+                return true;
+
+            ReleaseCurrentImageBeforeBorrowingPhysicalGroup(newlyPlannedGroup);
+            _physicalGroup = newlyPlannedGroup;
+            _image = newlyPlannedGroup.Image;
+            _memory = newlyPlannedGroup.Memory;
+            _extentOverride = newlyPlannedGroup.ResolvedExtent;
+            _formatOverride = newlyPlannedGroup.Format;
+            _arrayLayersOverride = Math.Max(newlyPlannedGroup.Template.Layers, 1u);
+            _mipLevelsOverride = Math.Max(1u, newlyPlannedGroup.MipLevels);
+            _samplesOverride = newlyPlannedGroup.Samples;
+            Usage = newlyPlannedGroup.Usage;
+            if (Data.RequiresStorageUsage)
+                Usage |= ImageUsageFlags.StorageBit;
+
+            _ownsImageMemory = false;
+            RecordCurrentImageStorageDescription();
+            AspectFlags = NormalizeAspectMaskForFormat(ResolvedFormat, AspectFlags);
+            _currentImageLayout = newlyPlannedGroup.LastKnownLayout;
+            ResetAttachmentLayoutTracking();
+            CreateImageView(default);
+            HasUploadedData = true;
+            IsInvalidated = false;
+            PublishDescriptorResourceReplacement();
+            return _image.Handle != 0 && _view.Handle != 0;
+        }
 
         bool physicalGroupChanged = false;
         bool switchedPhysicalGroup = false;
@@ -207,7 +243,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
         if (!_physicalGroup.IsAllocated)
         {
-            // The physical group was destroyed — the resource planner may have rebuilt
+            // The physical group was destroyed â€” the resource planner may have rebuilt
             // between frames and replaced it with a brand-new group object.
             // Try to re-resolve from the allocator.
             if (!TryResolvePhysicalGroup(ensureAllocated: true, out VulkanPhysicalImageGroup? replacement, out string? replacementFailureReason))
@@ -321,7 +357,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         Debug.VulkanWarningEvery(
             $"Vulkan.StaleImageHandle.{ResolveLogicalResourceName() ?? "?"}",
             TimeSpan.FromSeconds(2),
-            "[Vulkan] Physical group image handle changed for '{0}': 0x{1:X} → 0x{2:X}. Refreshing cached handle + view.",
+            "[Vulkan] Physical group image handle changed for '{0}': 0x{1:X} â†’ 0x{2:X}. Refreshing cached handle + view.",
             ResolveLogicalResourceName() ?? Data.Name ?? "<unnamed>",
             _image.Handle,
             current.Handle);
@@ -329,7 +365,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         // Same physical-group handle changes mean the underlying image was reallocated.
         // A fresh VkImage starts in UNDEFINED even if the group object still has stale
         // layout state from the previous handle.
-        BackendContext.Images.ClearTrackedLayouts(_image);
+        BackendContext.Resources.Images.ClearTrackedLayouts(_image);
         _physicalGroup.LastKnownLayout = ImageLayout.Undefined;
 
         // Retire the old views before changing _image so cache removal targets the old handle.
@@ -390,7 +426,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             SharingMode = SharingMode.Exclusive,
         };
 
-        Result result = BackendContext.Images.CreateOwnedImage(
+        Result result = BackendContext.Resources.Images.CreateOwnedImage(
             BackendContext,
             ref imageInfo,
             "VkImageBackedTexture.Image",
@@ -408,15 +444,15 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
         Api!.GetImageMemoryRequirements(Device, _image, out MemoryRequirements memRequirements);
 
-        VulkanMemoryAllocation allocation = BackendContext.Images.AllocateOwnedImageMemory(BackendContext, _image, MemoryProperties);
-        BackendContext.Images.RegisterOwnedImageAllocation(_image, in allocation);
+        VulkanMemoryAllocation allocation = BackendContext.Resources.Images.AllocateOwnedImageMemory(BackendContext, _image, MemoryProperties);
+        BackendContext.Resources.Images.RegisterOwnedImageAllocation(_image, in allocation);
         _memory = allocation.Memory;
 
         if (Api!.BindImageMemory(Device, _image, allocation.Memory, allocation.Offset) != Result.Success)
         {
-            BackendContext.Images.RemoveOwnedImageAllocation(_image);
-            BackendContext.Images.DestroyUnpublishedOwnedImage(BackendContext, _image, "VkImageBackedTexture.Image.BindFailure");
-            BackendContext.Images.FreeMemory(BackendContext, in allocation);
+            BackendContext.Resources.Images.RemoveOwnedImageAllocation(_image);
+            BackendContext.Resources.Images.DestroyUnpublishedOwnedImage(BackendContext, _image, "VkImageBackedTexture.Image.BindFailure");
+            BackendContext.Resources.Images.FreeMemory(BackendContext, in allocation);
             _image = default;
             throw new Exception("Failed to bind memory for texture image.");
         }

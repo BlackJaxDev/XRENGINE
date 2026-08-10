@@ -51,7 +51,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (sourceLayout != ImageLayout.TransferDstOptimal)
             TransitionImageLayout(sourceLayout, ImageLayout.TransferDstOptimal);
 
-        BackendContext.ResourceCommands.GenerateMipmaps(
+        ResourceCommandPort.GenerateMipmaps(
             Image,
             ResolvedMipLevels,
             ResolvedArrayLayers,
@@ -65,10 +65,10 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
     /// <summary>
     /// Builds an <see cref="ImageBlit"/> descriptor that copies from mip level
-    /// <paramref name="targetLevel"/> − 1 to <paramref name="targetLevel"/>, halving
+    /// <paramref name="targetLevel"/> âˆ’ 1 to <paramref name="targetLevel"/>, halving
     /// the width and height (clamped to 1).
     /// </summary>
-    /// <param name="targetLevel">The destination mip level (source is <c>targetLevel − 1</c>).</param>
+    /// <param name="targetLevel">The destination mip level (source is <c>targetLevel âˆ’ 1</c>).</param>
     /// <param name="mipWidth">Width of the source mip level.</param>
     /// <param name="mipHeight">Height of the source mip level.</param>
     /// <returns>A configured <see cref="ImageBlit"/> ready for <c>CmdBlitImage</c>.</returns>

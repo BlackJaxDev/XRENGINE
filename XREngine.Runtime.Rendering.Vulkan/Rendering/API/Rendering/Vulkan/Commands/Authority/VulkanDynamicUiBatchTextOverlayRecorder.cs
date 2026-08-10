@@ -27,7 +27,7 @@ internal sealed unsafe class VulkanDynamicUiBatchTextOverlayRecorder
                 $"Failed to reset dynamic UI text overlay command buffer: {resetResult}.");
         }
 
-        encoder.CommandRuntime.ResetBindState(encoder, input.OverlayCommandBuffer);
+        encoder.Runtime.ResetBindState(encoder, input.OverlayCommandBuffer);
         bool trackingStarted = true;
         try
         {
@@ -36,23 +36,23 @@ internal sealed unsafe class VulkanDynamicUiBatchTextOverlayRecorder
                 SType = StructureType.CommandBufferBeginInfo,
                 Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
             };
-            encoder.CommandRuntime.BeginRecording(
-                encoder.Api,
-                encoder.DeviceContext.StateMachine,
+            encoder.Runtime.BeginRecording(
+                encoder.Runtime.Api,
+                encoder.Runtime.DeviceContext.StateMachine,
                 input.OverlayCommandBuffer,
                 "vkBeginCommandBuffer.DynamicUiTextOverlay");
-            if (encoder.Api.BeginCommandBuffer(input.OverlayCommandBuffer, ref beginInfo) != Result.Success)
+            if (encoder.Runtime.Api.BeginCommandBuffer(input.OverlayCommandBuffer, ref beginInfo) != Result.Success)
                 throw new InvalidOperationException("Failed to begin dynamic UI text overlay command buffer.");
 
-            encoder.CommandRuntime.SeedRecordedImageLayoutState(
+            encoder.Runtime.SeedRecordedImageLayoutState(
                 input.OverlayCommandBuffer,
                 input.PredecessorCommandBuffer);
-            encoder.CommandRuntime.TransitionSecondaryDescriptorImagesForExecution(
+            encoder.Runtime.TransitionSecondaryDescriptorImagesForExecution(
                 encoder,
                 telemetry,
                 input.OverlayCommandBuffer,
                 input.SecondaryCommandBuffer);
-            encoder.CommandRuntime.MergeSecondaryImageStatesForExecution(
+            encoder.Runtime.MergeSecondaryImageStatesForExecution(
                 input.OverlayCommandBuffer,
                 input.SecondaryCommandBuffer,
                 telemetry);
@@ -119,7 +119,7 @@ internal sealed unsafe class VulkanDynamicUiBatchTextOverlayRecorder
             BaseArrayLayer = 0,
             LayerCount = 1,
         };
-        encoder.CommandRuntime.EmitImageTransition(
+        encoder.Runtime.EmitImageTransition(
             encoder,
             telemetry,
             commandBuffer,
@@ -152,11 +152,11 @@ internal sealed unsafe class VulkanDynamicUiBatchTextOverlayRecorder
         encoder.Track(commandBuffer, ObjectType.ImageView, view.Handle);
         BeginDynamicRendering(encoder, commandBuffer, &renderingInfo, preferKhrDynamicRendering);
         encoder.Track(commandBuffer, ObjectType.CommandBuffer, unchecked((ulong)secondary.Handle));
-        encoder.Api.CmdExecuteCommands(commandBuffer, 1, &secondary);
+        encoder.Runtime.Api.CmdExecuteCommands(commandBuffer, 1, &secondary);
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanExecuteSecondaryCommandBuffers(1);
         EndDynamicRendering(encoder, commandBuffer, preferKhrDynamicRendering);
 
-        encoder.CommandRuntime.EmitImageTransition(
+        encoder.Runtime.EmitImageTransition(
             encoder,
             telemetry,
             commandBuffer,
@@ -172,14 +172,14 @@ internal sealed unsafe class VulkanDynamicUiBatchTextOverlayRecorder
         RenderingInfo* renderingInfo,
         bool preferKhrDynamicRendering)
     {
-        bool useKhr = preferKhrDynamicRendering || encoder.DeviceContext.InstanceApiVersion < Vk.Version13;
+        bool useKhr = preferKhrDynamicRendering || encoder.Runtime.DeviceContext.InstanceApiVersion < Vk.Version13;
         if (!useKhr)
         {
-            encoder.Api.CmdBeginRendering(commandBuffer, renderingInfo);
+            encoder.Runtime.Api.CmdBeginRendering(commandBuffer, renderingInfo);
             return;
         }
 
-        (encoder.DeviceContext.ExtensionFunctions.KhrDynamicRendering ??
+        (encoder.Runtime.DeviceContext.ExtensionFunctions.KhrDynamicRendering ??
             throw new InvalidOperationException("VK_KHR_dynamic_rendering command extension is not loaded."))
             .CmdBeginRendering(commandBuffer, renderingInfo);
     }
@@ -189,14 +189,14 @@ internal sealed unsafe class VulkanDynamicUiBatchTextOverlayRecorder
         CommandBuffer commandBuffer,
         bool preferKhrDynamicRendering)
     {
-        bool useKhr = preferKhrDynamicRendering || encoder.DeviceContext.InstanceApiVersion < Vk.Version13;
+        bool useKhr = preferKhrDynamicRendering || encoder.Runtime.DeviceContext.InstanceApiVersion < Vk.Version13;
         if (!useKhr)
         {
-            encoder.Api.CmdEndRendering(commandBuffer);
+            encoder.Runtime.Api.CmdEndRendering(commandBuffer);
             return;
         }
 
-        (encoder.DeviceContext.ExtensionFunctions.KhrDynamicRendering ??
+        (encoder.Runtime.DeviceContext.ExtensionFunctions.KhrDynamicRendering ??
             throw new InvalidOperationException("VK_KHR_dynamic_rendering command extension is not loaded."))
             .CmdEndRendering(commandBuffer);
     }

@@ -129,7 +129,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 Depth = color.R,
                 Stencil = (uint)Math.Clamp((int)color.G, 0, 255),
             };
-            BackendContext.ResourceCommands.ClearDepthStencilImage(
+            ResourceCommandPort.ClearDepthStencilImage(
                 _image,
                 ImageLayout.TransferDstOptimal,
                 ref clearDepthStencil,
@@ -145,7 +145,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 Float32_2 = color.B,
                 Float32_3 = color.A,
             };
-            BackendContext.ResourceCommands.ClearColorImage(
+            ResourceCommandPort.ClearColorImage(
                 _image,
                 ImageLayout.TransferDstOptimal,
                 ref clearColor,

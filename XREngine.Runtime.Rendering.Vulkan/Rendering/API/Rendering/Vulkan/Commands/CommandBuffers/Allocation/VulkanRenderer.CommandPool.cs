@@ -260,7 +260,7 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 for (int i = 0; i < children.Length; i++)
-                    if (!ResourceRuntime.CanResetCommandBuffer(this, children[i]))
+                    if (!ResourceRuntime.CanResetCommandBuffer(children[i]))
                         throw new InvalidOperationException(
                             $"Cannot reset command pool 0x{pool.Handle:X} for {owner}: child command buffer " +
                             $"0x{unchecked((ulong)children[i].Handle):X} is not resettable.");

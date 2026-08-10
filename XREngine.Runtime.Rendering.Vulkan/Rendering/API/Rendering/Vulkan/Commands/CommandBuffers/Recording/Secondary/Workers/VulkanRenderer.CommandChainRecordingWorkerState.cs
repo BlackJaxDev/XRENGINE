@@ -5,8 +5,9 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed class CommandChainRecordingWorkerState(int workerIndex)
+internal sealed class CommandChainRecordingWorkerState(VulkanCommandRuntime commandRuntime, int workerIndex)
 {
+    private readonly VulkanCommandRuntime _commandRuntime = commandRuntime;
     public int WorkerIndex { get; } = workerIndex;
     public readonly AutoResetEvent WorkAvailable = new(initialState: false);
     public readonly VulkanWorkerSecondaryCommandArena Arena =
@@ -35,8 +36,8 @@ internal sealed class CommandChainRecordingWorkerState(int workerIndex)
                 return;
 
             VulkanCommandChainRecordingBatch? batch = Batch;
-            if (batch?.PreparedWorkerContext.Runtime is { } runtime)
-                runtime.ExecuteCommandChainRecordingWorker(this);
+            if (batch is not null)
+                _commandRuntime.ExecuteCommandChainRecordingWorker(this);
         }
     }
 }

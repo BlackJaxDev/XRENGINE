@@ -5,14 +5,14 @@ using XREngine.Data.Geometry;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed unsafe partial class VulkanFrameLoop
 {
     private const string GetSurfaceCapabilities2ExtensionName = "VK_KHR_get_surface_capabilities2";
     private const string SurfaceMaintenance1ExtensionName = "VK_EXT_surface_maintenance1";
-    private const string SwapchainMaintenance1ExtensionName = "VK_EXT_swapchain_maintenance1";
+    internal const string SwapchainMaintenance1ExtensionName = "VK_EXT_swapchain_maintenance1";
 
 
-    private bool QuerySwapchainMaintenance1FeatureSupport()
+    internal bool QuerySwapchainMaintenance1FeatureSupport()
     {
         PhysicalDeviceSwapchainMaintenance1FeaturesEXT supportedFeatures = new()
         {
@@ -24,7 +24,7 @@ public unsafe partial class VulkanRenderer
             PNext = &supportedFeatures,
         };
 
-        Api!.GetPhysicalDeviceFeatures2(_deviceContext.PhysicalDevice, &features);
+        Api.GetPhysicalDeviceFeatures2(_deviceContext.PhysicalDevice, &features);
         return supportedFeatures.SwapchainMaintenance1;
     }
 
@@ -36,10 +36,10 @@ public unsafe partial class VulkanRenderer
     {
         createInfo = default;
         capabilities = default;
-        if (!_deviceContext.MutableCapabilities._surfacePresentScalingInstanceExtensionsEnabled || !OutputRuntime.Desktop.Maintenance1Enabled)
+        if (!_deviceContext.MutableCapabilities._surfacePresentScalingInstanceExtensionsEnabled || !_outputRuntime.Desktop.Maintenance1Enabled)
             return false;
 
-        if (!Api!.TryGetInstanceExtension<KhrGetSurfaceCapabilities2>(
+        if (!Api.TryGetInstanceExtension<KhrGetSurfaceCapabilities2>(
                 _deviceContext.Instance,
                 out KhrGetSurfaceCapabilities2? surfaceCapabilities2))
         {
@@ -121,7 +121,7 @@ public unsafe partial class VulkanRenderer
         uint swapchainWidth,
         uint swapchainHeight)
     {
-        if (!OutputRuntime.Desktop.PresentScalingActive ||
+        if (!_outputRuntime.Desktop.PresentScalingActive ||
             swapchainWidth == 0 ||
             swapchainHeight == 0)
         {
@@ -130,8 +130,8 @@ public unsafe partial class VulkanRenderer
 
         // The scaled-image range constrains the swapchain image extent, while
         // the compositor owns the changing destination surface extent.
-        Extent2D min = OutputRuntime.Desktop.PresentScalingCapabilities.MinScaledImageExtent;
-        Extent2D max = OutputRuntime.Desktop.PresentScalingCapabilities.MaxScaledImageExtent;
+        Extent2D min = _outputRuntime.Desktop.PresentScalingCapabilities.MinScaledImageExtent;
+        Extent2D max = _outputRuntime.Desktop.PresentScalingCapabilities.MaxScaledImageExtent;
         return swapchainWidth >= min.Width &&
             swapchainHeight >= min.Height &&
             swapchainWidth <= max.Width &&
@@ -143,19 +143,21 @@ public unsafe partial class VulkanRenderer
     /// the final window composite to the fixed swapchain image that WSI will stretch.
     /// Scaling shared rectangle edges independently avoids gaps between split viewports.
     /// </summary>
-    internal override BoundingRectangle MapWindowPresentationRegionToBackbuffer(BoundingRectangle region)
+    internal BoundingRectangle MapWindowPresentationRegionToBackbuffer(BoundingRectangle region)
     {
-        if (!OutputRuntime.Desktop.PresentScalingActive || !DesktopWsiOutput.IsInteractiveResizeInProgress)
+        VulkanDesktopWsiTargetDriver desktopWsiOutput =
+            DesktopWsiOutput;
+        if (!_outputRuntime.Desktop.PresentScalingActive || !desktopWsiOutput.IsInteractiveResizeInProgress)
             return region;
 
-        Vector2D<int> presentationExtent = DesktopWsiOutput.ResizeExtents.PresentationExtent;
+        Vector2D<int> presentationExtent = desktopWsiOutput.ResizeExtents.PresentationExtent;
         if (presentationExtent.X <= 0 || presentationExtent.Y <= 0)
-            presentationExtent = DesktopWsiOutput.EffectiveFramebufferSize;
+            presentationExtent = desktopWsiOutput.EffectiveFramebufferSize;
 
         return ScalePresentationRegionToBackbuffer(
             region,
             presentationExtent,
-            new Vector2D<int>((int)OutputRuntime.Desktop.Extent.Width, (int)OutputRuntime.Desktop.Extent.Height));
+            new Vector2D<int>((int)_outputRuntime.Desktop.Extent.Width, (int)_outputRuntime.Desktop.Extent.Height));
     }
 
     internal static BoundingRectangle ScalePresentationRegionToBackbuffer(

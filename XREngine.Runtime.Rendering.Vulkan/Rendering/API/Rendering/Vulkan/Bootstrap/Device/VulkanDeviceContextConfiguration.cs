@@ -4,8 +4,8 @@ namespace XREngine.Rendering.Vulkan.DeviceBootstrap;
 
 /// <summary>
 /// Immutable creation policy for one Vulkan device lifetime. Output-specific
-/// support is supplied separately through <see cref="VulkanPresentationSupportProbe"/>
-/// so the device authority never owns a surface or a renderer facade.
+/// observations are supplied per candidate as typed facts, so the device
+/// authority never owns a surface or a renderer facade.
 /// </summary>
 internal sealed class VulkanDeviceContextConfiguration
 {

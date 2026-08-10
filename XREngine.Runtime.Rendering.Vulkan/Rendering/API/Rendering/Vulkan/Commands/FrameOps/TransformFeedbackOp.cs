@@ -19,7 +19,7 @@ internal sealed record TransformFeedbackOp(
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.TransformFeedback;
 
     internal override int RecordPrimary(
-        VulkanCommandRuntime renderer,
+        VulkanCommandRuntime commandRuntime,
         scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
@@ -30,8 +30,8 @@ internal sealed record TransformFeedbackOp(
             (!recordingState.RenderScope.IsActive ||
              recordingState.RenderScope.Target != Target))
         {
-            renderer.EndActiveRenderPass(ref recordingState);
-            renderer.BeginRenderPassForTarget(
+            commandRuntime.EndActiveRenderPass(ref recordingState);
+            commandRuntime.BeginRenderPassForTarget(
                 ref recordingState,
                 Target,
                 recordingInfo.PassIndex,
@@ -39,15 +39,15 @@ internal sealed record TransformFeedbackOp(
         }
 
         bool labelActive = false;
-        if (renderer.CanRecordCommandBufferDebugLabels)
+        if (commandRuntime.CanRecordCommandBufferDebugLabels)
         {
-            labelActive = renderer.CmdBeginLabel(
+            labelActive = commandRuntime.CmdBeginLabel(
                 recordingState.CommandBuffer,
                 $"TransformFeedback.{Operation}");
         }
-        renderer.RecordTransformFeedbackOp(recordingState.CommandBuffer, this);
+        commandRuntime.RecordTransformFeedbackOp(recordingState.CommandBuffer, this);
         if (labelActive)
-            renderer.CmdEndLabel(recordingState.CommandBuffer);
+            commandRuntime.CmdEndLabel(recordingState.CommandBuffer);
 
         return recordingInfo.OperationIndex;
     }

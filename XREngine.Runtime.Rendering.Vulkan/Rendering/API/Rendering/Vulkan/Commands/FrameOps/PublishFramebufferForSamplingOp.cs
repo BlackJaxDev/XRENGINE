@@ -28,17 +28,17 @@ internal sealed record PublishFramebufferForSamplingOp(
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.PublishFramebufferForSampling;
 
     internal override int RecordPrimary(
-        VulkanCommandRuntime renderer,
+        VulkanCommandRuntime commandRuntime,
         scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
-        renderer.CmdBeginLabel(
+        commandRuntime.CmdBeginLabel(
             recordingState.CommandBuffer,
             "PublishFramebufferForSampling");
-        renderer.RecordPublishFramebufferForSamplingOp(
+        commandRuntime.RecordPublishFramebufferForSamplingOp(
             recordingState.CommandBuffer,
             this);
-        renderer.CmdEndLabel(recordingState.CommandBuffer);
+        commandRuntime.CmdEndLabel(recordingState.CommandBuffer);
         return recordingInfo.OperationIndex;
     }
 }

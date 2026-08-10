@@ -36,7 +36,7 @@ internal unsafe sealed class VulkanSynchronousUploadSession : IDisposable
             _pool,
             CommandBufferLevel.Primary,
             owner);
-        Encoder = new VulkanTrackedCommandEncoder(api, deviceContext, commands, resources);
+        Encoder = new VulkanTrackedCommandEncoder(commands);
         Encoder.BeginTracking(CommandBuffer);
         CommandBufferBeginInfo beginInfo = new()
         {

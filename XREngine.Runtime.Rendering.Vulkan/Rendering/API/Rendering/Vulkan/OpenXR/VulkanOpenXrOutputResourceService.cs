@@ -9,38 +9,39 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed unsafe class VulkanOpenXrOutputResourceService
 {
-    private readonly VulkanOutputRuntime _output;
+    private readonly VulkanOpenXrBackend _backend;
     private readonly Vk _api;
     private readonly VulkanDeviceContext _device;
     private readonly VulkanCommandRuntime _commands;
     private readonly VulkanResourceRuntime _resources;
-    private readonly VulkanTargetOutputServices _services;
+    private readonly IVulkanTargetOutputHost _services;
 
     internal VulkanOpenXrOutputResourceService(
-        VulkanOutputRuntime output,
+        VulkanOpenXrBackend backend,
         Vk api,
         VulkanDeviceContext device,
         VulkanCommandRuntime commands,
         VulkanResourceRuntime resources,
-        VulkanFrameTelemetry telemetry)
+        VulkanFrameTelemetry telemetry,
+        IVulkanTargetOutputHost services)
     {
-        _output = output;
+        _backend = backend;
         _api = api;
         _device = device;
         _commands = commands;
         _resources = resources;
-        _services = new VulkanTargetOutputServices(api, device, commands, resources, telemetry, output);
+        _services = services;
     }
 
     internal ImageView GetOrCreateSwapchainImageView(Image image, Format format)
     {
         ulong key = image.Handle;
-        if (_output.OpenXrBackend.SwapchainImageViews.TryGetValue(key, out VulkanOpenXrSwapchainImageViewCacheEntry cached))
+        if (_backend.SwapchainImageViews.TryGetValue(key, out VulkanOpenXrSwapchainImageViewCacheEntry cached))
         {
             if (cached.Format == format && cached.View.Handle != 0)
                 return cached.View;
             DestroySwapchainImageView(cached.View, "OpenXR.SwapchainImageViewFormatChanged");
-            _output.OpenXrBackend.SwapchainImageViews.Remove(key);
+            _backend.SwapchainImageViews.Remove(key);
         }
 
         ImageViewCreateInfo viewInfo = new()
@@ -60,13 +61,13 @@ internal sealed unsafe class VulkanOpenXrOutputResourceService
             throw new InvalidOperationException("Failed to create an OpenXR Vulkan swapchain image view.");
 
         _services.TrackLiveImageView(imageView, in viewInfo, "OpenXR.SwapchainImageView");
-        _output.OpenXrBackend.SwapchainImageViews[key] = new VulkanOpenXrSwapchainImageViewCacheEntry(imageView, format);
+        _backend.SwapchainImageViews[key] = new VulkanOpenXrSwapchainImageViewCacheEntry(imageView, format);
         return imageView;
     }
 
     internal VulkanOpenXrDepthTarget GetOrCreateDepthTarget(int targetIndex, Extent2D extent)
     {
-        VulkanOpenXrBackend backend = _output.OpenXrBackend;
+        VulkanOpenXrBackend backend = _backend;
         ref VulkanOpenXrDepthTarget cached = ref backend.CachedDepthTargets[targetIndex];
         ref Extent2D cachedExtent = ref backend.CachedDepthExtents[targetIndex];
         if (cached.Image.Handle != 0 && cachedExtent.Width == extent.Width && cachedExtent.Height == extent.Height)
@@ -80,15 +81,15 @@ internal sealed unsafe class VulkanOpenXrOutputResourceService
 
     internal void RetireResources()
     {
-        foreach (VulkanOpenXrSwapchainImageViewCacheEntry entry in _output.OpenXrBackend.SwapchainImageViews.Values)
+        foreach (VulkanOpenXrSwapchainImageViewCacheEntry entry in _backend.SwapchainImageViews.Values)
             DestroySwapchainImageView(entry.View, "OpenXR.SwapchainImageViewCache");
-        _output.OpenXrBackend.SwapchainImageViews.Clear();
+        _backend.SwapchainImageViews.Clear();
 
-        for (int index = 0; index < _output.OpenXrBackend.CachedDepthTargets.Length; index++)
+        for (int index = 0; index < _backend.CachedDepthTargets.Length; index++)
         {
-            RetireDepthTarget(_output.OpenXrBackend.CachedDepthTargets[index]);
-            _output.OpenXrBackend.CachedDepthTargets[index] = default;
-            _output.OpenXrBackend.CachedDepthExtents[index] = default;
+            RetireDepthTarget(_backend.CachedDepthTargets[index]);
+            _backend.CachedDepthTargets[index] = default;
+            _backend.CachedDepthExtents[index] = default;
         }
     }
 

@@ -1,10 +1,10 @@
-// ──────────────────────────────────────────────────────────────────────────────
-// VkMeshRenderer.Uniforms.cs  – partial class: Uniform Buffer Management
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// VkMeshRenderer.Uniforms.cs  â€“ partial class: Uniform Buffer Management
 //
 // Allocates per-frame host-visible UBOs for engine and auto uniform blocks,
 // writes typed values (scalars, vectors, matrices) into mapped buffer memory,
 // and uploads legacy per-binding engine uniforms to Vulkan descriptor buffers.
-// ──────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 using System;
 using System.Buffers;
@@ -36,7 +36,7 @@ internal unsafe partial class VkMeshRenderer
 
 	private int UniformBufferSlotCount => Math.Max(_uniformDrawSlotCapacity, 1);
 
-	private int UniformBufferFrameCount => Math.Max(BackendContext.Descriptors.FrameSlotCount, 1);
+	private int UniformBufferFrameCount => Math.Max(BackendContext.Resources.Descriptors.FrameSlotCount, 1);
 
 	private int UniformBufferArrayLength => UniformBufferFrameCount * UniformBufferSlotCount;
 
@@ -107,9 +107,9 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		if (!BackendContext.Buffers.TryMap(BackendContext, buffer, memory, 0, totalSize, out void* mappedPtr))
+		if (!BackendContext.Resources.Buffers.TryMap(BackendContext, buffer, memory, 0, totalSize, out void* mappedPtr))
 		{
-			BackendContext.Buffers.Destroy(BackendContext, buffer, memory, "VkMeshRenderer.UniformBuffer");
+			BackendContext.Resources.Buffers.Destroy(BackendContext, buffer, memory, "VkMeshRenderer.UniformBuffer");
 			return false;
 		}
 
@@ -173,9 +173,9 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		if (!BackendContext.Buffers.TryMap(BackendContext, buffer, memory, 0, totalSize, out void* mappedPtr))
+		if (!BackendContext.Resources.Buffers.TryMap(BackendContext, buffer, memory, 0, totalSize, out void* mappedPtr))
 		{
-			BackendContext.Buffers.Destroy(BackendContext, buffer, memory, "VkMeshRenderer.UniformBuffer");
+			BackendContext.Resources.Buffers.Destroy(BackendContext, buffer, memory, "VkMeshRenderer.UniformBuffer");
 			return false;
 		}
 
@@ -340,14 +340,14 @@ internal unsafe partial class VkMeshRenderer
 		buffer = default;
 		memory = default;
 		size = Math.Max(size, 1UL);
-		bool enableDeviceAddress = BackendContext.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap;
+		bool enableDeviceAddress = BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap;
 		if (enableDeviceAddress)
 			usage |= BufferUsageFlags.ShaderDeviceAddressBit;
 
 		MemoryPropertyFlags props = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
 		try
 		{
-			(buffer, memory) = BackendContext.Buffers.CreateRaw(BackendContext, size, usage, props, enableDeviceAddress, "VkMeshRenderer.UniformBuffer");
+			(buffer, memory) = BackendContext.Resources.Buffers.CreateRaw(BackendContext, size, usage, props, enableDeviceAddress, "VkMeshRenderer.UniformBuffer");
 			return true;
 		}
 		catch (Exception ex)
@@ -925,7 +925,7 @@ internal unsafe partial class VkMeshRenderer
 			runtimeUniformNameSignature,
 			runtimeUniformPublicationLayoutSignature);
 		VkMaterial? materialPlanOwner = materialOwned
-			? BackendContext.GetOrCreateAPIRenderObject(
+			? WrapperLookup.GetOrCreate(
 				material,
 				generateNow: true) as VkMaterial
 			: null;
@@ -1178,7 +1178,7 @@ internal unsafe partial class VkMeshRenderer
 	{
 		ownerIdentity = 0;
 		if (block.Frequency == EVulkanBindingFrequency.Unknown ||
-			BackendContext.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
+			BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
 		{
 			return ResolveUniformBufferIndex(
 				frameIndex,
@@ -1209,7 +1209,7 @@ internal unsafe partial class VkMeshRenderer
 		int bufferCount)
 	{
 		if (block.Frequency == EVulkanBindingFrequency.Unknown ||
-			BackendContext.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap ||
+			BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap ||
 			!_autoUniformOwnerSlotTables.TryGetValue(
 				block.InstanceName,
 				out VulkanAutoUniformOwnerSlotTable? table) ||
@@ -2442,19 +2442,19 @@ internal unsafe partial class VkMeshRenderer
 		switch (uniform)
 		{
 			case EEngineUniform.UpdateDelta:
-				value = BackendContext.MeshServices.MaterialUniformUpdateDelta;
+				value = CommandOperations.MaterialUniformUpdateDelta;
 				type = EShaderVarType._float;
 				return true;
 			case EEngineUniform.RenderTime:
-				value = BackendContext.MeshServices.MaterialUniformSeconds;
+				value = CommandOperations.MaterialUniformSeconds;
 				type = EShaderVarType._float;
 				return true;
 			case EEngineUniform.EngineTime:
-				value = BackendContext.MeshServices.MaterialUniformSeconds;
+				value = CommandOperations.MaterialUniformSeconds;
 				type = EShaderVarType._float;
 				return true;
 			case EEngineUniform.DeltaTime:
-				value = BackendContext.MeshServices.MaterialUniformRenderDelta;
+				value = CommandOperations.MaterialUniformRenderDelta;
 				type = EShaderVarType._float;
 				return true;
 			case EEngineUniform.ModelMatrix:
@@ -2693,7 +2693,7 @@ internal unsafe partial class VkMeshRenderer
 
 	/// <summary>
 	/// Writes a typed value into auto uniform buffer memory at the member's offset.
-	/// Supports float, int, uint, bool, vec2–vec4, ivec2–ivec4, uvec2–uvec4, and mat4.
+	/// Supports float, int, uint, bool, vec2â€“vec4, ivec2â€“ivec4, uvec2â€“uvec4, and mat4.
 	/// </summary>
 	private bool TryWriteAutoUniformValue(Span<byte> data, AutoUniformMember member, object value, EShaderVarType valueType)
 	{
@@ -2789,7 +2789,7 @@ internal unsafe partial class VkMeshRenderer
 
     /// <summary>
     /// Checks whether two shader variable types are compatible for writing.
-    /// Allows common promotions (vec3↔vec4, int↔bool, uint↔bool).
+    /// Allows common promotions (vec3â†”vec4, intâ†”bool, uintâ†”bool).
     /// </summary>
     private static bool AreCompatible(EShaderVarType expected, EShaderVarType actual)
 		=> expected == actual || (expected, actual) switch
@@ -2803,7 +2803,7 @@ internal unsafe partial class VkMeshRenderer
 			_ => false
 		};
 
-    // ── Scalar and Vector Write Helpers ───────────────────────────────────
+    // â”€â”€ Scalar and Vector Write Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Each helper writes a specific type into a byte span at the given offset.
     // std140 aligns vec3 members to 16 bytes but still lets the next scalar use
     // the fourth lane, so vec3 writes must only touch xyz.
@@ -3034,13 +3034,13 @@ internal unsafe partial class VkMeshRenderer
 		switch (normalized)
 		{
 			case nameof(EEngineUniform.UpdateDelta):
-				return UploadUniform(buffer, BackendContext.MeshServices.MaterialUniformUpdateDelta);
+				return UploadUniform(buffer, CommandOperations.MaterialUniformUpdateDelta);
 			case nameof(EEngineUniform.RenderTime):
-				return UploadUniform(buffer, BackendContext.MeshServices.MaterialUniformSeconds);
+				return UploadUniform(buffer, CommandOperations.MaterialUniformSeconds);
 			case nameof(EEngineUniform.EngineTime):
-				return UploadUniform(buffer, BackendContext.MeshServices.MaterialUniformSeconds);
+				return UploadUniform(buffer, CommandOperations.MaterialUniformSeconds);
 			case nameof(EEngineUniform.DeltaTime):
-				return UploadUniform(buffer, BackendContext.MeshServices.MaterialUniformRenderDelta);
+				return UploadUniform(buffer, CommandOperations.MaterialUniformRenderDelta);
 			case TransformIdUniformName:
 				return UploadUniform(buffer, draw.TransformId);
 			case SkinPaletteBaseUniformName:

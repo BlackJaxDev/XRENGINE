@@ -9,14 +9,11 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanFrameOpWorkspace
 {
-    private readonly Dictionary<Type, object> _pools = new()
-    {
-        [typeof(ClearOp)] = new Pool<ClearOp>(),
-        [typeof(MeshDrawOp)] = new Pool<MeshDrawOp>(),
-        [typeof(IndirectDrawOp)] = new Pool<IndirectDrawOp>(),
-        [typeof(MemoryBarrierOp)] = new Pool<MemoryBarrierOp>(),
-        [typeof(ComputeDispatchOp)] = new Pool<ComputeDispatchOp>(),
-    };
+    private readonly Pool<ClearOp> _clearOps = new();
+    private readonly Pool<MeshDrawOp> _meshDrawOps = new();
+    private readonly Pool<IndirectDrawOp> _indirectDrawOps = new();
+    private readonly Pool<MemoryBarrierOp> _memoryBarrierOps = new();
+    private readonly Pool<ComputeDispatchOp> _computeDispatchOps = new();
 
     internal bool TryRent<T>(ulong frameId, out T? reusable)
         where T : FrameOp
@@ -53,20 +50,31 @@ internal sealed class VulkanFrameOpWorkspace
 
     internal void Reset()
     {
-        foreach (object pool in _pools.Values)
-            ((IFrameOpPool)pool).Reset();
+        _clearOps.Reset();
+        _meshDrawOps.Reset();
+        _indirectDrawOps.Reset();
+        _memoryBarrierOps.Reset();
+        _computeDispatchOps.Reset();
     }
 
     private Pool<T> GetPool<T>()
         where T : FrameOp
-        => (Pool<T>)_pools[typeof(T)];
-
-    private interface IFrameOpPool
     {
-        void Reset();
+        if (typeof(T) == typeof(ClearOp))
+            return (Pool<T>)(object)_clearOps;
+        if (typeof(T) == typeof(MeshDrawOp))
+            return (Pool<T>)(object)_meshDrawOps;
+        if (typeof(T) == typeof(IndirectDrawOp))
+            return (Pool<T>)(object)_indirectDrawOps;
+        if (typeof(T) == typeof(MemoryBarrierOp))
+            return (Pool<T>)(object)_memoryBarrierOps;
+        if (typeof(T) == typeof(ComputeDispatchOp))
+            return (Pool<T>)(object)_computeDispatchOps;
+
+        throw new NotSupportedException($"Frame-operation pooling is not configured for {typeof(T).FullName}.");
     }
 
-    private sealed class Pool<T> : IFrameOpPool
+    private sealed class Pool<T>
         where T : FrameOp
     {
         internal readonly List<T> Items = [];

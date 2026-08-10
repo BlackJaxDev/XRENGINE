@@ -338,7 +338,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
                 descriptorSet,
                 _globalMaterialTextureDescriptorSetUsesUpdateAfterBind,
                 "GlobalMaterialTexture.DescriptorSet");
-            SetDebugDescriptorSetName(_globalMaterialTextureDescriptorSet, "GlobalMaterialTexture.DescriptorSet");
+            DeviceContext.SetDebugDescriptorSetName(_globalMaterialTextureDescriptorSet, "GlobalMaterialTexture.DescriptorSet");
             RecordVulkanDescriptorTableGeneration("GlobalMaterialTextureDescriptorSet.Allocated");
             _globalMaterialTextureDescriptorSlots = new MaterialTextureDescriptorSlot[_globalMaterialTextureDescriptorCapacity];
             _nextGlobalMaterialTextureDescriptorSlot = 1u;
@@ -346,7 +346,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
             _globalMaterialTextureDescriptorSlotsByTexture.Clear();
             _dirtyGlobalMaterialTextureDescriptorSlots.Clear();
 
-            DescriptorImageInfo fallbackInfo = BackendContext.FallbackTexture.GetImageInfo(
+            DescriptorImageInfo fallbackInfo = BackendContext.Resources.FallbackTexture.GetImageInfo(
                 DescriptorType.CombinedImageSampler,
                 ImageViewType.Type2D);
             if (fallbackInfo.ImageView.Handle == 0 || fallbackInfo.Sampler.Handle == 0)
@@ -486,13 +486,16 @@ internal sealed unsafe partial class VulkanDescriptorManager
         FlushGlobalMaterialTextureDescriptorUpdates();
         Span<DescriptorSet> sets = stackalloc DescriptorSet[1];
         sets[0] = _globalMaterialTextureDescriptorSet;
-        CommandRuntime.BindDescriptorSetsTracked(
-            commandBuffer,
-            PipelineBindPoint.Graphics,
-            program.PipelineLayout,
-            VulkanBindlessMaterialDescriptors.TextureArraySet,
-            sets,
-            ReadOnlySpan<uint>.Empty);
+        fixed (DescriptorSet* setsPointer = sets)
+            Api.CmdBindDescriptorSets(
+                commandBuffer,
+                PipelineBindPoint.Graphics,
+                program.PipelineLayout,
+                VulkanBindlessMaterialDescriptors.TextureArraySet,
+                1,
+                setsPointer,
+                0,
+                null);
         return true;
     }
 
@@ -514,7 +517,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
         reason = string.Empty;
 
         bool allowSynchronousTextureUpload = AllowSynchronousResourceUploads;
-        if (BackendContext.GetOrCreateAPIRenderObject(texture, generateNow: allowSynchronousTextureUpload) is not IVkImageDescriptorSource source)
+        if (WrapperLookup.GetOrCreate(texture, generateNow: allowSynchronousTextureUpload) is not IVkImageDescriptorSource source)
         {
             reason = $"Texture '{texture.Name ?? "<unnamed>"}' has no Vulkan image descriptor source.";
             return false;
@@ -541,7 +544,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
             return false;
         }
 
-        if (!BackendContext.Images.IsAvailableForDescriptor(descriptorView))
+        if (!BackendContext.Resources.Images.IsAvailableForDescriptor(descriptorView))
         {
             reason = $"Texture '{texture.Name ?? "<unnamed>"}' references a retired Vulkan image view for material semantic '{semantic}'.";
             return false;
@@ -552,7 +555,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
             descriptorSampler = default;
 
         if (descriptorSampler.Handle == 0)
-            descriptorSampler = BackendContext.FallbackTexture.GetSampler();
+            descriptorSampler = BackendContext.Resources.FallbackTexture.GetSampler();
 
         if (descriptorSampler.Handle == 0 || !ResourceRuntime.Descriptors.IsLiveSampler(descriptorSampler))
         {

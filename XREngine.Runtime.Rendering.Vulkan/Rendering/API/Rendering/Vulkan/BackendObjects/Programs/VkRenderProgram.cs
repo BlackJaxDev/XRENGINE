@@ -22,6 +22,8 @@ internal unsafe partial class VkRenderProgram(
     VulkanBackendObjectContext backendContext,
     XRRenderProgram data) : VkObject<XRRenderProgram>(backendContext, data)
 {
+    protected override void BindOperationPorts(VulkanWrapperPortBinding binding)
+        => binding.AttachPlannerOperationHandlers(this);
     private readonly Dictionary<XRShader, VkShader> _shaderCache = new();
     private readonly Dictionary<EProgramStageMask, VkShader> _stageLookup = new();
     private readonly Lock _linkLock = new();
@@ -173,7 +175,6 @@ internal unsafe partial class VkRenderProgram(
         Data.SamplerRequestedByLocation += Sampler;
         Data.BindImageTextureRequested += BindImageTexture;
         Data.BindBufferRequested += BindBuffer;
-        Data.DispatchComputeRequested += DispatchCompute;
 
         Data.LinkRequested += OnLinkRequested;
         Data.UseRequested += OnUseRequested;
@@ -242,7 +243,6 @@ internal unsafe partial class VkRenderProgram(
         Data.SamplerRequestedByLocation -= Sampler;
         Data.BindImageTextureRequested -= BindImageTexture;
         Data.BindBufferRequested -= BindBuffer;
-        Data.DispatchComputeRequested -= DispatchCompute;
 
         Data.LinkRequested -= OnLinkRequested;
         Data.UseRequested -= OnUseRequested;
@@ -262,7 +262,7 @@ internal unsafe partial class VkRenderProgram(
         if (_shaderCache.ContainsKey(shader))
             return;
 
-        if (BackendContext.GetOrCreateAPIRenderObject(shader) is not VkShader vkShader)
+        if (ProgramCreationPort.GetOrCreateShader(shader) is not { } vkShader)
             return;
 
         _shaderCache.Add(shader, vkShader);
@@ -327,7 +327,7 @@ internal unsafe partial class VkRenderProgram(
 
         if (!BackendContext.IsLogicalDeviceReady)
         {
-            BackendContext.Pipelines.QueueProgramLinkUntilDeviceReady(this);
+            BackendContext.Resources.PipelineManager.QueueProgramLinkUntilDeviceReady(this);
             return;
         }
 
@@ -357,7 +357,7 @@ internal unsafe partial class VkRenderProgram(
 
         if (!BackendContext.IsLogicalDeviceReady)
         {
-            BackendContext.Pipelines.QueueProgramLinkUntilDeviceReady(this);
+            BackendContext.Resources.PipelineManager.QueueProgramLinkUntilDeviceReady(this);
             return;
         }
 

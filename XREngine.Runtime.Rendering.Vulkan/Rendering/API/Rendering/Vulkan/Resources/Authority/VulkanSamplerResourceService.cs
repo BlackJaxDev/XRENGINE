@@ -52,10 +52,8 @@ internal sealed class VulkanSamplerResourceService(
             return;
 
         VulkanResourceLifetimeKey key = new(ObjectType.Sampler, sampler.Handle);
-        VulkanRetirementTicket ticket = resources.CaptureRetirementTicket(
-            CommandRuntime,
-            key,
-            owner);
+        CommandRuntime.PublishTrackingDependenciesBeforeResourceRetirement(key);
+        VulkanRetirementTicket ticket = resources.CaptureRetirementTicket(key, owner);
         int frameSlot = Volatile.Read(ref _frameSlot);
         lock (lifetime.Retirement.SyncRoot)
         {

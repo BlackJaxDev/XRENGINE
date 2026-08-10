@@ -86,9 +86,9 @@ internal unsafe partial class VkMeshRenderer
 	private void DestroyMappedUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, void* mappedPtr)
 	{
 		if (mappedPtr != null)
-			BackendContext.Buffers.Unmap(BackendContext, buffer, memory);
+			BackendContext.Resources.Buffers.Unmap(BackendContext, buffer, memory);
 
-		BackendContext.Buffers.Destroy(BackendContext, buffer, memory, "VkMeshRenderer.UniformBuffer");
+		BackendContext.Resources.Buffers.Destroy(BackendContext, buffer, memory, "VkMeshRenderer.UniformBuffer");
 	}
 
 	/// <summary>
@@ -144,7 +144,7 @@ internal unsafe partial class VkMeshRenderer
 		bool destroyPoolImmediately = false)
 	{
 		RemoveDescriptorOwnerLookupEntries(allocation);
-		if (!BackendContext.Descriptors.ReleaseSharedMeshDescriptorAllocation(key, allocation))
+		if (!BackendContext.Resources.Descriptors.ReleaseSharedMeshDescriptorAllocation(key, allocation))
 			return;
 
 		ReleaseDescriptorOwnershipTelemetry(allocation);
@@ -183,11 +183,11 @@ internal unsafe partial class VkMeshRenderer
 
 		if (destroyImmediately)
 		{
-			BackendContext.DescriptorLifetime.RetireDescriptorPool(descriptorPool);
+			BackendContext.Resources.DescriptorLifetime.RetireDescriptorPool(descriptorPool);
 			return;
 		}
 
-		BackendContext.DescriptorLifetime.RetireDescriptorPool(descriptorPool);
+		BackendContext.Resources.DescriptorLifetime.RetireDescriptorPool(descriptorPool);
 	}
 
 	private void ReleaseDescriptorAllocationResources(
@@ -196,7 +196,7 @@ internal unsafe partial class VkMeshRenderer
 	{
 		if (allocation.PoolSlabLease is not null)
 		{
-			BackendContext.DescriptorLifetime.ReleaseMeshDescriptorPoolSlab(
+			BackendContext.Resources.DescriptorLifetime.ReleaseMeshDescriptorPoolSlab(
 				allocation.PoolSlabLease,
 				allocation.Sets,
 				allocation.ActiveSetMask);

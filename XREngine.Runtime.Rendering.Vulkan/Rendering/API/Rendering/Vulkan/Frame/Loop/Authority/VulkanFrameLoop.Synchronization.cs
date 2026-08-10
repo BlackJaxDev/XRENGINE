@@ -8,11 +8,6 @@ internal sealed unsafe partial class VulkanFrameLoop
 {
     private const ulong TimelineWaitPollTimeoutNanoseconds = 50_000_000UL;
 
-    private InvalidOperationException CreateDeviceLostException(
-        string operation,
-        Result result)
-        => _deviceLossCoordinator.CreateException(operation, result);
-
     private void CompleteMappedFrameArenaDeviceLossObservation()
     {
         DeviceBootstrap.VulkanNativeDeviceFault? fault =
@@ -20,7 +15,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         if (fault is null)
             return;
 
-        _deviceLossCoordinator.MarkDeviceLost(
+        MarkDeviceLost(
             $"Mapped frame arena {fault.Operation} returned {fault.Result}",
             fault.Operation,
             fault.Result);
@@ -47,7 +42,7 @@ internal sealed unsafe partial class VulkanFrameLoop
             throw new InvalidOperationException(failureReason);
     }
 
-    private bool HasTimelineValueCompleted(Semaphore semaphore, ulong value)
+    internal bool HasTimelineValueCompleted(Semaphore semaphore, ulong value)
     {
         if (!TryAdmitVulkanDeviceOperation(nameof(HasTimelineValueCompleted), out _))
             return false;
@@ -106,7 +101,7 @@ internal sealed unsafe partial class VulkanFrameLoop
             $"Failed to wait for timeline semaphore value {value}. Result={result}.");
     }
 
-    private void WaitForTimelineValue(Semaphore semaphore, ulong value)
+    internal void WaitForTimelineValue(Semaphore semaphore, ulong value)
     {
         long waitStart = Stopwatch.GetTimestamp();
         while (!TryWaitForTimelineValue(
@@ -122,5 +117,64 @@ internal sealed unsafe partial class VulkanFrameLoop
                 value,
                 Stopwatch.GetElapsedTime(waitStart).TotalMilliseconds);
         }
+    }
+
+    internal void CreateSyncObjects()
+    {
+        if (!_deviceContext.Capabilities.Supports(EVulkanDeviceCapability.TimelineSemaphores))
+            throw new InvalidOperationException("Vulkan timeline semaphores are required but were not enabled on the logical device.");
+
+        VulkanCommandSynchronizationState sync = _commandRuntime.Synchronization;
+        sync.acquireBridgeSemaphores = new Semaphore[FrameSlotCount];
+        sync._frameSlotTimelineValues = new ulong[FrameSlotCount];
+        EnsureSwapchainTimelineState();
+        SemaphoreTypeCreateInfo type = new() { SType = StructureType.SemaphoreTypeCreateInfo, SemaphoreType = SemaphoreType.Timeline };
+        SemaphoreCreateInfo timeline = new() { SType = StructureType.SemaphoreCreateInfo, PNext = &type };
+        if (Api.CreateSemaphore(_deviceContext.Device, ref timeline, null, out sync._graphicsTimelineSemaphore) != Result.Success ||
+            Api.CreateSemaphore(_deviceContext.Device, ref timeline, null, out sync._presentTimelineSemaphore) != Result.Success ||
+            Api.CreateSemaphore(_deviceContext.Device, ref timeline, null, out sync._transferTimelineSemaphore) != Result.Success)
+            throw new InvalidOperationException("Failed to create Vulkan timeline synchronization semaphores.");
+
+        SemaphoreCreateInfo binary = new() { SType = StructureType.SemaphoreCreateInfo };
+        for (int index = 0; index < FrameSlotCount; index++)
+            if (Api.CreateSemaphore(_deviceContext.Device, ref binary, null, out sync.acquireBridgeSemaphores[index]) != Result.Success)
+                throw new InvalidOperationException("Failed to create Vulkan acquire bridge synchronization semaphores.");
+
+        if (_targetDriver.RequiresSwapchainOutput)
+            CreateDesktopPresentBridgeSemaphores(_outputRuntime.Desktop.Images?.Length ?? FrameSlotCount);
+    }
+
+    internal void DestroySyncObjects()
+    {
+        VulkanCommandSynchronizationState sync = _commandRuntime.Synchronization;
+        sync.FailAllSubmissionMarkers();
+        if (sync.acquireBridgeSemaphores is not null)
+            for (int index = 0; index < sync.acquireBridgeSemaphores.Length; index++)
+                Api.DestroySemaphore(_deviceContext.Device, sync.acquireBridgeSemaphores[index], null);
+        if (_outputRuntime.Desktop.PresentBridgeSemaphores is not null && _targetDriver.RequiresSwapchainOutput)
+            DestroyDesktopPresentBridgeSemaphores();
+        if (sync._graphicsTimelineSemaphore.Handle != 0) Api.DestroySemaphore(_deviceContext.Device, sync._graphicsTimelineSemaphore, null);
+        if (sync._presentTimelineSemaphore.Handle != 0) Api.DestroySemaphore(_deviceContext.Device, sync._presentTimelineSemaphore, null);
+        if (sync._transferTimelineSemaphore.Handle != 0) Api.DestroySemaphore(_deviceContext.Device, sync._transferTimelineSemaphore, null);
+        sync.acquireBridgeSemaphores = null;
+        sync._graphicsTimelineSemaphore = default;
+        sync._presentTimelineSemaphore = default;
+        sync._transferTimelineSemaphore = default;
+        sync._frameSlotTimelineValues = null;
+        _outputRuntime.Desktop.ImageTimelineValues = null;
+        sync._acquireTimelineValue = 0;
+        sync._graphicsTimelineValue = 0;
+    }
+
+    private void EnsureSwapchainTimelineState()
+    {
+        if (_outputRuntime.Desktop.Images is null)
+        {
+            _outputRuntime.Desktop.ImageTimelineValues = null;
+            return;
+        }
+        if (_outputRuntime.Desktop.ImageTimelineValues is null || _outputRuntime.Desktop.ImageTimelineValues.Length != _outputRuntime.Desktop.Images.Length)
+            _outputRuntime.Desktop.ImageTimelineValues = new ulong[_outputRuntime.Desktop.Images.Length];
+        else Array.Clear(_outputRuntime.Desktop.ImageTimelineValues);
     }
 }

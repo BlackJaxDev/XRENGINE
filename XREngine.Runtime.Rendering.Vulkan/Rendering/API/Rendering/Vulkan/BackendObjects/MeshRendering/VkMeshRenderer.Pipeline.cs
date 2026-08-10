@@ -116,8 +116,8 @@ internal unsafe partial class VkMeshRenderer
 				shaderStageList));
 			generatedProgram.AllowLink();
 
-			VkRenderProgram? vkProgram = BackendContext
-				.GetOrCreateAPIRenderObject(generatedProgram, generateNow: true) as VkRenderProgram;
+            VkRenderProgram? vkProgram = WrapperLookup
+                .GetOrCreate(generatedProgram, generateNow: true) as VkRenderProgram;
 			if (vkProgram is null)
 			{
 				generatedProgram.Destroy();
@@ -688,7 +688,7 @@ internal unsafe partial class VkMeshRenderer
 		bool pipelineInvalidated = _pipelineDirty;
 		uint colorAttachmentCount = useDynamicRendering
 			? dynamicRenderingFormats.ColorAttachmentCount
-			: BackendContext.ProgramServices.GetRenderPassColorAttachmentCount(renderPass);
+			: ProgramCreationPort.GetRenderPassColorAttachmentCount(renderPass);
 		PendingMeshDraw effectiveDraw = ResolveAttachmentCompatibleDrawState(
 			draw,
 			passIndex,
@@ -756,7 +756,7 @@ internal unsafe partial class VkMeshRenderer
 			return true;
 		}
 
-		if (BackendContext.Pipelines.TryGetSharedGraphicsPipeline(key, out pipeline))
+		if (BackendContext.Resources.PipelineManager.TryGetSharedGraphicsPipeline(key, out pipeline))
 		{
 			RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineCacheLookup(cacheHit: true);
 			_pipelines[key] = pipeline;
@@ -834,8 +834,8 @@ internal unsafe partial class VkMeshRenderer
 			PipelineColorBlendAttachmentState attachmentBlend = colorBlendAttachment;
 			Format attachmentFormat = useDynamicRendering
 				? dynamicRenderingFormats.GetColorAttachmentFormat((uint)i)
-				: BackendContext.ProgramServices.GetRenderPassColorAttachmentFormat(renderPass, (uint)i);
-			if (!BackendContext.ProgramServices.SupportsColorAttachmentBlend(attachmentFormat))
+				: ProgramCreationPort.GetRenderPassColorAttachmentFormat(renderPass, (uint)i);
+			if (!ProgramCreationPort.SupportsColorAttachmentBlend(attachmentFormat))
 				attachmentBlend.BlendEnable = Vk.False;
 
 			blendAttachments[i] = attachmentBlend;
@@ -879,12 +879,12 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		if (BackendContext.Pipelines.IsAsyncCompilationEnabled(
+		if (BackendContext.Resources.PipelineManager.IsAsyncCompilationEnabled(
 				BackendContext.IsLogicalDeviceReady,
 				BackendContext.IsDeviceOperational,
 				RuntimeEngine.Rendering.Settings.AsyncProgramCompilation))
 		{
-			if (BackendContext.Pipelines.TryTakeCompletedGraphicsPipeline(request.CompileKey, out VulkanGraphicsPipelineCompileResult asyncResult))
+			if (BackendContext.Resources.PipelineManager.TryTakeCompletedGraphicsPipeline(request.CompileKey, out VulkanGraphicsPipelineCompileResult asyncResult))
 			{
 				if (!asyncResult.Success || asyncResult.Pipeline.Handle == 0)
 				{
@@ -906,13 +906,13 @@ internal unsafe partial class VkMeshRenderer
 					return false;
 				}
 
-				pipeline = BackendContext.Pipelines.StoreOrRetireSharedGraphicsPipeline(key, asyncResult.Pipeline);
+				pipeline = BackendContext.Resources.PipelineManager.StoreOrRetireSharedGraphicsPipeline(key, asyncResult.Pipeline);
 				_pipelines[key] = pipeline;
 				_pipelineDirty = false;
 				return true;
 			}
 
-			if (BackendContext.Pipelines.IsGraphicsPipelineCompileInFlight(request.CompileKey))
+			if (BackendContext.Resources.PipelineManager.IsGraphicsPipelineCompileInFlight(request.CompileKey))
 			{
 				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
 					EVulkanPipelineTelemetryEvent.DrawNotReady,
@@ -924,7 +924,7 @@ internal unsafe partial class VkMeshRenderer
 			// A completion continuation publishes successful worker results directly
 			// into the shared object cache. Recheck after observing no in-flight job
 			// so a just-completed compile is not redundantly enqueued.
-			if (BackendContext.Pipelines.TryGetSharedGraphicsPipeline(key, out pipeline))
+			if (BackendContext.Resources.PipelineManager.TryGetSharedGraphicsPipeline(key, out pipeline))
 			{
 				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineCacheLookup(cacheHit: true);
 				_pipelines[key] = pipeline;
@@ -950,7 +950,7 @@ internal unsafe partial class VkMeshRenderer
 				key,
 				effectiveDraw);
 
-			if (!BackendContext.Pipelines.TryEnqueueGraphicsPipelineCompile(
+			if (!BackendContext.Resources.PipelineManager.TryEnqueueGraphicsPipelineCompile(
 					request,
 					BackendContext.IsDeviceOperational,
 					RuntimeEngine.Rendering.Settings.AsyncProgramCompilation,
@@ -997,9 +997,9 @@ internal unsafe partial class VkMeshRenderer
 
 		try
 		{
-			pipeline = BackendContext.Pipelines.CreateGraphicsPipelineFromRequest(
+			pipeline = BackendContext.Resources.PipelineManager.CreateGraphicsPipelineFromRequest(
 				request,
-				BackendContext.Pipelines.ActivePipelineCache,
+				BackendContext.Resources.PipelineManager.ActivePipelineCache,
 				backgroundCompile: false);
 		}
 		catch (VulkanPipelineCompilationDeferredException)
@@ -1015,7 +1015,7 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		pipeline = BackendContext.Pipelines.StoreOrRetireSharedGraphicsPipeline(key, pipeline);
+		pipeline = BackendContext.Resources.PipelineManager.StoreOrRetireSharedGraphicsPipeline(key, pipeline);
 		_pipelines[key] = pipeline;
 		_pipelineDirty = false;
 		return pipeline.Handle != 0;
@@ -1039,7 +1039,7 @@ internal unsafe partial class VkMeshRenderer
 		in VulkanGraphicsPipelineKey key,
 		in PendingMeshDraw effectiveDraw)
 	{
-		bool knownAtStartup = BackendContext.Pipelines.RecordGraphicsPipelineCacheMiss(
+		bool knownAtStartup = BackendContext.Resources.PipelineManager.RecordGraphicsPipelineCacheMiss(
 			passIndex,
 			passMetadata,
 			pipelineName,
@@ -1149,7 +1149,7 @@ internal unsafe partial class VkMeshRenderer
 		DynamicRenderingFormatSignature dynamicRenderingFormats)
 	{
 		using VulkanPipelineCompilationDependencyLease dependencyLease =
-			BackendContext.Pipelines.AcquireCompilationDependencyLease();
+			BackendContext.Resources.PipelineManager.AcquireCompilationDependencyLease();
 		long dependencyGeneration = dependencyLease.Generation;
 				if (!program.IsLinked ||
 					program.PipelineLayout.Handle == 0 ||
@@ -1202,7 +1202,7 @@ internal unsafe partial class VkMeshRenderer
 		return new VulkanGraphicsPipelineBuildRequest(
 					PipelineCompileOwnerId,
 					program,
-					BackendContext.ProgramServices,
+					ProgramCreationPort,
 					ShouldUseGraphicsPipelineLibraries(),
 					dependencyGeneration,
 					key,

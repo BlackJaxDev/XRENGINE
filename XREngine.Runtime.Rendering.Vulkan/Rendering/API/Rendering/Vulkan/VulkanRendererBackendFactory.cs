@@ -21,7 +21,7 @@ public sealed class VulkanRendererBackendFactory :
     public IRuntimeRendererHost Create(in RendererBackendCreateContext context)
     {
         if (context.Target is PresentationlessRenderTarget or ComponentRenderTarget or HeadlessWsiRenderTarget)
-            return new VulkanExplicitTargetRendererHost(context.Target, context.ModuleGeneration);
+            return CreateInitializedExplicitTargetRenderer(context);
 
         if (context.Window is not XRWindow window)
         {
@@ -32,5 +32,33 @@ public sealed class VulkanRendererBackendFactory :
         }
 
         return new VulkanRenderer(context.ToRendererHostContext());
+    }
+
+    private static VulkanRenderer CreateInitializedExplicitTargetRenderer(
+        in RendererBackendCreateContext context)
+    {
+        VulkanRenderer renderer = new(context.ToRendererHostContext());
+        try
+        {
+            renderer.Initialize();
+            if (!renderer.HasExplicitFrameTarget)
+            {
+                throw new InvalidOperationException(
+                    $"The Vulkan target '{context.Target.ExecutionMode}' does not support explicit target-frame submission.");
+            }
+
+            return renderer;
+        }
+        catch
+        {
+            try { renderer.CleanUp(); }
+            catch
+            {
+                // Preserve the initialization failure when partial teardown cannot
+                // safely traverse an incomplete Vulkan device core.
+            }
+
+            throw;
+        }
     }
 }

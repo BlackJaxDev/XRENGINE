@@ -404,7 +404,7 @@ namespace XREngine.Rendering.Vulkan
                     frameOpContextId,
                     "command-chain-primary");
                 commandBuffer = variant.PrimaryCommandBuffer;
-                PrepareSubmissionMarkersForCommandBufferReuse(
+                _commandRuntime.PrepareSubmissionMarkersForCommandBufferReuse(
                     commandBuffer,
                     ops,
                     dynamicUiBatchTextOps);
@@ -628,7 +628,9 @@ namespace XREngine.Rendering.Vulkan
                             {
                                 VkRenderProgram computeProgram =
                                     request.ComputeProgram!;
+                                VulkanProgramPlannerRequest plannerRequest = VulkanProgramPlannerRequest.From(request.Context);
                                 if (!computeProgram.TryRefreshReusableComputeDispatchFrameData(
+                                        plannerRequest,
                                         imageIndex,
                                         request.ComputeSnapshot!,
                                         request.ComputeDescriptorKey))

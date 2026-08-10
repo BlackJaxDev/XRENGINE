@@ -292,7 +292,9 @@ namespace XREngine.Rendering.Vulkan
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                            "Vulkan.FrameLifecycle.TrimStaging"))
                 {
-                    ResourceRuntime.Allocations.Staging.Trim(OutputRuntime);
+                    ResourceRuntime.Allocations.Staging.Trim(
+                        ResourceRuntime.BackendObjectContext ?? throw new InvalidOperationException(
+                            "The Vulkan backend object context is not initialized."));
                 }
             }
             catch (Exception ex)

@@ -110,7 +110,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
 
         if (attachment is not XRRenderBuffer renderBuffer ||
-            ResourceRuntime.BackendObjectContext?.GetOrCreateAPIRenderObject(renderBuffer, true) is not VkRenderBuffer vkRenderBuffer)
+            ResourceRuntime.WrapperLookup.GetOrCreate(renderBuffer, true) is not VkRenderBuffer vkRenderBuffer)
         {
             info = default;
             return false;
@@ -165,8 +165,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         if (string.IsNullOrWhiteSpace(resourceName))
             resourceName = texture.GetDescribingName();
 
-        AbstractRenderAPIObject? apiObject = ResourceRuntime.BackendObjectContext?
-            .GetOrCreateAPIRenderObject(texture, true);
+        AbstractRenderAPIObject apiObject = ResourceRuntime.WrapperLookup.GetOrCreate(texture, true);
         if (apiObject is VkTextureView textureView)
         {
             textureView.RefreshDescriptorFromViewedTextureIfStale();

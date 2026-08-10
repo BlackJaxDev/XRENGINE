@@ -178,7 +178,7 @@ namespace XREngine.Rendering.Vulkan
 				heapPayload = null;
 				lock (_stateSync)
 				{
-					if (program is null || !program.Link() || BackendContext.Descriptors.FrameSlotCount <= 0 ||
+					if (program is null || !program.Link() || BackendContext.Resources.Descriptors.FrameSlotCount <= 0 ||
 						!TryEnsureState(program, out ProgramDescriptorState? state) || state is null)
 					{
 						return false;
@@ -206,7 +206,7 @@ namespace XREngine.Rendering.Vulkan
 					state.ResourceFingerprint = resourceFingerprint;
 					descriptorSet = state.DescriptorSets[resolvedFrame][VulkanDescriptorManager.MaterialSetIndex];
 					heapPayload = state.DescriptorHeapPushData[resolvedFrame];
-					return descriptorSet.Handle != 0 || BackendContext.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap;
+					return descriptorSet.Handle != 0 || BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap;
 				}
 			}
 
@@ -225,12 +225,12 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (_materialDirty ||
                     program is null ||
-                    BackendContext.Descriptors.FrameSlotCount <= 0 ||
+                    BackendContext.Resources.Descriptors.FrameSlotCount <= 0 ||
                     !_programStates.TryGetValue(program.BindingId, out ProgramDescriptorState? state) ||
                     state.Dirty ||
                     !ReferenceEquals(state.Program, program) ||
                     state.ProgramLinkGeneration != program.LinkGeneration ||
-                    state.FrameCount != BackendContext.Descriptors.FrameSlotCount ||
+                    state.FrameCount != BackendContext.Resources.Descriptors.FrameSlotCount ||
                     state.SetCount != program.DescriptorSetLayouts.Count)
                 {
                     return false;
@@ -253,7 +253,7 @@ namespace XREngine.Rendering.Vulkan
                     return false;
 
                 descriptorSet = frameSets[VulkanDescriptorManager.MaterialSetIndex];
-                return descriptorSet.Handle != 0 || BackendContext.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap;
+                return descriptorSet.Handle != 0 || BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap;
             }
         }
 
@@ -387,7 +387,7 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
-                int frameCount = BackendContext.Descriptors.FrameSlotCount;
+                int frameCount = BackendContext.Resources.Descriptors.FrameSlotCount;
                 int setCount = program.DescriptorSetLayouts.Count;
                 uint key = program.BindingId;
 
@@ -431,7 +431,7 @@ namespace XREngine.Rendering.Vulkan
         {
             state = null;
 
-            int frameCount = BackendContext.Descriptors.FrameSlotCount;
+            int frameCount = BackendContext.Resources.Descriptors.FrameSlotCount;
             if (frameCount <= 0)
                 return false;
 
@@ -511,7 +511,7 @@ namespace XREngine.Rendering.Vulkan
 
 						if (Api!.AllocateDescriptorSets(Device, ref allocInfo, &materialSet) != Result.Success)
                     {
-                        BackendContext.DescriptorLifetime.RetireDescriptorPool(descriptorPool);
+                        BackendContext.Resources.DescriptorLifetime.RetireDescriptorPool(descriptorPool);
                         WarnOnce("Failed to allocate Vulkan descriptor sets for material.");
                         return false;
 						}
@@ -519,22 +519,22 @@ namespace XREngine.Rendering.Vulkan
 					frameSets[VulkanDescriptorManager.MaterialSetIndex] = materialSet;
 
                 string materialOwner = $"Material[{Data.Name ?? "<unnamed>"}].Program[{program.Data.Name ?? "<unnamed>"}].Frame{frame}";
-                BackendContext.DescriptorLifetime.SetDebugName(materialSet, materialOwner);
-                BackendContext.DescriptorLifetime.RegisterDescriptorSet(
+                BackendContext.Resources.DescriptorLifetime.SetDebugName(materialSet, materialOwner);
+                BackendContext.Resources.DescriptorLifetime.RegisterDescriptorSet(
                     descriptorPool,
 						materialSet,
                     materialSetUsesUpdateAfterBind,
 						materialOwner,
 						VulkanDescriptorManager.MaterialSetIndex,
                     bindings);
-                BackendContext.DescriptorLifetime.RecordTableGeneration();
+                BackendContext.Resources.DescriptorLifetime.RecordTableGeneration();
                 descriptorSets[frame] = frameSets;
                 descriptorHeapPushData[frame] = VulkanDescriptorManager.CreateHeapPushDataPayload(program.DescriptorHeapLayout);
             }
 
             if (!TryCreateUniformResources(program, bindings, frameCount, out Dictionary<(uint set, uint binding), UniformBindingResource> uniformResources))
             {
-                BackendContext.DescriptorLifetime.RetireDescriptorPool(descriptorPool);
+                BackendContext.Resources.DescriptorLifetime.RetireDescriptorPool(descriptorPool);
                 return false;
             }
 
@@ -668,10 +668,10 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (retireDescriptorPool)
                 {
-                    BackendContext.DescriptorLifetime.RetireDescriptorPool(state.DescriptorPool);
+                    BackendContext.Resources.DescriptorLifetime.RetireDescriptorPool(state.DescriptorPool);
                 }
                 else
-                    BackendContext.DescriptorLifetime.RetireDescriptorPool(state.DescriptorPool);
+                    BackendContext.Resources.DescriptorLifetime.RetireDescriptorPool(state.DescriptorPool);
             }
         }
 
@@ -756,7 +756,7 @@ namespace XREngine.Rendering.Vulkan
             // Descriptor publication for this state owns only the material set.
             // Hashing every texture attached to the program made frame/pass image
             // bindings invalidate an otherwise unchanged material descriptor set.
-            hash.Add(RuntimeHelpers.GetHashCode(BackendContext.Lifetime));
+            hash.Add(RuntimeHelpers.GetHashCode(BackendContext.Resources.Lifetime.Tracker));
             hash.Add(state.ProgramLinkGeneration);
             hash.Add(state.Bindings.Length);
 
@@ -836,7 +836,7 @@ namespace XREngine.Rendering.Vulkan
             if (!TryResolveBoundTexture(program, binding, arrayIndex, out XRTexture? texture) ||
                 texture is null)
             {
-                imageInfo = BackendContext.FallbackTexture.GetImageInfo(
+                imageInfo = BackendContext.Resources.FallbackTexture.GetImageInfo(
                     binding.DescriptorType,
                     binding.ExpectedImageViewType);
             }
@@ -990,12 +990,12 @@ namespace XREngine.Rendering.Vulkan
 
                     if (writeSpan.Length > 0)
                     {
-                        if (BackendContext.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
+                        if (BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
                         {
                             DescriptorHeapPushDataPayload payload = state.DescriptorHeapPushData[frameIndex];
                             foreach ((_, int bufferIndex, DescriptorBindingInfo binding, uint descriptorCount) in bufferMap)
                             {
-                                if (!BackendContext.DescriptorLifetime.TryWriteDescriptorHeapBinding(state.Program, binding, payload, bufferPtr + bufferIndex, null, null, descriptorCount, out string heapReason))
+                                if (!BackendContext.Resources.DescriptorLifetime.TryWriteDescriptorHeapBinding(state.Program, binding, payload, bufferPtr + bufferIndex, null, null, descriptorCount, out string heapReason))
                                 {
                                     RecordDescriptorFailure(binding, $"descriptor heap buffer write failed: {heapReason}");
                                     return false;
@@ -1004,7 +1004,7 @@ namespace XREngine.Rendering.Vulkan
 
                             foreach ((_, int imageIndex, DescriptorBindingInfo binding, uint descriptorCount) in imageMap)
                             {
-                                if (!BackendContext.DescriptorLifetime.TryWriteDescriptorHeapBinding(state.Program, binding, payload, null, imagePtr + imageIndex, null, descriptorCount, out string heapReason))
+                                if (!BackendContext.Resources.DescriptorLifetime.TryWriteDescriptorHeapBinding(state.Program, binding, payload, null, imagePtr + imageIndex, null, descriptorCount, out string heapReason))
                                 {
                                     RecordDescriptorFailure(binding, $"descriptor heap image write failed: {heapReason}");
                                     return false;
@@ -1013,7 +1013,7 @@ namespace XREngine.Rendering.Vulkan
 
                             foreach ((_, int texelIndex, DescriptorBindingInfo binding, uint descriptorCount) in texelMap)
                             {
-                                if (!BackendContext.DescriptorLifetime.TryWriteDescriptorHeapBinding(state.Program, binding, payload, null, null, texelPtr + texelIndex, descriptorCount, out string heapReason))
+                                if (!BackendContext.Resources.DescriptorLifetime.TryWriteDescriptorHeapBinding(state.Program, binding, payload, null, null, texelPtr + texelIndex, descriptorCount, out string heapReason))
                                 {
                                     RecordDescriptorFailure(binding, $"descriptor heap texel write failed: {heapReason}");
                                     return false;
@@ -1022,7 +1022,7 @@ namespace XREngine.Rendering.Vulkan
                         }
 
                         if (!TryUpdateDescriptorSetsWithTemplates(state, frameIndex, writeSpan, scratch.TemplateWrites) &&
-                            !BackendContext.DescriptorLifetime.TryUpdateDescriptorSets(
+                            !BackendContext.Resources.DescriptorLifetime.TryUpdateDescriptorSets(
                                 (uint)writeSpan.Length,
                                 writePtr,
                                 out string descriptorUpdateFailure))
@@ -1046,7 +1046,7 @@ namespace XREngine.Rendering.Vulkan
                                 descriptorUpdateFailure);
                             return false;
                         }
-                        BackendContext.DescriptorLifetime.RecordTableGeneration();
+                        BackendContext.Resources.DescriptorLifetime.RecordTableGeneration();
                     }
                 }
 
@@ -1083,7 +1083,7 @@ namespace XREngine.Rendering.Vulkan
                 if (setWrites.Count == 0)
                     continue;
 
-                if (!BackendContext.DescriptorLifetime.TryUpdateDescriptorSetWithTemplate(
+                if (!BackendContext.Resources.DescriptorLifetime.TryUpdateDescriptorSetWithTemplate(
                     frameSets[setIndex],
                     state.Program.DescriptorSetLayouts[setIndex],
                     PipelineBindPoint.Graphics,
@@ -1164,15 +1164,15 @@ namespace XREngine.Rendering.Vulkan
 
                 for (int frame = 0; frame < frameCount; frame++)
                 {
-                    (buffers[frame], memories[frame]) = BackendContext.Buffers.Create(
+                    (buffers[frame], memories[frame]) = BackendContext.Resources.Buffers.Create(
 						BackendContext,
                         bufferSize,
-                        BackendContext.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap
+                        BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap
                             ? BufferUsageFlags.UniformBufferBit | BufferUsageFlags.ShaderDeviceAddressBit
                             : BufferUsageFlags.UniformBufferBit,
                         MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
                         default,
-                        BackendContext.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap,
+                        BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap,
                         "Material.UniformBuffer");
                 }
 
@@ -1217,7 +1217,7 @@ namespace XREngine.Rendering.Vulkan
 
                 Silk.NET.Vulkan.Buffer buffer = resource.Buffers[frameIndex];
                 void* mapped;
-                if (!BackendContext.Buffers.TryMap(BackendContext, buffer, memory, 0, resource.Size, out mapped))
+                if (!BackendContext.Resources.Buffers.TryMap(BackendContext, buffer, memory, 0, resource.Size, out mapped))
                     return false;
 
                 try
@@ -1237,7 +1237,7 @@ namespace XREngine.Rendering.Vulkan
                 }
                 finally
                 {
-                    BackendContext.Buffers.Unmap(BackendContext, buffer, memory);
+                    BackendContext.Resources.Buffers.Unmap(BackendContext, buffer, memory);
                 }
             }
 
@@ -1254,7 +1254,7 @@ namespace XREngine.Rendering.Vulkan
             foreach (UniformBindingResource resource in resources.Values)
             {
                 for (int i = 0; i < resource.Buffers.Length; i++)
-                    BackendContext.Buffers.Destroy(BackendContext, resource.Buffers[i], resource.Memories[i], "Material.UniformBuffer");
+                    BackendContext.Resources.Buffers.Destroy(BackendContext, resource.Buffers[i], resource.Memories[i], "Material.UniformBuffer");
             }
         }
 
@@ -1278,7 +1278,7 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
-                imageInfo = BackendContext.FallbackTexture.GetImageInfo(descriptorType, binding.ExpectedImageViewType);
+                imageInfo = BackendContext.Resources.FallbackTexture.GetImageInfo(descriptorType, binding.ExpectedImageViewType);
                 if (imageInfo.ImageView.Handle != 0)
                 {
                     RecordDescriptorFallback(binding);
@@ -1361,8 +1361,8 @@ namespace XREngine.Rendering.Vulkan
 
             bool includeSampler = descriptorType is DescriptorType.CombinedImageSampler or DescriptorType.Sampler;
 
-            bool allowSynchronousTextureUpload = BackendContext.AllowSynchronousResourceUploads;
-            if (BackendContext.GetOrCreateAPIRenderObject(texture, generateNow: allowSynchronousTextureUpload) is not IVkImageDescriptorSource source)
+            bool allowSynchronousTextureUpload = BackendContext.Resources.AllowSynchronousResourceUploads;
+            if (WrapperLookup.GetOrCreate(texture, generateNow: allowSynchronousTextureUpload) is not IVkImageDescriptorSource source)
             {
                 WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' does not have a Vulkan image wrapper.");
                 return false;
@@ -1376,7 +1376,7 @@ namespace XREngine.Rendering.Vulkan
                 if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
                     return false;
 
-                imageInfo = BackendContext.FallbackTexture.GetImageInfo(descriptorType, binding.ExpectedImageViewType);
+                imageInfo = BackendContext.Resources.FallbackTexture.GetImageInfo(descriptorType, binding.ExpectedImageViewType);
                 if (imageInfo.ImageView.Handle != 0)
                 {
                     WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' is not ready for Vulkan descriptor use on binding '{binding.Name}'. Using placeholder.");
@@ -1411,12 +1411,12 @@ namespace XREngine.Rendering.Vulkan
                 string aspectLabel = stencilOnly ? "stencil-only" : "depth-only";
                 if (aspectView.Handle != 0)
                 {
-                    if (!BackendContext.Images.IsLiveBackedByLiveImage(aspectView))
+                    if (!BackendContext.Resources.Images.IsLiveBackedByLiveImage(aspectView))
                     {
                         if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
                             return false;
 
-                        imageInfo = BackendContext.FallbackTexture.GetImageInfo(descriptorType, binding.ExpectedImageViewType);
+                        imageInfo = BackendContext.Resources.FallbackTexture.GetImageInfo(descriptorType, binding.ExpectedImageViewType);
                         if (imageInfo.ImageView.Handle != 0)
                         {
                             WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' references a retired Vulkan {aspectLabel} image view for binding '{binding.Name}'. Using placeholder.");
@@ -1450,7 +1450,7 @@ namespace XREngine.Rendering.Vulkan
                 if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
                     return false;
 
-                imageInfo = BackendContext.FallbackTexture.GetImageInfo(descriptorType, binding.ExpectedImageViewType);
+                imageInfo = BackendContext.Resources.FallbackTexture.GetImageInfo(descriptorType, binding.ExpectedImageViewType);
                 if (imageInfo.ImageView.Handle != 0)
                 {
                     WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' cannot provide expected view type '{binding.ExpectedImageViewType}' for binding '{binding.Name}'. Using placeholder.");
@@ -1462,12 +1462,12 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            if (!BackendContext.Images.IsLiveBackedByLiveImage(descriptorView))
+            if (!BackendContext.Resources.Images.IsLiveBackedByLiveImage(descriptorView))
             {
                 if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
                     return false;
 
-                imageInfo = BackendContext.FallbackTexture.GetImageInfo(descriptorType, binding.ExpectedImageViewType);
+                imageInfo = BackendContext.Resources.FallbackTexture.GetImageInfo(descriptorType, binding.ExpectedImageViewType);
                 if (imageInfo.ImageView.Handle != 0)
                 {
                     WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' references a retired Vulkan image view for binding '{binding.Name}'. Using placeholder.");
@@ -1498,7 +1498,7 @@ namespace XREngine.Rendering.Vulkan
                 return true;
 
             sampler = source.DescriptorSampler;
-            if (sampler.Handle != 0 && BackendContext.Descriptors.IsLiveSampler(sampler))
+            if (sampler.Handle != 0 && BackendContext.Resources.Descriptors.IsLiveSampler(sampler))
                 return true;
 
             if (sampler.Handle != 0)
@@ -1513,8 +1513,8 @@ namespace XREngine.Rendering.Vulkan
             if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
                 return false;
 
-            sampler = BackendContext.FallbackTexture.GetSampler();
-            if (sampler.Handle != 0 && BackendContext.Descriptors.IsLiveSampler(sampler))
+            sampler = BackendContext.Resources.FallbackTexture.GetSampler();
+            if (sampler.Handle != 0 && BackendContext.Resources.Descriptors.IsLiveSampler(sampler))
             {
                 WarnOnce($"Material texture for binding '{binding.Name}' has no Vulkan sampler. Using placeholder sampler.");
                 RecordDescriptorFallback(binding);
@@ -1583,7 +1583,7 @@ namespace XREngine.Rendering.Vulkan
         {
             texelView = default;
 
-            if (BackendContext.GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkTexelBufferDescriptorSource source)
+            if (WrapperLookup.GetOrCreate(texture, generateNow: true) is not IVkTexelBufferDescriptorSource source)
             {
                 WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' does not have a Vulkan texel-buffer wrapper.");
                 return false;

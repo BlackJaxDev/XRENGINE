@@ -15,7 +15,7 @@ internal sealed record MeshTaskDispatchIndirectCountOp(
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount;
 
     internal override int RecordPrimary(
-        VulkanCommandRuntime renderer,
+        VulkanCommandRuntime commandRuntime,
         scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
@@ -25,21 +25,21 @@ internal sealed record MeshTaskDispatchIndirectCountOp(
         if (recordingInfo.BeginsRendering &&
             !recordingState.RenderScope.MatchesTarget(null))
         {
-            renderer.EndActiveRenderPass(ref recordingState);
-            renderer.BeginRenderPassForTarget(
+            commandRuntime.EndActiveRenderPass(ref recordingState);
+            commandRuntime.BeginRenderPassForTarget(
                 ref recordingState,
                 null,
                 recordingInfo.PassIndex,
                 recordingState.ActiveContext);
         }
 
-        renderer.CmdBeginLabel(
+        commandRuntime.CmdBeginLabel(
             recordingState.CommandBuffer,
             "MeshTaskDispatchIndirectCount");
-        renderer.RecordMeshTaskDispatchIndirectCountOp(
+        commandRuntime.RecordMeshTaskDispatchIndirectCountOp(
             recordingState.CommandBuffer,
             this);
-        renderer.CmdEndLabel(recordingState.CommandBuffer);
+        commandRuntime.CmdEndLabel(recordingState.CommandBuffer);
         recordingState.ActualSwapchainWriteCount++;
         return recordingInfo.OperationIndex;
     }

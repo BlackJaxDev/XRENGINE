@@ -1,7 +1,7 @@
 # Vulkan Core Phase 4 Implementation
 
 Date: 2026-08-06  
-Status: Phase 4.0 complete; Phase 4.1+ active
+Status: Phase 4.0 and Phase 4.1 complete; Phase 4.2+ active
 Owner: Rendering
 
 ## Objective
@@ -378,46 +378,44 @@ therefore still open.
   owners. This prevents a renamed inheritance shell from satisfying the facade
   gate.
 
-## Unresolved Completion Work
+## Phase 4.1 Completion
 
-The Phase 4.1 parent facade and final dependency-inventory boxes remain open.
-The old `VulkanRendererRuntime` inheritance shell has been deleted and the
-production identity is again `VulkanRenderer`. Reflection now proves that the
-renderer has exactly seven readonly instance fields: device, output, frame
-loop, planner, resource, command, and telemetry. The prior lexical field count
-included fields on nested contracts and is not a valid state-ownership measure.
+Phase 4.1 closed on 2026-08-10. The production identity is one non-partial,
+442-line `VulkanRenderer` facade. It owns exactly seven readonly authority-root
+fields: device, output, frame loop, planner, resource, command, and telemetry.
+All 207 former renderer partial declarations and their implementation behavior
+were rehomed behind those authorities or focused typed ports.
 
-The behavior extraction is not complete. The declaring-type-aware structural
-inventory currently finds 207 `VulkanRenderer` partial declarations, 3,063
-declared renderer methods, 99 files with facade callbacks, and six authority
-declaration files which still name `VulkanRenderer`. The desktop coordinator and
-`IVulkanDesktopFramePhaseService` were deleted, but `VulkanFrameLoop.Render`
-still invokes renderer phase methods. Target-driver lifecycle parameters now use
-typed surface/output adapters and headless/presentationless drivers contain no
-direct renderer reference, but the output context still forwards native work to
-the renderer. Command worker dispatch no longer uses
-`IVulkanCommandChainWorkerExecutor` or `Executor = this`, but its recording
-procedure is still a bound renderer delegate. `VkObjectBase` and both legacy
-allocators are renderer-type-free; eleven wrapper families still use the
-transitional renderer accessor.
+The final cut also removed type-keyed and opaque planner/command state,
+renderer-nested planner contracts, renderer-backed wrapper construction, and
+facade callback/backlink paths. Deferred mesh requests now freeze their pass,
+pipeline, frame context, producer target/raster state, and typed deferred
+binding publication before the frame loop consumes them. This restored render
+graph target attribution and preserved light-combine bindings after the
+producer scope ended. Resource generation is command-scoped during publication,
+image-backed textures can adopt a newly planned physical group, cold shader
+creation crosses the resource authority, and final presentation descriptor and
+readback publication use explicit typed ports.
 
-`Tools/Reports/Get-VulkanCoreArchitectureInventory.ps1` now classifies authority
-owners by declarations instead of co-mentions, publishes the approved edge set,
-reports edge violations separately, and lists authority files with renderer
-backlinks. The current declared-authority graph has zero unapproved authority
-edges, but the backlink list is nonempty, so the final dependency proof remains
-open.
+The declaring-type-aware inventory archived at
+`Build/_AgentValidation/20260809-phase41-facade-close/reports/architecture-inventory-final.json`
+reports one non-partial renderer declaration, zero partial declarations, seven
+authority-root fields, zero unapproved authority dependency edges, zero
+renderer backlinks, zero facade callbacks, zero ambient renderer lookups, and
+zero thread-static or ambient-thread-state escape hatches. The conservative
+retained-type graph separately reports 22 multi-authority types and 28 broad
+advisory flags; those are candidates for later hardening and are not substituted
+for the exact Phase 4.1 dependency gates.
 
-Warning-as-error builds pass for the Vulkan project and editor. The first named
-Vulkan-only run exposed a staged-bootstrap regression in
-`VulkanBackendObjectContext`: wrappers created by the base renderer constructor
-had cached the context before the device authority existed. The context now
-supports a publish-once device handoff, and the repeated
-`phase41-authority-final` session had no `NullReferenceException`, VUID,
-device-loss, fatal, or unhandled fault. MCP frame-output telemetry reported the
-desktop scene and present outputs rendered, lifecycle authority ID 1, validation
-message/error counts of zero, and zero pending retired resources. No OpenGL log
-was produced. A live OpenXR runtime was not available for this cut.
+Warning-as-error builds passed with zero warnings and zero errors. Named isolated
+Vulkan session `phase41-final-20260810` committed generation 1 with 51 textures
+and 59 framebuffers. Two visually inspected screenshots at different camera
+positions showed camera-dependent Sponza geometry and cyan debug overlays;
+readback used alternating slots 0 and 1 with `R16G16B16A16Sfloat`. Steady-state
+Vulkan/rendering logs contained no VUID, validation error, exception, device
+loss, or frame failure. A single bounded startup rejection occurred while the
+render pipeline warmed and did not recur. No tests were added or run because
+live feature validation precedes test work under the repository policy.
 
 ### 4.1.1-4.1.4 Facade-Spine Completion Investigation
 

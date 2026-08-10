@@ -117,13 +117,14 @@ internal sealed class VulkanResourceAllocator
         => _logicalBufferAllocations.TryGetValue(resourceName, out allocation);
 
     public void RebuildPhysicalPlan(
-        VulkanRenderer renderer,
+        VulkanBackendObjectContext backendContext,
+        bool supportsTransformFeedback,
         IReadOnlyCollection<RenderPassMetadata>? passMetadata,
         VulkanResourcePlanner planner,
         VulkanResourceExtentContext extentContext)
     {
-        DestroyPhysicalImages(renderer);
-        DestroyPhysicalBuffers(renderer);
+        DestroyPhysicalImages(backendContext);
+        DestroyPhysicalBuffers(backendContext);
 
         _physicalGroups.Clear();
         _resourceToPhysicalGroup.Clear();
@@ -167,7 +168,7 @@ internal sealed class VulkanResourceAllocator
 
         foreach (VulkanBufferAliasGroup group in _bufferAliasGroups.Values)
         {
-            BufferUsageFlags usage = InferBufferUsage(group, renderer.SupportsTransformFeedback);
+            BufferUsageFlags usage = InferBufferUsage(group, supportsTransformFeedback);
             VulkanPhysicalBufferGroup physicalGroup = new(group, usage);
 
             foreach (VulkanBufferAllocation allocation in group.Allocations)
@@ -186,10 +187,16 @@ internal sealed class VulkanResourceAllocator
     }
 
     public void RebuildPhysicalPlan(
-        VulkanRenderer renderer,
+        VulkanBackendObjectContext backendContext,
+        bool supportsTransformFeedback,
         IReadOnlyCollection<RenderPassMetadata>? passMetadata,
         VulkanResourcePlanner planner)
-        => RebuildPhysicalPlan(renderer, passMetadata, planner, new VulkanResourceExtentContext(1u, 1u, 1u, 1u));
+        => RebuildPhysicalPlan(
+            backendContext,
+            supportsTransformFeedback,
+            passMetadata,
+            planner,
+            new VulkanResourceExtentContext(1u, 1u, 1u, 1u));
 
     public int ReuseCompatiblePhysicalImagesFrom(
         VulkanResourceAllocator previousAllocator,
@@ -299,11 +306,11 @@ internal sealed class VulkanResourceAllocator
         return false;
     }
 
-    public bool TryEnsureImage(string resourceName, VulkanRenderer renderer, out Image image)
+    public bool TryEnsureImage(string resourceName, VulkanBackendObjectContext backendContext, out Image image)
     {
         if (TryGetPhysicalGroupForResource(resourceName, out VulkanPhysicalImageGroup? group))
         {
-            if (group is null || !group.TryEnsureAllocated(renderer, out _))
+            if (group is null || !group.TryEnsureAllocated(backendContext, out _))
             {
                 image = default;
                 return false;
@@ -317,11 +324,11 @@ internal sealed class VulkanResourceAllocator
         return false;
     }
 
-    public bool TryEnsureBuffer(string resourceName, VulkanRenderer renderer, out Buffer buffer, out ulong size)
+    public bool TryEnsureBuffer(string resourceName, VulkanBackendObjectContext backendContext, out Buffer buffer, out ulong size)
     {
         if (TryGetPhysicalBufferGroupForResource(resourceName, out VulkanPhysicalBufferGroup? group))
         {
-            group?.EnsureAllocated(renderer);
+            group?.EnsureAllocated(backendContext);
             buffer = group?.Buffer ?? default;
             size = group?.SizeInBytes ?? 0;
             return buffer.Handle != 0;
@@ -332,19 +339,19 @@ internal sealed class VulkanResourceAllocator
         return false;
     }
 
-    public void AllocatePhysicalImages(VulkanRenderer renderer)
+    public void AllocatePhysicalImages(VulkanBackendObjectContext backendContext)
     {
         foreach (VulkanPhysicalImageGroup group in _physicalGroups.Values)
-            group.EnsureAllocated(renderer);
+            group.EnsureAllocated(backendContext);
     }
 
-    public bool TryAllocatePhysicalImages(VulkanRenderer renderer, out string failureReason)
+    public bool TryAllocatePhysicalImages(VulkanBackendObjectContext backendContext, out string failureReason)
     {
         failureReason = string.Empty;
 
         foreach (VulkanPhysicalImageGroup group in _physicalGroups.Values)
         {
-            if (group.TryEnsureAllocated(renderer, out failureReason))
+            if (group.TryEnsureAllocated(backendContext, out failureReason))
                 continue;
 
             failureReason = $"{failureReason}; failedGroup={DescribePhysicalGroupShort(group)} extent={group.ResolvedExtent.Width}x{group.ResolvedExtent.Height}x{group.ResolvedExtent.Depth} format={group.Format} usage={group.Usage} mips={group.MipLevels} samples={group.Samples}";
@@ -354,14 +361,14 @@ internal sealed class VulkanResourceAllocator
         return true;
     }
 
-    public void AllocatePhysicalBuffers(VulkanRenderer renderer)
+    public void AllocatePhysicalBuffers(VulkanBackendObjectContext backendContext)
     {
         foreach (VulkanPhysicalBufferGroup group in _physicalBufferGroups.Values)
-            group.EnsureAllocated(renderer);
+            group.EnsureAllocated(backendContext);
     }
 
     public void DestroyPhysicalImages(
-        VulkanRenderer renderer,
+        VulkanBackendObjectContext backendContext,
         VulkanPhysicalImageGroup? exceptGroup = null,
         IReadOnlySet<VulkanPhysicalImageGroup>? exceptGroups = null)
     {
@@ -373,12 +380,12 @@ internal sealed class VulkanResourceAllocator
                 continue;
             }
 
-            group.Destroy(renderer);
+            group.Destroy(backendContext);
         }
     }
 
     public void DestroyPhysicalImagesImmediate(
-        VulkanRenderer renderer,
+        VulkanBackendObjectContext backendContext,
         IReadOnlySet<VulkanPhysicalImageGroup>? exceptGroups = null)
     {
         foreach (VulkanPhysicalImageGroup group in _physicalGroups.Values)
@@ -386,24 +393,24 @@ internal sealed class VulkanResourceAllocator
             if (exceptGroups?.Contains(group) == true)
                 continue;
 
-            group.DestroyImmediate(renderer);
+            group.DestroyImmediate(backendContext);
         }
     }
 
-    public void DestroyPhysicalBuffers(VulkanRenderer renderer)
+    public void DestroyPhysicalBuffers(VulkanBackendObjectContext backendContext)
     {
         foreach (VulkanPhysicalBufferGroup group in _physicalBufferGroups.Values)
-            group.Destroy(renderer);
+            group.Destroy(backendContext);
     }
 
-    public void DestroyPhysicalBuffersImmediate(VulkanRenderer renderer)
+    public void DestroyPhysicalBuffersImmediate(VulkanBackendObjectContext backendContext)
     {
         foreach (VulkanPhysicalBufferGroup group in _physicalBufferGroups.Values)
-            group.DestroyImmediate(renderer);
+            group.DestroyImmediate(backendContext);
     }
 
     public bool TryRetirePhysicalResources(
-        VulkanRenderer renderer,
+        VulkanBackendObjectContext backendContext,
         VulkanPhysicalImageGroup? exceptImageGroup = null,
         IReadOnlySet<VulkanPhysicalImageGroup>? exceptImageGroups = null,
         bool immediate = false)
@@ -413,13 +420,13 @@ internal sealed class VulkanResourceAllocator
 
         if (immediate)
         {
-            DestroyPhysicalImagesImmediate(renderer, exceptImageGroups);
-            DestroyPhysicalBuffersImmediate(renderer);
+            DestroyPhysicalImagesImmediate(backendContext, exceptImageGroups);
+            DestroyPhysicalBuffersImmediate(backendContext);
         }
         else
         {
-            DestroyPhysicalImages(renderer, exceptImageGroup, exceptImageGroups);
-            DestroyPhysicalBuffers(renderer);
+            DestroyPhysicalImages(backendContext, exceptImageGroup, exceptImageGroups);
+            DestroyPhysicalBuffers(backendContext);
         }
 
         return true;

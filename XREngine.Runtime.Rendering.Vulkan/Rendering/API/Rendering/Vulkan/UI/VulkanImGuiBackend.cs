@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Vulkan;
 
 internal unsafe sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDisposable
 {
-    private readonly VulkanImGuiServices _services;
+    private readonly IVulkanImGuiOutputHost _outputHost;
     private readonly VulkanImGuiInputRouter _input;
     private readonly VulkanImGuiMultiViewportController? _viewports;
     private readonly IntPtr _context;
@@ -16,10 +16,10 @@ internal unsafe sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDispos
 
     public IntPtr ContextHandle => _context;
 
-    public VulkanImGuiBackend(VulkanImGuiServices services)
+    public VulkanImGuiBackend(IVulkanImGuiOutputHost outputHost, XRWindow windowHost)
     {
-        _services = services;
-        _input = new VulkanImGuiInputRouter(services.WindowHost);
+        _outputHost = outputHost;
+        _input = new VulkanImGuiInputRouter(windowHost);
         _context = ImGui.CreateContext();
         ImGuiContextTracker.Register(_context);
         MakeCurrent();
@@ -48,7 +48,7 @@ internal unsafe sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDispos
 
         VulkanImGuiClipboard.InstallCallbacks();
         _input.TryAttachInputHandlers();
-        _viewports = VulkanImGuiMultiViewportController.TryCreate(services, _context);
+        _viewports = VulkanImGuiMultiViewportController.TryCreate(outputHost, _context);
         _viewports?.Install();
     }
 
@@ -110,7 +110,7 @@ internal unsafe sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDispos
                 drawData.FramebufferScale.Y);
         }
 
-        _services.Output.StoreImGuiDrawData(drawData);
+        _outputHost.StoreDrawData(drawData);
     }
 
     public void RenderPlatformWindows()

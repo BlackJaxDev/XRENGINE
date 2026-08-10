@@ -295,7 +295,7 @@ internal unsafe partial class VkMeshRenderer
 	{
 		if (preparedProgram.LinkGeneration != preparedProgramLinkGeneration)
 		{
-			BackendContext.ProgramServices.CommandRuntime.MarkCommandBuffersDirtyForLegacyMeshState();
+			CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
 			return false;
 		}
 
@@ -331,7 +331,7 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		if (_program.LinkGeneration != preparedProgramLinkGeneration)
 		{
-			BackendContext.ProgramServices.CommandRuntime.MarkCommandBuffersDirtyForLegacyMeshState();
+			CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
 			return false;
 		}
 

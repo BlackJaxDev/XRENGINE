@@ -7,6 +7,70 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed partial class VulkanCommandRuntime
 {
     /// <summary>
+    /// Publishes ownership returned by OpenXR for an acquired runtime image.
+    /// The command authority owns this ledger; callers retain only the image and
+    /// frozen subresource range needed for the transition.
+    /// </summary>
+    internal void PublishOpenXrExternalImageAcquireState(
+        Image image,
+        in ImageSubresourceRange range)
+    {
+        if (image.Handle == 0)
+            throw new InvalidOperationException("An OpenXR acquire cannot publish a null Vulkan image.");
+
+        ulong generation = ResourceRuntime.GetPublishedGeneration(ObjectType.Image, image.Handle);
+        lock (Synchronization._vulkanImageLayoutLock)
+        {
+            Synchronization._externalImageOwnershipByHandle[image.Handle] =
+                (generation, EVulkanExternalImageOwnership.OpenXrRuntimeAcquired);
+            uint levels = Math.Max(range.LevelCount, 1u);
+            uint layers = Math.Max(range.LayerCount, 1u);
+            for (uint levelOffset = 0; levelOffset < levels; levelOffset++)
+            for (uint layerOffset = 0; layerOffset < layers; layerOffset++)
+            {
+                UpdateExternalImageOwnershipNoLock(
+                    image.Handle, in range, levelOffset, layerOffset, ImageAspectFlags.ColorBit);
+                UpdateExternalImageOwnershipNoLock(
+                    image.Handle, in range, levelOffset, layerOffset, ImageAspectFlags.DepthBit);
+                UpdateExternalImageOwnershipNoLock(
+                    image.Handle, in range, levelOffset, layerOffset, ImageAspectFlags.StencilBit);
+            }
+        }
+    }
+
+    private void UpdateExternalImageOwnershipNoLock(
+        ulong imageHandle,
+        in ImageSubresourceRange range,
+        uint levelOffset,
+        uint layerOffset,
+        ImageAspectFlags aspect)
+    {
+        if ((range.AspectMask & aspect) == 0)
+            return;
+
+        VulkanTrackedImageSubresource key = new(
+            imageHandle,
+            range.BaseMipLevel + levelOffset,
+            range.BaseArrayLayer + layerOffset,
+            aspect);
+        if (!Synchronization._trackedImageSubresourceStates.TryGetValue(
+                key,
+                out VulkanImageSubresourceState? state))
+        {
+            return;
+        }
+
+        state.Submitted = state.Submitted with
+        {
+            ExternalOwnership = EVulkanExternalImageOwnership.OpenXrRuntimeAcquired,
+        };
+        state.Completed = state.Completed with
+        {
+            ExternalOwnership = EVulkanExternalImageOwnership.OpenXrRuntimeAcquired,
+        };
+    }
+
+    /// <summary>
     /// Publishes the Vulkan-defined initial state for every subresource of a newly
     /// created engine-owned image. This closes the gap between native image creation
     /// and the first recorded transition so persistent command buffers can capture a
@@ -106,7 +170,7 @@ internal sealed partial class VulkanCommandRuntime
         VulkanFrameTelemetry telemetry,
         out string failureReason)
     {
-        if (!resources.TryPublishCommandBufferTrackingBatch(this, commandBuffer, batch, out failureReason))
+        if (!resources.TryPublishCommandBufferTrackingBatch(commandBuffer, batch, out failureReason))
             return false;
 
         bool layoutLockContended = FlushImageAccessBatch(commandBuffer, batch, telemetry);

@@ -29,17 +29,17 @@ internal sealed record DlssFrameGenerationOp(
     protected override string CommandLabel => "DLSS.FrameGenerationInputs";
 
     protected override void RecordStreamlineCommand(
-        VulkanCommandRuntime renderer,
+        VulkanCommandRuntime commandRuntime,
         CommandBuffer commandBuffer,
         uint imageIndex)
     {
         VulkanStreamlineImage depth =
-            TransitionImageToGeneral(renderer, commandBuffer, Depth);
+            TransitionImageToGeneral(commandRuntime, commandBuffer, Depth);
         VulkanStreamlineImage motion =
-            TransitionImageToGeneral(renderer, commandBuffer, Motion);
+            TransitionImageToGeneral(commandRuntime, commandBuffer, Motion);
         VulkanStreamlineImage hudlessColor =
-            TransitionImageToGeneral(renderer, commandBuffer, HudlessColor);
-        if (!renderer.TryPrepareStreamlineUiImage(
+            TransitionImageToGeneral(commandRuntime, commandBuffer, HudlessColor);
+        if (!commandRuntime.TryPrepareStreamlineUiImage(
                 commandBuffer,
                 UiColorAndAlpha,
                 out VulkanStreamlineImage uiColorAndAlpha))

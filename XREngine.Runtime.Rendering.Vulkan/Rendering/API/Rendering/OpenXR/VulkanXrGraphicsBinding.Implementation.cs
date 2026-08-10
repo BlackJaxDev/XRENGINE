@@ -131,7 +131,8 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
             vulkan2LoadError = ex.Message;
         }
 
-        bool useEnable2Binding = renderer.UsesOpenXrVulkanEnable2Creation;
+        bool useEnable2Binding = renderer.DeviceContext.InstanceCreatedThroughOpenXr &&
+            renderer.DeviceContext.CreatedThroughOpenXr;
         if (useEnable2Binding && vulkan2Extension is null)
             throw new Exception($"Vulkan renderer was created through XR_KHR_vulkan_enable2, but the OpenXR session instance could not load it: {vulkan2LoadError}");
 
@@ -210,7 +211,7 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
             {
                 Type = StructureType.GraphicsBindingVulkanKhr,
                 Instance = new(renderer.Instance.Handle),
-                PhysicalDevice = new(renderer.PhysicalDevice.Handle),
+                PhysicalDevice = new(renderer.DeviceContext.PhysicalDevice.Handle),
                 Device = new(renderer.Device.Handle),
                 QueueFamilyIndex = graphicsFamilyIndex,
                 QueueIndex = 0 // Main queue for session
@@ -230,7 +231,7 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
             string bindingExtension = useEnable2Binding ? "XR_KHR_vulkan_enable2" : "XR_KHR_vulkan_enable";
             string message = $"Failed to create Vulkan OpenXR session: {result}. " +
                 $"BindingExtension={bindingExtension}, XrSystemId={_systemId}, " +
-                $"VkInstance={renderer.Instance.Handle}, VkPhysicalDevice={renderer.PhysicalDevice.Handle}, VkDevice={renderer.Device.Handle}, " +
+                $"VkInstance={renderer.Instance.Handle}, VkPhysicalDevice={renderer.DeviceContext.PhysicalDevice.Handle}, VkDevice={renderer.Device.Handle}, " +
                 $"QueueFamilyIndex={graphicsFamilyIndex}, QueueIndex=0, " +
                 $"RuntimeMinVulkan={requirements.MinApiVersionSupported}, RuntimeMaxVulkan={requirements.MaxApiVersionSupported}.";
 
@@ -283,11 +284,11 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
         if (requestedDevice.Handle == 0)
             throw new Exception("OpenXR runtime returned a zero Vulkan physical-device handle before session creation.");
 
-        if ((nint)requestedDevice.Handle != (nint)renderer.PhysicalDevice.Handle)
+        if ((nint)requestedDevice.Handle != (nint)renderer.DeviceContext.PhysicalDevice.Handle)
         {
             throw new Exception(
                 "OpenXR runtime-selected Vulkan physical device does not match the renderer device. " +
-                $"Runtime=0x{(nuint)requestedDevice.Handle:X}, Renderer=0x{(nuint)renderer.PhysicalDevice.Handle:X}.");
+                $"Runtime=0x{(nuint)requestedDevice.Handle:X}, Renderer=0x{(nuint)renderer.DeviceContext.PhysicalDevice.Handle:X}.");
         }
 
         Debug.Vulkan(
@@ -784,7 +785,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                     : new ColorF4(0f, 1f, 0f, 1f);
 
             VkImage debugImage = new(images[imageIndex].Image);
-            bool debugCleared = renderer.TryClearOpenXrSwapchainImage(
+            bool debugCleared = renderer.OpenXrFrameLoop.TryClearOpenXrSwapchainImage(
                 debugImage,
                 new VkExtent2D(width, height),
                 clearColor);
@@ -818,7 +819,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         if (selectedFormat == 0)
             return LogVulkanEyeRenderNotReady(viewIndex, imageIndex, "no selected Vulkan swapchain format");
 
-        using (renderer.EnterOpenXrRenderOperation())
+        using (new VulkanOpenXrRenderOperation(renderer))
         {
 
             ApplyOpenXrEyePoseForRenderThread(viewIndex);
@@ -857,7 +858,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
             if (mirrorFbo is null || mirrorColor is null)
                 return LogVulkanEyeRenderNotReady(viewIndex, imageIndex, "no Vulkan mirror FBO");
 
-            bool mirrorRendered = renderer.TryRenderOpenXrEyeMirrorFrameBuffer(
+            bool mirrorRendered = renderer.OpenXrFrameLoop.TryRenderOpenXrEyeMirrorFrameBuffer(
                 mirrorFbo,
                 extent,
                 resourcePlannerStateIndex: (int)viewIndex,
@@ -870,7 +871,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
             if (!mirrorRendered)
                 return false;
 
-            bool submitted = renderer.TryBlitTextureToOpenXrSwapchainImage(
+            bool submitted = renderer.OpenXrFrameLoop.TryBlitTextureToOpenXrSwapchainImage(
                 mirrorColor,
                 eyeImage,
                 (VkFormat)selectedFormat,
@@ -1727,7 +1728,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 _openXrFrameWorld.TargetWorldName ?? "<unnamed world>");
         }
 
-        using (renderer.EnterOpenXrRenderOperation())
+        using (new VulkanOpenXrRenderOperation(renderer))
         {
 
             ulong renderFrameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
@@ -1753,7 +1754,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 RendersExternalSwapchainTarget: false,
                 ViewBatchStructuralIdentity: productionBatch.StructuralIdentity);
 
-            bool stereoRenderedAndPublished = renderer.TryRenderAndBlitTextureArrayLayersToOpenXrSwapchainImages(
+            bool stereoRenderedAndPublished = renderer.OpenXrFrameLoop.TryRenderAndBlitTextureArrayLayersToOpenXrSwapchainImages(
                 in renderRequest,
                 stereoViewport.RenderPipelineInstance,
                 target.ColorArrayTexture,
@@ -1968,11 +1969,11 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
         if (OpenXrDebugClearOnly)
         {
-            bool leftCleared = renderer.TryClearOpenXrSwapchainImage(
+            bool leftCleared = renderer.OpenXrFrameLoop.TryClearOpenXrSwapchainImage(
                 new VkImage(leftImages[leftImageIndex].Image),
                 new VkExtent2D(width, height),
                 new ColorF4(1f, 0f, 0f, 1f));
-            bool rightCleared = renderer.TryClearOpenXrSwapchainImage(
+            bool rightCleared = renderer.OpenXrFrameLoop.TryClearOpenXrSwapchainImage(
                 new VkImage(rightImages[rightImageIndex].Image),
                 new VkExtent2D(width, height),
                 new ColorF4(0f, 1f, 0f, 1f));
@@ -2007,7 +2008,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         if (leftFormat == 0 || rightFormat == 0)
             return LogVulkanEyeRenderNotReady(0, leftImageIndex, "no selected Vulkan swapchain format");
 
-        using (renderer.EnterOpenXrRenderOperation())
+        using (new VulkanOpenXrRenderOperation(renderer))
         {
 
             if (VulkanCaptureEyeOutputs)
@@ -2081,7 +2082,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                     $"right eye swapchain image {rightImageIndex}",
                     FlipPreviewY: false);
 
-                bool published = renderer.TryRenderAndPublishOpenXrEyeMirrorFrameBuffers(
+                bool published = renderer.OpenXrFrameLoop.TryRenderAndPublishOpenXrEyeMirrorFrameBuffers(
                     leftMirrorRequest,
                     rightMirrorRequest,
                     leftPublishRequest,
@@ -2096,7 +2097,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 if (ShouldCopyVulkanEyeToDesktopMirror(0))
                 {
                     EnsureViewportMirrorTargets(renderer, width, height);
-                    bool desktopMirrorCopied = renderer.TryCopyOpenXrEyeMirrorTexture(
+                    bool desktopMirrorCopied = renderer.OpenXrFrameLoop.TryCopyOpenXrEyeMirrorTexture(
                         leftMirrorColor,
                         _viewportMirrorColor,
                         $"desktop mirror eye 0",
@@ -2155,9 +2156,9 @@ Target:                 new RenderFrameViewTargetDescriptor(
             {
                 directRendered = viewRenderMode switch
                 {
-                    EVrViewRenderMode.SinglePassStereo => renderer.TryRenderOpenXrEyeSwapchainsSinglePassStereo(leftRequest, rightRequest),
-                    EVrViewRenderMode.ParallelCommandBufferRecording => renderer.TryRenderOpenXrEyeSwapchainsParallelCommandBufferRecording(leftRequest, rightRequest),
-                    _ => renderer.TryRenderOpenXrEyeSwapchains(leftRequest, rightRequest),
+                    EVrViewRenderMode.SinglePassStereo => renderer.OpenXrFrameLoop.TryRenderOpenXrEyeSwapchainsSinglePassStereo(leftRequest, rightRequest),
+                    EVrViewRenderMode.ParallelCommandBufferRecording => renderer.OpenXrFrameLoop.TryRenderOpenXrEyeSwapchainsParallelCommandBufferRecording(leftRequest, rightRequest),
+                    _ => renderer.OpenXrFrameLoop.TryRenderOpenXrEyeSwapchains(leftRequest, rightRequest),
                 };
             }
             if (!directRendered)
@@ -2232,7 +2233,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         XRTexture2D? previewTexture = GetOpenXrPreviewTexture(viewIndex);
         bool shouldCopyPreview = ShouldCopyDirectVulkanEyeSwapchainPreview();
         bool copiedPreview = shouldCopyPreview &&
-            renderer.TryCopyOpenXrEyeMirrorTexture(
+            renderer.OpenXrFrameLoop.TryCopyOpenXrEyeMirrorTexture(
                 sourceTexture,
                 previewTexture,
                 $"preview eye {viewIndex}",
@@ -2241,7 +2242,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         if (ShouldCopyVulkanEyeToDesktopMirror(viewIndex))
         {
             EnsureViewportMirrorTargets(renderer, width, height);
-            copiedDesktopMirror = renderer.TryCopyOpenXrEyeMirrorTexture(
+            copiedDesktopMirror = renderer.OpenXrFrameLoop.TryCopyOpenXrEyeMirrorTexture(
                 sourceTexture,
                 _viewportMirrorColor,
                 $"desktop mirror eye {viewIndex}",
@@ -2293,7 +2294,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         XRTexture2D? previewTexture = GetOpenXrPreviewTexture(viewIndex);
         bool shouldCopyPreview = ShouldCopyDirectVulkanEyeSwapchainPreview();
         bool copiedPreview = shouldCopyPreview &&
-            renderer.TryCopyOpenXrEyeSwapchainImageToTexture(
+            renderer.OpenXrFrameLoop.TryCopyOpenXrEyeSwapchainImageToTexture(
                 sourceImage,
                 sourceFormat,
                 sourceExtent,
@@ -2304,7 +2305,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         if (ShouldCopyVulkanEyeToDesktopMirror(viewIndex))
         {
             EnsureViewportMirrorTargets(renderer, width, height);
-            copiedDesktopMirror = renderer.TryCopyOpenXrEyeSwapchainImageToTexture(
+            copiedDesktopMirror = renderer.OpenXrFrameLoop.TryCopyOpenXrEyeSwapchainImageToTexture(
                 sourceImage,
                 sourceFormat,
                 sourceExtent,
@@ -2376,14 +2377,14 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
         eyeViewport.WorldInstanceOverride = _openXrFrameWorld;
 
-        using (renderer.EnterOpenXrRenderOperation())
+        using (new VulkanOpenXrRenderOperation(renderer))
         {
 
             ApplyOpenXrEyePoseForRenderThread(viewIndex);
 
             if (!OpenXrVulkanMirrorFbo)
             {
-                renderer.PrewarmOpenXrEyeSwapchainResources(
+                renderer.OpenXrFrameLoop.PrewarmOpenXrEyeSwapchainResources(
                     (VkFormat)selectedFormat,
                     new VkExtent2D(width, height),
                     (int)viewIndex,
@@ -2399,7 +2400,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
             if (mirrorFbo is null)
                 return;
 
-            renderer.PrewarmOpenXrEyeMirrorFrameBufferResources(
+            renderer.OpenXrFrameLoop.PrewarmOpenXrEyeMirrorFrameBufferResources(
                 mirrorFbo,
                 new VkExtent2D(width, height),
                 (int)viewIndex,

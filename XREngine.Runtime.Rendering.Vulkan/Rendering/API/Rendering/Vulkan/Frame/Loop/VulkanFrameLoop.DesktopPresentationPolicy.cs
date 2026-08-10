@@ -30,7 +30,7 @@ internal sealed unsafe partial class VulkanFrameLoop
 
         if (enabled && imageHasCompletedContent && desktopOwned)
         {
-            sampleSucceeded = _textureReadbackService.TryReadDesktopAutoExposure(
+            sampleSucceeded = TryReadDesktopAutoExposure(
                 in context,
                 out exposure,
                 out diagnostic);

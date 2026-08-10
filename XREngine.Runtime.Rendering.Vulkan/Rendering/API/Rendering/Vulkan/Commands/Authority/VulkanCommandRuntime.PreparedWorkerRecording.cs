@@ -26,8 +26,7 @@ internal sealed partial class VulkanCommandRuntime
         if (packet.DrawCount != preparedChain.SourceCount || preparedChain.SourceCount <= 0)
             throw new InvalidOperationException("Prepared mesh command-chain packet draw range does not match the scheduled source range.");
 
-        VulkanTrackedCommandEncoder encoder = batch.PreparedWorkerContext.Encoder
-            ?? throw new InvalidOperationException("Prepared mesh command-chain worker inputs were not frozen.");
+        VulkanTrackedCommandEncoder encoder = new(this);
         VulkanRecordedCommandInheritance inheritance = preparedChain.Inheritance;
         using VulkanWorkerSecondaryCommandArena.RecordingLease arenaLease =
             VulkanWorkerSecondaryCommandArena.EnterRecording(chain.RecordedArtifact.WorkerArenaOwner);
@@ -106,13 +105,13 @@ internal sealed partial class VulkanCommandRuntime
             PInheritanceInfo = &inheritanceInfo,
         };
 
-        if (!encoder.DeviceContext.StateMachine.IsOperational)
+        if (!DeviceContext.StateMachine.IsOperational)
             throw new InvalidOperationException("Vulkan device is not operational for prepared worker recording.");
-        if (encoder.Api.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
+        if (Api.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
             throw new InvalidOperationException("Failed to begin Vulkan worker mesh command-chain secondary command buffer.");
 
-        encoder.CommandRuntime.ResetBindState(encoder, secondary);
-        chain.RecordedArtifact.BeginRecording(encoder.CommandRuntime.CommandBuffers.ResolveRecordingGeneration(secondary));
+        ResetBindState(encoder, secondary);
+        chain.RecordedArtifact.BeginRecording(CommandBuffers.ResolveRecordingGeneration(secondary));
         for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
         {
             ref readonly VkPreparedMeshDraw preparedDraw = ref GetPreparedCommandChainDraw(batch, chainIndex, drawIndex);
@@ -194,7 +193,7 @@ internal sealed partial class VulkanCommandRuntime
         // descriptor key in DependencySignature, permanently making the newly
         // recorded secondary disagree with its own current chain state.
         PublishPreparedCommandChainAuthority(chain, preparedChain.Authority);
-        PublishRecordedSecondary(chain, encoder.ResourceRuntime);
+        PublishRecordedSecondary(chain, ResourceRuntime);
     }
 
     private static ref readonly VkPreparedMeshDraw GetPreparedCommandChainDraw(

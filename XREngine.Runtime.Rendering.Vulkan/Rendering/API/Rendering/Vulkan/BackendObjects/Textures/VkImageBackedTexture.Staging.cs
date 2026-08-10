@@ -32,12 +32,12 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             return false;
         }
 
-        bool preferIndirectCopy = BackendContext.Buffers.CanUseNvIndirectCopyUploads(BackendContext);
+        bool preferIndirectCopy = BackendContext.Resources.Buffers.CanUseNvIndirectCopyUploads(BackendContext);
         BufferUsageFlags usage = BufferUsageFlags.TransferSrcBit;
         if (preferIndirectCopy)
             usage |= BufferUsageFlags.ShaderDeviceAddressBit;
 
-        (buffer, memory) = BackendContext.Buffers.Create(
+        (buffer, memory) = BackendContext.Resources.Buffers.Create(
             BackendContext,
             data.Length,
             usage,
@@ -76,13 +76,13 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (string.IsNullOrWhiteSpace(filePath) || length <= 0)
             return false;
 
-        bool preferIndirectCopy = BackendContext.Buffers.CanUseNvIndirectCopyUploads(BackendContext);
+        bool preferIndirectCopy = BackendContext.Resources.Buffers.CanUseNvIndirectCopyUploads(BackendContext);
         BufferUsageFlags usage = BufferUsageFlags.TransferSrcBit;
         if (preferIndirectCopy)
             usage |= BufferUsageFlags.ShaderDeviceAddressBit;
 
         // Allocate a host-visible staging buffer WITHOUT copying any data yet.
-        (buffer, memory) = BackendContext.Buffers.CreateRaw(
+        (buffer, memory) = BackendContext.Resources.Buffers.CreateRaw(
             BackendContext,
             (ulong)length,
             usage,
@@ -91,9 +91,9 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
         // Map the staging buffer memory.
         void* mappedPtr = null;
-        if (!BackendContext.Buffers.TryMap(BackendContext, buffer, memory, 0, (ulong)length, out mappedPtr))
+        if (!BackendContext.Resources.Buffers.TryMap(BackendContext, buffer, memory, 0, (ulong)length, out mappedPtr))
         {
-            BackendContext.Buffers.Destroy(BackendContext, buffer, memory, "VkImageBackedTexture.StagingFile.MapFailure");
+            BackendContext.Resources.Buffers.Destroy(BackendContext, buffer, memory, "VkImageBackedTexture.StagingFile.MapFailure");
             buffer = default;
             memory = default;
             return false;
@@ -107,14 +107,14 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         }
         catch
         {
-            BackendContext.Buffers.Unmap(BackendContext, buffer, memory);
-            BackendContext.Buffers.Destroy(BackendContext, buffer, memory, "VkImageBackedTexture.StagingFile.ReadFailure");
+            BackendContext.Resources.Buffers.Unmap(BackendContext, buffer, memory);
+            BackendContext.Resources.Buffers.Destroy(BackendContext, buffer, memory, "VkImageBackedTexture.StagingFile.ReadFailure");
             buffer = default;
             memory = default;
             return false;
         }
 
-        BackendContext.Buffers.Unmap(BackendContext, buffer, memory);
+        BackendContext.Resources.Buffers.Unmap(BackendContext, buffer, memory);
         return true;
     }
 
@@ -124,7 +124,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     /// <param name="buffer">The staging buffer to destroy.</param>
     /// <param name="memory">The device memory backing the buffer.</param>
     protected void DestroyStagingBuffer(Buffer buffer, DeviceMemory memory)
-        => BackendContext.Buffers.Destroy(BackendContext, buffer, memory, "VkImageBackedTexture.Staging");
+        => BackendContext.Resources.Buffers.Destroy(BackendContext, buffer, memory, "VkImageBackedTexture.Staging");
 
     #endregion
 }

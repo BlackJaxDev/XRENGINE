@@ -79,7 +79,5 @@ internal sealed class VulkanDeviceMutableCapabilities
     internal bool _supportsNvDiagnosticsConfig;
     internal bool _surfacePresentScalingInstanceExtensionsEnabled;
     internal bool _useDynamicRenderingRenderTargets;
-    internal bool? _validationLayersEnabledOverride;
-    internal string[] validationLayers = ["VK_LAYER_KHRONOS_validation"];
     internal bool SupportsLazyAllocation;
 }

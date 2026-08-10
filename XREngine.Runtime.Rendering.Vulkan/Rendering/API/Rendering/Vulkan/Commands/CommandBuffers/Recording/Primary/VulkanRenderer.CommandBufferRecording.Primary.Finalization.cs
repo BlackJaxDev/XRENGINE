@@ -24,7 +24,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (recordingState.PassIndexLabelActive)
                 {
-                    CmdEndLabel(recordingState.CommandBuffer);
+                    _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
                     recordingState.PassIndexLabelActive = false;
                 }
 
@@ -68,7 +68,7 @@ namespace XREngine.Rendering.Vulkan
 
                     // For presentation we want deterministic full-surface state regardless of prior per-viewport scissor.
                     // This also makes resize issues obvious (the clear should cover the entire swapchain extent).
-                    Viewport swapViewport = CreateVulkanViewport(recordingState.SwapchainRecordExtent);
+                    Viewport swapViewport = VulkanCommandRuntime.CreateVulkanViewport(recordingState.SwapchainRecordExtent);
 
                     Rect2D swapScissor = new()
                     {
@@ -299,7 +299,7 @@ namespace XREngine.Rendering.Vulkan
 
                 EndFrameTimingQueries(recordingState.CommandBuffer, recordingState.CommandBufferImageSlot);
 
-                CmdEndLabel(recordingState.CommandBuffer);
+                _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
 
                 if (recordingState.OpenXrTargetContext is { } externalTarget &&
                     recordingState.PrimaryCommandPlan.HasTerminalAction(

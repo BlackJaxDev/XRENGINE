@@ -532,12 +532,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         uint baseArrayLayer = 0,
         uint layerCount = 1)
     {
-        VulkanTrackedCommandEncoder encoder = new(
-            Api,
-            DeviceContext,
-            this,
-            ResourceRuntime,
-            FrameTelemetry);
+        VulkanTrackedCommandEncoder encoder = new(this);
         TransitionOpenXrMirrorImage(
             encoder,
             commandBuffer,
@@ -556,12 +551,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         out VulkanTrackedCommandEncoder encoder)
     {
         commandBuffer = default;
-        encoder = new VulkanTrackedCommandEncoder(
-            Api,
-            DeviceContext,
-            this,
-            ResourceRuntime,
-            FrameTelemetry);
+        encoder = new VulkanTrackedCommandEncoder(this);
         if (!DeviceContext.IsOperational || Pools.PrimaryGraphics.Handle == 0)
             return false;
 

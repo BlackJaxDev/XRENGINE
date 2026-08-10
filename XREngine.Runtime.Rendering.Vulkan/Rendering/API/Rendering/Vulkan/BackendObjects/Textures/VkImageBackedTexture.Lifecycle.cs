@@ -92,7 +92,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             retiredAttachmentViews = [];
         }
 
-        BackendContext.Images.RetireOwnedResources(new RetiredImageResources(
+        BackendContext.Resources.Images.RetireOwnedResources(new RetiredImageResources(
             _ownsImageMemory ? _image : default,
             _ownsImageMemory ? _memory : default,
             _view,

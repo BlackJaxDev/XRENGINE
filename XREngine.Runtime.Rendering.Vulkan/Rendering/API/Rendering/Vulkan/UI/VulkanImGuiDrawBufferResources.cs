@@ -11,16 +11,18 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal unsafe sealed class VulkanImGuiDrawBufferResources(
     VulkanOutputRuntime outputRuntime,
-    VulkanResourceRuntime resourceRuntime)
+    VulkanResourceRuntime resourceRuntime,
+    VulkanTargetOutputContext target)
 {
     private readonly VulkanOutputRuntime _outputRuntime = outputRuntime;
     private readonly VulkanResourceRuntime _resourceRuntime = resourceRuntime;
+    private readonly VulkanTargetOutputContext _target = target;
 
     internal ref VulkanImGuiDrawBufferSet Ensure(uint imageIndex, ulong vertexBytes, ulong indexBytes)
     {
         int slot = EnsureSlot(imageIndex);
         ref VulkanImGuiDrawBufferSet buffers = ref _outputRuntime._imguiResources.DrawBuffers[slot];
-        VulkanTargetOutputContext target = _outputRuntime.TargetOutputContext;
+        VulkanTargetOutputContext target = _target;
         EnsureBuffer(
             target,
             ref buffers.VertexBuffer,
@@ -46,7 +48,7 @@ internal unsafe sealed class VulkanImGuiDrawBufferResources(
     {
         ulong vertexBytes = checked((ulong)snapshot.TotalVertexCount * (ulong)sizeof(ImDrawVert));
         ulong indexBytes = checked((ulong)snapshot.TotalIndexCount * sizeof(ushort));
-        VulkanTargetOutputContext target = _outputRuntime.TargetOutputContext;
+        VulkanTargetOutputContext target = _target;
         if (!target.TryMapMemoryAllocation(
                 ResolveBufferAllocation(buffers.VertexBuffer),
                 0,
@@ -132,7 +134,7 @@ internal unsafe sealed class VulkanImGuiDrawBufferResources(
             SharingMode = SharingMode.Exclusive,
         };
         Result result = target.VulkanApi.CreateBuffer(target.Device, ref createInfo, null, out Buffer created);
-        target.DeviceContext.ObserveNativeResult($"vkCreateBuffer.{owner}", result);
+        target.ObserveNativeResult($"vkCreateBuffer.{owner}", result);
         if (result != Result.Success)
             throw new InvalidOperationException($"Failed to create {owner} ({result}).");
 
@@ -149,7 +151,7 @@ internal unsafe sealed class VulkanImGuiDrawBufferResources(
                 created,
                 allocation.Memory,
                 allocation.Offset);
-            target.DeviceContext.ObserveNativeResult($"vkBindBufferMemory.{owner}", result);
+            target.ObserveNativeResult($"vkBindBufferMemory.{owner}", result);
             if (result != Result.Success)
                 throw new InvalidOperationException($"Failed to bind {owner} memory ({result}).");
         }

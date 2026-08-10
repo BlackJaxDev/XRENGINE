@@ -3,7 +3,7 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>
 /// Maintains binding slots and generated wrappers for one render-object data type.
 /// </summary>
-internal sealed class VulkanBackendObjectBucket<T>
+internal sealed class VulkanBackendObjectBucket<T> : IVulkanBackendObjectBucket
     where T : GenericRenderObject
 {
     private readonly Lock _lock = new();

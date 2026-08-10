@@ -15,7 +15,7 @@ namespace XREngine.Rendering.Vulkan
             // Detached ImGui viewports sample renderer-owned textures. Submit them only
             // after the primary scene submission so graphics-queue ordering makes those
             // resources visible without introducing a second engine-wide frame graph.
-            _outputRuntime._imguiBackend?.RenderPendingViewports();
+            _imguiBackend?.RenderPendingViewports();
 
             VulkanDesktopPresentDispatchOutcome dispatch = QueueDesktopPresentCore(
                 ref attempt,

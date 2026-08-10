@@ -125,7 +125,9 @@ internal sealed partial class VulkanFramePlanner
             ? requestedOverlapMode
             : EVulkanQueueOverlapMode.GraphicsOnly;
 
-        if (VulkanCommandRuntime.FrameDiagnosticsTraceEnabled)
+        if (XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanRecordingDiag) ||
+            XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||
+            XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw)
         {
             Debug.VulkanEvery(
                 "Vulkan.QueueOwnership.Policy",

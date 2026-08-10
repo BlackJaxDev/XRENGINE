@@ -229,7 +229,7 @@ namespace XREngine.Rendering.Vulkan
 
         internal void ResetCommandBufferBindState(CommandBuffer commandBuffer)
         {
-            if (!ResourceRuntime.CanResetCommandBuffer(this, commandBuffer))
+            if (!ResourceRuntime.CanResetCommandBuffer(commandBuffer))
                 throw new InvalidOperationException(
                     $"Command buffer 0x{unchecked((ulong)commandBuffer.Handle):X} is not resettable.");
             ResourceRuntime.CompleteCommandBufferReset(unchecked((ulong)commandBuffer.Handle));
@@ -1439,7 +1439,7 @@ namespace XREngine.Rendering.Vulkan
                                 sets,
                                 requireUpdateAfterBind,
                                 "RendererOwned.DescriptorSet");
-                            SetDebugDescriptorSetNames(sets, "RendererOwned.DescriptorSet");
+                            _deviceContext.SetDebugDescriptorSetNames(sets, "RendererOwned.DescriptorSet");
                             RecordVulkanDescriptorTableGeneration("RendererOwnedDescriptorSets.Allocated");
                             return true;
                         }

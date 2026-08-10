@@ -79,7 +79,7 @@ internal sealed partial class VulkanTextureUploadService
     }
 
     private void PublishCompletedImportedTextureUpload(
-        VulkanRenderer renderer,
+        VulkanResourceRuntime resourceRuntime,
         VulkanImportedTexturePendingUpload upload,
         string uploadSource)
     {
@@ -103,7 +103,7 @@ internal sealed partial class VulkanTextureUploadService
         long publicationStart = TextureRuntimeDiagnostics.StartTiming();
         upload.Texture.PublishSynchronizedImportedTextureUpload(upload);
         upload.MarkPublished();
-        RetireTextureUploadStagingResources(renderer, upload);
+        RetireTextureUploadStagingResources(resourceRuntime, upload);
         double publicationMilliseconds = TextureRuntimeDiagnostics.ElapsedMilliseconds(publicationStart);
         Volatile.Write(ref s_lastPublicationMilliseconds, publicationMilliseconds);
         int pending = Interlocked.Decrement(ref s_pendingDescriptorPublications);
@@ -183,17 +183,6 @@ internal sealed partial class VulkanTextureUploadService
             VulkanTextureUploadGenerationState.Retired,
             "old texture and staging resources enqueued for frame-slot retirement");
         InvokeTextureUploadFinished(upload);
-    }
-
-    private static void RetireTextureUploadStagingResources(
-        VulkanRenderer renderer,
-        VulkanImportedTexturePendingUpload upload)
-    {
-        for (int i = 0; i < upload.StagingResources.Length; i++)
-        {
-            VulkanImportedTextureUploadStagingResource staging = upload.StagingResources[i];
-            renderer.RetireBuffer(staging.Buffer, staging.Memory);
-        }
     }
 
     private static void RetireTextureUploadStagingResources(

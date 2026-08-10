@@ -9,7 +9,6 @@ namespace XREngine.Rendering.Vulkan;
 internal unsafe sealed partial class VulkanQueryAuthority : IVulkanQueryArenaFacility
 {
     private VulkanBackendObjectContext? _backendContext;
-    private VulkanDeviceLossCoordinator? _deviceLossCoordinator;
 
     internal VulkanQueryCommandService? Commands { get; private set; }
 
@@ -36,15 +35,6 @@ internal unsafe sealed partial class VulkanQueryAuthority : IVulkanQueryArenaFac
         _backendContext = backendContext;
     }
 
-    /// <summary>Publishes the terminal device-loss coordinator for host query reads.</summary>
-    internal void BindDeviceLossCoordinator(VulkanDeviceLossCoordinator deviceLossCoordinator)
-    {
-        ArgumentNullException.ThrowIfNull(deviceLossCoordinator);
-        if (_deviceLossCoordinator is not null && !ReferenceEquals(_deviceLossCoordinator, deviceLossCoordinator))
-            throw new InvalidOperationException(
-                "Vulkan query authority has already been bound to another device-loss coordinator.");
-        _deviceLossCoordinator = deviceLossCoordinator;
-    }
     private readonly object _sync = new();
     private readonly Dictionary<ERenderQueryKind, IVulkanSpecializedQueryProvider> _providers = [];
     internal bool OcclusionPreciseAdvertised;
@@ -91,7 +81,7 @@ internal unsafe sealed partial class VulkanQueryAuthority : IVulkanQueryArenaFac
         if (submission.QueueSequence == 0ul)
             return false;
 
-        VulkanResourceLifetimeTracker lifetime = RequireBackendContext().Lifetime;
+        VulkanResourceLifetimeTracker lifetime = RequireBackendContext().Resources.Lifetime.Tracker;
         lock (lifetime.SyncRoot)
         {
             return submission.QueueDomain switch
@@ -165,15 +155,9 @@ internal unsafe sealed partial class VulkanQueryAuthority : IVulkanQueryArenaFac
 
     internal void MarkDeviceLost(string reason, string operation, Result result)
     {
-        if (_deviceLossCoordinator is not null)
-        {
-            _deviceLossCoordinator.MarkDeviceLost(reason, operation, result);
-            return;
-        }
-
-        // The coordinator is bound during frame-loop composition.  Recording
-        // cannot outlive that setup, but host reads can race construction only
-        // in a failed bootstrap path; keep the native result visible there.
+        // Query host waits are resource-authority observations. The frame loop
+        // settles the cross-authority terminal transition when it next observes
+        // the device context state.
         RequireBackendContext().DeviceContext.ObserveNativeResult(operation, result);
     }
 
@@ -261,7 +245,6 @@ internal unsafe sealed partial class VulkanQueryAuthority : IVulkanQueryArenaFac
         ReadOnlySpan<ulong> sourceHandles,
         out string? reason)
     {
-        ArgumentNullException.ThrowIfNull(encoder);
         if (!TryGet(descriptor.Kind, out IVulkanSpecializedQueryProvider provider))
         {
             reason = "No specialized provider is registered.";
@@ -295,7 +278,7 @@ internal unsafe sealed partial class VulkanQueryAuthority : IVulkanQueryArenaFac
     void IVulkanQueryArenaFacility.RegisterQueryPool(QueryPool pool, string owner)
     {
         if (pool.Handle != 0)
-            RequireBackendContext().Lifetime.RegisterResource(
+            RequireBackendContext().Resources.Lifetime.Tracker.RegisterResource(
                 new VulkanResourceLifetimeKey(ObjectType.QueryPool, pool.Handle),
                 owner,
                 externallyOwned: false);
@@ -330,7 +313,7 @@ internal unsafe sealed partial class VulkanQueryAuthority : IVulkanQueryArenaFac
         if (fenceHandle == 0)
             return;
 
-        VulkanResourceLifetimeTracker lifetime = RequireBackendContext().Lifetime;
+        VulkanResourceLifetimeTracker lifetime = RequireBackendContext().Resources.Lifetime.Tracker;
         lock (lifetime.SyncRoot)
         {
             for (int index = lifetime.LifetimeSubmissions.Count - 1; index >= 0; index--)
@@ -349,7 +332,7 @@ internal unsafe sealed partial class VulkanQueryAuthority : IVulkanQueryArenaFac
 
     private void MarkCompletedTimelineSubmission(in VulkanLifetimeSubmission completed)
     {
-        VulkanResourceLifetimeTracker lifetime = RequireBackendContext().Lifetime;
+        VulkanResourceLifetimeTracker lifetime = RequireBackendContext().Resources.Lifetime.Tracker;
         lock (lifetime.SyncRoot)
         {
             for (int index = lifetime.LifetimeSubmissions.Count - 1; index >= 0; index--)

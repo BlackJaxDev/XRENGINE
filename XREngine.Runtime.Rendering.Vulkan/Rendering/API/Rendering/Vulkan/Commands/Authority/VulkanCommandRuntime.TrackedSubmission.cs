@@ -1019,7 +1019,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
     }
 
-    private void ResolveSubmissionMarkers(ref SubmitInfo submitInfo, bool submissionSucceeded)
+    internal void ResolveSubmissionMarkers(ref SubmitInfo submitInfo, bool submissionSucceeded)
     {
         ResolveSubmissionTimelineSignal(ref submitInfo, out ulong semaphoreHandle, out ulong timelineValue);
         lock (Synchronization._submissionMarkerLock)

@@ -27,16 +27,17 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 WaitForTimelineValue(_commandRuntime.Synchronization._graphicsTimelineSemaphore, slotWaitValue);
-                _frameTelemetry.SampleFrameTimingQueries(
+                VulkanCompletedTimingQueryPools completedQueries =
+                    _frameTelemetry.SampleFrameTimingQueries(
                     Api,
                     _deviceContext.Device,
-                    ResourceRuntime,
                     frameSlot);
+                ResourceRuntime.NotifyTimingQueryPoolsCompleted(completedQueries);
             }
 
             _commandRuntime.DrainInvalidatedCommandBufferRecordings(
                 Api, ResourceRuntime);
-            OutputRuntime.DrainRetiredDesktopSwapchainGenerations();
+            DrainRetiredDesktopSwapchainGenerations();
             _commandRuntime.DrainRetiredCommandBuffers(
                 Api,
                 _deviceContext.Device,
@@ -63,7 +64,9 @@ namespace XREngine.Rendering.Vulkan
                 _frameTelemetry,
                 frameSlot);
             if (pooledBuffers != 0)
-                ResourceRuntime.Allocations.Staging.Trim(OutputRuntime);
+                ResourceRuntime.Allocations.Staging.Trim(
+                    ResourceRuntime.BackendObjectContext ?? throw new InvalidOperationException(
+                        "The Vulkan backend object context is not initialized."));
             ResourceRuntime.DrainRetiredFramebuffers(
                 Api, _deviceContext.Device, frameSlot);
             ResourceRuntime.DrainRetiredImages(

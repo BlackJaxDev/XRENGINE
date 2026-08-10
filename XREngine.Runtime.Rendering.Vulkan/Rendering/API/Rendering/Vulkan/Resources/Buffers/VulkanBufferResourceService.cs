@@ -98,7 +98,7 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
     {
         if (bufferView.Handle == 0)
             return;
-        context.Descriptors.DescriptorHeapBufferViewCreateInfos[bufferView.Handle] = createInfo with { PNext = null };
+        context.Resources.Descriptors.DescriptorHeapBufferViewCreateInfos[bufferView.Handle] = createInfo with { PNext = null };
         VulkanResourceLifetimeTracker tracker = RequireLifetime().Tracker;
         tracker.RegisterResource(new VulkanResourceLifetimeKey(ObjectType.BufferView, bufferView.Handle), owner, externallyOwned: false);
         lock (tracker.SyncRoot)
@@ -109,7 +109,7 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
     {
         if (bufferView.Handle == 0)
             return;
-        context.Descriptors.DescriptorHeapBufferViewCreateInfos.TryRemove(bufferView.Handle, out _);
+        context.Resources.Descriptors.DescriptorHeapBufferViewCreateInfos.TryRemove(bufferView.Handle, out _);
         VulkanLifetimeAuthority lifetime = RequireLifetime();
         VulkanResourceLifetimeKey key = new(ObjectType.BufferView, bufferView.Handle);
         VulkanRetirementTicket ticket = CaptureTicket(lifetime, key, owner);

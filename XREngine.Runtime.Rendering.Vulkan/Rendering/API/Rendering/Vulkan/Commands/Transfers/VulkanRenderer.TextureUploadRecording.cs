@@ -53,7 +53,7 @@ namespace XREngine.Rendering.Vulkan
                 commandBufferBegun = true;
                 ResetCommandBufferBindState(commandBuffer);
 
-                bool uploadBatchLabelActive = CmdBeginLabel(commandBuffer, "TextureUploads");
+                bool uploadBatchLabelActive = _deviceContext.CmdBeginLabel(commandBuffer, "TextureUploads");
                 int queuedBefore = _textureUploadPublicationState.RecordedForSubmit.Count;
                 try
                 {
@@ -62,7 +62,7 @@ namespace XREngine.Rendering.Vulkan
                         if (textureUploadOps[i] is not TextureUploadFrameOp textureUploadOp)
                             continue;
 
-                        bool uploadLabelActive = CmdBeginLabel(commandBuffer, "TextureUpload");
+                        bool uploadLabelActive = _deviceContext.CmdBeginLabel(commandBuffer, "TextureUpload");
                         try
                         {
                             RecordTextureUploadOp(commandBuffer, textureUploadOp.Upload);
@@ -70,14 +70,14 @@ namespace XREngine.Rendering.Vulkan
                         finally
                         {
                             if (uploadLabelActive)
-                                CmdEndLabel(commandBuffer);
+                                _deviceContext.CmdEndLabel(commandBuffer);
                         }
                     }
                 }
                 finally
                 {
                     if (uploadBatchLabelActive)
-                        CmdEndLabel(commandBuffer);
+                        _deviceContext.CmdEndLabel(commandBuffer);
                 }
 
                 if (EndCommandBufferTracked(commandBuffer) != Result.Success)

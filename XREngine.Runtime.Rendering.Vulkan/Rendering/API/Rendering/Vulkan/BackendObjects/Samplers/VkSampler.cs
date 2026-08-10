@@ -103,7 +103,7 @@ internal unsafe class VkSampler(
         if (Api!.CreateSampler(Device, ref samplerInfo, null, out _sampler) != Result.Success)
             throw new Exception("Failed to create Vulkan sampler.");
 
-        BackendContext.Samplers.Register(_sampler, in samplerInfo, nameof(VkSampler));
+        BackendContext.Resources.Samplers.Register(_sampler, in samplerInfo, nameof(VkSampler));
     }
 
     private void DestroySampler()
@@ -111,7 +111,7 @@ internal unsafe class VkSampler(
         if (_sampler.Handle == 0)
             return;
 
-        BackendContext.Samplers.Retire(_sampler, nameof(VkSampler));
+        BackendContext.Resources.Samplers.Retire(_sampler, nameof(VkSampler));
         _sampler = default;
     }
 

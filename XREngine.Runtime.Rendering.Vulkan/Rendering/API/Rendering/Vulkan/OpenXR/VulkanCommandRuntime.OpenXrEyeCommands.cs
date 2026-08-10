@@ -139,7 +139,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
                     RemoveOpenXrPrimaryOwnersForPool(pool);
                     Api.DestroyCommandPool(DeviceContext.Device, pool, null);
-                    ResourceRuntime.CompleteCommandPoolChildDestructions(this, pool);
+                    ResourceRuntime.CompleteCommandPoolChildDestructions(pool);
                     ResourceRuntime.CompleteCommandPoolDestruction(pool);
                     _openXrEyeCommandPools[index] = default;
                 }

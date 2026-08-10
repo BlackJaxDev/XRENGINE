@@ -6,13 +6,16 @@ using Silk.NET.Vulkan;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Owns descriptor-set publication, mutation validation, exact command-cache
-/// invalidation, and descriptor pool/set retirement for one device generation.
+/// Owns descriptor-set publication, mutation validation, and descriptor pool/set
+/// retirement for one device generation.
 /// </summary>
 /// <remarks>
 /// Descriptor wrappers depend on this authority instead of retaining the renderer
 /// facade. Native writes remain serialized with the lifetime ledger so a resource
 /// cannot retire between validation and Vulkan copying the descriptor payload.
+/// The authority captures command-cache invalidation work under that lock, then
+/// applies it only after the lock is released through the generation-local
+/// command-operation boundary.
 /// </remarks>
 internal sealed unsafe class VulkanDescriptorLifetimeAuthority
 {
@@ -21,8 +24,6 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
     private readonly VulkanDescriptorManager _descriptors;
     private readonly VulkanLifetimeAuthority _lifetime;
     private VulkanDeviceContext? _deviceContext;
-    private VulkanCommandRuntime? _commandRuntime;
-    private VulkanFrameTelemetry? _telemetry;
     private VulkanBackendObjectContext? _backendContext;
     private int _payloadChangeDiagnosticCount;
 
@@ -36,34 +37,21 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         _lifetime = lifetime;
     }
 
-    internal void Configure(
-        VulkanDeviceContext deviceContext,
-        VulkanCommandRuntime commandRuntime,
-        VulkanFrameTelemetry telemetry)
+    internal void Configure(VulkanDeviceContext deviceContext)
     {
         ArgumentNullException.ThrowIfNull(deviceContext);
-        ArgumentNullException.ThrowIfNull(commandRuntime);
-        ArgumentNullException.ThrowIfNull(telemetry);
         if (_deviceContext is not null &&
-            (!ReferenceEquals(_deviceContext, deviceContext) ||
-             !ReferenceEquals(_commandRuntime, commandRuntime) ||
-             !ReferenceEquals(_telemetry, telemetry)))
+            !ReferenceEquals(_deviceContext, deviceContext))
         {
             throw new InvalidOperationException(
                 "The descriptor lifetime authority cannot be rebound to another device generation.");
         }
 
         _deviceContext = deviceContext;
-        _commandRuntime = commandRuntime;
-        _telemetry = telemetry;
     }
 
     internal void RecordTableGeneration()
-    {
-        VulkanFrameTelemetry? telemetry = _telemetry;
-        if (telemetry?._diagnosticOptions.EnableCrashBreadcrumbs == true)
-            Interlocked.Increment(ref telemetry._vulkanDescriptorTableGeneration);
-    }
+        => _resources.RecordDescriptorTableGeneration();
 
     /// <summary>Assigns a validation-layer name to a descriptor set when debug utils are active.</summary>
     internal void SetDebugName(DescriptorSet descriptorSet, string name)
@@ -1210,7 +1198,10 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         if (!key.IsValid)
             return VulkanRetirementTicket.None;
 
-        VulkanCommandRuntime commandRuntime = RequireCommandRuntime();
+        // Descriptor lifetime does not retain command ownership. Resolve the
+        // generation-local command port only for this retirement operation,
+        // after fencing new recordings and before mutating the ledger.
+        VulkanCommandRuntime commandRuntime = _resources.SynchronousCommands.CommandRuntime;
         VulkanResourceLifetimeTracker tracker = _lifetime.Tracker;
         tracker.FenceResourceRecordingAdmission(key, owner);
         commandRuntime.PublishTrackingDependenciesBeforeResourceRetirement(key);
@@ -1793,7 +1784,7 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
                     $"update={updateKind} set=0x{firstInvalidation.DescriptorSetHandle:X} owner={firstInvalidation.Owner ?? "<unknown>"} binding={firstInvalidation.Binding} array={firstInvalidation.ArrayElement} type={firstInvalidation.DescriptorType} count={firstInvalidation.DescriptorCount} dependentCommandBuffers={dependentCommandBufferCount}");
             }
 
-            VulkanExactInvalidationResult result = RequireCommandRuntime().InvalidateCachedCommandBuffers(
+            VulkanExactInvalidationResult result = _resources.SynchronousCommands.CommandRuntime.InvalidateCachedCommandBuffers(
                 dependentCommandBuffers.AsSpan(0, dependentCommandBufferCount),
                 $"{updateKind} changed a descriptor payload required by a recorded command buffer");
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanExactResourceInvalidation(
@@ -1919,10 +1910,6 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
     private VulkanDeviceContext RequireDeviceContext()
         => _deviceContext ?? throw new InvalidOperationException(
             "The descriptor lifetime authority has not been configured with a device context.");
-
-    private VulkanCommandRuntime RequireCommandRuntime()
-        => _commandRuntime ?? throw new InvalidOperationException(
-            "The descriptor lifetime authority has not been configured with a command runtime.");
 
     private VulkanBackendObjectContext RequireBackendContext()
         => _backendContext ?? throw new InvalidOperationException(

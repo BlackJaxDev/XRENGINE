@@ -33,7 +33,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         oldLayout = CoerceLayoutForUsage(oldLayout);
         newLayout = CoerceLayoutForUsage(newLayout);
         AssembleTransitionImageLayout(oldLayout, newLayout, out ImageMemoryBarrier barrier, out PipelineStageFlags src, out PipelineStageFlags dst);
-        BackendContext.ResourceCommands.PipelineBarrier(
+        ResourceCommandPort.PipelineBarrier(
             src,
             dst,
             1,
@@ -73,7 +73,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     /// <summary>
     /// Builds the <see cref="ImageMemoryBarrier"/> and selects appropriate pipeline stages
     /// for transitioning from <paramref name="oldLayout"/> to <paramref name="newLayout"/>.
-    /// Common transitions (undefined→transfer-dst, transfer-dst→shader-read) use precise
+    /// Common transitions (undefinedâ†’transfer-dst, transfer-dstâ†’shader-read) use precise
     /// stages; other pairs derive stages/access per layout role, falling back to
     /// <c>AllCommands</c> only for unrecognized layouts.
     /// </summary>

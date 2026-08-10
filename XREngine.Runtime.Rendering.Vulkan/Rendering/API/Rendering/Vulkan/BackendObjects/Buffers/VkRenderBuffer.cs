@@ -8,6 +8,8 @@ internal unsafe sealed class VkRenderBuffer(
     VulkanBackendObjectContext backendContext,
     XRRenderBuffer data) : VkObject<XRRenderBuffer>(backendContext, data)
 {
+    private VulkanResourcePublicationPort? _resourcePublicationPort;
+    private VulkanResourcePublicationPort ResourcePublications => _resourcePublicationPort ?? throw new InvalidOperationException("Render-buffer publication port has not been bound.");
     private Image _image;
     private DeviceMemory _memory;
     private ImageView _view;
@@ -21,6 +23,9 @@ internal unsafe sealed class VkRenderBuffer(
     /// Tracks the currently allocated GPU memory size for this render buffer in bytes.
     /// </summary>
     private long _allocatedVRAMBytes = 0;
+
+    protected override void BindOperationPorts(VulkanWrapperPortBinding binding)
+        => _resourcePublicationPort = binding.TryGetResourcePublications();
 
     internal Image Image => _image;
 
@@ -41,7 +46,10 @@ internal unsafe sealed class VkRenderBuffer(
 
         bool physicalGroupChanged = false;
         if (!string.IsNullOrWhiteSpace(Data.Name) &&
-            BackendContext.Planner.TryGetPhysicalImageGroup(Data.Name, out VulkanPhysicalImageGroup? activeGroup) &&
+            ResourcePublications.TryGetPhysicalImageGroup(
+                ResourcePublications.GetCurrentGeneration(),
+                Data.Name,
+                out VulkanPhysicalImageGroup? activeGroup) &&
             activeGroup is not null &&
             !ReferenceEquals(activeGroup, _physicalGroup))
         {
@@ -51,11 +59,14 @@ internal unsafe sealed class VkRenderBuffer(
 
         if (!_physicalGroup.IsAllocated)
         {
-            // The physical group was destroyed — the resource planner may have rebuilt
+            // The physical group was destroyed Ã¢â‚¬â€ the resource planner may have rebuilt
             // between frames and replaced it with a brand-new group object.
             // Try to re-resolve from the allocator.
             if (!string.IsNullOrWhiteSpace(Data.Name) &&
-                BackendContext.Planner.TryGetPhysicalImageGroup(Data.Name, out VulkanPhysicalImageGroup? replacement) &&
+                ResourcePublications.TryGetPhysicalImageGroup(
+                    ResourcePublications.GetCurrentGeneration(),
+                    Data.Name,
+                    out VulkanPhysicalImageGroup? replacement) &&
                 replacement is not null)
             {
                 physicalGroupChanged |= !ReferenceEquals(replacement, _physicalGroup);
@@ -95,7 +106,7 @@ internal unsafe sealed class VkRenderBuffer(
             return;
         }
 
-        // Physical group was reallocated — refresh our cached handles.
+        // Physical group was reallocated Ã¢â‚¬â€ refresh our cached handles.
         RetireView();
 
         _image = _physicalGroup.Image;
@@ -149,7 +160,7 @@ internal unsafe sealed class VkRenderBuffer(
 
         if (retiredView.Handle != 0 || retiredImage.Handle != 0 || retiredMemory.Handle != 0)
         {
-            BackendContext.Images.RetireOwnedResources(new RetiredImageResources(
+            BackendContext.Resources.Images.RetireOwnedResources(new RetiredImageResources(
                 retiredImage,
                 retiredMemory,
                 retiredView,
@@ -170,7 +181,10 @@ internal unsafe sealed class VkRenderBuffer(
     private void AcquireImage()
     {
         if (!string.IsNullOrWhiteSpace(Data.Name)
-            && BackendContext.Planner.TryGetPhysicalImageGroup(Data.Name, out VulkanPhysicalImageGroup? group)
+            && ResourcePublications.TryGetPhysicalImageGroup(
+                ResourcePublications.GetCurrentGeneration(),
+                Data.Name,
+                out VulkanPhysicalImageGroup? group)
             && group is not null)
         {
             if (!group.TryEnsureAllocated(BackendContext, out string allocationFailure))
@@ -211,20 +225,20 @@ internal unsafe sealed class VkRenderBuffer(
             SharingMode = SharingMode.Exclusive,
         };
 
-        if (BackendContext.Images.CreateOwnedImage(BackendContext, ref info, "VkRenderBuffer.Image", out _image) != Result.Success)
+        if (BackendContext.Resources.Images.CreateOwnedImage(BackendContext, ref info, "VkRenderBuffer.Image", out _image) != Result.Success)
             throw new Exception("Failed to create Vulkan render buffer image.");
 
-        VulkanMemoryAllocation allocation = BackendContext.Images.AllocateOwnedImageMemory(
+        VulkanMemoryAllocation allocation = BackendContext.Resources.Images.AllocateOwnedImageMemory(
             BackendContext,
             _image,
             MemoryPropertyFlags.DeviceLocalBit);
-        BackendContext.Images.RegisterOwnedImageAllocation(_image, in allocation);
+        BackendContext.Resources.Images.RegisterOwnedImageAllocation(_image, in allocation);
         _memory = allocation.Memory;
 
         if (Api!.BindImageMemory(Device, _image, _memory, allocation.Offset) != Result.Success)
         {
-            BackendContext.Images.DestroyUnpublishedOwnedImage(BackendContext, _image, "VkRenderBuffer.BindFailure");
-            BackendContext.Images.FreeMemory(BackendContext, in allocation);
+            BackendContext.Resources.Images.DestroyUnpublishedOwnedImage(BackendContext, _image, "VkRenderBuffer.BindFailure");
+            BackendContext.Resources.Images.FreeMemory(BackendContext, in allocation);
             _image = default;
             _memory = default;
             throw new Exception("Failed to bind memory for render buffer image.");
@@ -272,7 +286,7 @@ internal unsafe sealed class VkRenderBuffer(
 
         if (Api!.CreateImageView(Device, ref viewInfo, null, out _view) != Result.Success)
             throw new Exception("Failed to create render buffer image view.");
-        BackendContext.Images.RegisterView(_view, in viewInfo, "VkRenderBuffer.View");
+        BackendContext.Resources.Images.RegisterView(_view, in viewInfo, "VkRenderBuffer.View");
     }
 
     private void RetireView()
@@ -280,7 +294,7 @@ internal unsafe sealed class VkRenderBuffer(
         if (_view.Handle == 0)
             return;
 
-        BackendContext.Images.RetireOwnedResources(new RetiredImageResources(
+        BackendContext.Resources.Images.RetireOwnedResources(new RetiredImageResources(
             default,
             default,
             _view,

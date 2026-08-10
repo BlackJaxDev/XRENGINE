@@ -6,28 +6,23 @@ namespace XREngine.Rendering.Vulkan;
 /// Frozen native command services consumed by prepared secondary workers.
 /// It deliberately owns no renderer or planner reference.
 /// </summary>
-internal unsafe sealed class VulkanTrackedCommandEncoder(
-    Vk api,
-    VulkanDeviceContext deviceContext,
-    VulkanCommandRuntime commandRuntime,
-    VulkanResourceRuntime resourceRuntime,
-    VulkanFrameTelemetry? telemetry = null)
+internal readonly unsafe struct VulkanTrackedCommandEncoder(VulkanCommandRuntime runtime)
 {
-    internal Vk Api { get; } = api;
-    internal VulkanDeviceContext DeviceContext { get; } = deviceContext;
-    internal VulkanCommandRuntime CommandRuntime { get; } = commandRuntime;
-    internal VulkanResourceRuntime ResourceRuntime { get; } = resourceRuntime;
-    internal VulkanFrameTelemetry? Telemetry { get; } = telemetry;
+    // The encoder is deliberately an operation-bound view over the command
+    // runtime. It must not become another retained path to device, resource, or
+    // telemetry authority.
+    internal VulkanCommandRuntime Runtime { get; } = runtime;
+    private Vk Api => Runtime.Api;
 
     internal Result Reset(CommandBuffer commandBuffer)
     {
-        if (!ResourceRuntime.CanResetCommandBuffer(CommandRuntime, commandBuffer))
+        if (!Runtime.ResourceRuntime.CanResetCommandBuffer(commandBuffer))
             throw new InvalidOperationException($"Command buffer 0x{unchecked((ulong)commandBuffer.Handle):X} cannot be reset.");
 
         Result result = Api.ResetCommandBuffer(commandBuffer, 0);
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResetCommandBufferCall();
         if (result == Result.Success)
-            ResourceRuntime.CompleteCommandBufferReset(unchecked((ulong)commandBuffer.Handle));
+            Runtime.ResourceRuntime.CompleteCommandBufferReset(unchecked((ulong)commandBuffer.Handle));
         return result;
     }
 
@@ -37,14 +32,14 @@ internal unsafe sealed class VulkanTrackedCommandEncoder(
         if (handle == 0)
             return;
 
-        VulkanCommandBufferTrackingBatch batch = CommandRuntime.CommandBuffers.TrackingBatches.GetOrAdd(handle, static _ => new());
+        VulkanCommandBufferTrackingBatch batch = Runtime.CommandBuffers.TrackingBatches.GetOrAdd(handle, static _ => new());
         lock (batch)
         {
             if (batch.QueuedSubmissionCount != 0)
                 throw new InvalidOperationException($"Command buffer 0x{handle:X} is queued for submission.");
-            batch.Reset(CommandRuntime.CommandBuffers.ResolveRecordingGeneration(commandBuffer));
+            batch.Reset(Runtime.CommandBuffers.ResolveRecordingGeneration(commandBuffer));
         }
-        CommandRuntime.ResetCommandBufferImageLayoutJournal(commandBuffer);
+        Runtime.ResetCommandBufferImageLayoutJournal(commandBuffer);
     }
 
     internal Result End(CommandBuffer commandBuffer, bool cacheVariant = true)
@@ -54,33 +49,27 @@ internal unsafe sealed class VulkanTrackedCommandEncoder(
         bool published = result != Result.Success;
         string reason = string.Empty;
         if (result == Result.Success && handle != 0 &&
-            CommandRuntime.CommandBuffers.TrackingBatches.TryGetValue(handle, out VulkanCommandBufferTrackingBatch? batch))
+            Runtime.CommandBuffers.TrackingBatches.TryGetValue(handle, out VulkanCommandBufferTrackingBatch? batch))
         {
-            published = Telemetry is null
-                ? ResourceRuntime.TryPublishCommandBufferTrackingBatch(
-                    CommandRuntime,
-                    commandBuffer,
-                    batch,
-                    out reason)
-                : CommandRuntime.TryFlushTrackingBatchForRetirement(
-                    ResourceRuntime,
-                    commandBuffer,
-                    batch,
-                    Telemetry,
-                    out reason);
+            published = Runtime.TryFlushTrackingBatchForRetirement(
+                Runtime.ResourceRuntime,
+                commandBuffer,
+                batch,
+                Runtime.FrameTelemetry,
+                out reason);
             lock (batch)
                 batch.IsRecording = false;
         }
 
         if (result == Result.Success && published)
         {
-            ResourceRuntime.CompleteCommandBufferRecording(commandBuffer, cacheVariant);
+            Runtime.ResourceRuntime.CompleteCommandBufferRecording(commandBuffer, cacheVariant);
             return result;
         }
 
-        ResourceRuntime.AbandonCommandBufferRecording(commandBuffer);
+        Runtime.ResourceRuntime.AbandonCommandBufferRecording(commandBuffer);
         if (handle != 0)
-            CommandRuntime.CommandBuffers.TrackingBatches.TryRemove(handle, out _);
+            Runtime.CommandBuffers.TrackingBatches.TryRemove(handle, out _);
         if (result == Result.Success)
             throw new InvalidOperationException($"Vulkan command-buffer tracking publication failed: {reason}");
         return result;
@@ -89,17 +78,17 @@ internal unsafe sealed class VulkanTrackedCommandEncoder(
     internal void Abandon(CommandBuffer commandBuffer)
     {
         ulong handle = unchecked((ulong)commandBuffer.Handle);
-        ResourceRuntime.AbandonCommandBufferRecording(commandBuffer);
+        Runtime.ResourceRuntime.AbandonCommandBufferRecording(commandBuffer);
         if (handle != 0)
-            CommandRuntime.CommandBuffers.TrackingBatches.TryRemove(handle, out _);
-        CommandRuntime.Synchronization.RemoveRecordedImageLayouts(commandBuffer);
+            Runtime.CommandBuffers.TrackingBatches.TryRemove(handle, out _);
+        Runtime.Synchronization.RemoveRecordedImageLayouts(commandBuffer);
     }
 
     internal void Track(CommandBuffer commandBuffer, ObjectType type, ulong handle)
     {
         ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
         if (commandBufferHandle == 0 || handle == 0 ||
-            !CommandRuntime.CommandBuffers.TrackingBatches.TryGetValue(commandBufferHandle, out VulkanCommandBufferTrackingBatch? batch))
+            !Runtime.CommandBuffers.TrackingBatches.TryGetValue(commandBufferHandle, out VulkanCommandBufferTrackingBatch? batch))
             return;
 
         lock (batch)
@@ -123,7 +112,7 @@ internal unsafe sealed class VulkanTrackedCommandEncoder(
     {
         ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
         if (commandBufferHandle == 0 || image.Handle == 0 ||
-            !CommandRuntime.CommandBuffers.TrackingBatches.TryGetValue(
+            !Runtime.CommandBuffers.TrackingBatches.TryGetValue(
                 commandBufferHandle,
                 out VulkanCommandBufferTrackingBatch? batch))
         {
@@ -279,7 +268,7 @@ internal unsafe sealed class VulkanTrackedCommandEncoder(
         int drawSlot,
         ulong sealedGeneration,
         out string reason)
-        => ResourceRuntime.TryAcquirePreparedFrameDataLease(
+        => Runtime.ResourceRuntime.TryAcquirePreparedFrameDataLease(
             commandBuffer,
             owner,
             drawSlot,
@@ -292,7 +281,7 @@ internal unsafe sealed class VulkanTrackedCommandEncoder(
         uint[]? dwords,
         int dwordCount)
     {
-        VulkanDescriptorHeapState heap = ResourceRuntime.Descriptors.Heap;
+        VulkanDescriptorHeapState heap = Runtime.ResourceRuntime.Descriptors.Heap;
         if (heap.ActiveBackend != EVulkanDescriptorBackend.DescriptorHeap)
             return true;
 
@@ -360,7 +349,7 @@ internal unsafe sealed class VulkanTrackedCommandEncoder(
         out string reason)
     {
         reason = string.Empty;
-        VulkanDescriptorHeapState heap = ResourceRuntime.Descriptors.Heap;
+        VulkanDescriptorHeapState heap = Runtime.ResourceRuntime.Descriptors.Heap;
         if (heap.ActiveBackend != EVulkanDescriptorBackend.DescriptorHeap ||
             heap.NativeFunctions is null || !heap.SamplerStorage.IsReady ||
             !heap.ResourceStorage.IsReady)
@@ -417,7 +406,7 @@ internal unsafe sealed class VulkanTrackedCommandEncoder(
         BindHeapInfoEXTNative* samplerHeapInfo,
         BindHeapInfoEXTNative* resourceHeapInfo)
     {
-        VulkanDescriptorHeapState heap = ResourceRuntime.Descriptors.Heap;
+        VulkanDescriptorHeapState heap = Runtime.ResourceRuntime.Descriptors.Heap;
         if (heap.ActiveBackend != EVulkanDescriptorBackend.DescriptorHeap ||
             heap.NativeFunctions is null || !heap.SamplerStorage.IsReady || !heap.ResourceStorage.IsReady ||
             heapInfo is null || samplerHeapInfo is null || resourceHeapInfo is null)
@@ -467,7 +456,7 @@ internal unsafe sealed class VulkanTrackedCommandEncoder(
         uint* depthInputAttachmentIndex,
         uint* stencilInputAttachmentIndex)
     {
-        if (!DeviceContext.MutableCapabilities._supportsDynamicRenderingLocalRead || !signature.Enabled)
+        if (!Runtime.DeviceContext.MutableCapabilities._supportsDynamicRenderingLocalRead || !signature.Enabled)
             return false;
 
         int locationCount = signature.ColorAttachmentLocationCount;

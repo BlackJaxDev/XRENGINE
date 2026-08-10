@@ -28,6 +28,7 @@ internal sealed unsafe partial class VulkanFrameLoop
                 $"Desktop image index {imageIndex} has no command artifact slot.");
         }
 
+        DrainQueuedMeshRenderRequests();
         FrameOp[] drainedOperations = _framePlanner.Operations.DrainForPrimary(
             out FrameOp[] textureUploadOperations);
         VulkanFramePlanningSnapshot planningSnapshot = _framePlanner.CaptureSnapshot();
@@ -64,7 +65,7 @@ internal sealed unsafe partial class VulkanFrameLoop
             RuntimeRenderingHostServices.Settings.VulkanCommandRecordingMode ==
             EVulkanCommandRecordingMode.FreshSerial;
         bool allowSynchronousResourceUploads =
-            _resourceRuntime.BackendObjectContext?.AllowSynchronousResourceUploads == true;
+            _resourceRuntime.AllowSynchronousResourceUploads;
         VulkanPrimaryCommandPlan primaryPlan = primaryPlans[imageIndex];
         string replanReason = string.Empty;
         for (int attempt = 0; attempt < 2; attempt++)
@@ -176,6 +177,81 @@ internal sealed unsafe partial class VulkanFrameLoop
 
         return VulkanPrimaryCommandRecordingResult.Deferred(
             $"primary command recording exceeded the two-attempt replan limit: {replanReason}");
+    }
+
+    /// <summary>
+    /// Converts wrapper-owned render events into prepared mesh operations at the only
+    /// point where frame, output, command, and planner state are jointly authoritative.
+    /// </summary>
+    private void DrainQueuedMeshRenderRequests()
+    {
+        while (MeshOperationRequests.TryDequeue(out VulkanMeshRenderRequest request))
+        {
+            XRRenderPipelineInstance? pipeline = request.Pipeline;
+            if (pipeline is null)
+                continue;
+
+            FrameOpContext requestContext = request.Context.PipelineInstance is not null
+                ? request.Context
+                : CreateFrameOpContext(pipeline, pipeline.LastWindowViewport);
+            VulkanMeshProducerSnapshot producer = request.Producer with
+            {
+                Context = requestContext,
+                IsExternalSwapchainTarget =
+                    TryResolveExternalSwapchainTargetExtent(out _),
+                IsPrewarmingExternalSwapchainTarget =
+                    IsPrewarmingOpenXrExternalSwapchainTarget,
+            };
+            VulkanMeshMaterializationSnapshot materializationSnapshot = new(
+                PublishedResourcePlannerRuntimeState.LastActiveFrameOpContext,
+                ResolveQueuedMeshDescriptorViewFamilyIdentity(),
+                _resourceRuntime.ShouldAvoidSynchronousImageAllocationForOpenXr(
+                    _deviceContext.Api,
+                    _deviceContext,
+                    RuntimeRenderingHostServices.Presentation,
+                    RuntimeRenderingHostServices.FrameTiming,
+                    out _));
+            using IDisposable? pipelineScope =
+                RuntimeRenderingHostServices.Diagnostics.PushRenderingPipeline(pipeline);
+            using IDisposable? cameraScope = pipeline.RenderState.PushRenderingCamera(
+                pipeline.LastRenderingCamera ?? pipeline.LastSceneCamera);
+            if (!request.Renderer.TryMaterializeQueuedRenderRequest(
+                in request,
+                in producer,
+                in materializationSnapshot,
+                out VulkanMeshOperationRequest operationRequest))
+            {
+                continue;
+            }
+
+            EnqueueQueuedMeshDraw(in operationRequest);
+        }
+    }
+
+    private int ResolveQueuedMeshDescriptorViewFamilyIdentity()
+    {
+        FrameOpContext? context = PublishedResourcePlannerRuntimeState.LastActiveFrameOpContext;
+        return context is not { } active
+            ? 0
+            : active.OutputTargetIdentity != 0 ? active.OutputTargetIdentity : active.ViewportIdentity;
+    }
+
+    private void EnqueueQueuedMeshDraw(in VulkanMeshOperationRequest request)
+    {
+        int passIndex = VulkanCommandRuntime.EnsureValidPassIndex(
+            request.PassIndex,
+            nameof(MeshDrawOp),
+            request.Context.PassMetadata);
+        if (passIndex == int.MinValue)
+            return;
+
+        MeshDrawOp operation = MeshDrawOp.Rent(
+            passIndex,
+            request.ExplicitTarget ?? request.ProducerSnapshot.Target,
+            request.Draw,
+            request.Context,
+            _frameOperationQueue.CurrentThread.RenderQueryBracketDepth > 0);
+        _commandRuntime.EnqueueFrameOperation(_frameOperationQueue, operation, passIndex);
     }
 
     /// <summary>

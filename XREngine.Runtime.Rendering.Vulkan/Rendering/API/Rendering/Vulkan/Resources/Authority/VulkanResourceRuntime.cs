@@ -18,6 +18,7 @@ internal sealed partial class VulkanResourceRuntime
     internal const int DefaultRetirementDrainLimitPerFrame = 8;
 
     private int _framebufferRetirementFrameSlot;
+    private long _descriptorTableGeneration;
     internal VulkanResourceRuntime(int frameSlotCount)
     {
         BackendObjects = new VulkanBackendObjectRegistry();
@@ -37,18 +38,27 @@ internal sealed partial class VulkanResourceRuntime
         Images.ConfigureRetirementRuntime(this);
         FallbackTexture = new VulkanFallbackTextureAuthority(this, new VulkanFallbackTextureState());
         Buffers.BindLifetime(Lifetime);
-        Planner = new VulkanResourcePlannerService();
         Samplers = new VulkanSamplerResourceService(this, Descriptors, Lifetime);
         Framebuffers = new VulkanFrameBufferResourceService(this);
         SparseTextureStreaming = new VulkanSparseTextureStreamingService();
     }
 
     internal VulkanBackendObjectRegistry BackendObjects { get; }
+
+    /// <summary>
+    /// Resource-owned descriptor publication generation. Frame telemetry observes
+    /// this value at its frame-loop boundary rather than being retained by
+    /// descriptor lifetime services.
+    /// </summary>
+    internal ulong DescriptorTableGeneration
+        => unchecked((ulong)Volatile.Read(ref _descriptorTableGeneration));
+
+    internal void RecordDescriptorTableGeneration()
+        => Interlocked.Increment(ref _descriptorTableGeneration);
     internal VulkanDescriptorManager Descriptors { get; }
     internal VulkanAllocationAuthority Allocations { get; }
     internal VulkanBufferResourceService Buffers { get; }
     internal VulkanImageResourceService Images { get; }
-    internal VulkanResourcePlannerService Planner { get; }
     internal VulkanTextureUploadService Uploads { get; }
     internal VulkanQueryAuthority Queries { get; }
     internal VulkanFallbackTextureAuthority FallbackTexture { get; }
@@ -59,45 +69,85 @@ internal sealed partial class VulkanResourceRuntime
     internal VulkanSparseTextureStreamingService SparseTextureStreaming { get; }
     internal VulkanPipelineManager PipelineManager { get; } = new();
     internal VulkanBackendObjectContext? BackendObjectContext;
+    internal bool AllowSynchronousResourceUploads { get; private set; }
+    private VulkanWrapperLookupPort? _wrapperLookup;
+    private VulkanBackendObjectFactory? _backendObjectFactory;
+    private VulkanWrapperColdComposition? _wrapperColdComposition;
+    private VulkanResourceCommandWrapperPort? _synchronousCommands;
+    private RenderGraph.VulkanResourcePlannerPublicationReader? _plannerPublications;
+    internal VulkanWrapperLookupPort WrapperLookup
+        => _wrapperLookup ?? throw new InvalidOperationException("The Vulkan resource runtime has no published wrapper lookup port.");
+
+    /// <summary>
+    /// Factory-owned cold wrapper composition for this resource generation.
+    /// The resource runtime retains it only as the generation-local creation
+    /// boundary; its behavior ports are published by bootstrap composition.
+    /// </summary>
+    internal VulkanWrapperColdComposition WrapperColdComposition
+        => _wrapperColdComposition ?? throw new InvalidOperationException(
+            "The Vulkan resource runtime has no published wrapper cold composition.");
 
     internal VulkanBackendObjectContext GetOrCreateBackendObjectContext(
         Vk api,
-        VulkanDeviceContext? deviceContext,
-        VulkanCommandRuntime commandRuntime,
-        VulkanFramePlanner framePlanner,
-        VulkanFrameTelemetry frameTelemetry,
-        bool allowSynchronousResourceUploads)
+        VulkanDeviceContext deviceContext)
     {
-        VulkanBackendObjectContext context = BackendObjectContext ??= new VulkanBackendObjectContext(
-            api,
-            deviceContext,
-            BackendObjects,
-            Lifetime.Tracker,
-            Descriptors,
-            Buffers,
-            Images,
-            Planner,
-            Samplers,
-            Queries,
-            PipelineManager,
-            this,
-            allowSynchronousResourceUploads);
-        DescriptorLifetime.PublishBackendObjectContext(context);
-        Descriptors.PublishBackendObjectContext(context);
-        FallbackTexture.PublishBackendObjectContext(context);
-
-        // AbstractRenderer requests wrapper objects from its constructor, before the
-        // derived Vulkan constructor can publish the generation's device authority.
-        // Wrapper identity is valid during that phase; device-dependent services are not.
-        if (deviceContext is not null)
-        {
-            Descriptors.ConfigureDeviceServices(context, commandRuntime, frameTelemetry);
-            context.PublishDeviceContext(deviceContext);
-            context.ConfigureProgramServices(commandRuntime, framePlanner, frameTelemetry);
-        }
-
+        VulkanBackendObjectContext context = BackendObjectContext ?? PublishBackendObjectContext(
+            new VulkanBackendObjectContext(api, deviceContext, this));
+        VulkanWrapperLookupPort lookup = _wrapperLookup ??= new VulkanWrapperLookupPort(context);
+        _wrapperColdComposition ??= new VulkanWrapperColdComposition(lookup);
         return context;
     }
+
+    internal AbstractRenderAPIObject CreateAPIRenderObject(GenericRenderObject renderObject)
+    {
+        VulkanBackendObjectContext context = BackendObjectContext ?? throw new InvalidOperationException(
+            "The Vulkan backend object context has not been published.");
+        VulkanWrapperColdComposition composition = _wrapperColdComposition ?? throw new InvalidOperationException(
+            "The Vulkan wrapper cold composition has not been published.");
+        return composition.GetOrCreate(_backendObjectFactory ??= new VulkanBackendObjectFactory(), context, renderObject);
+    }
+
+    /// <summary>
+    /// Resource-owned synchronous command service.  Resource wrappers resolve
+    /// it from their generation context at the operation boundary rather than
+    /// retaining a command/telemetry/planner port for their entire lifetime.
+    /// </summary>
+    internal VulkanResourceCommandWrapperPort SynchronousCommands
+        => _synchronousCommands ?? throw new InvalidOperationException(
+            "The Vulkan resource runtime has no published synchronous command service.");
+
+    /// <summary>Planner publication access owned by the resource generation.</summary>
+    internal RenderGraph.VulkanResourcePlannerPublicationReader PlannerPublications
+        => _plannerPublications ?? throw new InvalidOperationException(
+            "The Vulkan resource runtime has no published planner publications.");
+
+    internal void ConfigureWrapperOperationServices(
+        VulkanResourceCommandWrapperPort synchronousCommands,
+        RenderGraph.VulkanResourcePlannerPublicationReader publications)
+    {
+        ArgumentNullException.ThrowIfNull(synchronousCommands);
+        ArgumentNullException.ThrowIfNull(publications);
+        PublishSingle(ref _synchronousCommands,
+            synchronousCommands,
+            "synchronous command service");
+        PublishSingle(ref _plannerPublications, publications, "planner publications");
+    }
+
+    private static void PublishSingle<T>(ref T? destination, T value, string name) where T : class
+    {
+        T? current = Interlocked.CompareExchange(ref destination, value, null);
+        if (current is not null && !ReferenceEquals(current, value))
+            throw new InvalidOperationException($"The Vulkan resource runtime already owns a different {name}.");
+    }
+
+    /// <summary>Publishes the immutable upload policy for this resource generation.</summary>
+    internal void PublishSynchronousUploadPolicy(bool allowSynchronousUploads)
+    {
+        if (AllowSynchronousResourceUploads != default && AllowSynchronousResourceUploads != allowSynchronousUploads)
+            throw new InvalidOperationException("The Vulkan resource runtime upload policy cannot change within a generation.");
+        AllowSynchronousResourceUploads = allowSynchronousUploads;
+    }
+
     internal RenderPass SwapchainRenderPass;
     internal RenderPass SwapchainLoadRenderPass;
     internal Dictionary<ulong, uint> RenderPassColorAttachmentCounts { get; } = new();
@@ -115,13 +165,6 @@ internal sealed partial class VulkanResourceRuntime
     internal ulong GetPublishedGeneration(ObjectType type, ulong handle)
         => Lifetime.Tracker.GetPublishedGeneration(
             new VulkanResourceLifetimeKey(type, handle));
-
-    internal void ConfigureLifetimeCommandRuntime(VulkanCommandRuntime commandRuntime)
-    {
-        Planner.BindCommandRuntime(commandRuntime);
-        Images.ConfigureCommandRuntime(commandRuntime);
-        Samplers.ConfigureCommandRuntime(commandRuntime);
-    }
 
     internal int FramebufferRetirementFrameSlot
         => Volatile.Read(ref _framebufferRetirementFrameSlot);
@@ -565,7 +608,6 @@ internal sealed partial class VulkanResourceRuntime
     /// of the batch has passed its generation and retirement checks.
     /// </summary>
     internal bool TryPublishCommandBufferTrackingBatch(
-        VulkanCommandRuntime commandRuntime,
         CommandBuffer commandBuffer,
         VulkanCommandBufferTrackingBatch batch,
         out string reason)
@@ -803,9 +845,7 @@ internal sealed partial class VulkanResourceRuntime
         }
     }
 
-    internal bool CanResetCommandBuffer(
-        VulkanCommandRuntime commandRuntime,
-        CommandBuffer commandBuffer)
+    internal bool CanResetCommandBuffer(CommandBuffer commandBuffer)
     {
         ulong handle = unchecked((ulong)commandBuffer.Handle);
         if (handle == 0)
@@ -813,15 +853,6 @@ internal sealed partial class VulkanResourceRuntime
 
         lock (Lifetime.Tracker.SyncRoot)
         {
-            if (commandRuntime.CommandBuffers.TrackingBatches.TryGetValue(
-                    handle,
-                    out VulkanCommandBufferTrackingBatch? batch))
-            {
-                lock (batch)
-                    if (batch.IsRecording || batch.QueuedSubmissionCount != 0)
-                        return false;
-            }
-
             if (Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(
                     handle,
                     out VulkanCommandBufferLifetimeRecord? lifetime))
@@ -877,7 +908,6 @@ internal sealed partial class VulkanResourceRuntime
     }
 
     internal bool IsCommandBufferRetirementReady(
-        VulkanCommandRuntime commandRuntime,
         CommandBuffer commandBuffer,
         in VulkanRetirementTicket ticket)
     {
@@ -889,15 +919,6 @@ internal sealed partial class VulkanResourceRuntime
         {
             if (Lifetime.Tracker.ForcedRetirementDrainDepth > 0)
                 return true;
-
-            if (commandRuntime.CommandBuffers.TrackingBatches.TryGetValue(
-                    handle,
-                    out VulkanCommandBufferTrackingBatch? batch))
-            {
-                lock (batch)
-                    if (batch.IsRecording || batch.QueuedSubmissionCount != 0)
-                        return false;
-            }
 
             if (Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(
                     handle,
@@ -911,9 +932,7 @@ internal sealed partial class VulkanResourceRuntime
         }
     }
 
-    internal bool AreCommandPoolChildrenRetirementReady(
-        VulkanCommandRuntime commandRuntime,
-        CommandPool commandPool)
+    internal bool AreCommandPoolChildrenRetirementReady(CommandPool commandPool)
     {
         if (commandPool.Handle == 0)
             return true;
@@ -946,10 +965,7 @@ internal sealed partial class VulkanResourceRuntime
         {
             CommandBuffer child = children[index];
             if (IsCommandBufferPendingRetirement(child) ||
-                !IsCommandBufferRetirementReady(
-                    commandRuntime,
-                    child,
-                    VulkanRetirementTicket.None))
+                !IsCommandBufferRetirementReady(child, VulkanRetirementTicket.None))
             {
                 return false;
             }
@@ -973,9 +989,7 @@ internal sealed partial class VulkanResourceRuntime
             ObjectType.Pipeline,
             pipeline.Handle);
 
-    internal void CompleteCommandPoolChildDestructions(
-        VulkanCommandRuntime commandRuntime,
-        CommandPool commandPool)
+    internal void CompleteCommandPoolChildDestructions(CommandPool commandPool)
     {
         if (commandPool.Handle == 0)
             return;
@@ -1005,7 +1019,6 @@ internal sealed partial class VulkanResourceRuntime
 
         for (int index = 0; index < children.Length; index++)
         {
-            commandRuntime.RemoveCommandBufferState(children[index]);
             CompleteCommandBufferDestruction(children[index]);
         }
     }
@@ -1059,7 +1072,6 @@ internal sealed partial class VulkanResourceRuntime
     }
 
     internal VulkanRetirementTicket PrepareCommandBufferRetirement(
-        VulkanCommandRuntime commandRuntime,
         CommandBuffer commandBuffer,
         string owner)
     {
@@ -1071,7 +1083,6 @@ internal sealed partial class VulkanResourceRuntime
             ObjectType.CommandBuffer,
             handle);
         Lifetime.Tracker.FenceResourceRecordingAdmission(key, owner);
-        commandRuntime.PublishTrackingDependenciesBeforeResourceRetirement(key);
         lock (Lifetime.Tracker.SyncRoot)
         {
             VulkanResourceLifetimeRecord resource =
@@ -1219,6 +1230,13 @@ internal sealed partial class VulkanResourceRuntime
 
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(
             pipelines: destroyed);
+    }
+
+    internal void NotifyTimingQueryPoolsCompleted(
+        in VulkanCompletedTimingQueryPools completed)
+    {
+        NotifyResourceUseCompleted(ObjectType.QueryPool, completed.FrameTiming.Handle);
+        NotifyResourceUseCompleted(ObjectType.QueryPool, completed.GpuProfiler.Handle);
     }
 
     /// <summary>Publishes a program-owned pipeline layout to the lifetime ledger.</summary>

@@ -164,7 +164,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         return info.IsValid;
     }
 
-    private bool TryGetTrackedImageLayout(
+    internal bool TryGetTrackedImageLayout(
         Image image,
         in ImageSubresourceRange range,
         out ImageLayout layout)
@@ -224,7 +224,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         return layout != ImageLayout.Undefined;
     }
 
-    private bool TryGetRecordedImageLayout(
+    internal bool TryGetRecordedImageLayout(
         CommandBuffer commandBuffer,
         Image image,
         in ImageSubresourceRange range,
@@ -316,7 +316,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             ResourceGeneration: generation);
     }
 
-    private static int EnsureValidPassIndex(
+    internal static int EnsureValidPassIndex(
         int passIndex,
         string opName,
         IReadOnlyCollection<RenderPassMetadata>? passMetadata = null)

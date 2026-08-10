@@ -16,11 +16,11 @@ internal struct ResourcePlannerRuntimeState
     public ulong FailedResourcePlannerSignature;
     public ulong FailedResourceAllocationSignature;
     public long FailedResourceAllocationTimestamp;
-    public VulkanRenderer.ResourcePlannerFastPathKey ResourcePlannerFastPathKey;
+    public ResourcePlannerFastPathKey ResourcePlannerFastPathKey;
     public bool HasResourcePlannerFastPathKey;
-    public VulkanRenderer.BarrierPlanFastPathKey BarrierPlanFastPathKey;
+    public BarrierPlanFastPathKey BarrierPlanFastPathKey;
     public bool HasBarrierPlanFastPathKey;
-    public VulkanRenderer.ResourcePlannerSignatureBreakdown ResourcePlannerSignatureBreakdown;
+    public ResourcePlannerSignatureBreakdown ResourcePlannerSignatureBreakdown;
     public ulong ResourcePlannerRevision;
     public long AllocatorOwnershipId;
     public FrameOpResourcePlannerSwitchingState? FrameOpResourcePlannerSwitchingState;

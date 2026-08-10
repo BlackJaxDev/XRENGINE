@@ -297,7 +297,7 @@ namespace XREngine.Rendering.Vulkan
                 : recordingState.HasActiveContext
                     ? recordingState.ActiveContext
                     : recordingState.InitialContext;
-            CmdBeginLabel(recordingState.CommandBuffer, "RefreshSwapchainFromLastPresentSource");
+            _deviceContext.CmdBeginLabel(recordingState.CommandBuffer, "RefreshSwapchainFromLastPresentSource");
             bool blitRecorded = RecordPresentationSourceBlit(
                 recordingState.CommandBuffer,
                 recordingState.ImageIndex,
@@ -305,7 +305,7 @@ namespace XREngine.Rendering.Vulkan
                 in recordingState.SwapchainTarget,
                 passIndex,
                 blitContext);
-            CmdEndLabel(recordingState.CommandBuffer);
+            _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
             if (!blitRecorded)
             {
                 Debug.VulkanEvery(

@@ -42,31 +42,28 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
     private readonly VulkanOutputRuntime _output;
     private readonly Vk _api;
     private readonly VulkanDeviceContext _device;
-    private readonly VulkanCommandRuntime _commands;
     private readonly VulkanResourceRuntime _resources;
-    private readonly VulkanFramePlanner _planner;
-    private readonly VulkanOpenXrFrameDataSlotReservation _openXrFrameDataSlots;
     private readonly VulkanImGuiOutputPipelineService _imguiPipeline;
-    private readonly VulkanTargetOutputServices _services;
+    private readonly VulkanDesktopWsiTargetDriver? _desktopWsiTarget;
+    private readonly IVulkanTargetOutputHost _services;
 
     internal VulkanDesktopSwapchainService(
         VulkanOutputRuntime output,
         Vk api,
         VulkanDeviceContext device,
-        VulkanCommandRuntime commands,
         VulkanResourceRuntime resources,
         VulkanFrameTelemetry telemetry,
-        VulkanFramePlanner planner)
+        VulkanImGuiOutputPipelineService imguiPipeline,
+        VulkanDesktopWsiTargetDriver? desktopWsiTarget,
+        IVulkanTargetOutputHost services)
     {
         _output = output;
         _api = api;
         _device = device;
-        _commands = commands;
         _resources = resources;
-        _planner = planner;
-        _openXrFrameDataSlots = new VulkanOpenXrFrameDataSlotReservation(output, resources, commands);
-        _imguiPipeline = output.GetImGuiOutputPipelineService(resources, device);
-        _services = new VulkanTargetOutputServices(api, device, commands, resources, telemetry, output);
+        _imguiPipeline = imguiPipeline;
+        _desktopWsiTarget = desktopWsiTarget;
+        _services = services;
     }
 
     internal void QueueRetiredGeneration(RetiredSwapchainGeneration generation)
@@ -98,13 +95,10 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
             CreateRenderPasses();
             CreateFramebuffers();
             _output._imguiResources.OverlayCommandBuffers =
-                _commands.CreateDesktopOutputArtifacts(
-                _api,
-                _device,
-                _resources,
+                _services.CreateDesktopOutputArtifacts(
                 _output.Desktop.Images?.Length
                     ?? throw new InvalidOperationException("Desktop images were not published."));
-            _openXrFrameDataSlots.ReserveForDesktopImageCount(_output.Desktop.Images.Length);
+            _services.ReserveOpenXrFrameDataSlots(_output.Desktop.Images.Length);
             PublishPlannerExtent(_output.Desktop.Extent);
         }
         catch
@@ -194,7 +188,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                 return false;
             }
 
-            _output.DisableDesktopStreamlineFrameGenerationForMutation("swapchain recreation");
+            DisableStreamlineFrameGenerationBeforeMutation("swapchain recreation");
             if (!TryPrepareRetirementMarkers(out Fence graphicsMarker, out Fence presentMarker))
                 return false;
 
@@ -245,12 +239,9 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                 CreateFramebuffers();
                 _output.Desktop.PresentBridgeSemaphores = CreatePresentBridgeSemaphores(_output.Desktop.Images!.Length);
                 _output._imguiResources.OverlayCommandBuffers =
-                    _commands.CreateDesktopOutputArtifacts(
-                        _api,
-                        _device,
-                        _resources,
+                    _services.CreateDesktopOutputArtifacts(
                         _output.Desktop.Images.Length);
-                _openXrFrameDataSlots.ReserveForDesktopImageCount(_output.Desktop.Images.Length);
+                _services.ReserveOpenXrFrameDataSlots(_output.Desktop.Images.Length);
                 _output.Desktop.ImageTimelineValues = new ulong[_output.Desktop.Images.Length];
                 PublishPlannerExtent(_output.Desktop.Extent);
                 return true;
@@ -461,7 +452,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         if (!_output.Desktop.StreamlineFrameGenerationActive)
             return;
 
-        var viewports = _output.RequireDesktopWsiTarget().Window.Viewports;
+        var viewports = RequireDesktopWsiTarget().Window.Viewports;
         VulkanStreamlineDeviceBinding binding = _output.CaptureStreamlineDeviceBinding(_device);
         for (int index = 0; index < viewports.Count; index++)
             if (!NvidiaDlssManager.Native.TryDisableFrameGeneration(binding, viewports[index], out string failureReason))
@@ -473,7 +464,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         if (!_output.Desktop.StreamlineFrameGenerationActive || NvidiaDlssManager.IsFrameGenerationRequested)
             return;
 
-        var viewports = _output.RequireDesktopWsiTarget().Window.Viewports;
+        var viewports = RequireDesktopWsiTarget().Window.Viewports;
         VulkanStreamlineDeviceBinding binding = _output.CaptureStreamlineDeviceBinding(_device);
         for (int index = 0; index < viewports.Count; index++)
             if (!NvidiaDlssManager.Native.TryDrainFrameGenerationDisableForPresent(binding, viewports[index], out string failureReason))
@@ -533,9 +524,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
 
     private void PublishPlannerExtent(Extent2D extent)
     {
-        _commands.StateTracker.SetSwapchainExtent(extent);
-        _commands.StateTracker.SetCurrentTargetExtent(extent);
-        _planner.PublishDesktopSwapchainExtent(extent);
+        _services.PublishDesktopSwapchainExtent(extent);
     }
 
     /// <summary>
@@ -546,12 +535,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
     {
         CommandBuffer[]? imguiOverlayCommandBuffers =
             _output._imguiResources.OverlayCommandBuffers;
-        _commands.RetireDesktopOutputArtifacts(
-            _api,
-            _device,
-            _resources,
-            _resources.FramebufferRetirementFrameSlot,
-            imguiOverlayCommandBuffers);
+        _services.RetireDesktopOutputArtifacts(imguiOverlayCommandBuffers);
         _output._imguiResources.OverlayCommandBuffers = null;
     }
 
@@ -600,7 +584,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
 
     private SurfaceFormatKHR ChooseSurfaceFormat(IReadOnlyList<SurfaceFormatKHR> formats)
     {
-        bool requestHdr = _output.RequireDesktopWsiTarget().PreferHdrOutput;
+        bool requestHdr = RequireDesktopWsiTarget().PreferHdrOutput;
         bool frameGeneration = _output._streamlineFrameGenerationProvisioned;
         if (_device.MutableCapabilities._supportsSwapchainColorspace && requestHdr && frameGeneration && TrySelectFormat(formats, DlssFrameGenerationHdrSurfacePreferences, out SurfaceFormatKHR dlssHdr))
             return SetPreferredFormat(dlssHdr);
@@ -645,8 +629,9 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
             return extent.Width != 0 && extent.Height != 0;
         }
 
-        Vector2D<int> framebuffer = _output.RequireDesktopWsiTarget().EffectiveFramebufferSize;
-        Vector2D<int> window = _output.RequireDesktopWsiTarget().Window.Window.Size;
+        VulkanDesktopWsiTargetDriver desktopWsiTarget = RequireDesktopWsiTarget();
+        Vector2D<int> framebuffer = desktopWsiTarget.EffectiveFramebufferSize;
+        Vector2D<int> window = desktopWsiTarget.Window.Window.Size;
         if ((framebuffer.X <= 0 || framebuffer.Y <= 0) && (window.X <= 0 || window.Y <= 0))
         {
             extent = default;
@@ -662,6 +647,11 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         reason = extent.Width == 0 || extent.Height == 0 ? "surface clamp produced a zero extent" : string.Empty;
         return extent.Width != 0 && extent.Height != 0;
     }
+
+    private VulkanDesktopWsiTargetDriver RequireDesktopWsiTarget()
+        => _desktopWsiTarget
+            ?? throw new InvalidOperationException(
+                "The desktop swapchain service is unavailable for the active Vulkan target.");
 
     private SwapChainSupportDetails QuerySwapchainSupport(PhysicalDevice physicalDevice)
     {
@@ -832,7 +822,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
     {
         for (int slot = 0; slot < _resources.Lifetime.Retirement.CommandBuffers.Length; slot++)
         {
-            _commands.DrainRetiredCommandBuffers(_api, _device.Device, _resources, slot, int.MaxValue);
+            _services.DrainRetiredDesktopCommandBuffers(slot);
             _resources.DrainRetiredDescriptorSets(_api, _device.Device, slot, int.MaxValue);
             _resources.DrainRetiredDescriptorPools(_api, _device.Device, slot, int.MaxValue);
             _resources.DrainRetiredFramebuffers(_api, _device.Device, slot, int.MaxValue);

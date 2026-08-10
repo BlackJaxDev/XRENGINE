@@ -76,7 +76,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         // Keep synchronous texture publication ordered with prior and future image
         // uses on the graphics queue.  The resource command authority owns the
         // tracked submission and fence receipt; no renderer facade participates.
-        BackendContext.ResourceCommands.CopyBufferToImage(
+        ResourceCommandPort.CopyBufferToImage(
             buffer,
             _image,
             ImageLayout.TransferDstOptimal,

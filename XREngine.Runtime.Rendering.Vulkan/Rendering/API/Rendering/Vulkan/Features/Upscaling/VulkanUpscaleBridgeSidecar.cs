@@ -18,7 +18,7 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>
 /// Represents a Vulkan-based sidecar for handling upscaling bridge operations, including resource management and queue handling.
 /// </summary>
-internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
+internal sealed unsafe partial class VulkanUpscaleBridgeSidecar : IDisposable
 {
     private const int FramesInFlight = 2;
     private const uint DuplicateSameAccess = 0x00000002;
@@ -33,6 +33,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     private readonly uint _streamlineGraphicsQueueIndex;
     private readonly uint _streamlineComputeQueueIndex;
     private readonly uint _streamlineOpticalFlowQueueIndex;
+    private readonly VulkanUpscaleBridgeVulkanContext _nativeContext;
     private readonly object _graphicsQueueOperationGate = new();
     private readonly VulkanDeviceStateMachine _deviceState = new();
     private readonly VulkanFrameTelemetry _telemetry = new();
@@ -91,6 +92,15 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         _streamlineOpticalFlowQueueIndex = streamlineOpticalFlowQueueIndex;
         _graphicsQueue = GetGraphicsQueue(_selectedDevice.GraphicsQueueFamilyIndex);
         _commandPool = CreateCommandPool(_selectedDevice.GraphicsQueueFamilyIndex);
+        _nativeContext = new VulkanUpscaleBridgeVulkanContext(
+            _api,
+            _instance,
+            _selectedDevice.Device,
+            _device,
+            _selectedDevice.GraphicsQueueFamilyIndex,
+            _streamlineGraphicsQueueIndex,
+            _streamlineComputeQueueIndex,
+            _streamlineOpticalFlowQueueIndex);
 
         if (!_api.TryGetDeviceExtension(_instance, _device, out _externalMemoryWin32))
             throw new InvalidOperationException("Failed to load VK_KHR_external_memory_win32 for the bridge sidecar.");
@@ -102,15 +112,10 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     public uint VendorId => _selectedDevice.VendorId;
     public uint DeviceId => _selectedDevice.DeviceId;
     public int FrameSlotCount => FramesInFlight;
-    public Instance Instance => _instance;
-    public PhysicalDevice PhysicalDevice => _selectedDevice.Device;
-    public Device Device => _device;
     public Queue GraphicsQueue => _graphicsQueue;
     public uint GraphicsQueueFamilyIndex => _selectedDevice.GraphicsQueueFamilyIndex;
     public uint GraphicsQueueIndex => 0;
-    public uint StreamlineGraphicsQueueIndex => _streamlineGraphicsQueueIndex;
-    public uint StreamlineComputeQueueIndex => _streamlineComputeQueueIndex;
-    public uint StreamlineOpticalFlowQueueIndex => _streamlineOpticalFlowQueueIndex;
+    internal VulkanUpscaleBridgeVulkanContext NativeContext => _nativeContext;
 
     /// <summary>
     /// Waits for the specified frame slot to become available for use.
@@ -318,13 +323,13 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         if (beginResult != Result.Success)
             throw new InvalidOperationException($"Failed to begin bridge passthrough command buffer for slot {slot.SlotIndex}.");
 
-        TransitionImageLayout(
+        _nativeContext.TransitionImageLayout(
             slot.CommandBuffer,
             slot.SourceColor,
             ImageLayout.TransferSrcOptimal,
             PipelineStageFlags.TransferBit,
             AccessFlags.TransferReadBit);
-        TransitionImageLayout(
+        _nativeContext.TransitionImageLayout(
             slot.CommandBuffer,
             slot.OutputColor,
             ImageLayout.TransferDstOptimal,
@@ -363,13 +368,13 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             &region,
             Filter.Linear);
 
-        TransitionImageLayout(
+        _nativeContext.TransitionImageLayout(
             slot.CommandBuffer,
             slot.SourceColor,
             ImageLayout.General,
             PipelineStageFlags.AllCommandsBit,
             AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
-        TransitionImageLayout(
+        _nativeContext.TransitionImageLayout(
             slot.CommandBuffer,
             slot.OutputColor,
             ImageLayout.General,
@@ -585,22 +590,6 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     }
 
     /// <summary>
-    /// Records a command to transition the layout of the specified image within the given command buffer.
-    /// </summary>
-    /// <param name="commandBuffer">The command buffer in which to record the layout transition command.</param>
-    /// <param name="image">The image whose layout is to be transitioned.</param>
-    /// <param name="newLayout">The new layout to transition the image to.</param>
-    /// <param name="dstStage">The destination pipeline stage for the layout transition.</param>
-    /// <param name="dstAccessMask">The destination access mask for the layout transition.</param>
-    public void RecordTransitionImageLayout(
-        CommandBuffer commandBuffer,
-        VulkanUpscaleBridgeSharedImage image,
-        ImageLayout newLayout,
-        PipelineStageFlags dstStage,
-        AccessFlags dstAccessMask)
-        => TransitionImageLayout(commandBuffer, image, newLayout, dstStage, dstAccessMask);
-
-    /// <summary>
     /// Ensures that a DLSS session is available, creating one if necessary.
     /// </summary>
     /// <param name="failureReason">Outputs the reason for failure if the session could not be ensured.</param>
@@ -612,7 +601,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         if (_dlssSession is not null)
             return true;
 
-        if (!NvidiaDlssManager.Native.TryCreateBridgeSession(this, _streamlineViewportId, out _dlssSession, out failureReason)
+        if (!NvidiaDlssManager.Native.TryCreateBridgeSession(_nativeContext, _streamlineViewportId, out _dlssSession, out failureReason)
             || _dlssSession is null)
         {
             _dlssSession = null;
@@ -635,7 +624,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         if (_xessSession is not null)
             return true;
 
-        if (!IntelXessManager.Native.TryCreateBridgeSession(this, in parameters, out _xessSession, out failureReason)
+        if (!IntelXessManager.Native.TryCreateBridgeSession(_nativeContext, in parameters, out _xessSession, out failureReason)
             || _xessSession is null)
         {
             _xessSession = null;
@@ -1998,106 +1987,6 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             _ => throw new NotSupportedException($"Vulkan upscale bridge does not yet map GL format '{internalFormat}'."),
         };
     }
-
-    /// <summary>
-    /// Transitions the layout of a Vulkan image to a new layout, updating the pipeline stage and access masks accordingly.
-    /// </summary>
-    /// <param name="commandBuffer">The command buffer used to record the pipeline barrier.</param>
-    /// <param name="image">The Vulkan image whose layout is to be transitioned.</param>
-    /// <param name="newLayout">The new layout to transition the image to.</param>
-    /// <param name="dstStage">The destination pipeline stage flags for the transition.</param>
-    /// <param name="dstAccessMask">The destination access mask for the transition.</param>
-    /// <remarks>
-    /// This method records a pipeline barrier into the specified command buffer to transition the image layout.
-    /// It automatically resolves the source pipeline stage and access mask based on the current layout of the image.
-    /// </remarks>
-    private void TransitionImageLayout(
-        CommandBuffer commandBuffer,
-        VulkanUpscaleBridgeSharedImage image,
-        ImageLayout newLayout,
-        PipelineStageFlags dstStage,
-        AccessFlags dstAccessMask)
-    {
-        ImageLayout oldLayout = image.CurrentLayout;
-        if (oldLayout == newLayout)
-            return;
-
-        PipelineStageFlags srcStage = ResolvePipelineStage(oldLayout);
-        AccessFlags srcAccessMask = ResolveAccessMask(oldLayout);
-
-        ImageMemoryBarrier barrier = new()
-        {
-            SType = StructureType.ImageMemoryBarrier,
-            SrcAccessMask = srcAccessMask,
-            DstAccessMask = dstAccessMask,
-            OldLayout = oldLayout,
-            NewLayout = newLayout,
-            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-            Image = image.VulkanImage,
-            SubresourceRange = new ImageSubresourceRange
-            {
-                AspectMask = image.AspectMask,
-                BaseMipLevel = 0,
-                LevelCount = 1,
-                BaseArrayLayer = 0,
-                LayerCount = 1,
-            },
-        };
-
-        ImageMemoryBarrier* barrierPtr = stackalloc ImageMemoryBarrier[1];
-        barrierPtr[0] = barrier;
-
-        _api.CmdPipelineBarrier(
-            commandBuffer,
-            srcStage,
-            dstStage,
-            DependencyFlags.None,
-            0,
-            null,
-            0,
-            null,
-            1,
-            barrierPtr);
-
-        image.CurrentLayout = newLayout;
-    }
-
-    /// <summary>
-    /// Resolves the appropriate pipeline stage flags for a given image layout.
-    /// </summary>
-    /// <param name="layout">The image layout for which to resolve the pipeline stage flags.</param>
-    /// <returns>The corresponding pipeline stage flags for the specified image layout.</returns>
-    private static PipelineStageFlags ResolvePipelineStage(ImageLayout layout)
-        => layout switch
-        {
-            ImageLayout.Undefined => PipelineStageFlags.TopOfPipeBit,
-            ImageLayout.TransferSrcOptimal or ImageLayout.TransferDstOptimal => PipelineStageFlags.TransferBit,
-            ImageLayout.ColorAttachmentOptimal => PipelineStageFlags.ColorAttachmentOutputBit,
-            ImageLayout.DepthStencilAttachmentOptimal or ImageLayout.DepthAttachmentOptimal => PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
-            ImageLayout.ShaderReadOnlyOptimal => PipelineStageFlags.FragmentShaderBit,
-            _ => PipelineStageFlags.AllCommandsBit,
-        };
-
-    /// <summary>
-    /// Resolves the appropriate pipeline stage flags for a given image layout.
-    /// </summary>
-    /// <param name="layout">The image layout for which to resolve the pipeline stage flags.</param>
-    /// <returns>The corresponding pipeline stage flags for the specified image layout.</returns>
-    private static AccessFlags ResolveAccessMask(ImageLayout layout)
-        => layout switch
-        {
-            ImageLayout.Undefined => 0,
-            ImageLayout.TransferSrcOptimal => AccessFlags.TransferReadBit,
-            ImageLayout.TransferDstOptimal => AccessFlags.TransferWriteBit,
-            ImageLayout.ColorAttachmentOptimal => AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit,
-            ImageLayout.DepthStencilAttachmentOptimal or ImageLayout.DepthAttachmentOptimal
-                => AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit,
-            ImageLayout.DepthStencilReadOnlyOptimal or ImageLayout.DepthReadOnlyOptimal
-                => AccessFlags.DepthStencilAttachmentReadBit,
-            ImageLayout.ShaderReadOnlyOptimal => AccessFlags.ShaderReadBit,
-            _ => AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
-        };
 
     /// <summary>
     /// Duplicates a Win32 handle for import into another API, such as OpenGL. 

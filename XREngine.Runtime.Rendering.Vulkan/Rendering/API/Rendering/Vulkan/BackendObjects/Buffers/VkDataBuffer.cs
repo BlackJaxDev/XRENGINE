@@ -121,7 +121,7 @@ namespace XREngine.Rendering.Vulkan
                     return true;
                 }
 
-                downgradeReason = BackendContext.Buffers.ResolveDeviceAddressStatus(BackendContext, Data, DeviceAddress);
+                downgradeReason = BackendContext.Resources.Buffers.ResolveDeviceAddressStatus(BackendContext, Data, DeviceAddress);
                 Data.ReportDeviceAddressDowngrade(downgradeReason);
                 return false;
             }
@@ -241,8 +241,8 @@ namespace XREngine.Rendering.Vulkan
                 BufferUsageFlags usage = ResolveVkUsageFlags(Data.Target, Data.Usage);
                 MemoryPropertyFlags memProps = ResolveMemoryProperties(Data, Data.Length);
                 bool enableDeviceAddress =
-                    BackendContext.Buffers.ShouldEnableDeviceAddress(BackendContext, Data) ||
-                    BackendContext.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap;
+                    BackendContext.Resources.Buffers.ShouldEnableDeviceAddress(BackendContext, Data) ||
+                    BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap;
                 if (enableDeviceAddress)
                     usage |= BufferUsageFlags.ShaderDeviceAddressBit;
 
@@ -270,7 +270,7 @@ namespace XREngine.Rendering.Vulkan
                     _hasPendingUpload = true;
                     ReportBackendState();
 
-                    // Retire old buffer handles for deferred cleanup — the command buffer
+                    // Retire old buffer handles for deferred cleanup ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â the command buffer
                     // currently being recorded may still reference them, so we must not
                     // destroy them synchronously.  Do NOT call Destroy() here because
                     // that also resets _bindingId, which would make IsActive return false
@@ -279,14 +279,14 @@ namespace XREngine.Rendering.Vulkan
                     {
                         ReleasePersistentMappingBeforeResourceRetire();
                         if (_vkBuffer.HasValue && _vkMemory.HasValue)
-                            BackendContext.Buffers.Retire(_vkBuffer.Value, _vkMemory.Value, "VkDataBuffer.PushData");
+                            BackendContext.Resources.Buffers.Retire(_vkBuffer.Value, _vkMemory.Value, "VkDataBuffer.PushData");
                         else
                         {
-                            // Partial state — still retire to avoid use-after-free.
+                            // Partial state ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â still retire to avoid use-after-free.
                             if (_vkBuffer.HasValue)
-                                BackendContext.Buffers.Retire(_vkBuffer.Value, default, "VkDataBuffer.PushData.PartialState");
+                                BackendContext.Resources.Buffers.Retire(_vkBuffer.Value, default, "VkDataBuffer.PushData.PartialState");
                             if (_vkMemory.HasValue)
-                                BackendContext.Buffers.Retire(default, _vkMemory.Value, "VkDataBuffer.PushData.PartialState");
+                                BackendContext.Resources.Buffers.Retire(default, _vkMemory.Value, "VkDataBuffer.PushData.PartialState");
                         }
                         _vkBuffer = null;
                         _vkMemory = null;
@@ -321,7 +321,7 @@ namespace XREngine.Rendering.Vulkan
                         if (createDeviceAddress)
                             deviceUsage |= BufferUsageFlags.ShaderDeviceAddressBit;
 
-                        var (deviceBuffer, deviceMemory) = BackendContext.Buffers.Create(
+                        var (deviceBuffer, deviceMemory) = BackendContext.Resources.Buffers.Create(
                             BackendContext,
                             _bufferSize,
                             deviceUsage,
@@ -346,7 +346,7 @@ namespace XREngine.Rendering.Vulkan
                                 stagingUsage |= BufferUsageFlags.ShaderDeviceAddressBit;
 
                             MemoryPropertyFlags stagingProps = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
-                            var (stagingBuffer, stagingMemory) = BackendContext.Buffers.Create(
+                            var (stagingBuffer, stagingMemory) = BackendContext.Resources.Buffers.Create(
                                 BackendContext,
                                 requiredByteSize,
                                 stagingUsage,
@@ -355,7 +355,7 @@ namespace XREngine.Rendering.Vulkan
                                 preferIndirectCopy);
                             try
                             {
-                                BackendContext.ResourceCommands.CopyBuffer(
+                                BackendContext.Resources.SynchronousCommands.CopyBuffer(
                                     stagingBuffer,
                                     deviceBuffer,
                                     requiredByteSize,
@@ -366,7 +366,7 @@ namespace XREngine.Rendering.Vulkan
                             }
                             finally
                             {
-                                BackendContext.Buffers.Destroy(BackendContext, stagingBuffer, stagingMemory, "VkDataBuffer.PushData.Staging");
+                                BackendContext.Resources.Buffers.Destroy(BackendContext, stagingBuffer, stagingMemory, "VkDataBuffer.PushData.Staging");
                             }
                         }
                         else if (Data.HasGpuCompressedPayload)
@@ -390,7 +390,7 @@ namespace XREngine.Rendering.Vulkan
                         VoidPtr initialData = _bufferSize == requiredByteSize && Data.TryGetAddress(out var address)
                             ? address
                             : VoidPtr.Zero;
-                        (_vkBuffer, _vkMemory) = BackendContext.Buffers.Create(
+                        (_vkBuffer, _vkMemory) = BackendContext.Resources.Buffers.Create(
                             BackendContext,
                             _bufferSize,
                             usage,
@@ -419,7 +419,7 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 }
 
-                BackendContext.Planner.TrackBufferBinding(Data);
+                BackendContext.Resources.PlannerPublications.TrackBufferBinding(Data);
                 RecordUploadDiagnostics((long)_bufferSize, recreate: needsRecreate, fullUpload: true);
                 ReportBackendState();
 
@@ -454,7 +454,7 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 if (!_vkBuffer.HasValue ||
-                    !BackendContext.Buffers.TryGetAllocation(_vkBuffer.Value, out VulkanMemoryAllocation allocation) ||
+                    !BackendContext.Resources.Buffers.TryGetAllocation(_vkBuffer.Value, out VulkanMemoryAllocation allocation) ||
                     !VulkanBufferResourceService.IsDeviceLocalVramAllocation(allocation.Properties))
                 {
                     return;
@@ -578,7 +578,7 @@ namespace XREngine.Rendering.Vulkan
                         stagingUsage |= BufferUsageFlags.ShaderDeviceAddressBit;
 
                     MemoryPropertyFlags stagingProps = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
-                    var (stagingBuffer, stagingMemory) = BackendContext.Buffers.Create(
+                    var (stagingBuffer, stagingMemory) = BackendContext.Resources.Buffers.Create(
                         BackendContext,
                         clampedLength,
                         stagingUsage,
@@ -587,7 +587,7 @@ namespace XREngine.Rendering.Vulkan
                         preferIndirectCopy);
                     try
                     {
-                        BackendContext.ResourceCommands.CopyBuffer(
+                        BackendContext.Resources.SynchronousCommands.CopyBuffer(
                             stagingBuffer,
                             _vkBuffer.Value,
                             clampedLength,
@@ -597,7 +597,7 @@ namespace XREngine.Rendering.Vulkan
                     }
                     finally
                     {
-                        BackendContext.Buffers.Destroy(BackendContext, stagingBuffer, stagingMemory, "VkDataBuffer.PushSubData.Staging");
+                        BackendContext.Resources.Buffers.Destroy(BackendContext, stagingBuffer, stagingMemory, "VkDataBuffer.PushSubData.Staging");
                     }
                 }
                 else
@@ -607,14 +607,14 @@ namespace XREngine.Rendering.Vulkan
 
                     // Host-visible: map, copy, unmap
                     _lastUploadRoute = ResolveHostVisibleSubDataUploadRoute(_lastMemProps);
-                    BackendContext.Buffers.Update(BackendContext, _vkBuffer.Value, _vkMemory.Value, (ulong)offset, (ulong)clampedLength, sourceSlice.Pointer);
+                    BackendContext.Resources.Buffers.Update(BackendContext, _vkBuffer.Value, _vkMemory.Value, (ulong)offset, (ulong)clampedLength, sourceSlice.Pointer);
                 }
 
                 ulong uploadedEnd = (ulong)offset + clampedLength;
                 if (uploadedEnd > _uploadedByteCount)
                     _uploadedByteCount = uploadedEnd;
                 _hasPendingUpload = false;
-                BackendContext.Planner.TrackBufferBinding(Data);
+                BackendContext.Resources.PlannerPublications.TrackBufferBinding(Data);
                 RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.BufferUploadBytes, clampedLength);
                 TracePushSubData(offset, clampedLength, "done");
                 ReportBackendState();
@@ -728,7 +728,7 @@ namespace XREngine.Rendering.Vulkan
                 BufferUsageFlags stagingUsage = BufferUsageFlags.TransferSrcBit | BufferUsageFlags.ShaderDeviceAddressBit;
                 MemoryPropertyFlags stagingProps = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
 
-                var (compressedBuffer, compressedMemory) = BackendContext.Buffers.Create(
+                var (compressedBuffer, compressedMemory) = BackendContext.Resources.Buffers.Create(
                     BackendContext,
                     compressedLength,
                     stagingUsage,
@@ -738,7 +738,7 @@ namespace XREngine.Rendering.Vulkan
 
                 try
                 {
-                    return BackendContext.ResourceCommands.TryDecompressBufferGDeflate(
+                    return BackendContext.Resources.SynchronousCommands.TryDecompressBufferGDeflate(
                         compressedBuffer,
                         sourceOffset: 0,
                         compressedSize: compressedLength,
@@ -749,7 +749,7 @@ namespace XREngine.Rendering.Vulkan
                 }
                 finally
                 {
-                    BackendContext.Buffers.Destroy(BackendContext, compressedBuffer, compressedMemory, "VkDataBuffer.GpuDecompression.Staging");
+                    BackendContext.Resources.Buffers.Destroy(BackendContext, compressedBuffer, compressedMemory, "VkDataBuffer.GpuDecompression.Staging");
                 }
             }
 
@@ -761,7 +761,7 @@ namespace XREngine.Rendering.Vulkan
 
             private bool ShouldUseDeviceAddressForIndirectCopy(ulong byteCount)
                 => byteCount >= IndirectCopyDeviceAddressThresholdBytes &&
-                   BackendContext.Buffers.CanUseNvIndirectCopyUploads(BackendContext);
+                   BackendContext.Resources.Buffers.CanUseNvIndirectCopyUploads(BackendContext);
             public void PushSubData() => PushSubData(0, Data.Length);
 
             private void RefreshDeviceAddress()
@@ -770,7 +770,7 @@ namespace XREngine.Rendering.Vulkan
                 if (!_lastDeviceAddressEnabled || !BackendContext.Supports(EVulkanDeviceCapability.BufferDeviceAddress) || _vkBuffer is not { } buffer)
                     return;
 
-                DeviceAddress = BackendContext.Buffers.GetDeviceAddress(BackendContext, buffer);
+                DeviceAddress = BackendContext.Resources.Buffers.GetDeviceAddress(BackendContext, buffer);
             }
 
             /// <summary>
@@ -784,7 +784,7 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 // Only needed for non-coherent memory
                 if ((_lastMemProps & MemoryPropertyFlags.HostCoherentBit) == 0)
-                    BackendContext.Buffers.Flush(BackendContext, _vkBuffer!.Value, _vkMemory!.Value, GetMappedMemoryOffset(0), length);
+                    BackendContext.Resources.Buffers.Flush(BackendContext, _vkBuffer!.Value, _vkMemory!.Value, GetMappedMemoryOffset(0), length);
             }
             public void FlushRange(int offset, uint length)
             {
@@ -793,7 +793,7 @@ namespace XREngine.Rendering.Vulkan
                 if (!NormalizeMappedRange(offset, length, out ulong memoryOffset, out ulong mappedLength))
                     return;
                 if ((_lastMemProps & MemoryPropertyFlags.HostCoherentBit) == 0)
-                    BackendContext.Buffers.Flush(BackendContext, _vkBuffer!.Value, _vkMemory!.Value, memoryOffset, mappedLength);
+                    BackendContext.Resources.Buffers.Flush(BackendContext, _vkBuffer!.Value, _vkMemory!.Value, memoryOffset, mappedLength);
             }
 
             // --- Persistent mapping for dynamic buffers ---
@@ -890,13 +890,13 @@ namespace XREngine.Rendering.Vulkan
 
             private ulong GetMappedMemoryOffset(ulong bufferOffset)
                 => _vkBuffer.HasValue
-                    ? BackendContext.Buffers.GetAllocationOffset(_vkBuffer.Value) + bufferOffset
+                    ? BackendContext.Resources.Buffers.GetAllocationOffset(_vkBuffer.Value) + bufferOffset
                     : bufferOffset;
 
             private void* MapCurrentBufferOrThrow(ulong offset, ulong length)
             {
                 if (!_vkBuffer.HasValue || !_vkMemory.HasValue ||
-                    !BackendContext.Buffers.TryMap(
+                    !BackendContext.Resources.Buffers.TryMap(
                         BackendContext,
                         _vkBuffer.Value,
                         _vkMemory.Value,
@@ -913,7 +913,7 @@ namespace XREngine.Rendering.Vulkan
             private void UnmapCurrentBuffer()
             {
                 if (_vkBuffer.HasValue && _vkMemory.HasValue)
-                    BackendContext.Buffers.Unmap(BackendContext, _vkBuffer.Value, _vkMemory.Value);
+                    BackendContext.Resources.Buffers.Unmap(BackendContext, _vkBuffer.Value, _vkMemory.Value);
             }
 
             public uint GetLength()
@@ -947,7 +947,7 @@ namespace XREngine.Rendering.Vulkan
                           EBufferMapRangeFlags.InvalidateRange |
                           EBufferMapRangeFlags.InvalidateBuffer)) != 0)
                     {
-                        BackendContext.Buffers.Invalidate(BackendContext, _vkMemory!.Value, GetMappedMemoryOffset(0), _bufferSize);
+                        BackendContext.Resources.Buffers.Invalidate(BackendContext, _vkMemory!.Value, GetMappedMemoryOffset(0), _bufferSize);
                     }
 
                     UnmapCurrentBuffer();
@@ -969,7 +969,7 @@ namespace XREngine.Rendering.Vulkan
                               EBufferMapRangeFlags.InvalidateRange |
                               EBufferMapRangeFlags.InvalidateBuffer)) != 0)
                         {
-                            BackendContext.Buffers.Invalidate(BackendContext, _vkMemory!.Value, GetMappedMemoryOffset(0), _bufferSize);
+                            BackendContext.Resources.Buffers.Invalidate(BackendContext, _vkMemory!.Value, GetMappedMemoryOffset(0), _bufferSize);
                         }
 
                         UnmapCurrentBuffer();
@@ -1309,7 +1309,7 @@ namespace XREngine.Rendering.Vulkan
                     _lastMemProps,
                     _lastDeviceAddressEnabled,
                     DeviceAddress,
-                    BackendContext.Buffers.ResolveDeviceAddressStatus(BackendContext, Data, DeviceAddress),
+                    BackendContext.Resources.Buffers.ResolveDeviceAddressStatus(BackendContext, Data, DeviceAddress),
                     _lastUploadUsedCompressedGpuPath);
             }
 
@@ -1478,21 +1478,21 @@ namespace XREngine.Rendering.Vulkan
                     _allocatedVRAMBytes = 0;
                 }
 
-                // Retire buffer handles for deferred destruction — a command buffer
+                // Retire buffer handles for deferred destruction ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â a command buffer
                 // recorded this frame (or still in-flight on the GPU) may still
                 // reference this buffer.
                 ReleasePersistentMappingBeforeResourceRetire();
                 if (_vkBuffer.HasValue && _vkMemory.HasValue)
                 {
-                    BackendContext.Buffers.Retire(_vkBuffer.Value, _vkMemory.Value, "VkDataBuffer.DeleteObjectInternal");
+                    BackendContext.Resources.Buffers.Retire(_vkBuffer.Value, _vkMemory.Value, "VkDataBuffer.DeleteObjectInternal");
                 }
                 else
                 {
-                    // Partial state — destroy immediately (shouldn't happen normally).
+                    // Partial state ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â destroy immediately (shouldn't happen normally).
                     if (_vkBuffer.HasValue)
-                        BackendContext.Buffers.Retire(_vkBuffer.Value, default, "VkDataBuffer.DeleteObjectInternal.PartialState");
+                        BackendContext.Resources.Buffers.Retire(_vkBuffer.Value, default, "VkDataBuffer.DeleteObjectInternal.PartialState");
                     if (_vkMemory.HasValue)
-                        BackendContext.Buffers.Retire(default, _vkMemory.Value, "VkDataBuffer.DeleteObjectInternal.PartialState");
+                        BackendContext.Resources.Buffers.Retire(default, _vkMemory.Value, "VkDataBuffer.DeleteObjectInternal.PartialState");
                 }
 
                 _vkBuffer = null;

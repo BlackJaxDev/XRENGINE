@@ -8,13 +8,12 @@ internal unsafe partial class VkRenderProgram
     // This preserves nested captures across programs without a static ambient
     // workspace or cross-renderer state retention.
     private BindingCaptureWorkspace CurrentBindingCaptureWorkspace
-        => BackendContext.ProgramServices.GetOrCreateBindingWorkspace(
-            static () => new BindingCaptureWorkspace());
+        => ProgramCreationPort.BindingWorkspace;
 
-    private sealed class BindingCaptureWorkspace
+    internal sealed class BindingCaptureWorkspace
     {
-        public BindingCaptureState? Active;
-        public BindingCaptureState? Free;
+        internal BindingCaptureState? Active;
+        internal BindingCaptureState? Free;
 
         public void Reset()
         {
@@ -28,7 +27,7 @@ internal unsafe partial class VkRenderProgram
     /// snapshot. It prevents independent views from serializing through a program's
     /// legacy immediate-binding dictionaries.
     /// </summary>
-    private sealed class BindingCaptureState
+    internal sealed class BindingCaptureState
     {
         private readonly List<ComputeDispatchSnapshot> _frameSnapshots = [];
         private ulong _frameSnapshotFrame;
