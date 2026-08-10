@@ -494,13 +494,18 @@ public unsafe partial class VulkanRenderer
                     }
                 }
 
+                VulkanFramePlanningSnapshot planningSnapshot =
+                    _framePlanner.CaptureSnapshot() with
+                    {
+                        RenderGraphPlan = plannerState.RenderGraphPlan,
+                    };
                 prepared = new OpenXrPreparedEyeCommandBufferInput(
                     frameContext,
                     targetContext,
                     CloneFrameOpsForPreparedOpenXrEye(ops),
                     plannerContext,
                     new VulkanPreparedResourcePlanStamp(
-                        _framePlanner.CaptureSnapshot(),
+                        planningSnapshot,
                         plannerState.ResourcePlannerRevision,
                         plannerState.ResourcePlannerSignature,
                         plannerState.ResourceAllocationSignature),
@@ -628,7 +633,7 @@ public unsafe partial class VulkanRenderer
                 PreserveSwapchainForOverlay: false,
                 TransitionSwapchainToPresent: false,
                 ReleaseExternalImageOwnership: true),
-            prepared.ResourcePlanStamp.PlanningSnapshot.RenderGraphPlan.Barriers);
+            framePlan);
 
         SwapchainRecordingTarget recordingTarget = new(
             targetContext.Image,
@@ -813,6 +818,8 @@ public unsafe partial class VulkanRenderer
         FrameOp[] combined = new FrameOp[firstEye.Ops.Length + secondEye.Ops.Length];
         CopyTargetNeutralLogicalOperations(firstEye.Ops, combined, 0);
         CopyTargetNeutralLogicalOperations(secondEye.Ops, combined, firstEye.Ops.Length);
+        ResourcePlannerRuntimeState publishedPlannerState =
+            PublishedResourcePlannerRuntimeState;
         try
         {
             plan = _framePlanner.FramePlanBuilder.BuildAndSeal(
@@ -821,7 +828,10 @@ public unsafe partial class VulkanRenderer
                 ComputeFrameOpsSignature(combined),
                 dynamicOverlaySignature: 0UL,
                 combined,
-                Array.Empty<FrameOp>());
+                Array.Empty<FrameOp>(),
+                new VulkanFramePlanRenderGraphAuthority(
+                    firstEye.ResourcePlanStamp.PlanningSnapshot.RenderGraphPlan,
+                    publishedPlannerState.FrameOpResourcePlannerSwitchingState));
             return true;
         }
         catch (Exception ex)
@@ -894,13 +904,18 @@ public unsafe partial class VulkanRenderer
 
         try
         {
+            ResourcePlannerRuntimeState publishedPlannerState =
+                PublishedResourcePlannerRuntimeState;
             plan = _framePlanner.FramePlanBuilder.BuildAndSeal(
                 frameSlot: 0,
                 eye.PlannerRevision,
                 eye.FrameOpsSignature,
                 dynamicOverlaySignature: 0UL,
                 eye.Ops,
-                Array.Empty<FrameOp>());
+                Array.Empty<FrameOp>(),
+                new VulkanFramePlanRenderGraphAuthority(
+                    eye.ResourcePlanStamp.PlanningSnapshot.RenderGraphPlan,
+                    publishedPlannerState.FrameOpResourcePlannerSwitchingState));
             return true;
         }
         catch (Exception ex)

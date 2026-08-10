@@ -41,6 +41,8 @@ internal sealed class FramePlanBuilder
         internal int[] OutputNodeIndegreeScratch = new int[32];
         internal FramePlanOperationKey[] OperationKeys = new FramePlanOperationKey[64];
         internal VulkanFrameOpPlannerStateKey[] StaticPlannerContextKeys = new VulkanFrameOpPlannerStateKey[8];
+        internal FrameOpContext[] StaticPlannerContexts = new FrameOpContext[8];
+        internal VulkanRenderGraphPlan[] StaticPlannerContextPlans = new VulkanRenderGraphPlan[8];
 
         internal Slot() => Plan = new FramePlan(ViewSet);
     }
@@ -58,6 +60,7 @@ internal sealed class FramePlanBuilder
         ulong dynamicOverlaySignature,
         FrameOp[] operations,
         FrameOp[] dynamicOverlayOperations,
+        in VulkanFramePlanRenderGraphAuthority renderGraphAuthority,
         uint? openXrViewIndex = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(frameSlot);
@@ -102,6 +105,10 @@ internal sealed class FramePlanBuilder
             operationCount,
             dynamicOperationCount);
         int staticPlannerContextKeyCount = CollectStaticPlannerContextKeys(slot);
+        ulong renderGraphPlanSignature = ResolveStaticPlannerContextPlans(
+            slot,
+            staticPlannerContextKeyCount,
+            in renderGraphAuthority);
 
         ComputeVersionSignatures(
             staticIngress,
@@ -129,7 +136,10 @@ internal sealed class FramePlanBuilder
             slot.OperationKeys,
             operationKeyCount,
             slot.StaticPlannerContextKeys,
-            staticPlannerContextKeyCount);
+            slot.StaticPlannerContexts,
+            slot.StaticPlannerContextPlans,
+            staticPlannerContextKeyCount,
+            renderGraphPlanSignature);
         return slot.Plan;
     }
 
@@ -161,12 +171,50 @@ internal sealed class FramePlanBuilder
             {
                 int newCapacity = Math.Max(8, slot.StaticPlannerContextKeys.Length * 2);
                 Array.Resize(ref slot.StaticPlannerContextKeys, newCapacity);
+                Array.Resize(ref slot.StaticPlannerContexts, newCapacity);
             }
 
-            slot.StaticPlannerContextKeys[keyCount++] = key;
+            slot.StaticPlannerContextKeys[keyCount] = key;
+            slot.StaticPlannerContexts[keyCount] = context;
+            keyCount++;
         }
 
         return keyCount;
+    }
+
+    private static ulong ResolveStaticPlannerContextPlans(
+        Slot slot,
+        int keyCount,
+        in VulkanFramePlanRenderGraphAuthority authority)
+    {
+        if (slot.StaticPlannerContextPlans.Length < keyCount)
+            Array.Resize(ref slot.StaticPlannerContextPlans, slot.StaticPlannerContextKeys.Length);
+
+        FrameOpSignatureHasher signature = new();
+        signature.Add(keyCount);
+        for (int keyIndex = 0; keyIndex < keyCount; keyIndex++)
+        {
+            VulkanFrameOpPlannerStateKey key = slot.StaticPlannerContextKeys[keyIndex];
+            if (!authority.TryResolve(key, keyCount, out VulkanRenderGraphPlan plan))
+            {
+                throw new VulkanPlanPreconditionException(
+                    $"Frame plan has no frozen render-graph publication for context " +
+                    $"kind={key.ContextKind} pipe={key.PipelineIdentity} viewport={key.ViewportIdentity} " +
+                    $"resourceGeneration={key.ResourceGeneration}.");
+            }
+
+            slot.StaticPlannerContextPlans[keyIndex] = plan;
+            signature.Add((int)key.ContextKind);
+            signature.Add(key.PipelineIdentity);
+            signature.Add(key.ViewportIdentity);
+            signature.Add(key.LogicalViewId);
+            signature.Add(key.ResourceGeneration);
+            signature.Add(plan.Revision);
+            signature.Add(plan.CompatibilityIdentity);
+            signature.Add(plan.Barriers.Generation);
+        }
+
+        return signature.ToHash();
     }
 
     private Slot AcquireWritableSlot(int frameSlot)

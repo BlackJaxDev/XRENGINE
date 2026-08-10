@@ -109,7 +109,10 @@ internal sealed unsafe partial class VulkanFrameLoop
                 preparationSignature,
                 dynamicSignature,
                 staticOperations,
-                dynamicUiOperations);
+                dynamicUiOperations,
+                new VulkanFramePlanRenderGraphAuthority(
+                    frozenPlanningSnapshot.RenderGraphPlan,
+                    plannerState.FrameOpResourcePlannerSwitchingState));
             FrameOperationSequence preparedOperations =
                 framePlan.GetNativeStaticOperationsForRecording();
             computePreparation = _commandRuntime.PrepareComputeFrameOpsForRecording(
@@ -132,7 +135,7 @@ internal sealed unsafe partial class VulkanFrameLoop
                     preserveSwapchainForOverlay,
                     TransitionSwapchainToPresent: true,
                     ReleaseExternalImageOwnership: false),
-                frozenPlanningSnapshot.RenderGraphPlan.Barriers);
+                framePlan);
 
             if (!TryPreparePrimaryCommandInput(
                     imageIndex,
@@ -427,6 +430,13 @@ internal sealed unsafe partial class VulkanFrameLoop
     {
         VulkanRenderGraphPlan sourcePlan = planningSnapshot.RenderGraphPlan;
         VulkanBarrierPlan sourceBarriers = sourcePlan.Barriers;
+        if (sourceBarriers.HasCompleteNativeBindings)
+        {
+            frozenSnapshot = planningSnapshot;
+            reason = string.Empty;
+            return true;
+        }
+
         int bufferBarrierCount = sourceBarriers.BufferBarriers.Count;
         VulkanBarrierPlanner.PlannedBufferBarrier[] frozenBufferBarriers =
             new VulkanBarrierPlanner.PlannedBufferBarrier[bufferBarrierCount];

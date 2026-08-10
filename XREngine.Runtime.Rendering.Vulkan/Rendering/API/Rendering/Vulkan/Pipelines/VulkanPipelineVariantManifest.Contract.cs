@@ -39,14 +39,18 @@ internal sealed class VulkanPipelineVariantManifest
             new FrameOperationSequence(ops),
             submissionStrategy,
             dynamicRendering,
-            recordingStructuralSignature);
+            recordingStructuralSignature,
+            plan.CompatibilityIdentity,
+            framePlan: null);
 
     internal static VulkanPipelineVariantManifest Build(
         VulkanCompiledRenderGraphPlan plan,
         FrameOperationSequence ops,
         EMeshSubmissionStrategy submissionStrategy,
         bool dynamicRendering,
-        ulong recordingStructuralSignature)
+        ulong recordingStructuralSignature,
+        ulong renderGraphPlanSignature,
+        FramePlan? framePlan)
     {
         int requirementCount = 0;
         for (int opIndex = 0; opIndex < ops.Length; opIndex++)
@@ -57,7 +61,7 @@ internal sealed class VulkanPipelineVariantManifest
 
         var requirements = new VulkanPipelineVariantRequirement[requirementCount];
         var hash = new VulkanStableHash64(1u);
-        hash.Add(plan.CompatibilityIdentity);
+        hash.Add(renderGraphPlanSignature);
         hash.Add(recordingStructuralSignature);
         hash.Add((int)submissionStrategy);
         hash.Add(dynamicRendering);
@@ -75,7 +79,16 @@ internal sealed class VulkanPipelineVariantManifest
                 _ => default,
             };
             int passIndex = ops[opIndex].PassIndex;
-            RenderGraphPlanPass? planPass = FindPass(plan.Passes, passIndex);
+            FrameOpContext operationContext = ops[opIndex].Context;
+            VulkanCompiledRenderGraphPlan operationPlan = plan;
+            if (framePlan is not null &&
+                framePlan.TryResolveRenderGraphPlan(
+                    in operationContext,
+                    out VulkanRenderGraphPlan renderGraphPlan))
+            {
+                operationPlan = renderGraphPlan.CompiledGraph.Plan;
+            }
+            RenderGraphPlanPass? planPass = FindPass(operationPlan.Passes, passIndex);
             string passName = planPass?.Name ?? $"Pass{passIndex}";
             bool shadow = passName.Contains("Shadow", StringComparison.OrdinalIgnoreCase);
             bool velocity = passName.Contains("Velocity", StringComparison.OrdinalIgnoreCase) ||
@@ -84,8 +97,8 @@ internal sealed class VulkanPipelineVariantManifest
                 passName.Contains("Picking", StringComparison.OrdinalIgnoreCase) ||
                 passName.Contains("TransformId", StringComparison.OrdinalIgnoreCase);
             bool materialOverride = draw.MaterialOverride is not null;
-            bool stereo = draw.IsStereoPass || ops[opIndex].Context.StereoEnabled;
-            bool multiview = ops[opIndex].Context.MultiviewEnabled;
+            bool stereo = draw.IsStereoPass || operationContext.StereoEnabled;
+            bool multiview = operationContext.MultiviewEnabled;
 
             requirements[requirementIndex++] = new VulkanPipelineVariantRequirement(
                 opIndex,

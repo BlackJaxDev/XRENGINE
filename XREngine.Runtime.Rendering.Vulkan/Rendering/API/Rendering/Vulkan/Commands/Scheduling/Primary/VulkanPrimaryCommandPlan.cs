@@ -79,7 +79,8 @@ internal sealed class VulkanPrimaryCommandPlan
         ulong operationSignature,
         VulkanPrimaryPlanTerminalContext terminalContext,
         VulkanBarrierPlanner? barrierPlanner,
-        VulkanBarrierPlan? barrierPlan = null)
+        VulkanBarrierPlan? barrierPlan = null,
+        FramePlan? framePlan = null)
     {
         Volatile.Write(ref _isFrozen, 0);
 
@@ -121,7 +122,15 @@ internal sealed class VulkanPrimaryCommandPlan
                 throw new InvalidOperationException($"Unsupported FrameOp type: {operation.GetType().Name}");
 
             // Resolve the actions for the FrameOp based on its kind, the operation itself, and any barrier planning that may be required.
-            EVulkanPrimaryPlanAction actions = ResolveActions(kind, operation, barrierPlanner, barrierPlan);
+            VulkanBarrierPlan? operationBarrierPlan = ResolveOperationBarrierPlan(
+                operation,
+                barrierPlan,
+                framePlan);
+            EVulkanPrimaryPlanAction actions = ResolveActions(
+                kind,
+                operation,
+                barrierPlanner,
+                operationBarrierPlan);
 
             // Determine if the operation is a draw-like operation, which affects how it is handled in the plan.
             bool isDrawLike = kind is
@@ -162,7 +171,7 @@ internal sealed class VulkanPrimaryCommandPlan
             AddEmission(
                 ref directRecorderIdentity,
                 kind,
-                ResolveDirectRecorderActions(operation, barrierPlanner, barrierPlan),
+                ResolveDirectRecorderActions(operation, barrierPlanner, operationBarrierPlan),
                 opIndex,
                 passIndex,
                 pipelineIdentity,
@@ -220,7 +229,7 @@ internal sealed class VulkanPrimaryCommandPlan
 
         // Validate that the typed primary plan matches the direct FrameOp dispatch semantics
         System.Diagnostics.Debug.Assert(
-            IsEquivalentToDirectOperations(operations, barrierPlanner, barrierPlan),
+            IsEquivalentToDirectOperations(operations, barrierPlanner, barrierPlan, framePlan),
             "The typed primary plan no longer matches direct FrameOp dispatch semantics.");
 
         // Validate that the typed primary plan's emitted-command signature matches the direct recorder's signature
@@ -242,6 +251,23 @@ internal sealed class VulkanPrimaryCommandPlan
             terminalContext,
             barrierPlanner: null,
             barrierPlan);
+
+    /// <summary>
+    /// Builds against the per-context immutable graph publications sealed into
+    /// the frame plan.
+    /// </summary>
+    internal void Build(
+        FrameOperationSequence operations,
+        ulong operationSignature,
+        VulkanPrimaryPlanTerminalContext terminalContext,
+        FramePlan framePlan)
+        => Build(
+            operations,
+            operationSignature,
+            terminalContext,
+            barrierPlanner: null,
+            barrierPlan: null,
+            framePlan: framePlan);
 
     /// <summary>
     /// Adds an emission to the identity hasher, including the kind, actions, index, and other relevant information for a FrameOp or terminal node.
@@ -315,7 +341,8 @@ internal sealed class VulkanPrimaryCommandPlan
     internal bool IsEquivalentToDirectOperations(
         FrameOperationSequence operations,
         VulkanBarrierPlanner? barrierPlanner = null,
-        VulkanBarrierPlan? barrierPlan = null)
+        VulkanBarrierPlan? barrierPlan = null,
+        FramePlan? framePlan = null)
     {
         if (operations.Length != OperationCount)
             return false;
@@ -327,16 +354,49 @@ internal sealed class VulkanPrimaryCommandPlan
             FrameOp operation = operations[index];
 
             ref readonly VulkanPrimaryPlanNode node = ref _nodes[index];
+            VulkanBarrierPlan? operationBarrierPlan = ResolveOperationBarrierPlan(
+                operation,
+                barrierPlan,
+                framePlan);
 
             // Compare the operation reference, source index, kind, and resolved actions for equivalence.
             if (!ReferenceEquals(node.Operation, operation) ||
                 node.SourceIndex != index ||
                 node.Kind != operation.Kind ||
-                node.Actions != ResolveDirectRecorderActions(operation, barrierPlanner, barrierPlan))
+                node.Actions != ResolveDirectRecorderActions(
+                    operation,
+                    barrierPlanner,
+                    operationBarrierPlan))
                 return false;
         }
 
         return true;
+    }
+
+    private static VulkanBarrierPlan? ResolveOperationBarrierPlan(
+        FrameOp operation,
+        VulkanBarrierPlan? fallbackPlan,
+        FramePlan? framePlan)
+    {
+        if (framePlan is null)
+            return fallbackPlan;
+        FrameOpContext context = operation.Context;
+        if (framePlan.TryResolveRenderGraphPlan(
+                in context,
+                out VulkanRenderGraphPlan renderGraphPlan))
+        {
+            return renderGraphPlan.Barriers;
+        }
+        if (context.ResourceRegistry is null &&
+            context.PassMetadata is not { Count: > 0 })
+        {
+            return fallbackPlan;
+        }
+
+        throw new VulkanPlanPreconditionException(
+            $"Primary command plan has no frozen render-graph publication for " +
+            $"kind={context.ContextKind} pipe={context.PipelineIdentity} " +
+            $"viewport={context.ViewportIdentity} pass={operation.PassIndex}.");
     }
 
     /// <summary>

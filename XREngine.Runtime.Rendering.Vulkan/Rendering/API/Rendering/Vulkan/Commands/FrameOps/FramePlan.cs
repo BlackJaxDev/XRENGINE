@@ -15,6 +15,9 @@ internal sealed class FramePlan
     private FramePlanOperationKey[] _operationKeys = Array.Empty<FramePlanOperationKey>();
     private VulkanFrameOpPlannerStateKey[] _staticPlannerContextKeys =
         Array.Empty<VulkanFrameOpPlannerStateKey>();
+    private FrameOpContext[] _staticPlannerContexts = Array.Empty<FrameOpContext>();
+    private VulkanRenderGraphPlan[] _staticPlannerContextPlans =
+        Array.Empty<VulkanRenderGraphPlan>();
     private int _operationCount;
     private int _dynamicOverlayOperationCount;
     private int _outputCount;
@@ -32,6 +35,7 @@ internal sealed class FramePlan
     internal ulong DescriptorVersionSignature { get; private set; }
     internal ulong StaticOperationSignature { get; private set; }
     internal ulong DynamicOverlaySignature { get; private set; }
+    internal ulong RenderGraphPlanSignature { get; private set; }
     internal ViewSetPlan ViewSet { get; }
     internal bool IsSealed { get; private set; }
     internal int OperationCount => _operationCount;
@@ -49,6 +53,8 @@ internal sealed class FramePlan
     internal int OperationKeyCount => _operationKeyCount;
     internal ReadOnlySpan<VulkanFrameOpPlannerStateKey> StaticPlannerContextKeys
         => _staticPlannerContextKeys.AsSpan(0, _staticPlannerContextKeyCount);
+    internal ReadOnlySpan<VulkanRenderGraphPlan> StaticPlannerContextPlans
+        => _staticPlannerContextPlans.AsSpan(0, _staticPlannerContextKeyCount);
     internal bool IsPinned
     {
         get
@@ -132,7 +138,10 @@ internal sealed class FramePlan
         FramePlanOperationKey[] operationKeys,
         int operationKeyCount,
         VulkanFrameOpPlannerStateKey[] staticPlannerContextKeys,
-        int staticPlannerContextKeyCount)
+        FrameOpContext[] staticPlannerContexts,
+        VulkanRenderGraphPlan[] staticPlannerContextPlans,
+        int staticPlannerContextKeyCount,
+        ulong renderGraphPlanSignature)
     {
         lock (_leaseGate)
         {
@@ -147,6 +156,7 @@ internal sealed class FramePlan
             DescriptorVersionSignature = descriptorVersionSignature;
             StaticOperationSignature = staticOperationSignature;
             DynamicOverlaySignature = dynamicOverlaySignature;
+            RenderGraphPlanSignature = renderGraphPlanSignature;
             _operations = operations;
             _dynamicOverlayOperations = dynamicOverlayOperations;
             _operationCount = operations.Count;
@@ -158,6 +168,8 @@ internal sealed class FramePlan
             _operationKeys = operationKeys;
             _operationKeyCount = operationKeyCount;
             _staticPlannerContextKeys = staticPlannerContextKeys;
+            _staticPlannerContexts = staticPlannerContexts;
+            _staticPlannerContextPlans = staticPlannerContextPlans;
             _staticPlannerContextKeyCount = staticPlannerContextKeyCount;
             ViewSet.Seal();
             IsSealed = true;
@@ -179,11 +191,14 @@ internal sealed class FramePlan
             DescriptorVersionSignature = 0;
             StaticOperationSignature = 0;
             DynamicOverlaySignature = 0;
+            RenderGraphPlanSignature = 0;
             _operationCount = 0;
             _dynamicOverlayOperationCount = 0;
             _outputCount = 0;
             _outputExecutionNodeCount = 0;
             _operationKeyCount = 0;
+            Array.Clear(_staticPlannerContexts, 0, _staticPlannerContextKeyCount);
+            Array.Clear(_staticPlannerContextPlans, 0, _staticPlannerContextKeyCount);
             _staticPlannerContextKeyCount = 0;
             IsSealed = false;
             ViewSet.Reset();
@@ -321,6 +336,38 @@ internal sealed class FramePlan
             throw new ArgumentOutOfRangeException(nameof(index));
 
         return ref _operations.GetPayloadForPrimaryDispatch(index);
+    }
+
+    /// <summary>
+    /// Resolves the immutable graph publication owned by the supplied operation
+    /// context. The bounded linear lookup avoids a dictionary allocation in the
+    /// recording hot path and runs only when the active context changes.
+    /// </summary>
+    internal bool TryResolveRenderGraphPlan(
+        in FrameOpContext context,
+        out VulkanRenderGraphPlan plan)
+    {
+        EnsureSealed();
+        if (context.ResourceRegistry is null && context.PassMetadata is not { Count: > 0 })
+        {
+            plan = VulkanRenderGraphPlan.Empty;
+            return false;
+        }
+
+        for (int index = 0; index < _staticPlannerContextKeyCount; index++)
+        {
+            if (!VulkanFrameOpSnapshotSignatures.MatchesPlannerStateKey(
+                    in context,
+                    in _staticPlannerContextKeys[index],
+                    _staticPlannerContexts[index].PassMetadata))
+                continue;
+
+            plan = _staticPlannerContextPlans[index];
+            return true;
+        }
+
+        plan = VulkanRenderGraphPlan.Empty;
+        return false;
     }
 
     internal ref readonly FrameOp GetDynamicOverlayOperation(int index)

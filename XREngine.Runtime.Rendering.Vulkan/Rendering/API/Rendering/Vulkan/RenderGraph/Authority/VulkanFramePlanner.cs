@@ -13,7 +13,7 @@ namespace XREngine.Rendering.Vulkan.RenderGraph;
 internal sealed partial class VulkanFramePlanner
 {
     private const int MaxInteractiveResizeExtentSnapshots = 32;
-    private ulong _publishedBarrierGeneration;
+    private long _publishedBarrierGeneration;
     private long _frameContextId;
     private int _frozenPlanReaders;
     private object? _publishedResourcePlannerGeneration;
@@ -81,13 +81,19 @@ internal sealed partial class VulkanFramePlanner
             FrozenResourcePlanRevision = 0;
     }
 
-    public void PublishPlan(ulong revision, VulkanCompiledRenderGraph compiledGraph, VulkanBarrierPlanner barrierPlanner)
+    /// <summary>Reserves a unique generation for one immutable barrier publication.</summary>
+    public ulong NextBarrierPlanGeneration()
+        => unchecked((ulong)Interlocked.Increment(ref _publishedBarrierGeneration));
+
+    /// <summary>
+    /// Publishes a plan already frozen against the resource-planner generation
+    /// that owns it. Native recording must never reconstruct this association
+    /// from whichever context happened to publish most recently.
+    /// </summary>
+    public void PublishPlan(VulkanRenderGraphPlan plan)
     {
-        ulong barrierGeneration = unchecked(++_publishedBarrierGeneration);
-        CurrentPlan = new VulkanRenderGraphPlan(
-            revision,
-            compiledGraph,
-            VulkanBarrierPlan.Capture(barrierGeneration, barrierPlanner));
+        ArgumentNullException.ThrowIfNull(plan);
+        CurrentPlan = plan;
     }
 
     public VulkanFramePlanningSnapshot CaptureSnapshot()

@@ -226,9 +226,32 @@ namespace XREngine.Rendering.Vulkan;
         // Planner-state selection and wrapper publication are complete before
         // the frame loop freezes the input. Encoding may observe the prepared
         // context identity, but must never switch or rebuild planner state.
+        recordingState.RenderGraphPlan = ResolvePrimaryRenderGraphPlan(
+            ref recordingState,
+            in recordingState.ActiveContext);
         recordingState.PlannerContext = recordingState.ActiveContext;
         recordingState.HasPlannerContext = true;
         return true;
+    }
+
+    private static VulkanRenderGraphPlan ResolvePrimaryRenderGraphPlan(
+        scoped ref PrimaryCommandBufferRecordingState recordingState,
+        in FrameOpContext context)
+    {
+        if (recordingState.FramePlan is not null &&
+            recordingState.FramePlan.TryResolveRenderGraphPlan(
+                in context,
+                out VulkanRenderGraphPlan plan))
+        {
+            return plan;
+        }
+        if (context.ResourceRegistry is null && context.PassMetadata is not { Count: > 0 })
+            return recordingState.RenderGraphPlan;
+
+        throw new VulkanPlanPreconditionException(
+            $"Primary recording has no frozen render-graph publication for " +
+            $"kind={context.ContextKind} pipe={context.PipelineIdentity} " +
+            $"viewport={context.ViewportIdentity} resourceGeneration={context.ResourceGeneration}.");
     }
 
     private void TransitionToPrimaryOperationPass(

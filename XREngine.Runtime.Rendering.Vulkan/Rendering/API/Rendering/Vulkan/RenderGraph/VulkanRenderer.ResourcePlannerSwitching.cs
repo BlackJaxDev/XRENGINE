@@ -231,7 +231,11 @@ public unsafe partial class VulkanRenderer
            !state.ResourceAllocator.IsRetired &&
            state.ResourceAllocator.OwnershipId == state.AllocatorOwnershipId &&
            state.BarrierPlanner is not null &&
-           state.CompiledRenderGraph is not null;
+           state.CompiledRenderGraph is not null &&
+           state.RenderGraphPlan is not null &&
+           state.RenderGraphPlan.Revision == state.ResourcePlannerRevision &&
+           ReferenceEquals(state.RenderGraphPlan.CompiledGraph, state.CompiledRenderGraph) &&
+           state.RenderGraphPlan.Barriers.HasCompleteNativeBindings;
 
     private static bool TryGetPreparedFrameOpResourcePlannerState(
         FrameOpResourcePlannerSwitchingState switchingState,

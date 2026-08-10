@@ -34,12 +34,18 @@ internal sealed class VulkanBarrierPlan
         _imageBarriersByPass = IndexByPass(imageBarriers, static barrier => barrier.PassIndex);
         _bufferBarriersByPass = IndexByPass(bufferBarriers, static barrier => barrier.PassIndex);
         _swapchainBarriersByPass = IndexByPass(swapchainBarriers, static barrier => barrier.PassIndex);
+        HasCompleteNativeBindings = HasCompleteBindings(imageBarriers, bufferBarriers);
     }
 
     public ulong Generation { get; }
     public ReadOnlyCollection<VulkanBarrierPlanner.PlannedImageBarrier> ImageBarriers { get; }
     public ReadOnlyCollection<VulkanBarrierPlanner.PlannedBufferBarrier> BufferBarriers { get; }
     public ReadOnlyCollection<VulkanBarrierPlanner.PlannedSwapchainBarrier> SwapchainBarriers { get; }
+    /// <summary>
+    /// True when every physical barrier resource was resolved before the plan
+    /// crossed into command recording.
+    /// </summary>
+    public bool HasCompleteNativeBindings { get; }
 
     internal IReadOnlyList<VulkanBarrierPlanner.PlannedImageBarrier> GetImageBarriersForPass(int passIndex)
         => _imageBarriersByPass.TryGetValue(passIndex, out VulkanBarrierPlanner.PlannedImageBarrier[]? barriers)
@@ -84,4 +90,22 @@ internal sealed class VulkanBarrierPlan
             [.. planner.ImageBarriers],
             [.. planner.BufferBarriers],
             [.. planner.SwapchainBarriers]);
+
+    private static bool HasCompleteBindings(
+        VulkanBarrierPlanner.PlannedImageBarrier[] imageBarriers,
+        VulkanBarrierPlanner.PlannedBufferBarrier[] bufferBarriers)
+    {
+        for (int index = 0; index < imageBarriers.Length; index++)
+            if (imageBarriers[index].NativeImage.Handle == 0)
+                return false;
+
+        for (int index = 0; index < bufferBarriers.Length; index++)
+            if (bufferBarriers[index].NativeBuffer.Handle == 0 ||
+                bufferBarriers[index].NativeSize == 0)
+            {
+                return false;
+            }
+
+        return true;
+    }
 }

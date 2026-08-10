@@ -549,7 +549,10 @@ public unsafe partial class VulkanRenderer
                     ? ops[0].Context
                     : plannerContext;
                 VulkanFramePlanningSnapshot planningSnapshot =
-                    _framePlanner.CaptureSnapshot();
+                    _framePlanner.CaptureSnapshot() with
+                    {
+                        RenderGraphPlan = plannerState.RenderGraphPlan,
+                    };
                 FramePlan framePlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
                     checked((int)recordImageIndex),
                     plannerRevision,
@@ -557,6 +560,9 @@ public unsafe partial class VulkanRenderer
                     dynamicOverlaySignature: 0,
                     ops,
                     Array.Empty<FrameOp>(),
+                    new VulkanFramePlanRenderGraphAuthority(
+                        planningSnapshot.RenderGraphPlan,
+                        plannerState.FrameOpResourcePlannerSwitchingState),
                     openXrViewIndex: request.OpenXrViewIndex);
                 FrameOperationSequence recordingOperations =
                     framePlan.GetNativeStaticOperationsForRecording();
@@ -576,7 +582,7 @@ public unsafe partial class VulkanRenderer
                         PreserveSwapchainForOverlay: false,
                         TransitionSwapchainToPresent: false,
                         ReleaseExternalImageOwnership: false),
-                    planningSnapshot.RenderGraphPlan.Barriers);
+                    framePlan);
                 VulkanStateTracker clearState =
                     CreateOpenXrPrewarmRenderStateTracker(request.Extent);
                 VulkanPreparedPrimaryCommandInput commandInput = new(
