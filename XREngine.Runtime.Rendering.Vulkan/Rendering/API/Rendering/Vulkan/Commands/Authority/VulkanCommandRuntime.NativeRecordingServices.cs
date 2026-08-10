@@ -35,6 +35,9 @@ internal sealed unsafe partial class VulkanCommandRuntime
     private ulong GetCurrentVulkanResourceGeneration(ObjectType type, ulong handle)
         => ResourceRuntime.GetPublishedGeneration(type, handle);
 
+    internal ulong GetResourceGeneration(ObjectType type, ulong handle)
+        => GetCurrentVulkanResourceGeneration(type, handle);
+
     private long SnapshotDescriptorSetContentUpdateGeneration()
         => ResourceRuntime.Descriptors.SnapshotDescriptorSetContentUpdateGeneration();
 
@@ -340,7 +343,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         _ = frameSlot;
     }
 
-    private void PrepareSubmissionMarkersForCommandBufferReuse(
+    internal void PrepareSubmissionMarkersForCommandBufferReuse(
         CommandBuffer commandBuffer,
         ReadOnlySpan<FrameOp> frameOps,
         ReadOnlySpan<FrameOp> dynamicUiFrameOps)
@@ -385,7 +388,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         where T : VkObjectBase
         => renderObject is null ? null : ResourceRuntime.BackendObjects.Get(renderObject) as T;
 
-    private static Extent2D ResolveFrameBufferDrawExtent(XRFrameBuffer frameBuffer)
+    internal static Extent2D ResolveFrameBufferDrawExtent(XRFrameBuffer frameBuffer)
     {
         var targets = frameBuffer.Targets;
         if (targets is null || targets.Length == 0)
@@ -615,7 +618,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         throw new InvalidOperationException("VK_KHR_dynamic_rendering command extension is unavailable.");
     }
 
-    private static Viewport CreateVulkanViewport(Extent2D extent)
+    internal static Viewport CreateVulkanViewport(Extent2D extent)
         => RuntimeEngine.Rendering.Settings.ClipSpaceYDirection == ERenderClipSpaceYDirection.YDown
             ? new Viewport
             {
@@ -1191,7 +1194,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             new ComputeDispatchPushConstants(0u, 0u, 0u, 0u));
 
         if (!operation.Program.TryBuildAndBindComputeDescriptorSets(
-                commandBuffer,
+                CreateProgramRecordingRequest(commandBuffer),
                 imageIndex,
                 operation.Snapshot,
                 0,

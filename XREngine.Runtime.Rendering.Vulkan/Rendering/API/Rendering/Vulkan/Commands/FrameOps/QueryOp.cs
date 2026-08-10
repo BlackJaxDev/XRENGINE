@@ -22,12 +22,12 @@ internal sealed record QueryOp(
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.Query;
 
     internal override int RecordPrimary(
-        VulkanCommandRuntime renderer,
+        VulkanCommandRuntime commandRuntime,
         scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
         if (TryRecordSecondaryBucket(
-                renderer,
+                commandRuntime,
                 ref recordingState,
                 in recordingInfo,
                 $"Query.{Operation}",
@@ -52,7 +52,7 @@ internal sealed record QueryOp(
             case ERenderQueryOperation.WriteProperties:
                 if (!recordingState.RecordingScratch.PreparedInlineQueries.Contains(Query) ||
                     Query.WriteProperties(
-                        renderer.CreateQueryCommandEncoder(),
+                        commandRuntime.CreateQueryCommandEncoder(),
                         recordingState.CommandBuffer,
                         SourceHandles.Span) != ERenderQueryReadStatus.Ready)
                     recordingState.FrameOpsRequireRerecordLocal = true;
@@ -72,14 +72,14 @@ internal sealed record QueryOp(
 
             case ERenderQueryOperation.Begin:
                 return RecordInlineQueryOperation(
-                    renderer,
+                    commandRuntime,
                     ref recordingState,
                     in recordingInfo,
                     begin: true);
 
             case ERenderQueryOperation.End:
                 return RecordInlineQueryOperation(
-                    renderer,
+                    commandRuntime,
                     ref recordingState,
                     in recordingInfo,
                     begin: false);
@@ -93,7 +93,7 @@ internal sealed record QueryOp(
     }
 
     private int RecordInlineQueryOperation(
-        VulkanCommandRuntime renderer,
+        VulkanCommandRuntime commandRuntime,
         scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo,
         bool begin)
@@ -120,8 +120,8 @@ internal sealed record QueryOp(
             (!recordingState.RenderScope.IsActive ||
              recordingState.RenderScope.Target != Target))
         {
-            renderer.EndActiveRenderPass(ref recordingState);
-            renderer.BeginRenderPassForTarget(
+            commandRuntime.EndActiveRenderPass(ref recordingState);
+            commandRuntime.BeginRenderPassForTarget(
                 ref recordingState,
                 Target,
                 recordingInfo.PassIndex,
@@ -129,9 +129,9 @@ internal sealed record QueryOp(
         }
 
         bool labelActive = false;
-        if (renderer.CanRecordCommandBufferDebugLabels)
+        if (commandRuntime.CanRecordCommandBufferDebugLabels)
         {
-            labelActive = renderer.CmdBeginLabel(
+            labelActive = commandRuntime.CmdBeginLabel(
                 recordingState.CommandBuffer,
                 $"Query.{Operation}");
         }
@@ -154,7 +154,7 @@ internal sealed record QueryOp(
         }
 
         if (labelActive)
-            renderer.CmdEndLabel(recordingState.CommandBuffer);
+            commandRuntime.CmdEndLabel(recordingState.CommandBuffer);
 
         return recordingInfo.OperationIndex;
     }

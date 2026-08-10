@@ -120,7 +120,7 @@ namespace XREngine.Rendering.XeSS
             }
 
             internal static bool TryCreateBridgeSession(
-                VulkanUpscaleBridgeSidecar sidecar,
+                VulkanUpscaleBridgeVulkanContext context,
                 in VulkanUpscaleBridgeDispatchParameters parameters,
                 out BridgeSession? session,
                 out string failureReason)
@@ -136,8 +136,8 @@ namespace XREngine.Rendering.XeSS
                         return false;
                     }
 
-                    XessResult createResult = _createContext!(sidecar.Instance, sidecar.PhysicalDevice, sidecar.Device, out IntPtr context);
-                    if (createResult != XessResult.Success || context == IntPtr.Zero)
+                    XessResult createResult = _createContext!(context.Instance, context.PhysicalDevice, context.Device, out IntPtr xessContext);
+                    if (createResult != XessResult.Success || xessContext == IntPtr.Zero)
                     {
                         failureReason = $"xessVKCreateContext failed with {createResult}.";
                         _lastError = failureReason;
@@ -149,7 +149,7 @@ namespace XREngine.Rendering.XeSS
 
                     if (_buildPipelines is not null)
                     {
-                        _buildPipelines(context, default, false, initFlags);
+                        _buildPipelines(xessContext, default, false, initFlags);
                     }
 
                     XessVkInitParams initParams = new()
@@ -166,16 +166,16 @@ namespace XREngine.Rendering.XeSS
                         PipelineCache = default,
                     };
 
-                    XessResult initResult = _initialize!(context, ref initParams);
+                    XessResult initResult = _initialize!(xessContext, ref initParams);
                     if (initResult != XessResult.Success)
                     {
-                        _destroyContext!(context);
+                        _destroyContext!(xessContext);
                         failureReason = $"xessVKInit failed with {initResult}.";
                         _lastError = failureReason;
                         return false;
                     }
 
-                    session = new BridgeSession(sidecar, context, quality, initFlags, parameters.OutputWidth, parameters.OutputHeight);
+                    session = new BridgeSession(context, xessContext, quality, initFlags, parameters.OutputWidth, parameters.OutputHeight);
                     return true;
                 }
             }
@@ -396,7 +396,7 @@ namespace XREngine.Rendering.XeSS
 
             internal sealed class BridgeSession : IDisposable
             {
-                private readonly VulkanUpscaleBridgeSidecar _sidecar;
+                private readonly VulkanUpscaleBridgeVulkanContext _vulkanContext;
                 private readonly IntPtr _context;
                 private readonly XessQualitySetting _quality;
                 private readonly uint _initFlags;
@@ -405,10 +405,10 @@ namespace XREngine.Rendering.XeSS
                 private bool _disposed;
                 private bool _firstDispatch = true;
 
-                internal BridgeSession(VulkanUpscaleBridgeSidecar sidecar, IntPtr context, XessQualitySetting quality, uint initFlags, uint outputWidth, uint outputHeight)
+                internal BridgeSession(VulkanUpscaleBridgeVulkanContext context, IntPtr xessContext, XessQualitySetting quality, uint initFlags, uint outputWidth, uint outputHeight)
                 {
-                    _sidecar = sidecar;
-                    _context = context;
+                    _context = xessContext;
+                    _vulkanContext = context;
                     _quality = quality;
                     _initFlags = initFlags;
                     _outputWidth = outputWidth;
@@ -437,12 +437,12 @@ namespace XREngine.Rendering.XeSS
                         return false;
                     }
 
-                    _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.SourceColor, ImageLayout.ShaderReadOnlyOptimal, PipelineStageFlags.ComputeShaderBit, AccessFlags.ShaderReadBit);
-                    _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.SourceMotion, ImageLayout.ShaderReadOnlyOptimal, PipelineStageFlags.ComputeShaderBit, AccessFlags.ShaderReadBit);
-                    _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.SourceDepth, ImageLayout.ShaderReadOnlyOptimal, PipelineStageFlags.ComputeShaderBit, AccessFlags.ShaderReadBit);
+                    _vulkanContext.TransitionImageLayout(slot.CommandBuffer, slot.SourceColor, ImageLayout.ShaderReadOnlyOptimal, PipelineStageFlags.ComputeShaderBit, AccessFlags.ShaderReadBit);
+                    _vulkanContext.TransitionImageLayout(slot.CommandBuffer, slot.SourceMotion, ImageLayout.ShaderReadOnlyOptimal, PipelineStageFlags.ComputeShaderBit, AccessFlags.ShaderReadBit);
+                    _vulkanContext.TransitionImageLayout(slot.CommandBuffer, slot.SourceDepth, ImageLayout.ShaderReadOnlyOptimal, PipelineStageFlags.ComputeShaderBit, AccessFlags.ShaderReadBit);
                     if (parameters.HasExposureTexture)
-                        _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.Exposure, ImageLayout.ShaderReadOnlyOptimal, PipelineStageFlags.ComputeShaderBit, AccessFlags.ShaderReadBit);
-                    _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.OutputColor, ImageLayout.General, PipelineStageFlags.ComputeShaderBit, AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit);
+                        _vulkanContext.TransitionImageLayout(slot.CommandBuffer, slot.Exposure, ImageLayout.ShaderReadOnlyOptimal, PipelineStageFlags.ComputeShaderBit, AccessFlags.ShaderReadBit);
+                    _vulkanContext.TransitionImageLayout(slot.CommandBuffer, slot.OutputColor, ImageLayout.General, PipelineStageFlags.ComputeShaderBit, AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit);
 
                     if (_setVelocityScale is not null)
                     {
@@ -483,12 +483,12 @@ namespace XREngine.Rendering.XeSS
                         return false;
                     }
 
-                    _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.SourceColor, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
-                    _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.SourceMotion, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
-                    _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.SourceDepth, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
+                    _vulkanContext.TransitionImageLayout(slot.CommandBuffer, slot.SourceColor, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
+                    _vulkanContext.TransitionImageLayout(slot.CommandBuffer, slot.SourceMotion, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
+                    _vulkanContext.TransitionImageLayout(slot.CommandBuffer, slot.SourceDepth, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
                     if (parameters.HasExposureTexture)
-                        _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.Exposure, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
-                    _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.OutputColor, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
+                        _vulkanContext.TransitionImageLayout(slot.CommandBuffer, slot.Exposure, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
+                    _vulkanContext.TransitionImageLayout(slot.CommandBuffer, slot.OutputColor, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
 
                     _firstDispatch = false;
                     return true;

@@ -6,7 +6,7 @@ namespace XREngine.Rendering.Vulkan
     internal sealed unsafe partial class VulkanFrameLoop
     {
         private VulkanTrackedCommandEncoder CreateRecoveryCommandEncoder()
-            => new(Api!, _deviceContext, _commandRuntime, ResourceRuntime);
+            => new(_commandRuntime);
 
         private void PrepareRejectedDesktopAbortCommand(
             ref VulkanFrameAttempt attempt,
@@ -122,11 +122,7 @@ namespace XREngine.Rendering.Vulkan
                 commandBuffer,
                 source,
                 in target,
-                new VulkanTrackedCommandEncoder(
-                    Api,
-                    _deviceContext,
-                    _commandRuntime,
-                    ResourceRuntime));
+                new VulkanTrackedCommandEncoder(_commandRuntime));
             if (!recorded)
                 return false;
 

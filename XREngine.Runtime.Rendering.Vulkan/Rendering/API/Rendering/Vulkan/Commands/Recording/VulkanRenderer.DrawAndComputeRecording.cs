@@ -357,7 +357,7 @@ namespace XREngine.Rendering.Vulkan
                 ComputeReusableComputeDescriptorBindingKey(
                     op,
                     descriptorBindingOrdinal);
-            if (!op.Program.TryBuildAndBindComputeDescriptorSets(commandBuffer, imageIndex, op.Snapshot, reusableDescriptorKey, out _, out DescriptorSet[] boundDescriptorSets, out var tempBuffers))
+            if (!op.Program.TryBuildAndBindComputeDescriptorSets(CreateProgramRecordingRequest(commandBuffer), imageIndex, op.Snapshot, reusableDescriptorKey, out _, out DescriptorSet[] boundDescriptorSets, out var tempBuffers))
             {
                 foreach ((Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) in tempBuffers)
                     DestroyBuffer(buffer, memory);

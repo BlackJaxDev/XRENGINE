@@ -30,7 +30,7 @@ namespace XREngine.Rendering.Vulkan
                 // Ensure that the pass index of the operation is valid and consistent with the pass metadata.
                 // If the pass index is invalid, it will be adjusted to a valid value.
                 FrameOp operation = operations[index];
-                int resolvedPassIndex = EnsureValidPassIndex(
+                int resolvedPassIndex = VulkanCommandRuntime.EnsureValidPassIndex(
                     operation.PassIndex,
                     GetFrameOpDiagnosticName(operation),
                     operation.Context.PassMetadata);
@@ -50,7 +50,7 @@ namespace XREngine.Rendering.Vulkan
             for (int index = 0; index < operations.Length; index++)
             {
                 FrameOp operation = operations[index];
-                int resolvedPassIndex = EnsureValidPassIndex(
+                int resolvedPassIndex = VulkanCommandRuntime.EnsureValidPassIndex(
                     operation.PassIndex,
                     GetFrameOpDiagnosticName(operation),
                     operation.Context.PassMetadata);

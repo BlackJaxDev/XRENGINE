@@ -24,7 +24,6 @@ internal sealed unsafe partial class VulkanResourceRuntime
     internal void DestroyDescriptorSetLayout(
         Vk api,
         Device device,
-        VulkanCommandRuntime commandRuntime,
         int frameSlot,
         DescriptorSetLayout layout,
         string owner)
@@ -36,7 +35,7 @@ internal sealed unsafe partial class VulkanResourceRuntime
         }
 
         VulkanResourceLifetimeKey key = new(ObjectType.DescriptorSetLayout, layout.Handle);
-        VulkanRetirementTicket ticket = CaptureRetirementTicket(commandRuntime, key, owner);
+        VulkanRetirementTicket ticket = CaptureRetirementTicket(key, owner);
         lock (Lifetime.Retirement.SyncRoot)
         {
             if (Lifetime.Retirement.AllDescriptorSetLayoutHandles.Contains(layout.Handle))
@@ -70,7 +69,6 @@ internal sealed unsafe partial class VulkanResourceRuntime
     internal void DestroyRemainingDescriptorSetLayouts(
         Vk api,
         Device device,
-        VulkanCommandRuntime commandRuntime,
         int frameSlot)
     {
         foreach ((ulong handle, string owner) in Descriptors.LiveDescriptorSetLayoutHandles.ToArray())
@@ -78,7 +76,6 @@ internal sealed unsafe partial class VulkanResourceRuntime
             DestroyDescriptorSetLayout(
                 api,
                 device,
-                commandRuntime,
                 frameSlot,
                 new DescriptorSetLayout { Handle = handle },
                 $"Shutdown:{owner}");

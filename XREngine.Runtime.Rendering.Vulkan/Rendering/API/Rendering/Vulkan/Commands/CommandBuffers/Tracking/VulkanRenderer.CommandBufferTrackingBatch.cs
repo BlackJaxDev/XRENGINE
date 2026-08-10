@@ -7,7 +7,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
 {
     internal Result ResetTrackedCommandBuffer(CommandBuffer commandBuffer)
     {
-        if (!ResourceRuntime.CanResetCommandBuffer(this, commandBuffer))
+        if (!ResourceRuntime.CanResetCommandBuffer(commandBuffer))
         {
             throw new InvalidOperationException(
                 $"Command buffer 0x{unchecked((ulong)commandBuffer.Handle):X} cannot be reset while recording, queued, submitted, retired, or referenced.");
@@ -525,7 +525,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         bool lifetimeLockContended = !Monitor.TryEnter(ResourceRuntime.Lifetime.Tracker.SyncRoot);
         if (!lifetimeLockContended)
             Monitor.Exit(ResourceRuntime.Lifetime.Tracker.SyncRoot);
-        if (!ResourceRuntime.TryPublishCommandBufferTrackingBatch(this, commandBuffer, batch, out failureReason))
+        if (!ResourceRuntime.TryPublishCommandBufferTrackingBatch(commandBuffer, batch, out failureReason))
             return false;
 
         bool layoutLockContended;

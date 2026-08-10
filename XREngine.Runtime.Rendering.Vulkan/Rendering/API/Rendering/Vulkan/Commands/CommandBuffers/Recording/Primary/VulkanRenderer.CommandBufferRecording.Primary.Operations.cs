@@ -191,7 +191,7 @@ namespace XREngine.Rendering.Vulkan;
 
             if (!preservedRenderPass && recordingState.PassIndexLabelActive)
             {
-                CmdEndLabel(recordingState.CommandBuffer);
+                _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
                 recordingState.PassIndexLabelActive = false;
             }
 
@@ -285,13 +285,13 @@ namespace XREngine.Rendering.Vulkan;
 
             if (recordingState.PassIndexLabelActive)
             {
-                CmdEndLabel(recordingState.CommandBuffer);
+                _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
                 recordingState.PassIndexLabelActive = false;
             }
 
-            if (CanRecordCommandBufferDebugLabels)
+            if (_deviceContext.CanRecordCommandBufferDebugLabels)
             {
-                recordingState.PassIndexLabelActive = CmdBeginLabel(
+                recordingState.PassIndexLabelActive = _deviceContext.CmdBeginLabel(
                     recordingState.CommandBuffer,
                     $"Pass={passIndex} Pipe={operation.Context.PipelineIdentity} Vp={operation.Context.ViewportIdentity}");
             }
@@ -404,7 +404,7 @@ namespace XREngine.Rendering.Vulkan;
         EndActiveRenderPass(ref recordingState);
         if (recordingState.RenderPassLabelActive)
         {
-            CmdEndLabel(recordingState.CommandBuffer);
+            _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
             recordingState.RenderPassLabelActive = false;
         }
 

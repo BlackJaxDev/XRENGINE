@@ -33,13 +33,13 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
         => runtimeState != OpenXRAPI.OpenXrRuntimeState.SessionRunning || runtimeLossPending;
 
     public bool ShouldDeferSessionStart(AbstractRenderer renderer, out string reason)
-        => ((VulkanRenderer)renderer).ShouldDeferOpenXrRuntimeSessionStart(out reason);
+        => ((VulkanRenderer)renderer).OpenXrFrameLoop.ShouldDeferOpenXrRuntimeSessionStart(out reason);
 
     public void ExecuteRuntimeGraphicsTransition(
         AbstractRenderer renderer,
         string operation,
         System.Action action)
-        => ((VulkanRenderer)renderer).ExecuteOpenXrRuntimeGraphicsTransition(operation, action);
+        => ((VulkanRenderer)renderer).OpenXrFrameLoop.ExecuteOpenXrRuntimeGraphicsTransition(operation, action);
 
     public bool TryGetRendererOwnedInstance(
         AbstractRenderer renderer,
@@ -47,7 +47,7 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
         out Instance rendererOwnedInstance,
         out string[] rendererOwnedExtensions)
     {
-        bool success = ((VulkanRenderer)renderer).TryGetOpenXrVulkanEnable2BootstrapInstance(
+        bool success = ((VulkanRenderer)renderer).DeviceContext.TryGetOpenXrBootstrapInstance(
             out XR api,
             out rendererOwnedInstance,
             out rendererOwnedExtensions);
@@ -56,13 +56,14 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
     }
 
     public bool InvalidateRendererOwnedInstance(AbstractRenderer renderer, string reason)
-        => ((VulkanRenderer)renderer).InvalidateOpenXrVulkanEnable2BootstrapInstance(reason);
+        => ((VulkanRenderer)renderer).DeviceContext.InvalidateOpenXrBootstrapInstance(reason);
 
     public bool UsesOpenXrVulkanEnable2Creation(AbstractRenderer renderer)
-        => ((VulkanRenderer)renderer).UsesOpenXrVulkanEnable2Creation;
+        => ((VulkanRenderer)renderer).DeviceContext.InstanceCreatedThroughOpenXr &&
+           ((VulkanRenderer)renderer).DeviceContext.CreatedThroughOpenXr;
 
     public void ResetRenderingResourcesForRuntimeRecreate(AbstractRenderer renderer, string reason)
-        => ((VulkanRenderer)renderer).ResetOpenXrRenderingResourcesForRuntimeRecreate(reason);
+        => ((VulkanRenderer)renderer).OpenXrFrameLoop.ResetOpenXrRenderingResourcesForRuntimeRecreate(reason);
 
     public bool SupportsVulkanFragmentShadingRate(AbstractRenderer renderer)
         => ((VulkanRenderer)renderer).SupportsVulkanFragmentShadingRate;

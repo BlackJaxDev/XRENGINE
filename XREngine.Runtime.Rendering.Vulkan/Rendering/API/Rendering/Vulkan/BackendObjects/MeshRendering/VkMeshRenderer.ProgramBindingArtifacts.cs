@@ -90,7 +90,7 @@ internal unsafe partial class VkMeshRenderer
             }
 
             engineBindingSnapshot =
-                BackendContext.MeshServices.GetForwardLightingBindingSnapshotForArtifact(
+                CommandOperations.GetForwardLightingBindingSnapshotForArtifact(
                     lights,
                     programData,
                     _program);
@@ -247,6 +247,7 @@ internal unsafe partial class VkMeshRenderer
 
         artifact = snapshot.CreatePersistentProgramBindingArtifact(
             BackendContext,
+            WrapperLookup,
             RuntimeEngine.Rendering.State.CurrentRenderingPipeline,
             RetainedArtifactEngineRequirements);
         return true;

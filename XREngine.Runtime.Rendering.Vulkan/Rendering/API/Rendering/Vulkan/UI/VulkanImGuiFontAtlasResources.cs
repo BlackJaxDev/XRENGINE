@@ -12,24 +12,28 @@ namespace XREngine.Rendering.Vulkan;
 /// image, sampler, and descriptor handles into the shared output state.
 /// </summary>
 internal unsafe sealed class VulkanImGuiFontAtlasResources(
-    VulkanOutputRuntime outputRuntime,
+    VulkanImGuiResources resourcesState,
+    VulkanImGuiTextureRegistry textureRegistry,
     VulkanResourceRuntime resourceRuntime,
     VulkanCommandRuntime commandRuntime,
-    VulkanDeviceContext deviceContext)
+    VulkanDeviceContext deviceContext,
+    VulkanTargetOutputContext target)
 {
     private const uint DescriptorPoolMaxSets = 256;
-    private readonly VulkanOutputRuntime _outputRuntime = outputRuntime;
+    private readonly VulkanImGuiResources _resourcesState = resourcesState;
+    private readonly VulkanImGuiTextureRegistry _textureRegistry = textureRegistry;
     private readonly VulkanResourceRuntime _resourceRuntime = resourceRuntime;
     private readonly VulkanCommandRuntime _commandRuntime = commandRuntime;
     private readonly VulkanDeviceContext _deviceContext = deviceContext;
+    private readonly VulkanTargetOutputContext _target = target;
 
     internal void EnsureCreated()
     {
-        VulkanImGuiResources resources = _outputRuntime._imguiResources;
+        VulkanImGuiResources resources = _resourcesState;
         if (resources.FontReady)
             return;
 
-        VulkanTargetOutputContext target = _outputRuntime.TargetOutputContext;
+        VulkanTargetOutputContext target = _target;
         target.ThrowIfVulkanDeviceOperationNotAdmitted("ImGui.FontAtlas.Create");
         ImGui.GetIO().Fonts.GetTexDataAsRGBA32(
             out byte* pixels,
@@ -82,7 +86,7 @@ internal unsafe sealed class VulkanImGuiFontAtlasResources(
     /// </summary>
     internal void RetireAll()
     {
-        VulkanImGuiResources resources = _outputRuntime._imguiResources;
+        VulkanImGuiResources resources = _resourcesState;
         if (resources.FontImage.Handle != 0 || resources.FontImageView.Handle != 0 || resources.FontSampler.Handle != 0)
         {
             _resourceRuntime.Images.RetireOwnedResources(new RetiredImageResources(
@@ -94,7 +98,7 @@ internal unsafe sealed class VulkanImGuiFontAtlasResources(
                 0));
         }
 
-        VulkanTargetOutputContext target = _outputRuntime.TargetOutputContext;
+        VulkanTargetOutputContext target = _target;
         if (resources.DescriptorPool.Handle != 0)
             target.VulkanApi.DestroyDescriptorPool(target.Device, resources.DescriptorPool, null);
         if (resources.DescriptorSetLayout.Handle != 0)
@@ -108,7 +112,7 @@ internal unsafe sealed class VulkanImGuiFontAtlasResources(
         resources.DescriptorSetLayout = default;
         resources.FontDescriptorSet = default;
         resources.FontReady = false;
-        _outputRuntime._imguiTextureRegistry.Clear();
+        _textureRegistry.Clear();
     }
 
     private (Buffer Buffer, VulkanMemoryAllocation Allocation) CreateAndUploadStagingBuffer(
@@ -124,7 +128,7 @@ internal unsafe sealed class VulkanImGuiFontAtlasResources(
             SharingMode = SharingMode.Exclusive,
         };
         Result result = target.VulkanApi.CreateBuffer(target.Device, ref createInfo, null, out Buffer buffer);
-        _deviceContext.ObserveNativeResult("vkCreateBuffer.ImGuiFontAtlas", result);
+        target.ObserveNativeResult("vkCreateBuffer.ImGuiFontAtlas", result);
         if (result != Result.Success)
             throw new InvalidOperationException($"Failed to create ImGui font staging buffer ({result}).");
 
@@ -137,7 +141,7 @@ internal unsafe sealed class VulkanImGuiFontAtlasResources(
                 MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
             target.TrackExternalBufferAllocation(buffer, in allocation);
             result = target.VulkanApi.BindBufferMemory(target.Device, buffer, allocation.Memory, allocation.Offset);
-            _deviceContext.ObserveNativeResult("vkBindBufferMemory.ImGuiFontAtlas", result);
+            target.ObserveNativeResult("vkBindBufferMemory.ImGuiFontAtlas", result);
             if (result != Result.Success)
                 throw new InvalidOperationException($"Failed to bind ImGui font staging memory ({result}).");
 
@@ -198,7 +202,7 @@ internal unsafe sealed class VulkanImGuiFontAtlasResources(
             resources.FontImage,
             allocation.Memory,
             allocation.Offset);
-        _deviceContext.ObserveNativeResult("vkBindImageMemory.ImGuiFontAtlas", result);
+        target.ObserveNativeResult("vkBindImageMemory.ImGuiFontAtlas", result);
         if (result != Result.Success)
             throw new InvalidOperationException($"Failed to bind ImGui font image memory ({result}).");
 
@@ -218,7 +222,7 @@ internal unsafe sealed class VulkanImGuiFontAtlasResources(
             },
         };
         result = target.VulkanApi.CreateImageView(target.Device, ref viewInfo, null, out resources.FontImageView);
-        _deviceContext.ObserveNativeResult("vkCreateImageView.ImGuiFontAtlas", result);
+        target.ObserveNativeResult("vkCreateImageView.ImGuiFontAtlas", result);
         if (result != Result.Success)
             throw new InvalidOperationException($"Failed to create ImGui font image view ({result}).");
         target.TrackLiveImageView(resources.FontImageView, in viewInfo, "ImGui.FontAtlas.ImageView");
@@ -238,7 +242,7 @@ internal unsafe sealed class VulkanImGuiFontAtlasResources(
             BorderColor = BorderColor.FloatOpaqueWhite,
         };
         result = target.VulkanApi.CreateSampler(target.Device, ref samplerInfo, null, out resources.FontSampler);
-        _deviceContext.ObserveNativeResult("vkCreateSampler.ImGuiFontAtlas", result);
+        target.ObserveNativeResult("vkCreateSampler.ImGuiFontAtlas", result);
         if (result != Result.Success)
             throw new InvalidOperationException($"Failed to create ImGui font sampler ({result}).");
         _resourceRuntime.Samplers.Register(resources.FontSampler, in samplerInfo, "ImGui.FontAtlas.Sampler");
@@ -343,7 +347,7 @@ internal unsafe sealed class VulkanImGuiFontAtlasResources(
             ref layoutInfo,
             null,
             out resources.DescriptorSetLayout);
-        _deviceContext.ObserveNativeResult("vkCreateDescriptorSetLayout.ImGuiFontAtlas", result);
+        target.ObserveNativeResult("vkCreateDescriptorSetLayout.ImGuiFontAtlas", result);
         if (result != Result.Success)
             throw new InvalidOperationException($"Failed to create ImGui descriptor set layout ({result}).");
         _resourceRuntime.Descriptors.LiveDescriptorSetLayoutHandles[resources.DescriptorSetLayout.Handle] =
@@ -367,7 +371,7 @@ internal unsafe sealed class VulkanImGuiFontAtlasResources(
             Flags = DescriptorPoolCreateFlags.FreeDescriptorSetBit,
         };
         result = target.VulkanApi.CreateDescriptorPool(target.Device, ref poolInfo, null, out resources.DescriptorPool);
-        _deviceContext.ObserveNativeResult("vkCreateDescriptorPool.ImGuiFontAtlas", result);
+        target.ObserveNativeResult("vkCreateDescriptorPool.ImGuiFontAtlas", result);
         if (result != Result.Success)
             throw new InvalidOperationException($"Failed to create ImGui descriptor pool ({result}).");
         _resourceRuntime.Lifetime.Tracker.RegisterResource(
@@ -384,7 +388,7 @@ internal unsafe sealed class VulkanImGuiFontAtlasResources(
             PSetLayouts = &layout,
         };
         result = target.VulkanApi.AllocateDescriptorSets(target.Device, ref allocation, out resources.FontDescriptorSet);
-        _deviceContext.ObserveNativeResult("vkAllocateDescriptorSets.ImGuiFontAtlas", result);
+        target.ObserveNativeResult("vkAllocateDescriptorSets.ImGuiFontAtlas", result);
         if (result != Result.Success)
             throw new InvalidOperationException($"Failed to allocate ImGui font descriptor set ({result}).");
         _resourceRuntime.Lifetime.Tracker.RegisterResource(
@@ -408,7 +412,7 @@ internal unsafe sealed class VulkanImGuiFontAtlasResources(
             PImageInfo = &imageInfo,
         };
         target.VulkanApi.UpdateDescriptorSets(target.Device, 1, &write, 0, null);
-        _outputRuntime._imguiTextureRegistry.DescriptorSets[(nint)1] = resources.FontDescriptorSet;
+        _textureRegistry.DescriptorSets[(nint)1] = resources.FontDescriptorSet;
     }
 
     private void DestroyIncompleteFontResources(VulkanTargetOutputContext target, VulkanImGuiResources resources)

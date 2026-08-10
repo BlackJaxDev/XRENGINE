@@ -290,6 +290,7 @@ internal sealed class ComputeDispatchSnapshot
     /// </summary>
     internal ComputeDispatchSnapshot CreatePersistentProgramBindingArtifact(
         VulkanBackendObjectContext backendContext,
+        VulkanWrapperLookupPort wrapperLookup,
         XRRenderPipelineInstance? frameSourcePipeline,
         EUniformRequirements retainedEngineRequirements)
     {
@@ -330,7 +331,7 @@ internal sealed class ComputeDispatchSnapshot
 
         artifact.SetMaterialUniformBindings(MaterialUniformBindings);
         artifact.EnableMaterialBindingFastPath();
-        artifact.PublishBindingLayoutSignatures(backendContext, frameSourcePipeline);
+        artifact.PublishBindingLayoutSignatures(backendContext, wrapperLookup, frameSourcePipeline);
         artifact.IsImmutableBindingArtifact = true;
         return artifact;
     }
@@ -484,9 +485,10 @@ internal sealed class ComputeDispatchSnapshot
     /// </summary>
     internal void PublishBindingLayoutSignatures(
         VulkanBackendObjectContext backendContext,
+        VulkanWrapperLookupPort wrapperLookup,
         XRRenderPipelineInstance? frameSourcePipeline)
     {
-        DescriptorSignatures.Capture(backendContext, Samplers, SamplersByName, Images);
+        DescriptorSignatures.Capture(wrapperLookup, Samplers, SamplersByName, Images);
         _publishedFrameSourcePipelineIdentity = frameSourcePipeline is null
             ? 0
             : RuntimeHelpers.GetHashCode(frameSourcePipeline);

@@ -1,17 +1,18 @@
 using Silk.NET.Vulkan;
 using XREngine.Rendering.Resources;
 
-namespace XREngine.Rendering.Vulkan;
+namespace XREngine.Rendering.Vulkan.RenderGraph;
 
-public unsafe partial class VulkanRenderer
+internal sealed partial class VulkanFramePlanner
 {
     /// <summary>
     /// Captures one immutable graph/barrier publication from the exact planner
     /// state that owns its physical resources. This runs only when a planner
     /// generation changes; steady-state frame recording reuses the publication.
     /// </summary>
-    private bool TryFreezeResourcePlannerRenderGraphPlan(
+    internal bool TryFreezeResourcePlannerRenderGraphPlan(
         ref ResourcePlannerRuntimeState state,
+        VulkanBackendObjectContext? backendContext,
         bool allowSynchronousResourceUploads,
         out string reason)
     {
@@ -58,6 +59,7 @@ public unsafe partial class VulkanRenderer
             if (!TryResolveFrozenRenderGraphBuffer(
                     barrier.ResourceName,
                     in state,
+                    backendContext,
                     allowSynchronousResourceUploads,
                     out Silk.NET.Vulkan.Buffer nativeBuffer,
                     out ulong nativeSize,
@@ -100,7 +102,7 @@ public unsafe partial class VulkanRenderer
             frozenSwapchainBarriers[index] = swapchainBarriers[index];
 
         VulkanBarrierPlan frozenBarriers = new(
-            _framePlanner.NextBarrierPlanGeneration(),
+            NextBarrierPlanGeneration(),
             frozenImageBarriers,
             frozenBufferBarriers,
             frozenSwapchainBarriers);
@@ -158,6 +160,7 @@ public unsafe partial class VulkanRenderer
     private bool TryResolveFrozenRenderGraphBuffer(
         string resourceName,
         in ResourcePlannerRuntimeState plannerState,
+        VulkanBackendObjectContext? backendContext,
         bool allowSynchronousResourceUploads,
         out Silk.NET.Vulkan.Buffer nativeBuffer,
         out ulong nativeSize,
@@ -198,7 +201,7 @@ public unsafe partial class VulkanRenderer
         // exact generation-owned lookup; it must not override a context binding.
         if (dataBuffer is null)
         {
-            _framePlanner.TrackedBuffersByName.TryGetValue(
+            TrackedBuffersByName.TryGetValue(
                 resourceName,
                 out dataBuffer);
             if (dataBuffer is not null)
@@ -215,7 +218,7 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        if (_resourceRuntime.BackendObjectContext is not { } backendContext)
+        if (backendContext is null)
         {
             nativeBuffer = default;
             nativeSize = 0;

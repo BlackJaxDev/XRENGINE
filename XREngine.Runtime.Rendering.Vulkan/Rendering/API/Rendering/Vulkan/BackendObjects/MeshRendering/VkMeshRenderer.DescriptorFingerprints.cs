@@ -1,10 +1,10 @@
-// ──────────────────────────────────────────────────────────────────────────────
-// VkMeshRenderer.Descriptors.cs  – partial class: Descriptor Set Management
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// VkMeshRenderer.Descriptors.cs  â€“ partial class: Descriptor Set Management
 //
 // Allocates and writes Vulkan descriptor sets for each swapchain frame.
 // Resolves buffer, image, and texel-buffer descriptors from the buffer cache,
 // material textures, and engine/auto uniform buffers.
-// ──────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 using System;
 using System.Collections.Concurrent;
@@ -34,7 +34,7 @@ internal unsafe partial class VkMeshRenderer
 		AppendComponent(builder, "textures", ComputeMaterialTextureResourceFingerprint(material));
 		AppendComponent(builder, "engineUbo", ComputeEngineUniformResourceFingerprint());
 		AppendComponent(builder, "autoUbo", ComputeAutoUniformResourceFingerprint());
-		AppendComponent(builder, "resourceAllocator", unchecked((ulong)RuntimeHelpers.GetHashCode(BackendContext.Buffers)));
+		AppendComponent(builder, "resourceAllocator", unchecked((ulong)RuntimeHelpers.GetHashCode(BackendContext.Resources.Buffers)));
 		if (_program is not null)
 		{
 			AppendReferencedProgramSamplerResourceFingerprintDetails(builder, material, bindings);
@@ -306,7 +306,7 @@ internal unsafe partial class VkMeshRenderer
 		if (includeFrameSourceDescriptors)
 		{
 			bindingSnapshot.ResolvePublishedResourceSignatures(
-				BackendContext.MeshServices.ResolveDescriptorViewFamilyIdentity(),
+				MaterializationSnapshot.DescriptorViewFamilyIdentity,
 				out _,
 				out snapshotResourceSignature);
 		}
@@ -598,7 +598,7 @@ internal unsafe partial class VkMeshRenderer
 		if (snapshot is { HasPublishedBindingLayoutSignatures: true })
 		{
 			snapshot.ResolvePublishedResourceSignatures(
-				BackendContext.MeshServices.ResolveDescriptorViewFamilyIdentity(),
+				MaterializationSnapshot.DescriptorViewFamilyIdentity,
 				out exactSamplerResourceSignature,
 				out _);
 		}
@@ -680,7 +680,7 @@ internal unsafe partial class VkMeshRenderer
 				resolvedImageInfos);
 			if (writeMatched)
 			{
-				BackendContext.MeshServices.ObserveFinalPresentationDescriptor(
+				ObserveFinalPresentationDescriptor(
 					descriptorSlotIndex,
 					descriptorCommandBuffer,
 					frameSets[binding.Set],
@@ -712,7 +712,7 @@ internal unsafe partial class VkMeshRenderer
 					return false;
 				}
 
-				if (BackendContext.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
+				if (BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
 				{
 					DescriptorHeapPushDataPayload? payload = allocation?.DescriptorHeapPushData is { Length: > 0 } heapPayloads &&
 						(uint)descriptorSlotIndex < (uint)heapPayloads.Length
@@ -724,14 +724,14 @@ internal unsafe partial class VkMeshRenderer
 						return false;
 					}
 
-					if (!BackendContext.DescriptorLifetime.TryWriteDescriptorHeapBinding(_program, binding, payload, null, imageInfoPtr, null, descriptorCount, out string heapReason))
+					if (!BackendContext.Resources.DescriptorLifetime.TryWriteDescriptorHeapBinding(_program, binding, payload, null, imageInfoPtr, null, descriptorCount, out string heapReason))
 					{
 						reason = $"descriptor heap frame-source sampler '{binding.Name}' update failed: {heapReason}";
 						return false;
 					}
 				}
 
-				if (!BackendContext.DescriptorLifetime.TryUpdateDescriptorSets(1, &write, out string updateFailureReason))
+				if (!BackendContext.Resources.DescriptorLifetime.TryUpdateDescriptorSets(1, &write, out string updateFailureReason))
 				{
 					reason = $"frame-source sampler '{binding.Name}' update deferred: {updateFailureReason}";
 					Debug.VulkanWarningEvery(
@@ -748,7 +748,7 @@ internal unsafe partial class VkMeshRenderer
 			}
 
 			RecordFrameSourceDescriptorWriteSignature(allocation, descriptorSlotIndex, binding, descriptorCount, resolvedImageInfos);
-			BackendContext.MeshServices.ObserveFinalPresentationDescriptor(
+			ObserveFinalPresentationDescriptor(
 				descriptorSlotIndex,
 				descriptorCommandBuffer,
 				frameSets[binding.Set],
@@ -966,7 +966,7 @@ internal unsafe partial class VkMeshRenderer
 		hash.Add((int)buffer.Target);
 		hash.Add(buffer.BindingIndexOverride ?? uint.MaxValue);
 
-		if (BackendContext.GetOrCreateAPIRenderObject(buffer, generateNow: false) is VkDataBuffer vkBuffer)
+		if (WrapperLookup.GetOrCreate(buffer, generateNow: false) is VkDataBuffer vkBuffer)
 		{
 			hash.Add(vkBuffer.BufferHandle?.Handle ?? 0UL);
 			hash.Add(vkBuffer.AllocatedByteSize);
@@ -1104,7 +1104,7 @@ internal unsafe partial class VkMeshRenderer
 			return;
 		}
 
-		if (BackendContext.Registry.Get(texture) is not AbstractRenderAPIObject apiObject)
+		if (BackendContext.Resources.BackendObjects.Get(texture) is not AbstractRenderAPIObject apiObject)
 		{
 			hash.Add(false);
 			hash.Add(0UL);
@@ -1143,6 +1143,31 @@ internal unsafe partial class VkMeshRenderer
 		{
 			hash.Add(0UL);
 		}
+	}
+
+	private void ObserveFinalPresentationDescriptor(
+		int descriptorSlot,
+		CommandBuffer commandBuffer,
+		DescriptorSet descriptorSet,
+		uint set,
+		uint binding,
+		string? bindingName,
+		in DescriptorImageInfo imageInfo,
+		ulong resourceSignature,
+		bool writeMatched,
+		bool writeSucceeded)
+	{
+		_finalPresentationDescriptors?.Observe(
+			descriptorSlot,
+			commandBuffer,
+			descriptorSet,
+			bindingName,
+			imageInfo,
+			resourceSignature,
+			writeSucceeded);
+		_ = set;
+		_ = binding;
+		_ = writeMatched;
 	}
 
 	/// <summary>Resolves one or more buffer descriptors for a binding, duplicating for array bindings.</summary>

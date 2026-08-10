@@ -15,10 +15,10 @@ internal abstract class VkObject<T> : VkObjectBase
         => $"{GetType()} {_bindingId}";
 
     public uint CacheObject(VkObject<T> obj)
-        => BackendContext.Registry.Cache(obj);
+        => BackendContext.Resources.BackendObjects.Cache(obj);
 
     public VkObject<T>? GetCachedObject(uint id)
-        => BackendContext.Registry.Get<T>(id);
+        => BackendContext.Resources.BackendObjects.Get<T>(id);
 
     /// <summary>
     /// Resolves or creates a context-owned wrapper without routing through the
@@ -26,10 +26,10 @@ internal abstract class VkObject<T> : VkObjectBase
     /// generation-local backend registry and factory.
     /// </summary>
     protected AbstractRenderAPIObject? GetBackendWrapper(GenericRenderObject data, bool generateNow)
-        => BackendContext.GetOrCreateAPIRenderObject(data, generateNow);
+        => WrapperLookup.GetOrCreate(data, generateNow);
 
     public void RemoveCachedObject(uint id)
-        => BackendContext.Registry.Remove<T>(id);
+        => BackendContext.Resources.BackendObjects.Remove<T>(id);
 
     /// <summary>
     /// Creates a context-owned wrapper. The backend context is both the native
@@ -39,18 +39,41 @@ internal abstract class VkObject<T> : VkObjectBase
     protected VkObject(
         VulkanBackendObjectContext backendContext,
         T data) : base(backendContext, backendContext)
-        => Data = data;
+        => _data = data ?? throw new ArgumentNullException(nameof(data));
 
     protected VkObject(
         VulkanBackendObjectContext backendContext,
         IRenderApiWrapperOwner owner,
         T data) : base(backendContext, owner)
-        => Data = data;
+        => _data = data ?? throw new ArgumentNullException(nameof(data));
+
+    /// <summary>
+    /// Completes wrapper construction after the factory has bound the exact
+    /// operation ports required by this wrapper family.
+    /// </summary>
+    internal override void CompleteConstruction()
+    {
+        if (_dataLinked)
+            return;
+
+        _data.AddWrapper(this);
+        try
+        {
+            LinkData();
+            _dataLinked = true;
+        }
+        catch
+        {
+            try { UnlinkData(); }
+            finally { _data.RemoveWrapper(this); }
+            throw;
+        }
+    }
 
     protected override GenericRenderObject Data_Internal => Data;
 
-    // Constructors assign through the virtual Data property so wrapper links are
-    // established consistently; the field is never observed before that assignment.
+    // The factory binds narrow behavior ports before completing the data link.
+    // This prevents constructor-time callbacks from observing unpublished services.
     private T _data = null!;
     private bool _dataLinked;
     public virtual T Data
@@ -98,13 +121,13 @@ internal abstract class VkObject<T> : VkObjectBase
     protected internal override void PostGenerated()
     {
         base.PostGenerated();
-        BackendContext.Registry.Publish(BindingId, this);
+        BackendContext.Resources.BackendObjects.Publish(BindingId, this);
     }
 
     protected internal override void PostDeleted()
     {
-        BackendContext.Registry.Remove(Data);
-        BackendContext.Registry.Remove<T>(BindingId);
+        BackendContext.Resources.BackendObjects.Remove(Data);
+        BackendContext.Resources.BackendObjects.Remove<T>(BindingId);
         base.PostDeleted();
     }
 }

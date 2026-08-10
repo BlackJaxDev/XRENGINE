@@ -9,7 +9,7 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed class VulkanGraphicsPipelineBuildRequest(
     long ownerId,
     VkRenderProgram program,
-    VulkanProgramBackendServices programServices,
+    VulkanProgramCreationPort programServices,
     bool useGraphicsPipelineLibraries,
     long dependencyGeneration,
     VulkanGraphicsPipelineKey key,
@@ -34,7 +34,7 @@ internal sealed class VulkanGraphicsPipelineBuildRequest(
 {
         public long OwnerId { get; } = ownerId;
         public VkRenderProgram Program { get; } = program;
-        public VulkanProgramBackendServices ProgramServices { get; } = programServices;
+        public VulkanProgramCreationPort ProgramServices { get; } = programServices;
         public bool UseGraphicsPipelineLibraries { get; } = useGraphicsPipelineLibraries;
         public long DependencyGeneration { get; } = dependencyGeneration;
         public VulkanGraphicsPipelineKey Key { get; } = key;

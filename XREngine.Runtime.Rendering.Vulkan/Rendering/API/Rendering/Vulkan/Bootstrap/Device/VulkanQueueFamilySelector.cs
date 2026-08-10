@@ -4,14 +4,13 @@ namespace XREngine.Rendering.Vulkan.DeviceBootstrap;
 
 /// <summary>
 /// Selects the queue families used by the engine from one immutable physical
-/// device snapshot and the active presentation surface.
+/// device snapshot and output-published presentation facts.
 /// </summary>
 internal static class VulkanQueueFamilySelector
 {
     public static QueueFamilyIndices Select(
         ReadOnlySpan<QueueFamilyProperties> queueFamilies,
-        PhysicalDevice physicalDevice,
-        VulkanPresentationSupportProbe? presentationSupportProbe)
+        VulkanOutputDeviceProbeFacts outputProbe)
     {
         QueueFamilyIndices indices = default;
 
@@ -46,22 +45,10 @@ internal static class VulkanQueueFamilySelector
                 indices.TransferFamilyIndex = i;
             }
 
-            if (presentationSupportProbe is not null)
+            if (outputProbe.SupportsPresentation(i) &&
+                !indices.PresentFamilyIndex.HasValue)
             {
-                Result result = presentationSupportProbe(
-                    physicalDevice,
-                    i,
-                    out bool supportsPresentation);
-                if (result != Result.Success)
-                {
-                    throw new InvalidOperationException(
-                        $"Vulkan presentation support query failed for queue family {i}. Result={result}.");
-                }
-                if (supportsPresentation &&
-                    !indices.PresentFamilyIndex.HasValue)
-                {
-                    indices.PresentFamilyIndex = i;
-                }
+                indices.PresentFamilyIndex = i;
             }
         }
 

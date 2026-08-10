@@ -402,7 +402,7 @@ namespace XREngine.Rendering.Vulkan
                 _outputRuntime.Desktop.StreamlineFrameGenerationActive,
                 target);
             bool recorded = _commandRuntime.DynamicUiOverlayRecorder.TryRecord(
-                OverlayCommandEncoder,
+                new VulkanTrackedCommandEncoder(_commandRuntime),
                 _telemetry,
                 in input,
                 out overlayCommandBuffer,

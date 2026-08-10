@@ -584,7 +584,7 @@ internal sealed unsafe class VkShader(
         }
 
         private void DestroyShaderResources()
-            => BackendContext.ProgramServices.ExecuteWithPipelineCompilationQuiesced(
+            => ProgramCreationPort.ExecuteWithPipelineCompilationQuiesced(
                 DestroyShaderResourcesAfterPipelineCompileDrain,
                 $"shader module mutation for '{SourceLabel}'");
 
@@ -682,7 +682,7 @@ internal sealed unsafe class VkShader(
                 return;
             }
 
-            BackendContext.ProgramServices.ExecuteWithPipelineCompilationQuiesced(
+            ProgramCreationPort.ExecuteWithPipelineCompilationQuiesced(
                 InvalidateAfterPipelineCompileDrain,
                 $"shader invalidation for '{SourceLabel}'");
         }

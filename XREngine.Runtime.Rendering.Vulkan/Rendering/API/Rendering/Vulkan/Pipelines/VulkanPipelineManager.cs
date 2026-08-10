@@ -25,7 +25,7 @@ internal sealed unsafe partial class VulkanPipelineManager
         ShaderStageFlags.ComputeBit;
     private Vk? _api;
     private VulkanDeviceContext? _deviceContext;
-    private VulkanProgramBackendServices? _programServices;
+    private VulkanProgramCreationPort? _programServices;
     internal readonly ConcurrentDictionary<VulkanGraphicsPipelineCompileKey, VulkanGraphicsPipelineCompileJob> _vulkanGraphicsPipelineCompileJobs = new();
     internal readonly Dictionary<ulong, VulkanGraphicsPipelineCompileKey> _vulkanGraphicsPipelineProgramCompileJobs = new();
     internal readonly Lock _vulkanGraphicsPipelineCompileJobsLock = new();
@@ -97,10 +97,10 @@ internal sealed unsafe partial class VulkanPipelineManager
         }
     }
 
-    internal void PublishProgramServices(VulkanProgramBackendServices programServices)
+    internal void PublishProgramServices(VulkanProgramCreationPort programServices)
     {
         ArgumentNullException.ThrowIfNull(programServices);
-        VulkanProgramBackendServices? current = Interlocked.CompareExchange(
+        VulkanProgramCreationPort? current = Interlocked.CompareExchange(
             ref _programServices,
             programServices,
             comparand: null);
@@ -114,7 +114,7 @@ internal sealed unsafe partial class VulkanPipelineManager
     private VulkanDeviceContext RequireDeviceContext()
         => _deviceContext ?? throw new InvalidOperationException("The Vulkan pipeline manager has no published device context.");
 
-    private VulkanProgramBackendServices RequireProgramServices()
+    private VulkanProgramCreationPort RequireProgramServices()
         => _programServices ?? throw new InvalidOperationException(
             "The Vulkan pipeline manager has no published program services.");
 
@@ -613,7 +613,7 @@ internal sealed unsafe partial class VulkanPipelineManager
     internal int DestroySharedGraphicsPipelines()
     {
         Pipeline[] pipelines = DrainSharedGraphicsPipelines();
-        VulkanProgramBackendServices services = RequireProgramServices();
+        VulkanProgramCreationPort services = RequireProgramServices();
         int destroyed = 0;
         for (int index = 0; index < pipelines.Length; index++)
         {
@@ -695,7 +695,7 @@ internal sealed unsafe partial class VulkanPipelineManager
     internal int DestroySharedGraphicsPipelineLibraries()
     {
         Pipeline[] libraries = DrainSharedGraphicsPipelineLibraries();
-        VulkanProgramBackendServices services = RequireProgramServices();
+        VulkanProgramCreationPort services = RequireProgramServices();
         int destroyed = 0;
         for (int index = 0; index < libraries.Length; index++)
         {

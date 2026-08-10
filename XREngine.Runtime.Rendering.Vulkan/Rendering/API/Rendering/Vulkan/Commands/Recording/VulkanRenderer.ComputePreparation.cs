@@ -42,6 +42,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             ulong reusableDescriptorKey;
             int passIndex;
             IReadOnlyCollection<RenderPassMetadata>? passMetadata;
+            FrameOpContext frameContext;
 
             switch (operations[operationIndex])
             {
@@ -51,6 +52,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
                     reusableDescriptorKey = 0UL;
                     passIndex = dispatch.PassIndex;
                     passMetadata = dispatch.Context.PassMetadata;
+                    frameContext = dispatch.Context;
                     break;
                 case ComputeDispatchIndirectOp indirect:
                     program = indirect.Program;
@@ -58,6 +60,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
                     reusableDescriptorKey = 0UL;
                     passIndex = indirect.PassIndex;
                     passMetadata = indirect.Context.PassMetadata;
+                    frameContext = indirect.Context;
                     break;
                 default:
                     continue;
@@ -109,6 +112,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             }
 
             if (program.TryPrepareComputeDispatchResources(
+                VulkanProgramPlannerRequest.From(frameContext),
                 imageIndex,
                 snapshot,
                 reusableDescriptorKey))

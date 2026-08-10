@@ -37,18 +37,18 @@ internal sealed record IndirectDrawOp(
     }
 
     internal override int RecordPrimary(
-        VulkanCommandRuntime renderer,
+        VulkanCommandRuntime commandRuntime,
         scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
         int commandChainRunCount =
-            renderer.CountContiguousIndirectCommandChainRun(
+            commandRuntime.CountContiguousIndirectCommandChainRun(
                 ref recordingState,
                 recordingInfo.OperationIndex,
                 this,
                 recordingInfo.PassIndex);
         if (recordingInfo.ExecutesSecondaryRange &&
-            renderer.TryExecuteIndirectCommandChainSecondaryRun(
+            commandRuntime.TryExecuteIndirectCommandChainSecondaryRun(
                 ref recordingState,
                 recordingInfo.OperationIndex,
                 commandChainRunCount,
@@ -60,27 +60,27 @@ internal sealed record IndirectDrawOp(
             return recordingInfo.OperationIndex + commandChainRunCount - 1;
         }
 
-        renderer.EmitIndirectDrawRunReadBarrier(ref recordingState);
+        commandRuntime.EmitIndirectDrawRunReadBarrier(ref recordingState);
         System.Diagnostics.Debug.Assert(
             recordingInfo.BeginsRendering,
             "Indirect-draw primary-plan nodes must own render-scope entry.");
         if (recordingInfo.BeginsRendering)
         {
-            renderer.BeginRenderPassForTarget(
+        commandRuntime.BeginRenderPassForTarget(
                 ref recordingState,
                 Target,
                 recordingInfo.PassIndex,
                 recordingState.ActiveContext);
         }
 
-        renderer.CmdBeginLabel(recordingState.CommandBuffer, "IndirectDraw");
-        renderer.RecordIndirectDrawIntoCommandBuffer(
+        commandRuntime.CmdBeginLabel(recordingState.CommandBuffer, "IndirectDraw");
+        commandRuntime.RecordIndirectDrawIntoCommandBuffer(
             ref recordingState,
             recordingState.CommandBuffer,
             this,
             recordingInfo.PassIndex,
             recordingInfo.OperationIndex);
-        renderer.CmdEndLabel(recordingState.CommandBuffer);
+        commandRuntime.CmdEndLabel(recordingState.CommandBuffer);
 
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanIndirectRecordingMode(
             usedSecondary: false,

@@ -37,6 +37,6 @@ internal static unsafe class VulkanRootDescriptorLayoutService
         DescriptorSetLayout layout = resources.Descriptors.RootSetLayout;
         resources.Descriptors.RootSetLayout = default;
         resources.DestroyDescriptorSetLayout(
-            api, device, commandRuntime, frameSlot, layout, "Swapchain.DescriptorSetLayout");
+            api, device, frameSlot, layout, "Swapchain.DescriptorSetLayout");
     }
 }

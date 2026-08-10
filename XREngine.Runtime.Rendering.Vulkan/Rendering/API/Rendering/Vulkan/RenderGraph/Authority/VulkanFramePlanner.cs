@@ -16,15 +16,20 @@ internal sealed partial class VulkanFramePlanner
     private long _publishedBarrierGeneration;
     private long _frameContextId;
     private int _frozenPlanReaders;
-    private object? _publishedResourcePlannerGeneration;
+    private ResourcePlannerRuntimeGeneration? _publishedResourcePlannerGeneration;
     internal static bool ReportedNativeNegativeOneToOneDepth;
     internal static bool ReportedShaderRemappedNegativeOneToOneDepth;
     internal static ConcurrentDictionary<IReadOnlyCollection<RenderPassMetadata>, RenderPassMetadataSignatureCacheEntry>
         PassMetadataSignatureCache { get; } = new(ReferenceEqualityComparer.Instance);
 
+    public VulkanFramePlanner()
+        => ResourcePublications = new VulkanResourcePlannerPublicationReader(this);
+
     public VulkanInteractiveResizePlannerExtentCache InteractiveResizeExtentCache { get; } =
         new(MaxInteractiveResizeExtentSnapshots);
     public ulong FrozenResourcePlanRevision { get; private set; }
+    /// <summary>Reads immutable planner-generation publications for backend wrappers.</summary>
+    internal VulkanResourcePlannerPublicationReader ResourcePublications { get; }
     public Extent2D DesktopSwapchainExtent { get; private set; }
 
     /// <summary>Publishes the newly committed desktop output extent to planning consumers.</summary>
@@ -33,8 +38,6 @@ internal sealed partial class VulkanFramePlanner
     public Dictionary<string, XRDataBuffer> TrackedBuffersByName { get; } =
         new(StringComparer.OrdinalIgnoreCase);
     public object PlannerReadbackGate { get; } = new();
-    public ConcurrentStack<VulkanRenderer.PooledExternalResourcePlannerReadbackScope> FreeExternalResourcePlannerReadbackScopes { get; } = new();
-
     public VulkanRenderGraphCompiler Compiler { get; } = new();
     public VulkanFrameOperationScheduler FrameScheduler { get; } = new();
     public VulkanFrameOperationQueue Operations { get; } = new();
@@ -43,9 +46,9 @@ internal sealed partial class VulkanFramePlanner
         VulkanFrameOpPlannerStateKey,
         FrameOpResourcePlannerSwitchingState,
         VulkanQueueOwnershipConfigCacheEntry,
-        VulkanRenderer.MergedFrameOpRegistryCacheEntry,
-        VulkanRenderer.FrameOpRegistryCacheSource,
-        VulkanRenderer.ActivePassMetadataFilterCacheEntry> MutableState { get; } =
+        MergedFrameOpRegistryCacheEntry,
+        FrameOpRegistryCacheSource,
+        ActivePassMetadataFilterCacheEntry> MutableState { get; } =
         new(VulkanFrameOpPlannerStateKeyComparer.Instance, partitionCapacity: 12);
     public VulkanRenderGraphPlan CurrentPlan { get; private set; } = VulkanRenderGraphPlan.Empty;
     public EVulkanQueueOverlapMode AutoQueueOverlapMode = EVulkanQueueOverlapMode.GraphicsOnly;
@@ -99,11 +102,11 @@ internal sealed partial class VulkanFramePlanner
     public VulkanFramePlanningSnapshot CaptureSnapshot()
         => new(CurrentPlan, FrozenResourcePlanRevision, IsResourcePlanFrozen);
 
-    public T GetPublishedResourcePlannerGeneration<T>() where T : class
-        => (T?)Volatile.Read(ref _publishedResourcePlannerGeneration)
+    public ResourcePlannerRuntimeGeneration GetPublishedResourcePlannerGeneration()
+        => Volatile.Read(ref _publishedResourcePlannerGeneration)
             ?? throw new InvalidOperationException("The Vulkan resource-planner runtime generation has not been initialized.");
 
-    public void PublishResourcePlannerGeneration(object generation)
+    public void PublishResourcePlannerGeneration(ResourcePlannerRuntimeGeneration generation)
     {
         ArgumentNullException.ThrowIfNull(generation);
         Volatile.Write(ref _publishedResourcePlannerGeneration, generation);

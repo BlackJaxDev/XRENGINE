@@ -187,7 +187,6 @@ internal sealed unsafe partial class VulkanResourceRuntime
     internal void DestroyImageImmediateTracked(
         Vk api,
         Device device,
-        VulkanCommandRuntime commandRuntime,
         Image image,
         string owner)
     {
@@ -196,7 +195,6 @@ internal sealed unsafe partial class VulkanResourceRuntime
 
         VulkanResourceLifetimeKey key = new(ObjectType.Image, image.Handle);
         VulkanRetirementTicket ticket = CaptureRetirementTicket(
-            commandRuntime,
             key,
             owner);
         if (!Lifetime.Tracker.IsRetirementReady(ticket))
@@ -210,7 +208,6 @@ internal sealed unsafe partial class VulkanResourceRuntime
     }
 
     internal VulkanRetirementTicket CaptureRetirementTicket(
-        VulkanCommandRuntime commandRuntime,
         VulkanResourceLifetimeKey key,
         string owner)
     {
@@ -218,7 +215,6 @@ internal sealed unsafe partial class VulkanResourceRuntime
             return VulkanRetirementTicket.None;
 
         Lifetime.Tracker.FenceResourceRecordingAdmission(key, owner);
-        commandRuntime.PublishTrackingDependenciesBeforeResourceRetirement(key);
         if (key.Type == ObjectType.Image)
             Images.RetireViewsForBackingImage(key.Handle, owner);
 
@@ -226,20 +222,8 @@ internal sealed unsafe partial class VulkanResourceRuntime
             key,
             owner,
             out ulong generation,
-            out ulong[] dependentCommandBuffers,
+            out _,
             out int invalidatedDescriptorSetCount);
-        if (dependentCommandBuffers.Length != 0)
-        {
-            VulkanExactInvalidationResult result =
-                commandRuntime.InvalidateCachedCommandBuffers(
-                dependentCommandBuffers,
-                $"resource retirement {key} generation {generation}");
-            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanExactResourceInvalidation(
-                result.ExactVariantsDirtied,
-                result.ExactCommandChainsDirtied,
-                result.UnrelatedVariantsPreserved,
-                result.GlobalFallbackInvalidations);
-        }
         if (invalidatedDescriptorSetCount != 0)
             Debug.VulkanEvery(
                 $"Vulkan.ResourceLifetime.TargetedDescriptorInvalidation.{key.Type}",
@@ -515,12 +499,10 @@ internal sealed unsafe partial class VulkanResourceRuntime
             snapshot.DeviceLost);
     }
 
-    internal void ReleaseDescriptorReferencesForPhysicalResourceDestruction(
-        VulkanCommandRuntime commandRuntime,
-        string reason)
+    internal void ReleaseDescriptorReferencesForPhysicalResourceDestruction(string reason)
     {
         int cachedPoolCount = ReleaseComputeDescriptorCaches();
-        int commandReferenceCount = commandRuntime.ReleaseDescriptorRecordingReferences();
+        int commandReferenceCount = 0;
         int meshRendererCount = 0;
         int materialCount = 0;
         int frameBufferCount = 0;

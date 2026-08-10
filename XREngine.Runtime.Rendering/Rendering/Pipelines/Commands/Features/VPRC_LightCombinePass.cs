@@ -143,12 +143,23 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// identity is used to authorize cross-frame reuse.
         /// </summary>
         private sealed class DeferredLightBindingPublisher(
-            VPRC_LightCombinePass owner) : IRenderResourceBindingPublisher
+            VPRC_LightCombinePass owner) :
+            IRenderResourceBindingPublisher,
+            IDeferredRenderBindingPublisher
         {
+            private const int DeferredPublicationCapacity = 1024;
             private readonly object _generationSync = new();
+            private readonly object _activationSync = new();
+            private readonly LightComponent?[] _deferredLights =
+                new LightComponent?[DeferredPublicationCapacity];
+            private readonly ulong[] _deferredTokens =
+                new ulong[DeferredPublicationCapacity];
             private LightBindingState _lastState;
             private bool _hasLastState;
             private ulong _generation = 1;
+            private long _nextDeferredToken;
+            private LightComponent? _activationPreviousLight;
+            private ulong _activeDeferredToken;
 
             public ERenderBindingFrequency Frequency
                 => ERenderBindingFrequency.Object;
@@ -185,6 +196,48 @@ namespace XREngine.Rendering.Pipelines.Commands
                 XRRenderProgram vertexProgram,
                 XRRenderProgram materialProgram)
                 => owner.BindCurrentLightUniforms(materialProgram);
+
+            public ulong CaptureDeferredPublication()
+            {
+                ulong token = unchecked((ulong)Interlocked.Increment(
+                    ref _nextDeferredToken));
+                if (token == 0)
+                    token = unchecked((ulong)Interlocked.Increment(
+                        ref _nextDeferredToken));
+
+                int slot = (int)(token % DeferredPublicationCapacity);
+                _deferredLights[slot] = owner._currentLightComponent;
+                Volatile.Write(ref _deferredTokens[slot], token);
+                return token;
+            }
+
+            public bool TryActivateDeferredPublication(ulong token)
+            {
+                Monitor.Enter(_activationSync);
+                int slot = (int)(token % DeferredPublicationCapacity);
+                if (Volatile.Read(ref _deferredTokens[slot]) != token)
+                {
+                    Monitor.Exit(_activationSync);
+                    return false;
+                }
+
+                _activationPreviousLight = owner._currentLightComponent;
+                owner._currentLightComponent = _deferredLights[slot];
+                _activeDeferredToken = token;
+                return true;
+            }
+
+            public void DeactivateDeferredPublication(ulong token)
+            {
+                if (_activeDeferredToken != token)
+                    throw new InvalidOperationException(
+                        "Deferred light binding publication deactivated out of order.");
+
+                owner._currentLightComponent = _activationPreviousLight;
+                _activationPreviousLight = null;
+                _activeDeferredToken = 0;
+                Monitor.Exit(_activationSync);
+            }
         }
 
         private LightRendererCache? _activeRendererCache;

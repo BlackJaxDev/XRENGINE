@@ -13,7 +13,43 @@ internal abstract class VkObjectBase(
     IRenderAPIObject
 {
     internal VulkanBackendObjectContext BackendContext { get; } = backendContext;
+    /// <summary>
+    /// Deferred program wrapper port.  Wrapper identity may be constructed by the
+    /// base renderer before device composition; the port becomes operational only
+    /// after the generation publishes its command and planner authorities.
+    /// </summary>
+    // Wrapper base identity deliberately retains only creation-time services.
+    // Frame planner, command recording, telemetry, and output facts are supplied
+    // by their owners at an operation boundary, never retained by every wrapper.
+    private VulkanProgramCreationPort? _programCreationPort;
+    private VulkanWrapperLookupPort? _wrapperLookup;
+
+    protected VulkanProgramCreationPort ProgramCreationPort => _programCreationPort ?? throw new InvalidOperationException("This wrapper has no program-creation port.");
     protected Silk.NET.Vulkan.Vk Api => BackendContext.Api;
+
+    internal void BindDeferredPorts(VulkanWrapperPortBinding binding)
+    {
+        ArgumentNullException.ThrowIfNull(binding);
+        _programCreationPort = binding.TryGetProgramCreation();
+        VulkanWrapperLookupPort lookup = binding.Lookup;
+        if (Interlocked.CompareExchange(ref _wrapperLookup, lookup, null) is { } currentLookup && !ReferenceEquals(currentLookup, lookup))
+            throw new InvalidOperationException("The Vulkan wrapper already belongs to a different lookup boundary.");
+        BindOperationPorts(binding);
+    }
+
+    /// <summary>
+    /// Allows a wrapper family to consume the narrow port it owns.  This hook is
+    /// intentionally after the base creation binding so no common wrapper base
+    /// becomes a retained all-authorities service bag.
+    /// </summary>
+    protected virtual void BindOperationPorts(VulkanWrapperPortBinding binding) { }
+
+    /// <summary>Links engine data only after the factory has bound operation ports.</summary>
+    internal abstract void CompleteConstruction();
+
+    /// <summary>Returns only wrapper lookup behavior, never the port publisher.</summary>
+    protected VulkanWrapperLookupPort WrapperLookup
+        => Volatile.Read(ref _wrapperLookup) ?? throw new InvalidOperationException("The Vulkan wrapper lookup boundary has not been bound.");
 
     public const uint InvalidBindingId = 0;
     public abstract VkObjectType Type { get; }

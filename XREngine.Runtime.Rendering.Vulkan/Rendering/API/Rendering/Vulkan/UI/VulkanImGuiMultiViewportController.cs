@@ -21,7 +21,7 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
         private static bool DisposeNativeViewportWindows
             => XREnvironment.IsEnabled(XREngineEnvironmentVariables.ImGuiViewportDisposeNative);
 
-        private readonly VulkanImGuiServices _services;
+        private readonly IVulkanImGuiOutputHost _outputHost;
         private readonly nint _context;
         private readonly IWindow _mainWindow;
         private readonly Dictionary<uint, VulkanImGuiPlatformWindow> _platformWindows = [];
@@ -33,14 +33,14 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
         private bool _installed;
         private bool _disposed;
 
-        private VulkanImGuiMultiViewportController(VulkanImGuiServices services, nint context)
+        private VulkanImGuiMultiViewportController(IVulkanImGuiOutputHost outputHost, nint context)
         {
-            _services = services;
+            _outputHost = outputHost;
             _context = context;
-            _mainWindow = services.MainWindow;
+            _mainWindow = outputHost.MainWindow;
         }
 
-        public static VulkanImGuiMultiViewportController? TryCreate(VulkanImGuiServices services, nint context)
+        public static VulkanImGuiMultiViewportController? TryCreate(IVulkanImGuiOutputHost outputHost, nint context)
         {
             if (context == nint.Zero)
             {
@@ -48,26 +48,26 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
                 return null;
             }
 
-            if (!services.TargetRequiresSwapchainOutput || services.MainWindow.VkSurface is null)
+            if (!outputHost.TargetRequiresSwapchainOutput || outputHost.MainWindow.VkSurface is null)
             {
                 Debug.RenderingWarning("Vulkan ImGui multi-viewports disabled: the renderer does not own a desktop Vulkan surface.");
                 return null;
             }
 
-            if (!services.UseDynamicRenderingRenderTargets)
+            if (!outputHost.UseDynamicRenderingRenderTargets)
             {
                 Debug.RenderingWarning(
                     "Vulkan ImGui multi-viewports disabled: detached windows currently require the Vulkan dynamic-rendering target mode.");
                 return null;
             }
 
-            if (services.Output.SurfaceApi is null || services.Output.Desktop.SwapchainExtension is null || !services.Device.IsReady)
+            if (!outputHost.IsPlatformOutputReady)
             {
                 Debug.RenderingWarning("Vulkan ImGui multi-viewports disabled: Vulkan WSI initialization is incomplete.");
                 return null;
             }
 
-            return new VulkanImGuiMultiViewportController(services, context);
+            return new VulkanImGuiMultiViewportController(outputHost, context);
         }
 
         public void Install()
@@ -270,7 +270,7 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
                 if (_platformWindows.ContainsKey(viewport.ID))
                     return;
 
-                VulkanImGuiPlatformWindow window = new(this, _services, viewport);
+                VulkanImGuiPlatformWindow window = new(this, _outputHost, viewport);
                 _platformWindows.Add(viewport.ID, window);
                 viewport.PlatformUserData = window.Handle;
                 viewport.PlatformHandle = window.Window.Handle;
@@ -387,7 +387,7 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
             try
             {
                 VulkanImGuiPlatformWindow? window = GetPlatformWindow(new ImGuiViewportPtr(nativeViewport));
-                return (window?.Focused ?? _services.MainWindowFocused) ? (byte)1 : (byte)0;
+                return (window?.Focused ?? _outputHost.MainWindowFocused) ? (byte)1 : (byte)0;
             }
             catch (Exception ex)
             {

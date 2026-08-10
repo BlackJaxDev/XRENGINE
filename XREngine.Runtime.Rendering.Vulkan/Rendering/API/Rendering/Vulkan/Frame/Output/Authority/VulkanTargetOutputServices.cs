@@ -7,52 +7,60 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>
 /// Concrete native services used by presentationless and headless output targets.
 /// </summary>
-internal sealed unsafe class VulkanTargetOutputServices
+internal sealed unsafe partial class VulkanFrameLoop : IVulkanTargetOutputHost
 {
-    private readonly Vk _api;
-    private readonly VulkanDeviceContext _deviceContext;
-    private readonly VulkanCommandRuntime _commandRuntime;
-    private readonly VulkanResourceRuntime _resourceRuntime;
-    private readonly VulkanFrameTelemetry _telemetry;
-    private readonly VulkanOutputRuntime _outputRuntime;
-
-    internal VulkanTargetOutputServices(
-        Vk api,
-        VulkanDeviceContext deviceContext,
-        VulkanCommandRuntime commandRuntime,
-        VulkanResourceRuntime resourceRuntime,
-        VulkanFrameTelemetry telemetry,
-        VulkanOutputRuntime outputRuntime)
+    public Vk VulkanApi => Api;
+    public Instance Instance => _deviceContext.Instance;
+    public PhysicalDevice PhysicalDevice => _deviceContext.PhysicalDevice;
+    public Device Device => _deviceContext.Device;
+    public Queue GraphicsQueue => _deviceContext.GraphicsQueue;
+    public Queue PresentQueue => _deviceContext.PresentQueue;
+    public SurfaceKHR TargetSurface => _outputRuntime.Surface;
+    public uint GraphicsQueueFamilyIndex => _deviceContext.QueueFamilies.GraphicsFamilyIndex!.Value;
+    public uint PresentQueueFamilyIndex => _deviceContext.QueueFamilies.PresentFamilyIndex!.Value;
+    public bool StreamlineDlssProvisioned => _outputRuntime._streamlineDlssProvisioned;
+    public bool StreamlineFrameGenerationProvisioned => _outputRuntime._streamlineFrameGenerationProvisioned;
+    public VulkanStreamlineDeviceBinding CaptureStreamlineDeviceBinding()
+        => _outputRuntime.CaptureStreamlineDeviceBinding(_deviceContext);
+    public CommandBuffer[] CreateDesktopOutputArtifacts(int imageCount)
+        => _commandRuntime.CreateDesktopOutputArtifacts(
+            Api, _deviceContext, _resourceRuntime, imageCount);
+    public int ReserveOpenXrFrameDataSlots(int desktopImageCount)
     {
-        _api = api;
-        _deviceContext = deviceContext;
-        _commandRuntime = commandRuntime;
-        _resourceRuntime = resourceRuntime;
-        _telemetry = telemetry;
-        _outputRuntime = outputRuntime;
+        int desktopSlots = Math.Max(Math.Max(desktopImageCount, 2), 1);
+        int totalSlots = checked(desktopSlots + _outputRuntime.OpenXrBackend.EyeFrameDataSlotCount);
+        _resourceRuntime.Descriptors.EnsureFrameSlotCountFloor(totalSlots);
+        _commandRuntime.EnsureFrameDataSlotCapacity(totalSlots);
+        return totalSlots;
     }
+    public void PublishDesktopSwapchainExtent(Extent2D extent)
+    {
+        _commandRuntime.StateTracker.SetSwapchainExtent(extent);
+        _commandRuntime.StateTracker.SetCurrentTargetExtent(extent);
+        _framePlanner.PublishDesktopSwapchainExtent(extent);
+    }
+    public void RetireDesktopOutputArtifacts(CommandBuffer[]? commandBuffers)
+        => _commandRuntime.RetireDesktopOutputArtifacts(
+            Api,
+            _deviceContext,
+            _resourceRuntime,
+            _resourceRuntime.FramebufferRetirementFrameSlot,
+            commandBuffers);
+    public void DrainRetiredDesktopCommandBuffers(int frameSlot)
+        => _commandRuntime.DrainRetiredCommandBuffers(
+            Api, _deviceContext.Device, _resourceRuntime, frameSlot, int.MaxValue);
 
-    internal Vk VulkanApi => _api;
-    internal Instance Instance => _deviceContext.Instance;
-    internal PhysicalDevice PhysicalDevice => _deviceContext.PhysicalDevice;
-    internal Device Device => _deviceContext.Device;
-    internal Queue GraphicsQueue => _deviceContext.GraphicsQueue;
-    internal Queue PresentQueue => _deviceContext.PresentQueue;
-    internal SurfaceKHR TargetSurface => _outputRuntime.Surface;
-    internal VulkanDeviceContext DeviceContext => _deviceContext;
-    internal VulkanResourceRuntime ResourceRuntime => _resourceRuntime;
-
-    internal KhrSurface RequireSurfaceApi()
+    public KhrSurface RequireSurfaceApi()
         => _outputRuntime.SurfaceApi
             ?? throw new InvalidOperationException("Vulkan surface API is not initialized.");
 
-    internal void ThrowIfVulkanDeviceOperationNotAdmitted(string operation)
+    void IVulkanTargetOutputHost.ThrowIfVulkanDeviceOperationNotAdmitted(string operation)
     {
         if (!TryAdmitVulkanDeviceOperation(operation, out string failureReason))
             throw new InvalidOperationException(failureReason);
     }
 
-    internal bool TryAdmitVulkanDeviceOperation(string operation, out string failureReason)
+    bool IVulkanTargetOutputHost.TryAdmitVulkanDeviceOperation(string operation, out string failureReason)
     {
         if (_deviceContext.IsOperational)
         {
@@ -64,7 +72,7 @@ internal sealed unsafe class VulkanTargetOutputServices
         return false;
     }
 
-    internal void NotifyVulkanFenceCompleted(Fence fence)
+    public void NotifyVulkanFenceCompleted(Fence fence)
     {
         if (fence.Handle == 0)
             return;
@@ -87,13 +95,13 @@ internal sealed unsafe class VulkanTargetOutputServices
         }
     }
 
-    internal Result CreateVulkanCommandPoolTracked(ref CommandPoolCreateInfo createInfo, out CommandPool pool, string owner)
+    public Result CreateVulkanCommandPoolTracked(ref CommandPoolCreateInfo createInfo, out CommandPool pool, string owner)
     {
         pool = default;
         ThrowIfVulkanDeviceOperationNotAdmitted(owner);
         lock (_commandRuntime.Pools.Gate)
         {
-            Result result = _api.CreateCommandPool(Device, ref createInfo, null, out pool);
+            Result result = Api.CreateCommandPool(Device, ref createInfo, null, out pool);
             ObserveNativeResult(owner, result);
             if (result == Result.Success)
                 RegisterResource(ObjectType.CommandPool, pool.Handle, owner);
@@ -101,13 +109,13 @@ internal sealed unsafe class VulkanTargetOutputServices
         }
     }
 
-    internal Result AllocateVulkanCommandBufferTracked(ref CommandBufferAllocateInfo allocateInfo, out CommandBuffer commandBuffer, string owner)
+    public Result AllocateVulkanCommandBufferTracked(ref CommandBufferAllocateInfo allocateInfo, out CommandBuffer commandBuffer, string owner)
     {
         commandBuffer = default;
         ThrowIfVulkanDeviceOperationNotAdmitted(owner);
         lock (_commandRuntime.Pools.Gate)
         {
-            Result result = _api.AllocateCommandBuffers(Device, ref allocateInfo, out commandBuffer);
+            Result result = Api.AllocateCommandBuffers(Device, ref allocateInfo, out commandBuffer);
             ObserveNativeResult(owner, result);
             if (result != Result.Success || commandBuffer.Handle == 0)
                 return result;
@@ -129,7 +137,7 @@ internal sealed unsafe class VulkanTargetOutputServices
         }
     }
 
-    internal Result ResetVulkanCommandPoolTracked(CommandPool pool, string owner)
+    public Result ResetVulkanCommandPoolTracked(CommandPool pool, string owner)
     {
         if (pool.Handle == 0)
             return Result.Success;
@@ -137,33 +145,33 @@ internal sealed unsafe class VulkanTargetOutputServices
         ThrowIfVulkanDeviceOperationNotAdmitted(owner);
         lock (_commandRuntime.Pools.Gate)
         {
-            Result result = _api.ResetCommandPool(Device, pool, 0);
+            Result result = Api.ResetCommandPool(Device, pool, 0);
             ObserveNativeResult(owner, result);
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResetCommandPoolCall();
             return result;
         }
     }
 
-    internal Result EndCommandBufferTracked(CommandBuffer commandBuffer)
+    public Result EndCommandBufferTracked(CommandBuffer commandBuffer)
         => _commandRuntime.EndCommandBufferTracked(commandBuffer);
 
-    internal void DestroyCommandPoolHostSynchronized(CommandPool pool)
+    public void DestroyCommandPoolHostSynchronized(CommandPool pool)
     {
         if (pool.Handle == 0)
             return;
 
         lock (_commandRuntime.Pools.Gate)
         {
-            _api.DestroyCommandPool(Device, pool, null);
+            Api.DestroyCommandPool(Device, pool, null);
             CompleteCommandPoolResources(pool);
         }
     }
 
-    internal Result CreateVulkanImageTracked(ref ImageCreateInfo createInfo, out Image image, string owner)
+    public Result CreateVulkanImageTracked(ref ImageCreateInfo createInfo, out Image image, string owner)
     {
         image = default;
         ThrowIfVulkanDeviceOperationNotAdmitted("vkCreateImage." + owner);
-        Result result = _api.CreateImage(Device, ref createInfo, null, out image);
+        Result result = Api.CreateImage(Device, ref createInfo, null, out image);
         ObserveNativeResult("vkCreateImage." + owner, result);
         if (result == Result.Success)
         {
@@ -173,20 +181,20 @@ internal sealed unsafe class VulkanTargetOutputServices
         return result;
     }
 
-    internal void DestroyVulkanImageImmediateTracked(Image image, string owner)
+    public void DestroyVulkanImageImmediateTracked(Image image, string owner)
     {
         if (image.Handle == 0 || !TryCompleteResource(ObjectType.Image, image.Handle, owner))
             return;
 
-        _api.DestroyImage(Device, image, null);
+        Api.DestroyImage(Device, image, null);
         _resourceRuntime.Allocations.Images.Allocations.TryRemove(image.Handle, out _);
     }
 
-    internal VulkanMemoryAllocation AllocateImageMemoryWithFallback(Image image, MemoryPropertyFlags requiredProperties)
+    public VulkanMemoryAllocation AllocateImageMemoryWithFallback(Image image, MemoryPropertyFlags requiredProperties)
     {
         IVulkanMemoryAllocator allocator = RequireMemoryAllocator();
         if (allocator.TryAllocateForImage(
-                _api,
+                Api,
                 Device,
                 image,
                 requiredProperties,
@@ -200,7 +208,7 @@ internal sealed unsafe class VulkanTargetOutputServices
         if (requiredProperties.HasFlag(MemoryPropertyFlags.DeviceLocalBit))
         {
             MemoryPropertyFlags fallback = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
-            if (allocator.TryAllocateForImage(_api, Device, image, fallback, out allocation, out result))
+            if (allocator.TryAllocateForImage(Api, Device, image, fallback, out allocation, out result))
             {
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanOomFallback();
                 return allocation;
@@ -213,11 +221,11 @@ internal sealed unsafe class VulkanTargetOutputServices
             requiredProperties);
     }
 
-    internal VulkanMemoryAllocation AllocateBufferMemoryWithFallback(Buffer buffer, MemoryPropertyFlags requiredProperties)
+    public VulkanMemoryAllocation AllocateBufferMemoryWithFallback(Buffer buffer, MemoryPropertyFlags requiredProperties)
     {
         IVulkanMemoryAllocator allocator = RequireMemoryAllocator();
         if (allocator.TryAllocateForBuffer(
-                _api,
+                Api,
                 Device,
                 buffer,
                 requiredProperties,
@@ -231,7 +239,7 @@ internal sealed unsafe class VulkanTargetOutputServices
         if (requiredProperties.HasFlag(MemoryPropertyFlags.DeviceLocalBit))
         {
             MemoryPropertyFlags fallback = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
-            if (allocator.TryAllocateForBuffer(_api, Device, buffer, fallback, out allocation, out result))
+            if (allocator.TryAllocateForBuffer(Api, Device, buffer, fallback, out allocation, out result))
             {
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanOomFallback();
                 return allocation;
@@ -244,13 +252,13 @@ internal sealed unsafe class VulkanTargetOutputServices
             requiredProperties);
     }
 
-    internal void FreeMemoryAllocation(VulkanMemoryAllocation allocation)
+    public void FreeMemoryAllocation(VulkanMemoryAllocation allocation)
     {
         if (allocation.Memory.Handle != 0)
-            RequireMemoryAllocator().Free(_api, Device, allocation);
+            RequireMemoryAllocator().Free(Api, Device, allocation);
     }
 
-    internal void TrackLiveBuffer(Buffer buffer, string owner)
+    public void TrackLiveBuffer(Buffer buffer, string owner)
     {
         if (buffer.Handle == 0)
             return;
@@ -259,7 +267,7 @@ internal sealed unsafe class VulkanTargetOutputServices
         RegisterResource(ObjectType.Buffer, buffer.Handle, owner);
     }
 
-    internal void TrackExternalBufferAllocation(Buffer buffer, in VulkanMemoryAllocation allocation)
+    public void TrackExternalBufferAllocation(Buffer buffer, in VulkanMemoryAllocation allocation)
     {
         if (buffer.Handle == 0)
             throw new ArgumentException("A tracked buffer allocation requires a live Vulkan buffer.", nameof(buffer));
@@ -269,13 +277,13 @@ internal sealed unsafe class VulkanTargetOutputServices
         _resourceRuntime.Allocations.Buffers.Allocations[buffer.Handle] = allocation;
     }
 
-    internal void DestroyBufferRaw(Buffer? buffer, DeviceMemory? memory)
+    public void DestroyBufferRaw(Buffer? buffer, DeviceMemory? memory)
     {
         if (buffer is { Handle: not 0 } liveBuffer &&
             TryCompleteResource(ObjectType.Buffer, liveBuffer.Handle, nameof(DestroyBufferRaw)))
         {
             _resourceRuntime.Allocations.Buffers.LiveHandles.TryRemove(liveBuffer.Handle, out _);
-            _api.DestroyBuffer(Device, liveBuffer, null);
+            Api.DestroyBuffer(Device, liveBuffer, null);
             if (_resourceRuntime.Allocations.Buffers.Allocations.TryRemove(
                     liveBuffer.Handle,
                     out VulkanMemoryAllocation allocation))
@@ -286,13 +294,13 @@ internal sealed unsafe class VulkanTargetOutputServices
         }
 
         if (memory is { Handle: not 0 } liveMemory)
-            _api.FreeMemory(Device, liveMemory, null);
+            Api.FreeMemory(Device, liveMemory, null);
     }
 
-    internal bool TryBeginDestroyImageView(ImageView imageView, string owner)
+    public bool TryBeginDestroyImageView(ImageView imageView, string owner)
         => imageView.Handle != 0 && TryCompleteResource(ObjectType.ImageView, imageView.Handle, owner);
 
-    internal void TrackLiveImageView(ImageView imageView, in ImageViewCreateInfo createInfo, string owner)
+    public void TrackLiveImageView(ImageView imageView, in ImageViewCreateInfo createInfo, string owner)
     {
         if (imageView.Handle == 0)
             return;
@@ -303,18 +311,18 @@ internal sealed unsafe class VulkanTargetOutputServices
             tracker.ImageViewBackingImages[imageView.Handle] = createInfo.Image.Handle;
     }
 
-    internal Result SubmitToQueueTracked(Queue queue, ref SubmitInfo submitInfo, Fence fence, string caller)
+    public Result SubmitToQueueTracked(Queue queue, ref SubmitInfo submitInfo, Fence fence, string caller)
     {
         ThrowIfVulkanDeviceOperationNotAdmitted(caller);
-        Result result = _api.QueueSubmit(queue, 1, ref submitInfo, fence);
+        Result result = Api.QueueSubmit(queue, 1, ref submitInfo, fence);
         ObserveNativeResult(caller, result);
         return result;
     }
 
-    internal bool TryMapMemoryAllocation(VulkanMemoryAllocation allocation, ulong offset, ulong length, out void* mapped)
+    public bool TryMapMemoryAllocation(VulkanMemoryAllocation allocation, ulong offset, ulong length, out void* mapped)
     {
         bool mappedSuccessfully = RequireMemoryAllocator().TryMap(
-            _api,
+            Api,
             Device,
             allocation,
             offset,
@@ -325,10 +333,10 @@ internal sealed unsafe class VulkanTargetOutputServices
         return mappedSuccessfully;
     }
 
-    internal void UnmapMemoryAllocation(VulkanMemoryAllocation allocation)
-        => RequireMemoryAllocator().Unmap(_api, Device, allocation);
+    public void UnmapMemoryAllocation(VulkanMemoryAllocation allocation)
+        => RequireMemoryAllocator().Unmap(Api, Device, allocation);
 
-    internal void MarkDeviceLost(string reason, string operation, Result result)
+    void IVulkanTargetOutputHost.MarkDeviceLost(string reason, string operation, Result result)
     {
         ObserveNativeResult(operation, result);
         Debug.VulkanWarning(
@@ -342,29 +350,9 @@ internal sealed unsafe class VulkanTargetOutputServices
         => _resourceRuntime.Allocations.Buffers.MemoryAllocator
             ?? throw new InvalidOperationException("The Vulkan memory allocator is not initialized.");
 
-    private void ObserveNativeResult(string operation, Result result)
+    public void ObserveNativeResult(string operation, Result result)
     {
-        bool firstObservation =
-            result == Result.ErrorDeviceLost &&
-            _deviceContext.StateMachine.IsOperational;
         _deviceContext.ObserveNativeResult(operation, result);
-        if (result != Result.ErrorDeviceLost)
-            return;
-
-        lock (_telemetry._deviceLostTransitionLock)
-        {
-            _resourceRuntime.Lifetime.Tracker.DeviceLost = true;
-            if (firstObservation)
-            {
-                _deviceContext.DeviceFaultFacility.CompleteDeviceLoss(
-                    $"{operation} returned {result}");
-                _deviceContext.CompleteDeviceLossCollection();
-            }
-            else
-            {
-                _deviceContext.DeviceFaultFacility.RecordDeviceLossFallout();
-            }
-        }
     }
 
     private void RegisterResource(ObjectType type, ulong handle, string owner)

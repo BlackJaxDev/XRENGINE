@@ -14,29 +14,29 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanTextureUploadService
 {
-    private void EnsureTransferDrainScheduled(VulkanRenderer renderer)
+    private void EnsureTransferDrainScheduled(VulkanTextureUploadSchedulingContext context)
     {
         if (Interlocked.CompareExchange(ref _transferDrainScheduled, 1, 0) != 0)
             return;
 
         RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadCoroutine(
-            () => DrainSubmittedTextureTransfers(renderer),
+            () => DrainSubmittedTextureTransfers(context),
             "VulkanTextureUploadService.DrainTransferUploads",
             RenderThreadJobKind.TextureUpload);
     }
 
-    private bool DrainSubmittedTextureTransfers(VulkanRenderer renderer)
+    private bool DrainSubmittedTextureTransfers(VulkanTextureUploadSchedulingContext context)
     {
-        if (renderer.IsDeviceLost)
+        if (!context.IsDeviceOperational)
         {
-            CancelSubmittedTransfers(renderer, "Vulkan device was lost while transfer uploads were pending");
+            CancelSubmittedTransfers(context.Commands, "Vulkan device was lost while transfer uploads were pending");
             Interlocked.Exchange(ref _transferDrainScheduled, 0);
             return true;
         }
 
         while (TryPeekSubmittedTransfer(out VulkanSubmittedImportedTextureUpload? submitted) && submitted is not null)
         {
-            if (!renderer.CommandRuntime.TryPollImportedTextureTransfer(submitted, out bool complete, out string? pollFailure))
+            if (!context.Commands.TryPollImportedTextureTransfer(submitted, out bool complete, out string? pollFailure))
             {
                 RemoveSubmittedTransfer(submitted);
                 submitted.Upload.Texture.ReleasePreparedImportedUploadResources(submitted.Upload);
@@ -56,7 +56,7 @@ internal sealed partial class VulkanTextureUploadService
                 VulkanTextureUploadGenerationState.TransferComplete,
                 $"transfer upload fence signaled waitMs={Volatile.Read(ref s_lastTransferWaitMilliseconds):F3}");
 
-            if (!renderer.CommandRuntime.CompleteSubmittedImportedTextureUpload(submitted, out string? completeFailure))
+            if (!context.Commands.CompleteSubmittedImportedTextureUpload(submitted, out string? completeFailure))
             {
                 submitted.Upload.Texture.ReleasePreparedImportedUploadResources(submitted.Upload);
                 RecordState(submitted.Upload.Request, VulkanTextureUploadGenerationState.Failed, completeFailure ?? "transfer upload completion failed");
@@ -65,7 +65,7 @@ internal sealed partial class VulkanTextureUploadService
                 continue;
             }
 
-            PublishCompletedImportedTextureUpload(renderer, submitted.Upload, "_deviceContext.TransferQueue");
+            PublishCompletedImportedTextureUpload(context.Resources, submitted.Upload, "_deviceContext.TransferQueue");
         }
 
         Interlocked.Exchange(ref _transferDrainScheduled, 0);
@@ -104,7 +104,7 @@ internal sealed partial class VulkanTextureUploadService
             Interlocked.Exchange(ref s_transferQueueBytesInFlight, 0);
     }
 
-    private void CancelSubmittedTransfers(VulkanRenderer renderer, string reason)
+    private void CancelSubmittedTransfers(VulkanCommandRuntime commandRuntime, string reason)
     {
         VulkanSubmittedImportedTextureUpload[] submittedUploads;
         lock (_transferQueueSync)
@@ -118,7 +118,7 @@ internal sealed partial class VulkanTextureUploadService
         for (int i = 0; i < submittedUploads.Length; i++)
         {
             VulkanSubmittedImportedTextureUpload submitted = submittedUploads[i];
-            renderer.CommandRuntime.CompleteSubmittedImportedTextureUpload(submitted, out _);
+            commandRuntime.CompleteSubmittedImportedTextureUpload(submitted, out _);
             submitted.Upload.Texture.ReleasePreparedImportedUploadResources(submitted.Upload);
             RecordState(submitted.Upload.Request, VulkanTextureUploadGenerationState.Canceled, reason);
             Interlocked.Increment(ref s_canceledStaleUploads);

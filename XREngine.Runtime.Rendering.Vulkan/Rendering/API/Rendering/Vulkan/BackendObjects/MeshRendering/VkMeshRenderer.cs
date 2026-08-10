@@ -21,6 +21,25 @@ internal unsafe partial class VkMeshRenderer(
     VulkanBackendObjectContext backendContext,
     XRMeshRenderer.BaseVersion data) : VkObject<XRMeshRenderer.BaseVersion>(backendContext, data), IRenderPreparationState
 {
+    private VulkanProgramCommandOperations? _commandOperations;
+    private VulkanProgramPlannerPort? _programPlanner;
+    private VulkanMeshOperationRequestQueue? _meshRequests;
+    private VulkanFinalPresentationDescriptorPort? _finalPresentationDescriptors;
+    private VulkanMeshMaterializationSnapshot _materializationSnapshot;
+
+    private ref readonly VulkanMeshMaterializationSnapshot MaterializationSnapshot
+        => ref _materializationSnapshot;
+
+    private VulkanProgramCommandOperations CommandOperations => _commandOperations ?? throw new InvalidOperationException("Mesh command operations have not been bound.");
+
+    protected override void BindOperationPorts(VulkanWrapperPortBinding binding)
+    {
+        _commandOperations = binding.TryGetProgramCommandOperations();
+        _programPlanner = binding.TryGetProgramPlanner();
+        _meshRequests = binding.TryGetMeshRequests();
+        _finalPresentationDescriptors = binding.TryGetFinalPresentationDescriptors();
+    }
+
     private static int s_screenSpaceUiDrawDiagCount;
 
     private readonly object _bufferStateSync = new();
@@ -120,14 +139,14 @@ internal unsafe partial class VkMeshRenderer(
     /// to this wrapper generation only.
     /// </summary>
     private ulong GetResourceGeneration(ObjectType type, ulong handle)
-        => BackendContext.Lifetime.GetPublishedGeneration(
+        => BackendContext.Resources.Lifetime.Tracker.GetPublishedGeneration(
             new VulkanResourceLifetimeKey(type, handle));
 
     private bool IsLiveDescriptorImageView(ImageView imageView)
-        => BackendContext.Images.IsLiveBackedByLiveImage(imageView);
+        => BackendContext.Resources.Images.IsLiveBackedByLiveImage(imageView);
 
     private bool TryGetDescriptorImageBacking(ImageView imageView, out Image image)
-        => BackendContext.Images.TryGetBackingImage(imageView, out image);
+        => BackendContext.Resources.Images.TryGetBackingImage(imageView, out image);
 
     private VkRenderProgram? _program;
     private XRRenderProgram? _generatedProgram;
@@ -210,13 +229,13 @@ internal unsafe partial class VkMeshRenderer(
 
     protected override void DeleteObjectInternal()
     {
-        BackendContext.Pipelines.DrainPipelineCompileJobsForOwner(
+        BackendContext.Resources.PipelineManager.DrainPipelineCompileJobsForOwner(
             PipelineCompileOwnerId,
             GetDescribingName());
         DestroyPipelines();
         DestroyGeneratedPrograms();
         BackendContext.Resources.MappedFrameArena?.ReleaseReservations(this);
-        BackendContext.ProgramServices.CommandRuntime.RemoveMeshFrameDataManifestRenderer(this);
+        CommandOperations.RemoveMeshFrameDataManifestRenderer(this);
         RemoveCachedObject(BindingId);
     }
 
@@ -243,13 +262,13 @@ internal unsafe partial class VkMeshRenderer(
         Mesh?.DataChanged -= OnMeshChanged;
         SubscribeMeshBufferCollection(null);
 
-        BackendContext.Pipelines.DrainPipelineCompileJobsForOwner(
+        BackendContext.Resources.PipelineManager.DrainPipelineCompileJobsForOwner(
             PipelineCompileOwnerId,
             GetDescribingName());
         DestroyPipelines();
         DestroyGeneratedPrograms();
         BackendContext.Resources.MappedFrameArena?.ReleaseReservations(this);
-        BackendContext.ProgramServices.CommandRuntime.RemoveMeshFrameDataManifestRenderer(this);
+        CommandOperations.RemoveMeshFrameDataManifestRenderer(this);
         lock (_bufferStateSync)
         {
             _bufferCache.Clear();
@@ -340,26 +359,71 @@ internal unsafe partial class VkMeshRenderer(
             else
             {
                 PublishBufferReadinessSnapshot();
-                BackendContext.ProgramServices.CommandRuntime.MarkCommandBuffersDirtyForLegacyMeshState();
+                CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
             }
         }
     }
 
     private void OnRenderRequested(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo)
     {
+        FrameOpContext context = _programPlanner?.CaptureFrameOpContext() ?? default;
+        VulkanMeshRenderRequest request = new(
+            this,
+            RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex,
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline,
+            context,
+            CommandOperations.CaptureMeshProducerSnapshot(in context),
+            MeshRenderer.BindingPublishers.CaptureDeferredPublication(),
+            modelMatrix,
+            prevModelMatrix,
+            materialOverride,
+            renderOptionsOverride,
+            instances,
+            billboardMode,
+            forceNoStereo);
+        if (_meshRequests?.TryEnqueue(in request) == true)
+            return;
+
+        CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
+        Debug.VulkanWarningEvery(
+            $"Vulkan.MeshRenderer.RequestQueueFull.{MeshRenderer.Name ?? "UnnamedRenderer"}",
+            TimeSpan.FromSeconds(2),
+            "[Vulkan] Dropping mesh render request for renderer='{0}' because the bounded frame-loop request queue is unavailable or full.",
+            MeshRenderer.Name ?? "<unnamed renderer>");
+    }
+
+    /// <summary>
+    /// Materializes immutable draw facts after the frame-loop authority has captured
+    /// its current output, planner, and command state. Mesh wrappers only enqueue raw
+    /// render events; they never retain or consult those authorities directly.
+    /// </summary>
+    internal bool TryMaterializeQueuedRenderRequest(
+        in VulkanMeshRenderRequest request,
+        in VulkanMeshProducerSnapshot producer,
+        in VulkanMeshMaterializationSnapshot materializationSnapshot,
+        out VulkanMeshOperationRequest operationRequest)
+    {
+        _materializationSnapshot = materializationSnapshot;
+        Matrix4x4 modelMatrix = request.ModelMatrix;
+        Matrix4x4 prevModelMatrix = request.PreviousModelMatrix;
+        XRMaterial? materialOverride = request.MaterialOverride;
+        RenderingParameters? renderOptionsOverride = request.RenderOptionsOverride;
+        uint instances = request.Instances;
+        EMeshBillboardMode billboardMode = request.BillboardMode;
+        bool forceNoStereo = request.ForceNoStereo;
+        operationRequest = default;
         using VulkanCpuStageScope preparationStage =
-            new(BackendContext.ProgramServices.Telemetry, EVulkanCpuStage.MeshDrawPreparation);
+            default;
 
         if (!IsActive)
             Generate();
 
         // Don't enqueue mesh draw ops when there's no active rendering pipeline;
         // they would be emitted with an invalid pass index and dropped at recording time.
-        if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline is null)
-            return;
+        if (producer.Context.PipelineInstance is null)
+            return false;
 
-        int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
-        VulkanMeshProducerSnapshot producer = BackendContext.MeshServices.CaptureProducerSnapshot();
+        int passIndex = request.PassIndex;
         XRFrameBuffer? target = producer.Target;
         VulkanFixedFunctionStateSnapshot producerState = producer.FixedFunctionState;
 
@@ -371,21 +435,21 @@ internal unsafe partial class VkMeshRenderer(
 
         RenderingParameters? matOpts = renderOptionsOverride ?? effectiveMaterial.RenderOptions;
 
-        // â”€â”€ CullMode â”€â”€
+        // Ã¢â€â‚¬Ã¢â€â‚¬ CullMode Ã¢â€â‚¬Ã¢â€â‚¬
         CullModeFlags cullMode;
         if (matOpts is not null)
             cullMode = VulkanMeshRenderingConventions.ToVulkanCullMode(VulkanMeshRenderingConventions.ResolveCullMode(matOpts.CullMode));
         else
             cullMode = producerState.CullMode;
 
-        // â”€â”€ FrontFace â”€â”€
+        // Ã¢â€â‚¬Ã¢â€â‚¬ FrontFace Ã¢â€â‚¬Ã¢â€â‚¬
         FrontFace frontFace;
         if (matOpts is not null)
             frontFace = VulkanMeshRenderingConventions.ToVulkanFrontFace(VulkanMeshRenderingConventions.ResolveWinding(matOpts.Winding));
         else
             frontFace = producerState.FrontFace;
 
-        // â”€â”€ DepthTest â”€â”€
+        // Ã¢â€â‚¬Ã¢â€â‚¬ DepthTest Ã¢â€â‚¬Ã¢â€â‚¬
         bool depthTestEnabled;
         bool depthWriteEnabled;
         CompareOp depthCompareOp;
@@ -405,7 +469,7 @@ internal unsafe partial class VkMeshRenderer(
             depthCompareOp = producerState.DepthCompareOp;
         }
 
-        // â”€â”€ Blend â”€â”€
+        // Ã¢â€â‚¬Ã¢â€â‚¬ Blend Ã¢â€â‚¬Ã¢â€â‚¬
         bool blendEnabled;
         bool alphaToCoverageEnabled;
         BlendOp colorBlendOp, alphaBlendOp;
@@ -595,52 +659,66 @@ internal unsafe partial class VkMeshRenderer(
         VkRenderProgram? preparedProgramSnapshot;
         string? preparedProgramIdentitySnapshot;
         ulong preparedProgramLinkGenerationSnapshot;
-        lock (_recordDrawSync)
+        bool deferredBindingsActivated = request.DeferredBindings.TryActivate();
+        if (!deferredBindingsActivated)
         {
-            bool prepared;
-            string prepareReason;
-            using (VulkanCpuStageScope resourcePreparationStage =
-                   new(BackendContext.ProgramServices.Telemetry, EVulkanCpuStage.MeshDrawResourcePreparation))
-            {
-                prepared = TryPrepareForDrawEnqueue(
-                    effectiveMaterial,
-                    out prepareReason);
-            }
-            if (!prepared)
-            {
-                // A skipped draw means the recorded frame is incomplete. Keep the
-                // command buffers invalid until the pending program/buffers/descriptors
-                // are ready on the legacy primary path. Command-chain primaries are
-                // invalidated by the frame-op signature when the draw becomes available.
-                BackendContext.ProgramServices.CommandRuntime.MarkCommandBuffersDirtyForLegacyMeshState();
-                Debug.VulkanWarningEvery(
-                    $"Vulkan.MeshRenderer.PrepareSkip.{MeshRenderer.Name ?? "UnnamedRenderer"}.{prepareReason}",
-                    TimeSpan.FromSeconds(2),
-                    "[Vulkan] Skipping mesh draw enqueue for renderer='{0}' mesh='{1}' material='{2}' because render preparation is not ready: {3}. {4}",
-                    MeshRenderer.Name ?? "<unnamed renderer>",
-                    Mesh?.Name ?? "<unnamed mesh>",
-                    effectiveMaterial.Name ?? "<unnamed material>",
-                    prepareReason,
-                    LastPrepareDetail);
-                return;
-            }
+            CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
+            return false;
+        }
 
-            using (VulkanCpuStageScope bindingSnapshotStage =
-                   new(BackendContext.ProgramServices.Telemetry, EVulkanCpuStage.MeshDrawBindingPreparation))
+        try
+        {
+            lock (_recordDrawSync)
             {
-                programBindingSnapshot =
-                    CaptureProgramBindingSnapshot(
+                bool prepared;
+                string prepareReason;
+                using (VulkanCpuStageScope resourcePreparationStage =
+                       default)
+                {
+                    prepared = TryPrepareForDrawEnqueue(
                         effectiveMaterial,
-                        shadowUniformState);
-            }
+                        out prepareReason);
+                }
+                if (!prepared)
+                {
+                    // A skipped draw means the recorded frame is incomplete. Keep the
+                    // command buffers invalid until the pending program/buffers/descriptors
+                    // are ready on the legacy primary path. Command-chain primaries are
+                    // invalidated by the frame-op signature when the draw becomes available.
+                    CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.MeshRenderer.PrepareSkip.{MeshRenderer.Name ?? "UnnamedRenderer"}.{prepareReason}",
+                        TimeSpan.FromSeconds(2),
+                        "[Vulkan] Skipping mesh draw enqueue for renderer='{0}' mesh='{1}' material='{2}' because render preparation is not ready: {3}. {4}",
+                        MeshRenderer.Name ?? "<unnamed renderer>",
+                        Mesh?.Name ?? "<unnamed mesh>",
+                        effectiveMaterial.Name ?? "<unnamed material>",
+                        prepareReason,
+                    LastPrepareDetail);
+                    return false;
+                }
 
-            // Resource preparation, program selection, and binding capture are
-            // one publication transaction. RecordDraw uses the same lock, so a
-            // shader reload cannot retire the selected program interface between
-            // capture and publication or mix a new program with an old snapshot.
-            preparedProgramSnapshot = _program;
-            preparedProgramIdentitySnapshot = _activeProgramIdentity;
-            preparedProgramLinkGenerationSnapshot = _program?.LinkGeneration ?? 0UL;
+                using (VulkanCpuStageScope bindingSnapshotStage =
+                       default)
+                {
+                    programBindingSnapshot =
+                        CaptureProgramBindingSnapshot(
+                            effectiveMaterial,
+                            shadowUniformState);
+                }
+
+                // Resource preparation, program selection, and binding capture are
+                // one publication transaction. RecordDraw uses the same lock, so a
+                // shader reload cannot retire the selected program interface between
+                // capture and publication or mix a new program with an old snapshot.
+                preparedProgramSnapshot = _program;
+                preparedProgramIdentitySnapshot = _activeProgramIdentity;
+                preparedProgramLinkGenerationSnapshot = _program?.LinkGeneration ?? 0UL;
+            }
+        }
+        finally
+        {
+            request.DeferredBindings.Deactivate();
         }
         IndexedViewportScissorSnapshot indexedViewportScissors = producer.IndexedViewportScissors;
         uint viewportScissorCount = indexedViewportScissors.Count > 1 ? indexedViewportScissors.Count : 1u;
@@ -766,10 +844,18 @@ internal unsafe partial class VkMeshRenderer(
         }
 
         using (VulkanCpuStageScope enqueueStage =
-               new(BackendContext.ProgramServices.Telemetry, EVulkanCpuStage.MeshDrawEnqueue))
+               default)
         {
-            BackendContext.MeshServices.EnqueueMeshDraw(passIndex, draw, producer);
+            operationRequest = new VulkanMeshOperationRequest(
+                this,
+                passIndex,
+                draw,
+                producer,
+                ExplicitTarget: null,
+                RequiresExternalUploadBlock: producer.IsExternalSwapchainTarget &&
+                    !producer.IsPrewarmingExternalSwapchainTarget);
         }
+        return true;
     }
 
     private static Vector4 ProjectUiDiagCorner(float x, float y, in Matrix4x4 worldViewProjection)
@@ -799,7 +885,7 @@ internal unsafe partial class VkMeshRenderer(
         if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline is null)
             return SetPrepareResult(false, "PipelineMissing", "No active rendering pipeline is available for indirect draw capture.", out reason);
 
-        VulkanMeshProducerSnapshot producer = BackendContext.MeshServices.CaptureProducerSnapshot(target);
+        VulkanMeshProducerSnapshot producer = CommandOperations.CaptureIndirectProducerSnapshot(target);
         bool preparedForIndirect;
         if (producer.IsPrewarmingExternalSwapchainTarget)
         {
@@ -807,12 +893,9 @@ internal unsafe partial class VkMeshRenderer(
         }
         else if (producer.IsExternalSwapchainTarget)
         {
-            using (BackendContext.MeshServices.EnterExternalSnapshotUploadBlock(producer))
-            {
-                preparedForIndirect = TryReuseCapturedProgramForIndirectDrawSnapshot(effectiveMaterial, preparedProgram, preparedProgramIdentity, preparedProgramLinkGeneration, programBindingSnapshot, 0, out reason);
-                if (!preparedForIndirect)
-                    preparedForIndirect = TryPrepareCapturedProgramForRecording(effectiveMaterial, preparedProgram, preparedProgramIdentity, preparedProgramLinkGeneration, programBindingSnapshot, 0, out reason);
-            }
+            preparedForIndirect = TryReuseCapturedProgramForIndirectDrawSnapshot(effectiveMaterial, preparedProgram, preparedProgramIdentity, preparedProgramLinkGeneration, programBindingSnapshot, 0, out reason);
+            if (!preparedForIndirect)
+                preparedForIndirect = TryPrepareCapturedProgramForRecording(effectiveMaterial, preparedProgram, preparedProgramIdentity, preparedProgramLinkGeneration, programBindingSnapshot, 0, out reason);
         }
         else
         {
@@ -1052,7 +1135,7 @@ internal unsafe partial class VkMeshRenderer(
             ? GC.GetAllocatedBytesForCurrentThread()
             : 0;
         using (VulkanCpuStageScope publisherStateStage =
-               new(BackendContext.ProgramServices.Telemetry, EVulkanCpuStage.MeshDrawPublisherState))
+               default)
         {
             materialBindingPublishers =
                 material.BindingPublishers.CaptureSnapshot();
@@ -1081,7 +1164,7 @@ internal unsafe partial class VkMeshRenderer(
             ? GC.GetAllocatedBytesForCurrentThread()
             : 0;
         using (VulkanCpuStageScope eligibilityStage =
-               new(BackendContext.ProgramServices.Telemetry, EVulkanCpuStage.MeshDrawArtifactEligibility))
+               default)
         {
             if (!useMaterialPayloadFastPath)
             {
@@ -1131,7 +1214,7 @@ internal unsafe partial class VkMeshRenderer(
             long lookupScopeStart = artifactKeyAndGenerationEnd;
             bool artifactFound;
             using (VulkanCpuStageScope lookupStage =
-                   new(BackendContext.ProgramServices.Telemetry, EVulkanCpuStage.MeshDrawArtifactLookup))
+                   default)
             {
                 artifactFound =
                     program.TryGetPersistentProgramBindingArtifact(
@@ -1199,7 +1282,7 @@ internal unsafe partial class VkMeshRenderer(
                 RuntimeEngine.Rendering.State.RenderingCamera,
                 RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera,
                 RuntimeEngine.Rendering.State.RenderingWorld,
-                BackendContext.MeshServices.ResolveCurrentDrawTarget(),
+                CommandOperations.ResolveCurrentDrawTarget(),
                 program.LinkGeneration,
                 renderingState?.ScopedBindingRevision ?? 0UL,
                 typedBindingPublisherSignature,
@@ -1225,7 +1308,7 @@ internal unsafe partial class VkMeshRenderer(
             MaterialUniformBindingCacheKey materialPayloadKey =
                 new(material);
             VkMaterial? materialOwner =
-				BackendContext.GetOrCreateAPIRenderObject(
+				WrapperLookup.GetOrCreate(
                     material,
                     generateNow: true) as VkMaterial;
             bool materialPayloadCacheHit =
@@ -1281,17 +1364,17 @@ internal unsafe partial class VkMeshRenderer(
             }
         }
 
-        VulkanFixedFunctionStateSnapshot stateSnapshot = BackendContext.MeshServices.CaptureFixedFunctionState();
+        VulkanFixedFunctionStateSnapshot stateSnapshot = CommandOperations.CaptureFixedFunctionState();
         using VkRenderProgram.BindingUpdateScope bindingUpdate = program.BeginBindingUpdate();
         try
         {
             program.ClearBindings();
             using (VulkanCpuStageScope materialBindingsStage =
-                   new(BackendContext.ProgramServices.Telemetry, EVulkanCpuStage.MeshDrawMaterialBindings))
+                   default)
             {
                 if (useMaterialPayloadFastPath)
                 {
-                    BackendContext.MeshServices.SetMaterialRuntimeUniforms(
+                    CommandOperations.SetMaterialRuntimeUniforms(
                         material,
                         programData,
                         program,
@@ -1299,7 +1382,7 @@ internal unsafe partial class VkMeshRenderer(
                 }
                 else
                 {
-                    BackendContext.MeshServices.SetMaterialUniforms(material, programData, program, shadowUniformState);
+                    CommandOperations.SetMaterialUniforms(material, programData, program, shadowUniformState);
                 }
             }
             using (VkRenderProgram.MutableLegacyBindingPublicationScope
@@ -1393,7 +1476,7 @@ internal unsafe partial class VkMeshRenderer(
             // lets that path use the same O(1) signature as command-chain validation.
             ComputeDispatchSnapshot snapshot;
             using (VulkanCpuStageScope snapshotCopyStage =
-                   new(BackendContext.ProgramServices.Telemetry, EVulkanCpuStage.MeshDrawBindingSnapshotCopy))
+                   default)
             {
                 snapshot = program.CaptureComputeSnapshot();
             }
@@ -1460,7 +1543,7 @@ internal unsafe partial class VkMeshRenderer(
         }
         finally
         {
-            BackendContext.MeshServices.RestoreFixedFunctionState(stateSnapshot);
+            CommandOperations.RestoreFixedFunctionState(stateSnapshot);
         }
     }
 

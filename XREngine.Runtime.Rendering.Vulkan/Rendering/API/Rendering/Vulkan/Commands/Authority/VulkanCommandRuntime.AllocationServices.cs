@@ -14,7 +14,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
     private Result ResetVulkanCommandBufferTracked(CommandBuffer commandBuffer)
     {
-        if (!ResourceRuntime.CanResetCommandBuffer(this, commandBuffer))
+        if (!ResourceRuntime.CanResetCommandBuffer(commandBuffer))
             throw new InvalidOperationException(
                 $"Command buffer 0x{unchecked((ulong)commandBuffer.Handle):X} is not resettable.");
 

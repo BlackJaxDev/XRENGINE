@@ -71,7 +71,7 @@ internal unsafe partial class VkRenderProgram
 
         if (!BackendContext.IsLogicalDeviceReady)
         {
-            BackendContext.Pipelines.QueueProgramLinkUntilDeviceReady(this);
+            BackendContext.Resources.PipelineManager.QueueProgramLinkUntilDeviceReady(this);
             return false;
         }
 
@@ -544,7 +544,7 @@ internal unsafe partial class VkRenderProgram
     {
         HashCode item = new();
         item.Add(name, StringComparer.Ordinal);
-        if (texture is not null && BackendContext.GetOrCreateAPIRenderObject(texture, generateNow: false) is IVkImageDescriptorSource source)
+        if (texture is not null && WrapperLookup.GetOrCreate(texture, generateNow: false) is IVkImageDescriptorSource source)
         {
             item.Add(source.IsDescriptorReady);
             item.Add(source.DescriptorGeneration);
@@ -595,7 +595,7 @@ internal unsafe partial class VkRenderProgram
         item.Add((int)buffer.Target);
         item.Add(buffer.BindingIndexOverride ?? uint.MaxValue);
 
-        if (BackendContext.GetOrCreateAPIRenderObject(buffer, generateNow: false) is VkDataBuffer vkBuffer)
+        if (WrapperLookup.GetOrCreate(buffer, generateNow: false) is VkDataBuffer vkBuffer)
         {
             item.Add(vkBuffer.BufferHandle?.Handle ?? 0UL);
             item.Add(BackendContext.GetResourceGeneration(

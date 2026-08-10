@@ -186,12 +186,11 @@ state.
 
 #### 4.1 Extract The Seven Runtime Authorities
 
-> **Status on 2026-08-06:** state ownership has been consolidated and blocker
-> 4.1.0 restored the runtime baseline, but behavior ownership is not complete.
-> `VulkanRenderer` has the
-> intended seven authority-root instance fields, while 207 partial declarations
-> still contain renderer implementation behavior. The seven-field result must
-> not be treated as completion of this section.
+> **Status on 2026-08-10:** Phase 4.1 is complete. The implementation contains
+> one 442-line, non-partial `VulkanRenderer` facade with exactly the seven
+> authority-root fields and no renderer partial declarations. The final exact
+> inventory gates report no unapproved authority edge, renderer backlink,
+> facade callback, ambient renderer lookup, or thread-static escape hatch.
 >
 > **Execution rule:** restore the Vulkan runtime baseline in blocker 4.1.0
 > before performing more authority moves. Then close 4.1.1 through 4.1.6 in
@@ -300,16 +299,16 @@ state.
     Vulkan/general logs contained none of the prior null-context, frame-slot,
     unsealed-secondary, VUID, validation, or device-loss failures. Evidence is
     under `Build/_AgentValidation/mcp-sessions/phase4-core-hardening-final/`.
-- [ ] **4.1.5 Replace opaque authority state and renderer-nested planner
+- [x] **4.1.5 Replace opaque authority state and renderer-nested planner
   contracts with concrete types.**
   - [x] Replace the planner's former type-keyed state bag with a concrete
     `MutableState` owner and remove duplicate planner/cache state.
-  - [ ] Replace `VulkanCommandRuntime._threadWorkspaces` and
+  - [x] Replace `VulkanCommandRuntime._threadWorkspaces` and
     `GetThreadWorkspace<...>()`, which currently use
     `Dictionary<Type, object>`, with explicitly owned typed workspaces.
-  - [ ] Replace `VulkanFramePlanner.PublishResourcePlannerGeneration(object)`
+  - [x] Replace `VulkanFramePlanner.PublishResourcePlannerGeneration(object)`
     with a concrete generation contract.
-  - [ ] Move `PooledExternalResourcePlannerReadbackScope`,
+  - [x] Move `PooledExternalResourcePlannerReadbackScope`,
     `FrameOpResourcePlannerSwitchingState`, `QueueOwnershipConfigCacheEntry`,
     `MergedFrameOpRegistryCacheEntry`, `FrameOpRegistryCacheSource`, and
     `ActivePassMetadataFilterCacheEntry` out of `VulkanRenderer`; update
@@ -317,7 +316,7 @@ state.
   - Exit condition: authorities contain no type-keyed `object` service/state bag,
     opaque generation publication, all-authorities context, or
     `VulkanRenderer.*` contract type.
-- [ ] **4.1.6 Rehome the remaining renderer implementation and create the final
+- [x] **4.1.6 Rehome the remaining renderer implementation and create the final
   facade.** This is a semantic migration, not a file rename.
   - [x] Establish exactly seven authority-root instance fields on
     `VulkanRenderer`: device, output, frame loop, planner, resources, commands,
@@ -328,36 +327,50 @@ state.
   - [x] Complete `VulkanFrameTelemetry` as the typed lifecycle outcome and
     bounded publication owner used by profiler, MCP, trace, counter, and export
     consumers.
-  - [ ] After blockers 4.1.1 through 4.1.5 are closed, move every remaining
+  - [x] After blockers 4.1.1 through 4.1.5 are closed, move every remaining
     implementation member out of all 207 `VulkanRenderer` partial declarations
     and delete those declarations.
-  - [ ] Create one non-partial `VulkanRenderer` facade of at most 500 physical
+  - [x] Create one non-partial `VulkanRenderer` facade of at most 500 physical
     lines which owns only public API translation, authority construction, and
     one-way composition. Generated code may not hide renderer state or excluded
     implementation behavior.
   - Exit condition: the inventory reports exactly one non-partial
     `VulkanRenderer` declaration, zero partial declarations, seven authority-root
     fields, and no subsystem implementation member on the facade.
-- [ ] **4.1.7 Prove dependency direction and close Phase 4.1.**
+- [x] **4.1.7 Prove dependency direction and close Phase 4.1.**
   - [x] Maintain the declaring-type-aware inventory in
     `Tools/Reports/Get-VulkanCoreArchitectureInventory.ps1`.
   - [x] Current inventory reports zero unapproved authority-to-authority edges,
     zero ambient renderer lookups, zero ordinary hot-path thread-static files,
     and no device/validation backlink.
-  - [ ] Remove the six currently reported authority renderer-backlink files:
+  - [x] Remove the six previously reported authority renderer-backlink files:
     `VulkanDesktopWsiTargetDriver.cs`, `VulkanCommandRecorder.cs`,
     `VulkanFrameLoop.cs`, `VulkanOutputRuntime.cs`,
     `VulkanPipelineManager.cs`, and `VulkanFramePlanner.cs`.
-  - [ ] Classify and eliminate the 99 current facade-callback candidate files.
+  - [x] Classify and eliminate the 99 previous facade-callback candidate files.
     If a candidate is a lexical false positive, tighten the inventory rule and
     document the allowed edge; do not waive a real retained reference, facade
     parameter, callback interface, or call back into the facade.
-  - [ ] Run the final inventory and archive its summary with the Phase 4
+  - [x] Run the final inventory and archive its summary with the Phase 4
     validation evidence.
   - Exit condition: zero unapproved authority dependency edges, zero authority
     renderer backlinks, zero unresolved facade-callback candidates, zero
     ambient lookup/thread-static escape hatches, and a passing Vulkan runtime
     baseline from blocker 4.1.0.
+  - Completion evidence (2026-08-10): the archived inventory at
+    `Build/_AgentValidation/20260809-phase41-facade-close/reports/architecture-inventory-final.json`
+    reports one non-partial 442-line facade, zero partial declarations, seven
+    authority-root fields, zero authority dependency violations, zero renderer
+    backlinks, zero facade callbacks, zero ambient renderer lookups, and zero
+    thread-static/ambient-thread-state files. The conservative retained-type
+    graph still lists 22 multi-authority types and 28 broad advisory flags; that
+    is follow-on hardening evidence, not an exact Phase 4.1 exit gate.
+    Warning-as-error builds passed for the Vulkan project and editor. Named
+    Vulkan session `phase41-final-20260810` committed resource generation 1
+    with 51 textures and 59 framebuffers; two inspected camera-dependent Sponza
+    captures read back from alternating slots, and steady-state logs contained
+    no VUID, validation error, exception, or frame failure. One bounded startup
+    rejection occurred while the render pipeline warmed, then recovered.
 
 #### 4.2 Make Frame Settlement Explicit
 

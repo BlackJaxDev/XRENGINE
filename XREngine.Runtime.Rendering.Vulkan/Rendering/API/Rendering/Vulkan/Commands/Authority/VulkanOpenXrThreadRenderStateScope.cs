@@ -5,21 +5,16 @@ namespace XREngine.Rendering.Vulkan;
 /// installs no global current-renderer value and is safe to use on worker threads.
 /// </summary>
 internal readonly record struct VulkanOpenXrThreadRenderStateData(
-    VulkanCommandThreadContext<
-        VulkanStateTracker,
-        ResourcePlannerRuntimeState,
-        FrameOpResourcePlannerSwitchingState,
-        XRFrameBuffer,
-        EReadBufferMode> ThreadContext,
-    object OwnerToken);
+    VulkanCommandThreadContext ThreadContext,
+    VulkanCommandRuntime Owner);
 
 /// <summary>Restores command-thread render and framebuffer state after OpenXR recording.</summary>
 internal readonly struct VulkanOpenXrThreadRenderStateScope : IDisposable
 {
     private readonly VulkanOpenXrThreadRenderStateData _data;
-    private readonly object? _previousRenderStateOwner;
+    private readonly VulkanCommandRuntime? _previousRenderStateOwner;
     private readonly VulkanStateTracker? _previousRenderState;
-    private readonly object? _previousFramebufferOwner;
+    private readonly VulkanCommandRuntime? _previousFramebufferOwner;
     private readonly XRFrameBuffer? _previousDrawFrameBuffer;
     private readonly XRFrameBuffer? _previousReadFrameBuffer;
     private readonly EReadBufferMode _previousReadBufferMode;
@@ -28,6 +23,9 @@ internal readonly struct VulkanOpenXrThreadRenderStateScope : IDisposable
         in VulkanOpenXrThreadRenderStateData data,
         VulkanStateTracker state)
     {
+        if (!ReferenceEquals(data.ThreadContext.Owner, data.Owner))
+            throw new InvalidOperationException("The OpenXR render-state scope must use its command runtime's thread workspace.");
+
         _data = data;
         _previousRenderStateOwner = data.ThreadContext.RenderStateOwner;
         _previousRenderState = data.ThreadContext.RenderState;
@@ -35,9 +33,9 @@ internal readonly struct VulkanOpenXrThreadRenderStateScope : IDisposable
         _previousDrawFrameBuffer = data.ThreadContext.BoundDrawFrameBuffer;
         _previousReadFrameBuffer = data.ThreadContext.BoundReadFrameBuffer;
         _previousReadBufferMode = data.ThreadContext.ReadBufferMode;
-        data.ThreadContext.RenderStateOwner = data.OwnerToken;
+        data.ThreadContext.RenderStateOwner = data.Owner;
         data.ThreadContext.RenderState = state;
-        data.ThreadContext.FramebufferBindingOwner = data.OwnerToken;
+        data.ThreadContext.FramebufferBindingOwner = data.Owner;
         data.ThreadContext.BoundDrawFrameBuffer = null;
         data.ThreadContext.BoundReadFrameBuffer = null;
         data.ThreadContext.ReadBufferMode = EReadBufferMode.ColorAttachment0;

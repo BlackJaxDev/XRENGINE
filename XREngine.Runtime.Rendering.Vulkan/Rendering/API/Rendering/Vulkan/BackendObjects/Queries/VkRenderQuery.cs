@@ -71,7 +71,7 @@ internal unsafe sealed class VkRenderQuery(
 
         VulkanQueryPlan plan = VulkanQueryDescriptorMapper.Map(
             Data.Descriptor,
-            BackendContext.Queries.Capabilities,
+            BackendContext.Resources.Queries.Capabilities,
             viewSlotCount);
         if (!plan.Supported)
         {
@@ -115,7 +115,7 @@ internal unsafe sealed class VkRenderQuery(
                 _allocation.Pool,
                 _allocation.FirstQuery,
                 ticket.QueryCount);
-            BackendContext.Queries.RecordResetEpoch();
+            BackendContext.Resources.Queries.RecordResetEpoch();
             return true;
         }
     }
@@ -247,14 +247,14 @@ internal unsafe sealed class VkRenderQuery(
                 return ERenderQueryReadStatus.InvalidState;
             }
 
-            if (!VulkanQueryDescriptorMapper.IsTimestampStageSupported((ulong)stage, BackendContext.Queries.Capabilities))
+            if (!VulkanQueryDescriptorMapper.IsTimestampStageSupported((ulong)stage, BackendContext.Resources.Queries.Capabilities))
                 return ERenderQueryReadStatus.Unsupported;
 
             TrackPool(commandBuffer, "Query.Timestamp");
             uint queryIndex = _allocation.FirstQuery + pointIndex;
-            if (BackendContext.Queries.Capabilities.Synchronization2Enabled)
+            if (BackendContext.Resources.Queries.Capabilities.Synchronization2Enabled)
             {
-                VulkanQueryCommandService? commands = BackendContext.Queries.Commands;
+                VulkanQueryCommandService? commands = BackendContext.Resources.Queries.Commands;
                 if (commands is null)
                     return ERenderQueryReadStatus.SubsystemUnavailable;
                 commands.WriteTimestamp2(commandBuffer, stage, _allocation.Pool, queryIndex);
@@ -287,12 +287,12 @@ internal unsafe sealed class VkRenderQuery(
             {
                 return ERenderQueryReadStatus.SubsystemUnavailable;
             }
-            if (!BackendContext.Queries.TryGet(Data.Descriptor.Kind, out IVulkanSpecializedQueryProvider provider) ||
+            if (!BackendContext.Resources.Queries.TryGet(Data.Descriptor.Kind, out IVulkanSpecializedQueryProvider provider) ||
                 !provider.HasRequiredExternalOwnership)
                 return ERenderQueryReadStatus.InvalidState;
 
             TrackPool(commandBuffer, "Query.Properties");
-            if (!BackendContext.Queries.TryRecord(
+            if (!BackendContext.Resources.Queries.TryRecord(
                     encoder,
                     commandBuffer,
                     _allocation.Pool,
@@ -385,7 +385,7 @@ internal unsafe sealed class VkRenderQuery(
         if (!layout.FitsNativeResult(destination.Length))
             return new(ERenderQueryReadStatus.BufferTooSmall, epoch.Ticket, layout, 0, "Caller storage must include native availability words.");
 
-        if (!BackendContext.Queries.IsSubmissionCompleted(epoch.Submission))
+        if (!BackendContext.Resources.Queries.IsSubmissionCompleted(epoch.Submission))
         {
             if (!wait)
             {
@@ -395,7 +395,7 @@ internal unsafe sealed class VkRenderQuery(
             if (string.IsNullOrWhiteSpace(waitingCaller))
                 return new(ERenderQueryReadStatus.InvalidState, epoch.Ticket, layout, 0, "Explicit waits require a diagnostic caller name.");
             RenderQueryTelemetry.RecordWait();
-            if (!BackendContext.Queries.WaitForSubmissionCompletion(epoch.Submission, $"query:{waitingCaller}"))
+            if (!BackendContext.Resources.Queries.WaitForSubmissionCompletion(epoch.Submission, $"query:{waitingCaller}"))
                 return new(!BackendContext.IsDeviceOperational ? ERenderQueryReadStatus.DeviceLost : ERenderQueryReadStatus.ApiError, epoch.Ticket, layout, 0);
         }
 
@@ -428,7 +428,7 @@ internal unsafe sealed class VkRenderQuery(
         if (result is not (Result.Success or Result.NotReady))
         {
             if (result == Result.ErrorDeviceLost)
-                BackendContext.Queries.MarkDeviceLost(
+                BackendContext.Resources.Queries.MarkDeviceLost(
                     "vkGetQueryPoolResults returned ErrorDeviceLost",
                     "vkGetQueryPoolResults",
                     result);
@@ -512,8 +512,8 @@ internal unsafe sealed class VkRenderQuery(
         if (!read.IsReady)
             return read.Status;
 
-        ulong ticks = RenderQueryTimestampMath.MaskTicks(values[0], BackendContext.Queries.Capabilities.GraphicsTimestampValidBits);
-        result = new(ticks, RenderQueryTimestampMath.TicksToNanoseconds(ticks, BackendContext.Queries.Capabilities.TimestampPeriodNanoseconds));
+        ulong ticks = RenderQueryTimestampMath.MaskTicks(values[0], BackendContext.Resources.Queries.Capabilities.GraphicsTimestampValidBits);
+        result = new(ticks, RenderQueryTimestampMath.TicksToNanoseconds(ticks, BackendContext.Resources.Queries.Capabilities.TimestampPeriodNanoseconds));
         return ERenderQueryReadStatus.Ready;
     }
 
@@ -530,11 +530,11 @@ internal unsafe sealed class VkRenderQuery(
         if (!read.IsReady)
             return read.Status;
 
-        uint validBits = BackendContext.Queries.Capabilities.GraphicsTimestampValidBits;
+        uint validBits = BackendContext.Resources.Queries.Capabilities.GraphicsTimestampValidBits;
         ulong start = RenderQueryTimestampMath.MaskTicks(values[0], validBits);
         ulong end = RenderQueryTimestampMath.MaskTicks(values[1], validBits);
         ulong delta = RenderQueryTimestampMath.DeltaTicks(start, end, validBits);
-        result = new(start, end, RenderQueryTimestampMath.TicksToNanoseconds(delta, BackendContext.Queries.Capabilities.TimestampPeriodNanoseconds));
+        result = new(start, end, RenderQueryTimestampMath.TicksToNanoseconds(delta, BackendContext.Resources.Queries.Capabilities.TimestampPeriodNanoseconds));
         return ERenderQueryReadStatus.Ready;
     }
 
@@ -675,7 +675,7 @@ internal unsafe sealed class VkRenderQuery(
             plan.QueryType,
             plan.PipelineStatistics,
             plan.Provider,
-            BackendContext.Queries.Capabilities.GraphicsQueueFamily,
+            BackendContext.Resources.Queries.Capabilities.GraphicsQueueFamily,
             plan.ResultLayout.ValuesPerQuery,
             Data.Descriptor.Property);
 
@@ -684,7 +684,7 @@ internal unsafe sealed class VkRenderQuery(
         if (_allocation.IsValid)
             ReleaseAllocationNoLock();
 
-        if (!BackendContext.Queries.TryAllocate(key, queryCount, out _allocation, out string? reason))
+        if (!BackendContext.Resources.Queries.TryAllocate(key, queryCount, out _allocation, out string? reason))
         {
             Debug.VulkanWarningEvery(
                 $"Vulkan.QueryArena.Exhausted.{key.GetHashCode()}",
@@ -696,7 +696,7 @@ internal unsafe sealed class VkRenderQuery(
             return false;
         }
 
-        VulkanQueryAuthority.RegisterRenderQuery(BackendContext.Lifetime, _allocation.Pool, this);
+        VulkanQueryAuthority.RegisterRenderQuery(BackendContext.Resources.Lifetime.Tracker, _allocation.Pool, this);
         RenderQueryTelemetry.RecordAllocation();
         return true;
     }
@@ -705,8 +705,8 @@ internal unsafe sealed class VkRenderQuery(
     {
         if (!_allocation.IsValid)
             return;
-        VulkanQueryAuthority.UnregisterRenderQuery(BackendContext.Lifetime, _allocation.Pool, this);
-        BackendContext.Queries.Release(_allocation);
+        VulkanQueryAuthority.UnregisterRenderQuery(BackendContext.Resources.Lifetime.Tracker, _allocation.Pool, this);
+        BackendContext.Resources.Queries.Release(_allocation);
         RenderQueryTelemetry.RecordRelease();
         _allocation = default;
         _plan = default;
@@ -716,7 +716,7 @@ internal unsafe sealed class VkRenderQuery(
 
     private void TrackPool(CommandBuffer commandBuffer, string operation)
     {
-        VulkanQueryCommandService? commands = BackendContext.Queries.Commands;
+        VulkanQueryCommandService? commands = BackendContext.Resources.Queries.Commands;
         if (commands is null)
             throw new InvalidOperationException("Vulkan query command services are unavailable during query recording.");
 

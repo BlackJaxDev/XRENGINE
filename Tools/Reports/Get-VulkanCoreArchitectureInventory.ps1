@@ -49,6 +49,102 @@ function Get-DeclarationCount([string]$Source, [string]$Pattern) {
         [System.Text.RegularExpressions.RegexOptions]::Multiline).Count
 }
 
+function Get-CSharpStructuralSource([string]$Source) {
+    # Keep offsets and line breaks stable while removing text which must not
+    # participate in the retained-ownership graph. This is intentionally a
+    # lightweight structural scanner rather than a C# parser, but unlike the
+    # former whole-file regex it cannot invent types or braces from comments
+    # and ordinary string/character literals.
+    $withoutBlockComments = [regex]::Replace(
+        $Source,
+        '(?s)/\*.*?\*/',
+        { param($match) [regex]::Replace($match.Value, '[^\r\n]', ' ') })
+    $withoutLineComments = [regex]::Replace(
+        $withoutBlockComments,
+        '(?m)//[^\r\n]*',
+        { param($match) ' ' * $match.Value.Length })
+    $withoutStrings = [regex]::Replace(
+        $withoutLineComments,
+        '@"(?:[^"]|"")*"|"(?:\\.|[^"\\])*"|''(?:\\.|[^''\\])*''',
+        { param($match) [regex]::Replace($match.Value, '[^\r\n]', ' ') })
+    return $withoutStrings
+}
+
+function Get-CSharpTypeSpans([string]$StructuralSource) {
+    $typeSpans = [System.Collections.Generic.List[object]]::new()
+    $declarations = [regex]::Matches(
+        $StructuralSource,
+        '(?m)^\s*(?:(?:public|internal|private|protected|file|sealed|abstract|static|unsafe|partial|readonly|ref|new)\s+)*(?:class|struct|interface|record(?:\s+(?:class|struct))?)\s+(?<name>[A-Za-z_]\w*)')
+    foreach ($declaration in $declarations) {
+        $bodyStart = $StructuralSource.IndexOf('{', $declaration.Index + $declaration.Length)
+        $semicolon = $StructuralSource.IndexOf(';', $declaration.Index + $declaration.Length)
+        if ($bodyStart -lt 0 -or ($semicolon -ge 0 -and $semicolon -lt $bodyStart)) {
+            continue
+        }
+
+        $depth = 1
+        $bodyEnd = $StructuralSource.Length - 1
+        for ($index = $bodyStart + 1; $index -lt $StructuralSource.Length; $index++) {
+            switch ($StructuralSource[$index]) {
+                '{' { $depth++ }
+                '}' {
+                    $depth--
+                    if ($depth -eq 0) {
+                        $bodyEnd = $index
+                        break
+                    }
+                }
+            }
+            if ($depth -eq 0) {
+                break
+            }
+        }
+
+        $typeSpans.Add([ordered]@{
+            name = $declaration.Groups['name'].Value
+            declaration_start = $declaration.Index
+            body_start = $bodyStart
+            body_end = $bodyEnd
+            body_depth =
+                ([regex]::Matches($StructuralSource.Substring(0, $bodyStart + 1), '\{')).Count -
+                ([regex]::Matches($StructuralSource.Substring(0, $bodyStart + 1), '\}')).Count
+        })
+    }
+    return @($typeSpans)
+}
+
+function Test-FacadeCallbackCandidate([string]$Source) {
+    # Receiver names such as `renderer` are common for mesh, OpenGL, and
+    # target-output capabilities. Treat a receiver as a facade callback only
+    # when this file also declares that receiver with the concrete
+    # VulkanRenderer type. This keeps the check declaring-type-aware without
+    # requiring a particular field or parameter name.
+    $declarations = [regex]::Matches(
+        $Source,
+        '\bVulkanRenderer\s*\??\s+(?<name>[A-Za-z_]\w*)\b')
+    foreach ($declaration in $declarations) {
+        $receiverName = [regex]::Escape($declaration.Groups['name'].Value)
+        $lineStart = $Source.LastIndexOf("`n", $declaration.Index)
+        $lineEnd = $Source.IndexOf("`n", $declaration.Index)
+        if ($lineEnd -lt 0) {
+            $lineEnd = $Source.Length
+        }
+        $declarationLine = $Source.Substring(
+            $lineStart + 1,
+            $lineEnd - $lineStart - 1)
+        if ($declarationLine -match
+            "\bVulkanRenderer\s+$receiverName\s*=\s*new(?:\s+VulkanRenderer)?\s*\(") {
+            # A local constructed and immediately driven by the backend factory
+            # is facade composition, not a retained callback from a subsystem.
+            continue
+        }
+        if ($Source -match "\b$receiverName\s*(?:\?\.|\.)\s*[A-Za-z_]\w*") {
+            return $true
+        }
+    }
+    return $false
+}
+
 function Get-MaxDirectoryDepth([System.IO.FileInfo[]]$Files) {
     $maximumDepth = 0
     foreach ($file in $Files) {
@@ -134,9 +230,16 @@ $sourceFiles = @(
     Get-ChildItem -LiteralPath $resolvedSourceRoot -Recurse -File -Filter '*.cs' |
         Sort-Object FullName
 )
+$sourceTextByPath = [System.Collections.Generic.Dictionary[string, string]]::new(
+    [System.StringComparer]::OrdinalIgnoreCase)
+foreach ($file in $sourceFiles) {
+    $sourceTextByPath[$file.FullName] = [System.IO.File]::ReadAllText($file.FullName)
+}
 
 $fileRecords = [System.Collections.Generic.List[object]]::new($sourceFiles.Count)
 $rendererPartialFiles = [System.Collections.Generic.List[string]]::new()
+$rendererNonPartialFiles = [System.Collections.Generic.List[string]]::new()
+$rendererAuthorityRootFields = [System.Collections.Generic.List[object]]::new()
 $unsafeTypeFiles = [System.Collections.Generic.List[string]]::new()
 $threadStaticFiles = [System.Collections.Generic.List[string]]::new()
 $ambientThreadStateFiles = [System.Collections.Generic.List[string]]::new()
@@ -146,10 +249,13 @@ $methodRecords = [System.Collections.Generic.List[object]]::new()
 $handWrittenLineCount = 0
 $generatedLineCount = 0
 $rendererPartialDeclarationCount = 0
+$rendererNonPartialDeclarationCount = 0
+$rendererDirectAbstractBaseDeclarationCount = 0
+$rendererNonPartialPhysicalLines = 0
 $rendererFieldEstimate = 0
 
 foreach ($file in $sourceFiles) {
-    $source = [System.IO.File]::ReadAllText($file.FullName)
+    $source = $sourceTextByPath[$file.FullName]
     $lineCount = if ($source.Length -eq 0) {
         0
     }
@@ -174,6 +280,27 @@ foreach ($file in $sourceFiles) {
         $rendererFieldEstimate += Get-DeclarationCount $source '^[ \t]*(?:(?:public|private|protected|internal|static|readonly|volatile|unsafe|new|required)\s+)+[A-Za-z_][\w<>,.?\[\]: \t]*\s+[A-Za-z_]\w*\s*(?:=(?!>)|;)'
     }
 
+    $nonPartialCount = Get-DeclarationCount $source '^\s*(?:(?:public|internal|private|protected|sealed|unsafe|abstract)\s+)*(?!partial\s+)class\s+VulkanRenderer\b'
+    if ($nonPartialCount -gt 0) {
+        $rendererNonPartialDeclarationCount += $nonPartialCount
+        $rendererNonPartialFiles.Add((Get-RelativePath $file.FullName))
+        $rendererNonPartialPhysicalLines += $lineCount
+        $rendererDirectAbstractBaseDeclarationCount += Get-DeclarationCount $source 'class\s+VulkanRenderer\s*:\s*AbstractRenderer\s*<\s*Vk\s*>'
+    }
+
+    if ($partialCount -gt 0 -or $nonPartialCount -gt 0) {
+        foreach ($rootFieldMatch in [regex]::Matches(
+            $source,
+            '^\s*private\s+readonly\s+(?<type>VulkanDeviceContext|VulkanOutputRuntime|VulkanFrameLoop|VulkanFramePlanner|VulkanResourceRuntime|VulkanCommandRuntime|VulkanFrameTelemetry)\s+(?<name>_[A-Za-z_]\w*)\s*(?:=[^;]+)?;',
+            [System.Text.RegularExpressions.RegexOptions]::Multiline)) {
+            $rendererAuthorityRootFields.Add([ordered]@{
+                type = $rootFieldMatch.Groups['type'].Value
+                name = $rootFieldMatch.Groups['name'].Value
+                path = Get-RelativePath $file.FullName
+            })
+        }
+    }
+
     if ($source -match '\b(?:public|internal|private|protected)\s+unsafe\s+(?:partial\s+)?(?:class|struct|record)\b') {
         $unsafeTypeFiles.Add((Get-RelativePath $file.FullName))
     }
@@ -185,7 +312,7 @@ foreach ($file in $sourceFiles) {
     if ($hasThreadStatic -or $source -match '\bstatic\s+(?:readonly\s+)?ThreadLocal<') {
         $ambientThreadStateFiles.Add((Get-RelativePath $file.FullName))
     }
-    if ($source -match '\b(?:_renderer|Renderer)\.[A-Za-z_]\w*\s*\(') {
+    if (Test-FacadeCallbackCandidate $source) {
         $facadeCallbackFiles.Add((Get-RelativePath $file.FullName))
     }
     if ($source -match '\b(?:AbstractRenderer\.Current|RuntimeRenderingHostServices\.FrameTiming\.CurrentRenderer)\b') {
@@ -217,7 +344,7 @@ $authorityMatches = [ordered]@{}
 foreach ($entry in $authorityPatterns.GetEnumerator()) {
     $authorityFiles = [System.Collections.Generic.List[string]]::new()
     foreach ($file in $sourceFiles) {
-        $source = [System.IO.File]::ReadAllText($file.FullName)
+        $source = $sourceTextByPath[$file.FullName]
         # Source ownership is declaration-based. Classifying every file which merely
         # mentions an authority makes a facade composition file appear to own every
         # authority and produces meaningless all-to-all dependency edges.
@@ -243,8 +370,8 @@ $authorityRendererBacklinkFiles = [System.Collections.Generic.List[string]]::new
 foreach ($entry in $authorityMatches.GetEnumerator()) {
     foreach ($sourceFilePath in @($entry.Value)) {
         $sourceFile = Join-Path $repoRoot $sourceFilePath.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
-        $source = [System.IO.File]::ReadAllText($sourceFile)
-        if ($source -match '\bVulkanRenderer\b') {
+        $source = $sourceTextByPath[$sourceFile]
+        if (Test-FacadeCallbackCandidate $source) {
             $authorityRendererBacklinkFiles.Add($sourceFilePath)
         }
     }
@@ -254,7 +381,7 @@ $authorityDependencyEdges = [System.Collections.Generic.List[object]]::new()
 foreach ($sourceEntry in $authorityPatterns.GetEnumerator()) {
     foreach ($sourceFilePath in @($authorityMatches[$sourceEntry.Key])) {
         $sourceFile = Join-Path $repoRoot $sourceFilePath.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
-        $source = [System.IO.File]::ReadAllText($sourceFile)
+        $source = $sourceTextByPath[$sourceFile]
         foreach ($targetEntry in $authorityPatterns.GetEnumerator()) {
             if ($targetEntry.Key -eq $sourceEntry.Key -or
                 $source -notmatch "\b(?:$($targetEntry.Value))\b") {
@@ -276,8 +403,202 @@ foreach ($edge in $authorityDependencyEdges) {
     }
 }
 
+# Build a conservative retained-type graph from instance fields and auto-properties.
+# This intentionally ignores method parameters and return values: the gate is about
+# stored ownership paths which can hide a multi-authority service locator.
+$authorityRootTypes = @(
+    'VulkanDeviceContext',
+    'VulkanOutputRuntime',
+    'VulkanFrameLoop',
+    'VulkanFramePlanner',
+    'VulkanResourceRuntime',
+    'VulkanCommandRuntime',
+    'VulkanFrameTelemetry')
+$knownTypes = [System.Collections.Generic.HashSet[string]]::new(
+    [System.StringComparer]::Ordinal)
+$fileTypeSpans = @{}
+$fileStructuralSources = @{}
+foreach ($file in $sourceFiles) {
+    $source = $sourceTextByPath[$file.FullName]
+    $structuralSource = Get-CSharpStructuralSource $source
+    $typeSpans = @(Get-CSharpTypeSpans $structuralSource)
+    $fileStructuralSources[$file.FullName] = $structuralSource
+    $fileTypeSpans[$file.FullName] = $typeSpans
+    foreach ($typeSpan in $typeSpans) {
+        $typeName = $typeSpan.name
+        [void]$knownTypes.Add($typeName)
+    }
+}
+
+$retainedTypeEdges = @{}
+$directAuthorityMembers = [System.Collections.Generic.List[object]]::new()
+$rawAuthorityProperties = [System.Collections.Generic.List[object]]::new()
+function Add-RetainedEdge([string]$OwnerType, [string]$MemberType, [string]$MemberName, [string]$MemberKind, [bool]$Callable, [System.IO.FileInfo]$File, [int]$Line) {
+    $targetType = $MemberType.Trim() -replace '^global::', ''
+    $targetType = $targetType -replace '[?<\[].*$', ''
+    if (-not ($knownTypes.Contains($targetType) -or $authorityRootTypes -contains $targetType)) { return }
+    if (-not $retainedTypeEdges.ContainsKey($OwnerType)) {
+        $retainedTypeEdges[$OwnerType] = [System.Collections.Generic.List[object]]::new()
+    }
+    $edge = [ordered]@{ target_type = $targetType; member_name = $MemberName; member_kind = $MemberKind; callable = $Callable; path = Get-RelativePath $File.FullName; line = $Line }
+    $retainedTypeEdges[$OwnerType].Add($edge)
+    if ($authorityRootTypes -contains $targetType) {
+        $directAuthorityMembers.Add([ordered]@{ owner_type = $OwnerType; authority_type = $targetType; member = $MemberName; member_kind = $MemberKind; callable = $Callable; path = $edge.path; line = $Line })
+        if ($Callable) { $rawAuthorityProperties.Add($directAuthorityMembers[$directAuthorityMembers.Count - 1]) }
+    }
+}
+foreach ($file in $sourceFiles) {
+    $source = $fileStructuralSources[$file.FullName]
+    $typeSpans = @($fileTypeSpans[$file.FullName])
+    $lines = $source -split "(?<=`n)"; $sourceOffset = 0; $braceDepth = 0
+    # Primary-constructor parameters are retained inputs for this inventory.
+    foreach ($typeSpan in $typeSpans) {
+        $header = $source.Substring($typeSpan.declaration_start, $typeSpan.body_start - $typeSpan.declaration_start)
+        foreach ($parameter in [regex]::Matches($header, '(?<type>[A-Za-z_]\w*(?:\s*<[^()>{}]+>)?)\s+(?<name>[A-Za-z_]\w*)')) {
+            $line = 1 + ([regex]::Matches($source.Substring(0, $typeSpan.declaration_start + $parameter.Index), "`n")).Count
+            Add-RetainedEdge $typeSpan.name $parameter.Groups['type'].Value $parameter.Groups['name'].Value 'primary_constructor_parameter' $false $file $line
+        }
+    }
+    for ($lineIndex = 0; $lineIndex -lt $lines.Count; $lineIndex++) {
+        $lineWithEnding = $lines[$lineIndex]; $line = $lineWithEnding.TrimEnd("`r", "`n"); $owner = $null
+        foreach ($candidate in $typeSpans) {
+            if ($sourceOffset -gt $candidate.body_start -and $sourceOffset -lt $candidate.body_end -and ($null -eq $owner -or $candidate.body_start -gt $owner.body_start)) { $owner = $candidate }
+        }
+        if ($null -ne $owner -and $braceDepth -eq $owner.body_depth -and $line -notmatch '\b(?:static|const)\b') {
+            $fieldMatch = [regex]::Match($line, '^\s*(?:(?:public|private|protected|internal|file|readonly|volatile|unsafe|required|new)\s+)+(?<type>[A-Za-z_]\w[\w.<>,?\[\] ]*)\s+(?<name>[A-Za-z_]\w*)\s*(?:=[^;]*)?;\s*$')
+            $propertyMatch = [regex]::Match($line, '^\s*(?:(?:public|private|protected|internal|file|readonly|unsafe|required|new|virtual|override|sealed)\s+)+(?<type>[A-Za-z_]\w[\w.<>,?\[\] ]*)\s+(?<name>[A-Za-z_]\w*)\s*\{\s*(?:get|init)\s*;')
+            $match = if ($fieldMatch.Success) { $fieldMatch } else { $propertyMatch }
+            if ($match.Success) { Add-RetainedEdge $owner.name $match.Groups['type'].Value $match.Groups['name'].Value $(if ($fieldMatch.Success) { 'field' } else { 'property' }) $propertyMatch.Success $file ($lineIndex + 1) }
+        }
+        $braceDepth += ([regex]::Matches($lineWithEnding, '\{')).Count; $braceDepth -= ([regex]::Matches($lineWithEnding, '\}')).Count; $sourceOffset += $lineWithEnding.Length
+    }
+}
+$retainedAuthorityReach = @{}
+foreach ($typeName in $knownTypes) { $retainedAuthorityReach[$typeName] = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal); if ($authorityRootTypes -contains $typeName) { [void]$retainedAuthorityReach[$typeName].Add($typeName) } }
+$reachChanged = $true
+while ($reachChanged) {
+    $reachChanged = $false
+    foreach ($ownerType in @($retainedTypeEdges.Keys)) {
+        if ($authorityRootTypes -contains $ownerType) { continue }
+        foreach ($edge in @($retainedTypeEdges[$ownerType])) {
+            $targetType = $edge.target_type
+            if ($authorityRootTypes -contains $targetType) { if ($retainedAuthorityReach[$ownerType].Add($targetType)) { $reachChanged = $true }; continue }
+            foreach ($authorityType in @($retainedAuthorityReach[$targetType])) { if ($retainedAuthorityReach[$ownerType].Add($authorityType)) { $reachChanged = $true } }
+        }
+    }
+}
+function Get-RetainedAuthorityPaths([string]$StartType) {
+    $paths = [ordered]@{}; $pending = [System.Collections.Generic.Queue[object]]::new(); $pending.Enqueue([ordered]@{ type = $StartType; edges = @() })
+    $visited = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal); [void]$visited.Add($StartType)
+    while ($pending.Count -gt 0) {
+        $state = $pending.Dequeue(); $current = $state.type
+        if ($authorityRootTypes -contains $current) { if (-not $paths.Contains($current)) { $paths[$current] = @($state.edges) }; continue }
+        if (-not $retainedTypeEdges.ContainsKey($current)) { continue }
+        foreach ($edge in @($retainedTypeEdges[$current] | Sort-Object target_type, path, line, member_name)) { if ($visited.Add($edge.target_type)) { $pending.Enqueue([ordered]@{ type = $edge.target_type; edges = @($state.edges + $edge) }) } }
+    }
+    return $paths
+}
+$retainedMultiAuthorityTypes = [System.Collections.Generic.List[object]]::new()
+foreach ($typeName in @($retainedAuthorityReach.Keys | Sort-Object)) {
+    if ($authorityRootTypes -contains $typeName -or $typeName -eq 'VulkanRenderer' -or $retainedAuthorityReach[$typeName].Count -lt 4) { continue }
+    $authorityPaths = Get-RetainedAuthorityPaths $typeName
+    $retainedMultiAuthorityTypes.Add([ordered]@{ type = $typeName; authority_count = $retainedAuthorityReach[$typeName].Count; authorities = @($retainedAuthorityReach[$typeName] | Sort-Object); authority_paths = $authorityPaths; path = @($authorityPaths.Values | Select-Object -First 1)[0][0].path })
+}
+$authorityRetainedMultiAuthorityTypes = [System.Collections.Generic.List[object]]::new()
+foreach ($authorityType in $authorityRootTypes) { if ($retainedTypeEdges.ContainsKey($authorityType)) { foreach ($candidate in @($retainedMultiAuthorityTypes)) { foreach ($edge in @($retainedTypeEdges[$authorityType] | Where-Object { $_.target_type -eq $candidate.type })) { $authorityRetainedMultiAuthorityTypes.Add([ordered]@{ authority_type = $authorityType; retained_type = $candidate.type; member = $edge.member_name; path = $edge.path; line = $edge.line }) } } } }
+
+# A hard failure requires directly retained authority capability. Transitive
+# reach through immutable payloads remains advisory: it can be useful context,
+# but does not by itself demonstrate service location at the current type.
+$hardGateDirectAuthorityViolations = [System.Collections.Generic.List[object]]::new()
+$effectiveDirectAuthorityMembers = [System.Collections.Generic.List[object]]::new()
+$directAuthorityMembersByStorage = @{}
+foreach ($member in $directAuthorityMembers) {
+    $storageName = ([string]$member['member']) -replace '^_+', ''
+    $storageKey = '{0}|{1}|{2}' -f $member['owner_type'], $member['authority_type'], $storageName
+    if (-not $directAuthorityMembersByStorage.ContainsKey($storageKey) -or
+        $directAuthorityMembersByStorage[$storageKey]['member_kind'] -eq 'primary_constructor_parameter') {
+        $directAuthorityMembersByStorage[$storageKey] = $member
+    }
+}
+foreach ($member in $directAuthorityMembersByStorage.Values) { $effectiveDirectAuthorityMembers.Add($member) }
+$directAuthorityMembersByOwner = @{}
+foreach ($member in $effectiveDirectAuthorityMembers) {
+    $ownerType = [string]$member['owner_type']
+    if (-not $directAuthorityMembersByOwner.ContainsKey($ownerType)) {
+        $directAuthorityMembersByOwner[$ownerType] = [System.Collections.Generic.List[object]]::new()
+    }
+    $directAuthorityMembersByOwner[$ownerType].Add($member)
+}
+foreach ($ownerType in @($directAuthorityMembersByOwner.Keys | Sort-Object)) {
+    $members = @($directAuthorityMembersByOwner[$ownerType])
+    $authorities = @($members | ForEach-Object { $_['authority_type'] } | Sort-Object -Unique)
+    if ($ownerType -eq 'VulkanRenderer' -or
+        $authorityRootTypes -contains $ownerType -or
+        $authorities.Count -lt 2) { continue }
+    $hardGateDirectAuthorityViolations.Add([ordered]@{
+        type = $ownerType
+        classification = 'direct_multi_authority'
+        reason = 'Retains two or more distinct authority roots directly.'
+        direct_authority_count = $authorities.Count
+        distinct_authority_count = $authorities.Count
+        member_declaration_count = $members.Count
+        authorities = $authorities
+        members = $members
+    })
+}
+$allAuthoritiesContextViolations = [System.Collections.Generic.List[object]]::new()
+foreach ($violation in $hardGateDirectAuthorityViolations) {
+    if ($violation.distinct_authority_count -lt 4) { continue }
+    $hasRawRootAccessor = @($violation.members | Where-Object { $_['callable'] }).Count -gt 0
+    $isNarrowImmutableOperationOrSession = $violation.type -match '(?:Operation|Op|Session)$'
+    if ($isNarrowImmutableOperationOrSession -and -not $hasRawRootAccessor) { continue }
+    $allAuthoritiesContextViolations.Add([ordered]@{
+        type = $violation.type
+        classification = 'all_authorities_context'
+        reason = if ($isNarrowImmutableOperationOrSession) { 'Retains four or more distinct roots and exposes a raw root accessor.' } else { 'Retains four or more distinct authority roots directly.' }
+        direct_authority_count = $violation.direct_authority_count
+        member_declaration_count = $violation.member_declaration_count
+        authorities = $violation.authorities
+        members = $violation.members
+    })
+}
+$hardGateCallableServiceLocationViolations = [System.Collections.Generic.List[object]]::new()
+foreach ($ownerType in @($retainedTypeEdges.Keys | Sort-Object)) {
+    if ($authorityRootTypes -contains $ownerType) { continue }
+    foreach ($edge in @($retainedTypeEdges[$ownerType] | Where-Object { $_.callable -and $authorityRootTypes -notcontains $_.target_type })) {
+        if (-not $retainedAuthorityReach.ContainsKey($edge.target_type) -or $retainedAuthorityReach[$edge.target_type].Count -lt 2) { continue }
+        if ($edge.target_type -notmatch '(?:Context|Port|Service|Dispatcher|Encoder)$') { continue }
+        $hardGateCallableServiceLocationViolations.Add([ordered]@{
+            owner_type = $ownerType
+            retained_type = $edge.target_type
+            classification = 'callable_retained_service_location'
+            reason = 'Callable member exposes a retained context, port, service, dispatcher, or encoder with two or more authority roots.'
+            authority_count = $retainedAuthorityReach[$edge.target_type].Count
+            authorities = @($retainedAuthorityReach[$edge.target_type] | Sort-Object)
+            member = $edge.member_name
+            path = $edge.path
+            line = $edge.line
+        })
+    }
+}
+$hardGateViolationCount = $hardGateDirectAuthorityViolations.Count + $hardGateCallableServiceLocationViolations.Count
+
+$outputTargetImGuiMultiAuthorityTypes = @(
+    $retainedMultiAuthorityTypes |
+        Where-Object {
+            $_.path -match '/(?:Frame/Output|Bootstrap/Targets|UI)/' -or
+                $_.type -match 'OpenXrOutput'
+        })
+$outputTargetImGuiRawAuthorityProperties = @(
+    $rawAuthorityProperties |
+        Where-Object {
+            $_.path -match '/(?:Frame/Output|Bootstrap/Targets|UI)/' -or
+                $_.owner_type -match 'OpenXrOutput'
+        })
+
 $result = [ordered]@{
-    schema_version = 1
+    schema_version = 2
     generated_utc = [DateTime]::UtcNow.ToString('O')
     repository_root = $repoRoot
     source_root = Get-RelativePath $resolvedSourceRoot
@@ -293,6 +614,12 @@ $result = [ordered]@{
     facade = [ordered]@{
         renderer_partial_files = $rendererPartialFiles.Count
         renderer_partial_declarations = $rendererPartialDeclarationCount
+        renderer_non_partial_files = $rendererNonPartialFiles.Count
+        renderer_non_partial_declarations = $rendererNonPartialDeclarationCount
+        renderer_non_partial_physical_lines = $rendererNonPartialPhysicalLines
+        renderer_direct_abstract_base_declarations = $rendererDirectAbstractBaseDeclarationCount
+        authority_root_fields = @($rendererAuthorityRootFields)
+        authority_root_field_count = $rendererAuthorityRootFields.Count
         renderer_field_estimate = $rendererFieldEstimate
         unsafe_type_files = $unsafeTypeFiles.Count
         ambient_facade_callback_files = $facadeCallbackFiles.Count
@@ -305,6 +632,33 @@ $result = [ordered]@{
     approved_authority_edges = $approvedAuthorityEdges
     authority_dependency_violations = @($authorityDependencyViolations)
     authority_renderer_backlink_files = @($authorityRendererBacklinkFiles | Sort-Object -Unique)
+    retained_type_graph = [ordered]@{
+        hard_gate = [ordered]@{
+            direct_authority_violations = @($hardGateDirectAuthorityViolations)
+            direct_authority_violation_count = $hardGateDirectAuthorityViolations.Count
+            callable_retained_service_location_violations = @($hardGateCallableServiceLocationViolations)
+            callable_retained_service_location_violation_count = $hardGateCallableServiceLocationViolations.Count
+            all_authorities_context_violations = @($allAuthoritiesContextViolations)
+            all_authorities_context_violation_count = $allAuthoritiesContextViolations.Count
+            violation_count = $hardGateViolationCount
+        }
+        advisory_transitive_immutable_payload_reach = [ordered]@{
+            multi_authority_types = @($retainedMultiAuthorityTypes)
+            multi_authority_type_count = $retainedMultiAuthorityTypes.Count
+        }
+        direct_authority_members = @($effectiveDirectAuthorityMembers)
+        direct_authority_member_count = $effectiveDirectAuthorityMembers.Count
+        multi_authority_types = @($retainedMultiAuthorityTypes)
+        multi_authority_type_count = $retainedMultiAuthorityTypes.Count
+        authority_retained_multi_authority_types = @($authorityRetainedMultiAuthorityTypes)
+        authority_retained_multi_authority_type_count = $authorityRetainedMultiAuthorityTypes.Count
+        raw_authority_properties = @($rawAuthorityProperties)
+        raw_authority_property_count = $rawAuthorityProperties.Count
+        output_target_imgui_multi_authority_types = $outputTargetImGuiMultiAuthorityTypes
+        output_target_imgui_multi_authority_type_count = $outputTargetImGuiMultiAuthorityTypes.Count
+        output_target_imgui_raw_authority_properties = $outputTargetImGuiRawAuthorityProperties
+        output_target_imgui_raw_authority_property_count = $outputTargetImGuiRawAuthorityProperties.Count
+    }
     largest_files = @(
         $fileRecords |
             Sort-Object { [int]$_.lines } -Descending |
@@ -314,6 +668,7 @@ $result = [ordered]@{
             Sort-Object { [int]$_.logical_line_estimate } -Descending |
             Select-Object -First $LargestFileCount)
     renderer_partial_files = @($rendererPartialFiles)
+    renderer_non_partial_files = @($rendererNonPartialFiles)
     unsafe_type_files = @($unsafeTypeFiles)
     ambient_facade_callback_files = @($facadeCallbackFiles)
     ambient_renderer_lookup_files = @($ambientRendererLookupFiles)
@@ -323,8 +678,11 @@ $result = [ordered]@{
         physical_lines = 'One plus LF count for non-empty source files.'
         generated_source = 'Filename suffix or auto-generated/GeneratedCode marker.'
         renderer_fields = 'Lexical declaration estimate across VulkanRenderer and VulkanRendererRuntime partial implementations; review before using as an ownership gate.'
+        facade_gate = 'Counts non-partial VulkanRenderer declarations, direct AbstractRenderer<Vk> bases, physical lines in their declaring files, and the seven exact readonly authority-root field types.'
         method_spans = 'Lexical brace-span estimates; braces in strings/comments can over-count and require review.'
         dependency_edges = 'Observed authority-name references in files which declare the source authority; approved-edge violations and renderer backlinks are reported separately.'
+        retained_type_graph = 'Conservative retained graph of declared instance fields, one-line auto-properties, and primary-constructor parameters. Edges preserve declaring file, line, and member name; generic arguments are not edges. Authority roots terminate traversal. The hard gate reports two or more direct authority members or callable retained service-location members; transitive immutable-payload reach is advisory only.'
+        facade_callbacks = 'A receiver declared with the concrete VulkanRenderer type and subsequently dereferenced in the same file; unrelated mesh, OpenGL, and target-capability variables named renderer are excluded.'
     }
 }
 

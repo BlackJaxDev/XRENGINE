@@ -21,7 +21,7 @@ namespace XREngine.Rendering.Vulkan;
 internal unsafe partial class VkRenderProgram
 {
     private void BuildProgramInterface()
-        => BackendContext.ProgramServices.ExecuteWithPipelineCompilationQuiesced(
+        => ProgramCreationPort.ExecuteWithPipelineCompilationQuiesced(
             BuildProgramInterfaceAfterPipelineCompileDrain,
             $"program interface rebuild for '{Data.Name ?? "<unnamed program>"}'");
 
@@ -32,7 +32,7 @@ internal unsafe partial class VkRenderProgram
 
         IEnumerable<DescriptorBindingInfo> shaderBindings = EnumerateShaderDescriptorBindings();
         string programName = Data.Name ?? "UnnamedProgram";
-        var result = VulkanProgramUtilities.BuildDescriptorLayoutsShared(BackendContext.Descriptors, shaderBindings, programName);
+        var result = VulkanProgramUtilities.BuildDescriptorLayoutsShared(BackendContext.Resources.Descriptors, shaderBindings, programName);
 
         _descriptorSetLayouts = result.Layouts;
         _programDescriptorBindings.Clear();
@@ -45,9 +45,9 @@ internal unsafe partial class VkRenderProgram
         _descriptorSetsRequireUpdateAfterBind = result.RequiresUpdateAfterBind;
         _descriptorSetsRequireVariableDescriptorCount = result.RequiresVariableDescriptorCount;
         _descriptorHeapLayout = null;
-        if (BackendContext.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
+        if (BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
         {
-            _descriptorHeapLayout = BackendContext.DescriptorLifetime.CreateDescriptorHeapProgramLayout(
+            _descriptorHeapLayout = BackendContext.Resources.DescriptorLifetime.CreateDescriptorHeapProgramLayout(
                 _programDescriptorBindings,
                 programName,
                 out string descriptorHeapReason);
@@ -201,7 +201,7 @@ internal unsafe partial class VkRenderProgram
             };
             if (Api!.CreatePipelineLayout(Device, ref info, null, out _pipelineLayout) != Result.Success)
                 throw new InvalidOperationException($"Failed to create pipeline layout for program '{Data.Name ?? "UnnamedProgram"}'.");
-            BackendContext.ProgramServices.TrackPipelineLayout(_pipelineLayout, "VkRenderProgram.PipelineLayout");
+            ProgramCreationPort.TrackPipelineLayout(_pipelineLayout, "VkRenderProgram.PipelineLayout");
             return;
         }
 
@@ -220,7 +220,7 @@ internal unsafe partial class VkRenderProgram
 
             if (Api!.CreatePipelineLayout(Device, ref info, null, out _pipelineLayout) != Result.Success)
                 throw new InvalidOperationException($"Failed to create pipeline layout for program '{Data.Name ?? "UnnamedProgram"}'.");
-            BackendContext.ProgramServices.TrackPipelineLayout(_pipelineLayout, "VkRenderProgram.PipelineLayout");
+            ProgramCreationPort.TrackPipelineLayout(_pipelineLayout, "VkRenderProgram.PipelineLayout");
         }
     }
 
@@ -228,7 +228,7 @@ internal unsafe partial class VkRenderProgram
     {
         lock (_linkLock)
         {
-            BackendContext.ProgramServices.ExecuteWithPipelineCompilationQuiesced(
+            ProgramCreationPort.ExecuteWithPipelineCompilationQuiesced(
                 DestroyLayoutsAfterPipelineCompileDrain,
                 $"pipeline layout mutation for '{Data.Name ?? "<unnamed program>"}'");
         }
@@ -242,14 +242,14 @@ internal unsafe partial class VkRenderProgram
 
         if (_computePipeline.Handle != 0)
         {
-            BackendContext.ProgramServices.RetirePipeline(_computePipeline);
+            ProgramCreationPort.RetirePipeline(_computePipeline);
             _computePipeline = default;
         }
 
         if (_descriptorSetLayouts.Length > 0)
         {
             foreach (DescriptorSetLayout layout in _descriptorSetLayouts)
-                BackendContext.Descriptors.ReleaseProgramDescriptorSetLayout(layout);
+                BackendContext.Resources.Descriptors.ReleaseProgramDescriptorSetLayout(layout);
 
             _descriptorSetLayouts = Array.Empty<DescriptorSetLayout>();
         }
@@ -283,7 +283,7 @@ internal unsafe partial class VkRenderProgram
         PipelineLayout pipelineLayout = _pipelineLayout;
         _pipelineLayout = default;
 
-        if (BackendContext.ProgramServices.TryBeginDestroyPipelineLayout(pipelineLayout, owner))
+        if (ProgramCreationPort.TryBeginDestroyPipelineLayout(pipelineLayout, owner))
             Api!.DestroyPipelineLayout(Device, pipelineLayout, null);
     }
 
@@ -298,10 +298,10 @@ internal unsafe partial class VkRenderProgram
     private void ReleaseComputeUniformBuffer(in ComputeUniformBuffer resource)
     {
         if (resource.Mapped != null)
-            BackendContext.Buffers.Unmap(BackendContext,resource.Buffer, resource.Memory);
+            BackendContext.Resources.Buffers.Unmap(BackendContext,resource.Buffer, resource.Memory);
 
         if (resource.Buffer.Handle != 0 || resource.Memory.Handle != 0)
-            BackendContext.Buffers.Retire(resource.Buffer, resource.Memory, "VkRenderProgram.ComputeUniformBuffer");
+            BackendContext.Resources.Buffers.Retire(resource.Buffer, resource.Memory, "VkRenderProgram.ComputeUniformBuffer");
     }
 
     public IEnumerable<PipelineShaderStageCreateInfo> GetShaderStages()

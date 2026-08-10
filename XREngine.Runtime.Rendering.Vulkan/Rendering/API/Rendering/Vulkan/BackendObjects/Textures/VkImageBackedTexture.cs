@@ -24,6 +24,15 @@ namespace XREngine.Rendering.Vulkan;
 /// <typeparam name="TTexture">The engine-side texture type (e.g. <see cref="XRTexture2D"/>).</typeparam>
 internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTexture<TTexture>, IVkFrameBufferAttachmentSource where TTexture : XRTexture
 {
+    private VulkanResourceCommandWrapperPort? _resourceCommandPort;
+    private VulkanResourceCommandWrapperPort ResourceCommandPort => _resourceCommandPort ?? throw new InvalidOperationException("Texture command port has not been bound.");
+
+    protected override void BindOperationPorts(VulkanWrapperPortBinding binding)
+    {
+        base.BindOperationPorts(binding);
+        _resourceCommandPort = binding.TryGetResourceCommands();
+    }
+
     #region Fields
 
     /// <summary>Cache of per-attachment image views keyed by mip/layer/viewType/aspect.</summary>
@@ -136,7 +145,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             && !IsDescriptorDirty
             && _view.Handle != 0
             && IsImageViewBackedByCurrentImage(_view)
-            && BackendContext.Images.IsAvailableForDescriptor(_view)
+            && BackendContext.Resources.Images.IsAvailableForDescriptor(_view)
             && (!CreateSampler || _sampler.Handle != 0);
         if (!descriptorHandlesReady)
             return false;
@@ -189,7 +198,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             _image.Handle != 0 &&
             _view.Handle != 0 &&
             IsImageViewBackedByCurrentImage(_view) &&
-            BackendContext.Images.IsAvailableForDescriptor(_view) &&
+            BackendContext.Resources.Images.IsAvailableForDescriptor(_view) &&
             (!CreateSampler || _sampler.Handle != 0);
         if (!handlesReady)
             return;
@@ -258,7 +267,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     {
         if (_view.Handle != 0 &&
             IsImageViewBackedByCurrentImage(_view) &&
-            BackendContext.Images.IsAvailableForDescriptor(_view))
+            BackendContext.Resources.Images.IsAvailableForDescriptor(_view))
         {
             return true;
         }
@@ -283,7 +292,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         CreateImageView(default);
         bool refreshed = _view.Handle != 0 &&
             IsImageViewBackedByCurrentImage(_view) &&
-            BackendContext.Images.IsAvailableForDescriptor(_view);
+            BackendContext.Resources.Images.IsAvailableForDescriptor(_view);
         if (refreshed)
             PublishDescriptorViewRefreshNoLock();
         return refreshed;
@@ -462,17 +471,15 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     {
         lock (_imageStateLock)
         {
-            if (allowSynchronousUpload &&
-                !IsDescriptorReadyNoLock() &&
-                !TryEnsureDescriptorReadyForVulkanUseNoThrow(reason))
+            if (!RefreshPhysicalGroupImageIfStaleNoLock())
             {
                 snapshot = default;
                 return false;
             }
 
-            if (_physicalGroup is not null &&
-                (!_physicalGroup.IsAllocated || _physicalGroup.Image.Handle != _image.Handle) &&
-                !RefreshPhysicalGroupImageIfStaleNoLock())
+            if (allowSynchronousUpload &&
+                !IsDescriptorReadyNoLock() &&
+                !TryEnsureDescriptorReadyForVulkanUseNoThrow(reason))
             {
                 snapshot = default;
                 return false;
@@ -524,7 +531,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 : _view
         };
         if (view.Handle != 0 &&
-            (!IsImageViewBackedByCurrentImage(view) || !BackendContext.Images.IsAvailableForDescriptor(view)))
+            (!IsImageViewBackedByCurrentImage(view) || !BackendContext.Resources.Images.IsAvailableForDescriptor(view)))
         {
             Debug.VulkanWarningEvery(
                 $"Vulkan.Texture.StaleDescriptorView.{Data.GetHashCode()}.{view.Handle}",
@@ -545,7 +552,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             };
             if (view.Handle != 0 &&
                 IsImageViewBackedByCurrentImage(view) &&
-                BackendContext.Images.IsAvailableForDescriptor(view))
+                BackendContext.Resources.Images.IsAvailableForDescriptor(view))
             {
                 PublishDescriptorViewRefreshNoLock();
             }
@@ -555,7 +562,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         bool ready = IsDescriptorReadyNoLock() &&
             view.Handle != 0 &&
             IsImageViewBackedByCurrentImage(view) &&
-            BackendContext.Images.IsAvailableForDescriptor(view);
+            BackendContext.Resources.Images.IsAvailableForDescriptor(view);
         snapshot = new(
             _image,
             _memory,
@@ -788,7 +795,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (barrierCount > 0)
         {
             fixed (ImageMemoryBarrier* barriersPtr = barriers)
-                BackendContext.ResourceCommands.PipelineBarrier(
+                ResourceCommandPort.PipelineBarrier(
                     sourceStages,
                     destinationStages,
                     (uint)barrierCount,

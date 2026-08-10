@@ -244,7 +244,7 @@ internal sealed partial class VulkanTextureUploadService
     }
 
     public bool TryScheduleImportedTextureUpload(
-        VulkanRenderer renderer,
+        VulkanTextureUploadSchedulingContext context,
         XRTexture2D texture,
         TextureStreamingResidentData residentData,
         bool includeMipChain,
@@ -257,7 +257,7 @@ internal sealed partial class VulkanTextureUploadService
         Action<Exception>? onError,
         CancellationToken cancellationToken)
     {
-        if (renderer.IsDeviceLost)
+        if (!context.IsDeviceOperational)
         {
             onCanceled?.Invoke();
             return false;
@@ -300,20 +300,20 @@ internal sealed partial class VulkanTextureUploadService
             onCanceled,
             onError);
 
-        LogCompatibilityPathState(renderer);
+        LogCompatibilityPathState(context.Commands);
         if (!RenderDiagnosticsFlags.VkAsyncTextureUpload)
         {
             RecordState(request, VulkanTextureUploadGenerationState.PrepRunning, "async upload prep disabled; preparing immediately on render thread");
             while (true)
             {
                 VulkanImportedTextureUploadPrepResult immediateResult = TryPrepareAndEnqueueImportedTextureUpload(
-                    renderer,
+                    context,
                     job,
                     TextureRuntimeDiagnostics.StartTiming(),
                     0.0);
                 if (immediateResult == VulkanImportedTextureUploadPrepResult.Deferred)
                 {
-                    QueueUploadPreparation(renderer, job);
+                    QueueUploadPreparation(context, job);
                     return true;
                 }
 
@@ -321,11 +321,11 @@ internal sealed partial class VulkanTextureUploadService
             }
         }
 
-        QueueUploadPreparation(renderer, job);
+        QueueUploadPreparation(context, job);
         return true;
     }
 
-    private void QueueUploadPreparation(VulkanRenderer renderer, VulkanImportedTextureUploadJob job)
+    private void QueueUploadPreparation(VulkanTextureUploadSchedulingContext context, VulkanImportedTextureUploadJob job)
     {
         int depth;
         double oldestWaitMilliseconds;
@@ -342,7 +342,7 @@ internal sealed partial class VulkanTextureUploadService
             VulkanTextureUploadGenerationState.PrepQueued,
             $"queued Vulkan upload prep depth={depth} oldestWaitMs={oldestWaitMilliseconds:F3}");
         RenderWorkBudgetCoordinator.RecordTextureQueue(depth, oldestWaitMilliseconds);
-        EnsurePrepDrainScheduled(renderer);
+        EnsurePrepDrainScheduled(context);
     }
 
 }

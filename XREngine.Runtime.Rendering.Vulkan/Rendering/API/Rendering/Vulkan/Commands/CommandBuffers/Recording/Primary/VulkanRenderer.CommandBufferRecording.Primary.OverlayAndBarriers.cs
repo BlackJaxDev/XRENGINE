@@ -29,7 +29,7 @@ namespace XREngine.Rendering.Vulkan
                 return;
 
             EndActiveRenderPass(ref recordingState);
-            CmdBeginLabel(recordingState.CommandBuffer, "DynamicUIBatchText");
+            _deviceContext.CmdBeginLabel(recordingState.CommandBuffer, "DynamicUIBatchText");
             TransitionSecondaryDescriptorImagesForExecution(recordingState.CommandBuffer, secondaryCommandBuffer);
 
             try
@@ -223,7 +223,7 @@ namespace XREngine.Rendering.Vulkan
             }
             finally
             {
-                CmdEndLabel(recordingState.CommandBuffer);
+                _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
             }
         }
 
@@ -348,7 +348,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (swapchainBarriers.Count > 0 || imageBarriers.Count > 0 || bufferBarriers.Count > 0)
             {
-                CmdBeginLabel(recordingState.CommandBuffer, "PassBarriers");
+                _deviceContext.CmdBeginLabel(recordingState.CommandBuffer, "PassBarriers");
                 EmitPlannedSwapchainBarriers(ref recordingState, recordingState.CommandBuffer, swapchainBarriers);
                 EmitPlannedImageBarriers(
                     recordingState.CommandBuffer,
@@ -357,7 +357,7 @@ namespace XREngine.Rendering.Vulkan
                         ? recordingState.SwapchainTarget.Image
                         : default);
                 EmitPlannedBufferBarriers(recordingState.CommandBuffer, bufferBarriers);
-                CmdEndLabel(recordingState.CommandBuffer);
+                _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
 
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBarrierPlannerPass(
                     imageBarrierCount: imageBarriers.Count + swapchainBarriers.Count,

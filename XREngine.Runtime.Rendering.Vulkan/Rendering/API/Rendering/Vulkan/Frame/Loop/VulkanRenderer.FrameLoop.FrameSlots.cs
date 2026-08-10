@@ -51,7 +51,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 _commandRuntime.DrainInvalidatedCommandBufferRecordings(
                     Api, ResourceRuntime);
-                OutputRuntime.DrainRetiredDesktopSwapchainGenerations();
+                DrainRetiredDesktopSwapchainGenerations();
                 _commandRuntime.DrainRetiredCommandBuffers(
                     Api,
                     _deviceContext.Device,
@@ -82,7 +82,9 @@ namespace XREngine.Rendering.Vulkan
                     _frameTelemetry,
                     attempt.FrameSlot);
                 if (pooledBuffers != 0)
-                    ResourceRuntime.Allocations.Staging.Trim(OutputRuntime);
+                    ResourceRuntime.Allocations.Staging.Trim(
+                        ResourceRuntime.BackendObjectContext ?? throw new InvalidOperationException(
+                            "The Vulkan backend object context is not initialized."));
                 ResourceRuntime.DrainRetiredFramebuffers(
                     Api, _deviceContext.Device, attempt.FrameSlot);
                 ResourceRuntime.DrainRetiredImages(
@@ -142,11 +144,12 @@ namespace XREngine.Rendering.Vulkan
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.FrameLifecycle.SampleTimingQueries"))
             {
-                _frameTelemetry.SampleFrameTimingQueries(
+                VulkanCompletedTimingQueryPools completedQueries =
+                    _frameTelemetry.SampleFrameTimingQueries(
                     Api,
                     _deviceContext.Device,
-                    ResourceRuntime,
                     unchecked((int)Math.Min(attempt.ImageIndex, int.MaxValue)));
+                ResourceRuntime.NotifyTimingQueryPoolsCompleted(completedQueries);
             }
 
             attempt.Timing.SampleTimingQueries +=

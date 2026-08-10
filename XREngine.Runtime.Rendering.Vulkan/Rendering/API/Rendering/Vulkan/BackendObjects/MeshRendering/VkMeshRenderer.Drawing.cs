@@ -1,10 +1,10 @@
-// ──────────────────────────────────────────────────────────────────────────────
-// VkMeshRenderer.Drawing.cs  – partial class: Draw Command Recording
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+// VkMeshRenderer.Drawing.cs  Ã¢â‚¬â€œ partial class: Draw Command Recording
 //
 // Records indexed and non-indexed draw commands into Vulkan command buffers.
 // Handles vertex buffer binding, descriptor set binding, and per-draw uniform
 // notification.
-// ──────────────────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 using System;
 using System.Buffers;
@@ -167,7 +167,7 @@ internal unsafe partial class VkMeshRenderer
 			}
 
 			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindPipeline"))
-				BackendContext.ProgramServices.CommandRuntime.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
+				CommandOperations.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
 
 			bool vertexBuffersBound;
 			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindVertexBuffers"))
@@ -215,7 +215,7 @@ internal unsafe partial class VkMeshRenderer
 
 			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.CmdDrawIndexed"))
 			{
-				BackendContext.ProgramServices.CommandRuntime.BindIndexBufferTracked(commandBuffer, indexHandle, 0, ToVkIndexType(size));
+				CommandOperations.BindIndexBufferTracked(commandBuffer, indexHandle, 0, ToVkIndexType(size));
 				Api!.CmdDrawIndexed(commandBuffer, indexCount, drawInstances, 0, 0, 0);
 			}
 
@@ -280,7 +280,7 @@ internal unsafe partial class VkMeshRenderer
 			if (pipelineReady)
 			{
 				using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindPipeline"))
-					BackendContext.ProgramServices.CommandRuntime.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
+					CommandOperations.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
 
 				bool vertexBuffersBound;
 				using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindVertexBuffers"))
@@ -321,10 +321,10 @@ internal unsafe partial class VkMeshRenderer
 				if (VulkanMeshRenderingConventions.BloomVulkanDiagnosticsEnabled && vertexCount <= 6u)
 				{
 					Debug.VulkanEvery(
-						$"Vulkan.BloomDiag.CmdDraw.{passIndex}.{BackendContext.MeshServices.ActiveFrameOpContext?.OutputFrameBufferName}.{vertexCount}",
+						$"Vulkan.BloomDiag.CmdDraw.{passIndex}.{MaterializationSnapshot.ActiveFrameOpContext?.OutputFrameBufferName}.{vertexCount}",
 						TimeSpan.FromSeconds(1),
 						"[BloomDiag][Vulkan] CmdDraw fullscreen target='{0}' pass={1} vertices={2} pipeline=0x{3:X} topology={4} blend={5} depthTest={6} depthWrite={7} stencil={8} colorWrite={9} viewport=({10},{11},{12},{13}) scissor=({14},{15},{16},{17}) program='{18}' material='{19}'",
-						BackendContext.MeshServices.ActiveFrameOpContext?.OutputFrameBufferName ?? "<none>",
+						MaterializationSnapshot.ActiveFrameOpContext?.OutputFrameBufferName ?? "<none>",
 						passIndex,
 						vertexCount,
 						pipeline.Handle,
@@ -605,7 +605,7 @@ internal unsafe partial class VkMeshRenderer
 			DescriptorHeapPushDataPayload? descriptorHeapPushData = null;
 			int preparedDescriptorBindingCount = 0;
 			int preparedDescriptorHeapPushDwordCount = 0;
-			bool usesDescriptorHeap = BackendContext.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap;
+			bool usesDescriptorHeap = BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap;
 			bool requiresDescriptors =
 				program.DescriptorSetLayouts.Count > 0 &&
 				program.DescriptorBindings.Count > 0;
@@ -882,7 +882,7 @@ internal unsafe partial class VkMeshRenderer
 			if (primitive.Indexed)
 			{
 				encoder.BindIndexBuffer(commandBuffer, primitive.IndexBuffer, primitive.IndexType);
-				encoder.Api.CmdDrawIndexed(
+				encoder.Runtime.Api.CmdDrawIndexed(
 					commandBuffer,
 					primitive.ElementCount,
 					recordingState.InstanceCount,
@@ -892,7 +892,7 @@ internal unsafe partial class VkMeshRenderer
 			}
 			else
 			{
-				encoder.Api.CmdDraw(
+				encoder.Runtime.Api.CmdDraw(
 					commandBuffer,
 					primitive.ElementCount,
 					recordingState.InstanceCount,
@@ -1289,7 +1289,7 @@ internal unsafe partial class VkMeshRenderer
 		if (!EnsurePipeline(material, PrimitiveTopology.TriangleList, draw, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, allowPipelineCreation: false, out var pipeline))
 			return false;
 
-		BackendContext.ProgramServices.CommandRuntime.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
+		CommandOperations.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
 
 		if (!BindVertexBuffersForCurrentPipeline(commandBuffer))
 			return false;
@@ -1305,7 +1305,7 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 
 		PushPerDrawConstants(commandBuffer, material, draw);
-		BackendContext.ProgramServices.CommandRuntime.BindIndexBufferTracked(commandBuffer, indexHandle, 0, indexType);
+		CommandOperations.BindIndexBufferTracked(commandBuffer, indexHandle, 0, indexType);
 		return true;
 	}
 
@@ -1458,7 +1458,7 @@ internal unsafe partial class VkMeshRenderer
 			recordingState.Program is null)
 			return false;
 
-		BackendContext.ProgramServices.CommandRuntime.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, recordingState.Pipeline);
+		CommandOperations.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, recordingState.Pipeline);
 
 		if (recordingState.VertexBufferCount > 0)
 		{
@@ -1466,19 +1466,19 @@ internal unsafe partial class VkMeshRenderer
 				return false;
 
 			for (int i = 0; i < recordingState.VertexBufferCount; i++)
-				BackendContext.ProgramServices.CommandRuntime.BindVertexBufferTracked(commandBuffer, recordingState.VertexBindings[i], recordingState.VertexBuffers[i], 0);
+				CommandOperations.BindVertexBufferTracked(commandBuffer, recordingState.VertexBindings[i], recordingState.VertexBuffers[i], 0);
 		}
 
-		BackendContext.ProgramServices.CommandRuntime.PushConstantsTracked(
+		CommandOperations.PushConstantsTracked(
 			commandBuffer,
 			recordingState.PipelineLayout,
 			VulkanMeshRenderingConventions.CommonPushConstantStageFlags,
 			0,
 			recordingState.PushConstants);
 
-		if (BackendContext.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
+		if (BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
 		{
-			if (!BackendContext.ProgramServices.TryPushDescriptorHeapProgramData(commandBuffer, recordingState.Program, recordingState.DescriptorHeapPushData, out string heapReason))
+			if (!CommandOperations.TryPushDescriptorHeapProgramData(commandBuffer, recordingState.Program, recordingState.DescriptorHeapPushData, out string heapReason))
 			{
 				WarnOnce($"Skipping prepared draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because descriptor heap push failed: {heapReason}");
 				return false;
@@ -1497,7 +1497,7 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-			BackendContext.ProgramServices.CommandRuntime.BindIndexBufferTracked(commandBuffer, recordingState.IndexBuffer, 0, recordingState.IndexType);
+			CommandOperations.BindIndexBufferTracked(commandBuffer, recordingState.IndexBuffer, 0, recordingState.IndexType);
 		return true;
 	}
 
@@ -1537,7 +1537,7 @@ internal unsafe partial class VkMeshRenderer
 					return false;
 				}
 
-				if (!sourceBuffer.TryEnsureReadyForRendering(BackendContext.AllowSynchronousResourceUploads))
+				if (!sourceBuffer.TryEnsureReadyForRendering(BackendContext.Resources.AllowSynchronousResourceUploads))
 				{
 					reason = $"vertex binding {binding.Binding} buffer is not ready";
 					ReturnRentedVertexBufferSnapshot(vertexBuffers, vertexBindings);
@@ -1581,7 +1581,7 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		_program?.ClearBindings();
-		BackendContext.MeshServices.SetMaterialUniforms(material, programData, _program, draw.ShadowUniformState);
+		CommandOperations.SetMaterialUniforms(material, programData, _program, draw.ShadowUniformState);
 		MeshRenderer.OnSettingUniforms(programData, programData);
 		MeshRenderMaterialResolver.ApplyShadowUniforms(programData, material, draw.ShadowUniformState);
 	}
@@ -1611,7 +1611,7 @@ internal unsafe partial class VkMeshRenderer
 					return false;
 				}
 
-				if (!sourceBuffer.TryEnsureReadyForRendering(BackendContext.AllowSynchronousResourceUploads))
+				if (!sourceBuffer.TryEnsureReadyForRendering(BackendContext.Resources.AllowSynchronousResourceUploads))
 				{
 					WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because vertex binding {binding.Binding} buffer is not ready.");
 					return false;
@@ -1624,7 +1624,7 @@ internal unsafe partial class VkMeshRenderer
 				}
 
 				_singleVertexBindingBuffer[0] = handle;
-				BackendContext.ProgramServices.CommandRuntime.BindVertexBuffersTracked(commandBuffer, binding.Binding, _singleVertexBindingBuffer, _singleVertexBindingOffset);
+				CommandOperations.BindVertexBuffersTracked(commandBuffer, binding.Binding, _singleVertexBindingBuffer, _singleVertexBindingOffset);
 			}
 
 			return true;
@@ -1718,13 +1718,13 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		if (BackendContext.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
+		if (BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
 		{
 			DescriptorHeapPushDataPayload? payload = _activeDescriptorAllocation?.DescriptorHeapPushData is { Length: > 0 } heapPayloads &&
 				(uint)descriptorSlotIndex < (uint)heapPayloads.Length
 					? heapPayloads[descriptorSlotIndex]
 					: null;
-			if (!BackendContext.ProgramServices.TryPushDescriptorHeapProgramData(commandBuffer, _program, payload, out string heapReason))
+			if (!CommandOperations.TryPushDescriptorHeapProgramData(commandBuffer, _program, payload, out string heapReason))
 			{
 				WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=descriptor heap push failed: {heapReason}");
 				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
@@ -1763,7 +1763,7 @@ internal unsafe partial class VkMeshRenderer
 		int drawUniformSlot,
 		ulong sealedFrameDataGeneration = 0)
 	{
-		if (!BackendContext.ProgramServices.CommandRuntime.TryAcquireMappedFrameArenaRecordingLease(
+		if (!CommandOperations.TryAcquireMappedFrameArenaRecordingLease(
 				commandBuffer,
 				this,
 				drawUniformSlot,
@@ -1819,7 +1819,7 @@ internal unsafe partial class VkMeshRenderer
 			}
 
 			oneSet[0] = sets[setIndex];
-			BackendContext.ProgramServices.CommandRuntime.BindDescriptorSetsTracked(
+			CommandOperations.BindDescriptorSetsTracked(
 				commandBuffer,
 				PipelineBindPoint.Graphics,
 				pipelineLayout,
@@ -1912,7 +1912,7 @@ internal unsafe partial class VkMeshRenderer
 			DescriptorSet set = descriptorBindings[bindingIndex].DescriptorSet;
 			if (set.Handle != 0)
 				transitionedPublishedSet |=
-					BackendContext.ProgramServices.CommandRuntime.TransitionPublishedDescriptorSetImagesForSampling(
+					CommandOperations.TransitionPublishedDescriptorSetImagesForSampling(
 						commandBuffer,
 						set,
 						target);
@@ -1937,7 +1937,7 @@ internal unsafe partial class VkMeshRenderer
 					drawUniformSlot,
 					frameIndex,
 					out _)) ||
-				BackendContext.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap ||
+				BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap ||
 				_descriptorSets is not { Length: > 0 })
 			{
 				return false;
@@ -1950,7 +1950,7 @@ internal unsafe partial class VkMeshRenderer
 			{
 				DescriptorSet set = sets[setIndex];
 				if (set.Handle != 0)
-					resolvedPublishedSet |= BackendContext.ProgramServices.CommandRuntime.TransitionPublishedDescriptorSetImagesForSampling(
+					resolvedPublishedSet |= CommandOperations.TransitionPublishedDescriptorSetImagesForSampling(
 						commandBuffer,
 						set,
 						target);
@@ -2208,7 +2208,7 @@ internal unsafe partial class VkMeshRenderer
 			}
 
 			if (BackendContext.Resources.MappedFrameArena is null ||
-				BackendContext.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap ||
+				BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap ||
 				_program is null ||
 				!ReferenceEquals(_program, draw.PreparedProgram))
 			{
@@ -2219,7 +2219,7 @@ internal unsafe partial class VkMeshRenderer
 			int frameIndex = unchecked(
 				(int)Math.Min(imageIndex, int.MaxValue));
 			using VulkanCpuStageScope autoUniformStage =
-				new(BackendContext.ProgramServices.Telemetry, EVulkanCpuStage.FrameDataAutoUniformUpload);
+				default;
 			UpdateAutoUniformBuffersForDraw(
 				frameIndex,
 				drawUniformSlot,
@@ -2269,7 +2269,7 @@ internal unsafe partial class VkMeshRenderer
 	{
 		if (BackendContext.Resources.MappedFrameArena is null)
 			return "mesh frame-data arena disabled";
-		if (BackendContext.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
+		if (BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
 			return "descriptor-heap draw binding";
 		VkRenderProgram? publicationProgram =
 			draw.PreparedProgram ?? _program;
@@ -2448,7 +2448,7 @@ internal unsafe partial class VkMeshRenderer
 			descriptorResourcesCapturedByFrameSignature ||
 			draw.ProgramBindingSnapshot is not null;
         using (VulkanCpuStageScope descriptorStage =
-				new(BackendContext.ProgramServices.Telemetry, EVulkanCpuStage.FrameDataDescriptorValidation))
+				default)
         {
             bool descriptorSetsReusable = CanReuseRecordedDescriptorSets(
                 material,
@@ -2499,14 +2499,14 @@ internal unsafe partial class VkMeshRenderer
         }
 
         using (VulkanCpuStageScope engineUniformStage =
-				new(BackendContext.ProgramServices.Telemetry, EVulkanCpuStage.FrameDataEngineUniformUpload))
+				default)
         {
             UpdateEngineUniformBuffersForDraw(frameIndex, drawUniformSlot, draw);
         }
         if (refreshMaterialUniforms)
         {
             using VulkanCpuStageScope autoUniformStage =
-				new(BackendContext.ProgramServices.Telemetry, EVulkanCpuStage.FrameDataAutoUniformUpload);
+				default;
             UpdateAutoUniformBuffersForDraw(frameIndex, drawUniformSlot, material, draw);
         }
         return true;
@@ -2527,7 +2527,7 @@ internal unsafe partial class VkMeshRenderer
 			frameIndex,
 			_descriptorSets.Length);
 		DescriptorSet[] frameSets = _descriptorSets[descriptorSlotIndex];
-		if (BackendContext.ProgramServices.CommandRuntime.CommandBufferReferencesAllDescriptorSets(
+		if (CommandOperations.CommandBufferReferencesAllDescriptorSets(
 				recordedSecondaryCommandBuffer,
 				frameSets,
 				out ulong missingDescriptorSetHandle))
@@ -2558,7 +2558,7 @@ internal unsafe partial class VkMeshRenderer
 			return;
 
 		MeshDrawPushConstants constants = CreatePerDrawPushConstants(material, draw);
-		BackendContext.ProgramServices.CommandRuntime.PushConstantsTracked(
+		CommandOperations.PushConstantsTracked(
 			commandBuffer,
 			_program.PipelineLayout,
 			VulkanMeshRenderingConventions.CommonPushConstantStageFlags,
@@ -2617,5 +2617,5 @@ internal unsafe partial class VkMeshRenderer
 	/// Returns -1 if the buffer is not in the current set (e.g. transient buffer).
 	/// </summary>
 	private int ResolveCommandBufferIndex(CommandBuffer commandBuffer)
-		=> BackendContext.ProgramServices.CommandRuntime.ResolveCommandBufferImageIndex(commandBuffer);
+		=> CommandOperations.ResolveCommandBufferImageIndex(commandBuffer);
 }

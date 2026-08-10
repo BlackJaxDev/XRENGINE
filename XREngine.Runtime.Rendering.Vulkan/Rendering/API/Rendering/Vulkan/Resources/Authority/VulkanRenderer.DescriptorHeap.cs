@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using Silk.NET.Vulkan;
+using XREngine.Rendering.Vulkan.DeviceBootstrap;
 using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
@@ -57,6 +58,26 @@ internal sealed unsafe partial class VulkanDescriptorManager
     public ulong DescriptorHeapLastFrameCopies => _descriptorHeapLastFrameCopies;
     public bool DescriptorHeapUsesStagedGpuCopies =>
         _descriptorHeapSamplerStorage.RequiresCopy || _descriptorHeapResourceStorage.RequiresCopy;
+
+    /// <summary>
+    /// Applies the frozen descriptor-device facts produced by logical-device
+    /// bootstrap. Resource authority remains responsible for backend strictness
+    /// and descriptor-storage allocation.
+    /// </summary>
+    internal void ApplyLogicalDevicePublication(
+        VulkanLogicalDeviceBootstrapResult.DescriptorPublication publication)
+    {
+        ArgumentNullException.ThrowIfNull(publication);
+        _descriptorHeapFeatureSupported = publication.DescriptorHeapFeatureSupported;
+        _descriptorHeapCaptureReplaySupported = publication.DescriptorHeapCaptureReplaySupported;
+        _descriptorHeapShaderUntypedPointersAvailable =
+            publication.DescriptorHeapShaderUntypedPointersAvailable;
+        _descriptorHeapProperties = publication.DescriptorHeapFeatureSupported
+            ? publication.DescriptorHeapProperties
+            : default;
+        _descriptorHeapApi = publication.DescriptorHeapNativeFunctions;
+        _descriptorHeapNativeApiAvailable = publication.DescriptorHeapNativeApiAvailable;
+    }
 
     internal unsafe void QueryDescriptorHeapCapabilities(
         bool descriptorHeapExtensionAvailable,
@@ -365,252 +386,6 @@ internal sealed unsafe partial class VulkanDescriptorManager
             DestroyBuffer(storage.StagingBuffer, storage.StagingMemory);
         DestroyBuffer(storage.Buffer, storage.Memory);
         storage = default;
-    }
-
-    internal bool TryBindDescriptorHeapsTracked(CommandBuffer commandBuffer)
-    {
-        if (!ShouldBindDescriptorHeapState())
-            return false;
-
-        if (_descriptorHeapApi is null ||
-            !_descriptorHeapSamplerStorage.IsReady ||
-            !_descriptorHeapResourceStorage.IsReady)
-        {
-            return false;
-        }
-
-        FlushDescriptorHeapStagingCopies(commandBuffer);
-
-        CommandRuntime.TrackVulkanCommandBufferResource(
-            commandBuffer,
-            ObjectType.Buffer,
-            _descriptorHeapSamplerStorage.Buffer.Handle,
-            "DescriptorHeap.SamplerStorage");
-        CommandRuntime.TrackVulkanCommandBufferResource(
-            commandBuffer,
-            ObjectType.Buffer,
-            _descriptorHeapResourceStorage.Buffer.Handle,
-            "DescriptorHeap.ResourceStorage");
-
-        ulong signature = unchecked((ulong)HashCode.Combine(
-            _descriptorHeapSamplerStorage.DeviceAddress,
-            _descriptorHeapSamplerStorage.Size,
-            _descriptorHeapResourceStorage.DeviceAddress,
-            _descriptorHeapResourceStorage.Size));
-
-        bool shouldBind;
-        ulong key = unchecked((ulong)commandBuffer.Handle);
-        lock (CommandRuntime.CommandBuffers.BindStateGate)
-        {
-            CommandRuntime.CommandBuffers.BindStates.TryGetValue(key, out CommandBufferBindState state);
-            shouldBind = state.DescriptorHeapSignature != signature;
-            if (shouldBind)
-            {
-                state.DescriptorHeapSignature = signature;
-                CommandRuntime.CommandBuffers.BindStates[key] = state;
-            }
-        }
-
-        if (!shouldBind)
-            return true;
-
-        BindHeapInfoEXTNative samplerBindInfo = CreateSamplerHeapBindInfo();
-        BindHeapInfoEXTNative resourceBindInfo = CreateResourceHeapBindInfo();
-        _descriptorHeapApi.CmdBindSamplerHeap(commandBuffer, &samplerBindInfo);
-        _descriptorHeapApi.CmdBindResourceHeap(commandBuffer, &resourceBindInfo);
-        CommandRuntime.InvalidateDescriptorBindings(commandBuffer);
-        _descriptorHeapSamplerBindCount++;
-        _descriptorHeapResourceBindCount++;
-        return true;
-    }
-
-    private bool ShouldBindDescriptorHeapState()
-        => _descriptorHeapStorageReady &&
-           _activeDescriptorBackend == EVulkanDescriptorBackend.DescriptorHeap &&
-           _descriptorHeapNativeApiAvailable &&
-           _descriptorHeapApi is not null &&
-           _descriptorHeapSamplerStorage.IsReady &&
-           _descriptorHeapResourceStorage.IsReady;
-
-    private BindHeapInfoEXTNative CreateSamplerHeapBindInfo()
-        => new()
-        {
-            SType = VulkanDescriptorHeapExt.BindHeapInfoSType,
-            PNext = null,
-            HeapRange = new DeviceAddressRangeEXTNative
-            {
-                Address = _descriptorHeapSamplerStorage.DeviceAddress,
-                Size = _descriptorHeapSamplerStorage.Size,
-            },
-            ReservedRangeOffset = 0,
-            ReservedRangeSize = Math.Max(
-                _descriptorHeapProperties.MinSamplerHeapReservedRange,
-                _descriptorHeapProperties.MinSamplerHeapReservedRangeWithEmbedded),
-        };
-
-    private BindHeapInfoEXTNative CreateResourceHeapBindInfo()
-        => new()
-        {
-            SType = VulkanDescriptorHeapExt.BindHeapInfoSType,
-            PNext = null,
-            HeapRange = new DeviceAddressRangeEXTNative
-            {
-                Address = _descriptorHeapResourceStorage.DeviceAddress,
-                Size = _descriptorHeapResourceStorage.Size,
-            },
-            ReservedRangeOffset = 0,
-            ReservedRangeSize = _descriptorHeapProperties.MinResourceHeapReservedRange,
-        };
-
-    internal bool TryAppendDescriptorHeapInheritancePNext(
-        ref CommandBufferInheritanceInfo inheritanceInfo,
-        CommandBufferInheritanceDescriptorHeapInfoEXTNative* heapInfo,
-        BindHeapInfoEXTNative* samplerHeapInfo,
-        BindHeapInfoEXTNative* resourceHeapInfo)
-    {
-        if (!ShouldBindDescriptorHeapState() ||
-            heapInfo is null ||
-            samplerHeapInfo is null ||
-            resourceHeapInfo is null)
-        {
-            return false;
-        }
-
-        *samplerHeapInfo = CreateSamplerHeapBindInfo();
-        *resourceHeapInfo = CreateResourceHeapBindInfo();
-        *heapInfo = new CommandBufferInheritanceDescriptorHeapInfoEXTNative
-        {
-            SType = VulkanDescriptorHeapExt.CommandBufferInheritanceDescriptorHeapInfoSType,
-            PNext = inheritanceInfo.PNext,
-            SamplerHeapBindInfo = samplerHeapInfo,
-            ResourceHeapBindInfo = resourceHeapInfo,
-        };
-        inheritanceInfo.PNext = heapInfo;
-        return true;
-    }
-
-    private void FlushDescriptorHeapStagingCopies(CommandBuffer commandBuffer)
-    {
-        FlushDescriptorHeapStagingCopy(
-            commandBuffer,
-            _descriptorHeapSamplerStorage,
-            ref _descriptorHeapSamplerDirtyStart,
-            ref _descriptorHeapSamplerDirtyEnd,
-            (AccessFlags2)VulkanDescriptorHeapExt.SamplerHeapReadAccess2,
-            "Sampler");
-        FlushDescriptorHeapStagingCopy(
-            commandBuffer,
-            _descriptorHeapResourceStorage,
-            ref _descriptorHeapResourceDirtyStart,
-            ref _descriptorHeapResourceDirtyEnd,
-            (AccessFlags2)VulkanDescriptorHeapExt.ResourceHeapReadAccess2,
-            "Resource");
-    }
-
-    private void FlushDescriptorHeapStagingCopy(
-        CommandBuffer commandBuffer,
-        VulkanDescriptorHeapStorage storage,
-        ref ulong dirtyStart,
-        ref ulong dirtyEnd,
-        AccessFlags2 heapReadAccess,
-        string heapName)
-    {
-        if (!storage.RequiresCopy || dirtyStart == ulong.MaxValue || dirtyEnd <= dirtyStart)
-            return;
-
-        ulong copyStart = AlignDescriptorHeapDown(dirtyStart, sizeof(uint));
-        ulong copyEnd = AlignDescriptorHeapUp(dirtyEnd, sizeof(uint));
-        ulong copySize = copyEnd - copyStart;
-        BufferCopy copy = new()
-        {
-            SrcOffset = copyStart,
-            DstOffset = copyStart,
-            Size = copySize,
-        };
-        CommandRuntime.CmdCopyBufferTracked(commandBuffer, storage.StagingBuffer, storage.Buffer, 1, &copy);
-
-        BufferMemoryBarrier2 barrier = new()
-        {
-            SType = StructureType.BufferMemoryBarrier2,
-            SrcStageMask = PipelineStageFlags2.TransferBit,
-            SrcAccessMask = AccessFlags2.TransferWriteBit,
-            DstStageMask = PipelineStageFlags2.AllCommandsBit,
-            DstAccessMask = heapReadAccess,
-            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-            Buffer = storage.Buffer,
-            Offset = copyStart,
-            Size = copySize,
-        };
-        DependencyInfo dependency = new()
-        {
-            SType = StructureType.DependencyInfo,
-            BufferMemoryBarrierCount = 1,
-            PBufferMemoryBarriers = &barrier,
-        };
-        CommandRuntime.PipelineBarrier2Tracked(commandBuffer, &dependency);
-
-        dirtyStart = ulong.MaxValue;
-        dirtyEnd = 0;
-        _descriptorHeapCopyCount++;
-        _descriptorHeapFrameCopies++;
-        _descriptorHeapCopyBytes += copySize;
-        if (VulkanCommandRuntime.FrameDiagnosticsTraceEnabled)
-        {
-            Debug.VulkanEvery(
-                $"Vulkan.DescriptorHeap.Copy.{heapName}",
-                TimeSpan.FromSeconds(2),
-                "[Vulkan.DescriptorHeap.Copy] heap={0} offset={1} bytes={2} frameCopies={3} totalCopies={4}.",
-                heapName,
-                copyStart,
-                copySize,
-                _descriptorHeapFrameCopies,
-                _descriptorHeapCopyCount);
-        }
-    }
-
-    internal bool TryPushDescriptorHeapData(CommandBuffer commandBuffer, uint offset, void* data, uint byteCount, out string reason)
-    {
-        reason = string.Empty;
-        if (_descriptorHeapApi is null)
-        {
-            reason = "descriptor heap native API is not loaded.";
-            return false;
-        }
-
-        if (data is null || byteCount == 0)
-        {
-            reason = "descriptor heap push-data payload is empty.";
-            return false;
-        }
-
-        if (_descriptorHeapProperties.MaxPushDataSize > 0 &&
-            offset + byteCount > _descriptorHeapProperties.MaxPushDataSize)
-        {
-            reason = $"descriptor heap push-data range exceeds maxPushDataSize (offset={offset}, bytes={byteCount}, max={_descriptorHeapProperties.MaxPushDataSize}).";
-            return false;
-        }
-
-        if (!TryBindDescriptorHeapsTracked(commandBuffer))
-        {
-            reason = "descriptor heap state could not be rebound before push data.";
-            return false;
-        }
-
-        PushDataInfoEXTNative pushData = new()
-        {
-            SType = VulkanDescriptorHeapExt.PushDataInfoSType,
-            PNext = null,
-            Offset = offset,
-            Data = new HostAddressRangeConstEXTNative
-            {
-                Address = data,
-                Size = byteCount,
-            },
-        };
-        _descriptorHeapApi.CmdPushData(commandBuffer, &pushData);
-        CommandRuntime.InvalidateDescriptorBindings(commandBuffer);
-        return true;
     }
 
     private static bool TryResolveDescriptorHeapWriteDestination(

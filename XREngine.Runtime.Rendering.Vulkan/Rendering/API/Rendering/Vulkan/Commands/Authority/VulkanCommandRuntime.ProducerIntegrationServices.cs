@@ -5,6 +5,16 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>Narrow command-authority entry points for renderer-owned producers.</summary>
 internal sealed unsafe partial class VulkanCommandRuntime
 {
+    /// <summary>
+    /// Enqueues a frozen texture-upload operation without giving the resource
+    /// service a renderer callback or frame-loop authority.
+    /// </summary>
+    internal void EnqueuePreparedTextureUpload(
+        VulkanFrameOperationQueue operations,
+        in FrameOpContext context,
+        VulkanImportedTexturePendingUpload upload)
+        => operations.EnqueuePrepared(new TextureUploadFrameOp(upload, context));
+
     internal ImageLayout[]? QueryCurrentAttachmentLayoutsForProducer(
         XRFrameBuffer target,
         VkFrameBuffer frameBuffer)

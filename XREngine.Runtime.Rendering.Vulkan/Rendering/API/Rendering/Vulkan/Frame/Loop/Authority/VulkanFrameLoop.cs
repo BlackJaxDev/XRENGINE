@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Threading;
 using Silk.NET.Vulkan;
+using XREngine.Rendering.Resources;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -11,16 +13,19 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed unsafe partial class VulkanFrameLoop
 {
     private const int FrameSlotCount = 2;
+    private readonly Vk _api;
     private readonly VulkanDeviceContext _deviceContext;
     private readonly VulkanOutputRuntime _outputRuntime;
     private readonly VulkanFramePlanner _framePlanner;
     private readonly VulkanResourceRuntime _resourceRuntime;
     private readonly VulkanCommandRuntime _commandRuntime;
+    private readonly VulkanResourcePlannerSessionService _resourcePlannerSessions;
+    private readonly VulkanResourceGenerationTransactionService _resourceGenerationTransactions;
     private readonly VulkanFrameTelemetry _telemetry;
-    private readonly VulkanTextureReadbackService _textureReadbackService;
-    private VulkanTrackedCommandEncoder? _overlayCommandEncoder;
+    private readonly IVulkanRendererTargetDriver _targetDriver;
+    internal VulkanMeshOperationRequestQueue MeshOperationRequests { get; } = new();
+    private VulkanImGuiBackend? _imguiBackend;
     private readonly VulkanImGuiOverlayCommandRecorder _imguiOverlayRecorder = new();
-    private readonly VulkanDeviceLossCoordinator _deviceLossCoordinator;
     private readonly DesktopFrameActivityState _activity = new();
     private readonly object _retirementGate = new();
     private int _frameSlot;
@@ -30,50 +35,95 @@ internal sealed unsafe partial class VulkanFrameLoop
     private ulong _resourceCatchUpBlockedFrames;
 
     internal VulkanFrameLoop(
+        Vk api,
         VulkanDeviceContext deviceContext,
         VulkanOutputRuntime outputRuntime,
         VulkanFramePlanner framePlanner,
         VulkanResourceRuntime resourceRuntime,
         VulkanCommandRuntime commandRuntime,
         VulkanFrameTelemetry telemetry,
-        VulkanTextureReadbackService textureReadbackService)
+        IVulkanRendererTargetDriver targetDriver,
+        Silk.NET.Windowing.IWindow? window)
     {
+        _api = api ?? throw new ArgumentNullException(nameof(api));
         _deviceContext = deviceContext;
         _outputRuntime = outputRuntime;
         _framePlanner = framePlanner;
         _resourceRuntime = resourceRuntime;
         _commandRuntime = commandRuntime;
         _telemetry = telemetry;
-        _textureReadbackService = textureReadbackService;
+        _targetDriver = targetDriver;
+        _window = window;
+        _resourcePlannerSessions = new VulkanResourcePlannerSessionService(
+            framePlanner,
+            commandRuntime);
+        _resourceGenerationTransactions = new VulkanResourceGenerationTransactionService(
+            deviceContext,
+            framePlanner,
+            resourceRuntime,
+            _resourcePlannerSessions);
         _resourceRuntime.Samplers.PublishFrameSlot(CurrentFrameSlot);
         _resourceRuntime.Images.PublishFrameSlot(CurrentFrameSlot);
         _resourceRuntime.Buffers.PublishFrameSlot(CurrentFrameSlot);
         _resourceRuntime.Descriptors.PublishFrameSlot(CurrentFrameSlot);
         _resourceRuntime.PublishFramebufferRetirementFrameSlot(CurrentFrameSlot);
-        _deviceLossCoordinator = new VulkanDeviceLossCoordinator(
-            deviceContext,
-            commandRuntime,
-            resourceRuntime,
-            outputRuntime,
-            telemetry);
-        _resourceRuntime.Queries.BindDeviceLossCoordinator(_deviceLossCoordinator);
     }
 
+    private readonly Silk.NET.Windowing.IWindow? _window;
+
     internal ulong AcceptedAttemptCount => Volatile.Read(ref _acceptedAttemptCount);
-    private Vk Api => _deviceContext.Api;
-    private VulkanTrackedCommandEncoder OverlayCommandEncoder
-        => _overlayCommandEncoder ??= new VulkanTrackedCommandEncoder(
-            _deviceContext.Api,
-            _deviceContext,
-            _commandRuntime,
-            _resourceRuntime,
-            _telemetry);
+    internal IVulkanRendererTargetDriver TargetDriver => _targetDriver;
+    internal RenderExecutionMode TargetExecutionMode => _targetDriver.ExecutionMode;
+    internal bool TargetRequiresPresentQueue => _targetDriver.RequiresPresentQueue;
+    internal bool TargetRequiresSwapchainOutput => _targetDriver.RequiresSwapchainOutput;
+    internal bool TargetSupportsStreamlinePresentation => _targetDriver.SupportsStreamlinePresentation;
+    internal bool HasExplicitFrameTarget => _targetDriver is IVulkanExplicitFrameTargetDriver;
+    internal IReadOnlyList<string> TargetRequiredDeviceExtensions => _targetDriver.RequiredDeviceExtensions;
+    internal string[] GetTargetRequiredInstanceExtensions() => _targetDriver.GetRequiredInstanceExtensions();
+
+    internal IVulkanExplicitFrameTargetDriver RequireExplicitFrameTarget()
+        => _targetDriver as IVulkanExplicitFrameTargetDriver
+            ?? throw new InvalidOperationException(
+                $"Vulkan target '{TargetExecutionMode}' does not expose explicit target-frame submission.");
+    internal VulkanResourcePlannerSessionService ResourcePlannerSessions
+        => _resourcePlannerSessions;
+    internal VulkanResourceGenerationTransactionService ResourceGenerationTransactions
+        => _resourceGenerationTransactions;
+    internal VulkanImGuiPlatformWindowOutputAuthority ImGuiPlatformWindows { get; } = new();
+
+    private VulkanImGuiBackend GetOrCreateImGuiBackendCore(
+        IVulkanImGuiOutputHost outputHost,
+        XRWindow windowHost)
+    {
+        VulkanImGuiBackend? backend = _imguiBackend;
+        if (backend is not null && !ImGuiContextTracker.IsAlive(backend.ContextHandle))
+        {
+            backend.Dispose();
+            _imguiBackend = null;
+            _outputRuntime._imguiDrawData.Clear();
+        }
+
+        return _imguiBackend ??= new VulkanImGuiBackend(outputHost, windowHost);
+    }
+    internal bool TryReadBufferBytesForDiagnostics(
+        VulkanBackendObjectContext backendContext,
+        XRDataBuffer? sourceBuffer,
+        uint sourceByteOffset,
+        Span<byte> destination,
+        out string reason)
+        => TryReadBufferBytesForDiagnosticsCore(
+            backendContext,
+            sourceBuffer,
+            sourceByteOffset,
+            destination,
+            out reason);
+    private Vk Api => _api;
     private VulkanOutputRuntime OutputRuntime => _outputRuntime;
     private VulkanResourceRuntime ResourceRuntime => _resourceRuntime;
     private VulkanFrameTelemetry _frameTelemetry => _telemetry;
     private ResourcePlannerRuntimeState PublishedResourcePlannerRuntimeState
         => _framePlanner
-            .GetPublishedResourcePlannerGeneration<ResourcePlannerRuntimeGeneration>()
+            .GetPublishedResourcePlannerGeneration()
             .State;
     private ulong ResourcePlannerRevision
         => PublishedResourcePlannerRuntimeState.ResourcePlannerRevision;
@@ -93,7 +143,9 @@ internal sealed unsafe partial class VulkanFrameLoop
         }
     }
     private VulkanDesktopWsiTargetDriver DesktopWsiOutput
-        => _outputRuntime.RequireDesktopWsiTarget();
+        => _targetDriver as VulkanDesktopWsiTargetDriver
+            ?? throw new InvalidOperationException(
+                $"Vulkan target '{TargetExecutionMode}' does not provide desktop WSI policy.");
     private VulkanMappedFrameArena? MappedFrameArena
         => _resourceRuntime.MappedFrameArena;
     private VulkanPresentationSourcePublication _windowPresentSource
@@ -295,6 +347,8 @@ internal sealed unsafe partial class VulkanFrameLoop
             if (!_deviceContext.StateMachine.IsOperational)
                 throw CreateDeviceLostException("RenderWindow", Result.ErrorDeviceLost);
 
+            _telemetry.PublishDescriptorTableGeneration(
+                _resourceRuntime.DescriptorTableGeneration);
             _resourceRuntime.Descriptors.Heap.BeginFrame(frameAttempt.FrameNumber);
             RecordDesktopFrameGap(ref frameAttempt);
 

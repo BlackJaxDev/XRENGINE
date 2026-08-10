@@ -4,7 +4,7 @@ namespace XREngine.Rendering.Vulkan;
 
 internal unsafe partial class VkRenderProgram
 {
-    private Dictionary<Type, object>? _frameUniformArrayPools;
+    private Dictionary<Type, IFrameUniformArrayPool>? _frameUniformArrayPools;
 
     /// <summary>
     /// Copies a caller-owned array into storage that remains unique for the
@@ -47,8 +47,8 @@ internal unsafe partial class VkRenderProgram
         if (frameId == 0)
             return new T[length];
 
-        Dictionary<Type, object> pools = _frameUniformArrayPools ??= [];
-        if (!pools.TryGetValue(typeof(T), out object? untypedPool))
+        Dictionary<Type, IFrameUniformArrayPool> pools = _frameUniformArrayPools ??= [];
+        if (!pools.TryGetValue(typeof(T), out IFrameUniformArrayPool? untypedPool))
         {
             untypedPool = new FrameUniformArrayPool<T>();
             pools.Add(typeof(T), untypedPool);
@@ -57,7 +57,11 @@ internal unsafe partial class VkRenderProgram
         return ((FrameUniformArrayPool<T>)untypedPool).Rent(frameId, length);
     }
 
-    private sealed class FrameUniformArrayPool<T>
+    private interface IFrameUniformArrayPool
+    {
+    }
+
+    private sealed class FrameUniformArrayPool<T> : IFrameUniformArrayPool
     {
         private readonly List<T[]> _buffers = [];
         private ulong _frameId;

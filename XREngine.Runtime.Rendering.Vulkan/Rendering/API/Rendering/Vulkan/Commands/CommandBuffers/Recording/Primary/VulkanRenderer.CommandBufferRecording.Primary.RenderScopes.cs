@@ -131,7 +131,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (recordingState.RenderPassLabelActive)
             {
-                CmdEndLabel(recordingState.CommandBuffer);
+                _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
                 recordingState.RenderPassLabelActive = false;
             }
             recordingState.RenderScope.Deactivate();
@@ -233,7 +233,7 @@ namespace XREngine.Rendering.Vulkan
                 bool useDynamicRendering = recordingState.Policy.UseDynamicRendering &&
                     recordingState.SwapchainTarget.IsValid;
 
-                CmdBeginLabel(recordingState.CommandBuffer, useDynamicRendering ? "Rendering:Swapchain" : "RenderPass:Swapchain");
+                _deviceContext.CmdBeginLabel(recordingState.CommandBuffer, useDynamicRendering ? "Rendering:Swapchain" : "RenderPass:Swapchain");
                 recordingState.RenderPassLabelActive = true;
 
                 if (useDynamicRendering)
@@ -485,8 +485,8 @@ namespace XREngine.Rendering.Vulkan
             string fboName = string.IsNullOrWhiteSpace(target.Name)
                 ? $"FBO[{target.GetHashCode()}]"
                 : target.Name!;
-            if (CanRecordCommandBufferDebugLabels)
-                recordingState.RenderPassLabelActive = CmdBeginLabel(recordingState.CommandBuffer, $"{(recordingState.Policy.UseDynamicRendering ? "Rendering" : "RenderPass")}:{fboName}");
+            if (_deviceContext.CanRecordCommandBufferDebugLabels)
+                recordingState.RenderPassLabelActive = _deviceContext.CmdBeginLabel(recordingState.CommandBuffer, $"{(recordingState.Policy.UseDynamicRendering ? "Rendering" : "RenderPass")}:{fboName}");
 
             // Look up the CURRENT tracked layout of each attachment so the render
             // pass can use those as initialLayout (preserving content) instead of
@@ -531,7 +531,7 @@ namespace XREngine.Rendering.Vulkan
                     FormatFboAttachmentSignature(fboSignature));
             }
 
-            Extent2D logicalFboExtent = ResolveFrameBufferDrawExtent(target);
+            Extent2D logicalFboExtent = VulkanCommandRuntime.ResolveFrameBufferDrawExtent(target);
             uint fboRenderWidth = logicalFboExtent.Width;
             uint fboRenderHeight = logicalFboExtent.Height;
             if (vkFrameBuffer.FramebufferWidth > 0)

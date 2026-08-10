@@ -10,9 +10,6 @@ internal sealed unsafe partial class VulkanFrameLoop
     private bool UseDynamicRenderingRenderTargets
         => _deviceContext.MutableCapabilities._useDynamicRenderingRenderTargets;
 
-    private VulkanImGuiOverlayAdmission ImGuiOverlayAdmission
-        => _outputRuntime.GetImGuiOverlayAdmission(_resourceRuntime, _deviceContext);
-
     /// <summary>
     /// Captures the current output attachment identities and delegates native ImGui
     /// command encoding to the renderer-free recorder.  No renderer facade or
@@ -35,13 +32,8 @@ internal sealed unsafe partial class VulkanFrameLoop
             return false;
         }
 
-        _outputRuntime.GetImGuiFontAtlasResources(
-            _resourceRuntime,
-            _commandRuntime,
-            _deviceContext).EnsureCreated();
-        _outputRuntime.GetImGuiOutputPipelineService(
-            _resourceRuntime,
-            _deviceContext).EnsureCreated();
+        ImGuiFontAtlasResources.EnsureCreated();
+        ImGuiOutputPipelineService.EnsureCreated();
 
         CommandBuffer[]? commandBuffers = _outputRuntime._imguiResources.OverlayCommandBuffers;
         if (commandBuffers is null || imageIndex >= commandBuffers.Length)
@@ -59,9 +51,9 @@ internal sealed unsafe partial class VulkanFrameLoop
             ClearSwapchain: false,
             snapshot);
         return _imguiOverlayRecorder.TryRecord(
-            OverlayCommandEncoder,
+            new VulkanTrackedCommandEncoder(_commandRuntime),
             _telemetry,
-            _outputRuntime.GetImGuiDrawBufferResources(_resourceRuntime),
+            ImGuiDrawBufferResources,
             in input,
             out overlayCommandBuffer);
     }
@@ -209,7 +201,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         RecordQueueOperation("present", queue, result, caller);
         if (result == Result.ErrorDeviceLost)
         {
-            _deviceLossCoordinator.MarkDeviceLost(
+            MarkDeviceLost(
                 $"vkQueuePresentKHR:{caller ?? "<unknown>"}:{result}; QueuePresent returned ErrorDeviceLost in {caller ?? "<unknown>"}",
                 "vkQueuePresentKHR",
                 result);
@@ -385,5 +377,41 @@ internal sealed unsafe partial class VulkanFrameLoop
                 hasValidFrameContent,
                 invariantFailed,
                 invariantFailure));
+    }
+
+    /// <summary>
+    /// Captures the bounded final-presentation evidence owned by this frame-loop authority.
+    /// </summary>
+    internal object GetFinalPresentationLedgerDiagnostics(int limit)
+    {
+        _frameTelemetry._finalPresentationLedger.CaptureStatus(
+            out bool enabled,
+            out bool frozen,
+            out int count,
+            out string? freezeReason);
+        VulkanFinalPresentationLedgerEntry[] entries =
+            _frameTelemetry._finalPresentationLedger.Snapshot(limit);
+        return new
+        {
+            enabled,
+            frozen,
+            capacity = 128,
+            count,
+            returnedCount = entries.Length,
+            freezeReason,
+            entries,
+        };
+    }
+
+    /// <summary>
+    /// Configures the bounded final-presentation evidence owned by this frame-loop authority.
+    /// </summary>
+    internal object ConfigureFinalPresentationLedgerDiagnostics(
+        bool enabled,
+        bool frozen,
+        bool clear)
+    {
+        _frameTelemetry._finalPresentationLedger.Configure(enabled, frozen, clear);
+        return GetFinalPresentationLedgerDiagnostics(1);
     }
 }

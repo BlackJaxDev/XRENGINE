@@ -89,7 +89,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
             if (!_descriptorSetLayoutsByHandle.TryGetValue(layout.Handle, out CachedDescriptorSetLayout? cached))
             {
                 ResourceRuntime.DestroyDescriptorSetLayout(
-                    Api, DeviceContext.Device, CommandRuntime, CurrentDesktopFrameSlot,
+                    Api, DeviceContext.Device, CurrentDesktopFrameSlot,
                     layout, "DescriptorLayoutCache.UncachedRelease");
                 return;
             }
@@ -107,7 +107,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
             }
 
             ResourceRuntime.DestroyDescriptorSetLayout(
-                Api, DeviceContext.Device, CommandRuntime, CurrentDesktopFrameSlot,
+                Api, DeviceContext.Device, CurrentDesktopFrameSlot,
                 cached.Layout, "DescriptorLayoutCache.Release");
         }
     }
@@ -124,7 +124,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
                 if (cached.Layout.Handle != 0)
                 {
                     ResourceRuntime.DestroyDescriptorSetLayout(
-                        Api, DeviceContext.Device, CommandRuntime, CurrentDesktopFrameSlot,
+                        Api, DeviceContext.Device, CurrentDesktopFrameSlot,
                         cached.Layout, "DescriptorLayoutCache.DestroyAll");
                 }
             }

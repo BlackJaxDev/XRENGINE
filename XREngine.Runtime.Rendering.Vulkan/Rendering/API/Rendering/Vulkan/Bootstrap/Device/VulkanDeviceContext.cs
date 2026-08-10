@@ -18,23 +18,15 @@ internal sealed partial class VulkanDeviceContext
     private VulkanSubmissionDiagnosticContext _lastSubmissionDiagnostics;
 
     public VulkanDeviceContext(
-        VulkanDeviceContextConfiguration? configuration = null,
-        VulkanPresentationSupportProbe? presentationSupportProbe = null)
+        VulkanDeviceContextConfiguration? configuration = null)
     {
         Configuration = configuration ?? VulkanDeviceContextConfiguration.Default;
-        PresentationSupportProbe = presentationSupportProbe;
     }
 
     /// <summary>
     /// Immutable policy captured before native device creation begins.
     /// </summary>
     public VulkanDeviceContextConfiguration Configuration { get; }
-
-    /// <summary>
-    /// Explicit output-owned presentation support query. The context does not
-    /// infer output state or retain an output runtime.
-    /// </summary>
-    public VulkanPresentationSupportProbe? PresentationSupportProbe { get; private set; }
 
     /// <summary>
     /// Owns admission to the native device lifetime. The context, rather than
@@ -91,69 +83,6 @@ internal sealed partial class VulkanDeviceContext
     {
         lock (_submissionDiagnosticsLock)
             return _lastSubmissionDiagnostics;
-    }
-
-    /// <summary>
-    /// Publishes the output-owned presentation query before physical-device
-    /// selection. The delegate must close over native surface state only, never
-    /// the renderer facade or output runtime.
-    /// </summary>
-    public void AttachPresentationSupportProbe(
-        VulkanPresentationSupportProbe? presentationSupportProbe)
-    {
-        if (PhysicalDevice.Handle != 0)
-            throw new InvalidOperationException("Presentation support cannot change after physical-device selection.");
-        if (Configuration.RequirePresentQueue && presentationSupportProbe is null)
-            throw new InvalidOperationException("A presentation support probe is required by this device context.");
-        if (!Configuration.RequirePresentQueue && presentationSupportProbe is not null)
-            throw new InvalidOperationException("A presentation support probe cannot be attached to a presentationless device context.");
-        if (PresentationSupportProbe is not null)
-            throw new InvalidOperationException("Presentation support has already been published for this device context.");
-
-        PresentationSupportProbe = presentationSupportProbe;
-    }
-
-    public QueueFamilyIndices SelectQueueFamilies(
-        PhysicalDevice physicalDevice,
-        VulkanPhysicalDeviceCapabilitySnapshot capabilities)
-    {
-        if (physicalDevice.Handle == 0)
-            throw new ArgumentException("A valid physical device is required.", nameof(physicalDevice));
-        ArgumentNullException.ThrowIfNull(capabilities);
-        if (!HasInstance)
-            throw new InvalidOperationException("A Vulkan instance must exist before selecting a physical device.");
-        if (Configuration.RequirePresentQueue && PresentationSupportProbe is null)
-            throw new InvalidOperationException("Presentation support must be published before queue-family selection.");
-
-        return VulkanQueueFamilySelector.Select(
-            capabilities.QueueFamilyArray,
-            physicalDevice,
-            PresentationSupportProbe);
-    }
-
-    public bool SupportsRequiredDeviceExtensions(
-        VulkanDeviceExtensionSet availableExtensions,
-        IEnumerable<string>? additionalRequiredExtensions = null)
-    {
-        ArgumentNullException.ThrowIfNull(availableExtensions);
-        foreach (string requiredExtension in Configuration.RequiredDeviceExtensions)
-        {
-            if (!availableExtensions.Contains(requiredExtension))
-                return false;
-        }
-
-        if (additionalRequiredExtensions is null)
-            return true;
-        foreach (string requiredExtension in additionalRequiredExtensions)
-        {
-            if (!string.IsNullOrWhiteSpace(requiredExtension) &&
-                !availableExtensions.Contains(requiredExtension))
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     public void AttachPhysicalDevice(
@@ -411,7 +340,6 @@ internal sealed partial class VulkanDeviceContext
         PhysicalDevice = default;
         PhysicalDeviceCapabilities = null;
         QueueFamilies = default;
-        PresentationSupportProbe = null;
         AvailableDeviceExtensions = VulkanDeviceExtensionSet.Empty;
         EnabledDeviceExtensions = VulkanDeviceExtensionSet.Empty;
         Capabilities = VulkanDeviceCapabilities.Empty;

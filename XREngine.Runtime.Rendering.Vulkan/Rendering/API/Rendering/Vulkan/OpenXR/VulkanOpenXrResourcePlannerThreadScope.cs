@@ -4,17 +4,16 @@ namespace XREngine.Rendering.Vulkan;
 /// Explicit command-side data needed to install an OpenXR planner state on one
 /// recording thread. This keeps the scope independent from the renderer facade.
 /// </summary>
-internal readonly record struct VulkanOpenXrResourcePlannerThreadData(
-    VulkanOpenXrBackend Backend,
-    VulkanDeviceContext Device,
+internal readonly record struct VulkanOpenXrResourcePlannerSessionToken(
+    VulkanOpenXrThreadExecutionState ExecutionState,
+    object StateGate,
     Dictionary<VulkanOpenXrViewResourcePlannerContextKey, ResourcePlannerRuntimeState> States,
-    VulkanCommandThreadContext<
-        VulkanStateTracker,
-        ResourcePlannerRuntimeState,
-        FrameOpResourcePlannerSwitchingState,
-        XRFrameBuffer,
-        EReadBufferMode> ThreadContext,
-    object OwnerToken);
+    ulong PlannerGeneration);
+
+internal readonly record struct VulkanOpenXrResourcePlannerThreadData(
+    VulkanOpenXrResourcePlannerSessionToken Session,
+    VulkanCommandThreadContext ThreadContext,
+    VulkanCommandRuntime Owner);
 
 /// <summary>
 /// Restores OpenXR planner identity and publishes the thread's updated planner
@@ -28,18 +27,22 @@ internal readonly struct VulkanOpenXrResourcePlannerThreadScope : IDisposable
     private readonly VulkanOpenXrViewResourcePlannerContextKey _previousScopeKey;
     private readonly int _previousScopeDepth;
     private readonly ResourcePlannerRuntimeState? _previousPlannerState;
-    private readonly object? _previousPlannerOwner;
+    private readonly ResourcePlannerRuntimeGeneration? _previousPlannerGeneration;
+    private readonly VulkanCommandRuntime? _previousPlannerOwner;
     private readonly FrameOpResourcePlannerSwitchingState? _previousSwitchingState;
-    private readonly object? _previousSwitchingOwner;
+    private readonly VulkanCommandRuntime? _previousSwitchingOwner;
     private readonly bool _ownsThreadScopes;
 
     internal VulkanOpenXrResourcePlannerThreadScope(
         in VulkanOpenXrResourcePlannerThreadData data,
         in VulkanOpenXrViewResourcePlannerContextKey contextKey)
     {
+        if (!ReferenceEquals(data.ThreadContext.Owner, data.Owner))
+            throw new InvalidOperationException("The OpenXR planner scope must use its command runtime's thread workspace.");
+
         _data = data;
         _contextKey = contextKey;
-        _executionState = data.Backend.CurrentThreadExecutionState;
+        _executionState = data.Session.ExecutionState;
         _previousScopeKey = _executionState.ResourcePlannerKey;
         _previousScopeDepth = _executionState.ResourcePlannerDepth;
         bool reentrant = _previousScopeDepth > 0 && _previousScopeKey.Equals(contextKey);
@@ -47,6 +50,7 @@ internal readonly struct VulkanOpenXrResourcePlannerThreadScope : IDisposable
         _executionState.ResourcePlannerDepth = reentrant ? _previousScopeDepth + 1 : 1;
         _ownsThreadScopes = !reentrant;
         _previousPlannerState = default;
+        _previousPlannerGeneration = null;
         _previousPlannerOwner = null;
         _previousSwitchingState = null;
         _previousSwitchingOwner = null;
@@ -54,21 +58,23 @@ internal readonly struct VulkanOpenXrResourcePlannerThreadScope : IDisposable
             return;
 
         ResourcePlannerRuntimeState state;
-        lock (data.Backend.ResourcePlannerStatesLock)
+        lock (data.Session.StateGate)
         {
-            state = data.States.TryGetValue(contextKey, out ResourcePlannerRuntimeState existing)
+            state = data.Session.States.TryGetValue(contextKey, out ResourcePlannerRuntimeState existing)
                 ? existing
                 : ResourcePlannerRuntimeState.CreateEmpty();
         }
 
         state.FrameOpResourcePlannerSwitchingState ??= new FrameOpResourcePlannerSwitchingState();
         _previousPlannerState = data.ThreadContext.ResourcePlannerRuntimeState;
+        _previousPlannerGeneration = data.ThreadContext.ResourcePlannerRuntimeGeneration;
         _previousPlannerOwner = data.ThreadContext.ResourcePlannerRuntimeStateOwner;
         _previousSwitchingState = data.ThreadContext.FrameOpResourcePlannerSwitchingState;
         _previousSwitchingOwner = data.ThreadContext.FrameOpResourcePlannerSwitchingStateOwner;
-        data.ThreadContext.ResourcePlannerRuntimeStateOwner = data.OwnerToken;
+        data.ThreadContext.ResourcePlannerRuntimeStateOwner = data.Owner;
         data.ThreadContext.ResourcePlannerRuntimeState = state;
-        data.ThreadContext.FrameOpResourcePlannerSwitchingStateOwner = data.OwnerToken;
+        data.ThreadContext.ResourcePlannerRuntimeGeneration = new ResourcePlannerRuntimeGeneration(state);
+        data.ThreadContext.FrameOpResourcePlannerSwitchingStateOwner = data.Owner;
         data.ThreadContext.FrameOpResourcePlannerSwitchingState = state.FrameOpResourcePlannerSwitchingState;
     }
 
@@ -82,16 +88,17 @@ internal readonly struct VulkanOpenXrResourcePlannerThreadScope : IDisposable
             state.FrameOpResourcePlannerSwitchingState =
                 _data.ThreadContext.FrameOpResourcePlannerSwitchingState ??
                 state.FrameOpResourcePlannerSwitchingState;
-            if (_data.Device.IsOperational)
+            if (_data.Owner.IsDeviceOperational)
             {
-                lock (_data.Backend.ResourcePlannerStatesLock)
-                    _data.States[_contextKey] = state;
+                lock (_data.Session.StateGate)
+                    _data.Session.States[_contextKey] = state;
             }
 
             _data.ThreadContext.FrameOpResourcePlannerSwitchingStateOwner = _previousSwitchingOwner;
             _data.ThreadContext.FrameOpResourcePlannerSwitchingState = _previousSwitchingState;
             _data.ThreadContext.ResourcePlannerRuntimeStateOwner = _previousPlannerOwner;
             _data.ThreadContext.ResourcePlannerRuntimeState = _previousPlannerState;
+            _data.ThreadContext.ResourcePlannerRuntimeGeneration = _previousPlannerGeneration;
         }
 
         _executionState.ResourcePlannerKey = _previousScopeKey;

@@ -488,6 +488,7 @@ internal unsafe partial class VkRenderProgram
         CaptureComputeBufferBindings(capture.BuffersByBinding, snapshot);
         snapshot.PublishBindingLayoutSignatures(
             BackendContext,
+            WrapperLookup.Lookup,
             RuntimeEngine.Rendering.State.CurrentRenderingPipeline);
         return snapshot;
     }
@@ -511,6 +512,7 @@ internal unsafe partial class VkRenderProgram
         CaptureComputeBufferBindings(buffersByBinding, snapshot);
         snapshot.PublishBindingLayoutSignatures(
             BackendContext,
+            WrapperLookup.Lookup,
             RuntimeEngine.Rendering.State.CurrentRenderingPipeline);
 
         return snapshot;
@@ -521,11 +523,11 @@ internal unsafe partial class VkRenderProgram
         ComputeDispatchSnapshot snapshot)
     {
         snapshot.Buffers.EnsureCapacity(buffersByBinding.Count);
-        bool allowSynchronousUpload = BackendContext.AllowSynchronousResourceUploads;
+        bool allowSynchronousUpload = BackendContext.Resources.AllowSynchronousResourceUploads;
         foreach (KeyValuePair<uint, XRDataBuffer> pair in buffersByBinding)
         {
             XRDataBuffer buffer = pair.Value;
-            if (BackendContext.GetOrCreateAPIRenderObject(buffer, generateNow: allowSynchronousUpload) is not VkDataBuffer vkBuffer ||
+            if (WrapperLookup.GetOrCreate(buffer, generateNow: allowSynchronousUpload) is not VkDataBuffer vkBuffer ||
                 !vkBuffer.TryCaptureComputeBufferSnapshot(allowSynchronousUpload, out VulkanComputeBufferBinding bufferBinding))
             {
                 bufferBinding = new VulkanComputeBufferBinding(buffer, default, 0UL, 0);
@@ -778,10 +780,10 @@ internal unsafe partial class VkRenderProgram
             }
         }
 
-        BackendContext.ProgramServices.TrackBufferBinding(buffer);
     }
 
-    private void DispatchCompute(
+    internal void HandlePlannerDispatch(
+        VulkanProgramPlannerPort planner,
         uint x,
         uint y,
         uint z,
@@ -796,7 +798,7 @@ internal unsafe partial class VkRenderProgram
         int gx = x > int.MaxValue ? int.MaxValue : (int)x;
         int gy = y > int.MaxValue ? int.MaxValue : (int)y;
         int gz = z > int.MaxValue ? int.MaxValue : (int)z;
-        BackendContext.ProgramServices.DispatchCompute(this, gx, gy, gz);
+        planner.DispatchCompute(this, gx, gy, gz);
     }
 
 }

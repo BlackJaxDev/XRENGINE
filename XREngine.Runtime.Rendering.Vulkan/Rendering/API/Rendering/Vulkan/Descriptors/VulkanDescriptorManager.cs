@@ -33,7 +33,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
     private int _meshOwnershipDiagnosticCount;
     private int _frameSlotCount = 2;
     private VulkanBackendObjectContext? _backendContext;
-    private VulkanCommandRuntime? _commandRuntime;
+    private VulkanWrapperLookupPort? _wrapperLookup;
     private VulkanFrameTelemetry? _frameTelemetry;
     private int _desktopFrameSlot;
 
@@ -41,17 +41,17 @@ internal sealed unsafe partial class VulkanDescriptorManager
         => _backendContext ?? throw new InvalidOperationException("The descriptor manager has no published backend-object context.");
     private Vk Api => BackendContext.Api;
     private VulkanDeviceContext DeviceContext => BackendContext.DeviceContext;
-    private VulkanCommandRuntime CommandRuntime
-        => _commandRuntime ?? throw new InvalidOperationException("The descriptor manager has no published command runtime.");
     private VulkanFrameTelemetry FrameTelemetry
         => _frameTelemetry ?? throw new InvalidOperationException("The descriptor manager has no published frame telemetry.");
     private VulkanResourceRuntime ResourceRuntime => BackendContext.Resources;
+    private VulkanWrapperLookupPort WrapperLookup
+        => _wrapperLookup ?? throw new InvalidOperationException("The descriptor manager has no published Vulkan wrapper lookup port.");
     private int CurrentDesktopFrameSlot => Volatile.Read(ref _desktopFrameSlot);
-    private bool AllowSynchronousResourceUploads => BackendContext.AllowSynchronousResourceUploads;
+    private bool AllowSynchronousResourceUploads => BackendContext.Resources.AllowSynchronousResourceUploads;
 
     private T? GenericToAPI<T>(GenericRenderObject data)
         where T : class
-        => BackendContext.GetOrCreateAPIRenderObject(data) as T;
+        => WrapperLookup.GetOrCreate(data) as T;
 
     private void RecordVulkanDescriptorTableGeneration(string _) => ResourceRuntime.DescriptorLifetime.RecordTableGeneration();
     private void SetDebugDescriptorSetName(DescriptorSet set, string name) => ResourceRuntime.DescriptorLifetime.SetDebugName(set, name);
@@ -62,7 +62,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
         BufferUsageFlags usage,
         MemoryPropertyFlags properties,
         bool enableDeviceAddress = false)
-        => BackendContext.Buffers.CreateRaw(
+        => BackendContext.Resources.Buffers.CreateRaw(
             BackendContext,
             size,
             usage,
@@ -71,13 +71,13 @@ internal sealed unsafe partial class VulkanDescriptorManager
             "DescriptorHeap");
 
     private bool TryMapBufferMemory(Buffer buffer, DeviceMemory memory, ulong offset, ulong length, out void* mapped)
-        => BackendContext.Buffers.TryMap(BackendContext, buffer, memory, offset, length, out mapped);
+        => BackendContext.Resources.Buffers.TryMap(BackendContext, buffer, memory, offset, length, out mapped);
     private void UnmapBufferMemory(Buffer buffer, DeviceMemory memory)
-        => BackendContext.Buffers.Unmap(BackendContext, buffer, memory);
+        => BackendContext.Resources.Buffers.Unmap(BackendContext, buffer, memory);
     private void DestroyBuffer(Buffer buffer, DeviceMemory memory)
-        => BackendContext.Buffers.DestroyUnpublished(BackendContext, buffer, memory);
+        => BackendContext.Resources.Buffers.DestroyUnpublished(BackendContext, buffer, memory);
     private ulong GetBufferDeviceAddress(Buffer buffer)
-        => BackendContext.Buffers.GetDeviceAddress(BackendContext, buffer);
+        => BackendContext.Resources.Buffers.GetDeviceAddress(BackendContext, buffer);
 
     internal Sampler[] CanonicalImmutableSamplers { get; } = new Sampler[5];
 
@@ -135,18 +135,18 @@ internal sealed unsafe partial class VulkanDescriptorManager
 
     internal void ConfigureDeviceServices(
         VulkanBackendObjectContext context,
-        VulkanCommandRuntime commandRuntime,
-        VulkanFrameTelemetry frameTelemetry)
+        VulkanFrameTelemetry frameTelemetry,
+        VulkanWrapperLookupPort wrapperLookup)
     {
         PublishBackendObjectContext(context);
-        ArgumentNullException.ThrowIfNull(commandRuntime);
         ArgumentNullException.ThrowIfNull(frameTelemetry);
-        if (Interlocked.CompareExchange(ref _commandRuntime, commandRuntime, null) is { } currentRuntime &&
-            !ReferenceEquals(currentRuntime, commandRuntime))
-            throw new InvalidOperationException("The descriptor manager already owns a different command runtime.");
+        ArgumentNullException.ThrowIfNull(wrapperLookup);
         if (Interlocked.CompareExchange(ref _frameTelemetry, frameTelemetry, null) is { } currentTelemetry &&
             !ReferenceEquals(currentTelemetry, frameTelemetry))
             throw new InvalidOperationException("The descriptor manager already owns different frame telemetry.");
+        if (Interlocked.CompareExchange(ref _wrapperLookup, wrapperLookup, null) is { } currentLookup &&
+            !ReferenceEquals(currentLookup, wrapperLookup))
+            throw new InvalidOperationException("The descriptor manager already owns a different Vulkan wrapper lookup port.");
     }
 
     internal void PublishFrameSlot(int frameSlot)

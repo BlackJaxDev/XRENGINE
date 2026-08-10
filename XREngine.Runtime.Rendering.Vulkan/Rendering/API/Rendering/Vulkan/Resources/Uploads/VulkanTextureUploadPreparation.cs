@@ -12,22 +12,36 @@ using Image = Silk.NET.Vulkan.Image;
 
 namespace XREngine.Rendering.Vulkan;
 
+/// <summary>
+/// Frozen authority inputs for one imported-texture upload scheduling sequence.
+/// The upload service retains this concrete request rather than a renderer facade.
+/// </summary>
+internal readonly record struct VulkanTextureUploadSchedulingContext(
+    VulkanBackendObjectContext BackendObjects,
+    VulkanResourceRuntime Resources,
+    VulkanCommandRuntime Commands,
+    VulkanFrameOperationQueue Operations,
+    FrameOpContext FrameContext)
+{
+    internal bool IsDeviceOperational => BackendObjects.IsDeviceOperational;
+}
+
 internal sealed partial class VulkanTextureUploadService
 {
-    private void EnsurePrepDrainScheduled(VulkanRenderer renderer)
+    private void EnsurePrepDrainScheduled(VulkanTextureUploadSchedulingContext context)
     {
         if (Interlocked.CompareExchange(ref _prepDrainScheduled, 1, 0) != 0)
             return;
 
         RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadCoroutine(
-            () => DrainQueuedUploadPreparation(renderer),
+            () => DrainQueuedUploadPreparation(context),
             "VulkanTextureUploadService.DrainUploadPrepQueue",
             RenderThreadJobKind.TextureUpload);
     }
 
-    private bool DrainQueuedUploadPreparation(VulkanRenderer renderer)
+    private bool DrainQueuedUploadPreparation(VulkanTextureUploadSchedulingContext context)
     {
-        if (renderer.IsDeviceLost)
+        if (!context.IsDeviceOperational)
         {
             CancelQueuedPreparation("Vulkan device was lost before upload preparation");
             Interlocked.Exchange(ref _prepDrainScheduled, 0);
@@ -37,16 +51,6 @@ internal sealed partial class VulkanTextureUploadService
         double prepBudgetMilliseconds = ResolvePrepBudgetMilliseconds();
         long drainStart = TextureRuntimeDiagnostics.StartTiming();
         int preparedThisDrain = 0;
-
-        if (renderer.ShouldDeferTextureUploadPreparationForOpenXrPriority(out string openXrResourceReason))
-        {
-            XREngine.Debug.VulkanWarningEvery(
-                $"VulkanTextureUploadService.OpenXrPriorityDeferred.{renderer.GetHashCode()}",
-                TimeSpan.FromSeconds(1),
-                "[VulkanTextureUploadService] Deferring imported texture upload preparation: {0}",
-                openXrResourceReason);
-            return HasQueuedPrepWorkOrCompleteDrain();
-        }
 
         while (TryDequeueBestPrepJob(out VulkanImportedTextureUploadJob job))
         {
@@ -68,7 +72,7 @@ internal sealed partial class VulkanTextureUploadService
             }
 
             VulkanImportedTextureUploadPrepResult prepResult = TryPrepareAndEnqueueImportedTextureUpload(
-                renderer,
+                context,
                 job,
                 drainStart,
                 prepBudgetMilliseconds);
@@ -93,13 +97,13 @@ internal sealed partial class VulkanTextureUploadService
     }
 
     private VulkanImportedTextureUploadPrepResult TryPrepareAndEnqueueImportedTextureUpload(
-        VulkanRenderer renderer,
+        VulkanTextureUploadSchedulingContext context,
         VulkanImportedTextureUploadJob job,
         long drainStart,
         double prepBudgetMilliseconds)
     {
         VulkanImportedTextureUploadRequest request = job.Request;
-        if (renderer.IsDeviceLost)
+        if (!context.IsDeviceOperational)
         {
             RecordState(request, VulkanTextureUploadGenerationState.Canceled, "Vulkan device was lost before upload preparation");
             Interlocked.Increment(ref s_canceledStaleUploads);
@@ -117,7 +121,7 @@ internal sealed partial class VulkanTextureUploadService
 
         try
         {
-            if (!EnsureJobPreparation(renderer, job, out VulkanImportedTextureUploadPreparation? preparation, out string? failureReason)
+            if (!EnsureJobPreparation(context, job, out VulkanImportedTextureUploadPreparation? preparation, out string? failureReason)
                 || preparation is null)
             {
                 if (IsRetryableVulkanAllocationPressure(failureReason))
@@ -150,7 +154,7 @@ internal sealed partial class VulkanTextureUploadService
             }
 
             if (RenderDiagnosticsFlags.VkTextureUploadPrepWorker)
-                return TryDrainWorkerPreparation(renderer, job, preparation);
+                return TryDrainWorkerPreparation(context, job, preparation);
 
             while (true)
             {
@@ -231,7 +235,7 @@ internal sealed partial class VulkanTextureUploadService
                         request,
                         VulkanTextureUploadGenerationState.PrepReady,
                         $"prepared upload token={pendingUpload.PublicationToken} prepMs={prepMilliseconds:F3} stagingMips={pendingUpload.StagingResources.Length}");
-                    QueuePreparedImportedTextureUpload(renderer, pendingUpload, prepMilliseconds, workerPrepared: false);
+                    QueuePreparedImportedTextureUpload(context, pendingUpload, prepMilliseconds, workerPrepared: false);
                     return VulkanImportedTextureUploadPrepResult.Completed;
                 }
 
@@ -265,7 +269,7 @@ internal sealed partial class VulkanTextureUploadService
     }
 
     private bool EnsureJobPreparation(
-        VulkanRenderer renderer,
+        VulkanTextureUploadSchedulingContext context,
         VulkanImportedTextureUploadJob job,
         out VulkanImportedTextureUploadPreparation? preparation,
         out string? failureReason)
@@ -281,7 +285,7 @@ internal sealed partial class VulkanTextureUploadService
             return false;
         }
 
-        if (renderer.GetOrCreateAPIRenderObject(texture, generateNow: false) is not VkTexture2D vkTexture)
+        if (context.Resources.WrapperLookup.GetOrCreate(texture, generateNow: false) is not VkTexture2D vkTexture)
         {
             failureReason = "Vulkan texture wrapper could not be resolved for imported texture upload.";
             return false;
@@ -319,7 +323,7 @@ internal sealed partial class VulkanTextureUploadService
     }
 
     private VulkanImportedTextureUploadPrepResult TryDrainWorkerPreparation(
-        VulkanRenderer renderer,
+        VulkanTextureUploadSchedulingContext context,
         VulkanImportedTextureUploadJob job,
         VulkanImportedTextureUploadPreparation preparation)
     {
@@ -335,7 +339,7 @@ internal sealed partial class VulkanTextureUploadService
                 return VulkanImportedTextureUploadPrepResult.Canceled;
             }
 
-            job.WorkerPrepTask = Task.Run(() => RunWorkerPreparation(renderer, preparation));
+            job.WorkerPrepTask = Task.Run(() => RunWorkerPreparation(context, preparation));
             return VulkanImportedTextureUploadPrepResult.Deferred;
         }
 
@@ -393,12 +397,12 @@ internal sealed partial class VulkanTextureUploadService
             job.Request,
             VulkanTextureUploadGenerationState.PrepReady,
             $"worker prepared upload token={workerResult.PendingUpload.PublicationToken} prepMs={workerResult.PrepMilliseconds:F3} stagingMips={workerResult.PendingUpload.StagingResources.Length}");
-        QueuePreparedImportedTextureUpload(renderer, workerResult.PendingUpload, workerResult.PrepMilliseconds, workerPrepared: true);
+        QueuePreparedImportedTextureUpload(context, workerResult.PendingUpload, workerResult.PrepMilliseconds, workerPrepared: true);
         return VulkanImportedTextureUploadPrepResult.Completed;
     }
 
     private static VulkanImportedTextureUploadWorkerResult RunWorkerPreparation(
-        VulkanRenderer renderer,
+        VulkanTextureUploadSchedulingContext context,
         VulkanImportedTextureUploadPreparation preparation)
     {
         long prepStart = TextureRuntimeDiagnostics.StartTiming();
@@ -407,7 +411,7 @@ internal sealed partial class VulkanTextureUploadService
             if (RuntimeRenderingHostServices.FrameTiming.IsRenderThread)
                 throw new InvalidOperationException("Vulkan upload worker preparation must not run on the render thread or touch active frame command buffers.");
 
-            lock (renderer.TextureUploadContextSync)
+            lock (context.Resources.TextureUploadContextSync)
             {
                 bool completed = false;
                 VulkanImportedTexturePendingUpload? pendingUpload = null;
@@ -473,14 +477,13 @@ internal sealed partial class VulkanTextureUploadService
             return false;
 
         return failureReason.Contains("Vulkan image allocation failed", StringComparison.OrdinalIgnoreCase)
-            || VulkanRenderer.IsExpectedVulkanImageAllocationDeferral(failureReason)
             || failureReason.Contains("out of device memory", StringComparison.OrdinalIgnoreCase)
             || failureReason.Contains("out-of-device", StringComparison.OrdinalIgnoreCase)
             || failureReason.Contains("ErrorOutOfDeviceMemory", StringComparison.OrdinalIgnoreCase);
     }
 
     private void QueuePreparedImportedTextureUpload(
-        VulkanRenderer renderer,
+        VulkanTextureUploadSchedulingContext context,
         VulkanImportedTexturePendingUpload pendingUpload,
         double prepMilliseconds,
         bool workerPrepared)
@@ -488,7 +491,7 @@ internal sealed partial class VulkanTextureUploadService
         VulkanImportedTextureUploadRequest request = pendingUpload.Request;
         string? transferFailure = null;
         if (RenderDiagnosticsFlags.VkTextureUploadTransferQueue
-            && renderer.CommandRuntime.TrySubmitImportedTextureUploadToTransferQueue(
+            && context.Commands.TrySubmitImportedTextureUploadToTransferQueue(
                 pendingUpload,
                 out VulkanSubmittedImportedTextureUpload? submitted,
                 out transferFailure)
@@ -503,7 +506,7 @@ internal sealed partial class VulkanTextureUploadService
                 request,
                 VulkanTextureUploadGenerationState.TransferSubmitted,
                 $"submitted transfer-queue upload token={pendingUpload.PublicationToken} prepMs={prepMilliseconds:F3} workerPrep={workerPrepared}");
-            EnsureTransferDrainScheduled(renderer);
+            EnsureTransferDrainScheduled(context);
             return;
         }
 
@@ -520,7 +523,10 @@ internal sealed partial class VulkanTextureUploadService
             request,
             VulkanTextureUploadGenerationState.GpuUploadPending,
             "queued graphics-frame texture upload op");
-        renderer.EnqueueImportedTextureUpload(pendingUpload);
+        context.Commands.EnqueuePreparedTextureUpload(
+            context.Operations,
+            context.FrameContext,
+            pendingUpload);
     }
 
 }

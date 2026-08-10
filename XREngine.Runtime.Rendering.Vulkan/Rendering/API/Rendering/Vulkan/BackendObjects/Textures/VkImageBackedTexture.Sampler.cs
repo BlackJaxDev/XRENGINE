@@ -19,7 +19,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     {
         if (_sampler.Handle != 0)
         {
-            BackendContext.Samplers.Retire(_sampler, GetType().Name);
+            BackendContext.Resources.Samplers.Retire(_sampler, GetType().Name);
             _sampler = default;
         }
     }

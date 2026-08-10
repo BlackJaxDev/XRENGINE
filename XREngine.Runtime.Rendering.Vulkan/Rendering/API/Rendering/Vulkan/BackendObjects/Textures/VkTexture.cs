@@ -10,6 +10,11 @@ internal abstract class VkTexture<T>(
     IRenderApiWrapperOwner owner,
     T data) : VkObject<T>(backendContext, owner, data) where T : XRTexture
 {
+    private VulkanResourcePublicationPort? _resourcePublicationPort;
+    protected VulkanResourcePublicationPort ResourcePublications => _resourcePublicationPort ?? throw new InvalidOperationException("Texture publication port has not been bound.");
+
+    protected override void BindOperationPorts(VulkanWrapperPortBinding binding)
+        => _resourcePublicationPort = binding.TryGetResourcePublications();
     public XREvent<VulkanPrePushDataCallback>? PrePushData;
     public XREvent<VkTexture<T>>? PostPushData;
 
@@ -346,7 +351,10 @@ internal abstract class VkTexture<T>(
         if (string.IsNullOrWhiteSpace(resourceName))
             return true;
 
-        if (!BackendContext.Planner.TryGetPhysicalImageGroup(resourceName, out group) || group is null)
+        if (!ResourcePublications.TryGetPhysicalImageGroup(
+                ResourcePublications.GetCurrentGeneration(),
+                resourceName,
+                out group) || group is null)
             return true;
 
         if (ensureAllocated &&

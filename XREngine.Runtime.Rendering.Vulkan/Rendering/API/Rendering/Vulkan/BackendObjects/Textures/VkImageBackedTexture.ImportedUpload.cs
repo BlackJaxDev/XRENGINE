@@ -422,7 +422,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             PQueueFamilyIndices = uploadQueueFamilyCount > 0 ? uploadQueueFamilies : null,
         };
 
-        Result createResult = BackendContext.Images.CreateOwnedImage(
+        Result createResult = BackendContext.Resources.Images.CreateOwnedImage(
             BackendContext,
             ref imageInfo,
             "VkImageBackedTexture.ImportedUpload",
@@ -438,25 +438,25 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         VulkanMemoryAllocation allocation;
         try
         {
-            allocation = BackendContext.Images.AllocateOwnedImageMemory(BackendContext, image, MemoryProperties);
+            allocation = BackendContext.Resources.Images.AllocateOwnedImageMemory(BackendContext, image, MemoryProperties);
         }
         catch (Exception ex)
         {
-            BackendContext.Images.DestroyUnpublishedOwnedImage(BackendContext, image, "ImportedUpload.AllocationFailure");
+            BackendContext.Resources.Images.DestroyUnpublishedOwnedImage(BackendContext, image, "ImportedUpload.AllocationFailure");
             image = default;
             failureReason = ex.Message;
             return false;
         }
 
-        BackendContext.Images.RegisterOwnedImageAllocation(image, in allocation);
+        BackendContext.Resources.Images.RegisterOwnedImageAllocation(image, in allocation);
         memory = allocation.Memory;
 
         Result bindResult = Api!.BindImageMemory(Device, image, allocation.Memory, allocation.Offset);
         if (bindResult != Result.Success)
         {
-            BackendContext.Images.RemoveOwnedImageAllocation(image);
-            BackendContext.Images.DestroyUnpublishedOwnedImage(BackendContext, image, "ImportedUpload.BindFailure");
-            BackendContext.Images.FreeMemory(BackendContext, in allocation);
+            BackendContext.Resources.Images.RemoveOwnedImageAllocation(image);
+            BackendContext.Resources.Images.DestroyUnpublishedOwnedImage(BackendContext, image, "ImportedUpload.BindFailure");
+            BackendContext.Resources.Images.FreeMemory(BackendContext, in allocation);
             image = default;
             memory = default;
             failureReason = $"failed to bind synchronized imported texture image memory ({bindResult})";
@@ -499,7 +499,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (Api!.CreateImageView(Device, ref viewInfo, null, out ImageView created) != Result.Success)
             throw new Exception("Failed to create synchronized imported texture image view.");
 
-        BackendContext.Images.RegisterView(created, in viewInfo, "VkImageBackedTexture.ImportedUploadView");
+        BackendContext.Resources.Images.RegisterView(created, in viewInfo, "VkImageBackedTexture.ImportedUploadView");
         return created;
     }
 
@@ -572,12 +572,12 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         for (int i = 0; i < stagingResources.Length; i++)
         {
             VulkanImportedTextureUploadStagingResource staging = stagingResources[i];
-            BackendContext.Buffers.Retire(staging.Buffer, staging.Memory, "VkImageBackedTexture.ImportedUpload.DisposePreparedResources");
+            BackendContext.Resources.Buffers.Retire(staging.Buffer, staging.Memory, "VkImageBackedTexture.ImportedUpload.DisposePreparedResources");
         }
 
         if (image.Handle != 0 || memory.Handle != 0 || imageView.Handle != 0 || sampler.Handle != 0)
         {
-            BackendContext.Images.RetireOwnedResources(new RetiredImageResources(
+            BackendContext.Resources.Images.RetireOwnedResources(new RetiredImageResources(
                 image,
                 memory,
                 imageView,
@@ -650,8 +650,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             PostGenerated();
         }
 
-        BackendContext.Descriptors.RefreshGlobalMaterialTextureDescriptorForPublishedTexture(Data);
-        BackendContext.Images.RetireOwnedResources(
+        BackendContext.Resources.Descriptors.RefreshGlobalMaterialTextureDescriptorForPublishedTexture(Data);
+        BackendContext.Resources.Images.RetireOwnedResources(
             in previousResources,
             "VkImageBackedTexture.ImportedUpload.Publish");
         if (previousResources.AllocatedVRAMBytes > 0)

@@ -287,9 +287,9 @@ namespace XREngine.Rendering.Vulkan
             Exception? firstError = null;
 
             bool indirectLabelActive = false;
-            if (CanRecordCommandBufferDebugLabels)
+            if (_deviceContext.CanRecordCommandBufferDebugLabels)
             {
-                indirectLabelActive = CmdBeginLabel(recordingState.CommandBuffer, $"IndirectCommandChainSecondary[{runCount}]");
+                indirectLabelActive = _deviceContext.CmdBeginLabel(recordingState.CommandBuffer, $"IndirectCommandChainSecondary[{runCount}]");
             }
 
             try
@@ -513,7 +513,7 @@ namespace XREngine.Rendering.Vulkan
                 Array.Clear(recordingStates, 0, runCount);
                 Array.Clear(recordingStatePrepared, 0, runCount);
                 if (indirectLabelActive)
-                    CmdEndLabel(recordingState.CommandBuffer);
+                    _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
             }
         }
 
@@ -900,8 +900,8 @@ namespace XREngine.Rendering.Vulkan
             int recordJobCount = 0;
             bool meshLabelActive = false;
 
-            if (CanRecordCommandBufferDebugLabels)
-                meshLabelActive = CmdBeginLabel(recordingState.CommandBuffer, "ScheduledMeshCommandChainSecondary");
+            if (_deviceContext.CanRecordCommandBufferDebugLabels)
+                meshLabelActive = _deviceContext.CmdBeginLabel(recordingState.CommandBuffer, "ScheduledMeshCommandChainSecondary");
 
             try
             {
@@ -1373,15 +1373,7 @@ namespace XREngine.Rendering.Vulkan
                 // same frozen recording services. Keep this context alive until
                 // every job has finished; resetting it in the parallel wait path
                 // made any serial fallback fail deterministically.
-                batch.PreparedWorkerContext.Prepare(
-                    _commandRuntime,
-                    _frameTelemetry,
-                    new VulkanTrackedCommandEncoder(
-                        Api!,
-                        _deviceContext,
-                        _commandRuntime,
-                        ResourceRuntime),
-                    VulkanFrameCounter);
+                batch.PreparedWorkerContext.Prepare(VulkanFrameCounter);
 
                 int serialRecordedCount = 0;
                 int conflictCount = schedulingConflictCount;
@@ -1506,7 +1498,7 @@ namespace XREngine.Rendering.Vulkan
                     batch.ClearReferences();
 
                 if (meshLabelActive)
-                    CmdEndLabel(recordingState.CommandBuffer);
+                    _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
             }
         }
 
@@ -1956,8 +1948,8 @@ namespace XREngine.Rendering.Vulkan
             bool secondaryRecordingFinished = false;
             int[] drawUniformSlots = recordingState.RecordingScratch.MeshSecondaryUniformSlots;
 
-            if (CanRecordCommandBufferDebugLabels)
-                meshLabelActive = CmdBeginLabel(recordingState.CommandBuffer, $"MeshCommandChainSecondary[{runCount}]");
+            if (_deviceContext.CanRecordCommandBufferDebugLabels)
+                meshLabelActive = _deviceContext.CmdBeginLabel(recordingState.CommandBuffer, $"MeshCommandChainSecondary[{runCount}]");
 
             try
             {
@@ -2179,7 +2171,7 @@ namespace XREngine.Rendering.Vulkan
                 Array.Clear(drawUniformSlots, 0, Math.Min(runCount, drawUniformSlots.Length));
 
                 if (meshLabelActive)
-                    CmdEndLabel(recordingState.CommandBuffer);
+                    _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
             }
         }
     }

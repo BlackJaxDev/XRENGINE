@@ -89,7 +89,7 @@ internal unsafe class VkRenderProgramPipeline(
         EnsureLayouts();
 
         if (pipelineCache.Handle == 0)
-            pipelineCache = BackendContext.Pipelines.ActivePipelineCache;
+            pipelineCache = BackendContext.Resources.PipelineManager.ActivePipelineCache;
 
         PipelineShaderStageCreateInfo[] stages = EnumerateShaderStages(VulkanProgramUtilities.GraphicsStageMask).ToArray();
         if (stages.Length == 0)
@@ -101,11 +101,11 @@ internal unsafe class VkRenderProgramPipeline(
             pipelineInfo.PStages = stagesPtr;
             pipelineInfo.Layout = _pipelineLayout;
 
-            Result result = BackendContext.Pipelines.CreateGraphicsPipelinesSynchronized(pipelineCache, ref pipelineInfo, out Pipeline pipeline);
+            Result result = BackendContext.Resources.PipelineManager.CreateGraphicsPipelinesSynchronized(pipelineCache, ref pipelineInfo, out Pipeline pipeline);
             if (result != Result.Success)
                 throw new InvalidOperationException($"Failed to create graphics pipeline ({result}).");
 
-            BackendContext.ProgramServices.RegisterPipeline(pipeline, "VkRenderProgramPipeline.Graphics");
+            ProgramCreationPort.RegisterPipeline(pipeline, "VkRenderProgramPipeline.Graphics");
             return pipeline;
         }
     }
@@ -115,7 +115,7 @@ internal unsafe class VkRenderProgramPipeline(
         EnsureLayouts();
 
         if (pipelineCache.Handle == 0)
-            pipelineCache = BackendContext.Pipelines.ActivePipelineCache;
+            pipelineCache = BackendContext.Resources.PipelineManager.ActivePipelineCache;
 
         PipelineShaderStageCreateInfo computeStage = EnumerateShaderStages(EProgramStageMask.ComputeShaderBit).SingleOrDefault();
         if (computeStage.Module.Handle == 0)
@@ -124,11 +124,11 @@ internal unsafe class VkRenderProgramPipeline(
         pipelineInfo.Stage = computeStage;
         pipelineInfo.Layout = _pipelineLayout;
 
-        Result result = BackendContext.Pipelines.CreateComputePipelinesSynchronized(pipelineCache, ref pipelineInfo, out Pipeline pipeline);
+        Result result = BackendContext.Resources.PipelineManager.CreateComputePipelinesSynchronized(pipelineCache, ref pipelineInfo, out Pipeline pipeline);
         if (result != Result.Success)
             throw new InvalidOperationException($"Failed to create compute pipeline ({result}).");
 
-        BackendContext.ProgramServices.RegisterPipeline(pipeline, "VkRenderProgramPipeline.Compute");
+        ProgramCreationPort.RegisterPipeline(pipeline, "VkRenderProgramPipeline.Compute");
         return pipeline;
     }
 
@@ -151,7 +151,7 @@ internal unsafe class VkRenderProgramPipeline(
 
         IEnumerable<DescriptorBindingInfo> bindingInfos = _stagePrograms.Values.SelectMany(p => p.DescriptorBindings);
         string pipelineName = Data.Name ?? "UnnamedPipeline";
-        var result = VulkanProgramUtilities.BuildDescriptorLayoutsShared(BackendContext.Descriptors, bindingInfos, pipelineName);
+        var result = VulkanProgramUtilities.BuildDescriptorLayoutsShared(BackendContext.Resources.Descriptors, bindingInfos, pipelineName);
 
         _descriptorSetLayouts = result.Layouts;
         _descriptorBindings.Clear();
@@ -166,7 +166,7 @@ internal unsafe class VkRenderProgramPipeline(
         if (_descriptorSetLayouts.Length > 0)
         {
             foreach (DescriptorSetLayout layout in _descriptorSetLayouts)
-                BackendContext.Descriptors.ReleaseProgramDescriptorSetLayout(layout);
+                BackendContext.Resources.Descriptors.ReleaseProgramDescriptorSetLayout(layout);
 
             _descriptorSetLayouts = Array.Empty<DescriptorSetLayout>();
         }
@@ -196,7 +196,7 @@ internal unsafe class VkRenderProgramPipeline(
             };
             if (Api!.CreatePipelineLayout(Device, ref info, null, out _pipelineLayout) != Result.Success)
                 throw new InvalidOperationException("Failed to create pipeline layout for pipeline object.");
-            BackendContext.ProgramServices.TrackPipelineLayout(_pipelineLayout, "VkRenderProgramPipeline.PipelineLayout");
+            ProgramCreationPort.TrackPipelineLayout(_pipelineLayout, "VkRenderProgramPipeline.PipelineLayout");
             return;
         }
 
@@ -215,7 +215,7 @@ internal unsafe class VkRenderProgramPipeline(
 
             if (Api!.CreatePipelineLayout(Device, ref info, null, out _pipelineLayout) != Result.Success)
                 throw new InvalidOperationException("Failed to create pipeline layout for pipeline object.");
-            BackendContext.ProgramServices.TrackPipelineLayout(_pipelineLayout, "VkRenderProgramPipeline.PipelineLayout");
+            ProgramCreationPort.TrackPipelineLayout(_pipelineLayout, "VkRenderProgramPipeline.PipelineLayout");
         }
     }
 
@@ -227,7 +227,7 @@ internal unsafe class VkRenderProgramPipeline(
         PipelineLayout pipelineLayout = _pipelineLayout;
         _pipelineLayout = default;
 
-        if (BackendContext.ProgramServices.TryBeginDestroyPipelineLayout(pipelineLayout, owner))
+        if (ProgramCreationPort.TryBeginDestroyPipelineLayout(pipelineLayout, owner))
             Api!.DestroyPipelineLayout(Device, pipelineLayout, null);
     }
 

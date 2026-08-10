@@ -6,90 +6,90 @@ namespace XREngine.Rendering.Vulkan;
 /// Renderer boundary for deferred resource retirement. Queue ownership and drain
 /// decisions live in the resource and command authorities.
 /// </summary>
-public unsafe partial class VulkanRenderer
+internal sealed unsafe partial class VulkanFrameLoop
 {
-    private void DrainRetiredCommandPools(int frameSlot, int maxItems = 16)
+    internal void DrainRetiredCommandPools(int frameSlot, int maxItems = 16)
         => _commandRuntime.DrainRetiredCommandPools(
-            Api!,
+            Api,
             _deviceContext.Device,
             ResourceRuntime,
             frameSlot,
             maxItems);
 
-    private void DrainRetiredCommandBuffers(int frameSlot, int maxItems = 128)
+    internal void DrainRetiredCommandBuffers(int frameSlot, int maxItems = 128)
         => _commandRuntime.DrainRetiredCommandBuffers(
-            Api!,
+            Api,
             _deviceContext.Device,
             ResourceRuntime,
             frameSlot,
             maxItems);
 
-    private void DrainRetiredPipelines(int frameSlot, int maxItems = 8)
+    internal void DrainRetiredPipelines(int frameSlot, int maxItems = 8)
         => ResourceRuntime.DrainRetiredPipelines(
-            Api!,
+            Api,
             _deviceContext.Device,
             frameSlot,
             maxItems);
 
-    private void RetireDescriptorPool(DescriptorPool descriptorPool)
+    internal void RetireDescriptorPool(DescriptorPool descriptorPool)
         => ResourceRuntime.DescriptorLifetime.RetireDescriptorPool(descriptorPool);
 
-    private void DrainRetiredDescriptorPools(int frameSlot, int maxItems = int.MaxValue)
+    internal void DrainRetiredDescriptorPools(int frameSlot, int maxItems = int.MaxValue)
         => ResourceRuntime.DrainRetiredDescriptorPools(
-            Api!,
+            Api,
             _deviceContext.Device,
             frameSlot,
             maxItems);
 
-    private void DrainRetiredDescriptorSets(int frameSlot, int maxItems = int.MaxValue)
+    internal void DrainRetiredDescriptorSets(int frameSlot, int maxItems = int.MaxValue)
         => ResourceRuntime.DrainRetiredDescriptorSets(
-            Api!,
+            Api,
             _deviceContext.Device,
             frameSlot,
             maxItems);
 
-    private void RetireQueryPool(QueryPool queryPool)
-        => ResourceRuntime.RetireQueryPool(queryPool, "VulkanRenderer.QueryPool");
+    internal void RetireQueryPool(QueryPool queryPool)
+        => ResourceRuntime.RetireQueryPool(queryPool, "VulkanFrameLoop.QueryPool");
 
-    private void DrainRetiredQueryPools(int frameSlot, int maxItems = 32)
+    internal void DrainRetiredQueryPools(int frameSlot, int maxItems = 32)
         => ResourceRuntime.DrainRetiredQueryPools(
-            Api!,
+            Api,
             _deviceContext.Device,
             frameSlot,
             maxItems);
 
-    private void DrainRetiredBufferViews(int frameSlot, int maxItems = 64)
+    internal void DrainRetiredBufferViews(int frameSlot, int maxItems = 64)
         => ResourceRuntime.DrainRetiredBufferViews(
-            Api!,
+            Api,
             _deviceContext.Device,
             frameSlot,
             maxItems);
 
     internal void ReleaseDescriptorReferencesForPhysicalResourceDestruction(string reason)
-        => ResourceRuntime.ReleaseDescriptorReferencesForPhysicalResourceDestruction(
-            _commandRuntime,
-            reason);
+        => ResourceRuntime.ReleaseDescriptorReferencesForPhysicalResourceDestruction(reason);
 
-    private void DrainRetiredFramebuffers(int frameSlot, int maxItems = 64)
+    internal void DrainRetiredFramebuffers(int frameSlot, int maxItems = 64)
         => ResourceRuntime.DrainRetiredFramebuffers(
-            Api!,
+            Api,
             _deviceContext.Device,
             frameSlot,
             maxItems);
 
     internal void RetireBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)
-        => ResourceRuntime.Buffers.Retire(buffer, memory, "VulkanRenderer.Buffer");
+        => ResourceRuntime.Buffers.Retire(buffer, memory, "VulkanFrameLoop.Buffer");
 
-    private void DrainRetiredBuffers(int frameSlot, int maxItems = 256)
+    internal void DrainRetiredBuffers(int frameSlot, int maxItems = 256)
     {
         int pooledBuffers = ResourceRuntime.DrainRetiredBuffers(
-            Api!,
+            Api,
             _deviceContext.Device,
-            _frameTelemetry,
+            _telemetry,
             frameSlot,
             maxItems);
         if (pooledBuffers != 0)
-            ResourceRuntime.Allocations.Staging.Trim(OutputRuntime);
+            ResourceRuntime.Allocations.Staging.Trim(
+                ResourceRuntime.BackendObjectContext ?? throw new InvalidOperationException(
+                    "The Vulkan backend object context is not initialized."));
     }
 
     internal void WaitForAllInFlightWork()
@@ -111,24 +111,24 @@ public unsafe partial class VulkanRenderer
     {
         RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
             new FrameOutputWorkTelemetry(ForceFlushes: 1));
-        BeginForcedVulkanRetirementDrain();
+        ResourceRuntime.BeginForcedRetirementDrain();
         try
         {
             ForceFlushCompletedNonImageRetiredResources();
-            for (int pass = 0; pass < MAX_FRAMES_IN_FLIGHT; pass++)
-            for (int frameSlot = 0; frameSlot < MAX_FRAMES_IN_FLIGHT; frameSlot++)
+            for (int pass = 0; pass < FrameSlotCount; pass++)
+            for (int frameSlot = 0; frameSlot < FrameSlotCount; frameSlot++)
                 ResourceRuntime.DrainRetiredImages(
-                    Api!,
+                    Api,
                     _deviceContext.Device,
                     frameSlot,
                     int.MaxValue);
         }
         finally
         {
-            EndForcedVulkanRetirementDrain();
+            ResourceRuntime.EndForcedRetirementDrain();
         }
 
-        LogVulkanResourceLifetimeDiagnostics(
+        ResourceRuntime.LogLifetimeDiagnostics(
             IsDeviceLost ? "device-loss-force-destroy" : "force-flush-completed");
     }
 
@@ -142,7 +142,7 @@ public unsafe partial class VulkanRenderer
 
     internal void ForceFlushCompletedNonImageRetiredResources()
     {
-        for (int frameSlot = 0; frameSlot < MAX_FRAMES_IN_FLIGHT; frameSlot++)
+        for (int frameSlot = 0; frameSlot < FrameSlotCount; frameSlot++)
         {
             DrainRetiredCommandBuffers(frameSlot, int.MaxValue);
             DrainRetiredCommandPools(frameSlot, int.MaxValue);
@@ -150,9 +150,9 @@ public unsafe partial class VulkanRenderer
             DrainRetiredDescriptorPools(frameSlot, int.MaxValue);
             DrainRetiredPipelines(frameSlot, int.MaxValue);
             ResourceRuntime.DrainRetiredPipelineLayouts(
-                Api!, _deviceContext.Device, frameSlot, int.MaxValue);
+                Api, _deviceContext.Device, frameSlot, int.MaxValue);
             ResourceRuntime.DrainRetiredDescriptorSetLayouts(
-                Api!, _deviceContext.Device, frameSlot, int.MaxValue);
+                Api, _deviceContext.Device, frameSlot, int.MaxValue);
             DrainRetiredQueryPools(frameSlot, int.MaxValue);
             DrainRetiredBufferViews(frameSlot, int.MaxValue);
             DrainRetiredFramebuffers(frameSlot, int.MaxValue);

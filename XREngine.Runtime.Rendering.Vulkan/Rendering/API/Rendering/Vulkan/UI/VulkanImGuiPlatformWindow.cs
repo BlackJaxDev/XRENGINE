@@ -17,7 +17,7 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWindowOutputLifetime, IDisposable
     {
         private readonly VulkanImGuiMultiViewportController _owner;
-        private readonly VulkanImGuiServices _services;
+        private readonly IVulkanImGuiOutputHost _outputHost;
         private readonly GCHandle _handle;
         private readonly VulkanImGuiDrawDataCache _drawData = new();
         private IInputContext? _input;
@@ -30,16 +30,16 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
 
         public VulkanImGuiPlatformWindow(
             VulkanImGuiMultiViewportController owner,
-            VulkanImGuiServices services,
+            IVulkanImGuiOutputHost outputHost,
             ImGuiViewportPtr viewport)
         {
             _owner = owner;
-            _services = services;
+            _outputHost = outputHost;
             ViewportId = viewport.ID;
             _handle = GCHandle.Alloc(this);
 
             WindowOptions options = WindowOptions.Default;
-            options.API = services.MainWindow.API;
+            options.API = outputHost.MainWindow.API;
             options.Size = ToWindowSize(viewport.Size);
             options.Position = ToWindowPosition(viewport.Pos);
             options.Title = "XREngine";
@@ -58,7 +58,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             VulkanImGuiMultiViewportController.SetClientScreenPosition(Window, ToWindowPosition(viewport.Pos));
             _lastPosition = VulkanImGuiMultiViewportController.GetClientScreenPosition(Window);
             _lastSize = Window.Size;
-            services.Output.ImGuiPlatformWindows.Register(this);
+            outputHost.RegisterPlatformWindow(this);
         }
 
         public IWindow Window { get; }
@@ -110,11 +110,9 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             if (_rendererReady || _disposed)
                 return;
 
-            _services.Target.ThrowIfVulkanDeviceOperationNotAdmitted("ImGuiViewport.CreateRendererResources");
+            _outputHost.ThrowIfDeviceOperationNotAdmitted("ImGuiViewport.CreateRendererResources");
 
-            _surface = _services.Output.ImGuiPlatformWindows.CreateSurface(
-                _services.Device,
-                Window);
+            _surface = _outputHost.CreatePlatformSurface(Window);
             try
             {
                 ValidatePresentSupport();
@@ -209,7 +207,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
 
             if (_handle.IsAllocated)
                 _handle.Free();
-            _services.Output.ImGuiPlatformWindows.Unregister(this);
+            _outputHost.UnregisterPlatformWindow(this);
         }
 
         public void AbandonNativeWindowForShutdown()
@@ -224,7 +222,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
                 _handle.Free();
             VulkanImGuiMultiViewportController.PreserveAbandonedWindow(Window, _input);
             _input = null;
-            _services.Output.ImGuiPlatformWindows.Unregister(this);
+            _outputHost.UnregisterPlatformWindow(this);
         }
 
         public void DestroyRendererResources()
@@ -234,10 +232,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
 
             WaitForViewportQueuesIdle();
             DestroySwapchainResources();
-            _services.Output.ImGuiPlatformWindows.DestroySurface(
-                _services.Device,
-                _services.Output.SurfaceApi,
-                ref _surface);
+            _outputHost.DestroyPlatformSurface(ref _surface);
             _rendererReady = false;
             _resizeRequested = false;
             _drawData.Clear();
@@ -245,41 +240,17 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
 
         private void ValidatePresentSupport()
         {
-            uint presentFamily = _services.Device.QueueFamilies.PresentFamilyIndex
-                ?? throw new InvalidOperationException("The Vulkan renderer has no presentation queue family.");
-            Result result = _services.Output.SurfaceApi!.GetPhysicalDeviceSurfaceSupport(
-                _services.Device.PhysicalDevice,
-                presentFamily,
-                _surface,
-                out Bool32 supported);
-            ThrowIfFailed(result, "query detached-window presentation support");
-            if (!supported)
-            {
-                throw new NotSupportedException(
-                    $"The renderer's presentation queue family {presentFamily} cannot present this detached ImGui window.");
-            }
+            _outputHost.ValidatePlatformPresentSupport(_surface);
         }
 
         private bool TryCreateSwapchainResources()
         {
-            if (!_services.Target.TryAdmitVulkanDeviceOperation("ImGuiViewport.CreateSwapchainResources", out _))
+            if (!_outputHost.TryAdmitDeviceOperation("ImGuiViewport.CreateSwapchainResources"))
                 return false;
 
-            KhrSurface? surfaceApi = _services.Output.SurfaceApi;
-            KhrSwapchain? swapchainApi = _services.Output.Desktop.SwapchainExtension;
-            if (surfaceApi is null || swapchainApi is null)
-                throw new InvalidOperationException("Detached ImGui viewport output requires initialized Vulkan surface and swapchain extensions.");
-
-            if (!_services.Output.ImGuiPlatformWindows.TryCreateSwapchainGeneration(
-                    _services.Device,
-                    _services.Commands,
-                    _services.Target,
-                    surfaceApi,
-                    swapchainApi,
+            if (!_outputHost.TryCreatePlatformSwapchain(
                     _surface,
                     Window.FramebufferSize,
-                    _services.Output.Desktop.ImageFormat,
-                    _services.Output.Desktop.ImageColorSpace,
                     ViewportId,
                     out VulkanImGuiPlatformSwapchainGeneration generation))
             {
@@ -295,10 +266,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             _imagePresented = new bool[_images.Length];
 
             VulkanImGuiPlatformWindowCommandResources commandResources =
-                _services.Commands.CreateImGuiPlatformWindowResources(
-                    _services.Device,
-                    _services.Target,
-                    _services.Device.QueueFamilies.GraphicsFamilyIndex!.Value,
+                _outputHost.CreatePlatformCommandResources(
                     FramesInFlight,
                     _images.Length,
                     ViewportId);
@@ -315,28 +283,9 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
 
         private PresentModeKHR ChoosePresentMode()
         {
-            uint count = 0;
-            ThrowIfFailed(
-                _services.Output.SurfaceApi!.GetPhysicalDeviceSurfacePresentModes(
-                    _services.Device.PhysicalDevice,
-                    _surface,
-                    ref count,
-                    null),
-                "query detached-window present mode count");
-            if (count == 0)
+            PresentModeKHR[] modes = _outputHost.GetPlatformPresentModes(_surface);
+            if (modes.Length == 0)
                 throw new NotSupportedException("The detached ImGui surface exposes no Vulkan present modes.");
-
-            PresentModeKHR[] modes = new PresentModeKHR[count];
-            fixed (PresentModeKHR* modesPtr = modes)
-            {
-                ThrowIfFailed(
-                    _services.Output.SurfaceApi.GetPhysicalDeviceSurfacePresentModes(
-                        _services.Device.PhysicalDevice,
-                        _surface,
-                        ref count,
-                        modesPtr),
-                    "query detached-window present modes");
-            }
 
             if (Array.IndexOf(modes, PresentModeKHR.MailboxKhr) >= 0)
                 return PresentModeKHR.MailboxKhr;
@@ -383,7 +332,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
 
         private void RecreateSwapchainResources()
         {
-            if (!_services.Target.TryAdmitVulkanDeviceOperation("ImGuiViewport.RecreateSwapchainResources", out _))
+            if (!_outputHost.TryAdmitDeviceOperation("ImGuiViewport.RecreateSwapchainResources"))
             {
                 _rendererReady = false;
                 return;
@@ -397,7 +346,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
 
         private void RenderSnapshot(VulkanImGuiFrameSnapshot snapshot)
         {
-            if (!_services.Target.TryAdmitVulkanDeviceOperation("ImGuiViewport.RenderSnapshot", out _))
+            if (!_outputHost.TryAdmitDeviceOperation("ImGuiViewport.RenderSnapshot"))
             {
                 _resizeRequested = true;
                 return;
@@ -407,22 +356,15 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             Fence frameFence = _frameFences[frameSlot];
             if (_frameFenceSubmitted[frameSlot])
             {
-                _services.Target.ThrowIfVulkanDeviceOperationNotAdmitted("vkWaitForFences.ImGuiViewport");
                 ThrowIfFailed(
-                    _services.Api.WaitForFences(_services.Device.Device, 1, in frameFence, true, ulong.MaxValue),
+                    _outputHost.WaitForPlatformFence(frameFence),
                     "wait for detached-window frame fence");
-                _services.Target.NotifyVulkanFenceCompleted(frameFence);
                 _frameFenceSubmitted[frameSlot] = false;
             }
 
             uint imageIndex = 0;
-            Result acquireResult = _services.Output.Desktop.SwapchainExtension!.AcquireNextImage(
-                _services.Device.Device,
-                _swapchain,
-                ulong.MaxValue,
-                _imageAvailableSemaphores[frameSlot],
-                default,
-                &imageIndex);
+            Result acquireResult = _outputHost.AcquirePlatformImage(
+                _swapchain, _imageAvailableSemaphores[frameSlot], out imageIndex);
             if (acquireResult == Result.ErrorOutOfDateKhr)
             {
                 _resizeRequested = true;
@@ -435,7 +377,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             if (acquireResult == Result.SuboptimalKhr)
                 _resizeRequested = true;
 
-            Result resetFenceResult = _services.Api.ResetFences(_services.Device.Device, 1, in frameFence);
+            Result resetFenceResult = _outputHost.ResetPlatformFence(frameFence);
             if (resetFenceResult != Result.Success)
             {
                 _resizeRequested = true;
@@ -469,7 +411,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
                 SignalSemaphoreCount = 1,
                 PSignalSemaphores = &renderFinished,
             };
-            Result submitResult = _services.SubmitToGraphicsQueue(ref submitInfo, frameFence, "ImGuiViewport");
+            Result submitResult = _outputHost.SubmitPlatformDraw(ref submitInfo, frameFence);
             if (submitResult != Result.Success)
             {
                 _resizeRequested = true;
@@ -488,7 +430,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             };
             SwapchainKHR swapchain = _swapchain;
             presentInfo.PSwapchains = &swapchain;
-            Result presentResult = _services.PresentViewport(ref presentInfo);
+            Result presentResult = _outputHost.PresentPlatformViewport(ref presentInfo);
             if (presentResult is Result.ErrorOutOfDateKhr or Result.SuboptimalKhr)
                 _resizeRequested = true;
             else if (presentResult != Result.Success)
@@ -507,68 +449,24 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             uint imageIndex,
             int frameSlot,
             VulkanImGuiFrameSnapshot snapshot)
-        {
-            VulkanOutputRuntime output = _services.Output;
-            VulkanResourceRuntime resources = _services.Resources;
-            VulkanCommandRuntime commands = _services.Commands;
-            VulkanDeviceContext device = _services.Device;
-            output.GetImGuiFontAtlasResources(resources, commands, device).EnsureCreated();
-            output.GetImGuiOutputPipelineService(resources, device).EnsureCreated();
-
-            VulkanTrackedCommandEncoder encoder = new(
-                device.Api,
-                device,
-                commands,
-                resources,
-                _services.Telemetry);
-            VulkanDynamicUiOverlayTarget target = new(
-                _images[imageIndex],
-                _imageViews[imageIndex],
-                _extent,
-                HasStreamlineUi: false,
-                default,
-                default,
-                ImageLayout.Undefined);
-            VulkanImGuiOverlayRecordingInput input = new(
-                (uint)frameSlot,
+            => _outputHost.RecordPlatformViewport(
                 commandBuffer,
-                default,
-                _imagePresented[imageIndex] ? ImageLayout.PresentSrcKhr : ImageLayout.Undefined,
-                device.InstanceApiVersion < Vk.Version13,
-                target,
-                output._imguiResources,
-                output._imguiTextureRegistry.DescriptorSets,
-                ClearSwapchain: true,
-                snapshot);
-            if (!new VulkanImGuiPlatformViewportRecorder().TryRecord(
-                    encoder,
-                    _services.Telemetry,
-                    output.GetImGuiDrawBufferResources(resources),
-                    in input,
-                    out _))
-            {
-                throw new InvalidOperationException("Failed to record detached ImGui viewport command buffer.");
-            }
-        }
+                imageIndex,
+                frameSlot,
+                snapshot,
+                _images,
+                _imageViews,
+                _extent,
+                _imagePresented[imageIndex]);
 
         private void WaitForViewportQueuesIdle()
         {
-            if (!_services.Device.IsReady || !_services.Device.IsOperational)
-                return;
-
-            _ = _services.WaitForQueueIdle(_services.Device.GraphicsQueue, "ImGuiViewportDestroy.Graphics");
-            if (_services.Device.PresentQueue.Handle != _services.Device.GraphicsQueue.Handle)
-                _ = _services.WaitForQueueIdle(_services.Device.PresentQueue, "ImGuiViewportDestroy.Present");
+            _outputHost.WaitForPlatformQueuesIdle();
         }
 
         private void DestroySwapchainResources()
         {
-            if (!_services.Device.IsReady)
-                return;
-
-            _services.Commands.DestroyImGuiPlatformWindowResources(
-                _services.Device,
-                _services.Target,
+            _outputHost.DestroyPlatformCommandResources(
                 new VulkanImGuiPlatformWindowCommandResources(
                     _commandPool,
                     _commandBuffers,
@@ -578,17 +476,11 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
                     _renderFinishedSemaphores),
                 ViewportId);
 
-            KhrSwapchain? swapchainApi = _services.Output.Desktop.SwapchainExtension;
-            if (swapchainApi is not null)
-                _services.Output.ImGuiPlatformWindows.DestroySwapchainGeneration(
-                    _services.Device,
-                    _services.Commands,
-                    _services.Target,
-                    swapchainApi,
-                    _swapchain,
-                    _images,
-                    _imageViews,
-                    ViewportId);
+            _outputHost.DestroyPlatformSwapchain(
+                _swapchain,
+                _images,
+                _imageViews,
+                ViewportId);
 
             _swapchain = default;
             _format = default;
@@ -710,7 +602,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
                 return;
 
             if (result == Result.ErrorDeviceLost)
-                _services.Target.MarkDeviceLost($"Detached ImGui viewport failed to {operation}", operation, result);
+                _outputHost.MarkPlatformDeviceLost(operation, result);
             throw new InvalidOperationException($"Failed to {operation}: {result}.");
         }
     }

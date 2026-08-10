@@ -1070,7 +1070,7 @@ namespace XREngine.Rendering.Vulkan
                 FrameOp candidate = ops[i];
                 int candidatePassIndex = candidate.PassIndex == int.MinValue
                     ? passIndex
-                    : EnsureValidPassIndex(candidate.PassIndex, GetFrameOpDiagnosticName(candidate), candidate.Context.PassMetadata);
+                    : VulkanCommandRuntime.EnsureValidPassIndex(candidate.PassIndex, GetFrameOpDiagnosticName(candidate), candidate.Context.PassMetadata);
                 if (candidatePassIndex != passIndex || candidate.Context.SchedulingIdentity != schedulingIdentity)
                     break;
 
@@ -1342,7 +1342,7 @@ namespace XREngine.Rendering.Vulkan
                         }
 
                         ImageSubresourceRange range = viewInfo.SubresourceRange;
-                        range.AspectMask = NormalizeBarrierAspectMask(
+                        range.AspectMask = VulkanCommandRuntime.NormalizeBarrierAspectMask(
                             viewInfo.Format,
                             range.AspectMask);
                         range.LevelCount = Math.Max(range.LevelCount, 1u);
@@ -1575,7 +1575,7 @@ namespace XREngine.Rendering.Vulkan
             if (priorState.Layout == targetLayout)
                 return;
 
-            VulkanImageAccessState nextState = ResolveVulkanImageAccessState(targetLayout, range.AspectMask);
+            VulkanImageAccessState nextState = VulkanCommandSynchronizationState.ResolveVulkanImageAccessState(targetLayout, range.AspectMask);
             ImageMemoryBarrier barrier = new()
             {
                 SType = StructureType.ImageMemoryBarrier,

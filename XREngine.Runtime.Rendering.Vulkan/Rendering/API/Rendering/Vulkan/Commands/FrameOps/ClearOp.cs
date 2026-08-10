@@ -26,7 +26,7 @@ internal sealed record ClearOp(
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.Clear;
 
     internal override int RecordPrimary(
-        VulkanCommandRuntime renderer,
+        VulkanCommandRuntime commandRuntime,
         scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
@@ -65,8 +65,8 @@ internal sealed record ClearOp(
             (!recordingState.RenderScope.IsActive ||
              recordingState.RenderScope.Target != Target))
         {
-            renderer.EndActiveRenderPass(ref recordingState);
-            renderer.BeginRenderPassForTarget(
+            commandRuntime.EndActiveRenderPass(ref recordingState);
+            commandRuntime.BeginRenderPassForTarget(
                 ref recordingState,
                 Target,
                 recordingInfo.PassIndex,
@@ -91,7 +91,7 @@ internal sealed record ClearOp(
         {
             if (ClearDepth || ClearStencil)
             {
-                renderer.RecordClearOp(
+                commandRuntime.RecordClearOp(
                     recordingState.CommandBuffer,
                     recordingState.ImageIndex,
                     this,
@@ -105,7 +105,7 @@ internal sealed record ClearOp(
         }
         else
         {
-            renderer.RecordClearOp(
+            commandRuntime.RecordClearOp(
                 recordingState.CommandBuffer,
                 recordingState.ImageIndex,
                 this,

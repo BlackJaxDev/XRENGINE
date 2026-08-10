@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Silk.NET.Vulkan;
 using Semaphore = Silk.NET.Vulkan.Semaphore;
 
@@ -34,6 +35,193 @@ internal sealed unsafe class VulkanCommandSynchronizationState
     internal readonly object _submissionMarkerLock = new();
     internal readonly Dictionary<nint, List<VulkanTimelineGpuFence>> _submissionMarkersByCommandBuffer = [];
     internal readonly Stack<VulkanTimelineGpuFence> _timelineGpuFencePool = [];
+
+    /// <summary>
+    /// Debug-only assertion that fires when <c>AllCommandsBit</c> is used in a barrier.
+    /// </summary>
+    [Conditional("DEBUG")]
+    internal static void WarnBroadBarrierStages(
+        PipelineStageFlags srcStage,
+        PipelineStageFlags dstStage,
+        string? caller = null)
+    {
+        if ((srcStage & PipelineStageFlags.AllCommandsBit) == 0 &&
+            (dstStage & PipelineStageFlags.AllCommandsBit) == 0)
+        {
+            return;
+        }
+
+        string site = string.IsNullOrEmpty(caller) ? "<unknown>" : caller;
+        Debug.VulkanWarningEvery(
+            "Vulkan.BarrierAudit",
+            TimeSpan.FromSeconds(10),
+            "[Vulkan][BarrierAudit] Broad AllCommandsBit barrier originating from {0}. Consider narrowing src/dst stages for performance.",
+            site);
+    }
+
+    /// <summary>
+    /// Converts a legacy pipeline-stage mask to its synchronization2 equivalent,
+    /// using all commands when the legacy mask is empty.
+    /// </summary>
+    internal static PipelineStageFlags2 NormalizePipelineStages2(PipelineStageFlags stageMask)
+        => (PipelineStageFlags2)(ulong)(stageMask == 0 ? PipelineStageFlags.AllCommandsBit : stageMask);
+
+    /// <summary>
+    /// Converts a legacy access mask to its synchronization2 equivalent.
+    /// </summary>
+    internal static AccessFlags2 NormalizeAccessFlags2(AccessFlags accessMask)
+        => (AccessFlags2)(ulong)accessMask;
+
+    /// <summary>
+    /// Resolves the semantic image-access intent represented by a Vulkan layout
+    /// and image aspect.
+    /// </summary>
+    internal static EVulkanImageAccessIntent ResolveVulkanImageAccessIntent(
+        ImageLayout layout,
+        ImageAspectFlags aspectMask)
+        => layout switch
+        {
+            ImageLayout.Undefined => EVulkanImageAccessIntent.Undefined,
+            ImageLayout.PresentSrcKhr => EVulkanImageAccessIntent.Present,
+            ImageLayout.ColorAttachmentOptimal or ImageLayout.AttachmentOptimal =>
+                (aspectMask & ImageAspectFlags.ColorBit) != 0
+                    ? EVulkanImageAccessIntent.ColorAttachment
+                    : EVulkanImageAccessIntent.DepthStencilAttachment,
+            ImageLayout.DepthAttachmentOptimal or
+            ImageLayout.StencilAttachmentOptimal or
+            ImageLayout.DepthStencilAttachmentOptimal => EVulkanImageAccessIntent.DepthStencilAttachment,
+            ImageLayout.DepthReadOnlyOptimal or
+            ImageLayout.StencilReadOnlyOptimal or
+            ImageLayout.DepthStencilReadOnlyOptimal => EVulkanImageAccessIntent.DepthStencilRead,
+            ImageLayout.ShaderReadOnlyOptimal or ImageLayout.ReadOnlyOptimal => EVulkanImageAccessIntent.SampledRead,
+            ImageLayout.TransferSrcOptimal => EVulkanImageAccessIntent.TransferRead,
+            ImageLayout.TransferDstOptimal => EVulkanImageAccessIntent.TransferWrite,
+            _ => EVulkanImageAccessIntent.StorageReadWrite,
+        };
+
+    /// <summary>
+    /// Creates the canonical stage, access, descriptor-layout, ownership, and
+    /// generation state for a Vulkan image layout.
+    /// </summary>
+    internal static VulkanImageAccessState ResolveVulkanImageAccessState(
+        ImageLayout layout,
+        ImageAspectFlags aspectMask,
+        uint queueFamilyIndex = Vk.QueueFamilyIgnored,
+        ulong serial = 0,
+        ulong resourceGeneration = 0)
+    {
+        const PipelineStageFlags shaderStages =
+            PipelineStageFlags.VertexShaderBit |
+            PipelineStageFlags.FragmentShaderBit |
+            PipelineStageFlags.ComputeShaderBit;
+
+        EVulkanImageAccessIntent intent = ResolveVulkanImageAccessIntent(layout, aspectMask);
+        PipelineStageFlags stages;
+        AccessFlags access;
+        ImageLayout descriptorLayout;
+        switch (intent)
+        {
+            case EVulkanImageAccessIntent.Undefined:
+                stages = PipelineStageFlags.TopOfPipeBit;
+                access = AccessFlags.None;
+                descriptorLayout = ImageLayout.Undefined;
+                break;
+            case EVulkanImageAccessIntent.Present:
+                stages = PipelineStageFlags.BottomOfPipeBit;
+                access = AccessFlags.MemoryReadBit;
+                descriptorLayout = ImageLayout.Undefined;
+                break;
+            case EVulkanImageAccessIntent.ColorAttachment:
+                stages = PipelineStageFlags.ColorAttachmentOutputBit;
+                access = AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit;
+                descriptorLayout = ImageLayout.Undefined;
+                break;
+            case EVulkanImageAccessIntent.DepthStencilAttachment:
+                stages = PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit;
+                access = AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit;
+                descriptorLayout = ImageLayout.Undefined;
+                break;
+            case EVulkanImageAccessIntent.SampledRead:
+                stages = shaderStages;
+                access = AccessFlags.ShaderReadBit;
+                descriptorLayout = ImageLayout.ShaderReadOnlyOptimal;
+                break;
+            case EVulkanImageAccessIntent.DepthStencilRead:
+                stages = shaderStages | PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit;
+                access = AccessFlags.ShaderReadBit | AccessFlags.DepthStencilAttachmentReadBit;
+                descriptorLayout = ImageLayout.DepthStencilReadOnlyOptimal;
+                break;
+            case EVulkanImageAccessIntent.TransferRead:
+                stages = PipelineStageFlags.TransferBit;
+                access = AccessFlags.TransferReadBit;
+                descriptorLayout = ImageLayout.Undefined;
+                break;
+            case EVulkanImageAccessIntent.TransferWrite:
+                stages = PipelineStageFlags.TransferBit;
+                access = AccessFlags.TransferWriteBit;
+                descriptorLayout = ImageLayout.Undefined;
+                break;
+            default:
+                stages = shaderStages;
+                access = AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit;
+                descriptorLayout = ImageLayout.General;
+                break;
+        }
+
+        return new VulkanImageAccessState(
+            layout,
+            NormalizePipelineStages2(stages),
+            NormalizeAccessFlags2(access),
+            queueFamilyIndex,
+            descriptorLayout,
+            serial,
+            resourceGeneration);
+    }
+
+    /// <summary>
+    /// Produces the state published by the command-buffer tracker.
+    /// </summary>
+    internal static VulkanImageAccessState ResolveRecordedVulkanImageAccessState(
+        ImageLayout layout,
+        ImageAspectFlags aspectMask,
+        PipelineStageFlags stageMask,
+        AccessFlags accessMask,
+        uint queueFamilyIndex,
+        ulong serial,
+        ulong resourceGeneration)
+    {
+        VulkanImageAccessState canonical = ResolveVulkanImageAccessState(
+            layout,
+            aspectMask,
+            queueFamilyIndex,
+            serial,
+            resourceGeneration);
+        PipelineStageFlags2 requestedStages = NormalizePipelineStages2(stageMask);
+        AccessFlags2 requestedAccess = NormalizeAccessFlags2(accessMask);
+        if (layout == ImageLayout.General)
+        {
+            return canonical with
+            {
+                StageMask = requestedStages == 0 ? canonical.StageMask : requestedStages,
+                AccessMask = requestedAccess == 0 ? canonical.AccessMask : requestedAccess,
+            };
+        }
+
+        bool stagesAreCompatible =
+            requestedStages != 0 &&
+            (requestedStages & ~canonical.StageMask) == 0;
+        bool accessIsCompatible =
+            requestedAccess != 0 &&
+            (requestedAccess & ~canonical.AccessMask) == 0;
+        if (!stagesAreCompatible || !accessIsCompatible)
+            return canonical;
+
+        return canonical with
+        {
+            StageMask = requestedStages,
+            AccessMask = requestedAccess,
+        };
+    }
 
     internal void RecordQueueOperation(
         EVulkanDeviceState deviceState,

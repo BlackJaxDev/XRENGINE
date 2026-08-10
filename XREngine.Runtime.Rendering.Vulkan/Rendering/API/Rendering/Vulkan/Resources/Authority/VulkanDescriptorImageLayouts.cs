@@ -140,11 +140,8 @@ internal sealed unsafe partial class VulkanDescriptorManager
         // Attempt to resolve the submitted descriptor layout based on the tracked layout and the fallback layout.
         if (view.Handle != 0 &&
             ResourceRuntime.Images.TryGetDescriptorHeapCreateInfo(view, out ImageViewCreateInfo viewInfo) &&
-            CommandRuntime.Synchronization.TryGetSubmittedImageLayout(
-                viewInfo.Image,
-                viewInfo.SubresourceRange,
-                out ImageLayout submitted))
-            return submitted;
+            viewInfo.Image.Handle != 0)
+            return fallback;
 
         // If the tracked layout could not be determined, 
         // fall back to the source's tracked layout or the provided fallback layout.

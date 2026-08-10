@@ -350,7 +350,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             CommandChainRecordingWorkerState[] workers = new CommandChainRecordingWorkerState[capacity];
             for (int i = 0; i < workers.Length; i++)
             {
-                CommandChainRecordingWorkerState worker = new(i);
+                CommandChainRecordingWorkerState worker = new(_commandRuntime, i);
                 worker.Start();
                 workers[i] = worker;
             }

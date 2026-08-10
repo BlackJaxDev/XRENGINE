@@ -6,6 +6,10 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed unsafe partial class VulkanCommandRuntime
 {
+    /// <summary>Vulkan pipelines own vertex input; legacy VAO mutation has no runtime action.</summary>
+    internal void ConfigureIndirectVertexInput(XRRenderProgram program, XRMeshRenderer.BaseVersion? version)
+        => _ = (program, version);
+
     internal void BindIndirectMesh(VkMeshRenderer? mesh)
     {
         CommandBuffers.BoundMeshRendererForIndirect = mesh;
@@ -59,27 +63,39 @@ internal sealed unsafe partial class VulkanCommandRuntime
         return true;
     }
 
+    internal bool ValidateIndirectIndexedMesh(VkMeshRenderer? mesh)
+        => TryGetIndirectIndexBufferInfo(mesh, out _, out _);
+
+    internal bool TrySyncIndirectIndexBuffer(
+        XRMeshRenderer meshRenderer,
+        XRDataBuffer indexBuffer,
+        IndexSize elementSize)
+        => meshRenderer is not null &&
+           indexBuffer is not null &&
+           ResourceRuntime.WrapperLookup.GetOrCreate(meshRenderer.GetDefaultVersion()) is VkMeshRenderer mesh &&
+           ResourceRuntime.WrapperLookup.GetOrCreate(indexBuffer) is VkDataBuffer buffer &&
+           TrySyncIndirectIndexBuffer(mesh, buffer, indexBuffer, elementSize);
+
     internal bool TrySyncIndirectIndexBuffer(
         VkMeshRenderer mesh,
         VkDataBuffer indexBuffer,
         XRDataBuffer source,
-        IndexSize elementSize,
-        out bool boundStateChanged)
+        IndexSize elementSize)
     {
         mesh.Generate();
         indexBuffer.Generate();
         if (!indexBuffer.IsGenerated || indexBuffer.BufferHandle is null)
         {
-            boundStateChanged = false;
             return false;
         }
 
         bool changed = mesh.SetTriangleIndexBuffer(indexBuffer, elementSize);
-        boundStateChanged = changed && ReferenceEquals(CommandBuffers.BoundMeshRendererForIndirect, mesh);
+        bool boundStateChanged = changed && ReferenceEquals(CommandBuffers.BoundMeshRendererForIndirect, mesh);
         if (boundStateChanged && mesh.TryGetPrimaryIndexBinding(out _, out IndexType type, out uint count))
         {
             CommandBuffers.BoundIndexType = type;
             CommandBuffers.BoundIndexCount = count;
+            MarkCommandBuffersDirtyForLegacyMeshState();
         }
         return true;
     }
@@ -90,8 +106,29 @@ internal sealed unsafe partial class VulkanCommandRuntime
     internal void BindIndirectCountBuffer(VkDataBuffer? buffer)
         => CommandBuffers.BoundParameterBuffer = buffer;
 
-    internal bool TryCreateIndirectDrawOperation(
+    internal bool TryBindSceneDatabaseDeviceAddressUniforms(
         VulkanBackendObjectContext backendContext,
+        XRRenderProgram program,
+        XRDataBuffer drawMetadataBuffer,
+        XRDataBuffer? instanceTransformBuffer,
+        bool useInstanceTransformBuffer,
+        string consumer)
+        => ResourceRuntime.TryBindSceneDatabaseDeviceAddressUniforms(
+            backendContext,
+            ResourceRuntime.WrapperLookup,
+            program,
+            drawMetadataBuffer,
+            instanceTransformBuffer,
+            useInstanceTransformBuffer,
+            consumer);
+
+    internal bool HasBoundIndirectCountBuffer()
+        => CommandBuffers.BoundParameterBuffer?.BufferHandle is not null;
+
+    internal bool SupportsIndirectCountDraw()
+        => DeviceContext.Capabilities.Supports(EVulkanDeviceCapability.DrawIndirectCount);
+
+    internal bool TryCreateIndirectDrawOperation(
         VulkanDescriptorManager descriptors,
         string contextName,
         int passIndex,
@@ -116,7 +153,6 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
 
         if (!TryCaptureIndirectDrawPayload(
-                backendContext,
                 contextName,
                 target,
                 out VkMeshRenderer mesh,
@@ -151,7 +187,6 @@ internal sealed unsafe partial class VulkanCommandRuntime
     }
 
     private bool TryCaptureIndirectDrawPayload(
-        VulkanBackendObjectContext backendContext,
         string contextName,
         XRFrameBuffer? target,
         out VkMeshRenderer mesh,
@@ -169,7 +204,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             return false;
         }
 
-        if (backendContext.GetOrCreateAPIRenderObject(state.Program) is not VkRenderProgram program ||
+        if (ResourceRuntime.WrapperLookup.GetOrCreate(state.Program) is not VkRenderProgram program ||
             !program.IsLinked && !program.Link())
         {
             Debug.VulkanWarning("{0}: Vulkan indirect draw program '{1}' is unavailable or not linked.", contextName, state.Program.Name ?? "<unnamed>");
@@ -202,6 +237,70 @@ internal sealed unsafe partial class VulkanCommandRuntime
             reason,
             mesh.LastPrepareDetail);
         return false;
+    }
+
+    /// <summary>Captures and queues a frozen indirect draw without retaining renderer state.</summary>
+    internal void EnqueueIndirectDraw(
+        VulkanFrameOperationQueue queue,
+        string operationName,
+        uint drawCount,
+        uint stride,
+        nuint byteOffset,
+        nuint countByteOffset,
+        bool useCount,
+        int currentPassIndex,
+        in FrameOpContext context)
+    {
+        int passIndex = EnsureValidPassIndex(
+            currentPassIndex,
+            useCount ? "IndirectCountDraw" : "IndirectDraw",
+            context.PassMetadata);
+        if (!TryCreateIndirectDrawOperation(
+                ResourceRuntime.Descriptors,
+                operationName,
+                passIndex,
+                ResolveCurrentFrameOpDrawTarget(),
+                drawCount,
+                stride,
+                byteOffset,
+                countByteOffset,
+                useCount,
+                context,
+                out IndirectDrawOp? operation) ||
+            operation is null)
+        {
+            return;
+        }
+
+        EnqueueFrameOperation(queue, operation, passIndex);
+    }
+
+    internal void EnqueueIndirectCountDraw(
+        VulkanFrameOperationQueue queue,
+        uint maxDrawCount,
+        uint stride,
+        nuint byteOffset,
+        nuint countByteOffset,
+        int currentPassIndex,
+        in FrameOpContext context)
+    {
+        if (!SupportsIndirectCountDraw())
+        {
+            Debug.VulkanWarning(
+                "MultiDrawElementsIndirectCount called but VK_KHR_draw_indirect_count is not supported. Falling back to regular indirect draw.");
+            EnqueueIndirectDraw(queue, "MultiDrawElementsIndirectWithOffset", maxDrawCount, stride, byteOffset, 0, false, currentPassIndex, context);
+            return;
+        }
+
+        if (!HasBoundIndirectCountBuffer())
+        {
+            Debug.VulkanWarning(
+                "MultiDrawElementsIndirectCount: No parameter (count) buffer bound. Falling back to regular indirect draw.");
+            EnqueueIndirectDraw(queue, "MultiDrawElementsIndirectWithOffset", maxDrawCount, stride, byteOffset, 0, false, currentPassIndex, context);
+            return;
+        }
+
+        EnqueueIndirectDraw(queue, "MultiDrawElementsIndirectCount", maxDrawCount, stride, byteOffset, countByteOffset, true, currentPassIndex, context);
     }
 
     private static IndexType ToIndexType(IndexSize size)

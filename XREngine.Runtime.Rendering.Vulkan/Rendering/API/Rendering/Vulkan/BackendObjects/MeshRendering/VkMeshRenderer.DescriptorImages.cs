@@ -1,10 +1,10 @@
-// ──────────────────────────────────────────────────────────────────────────────
-// VkMeshRenderer.Descriptors.cs  – partial class: Descriptor Set Management
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// VkMeshRenderer.Descriptors.cs  â€“ partial class: Descriptor Set Management
 //
 // Allocates and writes Vulkan descriptor sets for each swapchain frame.
 // Resolves buffer, image, and texel-buffer descriptors from the buffer cache,
 // material textures, and engine/auto uniform buffers.
-// ──────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 using System;
 using System.Collections.Concurrent;
@@ -94,9 +94,9 @@ internal unsafe partial class VkMeshRenderer
 				return false;
 			}
 
-			// Use a 1×1 magenta placeholder to satisfy the descriptor binding
+			// Use a 1Ã—1 magenta placeholder to satisfy the descriptor binding
 			// instead of failing the entire descriptor set write.
-			imageInfo = BackendContext.FallbackTexture.GetImageInfo(descriptorType, binding.ExpectedImageViewType);
+			imageInfo = BackendContext.Resources.FallbackTexture.GetImageInfo(descriptorType, binding.ExpectedImageViewType);
 			if (imageInfo.ImageView.Handle != 0)
 			{
 				LogPostProcessDescriptor(binding, arrayIndex, null, imageInfo, "placeholder-missing-texture");
@@ -111,10 +111,10 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		bool allowSynchronousTextureUpload = BackendContext.AllowSynchronousResourceUploads;
+		bool allowSynchronousTextureUpload = BackendContext.Resources.AllowSynchronousResourceUploads;
 		bool suppressSynchronousTextureUploadForPressure =
 			allowSynchronousTextureUpload &&
-			BackendContext.MeshServices.ShouldAvoidSynchronousImageAllocationForOpenXr(out _);
+			MaterializationSnapshot.AvoidSynchronousImageAllocationForOpenXr;
 		if (suppressSynchronousTextureUploadForPressure)
 			allowSynchronousTextureUpload = false;
 
@@ -123,7 +123,7 @@ internal unsafe partial class VkMeshRenderer
 		{
 			try
 			{
-				apiTextureObject = BackendContext.GetOrCreateAPIRenderObject(texture, generateNow: true);
+				apiTextureObject = WrapperLookup.GetOrCreate(texture, generateNow: true);
 			}
 			catch (VulkanOutOfMemoryException ex)
 			{
@@ -137,7 +137,7 @@ internal unsafe partial class VkMeshRenderer
 		}
 		else
 		{
-			apiTextureObject = BackendContext.Registry.Get(texture);
+			apiTextureObject = BackendContext.Resources.BackendObjects.Get(texture);
 		}
 
 		if (apiTextureObject is not IVkImageDescriptorSource source)
@@ -236,7 +236,7 @@ internal unsafe partial class VkMeshRenderer
 
 				imageInfo = new DescriptorImageInfo
 				{
-					ImageLayout = BackendContext.MeshServices.ResolveDescriptorImageLayout(source, in descriptorSnapshot, descriptorType),
+					ImageLayout = VulkanMeshMaterializationSnapshot.ResolveDescriptorImageLayout(source, in descriptorSnapshot, descriptorType),
 					ImageView = descriptorSnapshot.View,
 					Sampler = sampler,
 				};
@@ -258,7 +258,7 @@ internal unsafe partial class VkMeshRenderer
 		{
 			if (!requiresReadyDescriptor)
 			{
-				imageInfo = BackendContext.FallbackTexture.GetImageInfo(descriptorType, binding.ExpectedImageViewType);
+				imageInfo = BackendContext.Resources.FallbackTexture.GetImageInfo(descriptorType, binding.ExpectedImageViewType);
 				if (imageInfo.ImageView.Handle != 0)
 				{
 					WarnOnce($"Texture for descriptor binding '{binding.Name}' cannot provide expected view type '{binding.ExpectedImageViewType}'. Using placeholder.");
@@ -290,7 +290,7 @@ internal unsafe partial class VkMeshRenderer
 
 		imageInfo = new DescriptorImageInfo
 		{
-			ImageLayout = BackendContext.MeshServices.ResolveDescriptorImageLayout(source, in descriptorSnapshot, descriptorType),
+			ImageLayout = VulkanMeshMaterializationSnapshot.ResolveDescriptorImageLayout(source, in descriptorSnapshot, descriptorType),
 			ImageView = descriptorSnapshot.View,
 			Sampler = descriptorSampler,
 		};
@@ -321,7 +321,7 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		imageInfo = BackendContext.FallbackTexture.GetImageInfo(descriptorType, binding.ExpectedImageViewType);
+		imageInfo = BackendContext.Resources.FallbackTexture.GetImageInfo(descriptorType, binding.ExpectedImageViewType);
 		if (imageInfo.ImageView.Handle == 0)
 			return false;
 
@@ -365,7 +365,7 @@ internal unsafe partial class VkMeshRenderer
 			return true;
 
 		sampler = snapshot.Sampler;
-		if (sampler.Handle != 0 && BackendContext.Descriptors.IsLiveSampler(sampler))
+		if (sampler.Handle != 0 && BackendContext.Resources.Descriptors.IsLiveSampler(sampler))
 			return true;
 
 		if (requiresReadyDescriptor)
@@ -381,8 +381,8 @@ internal unsafe partial class VkMeshRenderer
 			RecordDescriptorFallback(binding);
 		}
 
-		sampler = BackendContext.FallbackTexture.GetSampler();
-		if (sampler.Handle != 0 && BackendContext.Descriptors.IsLiveSampler(sampler))
+		sampler = BackendContext.Resources.FallbackTexture.GetSampler();
+		if (sampler.Handle != 0 && BackendContext.Resources.Descriptors.IsLiveSampler(sampler))
 		{
 			WarnOnce($"Texture for descriptor binding '{binding.Name}' has no Vulkan sampler. Using placeholder sampler.");
 			RecordDescriptorFallback(binding);
@@ -570,7 +570,7 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		if (BackendContext.GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkTexelBufferDescriptorSource source)
+		if (WrapperLookup.GetOrCreate(texture, generateNow: true) is not IVkTexelBufferDescriptorSource source)
 		{
 			WarnOnce($"Texture for texel descriptor binding '{binding.Name}' is not a Vulkan texel-buffer texture.");
 			RecordDescriptorFailure(binding, "texture has no Vulkan texel-buffer source");

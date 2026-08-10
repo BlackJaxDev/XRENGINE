@@ -10,6 +10,12 @@ namespace XREngine.Rendering.Vulkan
         VkObject<XRTransformFeedback>(backendContext, owner, data),
         IXRTransformFeedbackApi
     {
+        private VulkanProgramPlannerPort? _programPlannerPort;
+        private VulkanProgramPlannerPort ProgramPlannerPort => _programPlannerPort ?? throw new InvalidOperationException("Transform-feedback planner port has not been bound.");
+
+        protected override void BindOperationPorts(VulkanWrapperPortBinding binding)
+            => _programPlannerPort = binding.TryGetProgramPlanner();
+
         public override VkObjectType Type => VkObjectType.TransformFeedback;
         public override bool IsGenerated => IsActive && BackendContext.SupportsTransformFeedback;
 
@@ -182,7 +188,7 @@ namespace XREngine.Rendering.Vulkan
                 return XRTransformFeedbackOperationResult.Failed(operation, "Vulkan", ex.Message);
             }
 
-            BackendContext.ProgramServices.EnqueueTransformFeedback(
+            ProgramPlannerPort.EnqueueTransformFeedback(
                 this,
                 operation,
                 counterBuffer,
@@ -305,7 +311,7 @@ namespace XREngine.Rendering.Vulkan
 
         private VkDataBuffer GetFeedbackBuffer()
         {
-            if (BackendContext.GetOrCreateAPIRenderObject(Data.FeedbackBuffer, generateNow: true) is VkDataBuffer buffer)
+            if (WrapperLookup.GetOrCreate(Data.FeedbackBuffer, generateNow: true) is VkDataBuffer buffer)
                 return buffer;
 
             throw new InvalidOperationException("Failed to resolve transform feedback buffer.");
@@ -361,7 +367,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void TrackBuffer(CommandBuffer commandBuffer, Buffer buffer, string owner)
         {
-            VulkanQueryCommandService? commands = BackendContext.Queries.Commands;
+            VulkanQueryCommandService? commands = BackendContext.Resources.Queries.Commands;
             if (commands is null)
                 throw new InvalidOperationException(
                     "Vulkan query command services are unavailable during transform-feedback recording.");

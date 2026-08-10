@@ -15,37 +15,27 @@ using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
 using Buffer = Silk.NET.Vulkan.Buffer;
 
-namespace XREngine.Rendering.Vulkan;
+namespace XREngine.Rendering.Vulkan.RenderGraph;
 
-public unsafe partial class VulkanRenderer
+internal sealed partial class VulkanFramePlanner
 {
-    private void RebuildRenderGraphAndBarriers(
-        in ResourcePlanningInputs planningInputs,
-        ulong resourcePlannerSignature,
-        ulong resourceAllocationSignature)
+    private const int MaxActivePassMetadataFilterCacheEntries = 32;
+    private static readonly HashSet<string> VulkanPlannerOptionalResourceNames = new(StringComparer.OrdinalIgnoreCase)
     {
-        ActiveCompiledRenderGraph = planningInputs.CompiledGraph;
+        "LightProbeIrradianceArray",
+        "LightProbePrefilterArray",
+        "LightProbePositions",
+        "LightProbeTetrahedra",
+        "LightProbeParameters",
+        "LightProbeGridCells",
+        "LightProbeGridIndices",
+        "AtmosphereColor",
+        "VolumetricFogColor"
+    };
+    private List<ActivePassMetadataFilterCacheEntry> ActivePassMetadataFilterCache
+        => MutableState.ActivePassMetadataFilterCache;
 
-        BarrierPlanFastPathKey barrierKey = new(
-            planningInputs.CompiledGraph,
-            resourcePlannerSignature,
-            resourceAllocationSignature,
-            planningInputs.QueueOwnership);
-        if (ActiveHasBarrierPlanFastPathKey && barrierKey.Matches(ActiveBarrierPlanFastPathKey))
-            return;
-
-        ResourcePlannerRuntimeState plannerState = CaptureResourcePlannerRuntimeState();
-        plannerState.BarrierPlanner.Rebuild(
-            planningInputs.ActivePassMetadata,
-            plannerState.ResourcePlanner,
-            plannerState.ResourceAllocator,
-            plannerState.CompiledRenderGraph.Synchronization,
-            planningInputs.QueueOwnership);
-        ActiveBarrierPlanFastPathKey = barrierKey;
-        ActiveHasBarrierPlanFastPathKey = true;
-    }
-
-    private IReadOnlyCollection<RenderPassMetadata>? FilterActivePassMetadata(
+    internal IReadOnlyCollection<RenderPassMetadata>? FilterActivePassMetadata(
         IReadOnlyCollection<RenderPassMetadata>? passMetadata,
         RenderResourceRegistry? resourceRegistry,
         int resourceRegistryRevision,
@@ -70,19 +60,19 @@ public unsafe partial class VulkanRenderer
         if (activePassIndices is { Count: 0 })
             return Array.Empty<RenderPassMetadata>();
 
-        if (ReferenceEquals(passMetadata, _lastActiveFilterSourcePassMetadata) &&
-            ReferenceEquals(resourceRegistry, _lastActiveFilterResourceRegistry) &&
-            resourceRegistryRevision == _lastActiveFilterResourceRegistryRevision &&
-            activePassSetSignature == _lastActiveFilterPassSetSignature &&
-            activeResourceSetSignature == _lastActiveFilterResourceSetSignature &&
-            constrainToActivePassSet == _lastActiveFilterConstrainToActivePassSet)
+        if (ReferenceEquals(passMetadata, MutableState.LastActiveFilterSourcePassMetadata) &&
+            ReferenceEquals(resourceRegistry, MutableState.LastActiveFilterResourceRegistry) &&
+            resourceRegistryRevision == MutableState.LastActiveFilterResourceRegistryRevision &&
+            activePassSetSignature == MutableState.LastActiveFilterPassSetSignature &&
+            activeResourceSetSignature == MutableState.LastActiveFilterResourceSetSignature &&
+            constrainToActivePassSet == MutableState.LastActiveFilterConstrainToActivePassSet)
         {
-            return _lastActiveFilterResult;
+            return MutableState.LastActiveFilterResult;
         }
 
-        for (int cacheIndex = 0; cacheIndex < _activePassMetadataFilterCache.Count; cacheIndex++)
+        for (int cacheIndex = 0; cacheIndex < ActivePassMetadataFilterCache.Count; cacheIndex++)
         {
-            ActivePassMetadataFilterCacheEntry entry = _activePassMetadataFilterCache[cacheIndex];
+            ActivePassMetadataFilterCacheEntry entry = ActivePassMetadataFilterCache[cacheIndex];
             if (!entry.Matches(
                 passMetadata,
                 resourceRegistry,
@@ -147,15 +137,15 @@ public unsafe partial class VulkanRenderer
             activeResourceSetSignature,
             constrainToActivePassSet,
             result);
-        if (_activePassMetadataFilterCache.Count < MaxActivePassMetadataFilterCacheEntries)
+        if (ActivePassMetadataFilterCache.Count < MaxActivePassMetadataFilterCacheEntries)
         {
-            _activePassMetadataFilterCache.Add(cacheEntry);
+            ActivePassMetadataFilterCache.Add(cacheEntry);
         }
         else
         {
-            _activePassMetadataFilterCache[_activePassMetadataFilterCacheReplacementIndex] = cacheEntry;
-            _activePassMetadataFilterCacheReplacementIndex =
-                (_activePassMetadataFilterCacheReplacementIndex + 1) % MaxActivePassMetadataFilterCacheEntries;
+            ActivePassMetadataFilterCache[MutableState.ActivePassMetadataFilterCacheReplacementIndex] = cacheEntry;
+            MutableState.ActivePassMetadataFilterCacheReplacementIndex =
+                (MutableState.ActivePassMetadataFilterCacheReplacementIndex + 1) % MaxActivePassMetadataFilterCacheEntries;
         }
 
         RememberLastActivePassMetadataFilter(
@@ -178,13 +168,13 @@ public unsafe partial class VulkanRenderer
         bool constrainToActivePassSet,
         IReadOnlyCollection<RenderPassMetadata> result)
     {
-        _lastActiveFilterSourcePassMetadata = passMetadata;
-        _lastActiveFilterResourceRegistry = resourceRegistry;
-        _lastActiveFilterResourceRegistryRevision = resourceRegistryRevision;
-        _lastActiveFilterPassSetSignature = activePassSetSignature;
-        _lastActiveFilterResourceSetSignature = activeResourceSetSignature;
-        _lastActiveFilterConstrainToActivePassSet = constrainToActivePassSet;
-        _lastActiveFilterResult = result;
+        MutableState.LastActiveFilterSourcePassMetadata = passMetadata;
+        MutableState.LastActiveFilterResourceRegistry = resourceRegistry;
+        MutableState.LastActiveFilterResourceRegistryRevision = resourceRegistryRevision;
+        MutableState.LastActiveFilterPassSetSignature = activePassSetSignature;
+        MutableState.LastActiveFilterResourceSetSignature = activeResourceSetSignature;
+        MutableState.LastActiveFilterConstrainToActivePassSet = constrainToActivePassSet;
+        MutableState.LastActiveFilterResult = result;
     }
 
     private static RenderPassMetadata FilterActivePassResourceUsages(
@@ -279,7 +269,7 @@ public unsafe partial class VulkanRenderer
             !activeFrameBufferNames.Contains(binding.Name);
     }
 
-    private static int ComputeActivePassSetSignature(HashSet<int>? activePassIndices)
+    internal static int ComputeActivePassSetSignature(HashSet<int>? activePassIndices)
     {
         if (activePassIndices is not { Count: > 0 })
             return 0;
@@ -315,29 +305,7 @@ public unsafe partial class VulkanRenderer
         return hash.ToHashCode();
     }
 
-    private void LogDeferredResourcePlanReplacementRetirement(
-        int imageCount,
-        int bufferCount,
-        ulong plannerSignature,
-        ulong allocationSignature)
-    {
-        if (IsDeviceLost)
-            return;
-
-        Debug.VulkanEvery(
-            "Vulkan.ResourcePlanner.PlanReplacementDeferredRetirement",
-            TimeSpan.FromSeconds(2),
-            "[VulkanResourcePlanner] Deferring replaced physical resource plan retirement through frame-slot/timeline completion. revision={0} oldPlan=0x{1:X16} newPlan=0x{2:X16} oldAllocation=0x{3:X16} newAllocation=0x{4:X16} images={5} buffers={6}",
-            ActiveResourcePlannerRevision + 1,
-            ActiveResourcePlannerSignature,
-            plannerSignature,
-            ActiveResourceAllocationSignature,
-            allocationSignature,
-            imageCount,
-            bufferCount);
-    }
-
-    private static void ValidateVulkanResourcePlanMetadata(
+    internal static void ValidateVulkanResourcePlanMetadata(
         IReadOnlyCollection<RenderPassMetadata>? passMetadata,
         VulkanResourcePlanner planner,
         HashSet<int>? activePassIndices = null)
@@ -499,7 +467,7 @@ public unsafe partial class VulkanRenderer
         return false;
     }
 
-    private static ulong ComputeResourceAllocationSignature(
+    internal static ulong ComputeResourceAllocationSignature(
         in FrameOpContext context,
         VulkanResourcePlanner planner,
         IReadOnlyCollection<RenderPassMetadata>? passMetadata,
@@ -538,7 +506,7 @@ public unsafe partial class VulkanRenderer
             VulkanResourceAllocator.ComputePhysicalPlanUsageSignature(planner, passMetadata),
             supportsTransformFeedback);
 
-    private static ulong ComputeResourcePlannerSignature(
+    internal static ulong ComputeResourcePlannerSignature(
         in FrameOpContext context,
         in VulkanBarrierPlanner.QueueOwnershipConfig queueOwnership,
         VulkanCompiledRenderGraph compiledGraph,
@@ -606,7 +574,7 @@ public unsafe partial class VulkanRenderer
         return hash.ToHash();
     }
 
-    private static ResourcePlannerSignatureBreakdown ComputeResourcePlannerSignatureBreakdown(
+    internal static ResourcePlannerSignatureBreakdown ComputeResourcePlannerSignatureBreakdown(
         in FrameOpContext context,
         in VulkanBarrierPlanner.QueueOwnershipConfig queueOwnership,
         VulkanCompiledRenderGraph compiledGraph,
@@ -672,7 +640,7 @@ public unsafe partial class VulkanRenderer
         return hash.ToHashCode();
     }
 
-    private static int ComputeResourceRegistrySignature(RenderResourceRegistry? registry)
+    internal static int ComputeResourceRegistrySignature(RenderResourceRegistry? registry)
         => registry?.DescriptorSignature ?? 0;
 
     private static int ComputePhysicalResourceDescriptorSignature(RenderResourceRegistry? registry)
@@ -740,7 +708,7 @@ public unsafe partial class VulkanRenderer
     // walks every pass, usage, dependency, and schema once per draw while constructing planner
     // keys; a clean command-chain replay can consequently spend more CPU hashing than drawing.
     private const int MaxPassMetadataSignatureCacheEntries = 128;
-    private static int ComputePassMetadataSignature(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
+    internal static int ComputePassMetadataSignature(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
     {
         if (passMetadata is null || passMetadata.Count == 0)
             return 0;
@@ -821,7 +789,7 @@ public unsafe partial class VulkanRenderer
             hash.Add(pass.DescriptorSchemas[schemaIndex], StringComparer.Ordinal);
     }
 
-    private static int ComputePassMetadataRevisionStamp(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
+    internal static int ComputePassMetadataRevisionStamp(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
     {
         if (passMetadata is null || passMetadata.Count == 0)
             return 0;
@@ -848,52 +816,6 @@ public unsafe partial class VulkanRenderer
                 hash.Add(pass.PassIndex);
                 hash.Add(pass.DeclarationOrder);
                 hash.Add(pass.Revision);
-            }
-        }
-
-        return hash.ToHashCode();
-    }
-
-    private int ComputeResourcePlanningSignature(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
-    {
-        Extent2D fallbackExtent = ResolveFrameOpContextFallbackExtent();
-        HashCode hash = new();
-        hash.Add(fallbackExtent.Width);
-        hash.Add(fallbackExtent.Height);
-
-        foreach (VulkanAllocationRequest request in ResourcePlanner.CurrentPlan.AllTextures())
-        {
-            hash.Add(request.Name, StringComparer.OrdinalIgnoreCase);
-            hash.Add((int)request.Lifetime);
-            hash.Add(request.AliasKey);
-        }
-
-        foreach (VulkanBufferAllocationRequest request in ResourcePlanner.CurrentPlan.AllBuffers())
-        {
-            hash.Add(request.Name, StringComparer.OrdinalIgnoreCase);
-            hash.Add((int)request.Lifetime);
-            hash.Add(request.AliasKey);
-        }
-
-        if (passMetadata is not null)
-        {
-            hash.Add(passMetadata.Count);
-            foreach (RenderPassMetadata pass in passMetadata.OrderBy(static p => p.PassIndex))
-            {
-                hash.Add(pass.PassIndex);
-                hash.Add(pass.DeclarationOrder);
-                hash.Add((int)pass.Stage);
-                hash.Add(pass.Name, StringComparer.Ordinal);
-
-                foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
-                {
-                    hash.Add(usage.ResourceName, StringComparer.Ordinal);
-                    hash.Add((int)usage.ResourceType);
-                    hash.Add((int)usage.Access);
-                    hash.Add((int)usage.LoadOp);
-                    hash.Add((int)usage.StoreOp);
-                    AddSubresourceRangeToHash(ref hash, usage.SubresourceRange);
-                }
             }
         }
 
@@ -961,7 +883,10 @@ public unsafe partial class VulkanRenderer
             ? "invalid sentinel value"
             : $"pass {passIndex} is missing from metadata";
 
-        int? firstKnownBarrierPass = BarrierPlanner.GetFirstKnownPassIndex();
+        int? firstKnownBarrierPass = GetPublishedResourcePlannerGeneration()
+            .State
+            .BarrierPlanner
+            .GetFirstKnownPassIndex();
 
         Debug.VulkanWarningEvery(
             $"Vulkan.InvalidPass.{opName}.{passIndex}",

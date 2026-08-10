@@ -143,11 +143,11 @@ internal unsafe sealed class VulkanStateTracker
         // previous pass's target height (off-target rasterization on half-res passes).
         public Viewport GetViewport(Extent2D targetExtent)
             => _viewportExplicitlySet
-                ? VulkanRenderer.CreateVulkanViewport(_viewportRegion, targetExtent)
-                : VulkanRenderer.CreateVulkanViewport(targetExtent);
+                ? VulkanCommandRuntime.CreateVulkanViewport(_viewportRegion, targetExtent)
+                : VulkanCommandRuntime.CreateVulkanViewport(targetExtent);
 
         public static Viewport GetViewport(BoundingRectangle region, Extent2D targetExtent)
-            => VulkanRenderer.CreateVulkanViewport(region, targetExtent);
+            => VulkanCommandRuntime.CreateVulkanViewport(region, targetExtent);
 
         public bool SetViewport(BoundingRectangle region)
         {
@@ -284,7 +284,7 @@ internal unsafe sealed class VulkanStateTracker
             Rect2D[] scissors = new Rect2D[count];
             for (int i = 0; i < count; i++)
             {
-                viewports[i] = VulkanRenderer.CreateVulkanViewport(_indexedViewportRegions[i], targetExtent);
+                viewports[i] = VulkanCommandRuntime.CreateVulkanViewport(_indexedViewportRegions[i], targetExtent);
                 scissors[i] = CreateVulkanScissor(_indexedScissorRegions[i], targetExtent);
             }
 

@@ -44,7 +44,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
     }
 
     private bool CanResetSecondaryCommandBuffer(CommandBuffer commandBuffer)
-        => ResourceRuntime.CanResetCommandBuffer(this, commandBuffer);
+        => ResourceRuntime.CanResetCommandBuffer(commandBuffer);
 
     private bool SupportsSecondaryDebugNames => DeviceContext.DebugUtils is not null;
 

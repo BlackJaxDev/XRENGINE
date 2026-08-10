@@ -10,6 +10,58 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed unsafe partial class VulkanCommandRuntime
 {
+    internal bool SubmitAndWaitOpenXrCommandBuffer(CommandBuffer commandBuffer, out bool completed, VulkanSubmissionDiagnosticContext diagnosticContext = default)
+    {
+        VulkanOpenXrSubmissionResult result = SubmitAndWaitOpenXr(new(commandBuffer, default, 1, diagnosticContext));
+        completed = result.CommandBuffersCompleted;
+        return result.Succeeded;
+    }
+
+    internal bool SubmitAndWaitOpenXrCommandBuffers(CommandBuffer first, CommandBuffer second, out bool completed, VulkanSubmissionDiagnosticContext diagnosticContext = default)
+    {
+        VulkanOpenXrSubmissionResult result = SubmitAndWaitOpenXr(new(first, second, 2, diagnosticContext));
+        completed = result.CommandBuffersCompleted;
+        return result.Succeeded;
+    }
+
+    internal bool SubmitAndWaitOpenXrCommandBuffers(
+        CommandBuffer* commandBuffers,
+        uint commandBufferCount,
+        out bool completed,
+        VulkanSubmissionDiagnosticContext diagnosticContext = default)
+        => SubmitAndWaitOpenXrCommandBuffers(
+            commandBuffers,
+            commandBufferCount,
+            out completed,
+            out _,
+            out _,
+            diagnosticContext);
+
+    internal bool SubmitAndWaitOpenXrCommandBuffers(
+        CommandBuffer* commandBuffers,
+        uint commandBufferCount,
+        out bool completed,
+        out EVulkanQueueSubmissionDisposition submissionDisposition,
+        out EOpenXrStrictSpsFaultInjectionStage injectedFailureStage,
+        VulkanSubmissionDiagnosticContext diagnosticContext = default)
+    {
+        completed = false;
+        submissionDisposition = EVulkanQueueSubmissionDisposition.NotSubmitted;
+        injectedFailureStage = EOpenXrStrictSpsFaultInjectionStage.None;
+        if (commandBuffers is null || commandBufferCount is 0 or > 2)
+            return false;
+
+        VulkanOpenXrSubmissionResult result = SubmitAndWaitOpenXr(new(
+            commandBuffers[0],
+            commandBufferCount == 2 ? commandBuffers[1] : default,
+            commandBufferCount,
+            diagnosticContext));
+        completed = result.CommandBuffersCompleted;
+        submissionDisposition = result.SubmissionDisposition;
+        injectedFailureStage = result.InjectedFailureStage;
+        return result.Succeeded;
+    }
+
     private readonly List<RetiredOpenXrSubmissionFence> _retiredOpenXrSubmissionFences = new(2);
 
     internal VulkanOpenXrSubmissionResult SubmitAndWaitOpenXr(
