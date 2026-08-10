@@ -17,6 +17,8 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
 {
     private VulkanLifetimeAuthority? _lifetime;
     private int _frameSlot;
+
+    internal int CurrentFrameSlot => Volatile.Read(ref _frameSlot);
     private static readonly HashSet<string> SceneDatabaseDeviceAddressBuffers = new(StringComparer.Ordinal)
     {
         "DrawMetadataBuffer", "TransformBuffer", "PrevTransformBuffer", "BoundsBuffer",

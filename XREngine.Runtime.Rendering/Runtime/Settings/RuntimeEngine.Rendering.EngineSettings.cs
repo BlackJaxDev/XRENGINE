@@ -610,7 +610,7 @@ public static partial class RuntimeEngine
                 private long _maxShadowAtlasMemoryBytes = 0L;
                 private int _maxShadowTilesRenderedPerFrame = 16;
                 private float _maxShadowRenderMilliseconds = 2.0f;
-            private int _maxDirectionalCascadeAtlasStaleFrames = 2;
+                private int _maxDirectionalCascadeAtlasStaleFrames = 4;
                 private uint _minShadowAtlasTileResolution = 128u;
                 private uint _maxShadowAtlasTileResolution = 4096u;
 
@@ -775,7 +775,7 @@ public static partial class RuntimeEngine
                 }
 
                 [Category("Shadows")]
-                [Description("Maximum rendered-frame age for directional cascade atlas stale reprojection. Older atlas samples fall back to lit or legacy sampling.")]
+                [Description("Maximum consecutive camera/content-change frames for directional cascade atlas stale reprojection. Older atlas samples fall back to lit or legacy sampling.")]
                 public int MaxDirectionalCascadeAtlasStaleFrames
                 {
                     get => Volatile.Read(ref _maxDirectionalCascadeAtlasStaleFrames);

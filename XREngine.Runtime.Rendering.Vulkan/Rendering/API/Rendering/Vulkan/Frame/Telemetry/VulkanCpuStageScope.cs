@@ -9,6 +9,10 @@ internal readonly ref struct VulkanCpuStageScope
     private static readonly bool s_detailedDiagnosticsEnabled =
         XREnvironment.IsEnabled(
             XREngineEnvironmentVariables.VulkanRecordingDiag);
+    private static readonly bool s_fineGrainedProfilingEnabled =
+        s_detailedDiagnosticsEnabled ||
+        XREnvironment.IsEnabled(
+            XREngineEnvironmentVariables.VulkanRecordingProfileDetail);
 
     private readonly EVulkanCpuStage _stage;
     private readonly VulkanFrameTelemetry _telemetry;
@@ -34,7 +38,7 @@ internal readonly ref struct VulkanCpuStageScope
         _active =
             (enabled || spanCapture) &&
             (!IsFineGrainedHotPathStage(stage) ||
-             s_detailedDiagnosticsEnabled ||
+             s_fineGrainedProfilingEnabled ||
              spanCapture);
         _captureAllocations =
             _active && (s_detailedDiagnosticsEnabled || spanCapture);

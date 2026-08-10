@@ -15,13 +15,15 @@ internal sealed class CommandChainSchedule
         ulong resourcePlanRevision,
         ReadOnlyMemory<RenderPassChainGroup> groups,
         bool requiresFreshPrimary = false,
-        int inlineFrameOpCount = 0)
+        int inlineFrameOpCount = 0,
+        int budgetLimitedInlineFrameOpCount = 0)
         => Reset(
             structuralSignature,
             resourcePlanRevision,
             groups.Span,
             requiresFreshPrimary,
-            inlineFrameOpCount);
+            inlineFrameOpCount,
+            budgetLimitedInlineFrameOpCount);
 
     public ulong StructuralSignature { get; private set; }
     public ulong ResourcePlanRevision { get; private set; }
@@ -42,6 +44,11 @@ internal sealed class CommandChainSchedule
     /// </summary>
     public bool RequiresFreshPrimary { get; private set; }
     public int InlineFrameOpCount { get; private set; }
+    /// <summary>
+    /// Number of otherwise schedulable frame operations deliberately retained
+    /// in the primary because the bounded secondary-command budget was full.
+    /// </summary>
+    public int BudgetLimitedInlineFrameOpCount { get; private set; }
     public ReadOnlyMemory<RenderPassChainGroup> Groups => _groups.AsMemory(0, _groupCount);
 
     public RenderPassChainGroup RentGroup(int index)
@@ -55,7 +62,8 @@ internal sealed class CommandChainSchedule
         ulong resourcePlanRevision,
         ReadOnlySpan<RenderPassChainGroup> groups,
         bool requiresFreshPrimary = false,
-        int inlineFrameOpCount = 0)
+        int inlineFrameOpCount = 0,
+        int budgetLimitedInlineFrameOpCount = 0)
     {
         EnsureGroupCapacity(groups.Length);
         groups.CopyTo(_groups);
@@ -64,6 +72,10 @@ internal sealed class CommandChainSchedule
         ResourcePlanRevision = resourcePlanRevision;
         RequiresFreshPrimary = requiresFreshPrimary;
         InlineFrameOpCount = Math.Max(0, inlineFrameOpCount);
+        BudgetLimitedInlineFrameOpCount = Math.Clamp(
+            budgetLimitedInlineFrameOpCount,
+            0,
+            InlineFrameOpCount);
         ScheduledChainCount = CountScheduledChains(groups);
     }
 

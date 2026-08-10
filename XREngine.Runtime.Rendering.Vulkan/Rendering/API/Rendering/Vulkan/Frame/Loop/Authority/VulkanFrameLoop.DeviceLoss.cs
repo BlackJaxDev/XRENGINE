@@ -53,6 +53,8 @@ internal sealed unsafe partial class VulkanFrameLoop
         if (!firstObservation)
             return;
 
+        _commandRuntime.AbandonRetiredSynchronousSubmissionsAfterDeviceLoss();
+
         string deviceLostReason = BuildDeviceLostReason(reason);
         lock (_telemetry._deviceLostTransitionLock)
         {

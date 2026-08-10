@@ -189,13 +189,17 @@ internal sealed partial class VulkanTextureUploadService
         VulkanResourceRuntime resourceRuntime,
         VulkanImportedTexturePendingUpload upload)
     {
+        if (!upload.TryMarkStagingResourcesReleased())
+            return;
+
         for (int index = 0; index < upload.StagingResources.Length; index++)
         {
             VulkanImportedTextureUploadStagingResource staging = upload.StagingResources[index];
-            resourceRuntime.Buffers.Retire(
-                staging.Buffer,
-                staging.Memory,
-                "VulkanTextureUploadService.RecordedPublication");
+            if (!staging.Slice.IsValid)
+                resourceRuntime.Buffers.Retire(
+                    staging.Buffer,
+                    staging.Memory,
+                    "VulkanTextureUploadService.RecordedPublication");
         }
     }
 

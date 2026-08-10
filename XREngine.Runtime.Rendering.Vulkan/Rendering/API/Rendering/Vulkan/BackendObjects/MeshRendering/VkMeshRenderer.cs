@@ -412,8 +412,9 @@ internal unsafe partial class VkMeshRenderer(
         EMeshBillboardMode billboardMode = request.BillboardMode;
         bool forceNoStereo = request.ForceNoStereo;
         operationRequest = default;
-        using VulkanCpuStageScope preparationStage =
-            default;
+        using VulkanCpuStageScope preparationStage = new(
+            materializationSnapshot.Telemetry,
+            EVulkanCpuStage.MeshDrawPreparation);
 
         if (!IsActive)
             Generate();
@@ -672,8 +673,9 @@ internal unsafe partial class VkMeshRenderer(
             {
                 bool prepared;
                 string prepareReason;
-                using (VulkanCpuStageScope resourcePreparationStage =
-                       default)
+                using (VulkanCpuStageScope resourcePreparationStage = new(
+                           materializationSnapshot.Telemetry,
+                           EVulkanCpuStage.MeshDrawResourcePreparation))
                 {
                     prepared = TryPrepareForDrawEnqueue(
                         effectiveMaterial,
@@ -698,8 +700,9 @@ internal unsafe partial class VkMeshRenderer(
                     return false;
                 }
 
-                using (VulkanCpuStageScope bindingSnapshotStage =
-                       default)
+                using (VulkanCpuStageScope bindingSnapshotStage = new(
+                           materializationSnapshot.Telemetry,
+                           EVulkanCpuStage.MeshDrawBindingSnapshotCopy))
                 {
                     programBindingSnapshot =
                         CaptureProgramBindingSnapshot(
@@ -843,8 +846,9 @@ internal unsafe partial class VkMeshRenderer(
                 p3.W);
         }
 
-        using (VulkanCpuStageScope enqueueStage =
-               default)
+        using (VulkanCpuStageScope enqueueStage = new(
+                   materializationSnapshot.Telemetry,
+                   EVulkanCpuStage.MeshDrawEnqueue))
         {
             operationRequest = new VulkanMeshOperationRequest(
                 this,
@@ -1134,8 +1138,9 @@ internal unsafe partial class VkMeshRenderer(
         long publisherScopeStart = measureAllocationBreakdown
             ? GC.GetAllocatedBytesForCurrentThread()
             : 0;
-        using (VulkanCpuStageScope publisherStateStage =
-               default)
+        using (VulkanCpuStageScope publisherStateStage = new(
+                   MaterializationSnapshot.Telemetry,
+                   EVulkanCpuStage.MeshDrawPublisherState))
         {
             materialBindingPublishers =
                 material.BindingPublishers.CaptureSnapshot();
@@ -1163,8 +1168,9 @@ internal unsafe partial class VkMeshRenderer(
         long eligibilityScopeStart = measureAllocationBreakdown
             ? GC.GetAllocatedBytesForCurrentThread()
             : 0;
-        using (VulkanCpuStageScope eligibilityStage =
-               default)
+        using (VulkanCpuStageScope eligibilityStage = new(
+                   MaterializationSnapshot.Telemetry,
+                   EVulkanCpuStage.MeshDrawArtifactEligibility))
         {
             if (!useMaterialPayloadFastPath)
             {
@@ -1213,8 +1219,9 @@ internal unsafe partial class VkMeshRenderer(
                 : 0;
             long lookupScopeStart = artifactKeyAndGenerationEnd;
             bool artifactFound;
-            using (VulkanCpuStageScope lookupStage =
-                   default)
+            using (VulkanCpuStageScope lookupStage = new(
+                       MaterializationSnapshot.Telemetry,
+                       EVulkanCpuStage.MeshDrawArtifactLookup))
             {
                 artifactFound =
                     program.TryGetPersistentProgramBindingArtifact(
@@ -1369,8 +1376,9 @@ internal unsafe partial class VkMeshRenderer(
         try
         {
             program.ClearBindings();
-            using (VulkanCpuStageScope materialBindingsStage =
-                   default)
+            using (VulkanCpuStageScope materialBindingsStage = new(
+                       MaterializationSnapshot.Telemetry,
+                       EVulkanCpuStage.MeshDrawMaterialBindings))
             {
                 if (useMaterialPayloadFastPath)
                 {

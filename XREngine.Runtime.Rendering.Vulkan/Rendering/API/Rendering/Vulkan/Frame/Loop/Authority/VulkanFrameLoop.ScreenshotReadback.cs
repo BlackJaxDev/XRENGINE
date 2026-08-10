@@ -103,6 +103,7 @@ internal sealed unsafe partial class VulkanFrameLoop
                 out failure);
         }
 
+        bool stagingPrepared = false;
         bool submitted = false;
         try
         {
@@ -173,6 +174,15 @@ internal sealed unsafe partial class VulkanFrameLoop
                     out failure);
             }
 
+            if (!ReadbackOutputResources.TryPrepareStagingSlice(slot.StagingSlice))
+            {
+                return RejectPreparedScreenshotReadback(
+                    slot,
+                    "The Vulkan screenshot readback arena could not publish its staging slice for submission.",
+                    out failure);
+            }
+            stagingPrepared = true;
+
             CommandBuffer commandBuffer = slot.CommandBuffer;
             SubmitInfo submitInfo = new()
             {
@@ -181,15 +191,25 @@ internal sealed unsafe partial class VulkanFrameLoop
                 PCommandBuffers = &commandBuffer,
             };
 
-            Result submitResult = _commandRuntime.SubmitToQueueTracked(
-                Api!,
-                _deviceContext,
-                _frameTelemetry,
+            VulkanSubmissionDiagnosticContext diagnosticContext = new()
+            {
+                SubmissionKind = "ScreenshotReadback",
+                FrameSlot = slot.StagingSlice.FrameSlot,
+                CommandBufferCount = 1,
+                FirstCommandBufferHandle = unchecked((ulong)commandBuffer.Handle),
+                FenceHandle = unchecked((ulong)slot.Fence.Handle),
+                QueueKind = "Graphics",
+            };
+            VulkanSubmissionReceipt submitReceipt = _commandRuntime.SubmitToQueueTrackedWithDisposition(
                 _deviceContext.GraphicsQueue,
                 ref submitInfo,
                 slot.Fence,
+                in diagnosticContext,
+                out _,
+                out _,
                 "VulkanScreenshotReadback");
-            if (submitResult != Result.Success)
+            Result submitResult = submitReceipt.Result;
+            if (!submitReceipt.SubmissionAccepted)
             {
                 if (submitResult == Result.ErrorDeviceLost)
                     MarkDeviceLost(
@@ -203,10 +223,11 @@ internal sealed unsafe partial class VulkanFrameLoop
                     out failure);
             }
 
-            slot.SubmittedTimestamp = Stopwatch.GetTimestamp();
-            slot.SubmittedAtUtc = DateTimeOffset.UtcNow;
+            ReadbackOutputResources.MarkStagingSliceSubmitted(slot.StagingSlice);
             Volatile.Write(ref slot.State, (int)EVulkanScreenshotReadbackSlotState.Submitted);
             submitted = true;
+            slot.SubmittedTimestamp = Stopwatch.GetTimestamp();
+            slot.SubmittedAtUtc = DateTimeOffset.UtcNow;
             VulkanReadbackLayoutPolicy.PublishRestoredAttachmentLayout(
                 source,
                 VulkanReadbackLayoutPolicy.ResolvePostTransfer(source));
@@ -223,6 +244,9 @@ internal sealed unsafe partial class VulkanFrameLoop
         {
             if (reservationOwned)
                 ReleaseScreenshotReadbackReservation(rawByteCount);
+
+            if (stagingPrepared && !submitted)
+                ReadbackOutputResources.CancelStagingSliceSubmission(slot.StagingSlice);
 
             if (!submitted)
                 RecycleUnsubmittedScreenshotReadback(slot);
@@ -551,22 +575,22 @@ internal sealed unsafe partial class VulkanFrameLoop
         if (slot.StagingBuffer.Handle != 0)
             ReleaseScreenshotReadbackStaging(slot);
 
-        try
-        {
-            (slot.StagingBuffer, slot.StagingMemory) = ReadbackOutputResources.CreateStagingBuffer(
-                BackendObjectContext,
+        if (!ReadbackOutputResources.TryAcquireStagingSlice(
+                slotIndex,
                 slot.RawByteCount,
-                $"ScreenshotReadback[{slotIndex}].Staging");
-            _deviceContext.SetDebugObjectName(
-                ObjectType.Buffer,
-                slot.StagingBuffer.Handle,
-                $"ScreenshotReadback[{slotIndex}].Staging");
-        }
-        catch (Exception ex)
+                submissionCompletionProven: true,
+                out VulkanFrameDataSlice stagingSlice,
+                out failure))
         {
-            failure = $"Failed to acquire {slot.RawByteCount:N0} bytes of Vulkan screenshot staging memory: {ex.Message}";
             return false;
         }
+        slot.StagingSlice = stagingSlice;
+        slot.StagingBuffer = stagingSlice.Buffer;
+        slot.StagingMemory = stagingSlice.Memory;
+        _deviceContext.SetDebugObjectName(
+            ObjectType.Buffer,
+            slot.StagingBuffer.Handle,
+            $"ScreenshotReadback[{slotIndex}].ArenaStaging");
 
         if (!needsResolve)
             return true;
@@ -707,7 +731,7 @@ internal sealed unsafe partial class VulkanFrameLoop
 
         BufferImageCopy copy = new()
         {
-            BufferOffset = 0,
+            BufferOffset = slot.StagingSlice.Offset,
             BufferRowLength = 0,
             BufferImageHeight = 0,
             ImageSubresource = new ImageSubresourceLayers
@@ -766,6 +790,14 @@ internal sealed unsafe partial class VulkanFrameLoop
         }
 
         _commandRuntime.CompleteTrackedFence(slot.Fence);
+        if (!ReadbackOutputResources.TryCompleteStagingSlice(slot.StagingSlice))
+        {
+            DeliverScreenshotReadbackFailure(
+                slot,
+                $"The Vulkan screenshot readback arena could not settle completed slot {slotIndex}.",
+                gpuCompletionSeconds: null);
+            return false;
+        }
         slot.FenceSignaledTimestamp = Stopwatch.GetTimestamp();
         double gpuCompletionSeconds = Stopwatch.GetElapsedTime(
             slot.SubmittedTimestamp,
@@ -785,28 +817,19 @@ internal sealed unsafe partial class VulkanFrameLoop
         bool copied = false;
         try
         {
-            if (!TryMapReadbackMemory(
-                    slot.StagingBuffer,
-                    slot.StagingMemory,
-                    0,
-                    slot.RawByteCount,
-                    out void* mappedPtr))
+            if (!ReadbackOutputResources.TryBeginRead(slot.StagingSlice, out VulkanFrameDataReadScope readScope))
             {
                 DeliverScreenshotReadbackFailure(
                     slot,
-                    "Failed to map completed Vulkan screenshot staging memory.",
+                    "Failed to enter completed Vulkan screenshot arena read access.",
                     gpuCompletionSeconds);
                 return false;
             }
 
-            try
+            using (readScope)
             {
-                new ReadOnlySpan<byte>(mappedPtr, rawLength).CopyTo(rawPixels);
+                readScope.Bytes.CopyTo(rawPixels);
                 copied = true;
-            }
-            finally
-            {
-                UnmapBufferMemory(slot.StagingBuffer, slot.StagingMemory);
             }
         }
         finally
@@ -1058,14 +1081,10 @@ internal sealed unsafe partial class VulkanFrameLoop
 
     private void ReleaseScreenshotReadbackStaging(VulkanScreenshotReadbackSlot slot)
     {
-        if (slot.StagingBuffer.Handle == 0)
+        if (!slot.StagingSlice.IsValid)
             return;
 
-        ReadbackOutputResources.RetireStagingBuffer(
-            BackendObjectContext,
-            slot.StagingBuffer,
-            slot.StagingMemory,
-            "ScreenshotReadback.Staging");
+        slot.StagingSlice = default;
         slot.StagingBuffer = default;
         slot.StagingMemory = default;
     }

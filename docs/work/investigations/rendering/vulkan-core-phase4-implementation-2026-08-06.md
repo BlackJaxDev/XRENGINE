@@ -1,7 +1,7 @@
 # Vulkan Core Phase 4 Implementation
 
 Date: 2026-08-06  
-Status: Phase 4.0 and Phase 4.1 complete; Phase 4.2+ active
+Status: Phase 4.0 through Phase 4.3 complete; Phase 4.4+ active
 Owner: Rendering
 
 ## Objective
@@ -617,3 +617,55 @@ data while the stable frame-operation topology, packet structure, prepared
 chains, and secondary command buffers remain reusable. That boundary directly
 targets the remaining 22.31 ms lowering and 46.75 ms encoding peaks rather than
 returning to the now-eliminated graph-plan compatibility path.
+
+### Phase 4.2 Settlement And Phase 4.3 Arena Completion
+
+The desktop frame callback now exposes a readable typed stage spine from
+preflight and completion maintenance through acquire, plan, resource prepare,
+work scheduling, command recording, submit preparation, native queue submit,
+output completion, and settlement. `VulkanFrameAttempt` retains the last typed
+phase result and allows only one terminal settlement claim. That settlement
+publishes exactly one `VulkanDesktopFrameTerminalResult`, verifies acquire and
+upload ownership are legal, and preserves the primary exception when telemetry
+or recovery also fails. Native acquire and present ownership are recorded before
+post-call diagnostics, and desktop/recovery submits consume the immediate
+`VulkanSubmissionReceipt` before publishing reuse, timeline, and command-buffer
+retirement ledgers.
+
+The canonical mapped frame-data implementation uses capability lanes instead of
+resource-name inference. Its typed slices carry arena, native buffer/memory,
+lane, chunk, slot, offset, alignment, and generation identity. Chunk growth is
+bounded to 16 groups per lane and 1 GiB per arena, existing slices never move,
+and fixed dirty ranges are flushed or invalidated with non-coherent atom
+expansion. Main desktop/OpenXR submission, synchronous buffer and ordinary
+texture uploads, synchronous pixel/auto-exposure readback, asynchronous depth
+readback, eight-slot screenshot readback, and 32-slot GPU-stat readback now publish explicit arena ownership
+transitions. Independently fenced imported texture streaming remains on the
+bounded whole-buffer staging pool because it is not frame-slot-owned.
+Accepted synchronous work whose initiating wait cannot prove completion transfers
+its fence, command buffer, and arena slice into a preallocated debt ledger. Desktop
+and OpenXR completion maintenance retry that debt, while terminal device loss leaves
+native cleanup to logical-device destruction.
+
+The first live validation exposed the reported native ImGui `Missing End()`
+assertion. The assertion was secondary: an arena allocation exception escaped
+from toolbar icon texture creation while Dear ImGui was between `Begin()` and
+`End()`. Separating synchronous scratch from submit-owned frame slots removed
+that allocation collision. A follow-up run found that the texture copy helper
+was flushing a synchronous slice through the main arena; routing the flush by
+the correct arena removed the repeated render exception. The screenshot probe
+then exposed reused Vulkan buffer handles whose new arena generation had not
+been registered with command-resource lifetime tracking. Arena chunk creation
+and destruction now publish that lifetime generation explicitly.
+
+Final validation on 2026-08-10 used named isolated session
+`vulkan-phase42-43-final-20260810`. Two visually inspected, camera-dependent Vulkan
+readbacks completed on alternating ring slots. Each transferred 16,588,800 raw
+bytes; GPU completion measured 239.73 ms and 39.31 ms during the two explicit
+camera-cut capture requests. The final session remained
+MCP-responsive and its steady-state plus shutdown logs contained no frame-data
+arena rejection, retired arena buffer, ImGui assertion, VUID, validation error,
+render exception, frame failure, fatal error, or device loss. Warning-as-error
+builds passed for both the Vulkan project and full editor. RenderDoc desktop
+prerequisites also passed `rdc doctor`; a GPU capture was unnecessary after the
+CPU exception and lifetime logs identified both defects precisely.

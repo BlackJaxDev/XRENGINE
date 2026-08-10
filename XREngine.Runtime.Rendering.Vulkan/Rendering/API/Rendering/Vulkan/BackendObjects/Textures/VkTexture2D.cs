@@ -67,28 +67,15 @@ internal unsafe sealed class VkTexture2D(VulkanBackendObjectContext backendConte
                 continue;
 
             DataSource? uploadData = VkFormatConversions.CreateNormalizedUploadData2D(mip, ResolvedFormat, out bool ownsUploadData);
-            Buffer stagingBuffer;
-            DeviceMemory stagingMemory;
-            ulong uploadDataSize = uploadData?.Length ?? 0u;
             try
             {
-                if (!TryCreateStagingBuffer(uploadData, out stagingBuffer, out stagingMemory))
-                    continue;
+                Extent3D extent = new(Math.Max(mip.Width, 1u), Math.Max(mip.Height, 1u), 1);
+                _ = UploadStagingDataToImage(uploadData, level, 0, 1, extent);
             }
             finally
             {
                 if (ownsUploadData)
                     uploadData?.Dispose();
-            }
-
-            try
-            {
-                Extent3D extent = new(Math.Max(mip.Width, 1u), Math.Max(mip.Height, 1u), 1);
-                CopyBufferToImage(stagingBuffer, level, 0, 1, extent, uploadDataSize);
-            }
-            finally
-            {
-                DestroyStagingBuffer(stagingBuffer, stagingMemory);
             }
         }
 
@@ -201,30 +188,20 @@ internal unsafe sealed class VkTexture2D(VulkanBackendObjectContext backendConte
         }
 
         DataSource? uploadData = VkFormatConversions.CreateNormalizedUploadData2D(mip, ResolvedFormat, out bool ownsUploadData);
-        Buffer stagingBuffer;
-        DeviceMemory stagingMemory;
-        ulong uploadDataSize = uploadData?.Length ?? 0u;
         try
         {
-            if (!TryCreateStagingBuffer(uploadData, out stagingBuffer, out stagingMemory))
+            if (uploadData is null || uploadData.Length == 0)
                 return true;
-        }
-        finally
-        {
-            if (ownsUploadData)
-                uploadData?.Dispose();
-        }
 
-        try
-        {
             Extent3D extent = new(Math.Max(mip.Width, 1u), Math.Max(mip.Height, 1u), 1);
-            CopyBufferToImage(stagingBuffer, (uint)mipIndex, 0, 1, extent, uploadDataSize);
+            _ = UploadStagingDataToImage(uploadData, (uint)mipIndex, 0, 1, extent);
             if (BackendContext.IsDeviceOperational)
                 TransitionImageLayout(ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
         }
         finally
         {
-            DestroyStagingBuffer(stagingBuffer, stagingMemory);
+            if (ownsUploadData)
+                uploadData?.Dispose();
         }
 
         MarkUploaded();
@@ -279,11 +256,11 @@ internal unsafe sealed class VkTexture2D(VulkanBackendObjectContext backendConte
     /// <para>
     /// The image is (re-)created if the dimensions have changed, then:
     /// <list type="number">
-    ///   <item>A host-visible staging buffer is allocated and filled via memcpy.</item>
+    ///   <item>A persistently mapped frame-data upload slice is allocated and filled.</item>
     ///   <item>The image is transitioned to <c>TransferDstOptimal</c>.</item>
     ///   <item><c>vkCmdCopyBufferToImage</c> copies from the staging buffer to mip 0.</item>
     ///   <item>The image is transitioned to <c>ShaderReadOnlyOptimal</c>.</item>
-    ///   <item>The staging buffer is released.</item>
+    ///   <item>The frame slot retains the arena slice until its accepted GPU work completes.</item>
     /// </list>
     /// </para>
     /// </summary>
@@ -310,48 +287,14 @@ internal unsafe sealed class VkTexture2D(VulkanBackendObjectContext backendConte
         if (Image.Handle == 0)
             return false;
 
-        ulong requiredBytes = (ulong)pixelData.Length;
-
-        // Allocate a host-visible staging buffer and memcpy the pixel data.
-        BufferUsageFlags usage = BufferUsageFlags.TransferSrcBit;
-        if (BackendContext.Resources.Buffers.CanUseNvIndirectCopyUploads(BackendContext))
-            usage |= BufferUsageFlags.ShaderDeviceAddressBit;
-
-        (Buffer stagingBuffer, DeviceMemory stagingMemory) = BackendContext.Resources.Buffers.CreateRaw(
-            BackendContext,
-            requiredBytes,
-            usage,
-            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
 
         // Map â†’ memcpy â†’ unmap.
-        void* mapped = null;
-        if (!BackendContext.Resources.Buffers.TryMap(BackendContext, stagingBuffer, stagingMemory, 0, requiredBytes, out mapped))
-        {
-            BackendContext.Resources.Buffers.Destroy(BackendContext, stagingBuffer, stagingMemory, "VkTexture2D.VideoFrame.MapFailure");
-            return false;
-        }
-
-        fixed (byte* srcPtr = pixelData)
-        {
-            System.Buffer.MemoryCopy(srcPtr, mapped, (long)requiredBytes, (long)requiredBytes);
-        }
-
-        BackendContext.Resources.Buffers.Unmap(BackendContext, stagingBuffer, stagingMemory);
 
         // Transition â†’ copy â†’ transition.
-        try
-        {
-            TransitionImageLayout(_currentImageLayout, ImageLayout.TransferDstOptimal);
-
-            Extent3D extent = new(width, height, 1);
-            CopyBufferToImage(stagingBuffer, 0, 0, 1, extent, requiredBytes);
-
-            TransitionImageLayout(ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
-        }
-        finally
-        {
-            BackendContext.Resources.Buffers.Destroy(BackendContext, stagingBuffer, stagingMemory, "VkTexture2D.VideoFrame");
-        }
+        TransitionImageLayout(_currentImageLayout, ImageLayout.TransferDstOptimal);
+        Extent3D extent = new(width, height, 1);
+        _ = UploadStagingBytesToImage(pixelData, 0, 0, 1, extent);
+        TransitionImageLayout(ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
 
         return true;
     }

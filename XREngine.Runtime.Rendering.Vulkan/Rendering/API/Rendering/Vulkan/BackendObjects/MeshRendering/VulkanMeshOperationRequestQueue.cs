@@ -7,7 +7,12 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanMeshOperationRequestQueue
 {
-    private const int Capacity = 1024;
+    // A frame can contain a full shadow-caster cohort followed by the main-view
+    // and composition draws.  Keeping only one 1K cohort allowed the shadow
+    // pass to consume the entire queue, dropping the later fullscreen present
+    // draw while the camera was moving.  Four cohorts cover the current
+    // directional-cascade workload without allocating in the render hot path.
+    private const int Capacity = 4096;
     private readonly VulkanMeshRenderRequest[] _entries = new VulkanMeshRenderRequest[Capacity];
     private readonly object _gate = new();
     private int _head;

@@ -201,6 +201,7 @@ internal sealed unsafe partial class VulkanFrameLoop
 
     private void DrainRetiredResourcesFromCompletedSubmittedFrameSlots()
     {
+        _commandRuntime.DrainRetiredSynchronousSubmissions();
         using VulkanDesktopFrameRetirementScope retirement =
             new(_commandRuntime, RetirementGate);
         ReadOnlySpan<ulong> timelineValues = retirement.TimelineValues;

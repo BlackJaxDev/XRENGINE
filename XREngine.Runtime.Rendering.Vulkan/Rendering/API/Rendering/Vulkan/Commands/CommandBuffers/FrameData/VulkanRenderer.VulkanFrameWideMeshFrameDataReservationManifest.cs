@@ -97,6 +97,7 @@ internal sealed partial class VulkanFrameWideMeshFrameDataReservationManifest
                 if (_isSealed)
                 {
                     string? firstFailure = null;
+                    bool appendOnlyChanged = false;
                     foreach (KeyValuePair<VulkanMeshFrameDataRendererFamilyKey, int> requirement in rendererFamilyDrawSlots)
                     {
                         VulkanMeshFrameDataRendererFamilyKey key = requirement.Key;
@@ -106,28 +107,41 @@ internal sealed partial class VulkanFrameWideMeshFrameDataReservationManifest
                         if (!_publishedRendererFamilies.TryGetValue(key, out FamilyAllocation allocation) ||
                             allocation.SlotCount < requiredStride)
                         {
-                            QueuePendingRendererFamily(key, requiredStride);
-                            firstFailure ??=
-                                $"renderer '{key.Renderer.Data?.Parent?.Mesh?.Name ?? "<unnamed mesh>"}' output family {key.Family} " +
-                                $"requires a {requiredStride}-slot range after frame-wide manifest generation {_generation} was sealed for render frame {frameId}";
-                            continue;
+                            if (!TryPublishRendererFamilyAfterSeal(
+                                    key,
+                                    requiredStride,
+                                    out bool familyChanged))
+                            {
+                                QueuePendingRendererFamily(key, requiredStride);
+                                firstFailure ??=
+                                    $"renderer '{key.Renderer.Data?.Parent?.Mesh?.Name ?? "<unnamed mesh>"}' output family {key.Family} " +
+                                    $"requires a {requiredStride}-slot range that would relocate an existing frame-data family after manifest generation {_generation} was sealed for render frame {frameId}";
+                                continue;
+                            }
+
+                            appendOnlyChanged |= familyChanged;
+                            allocation = _publishedRendererFamilies[key];
                         }
 
                         resolvedFamilyBases[key] = allocation.BaseSlot;
                         int requiredSlots = checked(allocation.BaseSlot + allocation.SlotCount);
                         AccumulateRendererRequirement(requiredDrawSlots, key.Renderer, requiredSlots);
-                        if (_publishedDrawSlots.TryGetValue(key.Renderer, out int published) &&
-                            published >= requiredSlots)
-                        {
-                            continue;
-                        }
-
-                        QueuePendingRendererFamily(key, requiredStride);
-                        firstFailure ??=
-                            $"renderer '{key.Renderer.Data?.Parent?.Mesh?.Name ?? "<unnamed mesh>"}' requires {requiredSlots} draw slots " +
-                            $"after frame-wide manifest generation {_generation} was sealed with {published} for render frame {frameId}";
+                        appendOnlyChanged |= PublishRendererRequirement(
+                            key.Renderer,
+                            requiredSlots);
                     }
 
+                    if (appendOnlyChanged)
+                    {
+                        // Appending a new family or growing one in place preserves
+                        // every previously published base offset. Advance the
+                        // diagnostic publication generation without invalidating
+                        // command buffers; callers observe relocation separately.
+                        _generation++;
+                        _publicationCount++;
+                    }
+
+                    PublishCountsNoLock();
                     generation = _generation;
                     reason = firstFailure ?? string.Empty;
                     if (firstFailure is not null)
@@ -287,6 +301,53 @@ internal sealed partial class VulkanFrameWideMeshFrameDataReservationManifest
             }
 
             _publishedRendererFamilies[key] = new FamilyAllocation(baseSlot, publishedCapacity);
+            return true;
+        }
+
+        /// <summary>
+        /// Extends a sealed manifest only when all existing family base offsets
+        /// remain unchanged. Frame-arena draw-slot capacity is CPU-logical, so a
+        /// new family or an in-place range growth cannot invalidate a command
+        /// buffer already recorded by another output in the same render frame.
+        /// </summary>
+        private bool TryPublishRendererFamilyAfterSeal(
+            VulkanMeshFrameDataRendererFamilyKey key,
+            int requiredStride,
+            out bool changed)
+        {
+            changed = false;
+            requiredStride = Math.Max(requiredStride, 1);
+            if (_publishedRendererFamilies.TryGetValue(
+                    key,
+                    out FamilyAllocation published))
+            {
+                if (published.SlotCount >= requiredStride)
+                    return true;
+
+                int publishedCapacity = ResolveFamilySlotCapacity(requiredStride);
+                int expandedEnd = checked(published.BaseSlot + publishedCapacity);
+                if (WouldOverlapAnotherFamily(
+                        key,
+                        published.BaseSlot,
+                        expandedEnd))
+                {
+                    return false;
+                }
+
+                _publishedRendererFamilies[key] = new FamilyAllocation(
+                    published.BaseSlot,
+                    publishedCapacity);
+                changed = true;
+                return true;
+            }
+
+            int baseSlot = ResolveNextFamilyBaseSlot(key);
+            _publishedRendererFamilies.Add(
+                key,
+                new FamilyAllocation(
+                    baseSlot,
+                    ResolveFamilySlotCapacity(requiredStride)));
+            changed = true;
             return true;
         }
 

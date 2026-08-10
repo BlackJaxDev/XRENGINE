@@ -13,7 +13,7 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>
         /// Vulkan data buffer with best practices: staging, synchronization, descriptor integration, lifetime, mapping, error handling, and multi-frame support.
         /// </summary>
-    internal unsafe class VkDataBuffer(
+    internal unsafe partial class VkDataBuffer(
         VulkanBackendObjectContext backendContext,
         XRDataBuffer buffer) : VkObject<XRDataBuffer>(backendContext, buffer), IApiDataBuffer
         {
@@ -312,9 +312,7 @@ namespace XREngine.Rendering.Vulkan
                         bool canUseGpuDecompression = CanUseGpuDecompressionUpload();
                         bool preferIndirectCopy = ShouldUseDeviceAddressForIndirectCopy(_bufferSize);
                         bool createDeviceAddress = preferIndirectCopy || enableDeviceAddress || canUseGpuDecompression;
-                        _lastUploadRoute = createDeviceAddress
-                            ? "DeviceLocalStagingDeviceAddress"
-                            : "DeviceLocalStaging";
+                        _lastUploadRoute = "DeviceLocalFrameDataArena";
 
                         // Create device-local buffer first.
                         BufferUsageFlags deviceUsage = usage | BufferUsageFlags.TransferDstBit;
@@ -338,36 +336,16 @@ namespace XREngine.Rendering.Vulkan
                             _lastUploadRoute = "DeviceLocalGpuDecompression";
                             uploadedContent = true;
                         }
-                        // If CPU-side data exists, upload through a transient staging buffer.
+                        // Ordinary CPU data uses the persistent frame-slot arena. GPU-compressed
+                        // payloads retain their device-address staging requirement above.
                         else if (requiredByteSize > 0 && TryGetUploadSlice(0, (uint)requiredByteSize, out VoidPtr sourceSlice))
                         {
-                            BufferUsageFlags stagingUsage = BufferUsageFlags.TransferSrcBit;
-                            if (preferIndirectCopy)
-                                stagingUsage |= BufferUsageFlags.ShaderDeviceAddressBit;
-
-                            MemoryPropertyFlags stagingProps = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
-                            var (stagingBuffer, stagingMemory) = BackendContext.Resources.Buffers.Create(
-                                BackendContext,
-                                requiredByteSize,
-                                stagingUsage,
-                                stagingProps,
+                            uploadedContent = UploadDeviceLocalRangeFromFrameDataArena(
                                 sourceSlice,
-                                preferIndirectCopy);
-                            try
-                            {
-                                BackendContext.Resources.SynchronousCommands.CopyBuffer(
-                                    stagingBuffer,
-                                    deviceBuffer,
-                                    requiredByteSize,
-                                    0,
-                                    0,
-                                    "VkDataBuffer.PushData");
-                                uploadedContent = true;
-                            }
-                            finally
-                            {
-                                BackendContext.Resources.Buffers.Destroy(BackendContext, stagingBuffer, stagingMemory, "VkDataBuffer.PushData.Staging");
-                            }
+                                checked((uint)requiredByteSize),
+                                deviceBuffer,
+                                destinationOffset: 0,
+                                "VkDataBuffer.PushData");
                         }
                         else if (Data.HasGpuCompressedPayload)
                         {
@@ -568,37 +546,13 @@ namespace XREngine.Rendering.Vulkan
                     if (!TryGetUploadSlice(offset, clampedLength, out VoidPtr sourceSlice))
                         return;
 
-                    bool preferIndirectCopy = ShouldUseDeviceAddressForIndirectCopy(clampedLength);
-                    _lastUploadRoute = preferIndirectCopy
-                        ? "DeviceLocalSubDataStagingDeviceAddress"
-                        : "DeviceLocalSubDataStaging";
-
-                    BufferUsageFlags stagingUsage = BufferUsageFlags.TransferSrcBit;
-                    if (preferIndirectCopy)
-                        stagingUsage |= BufferUsageFlags.ShaderDeviceAddressBit;
-
-                    MemoryPropertyFlags stagingProps = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
-                    var (stagingBuffer, stagingMemory) = BackendContext.Resources.Buffers.Create(
-                        BackendContext,
-                        clampedLength,
-                        stagingUsage,
-                        stagingProps,
+                    _lastUploadRoute = "DeviceLocalSubDataFrameDataArena";
+                    _ = UploadDeviceLocalRangeFromFrameDataArena(
                         sourceSlice,
-                        preferIndirectCopy);
-                    try
-                    {
-                        BackendContext.Resources.SynchronousCommands.CopyBuffer(
-                            stagingBuffer,
-                            _vkBuffer.Value,
-                            clampedLength,
-                            0,
-                            (ulong)offset,
-                            "VkDataBuffer.PushSubData");
-                    }
-                    finally
-                    {
-                        BackendContext.Resources.Buffers.Destroy(BackendContext, stagingBuffer, stagingMemory, "VkDataBuffer.PushSubData.Staging");
-                    }
+                        clampedLength,
+                        _vkBuffer.Value,
+                        checked((ulong)offset),
+                        "VkDataBuffer.PushSubData");
                 }
                 else
                 {

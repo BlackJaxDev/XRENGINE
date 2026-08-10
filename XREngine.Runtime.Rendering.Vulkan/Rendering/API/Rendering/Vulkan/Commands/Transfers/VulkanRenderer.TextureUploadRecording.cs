@@ -416,13 +416,17 @@ namespace XREngine.Rendering.Vulkan
 
         private void RetireTextureUploadStagingResources(VulkanImportedTexturePendingUpload upload)
         {
+            if (!upload.TryMarkStagingResourcesReleased())
+                return;
+
             for (int i = 0; i < upload.StagingResources.Length; i++)
             {
                 VulkanImportedTextureUploadStagingResource staging = upload.StagingResources[i];
-                RetireUploadBuffer(
-                    staging.Buffer,
-                    staging.Memory,
-                    "TextureUpload.Staging");
+                if (!staging.Slice.IsValid)
+                    RetireUploadBuffer(
+                        staging.Buffer,
+                        staging.Memory,
+                        "TextureUpload.Staging");
             }
         }
 

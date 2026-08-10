@@ -22,18 +22,8 @@ internal sealed class VkTextureRectangle(VulkanBackendObjectContext backendConte
         Generate();
         TransitionImageLayout(_currentImageLayout, ImageLayout.TransferDstOptimal);
 
-        if (TryCreateStagingBuffer(Data.Data, out Buffer stagingBuffer, out DeviceMemory stagingMemory))
-        {
-            try
-            {
-                Extent3D extent = new(Math.Max(Data.Width, 1u), Math.Max(Data.Height, 1u), 1);
-                CopyBufferToImage(stagingBuffer, 0, 0, 1, extent, (ulong)(Data.Data?.Length ?? 0));
-            }
-            finally
-            {
-                DestroyStagingBuffer(stagingBuffer, stagingMemory);
-            }
-        }
+        Extent3D extent = new(Math.Max(Data.Width, 1u), Math.Max(Data.Height, 1u), 1);
+        _ = UploadStagingDataToImage(Data.Data, 0, 0, 1, extent);
 
         TransitionImageLayout(ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
     }

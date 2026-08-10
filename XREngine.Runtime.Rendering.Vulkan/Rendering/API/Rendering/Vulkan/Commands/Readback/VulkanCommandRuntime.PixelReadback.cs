@@ -79,12 +79,15 @@ namespace XREngine.Rendering.Vulkan
                 return false;
 
             ulong rawByteCount = (ulong)(width * height) * sourcePixelSize;
-            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(rawByteCount);
+            if (!TryAllocateReadbackSlice(rawByteCount, out VulkanSynchronousFrameDataArenaLease arenaLease, out VulkanFrameDataSlice stagingSlice))
+                return false;
+            using VulkanSynchronousFrameDataArenaLease ownedArenaLease = arenaLease;
+            Silk.NET.Vulkan.Buffer stagingBuffer = stagingSlice.Buffer;
             ImageLayout postTransferLayout = VulkanReadbackLayoutPolicy.ResolvePostTransfer(liveSource);
 
             try
             {
-                using var scope = _commandRuntime.NewCommandScope();
+                using var scope = _commandRuntime.NewSynchronousFrameDataCommandScope(stagingSlice);
 
                 ImageLayout preTransferLayout = liveSource.PreferredLayout;
 
@@ -100,7 +103,7 @@ namespace XREngine.Rendering.Vulkan
 
                 BufferImageCopy copy = new()
                 {
-                    BufferOffset = 0,
+                    BufferOffset = stagingSlice.Offset,
                     BufferRowLength = 0,
                     BufferImageHeight = 0,
                     ImageSubresource = new ImageSubresourceLayers
@@ -134,15 +137,13 @@ namespace XREngine.Rendering.Vulkan
             }
             catch
             {
-                DestroyReadbackBuffer(stagingBuffer, stagingMemory);
                 return false;
             }
 
             VulkanReadbackLayoutPolicy.PublishRestoredAttachmentLayout(liveSource, postTransferLayout);
 
-            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, rawByteCount, out void* mappedPtr))
+            if (!TryMapReadbackSlice(stagingSlice, out VulkanFrameDataReadScope readScope, out void* mappedPtr))
             {
-                DestroyReadbackBuffer(stagingBuffer, stagingMemory);
                 return false;
             }
 
@@ -153,8 +154,7 @@ namespace XREngine.Rendering.Vulkan
             }
             finally
             {
-                UnmapReadbackMemory(stagingBuffer, stagingMemory);
-                DestroyReadbackBuffer(stagingBuffer, stagingMemory);
+                readScope.Dispose();
             }
         }
 
@@ -174,12 +174,15 @@ namespace XREngine.Rendering.Vulkan
                 return false;
 
             ulong rawByteCount = (ulong)(width * height) * sourcePixelSize;
-            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(rawByteCount);
+            if (!TryAllocateReadbackSlice(rawByteCount, out VulkanSynchronousFrameDataArenaLease arenaLease, out VulkanFrameDataSlice stagingSlice))
+                return false;
+            using VulkanSynchronousFrameDataArenaLease ownedArenaLease = arenaLease;
+            Silk.NET.Vulkan.Buffer stagingBuffer = stagingSlice.Buffer;
             ImageLayout postTransferLayout = VulkanReadbackLayoutPolicy.ResolvePostTransfer(liveSource);
 
             try
             {
-                using var scope = _commandRuntime.NewCommandScope();
+                using var scope = _commandRuntime.NewSynchronousFrameDataCommandScope(stagingSlice);
 
                 ImageLayout preTransferLayout = liveSource.PreferredLayout;
 
@@ -195,7 +198,7 @@ namespace XREngine.Rendering.Vulkan
 
                 BufferImageCopy copy = new()
                 {
-                    BufferOffset = 0,
+                    BufferOffset = stagingSlice.Offset,
                     BufferRowLength = 0,
                     BufferImageHeight = 0,
                     ImageSubresource = new ImageSubresourceLayers
@@ -229,15 +232,13 @@ namespace XREngine.Rendering.Vulkan
             }
             catch
             {
-                DestroyReadbackBuffer(stagingBuffer, stagingMemory);
                 return false;
             }
 
             VulkanReadbackLayoutPolicy.PublishRestoredAttachmentLayout(liveSource, postTransferLayout);
 
-            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, rawByteCount, out void* mappedPtr))
+            if (!TryMapReadbackSlice(stagingSlice, out VulkanFrameDataReadScope readScope, out void* mappedPtr))
             {
-                DestroyReadbackBuffer(stagingBuffer, stagingMemory);
                 return false;
             }
 
@@ -249,8 +250,7 @@ namespace XREngine.Rendering.Vulkan
             }
             finally
             {
-                UnmapReadbackMemory(stagingBuffer, stagingMemory);
-                DestroyReadbackBuffer(stagingBuffer, stagingMemory);
+                readScope.Dispose();
             }
         }
 
@@ -273,11 +273,14 @@ namespace XREngine.Rendering.Vulkan
 
             int pixelCount = width * height;
             ulong rawByteCount = (ulong)pixelCount * pixelSize;
-            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(rawByteCount);
+            if (!TryAllocateReadbackSlice(rawByteCount, out VulkanSynchronousFrameDataArenaLease arenaLease, out VulkanFrameDataSlice stagingSlice))
+                return false;
+            using VulkanSynchronousFrameDataArenaLease ownedArenaLease = arenaLease;
+            Silk.NET.Vulkan.Buffer stagingBuffer = stagingSlice.Buffer;
 
             try
             {
-                using var scope = _commandRuntime.NewCommandScope();
+                using var scope = _commandRuntime.NewSynchronousFrameDataCommandScope(stagingSlice);
 
                 ImageLayout preTransferLayout = liveSource.PreferredLayout;
                 ImageLayout postTransferLayout = VulkanReadbackLayoutPolicy.ResolvePostTransfer(liveSource);
@@ -294,7 +297,7 @@ namespace XREngine.Rendering.Vulkan
 
                 BufferImageCopy copy = new()
                 {
-                    BufferOffset = 0,
+                    BufferOffset = stagingSlice.Offset,
                     BufferRowLength = 0,
                     BufferImageHeight = 0,
                     ImageSubresource = new ImageSubresourceLayers
@@ -328,13 +331,11 @@ namespace XREngine.Rendering.Vulkan
             }
             catch
             {
-                DestroyReadbackBuffer(stagingBuffer, stagingMemory);
                 return false;
             }
 
-            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, rawByteCount, out void* mappedPtr))
+            if (!TryMapReadbackSlice(stagingSlice, out VulkanFrameDataReadScope readScope, out void* mappedPtr))
             {
-                DestroyReadbackBuffer(stagingBuffer, stagingMemory);
                 return false;
             }
 
@@ -357,8 +358,7 @@ namespace XREngine.Rendering.Vulkan
             }
             finally
             {
-                UnmapReadbackMemory(stagingBuffer, stagingMemory);
-                DestroyReadbackBuffer(stagingBuffer, stagingMemory);
+                readScope.Dispose();
             }
         }
 
@@ -720,11 +720,14 @@ namespace XREngine.Rendering.Vulkan
                 return false;
 
             ulong bufferSize = pixelSize;
-            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
+            if (!TryAllocateReadbackSlice(bufferSize, out VulkanSynchronousFrameDataArenaLease arenaLease, out VulkanFrameDataSlice stagingSlice))
+                return false;
+            using VulkanSynchronousFrameDataArenaLease ownedArenaLease = arenaLease;
+            Silk.NET.Vulkan.Buffer stagingBuffer = stagingSlice.Buffer;
 
             try
             {
-                using var scope = _commandRuntime.NewCommandScope();
+                using var scope = _commandRuntime.NewSynchronousFrameDataCommandScope(stagingSlice);
 
                 ImageLayout preTransferLayout = liveSource.PreferredLayout;
                 ImageLayout postTransferLayout = VulkanReadbackLayoutPolicy.ResolvePostTransfer(liveSource);
@@ -741,7 +744,7 @@ namespace XREngine.Rendering.Vulkan
 
                 BufferImageCopy copy = new()
                 {
-                    BufferOffset = 0,
+                    BufferOffset = stagingSlice.Offset,
                     BufferRowLength = 0,
                     BufferImageHeight = 0,
                     ImageSubresource = new ImageSubresourceLayers
@@ -777,19 +780,16 @@ namespace XREngine.Rendering.Vulkan
             }
             catch
             {
-                DestroyReadbackBuffer(stagingBuffer, stagingMemory);
                 return false;
             }
 
-            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, bufferSize, out void* mappedPtr))
+            if (!TryMapReadbackSlice(stagingSlice, out VulkanFrameDataReadScope readScope, out void* mappedPtr))
             {
-                DestroyReadbackBuffer(stagingBuffer, stagingMemory);
                 return false;
             }
 
             depth = ReadDepthValue(mappedPtr, liveSource.Format);
-            UnmapReadbackMemory(stagingBuffer, stagingMemory);
-            DestroyReadbackBuffer(stagingBuffer, stagingMemory);
+            readScope.Dispose();
             return true;
         }
 
@@ -826,13 +826,16 @@ namespace XREngine.Rendering.Vulkan
             }
 
             ulong bufferSize = pixelSize;
-            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
+            if (!TryAllocateReadbackSlice(bufferSize, out VulkanSynchronousFrameDataArenaLease arenaLease, out VulkanFrameDataSlice stagingSlice))
+                return false;
+            using VulkanSynchronousFrameDataArenaLease ownedArenaLease = arenaLease;
+            Silk.NET.Vulkan.Buffer stagingBuffer = stagingSlice.Buffer;
             ImageLayout preTransferLayout = liveSource.PreferredLayout;
             ImageLayout postTransferLayout = VulkanReadbackLayoutPolicy.ResolvePostTransfer(liveSource);
 
             try
             {
-            using var scope = _commandRuntime.NewCommandScope();
+            using var scope = _commandRuntime.NewSynchronousFrameDataCommandScope(stagingSlice);
 
                 TransitionPreparedImageForBlit(
                     scope.CommandBuffer,
@@ -846,7 +849,7 @@ namespace XREngine.Rendering.Vulkan
 
                 BufferImageCopy copy = new()
                 {
-                    BufferOffset = 0,
+                    BufferOffset = stagingSlice.Offset,
                     BufferRowLength = 0,
                     BufferImageHeight = 0,
                     ImageSubresource = new ImageSubresourceLayers
@@ -880,14 +883,12 @@ namespace XREngine.Rendering.Vulkan
             }
             catch (Exception ex)
             {
-                DestroyReadbackBuffer(stagingBuffer, stagingMemory);
                 info = VulkanDepthReadbackDebugInfo.Failed($"Depth copy command failed: {ex.Message}", x, y);
                 return false;
             }
 
-            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, bufferSize, out void* mappedPtr))
+            if (!TryMapReadbackSlice(stagingSlice, out VulkanFrameDataReadScope readScope, out void* mappedPtr))
             {
-                DestroyReadbackBuffer(stagingBuffer, stagingMemory);
                 info = VulkanDepthReadbackDebugInfo.Failed("Could not map depth readback staging memory.", x, y);
                 return false;
             }
@@ -898,8 +899,7 @@ namespace XREngine.Rendering.Vulkan
                 rawBytes[i] = src[i];
 
             float decodedDepth = ReadDepthValue(mappedPtr, liveSource.Format);
-            UnmapReadbackMemory(stagingBuffer, stagingMemory);
-            DestroyReadbackBuffer(stagingBuffer, stagingMemory);
+            readScope.Dispose();
 
             info = VulkanDepthReadbackDebugInfo.FromRawBytes(
                 x,
@@ -941,11 +941,14 @@ namespace XREngine.Rendering.Vulkan
                 return false;
 
             ulong bufferSize = pixelSize;
-            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
+            if (!TryAllocateReadbackSlice(bufferSize, out VulkanSynchronousFrameDataArenaLease arenaLease, out VulkanFrameDataSlice stagingSlice))
+                return false;
+            using VulkanSynchronousFrameDataArenaLease ownedArenaLease = arenaLease;
+            Silk.NET.Vulkan.Buffer stagingBuffer = stagingSlice.Buffer;
 
             try
             {
-                using var scope = _commandRuntime.NewCommandScope();
+                using var scope = _commandRuntime.NewSynchronousFrameDataCommandScope(stagingSlice);
 
                 ImageLayout preTransferLayout = liveSource.PreferredLayout;
                 ImageLayout postTransferLayout = VulkanReadbackLayoutPolicy.ResolvePostTransfer(liveSource);
@@ -962,7 +965,7 @@ namespace XREngine.Rendering.Vulkan
 
                 BufferImageCopy copy = new()
                 {
-                    BufferOffset = 0,
+                    BufferOffset = stagingSlice.Offset,
                     BufferRowLength = 0,
                     BufferImageHeight = 0,
                     ImageSubresource = new ImageSubresourceLayers
@@ -996,19 +999,16 @@ namespace XREngine.Rendering.Vulkan
             }
             catch
             {
-                DestroyReadbackBuffer(stagingBuffer, stagingMemory);
                 return false;
             }
 
-            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, bufferSize, out void* mappedPtr))
+            if (!TryMapReadbackSlice(stagingSlice, out VulkanFrameDataReadScope readScope, out void* mappedPtr))
             {
-                DestroyReadbackBuffer(stagingBuffer, stagingMemory);
                 return false;
             }
 
             stencil = ReadStencilValue(mappedPtr, liveSource.Format);
-            UnmapReadbackMemory(stagingBuffer, stagingMemory);
-            DestroyReadbackBuffer(stagingBuffer, stagingMemory);
+            readScope.Dispose();
             return true;
         }
 
@@ -1041,63 +1041,76 @@ namespace XREngine.Rendering.Vulkan
             };
         }
 
-        private (Silk.NET.Vulkan.Buffer Buffer, DeviceMemory Memory) CreateReadbackBuffer(
-            ulong byteCount)
+        private bool TryAllocateReadbackSlice(
+            ulong byteCount,
+            out VulkanSynchronousFrameDataArenaLease lease,
+            out VulkanFrameDataSlice slice)
+        {
+            lease = default;
+            slice = default;
+            if (!ResourceRuntime.TryAcquireSynchronousFrameDataArenaLease(out lease))
+                return false;
+            if (lease.Arena.TryAllocate(
+                    0,
+                    EVulkanFrameDataLane.Readback,
+                    byteCount,
+                    alignment: 4,
+                    out slice))
+                return true;
+
+            lease.Dispose();
+            lease = default;
+            return false;
+        }
+
+        private bool TryMapReadbackSlice(
+            in VulkanFrameDataSlice slice,
+            out VulkanFrameDataReadScope scope,
+            out void* mapped)
+        {
+            scope = default;
+            mapped = null;
+            VulkanFrameDataArena? arena = ResourceRuntime.SynchronousFrameDataArena;
+            if (arena is null || !arena.TryBeginRead(slice, out scope))
+                return false;
+
+            mapped = scope.Pointer;
+            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
+            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(
+                checked((long)slice.Length));
+            return true;
+        }
+
+        // Async readback ownership remains fence-backed and cannot share the synchronous slot arena.
+        private (Silk.NET.Vulkan.Buffer Buffer, DeviceMemory Memory) CreateReadbackBuffer(ulong byteCount)
             => ResourceRuntime.Buffers.CreateRaw(
                 ReadbackContext,
                 byteCount,
                 BufferUsageFlags.TransferDstBit,
                 MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCachedBit,
-                owner: "CommandRuntime.PixelReadback");
+                owner: "CommandRuntime.PixelReadback.Async");
 
-        private void DestroyReadbackBuffer(
-            Silk.NET.Vulkan.Buffer buffer,
-            DeviceMemory memory)
-            => ResourceRuntime.Buffers.Destroy(
-                ReadbackContext,
-                buffer,
-                memory,
-                "CommandRuntime.PixelReadback");
+        private void DestroyReadbackBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)
+            => ResourceRuntime.Buffers.Destroy(ReadbackContext, buffer, memory, "CommandRuntime.PixelReadback.Async");
 
-        private bool TryMapReadbackMemory(
-            Silk.NET.Vulkan.Buffer buffer,
-            DeviceMemory memory,
-            ulong offset,
-            ulong length,
-            out void* mapped)
+        private bool TryMapReadbackMemory(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, ulong offset, ulong length, out void* mapped)
         {
             mapped = null;
-            if (!ResourceRuntime.Buffers.TryMap(
-                    ReadbackContext,
-                    buffer,
-                    memory,
-                    offset,
-                    length,
-                    out void* local))
+            if (!ResourceRuntime.Buffers.TryMap(ReadbackContext, buffer, memory, offset, length, out void* local))
                 return false;
-
-            ulong allocationOffset =
-                ResourceRuntime.Buffers.GetAllocationOffset(buffer) + offset;
-            ResourceRuntime.Buffers.Invalidate(
-                ReadbackContext,
-                memory,
-                allocationOffset,
-                Math.Max(length, 1UL));
+            ulong allocationOffset = ResourceRuntime.Buffers.GetAllocationOffset(buffer) + offset;
+            ResourceRuntime.Buffers.Invalidate(ReadbackContext, memory, allocationOffset, Math.Max(length, 1UL));
             mapped = local;
             RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
-            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(
-                checked((long)length));
+            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(checked((long)length));
             return true;
         }
 
-        private void UnmapReadbackMemory(
-            Silk.NET.Vulkan.Buffer buffer,
-            DeviceMemory memory)
+        private void UnmapReadbackMemory(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)
             => ResourceRuntime.Buffers.Unmap(ReadbackContext, buffer, memory);
 
         private VulkanBackendObjectContext ReadbackContext
-            => ResourceRuntime.BackendObjectContext ?? throw new InvalidOperationException(
-                "Pixel readback requires an initialized Vulkan backend-object context.");
+            => ResourceRuntime.BackendObjectContext ?? throw new InvalidOperationException("Pixel readback requires an initialized Vulkan backend-object context.");
 
         private static byte ReadStencilValue(void* ptr, Format format)
         {

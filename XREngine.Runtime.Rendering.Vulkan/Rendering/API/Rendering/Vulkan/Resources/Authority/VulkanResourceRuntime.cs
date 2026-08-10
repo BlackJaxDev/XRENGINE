@@ -924,9 +924,7 @@ internal sealed partial class VulkanResourceRuntime
                     handle,
                     out VulkanCommandBufferLifetimeRecord? lifetime) &&
                 lifetime.QueuedSubmissionCount != 0)
-            {
                 return false;
-            }
 
             return Lifetime.Tracker.IsRetirementReadyNoLock(ticket);
         }
@@ -947,9 +945,7 @@ internal sealed partial class VulkanResourceRuntime
                     poolKey,
                     out HashSet<ulong>? ownedChildren) ||
                 ownedChildren.Count == 0)
-            {
                 return true;
-            }
 
             List<CommandBuffer> trackedChildren = [];
             foreach (ulong childHandle in ownedChildren)
@@ -966,9 +962,7 @@ internal sealed partial class VulkanResourceRuntime
             CommandBuffer child = children[index];
             if (IsCommandBufferPendingRetirement(child) ||
                 !IsCommandBufferRetirementReady(child, VulkanRetirementTicket.None))
-            {
                 return false;
-            }
         }
 
         return true;
@@ -1004,9 +998,7 @@ internal sealed partial class VulkanResourceRuntime
                     poolKey,
                     out HashSet<ulong>? ownedChildren) ||
                 ownedChildren.Count == 0)
-            {
                 return;
-            }
 
             children = new CommandBuffer[ownedChildren.Count];
             int index = 0;
@@ -1165,19 +1157,17 @@ internal sealed partial class VulkanResourceRuntime
                     key,
                     out VulkanResourceLifetimeRecord? resource) ||
                 resource.Generation != generation)
-            {
                 continue;
-            }
 
             resource.Pins.ReleaseRecordedReference();
+
             if (!resource.Pins.HasRecordedReferences)
                 resource.State &= ~EVulkanResourceLifetimeState.Recorded;
+
             if (Lifetime.Tracker.ResourceCommandBufferDependencies.TryGetValue(
                     key,
                     out HashSet<ulong>? commandBuffers))
-            {
                 commandBuffers.Remove(commandBufferHandle);
-            }
         }
 
         lifetime.Dependencies.Clear();
@@ -1194,8 +1184,7 @@ internal sealed partial class VulkanResourceRuntime
         List<RetiredPipeline> ready = [];
         lock (Lifetime.Retirement.SyncRoot)
         {
-            for (int index = 0;
-                 index < list.Count && ready.Count < maxItems;)
+            for (int index = 0; index < list.Count && ready.Count < maxItems;)
             {
                 RetiredPipeline candidate = list[index];
                 if (!Lifetime.Tracker.IsRetirementReady(candidate.Ticket))
@@ -1259,11 +1248,10 @@ internal sealed partial class VulkanResourceRuntime
     /// </summary>
     internal bool TryBeginDestroyPipelineLayout(PipelineLayout pipelineLayout, string owner)
     {
-        if (pipelineLayout.Handle == 0 ||
-            !Lifetime.LivePipelineLayoutHandles.TryRemove(pipelineLayout.Handle, out string? trackedOwner))
-        {
+        if (pipelineLayout.Handle == 0 || !Lifetime.LivePipelineLayoutHandles.TryRemove(
+                pipelineLayout.Handle,
+                out string? trackedOwner))
             return false;
-        }
 
         VulkanResourceLifetimeKey key = new(ObjectType.PipelineLayout, pipelineLayout.Handle);
         VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
@@ -1352,8 +1340,7 @@ internal sealed partial class VulkanResourceRuntime
         int frameSlot,
         int maxItems = 8)
     {
-        List<VulkanRetiredPipelineLayout> list =
-            Lifetime.Retirement.PipelineLayouts[frameSlot];
+        List<VulkanRetiredPipelineLayout> list = Lifetime.Retirement.PipelineLayouts[frameSlot];
         List<VulkanRetiredPipelineLayout> ready = [];
         lock (Lifetime.Retirement.SyncRoot)
         {

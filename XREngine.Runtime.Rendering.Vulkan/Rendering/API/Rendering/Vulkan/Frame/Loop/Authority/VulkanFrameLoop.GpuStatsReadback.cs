@@ -112,92 +112,140 @@ internal sealed unsafe partial class VulkanFrameLoop
         }
 
         GpuRenderStatsReadbackSlot? slot = AcquireGpuRenderStatsReadbackSlot();
-        if (slot is null || !EnsureGpuRenderStatsReadbackResources(slot, byteCount))
+        if (slot is null ||
+            !EnsureGpuRenderStatsReadbackResources(slot) ||
+            !ReadbackOutputResources.TryAcquireGpuStatsSlice(
+                slot.ArenaSlot,
+                byteCount,
+                out slot.DataSlice))
             return false;
 
-        Result resetFenceResult = Api!.ResetFences(_deviceContext.Device, 1, in slot.Fence);
-        Result resetCommandResult = _commandRuntime.ResetTrackedCommandBuffer(slot.CommandBuffer);
-        if (resetFenceResult != Result.Success || resetCommandResult != Result.Success)
-            return false;
-
-        CommandBufferBeginInfo beginInfo = new()
+        bool arenaSubmissionAccepted = false;
+        try
         {
-            SType = StructureType.CommandBufferBeginInfo,
-            Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
-        };
-        _deviceContext.ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.GpuStatsReadback");
-        if (Api.BeginCommandBuffer(slot.CommandBuffer, in beginInfo) != Result.Success)
-            return false;
+            Result resetFenceResult = Api!.ResetFences(_deviceContext.Device, 1, in slot.Fence);
+            Result resetCommandResult = _commandRuntime.ResetTrackedCommandBuffer(slot.CommandBuffer);
+            if (resetFenceResult != Result.Success || resetCommandResult != Result.Success)
+            {
+                ReadbackOutputResources.CancelGpuStatsSliceSubmission(slot.DataSlice);
+                slot.DataSlice = default;
+                return false;
+            }
 
-        _commandRuntime.ResetCommandBufferBindState(slot.CommandBuffer);
+            CommandBufferBeginInfo beginInfo = new()
+            {
+                SType = StructureType.CommandBufferBeginInfo,
+                Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
+            };
+            _deviceContext.ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.GpuStatsReadback");
+            if (Api.BeginCommandBuffer(slot.CommandBuffer, in beginInfo) != Result.Success)
+            {
+                ReadbackOutputResources.CancelGpuStatsSliceSubmission(slot.DataSlice);
+                slot.DataSlice = default;
+                return false;
+            }
 
-        BufferMemoryBarrier sourceBarrier = new()
-        {
-            SType = StructureType.BufferMemoryBarrier,
-            SrcAccessMask = AccessFlags.ShaderWriteBit | AccessFlags.TransferWriteBit | AccessFlags.MemoryWriteBit,
-            DstAccessMask = AccessFlags.TransferReadBit,
-            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-            Buffer = sourceHandle,
-            Offset = sourceByteOffset,
-            Size = byteCount,
-        };
-        _commandRuntime.CmdPipelineBarrierTracked(
-            slot.CommandBuffer,
-            PipelineStageFlags.AllCommandsBit,
-            PipelineStageFlags.TransferBit,
-            0,
-            0,
-            null,
-            1,
-            &sourceBarrier,
-            0,
-            null);
+            _commandRuntime.ResetCommandBufferBindState(slot.CommandBuffer);
 
-        BufferCopy copy = new()
-        {
-            SrcOffset = sourceByteOffset,
-            DstOffset = 0,
-            Size = byteCount,
-        };
-        _commandRuntime.CmdCopyBufferTracked(slot.CommandBuffer, sourceHandle, slot.StagingBuffer, 1, &copy);
+            BufferMemoryBarrier sourceBarrier = new()
+            {
+                SType = StructureType.BufferMemoryBarrier,
+                SrcAccessMask = AccessFlags.ShaderWriteBit | AccessFlags.TransferWriteBit | AccessFlags.MemoryWriteBit,
+                DstAccessMask = AccessFlags.TransferReadBit,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Buffer = sourceHandle,
+                Offset = sourceByteOffset,
+                Size = byteCount,
+            };
+            _commandRuntime.CmdPipelineBarrierTracked(
+                slot.CommandBuffer,
+                PipelineStageFlags.AllCommandsBit,
+                PipelineStageFlags.TransferBit,
+                0,
+                0,
+                null,
+                1,
+                &sourceBarrier,
+                0,
+                null);
 
-        if (_commandRuntime.EndCommandBufferTracked(slot.CommandBuffer) != Result.Success)
-            return false;
+            BufferCopy copy = new()
+            {
+                SrcOffset = sourceByteOffset,
+                DstOffset = slot.DataSlice.Offset,
+                Size = byteCount,
+            };
+            _commandRuntime.CmdCopyBufferTracked(slot.CommandBuffer, sourceHandle, slot.DataSlice.Buffer, 1, &copy);
 
-        CommandBuffer readbackCommandBuffer = slot.CommandBuffer;
-        SubmitInfo submitInfo = new()
-        {
-            SType = StructureType.SubmitInfo,
-            CommandBufferCount = 1,
-            PCommandBuffers = &readbackCommandBuffer,
-        };
+            if (_commandRuntime.EndCommandBufferTracked(slot.CommandBuffer) != Result.Success ||
+                !ReadbackOutputResources.TryPrepareGpuStatsSlice(slot.DataSlice))
+            {
+                ReadbackOutputResources.CancelGpuStatsSliceSubmission(slot.DataSlice);
+                slot.DataSlice = default;
+                return false;
+            }
 
-        Result submitResult;
-        lock (_oneTimeSubmitLock)
-            submitResult = _commandRuntime.SubmitToQueueTracked(
-                Api!, _deviceContext, _frameTelemetry, _deviceContext.GraphicsQueue, ref submitInfo, slot.Fence,
-                "vkQueueSubmit.GpuStatsReadback");
+            CommandBuffer readbackCommandBuffer = slot.CommandBuffer;
+            SubmitInfo submitInfo = new()
+            {
+                SType = StructureType.SubmitInfo,
+                CommandBufferCount = 1,
+                PCommandBuffers = &readbackCommandBuffer,
+            };
 
-        if (submitResult != Result.Success)
-        {
-            if (submitResult == Result.ErrorDeviceLost)
-                MarkDeviceLost(
-                    "GPU statistics readback submit returned ErrorDeviceLost",
-                    "vkQueueSubmit.GpuStatsReadback",
-                    submitResult);
-            return false;
+            VulkanSubmissionDiagnosticContext diagnosticContext = new()
+            {
+                SubmissionKind = "GpuStatsReadback",
+                FrameSlot = slot.ArenaSlot,
+                CommandBufferCount = 1,
+                FirstCommandBufferHandle = unchecked((ulong)readbackCommandBuffer.Handle),
+                FenceHandle = unchecked((ulong)slot.Fence.Handle),
+                QueueKind = "Graphics",
+            };
+            VulkanSubmissionReceipt submitReceipt = _commandRuntime.SubmitToQueueTrackedWithDisposition(
+                _deviceContext.GraphicsQueue,
+                ref submitInfo,
+                slot.Fence,
+                in diagnosticContext,
+                out _,
+                out _,
+                "GpuStatsReadback");
+            Result submitResult = submitReceipt.Result;
+
+            if (!submitReceipt.SubmissionAccepted)
+            {
+                ReadbackOutputResources.CancelGpuStatsSliceSubmission(slot.DataSlice);
+                slot.DataSlice = default;
+                if (submitResult == Result.ErrorDeviceLost)
+                    MarkDeviceLost(
+                        "GPU statistics readback submit returned ErrorDeviceLost",
+                        "vkQueueSubmit.GpuStatsReadback",
+                        submitResult);
+                return false;
+            }
+
+            ReadbackOutputResources.MarkGpuStatsSliceSubmitted(slot.DataSlice);
+            arenaSubmissionAccepted = true;
+
+            slot.ByteCount = byteCount;
+            slot.ElementCount = elementCount;
+            slot.Kind = kind;
+            slot.PublishDraws = publishDraws;
+            slot.PublishTriangles = publishTriangles;
+            slot.SourceName = sourceBuffer.AttributeName ?? sourceBuffer.Target.ToString();
+            slot.SourceHandle = sourceHandle.Handle;
+            slot.Active = true;
+            return true;
         }
-
-        slot.ByteCount = byteCount;
-        slot.ElementCount = elementCount;
-        slot.Kind = kind;
-        slot.PublishDraws = publishDraws;
-        slot.PublishTriangles = publishTriangles;
-        slot.SourceName = sourceBuffer.AttributeName ?? sourceBuffer.Target.ToString();
-        slot.SourceHandle = sourceHandle.Handle;
-        slot.Active = true;
-        return true;
+        finally
+        {
+            if (!arenaSubmissionAccepted && slot.DataSlice.IsValid)
+            {
+                ReadbackOutputResources.CancelGpuStatsSliceSubmission(slot.DataSlice);
+                slot.DataSlice = default;
+            }
+        }
     }
 
     private GpuRenderStatsReadbackSlot? AcquireGpuRenderStatsReadbackSlot()
@@ -211,13 +259,14 @@ internal sealed unsafe partial class VulkanFrameLoop
                 continue;
 
             OutputRuntime.Capture.GpuStatsReadbackCursor = (index + 1) % slots.Length;
+            slot.ArenaSlot = index;
             return slot;
         }
 
         return null;
     }
 
-    private bool EnsureGpuRenderStatsReadbackResources(GpuRenderStatsReadbackSlot slot, uint byteCount)
+    private bool EnsureGpuRenderStatsReadbackResources(GpuRenderStatsReadbackSlot slot)
     {
         if (slot.CommandBuffer.Handle == 0)
         {
@@ -248,23 +297,7 @@ internal sealed unsafe partial class VulkanFrameLoop
             _deviceContext.SetDebugObjectName(ObjectType.Fence, slot.Fence.Handle, "GpuStatsReadback.Fence");
         }
 
-        if (slot.CapacityBytes >= byteCount && slot.StagingBuffer.Handle != 0)
-            return true;
-
-        if (slot.StagingBuffer.Handle != 0)
-            ReadbackOutputResources.RetireStagingBuffer(
-                BackendObjectContext,
-                slot.StagingBuffer,
-                slot.StagingMemory,
-                "GpuStatsReadback.StagingResize");
-
-        (slot.StagingBuffer, slot.StagingMemory) = ReadbackOutputResources.CreateStagingBuffer(
-            BackendObjectContext,
-            byteCount,
-            "GpuStatsReadback.Staging");
-        slot.CapacityBytes = byteCount;
-        _deviceContext.SetDebugObjectName(ObjectType.Buffer, slot.StagingBuffer.Handle, "GpuStatsReadback.Staging");
-        return slot.StagingBuffer.Handle != 0;
+        return true;
     }
 
     private bool TryConsumeGpuRenderStatsReadback(GpuRenderStatsReadbackSlot slot)
@@ -287,6 +320,14 @@ internal sealed unsafe partial class VulkanFrameLoop
 
         _commandRuntime.CompleteTrackedFence(slot.Fence);
 
+        if (!ReadbackOutputResources.TryCompleteGpuStatsSlice(slot.DataSlice) ||
+            !ReadbackOutputResources.TryBeginGpuStatsRead(
+                slot.DataSlice,
+                out VulkanFrameDataReadScope readScope))
+        {
+            return false;
+        }
+
         uint inlineCount = Math.Min(slot.ElementCount, GpuRenderStatsReadbackInlineUIntCapacity);
         Span<uint> inlineValues = stackalloc uint[(int)inlineCount];
         uint[]? rented = null;
@@ -296,17 +337,8 @@ internal sealed unsafe partial class VulkanFrameLoop
 
         try
         {
-            if (!TryMapReadbackMemory(slot.StagingBuffer, slot.StagingMemory, 0, slot.ByteCount, out void* mappedPtr))
-                return false;
-
-            try
-            {
-                new ReadOnlySpan<uint>(mappedPtr, (int)slot.ElementCount).CopyTo(values);
-            }
-            finally
-            {
-                UnmapBufferMemory(slot.StagingBuffer, slot.StagingMemory);
-            }
+            using (readScope)
+                new ReadOnlySpan<uint>(readScope.Pointer, (int)slot.ElementCount).CopyTo(values);
 
             PublishGpuRenderStatsReadback(slot, values);
             RuntimeEngine.Rendering.Stats.GpuDriven.RecordDelayedDiagnosticReadback(slot.ByteCount);
@@ -321,6 +353,7 @@ internal sealed unsafe partial class VulkanFrameLoop
             slot.ElementCount = 0u;
             slot.PublishDraws = false;
             slot.PublishTriangles = false;
+            slot.DataSlice = default;
         }
 
         return true;
@@ -333,63 +366,63 @@ internal sealed unsafe partial class VulkanFrameLoop
         switch (slot.Kind)
         {
             case GpuRenderStatsReadbackKind.DrawCountBuffer:
-            {
-                ulong drawCount = 0ul;
-                for (int i = 0; i < values.Length; ++i)
-                    drawCount += values[i];
-
-                if (slot.PublishDraws && drawCount > 0ul)
-                    RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls(VulkanGpuStatsReadbackTelemetry.SaturateToInt(drawCount));
-                RuntimeEngine.Rendering.Stats.GpuDriven.RecordCommandCompaction(
-                    culledCommands: 0,
-                    delayedDrawCountValue: drawCount > long.MaxValue
-                        ? long.MaxValue
-                        : (long)drawCount);
-
-                if (IndirectTraceEnabled)
                 {
-                    Debug.Vulkan("[VulkanIndirect] delayed draw counts source={0} elements={1} sum={2}", slot.SourceName, values.Length, drawCount);
-                    WriteGpuRenderStatsTraceIfChanged(slot.SourceName, slot.SourceHandle, "draw-counts", values);
+                    ulong drawCount = 0ul;
+                    for (int i = 0; i < values.Length; ++i)
+                        drawCount += values[i];
+
+                    if (slot.PublishDraws && drawCount > 0ul)
+                        RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls(VulkanGpuStatsReadbackTelemetry.SaturateToInt(drawCount));
+                    RuntimeEngine.Rendering.Stats.GpuDriven.RecordCommandCompaction(
+                        culledCommands: 0,
+                        delayedDrawCountValue: drawCount > long.MaxValue
+                            ? long.MaxValue
+                            : (long)drawCount);
+
+                    if (IndirectTraceEnabled)
+                    {
+                        Debug.Vulkan("[VulkanIndirect] delayed draw counts source={0} elements={1} sum={2}", slot.SourceName, values.Length, drawCount);
+                        WriteGpuRenderStatsTraceIfChanged(slot.SourceName, slot.SourceHandle, "draw-counts", values);
+                    }
+                    break;
                 }
-                break;
-            }
             case GpuRenderStatsReadbackKind.StatsBuffer:
-            {
-                uint draws = values.Length > (int)GpuStatsLayout.StatsDrawCount
-                    ? values[(int)GpuStatsLayout.StatsDrawCount]
-                    : 0u;
-                uint triangles = values.Length > (int)GpuStatsLayout.StatsTriangleCount
-                    ? values[(int)GpuStatsLayout.StatsTriangleCount]
-                    : 0u;
-
-                if (slot.PublishDraws && draws > 0u)
-                    RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls(VulkanGpuStatsReadbackTelemetry.SaturateToInt(draws));
-                if (slot.PublishTriangles && triangles > 0u)
-                    RuntimeEngine.Rendering.Stats.Frame.AddTrianglesRendered(VulkanGpuStatsReadbackTelemetry.SaturateToInt(triangles));
-
-                if (values.Length > (int)GpuStatsLayout.MeshletTaskRecordsHiZCulled)
                 {
-                    RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletTaskStats(
-                        values[(int)GpuStatsLayout.MeshletTaskRecordsEmitted],
-                        values[(int)GpuStatsLayout.MeshletTaskRecordsFrustumCulled],
-                        values[(int)GpuStatsLayout.MeshletTaskRecordsConeCulled],
-                        values[(int)GpuStatsLayout.MeshletTaskRecordsHiZCulled]);
-                }
+                    uint draws = values.Length > (int)GpuStatsLayout.StatsDrawCount
+                        ? values[(int)GpuStatsLayout.StatsDrawCount]
+                        : 0u;
+                    uint triangles = values.Length > (int)GpuStatsLayout.StatsTriangleCount
+                        ? values[(int)GpuStatsLayout.StatsTriangleCount]
+                        : 0u;
 
-                if (IndirectTraceEnabled && values.Length > (int)GpuStatsLayout.StatsRejectedDistance)
-                {
-                    Debug.Vulkan(
-                        "[VulkanIndirect] delayed stats input={0} culled={1} draws={2} triangles={3} frustumRejected={4} distanceRejected={5}",
-                        values[(int)GpuStatsLayout.StatsInputCount],
-                        values[(int)GpuStatsLayout.StatsCulledCount],
-                        draws,
-                        triangles,
-                        values[(int)GpuStatsLayout.StatsRejectedFrustum],
-                        values[(int)GpuStatsLayout.StatsRejectedDistance]);
-                    WriteGpuRenderStatsTraceIfChanged(slot.SourceName, slot.SourceHandle, "stats", values);
+                    if (slot.PublishDraws && draws > 0u)
+                        RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls(VulkanGpuStatsReadbackTelemetry.SaturateToInt(draws));
+                    if (slot.PublishTriangles && triangles > 0u)
+                        RuntimeEngine.Rendering.Stats.Frame.AddTrianglesRendered(VulkanGpuStatsReadbackTelemetry.SaturateToInt(triangles));
+
+                    if (values.Length > (int)GpuStatsLayout.MeshletTaskRecordsHiZCulled)
+                    {
+                        RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletTaskStats(
+                            values[(int)GpuStatsLayout.MeshletTaskRecordsEmitted],
+                            values[(int)GpuStatsLayout.MeshletTaskRecordsFrustumCulled],
+                            values[(int)GpuStatsLayout.MeshletTaskRecordsConeCulled],
+                            values[(int)GpuStatsLayout.MeshletTaskRecordsHiZCulled]);
+                    }
+
+                    if (IndirectTraceEnabled && values.Length > (int)GpuStatsLayout.StatsRejectedDistance)
+                    {
+                        Debug.Vulkan(
+                            "[VulkanIndirect] delayed stats input={0} culled={1} draws={2} triangles={3} frustumRejected={4} distanceRejected={5}",
+                            values[(int)GpuStatsLayout.StatsInputCount],
+                            values[(int)GpuStatsLayout.StatsCulledCount],
+                            draws,
+                            triangles,
+                            values[(int)GpuStatsLayout.StatsRejectedFrustum],
+                            values[(int)GpuStatsLayout.StatsRejectedDistance]);
+                        WriteGpuRenderStatsTraceIfChanged(slot.SourceName, slot.SourceHandle, "stats", values);
+                    }
+                    break;
                 }
-                break;
-            }
         }
     }
 
@@ -455,19 +488,10 @@ internal sealed unsafe partial class VulkanFrameLoop
                 _commandRuntime.FreeCommandBufferWithLifetime(CurrentFrameSlot, slot.CommandPool, ref commandBuffer, "GpuStatsReadback.Dispose");
                 _commandRuntime.RemoveCommandBufferBindState(slot.CommandBuffer);
             }
-            if (slot.StagingBuffer.Handle != 0)
-                ReadbackOutputResources.RetireStagingBuffer(
-                    BackendObjectContext,
-                    slot.StagingBuffer,
-                    slot.StagingMemory,
-                    "GpuStatsReadback.Dispose");
-
             slot.Active = false;
             slot.Fence = default;
             slot.CommandBuffer = default;
-            slot.StagingBuffer = default;
-            slot.StagingMemory = default;
-            slot.CapacityBytes = 0;
+            slot.DataSlice = default;
         }
 
         _frameTelemetry._gpuRenderStatsTraceHashes.Clear();

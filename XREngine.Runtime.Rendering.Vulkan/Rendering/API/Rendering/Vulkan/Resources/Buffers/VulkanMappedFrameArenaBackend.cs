@@ -13,6 +13,7 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
     PhysicalDevice physicalDevice,
     Device device,
     VulkanDeviceContext deviceContext,
+    VulkanResourceRuntime resourceRuntime,
     VulkanBufferResourceManager resourceManager,
     ulong nonCoherentAtomSize)
 {
@@ -20,6 +21,7 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
     private readonly PhysicalDevice _physicalDevice = physicalDevice;
     private readonly Device _device = device;
     private readonly VulkanDeviceContext _deviceContext = deviceContext;
+    private readonly VulkanResourceRuntime _resourceRuntime = resourceRuntime;
     private readonly VulkanBufferResourceManager _resourceManager = resourceManager;
 
     internal ulong NonCoherentAtomSize { get; } = Math.Max(nonCoherentAtomSize, 1UL);
@@ -27,6 +29,8 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
 
     internal bool TryCreateChunk(
         ulong capacity,
+        BufferUsageFlags usage,
+        string ownerLabel,
         out Buffer buffer,
         out DeviceMemory memory,
         out void* mappedPtr,
@@ -42,11 +46,16 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
             return false;
         bool registered = false;
 
+        if (usage == 0)
+            throw new ArgumentOutOfRangeException(nameof(usage), "Mapped frame chunks require at least one Vulkan buffer usage.");
+        if (string.IsNullOrWhiteSpace(ownerLabel))
+            throw new ArgumentException("Mapped frame chunks require an owner label for native diagnostics.", nameof(ownerLabel));
+
         BufferCreateInfo bufferInfo = new()
         {
             SType = StructureType.BufferCreateInfo,
             Size = Math.Max(capacity, 1UL),
-            Usage = BufferUsageFlags.UniformBufferBit,
+            Usage = usage,
             SharingMode = SharingMode.Exclusive,
         };
         if (!_deviceContext.IsOperational)
@@ -56,7 +65,7 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
             ref bufferInfo,
             null,
             out buffer);
-        ObserveResult("vkCreateBuffer.MappedFrameArena", createBufferResult);
+        ObserveResult($"vkCreateBuffer.{ownerLabel}", createBufferResult);
         if (createBufferResult != Result.Success)
             return false;
 
@@ -90,7 +99,7 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
                 ref allocateInfo,
                 null,
                 out memory);
-            ObserveResult("vkAllocateMemory.MappedFrameArena", allocateResult);
+            ObserveResult($"vkAllocateMemory.{ownerLabel}", allocateResult);
             if (allocateResult != Result.Success)
                 return false;
 
@@ -101,7 +110,7 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
                 buffer,
                 memory,
                 0);
-            ObserveResult("vkBindBufferMemory.MappedFrameArena", bindResult);
+            ObserveResult($"vkBindBufferMemory.{ownerLabel}", bindResult);
             if (bindResult != Result.Success)
                 return false;
 
@@ -115,7 +124,7 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
                     allocateInfo.AllocationSize,
                     0,
                     &localMappedPtr);
-            ObserveResult("vkMapMemory.MappedFrameArena", mapResult);
+            ObserveResult($"vkMapMemory.{ownerLabel}", mapResult);
             if (mapResult != Result.Success || localMappedPtr is null)
                 return false;
 
@@ -132,6 +141,17 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
                     properties,
                     BlockId: -1,
                     MappedData: (nint)mappedPtr));
+            try
+            {
+                _resourceRuntime.RegisterMappedFrameArenaChunkLifetime(
+                    buffer,
+                    ownerLabel);
+            }
+            catch
+            {
+                _resourceManager.TryUnregisterMappedFrameArenaChunk(buffer, out _);
+                throw;
+            }
             registered = true;
             return true;
         }
@@ -155,6 +175,24 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
             }
         }
     }
+
+    /// <summary>Creates a uniform-buffer chunk for the legacy mesh frame arena.</summary>
+    internal bool TryCreateChunk(
+        ulong capacity,
+        out Buffer buffer,
+        out DeviceMemory memory,
+        out void* mappedPtr,
+        out bool isHostCoherent,
+        out ulong allocationLength)
+        => TryCreateChunk(
+            capacity,
+            BufferUsageFlags.UniformBufferBit,
+            "MappedFrameArena",
+            out buffer,
+            out memory,
+            out mappedPtr,
+            out isHostCoherent,
+            out allocationLength);
 
     /// <summary>
     /// Establishes the sole supported destruction proof: every submitted generation is complete
@@ -184,7 +222,10 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
         if (mappedPtr is not null && memory.Handle != 0)
             _api.UnmapMemory(_device, memory);
         if (buffer.Handle != 0)
+        {
             _api.DestroyBuffer(_device, buffer, null);
+            _resourceRuntime.CompleteMappedFrameArenaChunkLifetime(buffer);
+        }
         if (memory.Handle != 0)
             _api.FreeMemory(_device, memory, null);
     }

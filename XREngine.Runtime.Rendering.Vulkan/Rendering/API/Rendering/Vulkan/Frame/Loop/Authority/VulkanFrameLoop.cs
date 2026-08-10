@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using System.Threading;
 using Silk.NET.Vulkan;
 using XREngine.Rendering.Resources;
@@ -148,6 +149,8 @@ internal sealed unsafe partial class VulkanFrameLoop
                 $"Vulkan target '{TargetExecutionMode}' does not provide desktop WSI policy.");
     private VulkanMappedFrameArena? MappedFrameArena
         => _resourceRuntime.MappedFrameArena;
+    private VulkanFrameDataArena? FrameDataArena
+        => _resourceRuntime.FrameDataArena;
     private VulkanPresentationSourcePublication _windowPresentSource
         => _outputRuntime.PresentationSource.Publication;
     private ref FrameOpContext? _lastWindowPresentFrameOpContext
@@ -276,7 +279,10 @@ internal sealed unsafe partial class VulkanFrameLoop
             _outputRuntime.Desktop.Generation);
         attempt.Timing.PublishAfterFrame(
             totalFrameTime,
-            ResolveDesktopFrameTelemetryOutcome(ref attempt));
+            attempt.TerminalResultPublished
+                ? attempt.TerminalResult.Outcome
+                : throw new InvalidOperationException(
+                    "Desktop frame telemetry cannot publish before its terminal result."));
         attempt.AdvanceTo(EDesktopFramePhase.Finalized);
     }
 
@@ -316,6 +322,102 @@ internal sealed unsafe partial class VulkanFrameLoop
             "[Vulkan] Desktop frame telemetry finalization failed: {0}",
             telemetryFailure.Message);
 
+    private static VulkanDesktopFramePhaseResult CompleteDesktopFramePhase(
+        ref VulkanFrameAttempt attempt,
+        EVulkanFrameStage stage,
+        EDesktopFrameFlow flow)
+        => attempt.CompletePhase(stage, flow);
+
+    /// <summary>
+    /// Performs the single terminal ownership pass for an accepted attempt.
+    /// Helpers may already have settled ownership; this method only invokes
+    /// recovery when an unresolved ownership state remains.
+    /// </summary>
+    private Exception? SettleDesktopFrameAttempt(
+        ref VulkanFrameAttempt attempt)
+    {
+        if (!attempt.TryClaimTerminalSettlement())
+            return null;
+
+        Exception? settlementFailure = null;
+        if (!_deviceLost)
+        {
+            try
+            {
+                SettleAcceptedDesktopRecoverySubmissionDebt(ref attempt);
+            }
+            catch (Exception failure)
+            {
+                AddDesktopSettlementFailure(ref settlementFailure, failure);
+            }
+
+            try
+            {
+                if (attempt.UploadOwnership == EVulkanDesktopUploadOwnership.SubmittedDeferredFree)
+                {
+                    CommitSubmittedDesktopTextureUpload(
+                        ref attempt,
+                        attempt.GraphicsSignalValue,
+                        "terminal desktop settlement");
+                }
+            }
+            catch (Exception failure)
+            {
+                AddDesktopSettlementFailure(ref settlementFailure, failure);
+            }
+        }
+
+        try
+        {
+            if (_deviceLost)
+            {
+                AbandonDesktopOwnershipAfterDeviceLoss(ref attempt);
+            }
+            else if (!VulkanDesktopFramePolicy.IsAcquireFinalizationLegal(attempt.AcquireOwnership))
+            {
+                SettleDesktopAcquireAfterUnexpectedFailure(
+                    ref attempt,
+                    attempt.PrimaryFailure ?? new InvalidOperationException(
+                        "Desktop frame ended with unresolved native ownership."));
+            }
+        }
+        catch (Exception failure)
+        {
+            AddDesktopSettlementFailure(ref settlementFailure, failure);
+        }
+
+        if (!VulkanDesktopFramePolicy.IsAcquireFinalizationLegal(attempt.AcquireOwnership) ||
+            !VulkanDesktopFramePolicy.IsUploadFinalizationLegal(attempt.UploadOwnership))
+        {
+            AddDesktopSettlementFailure(
+                ref settlementFailure,
+                new InvalidOperationException(
+                    $"Desktop frame settlement left unresolved ownership. Acquire={attempt.AcquireOwnership} Upload={attempt.UploadOwnership}."));
+        }
+        bool ownershipSettled =
+            VulkanDesktopFramePolicy.IsAcquireFinalizationLegal(attempt.AcquireOwnership) &&
+            VulkanDesktopFramePolicy.IsUploadFinalizationLegal(attempt.UploadOwnership);
+        EVulkanFrameOutcome outcome = settlementFailure is null
+            ? ResolveDesktopFrameTelemetryOutcome(ref attempt)
+            : EVulkanFrameOutcome.Failed;
+        attempt.PublishTerminalResult(
+            new VulkanDesktopFrameTerminalResult(
+                outcome,
+                attempt.Reason,
+                ownershipSettled));
+
+        return settlementFailure;
+    }
+
+    private static void AddDesktopSettlementFailure(
+        ref Exception? settlementFailure,
+        Exception failure)
+    {
+        settlementFailure = settlementFailure is null
+            ? failure
+            : new AggregateException(settlementFailure, failure);
+    }
+
     internal void ResetResourceCatchUpProgress()
     {
         _resourceCatchUpStartedAt = 0;
@@ -341,52 +443,97 @@ internal sealed unsafe partial class VulkanFrameLoop
             return;
         }
 
-        VulkanFrameAttempt frameAttempt = new(_telemetry, in desktopFrameIdentity);
         try
         {
-            if (!_deviceContext.StateMachine.IsOperational)
-                throw CreateDeviceLostException("RenderWindow", Result.ErrorDeviceLost);
-
-            _telemetry.PublishDescriptorTableGeneration(
-                _resourceRuntime.DescriptorTableGeneration);
-            _resourceRuntime.Descriptors.Heap.BeginFrame(frameAttempt.FrameNumber);
-            RecordDesktopFrameGap(ref frameAttempt);
-
-            if (RunDesktopFramePreflight(ref frameAttempt) != EDesktopFrameFlow.Continue ||
-                PrepareDesktopFrameSlot(ref frameAttempt) != EDesktopFrameFlow.Continue ||
-                AcquireDesktopSwapchainImageCore(ref frameAttempt) != EDesktopFrameFlow.Continue)
-                return;
-
-            PrepareAcquiredDesktopImage(ref frameAttempt);
-            if (RecordDesktopFrame(ref frameAttempt) != EDesktopFrameFlow.Continue ||
-                SubmitDesktopFrame(ref frameAttempt) != EDesktopFrameFlow.Continue)
-                return;
-
-            _ = PresentSubmittedDesktopFrame(ref frameAttempt);
-        }
-        catch (Exception primaryFailure)
-        {
-            frameAttempt.PrimaryFailure = primaryFailure;
-            SettleDesktopAcquireAfterUnexpectedFailure(ref frameAttempt, primaryFailure);
-            throw;
-        }
-        finally
-        {
+            VulkanFrameAttempt frameAttempt = new(in desktopFrameIdentity);
             try
             {
-                PublishDesktopFrameTelemetry(ref frameAttempt);
-            }
-            catch (Exception telemetryFailure)
-            {
-                if (frameAttempt.PrimaryFailure is null)
-                    throw;
+                frameAttempt.Timing = _telemetry.BeginFrame(desktopFrameIdentity);
+                if (!_deviceContext.StateMachine.IsOperational)
+                    throw CreateDeviceLostException("RenderWindow", Result.ErrorDeviceLost);
 
-                ReportDesktopFrameTelemetryFailure(telemetryFailure);
+                _telemetry.PublishDescriptorTableGeneration(
+                    _resourceRuntime.DescriptorTableGeneration);
+                _resourceRuntime.Descriptors.Heap.BeginFrame(frameAttempt.FrameNumber);
+                RecordDesktopFrameGap(ref frameAttempt);
+
+                VulkanDesktopFramePhaseResult phaseOutcome = CompleteDesktopFramePhase(
+                    ref frameAttempt,
+                    EVulkanFrameStage.FramePacing,
+                    RunDesktopFramePreflight(ref frameAttempt));
+                if (!phaseOutcome.ShouldContinue)
+                    return;
+
+                phaseOutcome = CompleteDesktopFramePhase(
+                    ref frameAttempt,
+                    EVulkanFrameStage.CompletionMaintenance,
+                    PrepareDesktopFrameSlot(ref frameAttempt));
+                if (!phaseOutcome.ShouldContinue)
+                    return;
+
+                phaseOutcome = CompleteDesktopFramePhase(
+                    ref frameAttempt,
+                    EVulkanFrameStage.OutputAcquire,
+                    AcquireDesktopSwapchainImageCore(ref frameAttempt));
+                if (!phaseOutcome.ShouldContinue)
+                    return;
+
+                PrepareAcquiredDesktopImage(ref frameAttempt);
+                phaseOutcome = RecordDesktopFrame(ref frameAttempt);
+                if (!phaseOutcome.ShouldContinue)
+                    return;
+
+                phaseOutcome = SubmitDesktopFrame(ref frameAttempt);
+                if (!phaseOutcome.ShouldContinue)
+                    return;
+
+                _ = CompleteDesktopFramePhase(
+                    ref frameAttempt,
+                    EVulkanFrameStage.OutputComplete,
+                    PresentSubmittedDesktopFrame(ref frameAttempt));
+            }
+            catch (Exception primaryFailure)
+            {
+                frameAttempt.PrimaryFailure = primaryFailure;
+                throw;
             }
             finally
             {
-                Exit(in desktopFrameIdentity);
+                Exception? settlementFailure = SettleDesktopFrameAttempt(ref frameAttempt);
+                Exception? telemetryFailure = null;
+                try
+                {
+                    PublishDesktopFrameTelemetry(ref frameAttempt);
+                }
+                catch (Exception failure)
+                {
+                    telemetryFailure = failure;
+                    ReportDesktopFrameTelemetryFailure(failure);
+                }
+
+                if (frameAttempt.PrimaryFailure is not null)
+                {
+                    if (settlementFailure is not null)
+                    {
+                        Debug.VulkanWarning(
+                            "[Vulkan] Desktop frame settlement failed after {0}: {1}",
+                            frameAttempt.PrimaryFailure.GetType().Name,
+                            settlementFailure.Message);
+                    }
+                }
+                else if (settlementFailure is not null)
+                {
+                    ExceptionDispatchInfo.Capture(settlementFailure).Throw();
+                }
+                else if (telemetryFailure is not null)
+                {
+                    ExceptionDispatchInfo.Capture(telemetryFailure).Throw();
+                }
             }
+        }
+        finally
+        {
+            Exit(in desktopFrameIdentity);
         }
     }
 }

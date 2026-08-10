@@ -44,21 +44,11 @@ internal sealed class VkTexture3D(VulkanBackendObjectContext backendContext, IRe
             if (mip is null)
                 continue;
 
-            if (!TryCreateStagingBuffer(mip.Data, out Buffer stagingBuffer, out DeviceMemory stagingMemory))
-                continue;
-
-            try
-            {
-                Extent3D extent = new(
-                    Math.Max(mip.Width, 1u),
-                    Math.Max(mip.Height, 1u),
-                    Math.Max(mip.Depth, 1u));
-                CopyBufferToImage(stagingBuffer, level, 0, 1, extent, (ulong)(mip.Data?.Length ?? 0));
-            }
-            finally
-            {
-                DestroyStagingBuffer(stagingBuffer, stagingMemory);
-            }
+            Extent3D extent = new(
+                Math.Max(mip.Width, 1u),
+                Math.Max(mip.Height, 1u),
+                Math.Max(mip.Depth, 1u));
+            _ = UploadStagingDataToImage(mip.Data, level, 0, 1, extent);
         }
 
         if (Data.AutoGenerateMipmaps && ResolvedMipLevels > 1)

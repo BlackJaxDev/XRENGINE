@@ -490,16 +490,27 @@ internal sealed partial class VulkanTextureUploadService
     {
         VulkanImportedTextureUploadRequest request = pendingUpload.Request;
         string? transferFailure = null;
-        if (RenderDiagnosticsFlags.VkTextureUploadTransferQueue
-            && context.Commands.TrySubmitImportedTextureUploadToTransferQueue(
-                pendingUpload,
-                out VulkanSubmittedImportedTextureUpload? submitted,
-                out transferFailure)
-            && submitted is not null)
+        VulkanSubmittedImportedTextureUpload? submitted = null;
+        if (RenderDiagnosticsFlags.VkTextureUploadTransferQueue)
         {
             lock (_transferQueueSync)
-                _pendingTransferUploads.Add(submitted);
+            {
+                // Reserve the durable owner slot before the native acceptance boundary and
+                // keep the collection locked until the non-allocating Add publishes it.
+                _pendingTransferUploads.EnsureCapacity(_pendingTransferUploads.Count + 1);
+                if (context.Commands.TrySubmitImportedTextureUploadToTransferQueue(
+                        pendingUpload,
+                        out submitted,
+                        out transferFailure) &&
+                    submitted is not null)
+                {
+                    _pendingTransferUploads.Add(submitted);
+                }
+            }
+        }
 
+        if (submitted is not null)
+        {
             Interlocked.Increment(ref s_pendingTransferSubmissions);
             Interlocked.Add(ref s_transferQueueBytesInFlight, submitted.BytesInFlight);
             RecordState(

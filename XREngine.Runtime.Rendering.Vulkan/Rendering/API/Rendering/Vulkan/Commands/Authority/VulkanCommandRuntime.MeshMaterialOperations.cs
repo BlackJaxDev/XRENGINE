@@ -39,7 +39,68 @@ internal sealed unsafe partial class VulkanCommandRuntime
         XRRenderProgram programData,
         VkRenderProgram backendProgram)
     {
-        using VkRenderProgram.BindingUpdateScope capture = backendProgram.BeginBindingUpdate();
+        ulong frameId =
+            RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
+        if (frameId == 0)
+            return CaptureForwardLightingBindingSnapshot(
+                lights,
+                programData,
+                backendProgram);
+
+        XRRenderPipelineInstance.RenderingState? renderingState =
+            RuntimeEngine.Rendering.State.RenderingPipelineState;
+        var renderArea = RuntimeEngine.Rendering.State.RenderArea;
+        ForwardLightingBindingSnapshotCacheKey key = new(
+            lights,
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline,
+            RuntimeEngine.Rendering.State.RenderingCamera,
+            RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera,
+            RuntimeEngine.Rendering.State.RenderingWorld,
+            ResolveCurrentDrawTarget(),
+            RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex,
+            renderArea.X,
+            renderArea.Y,
+            renderArea.Width,
+            renderArea.Height,
+            RuntimeEngine.Rendering.State.IsStereoPass,
+            renderingState?.UseUnjitteredProjection ?? false);
+
+        lock (CommandBuffers.ForwardLightingGate)
+        {
+            if (CommandBuffers.ForwardLightingSnapshotFrame != frameId)
+            {
+                CommandBuffers.ForwardLightingSnapshots.Clear();
+                CommandBuffers.ForwardLightingSnapshotFrame = frameId;
+            }
+
+            if (CommandBuffers.ForwardLightingSnapshots.TryGetValue(
+                    key,
+                    out ComputeDispatchSnapshot? snapshot))
+            {
+                return snapshot;
+            }
+
+            snapshot = CaptureForwardLightingBindingSnapshot(
+                lights,
+                programData,
+                backendProgram);
+            CommandBuffers.ForwardLightingSnapshots.Add(key, snapshot);
+            return snapshot;
+        }
+    }
+
+    /// <summary>
+    /// Captures one immutable lighting layer. Callers cache this per exact
+    /// frame/view/program scope so hundreds of draws do not rebuild identical
+    /// dictionaries and signatures while the camera is moving.
+    /// </summary>
+    private static ComputeDispatchSnapshot CaptureForwardLightingBindingSnapshot(
+        Lights3DCollection lights,
+        XRRenderProgram programData,
+        VkRenderProgram backendProgram)
+    {
+        using VkRenderProgram.BindingUpdateScope capture =
+            backendProgram.BeginBindingUpdate();
         backendProgram.ClearBindings();
         lights.SetForwardLightingUniforms(programData);
         return backendProgram.CaptureComputeSnapshot();

@@ -48,11 +48,11 @@ internal sealed class VulkanRecordedCommandArtifact(
         RecordedPrimaryReferenceCount != 0 ||
         State == EVulkanRecordedCommandArtifactState.PendingRetirement;
 
-    internal bool TryValidateSharedDependency(
+    internal bool TryValidateCommandChainSecondaryDependency(
         in CommandRecordingDependencySignature expected,
         out CommandRecordingDependencyMismatch mismatch)
     {
-        mismatch = _dependencyIdentity.Compare(in expected);
+        mismatch = _dependencyIdentity.CompareCommandChainSecondary(in expected);
         return IsExecutable && !mismatch.RequiresRecording;
     }
 

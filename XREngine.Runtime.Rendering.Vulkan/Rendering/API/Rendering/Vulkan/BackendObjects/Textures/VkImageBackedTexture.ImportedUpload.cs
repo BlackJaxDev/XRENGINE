@@ -284,7 +284,10 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             DataSource? uploadData = VkFormatConversions.CreateNormalizedUploadData2D(mip, preparation.Format, out bool ownsUploadData);
             try
             {
-                if (!TryCreateStagingBuffer(uploadData, out Buffer stagingBuffer, out DeviceMemory stagingMemory))
+                if (!TryAllocateImportedStagingBuffer(
+                        uploadData,
+                        out Buffer stagingBuffer,
+                        out DeviceMemory stagingMemory))
                 {
                     failureReason = $"could not create staging buffer for mip {level}";
                     return false;
@@ -309,6 +312,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 };
 
                 preparation.StagingResources.Add(new VulkanImportedTextureUploadStagingResource(
+                    default,
                     stagingBuffer,
                     stagingMemory,
                     region,
@@ -551,6 +555,9 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
     internal void ReleasePreparedImportedUploadResources(VulkanImportedTexturePendingUpload pendingUpload)
     {
+        if (!pendingUpload.TryMarkPreparedResourcesReleased())
+            return;
+
         ReleasePreparedImportedUploadResources(
             pendingUpload.Image,
             pendingUpload.Memory,
@@ -572,7 +579,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         for (int i = 0; i < stagingResources.Length; i++)
         {
             VulkanImportedTextureUploadStagingResource staging = stagingResources[i];
-            BackendContext.Resources.Buffers.Retire(staging.Buffer, staging.Memory, "VkImageBackedTexture.ImportedUpload.DisposePreparedResources");
+            if (!staging.Slice.IsValid)
+                BackendContext.Resources.Buffers.Retire(staging.Buffer, staging.Memory, "VkImageBackedTexture.ImportedUpload.DisposePreparedResources");
         }
 
         if (image.Handle != 0 || memory.Handle != 0 || imageView.Handle != 0 || sampler.Handle != 0)

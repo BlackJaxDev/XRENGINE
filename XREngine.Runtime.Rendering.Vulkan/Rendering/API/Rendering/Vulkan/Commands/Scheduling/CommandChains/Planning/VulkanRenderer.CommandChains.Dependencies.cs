@@ -50,7 +50,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         ref readonly CommandRecordingDependencySignature recordedDependency =
             ref chain.DependencySignatureReference;
         CommandRecordingDependencyMismatch dependencyMismatch =
-            recordedDependency.Compare(in currentDependency);
+            recordedDependency.CompareCommandChainSecondary(in currentDependency);
         if (dependencyMismatch.InvalidationClass == CommandRecordingInvalidationClass.Structural)
             reason |= CommandChainDirtyReason.Structure;
         else if (dependencyMismatch.InvalidationClass == CommandRecordingInvalidationClass.BindingIdentity)
@@ -68,8 +68,9 @@ internal sealed unsafe partial class VulkanCommandRuntime
             reason |= CommandChainDirtyReason.Structure;
         }
 
-        if (chain.ResourcePlanRevision != packet.ResourcePlanSnapshot.Revision)
-            reason |= CommandChainDirtyReason.ResourcePlan;
+        // ResourcePlanRevision is a renderer-wide logical planning epoch. Exact
+        // packet/native resource identities are validated above and below, so a
+        // visibility-only epoch change must not force secondary re-recording.
         if (chain.PhysicalImageSignature != packet.ResourcePlanSnapshot.PhysicalImageSignature ||
             chain.FramebufferSignature != packet.ResourcePlanSnapshot.FramebufferSignature)
         {

@@ -43,6 +43,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         CreateFrameTimingResources();
         _commandRuntime.InitializeSynchronizationBackend(_deviceContext.SupportsSynchronization2);
         _resourceRuntime.InitializeMappedFrameArena(_deviceContext, FrameSlotCount);
+        _resourceRuntime.InitializeFrameDataArenas(_deviceContext, FrameSlotCount);
         ReserveOpenXrFrameDataSlotsIfRequired("initialization");
         int deferredProgramLinkCount = _resourceRuntime.PipelineManager.FlushPendingDeviceReadyProgramLinks();
         if (deferredProgramLinkCount > 0)
@@ -111,6 +112,7 @@ internal sealed unsafe partial class VulkanFrameLoop
             resourceAllocator.DestroyPhysicalImages(BackendObjectContext);
             resourceAllocator.DestroyPhysicalBuffers(BackendObjectContext);
             _resourceRuntime.Allocations.Staging.Destroy(BackendObjectContext);
+            _resourceRuntime.DestroyFrameDataArenas();
             _resourceRuntime.DestroyMappedFrameArena();
 
             // Teardown paths above may create or retain late-bound GPU resources.

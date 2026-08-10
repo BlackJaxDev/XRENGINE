@@ -1,6 +1,6 @@
 # Vulkan Core Hardening And Recording Code Changes TODO
 
-Last Updated: 2026-08-06
+Last Updated: 2026-08-10
 Owner: Rendering
 Status: Active
 
@@ -29,6 +29,17 @@ The renderer must not mix main-view, shadow, UI-preview, capture, or swapchain
 resource generations even when those outputs share a window or frame.
 
 ## Code Changes
+
+### Cross-Cutting Vulkan Buffer Invariant
+
+- [x] Keep canonical frame-data arena lanes capability-based rather than
+  payload-name-based. `TransferUpload`, `TransferStaging`, `Readback`,
+  `Uniform`, `Storage`, and `Indirect` describe the Vulkan operations supported
+  by an allocation; callers select the required lane explicitly. Do not infer
+  camera, transform, material, skinning, debug, indirect, upload, or readback
+  behavior from `XRDataBuffer.AttributeName` or another diagnostic/resource
+  name. Content semantics may be carried separately for diagnostics, but must
+  not determine native usage flags or allocation behavior.
 
 ### 1. Contain Device Loss And Make Resource Lifetime Explicit
 
@@ -376,7 +387,7 @@ state.
 
 - [x] Add allocation and timing scopes for plan build, recording, queue-lock
   wait, native submission, and worker wait.
-- [ ] Make the acquire-to-settlement frame loop one readable orchestration spine
+- [x] Make the acquire-to-settlement frame loop one readable orchestration spine
   with typed phase outcomes and exactly-once ownership settlement on every
   return, exception, resize, output-unavailable, and device-loss path.
   - [x] Publish typed frame/output identity, stage outcomes, wait reasons, and
@@ -385,15 +396,15 @@ state.
     work and before fallible telemetry or publication work.
   - [x] Settle presentationless accepted command-buffer lifetime before command
     pool reset and defer accepted incomplete OpenXR fences.
-  - [ ] Express acquire, plan, prepare, schedule, record, submit, output
+  - [x] Express acquire, plan, prepare, schedule, record, submit, output
     completion, and settlement in one readable orchestration spine.
-  - [ ] Prove exactly-once settlement and one terminal typed outcome for every
+  - [x] Prove exactly-once settlement and one terminal typed outcome for every
     early return, exception, resize, unavailable output, and injected device
     loss.
 
 #### 4.3 Finish Frame-Slot And Native-Memory Arenas
 
-- [ ] Use frame-indexed upload/storage arenas, stable bindings and offsets, and
+- [x] Use frame-indexed upload/storage arenas, stable bindings and offsets, and
   capacity growth with subrange updates for camera, transform, material,
   skinning, debug-line, and indirect data.
   - [x] Introduce the persistently mapped mesh `VulkanMappedFrameArena` with
@@ -401,10 +412,33 @@ state.
     submitted, and reusable states.
   - [x] Validate mapped mesh slices against device ownership and
     `nonCoherentAtomSize`, including recorded flush expansion.
-  - [ ] Migrate camera, transform, material, skinning, debug-line, indirect,
+  - [x] Migrate camera, transform, material, skinning, debug-line, indirect,
     upload, staging, and readback consumers to the canonical frame-slot arenas.
-  - [ ] Add bounded capacity growth and dirty-subrange publication for every
+  - [x] Add bounded capacity growth and dirty-subrange publication for every
     migrated stream.
+
+Implementation evidence (2026-08-10): the desktop loop now retains typed stage
+results across the acquire, plan, prepare, schedule, record, submit, output, and
+terminal-settlement spine. Native acquire, submit, and present ownership changes
+are committed immediately after the native boundary, accepted submissions keep
+their receipt and reuse/timeline retirement debt, and the settlement pass uses a
+one-way claim to publish one `VulkanDesktopFrameTerminalResult` on every unwind.
+
+`VulkanFrameDataArena` now provides capability-based upload, staging, readback,
+uniform, storage, and indirect lanes with stable typed slices, bounded geometric
+chunk growth, fixed dirty-range coalescing, non-coherent atom expansion, and
+explicit writable/prepared/submitted/reusable states. Generic `VkDataBuffer`
+subrange uploads cover camera, transform, material, skinning, debug-line, and
+indirect destinations without payload-name classification. Ordinary texture
+uploads use exclusive synchronous arena scratch; accepted-incomplete fence,
+command-buffer, and arena ownership is retained in preallocated completion debt.
+Independently fenced imported texture
+streaming remains in the bounded staging pool because its lifetime is not owned
+by a desktop frame slot. Screenshot, asynchronous depth, and GPU-stat readbacks
+use independent fence-owned arena rings. The final named Vulkan session produced two successful
+16,588,800-byte readbacks on alternating slots with no arena rejection, ImGui
+assertion, VUID, validation error, render exception, frame failure, or device
+loss in its logs.
 Native-boundary transient arrays, mapped-memory safety, and final unsafe-code
 containment are tracked once in section 4.5 to avoid duplicate completion boxes.
 

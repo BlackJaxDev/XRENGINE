@@ -37,6 +37,7 @@ namespace XREngine.Rendering.Vulkan
 
             _commandRuntime.DrainInvalidatedCommandBufferRecordings(
                 Api, ResourceRuntime);
+            _commandRuntime.DrainRetiredSynchronousSubmissions();
             DrainRetiredDesktopSwapchainGenerations();
             _commandRuntime.DrainRetiredCommandBuffers(
                 Api,

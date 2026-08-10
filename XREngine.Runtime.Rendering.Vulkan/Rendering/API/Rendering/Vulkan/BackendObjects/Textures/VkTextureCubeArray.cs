@@ -75,18 +75,8 @@ internal sealed class VkTextureCubeArray(VulkanBackendObjectContext backendConte
                         break;
 
                     Mipmap2D side = cubeMip.Sides[face];
-                    if (!TryCreateStagingBuffer(side.Data, out Buffer stagingBuffer, out DeviceMemory stagingMemory))
-                        continue;
-
-                    try
-                    {
-                        Extent3D extent = new(Math.Max(side.Width, 1u), Math.Max(side.Height, 1u), 1);
-                        CopyBufferToImage(stagingBuffer, level, baseLayer, 1, extent, (ulong)(side.Data?.Length ?? 0));
-                    }
-                    finally
-                    {
-                        DestroyStagingBuffer(stagingBuffer, stagingMemory);
-                    }
+                    Extent3D extent = new(Math.Max(side.Width, 1u), Math.Max(side.Height, 1u), 1);
+                    _ = UploadStagingDataToImage(side.Data, level, baseLayer, 1, extent);
                 }
             }
         }

@@ -111,16 +111,16 @@ namespace XREngine.Rendering.Vulkan
 
             long artifactMutationGeneration =
                 CommandChains.SnapshotArtifactMutationGeneration();
-            if (variant.RecordedCommandChainArtifactMutationGeneration !=
-                    artifactMutationGeneration ||
-                cachedSchedule.ArtifactMutationGeneration !=
-                    artifactMutationGeneration)
-            {
-                TraceCommandChainPrimaryReuseRejection(
+            Dictionary<CommandChainKey, CommandChain> commandChainCache =
+                GetCommandChainCache(imageIndex);
+            if (!TryRevalidatePrimarySecondaryArtifactsAfterGlobalMutation(
                     imageIndex,
-                    "SecondaryArtifactGeneration");
+                    variant,
+                    cachedSchedule,
+                    commandChainCache,
+                    artifactMutationGeneration,
+                    out artifactMutationGeneration))
                 return false;
-            }
 
             if (variant.FrameOpsSignature != frameOpsSignature ||
                 variant.PlannerRevision != plannerRevision ||
@@ -150,8 +150,6 @@ namespace XREngine.Rendering.Vulkan
                 cachedSchedule.CacheIdentity.IsReusable;
             CommandRecordingDependencySignature currentPrimaryDependencySignature =
                 variant.RecordedDependencySignature;
-            Dictionary<CommandChainKey, CommandChain> commandChainCache =
-                GetCommandChainCache(imageIndex);
             VulkanReusableFrameDataRefreshBatchInfo primaryBatchInfo =
                 frameDataScratch.PrimaryReusableFrameDataRefreshBatchInfo;
             bool primaryOwnerOnlyRefresh =
@@ -417,6 +415,68 @@ namespace XREngine.Rendering.Vulkan
                 }
                 swapchainLayoutAfterCommandBuffer = variant.RecordedSwapchainFinalLayout;
                 return true;
+        }
+
+        /// <summary>
+        /// Converts the global secondary-artifact clock into an exact proof for
+        /// the secondary buffers actually baked into this primary. Mutations in
+        /// another output, frame slot, or command-chain family must not force an
+        /// otherwise immutable primary skeleton to be recorded again.
+        /// </summary>
+        private bool TryRevalidatePrimarySecondaryArtifactsAfterGlobalMutation(
+            uint imageIndex,
+            PrimaryCommandArtifactOwner variant,
+            CommandChainSchedule schedule,
+            IReadOnlyDictionary<CommandChainKey, CommandChain> commandChainCache,
+            long observedMutationGeneration,
+            out long validatedMutationGeneration)
+        {
+            validatedMutationGeneration = observedMutationGeneration;
+            if (variant.RecordedCommandChainArtifactMutationGeneration ==
+                    observedMutationGeneration &&
+                schedule.ArtifactMutationGeneration == observedMutationGeneration)
+            {
+                return true;
+            }
+
+            VulkanPrimarySecondaryArtifactSequence recordedArtifacts =
+                variant.RecordedSecondaryArtifactSequence;
+            string? mismatch = null;
+            bool hasExactArtifactProof = recordedArtifacts.Count > 0
+                ? recordedArtifacts.MatchesCurrentArtifacts(
+                    commandChainCache,
+                    out mismatch)
+                : schedule.ScheduledChainCount == 0;
+            if (!hasExactArtifactProof)
+            {
+                TraceCommandChainPrimaryReuseRejection(
+                    imageIndex,
+                    "SecondaryArtifactGeneration",
+                    recordedArtifacts.Count == 0
+                        ? "the cached primary has no exact secondary-artifact sequence"
+                        : mismatch);
+                return false;
+            }
+
+            long generationAfterValidation =
+                CommandChains.SnapshotArtifactMutationGeneration();
+            if (generationAfterValidation != observedMutationGeneration)
+            {
+                TraceCommandChainPrimaryReuseRejection(
+                    imageIndex,
+                    "ConcurrentSecondaryArtifactMutation",
+                    $"generation changed from {observedMutationGeneration} to {generationAfterValidation} during exact validation");
+                return false;
+            }
+
+            // The exact sequence still references the same handles and artifact
+            // generations. Advance the fast-path clock publications together so
+            // unrelated mutations do not repeat this bounded validation walk.
+            variant.RecordedCommandChainArtifactMutationGeneration =
+                generationAfterValidation;
+            schedule.PublishArtifactMutationGeneration(generationAfterValidation);
+            validatedMutationGeneration = generationAfterValidation;
+            return true;
         }
 
         private void TraceCommandChainPrimaryReuseRejection(

@@ -38,6 +38,7 @@ internal sealed partial class VulkanResourceRuntime
             deviceContext.PhysicalDevice,
             deviceContext.Device,
             deviceContext,
+            this,
             Allocations.Buffers,
             deviceContext.NonCoherentAtomSize);
         VulkanMappedFrameArena arena = new(
