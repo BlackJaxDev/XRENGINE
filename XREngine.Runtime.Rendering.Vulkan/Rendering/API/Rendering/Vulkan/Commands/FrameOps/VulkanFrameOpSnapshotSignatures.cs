@@ -35,6 +35,39 @@ internal static class VulkanFrameOpSnapshotSignatures
             context.DescriptorGeneration,
             context.SubmissionQueueFamily);
 
+    /// <summary>
+    /// Matches a context to a sealed planner key without rescanning pass metadata
+    /// when the immutable metadata publication is the same object captured by
+    /// the frame-plan slot.
+    /// </summary>
+    internal static bool MatchesPlannerStateKey(
+        in FrameOpContext context,
+        in VulkanFrameOpPlannerStateKey key,
+        IReadOnlyCollection<RenderPassMetadata>? capturedPassMetadata)
+    {
+        if (context.ContextKind != key.ContextKind ||
+            context.PipelineIdentity != key.PipelineIdentity ||
+            context.ViewportIdentity != key.ViewportIdentity ||
+            context.DisplayWidth != key.DisplayWidth ||
+            context.DisplayHeight != key.DisplayHeight ||
+            context.InternalWidth != key.InternalWidth ||
+            context.InternalHeight != key.InternalHeight ||
+            context.OutputFrameBufferIdentity != key.OutputFrameBufferIdentity ||
+            ResolveResourcePlanOutputTargetIdentity(context) != key.OutputTargetIdentity ||
+            context.LogicalViewId != key.LogicalViewId ||
+            (context.ResourceRegistrySignatureSnapshot ??
+                context.ResourceRegistry?.DescriptorSignature ?? 0) != key.ResourceRegistrySignature ||
+            context.ResourceGeneration != key.ResourceGeneration ||
+            context.DescriptorGeneration != key.DescriptorGeneration ||
+            context.SubmissionQueueFamily != key.SubmissionQueueFamily)
+        {
+            return false;
+        }
+
+        return ReferenceEquals(context.PassMetadata, capturedPassMetadata) ||
+            ComputePassMetadataSignature(context.PassMetadata) == key.PassMetadataSignature;
+    }
+
     internal static ulong HashUniformBindings(
         Dictionary<string, ProgramUniformValue> uniforms)
     {

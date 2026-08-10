@@ -63,11 +63,17 @@ public unsafe partial class VulkanRenderer
                 return;
             }
 
+            if (!TryFreezeResourcePlannerRenderGraphPlan(
+                    ref pendingState,
+                    AllowSynchronousResourceUploads,
+                    out string freezeFailureReason))
+            {
+                throw new InvalidOperationException(
+                    $"Vulkan resource-plan publication failed: {freezeFailureReason}");
+            }
+
             PublishResourcePlannerRuntimeState(pendingState, commitReusedImageMetadata: true);
-            _framePlanner.PublishPlan(
-                pendingState.ResourcePlannerRevision,
-                pendingState.CompiledRenderGraph,
-                pendingState.BarrierPlanner);
+            _framePlanner.PublishPlan(pendingState.RenderGraphPlan);
             return;
         }
 
@@ -210,13 +216,29 @@ public unsafe partial class VulkanRenderer
         ActiveResourceAllocationSignature = allocationPlan.Signature;
         ActiveResourcePlannerSignatureBreakdown = signatureBreakdown;
         ActiveResourcePlannerRevision++;
-        if (!HasThreadResourcePlannerRuntimeState)
+        ResourcePlannerRuntimeState currentState = CaptureResourcePlannerRuntimeState();
+        // The generation being frozen owns this exact context and its live external
+        // resource bindings. Thread-local generation preparation starts from an empty
+        // state, so relying on the previously active context here loses imported
+        // buffers before their native bindings can be captured.
+        currentState.LastActiveFrameOpContext = context;
+        if (!TryFreezeResourcePlannerRenderGraphPlan(
+                ref currentState,
+                AllowSynchronousResourceUploads,
+                out string freezeFailureReason))
         {
-            ResourcePlannerRuntimeState currentState = CaptureResourcePlannerRuntimeState();
-            _framePlanner.PublishPlan(
-                currentState.ResourcePlannerRevision,
-                currentState.CompiledRenderGraph,
-                currentState.BarrierPlanner);
+            throw new InvalidOperationException(
+                $"Vulkan resource-plan publication failed: {freezeFailureReason}");
+        }
+
+        if (HasThreadResourcePlannerRuntimeState)
+            StoreThreadResourcePlannerRuntimeState(in currentState);
+        else
+        {
+            PublishResourcePlannerRuntimeState(
+                currentState,
+                commitReusedImageMetadata: false);
+            _framePlanner.PublishPlan(currentState.RenderGraphPlan);
         }
         RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
             new FrameOutputWorkTelemetry(

@@ -563,3 +563,59 @@ to each sealed frame-operation context, rather than the last globally published
 context plan. Until that is corrected, non-graphics secondaries remain
 ineligible, conservative barriers are emitted repeatedly, command-chain
 prepared authority cannot settle, and the sub-1 ms CPU target is not attainable.
+
+### Per-Context Frozen Render-Graph Authority Fix
+
+The corrective boundary above was implemented and validated on 2026-08-09.
+Each planner generation now freezes a render-graph plan only after resolving its
+native image and buffer bindings. The sealed frame plan publishes an
+allocation-free context-to-plan table and combined signature, so primary
+preparation, queue-transfer scheduling, pipeline-manifest construction,
+secondary eligibility, and primary operation recording all resolve the exact
+plan owned by each operation context. A mixed-context frame is no longer
+permitted to fall back to the latest globally published plan; the legacy
+single-plan fallback is restricted to genuinely single-context frames.
+
+This exposed two valid absent-resource cases during startup. Structural pass
+metadata may still mention a buffer belonging to a disabled conditional feature
+such as ReSTIR, and an external import such as `LightProbePositions` may have no
+live resource in a scene without probes. The freezer now omits those unbound
+barriers for that generation. Managed planner resources must still resolve to a
+native allocation before publication, and a later resource-generation change
+republishes the barrier when an optional resource becomes bound. This preserves
+strict failure behavior for real planner defects without manufacturing barriers
+for resources that do not exist.
+
+The rebuilt named session `vulkan-frame-loop-cpu-fix` exercised two simultaneous
+operation contexts while the camera moved. No `BarrierPlanUnavailable`, context
+plan mismatch, unknown-pass fallback, graph-plan precondition failure, Vulkan
+validation error, or engine exception occurred. The compatibility/signature
+scan that previously consumed 29-50 ms measured 0 ms. Camera-motion scene
+recording improved from the previous 240-345 ms range to 75.50 ms average and
+109.35 ms maximum across 36 samples. Packet lowering fell from 57-91 ms to a
+22.31 ms maximum, and primary native command encoding fell from 73-119 ms to a
+46.75 ms maximum. The improvement is material, but it does not satisfy the
+sub-1 ms CPU target.
+
+After camera motion settled, 24 samples measured 3.15 ms average scene-command
+recording, 3.39 ms average total command recording, and 3.87 ms average frame
+time. ImGui recording averaged 0.204 ms and remained visibly present. An
+independent CPU-frame dump captured the VPRC authoring program at only 0.298 ms,
+which places the remaining camera-dirty cost after authoring, in Vulkan packet
+lowering and native primary command encoding.
+
+Visual inspection confirmed a lit, camera-dependent Sponza view rather than a
+stale or black frame. A full-window capture confirmed the ImGui menu, transform
+toolbar, hierarchy, inspector, and play controls composited over the scene.
+Evidence is in
+`Build/_AgentValidation/20260801-vulkan-command-recording-finish/mcp-captures/`
+and the session logs are in
+`Build/_AgentValidation/mcp-sessions/vulkan-frame-loop-cpu-fix/logs/`.
+
+The next measured fix should prevent camera-only data changes from rebuilding,
+lowering, and natively re-encoding structurally identical command artifacts.
+Camera matrices and other per-frame values should refresh through frame-owned
+data while the stable frame-operation topology, packet structure, prepared
+chains, and secondary command buffers remain reusable. That boundary directly
+targets the remaining 22.31 ms lowering and 46.75 ms encoding peaks rather than
+returning to the now-eliminated graph-plan compatibility path.

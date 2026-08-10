@@ -9,6 +9,7 @@ internal struct ResourcePlannerRuntimeState
     public VulkanResourceAllocator ResourceAllocator;
     public VulkanBarrierPlanner BarrierPlanner;
     public VulkanCompiledRenderGraph CompiledRenderGraph;
+    public VulkanRenderGraphPlan RenderGraphPlan;
     public FrameOpContext? LastActiveFrameOpContext;
     public ulong ResourcePlannerSignature;
     public ulong ResourceAllocationSignature;
@@ -34,6 +35,7 @@ internal struct ResourcePlannerRuntimeState
             ResourceAllocator = allocator,
             BarrierPlanner = new VulkanBarrierPlanner(),
             CompiledRenderGraph = VulkanCompiledRenderGraph.Empty,
+            RenderGraphPlan = VulkanRenderGraphPlan.Empty,
             ResourcePlannerSignature = ulong.MaxValue,
             ResourceAllocationSignature = ulong.MaxValue,
             FailedResourcePlannerSignature = ulong.MaxValue,

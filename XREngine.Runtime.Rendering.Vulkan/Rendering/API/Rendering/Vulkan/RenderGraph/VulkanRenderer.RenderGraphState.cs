@@ -1309,6 +1309,15 @@ public unsafe partial class VulkanRenderer
         }
 
         AssertResourcePlannerRuntimeStateCanBeRestored(state);
+        if (!TryFreezeResourcePlannerRenderGraphPlan(
+                ref state,
+                AllowSynchronousResourceUploads,
+                out string freezeFailureReason))
+        {
+            throw new InvalidOperationException(
+                $"Vulkan prepared resource generation cannot publish: {freezeFailureReason}");
+        }
+
         lock (_framePlanner.PlannerReadbackGate)
         {
             ResourcePlannerRuntimeState publishedState = PublishedResourcePlannerRuntimeState;
@@ -1324,10 +1333,7 @@ public unsafe partial class VulkanRenderer
 
             state.ResourceAllocator.CommitReusedPhysicalImageMetadata();
             RestoreResourcePlannerRuntimeStateCore(in state);
-            _framePlanner.PublishPlan(
-                state.ResourcePlannerRevision,
-                state.CompiledRenderGraph,
-                state.BarrierPlanner);
+            _framePlanner.PublishPlan(state.RenderGraphPlan);
             return switchingState;
         }
     }

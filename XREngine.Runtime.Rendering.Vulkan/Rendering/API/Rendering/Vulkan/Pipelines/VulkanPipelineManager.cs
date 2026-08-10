@@ -132,10 +132,13 @@ internal sealed unsafe partial class VulkanPipelineManager
         FrameOperationSequence operations,
         EMeshSubmissionStrategy submissionStrategy,
         bool dynamicRendering,
-        ulong recordingStructuralSignature)
+        ulong recordingStructuralSignature,
+        FramePlan? framePlan = null)
     {
+        ulong renderGraphPlanSignature = framePlan?.RenderGraphPlanSignature ??
+            plan.CompatibilityIdentity;
         VulkanPipelineManifestCacheKey key = new(
-            plan.CompatibilityIdentity,
+            renderGraphPlanSignature,
             recordingStructuralSignature,
             submissionStrategy,
             dynamicRendering);
@@ -149,7 +152,9 @@ internal sealed unsafe partial class VulkanPipelineManager
                 operations,
                 submissionStrategy,
                 dynamicRendering,
-                recordingStructuralSignature);
+                recordingStructuralSignature,
+                renderGraphPlanSignature,
+                framePlan);
             while (_pipelineVariantManifestCache.Count >= MaxCachedPipelineVariantManifests &&
                    _pipelineVariantManifestInsertionOrder.TryDequeue(out VulkanPipelineManifestCacheKey evictedKey))
             {

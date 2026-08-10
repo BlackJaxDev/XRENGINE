@@ -152,7 +152,8 @@ namespace XREngine.Rendering.Vulkan
                 recordingState.Ops,
                 submissionStrategy,
                 recordingState.Policy.UseDynamicRendering,
-                frameStructuralSignature);
+                frameStructuralSignature,
+                recordingState.FramePlan);
             HashSet<int> deferredRequirementIndices =
                 recordingState.RecordingScratch.PipelineDeferredRequirementIndices;
             ulong pipelineCompileActivityGeneration =
@@ -282,13 +283,25 @@ namespace XREngine.Rendering.Vulkan
                         continue;
                     }
 
+                    VulkanCompiledRenderGraph operationGraph =
+                        recordingState.RenderGraphPlan.CompiledGraph;
+                    FrameOpContext operationContext =
+                        recordingState.Ops[opIndex].Context;
+                    if (recordingState.FramePlan is not null &&
+                        recordingState.FramePlan.TryResolveRenderGraphPlan(
+                            in operationContext,
+                            out VulkanRenderGraphPlan operationPlan))
+                    {
+                        operationGraph = operationPlan.CompiledGraph;
+                    }
+
                     if (!TryResolveGraphicsPipelinePrewarmTarget(
                             target,
                             pipelinePassIndex,
                             recordingState.Ops[opIndex].Context,
                             recordingState.SwapchainTarget,
                             recordingState.Policy.UseDynamicRendering,
-                            recordingState.RenderGraphPlan.CompiledGraph,
+                            operationGraph,
                             out bool useDynamicRendering,
                             out RenderPass prewarmRenderPass,
                             out DynamicRenderingFormatSignature prewarmDynamicRenderingFormats,
@@ -602,6 +615,14 @@ namespace XREngine.Rendering.Vulkan
                 ? ImageLayout.PresentSrcKhr
                 : ImageLayout.ColorAttachmentOptimal;
             recordingState.SwapchainFinalLayout = recordingState.InitialSwapchainColorLayout;
+
+            if (recordingState.Ops.Length > 0)
+            {
+                FrameOpContext firstContext = recordingState.Ops[0].Context;
+                recordingState.RenderGraphPlan = ResolvePrimaryRenderGraphPlan(
+                    ref recordingState,
+                    in firstContext);
+            }
 
             // Ensure swapchain resources are transitioned appropriately before any rendering.
             EmitPrimaryFrameStartBarriers(ref recordingState);
