@@ -22,7 +22,7 @@ internal sealed record QueryOp(
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.Query;
 
     internal override int RecordPrimary(
-        VulkanRenderer renderer,
+        VulkanCommandRuntime renderer,
         scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
@@ -45,16 +45,17 @@ internal sealed record QueryOp(
                         recordingState.CommandBuffer,
                         TimestampStage,
                         PointIndex) != ERenderQueryReadStatus.Ready)
-                    recordingState.QueryFrameOpsRequireRerecordLocal = true;
+                    recordingState.FrameOpsRequireRerecordLocal = true;
 
                 return recordingInfo.OperationIndex;
 
             case ERenderQueryOperation.WriteProperties:
                 if (!recordingState.RecordingScratch.PreparedInlineQueries.Contains(Query) ||
                     Query.WriteProperties(
+                        renderer.CreateQueryCommandEncoder(),
                         recordingState.CommandBuffer,
                         SourceHandles.Span) != ERenderQueryReadStatus.Ready)
-                    recordingState.QueryFrameOpsRequireRerecordLocal = true;
+                    recordingState.FrameOpsRequireRerecordLocal = true;
 
                 return recordingInfo.OperationIndex;
 
@@ -65,7 +66,7 @@ internal sealed record QueryOp(
                         ResultDestinationOffset,
                         ResultStride,
                         IncludeAvailability) != ERenderQueryReadStatus.Ready)
-                    recordingState.QueryFrameOpsRequireRerecordLocal = true;
+                    recordingState.FrameOpsRequireRerecordLocal = true;
 
                 return recordingInfo.OperationIndex;
 
@@ -92,7 +93,7 @@ internal sealed record QueryOp(
     }
 
     private int RecordInlineQueryOperation(
-        VulkanRenderer renderer,
+        VulkanCommandRuntime renderer,
         scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo,
         bool begin)
@@ -102,7 +103,7 @@ internal sealed record QueryOp(
         if (firstBegin &&
             !recordingState.RecordingScratch.PreparedInlineQueries.Contains(Query))
         {
-            recordingState.QueryFrameOpsRequireRerecordLocal = true;
+            recordingState.FrameOpsRequireRerecordLocal = true;
             Debug.VulkanWarningEvery(
                 $"Vulkan.UnpreparedInlineOcclusionQuery.{Query.GetHashCode()}",
                 TimeSpan.FromSeconds(1),
@@ -166,7 +167,7 @@ internal sealed record QueryOp(
     {
         if (recordingState.ActiveInlineQuery is not null)
         {
-            recordingState.QueryFrameOpsRequireRerecordLocal = true;
+            recordingState.FrameOpsRequireRerecordLocal = true;
             operation.Query.InvalidateRecordedResultEpoch(
                 recordingState.CommandBuffer);
             Debug.VulkanWarningEvery(
@@ -190,7 +191,7 @@ internal sealed record QueryOp(
                     ? operation.Query
                     : null;
             if (recordingState.ActiveInlineQuery is null)
-                recordingState.QueryFrameOpsRequireRerecordLocal = true;
+                recordingState.FrameOpsRequireRerecordLocal = true;
             recordingState.ActiveInlineQueryRecordedDraw = false;
             return;
         }
@@ -199,7 +200,7 @@ internal sealed record QueryOp(
             return;
 
         recordingState.ActiveInlineQuery = null;
-        recordingState.QueryFrameOpsRequireRerecordLocal = true;
+        recordingState.FrameOpsRequireRerecordLocal = true;
         Debug.VulkanWarningEvery(
             $"Vulkan.DuplicateInlineOcclusionQuery.{operation.Query.GetHashCode()}",
             TimeSpan.FromSeconds(1),
@@ -219,7 +220,7 @@ internal sealed record QueryOp(
         {
             if (!recordingState.ActiveInlineQueryRecordedDraw)
             {
-                recordingState.QueryFrameOpsRequireRerecordLocal = true;
+                recordingState.FrameOpsRequireRerecordLocal = true;
                 recordingState.ActiveInlineQuery!.InvalidateRecordedResultEpoch(
                     recordingState.CommandBuffer);
                 Debug.VulkanWarningEvery(
@@ -235,7 +236,7 @@ internal sealed record QueryOp(
             return;
         }
 
-        recordingState.QueryFrameOpsRequireRerecordLocal = true;
+        recordingState.FrameOpsRequireRerecordLocal = true;
         operation.Query.InvalidateRecordedResultEpoch(recordingState.CommandBuffer);
         Debug.VulkanWarningEvery(
             $"Vulkan.MismatchedInlineQueryEnd.{operation.Query.GetHashCode()}",

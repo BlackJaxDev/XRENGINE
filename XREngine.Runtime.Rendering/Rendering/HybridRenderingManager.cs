@@ -173,10 +173,31 @@ namespace XREngine.Rendering
         Log(LogCategory.Draw, LogLevel.Debug, message.ToString());
     }
 
+        private static XRMaterial? ResolveActiveGpuOverrideMaterial()
+        {
+            XRRenderPipelineInstance.RenderingState? renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
+            if (renderState?.ShadowPass == true && renderState.GlobalMaterialOverride is { } shadowMaterial)
+                return shadowMaterial;
+
+            return renderState?.OverrideMaterial ?? renderState?.GlobalMaterialOverride;
+        }
+
         private static XRMaterial? ResolveEffectiveGpuMaterial(XRMaterial? sourceMaterial, XRMaterial? overrideMaterial)
         {
-            bool useDepthNormalMaterialVariants =
-                RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState?.UseDepthNormalMaterialVariants ?? false;
+            XRRenderPipelineInstance.RenderingState? renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
+            if (renderState?.ShadowPass == true && renderState.GlobalMaterialOverride is { } shadowMaterial)
+            {
+                if (sourceMaterial?.CanUseSharedOpaqueShadowMaterial() == false &&
+                    sourceMaterial.ShadowCasterVariant is { } shadowVariant)
+                {
+                    shadowVariant.ShadowUniformSourceMaterial = shadowMaterial;
+                    return shadowVariant;
+                }
+
+                return shadowMaterial;
+            }
+
+            bool useDepthNormalMaterialVariants = renderState?.UseDepthNormalMaterialVariants ?? false;
 
             if (!useDepthNormalMaterialVariants)
                 return overrideMaterial ?? sourceMaterial;
@@ -1733,7 +1754,7 @@ namespace XREngine.Rendering
             if (logGpu)
                 GpuDebug("Material map count: {0}", matMap.Count);
 
-            XRMaterial? overrideMaterial = RuntimeEngine.Rendering.State.OverrideMaterial;
+            XRMaterial? overrideMaterial = ResolveActiveGpuOverrideMaterial();
             if (overrideMaterial is not null && logGpu)
                 GpuDebug("Override material active: {0}", overrideMaterial.Name ?? "<unnamed>");
 
@@ -2467,7 +2488,7 @@ namespace XREngine.Rendering
                 return false;
             }
 
-            material = ResolveEffectiveGpuMaterial(sourceMaterial, RuntimeEngine.Rendering.State.OverrideMaterial)
+            material = ResolveEffectiveGpuMaterial(sourceMaterial, ResolveActiveGpuOverrideMaterial())
                 ?? XRMaterial.InvalidMaterial;
             return material is not null;
         }
@@ -2618,7 +2639,7 @@ namespace XREngine.Rendering
             }
 
             var renderState = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState;
-            bool overrideActive = RuntimeEngine.Rendering.State.OverrideMaterial is not null
+            bool overrideActive = ResolveActiveGpuOverrideMaterial() is not null
                 || (renderState is not null && renderState.UseDepthNormalMaterialVariants);
             if (overrideActive)
             {
@@ -5028,7 +5049,7 @@ namespace XREngine.Rendering
                 if (lookupMaterialId == uint.MaxValue && cpuMaterialOrder is not null && batch.Offset < cpuMaterialOrder.Count)
                     lookupMaterialId = cpuMaterialOrder[(int)batch.Offset];
 
-                XRMaterial? overrideMaterial = RuntimeEngine.Rendering.State.OverrideMaterial;
+                XRMaterial? overrideMaterial = ResolveActiveGpuOverrideMaterial();
 
                 uint effectiveMaterialId = lookupMaterialId;
                 XRMaterial? sourceMaterial = null;
@@ -5221,7 +5242,7 @@ namespace XREngine.Rendering
             {
                 P3Diagnostics.IncSlotIterated();
                 uint materialId = materialSlotIds[slotIndex];
-                XRMaterial? overrideMaterial = RuntimeEngine.Rendering.State.OverrideMaterial;
+                XRMaterial? overrideMaterial = ResolveActiveGpuOverrideMaterial();
 
                 XRMaterial? sourceMaterial = null;
                 if (materialId != 0)
@@ -5391,7 +5412,7 @@ namespace XREngine.Rendering
                     continue;
 
                 uint materialId = materialSlotIds[(int)slotIndex];
-                XRMaterial? overrideMaterial = RuntimeEngine.Rendering.State.OverrideMaterial;
+                XRMaterial? overrideMaterial = ResolveActiveGpuOverrideMaterial();
 
                 XRMaterial? sourceMaterial = null;
                 if (materialId != 0)

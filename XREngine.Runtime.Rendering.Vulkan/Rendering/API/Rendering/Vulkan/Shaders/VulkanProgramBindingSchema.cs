@@ -170,10 +170,10 @@ internal sealed class VulkanProgramBindingSchema
 
         return binding.Set switch
         {
-            VulkanRenderer.DescriptorSetGlobals => EVulkanDescriptorOwner.Globals,
-            VulkanRenderer.DescriptorSetCompute => EVulkanDescriptorOwner.Compute,
-            VulkanRenderer.DescriptorSetMaterial => EVulkanDescriptorOwner.Material,
-            VulkanRenderer.DescriptorSetPerPass => EVulkanDescriptorOwner.Pass,
+            VulkanDescriptorManager.GlobalsSetIndex => EVulkanDescriptorOwner.Globals,
+            VulkanDescriptorManager.ComputeSetIndex => EVulkanDescriptorOwner.Compute,
+            VulkanDescriptorManager.MaterialSetIndex => EVulkanDescriptorOwner.Material,
+            VulkanDescriptorManager.PerPassSetIndex => EVulkanDescriptorOwner.Pass,
             _ => throw new InvalidOperationException(
                 $"Descriptor set {binding.Set} is outside the linked Vulkan tier contract."),
         };

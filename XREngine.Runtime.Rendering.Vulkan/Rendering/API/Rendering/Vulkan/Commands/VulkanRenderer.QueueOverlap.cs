@@ -14,11 +14,27 @@ using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
 using Buffer = Silk.NET.Vulkan.Buffer;
 
-namespace XREngine.Rendering.Vulkan;
+namespace XREngine.Rendering.Vulkan.RenderGraph;
 
-public unsafe partial class VulkanRenderer
+internal sealed partial class VulkanFramePlanner
 {
-    private VulkanBarrierPlanner.QueueOwnershipConfig BuildQueueOwnershipConfig(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
+    private ref EVulkanQueueOverlapMode _autoQueueOverlapMode => ref AutoQueueOverlapMode;
+    private ref EVulkanQueueOverlapMode _lastResolvedQueueOverlapMode => ref LastResolvedQueueOverlapMode;
+    private ref int _queueOverlapPromotionStabilityFrames => ref QueueOverlapPromotionStabilityFrames;
+    private ref int _queueOverlapFramesInMode => ref QueueOverlapFramesInMode;
+    private ref long _lastQueueOverlapSampleTimestamp => ref LastQueueOverlapSampleTimestamp;
+    private ref ulong _lastQueueOverlapSampleFrameId => ref LastQueueOverlapSampleFrameId;
+    private ref ulong _lastQueueOverlapPolicyFrameId => ref LastQueueOverlapPolicyFrameId;
+    private ref double _queueOverlapFrameDeltaEmaMs => ref QueueOverlapFrameDeltaEmaMilliseconds;
+    private ref double _queueOverlapModeStartFrameDeltaMs => ref QueueOverlapModeStartFrameDeltaMilliseconds;
+    private ref ulong _queueOwnershipConfigCacheFrameId => ref QueueOwnershipConfigCacheFrameId;
+    private List<VulkanQueueOwnershipConfigCacheEntry> _queueOwnershipConfigCache
+        => MutableState.QueueOwnershipCache;
+
+    internal VulkanBarrierPlanner.QueueOwnershipConfig BuildQueueOwnershipConfig(
+        VulkanDeviceContext deviceContext,
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+        EVulkanGpuDrivenProfile profile)
     {
         ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
         if (frameId != 0)
@@ -31,30 +47,35 @@ public unsafe partial class VulkanRenderer
 
             for (int index = 0; index < _queueOwnershipConfigCache.Count; index++)
             {
-                QueueOwnershipConfigCacheEntry entry = _queueOwnershipConfigCache[index];
+                VulkanQueueOwnershipConfigCacheEntry entry = _queueOwnershipConfigCache[index];
                 if (ReferenceEquals(entry.PassMetadata, passMetadata))
                     return entry.Config;
             }
         }
 
-        VulkanBarrierPlanner.QueueOwnershipConfig config = BuildQueueOwnershipConfigCore(passMetadata, frameId);
+        VulkanBarrierPlanner.QueueOwnershipConfig config = BuildQueueOwnershipConfigCore(
+            deviceContext,
+            passMetadata,
+            frameId,
+            profile);
         if (frameId != 0)
-            _queueOwnershipConfigCache.Add(new QueueOwnershipConfigCacheEntry(passMetadata, config));
+            _queueOwnershipConfigCache.Add(new VulkanQueueOwnershipConfigCacheEntry(passMetadata, config));
 
         return config;
     }
 
     private VulkanBarrierPlanner.QueueOwnershipConfig BuildQueueOwnershipConfigCore(
+        VulkanDeviceContext deviceContext,
         IReadOnlyCollection<RenderPassMetadata>? passMetadata,
-        ulong frameId)
+        ulong frameId,
+        EVulkanGpuDrivenProfile profile)
     {
-        QueueFamilyIndices familyIndices = _deviceContext.QueueFamilies;
+        QueueFamilyIndices familyIndices = deviceContext.QueueFamilies;
         uint graphicsFamily = familyIndices.GraphicsFamilyIndex ?? 0u;
         uint candidateComputeFamily = familyIndices.ComputeFamilyIndex ?? graphicsFamily;
         uint candidateTransferFamily = familyIndices.TransferFamilyIndex ?? candidateComputeFamily;
 
-        EVulkanGpuDrivenProfile profile = VulkanFeatureProfile.ActiveProfile;
-        QueueOverlapMetrics metrics = CaptureQueueOverlapMetrics(passMetadata);
+        VulkanQueueOverlapMetrics metrics = CaptureQueueOverlapMetrics(passMetadata);
 
         bool promotedMode;
         bool demotedMode;
@@ -104,7 +125,7 @@ public unsafe partial class VulkanRenderer
             ? requestedOverlapMode
             : EVulkanQueueOverlapMode.GraphicsOnly;
 
-        if (VulkanFrameDiagnosticsTraceEnabled)
+        if (VulkanCommandRuntime.FrameDiagnosticsTraceEnabled)
         {
             Debug.VulkanEvery(
                 "Vulkan.QueueOwnership.Policy",
@@ -141,11 +162,7 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     private static bool SupportsFrameGraphMultiQueueSubmission => false;
 
-    internal readonly record struct QueueOwnershipConfigCacheEntry(
-        IReadOnlyCollection<RenderPassMetadata>? PassMetadata,
-        VulkanBarrierPlanner.QueueOwnershipConfig Config);
-
-    private QueueOverlapMetrics CaptureQueueOverlapMetrics(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
+    private VulkanQueueOverlapMetrics CaptureQueueOverlapMetrics(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
     {
         int computePassCount = 0;
         int transferUsageCount = 0;
@@ -193,7 +210,7 @@ public unsafe partial class VulkanRenderer
             _lastQueueOverlapSampleFrameId = frameId;
         }
 
-        return new QueueOverlapMetrics(
+        return new VulkanQueueOverlapMetrics(
             computePassCount,
             transferUsageCount,
             overlapCandidatePassCount,
@@ -235,7 +252,7 @@ public unsafe partial class VulkanRenderer
 
     private EVulkanQueueOverlapMode ResolveQueueOverlapMode(
         EVulkanGpuDrivenProfile profile,
-        in QueueOverlapMetrics metrics,
+        in VulkanQueueOverlapMetrics metrics,
         bool advanceAdaptivePolicy,
         out bool promotedMode,
         out bool demotedMode)

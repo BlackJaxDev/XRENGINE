@@ -12,12 +12,13 @@ using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.Vulkan.RenderGraph;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanCommandRuntime
     {
-        private static bool HasQueryFrameOps(FrameOp[] ops)
+        private static bool HasQueryFrameOps(ReadOnlySpan<FrameOp> ops)
         {
             for (int i = 0; i < ops.Length; i++)
             {
@@ -47,8 +48,8 @@ namespace XREngine.Rendering.Vulkan
         private CommandBufferGenerationDomains CaptureCommandBufferGenerationDomains(
             uint imageIndex,
             ulong structuralSignature,
-            FrameOp[] staticOps,
-            FrameOp[] volatileOps,
+            ReadOnlySpan<FrameOp> staticOps,
+            ReadOnlySpan<FrameOp> volatileOps,
             ulong overlaySignature,
             in FrameOpContext context,
             ulong frameOpContextFingerprint,
@@ -69,14 +70,18 @@ namespace XREngine.Rendering.Vulkan
 
         private static CommandRecordingDependencySignature CaptureCommandRecordingDependencySignature(
             uint imageIndex,
-            int frameSlot,
             ulong resourcePlanGeneration,
             ulong volatileSuffixSignature,
             in FrameOpContext context,
             in CommandBufferGenerationDomains generations,
-            FrameOp[] preparedStaticOps,
+            ReadOnlySpan<FrameOp> preparedStaticOps,
             ulong sharedGraphicsPipelineGeneration)
         {
+            VulkanFrameOpPlannerStateKey plannerState =
+                VulkanFrameOpSnapshotSignatures.BuildPlannerStateKey(context);
+            int passMetadataSignature = plannerState.PassMetadataSignature;
+            int resourceRegistrySignature = plannerState.ResourceRegistrySignature;
+
             FrameOpSignatureHasher renderAreaHash = new();
             renderAreaHash.Add(context.DisplayWidth);
             renderAreaHash.Add(context.DisplayHeight);
@@ -87,7 +92,7 @@ namespace XREngine.Rendering.Vulkan
             outputPassAttachmentHash.Add(context.OutputFrameBufferIdentity);
             outputPassAttachmentHash.Add(context.OutputTargetIdentity);
             outputPassAttachmentHash.Add(context.OutputTargetName);
-            outputPassAttachmentHash.Add(ComputePassMetadataSignature(context.PassMetadata));
+            outputPassAttachmentHash.Add(passMetadataSignature);
 
             uint viewMask = context.MultiviewEnabled
                 ? 0x3u
@@ -99,12 +104,12 @@ namespace XREngine.Rendering.Vulkan
             inheritanceHash.Add(context.OutputFrameBufferIdentity);
             inheritanceHash.Add(context.StereoEnabled);
             inheritanceHash.Add(context.MultiviewEnabled);
-            inheritanceHash.Add(ComputePassMetadataSignature(context.PassMetadata));
+            inheritanceHash.Add(passMetadataSignature);
             ulong inheritanceSignature = inheritanceHash.ToHash();
 
             FrameOpSignatureHasher descriptorBindingHash = new();
-            descriptorBindingHash.Add(ResolveFrameOpContextResourceRegistrySignature(context));
-            descriptorBindingHash.Add(ComputePassMetadataSignature(context.PassMetadata));
+            descriptorBindingHash.Add(resourceRegistrySignature);
+            descriptorBindingHash.Add(passMetadataSignature);
             ulong descriptorBindingIdentity = descriptorBindingHash.ToHash();
 
             CapturePreparedBindingIdentities(
@@ -127,18 +132,23 @@ namespace XREngine.Rendering.Vulkan
                 IndexBufferBindingIdentity: indexBufferBindingIdentity,
                 VertexBufferBindingIdentity: vertexBufferBindingIdentity,
                 BufferAllocationGeneration: generations.ResourceAllocation,
-                ImageAllocationGeneration: unchecked((ulong)(uint)ResolveFrameOpContextResourceRegistrySignature(context)),
+                ImageAllocationGeneration: unchecked((ulong)(uint)resourceRegistrySignature),
                 ImageViewGeneration: unchecked((ulong)(uint)context.OutputFrameBufferIdentity),
                 // Immutable descriptor-set and sampler identity remain separate from
                 // publication generation. The dependency classifier still treats a
                 // publication change as binding state because ordinary descriptor
                 // writes invalidate recorded command buffers.
                 SamplerAllocationGeneration: descriptorBindingIdentity,
-                DescriptorLayoutGeneration: unchecked((ulong)(uint)ComputePassMetadataSignature(context.PassMetadata)),
+                DescriptorLayoutGeneration: unchecked((ulong)(uint)passMetadataSignature),
                 DescriptorSetGeneration: descriptorBindingIdentity,
                 ResourcePlanGeneration: resourcePlanGeneration,
                 ExternalTargetVariant: imageIndex,
-                FrameSlotVariant: frameSlot,
+                // Primary artifacts are owned per acquired image and all native
+                // descriptor/target dependencies below are captured for that same
+                // command-buffer slot. FramePlan.FrameSlot instead rotates with CPU
+                // synchronization ownership; it is not encoded command identity and
+                // must not invalidate every cached primary on the following frame.
+                FrameSlotVariant: checked((int)imageIndex),
                 DescriptorPublicationGeneration: generations.Descriptor,
                 DataPublicationGeneration: generations.FrameData,
                 VolatileSuffixGeneration: volatileSuffixSignature);
@@ -153,7 +163,7 @@ namespace XREngine.Rendering.Vulkan
         private static CommandRecordingDependencySignature
             CaptureCommandChainPrimaryPreparedBindingDependencies(
                 in CommandRecordingDependencySignature signature,
-                FrameOp[] ops)
+                ReadOnlySpan<FrameOp> ops)
         {
             CapturePreparedBindingIdentities(
                 ops,
@@ -185,7 +195,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private static ulong CaptureCommandChainPrimaryDescriptorBindingIdentity(
-            FrameOp[] ops)
+            ReadOnlySpan<FrameOp> ops)
         {
             FrameOpSignatureHasher hash = new();
             hash.Add(0x5052494D44455343UL);
@@ -256,7 +266,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private static void CapturePreparedBindingIdentities(
-            FrameOp[] ops,
+            ReadOnlySpan<FrameOp> ops,
             bool commandChainPrimaryOnly,
             out ulong meshIdentity,
             out ulong indexIdentity,
@@ -365,8 +375,8 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private static ulong ComputeCameraPoseGeneration(
-            FrameOp[] staticOps,
-            FrameOp[] volatileOps,
+            ReadOnlySpan<FrameOp> staticOps,
+            ReadOnlySpan<FrameOp> volatileOps,
             in FrameOpContext outputContext)
         {
             // A primary-cache camera transition only concerns the camera that owns the output
@@ -410,7 +420,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private static void AddCameraPoseGenerationParts(
-            FrameOp[] ops,
+            ReadOnlySpan<FrameOp> ops,
             int outputViewportIdentity,
             Span<ulong> uniqueCameraPoseSignatures,
             ref int uniqueCameraPoseCount,
@@ -451,8 +461,8 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private static ulong ComputeCameraPoseGenerationConservatively(
-            FrameOp[] staticOps,
-            FrameOp[] volatileOps,
+            ReadOnlySpan<FrameOp> staticOps,
+            ReadOnlySpan<FrameOp> volatileOps,
             int outputViewportIdentity)
         {
             FrameOpSignatureHasher hash = new();
@@ -472,7 +482,7 @@ namespace XREngine.Rendering.Vulkan
 
         private static void AddCameraPoseGenerationPartsConservatively(
             ref FrameOpSignatureHasher hash,
-            FrameOp[] ops,
+            ReadOnlySpan<FrameOp> ops,
             int outputViewportIdentity,
             ref int cameraDrawCount)
         {
@@ -570,7 +580,9 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private static ulong ComputeFrameDataGeneration(FrameOp[] staticOps, FrameOp[] volatileOps)
+        private static ulong ComputeFrameDataGeneration(
+            ReadOnlySpan<FrameOp> staticOps,
+            ReadOnlySpan<FrameOp> volatileOps)
         {
             FrameOpSignatureHasher hash = new();
             hash.Add(staticOps.Length);
@@ -582,7 +594,9 @@ namespace XREngine.Rendering.Vulkan
             return hash.ToHash();
         }
 
-        private static ulong ComputeQueryGeneration(FrameOp[] staticOps, FrameOp[] volatileOps)
+        private static ulong ComputeQueryGeneration(
+            ReadOnlySpan<FrameOp> staticOps,
+            ReadOnlySpan<FrameOp> volatileOps)
         {
             FrameOpSignatureHasher hash = new();
             int queryCount = 0;
@@ -595,7 +609,7 @@ namespace XREngine.Rendering.Vulkan
 
         private static void AddQueryGenerationParts(
             ref FrameOpSignatureHasher hash,
-            FrameOp[] ops,
+            ReadOnlySpan<FrameOp> ops,
             ref int queryCount)
         {
             int queryBracketDepth = 0;
@@ -752,7 +766,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private static ulong ComputeCommandBufferFrameOpContextFingerprint(
-            FrameOp[] ops,
+            ReadOnlySpan<FrameOp> ops,
             FrameOp[] dynamicUiBatchTextOps,
             in FrameOpContext fallbackContext)
         {
@@ -766,7 +780,9 @@ namespace XREngine.Rendering.Vulkan
             return hash.ToHash();
         }
 
-        private static void AddFrameOpContextFingerprints(ref FrameOpSignatureHasher hash, FrameOp[] ops)
+        private static void AddFrameOpContextFingerprints(
+            ref FrameOpSignatureHasher hash,
+            ReadOnlySpan<FrameOp> ops)
         {
             hash.Add(ops.Length);
             for (int i = 0; i < ops.Length; i++)
@@ -776,7 +792,10 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private static ulong ResolveCommandBufferFrameOpContextId(FrameOp[] ops, FrameOp[] dynamicUiBatchTextOps, in FrameOpContext fallbackContext)
+        private static ulong ResolveCommandBufferFrameOpContextId(
+            ReadOnlySpan<FrameOp> ops,
+            ReadOnlySpan<FrameOp> dynamicUiBatchTextOps,
+            in FrameOpContext fallbackContext)
         {
             if (ops.Length > 0)
                 return ops[0].Context.ContextId;
@@ -809,7 +828,7 @@ namespace XREngine.Rendering.Vulkan
             return false;
         }
 
-        private void EnsureCommandBufferVariantContextBeforeSubmit(
+        internal void EnsureCommandBufferVariantContextBeforeSubmit(
             uint imageIndex,
             PrimaryCommandArtifactOwner variant,
             ulong frameOpContextFingerprint,

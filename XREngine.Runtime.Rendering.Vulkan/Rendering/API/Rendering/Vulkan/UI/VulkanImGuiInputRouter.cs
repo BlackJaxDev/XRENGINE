@@ -8,7 +8,7 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed class VulkanImGuiInputRouter : IDisposable
 {
-    private readonly VulkanRenderer _renderer;
+    private readonly XRWindow _windowHost;
     private readonly object _pendingInputLock = new();
     private readonly Queue<Action<ImGuiIOPtr>> _pendingInputEvents = new();
     private IMouse? _mouse;
@@ -16,8 +16,8 @@ internal sealed class VulkanImGuiInputRouter : IDisposable
     private bool _mouseSubscribed;
     private bool _disposed;
 
-    public VulkanImGuiInputRouter(VulkanRenderer renderer)
-        => _renderer = renderer;
+    public VulkanImGuiInputRouter(XRWindow windowHost)
+        => _windowHost = windowHost;
 
     public void Dispose()
     {
@@ -33,7 +33,7 @@ internal sealed class VulkanImGuiInputRouter : IDisposable
         if (_disposed)
             return;
 
-        var input = _renderer.ImGuiInputContext;
+        IInputContext? input = _windowHost.Input;
         if (input is null)
             return;
 

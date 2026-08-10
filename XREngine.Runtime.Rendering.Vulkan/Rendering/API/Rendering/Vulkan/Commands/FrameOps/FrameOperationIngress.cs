@@ -37,8 +37,11 @@ internal sealed class FrameOperationIngress
             int kind = (int)operation.Kind;
             int payloadIndex = counts[kind]++;
             _payloads[kind][payloadIndex] = operation;
-            _contexts[index] = operation.Context;
-            _resourceUses[index] = operation.ResourceUses;
+            ref readonly FrameOpContext context = ref operation.ContextReference;
+            ref readonly FrameOpResourceUseList resourceUses =
+                ref operation.ResourceUsesReference;
+            _contexts[index] = context;
+            _resourceUses[index] = resourceUses;
             _headers[index] = new FrameOperationHeader(
                 operation.Kind,
                 payloadIndex,
@@ -62,7 +65,7 @@ internal sealed class FrameOperationIngress
     }
 
     private static int ResolveTargetIdentity(FrameOp operation)
-        => operation.Context.OutputTargetIdentity;
+        => operation.ContextReference.OutputTargetIdentity;
 
     private void EnsureCapacity(int required)
     {

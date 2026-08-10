@@ -83,8 +83,11 @@ internal sealed class FrameOperationStream
                 orderIndex,
                 sourceIndex,
                 operation.RequiresPrimaryRecordingContext);
-            _contexts[orderIndex] = operation.Context;
-            _resourceUses[orderIndex] = operation.ResourceUses;
+            ref readonly FrameOpContext context = ref operation.ContextReference;
+            ref readonly FrameOpResourceUseList resourceUses =
+                ref operation.ResourceUsesReference;
+            _contexts[orderIndex] = context;
+            _resourceUses[orderIndex] = resourceUses;
             _encoderPayloads[orderIndex] = operation;
         }
 
@@ -138,6 +141,6 @@ internal sealed class FrameOperationStream
     }
 
     private static int ResolveTargetIdentity(FrameOp operation)
-        => operation.Context.OutputTargetIdentity;
+        => operation.ContextReference.OutputTargetIdentity;
 
 }

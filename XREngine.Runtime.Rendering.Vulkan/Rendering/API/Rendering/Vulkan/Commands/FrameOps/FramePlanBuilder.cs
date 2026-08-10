@@ -142,7 +142,8 @@ internal sealed class FramePlanBuilder
             if (context.ResourceRegistry is null && context.PassMetadata is not { Count: > 0 })
                 continue;
 
-            VulkanFrameOpPlannerStateKey key = VulkanRenderer.BuildFrameOpPlannerStateKey(context);
+            VulkanFrameOpPlannerStateKey key =
+                VulkanFrameOpSnapshotSignatures.BuildPlannerStateKey(context);
             bool exists = false;
             for (int keyIndex = 0; keyIndex < keyCount; keyIndex++)
             {
@@ -314,7 +315,8 @@ internal sealed class FramePlanBuilder
         for (int index = 0; index < operationCount; index++)
         {
             indegree[index] = 0;
-            FrameOpResourceUseList uses = operations.GetResourceUses(index);
+            ref readonly FrameOpResourceUseList uses =
+                ref operations.GetResourceUses(index);
             int dependencyCount = 0;
             for (int useIndex = 0; useIndex < uses.Count; useIndex++)
             {

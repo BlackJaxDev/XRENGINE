@@ -13,7 +13,7 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed unsafe partial class VulkanCommandRuntime
 {
     private int CountDistinctViewKeys(List<RenderPacket> packets)
     {

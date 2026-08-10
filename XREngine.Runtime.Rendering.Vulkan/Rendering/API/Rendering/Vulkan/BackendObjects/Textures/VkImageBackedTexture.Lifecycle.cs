@@ -92,13 +92,14 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             retiredAttachmentViews = [];
         }
 
-        Renderer.RetireImageResources(new RetiredImageResources(
+        BackendContext.Images.RetireOwnedResources(new RetiredImageResources(
             _ownsImageMemory ? _image : default,
             _ownsImageMemory ? _memory : default,
             _view,
             retiredAttachmentViews,
             _sampler,
-            _ownsImageMemory ? _allocatedVRAMBytes : 0));
+            _ownsImageMemory ? _allocatedVRAMBytes : 0),
+            "VkImageBackedTexture.DeleteObjectInternal");
 
         RemovePhysicalImageViewCacheEntry(_physicalGroup, _image.Handle);
         DestroyPhysicalImageViewCache();

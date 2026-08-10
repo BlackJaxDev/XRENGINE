@@ -2,10 +2,9 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal unsafe partial class VkMeshRenderer
-{
-    internal readonly record struct GraphicsPipelineLibraryKey(
-        GraphicsPipelineLibrarySubset Subset,
+/// <summary>Immutable key for one graphics-pipeline-library subset.</summary>
+internal readonly record struct VulkanGraphicsPipelineLibraryKey(
+        VulkanGraphicsPipelineLibrarySubset Subset,
         bool UseDynamicRendering,
         ulong RenderPassHandle,
         DynamicRenderingFormatSignature DynamicRenderingFormats,
@@ -36,4 +35,3 @@ internal unsafe partial class VkMeshRenderer
         ColorComponentFlags ColorWriteMask,
         uint ViewportScissorCount,
         bool NativeNegativeOneToOneDepth);
-}

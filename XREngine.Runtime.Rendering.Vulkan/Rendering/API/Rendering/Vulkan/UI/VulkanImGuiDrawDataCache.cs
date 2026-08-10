@@ -12,6 +12,18 @@ internal sealed class VulkanImGuiDrawDataCache
 
     public void Store(ImDrawDataPtr drawData)
     {
+        // A render command can be evaluated more than once while Vulkan plans
+        // and records a frame. Do not let a later empty ImGui frame overwrite a
+        // renderable editor snapshot that the frame loop has not consumed yet.
+        if (drawData.CmdListsCount <= 0 ||
+            drawData.TotalVtxCount <= 0 ||
+            drawData.TotalIdxCount <= 0 ||
+            drawData.DisplaySize.X <= 0f ||
+            drawData.DisplaySize.Y <= 0f)
+        {
+            return;
+        }
+
         lock (_gate)
         {
             VulkanImGuiFrameSnapshot snapshot =

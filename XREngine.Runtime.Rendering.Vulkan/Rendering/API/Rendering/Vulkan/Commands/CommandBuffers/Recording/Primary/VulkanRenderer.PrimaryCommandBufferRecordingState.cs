@@ -12,6 +12,7 @@ using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.Vulkan.RenderGraph;
 
 namespace XREngine.Rendering.Vulkan
 {
@@ -30,7 +31,7 @@ namespace XREngine.Rendering.Vulkan
         public bool PreserveSwapchainForOverlay;
         public bool TransitionSwapchainToPresent;
         public bool ExcludeDesktopSwapchainBarriers;
-        public bool QueryFrameOpsRequireRerecordLocal;
+        public bool FrameOpsRequireRerecordLocal;
         public uint FrameDataImageIndex;
         public uint? FrameDataImageIndexOverride;
         public int CommandBufferImageSlot;
@@ -40,6 +41,11 @@ namespace XREngine.Rendering.Vulkan
         public CommandBufferRecordingScratch RecordingScratch;
         public VulkanPrimaryCommandPlan PrimaryCommandPlan;
         public FramePlan? FramePlan;
+        public VulkanPresentationSourceTuple PresentationSource;
+        public VulkanCommandRecordingPolicySnapshot Policy;
+        public VulkanPreparedResourcePlanStamp ResourcePlanStamp;
+        public VulkanRenderGraphPlan RenderGraphPlan;
+        public VulkanCommandClearStateSnapshot ClearState;
         public int[] MeshDrawUniformSlotsByOpIndex;
         public bool[]
             ScheduledCommandChainFrameDataRefreshedByOpIndex;
@@ -51,6 +57,7 @@ namespace XREngine.Rendering.Vulkan
         public FrameOpContext InitialContext;
         public CommandChainKey[]? ScheduledCommandChainKeysByOpIndex;
         public Dictionary<CommandChainKey, CommandChain>? ScheduledCommandChainCache;
+        public int MeshSecondaryFallbackEndIndex;
         public int SwapchainPresentTransitions;
         public bool UsedSwapchainDynamicRendering;
         public bool SwapchainInColorAttachmentLayout;
@@ -93,7 +100,7 @@ namespace XREngine.Rendering.Vulkan
         public ref int RecordedSwapchainWriteCount;
         public ref ImageLayout RecordedSwapchainFinalLayout;
         public ref string RecordingDeferredReason;
-        public ref bool QueryFrameOpsRequireRerecord;
+        public ref bool FrameOpsRequireRerecord;
         public ImageLayout InitialSwapchainColorLayout;
         public List<VulkanSecondaryRecordingBucket> SecondaryBuckets;
         public Dictionary<int, VulkanSecondaryRecordingBucket>? SecondaryBucketByStart;

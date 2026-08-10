@@ -11,7 +11,7 @@ public unsafe partial class VulkanRenderer
                 ? EAdvancedIndirectSubmissionMode.MultiDrawIndirectCount
                 : EAdvancedIndirectSubmissionMode.MultiDrawIndirect;
 
-        EAdvancedTextureIndirectionMode textureIndirection = ActiveDescriptorBackend switch
+        EAdvancedTextureIndirectionMode textureIndirection = ResourceRuntime.Descriptors.ActiveDescriptorBackend switch
         {
             EVulkanDescriptorBackend.DescriptorHeap =>
                 EAdvancedTextureIndirectionMode.VulkanDescriptorHeap,

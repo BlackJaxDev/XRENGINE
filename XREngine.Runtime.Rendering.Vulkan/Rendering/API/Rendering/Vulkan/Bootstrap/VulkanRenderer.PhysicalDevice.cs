@@ -151,7 +151,7 @@ public unsafe partial class VulkanRenderer
         bool finalOutputAdequate = extensionsSupported;
         if (extensionsSupported && OutputRuntime.TargetDriver.RequiresSwapchainOutput)
         {
-            var swapChainSupport = QuerySwapChainSupport(device);
+            var swapChainSupport = OutputRuntime.QueryDesktopSwapchainSupport(device);
             finalOutputAdequate = VulkanPhysicalDevicePolicy.IsSwapchainAdequate(
                 swapChainSupport.Formats.Length,
                 swapChainSupport.PresentModes.Length);

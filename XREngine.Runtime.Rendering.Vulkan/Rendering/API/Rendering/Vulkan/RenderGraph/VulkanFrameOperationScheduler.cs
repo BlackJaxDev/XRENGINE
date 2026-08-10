@@ -72,68 +72,66 @@ internal sealed class VulkanFrameOperationScheduler
                 return queryBlockCompare;
 
             if (x.Operation is MeshDrawOp xDraw &&
-                y.Operation is MeshDrawOp yDraw &&
-                CanCanonicalizeMeshDrawOrder(xDraw) &&
-                CanCanonicalizeMeshDrawOrder(yDraw))
+                y.Operation is MeshDrawOp yDraw)
             {
-                int drawCompare = CompareCanonicalMeshDrawOrder(xDraw, yDraw);
-                if (drawCompare != 0)
-                    return drawCompare;
+                ref readonly VulkanMeshDrawSortKey xKey =
+                    ref xDraw.CanonicalSortKey;
+                ref readonly VulkanMeshDrawSortKey yKey =
+                    ref yDraw.CanonicalSortKey;
+                if (xKey.CanCanonicalize && yKey.CanCanonicalize)
+                {
+                    int drawCompare = CompareCanonicalMeshDrawOrder(
+                        in xKey,
+                        in yKey);
+                    if (drawCompare != 0)
+                        return drawCompare;
+                }
             }
 
             return x.OriginalIndex.CompareTo(y.OriginalIndex);
         }
 
-        private static bool CanCanonicalizeMeshDrawOrder(MeshDrawOp op)
-            => op.Draw.Renderer is not null &&
-               !op.Draw.BlendEnabled &&
-               !op.PreserveSubmissionOrder &&
-               !IsUiPipelineDraw(op);
-
-        private static bool IsUiPipelineDraw(MeshDrawOp op)
-            => op.Context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline;
-
-        private static int CompareCanonicalMeshDrawOrder(MeshDrawOp x, MeshDrawOp y)
+        private static int CompareCanonicalMeshDrawOrder(
+            in VulkanMeshDrawSortKey x,
+            in VulkanMeshDrawSortKey y)
         {
             // Material sorting must stay inside one render-view cohort. Sorting the
             // same mesh from several directional cascades together interleaves their
             // cameras and viewport/scissor state, which breaks contiguous secondary
             // batches and forces a begin/barrier/draw/end sequence per mesh.
-            int viewCompare = CompareRenderViewCohort(x.Context, y.Context);
+            int viewCompare = CompareRenderViewCohort(in x, in y);
             if (viewCompare != 0)
                 return viewCompare;
 
-            int targetCompare = (x.Target?.GetHashCode() ?? 0).CompareTo(y.Target?.GetHashCode() ?? 0);
+            int targetCompare = x.TargetIdentity.CompareTo(y.TargetIdentity);
             if (targetCompare != 0)
                 return targetCompare;
 
-            if (x.Draw.ShadowUniformState.IsShadowPass &&
-                y.Draw.ShadowUniformState.IsShadowPass)
+            if (x.ShadowPass && y.ShadowPass)
             {
-                int shadowBucketCompare =
-                    VulkanRenderer.ResolveShadowCommandChainBucket(x)
-                        .CompareTo(
-                            VulkanRenderer.ResolveShadowCommandChainBucket(y));
+                int shadowBucketCompare = x.ShadowBucket.CompareTo(y.ShadowBucket);
                 if (shadowBucketCompare != 0)
                     return shadowBucketCompare;
             }
 
-            int materialCompare = (x.Draw.MaterialOverride?.GetHashCode() ?? 0).CompareTo(y.Draw.MaterialOverride?.GetHashCode() ?? 0);
+            int materialCompare = x.MaterialIdentity.CompareTo(y.MaterialIdentity);
             if (materialCompare != 0)
                 return materialCompare;
 
-            int rendererCompare = x.Draw.Renderer.GetHashCode().CompareTo(y.Draw.Renderer.GetHashCode());
+            int rendererCompare = x.RendererIdentity.CompareTo(y.RendererIdentity);
             if (rendererCompare != 0)
                 return rendererCompare;
 
-            int instanceCompare = x.Draw.Instances.CompareTo(y.Draw.Instances);
+            int instanceCompare = x.InstanceCount.CompareTo(y.InstanceCount);
             if (instanceCompare != 0)
                 return instanceCompare;
 
-            return ((int)x.Draw.BillboardMode).CompareTo((int)y.Draw.BillboardMode);
+            return x.BillboardMode.CompareTo(y.BillboardMode);
         }
 
-        private static int CompareRenderViewCohort(in FrameOpContext x, in FrameOpContext y)
+        private static int CompareRenderViewCohort(
+            in VulkanMeshDrawSortKey x,
+            in VulkanMeshDrawSortKey y)
         {
             // SchedulingIdentity is the exact primary-recording/render-scope
             // boundary. Sequential directional cascades intentionally share the

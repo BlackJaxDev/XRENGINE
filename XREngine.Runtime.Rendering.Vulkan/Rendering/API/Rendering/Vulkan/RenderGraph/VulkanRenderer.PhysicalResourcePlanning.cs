@@ -256,7 +256,11 @@ public unsafe partial class VulkanRenderer
             activeResourceSetSignature,
             constrainToActivePassSet);
         VulkanCompiledRenderGraph compiledGraph = _renderGraphCompiler.Compile(activePassMetadata);
-        VulkanBarrierPlanner.QueueOwnershipConfig queueOwnership = BuildQueueOwnershipConfig(activePassMetadata);
+        VulkanBarrierPlanner.QueueOwnershipConfig queueOwnership =
+            _framePlanner.BuildQueueOwnershipConfig(
+                _deviceContext,
+                activePassMetadata,
+                VulkanFeatureProfile.ActiveProfile);
         ResourcePlannerFastPathKey fastPathKey = new(
             context.ResourceRegistry,
             context.ResourceRegistry?.DescriptorRevision ?? 0,
@@ -712,7 +716,7 @@ public unsafe partial class VulkanRenderer
             ? ResolveInitialPhysicalGroupLayout(newGroup.Usage, VulkanResourceAllocator.IsDepthStencilFormat(newGroup.Format))
             : newCurrentLayout;
 
-        using var scope = NewCommandScope();
+        using var scope = _commandRuntime.NewCommandScope();
 
         // The auto-exposure texture is only touched by compute (storage writes/reads)
         // and fragment sampling, so those stages fully cover prior access without
@@ -762,7 +766,7 @@ public unsafe partial class VulkanRenderer
                 Math.Max(1u, oldGroup.ResolvedExtent.Depth))
         };
 
-        CmdCopyImageTracked(
+        _commandRuntime.CopyImageTracked(
             scope.CommandBuffer,
             oldGroup.Image,
             ImageLayout.TransferSrcOptimal,
@@ -883,7 +887,7 @@ public unsafe partial class VulkanRenderer
             DstAccessMask = dstAccess,
         };
 
-        CmdPipelineBarrierTracked(
+        _commandRuntime.CmdPipelineBarrierTracked(
             commandBuffer,
             srcStage,
             dstStage,

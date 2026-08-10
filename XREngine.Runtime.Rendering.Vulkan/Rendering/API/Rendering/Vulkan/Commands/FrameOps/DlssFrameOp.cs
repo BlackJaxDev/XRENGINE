@@ -15,7 +15,7 @@ internal abstract unsafe record DlssFrameOp(
     protected abstract string CommandLabel { get; }
 
     internal sealed override int RecordPrimary(
-        VulkanRenderer renderer,
+        VulkanCommandRuntime renderer,
         scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
@@ -29,7 +29,7 @@ internal abstract unsafe record DlssFrameOp(
     }
 
     protected abstract void RecordStreamlineCommand(
-        VulkanRenderer renderer,
+        VulkanCommandRuntime renderer,
         CommandBuffer commandBuffer,
         uint imageIndex);
 
@@ -38,7 +38,7 @@ internal abstract unsafe record DlssFrameOp(
     /// required by the native DLSS Vulkan bridge.
     /// </summary>
     protected static VulkanStreamlineImage TransitionImageToGeneral(
-        VulkanRenderer renderer,
+        VulkanCommandRuntime renderer,
         CommandBuffer commandBuffer,
         in VulkanStreamlineImage image)
     {
@@ -102,7 +102,7 @@ internal abstract unsafe record DlssFrameOp(
     /// Makes a Streamline output visible to subsequent shader sampling.
     /// </summary>
     protected static void MakeOutputVisibleForSampling(
-        VulkanRenderer renderer,
+        VulkanCommandRuntime renderer,
         CommandBuffer commandBuffer,
         in VulkanStreamlineImage image)
     {

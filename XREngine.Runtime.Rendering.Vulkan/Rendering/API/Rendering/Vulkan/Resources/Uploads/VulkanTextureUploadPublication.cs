@@ -14,6 +14,51 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanTextureUploadService
 {
+    /// <summary>
+    /// Publishes recorded uploads only after their graphics timeline receipt has
+    /// completed.  The explicit device, command, and resource authorities keep
+    /// descriptor publication and staging retirement independent of the renderer.
+    /// </summary>
+    internal void DrainCompletedRecordedTextureUploadPublications(
+        Vk api,
+        VulkanDeviceContext deviceContext,
+        VulkanCommandRuntime commandRuntime,
+        VulkanResourceRuntime resourceRuntime,
+        bool deviceLost)
+    {
+        List<PendingRecordedTextureUploadPublication> pendingPublications =
+            PublicationState.PendingTimelinePublications;
+        if (pendingPublications.Count == 0 || deviceLost)
+            return;
+
+        Silk.NET.Vulkan.Semaphore timelineSemaphore = commandRuntime.Synchronization._graphicsTimelineSemaphore;
+        for (int index = pendingPublications.Count - 1; index >= 0; index--)
+        {
+            PendingRecordedTextureUploadPublication pending = pendingPublications[index];
+            if (pending.TimelineValue == ulong.MaxValue)
+                throw new InvalidOperationException(
+                    "Refusing to query the invalid Vulkan timeline value ulong.MaxValue for a texture upload publication.");
+
+            Result result = commandRuntime.Synchronization.QueryTimelineCompletion(
+                api,
+                deviceContext,
+                resourceRuntime.Lifetime.Tracker,
+                timelineSemaphore,
+                pending.TimelineValue,
+                out bool completed);
+            if (result != Result.Success)
+                return;
+            if (!completed)
+                continue;
+
+            pendingPublications.RemoveAt(index);
+            PublishCompletedRecordedTextureUpload(
+                resourceRuntime,
+                pending.Upload,
+                pending.UploadSource);
+        }
+    }
+
     internal void CancelRecordedSubmitBatch(bool deviceLost, string reason)
     {
         List<VulkanImportedTexturePendingUpload> recorded =
@@ -85,6 +130,61 @@ internal sealed partial class VulkanTextureUploadService
         InvokeTextureUploadFinished(upload);
     }
 
+    private void PublishCompletedRecordedTextureUpload(
+        VulkanResourceRuntime resourceRuntime,
+        VulkanImportedTexturePendingUpload upload,
+        string uploadSource)
+    {
+        VulkanImportedTextureUploadRequest request = upload.Request;
+        if (!upload.ShouldPublish())
+        {
+            upload.Texture.ReleasePreparedImportedUploadResources(upload);
+            RecordState(
+                request,
+                VulkanTextureUploadGenerationState.Canceled,
+                $"request became stale before {uploadSource} descriptor publication");
+            InvokeTextureUploadCanceled(upload);
+            return;
+        }
+
+        RecordState(
+            request,
+            VulkanTextureUploadGenerationState.Uploaded,
+            $"{uploadSource} recorded upload completed");
+        RecordState(
+            request,
+            VulkanTextureUploadGenerationState.DescriptorPublishPending,
+            $"publicationToken={upload.PublicationToken}");
+
+        long publicationStart = TextureRuntimeDiagnostics.StartTiming();
+        upload.Texture.PublishSynchronizedImportedTextureUpload(upload);
+        upload.MarkPublished();
+        RetireTextureUploadStagingResources(resourceRuntime, upload);
+        TextureRuntimeDiagnostics.LogVulkanImportedTextureUploadLatency(
+            RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
+            request.TextureName,
+            request.SourcePath,
+            request.StreamingGeneration,
+            upload.PublicationToken,
+            "uploadRecordToDescriptorPublication",
+            upload.RecordTimestamp == 0L ? 0.0 : TextureRuntimeDiagnostics.ElapsedMilliseconds(upload.RecordTimestamp));
+        TextureRuntimeDiagnostics.LogVulkanImportedTextureUploadLatency(
+            RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
+            request.TextureName,
+            request.SourcePath,
+            request.StreamingGeneration,
+            upload.PublicationToken,
+            "publicationToOldResourceRetirementEnqueue",
+            TextureRuntimeDiagnostics.ElapsedMilliseconds(publicationStart));
+
+        RecordState(request, VulkanTextureUploadGenerationState.Published, $"publicationToken={upload.PublicationToken}");
+        RecordState(
+            request,
+            VulkanTextureUploadGenerationState.Retired,
+            "old texture and staging resources enqueued for frame-slot retirement");
+        InvokeTextureUploadFinished(upload);
+    }
+
     private static void RetireTextureUploadStagingResources(
         VulkanRenderer renderer,
         VulkanImportedTexturePendingUpload upload)
@@ -93,6 +193,20 @@ internal sealed partial class VulkanTextureUploadService
         {
             VulkanImportedTextureUploadStagingResource staging = upload.StagingResources[i];
             renderer.RetireBuffer(staging.Buffer, staging.Memory);
+        }
+    }
+
+    private static void RetireTextureUploadStagingResources(
+        VulkanResourceRuntime resourceRuntime,
+        VulkanImportedTexturePendingUpload upload)
+    {
+        for (int index = 0; index < upload.StagingResources.Length; index++)
+        {
+            VulkanImportedTextureUploadStagingResource staging = upload.StagingResources[index];
+            resourceRuntime.Buffers.Retire(
+                staging.Buffer,
+                staging.Memory,
+                "VulkanTextureUploadService.RecordedPublication");
         }
     }
 

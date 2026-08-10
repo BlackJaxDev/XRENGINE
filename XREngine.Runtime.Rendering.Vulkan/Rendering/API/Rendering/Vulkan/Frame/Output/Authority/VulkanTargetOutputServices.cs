@@ -40,6 +40,7 @@ internal sealed unsafe class VulkanTargetOutputServices
     internal Queue PresentQueue => _deviceContext.PresentQueue;
     internal SurfaceKHR TargetSurface => _outputRuntime.Surface;
     internal VulkanDeviceContext DeviceContext => _deviceContext;
+    internal VulkanResourceRuntime ResourceRuntime => _resourceRuntime;
 
     internal KhrSurface RequireSurfaceApi()
         => _outputRuntime.SurfaceApi
@@ -143,6 +144,9 @@ internal sealed unsafe class VulkanTargetOutputServices
         }
     }
 
+    internal Result EndCommandBufferTracked(CommandBuffer commandBuffer)
+        => _commandRuntime.EndCommandBufferTracked(commandBuffer);
+
     internal void DestroyCommandPoolHostSynchronized(CommandPool pool)
     {
         if (pool.Handle == 0)
@@ -162,7 +166,10 @@ internal sealed unsafe class VulkanTargetOutputServices
         Result result = _api.CreateImage(Device, ref createInfo, null, out image);
         ObserveNativeResult("vkCreateImage." + owner, result);
         if (result == Result.Success)
+        {
             RegisterResource(ObjectType.Image, image.Handle, owner);
+            _commandRuntime.RegisterTrackedImageInitialLayouts(image, in createInfo);
+        }
         return result;
     }
 

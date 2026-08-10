@@ -9,7 +9,7 @@ namespace XREngine.Rendering.Vulkan;
 /// The total array-layer count equals <c>cubeCount × 6</c>. Each cube's six faces
 /// are packed contiguously, and attachment views can target individual layers.
 /// </summary>
-internal sealed class VkTextureCubeArray(VulkanRenderer api, XRTextureCubeArray data) : VkImageBackedTexture<XRTextureCubeArray>(api, data)
+internal sealed class VkTextureCubeArray(VulkanBackendObjectContext backendContext, IRenderApiWrapperOwner owner, XRTextureCubeArray data) : VkImageBackedTexture<XRTextureCubeArray>(backendContext, owner, data)
 {
     private const ImageCreateFlags CubeCompatibleFlag = (ImageCreateFlags)0x10;
 

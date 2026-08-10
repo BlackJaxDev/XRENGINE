@@ -15,7 +15,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanCommandRuntime
     {
 
         private void RememberPipelineName(scoped ref PrimaryCommandBufferRecordingState recordingState, in FrameOpContext context)

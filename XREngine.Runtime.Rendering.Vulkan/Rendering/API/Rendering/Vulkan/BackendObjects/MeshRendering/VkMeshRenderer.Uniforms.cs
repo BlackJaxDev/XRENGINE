@@ -75,7 +75,7 @@ internal unsafe partial class VkMeshRenderer
 	{
 		size = Math.Max(size, 1u);
 		int bufferCount = UniformBufferArrayLength;
-		bool useFrameArena = Renderer.IsMappedFrameArenaEnabled &&
+		bool useFrameArena = BackendContext.Resources.MappedFrameArena is not null &&
 			!string.Equals(name, FallbackDescriptorUniformName, StringComparison.Ordinal);
 		if (_engineUniformBuffers.TryGetValue(name, out EngineUniformBuffer[]? existing))
 		{
@@ -107,9 +107,9 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		if (!Renderer.TryMapBufferMemory(buffer, memory, 0, totalSize, out void* mappedPtr))
+		if (!BackendContext.Buffers.TryMap(BackendContext, buffer, memory, 0, totalSize, out void* mappedPtr))
 		{
-			Renderer.DestroyTrackedMeshUniformBuffer(buffer, memory);
+			BackendContext.Buffers.Destroy(BackendContext, buffer, memory, "VkMeshRenderer.UniformBuffer");
 			return false;
 		}
 
@@ -132,7 +132,7 @@ internal unsafe partial class VkMeshRenderer
 	{
 		size = Math.Max(size, 1u);
 		int bufferCount = UniformBufferArrayLength;
-		bool useFrameArena = Renderer.IsMappedFrameArenaEnabled;
+		bool useFrameArena = BackendContext.Resources.MappedFrameArena is not null;
 		if (_autoUniformBuffers.TryGetValue(name, out AutoUniformBuffer[]? existing))
 		{
 			bool frequencyOwnedArena =
@@ -173,9 +173,9 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		if (!Renderer.TryMapBufferMemory(buffer, memory, 0, totalSize, out void* mappedPtr))
+		if (!BackendContext.Buffers.TryMap(BackendContext, buffer, memory, 0, totalSize, out void* mappedPtr))
 		{
-			Renderer.DestroyTrackedMeshUniformBuffer(buffer, memory);
+			BackendContext.Buffers.Destroy(BackendContext, buffer, memory, "VkMeshRenderer.UniformBuffer");
 			return false;
 		}
 
@@ -193,7 +193,7 @@ internal unsafe partial class VkMeshRenderer
 	private bool TryCreateEngineUniformArenaViews(string name, uint size, out EngineUniformBuffer[] buffers)
 	{
 		buffers = new EngineUniformBuffer[UniformBufferArrayLength];
-		VulkanMappedFrameArena? arena = Renderer.MappedFrameArena;
+		VulkanMappedFrameArena? arena = BackendContext.Resources.MappedFrameArena;
 		if (arena is null)
 			return false;
 		for (int drawSlot = 0; drawSlot < UniformBufferSlotCount; drawSlot++)
@@ -217,7 +217,7 @@ internal unsafe partial class VkMeshRenderer
 	private bool TryCreateAutoUniformArenaViews(string name, uint size, out AutoUniformBuffer[] buffers)
 	{
 		buffers = new AutoUniformBuffer[UniformBufferArrayLength];
-		VulkanMappedFrameArena? arena = Renderer.MappedFrameArena;
+		VulkanMappedFrameArena? arena = BackendContext.Resources.MappedFrameArena;
 		if (arena is null)
 			return false;
 		if (_program is not null &&
@@ -230,6 +230,8 @@ internal unsafe partial class VkMeshRenderer
 			{
 				if (!arena.TryGetSlice(frame, offset: 0, length: size, out VulkanMappedFrameSlice slice))
 				{
+					_lastDescriptorPreparationFailure =
+						$"frequency auto-uniform slice rejected for '{name}': {arena.DescribeSliceRejection(frame, 0, size)}";
 					return false;
 				}
 
@@ -273,7 +275,7 @@ internal unsafe partial class VkMeshRenderer
 
 	private ulong ResolveUniformBufferStride(uint size)
 	{
-		ulong alignment = Math.Max(Renderer.DeviceContext.MinUniformBufferOffsetAlignment, 1UL);
+		ulong alignment = Math.Max(BackendContext.DeviceContext.MinUniformBufferOffsetAlignment, 1UL);
 		ulong value = Math.Max(size, 1u);
 		ulong remainder = value % alignment;
 		return remainder == 0 ? value : value + alignment - remainder;
@@ -338,15 +340,14 @@ internal unsafe partial class VkMeshRenderer
 		buffer = default;
 		memory = default;
 		size = Math.Max(size, 1UL);
-		bool enableDeviceAddress = Renderer.IsDescriptorHeapDrawBindingActive;
+		bool enableDeviceAddress = BackendContext.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap;
 		if (enableDeviceAddress)
 			usage |= BufferUsageFlags.ShaderDeviceAddressBit;
 
 		MemoryPropertyFlags props = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
 		try
 		{
-			(buffer, memory) = Renderer.CreateBufferRaw(size, usage, props, enableDeviceAddress);
-			Renderer.TrackMeshUniformBuffer(buffer, memory);
+			(buffer, memory) = BackendContext.Buffers.CreateRaw(BackendContext, size, usage, props, enableDeviceAddress, "VkMeshRenderer.UniformBuffer");
 			return true;
 		}
 		catch (Exception ex)
@@ -431,9 +432,9 @@ internal unsafe partial class VkMeshRenderer
 				out ulong ownerIdentity);
 			VulkanFrequencyAutoUniformReservation? frequencyReservation = null;
 			if (block.Frequency != EVulkanBindingFrequency.Unknown &&
-				Renderer.IsMappedFrameArenaEnabled)
+				BackendContext.Resources.MappedFrameArena is not null)
 			{
-				VulkanMappedFrameArena? arena = Renderer.MappedFrameArena;
+				VulkanMappedFrameArena? arena = BackendContext.Resources.MappedFrameArena;
 				if (arena is null ||
 					!arena.TryGetOrReserveFrequencyAutoUniformRange(
 						_program,
@@ -496,7 +497,7 @@ internal unsafe partial class VkMeshRenderer
 			Span<byte> data;
 			if (buffer.UsesMappedFrameArena)
 			{
-				if (Renderer.MappedFrameArena is not { } arena ||
+				if (BackendContext.Resources.MappedFrameArena is not { } arena ||
 					!arena.TryBeginWrite(buffer.MappedSlice, out mappedWrite))
 				{
 					return false;
@@ -704,8 +705,8 @@ internal unsafe partial class VkMeshRenderer
 		uint passMask,
 		uint viewId = 0u)
 	{
-		VulkanMappedFrameArena? arena = Renderer.MappedFrameArena;
-		if (!Renderer.IsMappedFrameArenaEnabled || arena is null)
+		VulkanMappedFrameArena? arena = BackendContext.Resources.MappedFrameArena;
+		if (arena is null)
 			return false;
 
 		uint size = checked((uint)VulkanCpuDirectDynamicData.Stride);
@@ -924,7 +925,7 @@ internal unsafe partial class VkMeshRenderer
 			runtimeUniformNameSignature,
 			runtimeUniformPublicationLayoutSignature);
 		VkMaterial? materialPlanOwner = materialOwned
-			? Renderer.GetOrCreateAPIRenderObject(
+			? BackendContext.GetOrCreateAPIRenderObject(
 				material,
 				generateNow: true) as VkMaterial
 			: null;
@@ -1177,7 +1178,7 @@ internal unsafe partial class VkMeshRenderer
 	{
 		ownerIdentity = 0;
 		if (block.Frequency == EVulkanBindingFrequency.Unknown ||
-			Renderer.IsDescriptorHeapDrawBindingActive)
+			BackendContext.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
 		{
 			return ResolveUniformBufferIndex(
 				frameIndex,
@@ -1208,7 +1209,7 @@ internal unsafe partial class VkMeshRenderer
 		int bufferCount)
 	{
 		if (block.Frequency == EVulkanBindingFrequency.Unknown ||
-			Renderer.IsDescriptorHeapDrawBindingActive ||
+			BackendContext.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap ||
 			!_autoUniformOwnerSlotTables.TryGetValue(
 				block.InstanceName,
 				out VulkanAutoUniformOwnerSlotTable? table) ||
@@ -2441,23 +2442,19 @@ internal unsafe partial class VkMeshRenderer
 		switch (uniform)
 		{
 			case EEngineUniform.UpdateDelta:
-				Renderer.EnsureMaterialUniformFrameTime();
-				value = Renderer._materialUniformUpdateDeltaLive;
+				value = BackendContext.MeshServices.MaterialUniformUpdateDelta;
 				type = EShaderVarType._float;
 				return true;
 			case EEngineUniform.RenderTime:
-				Renderer.EnsureMaterialUniformFrameTime();
-				value = Renderer._materialUniformSecondsLive;
+				value = BackendContext.MeshServices.MaterialUniformSeconds;
 				type = EShaderVarType._float;
 				return true;
 			case EEngineUniform.EngineTime:
-				Renderer.EnsureMaterialUniformFrameTime();
-				value = Renderer._materialUniformSecondsLive;
+				value = BackendContext.MeshServices.MaterialUniformSeconds;
 				type = EShaderVarType._float;
 				return true;
 			case EEngineUniform.DeltaTime:
-				Renderer.EnsureMaterialUniformFrameTime();
-				value = Renderer._materialUniformDeltaSecondsLive;
+				value = BackendContext.MeshServices.MaterialUniformRenderDelta;
 				type = EShaderVarType._float;
 				return true;
 			case EEngineUniform.ModelMatrix:
@@ -3037,17 +3034,13 @@ internal unsafe partial class VkMeshRenderer
 		switch (normalized)
 		{
 			case nameof(EEngineUniform.UpdateDelta):
-				Renderer.EnsureMaterialUniformFrameTime();
-				return UploadUniform(buffer, Renderer._materialUniformUpdateDeltaLive);
+				return UploadUniform(buffer, BackendContext.MeshServices.MaterialUniformUpdateDelta);
 			case nameof(EEngineUniform.RenderTime):
-				Renderer.EnsureMaterialUniformFrameTime();
-				return UploadUniform(buffer, Renderer._materialUniformSecondsLive);
+				return UploadUniform(buffer, BackendContext.MeshServices.MaterialUniformSeconds);
 			case nameof(EEngineUniform.EngineTime):
-				Renderer.EnsureMaterialUniformFrameTime();
-				return UploadUniform(buffer, Renderer._materialUniformSecondsLive);
+				return UploadUniform(buffer, BackendContext.MeshServices.MaterialUniformSeconds);
 			case nameof(EEngineUniform.DeltaTime):
-				Renderer.EnsureMaterialUniformFrameTime();
-				return UploadUniform(buffer, Renderer._materialUniformDeltaSecondsLive);
+				return UploadUniform(buffer, BackendContext.MeshServices.MaterialUniformRenderDelta);
 			case TransformIdUniformName:
 				return UploadUniform(buffer, draw.TransformId);
 			case SkinPaletteBaseUniformName:
@@ -3253,7 +3246,7 @@ internal unsafe partial class VkMeshRenderer
 		uint copySize = Math.Min(buffer.Size, size);
 		if (buffer.UsesMappedFrameArena)
 		{
-			if (Renderer.MappedFrameArena is not { } arena ||
+			if (BackendContext.Resources.MappedFrameArena is not { } arena ||
 				!arena.TryBeginWrite(buffer.MappedSlice, out VulkanMappedFrameWriteScope write))
 			{
 				return false;
@@ -3278,7 +3271,7 @@ internal unsafe partial class VkMeshRenderer
 	{
 		if (buffer.UsesMappedFrameArena)
 		{
-			if (Renderer.MappedFrameArena is not { } arena ||
+			if (BackendContext.Resources.MappedFrameArena is not { } arena ||
 				!arena.TryBeginWrite(buffer.MappedSlice, out VulkanMappedFrameWriteScope write))
 			{
 				return false;

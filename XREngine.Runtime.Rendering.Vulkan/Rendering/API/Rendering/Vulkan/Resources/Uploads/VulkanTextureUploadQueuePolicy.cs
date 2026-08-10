@@ -248,7 +248,7 @@ internal sealed partial class VulkanTextureUploadService
         }
 
         if (RenderDiagnosticsFlags.VkTextureUploadTransferQueue
-            && !renderer.HasDedicatedTextureUploadTransferQueue
+            && !renderer.CommandRuntime.HasDedicatedTextureUploadTransferQueue
             && Interlocked.Exchange(ref _transferQueueCompatLogged, 1) == 0)
         {
             XREngine.Debug.Vulkan(

@@ -20,7 +20,7 @@ internal sealed class VulkanRecordedImageLayoutState
     /// may skip the logical descriptor scan only while every referenced native
     /// descriptor set still publishes this generation.
     /// </summary>
-    public readonly Dictionary<ulong, ulong> SecondaryDescriptorPayloadGenerations = new(4);
+    public readonly Dictionary<ulong, ulong> SecondaryDescriptorImagePayloadGenerations = new(4);
 
     /// <summary>The newest state recorded for each touched subresource.</summary>
     public readonly Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> Subresources = new(32);

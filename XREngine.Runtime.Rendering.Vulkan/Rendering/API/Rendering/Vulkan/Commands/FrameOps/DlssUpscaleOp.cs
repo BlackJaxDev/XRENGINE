@@ -31,7 +31,7 @@ internal sealed record DlssUpscaleOp(
     protected override string CommandLabel => "DLSS.SuperResolution";
 
     protected override void RecordStreamlineCommand(
-        VulkanRenderer renderer,
+        VulkanCommandRuntime renderer,
         CommandBuffer commandBuffer,
         uint imageIndex)
     {

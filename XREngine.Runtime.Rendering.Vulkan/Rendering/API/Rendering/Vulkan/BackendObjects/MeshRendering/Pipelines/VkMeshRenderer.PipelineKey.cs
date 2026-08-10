@@ -3,43 +3,44 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal unsafe partial class VkMeshRenderer
+/// <summary>
+/// Immutable identity for a graphics pipeline variant independent of the mesh-wrapper family.
+/// </summary>
+internal readonly record struct VulkanGraphicsPipelineKey(
+    PrimitiveTopology Topology,
+    bool UseDynamicRendering,
+    ulong RenderPassHandle,
+    DynamicRenderingFormatSignature DynamicRenderingFormats,
+    ulong ProgramPipelineHash,
+    ulong ProgramLinkGeneration,
+    ulong VertexLayoutHash,
+    ulong DescriptorLayoutHash,
+    ulong PipelineLayoutHandle,
+    ulong PassMetadataHash,
+    ulong FeatureProfileHash,
+    SampleCountFlags RasterizationSamples,
+    bool DepthTestEnabled,
+    bool DepthWriteEnabled,
+    CompareOp DepthCompareOp,
+    bool StencilTestEnabled,
+    StencilOpState FrontStencilState,
+    StencilOpState BackStencilState,
+    uint StencilWriteMask,
+    CullModeFlags CullMode,
+    FrontFace FrontFace,
+    bool BlendEnabled,
+    bool AlphaToCoverageEnabled,
+    BlendOp ColorBlendOp,
+    BlendOp AlphaBlendOp,
+    BlendFactor SrcColorBlendFactor,
+    BlendFactor DstColorBlendFactor,
+    BlendFactor SrcAlphaBlendFactor,
+    BlendFactor DstAlphaBlendFactor,
+    ColorComponentFlags ColorWriteMask,
+    uint ViewportScissorCount,
+    bool NativeNegativeOneToOneDepth)
 {
-    internal readonly record struct PipelineKey(
-        PrimitiveTopology Topology,
-        bool UseDynamicRendering,
-        ulong RenderPassHandle,
-        DynamicRenderingFormatSignature DynamicRenderingFormats,
-        ulong ProgramPipelineHash,
-        ulong ProgramLinkGeneration,
-        ulong VertexLayoutHash,
-        ulong DescriptorLayoutHash,
-        ulong PipelineLayoutHandle,
-        ulong PassMetadataHash,
-        ulong FeatureProfileHash,
-        SampleCountFlags RasterizationSamples,
-        bool DepthTestEnabled,
-        bool DepthWriteEnabled,
-        CompareOp DepthCompareOp,
-        bool StencilTestEnabled,
-        StencilOpState FrontStencilState,
-        StencilOpState BackStencilState,
-        uint StencilWriteMask,
-        CullModeFlags CullMode,
-        FrontFace FrontFace,
-        bool BlendEnabled,
-        bool AlphaToCoverageEnabled,
-        BlendOp ColorBlendOp,
-        BlendOp AlphaBlendOp,
-        BlendFactor SrcColorBlendFactor,
-        BlendFactor DstColorBlendFactor,
-        BlendFactor SrcAlphaBlendFactor,
-        BlendFactor DstAlphaBlendFactor,
-        ColorComponentFlags ColorWriteMask,
-        uint ViewportScissorCount,
-        bool NativeNegativeOneToOneDepth)
-    {
-        public bool Equals(PipelineKey other)
+        public bool Equals(VulkanGraphicsPipelineKey other)
             => Topology == other.Topology &&
                UseDynamicRendering == other.UseDynamicRendering &&
                RenderPassHandle == other.RenderPassHandle &&
@@ -130,5 +131,4 @@ internal unsafe partial class VkMeshRenderer
             hash.Add(state.WriteMask);
             hash.Add(state.Reference);
         }
-    }
 }

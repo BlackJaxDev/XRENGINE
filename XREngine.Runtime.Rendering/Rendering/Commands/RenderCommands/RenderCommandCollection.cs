@@ -1965,15 +1965,15 @@ namespace XREngine.Rendering.Commands
             EMeshSubmissionStrategy meshSubmissionStrategy)
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
+            // Strict zero-readback owns every otherwise supported mesh. Commands
+            // are sourced from the GPU scene and filtered by the pass culling
+            // mask, so CPU-published pass membership is not an authority gate.
+            if (meshSubmissionStrategy.IsGpuZeroReadbackStrategy())
+                return _gpuPasses.ContainsKey(renderPass);
+
             if (!TryGetPublishedPassNoLock(renderPass, out BackendReadyRenderPass pass) ||
                 pass.MeshCommandCount == 0)
                 return false;
-
-            // Strict zero-readback owns every otherwise supported mesh. Commands
-            // marked CPU-preferred remain GPU-resident and are enabled by the
-            // pass culling mask instead of being submitted directly by the CPU.
-            if (meshSubmissionStrategy.IsGpuZeroReadbackStrategy())
-                return true;
 
             ReadOnlySpan<BackendReadyMeshSelection> selections =
                 _renderingBackendReadyPackage.MeshSelections;

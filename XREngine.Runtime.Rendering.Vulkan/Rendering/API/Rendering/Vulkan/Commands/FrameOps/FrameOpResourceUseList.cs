@@ -22,6 +22,8 @@ internal struct FrameOpResourceUseList
 
     public readonly FrameOpResourceUse this[int index] => _items[index];
 
+    public void Clear() => Count = 0;
+
     public void Add(ulong resourceId, ulong version, EFrameOpResourceAccess access)
     {
         if (resourceId == 0UL)

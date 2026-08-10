@@ -16,10 +16,11 @@ namespace XREngine.Rendering.Vulkan
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.FrameLifecycle.SnapshotImGuiOverlay"))
             {
-                if (CanRecordImGuiOverlayCommandBuffer(attempt.ImageIndex))
+                if (ImGuiOverlayAdmission.CanRecord(attempt.ImageIndex))
                 {
                     hasPendingImGuiOverlay =
-                        TryConsumeRenderableImGuiOverlaySnapshot(
+                        ImGuiOverlayAdmission.TryConsumeRenderableSnapshot(
+                            DesktopWsiOutput.IsInteractiveResizeInProgress,
                             out imguiOverlaySnapshot);
                 }
             }
@@ -36,9 +37,6 @@ namespace XREngine.Rendering.Vulkan
                     EVulkanDesktopFrameFaultPoint.SceneRecording);
                 CommandBuffer dynamicTextSecondaryCommandBuffer;
                 int dynamicTextOverlayOpCount;
-                FrameOp[] dynamicTextOverlayOps;
-                ulong dynamicTextOverlaySignature;
-                PrimaryCommandArtifactOwner? dynamicTextOverlayVariant;
 
                 stageStartTimestamp = Stopwatch.GetTimestamp();
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
@@ -48,20 +46,32 @@ namespace XREngine.Rendering.Vulkan
                         GC.GetAllocatedBytesForCurrentThread();
                     try
                     {
-                        attempt.SceneCommandBuffer =
-                            EnsureCommandBufferRecorded(
+                        VulkanPrimaryCommandRecordingResult recordingResult =
+                            RecordPreparedDesktopPrimary(
                                 attempt.ImageIndex,
-                                attempt.PreserveSwapchainForImGuiOverlay,
-                                out string recordingDeferredReason,
-                                out dynamicTextSecondaryCommandBuffer,
-                                out dynamicTextOverlayOpCount,
-                                out dynamicTextOverlayOps,
-                                out dynamicTextOverlaySignature,
-                                out dynamicTextOverlayVariant,
-                                out attempt.TextureUploadCommandBuffer,
-                                out attempt.TextureUploadCommandPool,
-                                out attempt.SwapchainLayoutAfterScene,
-                                out attempt.SceneCommandBufferDirtyGeneration);
+                                attempt.PreserveSwapchainForImGuiOverlay);
+                        string recordingDeferredReason =
+                            recordingResult.Succeeded
+                                ? string.Empty
+                                : recordingResult.Reason ??
+                                  "primary command recording was deferred";
+                        attempt.SceneCommandBuffer =
+                            recordingResult.CommandBuffer;
+                        dynamicTextSecondaryCommandBuffer =
+                            recordingResult.DynamicUiSecondaryCommandBuffer;
+                        dynamicTextOverlayOpCount =
+                            recordingResult.DynamicUiOverlayOperationCount;
+                        attempt.TextureUploadCommandBuffer =
+                            recordingResult.TextureUploadCommandBuffer;
+                        attempt.TextureUploadCommandPool =
+                            recordingResult.TextureUploadCommandPool;
+                        attempt.SwapchainLayoutAfterScene =
+                            recordingResult.SwapchainLayoutAfterCommandBuffer;
+                        attempt.SceneCommandBufferDirtyGeneration =
+                            recordingResult.CommandBufferDirtyGeneration;
+                        _lastEnsureCommandBufferRecordedPrimary =
+                            recordingResult.Disposition ==
+                            EVulkanPrimaryCommandRecordingDisposition.Recorded;
                         if (attempt.TextureUploadCommandBuffer.Handle != 0)
                         {
                             attempt.TransitionUploadOwnership(
@@ -117,9 +127,20 @@ namespace XREngine.Rendering.Vulkan
 
                 attempt.ScenePrimaryRecordedThisFrame =
                     _lastEnsureCommandBufferRecordedPrimary;
-                attempt.PresentationSource =
+                VulkanPresentationSourceTuple presentationSource =
                     _windowPresentSource.CaptureForDescriptorSlot(
                         checked((int)attempt.ImageIndex));
+                if (presentationSource.HasLogicalSource)
+                {
+                    _ = _windowPresentSource.TryBindCommandArtifact(
+                        presentationSource.LogicalEpoch,
+                        checked((int)attempt.ImageIndex),
+                        attempt.SceneCommandBuffer,
+                        _commandRuntime.CommandBuffers.ResolveRecordingGeneration(
+                            attempt.SceneCommandBuffer),
+                        out presentationSource);
+                }
+                attempt.PresentationSource = presentationSource;
                 if (RecordDesktopImGuiOverlay(
                         ref attempt,
                         imguiOverlaySnapshot) !=
@@ -141,17 +162,12 @@ namespace XREngine.Rendering.Vulkan
                         dynamicTextSecondaryCommandBuffer.Handle);
                 }
 
-                if (attempt.PreserveSwapchainForImGuiOverlay &&
-                    attempt.HasImGuiOverlayCommandBuffer &&
-                    dynamicTextOverlayOpCount > 0)
+                if (dynamicTextOverlayOpCount > 0)
                 {
                     RecordDesktopDynamicTextOverlay(
                         ref attempt,
                         dynamicTextSecondaryCommandBuffer,
-                        dynamicTextOverlayOpCount,
-                        dynamicTextOverlayOps,
-                        dynamicTextOverlaySignature,
-                        dynamicTextOverlayVariant);
+                        dynamicTextOverlayOpCount);
                 }
 
                 attempt.AdvanceTo(EDesktopFramePhase.Recorded);
@@ -265,7 +281,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     attempt.HasImGuiOverlayCommandBuffer =
                         snapshot is not null &&
-                        TryRecordImGuiOverlayCommandBuffer(
+                        TryRecordImGuiOverlay(
                             attempt.ImageIndex,
                             snapshot,
                             attempt.SwapchainLayoutAfterScene,
@@ -310,10 +326,7 @@ namespace XREngine.Rendering.Vulkan
         private void RecordDesktopDynamicTextOverlay(
             ref VulkanFrameAttempt attempt,
             CommandBuffer secondaryCommandBuffer,
-            int overlayOpCount,
-            FrameOp[] overlayOps,
-            ulong overlaySignature,
-            PrimaryCommandArtifactOwner? overlayVariant)
+            int overlayOpCount)
         {
             long stageStartTimestamp = Stopwatch.GetTimestamp();
             try
@@ -324,15 +337,16 @@ namespace XREngine.Rendering.Vulkan
                            "Vulkan.FrameLifecycle.RecordDynamicUiTextOverlay"))
                 {
                     attempt.HasDynamicTextOverlayCommandBuffer =
-                        TryRecordDynamicUiBatchTextOverlayCommandBuffer(
+                        TryRecordDesktopDynamicTextOverlayCommandBuffer(
                             attempt.ImageIndex,
                             secondaryCommandBuffer,
                             overlayOpCount,
-                            ImageLayout.PresentSrcKhr,
-                            attempt.ImGuiOverlayCommandBuffer,
-                            overlayVariant,
-                            overlayOps,
-                            overlaySignature,
+                            attempt.HasImGuiOverlayCommandBuffer
+                                ? ImageLayout.PresentSrcKhr
+                                : attempt.SwapchainLayoutAfterScene,
+                            attempt.HasImGuiOverlayCommandBuffer
+                                ? attempt.ImGuiOverlayCommandBuffer
+                                : attempt.SceneCommandBuffer,
                             out attempt.DynamicTextOverlayCommandBuffer);
                 }
             }
@@ -361,6 +375,41 @@ namespace XREngine.Rendering.Vulkan
                 attempt.HasDynamicTextOverlayCommandBuffer,
                 attempt.HasDynamicTextOverlayCommandBuffer ? 1 : 0,
                 elapsedTicks);
+        }
+
+        private bool TryRecordDesktopDynamicTextOverlayCommandBuffer(
+            uint imageIndex,
+            CommandBuffer secondaryCommandBuffer,
+            int operationCount,
+            ImageLayout initialSwapchainLayout,
+            CommandBuffer predecessorCommandBuffer,
+            out CommandBuffer overlayCommandBuffer)
+        {
+            overlayCommandBuffer = default;
+            CommandBuffer[]? overlays = _commandRuntime.CommandBuffers.DynamicUiOverlays;
+            if (overlays is null || imageIndex >= overlays.Length ||
+                !_outputRuntime.TryCaptureDynamicUiOverlayTarget(imageIndex, out VulkanDynamicUiOverlayTarget target))
+            {
+                return false;
+            }
+
+            VulkanDynamicUiBatchTextOverlayRecordingInput input = new(
+                overlays[imageIndex],
+                secondaryCommandBuffer,
+                operationCount,
+                initialSwapchainLayout,
+                predecessorCommandBuffer,
+                _outputRuntime.Desktop.StreamlineFrameGenerationActive,
+                target);
+            bool recorded = _commandRuntime.DynamicUiOverlayRecorder.TryRecord(
+                OverlayCommandEncoder,
+                _telemetry,
+                in input,
+                out overlayCommandBuffer,
+                out bool streamlineUiInitialized);
+            if (streamlineUiInitialized)
+                _outputRuntime.MarkStreamlineUiImageInitialized(imageIndex);
+            return recorded;
         }
 
         private EDesktopFrameFlow ValidateDesktopRecording(

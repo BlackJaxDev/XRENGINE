@@ -8,7 +8,7 @@ internal unsafe partial class VkRenderProgram
     // This preserves nested captures across programs without a static ambient
     // workspace or cross-renderer state retention.
     private BindingCaptureWorkspace CurrentBindingCaptureWorkspace
-        => Renderer.GetOrCreateCommandThreadBindingCaptureWorkspace(
+        => BackendContext.ProgramServices.GetOrCreateBindingWorkspace(
             static () => new BindingCaptureWorkspace());
 
     private sealed class BindingCaptureWorkspace

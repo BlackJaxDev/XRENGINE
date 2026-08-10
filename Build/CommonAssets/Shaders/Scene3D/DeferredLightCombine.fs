@@ -12,31 +12,31 @@ layout(location = 0) out vec4 OutLo; //Diffuse Light Color, to start off the HDR
 layout(location = 0) in vec3 FragPos;
 
 #ifdef XRENGINE_MSAA_DEFERRED
-layout(binding = 0) uniform sampler2DMS AlbedoOpacity;
-layout(binding = 1) uniform sampler2DMS Normal;
-layout(binding = 2) uniform sampler2DMS RMSE;
+layout(binding = 0) uniform sampler2DMS AlbedoOpacity; // XRENGINE_FREQUENCY(Pass)
+layout(binding = 1) uniform sampler2DMS Normal; // XRENGINE_FREQUENCY(Pass)
+layout(binding = 2) uniform sampler2DMS RMSE; // XRENGINE_FREQUENCY(Pass)
 #else
-layout(binding = 0) uniform sampler2D AlbedoOpacity;
-layout(binding = 1) uniform sampler2D Normal;
-layout(binding = 2) uniform sampler2D RMSE;
+layout(binding = 0) uniform sampler2D AlbedoOpacity; // XRENGINE_FREQUENCY(Pass)
+layout(binding = 1) uniform sampler2D Normal; // XRENGINE_FREQUENCY(Pass)
+layout(binding = 2) uniform sampler2D RMSE; // XRENGINE_FREQUENCY(Pass)
 #endif
-layout(binding = 3) uniform sampler2D AmbientOcclusionTexture;
+layout(binding = 3) uniform sampler2D AmbientOcclusionTexture; // XRENGINE_FREQUENCY(Pass)
  #ifdef XRENGINE_MSAA_DEFERRED
-layout(binding = 4) uniform sampler2DMS DepthView; //Depth
+layout(binding = 4) uniform sampler2DMS DepthView; // XRENGINE_FREQUENCY(Pass) Depth
 #else
-layout(binding = 4) uniform sampler2D DepthView; //Depth
+layout(binding = 4) uniform sampler2D DepthView; // XRENGINE_FREQUENCY(Pass) Depth
 #endif
 
 #ifdef XRENGINE_MSAA_DEFERRED
-layout(binding = 5) uniform sampler2DMS LightingTextureMS;
+layout(binding = 5) uniform sampler2DMS LightingTextureMS; // XRENGINE_FREQUENCY(Pass)
 #else
-layout(binding = 5) uniform sampler2D LightingAccumTexture;
+layout(binding = 5) uniform sampler2D LightingAccumTexture; // XRENGINE_FREQUENCY(Pass)
 #endif
 
-layout(binding = 6) uniform sampler2D BRDF;
+layout(binding = 6) uniform sampler2D BRDF; // XRENGINE_FREQUENCY(Pass)
 
-layout(binding = 7) uniform sampler2DArray IrradianceArray;
-layout(binding = 8) uniform sampler2DArray PrefilterArray;
+layout(binding = 7) uniform sampler2DArray IrradianceArray; // XRENGINE_FREQUENCY(Pass)
+layout(binding = 8) uniform sampler2DArray PrefilterArray; // XRENGINE_FREQUENCY(Pass)
 
 layout(std430, binding = 20) buffer LightProbePositions
 {

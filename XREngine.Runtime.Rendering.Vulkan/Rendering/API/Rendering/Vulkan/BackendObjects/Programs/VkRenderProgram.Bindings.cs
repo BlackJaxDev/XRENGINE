@@ -486,7 +486,9 @@ internal unsafe partial class VkRenderProgram
             ref capture.SamplersByName,
             ref capture.ImagesByUnit);
         CaptureComputeBufferBindings(capture.BuffersByBinding, snapshot);
-        snapshot.PublishBindingLayoutSignatures(Renderer);
+        snapshot.PublishBindingLayoutSignatures(
+            BackendContext,
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline);
         return snapshot;
     }
 
@@ -507,7 +509,9 @@ internal unsafe partial class VkRenderProgram
             samplersByName,
             imagesByUnit);
         CaptureComputeBufferBindings(buffersByBinding, snapshot);
-        snapshot.PublishBindingLayoutSignatures(Renderer);
+        snapshot.PublishBindingLayoutSignatures(
+            BackendContext,
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline);
 
         return snapshot;
     }
@@ -517,11 +521,11 @@ internal unsafe partial class VkRenderProgram
         ComputeDispatchSnapshot snapshot)
     {
         snapshot.Buffers.EnsureCapacity(buffersByBinding.Count);
-        bool allowSynchronousUpload = Renderer.AllowSynchronousResourceUploads;
+        bool allowSynchronousUpload = BackendContext.AllowSynchronousResourceUploads;
         foreach (KeyValuePair<uint, XRDataBuffer> pair in buffersByBinding)
         {
             XRDataBuffer buffer = pair.Value;
-            if (Renderer.GetOrCreateAPIRenderObject(buffer, generateNow: allowSynchronousUpload) is not VkDataBuffer vkBuffer ||
+            if (BackendContext.GetOrCreateAPIRenderObject(buffer, generateNow: allowSynchronousUpload) is not VkDataBuffer vkBuffer ||
                 !vkBuffer.TryCaptureComputeBufferSnapshot(allowSynchronousUpload, out VulkanComputeBufferBinding bufferBinding))
             {
                 bufferBinding = new VulkanComputeBufferBinding(buffer, default, 0UL, 0);
@@ -697,7 +701,6 @@ internal unsafe partial class VkRenderProgram
                 SetSamplerNoLock(name, xrTexture, unit);
         }
 
-        Renderer.TrackTextureBinding(xrTexture);
     }
 
     private void SetSamplerNoLock(string name, XRTexture texture, uint unit)
@@ -746,7 +749,6 @@ internal unsafe partial class VkRenderProgram
             }
         }
 
-        Renderer.TrackTextureBinding(xrTexture);
     }
 
     private void BindBuffer(uint index, XRDataBuffer buffer)
@@ -776,7 +778,7 @@ internal unsafe partial class VkRenderProgram
             }
         }
 
-        Renderer.TrackBufferBinding(buffer);
+        BackendContext.ProgramServices.TrackBufferBinding(buffer);
     }
 
     private void DispatchCompute(
@@ -794,7 +796,7 @@ internal unsafe partial class VkRenderProgram
         int gx = x > int.MaxValue ? int.MaxValue : (int)x;
         int gy = y > int.MaxValue ? int.MaxValue : (int)y;
         int gz = z > int.MaxValue ? int.MaxValue : (int)z;
-        Renderer.DispatchCompute(Data, gx, gy, gz);
+        BackendContext.ProgramServices.DispatchCompute(this, gx, gy, gz);
     }
 
 }

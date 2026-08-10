@@ -3,6 +3,8 @@ using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.KHR;
 using XREngine.Rendering.DLSS;
 using XREngine.Rendering.API.Rendering.OpenXR;
+using XREngine.Rendering.Vulkan.RenderGraph;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -20,6 +22,12 @@ internal sealed class VulkanOutputRuntime
     internal VulkanDesktopSwapchainPolicyState _desktopSwapchainPolicy = new();
     internal int _hasPresentedCompleteSceneFrame;
     internal VulkanImGuiBackend? _imguiBackend;
+    private VulkanImGuiFontAtlasResources? _imguiFontAtlasResources;
+    private VulkanImGuiDrawBufferResources? _imguiDrawBufferResources;
+    private VulkanImGuiOutputPipelineService? _imguiOutputPipelineService;
+    private VulkanImGuiOverlayAdmission? _imguiOverlayAdmission;
+    private VulkanImGuiTextureOutputResources? _imguiTextureOutputResources;
+    private VulkanImGuiTextureRegistryService? _imguiTextureRegistryService;
     internal VulkanImGuiDrawDataCache _imguiDrawData = new();
     internal VulkanImGuiResources _imguiResources = new();
     internal VulkanImGuiTextureRegistry _imguiTextureRegistry = new();
@@ -27,7 +35,6 @@ internal sealed class VulkanOutputRuntime
     internal Phase524bDesktopRejectionInjection _phase524bDesktopRejectionInjection = new();
     internal Phase524bDesktopRejectionDecision _phase524bPendingDesktopRejection;
     internal EVulkanRenderTargetMode _requestedRenderTargetMode = EVulkanRenderTargetMode.Auto;
-    internal readonly List<RetiredOpenXrSubmissionFence> _retiredOpenXrSubmissionFences = new(2);
     internal readonly List<RetiredSwapchainGeneration> _retiredSwapchainGenerations = new(8);
     internal uint _streamlineComputeQueueFamily;
     internal uint _streamlineComputeQueueIndex;
@@ -46,6 +53,9 @@ internal sealed class VulkanOutputRuntime
     internal KhrSurface? SurfaceApi;
     internal SurfaceKHR Surface;
     private VulkanTargetOutputContext? _targetOutputContext;
+    private VulkanDesktopSwapchainService? _desktopSwapchainService;
+    private VulkanOpenXrOutputResourceService? _openXrOutputResourceService;
+    private VulkanReadbackOutputResourceService? _readbackOutputResourceService;
     private long _explicitTargetFrameNumber;
     private int _imguiFrameMarkerResetRequested;
 
@@ -55,7 +65,9 @@ internal sealed class VulkanOutputRuntime
         OpenXrBackend = new VulkanOpenXrBackend();
         ImGuiPlatformWindows = new VulkanImGuiPlatformWindowOutputAuthority();
         Desktop = new VulkanDesktopOutputState();
-        Capture = new VulkanCaptureOutputState(readbackSlotCount: 8);
+        Capture = new VulkanCaptureOutputState(
+            screenshotReadbackSlotCount: 8,
+            gpuStatsReadbackSlotCount: 32);
         ObsHook = new VulkanObsHookOutputState();
         StreamlineUi = new VulkanStreamlineUiOutputState();
         PresentationSource = new VulkanPresentationSourceState();
@@ -69,6 +81,196 @@ internal sealed class VulkanOutputRuntime
     internal VulkanObsHookOutputState ObsHook { get; }
     internal VulkanStreamlineUiOutputState StreamlineUi { get; }
     internal VulkanPresentationSourceState PresentationSource { get; }
+    internal VulkanImGuiOverlayAdmission GetImGuiOverlayAdmission(
+        VulkanResourceRuntime resourceRuntime,
+        VulkanDeviceContext deviceContext)
+        => _imguiOverlayAdmission ??= new VulkanImGuiOverlayAdmission(this, resourceRuntime, deviceContext);
+    internal VulkanImGuiFontAtlasResources GetImGuiFontAtlasResources(
+        VulkanResourceRuntime resourceRuntime,
+        VulkanCommandRuntime commandRuntime,
+        VulkanDeviceContext deviceContext)
+        => _imguiFontAtlasResources ??= new VulkanImGuiFontAtlasResources(
+            this,
+            resourceRuntime,
+            commandRuntime,
+            deviceContext);
+    internal VulkanImGuiDrawBufferResources GetImGuiDrawBufferResources(
+        VulkanResourceRuntime resourceRuntime)
+        => _imguiDrawBufferResources ??= new VulkanImGuiDrawBufferResources(
+            this,
+            resourceRuntime);
+    internal VulkanImGuiOutputPipelineService GetImGuiOutputPipelineService(
+        VulkanResourceRuntime resourceRuntime,
+        VulkanDeviceContext deviceContext)
+        => _imguiOutputPipelineService ??= new VulkanImGuiOutputPipelineService(
+            this,
+            resourceRuntime,
+            deviceContext);
+    internal VulkanImGuiTextureOutputResources GetImGuiTextureOutputResources(
+        VulkanResourceRuntime resourceRuntime,
+        VulkanDeviceContext deviceContext)
+        => _imguiTextureOutputResources ??= new VulkanImGuiTextureOutputResources(
+            deviceContext,
+            resourceRuntime);
+    internal VulkanImGuiTextureRegistryService GetImGuiTextureRegistryService(
+        VulkanResourceRuntime resources,
+        VulkanCommandRuntime commands,
+        VulkanDeviceContext device)
+        => _imguiTextureRegistryService ??= new VulkanImGuiTextureRegistryService(
+            this,
+            resources,
+            commands,
+            device);
+
+    internal void StoreImGuiDrawData(ImGuiNET.ImDrawDataPtr drawData)
+        => _imguiDrawData.Store(drawData);
+
+    internal VulkanImGuiBackend GetOrCreateImGuiBackend(VulkanImGuiServices services)
+    {
+        VulkanImGuiBackend? backend = _imguiBackend;
+        if (backend is not null && !ImGuiContextTracker.IsAlive(backend.ContextHandle))
+        {
+            backend.Dispose();
+            _imguiBackend = null;
+            _imguiDrawData.Clear();
+        }
+
+        return _imguiBackend ??= new VulkanImGuiBackend(services);
+    }
+
+    internal void DisposeImGuiResources(
+        VulkanResourceRuntime resources,
+        VulkanCommandRuntime commands,
+        VulkanDeviceContext device)
+    {
+        _imguiBackend?.Dispose();
+        _imguiBackend = null;
+
+        GetImGuiOutputPipelineService(resources, device).Dispose();
+        GetImGuiFontAtlasResources(resources, commands, device).RetireAll();
+        GetImGuiDrawBufferResources(resources).RetireAll();
+        _imguiDrawData.Clear();
+    }
+    internal VulkanDesktopSwapchainService DesktopSwapchainService
+        => _desktopSwapchainService ?? throw new InvalidOperationException("The desktop swapchain service is not initialized.");
+    internal VulkanOpenXrOutputResourceService GetOpenXrOutputResourceService(
+        Vk api,
+        VulkanDeviceContext deviceContext,
+        VulkanCommandRuntime commandRuntime,
+        VulkanResourceRuntime resourceRuntime,
+        VulkanFrameTelemetry telemetry)
+        => _openXrOutputResourceService ??= new VulkanOpenXrOutputResourceService(
+            this,
+            api,
+            deviceContext,
+            commandRuntime,
+            resourceRuntime,
+            telemetry);
+    internal VulkanReadbackOutputResourceService GetReadbackOutputResourceService(
+        VulkanDeviceContext deviceContext,
+        VulkanResourceRuntime resourceRuntime,
+        VulkanCommandRuntime commandRuntime)
+        => _readbackOutputResourceService ??= new VulkanReadbackOutputResourceService(
+            deviceContext,
+            resourceRuntime,
+            commandRuntime);
+    internal VulkanTargetOutputContext TargetOutputContext
+        => _targetOutputContext ?? throw new InvalidOperationException(
+            "The Vulkan target output context is not initialized.");
+
+    /// <summary>
+    /// Returns the atomically published desktop depth target.  Frame recording
+    /// reads this through the output authority so it never needs a renderer
+    /// field mirror while a WSI generation is being replaced.
+    /// </summary>
+    internal VulkanSwapchainDepthResources? DesktopDepthResources
+        => Volatile.Read(ref Desktop.DepthResources);
+
+    internal Image DesktopDepthImage => DesktopDepthResources?.Image ?? default;
+    internal ImageView DesktopDepthView => DesktopDepthResources?.View ?? default;
+    internal Format DesktopDepthFormat => DesktopDepthResources?.Format ?? default;
+    internal ImageAspectFlags DesktopDepthAspect => DesktopDepthResources?.Aspect ?? default;
+
+    internal void InitializeDesktopSwapchainService(
+        Vk api,
+        VulkanDeviceContext deviceContext,
+        VulkanCommandRuntime commandRuntime,
+        VulkanResourceRuntime resourceRuntime,
+        VulkanFrameTelemetry telemetry,
+        VulkanFramePlanner framePlanner)
+        => _desktopSwapchainService ??= new VulkanDesktopSwapchainService(
+            this,
+            api,
+            deviceContext,
+            commandRuntime,
+            resourceRuntime,
+            telemetry,
+            framePlanner);
+
+    /// <summary>
+    /// Provides the frame-loop and bootstrap authorities with renderer-free desktop
+    /// WSI lifecycle entry points.  The swapchain service owns native WSI and
+    /// Streamline proxy calls; callers only coordinate their local resources.
+    /// </summary>
+    internal void CreateDesktopWsiGeneration(SwapchainKHR oldSwapchain = default)
+        => DesktopSwapchainService.CreateSwapchain(oldSwapchain);
+
+    internal void CreateInitialDesktopSwapchainGeneration()
+        => DesktopSwapchainService.CreateInitialGeneration();
+
+    internal void DestroyDesktopWsiGeneration()
+        => DesktopSwapchainService.DestroySwapchain();
+
+    internal void DestroyDesktopSwapchainGenerationForShutdown()
+        => DesktopSwapchainService.DestroyLiveGenerationForShutdown();
+
+    internal void CreateDesktopPresentBridgeSemaphores(int imageCount)
+        => DesktopSwapchainService.CreateLivePresentBridgeSemaphores(imageCount);
+
+    internal void DestroyDesktopPresentBridgeSemaphores()
+        => DesktopSwapchainService.DestroyLivePresentBridgeSemaphores();
+
+    internal void CreateDesktopSwapchainImageViews()
+        => DesktopSwapchainService.CreateImageViews();
+
+    internal void DestroyDesktopSwapchainImageViews()
+        => DesktopSwapchainService.DestroyImageViews();
+
+    internal void CreateDesktopDepthResources()
+        => DesktopSwapchainService.CreateDepthResources();
+
+    internal VulkanSwapchainDepthResources? DetachDesktopDepthResources()
+        => DesktopSwapchainService.DetachDepthResources();
+
+    internal bool IsDesktopSurfacePresentable(out string reason)
+        => DesktopSwapchainService.IsSurfacePresentable(out reason);
+
+    internal SwapChainSupportDetails QueryDesktopSwapchainSupport(PhysicalDevice physicalDevice)
+        => DesktopSwapchainService.QuerySupport(physicalDevice);
+
+    internal void DisableDesktopStreamlineFrameGenerationForMutation(string reason)
+        => DesktopSwapchainService.DisableStreamlineFrameGenerationBeforeMutation(reason);
+
+    internal void DrainDesktopStreamlineFrameGenerationDisableBeforePresent()
+        => DesktopSwapchainService.DrainStreamlineFrameGenerationDisableBeforePresent();
+
+    internal void DrainRetiredDesktopSwapchainGenerations(bool force = false)
+        => DesktopSwapchainService.DrainRetiredGenerations(force);
+
+    internal bool TryPrepareDesktopSwapchainRetirementMarkers(out Fence graphicsMarkerFence, out Fence presentMarkerFence)
+        => DesktopSwapchainService.TryPrepareRetirementMarkers(out graphicsMarkerFence, out presentMarkerFence);
+
+    internal void QueueRetiredDesktopSwapchainGeneration(RetiredSwapchainGeneration generation)
+        => DesktopSwapchainService.QueueRetiredGeneration(generation);
+
+    /// <summary>
+    /// Recreates the native desktop WSI generation through the output authority.
+    /// The frame loop deliberately has no renderer facade dependency for this
+    /// operation; all device, resource, command, and telemetry authorities were
+    /// captured when the desktop swapchain service was initialized.
+    /// </summary>
+    internal bool TryRecreateDesktopSwapchain()
+        => DesktopSwapchainService.TryRecreateGeneration();
 
     internal void RequestImGuiFrameMarkerReset()
         => Interlocked.Exchange(ref _imguiFrameMarkerResetRequested, 1);
@@ -206,6 +408,127 @@ internal sealed class VulkanOutputRuntime
         => TargetDriver as IVulkanExplicitFrameTargetDriver
             ?? throw new InvalidOperationException(
                 $"Vulkan target '{TargetDriver.ExecutionMode}' does not expose explicit target-frame submission.");
+
+    /// <summary>
+    /// Resolves the final-output attachments for a recording attempt without giving
+    /// the output authority access to the command/resource renderer facade.
+    /// </summary>
+    internal SwapchainRecordingTarget ResolveRecordingTarget(
+        in VulkanSwapchainRecordingTargetInput input)
+        => VulkanSwapchainRecordingTargetResolver.Resolve(
+            Desktop,
+            in input);
+
+    /// <summary>
+    /// Captures the immutable desktop/UI attachment identities needed by a late
+    /// dynamic-text overlay recording. Command recording must not reach back
+    /// into output state while it is encoding native commands.
+    /// </summary>
+    internal bool TryCaptureDynamicUiOverlayTarget(
+        uint imageIndex,
+        out VulkanDynamicUiOverlayTarget target)
+    {
+        target = default;
+        if (Desktop.Images is null || Desktop.ImageViews is null ||
+            imageIndex >= Desktop.Images.Length || imageIndex >= Desktop.ImageViews.Length)
+            return false;
+
+        Image swapchainImage = Desktop.Images[imageIndex];
+        ImageView swapchainView = Desktop.ImageViews[imageIndex];
+        if (swapchainImage.Handle == 0 || swapchainView.Handle == 0)
+            return false;
+
+        Image streamlineImage = default;
+        ImageView streamlineView = default;
+        ImageLayout streamlineLayout = ImageLayout.Undefined;
+        Image[]? streamlineImages = StreamlineUi.Images;
+        ImageView[]? streamlineViews = StreamlineUi.ImageViews;
+        bool[]? streamlineInitialized = StreamlineUi.ImagesInitialized;
+        bool hasStreamlineUi = streamlineImages is not null &&
+            streamlineViews is not null &&
+            streamlineInitialized is not null &&
+            imageIndex < streamlineImages.Length &&
+            imageIndex < streamlineViews.Length &&
+            imageIndex < streamlineInitialized.Length;
+        if (hasStreamlineUi)
+        {
+            streamlineImage = streamlineImages![imageIndex];
+            streamlineView = streamlineViews![imageIndex];
+            hasStreamlineUi = streamlineImage.Handle != 0 && streamlineView.Handle != 0;
+            if (hasStreamlineUi)
+            {
+                streamlineLayout = streamlineInitialized![imageIndex]
+                    ? ImageLayout.General
+                    : ImageLayout.Undefined;
+            }
+        }
+
+        target = new VulkanDynamicUiOverlayTarget(
+            swapchainImage,
+            swapchainView,
+            Desktop.Extent,
+            hasStreamlineUi,
+            streamlineImage,
+            streamlineView,
+            streamlineLayout);
+        return true;
+    }
+
+    /// <summary>
+    /// Captures the immutable Streamline UI attachment identity for a producer-owned
+    /// primary recording attempt. Command recording must not query output state.
+    /// </summary>
+    internal bool TryCaptureStreamlineUiImage(
+        uint imageIndex,
+        out VulkanStreamlineImage image)
+    {
+        image = default;
+        Image[]? images = StreamlineUi.Images;
+        DeviceMemory[]? memories = StreamlineUi.ImageMemories;
+        ImageView[]? views = StreamlineUi.ImageViews;
+        bool[]? initialized = StreamlineUi.ImagesInitialized;
+        if (images is null || memories is null || views is null ||
+            imageIndex >= images.Length || imageIndex >= memories.Length ||
+            imageIndex >= views.Length)
+        {
+            return false;
+        }
+
+        Image nativeImage = images[imageIndex];
+        ImageView view = views[imageIndex];
+        if (nativeImage.Handle == 0 || view.Handle == 0)
+            return false;
+
+        ImageLayout initialLayout = initialized is not null &&
+            imageIndex < initialized.Length && initialized[imageIndex]
+                ? ImageLayout.General
+                : ImageLayout.Undefined;
+        image = new VulkanStreamlineImage(
+            nativeImage,
+            memories[imageIndex],
+            view,
+            initialLayout,
+            Desktop.ImageFormat,
+            ImageUsageFlags.ColorAttachmentBit |
+            ImageUsageFlags.SampledBit |
+            ImageUsageFlags.TransferSrcBit |
+            ImageUsageFlags.TransferDstBit,
+            ImageAspectFlags.ColorBit,
+            Desktop.Extent.Width,
+            Desktop.Extent.Height,
+            null);
+        return true;
+    }
+
+    /// <summary>Publishes successful initialization of the Streamline UI target.</summary>
+    internal void MarkStreamlineUiImageInitialized(uint imageIndex)
+    {
+        if (StreamlineUi.ImagesInitialized is not null &&
+            imageIndex < StreamlineUi.ImagesInitialized.Length)
+        {
+            StreamlineUi.ImagesInitialized[imageIndex] = true;
+        }
+    }
 
     internal void DestroyBufferRaw(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)
     {

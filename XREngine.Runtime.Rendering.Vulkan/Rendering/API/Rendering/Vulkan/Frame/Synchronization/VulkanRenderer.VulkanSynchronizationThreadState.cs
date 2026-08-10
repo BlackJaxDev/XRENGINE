@@ -7,12 +7,6 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanSynchronizationThreadState
 {
-    /// <summary>
-    /// Gets or sets whether barrier recording should remove desktop-swapchain
-    /// image barriers on this thread.
-    /// </summary>
-    public bool ExcludeDesktopSwapchainBarriers;
-
     /// <summary>Reusable synchronization2 wait-semaphore storage.</summary>
     public SemaphoreSubmitInfo[]? SubmitWaitInfoScratch;
 
@@ -40,7 +34,6 @@ internal sealed class VulkanSynchronizationThreadState
     /// </summary>
     public void Reset()
     {
-        ExcludeDesktopSwapchainBarriers = false;
         SubmitWaitInfoScratch = null;
         SubmitSignalInfoScratch = null;
         SubmitCommandBufferInfoScratch = null;

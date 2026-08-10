@@ -33,8 +33,6 @@ public unsafe partial class VulkanRenderer
         XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||
         XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw;
 
-    private Dictionary<ulong, PrimaryCommandArtifactOwner> OpenXrPrimaryCommandArtifactOwners =>
-        OutputRuntime.OpenXrBackend.GetPrimaryCommandArtifactOwners<PrimaryCommandArtifactOwner>();
     private Dictionary<VulkanOpenXrViewResourcePlannerContextKey, ResourcePlannerRuntimeState> OpenXrResourcePlannerStates =>
         OutputRuntime.OpenXrBackend.GetResourcePlannerStates<VulkanOpenXrViewResourcePlannerContextKey, ResourcePlannerRuntimeState>();
 
@@ -54,26 +52,31 @@ public unsafe partial class VulkanRenderer
 
     public override bool IsRenderingExternalSwapchainTarget => IsThreadOpenXrExternalSwapchainTarget;
     internal bool IsPrewarmingOpenXrExternalSwapchainTarget =>
+        _outputRuntime is not null &&
         IsThreadOpenXrExternalSwapchainTarget &&
         Volatile.Read(ref OutputRuntime.OpenXrBackend.ExternalSwapchainPrewarmDepth) > 0;
     public override bool AllowSynchronousResourceUploads
-        => !IsThreadSynchronousResourceUploadBlocked &&
+        => _outputRuntime is null ||
+           !IsThreadSynchronousResourceUploadBlocked &&
            Volatile.Read(ref OutputRuntime.OpenXrBackend.SynchronousResourceUploadBlockDepth) == 0;
 
     private bool IsThreadOpenXrExternalSwapchainTarget =>
+        _outputRuntime is not null &&
         OutputRuntime.OpenXrBackend.CurrentThreadExecutionState.ExternalSwapchainDepth > 0;
 
     private bool IsThreadSynchronousResourceUploadBlocked =>
+        _outputRuntime is not null &&
         OutputRuntime.OpenXrBackend.CurrentThreadExecutionState.SynchronousUploadBlockDepth > 0;
 
     internal IDisposable BlockSynchronousResourceUploads(string reason)
     {
-        return new SynchronousResourceUploadBlockScope(this, reason);
+        LogSynchronousResourceUploadBlock(reason);
+        return _commandRuntime.OpenXrRecording.EnterSynchronousUploadBlockScope(OutputRuntime.OpenXrBackend);
     }
 
     private void LogSynchronousResourceUploadBlock(string reason)
     {
-        if (OpenXrVulkanTraceEnabled || DescriptorTraceEnabled)
+        if (_commandRuntime.IsOpenXrTraceEnabled || DescriptorTraceEnabled)
             Debug.VulkanWarningEvery(
                 $"Vulkan.SyncUploads.Blocked.{reason}.{GetHashCode()}",
                 TimeSpan.FromSeconds(2),
@@ -91,8 +94,8 @@ public unsafe partial class VulkanRenderer
 
         int frameDataSlotCount = ResolveOpenXrFrameDataSlotCount(OutputRuntime.Desktop.Images?.Length ?? 0);
         EnsureOpenXrFrameDataSlotCapacity(frameDataSlotCount);
-        bool grew = EnsureDescriptorFrameSlotFrameCountFloor(frameDataSlotCount);
-        if (grew || OpenXrVulkanTraceEnabled)
+        bool grew = _commandRuntime.EnsureOpenXrDescriptorFrameSlotFloor(frameDataSlotCount);
+        if (grew || _commandRuntime.IsOpenXrTraceEnabled)
         {
             Debug.Vulkan(
                 "[OpenXR] Reserved Vulkan frame-data slots for OpenXR. Reason={0} desktopSwapchainImages={1} frameDataSlots={2} descriptorFrameSlots={3}",
@@ -124,34 +127,7 @@ public unsafe partial class VulkanRenderer
             string.Equals(value, "on", StringComparison.OrdinalIgnoreCase));
 
     internal void MarkOpenXrPrimaryCommandArtifactOwnersDirty()
-    {
-        lock (OutputRuntime.OpenXrBackend.PrimaryCommandArtifactOwnersLock)
-        {
-            foreach (PrimaryCommandArtifactOwner owner in OpenXrPrimaryCommandArtifactOwners.Values)
-                owner.Dirty = true;
-        }
-    }
-
-    private void MarkUnsubmittedOpenXrPrimaryCommandBufferDirty(
-        in OpenXrRecordedEyeCommandBuffer recorded,
-        string reason)
-    {
-        if (!recorded.OwnedByOpenXrPrimaryCache || recorded.CommandBuffer.Handle == 0)
-            return;
-
-        lock (OutputRuntime.OpenXrBackend.PrimaryCommandArtifactOwnersLock)
-        {
-            foreach (PrimaryCommandArtifactOwner owner in OpenXrPrimaryCommandArtifactOwners.Values)
-            {
-                if (owner.PrimaryCommandBuffer.Handle != recorded.CommandBuffer.Handle)
-                    continue;
-
-                owner.Dirty = true;
-                owner.DirtyReason = reason;
-                return;
-            }
-        }
-    }
+        => _commandRuntime.MarkAllOpenXrPrimaryCommandArtifactsDirty();
 
     public override bool TryGetExternalSwapchainTargetRegion(out BoundingRectangle region)
     {
@@ -216,7 +192,7 @@ public unsafe partial class VulkanRenderer
         if (!frameContext.HasExternalTarget)
             throw new InvalidOperationException("OpenXR external swapchain render scope requires a non-zero target extent.");
 
-        return new OpenXrExternalSwapchainRenderScope(this, in frameContext);
+        return _commandRuntime.OpenXrRecording.EnterExternalSwapchainScope(OutputRuntime.OpenXrBackend, in frameContext);
     }
 
     internal VulkanOpenXrDiagnosticsSnapshot CaptureOpenXrDiagnostics()

@@ -32,12 +32,13 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             return false;
         }
 
-        bool preferIndirectCopy = Renderer.CanUseNvIndirectBufferCopyUploads;
+        bool preferIndirectCopy = BackendContext.Buffers.CanUseNvIndirectCopyUploads(BackendContext);
         BufferUsageFlags usage = BufferUsageFlags.TransferSrcBit;
         if (preferIndirectCopy)
             usage |= BufferUsageFlags.ShaderDeviceAddressBit;
 
-        (buffer, memory) = Renderer.CreateBuffer(
+        (buffer, memory) = BackendContext.Buffers.Create(
+            BackendContext,
             data.Length,
             usage,
             MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
@@ -75,13 +76,14 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (string.IsNullOrWhiteSpace(filePath) || length <= 0)
             return false;
 
-        bool preferIndirectCopy = Renderer.CanUseNvIndirectBufferCopyUploads;
+        bool preferIndirectCopy = BackendContext.Buffers.CanUseNvIndirectCopyUploads(BackendContext);
         BufferUsageFlags usage = BufferUsageFlags.TransferSrcBit;
         if (preferIndirectCopy)
             usage |= BufferUsageFlags.ShaderDeviceAddressBit;
 
         // Allocate a host-visible staging buffer WITHOUT copying any data yet.
-        (buffer, memory) = Renderer.CreateBufferRaw(
+        (buffer, memory) = BackendContext.Buffers.CreateRaw(
+            BackendContext,
             (ulong)length,
             usage,
             MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
@@ -89,9 +91,9 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
         // Map the staging buffer memory.
         void* mappedPtr = null;
-        if (!Renderer.TryMapBufferMemory(buffer, memory, 0, (ulong)length, out mappedPtr))
+        if (!BackendContext.Buffers.TryMap(BackendContext, buffer, memory, 0, (ulong)length, out mappedPtr))
         {
-            Renderer.DestroyBuffer(buffer, memory);
+            BackendContext.Buffers.Destroy(BackendContext, buffer, memory, "VkImageBackedTexture.StagingFile.MapFailure");
             buffer = default;
             memory = default;
             return false;
@@ -105,14 +107,14 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         }
         catch
         {
-            Renderer.UnmapBufferMemory(buffer, memory);
-            Renderer.DestroyBuffer(buffer, memory);
+            BackendContext.Buffers.Unmap(BackendContext, buffer, memory);
+            BackendContext.Buffers.Destroy(BackendContext, buffer, memory, "VkImageBackedTexture.StagingFile.ReadFailure");
             buffer = default;
             memory = default;
             return false;
         }
 
-        Renderer.UnmapBufferMemory(buffer, memory);
+        BackendContext.Buffers.Unmap(BackendContext, buffer, memory);
         return true;
     }
 
@@ -122,7 +124,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     /// <param name="buffer">The staging buffer to destroy.</param>
     /// <param name="memory">The device memory backing the buffer.</param>
     protected void DestroyStagingBuffer(Buffer buffer, DeviceMemory memory)
-        => Renderer.DestroyBuffer(buffer, memory);
+        => BackendContext.Buffers.Destroy(BackendContext, buffer, memory, "VkImageBackedTexture.Staging");
 
     #endregion
 }

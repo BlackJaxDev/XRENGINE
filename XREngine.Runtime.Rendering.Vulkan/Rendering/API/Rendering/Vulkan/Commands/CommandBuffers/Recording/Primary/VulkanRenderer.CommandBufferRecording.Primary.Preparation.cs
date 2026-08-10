@@ -15,7 +15,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanCommandRuntime
     {
         private static void CapturePrimaryCommandBufferRecordingContext(
             scoped in VulkanCommandRecordingContext context,
@@ -34,6 +34,12 @@ namespace XREngine.Rendering.Vulkan
             recordingState.ExcludeDesktopSwapchainBarriers = context.ExcludeDesktopSwapchainBarriers;
             recordingState.PrimaryCommandPlan = context.PrimaryCommandPlan;
             recordingState.FramePlan = context.FramePlan;
+            recordingState.SwapchainTarget = context.RecordingTarget;
+            recordingState.PresentationSource = context.PresentationSource;
+            recordingState.Policy = context.Policy;
+            recordingState.ResourcePlanStamp = context.ResourcePlanStamp;
+            recordingState.RenderGraphPlan = context.RenderGraphPlan;
+            recordingState.ClearState = context.ClearState;
         }
 
         private void InitializePrimaryCommandBufferRecordingState(
@@ -42,8 +48,8 @@ namespace XREngine.Rendering.Vulkan
             recordingState.RecordedSwapchainWriteCount = 0;
             recordingState.RecordedSwapchainFinalLayout = ImageLayout.Undefined;
             recordingState.RecordingDeferredReason = string.Empty;
-            recordingState.QueryFrameOpsRequireRerecord = false;
-            recordingState.QueryFrameOpsRequireRerecordLocal = false;
+            recordingState.FrameOpsRequireRerecord = false;
+            recordingState.FrameOpsRequireRerecordLocal = false;
             recordingState.Metrics.DroppedDrawOps = 0;
             recordingState.Metrics.DroppedComputeOps = 0;
             recordingState.Metrics.DroppedFrameOps = 0;
@@ -54,14 +60,7 @@ namespace XREngine.Rendering.Vulkan
             // and intentionally has no OpenXR image target context. Do not let its
             // frame-data index alias desktop swapchain image 0. Direct per-eye XR
             // recording supplies an explicit target context and remains valid.
-            recordingState.SwapchainTarget =
-                IsRenderingExternalSwapchainTarget &&
-                recordingState.OpenXrTargetContext is null
-                    ? default
-                    : ResolveSwapchainRecordingTarget(
-                        recordingState.ImageIndex,
-                        recordingState.OpenXrTargetContext);
-            recordingState.SwapchainRecordExtent = recordingState.SwapchainTarget.IsValid ? recordingState.SwapchainTarget.Extent : OutputRuntime.Desktop.Extent;
+            recordingState.SwapchainRecordExtent = recordingState.SwapchainTarget.Extent;
             recordingState.ImageWasEverPresentedAtRecordStart = recordingState.SwapchainTarget.ImageEverPresentedAtRecordStart;
             recordingState.InitialSwapchainColorLayout = recordingState.SwapchainTarget.IsValid
                 ? recordingState.SwapchainTarget.InitialColorLayout
@@ -72,20 +71,17 @@ namespace XREngine.Rendering.Vulkan
             recordingState.SecondaryBucketByStart = null;
             recordingState.ScheduledCommandChainKeysByOpIndex = null;
             recordingState.ScheduledCommandChainCache = null;
+            recordingState.MeshSecondaryFallbackEndIndex = 0;
             // Schedule before resource prewarm so clean secondary chains can
             // reuse their already-compiled graphics pipelines. It also ensures
             // the primary plan is built from the final sorted operation order.
             PreparePrimaryOperationSchedule(ref recordingState);
             ValidatePrimaryPlanPassIndicesForRecording(recordingState.Ops);
-            recordingState.PrimaryCommandPlan.Build(
-                recordingState.Ops,
-                ComputeFrameOpsSignature(recordingState.Ops),
-                new VulkanPrimaryPlanTerminalContext(
-                    recordingState.PreserveSwapchainForOverlay,
-                    recordingState.TransitionSwapchainToPresent,
-                    ReleaseExternalImageOwnership:
-                        recordingState.OpenXrTargetContext is not null),
-                BarrierPlanner);
+            if (recordingState.PrimaryCommandPlan.OperationCount != recordingState.Ops.Length)
+            {
+                throw new VulkanPlanPreconditionException(
+                    $"frame-plan precondition failed: frozen primary plan operation count {recordingState.PrimaryCommandPlan.OperationCount} does not match sealed frame plan operation count {recordingState.Ops.Length}");
+            }
             recordingState.MeshDrawUniformSlotsByOpIndex = recordingState.RecordingScratch.PreparePrimaryMeshDrawUniformSlots(recordingState.Ops.Length);
             recordingState.ScheduledCommandChainFrameDataRefreshedByOpIndex =
                 recordingState.RecordingScratch
@@ -148,12 +144,15 @@ namespace XREngine.Rendering.Vulkan
             PrepareScheduledCommandChainFrameDataRefresh(
                 ref recordingState);
             EMeshSubmissionStrategy submissionStrategy = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
-            VulkanPipelineVariantManifest pipelineVariantManifest = GetOrBuildPipelineVariantManifest(
-                CompiledRenderGraph.Plan,
+            ulong frameStructuralSignature = recordingState.FramePlan?.StaticOperationSignature
+                ?? throw new VulkanPlanPreconditionException(
+                    "Primary pipeline preparation requires a sealed frame plan.");
+            VulkanPipelineVariantManifest pipelineVariantManifest = ResourceRuntime.PipelineManager.GetOrBuildVariantManifest(
+                recordingState.RenderGraphPlan.CompiledGraph.Plan,
                 recordingState.Ops,
                 submissionStrategy,
-                UseDynamicRenderingRenderTargets,
-                ComputeFrameOpsSignature(recordingState.Ops));
+                recordingState.Policy.UseDynamicRendering,
+                frameStructuralSignature);
             HashSet<int> deferredRequirementIndices =
                 recordingState.RecordingScratch.PipelineDeferredRequirementIndices;
             ulong pipelineCompileActivityGeneration =
@@ -238,8 +237,6 @@ namespace XREngine.Rendering.Vulkan
 
                     using var pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(
                         recordingState.Ops[opIndex].Context.PipelineInstance);
-                    using var plannerScope =
-                        EnterFrameOpResourcePlannerReadbackScope(recordingState.Ops[opIndex].Context);
                     if (!meshRenderer.TryPrewarmFrameDataForRecording(
                             pendingDraw,
                             drawSlot,
@@ -260,10 +257,7 @@ namespace XREngine.Rendering.Vulkan
                         return false;
                     }
 
-                    int pipelinePassIndex = EnsureValidPassIndex(
-                        recordingState.Ops[opIndex].PassIndex,
-                        GetFrameOpDiagnosticName(recordingState.Ops[opIndex]),
-                        recordingState.Ops[opIndex].Context.PassMetadata);
+                    int pipelinePassIndex = recordingState.Ops[opIndex].PassIndex;
                     if (pipelinePassIndex == int.MinValue)
                         continue;
 
@@ -293,6 +287,8 @@ namespace XREngine.Rendering.Vulkan
                             pipelinePassIndex,
                             recordingState.Ops[opIndex].Context,
                             recordingState.SwapchainTarget,
+                            recordingState.Policy.UseDynamicRendering,
+                            recordingState.RenderGraphPlan.CompiledGraph,
                             out bool useDynamicRendering,
                             out RenderPass prewarmRenderPass,
                             out DynamicRenderingFormatSignature prewarmDynamicRenderingFormats,
@@ -376,6 +372,11 @@ namespace XREngine.Rendering.Vulkan
                 }
                 else
                 {
+                    // A primary recorded while required draw pipelines are pending is
+                    // intentionally incomplete. It may submit for startup progress,
+                    // but publishing it as reusable would freeze those omitted draws
+                    // after an async compile completes (or a saturated queue frees).
+                    recordingState.FrameOpsRequireRerecordLocal = true;
                     if (IsVulkanPipelineAsyncCompilationEnabled)
                     {
                         recordingState.RecordingScratch.PipelineDeferredManifestIdentity =
@@ -583,13 +584,8 @@ namespace XREngine.Rendering.Vulkan
             // maintain pass-scoped ordering.  Any remaining global mask is emitted
             // before the first pass barrier group via EmitPassBarriers.
 
-            recordingState.InitialContext = recordingState.Ops.Length > 0
-                ? recordingState.Ops[0].Context
-                : CaptureFrameOpContext();
-
-            recordingState.InitialContext = recordingState.Ops.Length > 0
-                ? recordingState.Ops[0].Context
-                : recordingState.InitialContext;
+            if (recordingState.Ops.Length > 0)
+                recordingState.InitialContext = recordingState.Ops[0].Context;
         }
 
         private void InitializePrimaryCommandEncodingState(

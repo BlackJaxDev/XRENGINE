@@ -223,73 +223,83 @@ state.
     passed, and clean shutdown logs contained no repeated generation-commit
     exception, null reference, retry backoff, incomplete presentation epoch,
     stale secondary, VUID, device loss, or validation error.
-- [ ] **4.1.1 Cut the frame loop's facade callback spine.**
+- [x] **4.1.1 Cut the frame loop's facade callback spine.**
   - [x] Delete `IVulkanDesktopFramePhaseService` and the stateful desktop frame
     coordinator; `VulkanFrameLoop` owns admission, settlement, and ordered phase
     sequencing.
-  - [ ] Replace `VulkanFrameLoop.Render(VulkanRenderer renderer, double delta)`
+  - [x] Replace `VulkanFrameLoop.Render(VulkanRenderer renderer, double delta)`
     and every phase call it makes back into the facade with typed authority
     inputs and renderer-free phase owners.
   - Exit condition: `Frame/Loop/Authority` contains no `VulkanRenderer`
     reference, and the facade performs one one-way call into `VulkanFrameLoop`
     without being passed as an argument or callback target.
-- [ ] **4.1.2 Cut the output authority's retained facade and finish output
+- [x] **4.1.2 Cut the output authority's retained facade and finish output
   behavior ownership.**
   - [x] Move output mutable state, target identities, and surface authority into
     `VulkanOutputRuntime` and renderer-free surface contracts.
-  - [ ] Remove `VulkanTargetOutputContext._renderer`, its
+  - [x] Remove `VulkanTargetOutputContext._renderer`, its
     `VulkanTargetOutputContext(VulkanRenderer)` constructor, and its 32 direct
     `_renderer.*` forwarding calls; replace the catch-all context with the
     narrow device, resource, command, and telemetry capabilities each target
     operation actually needs.
-  - [ ] Remove `VulkanRenderer` from
+  - [x] Remove `VulkanRenderer` from
     `VulkanOutputRuntime.InitializeTargetFinalOutput(...)` and from
     `VulkanDesktopWsiTargetDriver.RecreateFinalOutput(...)`,
     `ShouldKeepPresentScalingSwapchain(...)`, `AcquireFrameTarget(...)`, and
     `PresentFrameTarget(...)`.
-  - [ ] Rehome remaining desktop, presentationless, OpenXR, mirror, capture,
+  - [x] Rehome remaining desktop, presentationless, OpenXR, mirror, capture,
     probe, shadow, preview, readback, and ImGui lifecycle methods from
     `VulkanRenderer.*` partials into `VulkanOutputRuntime` or focused typed
     adapters.
   - Exit condition: output authorities, target drivers, and output adapters
     neither accept nor retain `VulkanRenderer`, and no output lifecycle method is
     implemented on a renderer partial.
-- [ ] **4.1.3 Remove renderer-backed resource wrappers and finish resource
+- [x] **4.1.3 Remove renderer-backed resource wrappers and finish resource
   behavior ownership.**
   - [x] Move resource mutable state, registries, descriptor state, pipeline
     caches, lifetime tracking, and allocator state to resource/device
     authorities.
-  - [ ] Remove the transitional `VkObject(VulkanRenderer renderer, T data)`
+  - [x] Remove the transitional `VkObject(VulkanRenderer renderer, T data)`
     constructor and `VkObject<T>.Renderer` accessor. Convert wrapper operations
     to `VulkanBackendObjectContext` plus narrow resource/command contracts.
-  - [ ] Rehome wrapper, registry, allocation, upload, descriptor, pipeline,
+  - [x] Rehome wrapper, registry, allocation, upload, descriptor, pipeline,
     pinning, retirement, and readback implementation still present in
     `VulkanRenderer.*` partials.
-  - [ ] Move `VulkanGraphicsPipelineCompileJob`,
+  - [x] Move `VulkanGraphicsPipelineCompileJob`,
     `VulkanPipelineManifestCacheKey`, and `VulkanPipelineVariantManifest` out of
     the renderer so `VulkanPipelineManager` no longer names renderer-nested
     contracts.
   - Exit condition: no `VkObject`-derived type reaches operations through a
     renderer backlink, `VulkanPipelineManager` contains no `VulkanRenderer`
     reference, and resource implementation lives under the resource authority.
-- [ ] **4.1.4 Move command execution, recording, and workers behind frozen
+- [x] **4.1.4 Move command execution, recording, and workers behind frozen
   command-runtime inputs.**
   - [x] Move command mutable state, worker synchronization, workspaces, and
     caches into `VulkanCommandRuntime`.
-  - [ ] Remove the `VulkanRenderer` parameters from
+  - [x] Remove the `VulkanRenderer` parameters from
     `VulkanCommandRecorder.Begin(...)` and `Record(...)`.
-  - [ ] Replace `CommandChainRecordingBatch.WorkerProcedure` and the bound
+  - [x] Replace `CommandChainRecordingBatch.WorkerProcedure` and the bound
     renderer worker method with a command-runtime worker procedure over an
     immutable prepared recording context. Move tracked reset/end, binding
     state, descriptor/local-read inheritance, and device admission into that
     context or its owning command services.
-  - [ ] Rehome scheduling, frame operations, primary/secondary recording,
+  - [x] Rehome scheduling, frame operations, primary/secondary recording,
     barriers, queue submission, receipts, and OpenXR recording workers that are
     still implemented by `VulkanRenderer.*` partials.
   - Exit condition: command authorities and workers neither accept nor retain
     `VulkanRenderer`; workers consume only frozen prepared inputs; command
     recording, synchronization, submission, and settlement behavior is owned by
     `VulkanCommandRuntime` and focused command services.
+  - Completion evidence (2026-08-08): exact authority/worker scans contain no
+    retained or accepted `VulkanRenderer` references outside the intentional
+    compatibility facade. Warning-as-error Vulkan and editor builds pass with
+    zero warnings and errors. Named Vulkan-only session
+    `phase4-core-hardening-final` reached MCP readiness after a clean rebuild;
+    two visually inspected, camera-dependent captures rendered scene geometry
+    and debug overlays, readback alternated between slots 0 and 1, and the live
+    Vulkan/general logs contained none of the prior null-context, frame-slot,
+    unsealed-secondary, VUID, validation, or device-loss failures. Evidence is
+    under `Build/_AgentValidation/mcp-sessions/phase4-core-hardening-final/`.
 - [ ] **4.1.5 Replace opaque authority state and renderer-nested planner
   contracts with concrete types.**
   - [x] Replace the planner's former type-keyed state bag with a concrete

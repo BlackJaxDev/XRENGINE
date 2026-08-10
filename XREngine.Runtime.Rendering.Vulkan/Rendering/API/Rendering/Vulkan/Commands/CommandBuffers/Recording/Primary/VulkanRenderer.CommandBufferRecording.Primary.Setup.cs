@@ -15,7 +15,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanCommandRuntime
     {
 
         private void ResetAndBeginPrimaryCommandBuffer(
@@ -29,10 +29,11 @@ namespace XREngine.Rendering.Vulkan
                 ResetSubmissionMarkersForCommandBuffer(recordingState.CommandBuffer);
                 CleanupComputeTransientResources(recordingState.FrameDataImageIndex);
 
-                _commandRuntime.Recorder.Begin(
+                _commandRuntime.BeginRecording(
                     VulkanApi,
                     _deviceContext.StateMachine,
-                    recordingState.CommandBuffer);
+                    recordingState.CommandBuffer,
+                    "vkBeginCommandBuffer.Primary");
 
                 BeginFrameTimingQueries(recordingState.CommandBuffer, recordingState.CommandBufferImageSlot);
                 BeginVulkanGpuProfilerQueries(recordingState.CommandBuffer, recordingState.CommandBufferImageSlot);
@@ -55,20 +56,11 @@ namespace XREngine.Rendering.Vulkan
         {
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.SortAndSecondaryBuckets"))
             {
-                if (recordingState.CommandChainSchedule is null &&
-                    !recordingState.Ops.IsNumericStream)
-                {
-                    // Always sort frame ops by (PassOrder, safe draw order, OriginalIndex)
-                    // and then normalize same-target clears before first same-target use.
-                    // Render graph pass order preserves cross-pass dependencies, while same-pass
-                    // compute/barrier/indirect operations stay in enqueue order so GPU-produced
-                    // counters are written before the draw commands that consume them.
-                    recordingState.Ops = _frameOperationScheduler.SortFrameOpsCore(
-                        recordingState.Ops.CompatibilityOperations,
-                        CompiledRenderGraph);
-                }
+                if (recordingState.FramePlan is not null && !recordingState.Ops.IsNumericStream)
+                    throw new VulkanPlanPreconditionException(
+                        "frame-plan precondition failed: sealed desktop operations were not published as a numeric stream");
 
-                _frameOperationScheduler.BuildSecondaryRecordingBuckets(recordingState.Ops, recordingState.SecondaryBuckets);
+                _primaryOperationScheduler.BuildSecondaryRecordingBuckets(recordingState.Ops, recordingState.SecondaryBuckets);
                 if (recordingState.SecondaryBuckets.Count > 8)
                 {
                     recordingState.SecondaryBucketByStart = recordingState.RecordingScratch.SecondaryBucketByStart;
@@ -114,20 +106,22 @@ namespace XREngine.Rendering.Vulkan
                 CmdBeginLabel(recordingState.CommandBuffer, "SwapchainBarriers");
                 if (recordingState.SwapchainTarget.IsValid)
                 {
-                    var plannedSwapchainBarriers = BarrierPlanner.GetSwapchainBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
-                    var swapchainImageBarriers = BarrierPlanner.GetBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
-                    var swapchainBufferBarriers = BarrierPlanner.GetBufferBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
+                    VulkanBarrierPlan barrierPlan = recordingState.RenderGraphPlan.Barriers;
+                    IReadOnlyList<VulkanBarrierPlanner.PlannedSwapchainBarrier> plannedSwapchainBarriers =
+                        barrierPlan.GetSwapchainBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
+                    IReadOnlyList<VulkanBarrierPlanner.PlannedImageBarrier> swapchainImageBarriers =
+                        barrierPlan.GetImageBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
+                    IReadOnlyList<VulkanBarrierPlanner.PlannedBufferBarrier> swapchainBufferBarriers =
+                        barrierPlan.GetBufferBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
                     EmitPlannedSwapchainBarriers(ref recordingState, recordingState.CommandBuffer, plannedSwapchainBarriers);
                     EmitPlannedImageBarriers(recordingState.CommandBuffer, swapchainImageBarriers);
                     EmitPlannedBufferBarriers(recordingState.CommandBuffer, swapchainBufferBarriers);
                 }
                 CmdEndLabel(recordingState.CommandBuffer);
 
-                // Transition any freshly-allocated physical images from UNDEFINED to
-                // a safe initial layout so that render passes never see UNDEFINED.
-                EmitInitialImageBarriersForUnknownPass(
-                    recordingState.CommandBuffer,
-                    skipDesktopSwapchainImages: recordingState.ExcludeDesktopSwapchainBarriers);
+                // Every physical image transition is frozen into RenderGraphPlan.Barriers.
+                // Encoding must not enumerate a live resource allocator to synthesize
+                // unplanned fallback barriers after prepared-input validation.
             }
         }
 

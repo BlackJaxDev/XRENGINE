@@ -36,7 +36,7 @@ internal sealed partial class VulkanTextureUploadService
 
         while (TryPeekSubmittedTransfer(out VulkanSubmittedImportedTextureUpload? submitted) && submitted is not null)
         {
-            if (!renderer.TryPollImportedTextureTransfer(submitted, out bool complete, out string? pollFailure))
+            if (!renderer.CommandRuntime.TryPollImportedTextureTransfer(submitted, out bool complete, out string? pollFailure))
             {
                 RemoveSubmittedTransfer(submitted);
                 submitted.Upload.Texture.ReleasePreparedImportedUploadResources(submitted.Upload);
@@ -56,7 +56,7 @@ internal sealed partial class VulkanTextureUploadService
                 VulkanTextureUploadGenerationState.TransferComplete,
                 $"transfer upload fence signaled waitMs={Volatile.Read(ref s_lastTransferWaitMilliseconds):F3}");
 
-            if (!renderer.CompleteSubmittedImportedTextureUpload(submitted, out string? completeFailure))
+            if (!renderer.CommandRuntime.CompleteSubmittedImportedTextureUpload(submitted, out string? completeFailure))
             {
                 submitted.Upload.Texture.ReleasePreparedImportedUploadResources(submitted.Upload);
                 RecordState(submitted.Upload.Request, VulkanTextureUploadGenerationState.Failed, completeFailure ?? "transfer upload completion failed");
@@ -118,7 +118,7 @@ internal sealed partial class VulkanTextureUploadService
         for (int i = 0; i < submittedUploads.Length; i++)
         {
             VulkanSubmittedImportedTextureUpload submitted = submittedUploads[i];
-            renderer.CompleteSubmittedImportedTextureUpload(submitted, out _);
+            renderer.CommandRuntime.CompleteSubmittedImportedTextureUpload(submitted, out _);
             submitted.Upload.Texture.ReleasePreparedImportedUploadResources(submitted.Upload);
             RecordState(submitted.Upload.Request, VulkanTextureUploadGenerationState.Canceled, reason);
             Interlocked.Increment(ref s_canceledStaleUploads);

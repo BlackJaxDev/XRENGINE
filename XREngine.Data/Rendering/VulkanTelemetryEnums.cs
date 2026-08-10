@@ -58,6 +58,10 @@ public enum EVulkanCpuStage
     MeshDrawArtifactEligibility,
     MeshDrawArtifactLookup,
     WorkerWait,
+    CommandChainCompatibilityScan,
+    CommandChainCapacityPlanning,
+    CommandChainDependencyAggregation,
+    CommandChainRecordedKeyCapture,
     Count,
 }
 

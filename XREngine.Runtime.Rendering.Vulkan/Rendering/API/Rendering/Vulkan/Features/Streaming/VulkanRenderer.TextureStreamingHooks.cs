@@ -35,7 +35,7 @@ public unsafe partial class VulkanRenderer
                 upload.Request,
                 VulkanTextureUploadGenerationState.Canceled,
                 reason);
-            InvokeTextureUploadCanceled(upload);
+            InvokePendingTextureUploadCanceled(upload);
             canceledUploads++;
         }
 
@@ -77,4 +77,17 @@ public unsafe partial class VulkanRenderer
         in TextureResidencyTelemetry residency,
         in TextureUploadTelemetry upload)
         => VulkanTextureUploadService.IsSynchronizedImportedTextureStreamingAvailable;
+
+    private static void InvokePendingTextureUploadCanceled(
+        VulkanImportedTexturePendingUpload upload)
+    {
+        try
+        {
+            upload.OnCanceled?.Invoke();
+        }
+        catch (Exception exception)
+        {
+            upload.OnError?.Invoke(exception);
+        }
+    }
 }

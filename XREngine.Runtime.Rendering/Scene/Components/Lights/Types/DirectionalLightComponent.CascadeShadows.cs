@@ -1666,6 +1666,30 @@ namespace XREngine.Components.Lights
             }
         }
 
+        /// <summary>
+        /// Completes a cascade visibility request whose caster membership will
+        /// be resolved from the GPU scene. No CPU command buffer was produced,
+        /// so the viewport must not swap a stale updating buffer into authority.
+        /// </summary>
+        private void MarkDirectionalCascadeAtlasGpuVisibilityReady(ShadowRequestSource source, int index)
+        {
+            if ((uint)index >= (uint)MaxCascadeRenderCount)
+                return;
+
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+
+            lock (_cascadeDataLock)
+            {
+                DirectionalCascadeSourceState state = GetCascadeSourceState(resolvedSource);
+                state.AtlasCollectedContentHashes[index] = state.AtlasRequestContentHashes[index];
+                state.AtlasCascadeVisibleSetCached[index] = state.AtlasCollectedContentHashes[index] != 0u;
+                state.AtlasCascadeCollectVisibleNeeded[index] = false;
+                state.AtlasCascadeSwapNeeded[index] = false;
+            }
+        }
+
         private bool HasDirectionalCascadeAtlasCollectionRequest(ShadowRequestSource source, int activeCascadeCount)
         {
             ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
@@ -3708,6 +3732,20 @@ namespace XREngine.Components.Lights
             bool hasAtlasRenderRequest = !atlasPage || HasDirectionalCascadeAtlasRenderRequest(source, cascadeCount);
             if (atlasPage && !hasAtlasRenderRequest)
                 return;
+
+            if (atlasPage && RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy())
+            {
+                // GPU-driven shadow passes cull the global GPU scene against the
+                // active cascade camera. Walking the CPU octree four times and
+                // publishing four command collections only duplicates that work.
+                for (int i = 0; i < cascadeCount; i++)
+                {
+                    if (ShouldCollectDirectionalCascadeAtlasViewport(source, i))
+                        MarkDirectionalCascadeAtlasGpuVisibilityReady(source, i);
+                }
+
+                return;
+            }
 
             if (plan.IsLayered || prepareAtlasGroupedCommands)
             {

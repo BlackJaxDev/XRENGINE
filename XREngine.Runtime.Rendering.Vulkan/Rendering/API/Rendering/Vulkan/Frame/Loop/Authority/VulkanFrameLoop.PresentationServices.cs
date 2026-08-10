@@ -10,76 +10,61 @@ internal sealed unsafe partial class VulkanFrameLoop
     private bool UseDynamicRenderingRenderTargets
         => _deviceContext.MutableCapabilities._useDynamicRenderingRenderTargets;
 
-    private bool CanRecordImGuiOverlayCommandBuffer(uint imageIndex)
+    private VulkanImGuiOverlayAdmission ImGuiOverlayAdmission
+        => _outputRuntime.GetImGuiOverlayAdmission(_resourceRuntime, _deviceContext);
+
+    /// <summary>
+    /// Captures the current output attachment identities and delegates native ImGui
+    /// command encoding to the renderer-free recorder.  No renderer facade or
+    /// output-state lookup is available after this immutable input is created.
+    /// </summary>
+    private bool TryRecordImGuiOverlay(
+        uint imageIndex,
+        VulkanImGuiFrameSnapshot snapshot,
+        ImageLayout initialSwapchainLayout,
+        CommandBuffer predecessorCommandBuffer,
+        out CommandBuffer overlayCommandBuffer)
     {
-        if (RenderDiagnosticsFlags.VkSkipImGui)
-            return false;
-
-        if (_outputRuntime._imguiResources.OverlayCommandBuffers is null ||
-            imageIndex >= _outputRuntime._imguiResources.OverlayCommandBuffers.Length ||
-            OutputRuntime.Desktop.Images is null ||
-            imageIndex >= OutputRuntime.Desktop.Images.Length)
+        overlayCommandBuffer = default;
+        if (!ImGuiOverlayAdmission.CanRecord(imageIndex) ||
+            !VulkanImGuiOverlayAdmission.HasRenderableSnapshot(snapshot) ||
+            !_outputRuntime.TryCaptureDynamicUiOverlayTarget(
+                imageIndex,
+                out VulkanDynamicUiOverlayTarget target))
         {
             return false;
         }
 
-        bool useDynamicRendering = UseDynamicRenderingRenderTargets &&
-            OutputRuntime.Desktop.ImageViews is not null &&
-            imageIndex < OutputRuntime.Desktop.ImageViews.Length;
-        if (!useDynamicRendering &&
-            (OutputRuntime.Desktop.Framebuffers is null ||
-             imageIndex >= OutputRuntime.Desktop.Framebuffers.Length ||
-             ResourceRuntime.SwapchainLoadRenderPass.Handle == 0))
-        {
-            return false;
-        }
+        _outputRuntime.GetImGuiFontAtlasResources(
+            _resourceRuntime,
+            _commandRuntime,
+            _deviceContext).EnsureCreated();
+        _outputRuntime.GetImGuiOutputPipelineService(
+            _resourceRuntime,
+            _deviceContext).EnsureCreated();
 
-        return _outputRuntime._imguiResources
-            .OverlayCommandBuffers[imageIndex].Handle != 0;
+        CommandBuffer[]? commandBuffers = _outputRuntime._imguiResources.OverlayCommandBuffers;
+        if (commandBuffers is null || imageIndex >= commandBuffers.Length)
+            return false;
+
+        VulkanImGuiOverlayRecordingInput input = new(
+            imageIndex,
+            commandBuffers[imageIndex],
+            predecessorCommandBuffer,
+            initialSwapchainLayout,
+            _deviceContext.InstanceApiVersion < Vk.Version13,
+            target,
+            _outputRuntime._imguiResources,
+            _outputRuntime._imguiTextureRegistry.DescriptorSets,
+            ClearSwapchain: false,
+            snapshot);
+        return _imguiOverlayRecorder.TryRecord(
+            OverlayCommandEncoder,
+            _telemetry,
+            _outputRuntime.GetImGuiDrawBufferResources(_resourceRuntime),
+            in input,
+            out overlayCommandBuffer);
     }
-
-    private bool TryConsumeRenderableImGuiOverlaySnapshot(
-        out VulkanImGuiFrameSnapshot? drawData)
-    {
-        drawData = null;
-        if (RenderDiagnosticsFlags.VkSkipImGui ||
-            !_outputRuntime._imguiDrawData.TryConsume(out drawData) ||
-            drawData is null)
-        {
-            return false;
-        }
-
-        if (!HasRenderableImGuiSnapshot(drawData))
-        {
-            _outputRuntime._imguiDrawData.Discard(drawData);
-            drawData = null;
-            return false;
-        }
-
-        bool snapshotMatchesSwapchain =
-            drawData.FramebufferWidth == OutputRuntime.Desktop.Extent.Width &&
-            drawData.FramebufferHeight == OutputRuntime.Desktop.Extent.Height;
-        bool canMapLiveSnapshotToScaledSwapchain =
-            OutputRuntime.Desktop.PresentScalingActive &&
-            DesktopWsiOutput.IsInteractiveResizeInProgress;
-        if (snapshotMatchesSwapchain || canMapLiveSnapshotToScaledSwapchain)
-            return true;
-
-        _outputRuntime.RequestImGuiFrameMarkerReset();
-        _outputRuntime._imguiDrawData.Discard(drawData);
-        drawData = null;
-        return false;
-    }
-
-    private static bool HasRenderableImGuiSnapshot(
-        VulkanImGuiFrameSnapshot drawData)
-        => drawData.TotalVertexCount > 0 &&
-           drawData.TotalIndexCount > 0 &&
-           drawData.CommandListCount > 0 &&
-           drawData.DisplaySize.X > 0f &&
-           drawData.DisplaySize.Y > 0f &&
-           drawData.FramebufferWidth > 0 &&
-           drawData.FramebufferHeight > 0;
 
     private VulkanStreamlineDeviceBinding StreamlineDeviceBinding
         => _outputRuntime.CaptureStreamlineDeviceBinding(_deviceContext);

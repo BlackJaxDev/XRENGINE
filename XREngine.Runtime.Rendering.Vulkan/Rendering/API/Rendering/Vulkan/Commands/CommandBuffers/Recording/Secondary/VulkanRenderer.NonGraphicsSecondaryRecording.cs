@@ -2,7 +2,7 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed unsafe partial class VulkanCommandRuntime
 {
     /// <summary>
     /// Evaluates the exact contract for compute, transfer, and query secondary
@@ -15,6 +15,7 @@ public unsafe partial class VulkanRenderer
         int startIndex,
         in VulkanSecondaryRecordingBucket bucket,
         int resolvedPassIndex,
+        bool barrierPlanHasPass,
         bool renderScopeActive,
         bool primaryQueryActive)
     {
@@ -22,7 +23,7 @@ public unsafe partial class VulkanRenderer
         VulkanQuerySecondaryInheritanceContract queryInheritance =
             VulkanQuerySecondaryInheritanceContract.Create(
                 primaryQueryActive,
-                QueryCapabilities.InheritedQueriesEnabled);
+                ResourceRuntime.Queries.InheritedQueriesEnabled);
         if (!IsSecondaryFamilyEnabled(family))
         {
             return new(
@@ -107,7 +108,7 @@ public unsafe partial class VulkanRenderer
                 queryInheritance);
         }
 
-        if (!BarrierPlanner.HasKnownPass(resolvedPassIndex))
+        if (!barrierPlanHasPass)
         {
             return new(
                 family,
@@ -121,6 +122,14 @@ public unsafe partial class VulkanRenderer
              operationIndex++)
         {
             FrameOp operation = operations[operationIndex];
+            if (!operation.IsSealedForFramePlan)
+            {
+                return new(
+                    family,
+                    EVulkanSecondaryRecordingEligibility.InvalidOperationState,
+                    queryInheritance);
+            }
+
             bool operationValid = family switch
             {
                 EVulkanSecondaryCommandFamily.Compute =>
@@ -347,4 +356,10 @@ public unsafe partial class VulkanRenderer
                operation.DestinationOffset >=
                    operation.SourceOffset + operation.ByteCount;
     }
+
+    private static bool IsBufferRangeValid(
+        ulong capacity,
+        ulong offset,
+        ulong count)
+        => count <= capacity && offset <= capacity - count;
 }

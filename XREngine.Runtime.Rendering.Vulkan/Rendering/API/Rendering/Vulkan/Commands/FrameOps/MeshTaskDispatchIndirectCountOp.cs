@@ -15,7 +15,7 @@ internal sealed record MeshTaskDispatchIndirectCountOp(
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount;
 
     internal override int RecordPrimary(
-        VulkanRenderer renderer,
+        VulkanCommandRuntime renderer,
         scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {

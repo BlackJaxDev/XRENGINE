@@ -7,34 +7,38 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed unsafe partial class VulkanPipelineManager
 {
     private const string VulkanPipelineCompileWorkersEnvVar = XREngineEnvironmentVariables.VulkanPipelineCompileWorkers;
     private const double VulkanPipelineCompileWarningSeconds = 2.0;
     private const double VulkanPipelineCompileQuarantineSeconds = 10.0;
 
 
-    internal bool IsVulkanPipelineAsyncCompilationEnabled
-        => RuntimeEngine.Rendering.Settings.AsyncProgramCompilation &&
-           _deviceContext.IsReady &&
-           AcceptsBackendWork &&
-           Volatile.Read(ref ResourceRuntime.PipelineManager._vulkanPipelineCompileShutdownStarted) == 0;
+    internal bool IsAsyncCompilationEnabled(
+        bool deviceReady,
+        bool acceptsBackendWork,
+        bool asyncCompilationEnabled)
+        => asyncCompilationEnabled &&
+           deviceReady &&
+           acceptsBackendWork &&
+           Volatile.Read(ref _vulkanPipelineCompileShutdownStarted) == 0;
 
-    internal ulong VulkanPipelineCompileActivityGeneration
-        => unchecked((ulong)Volatile.Read(ref ResourceRuntime.PipelineManager._vulkanPipelineCompileActivityGeneration));
+    internal ulong CompileActivityGeneration
+        => unchecked((ulong)Volatile.Read(ref _vulkanPipelineCompileActivityGeneration));
 
-    internal long VulkanPipelineCompileDependencyGeneration
-        => Volatile.Read(ref ResourceRuntime.PipelineManager._vulkanPipelineCompileDependencyGeneration);
+    internal long CompileDependencyGeneration
+        => Volatile.Read(ref _vulkanPipelineCompileDependencyGeneration);
 
-    internal bool TryTakeCompletedVulkanGraphicsPipeline(
-        in VkMeshRenderer.GraphicsPipelineCompileKey key,
+    internal bool TryTakeCompletedGraphicsPipeline(
+        in VulkanGraphicsPipelineCompileKey key,
         out VulkanGraphicsPipelineCompileResult result)
     {
-        InspectVulkanPipelineCompileHealth();
+        DrainSupersededSharedGraphicsPipelines();
+        InspectPipelineCompileHealth();
         result = default;
-        lock (ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobsLock)
+        lock (_vulkanGraphicsPipelineCompileJobsLock)
         {
-            if (!ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobs.TryGetValue(key, out VulkanGraphicsPipelineCompileJob? job) ||
+            if (!_vulkanGraphicsPipelineCompileJobs.TryGetValue(key, out VulkanGraphicsPipelineCompileJob? job) ||
                 !job.Task.IsCompleted)
             {
                 return false;
@@ -49,62 +53,69 @@ public unsafe partial class VulkanRenderer
                 result = result with { Pipeline = published };
             }
 
-            if (!ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobs.TryRemove(key, out job))
+            if (!_vulkanGraphicsPipelineCompileJobs.TryRemove(key, out job))
                 return false;
 
-            ReleaseVulkanPipelineProgramCompileReservation(job.Request);
-            Interlocked.Increment(ref ResourceRuntime.PipelineManager._vulkanPipelineCompileActivityGeneration);
+            ReleaseProgramCompileReservation(job.Request);
+            Interlocked.Increment(ref _vulkanPipelineCompileActivityGeneration);
             return true;
         }
     }
 
-    internal bool IsVulkanGraphicsPipelineCompileInFlight(in VkMeshRenderer.GraphicsPipelineCompileKey key)
+    internal bool IsGraphicsPipelineCompileInFlight(in VulkanGraphicsPipelineCompileKey key)
     {
-        InspectVulkanPipelineCompileHealth();
-        return ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobs.ContainsKey(key);
+        DrainSupersededSharedGraphicsPipelines();
+        InspectPipelineCompileHealth();
+        return _vulkanGraphicsPipelineCompileJobs.ContainsKey(key);
     }
 
-    internal bool TryEnqueueVulkanGraphicsPipelineCompile(
-        VkMeshRenderer.GraphicsPipelineBuildRequest request,
+    internal bool TryEnqueueGraphicsPipelineCompile(
+        VulkanGraphicsPipelineBuildRequest request,
+        bool acceptsBackendWork,
+        bool asyncCompilationEnabled,
         out string rejectReason)
     {
+        DrainSupersededSharedGraphicsPipelines();
         rejectReason = string.Empty;
-        InspectVulkanPipelineCompileHealth();
-        if (!IsVulkanPipelineAsyncCompilationEnabled)
+        InspectPipelineCompileHealth();
+        if (!IsAsyncCompilationEnabled(
+                RequireDeviceContext().IsReady,
+                acceptsBackendWork,
+                asyncCompilationEnabled))
         {
             rejectReason = "async Vulkan pipeline compilation is disabled";
             return false;
         }
 
-        lock (ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobsLock)
+        lock (_vulkanGraphicsPipelineCompileJobsLock)
         {
-            if (Volatile.Read(ref ResourceRuntime.PipelineManager._vulkanPipelineCompileShutdownStarted) != 0 ||
-                !AcceptsBackendWork)
+            if (Volatile.Read(ref _vulkanPipelineCompileShutdownStarted) != 0 ||
+                !acceptsBackendWork)
             {
                 rejectReason = "renderer backend retirement has begun";
                 return false;
             }
 
-            if (Volatile.Read(ref ResourceRuntime.PipelineManager._vulkanPipelineCompileDependencyMutationActive) != 0)
+            if (Volatile.Read(ref _vulkanPipelineCompileDependencyMutationActive) != 0)
             {
                 rejectReason = "shader or pipeline-layout dependencies are being replaced";
                 return false;
             }
 
             if (request.DependencyGeneration !=
-                Volatile.Read(ref ResourceRuntime.PipelineManager._vulkanPipelineCompileDependencyGeneration))
+                Volatile.Read(ref _vulkanPipelineCompileDependencyGeneration))
             {
                 rejectReason = "pipeline build request captured a retired shader or pipeline-layout generation";
                 return false;
             }
 
-            if (ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobs.ContainsKey(request.CompileKey))
+            if (_vulkanGraphicsPipelineCompileJobs.ContainsKey(request.CompileKey))
             {
                 rejectReason = "pipeline compile job is already queued";
                 return false;
             }
 
-            if (ResourceRuntime.PipelineManager._vulkanGraphicsPipelineProgramCompileJobs.ContainsKey(request.Key.ProgramPipelineHash))
+            if (_vulkanGraphicsPipelineProgramCompileJobs.ContainsKey(request.Key.ProgramPipelineHash))
             {
                 rejectReason =
                     $"another cold pipeline for program 0x{request.Key.ProgramPipelineHash:X16} is already queued";
@@ -119,7 +130,7 @@ public unsafe partial class VulkanRenderer
             // after the current compile publishes.
             int capacity = workerCount;
             int activeJobCount = CountActiveVulkanGraphicsPipelineCompileJobs();
-            int totalJobCount = ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobs.Count;
+            int totalJobCount = _vulkanGraphicsPipelineCompileJobs.Count;
             if (activeJobCount >= capacity)
             {
                 rejectReason = $"async Vulkan pipeline compile queue is at capacity ({capacity}; active={activeJobCount}, completed={Math.Max(0, totalJobCount - activeJobCount)})";
@@ -133,16 +144,18 @@ public unsafe partial class VulkanRenderer
             AnnounceVulkanPipelineCompileQueue(workerCount, capacity);
 
             SemaphoreSlim gate = EnsureVulkanPipelineCompileGate(workerCount);
-            ResourceRuntime.PipelineManager._vulkanGraphicsPipelineProgramCompileJobs.Add(
+            _vulkanGraphicsPipelineProgramCompileJobs.Add(
                 request.Key.ProgramPipelineHash,
                 request.CompileKey);
             Task<VulkanGraphicsPipelineCompileResult> task =
                 VulkanPipelineCompileTask.RunAsync(
                     gate,
-                    () => CreateVulkanGraphicsPipelineOnWorker(request));
+                    () => CreateGraphicsPipelineOnWorker(
+                        request,
+                        BackgroundPipelineCache));
 
             var job = new VulkanGraphicsPipelineCompileJob(request, task);
-            ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobs[request.CompileKey] = job;
+            _vulkanGraphicsPipelineCompileJobs[request.CompileKey] = job;
 
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
                 EVulkanPipelineTelemetryEvent.AsyncQueued,
@@ -153,33 +166,11 @@ public unsafe partial class VulkanRenderer
             job.PublicationTask = task.ContinueWith(
                 static (completedTask, state) =>
                 {
-                    var (renderer, completedJob, pipelineKey) =
-                        ((VulkanRenderer Renderer, VulkanGraphicsPipelineCompileJob Job, VkMeshRenderer.PipelineKey PipelineKey))state!;
+                    var (manager, completedJob) =
+                        ((VulkanPipelineManager Manager, VulkanGraphicsPipelineCompileJob Job))state!;
                     try
                     {
-                        lock (renderer.ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobsLock)
-                        {
-                            if (!renderer.ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobs.TryGetValue(
-                                    completedJob.Request.CompileKey,
-                                    out VulkanGraphicsPipelineCompileJob? registeredJob) ||
-                                !ReferenceEquals(registeredJob, completedJob))
-                            {
-                                return;
-                            }
-
-                            if (completedJob.Task.IsCompletedSuccessfully)
-                            {
-                                VulkanGraphicsPipelineCompileResult result = completedJob.Task.GetAwaiter().GetResult();
-                                if (result.Success && result.Pipeline.Handle != 0)
-                                    renderer.StoreOrRetireSharedGraphicsPipeline(pipelineKey, result.Pipeline);
-                            }
-
-                            renderer.ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobs.TryRemove(
-                                completedJob.Request.CompileKey,
-                                out _);
-                            renderer.ReleaseVulkanPipelineProgramCompileReservation(completedJob.Request);
-                            Interlocked.Increment(ref renderer.ResourceRuntime.PipelineManager._vulkanPipelineCompileActivityGeneration);
-                        }
+                        manager.PublishCompletedGraphicsPipelineCompile(completedJob);
 
                         // Publication is generation-driven. Compatible recordings observe the
                         // immutable pipeline-cache generation on their next prepared snapshot;
@@ -189,7 +180,7 @@ public unsafe partial class VulkanRenderer
                     {
                     }
                 },
-                (this, job, request.Key),
+                (this, job),
                 CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously,
                 TaskScheduler.Default);
@@ -201,7 +192,7 @@ public unsafe partial class VulkanRenderer
     private int CountActiveVulkanGraphicsPipelineCompileJobs()
     {
         int count = 0;
-        foreach (VulkanGraphicsPipelineCompileJob job in ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobs.Values)
+        foreach (VulkanGraphicsPipelineCompileJob job in _vulkanGraphicsPipelineCompileJobs.Values)
         {
             if (!job.Task.IsCompleted)
                 count++;
@@ -210,10 +201,10 @@ public unsafe partial class VulkanRenderer
         return count;
     }
 
-    private void InspectVulkanPipelineCompileHealth()
+    private void InspectPipelineCompileHealth()
     {
         long now = Stopwatch.GetTimestamp();
-        foreach (VulkanGraphicsPipelineCompileJob job in ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobs.Values)
+        foreach (VulkanGraphicsPipelineCompileJob job in _vulkanGraphicsPipelineCompileJobs.Values)
         {
             if (job.Task.IsCompleted)
                 continue;
@@ -253,88 +244,27 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private void ReleaseVulkanPipelineProgramCompileReservation(
-        VkMeshRenderer.GraphicsPipelineBuildRequest request)
-    {
-        if (ResourceRuntime.PipelineManager._vulkanGraphicsPipelineProgramCompileJobs.TryGetValue(
-                request.Key.ProgramPipelineHash,
-                out VkMeshRenderer.GraphicsPipelineCompileKey compileKey) &&
-            compileKey.Equals(request.CompileKey))
-        {
-            ResourceRuntime.PipelineManager._vulkanGraphicsPipelineProgramCompileJobs.Remove(
-                request.Key.ProgramPipelineHash);
-        }
-    }
-
-    private VulkanGraphicsPipelineCompileResult CreateVulkanGraphicsPipelineOnWorker(
-        VkMeshRenderer.GraphicsPipelineBuildRequest request)
-    {
-        long start = global::System.Diagnostics.Stopwatch.GetTimestamp();
-        try
-        {
-            Pipeline pipeline = request.Owner.CreateGraphicsPipelineFromRequest(
-                request,
-                pipelineCache: BackgroundPipelineCache,
-                backgroundCompile: true);
-            double elapsedMs = global::System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-            PublishVulkanBackgroundPipelineCache(elapsedMs);
-            uint keyHash = unchecked((uint)request.Key.GetHashCode());
-            Debug.Vulkan(
-                "[Vulkan] Async graphics pipeline compiled in {0:F2} ms: pipeline='{1}' program='{2}' key=0x{3:X8} programHash=0x{4:X16} vertexLayout=0x{5:X16} descriptorLayout=0x{6:X16} depthTest={7} depthWrite={8} depthCompare={9} blend={10} atc={11} cull={12} handle=0x{13:X}.",
-                elapsedMs,
-                request.PipelineName,
-                request.Program.Data.Name ?? "<unnamed program>",
-                keyHash,
-                request.Key.ProgramPipelineHash,
-                request.Key.VertexLayoutHash,
-                request.Key.DescriptorLayoutHash,
-                request.Key.DepthTestEnabled,
-                request.Key.DepthWriteEnabled,
-                request.Key.DepthCompareOp,
-                request.Key.BlendEnabled,
-                request.Key.AlphaToCoverageEnabled,
-                request.Key.CullMode,
-                pipeline.Handle);
-            return new VulkanGraphicsPipelineCompileResult(true, pipeline, null, elapsedMs);
-        }
-        catch (VulkanPipelineCompilationDeferredException ex)
-        {
-            double elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-            return new VulkanGraphicsPipelineCompileResult(
-                false,
-                default,
-                ex.Message,
-                elapsedMs,
-                Retryable: true);
-        }
-        catch (Exception ex)
-        {
-            double elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-            return new VulkanGraphicsPipelineCompileResult(false, default, ex.Message, elapsedMs);
-        }
-    }
-
     private SemaphoreSlim EnsureVulkanPipelineCompileGate(int workerCount)
     {
-        if (ResourceRuntime.PipelineManager._vulkanPipelineCompileGate is not null)
-            return ResourceRuntime.PipelineManager._vulkanPipelineCompileGate;
+        if (_vulkanPipelineCompileGate is not null)
+            return _vulkanPipelineCompileGate;
 
-        lock (ResourceRuntime.PipelineManager._vulkanPipelineCompileGateLock)
+        lock (_vulkanPipelineCompileGateLock)
         {
-            ResourceRuntime.PipelineManager._vulkanPipelineCompileGate ??= new SemaphoreSlim(workerCount, workerCount);
-            return ResourceRuntime.PipelineManager._vulkanPipelineCompileGate;
+            _vulkanPipelineCompileGate ??= new SemaphoreSlim(workerCount, workerCount);
+            return _vulkanPipelineCompileGate;
         }
     }
 
     private int EnsureVulkanPipelineCompileWorkerCount()
     {
-        int configured = Volatile.Read(ref ResourceRuntime.PipelineManager._vulkanPipelineCompileWorkerCount);
+        int configured = Volatile.Read(ref _vulkanPipelineCompileWorkerCount);
         if (configured > 0)
             return configured;
 
         configured = ResolveVulkanPipelineCompileWorkerCount();
-        Interlocked.CompareExchange(ref ResourceRuntime.PipelineManager._vulkanPipelineCompileWorkerCount, configured, 0);
-        return Volatile.Read(ref ResourceRuntime.PipelineManager._vulkanPipelineCompileWorkerCount);
+        Interlocked.CompareExchange(ref _vulkanPipelineCompileWorkerCount, configured, 0);
+        return Volatile.Read(ref _vulkanPipelineCompileWorkerCount);
     }
 
     private static int ResolveVulkanPipelineCompileWorkerCount()
@@ -351,7 +281,7 @@ public unsafe partial class VulkanRenderer
 
     private void AnnounceVulkanPipelineCompileQueue(int workerCount, int capacity)
     {
-        if (Interlocked.Exchange(ref ResourceRuntime.PipelineManager._vulkanPipelineCompileQueueAnnounced, 1) != 0)
+        if (Interlocked.Exchange(ref _vulkanPipelineCompileQueueAnnounced, 1) != 0)
             return;
 
         Debug.Vulkan(
@@ -361,113 +291,104 @@ public unsafe partial class VulkanRenderer
             VulkanPipelineCompileWorkersEnvVar);
     }
 
-    internal void DrainVulkanPipelineCompileJobsForOwner(VkMeshRenderer owner)
+    internal void DrainPipelineCompileJobsForOwner(long ownerId, string ownerName)
     {
         VulkanGraphicsPipelineCompileJob[] jobs;
-        lock (ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobsLock)
+        lock (_vulkanGraphicsPipelineCompileJobsLock)
         {
-            jobs = [.. ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobs.Values
-                .Where(job => ReferenceEquals(job.Request.Owner, owner))];
+            jobs = [.. _vulkanGraphicsPipelineCompileJobs.Values
+                .Where(job => job.Request.OwnerId == ownerId)];
         }
 
-        DrainVulkanPipelineCompileJobs(
+        DrainPipelineCompileJobs(
             jobs,
-            $"mesh renderer '{owner.GetDescribingName()}' teardown");
+            $"mesh renderer '{ownerName}' teardown");
     }
 
-    /// <summary>
-    /// Prevents new native graphics-pipeline compiles, drains every request that may
-    /// still reference a shader module or pipeline layout, then performs the mutation.
-    /// Nested shader/program invalidation on the same thread shares the outer barrier.
-    /// </summary>
-    internal void ExecuteWithVulkanPipelineCompilationQuiesced(
-        Action mutation,
+    internal VulkanPipelineCompilationMutationLease AcquireCompilationMutationLease(
         string reason)
     {
-        ArgumentNullException.ThrowIfNull(mutation);
-
-        lock (ResourceRuntime.PipelineManager._vulkanPipelineCompileDependencyMutationLock)
+        Monitor.Enter(_vulkanPipelineCompileDependencyMutationLock);
+        bool outermostMutation =
+            _vulkanPipelineCompileDependencyMutationDepth++ == 0;
+        try
         {
-            bool outermostMutation =
-                ResourceRuntime.PipelineManager._vulkanPipelineCompileDependencyMutationDepth++ == 0;
-            try
+            if (outermostMutation)
             {
-                if (outermostMutation)
+                VulkanGraphicsPipelineCompileJob[] jobs;
+                lock (_vulkanGraphicsPipelineCompileJobsLock)
                 {
-                    VulkanGraphicsPipelineCompileJob[] jobs;
-                    lock (ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobsLock)
-                    {
-                        Volatile.Write(
-                            ref ResourceRuntime.PipelineManager._vulkanPipelineCompileDependencyMutationActive,
-                            1);
-                        Interlocked.Increment(
-                            ref ResourceRuntime.PipelineManager._vulkanPipelineCompileDependencyGeneration);
-                        jobs = [.. ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobs.Values];
-                    }
-
-                    DrainVulkanPipelineCompileJobs(jobs, reason);
+                    Volatile.Write(
+                        ref _vulkanPipelineCompileDependencyMutationActive,
+                        1);
+                    Interlocked.Increment(
+                        ref _vulkanPipelineCompileDependencyGeneration);
+                    jobs = [.. _vulkanGraphicsPipelineCompileJobs.Values];
                 }
 
-                mutation();
+                DrainPipelineCompileJobs(jobs, reason);
             }
-            finally
-            {
-                ResourceRuntime.PipelineManager._vulkanPipelineCompileDependencyMutationDepth--;
-                if (outermostMutation)
-                {
-                    lock (ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobsLock)
-                    {
-                        // Requests captured either before or during the mutation must
-                        // not enter the driver after the replacement handles publish.
-                        Interlocked.Increment(
-                            ref ResourceRuntime.PipelineManager._vulkanPipelineCompileDependencyGeneration);
-                        Volatile.Write(
-                            ref ResourceRuntime.PipelineManager._vulkanPipelineCompileDependencyMutationActive,
-                            0);
-                    }
-                }
-            }
+
+            return new VulkanPipelineCompilationMutationLease(
+                this,
+                outermostMutation);
+        }
+        catch
+        {
+            ReleaseCompilationMutationLease(outermostMutation);
+            throw;
         }
     }
 
-    /// <summary>
-    /// Captures pointer-bearing shader and pipeline-layout state while dependency
-    /// replacement is excluded. The returned generation lets enqueue and worker
-    /// entry reject a snapshot if a mutation starts after this method returns.
-    /// </summary>
-    internal T CaptureVulkanPipelineCompilationDependencies<T>(
-        Func<long, T> capture)
+    internal void ReleaseCompilationMutationLease(bool outermostMutation)
     {
-        ArgumentNullException.ThrowIfNull(capture);
-
-        lock (ResourceRuntime.PipelineManager._vulkanPipelineCompileDependencyMutationLock)
+        _vulkanPipelineCompileDependencyMutationDepth--;
+        if (outermostMutation)
         {
-            if (Volatile.Read(ref ResourceRuntime.PipelineManager._vulkanPipelineCompileDependencyMutationActive) != 0)
+            lock (_vulkanGraphicsPipelineCompileJobsLock)
+            {
+                Interlocked.Increment(
+                    ref _vulkanPipelineCompileDependencyGeneration);
+                Volatile.Write(
+                    ref _vulkanPipelineCompileDependencyMutationActive,
+                    0);
+            }
+        }
+
+        Monitor.Exit(_vulkanPipelineCompileDependencyMutationLock);
+    }
+
+    internal VulkanPipelineCompilationDependencyLease AcquireCompilationDependencyLease()
+    {
+        Monitor.Enter(_vulkanPipelineCompileDependencyMutationLock);
+        try
+        {
+            if (Volatile.Read(ref _vulkanPipelineCompileDependencyMutationActive) != 0)
             {
                 throw new VulkanPipelineCompilationDeferredException(
                     "Shader or pipeline-layout dependencies are being replaced.");
             }
 
-            long dependencyGeneration =
-                Volatile.Read(ref ResourceRuntime.PipelineManager._vulkanPipelineCompileDependencyGeneration);
-            T snapshot = capture(dependencyGeneration);
-            if (dependencyGeneration !=
-                Volatile.Read(ref ResourceRuntime.PipelineManager._vulkanPipelineCompileDependencyGeneration))
-            {
-                throw new VulkanPipelineCompilationDeferredException(
-                    "Shader or pipeline-layout dependencies changed while the pipeline request was captured.");
-            }
-
-            return snapshot;
+            return new VulkanPipelineCompilationDependencyLease(
+                this,
+                Volatile.Read(ref _vulkanPipelineCompileDependencyGeneration));
+        }
+        catch
+        {
+            Monitor.Exit(_vulkanPipelineCompileDependencyMutationLock);
+            throw;
         }
     }
 
-    internal bool IsVulkanPipelineCompileDependencyGenerationCurrent(
+    internal void ReleaseCompilationDependencyLease()
+        => Monitor.Exit(_vulkanPipelineCompileDependencyMutationLock);
+
+    internal bool IsCompilationDependencyGenerationCurrent(
         long dependencyGeneration)
         => dependencyGeneration ==
-           Volatile.Read(ref ResourceRuntime.PipelineManager._vulkanPipelineCompileDependencyGeneration);
+           Volatile.Read(ref _vulkanPipelineCompileDependencyGeneration);
 
-    private void DrainVulkanPipelineCompileJobs(
+    private void DrainPipelineCompileJobs(
         VulkanGraphicsPipelineCompileJob[] jobs,
         string reason)
     {
@@ -478,13 +399,13 @@ public unsafe partial class VulkanRenderer
                 job.Task.Wait();
                 job.PublicationTask.Wait();
                 bool removed;
-                lock (ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobsLock)
+                lock (_vulkanGraphicsPipelineCompileJobsLock)
                 {
-                    removed = ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobs.TryRemove(
+                    removed = _vulkanGraphicsPipelineCompileJobs.TryRemove(
                         job.Request.CompileKey,
                         out _);
                     if (removed)
-                        ReleaseVulkanPipelineProgramCompileReservation(job.Request);
+                        ReleaseProgramCompileReservation(job.Request);
                 }
 
                 if (removed &&
@@ -504,13 +425,13 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private void DrainVulkanPipelineCompileQueueForShutdown()
+    internal void DrainPipelineCompileQueueForShutdown()
     {
-        Interlocked.Exchange(ref ResourceRuntime.PipelineManager._vulkanPipelineCompileShutdownStarted, 1);
+        Interlocked.Exchange(ref _vulkanPipelineCompileShutdownStarted, 1);
 
         VulkanGraphicsPipelineCompileJob[] jobs;
-        lock (ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobsLock)
-            jobs = [.. ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobs.Values];
+        lock (_vulkanGraphicsPipelineCompileJobsLock)
+            jobs = [.. _vulkanGraphicsPipelineCompileJobs.Values];
 
         foreach (VulkanGraphicsPipelineCompileJob job in jobs)
         {
@@ -527,12 +448,12 @@ public unsafe partial class VulkanRenderer
 
         foreach (VulkanGraphicsPipelineCompileJob job in jobs)
         {
-            lock (ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobsLock)
+            lock (_vulkanGraphicsPipelineCompileJobsLock)
             {
-                if (!ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobs.TryRemove(job.Request.CompileKey, out _))
+                if (!_vulkanGraphicsPipelineCompileJobs.TryRemove(job.Request.CompileKey, out _))
                     continue;
 
-                ReleaseVulkanPipelineProgramCompileReservation(job.Request);
+                ReleaseProgramCompileReservation(job.Request);
             }
 
             if (job.Task.IsCompletedSuccessfully)
@@ -543,13 +464,10 @@ public unsafe partial class VulkanRenderer
             }
         }
 
-        lock (ResourceRuntime.PipelineManager._vulkanGraphicsPipelineCompileJobsLock)
-            ResourceRuntime.PipelineManager._vulkanGraphicsPipelineProgramCompileJobs.Clear();
+        lock (_vulkanGraphicsPipelineCompileJobsLock)
+            _vulkanGraphicsPipelineProgramCompileJobs.Clear();
 
-        ResourceRuntime.PipelineManager._vulkanPipelineCompileGate?.Dispose();
-        ResourceRuntime.PipelineManager._vulkanPipelineCompileGate = null;
+        _vulkanPipelineCompileGate?.Dispose();
+        _vulkanPipelineCompileGate = null;
     }
-
-    protected override void OnBackendRetirementBeginning()
-        => DrainVulkanPipelineCompileQueueForShutdown();
 }

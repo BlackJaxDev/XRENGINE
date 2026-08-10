@@ -890,23 +890,6 @@ public unsafe partial class VulkanRenderer
         ImageMemoryBarrier* imageBarriers,
         [CallerMemberName] string? caller = null)
     {
-        if (SynchronizationThreadContext.ExcludeDesktopSwapchainBarriers && imageBarrierCount > 0)
-        {
-            uint retainedBarrierCount = 0;
-            for (uint readIndex = 0; readIndex < imageBarrierCount; readIndex++)
-            {
-                ImageMemoryBarrier barrier = imageBarriers[readIndex];
-                if (IsDesktopSwapchainImage(barrier.Image))
-                    continue;
-
-                if (retainedBarrierCount != readIndex)
-                    imageBarriers[retainedBarrierCount] = barrier;
-                retainedBarrierCount++;
-            }
-
-            imageBarrierCount = retainedBarrierCount;
-        }
-
         for (int i = 0; i < bufferBarrierCount; i++)
         {
             TrackVulkanCommandBufferResource(
@@ -1950,7 +1933,7 @@ public unsafe partial class VulkanRenderer
             recorded.Subresources.Clear();
             recorded.EntrySubresources.Clear();
             recorded.SecondaryDescriptorRequirements.Clear();
-            recorded.SecondaryDescriptorPayloadGenerations.Clear();
+            recorded.SecondaryDescriptorImagePayloadGenerations.Clear();
             recorded.TouchedSubresources.Clear();
             recorded.QueueOwnershipTransfers.Clear();
             recorded.EntryStateIncomplete = false;
@@ -1994,7 +1977,7 @@ public unsafe partial class VulkanRenderer
 
             recorded.EntrySubresources.Clear();
             recorded.SecondaryDescriptorRequirements.Clear();
-            recorded.SecondaryDescriptorPayloadGenerations.Clear();
+            recorded.SecondaryDescriptorImagePayloadGenerations.Clear();
             recorded.QueueOwnershipTransfers.Clear();
             recorded.EntryStateIncomplete = predecessorState.EntryStateIncomplete;
             recorded.EntryStateFailure = predecessorState.EntryStateFailure;
@@ -2684,18 +2667,25 @@ public unsafe partial class VulkanRenderer
                 if (!_commandRuntime.Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(
                         secondaryHandle,
                         out VulkanRecordedImageLayoutState? recorded) ||
-                    recorded.SecondaryDescriptorPayloadGenerations.Count == 0)
+                    !ResourceRuntime.Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(
+                        secondaryHandle,
+                        out VulkanCommandBufferLifetimeRecord? lifetime))
                 {
                     return false;
                 }
 
-                foreach (KeyValuePair<ulong, ulong> payload in
-                         recorded.SecondaryDescriptorPayloadGenerations)
+                foreach (KeyValuePair<VulkanResourceLifetimeKey, ulong> dependency in
+                         lifetime.TouchedDependencies)
                 {
+                    if (dependency.Key.Type != ObjectType.DescriptorSet)
+                        continue;
                     if (!ResourceRuntime.Lifetime.Tracker.PublishedDescriptorSets.TryGetValue(
-                            payload.Key,
+                            dependency.Key.Handle,
                             out VulkanPublishedDescriptorSetSnapshot? current) ||
-                        current.Generation != payload.Value)
+                        !recorded.SecondaryDescriptorImagePayloadGenerations.TryGetValue(
+                            dependency.Key.Handle,
+                            out ulong recordedPayloadGeneration) ||
+                        current.ImagePayloadGeneration != recordedPayloadGeneration)
                     {
                         return false;
                     }

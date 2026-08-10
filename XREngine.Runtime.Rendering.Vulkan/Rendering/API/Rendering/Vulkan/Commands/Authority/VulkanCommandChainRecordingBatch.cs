@@ -5,11 +5,8 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>Reusable command-runtime batch state shared by recording workers.</summary>
 internal sealed class VulkanCommandChainRecordingBatch
 {
-    /// <summary>
-    /// Batch-scoped worker procedure. It is published only after the prepared
-    /// frame is frozen and cleared before the batch is reused.
-    /// </summary>
-    public Action<CommandChainRecordingWorkerState>? WorkerProcedure;
+    /// <summary>Immutable encoder input published after the prepared frame is frozen.</summary>
+    public VulkanPreparedWorkerRecordingContext PreparedWorkerContext { get; } = new();
     public readonly VulkanPreparedFrameRecording PreparedFrame = new();
     public CommandChain[] Chains = new CommandChain[16];
     public CommandBuffer[] SecondaryBuffers = new CommandBuffer[16];
@@ -71,6 +68,6 @@ internal sealed class VulkanCommandChainRecordingBatch
         JobCount = 0;
         ActiveWorkerMask = 0;
         Error = null;
-        WorkerProcedure = null;
+        PreparedWorkerContext.Reset();
     }
 }

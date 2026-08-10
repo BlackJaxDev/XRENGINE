@@ -15,7 +15,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanCommandRuntime
     {
         private void FinalizePrimaryCommandRecording(
             scoped ref PrimaryCommandBufferRecordingState recordingState)
@@ -127,7 +127,9 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 bool hasSceneFrameWork = recordingState.Metrics.ClearCount > 0 || recordingState.Metrics.DrawCount > 0 || recordingState.Metrics.BlitCount > 0 || recordingState.Metrics.ComputeCount > 0;
-                bool expectsSceneSwapchainWriters = recordingState.TransitionSwapchainToPresent && !IsRenderingExternalSwapchainTarget;
+                bool expectsSceneSwapchainWriters =
+                    recordingState.TransitionSwapchainToPresent &&
+                    !recordingState.Policy.IsExternalSwapchainTarget;
                 bool preservingOverlayOnlyFrame =
                     sceneActualSwapchainWritesBeforeOverlay == 0 &&
                     recordingState.SceneSwapchainWriters == 0 &&
@@ -225,7 +227,7 @@ namespace XREngine.Rendering.Vulkan
                         : "None";
                     UpdateVulkanOnScreenDiagnostic(
                         pipelineLabel,
-                        GetClearColorValue(),
+                        recordingState.ClearState.ClearColor,
                         recordingState.Metrics.DroppedDrawOps,
                         recordingState.Metrics.DroppedFrameOps,
                         swapchainWriterSummary!);
@@ -316,9 +318,9 @@ namespace XREngine.Rendering.Vulkan
         {
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.EndCommandBuffer"))
             {
-                Result endResult = _commandRuntime.Recorder.End(
-                    this,
+                Result endResult = EndCommandBufferTracked(
                     recordingState.CommandBuffer,
+                    cacheVariant: true,
                     out string trackingFailure);
                 if (endResult != Result.Success)
                     throw new Exception("Failed to record command buffer.");
@@ -345,8 +347,8 @@ namespace XREngine.Rendering.Vulkan
                 recordingState.ActualSwapchainWriteCount;
             recordingState.RecordedSwapchainFinalLayout =
                 recordingState.SwapchainFinalLayout;
-            recordingState.QueryFrameOpsRequireRerecord =
-                recordingState.QueryFrameOpsRequireRerecordLocal;
+            recordingState.FrameOpsRequireRerecord =
+                recordingState.FrameOpsRequireRerecordLocal;
         }
 
     }

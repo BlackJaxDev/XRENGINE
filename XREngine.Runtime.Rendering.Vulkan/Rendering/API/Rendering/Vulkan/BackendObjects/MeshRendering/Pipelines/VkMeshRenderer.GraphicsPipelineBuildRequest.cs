@@ -2,37 +2,43 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal unsafe partial class VkMeshRenderer
+/// <summary>
+/// Immutable native graphics-pipeline build input. Pointer-bearing shader stages are
+/// captured while shader-module and layout generations are pinned by the caller.
+/// </summary>
+internal sealed class VulkanGraphicsPipelineBuildRequest(
+    long ownerId,
+    VkRenderProgram program,
+    VulkanProgramBackendServices programServices,
+    bool useGraphicsPipelineLibraries,
+    long dependencyGeneration,
+    VulkanGraphicsPipelineKey key,
+    string pipelineName,
+    uint colorAttachmentCount,
+    PipelineLayout pipelineLayout,
+    VertexInputBindingDescription[] vertexBindings,
+    VertexInputAttributeDescription[] vertexAttributes,
+    PipelineInputAssemblyStateCreateInfo inputAssembly,
+    uint viewportScissorCount,
+    bool nativeNegativeOneToOneDepth,
+    PipelineRasterizationStateCreateInfo rasterizer,
+    PipelineMultisampleStateCreateInfo multisampling,
+    PipelineDepthStencilStateCreateInfo depthStencil,
+    PipelineColorBlendAttachmentState[] blendAttachments,
+    DynamicState[] dynamicStates,
+    RenderPass renderPass,
+    DynamicRenderingFormatSignature dynamicRenderingFormats,
+    PipelineShaderStageCreateInfo[] graphicsStages,
+    PipelineShaderStageCreateInfo[] preRasterStages,
+    PipelineShaderStageCreateInfo[] fragmentStages)
 {
-    internal sealed class GraphicsPipelineBuildRequest(
-        VkMeshRenderer owner,
-        VkRenderProgram program,
-        long dependencyGeneration,
-        VkMeshRenderer.PipelineKey key,
-        string pipelineName,
-        uint colorAttachmentCount,
-        PipelineLayout pipelineLayout,
-        VertexInputBindingDescription[] vertexBindings,
-        VertexInputAttributeDescription[] vertexAttributes,
-        PipelineInputAssemblyStateCreateInfo inputAssembly,
-        uint viewportScissorCount,
-        bool nativeNegativeOneToOneDepth,
-        PipelineRasterizationStateCreateInfo rasterizer,
-        PipelineMultisampleStateCreateInfo multisampling,
-        PipelineDepthStencilStateCreateInfo depthStencil,
-        PipelineColorBlendAttachmentState[] blendAttachments,
-        DynamicState[] dynamicStates,
-        RenderPass renderPass,
-        DynamicRenderingFormatSignature dynamicRenderingFormats,
-        PipelineShaderStageCreateInfo[] graphicsStages,
-        PipelineShaderStageCreateInfo[] preRasterStages,
-        PipelineShaderStageCreateInfo[] fragmentStages)
-    {
-        public VkMeshRenderer Owner { get; } = owner;
+        public long OwnerId { get; } = ownerId;
         public VkRenderProgram Program { get; } = program;
+        public VulkanProgramBackendServices ProgramServices { get; } = programServices;
+        public bool UseGraphicsPipelineLibraries { get; } = useGraphicsPipelineLibraries;
         public long DependencyGeneration { get; } = dependencyGeneration;
-        public PipelineKey Key { get; } = key;
-        public GraphicsPipelineCompileKey CompileKey { get; } = new GraphicsPipelineCompileKey(key);
+        public VulkanGraphicsPipelineKey Key { get; } = key;
+        public VulkanGraphicsPipelineCompileKey CompileKey { get; } = new(key);
         public string PipelineName { get; } = pipelineName;
         public uint ColorAttachmentCount { get; } = colorAttachmentCount;
         public PipelineLayout PipelineLayout { get; } = pipelineLayout;
@@ -51,5 +57,4 @@ internal unsafe partial class VkMeshRenderer
         public PipelineShaderStageCreateInfo[] GraphicsStages { get; } = graphicsStages;
         public PipelineShaderStageCreateInfo[] PreRasterStages { get; } = preRasterStages;
         public PipelineShaderStageCreateInfo[] FragmentStages { get; } = fragmentStages;
-    }
 }

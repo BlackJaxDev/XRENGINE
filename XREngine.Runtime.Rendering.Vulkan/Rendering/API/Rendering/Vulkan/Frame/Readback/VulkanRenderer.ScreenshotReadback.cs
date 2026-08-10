@@ -12,9 +12,13 @@ public unsafe partial class VulkanRenderer
 {
     private const int ScreenshotReadbackRingSize = 8;
     private const ulong MaximumScreenshotReadbackRawBytes = 256UL * 1024UL * 1024UL;
-    private const ulong MaximumScreenshotResolveImageBytes = 256UL * 1024UL * 1024UL;
     private static readonly TimeSpan ScreenshotReadbackWatchdogWarningAge = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan ScreenshotReadbackFailureAge = TimeSpan.FromSeconds(10);
+    private VulkanReadbackOutputResourceService ReadbackOutputResources
+        => OutputRuntime.GetReadbackOutputResourceService(
+            _deviceContext,
+            ResourceRuntime,
+            _commandRuntime);
 
     public override bool TryQueueScreenshotReadback(
         BoundingRectangle region,
@@ -55,7 +59,7 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        uint sourcePixelSize = GetColorFormatPixelSize(source.Format);
+        uint sourcePixelSize = VulkanCommandRuntime.GetColorFormatPixelSize(source.Format);
         if (sourcePixelSize == 0)
         {
             return RejectScreenshotReadback(
@@ -163,7 +167,7 @@ public unsafe partial class VulkanRenderer
                 width,
                 height);
 
-            Result endResult = Api.EndCommandBuffer(slot.CommandBuffer);
+            Result endResult = EndCommandBufferTracked(slot.CommandBuffer);
             if (endResult != Result.Success)
             {
                 return RejectPreparedScreenshotReadback(
@@ -203,7 +207,9 @@ public unsafe partial class VulkanRenderer
             slot.SubmittedAtUtc = DateTimeOffset.UtcNow;
             Volatile.Write(ref slot.State, (int)EVulkanScreenshotReadbackSlotState.Submitted);
             submitted = true;
-            UpdateReadbackRestoredAttachmentLayout(source, ResolvePostTransferReadLayout(source));
+            VulkanReadbackLayoutPolicy.PublishRestoredAttachmentLayout(
+                source,
+                VulkanReadbackLayoutPolicy.ResolvePostTransfer(source));
             Interlocked.Increment(ref OutputRuntime.Capture.ScreenshotReadbackQueuedCount);
             return true;
         }
@@ -236,7 +242,8 @@ public unsafe partial class VulkanRenderer
 
         if (_deviceLost)
         {
-            FailPendingScreenshotReadbacksForDeviceLoss(DeviceLostReason ?? "The Vulkan device was lost.");
+            OutputRuntime.Capture.FailPendingScreenshotReadbacksForDeviceLoss(
+                DeviceLostReason ?? "The Vulkan device was lost.");
             return;
         }
 
@@ -326,7 +333,7 @@ public unsafe partial class VulkanRenderer
         XRFrameBuffer? boundReadFrameBuffer = ActiveBoundReadFrameBuffer;
         if (boundReadFrameBuffer is not null)
         {
-            ClampReadbackRegion(
+            VulkanCommandRuntime.ClampReadbackRegion(
                 region,
                 boundReadFrameBuffer.Width,
                 boundReadFrameBuffer.Height,
@@ -344,7 +351,7 @@ public unsafe partial class VulkanRenderer
                     out BlitImageInfo boundSource,
                     isSource: true) &&
                 TryResolveLiveBlitImage(boundSource, out source) &&
-                IsRegionInsideExtent(x, y, width, height, source.Extent))
+                VulkanCommandRuntime.IsRegionInsideExtent(x, y, width, height, source.Extent))
             {
                 return true;
             }
@@ -358,7 +365,7 @@ public unsafe partial class VulkanRenderer
 
         if (_lastWindowPresentFrameBuffer is not null)
         {
-            ClampReadbackRegion(
+            VulkanCommandRuntime.ClampReadbackRegion(
                 region,
                 _lastWindowPresentFrameBuffer.Width,
                 _lastWindowPresentFrameBuffer.Height,
@@ -376,7 +383,7 @@ public unsafe partial class VulkanRenderer
                     out BlitImageInfo presentSource,
                     isSource: true) &&
                 TryResolveLiveBlitImage(presentSource, out source) &&
-                IsRegionInsideExtent(x, y, width, height, source.Extent))
+                VulkanCommandRuntime.IsRegionInsideExtent(x, y, width, height, source.Extent))
             {
                 return true;
             }
@@ -384,7 +391,7 @@ public unsafe partial class VulkanRenderer
 
         if (_lastWindowPresentColorTexture is IFrameBufferAttachement textureAttachment)
         {
-            ClampReadbackRegion(
+            VulkanCommandRuntime.ClampReadbackRegion(
                 region,
                 textureAttachment.Width,
                 textureAttachment.Height,
@@ -402,7 +409,7 @@ public unsafe partial class VulkanRenderer
                     AccessFlags.ShaderReadBit,
                     out BlitImageInfo textureSource) &&
                 TryResolveLiveBlitImage(textureSource, out source) &&
-                IsRegionInsideExtent(x, y, width, height, source.Extent))
+                VulkanCommandRuntime.IsRegionInsideExtent(x, y, width, height, source.Extent))
             {
                 return true;
             }
@@ -516,7 +523,7 @@ public unsafe partial class VulkanRenderer
                 CommandPool = slot.CommandPool,
                 CommandBufferCount = 1,
             };
-            Result allocateResult = AllocateVulkanCommandBuffersTracked(
+            Result allocateResult = _commandRuntime.AllocateCommandBufferWithLifetime(
                 ref allocateInfo,
                 out slot.CommandBuffer,
                 $"ScreenshotReadback[{slotIndex}]");
@@ -529,12 +536,9 @@ public unsafe partial class VulkanRenderer
 
         if (slot.Fence.Handle == 0)
         {
-            FenceCreateInfo fenceCreateInfo = new()
-            {
-                SType = StructureType.FenceCreateInfo,
-                Flags = FenceCreateFlags.SignaledBit,
-            };
-            Result fenceResult = Api!.CreateFence(_deviceContext.Device, in fenceCreateInfo, null, out slot.Fence);
+            Result fenceResult = ReadbackOutputResources.EnsureFence(
+                ref slot.Fence,
+                $"ScreenshotReadback[{slotIndex}]");
             if (fenceResult != Result.Success)
             {
                 failure = $"Failed to create Vulkan screenshot fence ({fenceResult}).";
@@ -549,7 +553,10 @@ public unsafe partial class VulkanRenderer
 
         try
         {
-            (slot.StagingBuffer, slot.StagingMemory) = CreateReadbackBuffer(slot.RawByteCount);
+            (slot.StagingBuffer, slot.StagingMemory) = ReadbackOutputResources.CreateStagingBuffer(
+                BackendObjectContext,
+                slot.RawByteCount,
+                $"ScreenshotReadback[{slotIndex}].Staging");
             SetDebugObjectName(
                 ObjectType.Buffer,
                 slot.StagingBuffer.Handle,
@@ -583,81 +590,20 @@ public unsafe partial class VulkanRenderer
         uint sourcePixelSize,
         out string? failure)
     {
-        failure = null;
-        if (slot.ResolveImage.Handle != 0 &&
-            slot.ResolveFormat == format &&
-            slot.ResolveWidth == width &&
-            slot.ResolveHeight == height)
-        {
-            return true;
-        }
-
-        if (slot.ResolveImage.Handle != 0)
-            DestroyScreenshotResolveImage(slot, "ScreenshotReadback.ResolveResize");
-
-        ulong requiredBytes = checked((ulong)width * height * sourcePixelSize);
-        EvictIdleScreenshotResolveImages(slot, requiredBytes);
-        ulong retainedBytes = GetRetainedScreenshotResolveImageBytes();
-        if (retainedBytes + requiredBytes > MaximumScreenshotResolveImageBytes)
-        {
-            failure = $"The Vulkan MSAA screenshot resolve cache would exceed its {MaximumScreenshotResolveImageBytes / (1024 * 1024)} MiB budget.";
-            return false;
-        }
-
-        ImageCreateInfo imageInfo = new()
-        {
-            SType = StructureType.ImageCreateInfo,
-            ImageType = ImageType.Type2D,
-            Format = format,
-            Extent = new Extent3D(width, height, 1),
-            MipLevels = 1,
-            ArrayLayers = 1,
-            Samples = SampleCountFlags.Count1Bit,
-            Tiling = ImageTiling.Optimal,
-            Usage = ImageUsageFlags.TransferDstBit | ImageUsageFlags.TransferSrcBit,
-            SharingMode = SharingMode.Exclusive,
-            InitialLayout = ImageLayout.Undefined,
-        };
-
-        Result createResult = CreateVulkanImageTracked(
-            ref imageInfo,
-            out Image resolveImage,
-            $"ScreenshotReadback[{slotIndex}].Resolve");
-        if (createResult != Result.Success)
-        {
-            failure = $"Failed to create Vulkan MSAA screenshot resolve image ({createResult}).";
-            return false;
-        }
-
-        VulkanMemoryAllocation allocation = default;
-        try
-        {
-            ClearTrackedImageLayouts(resolveImage);
-            allocation = AllocateImageMemoryWithFallback(resolveImage, MemoryPropertyFlags.DeviceLocalBit);
-            ResourceRuntime.Allocations.Images.Allocations[resolveImage.Handle] = allocation;
-            Result bindResult = Api!.BindImageMemory(_deviceContext.Device, resolveImage, allocation.Memory, allocation.Offset);
-            if (bindResult != Result.Success)
-                throw new InvalidOperationException($"vkBindImageMemory returned {bindResult}.");
-
-            slot.ResolveImage = resolveImage;
-            slot.ResolveAllocation = allocation;
-            slot.ResolveFormat = format;
-            slot.ResolveWidth = width;
-            slot.ResolveHeight = height;
-            slot.ResolveByteCount = requiredBytes;
-            SetDebugObjectName(ObjectType.Image, resolveImage.Handle, $"ScreenshotReadback[{slotIndex}].Resolve");
-            return true;
-        }
-        catch (Exception ex)
-        {
-            ResourceRuntime.Allocations.Images.Allocations.TryRemove(resolveImage.Handle, out _);
-            UntrackImageAllocation(resolveImage);
-            DestroyVulkanImageImmediateTracked(resolveImage, "ScreenshotReadback.ResolveCreateFailure");
-            if (!allocation.IsNull)
-                FreeMemoryAllocation(allocation);
-            failure = $"Failed to allocate Vulkan MSAA screenshot resolve image: {ex.Message}";
-            return false;
-        }
+        bool ensured = ReadbackOutputResources.EnsureScreenshotResolveImage(
+                OutputRuntime.Capture,
+                OutputRuntime.TargetOutputContext,
+                slot,
+                slotIndex,
+                format,
+                width,
+                height,
+                sourcePixelSize,
+                out bool created,
+                out failure);
+        if (created)
+            SetDebugObjectName(ObjectType.Image, slot.ResolveImage.Handle, $"ScreenshotReadback[{slotIndex}].Resolve");
+        return ensured;
     }
 
     private void RecordScreenshotReadbackCommands(
@@ -668,7 +614,7 @@ public unsafe partial class VulkanRenderer
         int width,
         int height)
     {
-        ImageLayout sourceRestoreLayout = ResolvePostTransferReadLayout(source);
+        ImageLayout sourceRestoreLayout = VulkanReadbackLayoutPolicy.ResolvePostTransfer(source);
         TransitionForBlit(
             slot.CommandBuffer,
             source,
@@ -733,7 +679,7 @@ public unsafe partial class VulkanRenderer
                 DstOffset = new Offset3D(0, 0, 0),
                 Extent = new Extent3D(checked((uint)width), checked((uint)height), 1),
             };
-            CmdResolveImageTracked(
+            _commandRuntime.ResolveImageTracked(
                 slot.CommandBuffer,
                 source.Image,
                 ImageLayout.TransferSrcOptimal,
@@ -774,7 +720,7 @@ public unsafe partial class VulkanRenderer
             ImageOffset = new Offset3D(copyX, copyY, 0),
             ImageExtent = new Extent3D(checked((uint)width), checked((uint)height), 1),
         };
-        CmdCopyImageToBufferTracked(
+        _commandRuntime.CopyImageToBufferTracked(
             slot.CommandBuffer,
             copyImage,
             copyLayout,
@@ -885,7 +831,7 @@ public unsafe partial class VulkanRenderer
             rawPixels,
             rawLength,
             gpuCompletionSeconds));
-        RegisterReadbackTask(processingTask);
+        _commandRuntime.CommandBuffers.ReadbackTasks.Register(processingTask);
         return true;
     }
 
@@ -928,7 +874,7 @@ public unsafe partial class VulkanRenderer
             byte[] rgbaPixels = GC.AllocateUninitializedArray<byte>(checked(pixelCount * 4));
             fixed (byte* rawPtr = rawPixels)
             {
-                if (!TryConvertColorPixelsToRgba8(rawPtr, slot.SourceFormat, pixelCount, rgbaPixels))
+                if (!VulkanCommandRuntime.TryConvertColorPixelsToRgba8(rawPtr, slot.SourceFormat, pixelCount, rgbaPixels))
                 {
                     DeliverScreenshotReadbackFailure(
                         slot,
@@ -1036,31 +982,6 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private void FailPendingScreenshotReadbacksForDeviceLoss(string reason)
-    {
-        for (int i = 0; i < OutputRuntime.Capture.ScreenshotReadbackSlots.Length; ++i)
-        {
-            VulkanScreenshotReadbackSlot? slot = OutputRuntime.Capture.ScreenshotReadbackSlots[i];
-            if (slot is null ||
-                Interlocked.CompareExchange(
-                    ref slot.State,
-                    (int)EVulkanScreenshotReadbackSlotState.Abandoned,
-                    (int)EVulkanScreenshotReadbackSlotState.Submitted) !=
-                (int)EVulkanScreenshotReadbackSlotState.Submitted)
-            {
-                continue;
-            }
-
-            DeliverScreenshotReadbackFailure(
-                slot,
-                $"Vulkan device loss aborted screenshot readback slot {i}: {reason}",
-                slot.SubmittedTimestamp == 0
-                    ? null
-                    : Stopwatch.GetElapsedTime(slot.SubmittedTimestamp).TotalSeconds);
-            ReleaseScreenshotReadbackReservation(slot);
-        }
-    }
-
     private bool RejectScreenshotReadback(string error, out string? failure)
     {
         failure = error;
@@ -1140,7 +1061,11 @@ public unsafe partial class VulkanRenderer
         if (slot.StagingBuffer.Handle == 0)
             return;
 
-        DestroyBuffer(slot.StagingBuffer, slot.StagingMemory);
+        ReadbackOutputResources.RetireStagingBuffer(
+            BackendObjectContext,
+            slot.StagingBuffer,
+            slot.StagingMemory,
+            "ScreenshotReadback.Staging");
         slot.StagingBuffer = default;
         slot.StagingMemory = default;
     }
@@ -1158,70 +1083,17 @@ public unsafe partial class VulkanRenderer
         slot.SubmittedAtUtc = default;
     }
 
-    private void EvictIdleScreenshotResolveImages(
-        VulkanScreenshotReadbackSlot requestingSlot,
-        ulong requiredBytes)
-    {
-        ulong retainedBytes = GetRetainedScreenshotResolveImageBytes();
-        if (retainedBytes + requiredBytes <= MaximumScreenshotResolveImageBytes)
-            return;
-
-        for (int i = 0; i < OutputRuntime.Capture.ScreenshotReadbackSlots.Length; ++i)
-        {
-            VulkanScreenshotReadbackSlot? candidate = OutputRuntime.Capture.ScreenshotReadbackSlots[i];
-            if (candidate is null ||
-                ReferenceEquals(candidate, requestingSlot) ||
-                candidate.ResolveImage.Handle == 0 ||
-                Volatile.Read(ref candidate.State) != (int)EVulkanScreenshotReadbackSlotState.Idle)
-            {
-                continue;
-            }
-
-            DestroyScreenshotResolveImage(candidate, "ScreenshotReadback.ResolveBudgetEviction");
-            retainedBytes = GetRetainedScreenshotResolveImageBytes();
-            if (retainedBytes + requiredBytes <= MaximumScreenshotResolveImageBytes)
-                return;
-        }
-    }
-
-    private ulong GetRetainedScreenshotResolveImageBytes()
-    {
-        ulong total = 0;
-        for (int i = 0; i < OutputRuntime.Capture.ScreenshotReadbackSlots.Length; ++i)
-            total += OutputRuntime.Capture.ScreenshotReadbackSlots[i]?.ResolveByteCount ?? 0;
-        return total;
-    }
-
     private void DestroyScreenshotResolveImage(
         VulkanScreenshotReadbackSlot slot,
         string owner)
-    {
-        Image image = slot.ResolveImage;
-        if (image.Handle == 0)
-            return;
-
-        VulkanMemoryAllocation allocation = slot.ResolveAllocation;
-        ClearTrackedImageLayouts(image);
-        if (ResourceRuntime.Allocations.Images.Allocations.TryRemove(image.Handle, out VulkanMemoryAllocation trackedAllocation))
-            allocation = trackedAllocation;
-        UntrackImageAllocation(image);
-        DestroyVulkanImageImmediateTracked(image, owner);
-        if (!allocation.IsNull)
-            FreeMemoryAllocation(allocation);
-
-        slot.ResolveImage = default;
-        slot.ResolveAllocation = default;
-        slot.ResolveFormat = default;
-        slot.ResolveWidth = 0;
-        slot.ResolveHeight = 0;
-        slot.ResolveByteCount = 0;
-    }
+        => ReadbackOutputResources.RetireScreenshotResolveImage(slot, owner);
 
     private void DrainScreenshotReadbacksForShutdown()
     {
         if (_deviceLost)
         {
-            FailPendingScreenshotReadbacksForDeviceLoss(DeviceLostReason ?? "Vulkan renderer shutdown after device loss.");
+            OutputRuntime.Capture.FailPendingScreenshotReadbacksForDeviceLoss(
+                DeviceLostReason ?? "Vulkan renderer shutdown after device loss.");
             return;
         }
 
@@ -1260,12 +1132,12 @@ public unsafe partial class VulkanRenderer
 
             if (slot.ResolveImage.Handle != 0)
                 DestroyScreenshotResolveImage(slot, "ScreenshotReadback.Dispose");
-            if (slot.Fence.Handle != 0)
-                Api!.DestroyFence(_deviceContext.Device, slot.Fence, null);
+            ReadbackOutputResources.DestroyFence(ref slot.Fence);
             if (slot.CommandBuffer.Handle != 0)
             {
                 CommandBuffer commandBuffer = slot.CommandBuffer;
-                FreeVulkanCommandBufferTracked(
+                _commandRuntime.FreeCommandBufferWithLifetime(
+                    CurrentDesktopFrameSlot,
                     slot.CommandPool,
                     ref commandBuffer,
                     "ScreenshotReadback.Dispose");

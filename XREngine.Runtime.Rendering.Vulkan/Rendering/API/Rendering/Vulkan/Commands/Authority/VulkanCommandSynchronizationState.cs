@@ -28,10 +28,12 @@ internal sealed unsafe class VulkanCommandSynchronizationState
         new VulkanQueueOperationRecord[QueueOperationHistoryCapacity];
     internal long _vulkanQueueOperationSerial;
     internal readonly Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> _submissionImageStateScratch = new(64);
+    internal readonly Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> _secondaryDescriptorRequirementScratch = new(32);
+    internal object SecondaryDescriptorRequirementScratchGate { get; } = new();
     internal readonly List<VulkanQueueSemaphoreRequirement> _submissionQueueSemaphoreRequirements = new(8);
     internal readonly object _submissionMarkerLock = new();
-    internal readonly Dictionary<nint, List<VulkanRenderer.VulkanTimelineGpuFence>> _submissionMarkersByCommandBuffer = [];
-    internal readonly Stack<VulkanRenderer.VulkanTimelineGpuFence> _timelineGpuFencePool = [];
+    internal readonly Dictionary<nint, List<VulkanTimelineGpuFence>> _submissionMarkersByCommandBuffer = [];
+    internal readonly Stack<VulkanTimelineGpuFence> _timelineGpuFencePool = [];
 
     internal void RecordQueueOperation(
         EVulkanDeviceState deviceState,
@@ -58,7 +60,7 @@ internal sealed unsafe class VulkanCommandSynchronizationState
     {
         lock (_submissionMarkerLock)
         {
-            foreach (List<VulkanRenderer.VulkanTimelineGpuFence> markers in _submissionMarkersByCommandBuffer.Values)
+            foreach (List<VulkanTimelineGpuFence> markers in _submissionMarkersByCommandBuffer.Values)
             {
                 for (int index = 0; index < markers.Count; index++)
                     markers[index].Fail();
@@ -76,6 +78,100 @@ internal sealed unsafe class VulkanCommandSynchronizationState
         lock (_vulkanImageLayoutLock)
             _recordedImageLayoutsByCommandBuffer.Remove(
                 unchecked((ulong)commandBuffer.Handle));
+    }
+
+    /// <summary>
+    /// Resolves one common submitted layout across the requested image range.
+    /// This is the renderer-free read side of the command authority's image
+    /// state ledger; output target selection consumes the resulting value as a
+    /// frozen input.
+    /// </summary>
+    internal bool TryGetSubmittedImageLayout(
+        Image image,
+        in ImageSubresourceRange range,
+        out ImageLayout layout)
+    {
+        layout = ImageLayout.Undefined;
+        if (image.Handle == 0)
+            return false;
+
+        bool found = false;
+        uint levelCount = Math.Max(range.LevelCount, 1u);
+        uint layerCount = Math.Max(range.LayerCount, 1u);
+        lock (_vulkanImageLayoutLock)
+        {
+            for (uint mipOffset = 0; mipOffset < levelCount; mipOffset++)
+            for (uint layerOffset = 0; layerOffset < layerCount; layerOffset++)
+            {
+                uint mipLevel = range.BaseMipLevel + mipOffset;
+                uint arrayLayer = range.BaseArrayLayer + layerOffset;
+                if (!TryMergeSubmittedAspectNoLock(
+                        image.Handle,
+                        mipLevel,
+                        arrayLayer,
+                        range.AspectMask,
+                        ImageAspectFlags.ColorBit,
+                        ref found,
+                        ref layout) ||
+                    !TryMergeSubmittedAspectNoLock(
+                        image.Handle,
+                        mipLevel,
+                        arrayLayer,
+                        range.AspectMask,
+                        ImageAspectFlags.DepthBit,
+                        ref found,
+                        ref layout) ||
+                    !TryMergeSubmittedAspectNoLock(
+                        image.Handle,
+                        mipLevel,
+                        arrayLayer,
+                        range.AspectMask,
+                        ImageAspectFlags.StencilBit,
+                        ref found,
+                        ref layout))
+                {
+                    layout = ImageLayout.Undefined;
+                    return false;
+                }
+            }
+        }
+
+        return found;
+    }
+
+    private bool TryMergeSubmittedAspectNoLock(
+        ulong imageHandle,
+        uint mipLevel,
+        uint arrayLayer,
+        ImageAspectFlags requestedAspects,
+        ImageAspectFlags aspect,
+        ref bool found,
+        ref ImageLayout layout)
+    {
+        if ((requestedAspects & aspect) == 0)
+            return true;
+
+        VulkanTrackedImageSubresource key = new(
+            imageHandle,
+            mipLevel,
+            arrayLayer,
+            aspect);
+        if (!_trackedImageSubresourceStates.TryGetValue(
+                key,
+                out VulkanImageSubresourceState? state))
+        {
+            return false;
+        }
+
+        ImageLayout candidate = state.Submitted.Layout;
+        if (!found)
+        {
+            layout = candidate;
+            found = true;
+            return true;
+        }
+
+        return layout == candidate;
     }
 
     internal static void FailUnsubmittedSubmissionMarkers(
@@ -167,7 +263,7 @@ internal sealed unsafe class VulkanCommandSynchronizationState
         AdvanceCompletedImageLayouts(lifetimeTracker);
     }
 
-    private void AdvanceCompletedImageLayouts(
+    internal void AdvanceCompletedImageLayouts(
         VulkanResourceLifetimeTracker lifetimeTracker)
     {
         ulong completedGraphics;

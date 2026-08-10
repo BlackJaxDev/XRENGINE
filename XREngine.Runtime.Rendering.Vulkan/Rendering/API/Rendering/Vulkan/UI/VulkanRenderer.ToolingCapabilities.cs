@@ -7,6 +7,12 @@ public partial class VulkanRenderer :
     IRenderBackendDiagnosticsCapability,
     IOpenXrSmokeDiagnosticsBackendCapability
 {
+    private static FrameOp[] FilterDiagnosticSkippedFrameOps(FrameOp[] operations)
+        => VulkanCommandRuntime.FilterDiagnosticSkippedFrameOps(operations);
+
+    private object GetLastFrameOpTraceDiagnostics(int limit, string? targetContains)
+        => _commandRuntime.GetLastFrameOpTraceDiagnostics(limit, targetContains);
+
     /// <inheritdoc />
     public bool TryGetTexturePreviewHandle(
         XRTexture texture,
@@ -15,7 +21,10 @@ public partial class VulkanRenderer :
         out bool requiresVerticalFlip,
         out string? failureReason)
     {
-        IntPtr textureId = RegisterImGuiTexture(texture);
+        IntPtr textureId = _outputRuntime.GetImGuiTextureRegistryService(
+            ResourceRuntime,
+            _commandRuntime,
+            _deviceContext).RegisterImGuiTexture(texture);
         handle = (nint)textureId;
         requiresVerticalFlip = false;
         failureReason = textureId == IntPtr.Zero
@@ -57,7 +66,11 @@ public partial class VulkanRenderer :
         int y,
         out object? diagnostic)
     {
-        bool success = TryReadDepthPixelDebug(frameBuffer, x, y, out VulkanDepthReadbackDebugInfo info);
+        bool success = TryReadDepthPixelDebug(
+            frameBuffer,
+            x,
+            y,
+            out VulkanCommandRuntime.VulkanDepthReadbackDebugInfo info);
         diagnostic = info;
         return success;
     }

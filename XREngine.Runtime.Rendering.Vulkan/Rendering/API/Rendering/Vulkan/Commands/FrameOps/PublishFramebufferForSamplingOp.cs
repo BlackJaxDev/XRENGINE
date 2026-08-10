@@ -28,7 +28,7 @@ internal sealed record PublishFramebufferForSamplingOp(
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.PublishFramebufferForSampling;
 
     internal override int RecordPrimary(
-        VulkanRenderer renderer,
+        VulkanCommandRuntime renderer,
         scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {

@@ -26,7 +26,7 @@ internal readonly record struct RecordedPacketKey(
         init => _descriptorSets = value;
     }
 
-    private static ref readonly VulkanRecordedDescriptorSetIdentityBuffer
+    internal static ref readonly VulkanRecordedDescriptorSetIdentityBuffer
         GetDescriptorSetsReference(in RecordedPacketKey key)
         => ref key._descriptorSets;
 
@@ -51,6 +51,21 @@ internal readonly record struct RecordedPacketKey(
             VertexBuffers.Equals(other.VertexBuffers) &&
             AuxiliaryBuffers.Equals(other.AuxiliaryBuffers);
     }
+
+    /// <summary>
+    /// Validates the packet state captured before descriptor and pipeline
+    /// binding against a complete post-binding key. This avoids materializing
+    /// a second capacity-sized descriptor snapshot solely to splice those two
+    /// prepared fields into the otherwise immutable packet identity.
+    /// </summary>
+    internal bool MatchesBindingIndependentState(in RecordedPacketKey other)
+        => ExecutionDomain == other.ExecutionDomain &&
+            RenderTarget == other.RenderTarget &&
+            RenderArea == other.RenderArea &&
+            QueueFamily == other.QueueFamily &&
+            IndexBuffer == other.IndexBuffer &&
+            VertexBuffers.Equals(other.VertexBuffers) &&
+            AuxiliaryBuffers.Equals(other.AuxiliaryBuffers);
 
     /// <summary>
     /// Identifies the first native packet field that differs. This is used only
@@ -86,6 +101,38 @@ internal readonly record struct RecordedPacketKey(
         return "<none>";
     }
 
+    /// <summary>
+    /// Identifies the first field preventing this packet from becoming an exact
+    /// reusable recording key. Called only on diagnostic failure paths.
+    /// </summary>
+    internal string DescribeFirstIncompleteField()
+    {
+        if (ExecutionDomain == RenderPacketExecutionDomain.GraphicsRendering)
+        {
+            if (!RenderTarget.IsComplete)
+                return nameof(RenderTarget);
+            if (RenderArea == 0UL)
+                return nameof(RenderArea);
+        }
+
+        if (ExecutionDomain != RenderPacketExecutionDomain.StandaloneSynchronization &&
+            !Programs.IsComplete)
+            return nameof(Programs);
+
+        ref readonly VulkanRecordedDescriptorSetIdentityBuffer descriptorSets =
+            ref GetDescriptorSetsReference(in this);
+        if (!descriptorSets.IsComplete)
+            return $"{nameof(DescriptorSets)} ({descriptorSets.DescribeFirstIncompleteIdentity()})";
+        if (!IndexBuffer.IsComplete)
+            return nameof(IndexBuffer);
+        if (!VertexBuffers.IsComplete)
+            return nameof(VertexBuffers);
+        if (!AuxiliaryBuffers.IsComplete)
+            return nameof(AuxiliaryBuffers);
+
+        return "<none>";
+    }
+
     public ulong PipelineLayoutGeneration
     {
         get
@@ -110,32 +157,55 @@ internal readonly record struct RecordedPacketKey(
         }
     }
 
-    public bool IsComplete =>
-        (ExecutionDomain != RenderPacketExecutionDomain.GraphicsRendering ||
-         RenderTarget.IsComplete && RenderArea != 0UL) &&
-        (ExecutionDomain == RenderPacketExecutionDomain.StandaloneSynchronization ||
-         Programs.IsComplete) &&
-        DescriptorSets.IsComplete &&
-        IndexBuffer.IsComplete &&
-        VertexBuffers.IsComplete &&
-        AuxiliaryBuffers.IsComplete;
+    public bool IsComplete
+    {
+        get
+        {
+            ref readonly VulkanRecordedDescriptorSetIdentityBuffer descriptorSets =
+                ref GetDescriptorSetsReference(in this);
+            return
+                (ExecutionDomain != RenderPacketExecutionDomain.GraphicsRendering ||
+                 RenderTarget.IsComplete && RenderArea != 0UL) &&
+                (ExecutionDomain == RenderPacketExecutionDomain.StandaloneSynchronization ||
+                 Programs.IsComplete) &&
+                descriptorSets.IsComplete &&
+                IndexBuffer.IsComplete &&
+                VertexBuffers.IsComplete &&
+                AuxiliaryBuffers.IsComplete;
+        }
+    }
 
     internal void AddIdentityComponents(ref FrameOpSignatureHasher hash)
     {
+        ref readonly VulkanRecordedDescriptorSetIdentityBuffer descriptorSets =
+            ref GetDescriptorSetsReference(in this);
         hash.Add((int)ExecutionDomain);
         hash.Add(RenderTarget.FramebufferHandle);
         hash.Add(RenderTarget.FramebufferGeneration);
         hash.Add(RenderArea);
         hash.Add(QueueFamily);
-        hash.Add(DescriptorSets.Count);
-        hash.Add(DescriptorSets.IsComplete);
-        for (int i = 0; i < DescriptorSets.Count; i++)
+        hash.Add(descriptorSets.Count);
+        hash.Add(descriptorSets.IsComplete);
+        for (int i = 0; i < descriptorSets.Count; i++)
         {
-            VulkanRecordedDescriptorSetIdentity set = DescriptorSets.Get(i);
+            ref readonly VulkanRecordedDescriptorSetIdentity set =
+                ref VulkanRecordedDescriptorSetIdentityBuffer.GetReference(
+                    in descriptorSets,
+                    i);
             hash.Add(set.SetIndex); hash.Add(set.DescriptorSetHandle);
             hash.Add(set.DescriptorSetLifetimeGeneration); hash.Add(set.PayloadGeneration);
-            hash.Add(set.PublicationGeneration); hash.Add(set.Resources.Count); hash.Add(set.Resources.IsComplete);
-            for (int j = 0; j < set.Resources.Count; j++) { VulkanRecordedDescriptorResourceIdentity resource = set.Resources.Get(j); hash.Add((int)resource.Type); hash.Add(resource.Handle); hash.Add(resource.Generation); hash.Add((int)resource.Layout); }
+            ref readonly VulkanRecordedDescriptorResourceIdentityBuffer resources =
+                ref VulkanRecordedDescriptorSetIdentity.GetResourcesReference(in set);
+            hash.Add(set.PublicationGeneration); hash.Add(resources.Count); hash.Add(resources.IsComplete);
+            for (int j = 0; j < resources.Count; j++)
+            {
+                ref readonly VulkanRecordedDescriptorResourceIdentity resource =
+                    ref VulkanRecordedDescriptorResourceIdentityBuffer.GetReference(
+                        in resources,
+                        j);
+                hash.Add((int)resource.Type); hash.Add(resource.Handle);
+                hash.Add(resource.Generation); hash.Add((int)resource.Layout);
+            }
         }
         hash.Add(Programs.Count);
         hash.Add(Programs.IsComplete);

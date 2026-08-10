@@ -39,9 +39,12 @@ internal sealed class PrimaryCommandArtifactOwner(
             public ulong RecordedImageLayoutEndSignature { get; set; } = ulong.MaxValue;
             public VulkanImageLayoutStateSnapshot? RecordedImageLayoutEndState { get; set; }
             public ulong CommandChainScheduleSignature { get; set; } = ulong.MaxValue;
+            public CommandChainScheduleCacheIdentity RecordedCommandChainScheduleCacheIdentity { get; set; }
             public ulong CommandChainPrimaryGroupSignature { get; set; } = ulong.MaxValue;
             public VulkanCommandIdentityComponents CommandChainPrimaryIdentityComponents { get; set; }
             public VulkanPrimarySecondaryArtifactSequence RecordedSecondaryArtifactSequence { get; } = new();
+            public long RecordedCommandChainArtifactMutationGeneration { get; set; } = -1;
+            public bool AllPreparedDrawBindingsUseSecondaryBuffers { get; set; }
             public ulong CommandChainPrimarySkeletonSignature { get; set; } = ulong.MaxValue;
             public int CommandChainPrimaryGroupCount { get; set; } = -1;
             public ulong PlannerRevision { get; set; } = ulong.MaxValue;

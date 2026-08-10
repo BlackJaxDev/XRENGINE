@@ -97,7 +97,7 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
 
     public VulkanFrameTargetLease AcquireFrameTarget(out CommandBuffer commandBuffer)
     {
-        VulkanTargetOutputContext renderer = RequireRenderer();
+        VulkanTargetOutputContext renderer = RequireOutputContext();
         renderer.ThrowIfVulkanDeviceOperationNotAdmitted("Presentationless.AcquireFrameTarget");
         Vk api = renderer.VulkanApi;
         Device device = renderer.Device;
@@ -179,7 +179,7 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
         in VulkanFrameTargetLease lease,
         CommandBuffer commandBuffer)
     {
-        VulkanTargetOutputContext renderer = RequireRenderer();
+        VulkanTargetOutputContext renderer = RequireOutputContext();
         renderer.ThrowIfVulkanDeviceOperationNotAdmitted("Presentationless.EndFrameRecording");
         int slotIndex = ResolveSlotIndex(in lease);
         VulkanPresentationlessFrameSlot slot = _slots[slotIndex];
@@ -189,7 +189,7 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
             slot.TimestampQueryPool,
             1);
         ThrowIfDeviceFailure(
-            renderer.VulkanApi.EndCommandBuffer(commandBuffer),
+            renderer.EndCommandBufferTracked(commandBuffer),
             "end presentationless command buffer");
     }
 
@@ -223,7 +223,7 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
 
     public byte[] ReadbackLastSubmittedColor(int maxByteCount, ImageLayout sourceLayout)
     {
-        VulkanTargetOutputContext renderer = RequireRenderer();
+        VulkanTargetOutputContext renderer = RequireOutputContext();
         renderer.ThrowIfVulkanDeviceOperationNotAdmitted("Presentationless.ReadbackLastSubmittedColor");
         if (_lastSubmittedSlot < 0)
             throw new InvalidOperationException("No presentationless frame has been submitted.");
@@ -266,7 +266,7 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
             ImageExtent = new Extent3D(_output.Width, _output.Height, 1),
         };
         api.CmdCopyImageToBuffer(slot.CommandBuffer, slot.ColorImage, sourceLayout, slot.ReadbackBuffer, 1, in copy);
-        ThrowIfDeviceFailure(api.EndCommandBuffer(slot.CommandBuffer), "end presentationless readback command buffer");
+        ThrowIfDeviceFailure(renderer.EndCommandBufferTracked(slot.CommandBuffer), "end presentationless readback command buffer");
 
         CommandBuffer commandBuffer = slot.CommandBuffer;
         SubmitInfo submit = new()
@@ -525,7 +525,7 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
         Format format,
         ImageAspectFlags aspect)
     {
-        RequireRenderer().ThrowIfVulkanDeviceOperationNotAdmitted("vkCreateImageView.Presentationless");
+        RequireOutputContext().ThrowIfVulkanDeviceOperationNotAdmitted("vkCreateImageView.Presentationless");
         ImageViewCreateInfo info = new()
         {
             SType = StructureType.ImageViewCreateInfo,
@@ -535,7 +535,7 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
             SubresourceRange = new ImageSubresourceRange(aspect, 0, 1, 0, _output.Layers),
         };
         ThrowIfDeviceFailure(api.CreateImageView(device, in info, null, out ImageView view), "create presentationless image view");
-        RequireRenderer().TrackLiveImageView(view, in info, "Presentationless.ImageView");
+        RequireOutputContext().TrackLiveImageView(view, in info, "Presentationless.ImageView");
         return view;
     }
 
@@ -547,7 +547,7 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
         Device device = renderer.Device;
         if (slot.ColorView.Handle != 0)
         {
-            if (renderer.TryBeginDestroyImageView(slot.ColorView, "PresentationlessTarget.ColorView"))
+            if (renderer.ResourceRuntime.Images.TryBeginDestroy(slot.ColorView, "PresentationlessTarget.ColorView"))
                 api.DestroyImageView(device, slot.ColorView, null);
         }
         if (slot.ColorImage.Handle != 0)
@@ -555,7 +555,7 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
         renderer.FreeMemoryAllocation(slot.ColorAllocation);
         if (slot.DepthView.Handle != 0)
         {
-            if (renderer.TryBeginDestroyImageView(slot.DepthView, "PresentationlessTarget.DepthView"))
+            if (renderer.ResourceRuntime.Images.TryBeginDestroy(slot.DepthView, "PresentationlessTarget.DepthView"))
                 api.DestroyImageView(device, slot.DepthView, null);
         }
         if (slot.DepthImage.Handle != 0)
@@ -573,7 +573,7 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
             renderer.DestroyCommandPoolHostSynchronized(slot.CommandPool);
     }
 
-    private VulkanTargetOutputContext RequireRenderer()
+    private VulkanTargetOutputContext RequireOutputContext()
         => _outputContext
             ?? throw new InvalidOperationException("The presentationless target generation is not initialized.");
 
@@ -590,7 +590,7 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
 
     private void RestoreFrameSlotFence(int slotIndex)
     {
-        VulkanTargetOutputContext renderer = RequireRenderer();
+        VulkanTargetOutputContext renderer = RequireOutputContext();
         renderer.ThrowIfVulkanDeviceOperationNotAdmitted("Presentationless.RestoreFrameSlotFence");
         Vk api = renderer.VulkanApi;
         Device device = renderer.Device;

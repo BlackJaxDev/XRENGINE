@@ -12,6 +12,8 @@ internal sealed class VulkanReusableFrameDataRefreshState
     private bool _ownerOnlyRefreshPublished;
     private int[] _fallbackRequestIndices = [];
     private int _fallbackRequestCount;
+    private readonly Dictionary<VulkanReusableFrameOwnerSlotKey, ulong>
+        _publishedOwnerGenerations = [];
 
     internal bool CanUseOwnerOnlyRefresh(
         in VulkanReusableFrameDataRefreshBatchInfo batch)
@@ -30,6 +32,58 @@ internal sealed class VulkanReusableFrameDataRefreshState
         _meshRequestCount = batch.MeshRequestCount;
         _ownerOnlyRefreshPublished = false;
         _fallbackRequestCount = 0;
+        _publishedOwnerGenerations.Clear();
+    }
+
+    /// <summary>
+    /// Returns whether the exact frequency owner generation is already visible
+    /// in this frame slot. This is deliberately checked before renderer and
+    /// arena locks so unchanged Frame, Material, Object, and Instance owners do
+    /// not pay the uniform publication pipeline on every reused frame.
+    /// </summary>
+    internal bool IsOwnerGenerationPublished(
+        uint frameSlot,
+        in VulkanReusableFrameOwnerKey ownerKey)
+    {
+        if (ownerKey.PublicationLayoutSignature == 0 ||
+            ownerKey.OwnerIdentity == 0 ||
+            ownerKey.Frequency is <= EVulkanBindingFrequency.Unknown or
+                >= EVulkanBindingFrequency.Count)
+        {
+            return false;
+        }
+
+        VulkanReusableFrameOwnerSlotKey slotKey = new(
+            ownerKey.PublicationLayoutSignature,
+            ownerKey.Frequency,
+            ownerKey.OwnerIdentity,
+            frameSlot);
+        return _publishedOwnerGenerations.TryGetValue(
+                   slotKey,
+                   out ulong publishedGeneration) &&
+               publishedGeneration == ownerKey.ContentGeneration;
+    }
+
+    /// <summary>
+    /// Records a successful owner publication for the exact mapped frame slot.
+    /// A later content generation replaces the value without growing the map.
+    /// </summary>
+    internal void PublishOwnerGeneration(
+        uint frameSlot,
+        in VulkanReusableFrameOwnerKey ownerKey)
+    {
+        if (ownerKey.PublicationLayoutSignature == 0 ||
+            ownerKey.OwnerIdentity == 0)
+        {
+            return;
+        }
+
+        VulkanReusableFrameOwnerSlotKey slotKey = new(
+            ownerKey.PublicationLayoutSignature,
+            ownerKey.Frequency,
+            ownerKey.OwnerIdentity,
+            frameSlot);
+        _publishedOwnerGenerations[slotKey] = ownerKey.ContentGeneration;
     }
 
     internal void AddFallbackRequestIndex(int requestIndex)
@@ -68,5 +122,6 @@ internal sealed class VulkanReusableFrameDataRefreshState
         _meshRequestCount = -1;
         _ownerOnlyRefreshPublished = false;
         _fallbackRequestCount = 0;
+        _publishedOwnerGenerations.Clear();
     }
 }

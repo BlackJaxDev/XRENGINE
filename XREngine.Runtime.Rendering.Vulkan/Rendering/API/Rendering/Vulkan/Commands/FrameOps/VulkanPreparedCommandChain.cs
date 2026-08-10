@@ -23,12 +23,14 @@ internal readonly record struct VulkanPreparedCommandChain(
     /// </summary>
     internal bool Matches(CommandChain chain, RenderPacket packet)
     {
-        VulkanPreparedCommandChainKey authorityKey = Authority.PreparedKey;
+        ref readonly VulkanPreparedCommandChainKey authorityKey = ref Authority.PreparedKey;
+        ref readonly VulkanPreparedCommandChainKey chainPreparedKey =
+            ref chain.PreparedKeyReference;
         return chain.Key == Key &&
             chain.SourceStartIndex == SourceStartIndex &&
             chain.SourceCount == SourceCount &&
             ReferenceEquals(chain.PacketSnapshot, packet) &&
-            chain.PreparedKey.Matches(in authorityKey) &&
+            chainPreparedKey.Matches(in authorityKey) &&
             chain.RecordedArtifact.Generation ==
                 WritableArtifact.ArtifactGeneration &&
             chain.RecordedArtifact.NativeBuffer.Handle ==

@@ -41,7 +41,7 @@ internal readonly record struct DescriptorBindingInfo(
                 : binding with { Requirement = requirement };
         }
 
-        if (binding.Set != VulkanRenderer.DescriptorSetPerPass)
+        if (binding.Set != VulkanDescriptorManager.PerPassSetIndex)
         {
             return binding;
         }

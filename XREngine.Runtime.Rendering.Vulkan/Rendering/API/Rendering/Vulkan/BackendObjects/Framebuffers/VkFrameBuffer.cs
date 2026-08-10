@@ -8,7 +8,9 @@ using Format = Silk.NET.Vulkan.Format;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : VkObject<XRFrameBuffer>(api, data)
+internal unsafe class VkFrameBuffer(
+    VulkanBackendObjectContext backendContext,
+    XRFrameBuffer data) : VkObject<XRFrameBuffer>(backendContext, data)
 {
     private Framebuffer _frameBuffer = default;
     private RenderPass _renderPass = default;
@@ -71,7 +73,7 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
 
         ulong framebufferGeneration = _frameBuffer.Handle == 0
             ? 0UL
-            : Renderer.GetCurrentVulkanResourceGeneration(
+            : BackendContext.GetResourceGeneration(
                 ObjectType.Framebuffer,
                 _frameBuffer.Handle);
         snapshot.Initialize(
@@ -91,9 +93,9 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
             ImageView view = _attachmentViews[i];
             VulkanNativeAttachmentIdentity identity = new(
                 image.Handle,
-                Renderer.GetCurrentVulkanResourceGeneration(ObjectType.Image, image.Handle),
+                BackendContext.GetResourceGeneration(ObjectType.Image, image.Handle),
                 view.Handle,
-                Renderer.GetCurrentVulkanResourceGeneration(ObjectType.ImageView, view.Handle),
+                BackendContext.GetResourceGeneration(ObjectType.ImageView, view.Handle),
                 _attachmentSignature[i].ReferenceLayout);
             snapshot.SetAttachment(i, identity);
         }
@@ -108,8 +110,8 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
         image = default;
         object? apiObject = target switch
         {
-            XRTexture texture when Renderer.TryGetAPIRenderObject(texture, out var textureObject) => textureObject,
-            XRRenderBuffer renderBuffer when Renderer.TryGetAPIRenderObject(renderBuffer, out var renderBufferObject) => renderBufferObject,
+            XRTexture texture => GetBackendWrapper(texture, generateNow: false),
+            XRRenderBuffer renderBuffer => GetBackendWrapper(renderBuffer, generateNow: false),
             _ => null,
         };
         image = apiObject switch
@@ -232,7 +234,7 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
         if (planned.Length == 0 || SignatureEquals(_attachmentSignature, planned))
             return _renderPass;
 
-        return Renderer.GetOrCreateFrameBufferRenderPass(planned);
+        return BackendContext.Framebuffers.GetOrCreateRenderPass(BackendContext.Api, Device, planned);
     }
 
     internal bool UsesReadOnlyDepthStencilForPass(
@@ -506,17 +508,21 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
             _ => loadOp
         };
 
-    internal void WriteClearValues(ClearValue* destination, uint clearValueCount)
-        => WriteClearValues(destination, clearValueCount, _attachmentSignature);
-
-    internal void WriteClearValues(ClearValue* destination, uint clearValueCount, FrameBufferAttachmentSignature[]? signatures)
+    /// <summary>
+    /// Writes attachment clear values from the command-recording snapshot.  The
+    /// wrapper deliberately does not read renderer render-state while a worker
+    /// is recording a frame.
+    /// </summary>
+    internal void WriteClearValues(
+        ClearValue* destination,
+        uint clearValueCount,
+        FrameBufferAttachmentSignature[]? signatures,
+        in ColorF4 clearColor,
+        float clearDepth,
+        uint clearStencil)
     {
         if (signatures is null || clearValueCount == 0)
             return;
-
-        var clearColor = Renderer.GetClearColorValue();
-        float clearDepth = Renderer.GetClearDepthValue();
-        uint clearStencil = Renderer.GetClearStencilValue();
 
         uint count = Math.Min(clearValueCount, (uint)signatures.Length);
         for (uint i = 0; i < count; i++)
@@ -715,7 +721,7 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
         uint framebufferLayers = ResolveFramebufferLayers(attachments);
         uint multiviewViewMask = ResolveFramebufferMultiviewViewMask(attachments);
 
-        if (Renderer.UseDynamicRenderingRenderTargets)
+        if (BackendContext.UsesDynamicRenderingRenderTargets)
         {
             return new CachedFrameBufferState(
                 default,
@@ -730,7 +736,7 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
                 multiviewViewMask);
         }
 
-        RenderPass renderPass = Renderer.GetOrCreateFrameBufferRenderPass(signatures);
+        RenderPass renderPass = BackendContext.Framebuffers.GetOrCreateRenderPass(BackendContext.Api, Device, signatures);
         Framebuffer frameBuffer = default;
 
         fixed (ImageView* viewsPtr = views)
@@ -750,18 +756,10 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
                 throw new Exception("Failed to create framebuffer.");
         }
 
-        Renderer.RegisterVulkanFramebuffer(
+        BackendContext.Framebuffers.RegisterFramebuffer(
             frameBuffer,
             views,
             $"Framebuffer.{Data?.Name ?? "<unnamed>"}");
-
-        string debugName = string.IsNullOrWhiteSpace(Data?.Name)
-            ? $"FBO.0x{frameBuffer.Handle:X}"
-            : $"FBO.{Data.Name}";
-        Renderer.SetDebugObjectName(
-            ObjectType.Framebuffer,
-            frameBuffer.Handle,
-            $"{debugName}.{fbWidth}x{fbHeight}.Layers{framebufferLayers}");
 
         return new CachedFrameBufferState(
             frameBuffer,
@@ -814,14 +812,14 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
             if (frameBuffer.Handle == 0 || !retiredHandles.Add(frameBuffer.Handle))
                 continue;
 
-            Renderer.RetireFramebuffer(frameBuffer);
+            BackendContext.Framebuffers.RetireFramebuffer(frameBuffer, $"Framebuffer.{Data?.Name ?? "<unnamed>"}");
         }
 
         if (_cachedFrameBufferStates.Count == 0 &&
             _frameBuffer.Handle != 0 &&
             retiredHandles.Add(_frameBuffer.Handle))
         {
-            Renderer.RetireFramebuffer(_frameBuffer);
+            BackendContext.Framebuffers.RetireFramebuffer(_frameBuffer, $"Framebuffer.{Data?.Name ?? "<unnamed>"}");
         }
 
         _cachedFrameBufferStates.Clear();
@@ -1693,7 +1691,7 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
 
     private AttachmentSource ResolveRenderBufferAttachment(XRRenderBuffer renderBuffer)
     {
-        if (Renderer.GetOrCreateAPIRenderObject(renderBuffer) is not VkRenderBuffer vkRenderBuffer)
+        if (BackendContext.GetOrCreateAPIRenderObject(renderBuffer) is not VkRenderBuffer vkRenderBuffer)
             throw new InvalidOperationException("Render buffer is not backed by a Vulkan object.");
 
         vkRenderBuffer.Generate();
@@ -1714,7 +1712,7 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
 
     private AttachmentSource ResolveTextureAttachment(IFrameBufferAttachement textureAttachment, XRTexture texture, EFrameBufferAttachment attachment, int mipLevel, int layerIndex)
     {
-        if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkFrameBufferAttachmentSource source)
+        if (BackendContext.GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkFrameBufferAttachmentSource source)
             throw new InvalidOperationException($"Texture '{texture.Name ?? texture.GetDescribingName()}' is not backed by a Vulkan texture.");
 
         bool depthStencilAttachment = attachment is EFrameBufferAttachment.DepthAttachment
@@ -2079,16 +2077,30 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
     }
 
     private void BindForReading()
-        => Renderer.BindFrameBuffer(EFramebufferTarget.ReadFramebuffer, Data);
+    {
+        Generate();
+        BackendContext.ProgramServices.SetBoundFrameBufferState(
+            EFramebufferTarget.ReadFramebuffer,
+            Data);
+    }
 
     private void UnbindFromReading()
-        => Renderer.BindFrameBuffer(EFramebufferTarget.ReadFramebuffer, null);
+        => BackendContext.ProgramServices.SetBoundFrameBufferState(
+            EFramebufferTarget.ReadFramebuffer,
+            null);
 
     private void BindForWriting()
-        => Renderer.BindFrameBuffer(EFramebufferTarget.DrawFramebuffer, Data);
+    {
+        Generate();
+        BackendContext.ProgramServices.SetBoundFrameBufferState(
+            EFramebufferTarget.DrawFramebuffer,
+            Data);
+    }
 
     private void UnbindFromWriting()
-        => Renderer.BindFrameBuffer(EFramebufferTarget.DrawFramebuffer, null);
+        => BackendContext.ProgramServices.SetBoundFrameBufferState(
+            EFramebufferTarget.DrawFramebuffer,
+            null);
 
     private void OnFramebufferResized()
         => Destroy();

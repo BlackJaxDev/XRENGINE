@@ -2,7 +2,7 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed record SubmissionMarkerOp(
     int PassIndex,
-    VulkanRenderer.VulkanTimelineGpuFence Fence,
+    VulkanTimelineGpuFence Fence,
     string Label,
     FrameOpContext Context) 
     : FrameOp(PassIndex, null, Context)
@@ -10,7 +10,7 @@ internal sealed record SubmissionMarkerOp(
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.SubmissionMarker;
 
     internal override int RecordPrimary(
-        VulkanRenderer renderer,
+        VulkanCommandRuntime renderer,
         scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {

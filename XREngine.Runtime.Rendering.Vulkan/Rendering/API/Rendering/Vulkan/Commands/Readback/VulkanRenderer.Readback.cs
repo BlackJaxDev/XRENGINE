@@ -13,14 +13,6 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
-        // =========== Readback Task Management ===========
-
-        private void RegisterReadbackTask(System.Threading.Tasks.Task task)
-            => _readbackTasks.Register(task);
-
-        private void WaitForPendingReadbackTasks(TimeSpan timeout)
-            => _readbackTasks.WaitForPendingTasks(timeout);
-
         internal bool TryReadBufferBytesForDiagnostics(XRDataBuffer? sourceBuffer, uint sourceByteOffset, Span<byte> destination, out string reason)
         {
             reason = "<missing>";
@@ -59,64 +51,13 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(byteCount);
             try
             {
-                using (var scope = NewCommandScope())
-                {
-                    BufferMemoryBarrier sourceBarrier = new()
-                    {
-                        SType = StructureType.BufferMemoryBarrier,
-                        SrcAccessMask =
-                            AccessFlags.ShaderWriteBit |
-                            AccessFlags.TransferWriteBit |
-                            AccessFlags.MemoryWriteBit,
-                        DstAccessMask = AccessFlags.TransferReadBit,
-                        SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                        DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                        Buffer = sourceHandle,
-                        Offset = byteOffset,
-                        Size = byteCount,
-                    };
-
-                    CmdPipelineBarrierTracked(
-                        scope.CommandBuffer,
-                        PipelineStageFlags.AllCommandsBit,
-                        PipelineStageFlags.TransferBit,
-                        0,
-                        0,
-                        null,
-                        1,
-                        &sourceBarrier,
-                        0,
-                        null);
-
-                    BufferCopy copy = new()
-                    {
-                        SrcOffset = byteOffset,
-                        DstOffset = 0,
-                        Size = byteCount,
-                    };
-
-                    CmdCopyBufferTracked(scope.CommandBuffer, sourceHandle, stagingBuffer, 1, &copy);
-                }
-
-                if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, byteCount, out void* mappedPtr))
-                {
-                    reason = "<map-failed>";
-                    return false;
-                }
-
-                try
-                {
-                    new Span<byte>(mappedPtr, destination.Length).CopyTo(destination);
-                    reason = "gpu";
-                    return true;
-                }
-                finally
-                {
-                    UnmapBufferMemory(stagingBuffer, stagingMemory);
-                }
+                return _commandRuntime.TryReadBufferBytes(
+                    sourceHandle,
+                    byteOffset,
+                    destination,
+                    out reason);
             }
             catch (Exception ex)
             {
@@ -131,10 +72,6 @@ namespace XREngine.Rendering.Vulkan
                     ex.GetType().Name,
                     ex.Message);
                 return false;
-            }
-            finally
-            {
-                DestroyBuffer(stagingBuffer, stagingMemory);
             }
         }
 
@@ -249,7 +186,7 @@ namespace XREngine.Rendering.Vulkan
                         wantStencil: false,
                         out BlitImageInfo depthSource,
                         isSource: true) &&
-                    TryReadDepthPixel(depthSource, x, y, out float fboDepth))
+                    _commandRuntime.TryReadDepthPixel(depthSource, x, y, out float fboDepth))
                 {
                     return fboDepth;
                 }
@@ -270,112 +207,14 @@ namespace XREngine.Rendering.Vulkan
         {
             depth = 1.0f;
 
-            VulkanSwapchainDepthResources? resources = CurrentSwapchainDepthResources;
+            VulkanSwapchainDepthResources? resources = OutputRuntime.DesktopDepthResources;
             if (resources is null)
                 return false;
 
-            // Clamp coordinates to valid range
             x = Math.Clamp(x, 0, Math.Max((int)resources.Extent.Width - 1, 0));
             y = Math.Clamp(y, 0, Math.Max((int)resources.Extent.Height - 1, 0));
-
-            // Determine byte size based on depth format
-            uint pixelSize = GetDepthFormatPixelSize(resources.Format);
-            if (pixelSize == 0)
-                return false;
-
-            ulong bufferSize = pixelSize;
-
-            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
-
-            try
-            {
-                using var scope = NewCommandScope();
-
-                // Transition depth image to transfer source
-                ImageMemoryBarrier toTransferBarrier = new()
-                {
-                    SType = StructureType.ImageMemoryBarrier,
-                    OldLayout = ImageLayout.DepthStencilAttachmentOptimal,
-                    NewLayout = ImageLayout.TransferSrcOptimal,
-                    SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                    DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                    Image = resources.Image,
-                    SubresourceRange = new ImageSubresourceRange
-                    {
-                        AspectMask = ImageAspectFlags.DepthBit,
-                        BaseMipLevel = 0,
-                        LevelCount = 1,
-                        BaseArrayLayer = 0,
-                        LayerCount = 1,
-                    },
-                    SrcAccessMask = AccessFlags.DepthStencilAttachmentWriteBit,
-                    DstAccessMask = AccessFlags.TransferReadBit,
-                };
-
-                CmdPipelineBarrierTracked(
-                    scope.CommandBuffer,
-                    PipelineStageFlags.LateFragmentTestsBit,
-                    PipelineStageFlags.TransferBit,
-                    0, 0, null, 0, null, 1, &toTransferBarrier);
-
-                BufferImageCopy copy = new()
-                {
-                    BufferOffset = 0,
-                    BufferRowLength = 0,
-                    BufferImageHeight = 0,
-                    ImageSubresource = new ImageSubresourceLayers
-                    {
-                        AspectMask = ImageAspectFlags.DepthBit,
-                        MipLevel = 0,
-                        BaseArrayLayer = 0,
-                        LayerCount = 1,
-                    },
-                    ImageOffset = new Offset3D { X = x, Y = y, Z = 0 },
-                    ImageExtent = new Extent3D { Width = 1, Height = 1, Depth = 1 }
-                };
-
-                CmdCopyImageToBufferTracked(
-                    scope.CommandBuffer,
-                    resources.Image,
-                    ImageLayout.TransferSrcOptimal,
-                    stagingBuffer,
-                    1,
-                    &copy);
-
-                // Transition depth image back to attachment optimal
-                ImageMemoryBarrier toAttachmentBarrier = toTransferBarrier with
-                {
-                    OldLayout = ImageLayout.TransferSrcOptimal,
-                    NewLayout = ImageLayout.DepthStencilAttachmentOptimal,
-                    SrcAccessMask = AccessFlags.TransferReadBit,
-                    DstAccessMask = AccessFlags.DepthStencilAttachmentWriteBit | AccessFlags.DepthStencilAttachmentReadBit,
-                };
-
-                CmdPipelineBarrierTracked(
-                    scope.CommandBuffer,
-                    PipelineStageFlags.TransferBit,
-                    PipelineStageFlags.EarlyFragmentTestsBit,
-                    0, 0, null, 0, null, 1, &toAttachmentBarrier);
-            }
-            catch
-            {
-                DestroyBuffer(stagingBuffer, stagingMemory);
-                return false;
-            }
-
-            // Map and read depth value
-            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, bufferSize, out void* mappedPtr))
-            {
-                DestroyBuffer(stagingBuffer, stagingMemory);
-                return false;
-            }
-
-            depth = ReadDepthValue(mappedPtr, resources.Format);
-
-            UnmapBufferMemory(stagingBuffer, stagingMemory);
-            DestroyBuffer(stagingBuffer, stagingMemory);
-
-            return true;
+            BlitImageInfo source = CreateSwapchainDepthReadbackSource(resources);
+            return _commandRuntime.TryReadDepthPixel(source, x, y, out depth);
         }
 
         public override void GetDepthAsync(XRFrameBuffer fbo, int x, int y, Action<float> depthCallback)
@@ -395,306 +234,47 @@ namespace XREngine.Rendering.Vulkan
                         wantStencil: false,
                         out BlitImageInfo depthSource,
                         isSource: true) &&
-                    TryReadDepthPixel(depthSource, x, y, out float depth))
+                    _commandRuntime.TryReadDepthPixel(depthSource, x, y, out float depth))
                 {
                     depthCallback?.Invoke(depth);
                     return;
                 }
             }
 
-            // Async fallback: read from swapchain depth image via fence + background poll.
-
-            if (!TryAdmitVulkanDeviceOperation("Readback.Depth", out _))
-            {
-                depthCallback?.Invoke(1.0f);
-                return;
-            }
-
-            VulkanSwapchainDepthResources? resources = CurrentSwapchainDepthResources;
+            VulkanSwapchainDepthResources? resources = OutputRuntime.DesktopDepthResources;
             if (resources is null)
             {
                 depthCallback?.Invoke(1.0f);
                 return;
             }
 
-            // Clamp coordinates to valid range
-            x = Math.Clamp(x, 0, (int)resources.Extent.Width - 1);
-            y = Math.Clamp(y, 0, (int)resources.Extent.Height - 1);
+            x = Math.Clamp(x, 0, Math.Max((int)resources.Extent.Width - 1, 0));
+            y = Math.Clamp(y, 0, Math.Max((int)resources.Extent.Height - 1, 0));
+            BlitImageInfo source = CreateSwapchainDepthReadbackSource(resources);
+            _commandRuntime.BeginDepthReadbackAsync(
+                source,
+                x,
+                y,
+                depthCallback,
+                ReadbackOutputResources,
+                CurrentDesktopFrameSlot);
+        }
 
-            // Determine byte size based on depth format
-            uint pixelSize = GetDepthFormatPixelSize(resources.Format);
-            if (pixelSize == 0)
-            {
-                depthCallback?.Invoke(1.0f);
-                return;
-            }
-
-            ulong bufferSize = pixelSize;
-
-            // Create staging buffer
-            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
-
-            // Allocate command buffer
-            CommandBufferAllocateInfo allocateInfo = new()
-            {
-                SType = StructureType.CommandBufferAllocateInfo,
-                Level = CommandBufferLevel.Primary,
-                CommandPool = commandPool,
-                CommandBufferCount = 1,
-            };
-
-            if (AllocateVulkanCommandBuffersTracked(ref allocateInfo, out CommandBuffer commandBuffer, "Readback.Depth") != Result.Success)
-            {
-                DestroyBuffer(stagingBuffer, stagingMemory);
-                depthCallback?.Invoke(1.0f);
-                return;
-            }
-
-            // Create a fence for this operation
-            FenceCreateInfo fenceInfo = new()
-            {
-                SType = StructureType.FenceCreateInfo,
-                Flags = 0, // Start unsignaled
-            };
-
-            if (!TryAdmitVulkanDeviceOperation("vkCreateFence.Readback.Depth", out _))
-            {
-                FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "Readback.DeviceLost");
-                DestroyBuffer(stagingBuffer, stagingMemory);
-                depthCallback?.Invoke(1.0f);
-                return;
-            }
-            Result createFenceResult = Api!.CreateFence(_deviceContext.Device, ref fenceInfo, null, out Fence fence);
-            if (createFenceResult != Result.Success)
-            {
-                if (createFenceResult == Result.ErrorDeviceLost)
-                    MarkDeviceLost("Depth readback fence creation returned ErrorDeviceLost", "vkCreateFence.Readback.Depth", createFenceResult);
-                FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "Readback.RecordFailure");
-                DestroyBuffer(stagingBuffer, stagingMemory);
-                depthCallback?.Invoke(1.0f);
-                return;
-            }
-
-            // Record commands
-            CommandBufferBeginInfo beginInfo = new()
-            {
-                SType = StructureType.CommandBufferBeginInfo,
-                Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
-            };
-
-            if (!TryAdmitVulkanDeviceOperation("vkBeginCommandBuffer.Readback.Depth", out _))
-            {
-                Api!.DestroyFence(_deviceContext.Device, fence, null);
-                FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "Readback.DeviceLost");
-                DestroyBuffer(stagingBuffer, stagingMemory);
-                depthCallback?.Invoke(1.0f);
-                return;
-            }
-            Result beginCommandBufferResult = Api!.BeginCommandBuffer(commandBuffer, ref beginInfo);
-            if (beginCommandBufferResult != Result.Success)
-            {
-                if (beginCommandBufferResult == Result.ErrorDeviceLost)
-                    MarkDeviceLost("Depth readback command recording returned ErrorDeviceLost", "vkBeginCommandBuffer.Readback.Depth", beginCommandBufferResult);
-                Api.DestroyFence(_deviceContext.Device, fence, null);
-                FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "Readback.BeginFailure");
-                DestroyBuffer(stagingBuffer, stagingMemory);
-                depthCallback?.Invoke(1.0f);
-                return;
-            }
-            ResetCommandBufferBindState(commandBuffer);
-
-            // Transition depth image to transfer source
-            ImageMemoryBarrier toTransferBarrier = new()
-            {
-                SType = StructureType.ImageMemoryBarrier,
-                OldLayout = ImageLayout.DepthStencilAttachmentOptimal,
-                NewLayout = ImageLayout.TransferSrcOptimal,
-                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                Image = resources.Image,
-                SubresourceRange = new ImageSubresourceRange
-                {
-                    AspectMask = ImageAspectFlags.DepthBit,
-                    BaseMipLevel = 0,
-                    LevelCount = 1,
-                    BaseArrayLayer = 0,
-                    LayerCount = 1,
-                },
-                SrcAccessMask = AccessFlags.DepthStencilAttachmentWriteBit,
-                DstAccessMask = AccessFlags.TransferReadBit,
-            };
-
-            CmdPipelineBarrierTracked(
-                commandBuffer,
-                PipelineStageFlags.LateFragmentTestsBit,
-                PipelineStageFlags.TransferBit,
-                0, 0, null, 0, null, 1, &toTransferBarrier);
-
-            BufferImageCopy copy = new()
-            {
-                BufferOffset = 0,
-                BufferRowLength = 0,
-                BufferImageHeight = 0,
-                ImageSubresource = new ImageSubresourceLayers
-                {
-                    AspectMask = ImageAspectFlags.DepthBit,
-                    MipLevel = 0,
-                    BaseArrayLayer = 0,
-                    LayerCount = 1,
-                },
-                ImageOffset = new Offset3D { X = x, Y = y, Z = 0 },
-                ImageExtent = new Extent3D { Width = 1, Height = 1, Depth = 1 }
-            };
-
-            CmdCopyImageToBufferTracked(
-                commandBuffer,
+        private static BlitImageInfo CreateSwapchainDepthReadbackSource(
+            VulkanSwapchainDepthResources resources)
+            => new(
                 resources.Image,
-                ImageLayout.TransferSrcOptimal,
-                stagingBuffer,
+                resources.Format,
+                ImageAspectFlags.DepthBit,
+                0,
                 1,
-                &copy);
-
-            // Transition depth image back to attachment optimal
-            ImageMemoryBarrier toAttachmentBarrier = toTransferBarrier with
-            {
-                OldLayout = ImageLayout.TransferSrcOptimal,
-                NewLayout = ImageLayout.DepthStencilAttachmentOptimal,
-                SrcAccessMask = AccessFlags.TransferReadBit,
-                DstAccessMask = AccessFlags.DepthStencilAttachmentWriteBit | AccessFlags.DepthStencilAttachmentReadBit,
-            };
-
-            CmdPipelineBarrierTracked(
-                commandBuffer,
-                PipelineStageFlags.TransferBit,
-                PipelineStageFlags.EarlyFragmentTestsBit,
-                0, 0, null, 0, null, 1, &toAttachmentBarrier);
-
-            if (!TryAdmitVulkanDeviceOperation("vkEndCommandBuffer.Readback.Depth", out _))
-            {
-                Api!.DestroyFence(_deviceContext.Device, fence, null);
-                FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "Readback.DeviceLost");
-                DestroyBuffer(stagingBuffer, stagingMemory);
-                depthCallback?.Invoke(1.0f);
-                return;
-            }
-            Result endCommandBufferResult = Api!.EndCommandBuffer(commandBuffer);
-            if (endCommandBufferResult != Result.Success)
-            {
-                if (endCommandBufferResult == Result.ErrorDeviceLost)
-                    MarkDeviceLost("Depth readback command recording returned ErrorDeviceLost", "vkEndCommandBuffer.Readback.Depth", endCommandBufferResult);
-                Api.DestroyFence(_deviceContext.Device, fence, null);
-                FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "Readback.EndFailure");
-                DestroyBuffer(stagingBuffer, stagingMemory);
-                depthCallback?.Invoke(1.0f);
-                return;
-            }
-
-            // Submit with fence
-            SubmitInfo submitInfo = new()
-            {
-                SType = StructureType.SubmitInfo,
-                CommandBufferCount = 1,
-                PCommandBuffers = &commandBuffer,
-            };
-
-            Result depthSubmitResult;
-            lock (_oneTimeSubmitLock)
-            {
-                depthSubmitResult = SubmitToQueueTracked(_deviceContext.GraphicsQueue, ref submitInfo, fence);
-            }
-
-            if (depthSubmitResult != Result.Success)
-            {
-                if (depthSubmitResult == Result.ErrorDeviceLost)
-                    MarkDeviceLost(
-                        "Depth readback QueueSubmit returned ErrorDeviceLost",
-                        "vkQueueSubmit.Readback.Depth",
-                        depthSubmitResult);
-
-                Api!.DestroyFence(_deviceContext.Device, fence, null);
-                FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "Readback.SubmitFailure");
-                DestroyBuffer(stagingBuffer, stagingMemory);
-                depthCallback?.Invoke(1.0f);
-                return;
-            }
-
-            // Capture values for the async continuation
-            var api = Api;
-            var dev = _deviceContext.Device;
-            var pool = commandPool;
-            var depthFormat = resources.Format;
-            var capturedCommandBuffer = commandBuffer; // Copy for lambda capture
-
-            // Wait for the fence asynchronously on a background thread
-            var readbackTask = System.Threading.Tasks.Task.Run(() =>
-            {
-                bool submissionCompleted = false;
-                try
-                {
-                    if (!TryAdmitVulkanDeviceOperation("vkWaitForFences.Readback.Depth", out _))
-                    {
-                        depthCallback?.Invoke(1.0f);
-                        return;
-                    }
-                    // Poll the fence with a timeout to avoid blocking indefinitely
-                    const ulong timeoutNs = 5_000_000_000; // 5 seconds
-                    var result = api!.WaitForFences(dev, 1, ref fence, true, timeoutNs);
-
-                    if (result != Result.Success)
-                    {
-                        if (result == Result.ErrorDeviceLost)
-                            MarkDeviceLost("Depth readback WaitForFences returned ErrorDeviceLost", "vkWaitForFences.Readback.Depth", result);
-
-                        depthCallback?.Invoke(1.0f);
-                        return;
-                    }
-
-                    NotifyVulkanFenceCompleted(fence);
-                    submissionCompleted = true;
-
-                    // Map and read depth value
-                    if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, bufferSize, out void* mappedPtr))
-                    {
-                        depthCallback?.Invoke(1.0f);
-                        return;
-                    }
-
-                    float depth = ReadDepthValue(mappedPtr, depthFormat);
-                    UnmapBufferMemory(stagingBuffer, stagingMemory);
-
-                    depthCallback?.Invoke(depth);
-                }
-                finally
-                {
-                    if (!submissionCompleted)
-                    {
-                        Debug.VulkanWarning(
-                            "[Vulkan.ResourceLifetime] Preserving timed-out depth-readback fence, command buffer, and staging buffer because GPU completion was not proven.");
-                    }
-                    else
-                    {
-                        // Cleanup resources only after the fence proves the submission completed.
-                        api!.DestroyFence(dev, fence, null);
-
-                        CommandBuffer cmdToFree = capturedCommandBuffer;
-                        FreeVulkanCommandBufferTracked(pool, ref cmdToFree, "Readback.AsyncComplete");
-                        DestroyBuffer(stagingBuffer, stagingMemory);
-                    }
-                }
-            });
-
-            RegisterReadbackTask(readbackTask);
-        }
-
-        /// <summary>
-        /// Static helper to destroy a buffer without requiring instance access.
-        /// Used for async cleanup on background threads.
-        /// </summary>
-        private static void DestroyBufferStatic(Vk api, Device device, Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)
-        {
-            api.DestroyBuffer(device, buffer, null);
-            api.FreeMemory(device, memory, null);
-        }
+                0,
+                resources.Extent,
+                ImageLayout.DepthStencilAttachmentOptimal,
+                PipelineStageFlags.EarlyFragmentTestsBit |
+                PipelineStageFlags.LateFragmentTestsBit,
+                AccessFlags.DepthStencilAttachmentWriteBit |
+                AccessFlags.DepthStencilAttachmentReadBit);
 
         // =========== Pixel Readback ===========
 
@@ -726,7 +306,7 @@ namespace XREngine.Rendering.Vulkan
                         wantStencil: false,
                         out BlitImageInfo colorSource,
                         isSource: true) &&
-                    TryReadColorPixel(colorSource, x, y, out ColorF4 color))
+                    _commandRuntime.TryReadColorPixel(colorSource, x, y, out ColorF4 color))
                 {
                     colorCallback?.Invoke(color);
                     return;
@@ -784,7 +364,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (_lastWindowPresentFrameBuffer is not null)
             {
-                ClampReadbackRegion(region, _lastWindowPresentFrameBuffer.Width, _lastWindowPresentFrameBuffer.Height, out int fboX, out int fboY, out int fboW, out int fboH);
+                VulkanCommandRuntime.ClampReadbackRegion(region, _lastWindowPresentFrameBuffer.Width, _lastWindowPresentFrameBuffer.Height, out int fboX, out int fboY, out int fboW, out int fboH);
                 if (TryResolveBlitImage(
                         _lastWindowPresentFrameBuffer,
                         OutputRuntime.Desktop.LastPresentedImageIndex,
@@ -794,7 +374,7 @@ namespace XREngine.Rendering.Vulkan
                         wantStencil: false,
                         out BlitImageInfo colorSource,
                         isSource: true) &&
-                    TryReadColorRegionRgba8(colorSource, fboX, fboY, fboW, fboH, out rgbaPixels))
+                    _commandRuntime.TryReadColorRegionRgba8(colorSource, fboX, fboY, fboW, fboH, out rgbaPixels))
                 {
                     width = fboW;
                     height = fboH;
@@ -805,7 +385,7 @@ namespace XREngine.Rendering.Vulkan
             if (_lastWindowPresentColorTexture is not IFrameBufferAttachement textureAttachment)
                 return false;
 
-            ClampReadbackRegion(region, textureAttachment.Width, textureAttachment.Height, out int texX, out int texY, out int texW, out int texH);
+            VulkanCommandRuntime.ClampReadbackRegion(region, textureAttachment.Width, textureAttachment.Height, out int texX, out int texY, out int texW, out int texH);
             if (!TryResolveTextureBlitImage(
                     _lastWindowPresentColorTexture,
                     mipLevel: 0,
@@ -815,7 +395,7 @@ namespace XREngine.Rendering.Vulkan
                     PipelineStageFlags.FragmentShaderBit,
                     AccessFlags.ShaderReadBit,
                     out BlitImageInfo textureSource) ||
-                !TryReadColorRegionRgba8(textureSource, texX, texY, texW, texH, out rgbaPixels))
+                !_commandRuntime.TryReadColorRegionRgba8(textureSource, texX, texY, texW, texH, out rgbaPixels))
             {
                 return false;
             }
@@ -845,7 +425,7 @@ namespace XREngine.Rendering.Vulkan
                         wantStencil: false,
                         out BlitImageInfo colorSource,
                         isSource: true) &&
-                    TryReadColorPixel(colorSource, x, y, out color))
+                    _commandRuntime.TryReadColorPixel(colorSource, x, y, out color))
                 {
                     return true;
                 }
@@ -865,7 +445,7 @@ namespace XREngine.Rendering.Vulkan
                     PipelineStageFlags.FragmentShaderBit,
                     AccessFlags.ShaderReadBit,
                     out BlitImageInfo textureSource) &&
-                TryReadColorPixel(textureSource, x, y, out color);
+                _commandRuntime.TryReadColorPixel(textureSource, x, y, out color);
         }
 
         private static void WarnUnsupportedPostPresentSwapchainReadback(string operation)
@@ -903,81 +483,36 @@ namespace XREngine.Rendering.Vulkan
             int mipLevel = vkTex.UsesAllocatorImage
                 ? 0
                 : XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height, texture.SmallestAllowedMipmapLevel);
-
-            // Read one RGBA pixel per layer from the smallest mip
-            ulong pixelSize = 16; // sizeof(Vector4) = 4 floats
-            ulong bufferSize = pixelSize * (ulong)layerCount;
-
-            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
-
-            try
+            Vector3 accumulatedRgb = Vector3.Zero;
+            for (int layerIndex = 0; layerIndex < layerCount; layerIndex++)
             {
-                using var scope = NewCommandScope();
-
-                // Transition image to transfer source
-                vkTex.TransitionImageLayout(ImageLayout.ShaderReadOnlyOptimal, ImageLayout.TransferSrcOptimal);
-
-                BufferImageCopy copy = new()
+                if (!TryResolveTextureBlitImage(
+                        texture,
+                        mipLevel,
+                        layerIndex,
+                        ImageAspectFlags.ColorBit,
+                        ImageLayout.ShaderReadOnlyOptimal,
+                        PipelineStageFlags.FragmentShaderBit |
+                        PipelineStageFlags.ComputeShaderBit,
+                        AccessFlags.ShaderReadBit |
+                        AccessFlags.MemoryReadBit,
+                        out BlitImageInfo source) ||
+                    !_commandRuntime.TryReadColorRegionRgbaFloat(source, 0, 0, 1, 1, out float[] rgba) ||
+                    rgba.Length < 4 ||
+                    float.IsNaN(rgba[0]) ||
+                    float.IsNaN(rgba[1]) ||
+                    float.IsNaN(rgba[2]))
                 {
-                    BufferOffset = 0,
-                    BufferRowLength = 0,
-                    BufferImageHeight = 0,
-                    ImageSubresource = new ImageSubresourceLayers
-                    {
-                        AspectMask = ImageAspectFlags.ColorBit,
-                        MipLevel = (uint)mipLevel,
-                        BaseArrayLayer = 0,
-                        LayerCount = (uint)layerCount,
-                    },
-                    ImageOffset = new Offset3D { X = 0, Y = 0, Z = 0 },
-                    ImageExtent = new Extent3D { Width = 1, Height = 1, Depth = 1 }
-                };
-
-                CmdCopyImageToBufferTracked(
-                    scope.CommandBuffer,
-                    vkTex.Image,
-                    ImageLayout.TransferSrcOptimal,
-                    stagingBuffer,
-                    1,
-                    &copy);
-
-                vkTex.TransitionImageLayout(ImageLayout.TransferSrcOptimal, ImageLayout.ShaderReadOnlyOptimal);
-            }
-            catch
-            {
-                DestroyBuffer(stagingBuffer, stagingMemory);
-                return false;
-            }
-
-            // Map and compute average luminance
-            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, bufferSize, out void* mappedPtr))
-            {
-                DestroyBuffer(stagingBuffer, stagingMemory);
-                return false;
-            }
-
-            try
-            {
-                Vector4* samples = (Vector4*)mappedPtr;
-                Vector3 accum = Vector3.Zero;
-                for (int i = 0; i < layerCount; i++)
-                {
-                    Vector4 sample = samples[i];
-                    if (float.IsNaN(sample.X) || float.IsNaN(sample.Y) || float.IsNaN(sample.Z))
-                        return false;
-                    accum += new Vector3(sample.X, sample.Y, sample.Z);
+                    return false;
                 }
 
-                Vector3 average = accum / layerCount;
-                dotLuminance = Vector3.Dot(average, luminance);
-                return true;
+                accumulatedRgb += new Vector3(rgba[0], rgba[1], rgba[2]);
             }
-            finally
-            {
-                UnmapBufferMemory(stagingBuffer, stagingMemory);
-                DestroyBuffer(stagingBuffer, stagingMemory);
-            }
+
+            dotLuminance = Vector3.Dot(accumulatedRgb / layerCount, luminance);
+            return true;
         }
+
         public override bool CalcDotLuminance(XRTexture2D texture, Vector3 luminance, out float dotLuminance, bool genMipmapsNow)
         {
             dotLuminance = 0f;
@@ -994,74 +529,30 @@ namespace XREngine.Rendering.Vulkan
             int mipLevel = vkTex.UsesAllocatorImage
                 ? 0
                 : XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height, texture.SmallestAllowedMipmapLevel);
-
-            // Read a single RGBA pixel from the smallest mip
-            ulong pixelSize = 16; // sizeof(Vector4) = 4 floats
-            ulong bufferSize = pixelSize;
-
-            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
-
-            try
+            if (!TryResolveTextureBlitImage(
+                    texture,
+                    mipLevel,
+                    0,
+                    ImageAspectFlags.ColorBit,
+                    ImageLayout.ShaderReadOnlyOptimal,
+                    PipelineStageFlags.FragmentShaderBit |
+                    PipelineStageFlags.ComputeShaderBit,
+                    AccessFlags.ShaderReadBit |
+                    AccessFlags.MemoryReadBit,
+                    out BlitImageInfo source) ||
+                !_commandRuntime.TryReadColorRegionRgbaFloat(source, 0, 0, 1, 1, out float[] rgba) ||
+                rgba.Length < 4 ||
+                float.IsNaN(rgba[0]) ||
+                float.IsNaN(rgba[1]) ||
+                float.IsNaN(rgba[2]))
             {
-                using var scope = NewCommandScope();
-
-                // Transition image to transfer source
-                vkTex.TransitionImageLayout(ImageLayout.ShaderReadOnlyOptimal, ImageLayout.TransferSrcOptimal);
-
-                BufferImageCopy copy = new()
-                {
-                    BufferOffset = 0,
-                    BufferRowLength = 0,
-                    BufferImageHeight = 0,
-                    ImageSubresource = new ImageSubresourceLayers
-                    {
-                        AspectMask = ImageAspectFlags.ColorBit,
-                        MipLevel = (uint)mipLevel,
-                        BaseArrayLayer = 0,
-                        LayerCount = 1,
-                    },
-                    ImageOffset = new Offset3D { X = 0, Y = 0, Z = 0 },
-                    ImageExtent = new Extent3D { Width = 1, Height = 1, Depth = 1 }
-                };
-
-                CmdCopyImageToBufferTracked(
-                    scope.CommandBuffer,
-                    vkTex.Image,
-                    ImageLayout.TransferSrcOptimal,
-                    stagingBuffer,
-                    1,
-                    &copy);
-
-                vkTex.TransitionImageLayout(ImageLayout.TransferSrcOptimal, ImageLayout.ShaderReadOnlyOptimal);
-            }
-            catch
-            {
-                DestroyBuffer(stagingBuffer, stagingMemory);
                 return false;
             }
 
-            // Map and read the pixel
-            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, bufferSize, out void* mappedPtr))
-            {
-                DestroyBuffer(stagingBuffer, stagingMemory);
-                return false;
-            }
-
-            try
-            {
-                Vector4 sample = *(Vector4*)mappedPtr;
-                if (float.IsNaN(sample.X) || float.IsNaN(sample.Y) || float.IsNaN(sample.Z))
-                    return false;
-
-                Vector3 rgb = new(sample.X, sample.Y, sample.Z);
-                dotLuminance = Vector3.Dot(rgb, luminance);
-                return true;
-            }
-            finally
-            {
-                UnmapBufferMemory(stagingBuffer, stagingMemory);
-                DestroyBuffer(stagingBuffer, stagingMemory);
-            }
+            dotLuminance = Vector3.Dot(
+                new Vector3(rgba[0], rgba[1], rgba[2]),
+                luminance);
+            return true;
         }
 
         private static void LogPlannerMipReadbackFallback(string? textureName, bool isArray)
@@ -1181,7 +672,7 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
-                if (!TryReadDepthRegionRgbaFloat(source, 0, 0, width, height, out rgbaFloats))
+                if (!_commandRuntime.TryReadDepthRegionRgbaFloat(source, 0, 0, width, height, out rgbaFloats))
                 {
                     failure = "Depth texture readback failed";
                     return false;
@@ -1190,7 +681,7 @@ namespace XREngine.Rendering.Vulkan
                 return true;
             }
 
-            if (!TryReadColorRegionRgbaFloat(source, 0, 0, width, height, out rgbaFloats))
+            if (!_commandRuntime.TryReadColorRegionRgbaFloat(source, 0, 0, width, height, out rgbaFloats))
             {
                 failure = "Texture readback failed";
                 return false;

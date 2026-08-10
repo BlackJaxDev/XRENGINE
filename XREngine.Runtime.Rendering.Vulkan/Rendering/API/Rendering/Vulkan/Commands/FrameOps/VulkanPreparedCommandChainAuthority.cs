@@ -7,13 +7,18 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanPreparedCommandChainAuthority
 {
+    private readonly VulkanPreparedCommandChainKey _preparedKey;
+
     internal VulkanPreparedCommandChainAuthority(in VulkanPreparedCommandChainKey preparedKey)
     {
-        if (!preparedKey.IsComplete || !preparedKey.RecordedPacketKey.IsComplete)
+        ref readonly RecordedPacketKey recordedPacketKey =
+            ref VulkanPreparedCommandChainKey.GetRecordedPacketKeyReference(in preparedKey);
+        if (!preparedKey.IsComplete || !recordedPacketKey.IsComplete)
             throw new ArgumentException("Prepared command-chain authority requires a complete exact native key.", nameof(preparedKey));
 
-        PreparedKey = preparedKey;
+        _preparedKey = preparedKey;
     }
 
-    internal VulkanPreparedCommandChainKey PreparedKey { get; }
+    internal ref readonly VulkanPreparedCommandChainKey PreparedKey
+        => ref _preparedKey;
 }

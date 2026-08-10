@@ -104,7 +104,7 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
         for (int i = 0; i < _imageViews.Length; i++)
             if (_imageViews[i].Handle != 0)
             {
-                if (renderer.TryBeginDestroyImageView(_imageViews[i], "HeadlessWsiTarget.SwapchainColorView"))
+                if (renderer.ResourceRuntime.Images.TryBeginDestroy(_imageViews[i], "HeadlessWsiTarget.SwapchainColorView"))
                     api.DestroyImageView(device, _imageViews[i], null);
             }
         _imageViews = [];
@@ -126,7 +126,7 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
     public VulkanFrameTargetLease AcquireFrameTarget(
         out CommandBuffer commandBuffer)
     {
-        VulkanTargetOutputContext renderer = RequireRenderer();
+        VulkanTargetOutputContext renderer = RequireOutputContext();
         renderer.ThrowIfVulkanDeviceOperationNotAdmitted("HeadlessWsi.AcquireFrameTarget");
         Vk api = renderer.VulkanApi;
         Device device = renderer.Device;
@@ -215,10 +215,10 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
         in VulkanFrameTargetLease lease,
         CommandBuffer commandBuffer)
     {
-        VulkanTargetOutputContext renderer = RequireRenderer();
+        VulkanTargetOutputContext renderer = RequireOutputContext();
         renderer.ThrowIfVulkanDeviceOperationNotAdmitted("HeadlessWsi.EndFrameRecording");
         ThrowIfDeviceFailure(
-            renderer.VulkanApi.EndCommandBuffer(commandBuffer),
+            renderer.EndCommandBufferTracked(commandBuffer),
             "end headless WSI command buffer");
     }
 
@@ -234,7 +234,7 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
                 $"Headless WSI target received unexpected completion kind '{lease.CompletionKind}'.");
         }
 
-        VulkanTargetOutputContext renderer = RequireRenderer();
+        VulkanTargetOutputContext renderer = RequireOutputContext();
         renderer.ThrowIfVulkanDeviceOperationNotAdmitted("HeadlessWsi.CompleteFrameTarget");
         Semaphore renderFinished = lease.SubmissionSignalSemaphore;
         uint imageIndex = lease.ImageIndex;
@@ -263,7 +263,7 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
         if (submissionAccepted || _deviceLost || !lease.IsValid)
             return;
 
-        VulkanTargetOutputContext renderer = RequireRenderer();
+        VulkanTargetOutputContext renderer = RequireOutputContext();
         if (!renderer.TryAdmitVulkanDeviceOperation("HeadlessWsi.AbortFrameTarget", out _))
         {
             _deviceLost = true;
@@ -651,7 +651,7 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
         ImageAspectFlags aspect,
         string owner)
     {
-        RequireRenderer().ThrowIfVulkanDeviceOperationNotAdmitted("vkCreateImageView.HeadlessWsi");
+        RequireOutputContext().ThrowIfVulkanDeviceOperationNotAdmitted("vkCreateImageView.HeadlessWsi");
         ImageViewCreateInfo info = new()
         {
             SType = StructureType.ImageViewCreateInfo,
@@ -661,7 +661,7 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
             SubresourceRange = new ImageSubresourceRange(aspect, 0, 1, 0, _output.Layers),
         };
         ThrowIfDeviceFailure(api.CreateImageView(device, in info, null, out ImageView view), "create headless WSI image view");
-        RequireRenderer().TrackLiveImageView(view, in info, owner);
+        RequireOutputContext().TrackLiveImageView(view, in info, owner);
         return view;
     }
 
@@ -689,7 +689,7 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
         Device device = renderer.Device;
         if (slot.DepthView.Handle != 0)
         {
-            if (renderer.TryBeginDestroyImageView(slot.DepthView, "HeadlessWsiTarget.DepthView"))
+            if (renderer.ResourceRuntime.Images.TryBeginDestroy(slot.DepthView, "HeadlessWsiTarget.DepthView"))
                 api.DestroyImageView(device, slot.DepthView, null);
         }
         if (slot.DepthImage.Handle != 0)
@@ -703,7 +703,7 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
             renderer.DestroyCommandPoolHostSynchronized(slot.CommandPool);
     }
 
-    private VulkanTargetOutputContext RequireRenderer()
+    private VulkanTargetOutputContext RequireOutputContext()
         => _outputContext
             ?? throw new InvalidOperationException("The headless WSI target generation is not initialized.");
 

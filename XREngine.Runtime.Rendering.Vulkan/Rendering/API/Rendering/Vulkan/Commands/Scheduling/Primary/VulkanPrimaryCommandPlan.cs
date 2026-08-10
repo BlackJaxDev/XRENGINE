@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Threading;
 using XREngine.Rendering.Vulkan.RenderGraph;
 
 namespace XREngine.Rendering.Vulkan;
@@ -8,6 +9,9 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanPrimaryCommandPlan
 {
+    private int _isFrozen;
+
+    internal bool IsFrozen => Volatile.Read(ref _isFrozen) != 0;
     /// <summary>
     /// The array of plan nodes, which may be larger than the actual count of nodes in use.
     /// A node is a typed projection of a FrameOp, including its resolved kind, actions, and source index.
@@ -74,8 +78,10 @@ internal sealed class VulkanPrimaryCommandPlan
         FrameOperationSequence operations,
         ulong operationSignature,
         VulkanPrimaryPlanTerminalContext terminalContext,
-        VulkanBarrierPlanner? barrierPlanner)
+        VulkanBarrierPlanner? barrierPlanner,
+        VulkanBarrierPlan? barrierPlan = null)
     {
+        Volatile.Write(ref _isFrozen, 0);
 
         // Compute the total number of nodes needed, including terminal nodes for end-of-rendering actions.
         int terminalNodeCount =
@@ -115,7 +121,7 @@ internal sealed class VulkanPrimaryCommandPlan
                 throw new InvalidOperationException($"Unsupported FrameOp type: {operation.GetType().Name}");
 
             // Resolve the actions for the FrameOp based on its kind, the operation itself, and any barrier planning that may be required.
-            EVulkanPrimaryPlanAction actions = ResolveActions(kind, operation, barrierPlanner);
+            EVulkanPrimaryPlanAction actions = ResolveActions(kind, operation, barrierPlanner, barrierPlan);
 
             // Determine if the operation is a draw-like operation, which affects how it is handled in the plan.
             bool isDrawLike = kind is
@@ -156,7 +162,7 @@ internal sealed class VulkanPrimaryCommandPlan
             AddEmission(
                 ref directRecorderIdentity,
                 kind,
-                ResolveDirectRecorderActions(operation, barrierPlanner),
+                ResolveDirectRecorderActions(operation, barrierPlanner, barrierPlan),
                 opIndex,
                 passIndex,
                 pipelineIdentity,
@@ -214,14 +220,28 @@ internal sealed class VulkanPrimaryCommandPlan
 
         // Validate that the typed primary plan matches the direct FrameOp dispatch semantics
         System.Diagnostics.Debug.Assert(
-            IsEquivalentToDirectOperations(operations, barrierPlanner),
+            IsEquivalentToDirectOperations(operations, barrierPlanner, barrierPlan),
             "The typed primary plan no longer matches direct FrameOp dispatch semantics.");
 
         // Validate that the typed primary plan's emitted-command signature matches the direct recorder's signature
         System.Diagnostics.Debug.Assert(
             EmittedCommandSignature == DirectRecorderCommandSignature,
             "The typed primary plan emitted-command signature no longer matches the direct recorder.");
+        Volatile.Write(ref _isFrozen, 1);
     }
+
+    /// <summary>Builds against the immutable barrier publication captured for this frame.</summary>
+    internal void Build(
+        FrameOperationSequence operations,
+        ulong operationSignature,
+        VulkanPrimaryPlanTerminalContext terminalContext,
+        VulkanBarrierPlan barrierPlan)
+        => Build(
+            operations,
+            operationSignature,
+            terminalContext,
+            barrierPlanner: null,
+            barrierPlan);
 
     /// <summary>
     /// Adds an emission to the identity hasher, including the kind, actions, index, and other relevant information for a FrameOp or terminal node.
@@ -294,7 +314,8 @@ internal sealed class VulkanPrimaryCommandPlan
 
     internal bool IsEquivalentToDirectOperations(
         FrameOperationSequence operations,
-        VulkanBarrierPlanner? barrierPlanner = null)
+        VulkanBarrierPlanner? barrierPlanner = null,
+        VulkanBarrierPlan? barrierPlan = null)
     {
         if (operations.Length != OperationCount)
             return false;
@@ -311,7 +332,7 @@ internal sealed class VulkanPrimaryCommandPlan
             if (!ReferenceEquals(node.Operation, operation) ||
                 node.SourceIndex != index ||
                 node.Kind != operation.Kind ||
-                node.Actions != ResolveDirectRecorderActions(operation, barrierPlanner))
+                node.Actions != ResolveDirectRecorderActions(operation, barrierPlanner, barrierPlan))
                 return false;
         }
 
@@ -378,7 +399,8 @@ internal sealed class VulkanPrimaryCommandPlan
     private static EVulkanPrimaryPlanAction ResolveActions(
         EVulkanPrimaryPlanNodeKind kind,
         FrameOp operation,
-        VulkanBarrierPlanner? barrierPlanner)
+        VulkanBarrierPlanner? barrierPlanner,
+        VulkanBarrierPlan? barrierPlan)
     {
         // Determine the actions for the FrameOp based on its kind and any required synchronization or rendering scope.
         // Start with the default action of recording the operation, and add additional actions as needed.
@@ -389,7 +411,8 @@ internal sealed class VulkanPrimaryCommandPlan
             actions |= EVulkanPrimaryPlanAction.BarrierBatch;
 
         // Check if a queue ownership transfer is required for this operation based on the barrier planner and the operation's pass index.
-        if (barrierPlanner is not null && HasQueueOwnershipTransfer(barrierPlanner, operation.PassIndex))
+        if ((barrierPlanner is not null && HasQueueOwnershipTransfer(barrierPlanner, operation.PassIndex)) ||
+            (barrierPlan is not null && HasQueueOwnershipTransfer(barrierPlan, operation.PassIndex)))
             actions |= EVulkanPrimaryPlanAction.QueueOwnershipTransfer;
 
         // Determine if the operation requires a rendering scope to be begun, based on its kind and specific operation type.
@@ -471,7 +494,8 @@ internal sealed class VulkanPrimaryCommandPlan
 
     private static EVulkanPrimaryPlanAction ResolveDirectRecorderActions(
         FrameOp operation,
-        VulkanBarrierPlanner? barrierPlanner)
+        VulkanBarrierPlanner? barrierPlanner,
+        VulkanBarrierPlan? barrierPlan)
     {
         EVulkanPrimaryPlanAction actions = EVulkanPrimaryPlanAction.RecordOperation;
         if (operation is not TextureUploadFrameOp)
@@ -479,6 +503,11 @@ internal sealed class VulkanPrimaryCommandPlan
         if (barrierPlanner is not null &&
             DirectRecorderHasQueueOwnershipTransfer(
                 barrierPlanner,
+                operation.PassIndex))
+            actions |= EVulkanPrimaryPlanAction.QueueOwnershipTransfer;
+        if (barrierPlan is not null &&
+            DirectRecorderHasQueueOwnershipTransfer(
+                barrierPlan,
                 operation.PassIndex))
             actions |= EVulkanPrimaryPlanAction.QueueOwnershipTransfer;
 
@@ -571,6 +600,37 @@ internal sealed class VulkanPrimaryCommandPlan
         return false;
     }
 
+    private static bool HasQueueOwnershipTransfer(
+        VulkanBarrierPlan barrierPlan,
+        int passIndex)
+    {
+        IReadOnlyList<VulkanBarrierPlanner.PlannedImageBarrier> imageBarriers =
+            barrierPlan.GetImageBarriersForPass(passIndex);
+        for (int index = 0; index < imageBarriers.Count; index++)
+            if (IsQueueOwnershipTransfer(
+                    imageBarriers[index].SrcQueueFamilyIndex,
+                    imageBarriers[index].DstQueueFamilyIndex))
+                return true;
+
+        IReadOnlyList<VulkanBarrierPlanner.PlannedBufferBarrier> bufferBarriers =
+            barrierPlan.GetBufferBarriersForPass(passIndex);
+        for (int index = 0; index < bufferBarriers.Count; index++)
+            if (IsQueueOwnershipTransfer(
+                    bufferBarriers[index].SrcQueueFamilyIndex,
+                    bufferBarriers[index].DstQueueFamilyIndex))
+                return true;
+
+        IReadOnlyList<VulkanBarrierPlanner.PlannedSwapchainBarrier> swapchainBarriers =
+            barrierPlan.GetSwapchainBarriersForPass(passIndex);
+        for (int index = 0; index < swapchainBarriers.Count; index++)
+            if (IsQueueOwnershipTransfer(
+                    swapchainBarriers[index].SrcQueueFamilyIndex,
+                    swapchainBarriers[index].DstQueueFamilyIndex))
+                return true;
+
+        return false;
+    }
+
     // Kept structurally independent from HasQueueOwnershipTransfer so the
     // direct-recorder signature detects typed-plan classification drift.
     private static bool DirectRecorderHasQueueOwnershipTransfer(VulkanBarrierPlanner barrierPlanner, int passIndex)
@@ -614,6 +674,11 @@ internal sealed class VulkanPrimaryCommandPlan
 
         return false;
     }
+
+    private static bool DirectRecorderHasQueueOwnershipTransfer(
+        VulkanBarrierPlan barrierPlan,
+        int passIndex)
+        => HasQueueOwnershipTransfer(barrierPlan, passIndex);
 
     private static bool IsQueueOwnershipTransfer(
         uint sourceQueueFamilyIndex,

@@ -308,7 +308,11 @@ internal static partial class VulkanShaderAutoUniforms
         }
     }
 
-    private static string RewriteOpaqueUniformBindings(string source, EShaderType shaderType)
+    private static string RewriteOpaqueUniformBindings(
+        string source,
+        EShaderType shaderType,
+        IReadOnlyDictionary<string, EVulkanBindingFrequency>?
+            explicitFrequencyHints)
     {
         if (string.IsNullOrWhiteSpace(source))
             return source;
@@ -321,22 +325,79 @@ internal static partial class VulkanShaderAutoUniforms
                 return match.Value;
 
             string declaration = match.Groups["declaration"].Value.Trim();
+            uint descriptorSet = ResolveOpaqueDescriptorSet(
+                declaration,
+                explicitFrequencyHints);
             string existingLayout = match.Groups["layout"].Value;
             string layoutPrefix;
             if (!string.IsNullOrWhiteSpace(existingLayout))
             {
                 bool hasBinding = existingLayout.Contains("binding", StringComparison.OrdinalIgnoreCase);
                 layoutPrefix = hasBinding
-                    ? EnsureLayoutHasSet(existingLayout, VulkanRenderer.DescriptorSetMaterial)
-                    : EnsureLayoutHasSetAndBinding(existingLayout, VulkanRenderer.DescriptorSetMaterial, nextBinding++);
+                    ? EnsureLayoutHasSet(existingLayout, descriptorSet)
+                    : EnsureLayoutHasSetAndBinding(existingLayout, descriptorSet, nextBinding++);
             }
             else
             {
-                layoutPrefix = $"layout(set = {VulkanRenderer.DescriptorSetMaterial}, binding = {nextBinding++}) ";
+                layoutPrefix = $"layout(set = {descriptorSet}, binding = {nextBinding++}) ";
             }
 
             return $"{layoutPrefix}uniform {glslType} {declaration};";
         });
+    }
+
+    /// <summary>
+    /// Maps an explicitly owned opaque resource to the descriptor tier whose
+    /// lifetime matches that ownership. Unannotated resources retain the legacy
+    /// material tier so existing shaders do not change behavior implicitly.
+    /// </summary>
+    private static uint ResolveOpaqueDescriptorSet(
+        string declaration,
+        IReadOnlyDictionary<string, EVulkanBindingFrequency>?
+            explicitFrequencyHints)
+    {
+        if (explicitFrequencyHints is null ||
+            explicitFrequencyHints.Count == 0)
+        {
+            return VulkanDescriptorManager.MaterialSetIndex;
+        }
+
+        uint resolvedSet = VulkanDescriptorManager.MaterialSetIndex;
+        bool hasExplicitOwner = false;
+        foreach (string declarator in SplitDeclarators(declaration))
+        {
+            Match nameMatch = Regex.Match(
+                declarator,
+                @"^\s*(?<name>[A-Za-z_][A-Za-z0-9_]*)",
+                RegexOptions.CultureInvariant);
+            if (!nameMatch.Success ||
+                !explicitFrequencyHints.TryGetValue(
+                    nameMatch.Groups["name"].Value,
+                    out EVulkanBindingFrequency frequency))
+            {
+                continue;
+            }
+
+            uint candidateSet = frequency switch
+            {
+                EVulkanBindingFrequency.Material =>
+                    VulkanDescriptorManager.MaterialSetIndex,
+                EVulkanBindingFrequency.Frame or
+                EVulkanBindingFrequency.View =>
+                    VulkanDescriptorManager.GlobalsSetIndex,
+                _ => VulkanDescriptorManager.PerPassSetIndex,
+            };
+            if (hasExplicitOwner && candidateSet != resolvedSet)
+            {
+                throw new InvalidOperationException(
+                    $"Opaque uniform declaration '{declaration}' mixes descriptor ownership tiers.");
+            }
+
+            resolvedSet = candidateSet;
+            hasExplicitOwner = true;
+        }
+
+        return resolvedSet;
     }
 
     private static string EnsureLayoutHasSet(string layout, uint set)

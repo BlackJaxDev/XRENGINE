@@ -19,6 +19,7 @@ internal readonly record struct VkPreparedMeshDraw(
     string DiagnosticMeshName = "<unnamed mesh>")
 {
     internal VulkanPreparedMeshDrawState RecordingState { get; init; }
+    internal XRFrameBuffer? Target { get; init; }
     internal bool OwnsIndexedViewportArrays { get; init; }
     internal VkMeshRenderer OwnerIdentity => RecordingState.OwnerIdentity;
 
@@ -26,6 +27,7 @@ internal readonly record struct VkPreparedMeshDraw(
         int sourceOpIndex,
         in PendingMeshDraw source,
         in FrameOpContext context,
+        XRFrameBuffer? target,
         int uniformSlot,
         in VulkanPreparedMeshDrawState recordingState,
         out VkPreparedMeshDraw prepared,
@@ -83,6 +85,7 @@ internal readonly record struct VkPreparedMeshDraw(
             source.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>")
         {
             RecordingState = recordingState,
+            Target = target,
             OwnsIndexedViewportArrays = ownsIndexedArrays,
         };
         return true;

@@ -11,4 +11,5 @@ internal readonly record struct VulkanDescriptorUpdateInvalidation(
     uint Binding,
     uint ArrayElement,
     DescriptorType DescriptorType,
-    uint DescriptorCount);
+    uint DescriptorCount,
+    string? Owner);

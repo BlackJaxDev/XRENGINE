@@ -1,0 +1,518 @@
+using System.Diagnostics;
+using Silk.NET.Vulkan;
+
+namespace XREngine.Rendering.Vulkan;
+
+/// <summary>
+/// Owns synchronous OpenXR queue submission, mapped-frame settlement, and
+/// exceptional incomplete-submit fence retirement without retaining output
+/// authority state.
+/// </summary>
+internal sealed unsafe partial class VulkanCommandRuntime
+{
+    private readonly List<RetiredOpenXrSubmissionFence> _retiredOpenXrSubmissionFences = new(2);
+
+    internal VulkanOpenXrSubmissionResult SubmitAndWaitOpenXr(
+        in VulkanOpenXrSubmissionInput input)
+    {
+        DrainRetiredOpenXrSubmissionFences();
+        VulkanSubmissionReceipt submitReceipt =
+            VulkanSubmissionReceipt.Rejected(Result.ErrorValidationFailedExt);
+        EVulkanQueueSubmissionDisposition submissionDisposition =
+            EVulkanQueueSubmissionDisposition.NotSubmitted;
+        EOpenXrStrictSpsFaultInjectionStage injectedFailureStage =
+            EOpenXrStrictSpsFaultInjectionStage.None;
+        if (!input.IsValid)
+        {
+            return new VulkanOpenXrSubmissionResult(
+                false,
+                false,
+                submissionDisposition,
+                injectedFailureStage,
+                submitReceipt);
+        }
+        if (!DeviceContext.IsOperational)
+        {
+            submitReceipt = VulkanSubmissionReceipt.Rejected(
+                Result.ErrorDeviceLost);
+            return new VulkanOpenXrSubmissionResult(
+                false,
+                false,
+                submissionDisposition,
+                injectedFailureStage,
+                submitReceipt);
+        }
+
+        CommandBuffer* commandBuffers = stackalloc CommandBuffer[2];
+        commandBuffers[0] = input.FirstCommandBuffer;
+        commandBuffers[1] = input.SecondCommandBuffer;
+        FenceCreateInfo fenceCreateInfo = new()
+        {
+            SType = StructureType.FenceCreateInfo,
+        };
+        Result createFenceResult = Api.CreateFence(
+            DeviceContext.Device,
+            ref fenceCreateInfo,
+            null,
+            out Fence fence);
+        DeviceContext.ObserveNativeResult(
+            "vkCreateFence.OpenXR",
+            createFenceResult);
+        if (createFenceResult != Result.Success)
+            throw new InvalidOperationException(
+                $"Failed to create OpenXR Vulkan submit fence: {createFenceResult}.");
+
+        VulkanMappedFrameArena? mappedFrameArena = MappedFrameArena;
+        ulong mappedFrameGeneration = mappedFrameArena?.Generation ?? 0UL;
+        bool mappedFrameSlotsPrepared = false;
+        bool nativeSubmitAccepted = false;
+        bool commandBuffersCompleted = false;
+        try
+        {
+            NameOpenXrSubmissionFence(fence);
+            if (mappedFrameArena is not null &&
+                !TryPrepareOpenXrMappedFrameSlotsForSubmission(
+                    mappedFrameArena,
+                    mappedFrameGeneration,
+                    commandBuffers,
+                    input.CommandBufferCount))
+            {
+                Debug.VulkanWarning(
+                    "[OpenXR] Mapped frame-data slots could not be flushed/sealed before queue submission.");
+                return new VulkanOpenXrSubmissionResult(
+                    false,
+                    false,
+                    submissionDisposition,
+                    injectedFailureStage,
+                    submitReceipt);
+            }
+            mappedFrameSlotsPrepared = mappedFrameArena is not null;
+
+            SubmitInfo submitInfo = new()
+            {
+                SType = StructureType.SubmitInfo,
+                CommandBufferCount = input.CommandBufferCount,
+                PCommandBuffers = commandBuffers,
+            };
+            VulkanSubmissionDiagnosticContext diagnosticContext =
+                input.DiagnosticContext;
+            long submitStart = Stopwatch.GetTimestamp();
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                       "OpenXR.Vulkan.QueueSubmit"))
+            {
+                submitReceipt = SubmitToQueueTrackedWithDisposition(
+                    DeviceContext.GraphicsQueue,
+                    ref submitInfo,
+                    fence,
+                    in diagnosticContext,
+                    out bool queueDispatchAttempted,
+                    out injectedFailureStage,
+                    "OpenXR.SubmitAndWait");
+                if (submitReceipt.SubmissionAccepted)
+                {
+                    nativeSubmitAccepted = true;
+                    submissionDisposition =
+                        EVulkanQueueSubmissionDisposition.SubmittedIncomplete;
+                    if (mappedFrameArena is not null)
+                    {
+                        MarkOpenXrMappedFrameSlotsSubmitted(
+                            mappedFrameArena,
+                            mappedFrameGeneration,
+                            commandBuffers,
+                            input.CommandBufferCount);
+                    }
+                }
+                else if (queueDispatchAttempted)
+                {
+                    submissionDisposition =
+                        EVulkanQueueSubmissionDisposition.SubmittedIncomplete;
+                }
+            }
+            long submitEnd = Stopwatch.GetTimestamp();
+
+            if (submitReceipt.Result != Result.Success)
+            {
+                Debug.VulkanWarning(
+                    "[OpenXR] Vulkan eye QueueSubmit failed: {0}",
+                    submitReceipt.Result);
+                return new VulkanOpenXrSubmissionResult(
+                    false,
+                    false,
+                    submissionDisposition,
+                    injectedFailureStage,
+                    submitReceipt);
+            }
+
+            if (!submitReceipt.PostSubmissionPublicationSucceeded)
+            {
+                Debug.VulkanWarning(
+                    "[OpenXR] Vulkan eye submission accepted with deferred publication debt.");
+            }
+
+            if (!DeviceContext.IsOperational)
+            {
+                return new VulkanOpenXrSubmissionResult(
+                    false,
+                    false,
+                    submissionDisposition,
+                    injectedFailureStage,
+                    submitReceipt);
+            }
+
+            long waitStart = Stopwatch.GetTimestamp();
+            Result waitResult;
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                       "OpenXR.Vulkan.SubmitFenceWait"))
+            using (VulkanCpuStageScope fenceWaitStage =
+                   new(FrameTelemetry, EVulkanCpuStage.AuxiliaryFenceWait))
+            {
+                waitResult = Api.WaitForFences(
+                    DeviceContext.Device,
+                    1,
+                    &fence,
+                    true,
+                    ulong.MaxValue);
+            }
+            long waitEnd = Stopwatch.GetTimestamp();
+            DeviceContext.ObserveNativeResult(
+                "vkWaitForFences.OpenXR",
+                waitResult);
+            if (waitResult != Result.Success)
+            {
+                Debug.VulkanWarning(
+                    "[OpenXR] Vulkan eye fence wait failed: {0}",
+                    waitResult);
+                return new VulkanOpenXrSubmissionResult(
+                    false,
+                    false,
+                    submissionDisposition,
+                    injectedFailureStage,
+                    submitReceipt);
+            }
+
+            CompleteTrackedFence(fence);
+            submissionDisposition = EVulkanQueueSubmissionDisposition.Completed;
+            if (mappedFrameArena is not null &&
+                !TryCompleteOpenXrMappedFrameSlots(
+                    mappedFrameArena,
+                    mappedFrameGeneration,
+                    commandBuffers,
+                    input.CommandBufferCount))
+            {
+                throw new InvalidOperationException(
+                    "OpenXR fence completed, but mapped frame-data slots could not be reopened.");
+            }
+
+            if (IsOpenXrTraceEnabled)
+            {
+                double submitMs = Stopwatch.GetElapsedTime(
+                    submitStart,
+                    submitEnd).TotalMilliseconds;
+                double fenceWaitMs = Stopwatch.GetElapsedTime(
+                    waitStart,
+                    waitEnd).TotalMilliseconds;
+                Debug.Vulkan(
+                    "[OpenXrVulkan] submitted commandBuffers={0} queueSubmitMs={1:F3} fenceWaitMs={2:F3}",
+                    input.CommandBufferCount,
+                    submitMs,
+                    fenceWaitMs);
+            }
+
+            commandBuffersCompleted = true;
+            return new VulkanOpenXrSubmissionResult(
+                true,
+                true,
+                submissionDisposition,
+                injectedFailureStage,
+                submitReceipt);
+        }
+        finally
+        {
+            if (mappedFrameSlotsPrepared &&
+                !nativeSubmitAccepted &&
+                mappedFrameArena is not null)
+            {
+                CancelOpenXrMappedFrameSlotsSubmission(
+                    mappedFrameArena,
+                    mappedFrameGeneration,
+                    commandBuffers,
+                    input.CommandBufferCount);
+            }
+
+            if (fence.Handle != 0 &&
+                (!nativeSubmitAccepted || commandBuffersCompleted))
+            {
+                Api.DestroyFence(DeviceContext.Device, fence, null);
+            }
+            else if (fence.Handle != 0 &&
+                     nativeSubmitAccepted &&
+                     DeviceContext.IsOperational)
+            {
+                RetireOpenXrSubmissionFence(
+                    fence,
+                    mappedFrameArena,
+                    mappedFrameGeneration,
+                    commandBuffers,
+                    input.CommandBufferCount);
+            }
+        }
+    }
+
+    private void NameOpenXrSubmissionFence(Fence fence)
+    {
+        if (fence.Handle == 0 ||
+            DeviceContext.DebugUtils is null ||
+            !FrameTelemetry._diagnosticOptions.EnableDebugUtils)
+        {
+            return;
+        }
+
+        ReadOnlySpan<byte> name = "OpenXR.SubmitAndWaitFence\0"u8;
+        fixed (byte* namePointer = name)
+        {
+            DebugUtilsObjectNameInfoEXT nameInfo = new()
+            {
+                SType = StructureType.DebugUtilsObjectNameInfoExt,
+                ObjectType = ObjectType.Fence,
+                ObjectHandle = fence.Handle,
+                PObjectName = namePointer,
+            };
+            _ = DeviceContext.DebugUtils.SetDebugUtilsObjectName(
+                DeviceContext.Device,
+                in nameInfo);
+        }
+    }
+
+    private void RetireOpenXrSubmissionFence(
+        Fence fence,
+        VulkanMappedFrameArena? arena,
+        ulong generation,
+        CommandBuffer* commandBuffers,
+        uint commandBufferCount)
+    {
+        // This allocation is confined to the exceptional accepted-but-not-yet-
+        // completed path; it prevents retaining the caller's stack buffer.
+        uint[] frameSlots = new uint[commandBufferCount];
+        int frameSlotCount = 0;
+        for (uint index = 0; index < commandBufferCount; index++)
+        {
+            int frameSlot = ResolveCommandBufferImageIndex(commandBuffers[index]);
+            if (frameSlot < 0 ||
+                OpenXrMappedFrameSlotAppearedEarlier(
+                    commandBuffers,
+                    index,
+                    frameSlot))
+            {
+                continue;
+            }
+
+            frameSlots[frameSlotCount++] = checked((uint)frameSlot);
+        }
+
+        lock (CommandBuffers.OneTimeSubmitGate)
+        {
+            _retiredOpenXrSubmissionFences.Add(
+                new RetiredOpenXrSubmissionFence(
+                    fence,
+                    arena,
+                    generation,
+                    frameSlots,
+                    frameSlotCount));
+        }
+    }
+
+    private void DrainRetiredOpenXrSubmissionFences()
+    {
+        if (!DeviceContext.IsOperational)
+            return;
+
+        lock (CommandBuffers.OneTimeSubmitGate)
+        {
+            for (int index = _retiredOpenXrSubmissionFences.Count - 1;
+                 index >= 0;
+                 index--)
+            {
+                RetiredOpenXrSubmissionFence retired =
+                    _retiredOpenXrSubmissionFences[index];
+                Fence fence = retired.Fence;
+                Result result = Api.GetFenceStatus(
+                    DeviceContext.Device,
+                    fence);
+                DeviceContext.ObserveNativeResult(
+                    "vkGetFenceStatus.OpenXR",
+                    result);
+                if (result == Result.NotReady)
+                    continue;
+                if (result != Result.Success)
+                {
+                    Debug.VulkanWarning(
+                        "[OpenXR] Deferred submission fence status failed: {0}",
+                        result);
+                    continue;
+                }
+
+                CompleteTrackedFence(fence);
+                if (!TryCompleteRetiredOpenXrMappedFrameSlots(retired))
+                {
+                    Debug.VulkanWarning(
+                        "[OpenXR] Deferred submission fence completed, but its mapped frame slots could not be reopened.");
+                }
+                Api.DestroyFence(DeviceContext.Device, fence, null);
+                _retiredOpenXrSubmissionFences.RemoveAt(index);
+            }
+        }
+    }
+
+    private static bool TryCompleteRetiredOpenXrMappedFrameSlots(
+        RetiredOpenXrSubmissionFence retired)
+    {
+        if (retired.Arena is null)
+            return true;
+
+        for (int index = 0; index < retired.FrameSlotCount; index++)
+        {
+            if (!retired.Arena.TryResetFrameSlot(
+                    retired.FrameSlots[index],
+                    retired.Generation,
+                    submissionCompletionProven: true))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool TryPrepareOpenXrMappedFrameSlotsForSubmission(
+        VulkanMappedFrameArena arena,
+        ulong generation,
+        CommandBuffer* commandBuffers,
+        uint commandBufferCount)
+    {
+        for (uint index = 0; index < commandBufferCount; index++)
+        {
+            int frameSlot = ResolveCommandBufferImageIndex(commandBuffers[index]);
+            if (frameSlot < 0 ||
+                OpenXrMappedFrameSlotAppearedEarlier(
+                    commandBuffers,
+                    index,
+                    frameSlot))
+            {
+                continue;
+            }
+
+            if (arena.TryPrepareFrameSlotForSubmission(
+                    checked((uint)frameSlot),
+                    generation))
+            {
+                continue;
+            }
+
+            CancelOpenXrMappedFrameSlotsSubmission(
+                arena,
+                generation,
+                commandBuffers,
+                index);
+            return false;
+        }
+
+        return true;
+    }
+
+    private void MarkOpenXrMappedFrameSlotsSubmitted(
+        VulkanMappedFrameArena arena,
+        ulong generation,
+        CommandBuffer* commandBuffers,
+        uint commandBufferCount)
+    {
+        for (uint index = 0; index < commandBufferCount; index++)
+        {
+            int frameSlot = ResolveCommandBufferImageIndex(commandBuffers[index]);
+            if (frameSlot < 0 ||
+                OpenXrMappedFrameSlotAppearedEarlier(
+                    commandBuffers,
+                    index,
+                    frameSlot))
+            {
+                continue;
+            }
+
+            arena.MarkFrameSlotSubmitted(
+                checked((uint)frameSlot),
+                generation);
+        }
+    }
+
+    private void CancelOpenXrMappedFrameSlotsSubmission(
+        VulkanMappedFrameArena arena,
+        ulong generation,
+        CommandBuffer* commandBuffers,
+        uint commandBufferCount)
+    {
+        for (uint index = 0; index < commandBufferCount; index++)
+        {
+            int frameSlot = ResolveCommandBufferImageIndex(commandBuffers[index]);
+            if (frameSlot < 0 ||
+                OpenXrMappedFrameSlotAppearedEarlier(
+                    commandBuffers,
+                    index,
+                    frameSlot))
+            {
+                continue;
+            }
+
+            _ = arena.TryCancelFrameSlotSubmission(
+                checked((uint)frameSlot),
+                generation);
+        }
+    }
+
+    private bool TryCompleteOpenXrMappedFrameSlots(
+        VulkanMappedFrameArena arena,
+        ulong generation,
+        CommandBuffer* commandBuffers,
+        uint commandBufferCount)
+    {
+        for (uint index = 0; index < commandBufferCount; index++)
+        {
+            int frameSlot = ResolveCommandBufferImageIndex(commandBuffers[index]);
+            if (frameSlot < 0 ||
+                OpenXrMappedFrameSlotAppearedEarlier(
+                    commandBuffers,
+                    index,
+                    frameSlot))
+            {
+                continue;
+            }
+
+            if (!arena.TryResetFrameSlot(
+                    checked((uint)frameSlot),
+                    generation,
+                    submissionCompletionProven: true))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool OpenXrMappedFrameSlotAppearedEarlier(
+        CommandBuffer* commandBuffers,
+        uint currentIndex,
+        int frameSlot)
+    {
+        for (uint previousIndex = 0;
+             previousIndex < currentIndex;
+             previousIndex++)
+        {
+            if (ResolveCommandBufferImageIndex(
+                    commandBuffers[previousIndex]) == frameSlot)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}

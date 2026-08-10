@@ -6,60 +6,6 @@ namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
 
-    internal void ObserveFinalPresentationDescriptor(
-        int descriptorSlot,
-        CommandBuffer commandBuffer,
-        DescriptorSet descriptorSet,
-        uint set,
-        uint binding,
-        string? bindingName,
-        in DescriptorImageInfo imageInfo,
-        ulong resourceSignature,
-        bool writeMatched,
-        bool writeSucceeded)
-    {
-        if (!string.Equals(bindingName, "SourceTexture", StringComparison.Ordinal))
-            return;
-
-        // A successful new write is just as authoritative as a cache hit. The
-        // old matched-only gate left the presentation tuple incomplete on the
-        // first use of every descriptor slot even though vkUpdateDescriptorSets
-        // had already published the exact native payload.
-        if (writeSucceeded)
-        {
-            VulkanPresentationSourceTuple current =
-                _windowPresentSource.CaptureLogical();
-            _ = _windowPresentSource.TryBindDescriptor(
-                current.LogicalEpoch,
-                imageInfo,
-                descriptorSet,
-                GetCurrentVulkanResourceGeneration(
-                    ObjectType.DescriptorSet,
-                    descriptorSet.Handle),
-                descriptorSlot,
-                resourceSignature,
-                commandBuffer,
-                ResolveCommandBufferRecordingGeneration(commandBuffer),
-                out _);
-        }
-
-        if (!_frameTelemetry._finalPresentationLedger.Enabled)
-            return;
-
-        _frameTelemetry._finalPresentationLedger.ObserveDescriptor(
-            VulkanFrameCounter,
-            descriptorSlot,
-            unchecked((ulong)commandBuffer.Handle),
-            descriptorSet.Handle,
-            set,
-            binding,
-            bindingName,
-            imageInfo,
-            resourceSignature,
-            writeMatched,
-            writeSucceeded);
-    }
-
     private void RecordFinalPresentationLedger(
         ref VulkanFrameAttempt attempt,
         Result presentResult,
@@ -91,7 +37,7 @@ public unsafe partial class VulkanRenderer
         VulkanFinalPresentationDescriptorObservation descriptor =
             _frameTelemetry._finalPresentationLedger.CaptureLatestDescriptor();
 
-        _ = TryGetCommandBufferDiagnosticMetadata(
+        _ = TryGetFinalPresentationCommandMetadata(
             attempt.ImageIndex,
             attempt.SceneCommandBuffer,
             out ulong plannerRevision,
@@ -219,5 +165,35 @@ public unsafe partial class VulkanRenderer
     {
         _frameTelemetry._finalPresentationLedger.Configure(enabled, frozen, clear);
         return GetFinalPresentationLedgerDiagnostics(1);
+    }
+
+    private bool TryGetFinalPresentationCommandMetadata(
+        uint imageIndex,
+        CommandBuffer commandBuffer,
+        out ulong plannerRevision,
+        out ulong frameOpContextId,
+        out ulong resourceGeneration,
+        out ulong descriptorGeneration)
+    {
+        plannerRevision = 0;
+        frameOpContextId = 0;
+        resourceGeneration = 0;
+        descriptorGeneration = 0;
+        PrimaryCommandArtifactOwner[]? owners =
+            _commandRuntime.CommandBuffers.PrimaryOwners;
+        if (owners is null || imageIndex >= (uint)owners.Length)
+            return false;
+
+        PrimaryCommandArtifactOwner owner = owners[imageIndex];
+        if (owner.PrimaryCommandBuffer.Handle != commandBuffer.Handle)
+            return false;
+
+        plannerRevision = owner.PlannerRevision == ulong.MaxValue
+            ? 0
+            : owner.PlannerRevision;
+        frameOpContextId = owner.RecordedFrameOpContextId;
+        resourceGeneration = owner.RecordedResourceGeneration;
+        descriptorGeneration = owner.RecordedDescriptorGeneration;
+        return true;
     }
 }

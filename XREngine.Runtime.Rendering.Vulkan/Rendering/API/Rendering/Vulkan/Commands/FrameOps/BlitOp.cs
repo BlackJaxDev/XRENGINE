@@ -45,20 +45,20 @@ internal sealed record BlitOp(
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.Blit;
 
     internal override int RecordPrimary(
-        VulkanRenderer renderer,
+        VulkanCommandRuntime commandRuntime,
         scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
         if (ColorBit && (InFbo is null || OutFbo is null))
-            renderer.EnsureSwapchainColorAttachmentLayoutForBlit(ref recordingState);
+            commandRuntime.EnsureSwapchainColorAttachmentLayoutForBlit(ref recordingState);
 
-        renderer.CmdBeginLabel(recordingState.CommandBuffer, "Blit");
-        bool recorded = renderer.RecordBlitOp(
+        commandRuntime.CmdBeginLabel(recordingState.CommandBuffer, "Blit");
+        bool recorded = commandRuntime.RecordBlitOp(
             recordingState.CommandBuffer,
             recordingState.ImageIndex,
             this,
             in recordingState.SwapchainTarget);
-        renderer.CmdEndLabel(recordingState.CommandBuffer);
+        commandRuntime.CmdEndLabel(recordingState.CommandBuffer);
 
         if (OutFbo is not null ||
             (!ColorBit && !DepthBit && !StencilBit) ||

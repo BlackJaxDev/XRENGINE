@@ -8,7 +8,7 @@ namespace XREngine.Rendering.Vulkan;
 /// The image is created with <see cref="ImageType.Type3D"/> and depth is derived from
 /// the engine texture's <c>Depth</c> property.
 /// </summary>
-internal sealed class VkTexture3D(VulkanRenderer api, XRTexture3D data) : VkImageBackedTexture<XRTexture3D>(api, data)
+internal sealed class VkTexture3D(VulkanBackendObjectContext backendContext, IRenderApiWrapperOwner owner, XRTexture3D data) : VkImageBackedTexture<XRTexture3D>(backendContext, owner, data)
 {
     protected override ImageType TextureImageType => ImageType.Type3D;
     protected override ImageViewType DefaultImageViewType => ImageViewType.Type3D;

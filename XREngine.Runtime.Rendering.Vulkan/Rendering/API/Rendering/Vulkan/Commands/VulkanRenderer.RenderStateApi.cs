@@ -1,11 +1,30 @@
 using System;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
+using XREngine.Rendering.Models.Materials;
+using XREngine.Scene;
 
 namespace XREngine.Rendering.Vulkan
 {
     public partial class VulkanRenderer
     {
+        public override void ApplyRenderParameters(RenderingParameters parameters)
+        {
+            if (parameters is not null)
+                BackendObjectContext.MeshServices.ApplyRenderParameters(parameters);
+        }
+
+        public override void SetEngineUniforms(XRRenderProgram program, XRCamera camera)
+            => BackendObjectContext.MeshServices.SetEngineUniforms(program, camera);
+
+        public override void SetMaterialUniforms(XRMaterial material, XRRenderProgram program)
+            => BackendObjectContext.MeshServices.SetMaterialUniforms(
+                material,
+                program,
+                GetOrCreateAPIRenderObject(program, generateNow: false) as VkRenderProgram,
+                LayeredShadowUniformState.CaptureFromCurrentRenderingState());
+
         /// <summary>
         /// Sets the color mask for rendering, specifying which color channels are writable.
         /// </summary>

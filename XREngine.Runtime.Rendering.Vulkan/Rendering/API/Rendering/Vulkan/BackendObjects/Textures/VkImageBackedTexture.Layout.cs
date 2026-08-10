@@ -21,7 +21,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     /// </summary>
     internal void TransitionImageLayout(ImageLayout oldLayout, ImageLayout newLayout)
     {
-        if (Renderer.IsDeviceLost || Image.Handle == 0)
+        if (!BackendContext.IsDeviceOperational || Image.Handle == 0)
             return;
 
         RefreshPhysicalGroupImageIfStale();
@@ -33,8 +33,12 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         oldLayout = CoerceLayoutForUsage(oldLayout);
         newLayout = CoerceLayoutForUsage(newLayout);
         AssembleTransitionImageLayout(oldLayout, newLayout, out ImageMemoryBarrier barrier, out PipelineStageFlags src, out PipelineStageFlags dst);
-        using var scope = Renderer.NewCommandScope();
-        Renderer.CmdPipelineBarrierTracked(scope.CommandBuffer, src, dst, 0, 0, null, 0, null, 1, &barrier);
+        BackendContext.ResourceCommands.PipelineBarrier(
+            src,
+            dst,
+            1,
+            &barrier,
+            "VkImageBackedTexture.TransitionImageLayout");
         _currentImageLayout = newLayout;
         if (_physicalGroup is not null)
             _physicalGroup.LastKnownLayout = newLayout;

@@ -73,33 +73,15 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             ImageExtent = extent,
         };
 
-        // First, try the fast NV indirect copy path.
-        if (Renderer.TryCopyBufferToImageViaIndirectNv(
+        // Keep synchronous texture publication ordered with prior and future image
+        // uses on the graphics queue.  The resource command authority owns the
+        // tracked submission and fence receipt; no renderer facade participates.
+        BackendContext.ResourceCommands.CopyBufferToImage(
             buffer,
-            srcOffset: 0,
             _image,
             ImageLayout.TransferDstOptimal,
-            region.ImageSubresource,
-            region.ImageOffset,
-            region.ImageExtent))
-        {
-            return;
-        }
-
-        // Keep synchronous texture publication ordered with prior and future image
-        // uses on the graphics queue. A dedicated transfer queue is useful only when
-        // an asynchronous upload plan supplies cross-queue semaphores and ownership
-        // transfers; a queue-idle workaround would globally stall normal streaming.
-        using (var uploadScope = Renderer.NewCommandScope())
-        {
-            Renderer.CmdCopyBufferToImageTracked(
-                uploadScope.CommandBuffer,
-                buffer,
-                _image,
-                ImageLayout.TransferDstOptimal,
-                1,
-                &region);
-        }
+            ref region,
+            "VkImageBackedTexture.CopyBufferToImage");
     }
 
     private bool ValidateCopyBufferToImageRegion(uint mipLevel, uint baseArrayLayer, uint layerCount, Extent3D extent)

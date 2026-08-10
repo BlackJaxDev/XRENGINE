@@ -890,6 +890,42 @@ namespace XREngine.Rendering.DLSS
                 return true;
             }
 
+            /// <summary>
+            /// Creates a Streamline proxy swapchain from the output authority's immutable
+            /// device binding. This keeps desktop WSI lifecycle ownership out of the
+            /// renderer facade.
+            /// </summary>
+            internal static unsafe bool TryCreateProxySwapchain(
+                VulkanStreamlineDeviceBinding binding,
+                ref SwapchainCreateInfoKHR createInfo,
+                bool includeDlss,
+                out SwapchainKHR swapchain,
+                out Result result,
+                out string failureReason)
+            {
+                swapchain = default;
+                result = Result.ErrorInitializationFailed;
+
+                if (includeDlss && !NvidiaDlssManager.RequiredRuntimeDllsAvailable)
+                {
+                    failureReason = NvidiaDlssManager.RequiredRuntimeDllsUnavailableReason;
+                    _lastError = failureReason;
+                    return false;
+                }
+
+                if (!EnsureFrameGenerationVulkanProxyReady(binding, includeDlss, out failureReason))
+                    return false;
+
+                fixed (SwapchainCreateInfoKHR* createInfoPtr = &createInfo)
+                fixed (SwapchainKHR* swapchainPtr = &swapchain)
+                    result = CallVkCreateSwapchainProxy(binding.Device, createInfoPtr, null, swapchainPtr);
+
+                if (result == Result.Success)
+                    RegisterFrameGenerationProxySwapchain();
+
+                return true;
+            }
+
             internal static unsafe bool TryDestroyProxySwapchain(
                 VulkanRenderer renderer,
                 SwapchainKHR swapchain,
@@ -901,6 +937,30 @@ namespace XREngine.Rendering.DLSS
                         return false;
 
                     CallVkDestroySwapchainProxy(renderer.Device, swapchain, null);
+                    return true;
+                }
+                finally
+                {
+                    ReleaseFrameGenerationProxySwapchain();
+                }
+            }
+
+            internal static unsafe bool TryDestroyProxySwapchain(
+                VulkanStreamlineDeviceBinding binding,
+                SwapchainKHR swapchain,
+                out string failureReason)
+            {
+                try
+                {
+                    if (!EnsureFrameGenerationVulkanProxyReady(
+                            binding,
+                            binding.FrameGenerationSwapchainIncludesDlss,
+                            out failureReason))
+                    {
+                        return false;
+                    }
+
+                    CallVkDestroySwapchainProxy(binding.Device, swapchain, null);
                     return true;
                 }
                 finally
@@ -924,6 +984,29 @@ namespace XREngine.Rendering.DLSS
 
                 fixed (uint* imageCountPtr = &imageCount)
                     result = CallVkGetSwapchainImagesProxy(renderer.Device, swapchain, imageCountPtr, images);
+
+                return true;
+            }
+
+            internal static unsafe bool TryGetProxySwapchainImages(
+                VulkanStreamlineDeviceBinding binding,
+                SwapchainKHR swapchain,
+                ref uint imageCount,
+                Image* images,
+                out Result result,
+                out string failureReason)
+            {
+                result = Result.ErrorInitializationFailed;
+                if (!EnsureFrameGenerationVulkanProxyReady(
+                        binding,
+                        binding.FrameGenerationSwapchainIncludesDlss,
+                        out failureReason))
+                {
+                    return false;
+                }
+
+                fixed (uint* imageCountPtr = &imageCount)
+                    result = CallVkGetSwapchainImagesProxy(binding.Device, swapchain, imageCountPtr, images);
 
                 return true;
             }

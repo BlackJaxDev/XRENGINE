@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Threading;
 using Silk.NET.Vulkan;
 using XREngine.Rendering.Models.Materials;
 
@@ -12,8 +13,11 @@ namespace XREngine.Rendering.Vulkan;
 /// and shutdown ordering remain renderer concerns; this object only establishes the single
 /// ownership boundary for the state those operations mutate.
 /// </remarks>
-internal sealed class VulkanResourceRuntime
+internal sealed partial class VulkanResourceRuntime
 {
+    internal const int DefaultRetirementDrainLimitPerFrame = 8;
+
+    private int _framebufferRetirementFrameSlot;
     internal VulkanResourceRuntime(int frameSlotCount)
     {
         BackendObjects = new VulkanBackendObjectRegistry();
@@ -22,23 +26,78 @@ internal sealed class VulkanResourceRuntime
             new VulkanBufferResourceManager(),
             new VulkanImageAllocationTracker(),
             new VulkanStagingManager());
+        Buffers = new VulkanBufferResourceService(Allocations);
         Uploads = new VulkanTextureUploadService();
         Queries = new VulkanQueryAuthority();
-        FallbackTexture = new VulkanFallbackTextureState();
         Lifetime = new VulkanLifetimeAuthority(
             new VulkanResourceLifetimeTracker(),
             new VulkanResourceRetirementQueue(frameSlotCount));
+        DescriptorLifetime = new VulkanDescriptorLifetimeAuthority(this, Descriptors, Lifetime);
+        Images = new VulkanImageResourceService(Allocations, Lifetime);
+        Images.ConfigureRetirementRuntime(this);
+        FallbackTexture = new VulkanFallbackTextureAuthority(this, new VulkanFallbackTextureState());
+        Buffers.BindLifetime(Lifetime);
+        Planner = new VulkanResourcePlannerService();
+        Samplers = new VulkanSamplerResourceService(this, Descriptors, Lifetime);
+        Framebuffers = new VulkanFrameBufferResourceService(this);
+        SparseTextureStreaming = new VulkanSparseTextureStreamingService();
     }
 
     internal VulkanBackendObjectRegistry BackendObjects { get; }
     internal VulkanDescriptorManager Descriptors { get; }
     internal VulkanAllocationAuthority Allocations { get; }
+    internal VulkanBufferResourceService Buffers { get; }
+    internal VulkanImageResourceService Images { get; }
+    internal VulkanResourcePlannerService Planner { get; }
     internal VulkanTextureUploadService Uploads { get; }
     internal VulkanQueryAuthority Queries { get; }
-    internal VulkanFallbackTextureState FallbackTexture { get; }
+    internal VulkanFallbackTextureAuthority FallbackTexture { get; }
     internal VulkanLifetimeAuthority Lifetime { get; }
+    internal VulkanDescriptorLifetimeAuthority DescriptorLifetime { get; }
+    internal VulkanSamplerResourceService Samplers { get; }
+    internal VulkanFrameBufferResourceService Framebuffers { get; }
+    internal VulkanSparseTextureStreamingService SparseTextureStreaming { get; }
     internal VulkanPipelineManager PipelineManager { get; } = new();
     internal VulkanBackendObjectContext? BackendObjectContext;
+
+    internal VulkanBackendObjectContext GetOrCreateBackendObjectContext(
+        Vk api,
+        VulkanDeviceContext? deviceContext,
+        VulkanCommandRuntime commandRuntime,
+        VulkanFramePlanner framePlanner,
+        VulkanFrameTelemetry frameTelemetry,
+        bool allowSynchronousResourceUploads)
+    {
+        VulkanBackendObjectContext context = BackendObjectContext ??= new VulkanBackendObjectContext(
+            api,
+            deviceContext,
+            BackendObjects,
+            Lifetime.Tracker,
+            Descriptors,
+            Buffers,
+            Images,
+            Planner,
+            Samplers,
+            Queries,
+            PipelineManager,
+            this,
+            allowSynchronousResourceUploads);
+        DescriptorLifetime.PublishBackendObjectContext(context);
+        Descriptors.PublishBackendObjectContext(context);
+        FallbackTexture.PublishBackendObjectContext(context);
+
+        // AbstractRenderer requests wrapper objects from its constructor, before the
+        // derived Vulkan constructor can publish the generation's device authority.
+        // Wrapper identity is valid during that phase; device-dependent services are not.
+        if (deviceContext is not null)
+        {
+            Descriptors.ConfigureDeviceServices(context, commandRuntime, frameTelemetry);
+            context.PublishDeviceContext(deviceContext);
+            context.ConfigureProgramServices(commandRuntime, framePlanner, frameTelemetry);
+        }
+
+        return context;
+    }
     internal RenderPass SwapchainRenderPass;
     internal RenderPass SwapchainLoadRenderPass;
     internal Dictionary<ulong, uint> RenderPassColorAttachmentCounts { get; } = new();
@@ -56,6 +115,672 @@ internal sealed class VulkanResourceRuntime
     internal ulong GetPublishedGeneration(ObjectType type, ulong handle)
         => Lifetime.Tracker.GetPublishedGeneration(
             new VulkanResourceLifetimeKey(type, handle));
+
+    internal void ConfigureLifetimeCommandRuntime(VulkanCommandRuntime commandRuntime)
+    {
+        Planner.BindCommandRuntime(commandRuntime);
+        Images.ConfigureCommandRuntime(commandRuntime);
+        Samplers.ConfigureCommandRuntime(commandRuntime);
+    }
+
+    internal int FramebufferRetirementFrameSlot
+        => Volatile.Read(ref _framebufferRetirementFrameSlot);
+
+    /// <summary>
+    /// Publishes the desktop frame slot used for framebuffer retirement.  Output
+    /// services use this instead of reaching through a renderer frame-loop mirror.
+    /// </summary>
+    internal void PublishFramebufferRetirementFrameSlot(int frameSlot)
+    {
+        if ((uint)frameSlot >= (uint)Lifetime.Retirement.Framebuffers.Length)
+            throw new ArgumentOutOfRangeException(nameof(frameSlot));
+
+        Volatile.Write(ref _framebufferRetirementFrameSlot, frameSlot);
+    }
+
+    /// <summary>Registers a framebuffer and the image views it keeps alive.</summary>
+    internal void RegisterFramebuffer(
+        Framebuffer framebuffer,
+        ReadOnlySpan<ImageView> attachments,
+        string owner)
+    {
+        if (framebuffer.Handle == 0)
+            return;
+
+        VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
+        VulkanResourceLifetimeKey[] attachmentKeys = new VulkanResourceLifetimeKey[attachments.Length];
+        for (int index = 0; index < attachments.Length; index++)
+            attachmentKeys[index] = new VulkanResourceLifetimeKey(ObjectType.ImageView, attachments[index].Handle);
+
+        tracker.RegisterResource(
+            new VulkanResourceLifetimeKey(ObjectType.Framebuffer, framebuffer.Handle),
+            owner,
+            externallyOwned: false);
+        lock (tracker.SyncRoot)
+            tracker.FramebufferAttachments[framebuffer.Handle] = attachmentKeys;
+    }
+
+    /// <summary>
+    /// Captures the framebuffer's completion proof and queues it once for the
+    /// current output frame slot.  The global handle set prevents a duplicate
+    /// destroy when more than one output artifact releases the same framebuffer.
+    /// </summary>
+    internal void RetireFramebuffer(Framebuffer framebuffer, string owner)
+    {
+        if (framebuffer.Handle == 0)
+            return;
+
+        VulkanResourceLifetimeKey key = new(ObjectType.Framebuffer, framebuffer.Handle);
+        VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
+        tracker.FenceResourceRecordingAdmission(key, owner);
+        VulkanRetirementTicket ticket;
+        lock (tracker.SyncRoot)
+        {
+            VulkanResourceLifetimeRecord resource = tracker.GetOrRegisterResourceNoLock(key, owner);
+            if ((resource.State & (EVulkanResourceLifetimeState.Destroyed | EVulkanResourceLifetimeState.PendingRetirement)) != 0)
+                return;
+
+            ticket = new VulkanRetirementTicket(
+                resource.Pins.LastGraphicsSequence,
+                resource.Pins.LastTransferSequence,
+                resource.Pins.LastOtherSequence,
+                Stopwatch.GetTimestamp(),
+                resource.Generation,
+                (resource.State & EVulkanResourceLifetimeState.External) != 0,
+                VulkanRetirementPinSet.Single(key, resource.Generation));
+            resource.RetirementSerial = unchecked((ulong)Interlocked.Increment(ref tracker.RetirementSerial));
+            resource.State |= EVulkanResourceLifetimeState.PendingRetirement;
+            resource.RetirementTicket = ticket;
+            tracker.PublishedResourceGenerations[key] = 0;
+        }
+
+        int frameSlot = Volatile.Read(ref _framebufferRetirementFrameSlot);
+        lock (Lifetime.Retirement.SyncRoot)
+            VulkanResourceRetirementQueue.TryEnqueueUniqueNoLock(
+                frameSlot,
+                framebuffer.Handle,
+                new RetiredFramebuffer(framebuffer, ticket),
+                Lifetime.Retirement.Framebuffers,
+                Lifetime.Retirement.FramebufferHandles,
+                Lifetime.Retirement.AllFramebufferHandles);
+    }
+
+    /// <summary>
+    /// Captures a query-pool generation's completion proof and queues its native
+    /// destruction on the active output slot. Query wrappers use this resource
+    /// authority instead of reaching through the renderer lifecycle facade.
+    /// </summary>
+    internal void RetireQueryPool(QueryPool queryPool, string owner)
+    {
+        if (queryPool.Handle == 0)
+            return;
+
+        VulkanResourceLifetimeKey key = new(ObjectType.QueryPool, queryPool.Handle);
+        VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
+        tracker.FenceResourceRecordingAdmission(key, owner);
+        VulkanRetirementTicket ticket;
+        lock (tracker.SyncRoot)
+        {
+            VulkanResourceLifetimeRecord resource = tracker.GetOrRegisterResourceNoLock(key, owner);
+            if ((resource.State & (EVulkanResourceLifetimeState.Destroyed | EVulkanResourceLifetimeState.PendingRetirement)) != 0)
+                return;
+
+            ticket = new VulkanRetirementTicket(
+                resource.Pins.LastGraphicsSequence,
+                resource.Pins.LastTransferSequence,
+                resource.Pins.LastOtherSequence,
+                Stopwatch.GetTimestamp(),
+                resource.Generation,
+                (resource.State & EVulkanResourceLifetimeState.External) != 0,
+                VulkanRetirementPinSet.Single(key, resource.Generation));
+            resource.RetirementSerial = unchecked((ulong)Interlocked.Increment(ref tracker.RetirementSerial));
+            resource.State |= EVulkanResourceLifetimeState.PendingRetirement;
+            resource.RetirementTicket = ticket;
+            tracker.PublishedResourceGenerations[key] = 0;
+        }
+
+        int frameSlot = Volatile.Read(ref _framebufferRetirementFrameSlot);
+        lock (Lifetime.Retirement.SyncRoot)
+            VulkanResourceRetirementQueue.TryEnqueueUniqueNoLock(
+                frameSlot,
+                queryPool.Handle,
+                new RetiredQueryPool(queryPool, ticket),
+                Lifetime.Retirement.QueryPools,
+                Lifetime.Retirement.QueryPoolHandles,
+                Lifetime.Retirement.AllQueryPoolHandles);
+    }
+
+    /// <summary>Publishes legacy render-pass metadata to resource consumers.</summary>
+    internal void RegisterRenderPass(
+        RenderPass renderPass,
+        ReadOnlySpan<Format> colorAttachmentFormats,
+        string semanticSignature)
+    {
+        if (renderPass.Handle == 0)
+            return;
+
+        Lifetime.Tracker.RegisterResource(
+            new VulkanResourceLifetimeKey(ObjectType.RenderPass, renderPass.Handle),
+            "RenderPass",
+            externallyOwned: false);
+        RenderPassColorAttachmentCounts[renderPass.Handle] = (uint)colorAttachmentFormats.Length;
+        RenderPassColorAttachmentFormats[renderPass.Handle] = colorAttachmentFormats.ToArray();
+        RenderPassSemanticSignatures[renderPass.Handle] = semanticSignature;
+    }
+
+    /// <summary>
+    /// Registers a short-lived command buffer and its pool ownership before a
+    /// synchronous sidecar submission records any native resource references.
+    /// </summary>
+    internal void RegisterSynchronousCommandBuffer(
+        CommandBuffer commandBuffer,
+        CommandPool commandPool,
+        CommandBufferLevel level,
+        string owner)
+    {
+        if (commandBuffer.Handle == 0 || commandPool.Handle == 0)
+            throw new ArgumentException("A synchronous command buffer requires a live command buffer and command pool.");
+
+        ulong handle = unchecked((ulong)commandBuffer.Handle);
+        VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
+        tracker.RegisterResource(
+            new VulkanResourceLifetimeKey(ObjectType.CommandBuffer, handle),
+            owner,
+            externallyOwned: false);
+        lock (tracker.SyncRoot)
+        {
+            VulkanResourceLifetimeKey poolKey = new(ObjectType.CommandPool, commandPool.Handle);
+            VulkanResourceLifetimeRecord pool = tracker.GetOrRegisterResourceNoLock(
+                poolKey,
+                "SynchronousCommandBuffer.AllocationPool");
+            if ((pool.State & (EVulkanResourceLifetimeState.PendingRetirement |
+                               EVulkanResourceLifetimeState.Destroyed)) != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Cannot allocate synchronous command buffer 0x{handle:X} from retiring command pool {poolKey}.");
+            }
+
+            VulkanCommandBufferLifetimeRecord lifetime = new()
+            {
+                Level = level,
+                AllocatingCommandPool = poolKey,
+                AllocatingCommandPoolGeneration = pool.Generation,
+            };
+            tracker.CommandBufferLifetimes[handle] = lifetime;
+            if (!tracker.CommandBuffersByPool.TryGetValue(poolKey, out HashSet<ulong>? children))
+            {
+                children = [];
+                tracker.CommandBuffersByPool.Add(poolKey, children);
+            }
+            children.Add(handle);
+        }
+    }
+
+    /// <summary>
+    /// Publishes a native-accepted synchronous graphics submission to the same
+    /// lifetime receipt stream used by asynchronous command work.
+    /// </summary>
+    internal void RecordSynchronousGraphicsSubmission(
+        CommandBuffer commandBuffer,
+        Fence fence,
+        Queue queue,
+        Image sourceImage,
+        Silk.NET.Vulkan.Buffer stagingBuffer)
+    {
+        if (commandBuffer.Handle == 0 || fence.Handle == 0 || queue.Handle == 0 || sourceImage.Handle == 0 || stagingBuffer.Handle == 0)
+            throw new ArgumentException("A synchronous readback submission requires live command, fence, queue, image, and buffer handles.");
+
+        VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
+        lock (tracker.SyncRoot)
+        {
+            ulong commandHandle = unchecked((ulong)commandBuffer.Handle);
+            VulkanCommandBufferLifetimeRecord lifetime = tracker.CommandBufferLifetimes.TryGetValue(
+                commandHandle,
+                out VulkanCommandBufferLifetimeRecord? existing)
+                ? existing
+                : throw new InvalidOperationException($"Synchronous command buffer 0x{commandHandle:X} was not registered.");
+            if (lifetime.QueuedSubmissionCount != 0)
+                throw new InvalidOperationException($"Synchronous command buffer 0x{commandHandle:X} is already queued.");
+
+            VulkanResourceLifetimeRecord command = tracker.GetOrRegisterResourceNoLock(
+                new VulkanResourceLifetimeKey(ObjectType.CommandBuffer, commandHandle),
+                "SynchronousReadback.CommandBuffer");
+            VulkanResourceLifetimeRecord image = tracker.GetOrRegisterResourceNoLock(
+                new VulkanResourceLifetimeKey(ObjectType.Image, sourceImage.Handle),
+                "SynchronousReadback.SourceImage");
+            VulkanResourceLifetimeRecord buffer = tracker.GetOrRegisterResourceNoLock(
+                new VulkanResourceLifetimeKey(ObjectType.Buffer, stagingBuffer.Handle),
+                "SynchronousReadback.StagingBuffer");
+            AddSynchronousRecordedDependency(tracker, commandHandle, lifetime, image);
+            AddSynchronousRecordedDependency(tracker, commandHandle, lifetime, buffer);
+
+            ulong sequence = ++tracker.LastGraphicsSequence;
+            lifetime.QueuedSubmissionCount++;
+            MarkSynchronousResourceSubmitted(command, sequence);
+            MarkSynchronousResourceSubmitted(image, sequence);
+            MarkSynchronousResourceSubmitted(buffer, sequence);
+            tracker.LifetimeSubmissions.Add(new VulkanLifetimeSubmission(
+                QueueHandle: unchecked((ulong)queue.Handle),
+                QueueDomain: EVulkanLifetimeQueueDomain.Graphics,
+                QueueSequence: sequence,
+                TimelineSemaphoreHandle: 0,
+                TimelineValue: 0,
+                FenceHandle: unchecked((ulong)fence.Handle)));
+        }
+    }
+
+    /// <summary>
+    /// Publishes every dependency recorded by a synchronous wrapper command
+    /// buffer. Uploads and layout transitions do not have one canonical
+    /// image/buffer pair, so the encoder-owned dependency set is the receipt.
+    /// </summary>
+    internal void RecordSynchronousGraphicsSubmission(
+        CommandBuffer commandBuffer,
+        Fence fence,
+        Queue queue)
+    {
+        if (commandBuffer.Handle == 0 || fence.Handle == 0 || queue.Handle == 0)
+            throw new ArgumentException("A synchronous submission requires live command, fence, and queue handles.");
+
+        VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
+        lock (tracker.SyncRoot)
+        {
+            ulong commandHandle = unchecked((ulong)commandBuffer.Handle);
+            VulkanCommandBufferLifetimeRecord lifetime = tracker.CommandBufferLifetimes.TryGetValue(
+                commandHandle,
+                out VulkanCommandBufferLifetimeRecord? existing)
+                ? existing
+                : throw new InvalidOperationException($"Synchronous command buffer 0x{commandHandle:X} was not registered.");
+            if (lifetime.QueuedSubmissionCount != 0)
+                throw new InvalidOperationException($"Synchronous command buffer 0x{commandHandle:X} is already queued.");
+
+            VulkanResourceLifetimeRecord command = tracker.GetOrRegisterResourceNoLock(
+                new VulkanResourceLifetimeKey(ObjectType.CommandBuffer, commandHandle),
+                "SynchronousResourceCommand.CommandBuffer");
+            ulong sequence = ++tracker.LastGraphicsSequence;
+            lifetime.QueuedSubmissionCount++;
+            MarkSynchronousResourceSubmitted(command, sequence);
+            foreach ((VulkanResourceLifetimeKey key, ulong generation) in lifetime.Dependencies)
+            {
+                if (!tracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource) ||
+                    resource.Generation != generation)
+                {
+                    throw new InvalidOperationException(
+                        $"Synchronous command buffer 0x{commandHandle:X} retained an invalid dependency {key} generation {generation}.");
+                }
+
+                MarkSynchronousResourceSubmitted(resource, sequence);
+            }
+
+            tracker.LifetimeSubmissions.Add(new VulkanLifetimeSubmission(
+                QueueHandle: unchecked((ulong)queue.Handle),
+                QueueDomain: EVulkanLifetimeQueueDomain.Graphics,
+                QueueSequence: sequence,
+                TimelineSemaphoreHandle: 0,
+                TimelineValue: 0,
+                FenceHandle: unchecked((ulong)fence.Handle)));
+        }
+    }
+
+    internal void CompleteSynchronousFence(Fence fence)
+    {
+        if (fence.Handle == 0)
+            return;
+
+        VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
+        ulong handle = unchecked((ulong)fence.Handle);
+        lock (tracker.SyncRoot)
+        {
+            for (int index = tracker.LifetimeSubmissions.Count - 1; index >= 0; index--)
+            {
+                VulkanLifetimeSubmission submission = tracker.LifetimeSubmissions[index];
+                if (submission.FenceHandle != handle)
+                    continue;
+
+                tracker.MarkQueueSequenceCompletedNoLock(submission.QueueDomain, submission.QueueSequence);
+                tracker.LifetimeSubmissions.RemoveAt(index);
+            }
+        }
+    }
+
+    internal void CompleteSynchronousCommandBuffer(CommandBuffer commandBuffer)
+    {
+        if (commandBuffer.Handle == 0)
+            return;
+
+        ulong handle = unchecked((ulong)commandBuffer.Handle);
+        VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
+        lock (tracker.SyncRoot)
+        {
+            if (tracker.CommandBufferLifetimes.Remove(handle, out VulkanCommandBufferLifetimeRecord? lifetime))
+            {
+                foreach ((VulkanResourceLifetimeKey key, ulong generation) in lifetime.Dependencies)
+                {
+                    if (!tracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource) ||
+                        resource.Generation != generation)
+                    {
+                        continue;
+                    }
+
+                    resource.Pins.ReleaseRecordedReference();
+                    if (!resource.Pins.HasRecordedReferences)
+                        resource.State &= ~EVulkanResourceLifetimeState.Recorded;
+                    if (tracker.ResourceCommandBufferDependencies.TryGetValue(key, out HashSet<ulong>? commandBuffers))
+                        commandBuffers.Remove(handle);
+                }
+
+                if (lifetime.AllocatingCommandPool.IsValid &&
+                    tracker.CommandBuffersByPool.TryGetValue(lifetime.AllocatingCommandPool, out HashSet<ulong>? children))
+                {
+                    children.Remove(handle);
+                    if (children.Count == 0)
+                        tracker.CommandBuffersByPool.Remove(lifetime.AllocatingCommandPool);
+                }
+            }
+        }
+
+        CompleteDetachedExternalResourceDestruction(
+            ObjectType.CommandBuffer,
+            handle,
+            GetPublishedGeneration(ObjectType.CommandBuffer, handle),
+            forced: false);
+    }
+
+    private static void AddSynchronousRecordedDependency(
+        VulkanResourceLifetimeTracker tracker,
+        ulong commandHandle,
+        VulkanCommandBufferLifetimeRecord lifetime,
+        VulkanResourceLifetimeRecord resource)
+    {
+        if (lifetime.Dependencies.TryGetValue(resource.Key, out ulong generation) && generation == resource.Generation)
+            return;
+
+        lifetime.Dependencies[resource.Key] = resource.Generation;
+        resource.Pins.AddRecordedReference();
+        resource.State |= EVulkanResourceLifetimeState.Recorded;
+        if (!tracker.ResourceCommandBufferDependencies.TryGetValue(resource.Key, out HashSet<ulong>? commandBuffers))
+        {
+            commandBuffers = [];
+            tracker.ResourceCommandBufferDependencies.Add(resource.Key, commandBuffers);
+        }
+        commandBuffers.Add(commandHandle);
+    }
+
+    private static void MarkSynchronousResourceSubmitted(
+        VulkanResourceLifetimeRecord resource,
+        ulong sequence)
+    {
+        resource.State &= ~EVulkanResourceLifetimeState.Completed;
+        resource.State |= EVulkanResourceLifetimeState.Submitted;
+        resource.Pins.MarkSubmitted(EVulkanLifetimeQueueDomain.Graphics, sequence);
+    }
+
+    /// <summary>
+    /// Acquires the immutable arena generation captured by a prepared worker draw.
+    /// Worker recordings have no mutable manifest scope, so the sealed draw generation
+    /// is the sole admissible authority.
+    /// </summary>
+    internal bool TryAcquirePreparedFrameDataLease(
+        CommandBuffer commandBuffer,
+        VkMeshRenderer owner,
+        int drawSlot,
+        ulong sealedGeneration,
+        out string reason)
+    {
+        reason = string.Empty;
+        ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+        ulong generation = MappedFrameArena?.Generation ?? 0UL;
+        if (commandBufferHandle == 0 || generation == 0)
+            return true;
+        if (owner is null || sealedGeneration == 0 || sealedGeneration != generation)
+        {
+            reason = $"prepared frame-data generation {sealedGeneration} does not match active generation {generation}";
+            return false;
+        }
+
+        lock (Lifetime.Tracker.SyncRoot)
+        {
+            if (!Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? lifetime))
+            {
+                lifetime = new VulkanCommandBufferLifetimeRecord();
+                Lifetime.Tracker.CommandBufferLifetimes[commandBufferHandle] = lifetime;
+            }
+
+            if (lifetime.QueuedSubmissionCount != 0 ||
+                (lifetime.FrameDataLease.Generation != 0 && lifetime.FrameDataLease.Generation != generation) ||
+                !lifetime.FrameDataLease.TryAcquireRecording(generation, commandBufferQueued: false))
+            {
+                reason = $"command buffer 0x{commandBufferHandle:X} cannot acquire prepared frame-data generation {generation}";
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Transactionally validates and publishes the dependencies accumulated while a
+    /// command buffer was recorded. This is the command-runtime counterpart to the
+    /// submission receipt: no individual resource is pinned until every expansion
+    /// of the batch has passed its generation and retirement checks.
+    /// </summary>
+    internal bool TryPublishCommandBufferTrackingBatch(
+        VulkanCommandRuntime commandRuntime,
+        CommandBuffer commandBuffer,
+        VulkanCommandBufferTrackingBatch batch,
+        out string reason)
+    {
+        reason = string.Empty;
+        ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+        if (commandBufferHandle == 0)
+            return true;
+
+        lock (Lifetime.Tracker.SyncRoot)
+        lock (batch)
+        {
+            if (batch.QueuedSubmissionCount != 0)
+            {
+                reason = $"Command buffer 0x{commandBufferHandle:X} is queued for submission.";
+                return false;
+            }
+
+            foreach (VulkanResourceLifetimeKey key in batch.Dependencies)
+            {
+                if (!TryValidateCommandBufferDependencyNoLock(commandBufferHandle, key, out reason))
+                    return false;
+            }
+
+            if (!Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? lifetime))
+            {
+                lifetime = new VulkanCommandBufferLifetimeRecord();
+                Lifetime.Tracker.CommandBufferLifetimes[commandBufferHandle] = lifetime;
+            }
+
+            foreach (VulkanResourceLifetimeKey key in batch.Dependencies)
+                PublishCommandBufferDependencyNoLock(commandBufferHandle, lifetime, key);
+
+            lifetime.RefreshTouchedDependencies();
+            batch.Dependencies.Clear();
+            return true;
+        }
+    }
+
+    internal void AbandonCommandBufferRecording(CommandBuffer commandBuffer)
+    {
+        ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+        if (commandBufferHandle == 0)
+            return;
+
+        lock (Lifetime.Tracker.SyncRoot)
+        {
+            if (!Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? lifetime))
+                return;
+
+            lifetime.FrameDataLease.AbandonRecording();
+            ReleasePreparedCommandBufferDependenciesNoLock(commandBufferHandle, lifetime);
+        }
+    }
+
+    internal void CompleteCommandBufferRecording(CommandBuffer commandBuffer, bool cacheVariant)
+    {
+        ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+        if (commandBufferHandle == 0)
+            return;
+
+        lock (Lifetime.Tracker.SyncRoot)
+        {
+            if (Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? lifetime))
+                lifetime.FrameDataLease.CompleteRecording(cacheVariant);
+        }
+    }
+
+    private bool TryValidateCommandBufferDependencyNoLock(
+        ulong commandBufferHandle,
+        VulkanResourceLifetimeKey key,
+        out string reason)
+    {
+        VulkanResourceLifetimeRecord resource = Lifetime.Tracker.GetOrRegisterResourceNoLock(key, "CommandRuntime.TrackingBatch");
+        if ((resource.State & (EVulkanResourceLifetimeState.PendingRetirement | EVulkanResourceLifetimeState.Destroyed)) != 0)
+        {
+            reason = $"Command buffer 0x{commandBufferHandle:X} attempted to record retired resource {key} generation {resource.Generation}.";
+            return false;
+        }
+
+        if (key.Type == ObjectType.ImageView &&
+            Lifetime.Tracker.ImageViewBackingImages.TryGetValue(key.Handle, out ulong backingImage) &&
+            backingImage != 0)
+        {
+            if (!TryValidateCommandBufferDependencyNoLock(commandBufferHandle, new VulkanResourceLifetimeKey(ObjectType.Image, backingImage), out reason))
+                return false;
+        }
+        else if (key.Type == ObjectType.BufferView &&
+                 Lifetime.Tracker.BufferViewBackingBuffers.TryGetValue(key.Handle, out ulong backingBuffer) &&
+                 backingBuffer != 0)
+        {
+            if (!TryValidateCommandBufferDependencyNoLock(commandBufferHandle, new VulkanResourceLifetimeKey(ObjectType.Buffer, backingBuffer), out reason))
+                return false;
+        }
+        else if (key.Type == ObjectType.Framebuffer &&
+                 Lifetime.Tracker.FramebufferAttachments.TryGetValue(key.Handle, out VulkanResourceLifetimeKey[]? attachments))
+        {
+            for (int index = 0; index < attachments.Length; index++)
+                if (attachments[index].IsValid && !TryValidateCommandBufferDependencyNoLock(commandBufferHandle, attachments[index], out reason))
+                    return false;
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    private void PublishCommandBufferDependencyNoLock(
+        ulong commandBufferHandle,
+        VulkanCommandBufferLifetimeRecord lifetime,
+        VulkanResourceLifetimeKey key)
+    {
+        VulkanResourceLifetimeRecord resource = Lifetime.Tracker.GetOrRegisterResourceNoLock(key, "CommandRuntime.TrackingBatch");
+        if (!lifetime.Dependencies.TryGetValue(key, out ulong generation) || generation != resource.Generation)
+        {
+            lifetime.Dependencies[key] = resource.Generation;
+            resource.Pins.AddRecordedReference();
+            resource.State |= EVulkanResourceLifetimeState.Recorded;
+            if (!Lifetime.Tracker.ResourceCommandBufferDependencies.TryGetValue(key, out HashSet<ulong>? buffers))
+            {
+                buffers = [];
+                Lifetime.Tracker.ResourceCommandBufferDependencies[key] = buffers;
+            }
+            buffers.Add(commandBufferHandle);
+        }
+
+        if (key.Type == ObjectType.ImageView && Lifetime.Tracker.ImageViewBackingImages.TryGetValue(key.Handle, out ulong backingImage) && backingImage != 0)
+            PublishCommandBufferDependencyNoLock(commandBufferHandle, lifetime, new VulkanResourceLifetimeKey(ObjectType.Image, backingImage));
+        else if (key.Type == ObjectType.BufferView && Lifetime.Tracker.BufferViewBackingBuffers.TryGetValue(key.Handle, out ulong backingBuffer) && backingBuffer != 0)
+            PublishCommandBufferDependencyNoLock(commandBufferHandle, lifetime, new VulkanResourceLifetimeKey(ObjectType.Buffer, backingBuffer));
+        else if (key.Type == ObjectType.Framebuffer && Lifetime.Tracker.FramebufferAttachments.TryGetValue(key.Handle, out VulkanResourceLifetimeKey[]? attachments))
+        {
+            for (int index = 0; index < attachments.Length; index++)
+                if (attachments[index].IsValid)
+                    PublishCommandBufferDependencyNoLock(commandBufferHandle, lifetime, attachments[index]);
+        }
+    }
+
+    private void ReleasePreparedCommandBufferDependenciesNoLock(ulong commandBufferHandle, VulkanCommandBufferLifetimeRecord lifetime)
+    {
+        foreach ((VulkanResourceLifetimeKey key, ulong generation) in lifetime.Dependencies)
+        {
+            if (!Lifetime.Tracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource) || resource.Generation != generation)
+                continue;
+            resource.Pins.ReleaseRecordedReference();
+            if (!resource.Pins.HasRecordedReferences)
+                resource.State &= ~EVulkanResourceLifetimeState.Recorded;
+            if (Lifetime.Tracker.ResourceCommandBufferDependencies.TryGetValue(key, out HashSet<ulong>? buffers))
+                buffers.Remove(commandBufferHandle);
+        }
+
+        lifetime.Dependencies.Clear();
+        lifetime.TouchedDependencies.Clear();
+    }
+
+    internal void CompleteDetachedExternalResourceDestruction(
+        ObjectType type,
+        ulong handle,
+        ulong expectedGeneration,
+        bool forced)
+    {
+        if (handle == 0 || expectedGeneration == 0)
+            return;
+
+        VulkanResourceLifetimeKey key = new(type, handle);
+        lock (Lifetime.Tracker.SyncRoot)
+        {
+            if (!Lifetime.Tracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource) ||
+                resource.Generation != expectedGeneration)
+                return;
+
+            if (forced)
+                Interlocked.Increment(ref Lifetime.Tracker.ForcedResourceDestructionCount);
+            resource.State = EVulkanResourceLifetimeState.Destroyed;
+            Lifetime.Tracker.ResourceCommandBufferDependencies.Remove(key);
+        }
+    }
+
+    internal void UnregisterRenderPass(RenderPass renderPass)
+    {
+        if (renderPass.Handle == 0)
+            return;
+
+        RenderPassColorAttachmentCounts.Remove(renderPass.Handle);
+        RenderPassColorAttachmentFormats.Remove(renderPass.Handle);
+        RenderPassSemanticSignatures.Remove(renderPass.Handle);
+    }
+
+    /// <summary>
+    /// Detaches externally owned WSI image identities so a recreated swapchain
+    /// may legally reuse native handles while the prior generation retires.
+    /// Command artifacts must already have been retired by the caller.
+    /// </summary>
+    internal ulong[] DetachExternalImageLifetimesForHandleReuse(Image[] images)
+    {
+        ulong[] generations = new ulong[images.Length];
+        VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
+        lock (tracker.SyncRoot)
+        {
+            for (int index = 0; index < images.Length; index++)
+            {
+                ulong handle = images[index].Handle;
+                if (handle == 0)
+                    continue;
+                VulkanResourceLifetimeKey key = new(ObjectType.Image, handle);
+                if (!tracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource))
+                    continue;
+
+                generations[index] = resource.Generation;
+                tracker.ResourceLifetimes.Remove(key);
+                tracker.PublishedResourceGenerations.TryRemove(key, out _);
+                tracker.ResourceCommandBufferDependencies.Remove(key);
+            }
+        }
+        return generations;
+    }
 
     internal void NotifyResourceUseCompleted(ObjectType type, ulong handle)
     {
@@ -243,6 +968,11 @@ internal sealed class VulkanResourceRuntime
             ObjectType.CommandPool,
             commandPool.Handle);
 
+    internal void CompletePipelineDestruction(Pipeline pipeline)
+        => CompleteSimpleResourceDestruction(
+            ObjectType.Pipeline,
+            pipeline.Handle);
+
     internal void CompleteCommandPoolChildDestructions(
         VulkanCommandRuntime commandRuntime,
         CommandPool commandPool)
@@ -329,6 +1059,7 @@ internal sealed class VulkanResourceRuntime
     }
 
     internal VulkanRetirementTicket PrepareCommandBufferRetirement(
+        VulkanCommandRuntime commandRuntime,
         CommandBuffer commandBuffer,
         string owner)
     {
@@ -339,6 +1070,8 @@ internal sealed class VulkanResourceRuntime
         VulkanResourceLifetimeKey key = new(
             ObjectType.CommandBuffer,
             handle);
+        Lifetime.Tracker.FenceResourceRecordingAdmission(key, owner);
+        commandRuntime.PublishTrackingDependenciesBeforeResourceRetirement(key);
         lock (Lifetime.Tracker.SyncRoot)
         {
             VulkanResourceLifetimeRecord resource =
@@ -391,7 +1124,7 @@ internal sealed class VulkanResourceRuntime
                 unchecked((ulong)commandBuffer.Handle));
     }
 
-    private bool UpdateResourceCompletionStateNoLock(
+    internal bool UpdateResourceCompletionStateNoLock(
         VulkanResourceLifetimeRecord resource)
     {
         bool completed =
@@ -425,7 +1158,9 @@ internal sealed class VulkanResourceRuntime
                 continue;
             }
 
-            VulkanRenderer.ReleaseVulkanRecordedGenerationPin(resource);
+            resource.Pins.ReleaseRecordedReference();
+            if (!resource.Pins.HasRecordedReferences)
+                resource.State &= ~EVulkanResourceLifetimeState.Recorded;
             if (Lifetime.Tracker.ResourceCommandBufferDependencies.TryGetValue(
                     key,
                     out HashSet<ulong>? commandBuffers))
@@ -486,21 +1221,128 @@ internal sealed class VulkanResourceRuntime
             pipelines: destroyed);
     }
 
+    /// <summary>Publishes a program-owned pipeline layout to the lifetime ledger.</summary>
+    internal void TrackPipelineLayout(PipelineLayout pipelineLayout, string owner)
+    {
+        if (pipelineLayout.Handle == 0)
+            return;
+
+        Lifetime.LivePipelineLayoutHandles[pipelineLayout.Handle] = owner;
+        Lifetime.Tracker.RegisterResource(
+            new VulkanResourceLifetimeKey(ObjectType.PipelineLayout, pipelineLayout.Handle),
+            owner,
+            externallyOwned: false);
+    }
+
+    /// <summary>
+    /// Begins pipeline-layout destruction. A layout still referenced by recorded
+    /// work is queued on the current resource-retirement slot instead of being
+    /// destroyed synchronously.
+    /// </summary>
+    internal bool TryBeginDestroyPipelineLayout(PipelineLayout pipelineLayout, string owner)
+    {
+        if (pipelineLayout.Handle == 0 ||
+            !Lifetime.LivePipelineLayoutHandles.TryRemove(pipelineLayout.Handle, out string? trackedOwner))
+        {
+            return false;
+        }
+
+        VulkanResourceLifetimeKey key = new(ObjectType.PipelineLayout, pipelineLayout.Handle);
+        VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
+        VulkanRetirementTicket ticket;
+        lock (tracker.SyncRoot)
+        {
+            VulkanResourceLifetimeRecord record = tracker.GetOrRegisterResourceNoLock(key, owner);
+            if ((record.State & (EVulkanResourceLifetimeState.Destroyed | EVulkanResourceLifetimeState.PendingRetirement)) != 0)
+                return false;
+
+            ticket = new VulkanRetirementTicket(
+                record.Pins.LastGraphicsSequence,
+                record.Pins.LastTransferSequence,
+                record.Pins.LastOtherSequence,
+                Stopwatch.GetTimestamp(),
+                record.Generation,
+                (record.State & EVulkanResourceLifetimeState.External) != 0,
+                VulkanRetirementPinSet.Single(key, record.Generation));
+            record.RetirementSerial = unchecked((ulong)Interlocked.Increment(ref tracker.RetirementSerial));
+            record.State |= EVulkanResourceLifetimeState.PendingRetirement;
+            record.RetirementTicket = ticket;
+            tracker.PublishedResourceGenerations[key] = 0;
+        }
+
+        if (tracker.IsRetirementReady(ticket))
+        {
+            CompleteSimpleResourceDestruction(ObjectType.PipelineLayout, pipelineLayout.Handle);
+            return true;
+        }
+
+        int frameSlot = FramebufferRetirementFrameSlot;
+        lock (Lifetime.Retirement.SyncRoot)
+            VulkanResourceRetirementQueue.TryEnqueueUniqueNoLock(
+                frameSlot,
+                pipelineLayout.Handle,
+                new VulkanRetiredPipelineLayout(pipelineLayout, ticket, trackedOwner ?? owner),
+                Lifetime.Retirement.PipelineLayouts,
+                Lifetime.Retirement.PipelineLayoutHandles,
+                Lifetime.Retirement.AllPipelineLayoutHandles);
+        return false;
+    }
+
+    /// <summary>Queues a pipeline until every recorded dependency is complete.</summary>
+    internal void RetirePipeline(Pipeline pipeline, string owner)
+    {
+        if (pipeline.Handle == 0)
+            return;
+
+        VulkanResourceLifetimeKey key = new(ObjectType.Pipeline, pipeline.Handle);
+        VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
+        VulkanRetirementTicket ticket;
+        lock (tracker.SyncRoot)
+        {
+            VulkanResourceLifetimeRecord record = tracker.GetOrRegisterResourceNoLock(key, owner);
+            if ((record.State & (EVulkanResourceLifetimeState.Destroyed | EVulkanResourceLifetimeState.PendingRetirement)) != 0)
+                return;
+
+            ticket = new VulkanRetirementTicket(
+                record.Pins.LastGraphicsSequence,
+                record.Pins.LastTransferSequence,
+                record.Pins.LastOtherSequence,
+                Stopwatch.GetTimestamp(),
+                record.Generation,
+                (record.State & EVulkanResourceLifetimeState.External) != 0,
+                VulkanRetirementPinSet.Single(key, record.Generation));
+            record.RetirementSerial = unchecked((ulong)Interlocked.Increment(ref tracker.RetirementSerial));
+            record.State |= EVulkanResourceLifetimeState.PendingRetirement;
+            record.RetirementTicket = ticket;
+            tracker.PublishedResourceGenerations[key] = 0;
+        }
+
+        int frameSlot = FramebufferRetirementFrameSlot;
+        lock (Lifetime.Retirement.SyncRoot)
+            VulkanResourceRetirementQueue.TryEnqueueUniqueNoLock(
+                frameSlot,
+                pipeline.Handle,
+                new RetiredPipeline(pipeline, ticket),
+                Lifetime.Retirement.Pipelines,
+                Lifetime.Retirement.PipelineHandles,
+                Lifetime.Retirement.AllPipelineHandles);
+    }
+
     internal unsafe void DrainRetiredPipelineLayouts(
         Vk api,
         Device device,
         int frameSlot,
         int maxItems = 8)
     {
-        List<VulkanRenderer.RetiredPipelineLayout> list =
+        List<VulkanRetiredPipelineLayout> list =
             Lifetime.Retirement.PipelineLayouts[frameSlot];
-        List<VulkanRenderer.RetiredPipelineLayout> ready = [];
+        List<VulkanRetiredPipelineLayout> ready = [];
         lock (Lifetime.Retirement.SyncRoot)
         {
             for (int index = 0;
                  index < list.Count && ready.Count < maxItems;)
             {
-                VulkanRenderer.RetiredPipelineLayout candidate = list[index];
+                VulkanRetiredPipelineLayout candidate = list[index];
                 if (!Lifetime.Tracker.IsRetirementReady(candidate.Ticket))
                 {
                     index++;
@@ -533,21 +1375,37 @@ internal sealed class VulkanResourceRuntime
         }
     }
 
+    /// <summary>Destroys pipeline layouts left after the owning device is idle.</summary>
+    internal unsafe int DestroyRemainingTrackedPipelineLayouts(Vk api, Device device)
+    {
+        int destroyed = 0;
+        foreach (ulong handle in Lifetime.LivePipelineLayoutHandles.Keys.ToArray())
+        {
+            if (!Lifetime.LivePipelineLayoutHandles.TryRemove(handle, out _))
+                continue;
+
+            api.DestroyPipelineLayout(device, new PipelineLayout { Handle = handle }, null);
+            CompleteSimpleResourceDestruction(ObjectType.PipelineLayout, handle);
+            destroyed++;
+        }
+        return destroyed;
+    }
+
     internal unsafe void DrainRetiredDescriptorSetLayouts(
         Vk api,
         Device device,
         int frameSlot,
         int maxItems = 8)
     {
-        List<VulkanRenderer.RetiredDescriptorSetLayout> list =
+        List<VulkanRetiredDescriptorSetLayout> list =
             Lifetime.Retirement.DescriptorSetLayouts[frameSlot];
-        List<VulkanRenderer.RetiredDescriptorSetLayout> ready = [];
+        List<VulkanRetiredDescriptorSetLayout> ready = [];
         lock (Lifetime.Retirement.SyncRoot)
         {
             for (int index = 0;
                  index < list.Count && ready.Count < maxItems;)
             {
-                VulkanRenderer.RetiredDescriptorSetLayout candidate =
+                VulkanRetiredDescriptorSetLayout candidate =
                     list[index];
                 if (!Lifetime.Tracker.IsRetirementReady(candidate.Ticket))
                 {
@@ -727,14 +1585,12 @@ internal sealed class VulkanResourceRuntime
     /// </summary>
     /// <param name="api">The Vulkan API instance.</param>
     /// <param name="device">The Vulkan device.</param>
-    /// <param name="outputRuntime">The Vulkan output runtime.</param>
     /// <param name="telemetry">The Vulkan frame telemetry instance.</param>
     /// <param name="frameSlot">The frame slot for which to drain retired buffers.</param>
     /// <param name="maxItems">The maximum number of buffers to drain in this call.</param>
-    internal unsafe void DrainRetiredBuffers(
+    internal unsafe int DrainRetiredBuffers(
         Vk api,
         Device device,
-        VulkanOutputRuntime outputRuntime,
         VulkanFrameTelemetry telemetry,
         int frameSlot,
         int maxItems = 256)
@@ -859,8 +1715,7 @@ internal sealed class VulkanResourceRuntime
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(
             buffers: destroyedBuffers,
             bufferMemories: freedMemories);
-        if (pooledBuffers > 0)
-            Allocations.Staging.Trim(outputRuntime);
+        return pooledBuffers;
     }
 
     /// <summary>
@@ -1227,7 +2082,7 @@ internal sealed class VulkanResourceRuntime
     private bool TryTakeLiveBuffer(Silk.NET.Vulkan.Buffer buffer)
         => Allocations.Buffers.LiveHandles.TryRemove(buffer.Handle, out _);
 
-    private void ReactivateResourceAfterRetirement(
+    internal void ReactivateResourceAfterRetirement(
         ObjectType type,
         ulong handle,
         string owner)
@@ -1433,74 +2288,16 @@ internal sealed class VulkanResourceRuntime
     }
 
     private void RemoveDescriptorSetsOwnedByPoolNoLock(ulong poolHandle)
-    {
-        if (!Lifetime.Tracker.DescriptorSetsByPool.TryGetValue(
-                poolHandle,
-                out HashSet<ulong>? ownedSets))
-        {
-            return;
-        }
-
-        ulong[] removedSets = [.. ownedSets];
-        for (int index = 0; index < removedSets.Length; index++)
-            RemoveDescriptorSetLifetimeNoLock(removedSets[index]);
-
-        Lifetime.Tracker.DescriptorSetsByPool.Remove(poolHandle);
-    }
+        => VulkanDescriptorManager.RemoveDescriptorSetsOwnedByPoolNoLock(
+            Lifetime,
+            poolHandle,
+            forced: false);
 
     private void RemoveDescriptorSetLifetimeNoLock(ulong setHandle)
-    {
-        if (Lifetime.Tracker.DescriptorSetLifetimes.Remove(
-                setHandle,
-                out VulkanDescriptorSetLifetimeRecord? state))
-        {
-            foreach ((VulkanResourceLifetimeKey key, ulong generation) in
-                     state.PinnedReferences)
-            {
-                if (Lifetime.Tracker.ResourceLifetimes.TryGetValue(
-                        key,
-                        out VulkanResourceLifetimeRecord? resource) &&
-                    resource.Generation == generation)
-                {
-                    resource.Pins.ReleaseDescriptorReference();
-                }
-            }
-
-            state.PinnedReferences.Clear();
-            if (state.Pool.Handle != 0 &&
-                Lifetime.Tracker.DescriptorSetsByPool.TryGetValue(
-                    state.Pool.Handle,
-                    out HashSet<ulong>? poolSets))
-            {
-                poolSets.Remove(setHandle);
-                if (poolSets.Count == 0)
-                    Lifetime.Tracker.DescriptorSetsByPool.Remove(state.Pool.Handle);
-            }
-
-            foreach (VulkanResourceLifetimeKey reference in
-                     state.IndexedReferences)
-            {
-                if (!Lifetime.Tracker.DescriptorSetsByReferencedResource.TryGetValue(
-                        reference,
-                        out HashSet<ulong>? sets))
-                {
-                    continue;
-                }
-
-                sets.Remove(setHandle);
-                if (sets.Count == 0)
-                    Lifetime.Tracker.DescriptorSetsByReferencedResource.Remove(reference);
-            }
-        }
-
-        Lifetime.Tracker.PublishedDescriptorSets.TryRemove(setHandle, out _);
-        if (Lifetime.Tracker.ResourceLifetimes.TryGetValue(
-                new VulkanResourceLifetimeKey(ObjectType.DescriptorSet, setHandle),
-                out VulkanResourceLifetimeRecord? setResource))
-        {
-            setResource.State = EVulkanResourceLifetimeState.Destroyed;
-        }
-    }
+        => VulkanDescriptorManager.RemoveDescriptorSetLifetimeNoLock(
+            Lifetime,
+            setHandle,
+            forced: false);
 
     internal bool TryValidatePresentationSourceForReplay(
         in VulkanPresentationSourceTuple source,

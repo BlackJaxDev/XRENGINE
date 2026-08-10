@@ -35,6 +35,15 @@ internal readonly struct FrameOperationSequence
         return ref _stream.GetHeader(index);
     }
 
+    /// <summary>
+    /// Exposes the immutable operation payloads without materializing the
+    /// numeric stream. The returned span remains owned by the sealed frame plan.
+    /// </summary>
+    internal ReadOnlySpan<FrameOp> AsSpan()
+        => _stream is null
+            ? _compatibilityOperations
+            : _stream.GetEncoderPayloadRange(0, _stream.Count);
+
     public Enumerator GetEnumerator() => new(this);
 
     public struct Enumerator(FrameOperationSequence sequence)

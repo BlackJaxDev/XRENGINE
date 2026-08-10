@@ -25,9 +25,9 @@ internal sealed class VulkanResourceRetirementQueue
         DescriptorSetHandles = CreateSets<ulong>(frameSlotCount);
         Pipelines = CreateLists<RetiredPipeline>(frameSlotCount);
         PipelineHandles = CreateSets<ulong>(frameSlotCount);
-        PipelineLayouts = CreateLists<VulkanRenderer.RetiredPipelineLayout>(frameSlotCount);
+        PipelineLayouts = CreateLists<VulkanRetiredPipelineLayout>(frameSlotCount);
         PipelineLayoutHandles = CreateSets<ulong>(frameSlotCount);
-        DescriptorSetLayouts = CreateLists<VulkanRenderer.RetiredDescriptorSetLayout>(frameSlotCount);
+        DescriptorSetLayouts = CreateLists<VulkanRetiredDescriptorSetLayout>(frameSlotCount);
         DescriptorSetLayoutHandles = CreateSets<ulong>(frameSlotCount);
         QueryPools = CreateLists<RetiredQueryPool>(frameSlotCount);
         QueryPoolHandles = CreateSets<ulong>(frameSlotCount);
@@ -67,10 +67,10 @@ internal sealed class VulkanResourceRetirementQueue
     internal List<RetiredPipeline>[] Pipelines { get; }
     internal HashSet<ulong>[] PipelineHandles { get; }
     internal HashSet<ulong> AllPipelineHandles { get; } = [];
-    internal List<VulkanRenderer.RetiredPipelineLayout>[] PipelineLayouts { get; }
+    internal List<VulkanRetiredPipelineLayout>[] PipelineLayouts { get; }
     internal HashSet<ulong>[] PipelineLayoutHandles { get; }
     internal HashSet<ulong> AllPipelineLayoutHandles { get; } = [];
-    internal List<VulkanRenderer.RetiredDescriptorSetLayout>[] DescriptorSetLayouts { get; }
+    internal List<VulkanRetiredDescriptorSetLayout>[] DescriptorSetLayouts { get; }
     internal HashSet<ulong>[] DescriptorSetLayoutHandles { get; }
     internal HashSet<ulong> AllDescriptorSetLayoutHandles { get; } = [];
 

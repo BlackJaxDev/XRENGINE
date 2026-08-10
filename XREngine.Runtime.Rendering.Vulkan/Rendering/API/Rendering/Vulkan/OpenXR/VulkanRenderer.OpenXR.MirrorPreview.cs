@@ -9,6 +9,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Rendering;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.Vulkan.RenderGraph;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -66,12 +67,12 @@ public unsafe partial class VulkanRenderer
             if (submitted)
             {
                 CompleteOpenXrGpuProfilerSubmission(in recorded);
-                PublishRecordedTextureUploadsAfterCompletedSubmit(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror");
+                _commandRuntime.PublishOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror");
                 DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
             }
             else if (!commandBufferCompleted && !IsDeviceLost)
             {
-                CancelRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror command buffer did not complete");
+                _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror command buffer did not complete");
             }
 
             return submitted;
@@ -79,7 +80,7 @@ public unsafe partial class VulkanRenderer
         finally
         {
             if (!submitted && !commandBufferCompleted && !IsDeviceLost)
-                CancelRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror command buffer submit failed");
+                _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror command buffer submit failed");
 
             if (hasRecorded)
                 FreeOpenXrRecordedEyeCommandBuffer(recorded);
@@ -96,8 +97,10 @@ public unsafe partial class VulkanRenderer
         OpenXrRecordedEyeCommandBuffer firstRecorded = default;
         OpenXrRecordedEyeCommandBuffer secondRecorded = default;
         bool hasFirst = false;
+
         bool hasSecond = false;
         bool submitted = false;
+
         bool commandBuffersCompleted = false;
 
         try
@@ -125,12 +128,12 @@ public unsafe partial class VulkanRenderer
             {
                 CompleteOpenXrGpuProfilerSubmission(in firstRecorded);
                 CompleteOpenXrGpuProfilerSubmission(in secondRecorded);
-                PublishRecordedTextureUploadsAfterCompletedSubmit(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror batch");
+                _commandRuntime.PublishOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror batch");
                 DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
             }
             else if (!commandBuffersCompleted && !IsDeviceLost)
             {
-                CancelRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror batch command buffers did not complete");
+                _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror batch command buffers did not complete");
             }
 
             return submitted;
@@ -138,7 +141,7 @@ public unsafe partial class VulkanRenderer
         finally
         {
             if (!submitted && !commandBuffersCompleted && !IsDeviceLost)
-                CancelRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror batch command buffer submit failed");
+                _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror batch command buffer submit failed");
 
             if (hasSecond)
                 FreeOpenXrRecordedEyeCommandBuffer(secondRecorded);
@@ -195,9 +198,11 @@ public unsafe partial class VulkanRenderer
             if (!hasPublish)
                 return false;
 
+
             CommandBuffer* commandBuffers = stackalloc CommandBuffer[3];
             commandBuffers[0] = firstRecorded.CommandBuffer;
             commandBuffers[1] = secondRecorded.CommandBuffer;
+
             commandBuffers[2] = publishCommandBuffer;
 
             submitted = SubmitAndWaitOpenXrCommandBuffers(
@@ -217,12 +222,12 @@ public unsafe partial class VulkanRenderer
             {
                 CompleteOpenXrGpuProfilerSubmission(in firstRecorded);
                 CompleteOpenXrGpuProfilerSubmission(in secondRecorded);
-                PublishRecordedTextureUploadsAfterCompletedSubmit(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror render+publish batch");
+                _commandRuntime.PublishOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror render+publish batch");
                 DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
             }
             else if (!commandBuffersCompleted && !IsDeviceLost)
             {
-                CancelRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror render+publish batch command buffers did not complete");
+                _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror render+publish batch command buffers did not complete");
             }
 
             return submitted;
@@ -239,7 +244,7 @@ public unsafe partial class VulkanRenderer
         finally
         {
             if (!submitted && !commandBuffersCompleted && !IsDeviceLost)
-                CancelRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror render+publish batch command buffer submit failed");
+                _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror render+publish batch command buffer submit failed");
 
             if (hasPublish)
                 FreeOpenXrMirrorPublishCommandBuffer(publishCommandBuffer, submissionDisposition);
@@ -294,10 +299,12 @@ public unsafe partial class VulkanRenderer
             if (!hasRecorded)
                 return false;
 
+
             if (IsOpenXrStrictSpsFaultBoundary(
                     faultInjectionStage,
                     EOpenXrStrictSpsFaultInjectionStage.Recording))
             {
+
                 injectedFailureStage = EOpenXrStrictSpsFaultInjectionStage.Recording;
                 return false;
             }
@@ -350,12 +357,12 @@ public unsafe partial class VulkanRenderer
             {
                 CompleteOpenXrGpuProfilerSubmission(in recorded);
                 UpdateStereoLayerBlitTrackedLayouts(in plan);
-                PublishRecordedTextureUploadsAfterCompletedSubmit(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR true stereo render+publish batch");
+                _commandRuntime.PublishOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR true stereo render+publish batch");
                 DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
             }
             else if (!commandBuffersCompleted && !IsDeviceLost)
             {
-                CancelRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR true stereo render+publish batch command buffers did not complete");
+                _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR true stereo render+publish batch command buffers did not complete");
             }
 
             return submitted;
@@ -375,13 +382,13 @@ public unsafe partial class VulkanRenderer
                 submissionDisposition == EVulkanQueueSubmissionDisposition.NotSubmitted &&
                 hasRecorded)
             {
-                MarkUnsubmittedOpenXrPrimaryCommandBufferDirty(
+                _commandRuntime.MarkUnsubmittedOpenXrPrimaryCommandBufferDirty(
                     in recorded,
                     "OpenXR true stereo render+publish batch was not submitted");
             }
 
             if (!submitted && !commandBuffersCompleted && !IsDeviceLost)
-                CancelRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR true stereo render+publish batch command buffer submit failed");
+                _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR true stereo render+publish batch command buffer submit failed");
 
             if (hasPublish)
                 FreeOpenXrMirrorPublishCommandBuffer(publishCommandBuffer, submissionDisposition);
@@ -393,14 +400,15 @@ public unsafe partial class VulkanRenderer
     }
 
     private bool TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer(
+
         in OpenXrEyeMirrorRenderRequest request,
         out OpenXrRecordedEyeCommandBuffer recorded)
     {
         recorded = default;
         if (request.TargetFrameBuffer is null || request.Extent.Width == 0 || request.Extent.Height == 0)
+
             return false;
 
-        CommandBuffer commandBuffer = default;
         bool drainedFrameOps = false;
         int openXrFrameDataSlotCount = ResolveOpenXrFrameDataSlotCount(OutputRuntime.Desktop.Images?.Length ?? 0);
         uint recordImageIndex = ResolveOpenXrRecordImageIndex(
@@ -421,13 +429,15 @@ public unsafe partial class VulkanRenderer
         try
         {
             EnsureOpenXrFrameDataSlotCapacity(openXrFrameDataSlotCount);
-            EnsureDescriptorFrameSlotFrameCountFloor(openXrFrameDataSlotCount);
+            _commandRuntime.EnsureOpenXrDescriptorFrameSlotFloor(
+                openXrFrameDataSlotCount);
             bool frameDataSlotCompletionProven =
                 WaitForOpenXrFrameDataSlot(
                     recordImageIndex,
                     "eye mirror render");
             DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
-            DrainCompletedRecordedTextureUploadPublications();
+            ResourceRuntime.Uploads.DrainCompletedRecordedTextureUploadPublications(
+                Api!, _deviceContext, _commandRuntime, ResourceRuntime, IsDeviceLost);
 
             if (MappedFrameArena is { } arena &&
                 !arena.TryResetFrameSlot(
@@ -439,8 +449,10 @@ public unsafe partial class VulkanRenderer
                     $"OpenXR mapped frame-data slot {recordImageIndex} could not be reopened before mirror recording.");
             }
 
-            using ThreadRenderStateScope renderStateScope = EnterThreadRenderStateScope(
-                CreateOpenXrPrewarmRenderStateTracker(request.Extent));
+            using VulkanOpenXrThreadRenderStateScope renderStateScope =
+                _commandRuntime.OpenXrRecording.EnterThreadRenderStateScope(
+                    CreateOpenXrThreadRenderStateData(),
+                    CreateOpenXrPrewarmRenderStateTracker(request.Extent));
             using (EnterOpenXrResourcePlannerThreadScope(
                 request.ResourcePlannerStateIndex,
                 EVulkanOpenXrResourcePlannerPurpose.Mirror))
@@ -490,11 +502,13 @@ public unsafe partial class VulkanRenderer
                     return false;
                 }
 
+
                 if (!TryRefreshFrameOpResourceWrappers(
                     ops,
                     plannerContext,
                     "OpenXR eye mirror prepared frame-op resource refresh",
                     AllowSynchronousResourceUploads,
+
                     out string refreshFailureReason))
                 {
                     Debug.VulkanWarningEvery(
@@ -531,58 +545,94 @@ public unsafe partial class VulkanRenderer
                     frameOpsSignature,
                     plannerRevision);
 
-                ulong imageLayoutStartSignature = ComputeImageLayoutStateSignature();
-                FrameOpContext fallbackContext = ops.Length > 0 ? ops[0].Context : plannerContext;
-                ulong frameOpContextFingerprint = ComputeCommandBufferFrameOpContextFingerprint(
-                    ops,
-                    Array.Empty<FrameOp>(),
-                    fallbackContext);
-                ulong frameOpContextId = ResolveCommandBufferFrameOpContextId(
-                    ops,
-                    Array.Empty<FrameOp>(),
-                    fallbackContext);
-                bool reusedPrimary = TryReuseOpenXrMirrorPrimaryCommandBuffer(
-                    recordImageIndex,
-                    mirrorCommandChainImageIndex,
-                    request,
-                    ops,
-                    frameOpsSignature,
-                    frameOpContextFingerprint,
-                    frameOpContextId,
+                FrameOpContext fallbackContext = ops.Length > 0
+                    ? ops[0].Context
+                    : plannerContext;
+                VulkanFramePlanningSnapshot planningSnapshot =
+                    _framePlanner.CaptureSnapshot();
+                FramePlan framePlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
+                    checked((int)recordImageIndex),
                     plannerRevision,
-                    imageLayoutStartSignature,
-                    commandChainSchedule,
-                    out commandBuffer);
-
-                if (!reusedPrimary)
-                {
-                    commandBuffer = RecordOpenXrMirrorPrimaryCommandBuffer(
+                    frameOpsSignature,
+                    dynamicOverlaySignature: 0,
+                    ops,
+                    Array.Empty<FrameOp>(),
+                    openXrViewIndex: request.OpenXrViewIndex);
+                FrameOperationSequence recordingOperations =
+                    framePlan.GetNativeStaticOperationsForRecording();
+                ulong cacheKey = BuildOpenXrMirrorPrimaryCommandBufferCacheKey(
+                    mirrorCommandChainImageIndex,
+                    request);
+                PrimaryCommandArtifactOwner owner =
+                    _commandRuntime.GetOrCreateOpenXrPrimaryCommandBufferOwner(
+                        cacheKey,
                         recordImageIndex,
-                        mirrorCommandChainImageIndex,
-                        request,
-                        ops,
+                        _commandRuntime.Pools.PrimaryGraphics,
+                        $"OpenXR mirror primary eye={request.OpenXrViewIndex}");
+                owner.PrimaryCommandPlan.Build(
+                    recordingOperations,
+                    framePlan.StaticOperationSignature,
+                    new VulkanPrimaryPlanTerminalContext(
+                        PreserveSwapchainForOverlay: false,
+                        TransitionSwapchainToPresent: false,
+                        ReleaseExternalImageOwnership: false),
+                    planningSnapshot.RenderGraphPlan.Barriers);
+                VulkanStateTracker clearState =
+                    CreateOpenXrPrewarmRenderStateTracker(request.Extent);
+                VulkanPreparedPrimaryCommandInput commandInput = new(
+                    recordImageIndex,
+                    owner.PrimaryCommandBuffer,
+                    default,
+                    framePlan,
+                    owner.PrimaryCommandPlan,
+                    RecordingTarget: default,
+                    PresentationSource: default,
+                    new VulkanPreparedResourcePlanStamp(
+                        planningSnapshot,
+                        plannerState.ResourcePlannerRevision,
+                        plannerState.ResourcePlannerSignature,
+                        plannerState.ResourceAllocationSignature),
+                    new VulkanCommandClearStateSnapshot(
+                        clearState.ClearColor,
+                        clearState.ClearDepth,
+                        clearState.ClearStencil,
+                        XREngine.Rendering.RenderDiagnosticsFlags.VkForceSwapchainMagenta),
+                    new VulkanCommandRecordingPolicySnapshot(
+                        UseDynamicRenderingRenderTargets,
+                        AllowSynchronousResourceUploads,
+                        RuntimeRenderingHostServices.Settings.VulkanCommandRecordingMode ==
+                            EVulkanCommandRecordingMode.FreshSerial,
+
+                        IsExternalSwapchainTarget:
+                            request.RendersExternalSwapchainTarget,
+                        PreserveSwapchainForOverlay: false,
+                        TransitionSwapchainToPresent: false),
+                    TrackedTargetLayout: ImageLayout.Undefined,
+                    FrameDataImageIndexOverride: recordImageIndex,
+                    OpenXrTargetContext: null,
+                    CommandChainSchedule: commandChainSchedule,
+                    ExcludeDesktopSwapchainBarriers: true,
+                    NativeOperationsOverride: ops);
+                if (!_commandRuntime.TryRecordPreparedOpenXrMirror(
+                        in commandInput,
+                        CreateOpenXrMirrorFrameContext(in request),
+                        request.OpenXrViewIndex,
+                        request.OpenXrImageIndex,
+                        recordImageIndex,
                         frameOpsSignature,
-                        frameOpContextFingerprint,
-                        frameOpContextId,
                         plannerRevision,
-                        imageLayoutStartSignature,
-                        commandChainSchedule);
-                    if (commandBuffer.Handle == 0)
-                        return false;
+                        plannerContext.ContextId,
+                        fallbackContext.ResourceGeneration,
+                        fallbackContext.DescriptorGeneration,
+                        out recorded,
+                        out VulkanImportedTexturePendingUpload[] uploads))
+                {
+                    return false;
                 }
 
-                recorded = new OpenXrRecordedEyeCommandBuffer(
-                    commandBuffer,
-                    CreateOpenXrMirrorFrameContext(in request),
-                    request.OpenXrViewIndex,
-                    request.OpenXrImageIndex,
-                    recordImageIndex,
-                    frameOpsSignature,
-                    plannerRevision,
-                    frameOpContextId,
-                    fallbackContext.ResourceGeneration,
-                    fallbackContext.DescriptorGeneration,
-                    OwnedByOpenXrPrimaryCache: true);
+                if (uploads.Length != 0)
+                    OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit
+                        .AddRange(uploads);
                 return true;
             }
         }
@@ -595,358 +645,12 @@ public unsafe partial class VulkanRenderer
 
             Debug.VulkanWarningEvery(
                 $"OpenXR.Vulkan.RenderEyeMirrorFailed.{GetHashCode()}",
+
                 TimeSpan.FromSeconds(1),
                 "[OpenXR] Vulkan eye mirror render failed: {0}",
                 ex.Message);
             return false;
         }
-    }
-
-    private bool TryReuseOpenXrMirrorPrimaryCommandBuffer(
-        uint recordImageIndex,
-        uint commandChainImageIndex,
-        in OpenXrEyeMirrorRenderRequest request,
-        FrameOp[] ops,
-        ulong frameOpsSignature,
-        ulong frameOpContextFingerprint,
-        ulong frameOpContextId,
-        ulong plannerRevision,
-        ulong imageLayoutStartSignature,
-        CommandChainSchedule? commandChainSchedule,
-        out CommandBuffer commandBuffer)
-    {
-        commandBuffer = default;
-        if (FreshSerialRecordingEnabled)
-        {
-            if (OpenXrVulkanTraceEnabled)
-                RecordOpenXrPrimaryReuseMiss("openxr-mirror-primary-miss:fresh-serial");
-            return false;
-        }
-
-        if (!OpenXrVulkanPrimaryReuseEnabled)
-        {
-            if (OpenXrVulkanTraceEnabled)
-                RecordOpenXrPrimaryReuseMiss("openxr-mirror-primary-miss:disabled");
-            return false;
-        }
-
-        ulong cacheKey = BuildOpenXrMirrorPrimaryCommandBufferCacheKey(commandChainImageIndex, request);
-        lock (OutputRuntime.OpenXrBackend.PrimaryCommandArtifactOwnersLock)
-        {
-            if (!OpenXrPrimaryCommandArtifactOwners.TryGetValue(cacheKey, out PrimaryCommandArtifactOwner? variant))
-            {
-                if (OpenXrVulkanTraceEnabled)
-                    RecordOpenXrPrimaryReuseMiss($"openxr-mirror-primary-miss:no-owner key=0x{cacheKey:X16}");
-                else
-                    RecordOpenXrPrimaryReuseMiss("openxr-mirror-primary-miss:no-owner");
-                return false;
-            }
-
-            bool gpuPipelineProfilingActive =
-                IsVulkanGpuProfilerCommandBufferInstrumentationEnabled &&
-                RenderPipelineGpuProfiler.Instance.IsProfilingActive;
-            int commandBufferImageSlot = unchecked((int)Math.Min(recordImageIndex, int.MaxValue));
-            ulong commandChainPrimaryGroupSignature = ulong.MaxValue;
-            int commandChainPrimaryGroupCount = -1;
-            bool usingCommandChains = commandChainSchedule is not null;
-            bool requiresExactFrameOps = true;
-            if (!TryComputeOpenXrPrimaryCommandBufferGroupSignature(
-                    commandChainImageIndex,
-                    commandChainSchedule,
-                    requireReusableChains: true,
-                    out commandChainPrimaryGroupSignature,
-                    out commandChainPrimaryGroupCount))
-            {
-                if (OpenXrVulkanTraceEnabled)
-                {
-                    RecordOpenXrPrimaryReuseMiss(
-                        $"openxr-mirror-primary-miss:chains-not-reusable key=0x{cacheKey:X16} {DescribeOpenXrPrimaryReusableChainMiss(commandChainImageIndex, commandChainSchedule)}");
-                }
-                else
-                {
-                    RecordOpenXrPrimaryReuseMiss("openxr-mirror-primary-miss:chains-not-reusable");
-                }
-                return false;
-            }
-
-            bool imageEntryStateDirty =
-                    IsCommandBufferVariantImageLayoutStateDirty(
-                        variant,
-                        imageLayoutStartSignature,
-                        out VulkanImageEntryStateMismatch imageEntryStateMismatch);
-                if (imageEntryStateDirty)
-                    RecordPrimaryImageEntryStateMismatch(imageEntryStateMismatch);
-                if (variant.Dirty ||
-                    variant.PrimaryCommandBuffer.Handle == 0 ||
-                    (requiresExactFrameOps && variant.FrameOpsSignature != frameOpsSignature) ||
-                    !TryValidateCommandBufferVariantContext(
-                        recordImageIndex,
-                        variant,
-                        frameOpContextFingerprint,
-                        frameOpContextId,
-                        "openxr-mirror-primary") ||
-                    (!usingCommandChains && variant.PlannerRevision != plannerRevision) ||
-                    imageEntryStateDirty ||
-                    variant.CommandChainScheduleSignature != (commandChainSchedule?.StructuralSignature ?? ulong.MaxValue) ||
-                    variant.CommandChainPrimaryGroupSignature != (commandChainSchedule is null ? ulong.MaxValue : commandChainPrimaryGroupSignature) ||
-                    variant.CommandChainPrimaryGroupCount != (commandChainSchedule is null ? -1 : commandChainPrimaryGroupCount) ||
-                    IsCommandBufferVariantGpuProfilerStateDirty(variant, gpuPipelineProfilingActive, commandBufferImageSlot))
-                {
-                    RecordOpenXrPrimaryReuseMiss("openxr-mirror-primary-miss:owner-stale");
-                    return false;
-                }
-
-                _lastReusableFrameDataRefreshFailureReason = null;
-                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.MirrorPrimary.RefreshFrameData"))
-                {
-                    CommandBufferRecordingScratch frameDataScratch =
-                        _commandBufferRecordingScratch.Value!;
-                    if (!TryRefreshReusableCommandBufferFrameData(
-                            recordImageIndex,
-                            frameDataScratch
-                                .PrimaryReusableFrameDataRefreshRequests,
-                            frameDataScratch
-                                .PrimaryReusableFrameDataOwnerWorkRequests,
-                            frameDataScratch
-                                .PrimaryReusableFrameDataRefreshBatchInfo,
-                            variant.PrimaryFrameDataRefreshState,
-                            dynamicUi: false))
-                        return false;
-                }
-
-                variant.GpuProfilerActive = gpuPipelineProfilingActive;
-                variant.GpuProfilerFrameSlot = gpuPipelineProfilingActive ? commandBufferImageSlot : -1;
-
-                if (HasQueryFrameOps(ops) &&
-                    !PrepareQueryFrameOpsForCommandBufferReuse(variant.PrimaryCommandBuffer, ops))
-                {
-                    if (OpenXrVulkanTraceEnabled)
-                        RecordOpenXrPrimaryReuseMiss("openxr-mirror-primary-miss:query-pool-prepare");
-                    return false;
-                }
-
-                variant.LastUsedFrameId = VulkanFrameCounter;
-                StoreFrameOpSignatureDebugParts(variant, ops);
-                RestoreRecordedImageLayoutEndState(variant);
-                PrepareVulkanGpuProfilerReusableSubmission(
-                    commandBufferImageSlot,
-                    variant,
-                    gpuPipelineProfilingActive);
-                UpdateVulkanGpuProfilerCommandBufferState(
-                    recordImageIndex,
-                    gpuPipelineProfilingActive,
-                    commandBufferImageSlot);
-
-                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
-                    reusedClean: true,
-                    recorded: false,
-                    forcedDirty: false,
-                    frameOpSignatureDirty: false,
-                    plannerDirty: false,
-                    profilerDirty: false,
-                    dirtyReason: null);
-                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(primaryCommandBuffersReused: 1);
-
-                EnsureCommandBufferVariantContextBeforeSubmit(
-                    recordImageIndex,
-                    variant,
-                    frameOpContextFingerprint,
-                    frameOpContextId,
-                    "openxr-mirror-primary");
-                commandBuffer = variant.PrimaryCommandBuffer;
-                PrepareSubmissionMarkersForCommandBufferReuse(commandBuffer, ops);
-                if (OpenXrVulkanTraceEnabled)
-                {
-                    Debug.Vulkan(
-                        "[OpenXrVulkan] mirror reused primary eye={0} swapchainImage={1} commandKey={2} recorderSlot={3} target='{4}' commandBuffer=0x{5:X}",
-                        request.OpenXrViewIndex,
-                        request.OpenXrImageIndex,
-                        commandChainImageIndex,
-                        recordImageIndex,
-                        request.TargetFrameBuffer.Name ?? "<unnamed FBO>",
-                        commandBuffer.Handle);
-                }
-
-            return true;
-        }
-    }
-
-    private CommandBuffer RecordOpenXrMirrorPrimaryCommandBuffer(
-        uint recordImageIndex,
-        uint commandChainImageIndex,
-        in OpenXrEyeMirrorRenderRequest request,
-        FrameOp[] ops,
-        ulong frameOpsSignature,
-        ulong frameOpContextFingerprint,
-        ulong frameOpContextId,
-        ulong plannerRevision,
-        ulong imageLayoutStartSignature,
-        CommandChainSchedule? commandChainSchedule)
-    {
-        ulong cacheKey = BuildOpenXrMirrorPrimaryCommandBufferCacheKey(commandChainImageIndex, request);
-        PrimaryCommandArtifactOwner variant = GetOrCreateOpenXrPrimaryCommandBufferOwner(
-            cacheKey,
-            recordImageIndex);
-
-        bool gpuPipelineProfilingActive =
-            IsVulkanGpuProfilerCommandBufferInstrumentationEnabled &&
-            RenderPipelineGpuProfiler.Instance.IsProfilingActive;
-        int commandBufferImageSlot = unchecked((int)Math.Min(recordImageIndex, int.MaxValue));
-        ulong commandChainPrimaryGroupSignature = ulong.MaxValue;
-        int commandChainPrimaryGroupCount = -1;
-        _ = TryComputeOpenXrPrimaryCommandBufferGroupSignature(
-            commandChainImageIndex,
-            commandChainSchedule,
-            requireReusableChains: false,
-            out commandChainPrimaryGroupSignature,
-            out commandChainPrimaryGroupCount);
-
-        long recordStart = Stopwatch.GetTimestamp();
-        FramePlan framePlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
-            checked((int)recordImageIndex),
-            plannerRevision,
-            frameOpsSignature,
-            dynamicOverlaySignature: 0UL,
-            operations: ops,
-            dynamicOverlayOperations: Array.Empty<FrameOp>(),
-            openXrViewIndex: request.OpenXrViewIndex);
-        FrameOperationSequence recordingOps = framePlan.GetNativeStaticOperationsForRecording();
-        _commandRuntime.Recorder.EnterRecordingScope();
-        bool queryFrameOpsRequireRerecord = false;
-        try
-        {
-            BeginRecordedTextureUploadSubmitBatch();
-            if (OpenXrVulkanTraceEnabled)
-            {
-                Debug.Vulkan(
-                    "[OpenXrVulkan] mirror record eye={0} swapchainImage={1} commandKey={2} commandSlot={3} target='{4}' extent={5}x{6} ops={7}",
-                    request.OpenXrViewIndex,
-                    request.OpenXrImageIndex,
-                    commandChainImageIndex,
-                    recordImageIndex,
-                    request.TargetFrameBuffer.Name ?? "<unnamed FBO>",
-                    request.Extent.Width,
-                    request.Extent.Height,
-                    recordingOps.Length);
-            }
-
-            // Strict SPS renders into the engine-owned layered FBO. This command
-            // buffer must not inherit desktop swapchain image 0 ownership or a
-            // present transition merely because it reuses the primary recorder.
-            bool swapchainImageEverPresented = false;
-            if (!TryRecordCommandBuffer(
-                OpenXrExternalSwapchainTargetImageIndex,
-                variant.PrimaryCommandBuffer,
-                dynamicUiBatchTextSecondaryCommandBuffer: default,
-                recordingOps,
-                dynamicUiBatchTextOpCount: 0,
-                commandChainSchedule,
-                preserveSwapchainForOverlay: false,
-                primaryCommandPlan: variant.PrimaryCommandPlan,
-                recordedSwapchainWriteCount: out int recordedSwapchainWriteCount,
-                recordedSwapchainFinalLayout: out ImageLayout swapchainLayoutAfterCommandBuffer,
-                recordingDeferredReason: out string recordingDeferredReason,
-                queryFrameOpsRequireRerecord: out queryFrameOpsRequireRerecord,
-                transitionSwapchainToPresent: false,
-                frameDataImageIndexOverride: recordImageIndex,
-                excludeDesktopSwapchainBarriers: true,
-                framePlan: framePlan))
-            {
-                CancelRecordedTextureUploadSubmitBatch(
-                    $"OpenXR eye mirror command buffer recording deferred: {recordingDeferredReason}");
-                Debug.VulkanWarningEvery(
-                    $"OpenXR.Vulkan.EyeMirrorPrimaryRecordDeferred.{GetHashCode()}",
-                    TimeSpan.FromSeconds(1),
-                    "[OpenXR] Deferring Vulkan eye mirror primary command buffer recording before vkBeginCommandBuffer: {0}",
-                    recordingDeferredReason);
-                return default;
-            }
-
-            bool wasDirty = variant.Dirty;
-            variant.Dirty = false;
-            variant.FrameOpsSignature = frameOpsSignature;
-            variant.DynamicUiSignature = 0;
-            variant.DynamicUiOpCount = 0;
-            variant.DynamicUiSecondaryRecorded = false;
-            variant.PreserveSwapchainForOverlay = false;
-            variant.RecordedFrameOpContextFingerprint = frameOpContextFingerprint;
-            variant.RecordedFrameOpContextId = frameOpContextId;
-            variant.RecordedSwapchainImageEverPresented = swapchainImageEverPresented;
-            variant.RecordedSwapchainFinalLayout = swapchainLayoutAfterCommandBuffer;
-            variant.RecordedSwapchainWriteCount = recordedSwapchainWriteCount;
-            variant.RecordedSwapchainRefreshFromLastPresentSource = false;
-            variant.RecordedImageLayoutStartSignature = imageLayoutStartSignature;
-            CaptureCommandBufferVariantImageLayoutEndState(variant);
-            variant.CommandChainScheduleSignature = commandChainSchedule?.StructuralSignature ?? ulong.MaxValue;
-            if (!TryComputeOpenXrPrimaryCommandBufferGroupSignature(
-                    commandChainImageIndex,
-                    commandChainSchedule,
-                    requireReusableChains: false,
-                    out commandChainPrimaryGroupSignature,
-                    out commandChainPrimaryGroupCount))
-            {
-                commandChainPrimaryGroupSignature = ulong.MaxValue;
-                commandChainPrimaryGroupCount = -1;
-            }
-            variant.CommandChainPrimaryGroupSignature = commandChainPrimaryGroupSignature;
-            variant.CommandChainPrimaryGroupCount = commandChainPrimaryGroupCount;
-            variant.PlannerRevision = plannerRevision;
-            variant.GpuProfilerActive = gpuPipelineProfilingActive;
-            variant.GpuProfilerFrameSlot = gpuPipelineProfilingActive ? commandBufferImageSlot : -1;
-            variant.LastUsedFrameId = VulkanFrameCounter;
-            CaptureVulkanGpuProfilerVariantScopes(commandBufferImageSlot, variant);
-            StoreFrameOpSignatureDebugParts(variant, recordingOps);
-            if (queryFrameOpsRequireRerecord)
-                MarkPrimaryCommandArtifactOwnerTransient(variant, "query draw was not recorded");
-            UpdateVulkanGpuProfilerCommandBufferState(
-                recordImageIndex,
-                gpuPipelineProfilingActive,
-                commandBufferImageSlot);
-
-            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
-                reusedClean: false,
-                recorded: true,
-                forcedDirty: wasDirty,
-                frameOpSignatureDirty: false,
-                plannerDirty: false,
-                profilerDirty: false,
-                dirtyReason: wasDirty ? "forced" : null);
-            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(primaryCommandBuffersRecorded: 1);
-        }
-        catch
-        {
-            CancelRecordedTextureUploadSubmitBatch("OpenXR eye mirror command buffer recording failed before upload submit");
-            throw;
-        }
-        finally
-        {
-            _commandRuntime.Recorder.ExitRecordingScope();
-        }
-
-        MoveRecordedTextureUploadsForSubmitTo(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit);
-
-        if (OpenXrVulkanTraceEnabled)
-        {
-            double recordMs = (Stopwatch.GetTimestamp() - recordStart) * 1000.0 / Stopwatch.Frequency;
-            Debug.Vulkan(
-                "[OpenXrVulkan] mirror recorded primary eye={0} swapchainImage={1} commandKey={2} recorderSlot={3} target='{4}' commandBuffer=0x{5:X} recordMs={6:F3} pendingUploads={7}",
-                request.OpenXrViewIndex,
-                request.OpenXrImageIndex,
-                commandChainImageIndex,
-                recordImageIndex,
-                request.TargetFrameBuffer.Name ?? "<unnamed FBO>",
-                variant.PrimaryCommandBuffer.Handle,
-                recordMs,
-                OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit.Count);
-        }
-
-        EnsureCommandBufferVariantContextBeforeSubmit(
-            recordImageIndex,
-            variant,
-            frameOpContextFingerprint,
-            frameOpContextId,
-            "recorded-openxr-mirror-primary");
-        return variant.PrimaryCommandBuffer;
     }
 
     private static int ResolveOpenXrFrameDataSlotCount(int desktopSwapchainImageCount)
@@ -965,9 +669,8 @@ public unsafe partial class VulkanRenderer
     }
 
     private void EnsureOpenXrFrameDataSlotCapacity(int frameDataSlotCount)
-    {
-        EnsureCommandBufferFrameDataSlotCapacity(frameDataSlotCount);
-    }
+        => _commandRuntime.EnsureCommandBufferFrameDataSlotCapacity(
+            frameDataSlotCount);
 
     private CommandChainSchedule? TryBuildOpenXrEyeCommandChainSchedule(
         uint commandChainImageIndex,
@@ -978,7 +681,7 @@ public unsafe partial class VulkanRenderer
         ulong frameOpsSignature,
         ulong resourcePlanRevision)
     {
-        CommandChainSchedule? schedule = TryBuildCommandChainSchedule(
+        CommandChainSchedule? schedule = _commandRuntime.TryBuildCommandChainSchedule(
             imageIndex: commandChainImageIndex,
             staticOps: ops,
             volatileOps: Array.Empty<FrameOp>(),
@@ -990,14 +693,16 @@ public unsafe partial class VulkanRenderer
         if (schedule is null)
             return null;
 
-        if (OpenXrVulkanTraceEnabled)
+        if (_commandRuntime.IsOpenXrTraceEnabled)
         {
             Debug.Vulkan(
                 "[OpenXrVulkan] schedule eye={0} swapchainImage={1} image=0x{2:X} commandKey={3} chains={4} groups={5} recorded={6} reused={7}",
                 openXrViewIndex,
+
                 openXrImageIndex,
                 openXrImage.Handle,
                 commandChainImageIndex,
+
                 stats.ChainsScheduled,
                 schedule.Groups.Length,
                 stats.ChainsRecorded,

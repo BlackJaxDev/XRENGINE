@@ -4,7 +4,7 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanCommandRuntime
     {
         private CommandPool commandPool => _commandRuntime.Pools.PrimaryGraphics;
         private CommandPool transferCommandPool => _commandRuntime.Pools.PrimaryTransfer;
@@ -16,15 +16,11 @@ namespace XREngine.Rendering.Vulkan
             ref CommandBufferAllocateInfo allocateInfo,
             CommandBuffer* commandBuffers)
         {
-            if (!TryAdmitVulkanDeviceOperation(
-                    "vkAllocateCommandBuffers",
-                    out _))
-            {
+            if (!DeviceContext.IsOperational)
                 return Result.ErrorDeviceLost;
-            }
 
             lock (CommandPoolsGate)
-                return Api!.AllocateCommandBuffers(_deviceContext.Device, ref allocateInfo, commandBuffers);
+                return Api.AllocateCommandBuffers(DeviceContext.Device, ref allocateInfo, commandBuffers);
         }
 
         private void FreeCommandBuffersHostSynchronized(
@@ -33,7 +29,7 @@ namespace XREngine.Rendering.Vulkan
             CommandBuffer* commandBuffers)
         {
             lock (CommandPoolsGate)
-                Api!.FreeCommandBuffers(_deviceContext.Device, pool, commandBufferCount, commandBuffers);
+                Api.FreeCommandBuffers(DeviceContext.Device, pool, commandBufferCount, commandBuffers);
         }
 
         internal void DestroyCommandPoolHostSynchronized(CommandPool pool)
@@ -41,37 +37,21 @@ namespace XREngine.Rendering.Vulkan
             if (pool.Handle == 0)
                 return;
 
-            // Allocation, explicit free, and pool retirement share this lock. The
-            // pool-child ownership registration must be atomic with pool retirement
-            // so a just-allocated cached command buffer cannot escape the retire set.
-            lock (CommandPoolsGate)
-            {
-                VulkanRetirementTicket ticket = CaptureVulkanRetirementTicket(
-                    ObjectType.CommandPool,
-                    pool.Handle,
-                    nameof(DestroyCommandPoolHostSynchronized));
-                ticket = CaptureCommandPoolChildRetirementTicket(pool, ticket);
-                if (!IsVulkanRetirementReady(ticket) || !AreCommandPoolChildrenRetirementReady(pool))
-                {
-                    RetireCommandPool(pool, ticket);
-                    return;
-                }
-
-                DestroyCommandPoolNativeHostSynchronized(pool);
-                CompleteCommandPoolChildDestructions(pool);
-                CompleteVulkanResourceDestruction(
-                    ObjectType.CommandPool,
-                    pool.Handle);
-            }
+            // Pool destruction is always routed through the resource authority. It
+            // captures the command-buffer children atomically and delays the native
+            // destroy until their recording/submission pins have completed.
+            ResourceRuntime.QueueCommandPoolRetirement(
+                pool,
+                ResourceRuntime.FramebufferRetirementFrameSlot);
         }
 
         private void DestroyCommandPoolNativeHostSynchronized(CommandPool pool)
         {
             lock (CommandPoolsGate)
-                Api!.DestroyCommandPool(_deviceContext.Device, pool, null);
+                Api.DestroyCommandPool(DeviceContext.Device, pool, null);
         }
 
-        private void DestroyCommandPool()
+        internal void DestroyCommandPool()
         {
             DestroyCommandChainRecordingWorkers();
 
@@ -93,9 +73,9 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private void CreateCommandPool()
+        internal void CreateCommandPool()
         {
-            var queueFamilyIndices = _deviceContext.QueueFamilies;
+            var queueFamilyIndices = DeviceContext.QueueFamilies;
             uint graphicsFamily = queueFamilyIndices.GraphicsFamilyIndex
                 ?? throw new InvalidOperationException("Graphics queue family is not available.");
             uint transferFamily = queueFamilyIndices.TransferFamilyIndex ?? graphicsFamily;
@@ -114,7 +94,7 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private CommandPool GetThreadCommandPool()
+        internal CommandPool GetThreadCommandPool()
         {
             int threadId = Environment.CurrentManagedThreadId;
             lock (CommandPoolsGate)
@@ -123,7 +103,7 @@ namespace XREngine.Rendering.Vulkan
                     return pool;
             }
 
-            var queueFamilyIndices = _deviceContext.QueueFamilies;
+            var queueFamilyIndices = DeviceContext.QueueFamilies;
             uint graphicsFamily = queueFamilyIndices.GraphicsFamilyIndex
                 ?? throw new InvalidOperationException("Graphics queue family is not available.");
 
@@ -143,7 +123,7 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private CommandPool GetThreadTransferCommandPool()
+        internal CommandPool GetThreadTransferCommandPool()
         {
             int threadId = Environment.CurrentManagedThreadId;
             lock (CommandPoolsGate)
@@ -152,7 +132,7 @@ namespace XREngine.Rendering.Vulkan
                     return pool;
             }
 
-            var queueFamilyIndices = _deviceContext.QueueFamilies;
+            var queueFamilyIndices = DeviceContext.QueueFamilies;
             uint graphicsFamily = queueFamilyIndices.GraphicsFamilyIndex
                 ?? throw new InvalidOperationException("Graphics queue family is not available.");
             uint transferFamily = queueFamilyIndices.TransferFamilyIndex ?? graphicsFamily;
@@ -184,14 +164,16 @@ namespace XREngine.Rendering.Vulkan
                 Flags = CommandPoolCreateFlags.ResetCommandBufferBit | CommandPoolCreateFlags.TransientBit,
             };
 
-            ThrowIfVulkanDeviceOperationNotAdmitted("vkCreateCommandPool");
-            if (Api!.CreateCommandPool(_deviceContext.Device, ref poolInfo, null, out CommandPool pool) != Result.Success)
+            if (!DeviceContext.IsOperational)
+                throw new InvalidOperationException(
+                    $"Cannot create a command pool while device state is {DeviceContext.State}.");
+            if (Api.CreateCommandPool(DeviceContext.Device, ref poolInfo, null, out CommandPool pool) != Result.Success)
                 throw new Exception("Failed to create Vulkan command pool.");
 
-            RegisterVulkanResource(
-                ObjectType.CommandPool,
-                pool.Handle,
-                $"CommandPool.QueueFamily.{familyIndex}");
+            ResourceRuntime.Lifetime.Tracker.RegisterResource(
+                new VulkanResourceLifetimeKey(ObjectType.CommandPool, pool.Handle),
+                $"CommandPool.QueueFamily.{familyIndex}",
+                externallyOwned: false);
 
             return pool;
         }
@@ -203,12 +185,18 @@ namespace XREngine.Rendering.Vulkan
             string owner)
         {
             pool = default;
-            ThrowIfVulkanDeviceOperationNotAdmitted(owner);
+            if (!DeviceContext.IsOperational)
+                return Result.ErrorDeviceLost;
             lock (CommandPoolsGate)
             {
-                Result result = Api!.CreateCommandPool(_deviceContext.Device, ref createInfo, null, out pool);
+                Result result = Api.CreateCommandPool(DeviceContext.Device, ref createInfo, null, out pool);
                 if (result == Result.Success)
-                    RegisterVulkanResource(ObjectType.CommandPool, pool.Handle, owner);
+                {
+                    ResourceRuntime.Lifetime.Tracker.RegisterResource(
+                        new VulkanResourceLifetimeKey(ObjectType.CommandPool, pool.Handle),
+                        owner,
+                        externallyOwned: false);
+                }
                 return result;
             }
         }
@@ -218,7 +206,29 @@ namespace XREngine.Rendering.Vulkan
             ref CommandBufferAllocateInfo allocateInfo,
             out CommandBuffer commandBuffer,
             string owner)
-            => AllocateVulkanCommandBuffersTracked(ref allocateInfo, out commandBuffer, owner);
+        {
+            commandBuffer = default;
+            fixed (CommandBuffer* commandBufferPtr = &commandBuffer)
+                return AllocateVulkanCommandBuffersTracked(ref allocateInfo, commandBufferPtr, owner);
+        }
+
+        private Result AllocateVulkanCommandBuffersTracked(
+            ref CommandBufferAllocateInfo allocateInfo,
+            CommandBuffer* commandBuffers,
+            string owner)
+        {
+            Result result = AllocateCommandBuffersHostSynchronized(ref allocateInfo, commandBuffers);
+            if (result != Result.Success)
+                return result;
+
+            for (uint index = 0; index < allocateInfo.CommandBufferCount; index++)
+                ResourceRuntime.RegisterSynchronousCommandBuffer(
+                    commandBuffers[index],
+                    allocateInfo.CommandPool,
+                    allocateInfo.Level,
+                    owner);
+            return result;
+        }
 
         /// <summary>
         /// Resets every child command buffer only after the tracker has proved that
@@ -250,18 +260,19 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 for (int i = 0; i < children.Length; i++)
-                    if (!CanResetVulkanCommandBuffer(children[i], out string reason))
+                    if (!ResourceRuntime.CanResetCommandBuffer(this, children[i]))
                         throw new InvalidOperationException(
                             $"Cannot reset command pool 0x{pool.Handle:X} for {owner}: child command buffer " +
-                            $"0x{unchecked((ulong)children[i].Handle):X} is not resettable ({reason}).");
+                            $"0x{unchecked((ulong)children[i].Handle):X} is not resettable.");
 
-                Result result = Api!.ResetCommandPool(_deviceContext.Device, pool, 0);
+                Result result = Api.ResetCommandPool(DeviceContext.Device, pool, 0);
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResetCommandPoolCall();
                 if (result != Result.Success)
                     return result;
 
                 for (int i = 0; i < children.Length; i++)
-                    ResetVulkanCommandBufferLifetime(children[i]);
+                    ResourceRuntime.CompleteCommandBufferReset(
+                        unchecked((ulong)children[i].Handle));
                 return result;
             }
         }

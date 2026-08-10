@@ -5,7 +5,7 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed unsafe partial class VulkanCommandRuntime
 {
     // One chain cannot overlap. Two independent chains are the smallest batch
     // that can prove useful concurrency; the closeout cohorts own any
@@ -141,20 +141,6 @@ public unsafe partial class VulkanRenderer
         return EVulkanCommandChainWorkerEligibility.Eligible;
     }
 
-    private static ref readonly VkPreparedMeshDraw GetPreparedCommandChainDraw(
-        VulkanCommandChainRecordingBatch batch,
-        int chainIndex,
-        int drawIndex)
-    {
-        ref readonly VulkanPreparedCommandChain preparedChain =
-            ref batch.PreparedFrame.GetCommandChain(chainIndex);
-        if ((uint)drawIndex >= (uint)preparedChain.SourceCount)
-            throw new ArgumentOutOfRangeException(nameof(drawIndex));
-
-        int preparedIndex = preparedChain.PreparedDrawStartIndex + drawIndex;
-        return ref batch.PreparedFrame.GetMeshDraw(preparedIndex);
-    }
-
     private EVulkanCommandChainWorkerEligibility PrepareCommandChainRecordingWorkers(
         int recordJobCount,
         uint frameDataImageIndex,
@@ -239,7 +225,6 @@ public unsafe partial class VulkanRenderer
             return default;
 
         batch.ResetTiming();
-        batch.WorkerProcedure = ExecuteCommandChainRecordingWorker;
         batch.DispatchTimestamp = dispatchStart;
         for (int jobIndex = 0; jobIndex < batch.JobCount; jobIndex++)
         {
@@ -294,7 +279,6 @@ public unsafe partial class VulkanRenderer
         {
             _commandChainRecordingWorkersIdle.Set();
             Volatile.Write(ref _activeCommandChainRecordingWorkerCount, 0);
-            batch.WorkerProcedure = null;
         }
 
         if (timedOut)
@@ -319,6 +303,8 @@ public unsafe partial class VulkanRenderer
         {
             Interlocked.Exchange(ref _commandChainRecordingWorkersFaulted, 1);
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainWorkerMetrics(workerFailures: 1);
+            if (batch.Error is VulkanPlanPreconditionException planPrecondition)
+                throw planPrecondition;
             throw new InvalidOperationException("A Vulkan command-chain worker failed to record a secondary command buffer.", batch.Error);
         }
 
@@ -345,103 +331,10 @@ public unsafe partial class VulkanRenderer
             Stopwatch.GetElapsedTime(waitStart));
     }
 
-    private void ExecuteCommandChainRecordingWorker(
-        CommandChainRecordingWorkerState worker)
-    {
-        using VulkanCpuStageScope cpuStage = new(_frameTelemetry, EVulkanCpuStage.SecondaryRecording);
-        VulkanCommandChainRecordingBatch? batch = worker.Batch;
-        if (batch is null)
-            return;
-
-        long workerStart = Stopwatch.GetTimestamp();
-        Interlocked.Increment(ref batch.WorkersStarted);
-        UpdateMinimum(ref batch.FirstWorkerStartTimestamp, workerStart);
-        UpdateMaximum(ref batch.MaximumQueueDelayTimestamp, workerStart - batch.DispatchTimestamp);
-        int concurrentWorkers = Interlocked.Increment(ref batch.ConcurrentWorkers);
-        UpdateMaximum(ref batch.PeakConcurrentWorkers, concurrentWorkers);
-        try
-        {
-            worker.LastFrameId = VulkanFrameCounter;
-            for (int jobIndex = 0; jobIndex < batch.JobCount; jobIndex++)
-            {
-                if (Volatile.Read(ref batch.Error) is not null ||
-                    Volatile.Read(ref batch.CancelRequested) != 0)
-                    break;
-
-                if (batch.RecordJobWorkerIndices[jobIndex] != worker.WorkerIndex)
-                    continue;
-
-                try
-                {
-                    int chainIndex = batch.RecordJobChainIndices[jobIndex];
-                    RecordScheduledMeshCommandChainWorker(batch, chainIndex);
-                }
-                catch (Exception ex)
-                {
-                    Interlocked.CompareExchange(ref batch.Error, ex, null);
-                    break;
-                }
-            }
-        }
-        finally
-        {
-            long workerCompletion = Stopwatch.GetTimestamp();
-            Interlocked.Add(ref batch.WorkerRecordTimestampTotal, workerCompletion - workerStart);
-            UpdateMaximum(ref batch.LastWorkerCompletionTimestamp, workerCompletion);
-            Interlocked.Decrement(ref batch.ConcurrentWorkers);
-            Interlocked.Increment(ref batch.WorkersCompleted);
-            worker.Batch = null;
-            bool lastWorker = _commandChainRecordingWorkerCountdown.Signal();
-            if (lastWorker)
-            {
-                Volatile.Write(ref _activeCommandChainRecordingWorkerCount, 0);
-                _commandChainRecordingWorkersIdle.Set();
-                if (batch.Abandoned)
-                    batch.ClearReferences();
-            }
-        }
-    }
-
     private static TimeSpan StopwatchTicksToTimeSpan(long ticks)
         => ticks <= 0
             ? TimeSpan.Zero
             : TimeSpan.FromSeconds((double)ticks / Stopwatch.Frequency);
-
-    private static void UpdateMaximum(ref long target, long candidate)
-    {
-        long current = Volatile.Read(ref target);
-        while (candidate > current)
-        {
-            long observed = Interlocked.CompareExchange(ref target, candidate, current);
-            if (observed == current)
-                return;
-            current = observed;
-        }
-    }
-
-    private static void UpdateMaximum(ref int target, int candidate)
-    {
-        int current = Volatile.Read(ref target);
-        while (candidate > current)
-        {
-            int observed = Interlocked.CompareExchange(ref target, candidate, current);
-            if (observed == current)
-                return;
-            current = observed;
-        }
-    }
-
-    private static void UpdateMinimum(ref long target, long candidate)
-    {
-        long current = Volatile.Read(ref target);
-        while (candidate < current)
-        {
-            long observed = Interlocked.CompareExchange(ref target, candidate, current);
-            if (observed == current)
-                return;
-            current = observed;
-        }
-    }
 
     private CommandChainRecordingWorkerState[] EnsureCommandChainRecordingWorkers(int workerCount)
     {

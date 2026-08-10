@@ -8,7 +8,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Rectangle textures use a single mip level and are addressed by non-normalised
 /// texel coordinates. The image is always one mip-level deep.
 /// </summary>
-internal sealed class VkTextureRectangle(VulkanRenderer api, XRTextureRectangle data) : VkImageBackedTexture<XRTextureRectangle>(api, data)
+internal sealed class VkTextureRectangle(VulkanBackendObjectContext backendContext, IRenderApiWrapperOwner owner, XRTextureRectangle data) : VkImageBackedTexture<XRTextureRectangle>(backendContext, owner, data)
 {
     protected override TextureLayout DescribeTexture()
     {

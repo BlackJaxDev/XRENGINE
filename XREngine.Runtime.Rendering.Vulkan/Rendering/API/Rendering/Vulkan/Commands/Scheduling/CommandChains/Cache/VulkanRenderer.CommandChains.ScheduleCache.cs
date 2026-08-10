@@ -13,7 +13,7 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed unsafe partial class VulkanCommandRuntime
 {
     private CommandChainSchedule RentCommandChainSchedule(uint imageIndex)
     {
@@ -140,7 +140,6 @@ public unsafe partial class VulkanRenderer
 
     private void CacheCommandChainSchedule(
         uint imageIndex,
-        ulong fastScheduleSignature,
         CommandChainSchedule schedule)
     {
         if (CommandChainValidationEnabled || CommandChainTraceEnabled)
@@ -153,6 +152,74 @@ public unsafe partial class VulkanRenderer
             slot,
             _commandBuffers?.Length ?? 0,
             schedule);
+    }
+
+    private bool TryReuseCachedCommandChainSchedule(
+        uint imageIndex,
+        in CommandChainScheduleCacheIdentity identity,
+        out CommandChainSchedule? schedule,
+        out CommandChainLoweringStats stats)
+    {
+        schedule = null;
+        stats = default;
+        if (!identity.IsReusable ||
+            CommandChainValidationEnabled ||
+            CommandChainTraceEnabled ||
+            !TryGetIndexedCommandChainCacheSlot(imageIndex, out int slot))
+        {
+            return false;
+        }
+
+        CommandChainSchedule? candidate = _commandRuntime.GetReusableSchedule(
+            slot,
+            _commandBuffers?.Length ?? 0);
+        long artifactMutationGeneration =
+            CommandChains.SnapshotArtifactMutationGeneration();
+        if (candidate is null ||
+            candidate.CacheIdentity != identity ||
+            candidate.ArtifactMutationGeneration != artifactMutationGeneration)
+        {
+            return false;
+        }
+
+        // Artifact mutation is published by VulkanRecordedCommandArtifact itself,
+        // including allocation, recording, executability, invalidation, and
+        // retirement. The schedule captured the same authority clock only after
+        // its complete chain set became executable, so an equal clock proves the
+        // former O(chain-count) validation walk would observe identical artifacts.
+        int chainCount = candidate.ScheduledChainCount;
+
+        stats = new CommandChainLoweringStats(
+            VisibilityPackets: 0,
+            RenderPackets: chainCount,
+            ChainsScheduled: chainCount,
+            ChainsRecorded: 0,
+            ChainsReused: chainCount,
+            ChainsFrameDataRefreshed: 0,
+            VolatileChainsRecorded: 0,
+            SecondaryCommandBuffers: chainCount,
+            FirstStructuralDirtyReason: null,
+            FirstDescriptorGenerationMismatch: null,
+            FirstResourcePlanRevisionMismatch: null);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(
+            chainsScheduled: chainCount,
+            chainsReused: chainCount,
+            renderPackets: chainCount,
+            secondaryCommandBuffers: chainCount);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
+            reusedClean: false,
+            recorded: false,
+            forcedDirty: false,
+            frameOpSignatureDirty: false,
+            plannerDirty: false,
+            profilerDirty: false,
+            dirtyReason: null,
+            detailReasons: EVulkanCommandBufferDecisionReason.SecondaryReused,
+            structuralSignature: candidate.StructuralSignature,
+            descriptorGeneration: identity.DescriptorVersionSignature,
+            swapchainSlot: unchecked((int)imageIndex));
+        schedule = candidate;
+        return true;
     }
 
     private static ulong ComputeCommandChainFastScheduleSignature(

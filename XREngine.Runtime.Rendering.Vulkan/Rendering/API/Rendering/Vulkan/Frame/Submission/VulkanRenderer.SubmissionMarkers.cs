@@ -6,6 +6,37 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
+    private void ResolveSubmissionTimelineSignal(
+        ref SubmitInfo submitInfo,
+        out ulong semaphoreHandle,
+        out ulong timelineValue)
+    {
+        semaphoreHandle = 0;
+        timelineValue = 0;
+        TimelineSemaphoreSubmitInfo* timeline =
+            FindTimelineSemaphoreSubmitInfo(submitInfo.PNext);
+        if (timeline is null ||
+            timeline->PSignalSemaphoreValues is null ||
+            submitInfo.PSignalSemaphores is null)
+        {
+            return;
+        }
+
+        uint count = Math.Min(
+            timeline->SignalSemaphoreValueCount,
+            submitInfo.SignalSemaphoreCount);
+        for (uint index = 0; index < count; index++)
+        {
+            ulong value = timeline->PSignalSemaphoreValues[index];
+            Semaphore semaphore = submitInfo.PSignalSemaphores[index];
+            if (value == 0 || semaphore.Handle == 0)
+                continue;
+
+            semaphoreHandle = semaphore.Handle;
+            timelineValue = value;
+            return;
+        }
+    }
 
     private VulkanTimelineGpuFence RentTimelineGpuFence()
     {
@@ -14,15 +45,9 @@ public unsafe partial class VulkanRenderer
             VulkanTimelineGpuFence fence = _commandRuntime.Synchronization._timelineGpuFencePool.Count > 0
                 ? _commandRuntime.Synchronization._timelineGpuFencePool.Pop()
                 : new VulkanTimelineGpuFence();
-            fence.Reset(this);
+            fence.Reset(Api!, _deviceContext, _commandRuntime, ResourceRuntime);
             return fence;
         }
-    }
-
-    private void ReturnTimelineGpuFence(VulkanTimelineGpuFence fence)
-    {
-        lock (_commandRuntime.Synchronization._submissionMarkerLock)
-            _commandRuntime.Synchronization._timelineGpuFencePool.Push(fence);
     }
 
     internal void RegisterSubmissionMarker(CommandBuffer commandBuffer, VulkanTimelineGpuFence fence)

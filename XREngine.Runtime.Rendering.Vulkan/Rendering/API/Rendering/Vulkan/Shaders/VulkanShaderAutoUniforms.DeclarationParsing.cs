@@ -192,7 +192,7 @@ internal static partial class VulkanShaderAutoUniforms
     private static string BuildUniformBlock(string blockName, string instanceName, uint binding, IReadOnlyList<AutoUniformMember> members)
     {
         StringBuilder builder = new();
-        builder.AppendLine($"layout(std140, set = {VulkanRenderer.DescriptorSetGlobals}, binding = {binding}) uniform {blockName}");
+        builder.AppendLine($"layout(std140, set = {VulkanDescriptorManager.GlobalsSetIndex}, binding = {binding}) uniform {blockName}");
         builder.AppendLine("{");
         foreach (var member in members)
         {

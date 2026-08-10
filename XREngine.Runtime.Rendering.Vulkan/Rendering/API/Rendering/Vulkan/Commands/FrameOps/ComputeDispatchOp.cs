@@ -24,25 +24,27 @@ internal sealed record ComputeDispatchOp(
     }
 
     internal override int RecordPrimary(
-        VulkanRenderer renderer,
+        VulkanCommandRuntime commandRuntime,
         scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
         if (TryRecordSecondaryBucket(
-                renderer,
+                commandRuntime,
                 ref recordingState,
                 in recordingInfo,
                 "ComputeDispatch",
                 out int lastOperationIndex))
             return lastOperationIndex;
 
-        renderer.CmdBeginLabel(recordingState.CommandBuffer, "ComputeDispatch");
-        renderer.RecordComputeDispatchOp(
+        commandRuntime.CmdBeginLabel(recordingState.CommandBuffer, "ComputeDispatch");
+        commandRuntime.RecordComputeDispatchOp(
             recordingState.CommandBuffer,
             recordingState.FrameDataImageIndex,
             this,
-            recordingInfo.OperationIndex);
-        renderer.CmdEndLabel(recordingState.CommandBuffer);
+            VulkanCommandRuntime.ResolveCommandChainInlineOperationIndex(
+                recordingState.Ops,
+                recordingInfo.OperationIndex));
+        commandRuntime.CmdEndLabel(recordingState.CommandBuffer);
         return recordingInfo.OperationIndex;
     }
 

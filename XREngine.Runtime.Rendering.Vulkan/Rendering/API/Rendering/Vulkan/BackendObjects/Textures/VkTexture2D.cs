@@ -11,7 +11,7 @@ namespace XREngine.Rendering.Vulkan;
 /// This is the most common texture type; it uploads width×height mipmaps into
 /// a single-layer 2-D image.
 /// </summary>
-internal unsafe sealed class VkTexture2D(VulkanRenderer api, XRTexture2D data) : VkImageBackedTexture<XRTexture2D>(api, data)
+internal unsafe sealed class VkTexture2D(VulkanBackendObjectContext backendContext, IRenderApiWrapperOwner owner, XRTexture2D data) : VkImageBackedTexture<XRTexture2D>(backendContext, owner, data)
 {
     protected override void LinkTextureData()
     {
@@ -103,7 +103,7 @@ internal unsafe sealed class VkTexture2D(VulkanRenderer api, XRTexture2D data) :
         if (!RuntimeRenderingHostServices.FrameTiming.IsRenderThread)
             return SparseTextureStreamingTransitionResult.Unsupported("Vulkan sparse texture transition compatibility must run on the render thread. Use RuntimeRenderingHostServices.TryScheduleSparseTextureStreamingTransitionAsync or ImportedTextureStreamingManager.");
 
-        if (Renderer.IsDeviceLost)
+        if (!BackendContext.IsDeviceOperational)
             return SparseTextureStreamingTransitionResult.Unsupported("Vulkan device is lost.");
 
         if (request.ResidentMipmaps is null || request.ResidentMipmaps.Length == 0)
@@ -172,7 +172,7 @@ internal unsafe sealed class VkTexture2D(VulkanRenderer api, XRTexture2D data) :
         if (RuntimeEngine.InvokeOnMainThread(() => PushMipLevel(mipIndex), "VkTexture2D.PushMipLevel"))
             return false;
 
-        if (Renderer.IsDeviceLost)
+        if (!BackendContext.IsDeviceOperational)
             return false;
 
         Mipmap2D[]? mipmaps = Data.Mipmaps;
@@ -219,7 +219,7 @@ internal unsafe sealed class VkTexture2D(VulkanRenderer api, XRTexture2D data) :
         {
             Extent3D extent = new(Math.Max(mip.Width, 1u), Math.Max(mip.Height, 1u), 1);
             CopyBufferToImage(stagingBuffer, (uint)mipIndex, 0, 1, extent, uploadDataSize);
-            if (!Renderer.IsDeviceLost)
+            if (BackendContext.IsDeviceOperational)
                 TransitionImageLayout(ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
         }
         finally
@@ -293,7 +293,7 @@ internal unsafe sealed class VkTexture2D(VulkanRenderer api, XRTexture2D data) :
     /// <returns><c>true</c> if the upload succeeded.</returns>
     internal bool UploadVideoFrameData(ReadOnlySpan<byte> pixelData, uint width, uint height)
     {
-        if (Renderer.IsDeviceLost)
+        if (!BackendContext.IsDeviceOperational)
             return false;
 
         if (pixelData.IsEmpty || width == 0 || height == 0)
@@ -314,19 +314,20 @@ internal unsafe sealed class VkTexture2D(VulkanRenderer api, XRTexture2D data) :
 
         // Allocate a host-visible staging buffer and memcpy the pixel data.
         BufferUsageFlags usage = BufferUsageFlags.TransferSrcBit;
-        if (Renderer.SupportsNvCopyMemoryIndirect && Renderer.SupportsBufferDeviceAddress)
+        if (BackendContext.Buffers.CanUseNvIndirectCopyUploads(BackendContext))
             usage |= BufferUsageFlags.ShaderDeviceAddressBit;
 
-        (Buffer stagingBuffer, DeviceMemory stagingMemory) = Renderer.CreateBufferRaw(
+        (Buffer stagingBuffer, DeviceMemory stagingMemory) = BackendContext.Buffers.CreateRaw(
+            BackendContext,
             requiredBytes,
             usage,
             MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
 
         // Map → memcpy → unmap.
         void* mapped = null;
-        if (!Renderer.TryMapBufferMemory(stagingBuffer, stagingMemory, 0, requiredBytes, out mapped))
+        if (!BackendContext.Buffers.TryMap(BackendContext, stagingBuffer, stagingMemory, 0, requiredBytes, out mapped))
         {
-            Renderer.DestroyBuffer(stagingBuffer, stagingMemory);
+            BackendContext.Buffers.Destroy(BackendContext, stagingBuffer, stagingMemory, "VkTexture2D.VideoFrame.MapFailure");
             return false;
         }
 
@@ -335,7 +336,7 @@ internal unsafe sealed class VkTexture2D(VulkanRenderer api, XRTexture2D data) :
             System.Buffer.MemoryCopy(srcPtr, mapped, (long)requiredBytes, (long)requiredBytes);
         }
 
-        Renderer.UnmapBufferMemory(stagingBuffer, stagingMemory);
+        BackendContext.Buffers.Unmap(BackendContext, stagingBuffer, stagingMemory);
 
         // Transition → copy → transition.
         try
@@ -349,7 +350,7 @@ internal unsafe sealed class VkTexture2D(VulkanRenderer api, XRTexture2D data) :
         }
         finally
         {
-            Renderer.DestroyBuffer(stagingBuffer, stagingMemory);
+            BackendContext.Buffers.Destroy(BackendContext, stagingBuffer, stagingMemory, "VkTexture2D.VideoFrame");
         }
 
         return true;

@@ -9,6 +9,7 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
     private int _passIndex = PassIndex;
     private XRFrameBuffer? _target = Target;
     private FrameOpContext _context = Context;
+    private FrameOpResourceUseList _resourceUses;
 
     public int PassIndex
     {
@@ -37,7 +38,14 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
             _context = value;
         }
     }
-    internal FrameOpResourceUseList ResourceUses { get; private set; }
+    internal ref readonly FrameOpContext ContextReference => ref _context;
+    internal FrameOpResourceUseList ResourceUses
+    {
+        get => _resourceUses;
+        private set => _resourceUses = value;
+    }
+    internal ref readonly FrameOpResourceUseList ResourceUsesReference
+        => ref _resourceUses;
     public abstract EVulkanPrimaryPlanNodeKind Kind { get; }
 
     /// <summary>
@@ -50,7 +58,7 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
     /// Routes this operation to its strongly typed primary-command handler.
     /// </summary>
     internal abstract int RecordPrimary(
-        VulkanRenderer renderer,
+        VulkanCommandRuntime commandRuntime,
         scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo);
 
@@ -59,7 +67,7 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
     /// secondary-range recording.
     /// </summary>
     protected static bool TryRecordSecondaryBucket(
-        VulkanRenderer renderer,
+        VulkanCommandRuntime commandRuntime,
         scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo,
         string label,
@@ -67,12 +75,12 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
     {
         lastOperationIndex = recordingInfo.OperationIndex;
         if (!recordingInfo.ExecutesSecondaryRange ||
-            !VulkanRenderer.TryGetSecondaryBucketForStart(
+            !VulkanCommandRuntime.TryGetSecondaryBucketForStart(
                 recordingState.SecondaryBuckets,
                 recordingState.SecondaryBucketByStart,
                 recordingInfo.OperationIndex,
                 out VulkanSecondaryRecordingBucket bucket) ||
-            !renderer.TryRecordSecondaryBucket(
+            !commandRuntime.TryRecordSecondaryBucket(
                 primaryCommandBuffer: recordingState.CommandBuffer,
                 recordingState.FrameDataImageIndex,
                 recordingState.ExecutedCommandChainSecondaryHandles,
@@ -82,6 +90,9 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
                 recordingInfo.OperationIndex,
                 bucket,
                 recordingInfo.PassIndex,
+                recordingState.RenderGraphPlan.CompiledGraph.PassOrder.ContainsKey(
+                    recordingInfo.PassIndex) ||
+                recordingInfo.PassIndex == VulkanBarrierPlanner.SwapchainPassIndex,
                 recordingState.RenderScope.IsActive,
                 recordingState.ActiveInlineQuery is not null,
                 label))
@@ -136,6 +147,13 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
     {
         ThrowIfSealedForFramePlan();
         ResourceUses = resourceUses;
+    }
+
+    internal ref FrameOpResourceUseList BeginResourceUseUpdate()
+    {
+        ThrowIfSealedForFramePlan();
+        _resourceUses.Clear();
+        return ref _resourceUses;
     }
 
     /// <summary>

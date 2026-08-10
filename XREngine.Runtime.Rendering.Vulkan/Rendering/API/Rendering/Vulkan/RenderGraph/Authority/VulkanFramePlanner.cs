@@ -2,6 +2,7 @@ using System.Threading;
 using System.Collections.Concurrent;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.RenderGraph;
+using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan.RenderGraph;
 
@@ -9,7 +10,7 @@ namespace XREngine.Rendering.Vulkan.RenderGraph;
 /// Owns renderer-local frame-planning workspaces and publishes sealed render-graph plans.
 /// This authority deliberately has no dependency on the renderer facade.
 /// </summary>
-internal sealed class VulkanFramePlanner
+internal sealed partial class VulkanFramePlanner
 {
     private const int MaxInteractiveResizeExtentSnapshots = 32;
     private ulong _publishedBarrierGeneration;
@@ -24,18 +25,24 @@ internal sealed class VulkanFramePlanner
     public VulkanInteractiveResizePlannerExtentCache InteractiveResizeExtentCache { get; } =
         new(MaxInteractiveResizeExtentSnapshots);
     public ulong FrozenResourcePlanRevision { get; private set; }
+    public Extent2D DesktopSwapchainExtent { get; private set; }
+
+    /// <summary>Publishes the newly committed desktop output extent to planning consumers.</summary>
+    public void PublishDesktopSwapchainExtent(Extent2D extent)
+        => DesktopSwapchainExtent = extent;
     public Dictionary<string, XRDataBuffer> TrackedBuffersByName { get; } =
         new(StringComparer.OrdinalIgnoreCase);
     public object PlannerReadbackGate { get; } = new();
     public ConcurrentStack<VulkanRenderer.PooledExternalResourcePlannerReadbackScope> FreeExternalResourcePlannerReadbackScopes { get; } = new();
+
     public VulkanRenderGraphCompiler Compiler { get; } = new();
     public VulkanFrameOperationScheduler FrameScheduler { get; } = new();
     public VulkanFrameOperationQueue Operations { get; } = new();
     public FramePlanBuilder FramePlanBuilder { get; } = new();
     public VulkanFramePlannerMutableState<
         VulkanFrameOpPlannerStateKey,
-        VulkanRenderer.FrameOpResourcePlannerSwitchingState,
-        VulkanRenderer.QueueOwnershipConfigCacheEntry,
+        FrameOpResourcePlannerSwitchingState,
+        VulkanQueueOwnershipConfigCacheEntry,
         VulkanRenderer.MergedFrameOpRegistryCacheEntry,
         VulkanRenderer.FrameOpRegistryCacheSource,
         VulkanRenderer.ActivePassMetadataFilterCacheEntry> MutableState { get; } =

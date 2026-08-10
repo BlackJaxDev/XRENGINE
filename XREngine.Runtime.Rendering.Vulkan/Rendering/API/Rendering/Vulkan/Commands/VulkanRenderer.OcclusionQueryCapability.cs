@@ -15,17 +15,42 @@ public partial class VulkanRenderer : IOcclusionQueryBackendCapability
 
     /// <inheritdoc />
     public bool BeginOcclusionQuery(XRRenderQuery query)
-        => EnqueueOcclusionQueryBegin(query);
+        => query.Descriptor.Kind == ERenderQueryKind.Occlusion &&
+           EnqueuePreparedQuery(query, ERenderQueryOperation.Begin);
 
     /// <inheritdoc />
     public bool EndOcclusionQuery(XRRenderQuery query)
-        => EnqueueOcclusionQueryEnd(query);
+        => query.Descriptor.Kind == ERenderQueryKind.Occlusion &&
+           EnqueuePreparedQuery(query, ERenderQueryOperation.End);
 
     /// <inheritdoc />
     public ERenderQueryReadStatus WriteTimestamp(XRRenderQuery query)
-        => EnqueueTimestampQuery(query)
+        => query.Descriptor.Kind is ERenderQueryKind.Timestamp or ERenderQueryKind.ElapsedTime &&
+           EnqueuePreparedQuery(query, ERenderQueryOperation.WriteTimestamp)
             ? ERenderQueryReadStatus.Ready
             : ERenderQueryReadStatus.InvalidState;
+
+    private bool EnqueuePreparedQuery(XRRenderQuery query, ERenderQueryOperation operation)
+    {
+        if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline is null ||
+            GenericToAPI<VkRenderQuery>(query) is not { } apiQuery)
+        {
+            return false;
+        }
+
+        FrameOpContext context = CaptureFrameOpContext();
+        int passIndex = EnsureValidPassIndex(
+            RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex,
+            "Query",
+            context.PassMetadata);
+        return _frameOperationQueue.EnqueuePreparedQuery(
+            apiQuery,
+            query.Descriptor,
+            operation,
+            passIndex,
+            ResolveCurrentFrameOpDrawTarget(),
+            context);
+    }
 
     /// <inheritdoc />
     public ERenderQueryReadStatus TryGetTimestamp(XRRenderQuery query, out TimestampQueryResult result)

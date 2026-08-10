@@ -8,14 +8,34 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
     private PendingMeshDraw _draw = Draw;
     private DescriptorBindingSnapshot _descriptorBindingSnapshot;
     private bool _hasDescriptorBindingSnapshot;
+    private VulkanMeshDrawSortKey _canonicalSortKey;
+    private bool _hasCanonicalSortKey;
 
     public PendingMeshDraw Draw
     {
         get => _draw;
-        private set => _draw = value;
+        private set
+        {
+            _draw = value;
+            _hasCanonicalSortKey = false;
+        }
     }
 
     internal ref readonly PendingMeshDraw DrawRef => ref _draw;
+
+    internal ref readonly VulkanMeshDrawSortKey CanonicalSortKey
+    {
+        get
+        {
+            if (!_hasCanonicalSortKey)
+            {
+                _canonicalSortKey = VulkanMeshDrawSortKey.Capture(this);
+                _hasCanonicalSortKey = true;
+            }
+
+            return ref _canonicalSortKey;
+        }
+    }
 
     /// <summary>
     /// Returns the immutable descriptor dependency captured while lowering this
@@ -54,6 +74,7 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
         {
             ThrowIfSealedForFramePlan();
             _preserveSubmissionOrder = value;
+            _hasCanonicalSortKey = false;
         }
     }
 
@@ -66,11 +87,11 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
     }
 
     internal override int RecordPrimary(
-        VulkanRenderer renderer,
+        VulkanCommandRuntime renderer,
         scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
-        if (VulkanRenderer.CommandRecordingDiagnosticsEnabled &&
+        if (VulkanCommandRuntime.CommandRecordingDiagnosticsEnabled &&
             string.Equals(
                 Draw.Renderer.MeshRenderer.Mesh?.Name,
                 "CpuOcclusionProxy.UnitCube",
@@ -100,28 +121,39 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
                 Draw.CameraPosition.Z);
         }
 
-        int commandChainRunCount = renderer.CountContiguousMeshCommandChainRun(
-            ref recordingState,
-            recordingInfo.OperationIndex,
-            this,
-            recordingInfo.PassIndex);
         if (recordingInfo.ExecutesSecondaryRange &&
-            (renderer.TryExecuteScheduledMeshCommandChainSecondaryRun(
-                 ref recordingState,
-                 recordingInfo.OperationIndex,
-                 commandChainRunCount,
-                 recordingInfo.PassIndex,
-                 this) ||
-             renderer.TryExecuteMeshCommandChainSecondaryRun(
-                 ref recordingState,
-                 recordingInfo.OperationIndex,
-                 commandChainRunCount,
-                 recordingInfo.PassIndex,
-                 this)))
+            recordingInfo.OperationIndex >=
+            recordingState.MeshSecondaryFallbackEndIndex)
         {
-            if (Target is null)
-                recordingState.ActualSwapchainWriteCount += commandChainRunCount;
-            return recordingInfo.OperationIndex + commandChainRunCount - 1;
+            int commandChainRunCount = renderer.CountContiguousMeshCommandChainRun(
+                ref recordingState,
+                recordingInfo.OperationIndex,
+                this,
+                recordingInfo.PassIndex);
+            if (renderer.TryExecuteScheduledMeshCommandChainSecondaryRun(
+                    ref recordingState,
+                    recordingInfo.OperationIndex,
+                    commandChainRunCount,
+                    recordingInfo.PassIndex,
+                    this) ||
+                renderer.TryExecuteMeshCommandChainSecondaryRun(
+                    ref recordingState,
+                    recordingInfo.OperationIndex,
+                    commandChainRunCount,
+                    recordingInfo.PassIndex,
+                    this))
+            {
+                if (Target is null)
+                    recordingState.ActualSwapchainWriteCount += commandChainRunCount;
+                return recordingInfo.OperationIndex + commandChainRunCount - 1;
+            }
+
+            // A failed whole-run preparation must not retry the same remaining
+            // suffix from every following draw. Encode the rest of this bounded
+            // run inline once; the next independent render range may try again.
+            recordingState.MeshSecondaryFallbackEndIndex = Math.Max(
+                recordingState.MeshSecondaryFallbackEndIndex,
+                recordingInfo.OperationIndex + commandChainRunCount);
         }
 
         int inlineDrawUniformSlot = renderer.GetMeshDrawUniformSlot(
@@ -137,8 +169,6 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
             !recordingState.RenderScope.MatchesTarget(Target))
         {
             renderer.EndActiveRenderPass(ref recordingState);
-            using var plannerScope =
-                renderer.EnterFrameOpResourcePlannerReadbackScope(Context);
             Draw.Renderer.TryTransitionPreparedDescriptorImagesForSampling(
                 recordingState.CommandBuffer,
                 Draw,
@@ -206,5 +236,7 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
         PreserveSubmissionOrder = preserveSubmissionOrder;
         _descriptorBindingSnapshot = default;
         _hasDescriptorBindingSnapshot = false;
+        _canonicalSortKey = default;
+        _hasCanonicalSortKey = false;
     }
 }

@@ -377,6 +377,11 @@ public sealed partial class XRRenderPipelineInstance
             DirectionalCascadeShadowLayerCount = Math.Clamp(cascadeMatrices.Length, 0, _directionalCascadeShadowMatrices.Length);
             for (int i = 0; i < DirectionalCascadeShadowLayerCount; i++)
                 _directionalCascadeShadowMatrices[i] = cascadeMatrices[i];
+            // Layered matrices are program bindings just like the explicit
+            // scoped binding stacks below. Advance the shared revision so a
+            // per-frame binding snapshot can be reused inside this exact
+            // shadow scope, but never across a different cascade publication.
+            IncrementScopedBindingRevision();
             return StateObject.New(PopDirectionalCascadeLayeredShadowPassAction, this);
         }
 
@@ -404,6 +409,7 @@ public sealed partial class XRRenderPipelineInstance
             DirectionalCascadeAtlasGroupedShadowPass = false;
             DirectionalCascadeShadowLayerCount = 0;
             Array.Clear(_directionalCascadeShadowMatrices);
+            IncrementScopedBindingRevision();
         }
 
         private int _pointLightLayeredShadowPassDepth;
@@ -423,6 +429,7 @@ public sealed partial class XRRenderPipelineInstance
                 _pointLightShadowFaceMatrices[i] = faceMatrices[i];
                 _pointLightShadowFaceIndices[i] = i < faceIndices.Length ? faceIndices[i] : i;
             }
+            IncrementScopedBindingRevision();
             return StateObject.New(PopPointLightLayeredShadowPassAction, this);
         }
 
@@ -463,6 +470,7 @@ public sealed partial class XRRenderPipelineInstance
             PointLightShadowFaceCount = 0;
             Array.Clear(_pointLightShadowFaceMatrices);
             Array.Clear(_pointLightShadowFaceIndices);
+            IncrementScopedBindingRevision();
         }
 
         public XRCamera? RenderingCamera
