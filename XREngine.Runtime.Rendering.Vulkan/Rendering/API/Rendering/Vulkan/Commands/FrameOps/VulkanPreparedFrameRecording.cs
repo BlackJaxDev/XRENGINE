@@ -228,15 +228,14 @@ internal sealed class VulkanPreparedFrameRecording
         }
 
         RenderPacket packet = _packets[commandChain.PacketIndex];
-        RecordedPacketKey preparedPacketKey = packet.RecordedPacketKey with
-        {
-            DescriptorSets = commandChain.Authority.PreparedKey.RecordedPacketKey.DescriptorSets,
-        };
-        RecordedPacketKey authorityRecordedKey =
-            commandChain.Authority.PreparedKey.RecordedPacketKey;
+        ref readonly RecordedPacketKey packetRecordedKey = ref packet.RecordedPacketKey;
+        ref readonly VulkanPreparedCommandChainKey authorityKey =
+            ref commandChain.Authority.PreparedKey;
+        ref readonly RecordedPacketKey authorityRecordedKey =
+            ref VulkanPreparedCommandChainKey.GetRecordedPacketKeyReference(in authorityKey);
         if (!packet.IsSealed ||
-            !preparedPacketKey.IsComplete ||
-            !preparedPacketKey.Matches(in authorityRecordedKey) ||
+            !authorityRecordedKey.IsComplete ||
+            !packetRecordedKey.MatchesBindingIndependentState(in authorityRecordedKey) ||
             packet.SourceStartIndex != commandChain.SourceStartIndex ||
             packet.SourceCount != commandChain.SourceCount)
         {

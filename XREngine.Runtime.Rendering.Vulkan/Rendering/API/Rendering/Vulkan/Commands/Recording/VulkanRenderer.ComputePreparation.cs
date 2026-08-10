@@ -4,15 +4,36 @@ using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed unsafe partial class VulkanCommandRuntime
 {
     /// <summary>
-    /// Prepares compute pipelines, persistent uniform buffers, and reusable
-    /// descriptor sets before the command recorder enters its guarded scope.
+    /// Links compute programs and creates their pipelines before the frame plan
+    /// is sealed. Descriptor publication must wait for the plan's final DAG
+    /// order because that order owns the recording-time binding ordinal.
     /// </summary>
-    private VulkanComputePreparationResult PrepareComputeFrameOpsForRecording(
-        uint imageIndex,
+    internal VulkanComputePreparationResult PrepareComputeProgramsForFramePlan(
         FrameOp[] operations)
+        => PrepareComputeFrameOps(
+            imageIndex: 0,
+            operations,
+            prepareDescriptors: false);
+
+    /// <summary>
+    /// Publishes persistent uniform buffers and reusable descriptor sets for
+    /// the exact sealed operation sequence consumed by command recording.
+    /// </summary>
+    internal VulkanComputePreparationResult PrepareComputeFrameOpsForRecording(
+        uint imageIndex,
+        FrameOperationSequence operations)
+        => PrepareComputeFrameOps(
+            imageIndex,
+            operations,
+            prepareDescriptors: true);
+
+    private VulkanComputePreparationResult PrepareComputeFrameOps(
+        uint imageIndex,
+        FrameOperationSequence operations,
+        bool prepareDescriptors)
     {
         for (int operationIndex = 0; operationIndex < operations.Length; operationIndex++)
         {
@@ -27,14 +48,7 @@ public unsafe partial class VulkanRenderer
                 case ComputeDispatchOp dispatch:
                     program = dispatch.Program;
                     snapshot = dispatch.Snapshot;
-                    int descriptorBindingOrdinal =
-                        ResolveCommandChainInlineOperationIndex(
-                            operations,
-                            operationIndex);
-                    reusableDescriptorKey =
-                        ComputeReusableComputeDescriptorBindingKey(
-                            dispatch,
-                            descriptorBindingOrdinal);
+                    reusableDescriptorKey = 0UL;
                     passIndex = dispatch.PassIndex;
                     passMetadata = dispatch.Context.PassMetadata;
                     break;
@@ -73,6 +87,25 @@ public unsafe partial class VulkanRenderer
                     operations.Length,
                     program.Data.Name,
                     exception);
+            }
+
+            if (!prepareDescriptors)
+                continue;
+
+            // Linking publishes the program binding and link generation used by
+            // the reusable descriptor key. The sealed FramePlan sequence also
+            // publishes the final resource-DAG order used by secondary recording;
+            // preparing from the authoring array would publish a different key.
+            if (operations[operationIndex] is ComputeDispatchOp preparedDispatch)
+            {
+                int descriptorBindingOrdinal =
+                    ResolveCommandChainInlineOperationIndex(
+                        operations,
+                        operationIndex);
+                reusableDescriptorKey =
+                    ComputeReusableComputeDescriptorBindingKey(
+                        preparedDispatch,
+                        descriptorBindingOrdinal);
             }
 
             if (program.TryPrepareComputeDispatchResources(

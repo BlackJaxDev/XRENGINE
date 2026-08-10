@@ -13,7 +13,7 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed unsafe partial class VulkanCommandRuntime
 {
     private Dictionary<CommandChainKey, CommandChain> GetCommandChainCache(
         uint imageIndex)
@@ -182,18 +182,18 @@ public unsafe partial class VulkanRenderer
         _commandRuntime.InvalidateScheduleCache();
 
         if (invalidated > 0)
-            MarkOpenXrPrimaryCommandArtifactOwnersDirty();
+            MarkCommandBuffersDirty("command-chain artifact dependency changed");
 
         return invalidated;
     }
 
-    private static CommandChain GetOrCreateCommandChain(
+    private CommandChain GetOrCreateCommandChain(
         Dictionary<CommandChainKey, CommandChain> cache,
         CommandChainKey key)
     {
         if (!cache.TryGetValue(key, out CommandChain? chain))
         {
-            chain = new CommandChain(key);
+            chain = new CommandChain(key, CommandChains);
             cache.Add(key, chain);
         }
 

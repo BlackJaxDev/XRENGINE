@@ -258,6 +258,19 @@ internal sealed class VulkanPhysicalImageGroup
         return true;
     }
 
+    internal bool TryEnsureAllocated(VulkanBackendObjectContext context, out string failureReason)
+    {
+        failureReason = string.Empty;
+        if (_allocated)
+            return true;
+        if (!context.Images.TryAllocatePhysicalImage(context, this, ref _image, ref _memory, out failureReason))
+            return false;
+
+        _allocated = true;
+        LastKnownLayout = ImageLayout.Undefined;
+        return true;
+    }
+
     public void Destroy(VulkanRenderer renderer)
     {
         if (!_allocated)

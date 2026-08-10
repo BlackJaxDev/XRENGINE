@@ -52,7 +52,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (RuntimeEngine.InvokeOnMainThread(PushData, "VkTexture.PushData"))
             return;
 
-        if (Renderer.IsDeviceLost)
+        if (!BackendContext.IsDeviceOperational)
             return;
 
         if (Data is XRTexture2D { RuntimeManagedProgressiveUploadActive: true })
@@ -76,7 +76,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (RuntimeEngine.InvokeOnMainThread(GenerateMipmaps, "VkTexture.GenerateMipmaps"))
             return;
 
-        if (Renderer.IsDeviceLost)
+        if (!BackendContext.IsDeviceOperational)
             return;
 
         GenerateMipmapsGPU();
@@ -122,7 +122,6 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             LayerCount = ResolvedArrayLayers,
         };
 
-        using var scope = Renderer.NewCommandScope();
         if ((AspectFlags & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0)
         {
             ClearDepthStencilValue clearDepthStencil = new()
@@ -130,7 +129,12 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 Depth = color.R,
                 Stencil = (uint)Math.Clamp((int)color.G, 0, 255),
             };
-            Renderer.CmdClearDepthStencilImageTracked(scope.CommandBuffer, _image, ImageLayout.TransferDstOptimal, ref clearDepthStencil, 1, ref range);
+            BackendContext.ResourceCommands.ClearDepthStencilImage(
+                _image,
+                ImageLayout.TransferDstOptimal,
+                ref clearDepthStencil,
+                ref range,
+                "VkImageBackedTexture.ClearDepthStencil");
         }
         else
         {
@@ -141,7 +145,12 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 Float32_2 = color.B,
                 Float32_3 = color.A,
             };
-            Renderer.CmdClearColorImageTracked(scope.CommandBuffer, _image, ImageLayout.TransferDstOptimal, ref clearColor, 1, ref range);
+            BackendContext.ResourceCommands.ClearColorImage(
+                _image,
+                ImageLayout.TransferDstOptimal,
+                ref clearColor,
+                ref range,
+                "VkImageBackedTexture.ClearColor");
         }
 
         ImageLayout targetLayout = previousLayout == ImageLayout.Undefined

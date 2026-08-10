@@ -7,6 +7,7 @@ internal sealed class VulkanBackendObjectRegistry
 {
     private readonly Lock _bucketsLock = new();
     private readonly Dictionary<Type, object> _buckets = [];
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<GenericRenderObject, VkObjectBase> _byData = new();
     public VulkanBindingAllocator BindingAllocator { get; } = new();
 
     public uint Cache<T>(VkObject<T> wrapper)
@@ -16,6 +17,7 @@ internal sealed class VulkanBackendObjectRegistry
         try
         {
             GetBucket<T>().Cache(bindingId, wrapper);
+            _byData[wrapper.Data] = wrapper;
             return bindingId;
         }
         catch
@@ -31,7 +33,13 @@ internal sealed class VulkanBackendObjectRegistry
 
     public void Publish<T>(uint bindingId, VkObject<T> wrapper)
         where T : GenericRenderObject
-        => GetBucket<T>().Publish(bindingId, wrapper);
+    {
+        GetBucket<T>().Publish(bindingId, wrapper);
+        _byData[wrapper.Data] = wrapper;
+    }
+
+    public VkObjectBase? Get(GenericRenderObject data)
+        => _byData.TryGetValue(data, out VkObjectBase? wrapper) ? wrapper : null;
 
     public void Remove<T>(uint bindingId)
         where T : GenericRenderObject
@@ -39,6 +47,9 @@ internal sealed class VulkanBackendObjectRegistry
         GetBucket<T>().Remove(bindingId);
         BindingAllocator.Release<T>(bindingId);
     }
+
+    public void Remove(GenericRenderObject data)
+        => _byData.TryRemove(data, out _);
 
     public VkObject<T>[] Snapshot<T>()
         where T : GenericRenderObject

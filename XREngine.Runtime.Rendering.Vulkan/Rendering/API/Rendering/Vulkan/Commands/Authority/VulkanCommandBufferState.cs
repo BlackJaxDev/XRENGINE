@@ -16,6 +16,8 @@ internal sealed class VulkanCommandBufferState
     internal CommandBuffer[]? ActiveBuffers;
     internal VulkanPrimaryCommandPlan[]? PrimaryPlans;
     internal PrimaryCommandArtifactOwner[]? PrimaryOwners;
+    internal object OpenXrPrimaryOwnersGate { get; } = new();
+    internal Dictionary<ulong, PrimaryCommandArtifactOwner> OpenXrPrimaryOwners { get; } = [];
     internal CommandBuffer[]? DynamicUiSecondaries;
     internal CommandBuffer[]? DynamicUiOverlays;
     internal int[]? DynamicUiOpCounts;

@@ -2,6 +2,7 @@ using System;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Vulkan;
+using XREngine.Components.Lights;
 
 namespace XREngine.Rendering.Pipelines.Commands;
 
@@ -110,7 +111,20 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
     protected override bool ShouldExecuteThisFrame()
     {
         XRRenderPipelineInstance? activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
-        return activeInstance?.ActiveMeshRenderCommands.HasRenderingCommands(RenderPass) == true;
+        if (activeInstance is null)
+            return false;
+
+        EMeshSubmissionStrategy meshSubmissionStrategy = ResolveEffectiveMeshSubmissionStrategy();
+        if (meshSubmissionStrategy.IsGpuZeroReadbackStrategy() &&
+            activeInstance.Pipeline is ShadowRenderPipeline)
+        {
+            // Strict zero-readback visibility is owned by the GPU scene. A CPU
+            // visibility collection can legitimately publish an empty pass, so
+            // command execution is gated by configured GPU-pass topology only.
+            return activeInstance.ActiveMeshRenderCommands.TryGetGpuPass(RenderPass, out _);
+        }
+
+        return activeInstance.ActiveMeshRenderCommands.HasRenderingCommands(RenderPass);
     }
 
     protected override void Execute()

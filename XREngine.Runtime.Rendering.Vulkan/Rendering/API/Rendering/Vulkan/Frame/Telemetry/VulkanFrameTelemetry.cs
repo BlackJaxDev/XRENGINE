@@ -16,7 +16,6 @@ internal sealed class VulkanFrameTelemetry
     internal ConcurrentDictionary<string, string> ComputeDispatchOperationNames { get; } =
         new(StringComparer.Ordinal);
     private const int PublicationCapacity = 64;
-    private const int GpuRenderStatsReadbackRingSize = 32;
     private const int VulkanCrashBreadcrumbCapacity = 64;
     private const int VulkanDeviceAddressRangeCapacity = 512;
     private const int VulkanDeviceAddressBindingEventCapacity = 128;
@@ -42,10 +41,7 @@ internal sealed class VulkanFrameTelemetry
     internal uint _vulkanGpuProfilerNextQuery;
     internal bool[]? _vulkanGpuProfilerCommandBufferInstrumented;
     internal int[]? _vulkanGpuProfilerCommandBufferFrameSlots;
-    internal readonly GpuRenderStatsReadbackSlot?[] _gpuRenderStatsReadbackSlots =
-        new GpuRenderStatsReadbackSlot?[GpuRenderStatsReadbackRingSize];
     internal readonly Dictionary<string, ulong> _gpuRenderStatsTraceHashes = [];
-    internal int _gpuRenderStatsReadbackCursor;
     internal readonly VulkanFinalPresentationLedgerState _finalPresentationLedger =
         new(XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanFinalPresentationLedger));
     internal readonly object _deviceLostTransitionLock = new();
@@ -86,6 +82,32 @@ internal sealed class VulkanFrameTelemetry
                         existing with { Active = false };
                 }
             }
+        }
+    }
+
+    internal void RegisterDeviceAddressRange(Silk.NET.Vulkan.Buffer buffer, ulong baseAddress, ulong size, string label)
+    {
+        if (buffer.Handle == 0 || baseAddress == 0 || size == 0)
+            return;
+
+        lock (_vulkanDeviceAddressDiagnosticsLock)
+        {
+            int firstInactive = -1;
+            for (int index = 0; index < _vulkanDeviceAddressRanges.Length; index++)
+            {
+                VulkanDeviceAddressRange existing = _vulkanDeviceAddressRanges[index];
+                if (existing.Active && existing.Buffer.Handle == buffer.Handle)
+                {
+                    _vulkanDeviceAddressRanges[index] = new(buffer, baseAddress, size, label, Active: true);
+                    return;
+                }
+
+                if (!existing.Active && firstInactive < 0)
+                    firstInactive = index;
+            }
+
+            int replacement = firstInactive >= 0 ? firstInactive : unchecked((int)(buffer.Handle % (ulong)_vulkanDeviceAddressRanges.Length));
+            _vulkanDeviceAddressRanges[replacement] = new(buffer, baseAddress, size, label, Active: true);
         }
     }
     internal readonly VulkanDeviceAddressBindingEvent[] _vulkanDeviceAddressBindingEvents =

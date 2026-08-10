@@ -2,7 +2,7 @@ using System;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanCommandRuntime
 {
     private bool RecordPrimaryOperations(
         scoped ref PrimaryCommandBufferRecordingState recordingState)
@@ -23,7 +23,7 @@ public unsafe partial class VulkanRenderer
                 ref recordingState.PrimaryCommandPlan.GetNode(operationIndex);
             if (!ReferenceEquals(primaryNode.Operation, operation))
             {
-                throw new InvalidOperationException(
+                throw new VulkanPlanPreconditionException(
                     "A terminal or mismatched primary-plan node appeared in the frame-operation range.");
             }
 
@@ -46,12 +46,6 @@ public unsafe partial class VulkanRenderer
                         operationIndex,
                         out int passIndex))
                 {
-                    if (IsPlanPreconditionRecordingFailure(
-                            recordingState.RecordingDeferredReason))
-                    {
-                        return false;
-                    }
-
                     continue;
                 }
 
@@ -229,48 +223,12 @@ public unsafe partial class VulkanRenderer
     private bool UpdatePrimaryResourcePlannerContext(
         scoped ref PrimaryCommandBufferRecordingState recordingState)
     {
-        if (TryActivateFrameOpResourcePlannerState(recordingState.ActiveContext))
-        {
-            recordingState.PlannerContext = recordingState.ActiveContext;
-            recordingState.HasPlannerContext = true;
-            return true;
-        }
-
-        // Shadow/UI/bootstrap operations can own a pipeline context without
-        // referencing planner-backed resources. They must not replace the
-        // planner state selected for surrounding resource-owning operations.
-        if (!FrameOpContextHasPlannerResources(recordingState.ActiveContext))
-            return true;
-
-        if (recordingState.ActiveContext.PipelineInstance is null)
-        {
-            string missingPipelineReason =
-                "frame-plan precondition failed during recording: an operation requiring planner context has no pipeline instance.";
-            recordingState.RecordingDeferredReason = missingPipelineReason;
-            return false;
-        }
-
-        if (!recordingState.HasPlannerContext)
-        {
-            recordingState.PlannerContext = recordingState.ActiveContext;
-            recordingState.HasPlannerContext = true;
-            return true;
-        }
-
-        if (!RequiresResourcePlannerRebuild(
-                recordingState.PlannerContext,
-                recordingState.ActiveContext))
-            return true;
-
-        string reason =
-            $"frame-plan precondition failed during recording: planner context changed " +
-            $"from pipe={recordingState.PlannerContext.PipelineIdentity}/vp={recordingState.PlannerContext.ViewportIdentity} " +
-            $"to pipe={recordingState.ActiveContext.PipelineIdentity}/vp={recordingState.ActiveContext.ViewportIdentity}; " +
-            DescribeActiveFrameOpPlannerStateKeys(
-                recordingState.ActiveContext,
-                recordingState.FramePlan);
-        recordingState.RecordingDeferredReason = reason;
-        return false;
+        // Planner-state selection and wrapper publication are complete before
+        // the frame loop freezes the input. Encoding may observe the prepared
+        // context identity, but must never switch or rebuild planner state.
+        recordingState.PlannerContext = recordingState.ActiveContext;
+        recordingState.HasPlannerContext = true;
+        return true;
     }
 
     private void TransitionToPrimaryOperationPass(
@@ -326,7 +284,7 @@ public unsafe partial class VulkanRenderer
                 if (plannedQueueOwnershipTransfer !=
                     (emittedQueueOwnershipTransfers > 0))
                 {
-                    throw new InvalidOperationException(
+                    throw new VulkanPlanPreconditionException(
                         $"Primary plan queue-ownership action mismatch for pass {passIndex}: " +
                         $"planned={plannedQueueOwnershipTransfer} emitted={emittedQueueOwnershipTransfers}.");
                 }

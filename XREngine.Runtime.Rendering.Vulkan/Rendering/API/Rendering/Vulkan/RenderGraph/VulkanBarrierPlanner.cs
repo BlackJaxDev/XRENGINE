@@ -771,7 +771,9 @@ internal sealed class VulkanBarrierPlanner
         PlannedImageState Previous,
         PlannedImageState Next,
         uint SrcQueueFamilyIndex,
-        uint DstQueueFamilyIndex);
+        uint DstQueueFamilyIndex,
+        Image NativeImage = default,
+        Format NativeFormat = Format.Undefined);
 
     internal readonly record struct PlannedBufferBarrier(
         int PassIndex,
@@ -779,7 +781,10 @@ internal sealed class VulkanBarrierPlanner
         PlannedBufferState Previous,
         PlannedBufferState Next,
         uint SrcQueueFamilyIndex,
-        uint DstQueueFamilyIndex);
+        uint DstQueueFamilyIndex,
+        Silk.NET.Vulkan.Buffer NativeBuffer = default,
+        ulong NativeOffset = 0,
+        ulong NativeSize = Vk.WholeSize);
 
     internal readonly record struct PlannedSwapchainBarrier(
         int PassIndex,

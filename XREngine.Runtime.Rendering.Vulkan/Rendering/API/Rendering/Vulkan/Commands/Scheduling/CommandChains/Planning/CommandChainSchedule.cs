@@ -4,6 +4,7 @@ internal sealed class CommandChainSchedule
 {
     private RenderPassChainGroup[] _groups = [];
     private int _groupCount;
+    private CommandRecordingDependencySignature _dependencySignature;
 
     public CommandChainSchedule()
     {
@@ -24,7 +25,16 @@ internal sealed class CommandChainSchedule
 
     public ulong StructuralSignature { get; private set; }
     public ulong ResourcePlanRevision { get; private set; }
-    public CommandRecordingDependencySignature DependencySignature { get; private set; }
+    public CommandChainScheduleCacheIdentity CacheIdentity { get; private set; }
+    public CommandRecordingDependencySignature DependencySignature
+    {
+        get => _dependencySignature;
+        private set => _dependencySignature = value;
+    }
+    internal ref readonly CommandRecordingDependencySignature DependencySignatureReference
+        => ref _dependencySignature;
+    public long ArtifactMutationGeneration { get; private set; }
+    public int ScheduledChainCount { get; private set; }
     /// <summary>
     /// True when inline operations publish per-frame GPU data or submission state.
     /// The primary must be recorded again, while its immutable secondary islands
@@ -54,10 +64,25 @@ internal sealed class CommandChainSchedule
         ResourcePlanRevision = resourcePlanRevision;
         RequiresFreshPrimary = requiresFreshPrimary;
         InlineFrameOpCount = Math.Max(0, inlineFrameOpCount);
+        ScheduledChainCount = CountScheduledChains(groups);
     }
 
     public void PublishDependencySignature(in CommandRecordingDependencySignature signature)
-        => DependencySignature = signature;
+        => _dependencySignature = signature;
+
+    public void PublishCacheIdentity(in CommandChainScheduleCacheIdentity identity)
+        => CacheIdentity = identity;
+
+    public void PublishArtifactMutationGeneration(long generation)
+        => ArtifactMutationGeneration = generation;
+
+    private static int CountScheduledChains(ReadOnlySpan<RenderPassChainGroup> groups)
+    {
+        int count = 0;
+        for (int i = 0; i < groups.Length; i++)
+            count += groups[i].ChainKeys.Length;
+        return count;
+    }
 
     private void EnsureGroupCapacity(int required)
     {

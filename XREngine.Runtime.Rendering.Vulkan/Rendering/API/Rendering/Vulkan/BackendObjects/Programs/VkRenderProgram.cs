@@ -18,11 +18,13 @@ using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderProgram data) : VkObject<XRRenderProgram>(renderer, data)
+internal unsafe partial class VkRenderProgram(
+    VulkanBackendObjectContext backendContext,
+    XRRenderProgram data) : VkObject<XRRenderProgram>(backendContext, data)
 {
     private readonly Dictionary<XRShader, VkShader> _shaderCache = new();
     private readonly Dictionary<EProgramStageMask, VkShader> _stageLookup = new();
-    private readonly object _linkLock = new();
+    private readonly Lock _linkLock = new();
     private DescriptorSetLayout[] _descriptorSetLayouts = Array.Empty<DescriptorSetLayout>();
     private ulong _descriptorLayoutFingerprint;
     private ulong _descriptorSchemaFingerprint;
@@ -77,12 +79,12 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
     private bool _isLinked;
     public bool IsLinked
     {
-        get => _isLinked;
+        get => Volatile.Read(ref _isLinked);
         private set
         {
-            if (_isLinked == value)
+            if (Volatile.Read(ref _isLinked) == value)
                 return;
-            _isLinked = value;
+            Volatile.Write(ref _isLinked, value);
             Data.SetBackendLinked(value);
         }
     }
@@ -260,7 +262,7 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
         if (_shaderCache.ContainsKey(shader))
             return;
 
-        if (Renderer.GetOrCreateAPIRenderObject(shader) is not VkShader vkShader)
+        if (BackendContext.GetOrCreateAPIRenderObject(shader) is not VkShader vkShader)
             return;
 
         _shaderCache.Add(shader, vkShader);
@@ -314,7 +316,7 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
         IsLinked = false;
         _linkedTransformFeedbackLayoutVersion = ulong.MaxValue;
 
-        if (Data.LinkReady && Renderer.DeviceContext.IsReady)
+        if (Data.LinkReady && BackendContext.IsLogicalDeviceReady)
             Link();
     }
 
@@ -323,7 +325,7 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
         if (RuntimeEngine.InvokeOnMainThread(() => OnLinkRequested(program), "VkRenderProgram.LinkRequested"))
             return;
 
-        if (!Renderer.DeviceContext.IsReady)
+        if (!BackendContext.IsLogicalDeviceReady)
         {
             BackendContext.Pipelines.QueueProgramLinkUntilDeviceReady(this);
             return;
@@ -353,7 +355,7 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
         if (RuntimeEngine.InvokeOnMainThread(() => OnUseRequested(program), "VkRenderProgram.UseRequested"))
             return;
 
-        if (!Renderer.DeviceContext.IsReady)
+        if (!BackendContext.IsLogicalDeviceReady)
         {
             BackendContext.Pipelines.QueueProgramLinkUntilDeviceReady(this);
             return;

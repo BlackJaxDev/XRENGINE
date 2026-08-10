@@ -8,7 +8,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Uploads each 1-D mipmap level from the engine's <c>Mipmaps</c> array into
 /// a single-layer image with <see cref="ImageType.Type1D"/>.
 /// </summary>
-internal sealed class VkTexture1D(VulkanRenderer api, XRTexture1D data) : VkImageBackedTexture<XRTexture1D>(api, data)
+internal sealed class VkTexture1D(VulkanBackendObjectContext backendContext, IRenderApiWrapperOwner owner, XRTexture1D data) : VkImageBackedTexture<XRTexture1D>(backendContext, owner, data)
 {
     protected override ImageType TextureImageType => ImageType.Type1D;
     protected override ImageViewType DefaultImageViewType => ImageViewType.Type1D;

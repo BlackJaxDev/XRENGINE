@@ -24,6 +24,7 @@ namespace XREngine.Rendering.Vulkan
         private readonly VulkanResourceRuntime _resourceRuntime = new(MAX_FRAMES_IN_FLIGHT);
         private readonly VulkanCommandRuntime _commandRuntime = new();
         private readonly VulkanFrameTelemetry _frameTelemetry = new();
+        private readonly VulkanTextureReadbackService _textureReadbackService;
 
         public VulkanRenderer(
             XRWindow window,
@@ -44,14 +45,43 @@ namespace XREngine.Rendering.Vulkan
                     targetDriver.RequiresSwapchainOutput,
                     targetDriver.RequiredDeviceExtensions,
                     OptionalDeviceExtensions));
+            _commandRuntime.ConfigurePrimaryRecording(
+                _deviceContext,
+                _resourceRuntime,
+                _frameTelemetry);
+            _resourceRuntime.DescriptorLifetime.Configure(
+                _deviceContext,
+                _commandRuntime,
+                _frameTelemetry);
+            _resourceRuntime.FallbackTexture.Configure(_commandRuntime);
+            _textureReadbackService = new VulkanTextureReadbackService(
+                _deviceContext,
+                _resourceRuntime,
+                _commandRuntime,
+                _framePlanner,
+                _frameTelemetry);
             _frameLoop = new VulkanFrameLoop(
                 _deviceContext,
                 _outputRuntime,
                 _framePlanner,
                 _resourceRuntime,
                 _commandRuntime,
+                _frameTelemetry,
+                _textureReadbackService);
+            VulkanBackendObjectContext backendObjectContext = ResourceRuntime.GetOrCreateBackendObjectContext(
+                Api!,
+                _deviceContext,
+                _commandRuntime,
+                _framePlanner,
+                _frameTelemetry,
+                AllowSynchronousResourceUploads);
+            backendObjectContext.ConfigureMeshServices(
+                _commandRuntime,
+                _framePlanner,
+                _outputRuntime,
+                _frameLoop,
+                _frameOperationQueue,
                 _frameTelemetry);
-            ResourceRuntime.BackendObjectContext?.PublishDeviceContext(_deviceContext);
             _framePlanner.PublishResourcePlannerGeneration(
                 new ResourcePlannerRuntimeGeneration(ResourcePlannerRuntimeState.CreateEmpty()));
         }
@@ -83,6 +113,14 @@ namespace XREngine.Rendering.Vulkan
             CreateInstance();
             SetupDebugMessenger();
             OutputRuntime.CreateTargetInstanceResources(Api!, _deviceContext, Window);
+            if (OutputRuntime.TargetDriver.RequiresSwapchainOutput)
+                OutputRuntime.InitializeDesktopSwapchainService(
+                    VulkanApi,
+                    _deviceContext,
+                    _commandRuntime,
+                    _resourceRuntime,
+                    _frameTelemetry,
+                    _framePlanner);
             PublishPresentationSupportProbe();
             PickPhysicalDevice();
             if (OutputRuntime.TargetDriver.SupportsStreamlinePresentation)
@@ -90,10 +128,10 @@ namespace XREngine.Rendering.Vulkan
             CreateLogicalDevice();
             InitializeMemoryAllocator();
             VulkanTextureStreamingBackendProvider.Instance.BindScheduler(this);
-            InitializeCanonicalImmutableSamplers();
+            VulkanCanonicalImmutableSamplerService.Initialize(ResourceRuntime, Api!, _deviceContext);
             CreateCommandPool();
 
-            CreateDescriptorSetLayout();
+            VulkanRootDescriptorLayoutService.Create(ResourceRuntime, Api!, _deviceContext.Device);
             OutputRuntime.InitializeTargetFinalOutput(
                 VulkanApi,
                 _deviceContext,
@@ -101,7 +139,9 @@ namespace XREngine.Rendering.Vulkan
                 _resourceRuntime,
                 _frameTelemetry);
             if (OutputRuntime.TargetDriver is VulkanDesktopWsiTargetDriver)
-                CreateDesktopFinalOutput();
+            {
+                OutputRuntime.CreateInitialDesktopSwapchainGeneration();
+            }
 
             //CreateTestModel();
             //CreateUniformBuffers();
@@ -112,7 +152,12 @@ namespace XREngine.Rendering.Vulkan
             LogStartupCapabilitySnapshot();
             InitializeMappedFrameArena();
             ReserveOpenXrFrameDataSlotsIfRequired("initialization");
-            FlushPendingDeviceReadyProgramLinks();
+            int deferredProgramLinkCount = ResourceRuntime.PipelineManager.FlushPendingDeviceReadyProgramLinks();
+            if (deferredProgramLinkCount > 0)
+            {
+                Debug.Vulkan(
+                    $"Deferred {deferredProgramLinkCount} Vulkan program link(s) until first use after logical device creation.");
+            }
         }
 
         /// <summary>
@@ -235,7 +280,7 @@ namespace XREngine.Rendering.Vulkan
 
                 // Swapchain generations use nonblocking queue-marker fences during normal
                 // rendering. The caller establishes the teardown-only GPU-idle boundary.
-                DrainRetiredSwapchainGenerations(force: true);
+                OutputRuntime.DrainRetiredDesktopSwapchainGenerations(force: true);
             }
 
             bool forceRetirementDrain = IsDeviceLost;
@@ -248,13 +293,13 @@ namespace XREngine.Rendering.Vulkan
             ResourceRuntime.Uploads.CancelAllQueuedWork(this, "Vulkan renderer shutdown");
             CancelPendingImportedTextureUploadFrameOps("Vulkan renderer shutdown");
             CancelRecordedTextureUploadPublications("Vulkan renderer shutdown");
-            DrainVulkanPipelineCompileQueueForShutdown();
+            ResourceRuntime.PipelineManager.DrainPipelineCompileQueueForShutdown();
             DrainScreenshotReadbacksForShutdown();
-            WaitForPendingReadbackTasks(TimeSpan.FromSeconds(6));
+            _commandRuntime.CommandBuffers.ReadbackTasks.WaitForPendingTasks(TimeSpan.FromSeconds(6));
             DisposeScreenshotReadbacks();
             DisposeGpuRenderStatsReadbacks();
             DestroyComputeTransientResources();
-            DestroyComputeDescriptorCaches();
+            ResourceRuntime.RetireComputeDescriptorCachesForShutdown();
             DestroyDanglingMaterialWrappers();
             DestroyDanglingMeshRendererWrappers();
             DestroyDanglingRenderProgramPipelineWrappers();
@@ -263,24 +308,30 @@ namespace XREngine.Rendering.Vulkan
             DestroyDanglingFrameBufferWrappers();
             DestroyDanglingTextureWrappers();
             DestroyCachedAPIRenderObjects();
-            DestroyVulkanQueryArenas();
+            ResourceRuntime.Queries.DisposeArenas();
             DestroyRemainingTrackedMeshUniformBuffers();
 
             // Drain all deferred-deletion queues now that the GPU is idle.
             ForceFlushAllRetiredResources();
 
             DestroyAutoExposureComputeResources();
-            DestroyPlaceholderTexture();
-            DisposeImGuiResources();
+            ResourceRuntime.FallbackTexture.RetireAll();
+            _outputRuntime.DisposeImGuiResources(ResourceRuntime, _commandRuntime, _deviceContext);
+            ResetImGuiFrameMarker();
             DestroyOpenXrRenderingResources();
             DestroyFrameOpResourcePlannerStates();
             if (OutputRuntime.TargetDriver is VulkanDesktopWsiTargetDriver)
-                DestroyDesktopFinalOutput();
+                OutputRuntime.DestroyDesktopSwapchainGenerationForShutdown();
             OutputRuntime.DestroyTargetFinalOutput();
             // FBO render passes are NOT destroyed during swapchain recreation
             // (they are swapchain-independent). Clean them up here at full shutdown.
-            DestroyFrameBufferRenderPasses();
-            DestroyDescriptorSetLayout();
+            ResourceRuntime.Framebuffers.DestroyRenderPasses(Api!, _deviceContext.Device);
+            VulkanRootDescriptorLayoutService.Destroy(
+                ResourceRuntime,
+                Api!,
+                _deviceContext.Device,
+                _commandRuntime,
+                CurrentDesktopFrameSlot);
             DestroyRetainedAutoExposureHistory("renderer shutdown");
             VulkanResourceAllocator resourceAllocator = CaptureResourcePlannerRuntimeState().ResourceAllocator;
             resourceAllocator.DestroyPhysicalImages(this);
@@ -301,8 +352,8 @@ namespace XREngine.Rendering.Vulkan
             DestroyCachedAPIRenderObjects();
             DestroyRemainingTrackedMeshUniformBuffers();
             ForceFlushAllRetiredResources();
-            DestroyRemainingTrackedImageViews();
-            DestroyRemainingTrackedPipelineLayouts();
+            ResourceRuntime.Images.DestroyRemaining(Api!, _deviceContext.Device);
+            ResourceRuntime.DestroyRemainingTrackedPipelineLayouts(Api!, _deviceContext.Device);
             DestroyRemainingTrackedBufferAllocations();
             DestroyRemainingTrackedImageAllocations();
 
@@ -319,11 +370,15 @@ namespace XREngine.Rendering.Vulkan
             // Flush once more before destroying the logical device to catch any
             // handles retired by sync/command-pool teardown.
             ForceFlushAllRetiredResources();
-            DestroyRemainingTrackedImageViews();
-            DestroyRemainingTrackedDescriptorSetLayouts();
-            DestroySharedGraphicsPipelines();
-            DestroyRemainingTrackedPipelineLayouts();
-            DestroySharedGraphicsPipelineLibraries();
+            ResourceRuntime.Images.DestroyRemaining(Api!, _deviceContext.Device);
+            ResourceRuntime.DestroyRemainingDescriptorSetLayouts(
+                Api!,
+                _deviceContext.Device,
+                _commandRuntime,
+                CurrentDesktopFrameSlot);
+            ResourceRuntime.PipelineManager.DestroySharedGraphicsPipelines();
+            ResourceRuntime.DestroyRemainingTrackedPipelineLayouts(Api!, _deviceContext.Device);
+            ResourceRuntime.PipelineManager.DestroySharedGraphicsPipelineLibraries();
 
             DestroyLogicalDevice();
             OutputRuntime.DestroyTargetInstanceResources(Api!, _deviceContext, Window);
@@ -456,32 +511,8 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void DestroyRemainingTrackedBufferAllocations()
-        {
-            foreach (var pair in ResourceRuntime.Allocations.Buffers.Allocations.ToArray())
-            {
-                if (!ResourceRuntime.Allocations.Buffers.Allocations.TryRemove(pair.Key, out VulkanMemoryAllocation allocation))
-                    continue;
-
-                Buffer buffer = new() { Handle = pair.Key };
-                if (buffer.Handle != 0 && TryBeginDestroyBuffer(buffer, "DestroyRemainingTrackedBufferAllocations"))
-                    Api!.DestroyBuffer(_deviceContext.Device, buffer, null);
-
-                FreeMemoryAllocation(allocation);
-            }
-
-            foreach (var pair in ResourceRuntime.Allocations.Buffers.LegacyAllocations.ToArray())
-            {
-                if (!ResourceRuntime.Allocations.Buffers.LegacyAllocations.TryRemove(pair.Key, out VulkanMemoryAllocation allocation))
-                    continue;
-
-                Buffer buffer = new() { Handle = pair.Key };
-                if (buffer.Handle != 0 && TryBeginDestroyBuffer(buffer, "DestroyRemainingTrackedLegacyBufferAllocations"))
-                    Api!.DestroyBuffer(_deviceContext.Device, buffer, null);
-
-                if (allocation.Memory.Handle != 0)
-                    FreeLegacyBufferMemory(allocation);
-            }
-        }
+            => ResourceRuntime.Buffers.DestroyRemainingTrackedAllocations(
+                BackendObjectContext);
 
         private void DestroyRemainingTrackedImageAllocations()
         {
@@ -1136,8 +1167,16 @@ namespace XREngine.Rendering.Vulkan
                     DescriptorPublicationGeneration: 0,
                     OwningCommandArtifact: default,
                     OwningCommandArtifactGeneration: 0),
-                retainEquivalentCurrentSource:
-                    DesktopWsiOutput.IsInteractiveResizeInProgress);
+                // A logical epoch describes source identity, not frame identity.
+                // Re-publishing an unchanged source every frame used to clear the
+                // descriptor-slot bindings that associate reusable primaries with
+                // their immutable present descriptor. Cached descriptor sets do
+                // not issue another write, so those primaries were then rejected
+                // as having an incomplete presentation source and re-recorded.
+                // Preserve the epoch until the logical/native source really
+                // changes; PublishLogical still advances it for image/view/
+                // sampler, extent, pipeline, viewport, or registry changes.
+                retainEquivalentCurrentSource: true);
 
             // Transitional readback consumers are migrated separately, but all
             // command selection and submission consume the tuple above.
@@ -1164,7 +1203,7 @@ namespace XREngine.Rendering.Vulkan
 
             bool isReady = descriptorReady &&
                 snapshot.View.Handle != 0 &&
-                IsLiveImageViewBackedByLiveImage(snapshot.View) &&
+                ResourceRuntime.Images.IsLiveBackedByLiveImage(snapshot.View) &&
                 (snapshot.Usage & ImageUsageFlags.SampledBit) != 0;
             ulong descriptorGeneration = descriptorReady
                 ? snapshot.Generation
@@ -1291,7 +1330,7 @@ namespace XREngine.Rendering.Vulkan
                         wantStencil: true,
                         out BlitImageInfo stencilSource,
                         isSource: true) &&
-                    TryReadStencilPixel(stencilSource, sampleX, sampleY, out byte stencilValue))
+                    _commandRuntime.TryReadStencilPixel(stencilSource, sampleX, sampleY, out byte stencilValue))
                 {
                     return stencilValue;
                 }
@@ -1312,7 +1351,7 @@ namespace XREngine.Rendering.Vulkan
             if (!swapchainStencilSource.IsValid)
                 return 0;
 
-            return TryReadStencilPixel(swapchainStencilSource, sampleX, sampleY, out byte swapchainStencil)
+            return _commandRuntime.TryReadStencilPixel(swapchainStencilSource, sampleX, sampleY, out byte swapchainStencil)
                 ? swapchainStencil
                 : (byte)0;
         }

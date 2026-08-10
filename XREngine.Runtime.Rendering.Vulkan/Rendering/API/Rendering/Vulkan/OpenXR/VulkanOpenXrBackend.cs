@@ -24,8 +24,6 @@ internal sealed class VulkanOpenXrBackend
     internal long RuntimeSessionStartPendingFrameWaitStartTimestamp;
     internal readonly Dictionary<ulong, VulkanOpenXrSwapchainImageViewCacheEntry> SwapchainImageViews = new();
     internal readonly object PrimaryCommandArtifactOwnersLock = new();
-    internal readonly CommandPool[] EyeCommandPools = new CommandPool[EyeResourcePlannerStateCount];
-    internal readonly object EyeCommandPoolsLock = new();
     internal readonly VulkanOpenXrFrameDataRefreshRequestStorage[]
         EyeFrameDataRefreshRequests =
         [new(), new()];
@@ -42,7 +40,10 @@ internal sealed class VulkanOpenXrBackend
 
     internal VulkanOpenXrThreadExecutionState CurrentThreadExecutionState =>
         _threadExecutionState.Value
-        ?? throw new InvalidOperationException("The Vulkan OpenXR thread execution context is unavailable.");
+            ?? throw new InvalidOperationException("The Vulkan OpenXR thread execution context is unavailable.");
+
+    /// <summary>Number of reserved eye-planner frame-data slots.</summary>
+    internal int EyeFrameDataSlotCount => EyeResourcePlannerStateCount;
 
     internal Dictionary<ulong, TOwner> GetPrimaryCommandArtifactOwners<TOwner>()
         where TOwner : class

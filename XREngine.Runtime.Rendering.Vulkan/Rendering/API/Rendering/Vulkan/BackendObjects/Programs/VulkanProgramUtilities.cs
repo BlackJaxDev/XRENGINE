@@ -17,7 +17,7 @@ internal static class VulkanProgramUtilities
         EProgramStageMask.FragmentShaderBit |
         EProgramStageMask.MeshShaderBit |
         EProgramStageMask.TaskShaderBit;
-    internal static DescriptorLayoutBuildResult BuildDescriptorLayoutsShared(VulkanRenderer renderer, Device device, IEnumerable<DescriptorBindingInfo> bindings, string programName)
+    internal static DescriptorLayoutBuildResult BuildDescriptorLayoutsShared(VulkanDescriptorManager descriptors, IEnumerable<DescriptorBindingInfo> bindings, string programName)
     {
         List<DescriptorBindingInfo> reflectedBindings = bindings
             .Select(DescriptorBindingInfo.NormalizeKnownMetadata)
@@ -57,7 +57,7 @@ internal static class VulkanProgramUtilities
         bool requiresUpdateAfterBind = false;
         bool requiresVariableDescriptorCount = false;
         uint maxDeclaredSet = builders.Values.Max(b => b.Set);
-        uint maxSet = Math.Max(maxDeclaredSet, VulkanRenderer.DescriptorSetTierCount - 1);
+        uint maxSet = Math.Max(maxDeclaredSet, VulkanDescriptorManager.SetTierCount - 1);
 
         Dictionary<uint, List<DescriptorSetLayoutBindingBuilder>> groupsBySet = builders.Values
             .GroupBy(b => b.Set)
@@ -69,7 +69,7 @@ internal static class VulkanProgramUtilities
                 ? [.. setBuilders.Select(b => b.ToBinding())]
                 : Array.Empty<DescriptorSetLayoutBinding>();
 
-            if (!renderer.TryAcquireCachedDescriptorSetLayout(
+            if (!descriptors.TryAcquireProgramDescriptorSetLayout(
                 setIndex,
                 vkBindings,
                 out DescriptorSetLayout layout,
@@ -97,9 +97,45 @@ internal static class VulkanProgramUtilities
             requiresVariableDescriptorCount);
     }
 
+    /// <summary>
+    /// Resolves the descriptor layout from the immutable descriptor source. The
+    /// command encoder remains responsible for the transition itself; wrappers
+    /// only publish the layout contract and therefore do not retain a renderer.
+    /// </summary>
+    internal static ImageLayout ResolveDescriptorImageLayout(
+        IVkImageDescriptorSource source,
+        DescriptorType descriptorType)
+    {
+        if (descriptorType == DescriptorType.StorageImage)
+            return ImageLayout.General;
+
+        if ((source.DescriptorUsage & ImageUsageFlags.StorageBit) != 0 &&
+            (source.DescriptorUsage & ImageUsageFlags.SampledBit) != 0)
+        {
+            return ImageLayout.General;
+        }
+
+        ImageLayout tracked = source.TrackedImageLayout;
+        if (tracked is ImageLayout.ShaderReadOnlyOptimal or
+            ImageLayout.DepthStencilReadOnlyOptimal or
+            ImageLayout.DepthReadOnlyOptimal or
+            ImageLayout.StencilReadOnlyOptimal or
+            ImageLayout.ReadOnlyOptimal)
+        {
+            return tracked;
+        }
+
+        bool depthOrStencil =
+            (source.DescriptorAspect & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0 ||
+            source.DescriptorFormat is Format.D24UnormS8Uint or Format.D32SfloatS8Uint or Format.D16UnormS8Uint;
+        return depthOrStencil
+            ? ImageLayout.DepthStencilReadOnlyOptimal
+            : ImageLayout.ShaderReadOnlyOptimal;
+    }
+
     private static DescriptorBindingInfo NormalizeGraphicsFrameDataBinding(DescriptorBindingInfo binding)
     {
-        bool graphicsUniform = binding.Set == VulkanRenderer.DescriptorSetGlobals &&
+        bool graphicsUniform = binding.Set == VulkanDescriptorManager.GlobalsSetIndex &&
             binding.DescriptorType == DescriptorType.UniformBuffer &&
             (binding.StageFlags & ShaderStageFlags.ComputeBit) == 0;
         return graphicsUniform

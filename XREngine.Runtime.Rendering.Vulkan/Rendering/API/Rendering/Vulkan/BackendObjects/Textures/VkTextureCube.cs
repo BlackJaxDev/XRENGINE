@@ -4,7 +4,7 @@ using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed class VkTextureCube(VulkanRenderer api, XRTextureCube data) : VkImageBackedTexture<XRTextureCube>(api, data)
+internal sealed class VkTextureCube(VulkanBackendObjectContext backendContext, IRenderApiWrapperOwner owner, XRTextureCube data) : VkImageBackedTexture<XRTextureCube>(backendContext, owner, data)
 {
     private const ImageCreateFlags CubeCompatibleFlag = (ImageCreateFlags)0x10;
 

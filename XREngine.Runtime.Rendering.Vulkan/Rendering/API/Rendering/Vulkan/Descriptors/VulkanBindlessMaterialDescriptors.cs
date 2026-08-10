@@ -19,7 +19,7 @@ internal static class VulkanBindlessMaterialDescriptors
     /// <summary>
     /// The descriptor set index for the bindless texture array binding.
     /// </summary>
-    public const uint TextureArraySet = VulkanRenderer.DescriptorSetMaterial;
+    public const uint TextureArraySet = VulkanDescriptorManager.MaterialSetIndex;
     /// <summary>
     /// The binding index for the bindless texture array binding.
     /// </summary>
@@ -39,6 +39,28 @@ internal static class VulkanBindlessMaterialDescriptors
            binding.Binding == TextureArrayBinding &&
            binding.Name == TextureArrayBindingName &&
            binding.DescriptorType is DescriptorType.CombinedImageSampler or DescriptorType.SampledImage;
+
+    /// <summary>
+    /// Returns whether material set 2 is owned exclusively by the renderer's
+    /// global bindless texture table. Mesh-local descriptor allocation must leave
+    /// this set unbound so the indirect-draw command can bind the shared table.
+    /// </summary>
+    public static bool IsGlobalTextureArrayOnlySet(IReadOnlyList<DescriptorBindingInfo> bindings)
+    {
+        bool foundGlobalTextureArray = false;
+        for (int bindingIndex = 0; bindingIndex < bindings.Count; bindingIndex++)
+        {
+            DescriptorBindingInfo binding = bindings[bindingIndex];
+            if (binding.Set != TextureArraySet)
+                continue;
+            if (!IsBindlessTextureArrayBinding(binding))
+                return false;
+
+            foundGlobalTextureArray = true;
+        }
+
+        return foundGlobalTextureArray;
+    }
 
     /// <summary>
     /// Determines whether the specified descriptor set and binding correspond to the bindless texture array binding.

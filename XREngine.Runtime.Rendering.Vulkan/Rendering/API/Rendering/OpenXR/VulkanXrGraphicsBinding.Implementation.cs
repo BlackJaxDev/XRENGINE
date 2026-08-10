@@ -2130,11 +2130,11 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 OpenXrViewIndex: 0,
                 OpenXrImageIndex: leftImageIndex,
                 Foveation: CreateOpenXrEyeFoveationContext(0),
-                EmitFrameOps: () =>
+                FrameOpEmitter: new OpenXrEyeFrameOpDelegateEmitter(() =>
                 {
                     ApplyOpenXrEyePoseForRenderThread(0);
                     leftViewport.Render(null, _openXrFrameWorld, leftCamera, shadowPass: false, forcedMaterial: null);
-                });
+                }));
 
             var rightRequest = new OpenXrEyeSwapchainRenderRequest(
                 rightImage,
@@ -2144,11 +2144,11 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 OpenXrViewIndex: 1,
                 OpenXrImageIndex: rightImageIndex,
                 Foveation: CreateOpenXrEyeFoveationContext(1),
-                EmitFrameOps: () =>
+                FrameOpEmitter: new OpenXrEyeFrameOpDelegateEmitter(() =>
                 {
                     ApplyOpenXrEyePoseForRenderThread(1);
                     rightViewport.Render(null, _openXrFrameWorld, rightCamera, shadowPass: false, forcedMaterial: null);
-                });
+                }));
 
             bool directRendered;
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.RenderDirectSwapchains"))

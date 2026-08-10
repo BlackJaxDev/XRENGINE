@@ -36,7 +36,7 @@ namespace XREngine.Rendering.Vulkan
 
             _commandRuntime.DrainInvalidatedCommandBufferRecordings(
                 Api, ResourceRuntime);
-            DrainRetiredSwapchainGenerations();
+            OutputRuntime.DrainRetiredDesktopSwapchainGenerations();
             _commandRuntime.DrainRetiredCommandBuffers(
                 Api,
                 _deviceContext.Device,
@@ -57,12 +57,13 @@ namespace XREngine.Rendering.Vulkan
                 Api, _deviceContext.Device, frameSlot);
             ResourceRuntime.DrainRetiredDescriptorSetLayouts(
                 Api, _deviceContext.Device, frameSlot);
-            ResourceRuntime.DrainRetiredBuffers(
+            int pooledBuffers = ResourceRuntime.DrainRetiredBuffers(
                 Api,
                 _deviceContext.Device,
-                OutputRuntime,
                 _frameTelemetry,
                 frameSlot);
+            if (pooledBuffers != 0)
+                ResourceRuntime.Allocations.Staging.Trim(OutputRuntime);
             ResourceRuntime.DrainRetiredFramebuffers(
                 Api, _deviceContext.Device, frameSlot);
             ResourceRuntime.DrainRetiredImages(

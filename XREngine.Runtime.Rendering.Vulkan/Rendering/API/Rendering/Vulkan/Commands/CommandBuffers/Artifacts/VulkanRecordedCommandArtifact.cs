@@ -8,10 +8,12 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanRecordedCommandArtifact(
     CommandBufferLevel level,
-    int frameSlot)
+    int frameSlot,
+    VulkanCommandChainState? mutationAuthority = null)
 {
     private readonly HashSet<VulkanRecordedResourceReference> _referencedResources =
         new(64);
+    private CommandRecordingDependencySignature _dependencyIdentity;
 
     internal CommandBuffer NativeBuffer { get; private set; }
     internal CommandBufferLevel Level { get; } = level;
@@ -20,7 +22,13 @@ internal sealed class VulkanRecordedCommandArtifact(
     internal ulong ArenaOwnerIdentity =>
         WorkerArenaOwner?.Identity ?? OwnerPool.Handle;
     internal bool OwnsPool { get; private set; }
-    internal CommandRecordingDependencySignature DependencyIdentity { get; private set; }
+    internal CommandRecordingDependencySignature DependencyIdentity
+    {
+        get => _dependencyIdentity;
+        private set => _dependencyIdentity = value;
+    }
+    internal ref readonly CommandRecordingDependencySignature DependencyIdentityReference
+        => ref _dependencyIdentity;
     internal int FrameSlot { get; } = frameSlot;
     internal ulong Generation { get; private set; }
     internal ulong RecordingGeneration { get; private set; }
@@ -44,14 +52,14 @@ internal sealed class VulkanRecordedCommandArtifact(
         in CommandRecordingDependencySignature expected,
         out CommandRecordingDependencyMismatch mismatch)
     {
-        mismatch = DependencyIdentity.Compare(expected);
+        mismatch = _dependencyIdentity.Compare(in expected);
         return IsExecutable && !mismatch.RequiresRecording;
     }
 
     internal VulkanRecordedCommandArtifactReference CreateReference()
     {
         VulkanCommandIdentityComponents dependencyComponents =
-            DependencyIdentity.CaptureIdentityComponents();
+            _dependencyIdentity.CaptureIdentityComponents();
         FrameOpSignatureHasher resources = new();
         resources.Add(dependencyComponents.ResourceGenerations);
         resources.Add(unchecked((ulong)NativeBuffer.Handle));
@@ -253,5 +261,8 @@ internal sealed class VulkanRecordedCommandArtifact(
     }
 
     private void AdvanceGeneration()
-        => Generation = VulkanGeneration.NextNonZero(Generation);
+    {
+        Generation = VulkanGeneration.NextNonZero(Generation);
+        mutationAuthority?.NotifyArtifactMutation();
+    }
 }

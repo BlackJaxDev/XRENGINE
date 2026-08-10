@@ -193,7 +193,7 @@ public unsafe partial class VulkanRenderer
 
         try
         {
-            using var scope = NewCommandScope();
+            using var scope = _commandRuntime.NewCommandScope();
             _nvCopyMemoryIndirect!.CmdCopyMemoryIndirect(
                 scope.CommandBuffer,
                 commandAddress,
@@ -225,7 +225,7 @@ public unsafe partial class VulkanRenderer
 
         try
         {
-            using var scope = NewCommandScope();
+            using var scope = _commandRuntime.NewCommandScope();
             fixed (ImageSubresourceLayers* pImageSubresources = imageSubresources)
             {
                 _nvCopyMemoryIndirect!.CmdCopyMemoryToImageIndirect(

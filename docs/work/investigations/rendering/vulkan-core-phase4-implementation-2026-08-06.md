@@ -418,3 +418,148 @@ device-loss, fatal, or unhandled fault. MCP frame-output telemetry reported the
 desktop scene and present outputs rendered, lifecycle authority ID 1, validation
 message/error counts of zero, and zero pending retired resources. No OpenGL log
 was produced. A live OpenXR runtime was not available for this cut.
+
+### 4.1.1-4.1.4 Facade-Spine Completion Investigation
+
+The final authority cut initially compiled but produced a black desktop frame.
+RenderDoc captures at frames 200 and 1000 contained the fullscreen/post-process
+draws but no geometry, proving the fault was upstream of presentation. Source
+and live-log correlation found four authority-migration regressions:
+
+- asynchronous mesh index-buffer wrappers were looked up but no longer created,
+  leaving draw preparation permanently in `BuffersPending`;
+- desktop command recording confused the sealed frame-plan slot with the
+  swapchain descriptor slot;
+- the dynamic-UI secondary path received the producer array instead of the
+  frame plan's sealed operation sequence; and
+- command encoders captured the Vulkan API before staged backend construction
+  had published the device authority.
+
+The fixes restore wrapper creation through `VulkanBackendObjectContext`, begin
+prepared-frame recording with the plan-owned frame slot while retaining the
+acquired image for descriptor publication, pass the sealed dynamic-overlay
+sequence through reuse and recording, and create command encoders lazily after
+authority publication. Related cleanup also moved compute-descriptor retirement
+to `VulkanResourceRuntime`, corrected mapped-frame slot capacity, and routed
+tracked command-buffer completion through `VulkanCommandRuntime`.
+
+Named Vulkan session `phase4-core-hardening-final` subsequently rendered the
+scene through a 32-operation frame plan. Two visually inspected screenshots at
+different camera positions showed camera-dependent Sponza geometry and cyan
+debug overlays. Transfer readback succeeded from alternating slots 0 and 1 in
+`R16G16B16A16Sfloat`. Startup planner/presentation deferrals settled, and one
+later asynchronous partition deferral recovered on the following frames rather
+than becoming a persistent rejection. The old frame-slot mismatch, unsealed
+secondary, null-reference, queued-submission, and black-output signatures did
+not recur. Evidence is under
+`Build/_AgentValidation/mcp-sessions/phase4-core-hardening-final/`.
+
+The authority extraction following that live diagnosis removes the frame-loop
+facade callback, renderer-backed output and ImGui viewport lifetimes,
+renderer-backed resource wrappers and pipeline contracts, and command-worker
+renderer retention. Final post-extraction build, structural, and live-session
+evidence completed on 2026-08-08. A final clean rebuild first exposed one
+staged-bootstrap boundary error: the resource runtime attempted to publish a
+null device context while the base renderer constructor was creating wrapper
+identities. `VulkanResourceRuntime` now creates and publishes the renderer-free
+backend-object context during that bootstrap phase, but defers device-dependent
+service binding until the derived Vulkan constructor supplies the device
+authority.
+
+Both the Vulkan project and editor then built with warnings treated as errors
+and reported zero warnings and zero errors. The rebuilt named session
+`phase4-core-hardening-final` reached MCP readiness and rendered two inspected,
+camera-dependent views. The captures used alternating readback slots 0 and 1
+with `R16G16B16A16Sfloat`; neither was black. Steady-state Vulkan and general
+logs contained no null-context exception, frame-slot mismatch, unsealed
+secondary sequence, VUID, validation error, fatal error, or device loss. Final
+captures are in the session's `captures-final/` directory. These results close
+the implementation and integration gates for 4.1.1 through 4.1.4; later Phase
+4.1 sections remain outside this cut.
+
+### Post-Completion Performance and ImGui Regression Check
+
+The first interactive review after the 4.1.1-4.1.4 cut reported an extremely
+low frame rate and no ImGui editor. These are direct runtime regressions and
+should be diagnosed before continuing the hardening sequence; later facade,
+scheduling, and observability items do not themselves restore the missing UI or
+remove the measured command-recording cost.
+
+Live profiler snapshots from the rebuilt `phase4-core-hardening-final` Vulkan
+session measured a 608.68 ms representative frame (1.71 Hz) and a later 172.78
+ms frame (4.80 Hz). In the later sample, Vulkan command recording consumed
+165.05 ms while presentation itself consumed 0.10 ms. The dominant CPU stages
+were primary command encoding at 98.90 ms with 2,399,776 bytes allocated, frame
+operation dispatch at 83.59 ms with 2,001,152 bytes allocated, primary prewarm
+at 29.75 ms with 892,888 bytes allocated, and prepared-draw construction at
+24.51 ms with 698,392 bytes allocated. Signature and command-buffer reuse paths
+also allocated approximately 2 MiB each per sampled frame. This localizes the
+observed slowdown to repeated CPU-side frame-plan lowering, preparation, and
+command encoding rather than swapchain presentation. Unit-testing settings had
+mesh-bound and transform-debug rendering enabled, which increased the visible
+wireframe work and clutter but did not account for the dominant measured CPU
+cost.
+
+ImGui initialization succeeded: the startup path created the Dear ImGui node,
+loaded the font, enabled the Vulkan ImGui profile, and selected
+`FullViewportBehindImGuiUI`. However, the sampled CPU frame never entered
+`DearImGuiComponent.RenderImGui` or `EditorImGuiUI.RenderEditor`. Vulkan output
+telemetry reported zero ImGui commands, and snapshot/overlay recording took
+only microseconds. The UI render package also encountered a resource-generation
+mismatch during startup. The current working boundary is therefore upstream of
+the Vulkan ImGui backend: the hidden screen-space UI command that invokes the
+Dear ImGui component is not reaching execution, so no renderable ImGui snapshot
+exists for overlay admission.
+
+RenderDoc frame 50 independently confirmed the result. The capture contains
+124 draw calls and no ImGui draw pass. Its final secondary command buffer has a
+single 332-triangle, 166-instance draw, exactly matching the engine's 166-glyph
+dynamic performance-text overlay; the visually inspected final render target
+contains that text and the cyan scene debug overlay but no editor panels. The
+capture and exported before/after render targets are under
+`Build/_AgentValidation/mcp-sessions/phase4-core-hardening-final/renderdoc-perf-imgui/`.
+No corrective code change was attempted during this diagnosis checkpoint.
+
+### Structured CPU Attribution and Frozen-Plan Correlation
+
+The subsequent CPU investigation added opt-in nested command-chain timings and
+exact recorded-key incompleteness provenance. The detailed timers are gated by
+`XRE_VULKAN_RECORDING_PROFILE_DETAIL`; the disabled path does not capture
+allocation counters or format diagnostic text. Recorded packet diagnostics now
+report the first incomplete program, descriptor-set, buffer, or render-target
+identity instead of only returning an incomplete aggregate.
+
+During sustained MCP camera interpolation, representative scene-command
+recording rose to 240-345 ms. Packet lowering consumed 57-91 ms, including
+29-50 ms of mesh compatibility/signature scanning, 1.5-2.6 ms of capacity
+accounting, 1.9-4.2 ms of dependency aggregation, and 8-13 ms of exact recorded
+key capture. Schedule evaluation consumed 29-55 ms and primary command encoding
+73-119 ms. This rules out packet-capacity accounting as the primary bottleneck
+and shows that camera motion is forcing complete schedule evaluation and primary
+encoding rather than one expensive Vulkan API call.
+
+The first-incomplete-field trace isolated a recurring compute packet at pass
+`100065`: its logical snapshot contained one descriptor set, its pre-binding
+recorded identity was incomplete, and no prepared command-chain authority was
+published. Live secondary-eligibility counters then classified compute as
+`BarrierPlanUnavailable` during camera motion. Broader log classification found
+that this was not an isolated compute defect: many main-viewport passes were
+unknown to the frozen barrier plan and therefore emitted conservative barriers.
+
+A structured context/plan correlation diagnostic now records the operation's
+pass name and context identity alongside the frozen plan revision, generation,
+and pass count. The first rebuilt run proved the authority mismatch directly:
+main-viewport operations used pipeline 10 / viewport 2149160 metadata containing
+100 passes, while primary recording alternated between frozen graph generations
+6 and 7 containing only 5-7 passes. Examples included `OpaqueDeferred`,
+`OnTopForward`, and synthetic GTAO passes, all present in the operation context
+but absent from the frozen plan. The warning uses one value-type payload and a
+constant rate-limit key, avoiding the previous per-pass interpolated-key
+allocation on every re-record.
+
+The next corrective boundary is therefore the frozen planner input contract:
+primary recording must consume the render-graph/barrier publication belonging
+to each sealed frame-operation context, rather than the last globally published
+context plan. Until that is corrected, non-graphics secondaries remain
+ineligible, conservative barriers are emitted repeatedly, command-chain
+prepared authority cannot settle, and the sub-1 ms CPU target is not attainable.

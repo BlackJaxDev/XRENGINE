@@ -14,6 +14,13 @@ public unsafe partial class VulkanRenderer
     private const int VulkanCommandDiagnosticMarkerCapacity = 512;
     private const int VulkanImageLayoutTransitionCapacity = 128;
 
+    /// <summary>
+    /// Reads the command authority's monotonic dirty generation without
+    /// reintroducing renderer-owned command state.
+    /// </summary>
+    private long SnapshotCommandBufferDirtyGeneration()
+        => _commandRuntime.CommandBuffers.SnapshotDirtyGeneration();
+
 
     /// <summary>
     /// Gets the immutable record published by the thread that won the device-loss

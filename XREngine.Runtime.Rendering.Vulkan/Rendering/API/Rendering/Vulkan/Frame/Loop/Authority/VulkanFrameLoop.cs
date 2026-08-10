@@ -17,6 +17,9 @@ internal sealed unsafe partial class VulkanFrameLoop
     private readonly VulkanResourceRuntime _resourceRuntime;
     private readonly VulkanCommandRuntime _commandRuntime;
     private readonly VulkanFrameTelemetry _telemetry;
+    private readonly VulkanTextureReadbackService _textureReadbackService;
+    private VulkanTrackedCommandEncoder? _overlayCommandEncoder;
+    private readonly VulkanImGuiOverlayCommandRecorder _imguiOverlayRecorder = new();
     private readonly VulkanDeviceLossCoordinator _deviceLossCoordinator;
     private readonly DesktopFrameActivityState _activity = new();
     private readonly object _retirementGate = new();
@@ -32,7 +35,8 @@ internal sealed unsafe partial class VulkanFrameLoop
         VulkanFramePlanner framePlanner,
         VulkanResourceRuntime resourceRuntime,
         VulkanCommandRuntime commandRuntime,
-        VulkanFrameTelemetry telemetry)
+        VulkanFrameTelemetry telemetry,
+        VulkanTextureReadbackService textureReadbackService)
     {
         _deviceContext = deviceContext;
         _outputRuntime = outputRuntime;
@@ -40,16 +44,30 @@ internal sealed unsafe partial class VulkanFrameLoop
         _resourceRuntime = resourceRuntime;
         _commandRuntime = commandRuntime;
         _telemetry = telemetry;
+        _textureReadbackService = textureReadbackService;
+        _resourceRuntime.Samplers.PublishFrameSlot(CurrentFrameSlot);
+        _resourceRuntime.Images.PublishFrameSlot(CurrentFrameSlot);
+        _resourceRuntime.Buffers.PublishFrameSlot(CurrentFrameSlot);
+        _resourceRuntime.Descriptors.PublishFrameSlot(CurrentFrameSlot);
+        _resourceRuntime.PublishFramebufferRetirementFrameSlot(CurrentFrameSlot);
         _deviceLossCoordinator = new VulkanDeviceLossCoordinator(
             deviceContext,
             commandRuntime,
             resourceRuntime,
             outputRuntime,
             telemetry);
+        _resourceRuntime.Queries.BindDeviceLossCoordinator(_deviceLossCoordinator);
     }
 
     internal ulong AcceptedAttemptCount => Volatile.Read(ref _acceptedAttemptCount);
     private Vk Api => _deviceContext.Api;
+    private VulkanTrackedCommandEncoder OverlayCommandEncoder
+        => _overlayCommandEncoder ??= new VulkanTrackedCommandEncoder(
+            _deviceContext.Api,
+            _deviceContext,
+            _commandRuntime,
+            _resourceRuntime,
+            _telemetry);
     private VulkanOutputRuntime OutputRuntime => _outputRuntime;
     private VulkanResourceRuntime ResourceRuntime => _resourceRuntime;
     private VulkanFrameTelemetry _frameTelemetry => _telemetry;
@@ -137,7 +155,15 @@ internal sealed unsafe partial class VulkanFrameLoop
     }
 
     internal void AdvanceFrameSlot(int completedFrameSlot)
-        => Volatile.Write(ref _frameSlot, (completedFrameSlot + 1) % FrameSlotCount);
+    {
+        int nextFrameSlot = (completedFrameSlot + 1) % FrameSlotCount;
+        Volatile.Write(ref _frameSlot, nextFrameSlot);
+        _resourceRuntime.Samplers.PublishFrameSlot(nextFrameSlot);
+        _resourceRuntime.Images.PublishFrameSlot(nextFrameSlot);
+        _resourceRuntime.Buffers.PublishFrameSlot(nextFrameSlot);
+        _resourceRuntime.Descriptors.PublishFrameSlot(nextFrameSlot);
+        _resourceRuntime.PublishFramebufferRetirementFrameSlot(nextFrameSlot);
+    }
 
     internal void RecordObservedTick(long timestamp)
         => Volatile.Write(ref _lastObservedTickTimestamp, timestamp);

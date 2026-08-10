@@ -57,12 +57,24 @@ public class DearImGuiComponent : UIComponent, IRenderable
             return;
 
         var viewport = RuntimeEngine.Rendering.State.RenderingViewport;
-        renderer.TryRenderImGui(
+        bool rendered = renderer.TryRenderImGui(
             viewport,
             UserInterfaceCanvas,
             RuntimeEngine.Rendering.State.RenderingCamera,
             _drawCallback,
             allowMultipleInFrame: true);
+        if (XREnvironment.IsEnabled(
+                XREngineEnvironmentVariables.VulkanRecordingDiag))
+        {
+            Debug.RenderingEvery(
+                "DearImGuiComponent.RenderImGui",
+                TimeSpan.FromSeconds(1),
+                "[ImGui] Scene producer invoked. rendered={0} canvas={1} viewport={2} drawSubscribers={3}.",
+                rendered,
+                UserInterfaceCanvas is not null,
+                viewport is not null,
+                Draw?.GetInvocationList().Length ?? 0);
+        }
     }
 
     protected virtual void OnDraw()

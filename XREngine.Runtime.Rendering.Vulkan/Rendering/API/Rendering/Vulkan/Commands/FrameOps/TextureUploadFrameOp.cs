@@ -7,7 +7,7 @@ internal sealed record TextureUploadFrameOp(VulkanImportedTexturePendingUpload U
     internal override bool RequiresPrimaryRecordingContext => false;
 
     internal override int RecordPrimary(
-        VulkanRenderer renderer,
+        VulkanCommandRuntime renderer,
         scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {

@@ -14,7 +14,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanCommandRuntime
     {
         private bool RecordBlitOp(CommandBuffer commandBuffer, uint imageIndex, BlitOp op)
         {
@@ -94,15 +94,8 @@ namespace XREngine.Rendering.Vulkan
         {
             bool ExecuteSingleBlit(in BlitImageInfo source, in BlitImageInfo destination, Filter filter)
             {
-                if (!TryResolveLiveBlitImage(source, out BlitImageInfo resolvedSource) ||
-                    !TryResolveLiveBlitImage(destination, out BlitImageInfo resolvedDestination))
-                {
-                    Debug.VulkanWarningEvery(
-                        "Vulkan.Blit.UnresolvedLiveHandle",
-                        TimeSpan.FromSeconds(1),
-                        "[Vulkan] Blit skipped: source/destination image could not be resolved to a live handle.");
-                    return false;
-                }
+                BlitImageInfo resolvedSource = RequirePreparedBlitImage(source, "source");
+                BlitImageInfo resolvedDestination = RequirePreparedBlitImage(destination, "destination");
 
                 uint commonLayerCount = Math.Min(resolvedSource.LayerCount, resolvedDestination.LayerCount);
                 if (commonLayerCount == 0)
@@ -136,7 +129,7 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
-                if (!TryBuildImageBlit(
+                if (!TryBuildPreparedImageBlit(
                     resolvedSource,
                     resolvedDestination,
                     op.InX,
@@ -203,7 +196,7 @@ namespace XREngine.Rendering.Vulkan
                 // which is a valid OldLayout (content is discarded, which is fine for
                 // the destination; for the source, reading from Undefined gives
                 // undefined content but won't crash or cause validation errors).
-                TransitionForBlit(
+                TransitionPreparedImageForBlit(
                     commandBuffer,
                     resolvedSource,
                     resolvedSource.PreferredLayout,
@@ -213,7 +206,7 @@ namespace XREngine.Rendering.Vulkan
                     resolvedSource.StageMask,
                     PipelineStageFlags.TransferBit);
 
-                TransitionForBlit(
+                TransitionPreparedImageForBlit(
                     commandBuffer,
                     resolvedDestination,
                     resolvedDestination.PreferredLayout,
@@ -236,18 +229,17 @@ namespace XREngine.Rendering.Vulkan
                         filter);
                 }
 
-                CmdBlitImageTracked(
+                PrimaryCommandEncoder.BlitImage(
                     commandBuffer,
                     resolvedSource.Image,
                     ImageLayout.TransferSrcOptimal,
                     resolvedDestination.Image,
                     ImageLayout.TransferDstOptimal,
-                    1,
-                    &region,
+                    ref region,
                     filter);
 
                 // Post-blit: transition back to the attachment-optimal layout.
-                TransitionForBlit(
+                TransitionPreparedImageForBlit(
                     commandBuffer,
                     resolvedSource,
                     ImageLayout.TransferSrcOptimal,
@@ -257,7 +249,7 @@ namespace XREngine.Rendering.Vulkan
                     PipelineStageFlags.TransferBit,
                     resolvedSource.StageMask);
 
-                TransitionForBlit(
+                TransitionPreparedImageForBlit(
                     commandBuffer,
                     resolvedDestination,
                     ImageLayout.TransferDstOptimal,
@@ -275,17 +267,17 @@ namespace XREngine.Rendering.Vulkan
             BlitImageInfo colorSource = exactColorSource ?? default;
             bool colorSourceReady = exactColorSource.HasValue
                 ? colorSource.IsValid
-                : TryResolveBlitImage(op.InFbo, imageIndex, op.ReadBufferMode, wantColor: true, wantDepth: false, wantStencil: false, out colorSource, isSource: true, in swapchainTarget);
+                : TryResolvePreparedBlitImage(op.InFbo, op.ReadBufferMode, wantColor: true, wantDepth: false, wantStencil: false, out colorSource, isSource: true, in swapchainTarget);
             if (op.ColorBit &&
                 colorSourceReady &&
-                TryResolveBlitImage(op.OutFbo, imageIndex, EReadBufferMode.ColorAttachment0, wantColor: true, wantDepth: false, wantStencil: false, out var colorDestination, isSource: false, in swapchainTarget))
+                TryResolvePreparedBlitImage(op.OutFbo, EReadBufferMode.ColorAttachment0, wantColor: true, wantDepth: false, wantStencil: false, out var colorDestination, isSource: false, in swapchainTarget))
             {
                 copiedAny |= ExecuteSingleBlit(colorSource, colorDestination, op.LinearFilter ? Filter.Linear : Filter.Nearest);
             }
 
             if ((op.DepthBit || op.StencilBit) &&
-                TryResolveBlitImage(op.InFbo, imageIndex, op.ReadBufferMode, wantColor: false, wantDepth: op.DepthBit, wantStencil: op.StencilBit, out var depthSource, isSource: true, in swapchainTarget) &&
-                TryResolveBlitImage(op.OutFbo, imageIndex, EReadBufferMode.None, wantColor: false, wantDepth: op.DepthBit, wantStencil: op.StencilBit, out var depthDestination, isSource: false, in swapchainTarget))
+                TryResolvePreparedBlitImage(op.InFbo, op.ReadBufferMode, wantColor: false, wantDepth: op.DepthBit, wantStencil: op.StencilBit, out var depthSource, isSource: true, in swapchainTarget) &&
+                TryResolvePreparedBlitImage(op.OutFbo, EReadBufferMode.None, wantColor: false, wantDepth: op.DepthBit, wantStencil: op.StencilBit, out var depthDestination, isSource: false, in swapchainTarget))
             {
                 // Vulkan only supports nearest filtering for depth/stencil blits.
                 copiedAny |= ExecuteSingleBlit(depthSource, depthDestination, Filter.Nearest);
@@ -303,32 +295,6 @@ namespace XREngine.Rendering.Vulkan
             }
 
             return copiedAny;
-        }
-
-        private bool PlannerCoversIndirectBufferTransition(int passIndex, Silk.NET.Vulkan.Buffer indirectBuffer)
-        {
-            IReadOnlyList<VulkanBarrierPlanner.PlannedBufferBarrier> plannedBarriers = BarrierPlanner.GetBufferBarriersForPass(passIndex);
-            if (plannedBarriers.Count == 0)
-                return false;
-
-            for (int i = 0; i < plannedBarriers.Count; i++)
-            {
-                VulkanBarrierPlanner.PlannedBufferBarrier planned = plannedBarriers[i];
-                if (!TryResolveTrackedBuffer(planned.ResourceName, out Silk.NET.Vulkan.Buffer plannedBuffer, out _))
-                    continue;
-
-                if (plannedBuffer.Handle != indirectBuffer.Handle)
-                    continue;
-
-                bool transitionsToIndirectRead =
-                    (planned.Next.AccessMask & AccessFlags.IndirectCommandReadBit) != 0 ||
-                    (planned.Next.StageMask & PipelineStageFlags.DrawIndirectBit) != 0;
-
-                if (transitionsToIndirectRead)
-                    return true;
-            }
-
-            return false;
         }
 
 

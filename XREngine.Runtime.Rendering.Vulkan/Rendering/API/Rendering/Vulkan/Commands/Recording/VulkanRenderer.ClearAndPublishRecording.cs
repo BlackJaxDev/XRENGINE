@@ -14,7 +14,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanCommandRuntime
     {
         internal void RecordClearOp(
             CommandBuffer commandBuffer,
@@ -30,7 +30,7 @@ namespace XREngine.Rendering.Vulkan
             bool clearColor = op.ClearColor && !suppressColorClear;
 
             Extent2D targetExtent = op.Target is null
-                ? (swapchainTarget.IsValid ? swapchainTarget.Extent : OutputRuntime.Desktop.Extent)
+                ? swapchainTarget.Extent
                 : new Extent2D(Math.Max(op.Target.Width, 1u), Math.Max(op.Target.Height, 1u));
 
             Rect2D clearArea = ClampRectToExtent(
@@ -45,12 +45,14 @@ namespace XREngine.Rendering.Vulkan
             VkFrameBuffer? clearTargetFrameBuffer = op.Target is not null
                 ? GenericToAPI<VkFrameBuffer>(op.Target)
                 : null;
-            clearTargetFrameBuffer?.EnsureCurrent();
+            if (clearTargetFrameBuffer is not null && !clearTargetFrameBuffer.IsActive)
+                throw new VulkanPlanPreconditionException(
+                    $"Clear target '{op.Target?.Name ?? "<unnamed>"}' has no prepared Vulkan framebuffer state.");
             uint clearLayerCount = ResolveClearRectLayerCount(op.Target, clearTargetFrameBuffer, activeRenderLayerCount, activeRenderViewMask);
 
             if (clearLayerCount > 1u)
             {
-                if (VulkanFrameDiagnosticsTraceEnabled)
+                if (FrameDiagnosticsTraceEnabled)
                 {
                     Debug.VulkanEvery(
                     $"Vulkan.CmdClearAttachments.Layered.{op.Target?.Name ?? "<swapchain>"}",
@@ -110,7 +112,7 @@ namespace XREngine.Rendering.Vulkan
 
                     // Only emit aspects actually supported by the swapchain depth attachment view.
                     // Example: VK_FORMAT_D32_SFLOAT does not support stencil clears.
-                    ImageAspectFlags depthAspect = swapchainTarget.IsValid ? swapchainTarget.DepthAspect : _swapchainDepthAspect;
+                    ImageAspectFlags depthAspect = swapchainTarget.DepthAspect;
                     ImageAspectFlags aspects = requestedAspects & depthAspect;
 
                     if (aspects == ImageAspectFlags.None)
@@ -319,10 +321,9 @@ namespace XREngine.Rendering.Vulkan
         internal void RecordPublishFramebufferForSamplingOp(CommandBuffer commandBuffer, PublishFramebufferForSamplingOp op)
         {
             XRFrameBuffer fbo = op.FrameBuffer;
-            if (GetOrCreateAPIRenderObject(fbo, generateNow: true) is not VkFrameBuffer vkFbo)
-                return;
-
-            vkFbo.EnsureCurrent();
+            if (GenericToAPI<VkFrameBuffer>(fbo) is not { IsActive: true } vkFbo)
+                throw new VulkanPlanPreconditionException(
+                    $"Framebuffer '{fbo.Name ?? "<unnamed>"}' was not prepared for sampling publication.");
             if (vkFbo.AttachmentCount == 0)
                 return;
 
@@ -362,7 +363,7 @@ namespace XREngine.Rendering.Vulkan
                 uint transitionMipLevel = info.MipLevel;
                 uint imageBaseLayer;
                 uint transitionLayerCount;
-                ImageAspectFlags aspectMask = NormalizeBarrierAspectMask(info.Format, requestedAspect);
+                ImageAspectFlags aspectMask = VulkanCommandRuntime.NormalizeBarrierAspectMask(info.Format, requestedAspect);
 
                 if (vkFbo.TryGetAttachmentView(attachmentIndex, out ImageView attachmentView) &&
                     TryGetDescriptorHeapImageViewCreateInfo(attachmentView, out ImageViewCreateInfo viewInfo) &&
@@ -373,7 +374,7 @@ namespace XREngine.Rendering.Vulkan
                     imageBaseLayer = viewInfo.SubresourceRange.BaseArrayLayer;
                     transitionLayerCount = Math.Max(viewInfo.SubresourceRange.LayerCount, 1u);
 
-                    ImageAspectFlags viewAspect = NormalizeBarrierAspectMask(info.Format, viewInfo.SubresourceRange.AspectMask);
+                    ImageAspectFlags viewAspect = VulkanCommandRuntime.NormalizeBarrierAspectMask(info.Format, viewInfo.SubresourceRange.AspectMask);
                     if (viewAspect != ImageAspectFlags.None)
                         aspectMask = viewAspect;
                 }

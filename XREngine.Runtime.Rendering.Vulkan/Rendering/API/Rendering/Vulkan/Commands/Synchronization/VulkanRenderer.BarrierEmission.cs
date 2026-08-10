@@ -14,16 +14,16 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanCommandRuntime
     {
         private void EmitPendingMemoryBarriers(CommandBuffer commandBuffer)
         {
-            var pendingMask = ActiveState.PendingMemoryBarrierMask;
+            var pendingMask = StateTracker.PendingMemoryBarrierMask;
             if (pendingMask == EMemoryBarrierMask.None)
                 return;
 
             EmitMemoryBarrierMask(commandBuffer, pendingMask);
-            ActiveState.ClearPendingMemoryBarrierMask();
+            StateTracker.ClearPendingMemoryBarrierMask();
         }
 
         /// <summary>
@@ -151,7 +151,7 @@ namespace XREngine.Rendering.Vulkan
 
             if ((mask & EMemoryBarrierMask.TransformFeedback) != 0)
             {
-                if (SupportsTransformFeedback)
+                if (ResourceRuntime.BackendObjectContext?.SupportsTransformFeedback == true)
                 {
                     MergeBarrierScope(
                         true,
@@ -328,7 +328,7 @@ namespace XREngine.Rendering.Vulkan
                     continue;
                 }
 
-                ImageAspectFlags aspectMask = NormalizeBarrierAspectMask(signature.Format, signature.AspectMask);
+                ImageAspectFlags aspectMask = VulkanCommandRuntime.NormalizeBarrierAspectMask(signature.Format, signature.AspectMask);
                 if (!TryResolveAttachmentImage(target, mipLevel, layerIndex, aspectMask, out BlitImageInfo info) ||
                     info.Image.Handle == 0)
                 {
@@ -354,7 +354,7 @@ namespace XREngine.Rendering.Vulkan
                     imageBaseLayer = viewInfo.SubresourceRange.BaseArrayLayer;
                     transitionLayerCount = Math.Max(viewInfo.SubresourceRange.LayerCount, 1u);
 
-                    ImageAspectFlags viewAspect = NormalizeBarrierAspectMask(signature.Format, viewInfo.SubresourceRange.AspectMask);
+                    ImageAspectFlags viewAspect = VulkanCommandRuntime.NormalizeBarrierAspectMask(signature.Format, viewInfo.SubresourceRange.AspectMask);
                     if (viewAspect != ImageAspectFlags.None)
                         aspectMask = viewAspect;
                 }
@@ -498,7 +498,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             bool isDepthStencil = signature.Role is AttachmentRole.Depth or AttachmentRole.Stencil or AttachmentRole.DepthStencil ||
-                IsDepthOrStencilFormat(signature.Format) ||
+                VulkanCommandRuntime.IsDepthOrStencilFormat(signature.Format) ||
                 (signature.AspectMask & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0;
             if (!isDepthStencil)
             {
@@ -695,7 +695,10 @@ namespace XREngine.Rendering.Vulkan
         /// Returns an array suitable for <see cref="VkFrameBuffer.ResolveRenderPassForPass"/>
         /// that reflects any barrier-planner or blit transitions since the last render pass.
         /// </summary>
-        private ImageLayout[]? QueryCurrentAttachmentLayouts(XRFrameBuffer fbo, VkFrameBuffer vkFbo)
+        private ImageLayout[]? QueryCurrentAttachmentLayouts(
+            XRFrameBuffer fbo,
+            VkFrameBuffer vkFbo,
+            CommandBuffer commandBuffer = default)
         {
             if (vkFbo.AttachmentCount == 0)
                 return null;
@@ -717,6 +720,7 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 layouts[i] = TryGetExactTrackedFboAttachmentLayout(
+                    commandBuffer,
                     vkFbo,
                     i,
                     target,
@@ -749,6 +753,7 @@ namespace XREngine.Rendering.Vulkan
             return scratch.Layouts;
         }
         private bool TryGetExactTrackedFboAttachmentLayout(
+            CommandBuffer commandBuffer,
             VkFrameBuffer vkFbo,
             int attachmentIndex,
             IFrameBufferAttachement target,
@@ -770,7 +775,7 @@ namespace XREngine.Rendering.Vulkan
             Image image = info.Image;
             ImageSubresourceRange range = new()
             {
-                AspectMask = NormalizeBarrierAspectMask(info.Format, requestedAspect),
+                AspectMask = VulkanCommandRuntime.NormalizeBarrierAspectMask(info.Format, requestedAspect),
                 BaseMipLevel = info.MipLevel,
                 LevelCount = 1,
                 BaseArrayLayer = info.BaseArrayLayer,
@@ -783,12 +788,23 @@ namespace XREngine.Rendering.Vulkan
             {
                 image = viewInfo.Image;
                 range = viewInfo.SubresourceRange;
-                range.AspectMask = NormalizeBarrierAspectMask(info.Format, range.AspectMask);
+                range.AspectMask = VulkanCommandRuntime.NormalizeBarrierAspectMask(info.Format, range.AspectMask);
                 range.LevelCount = Math.Max(range.LevelCount, 1u);
                 range.LayerCount = Math.Max(range.LayerCount, 1u);
             }
 
-            return TryGetTrackedImageLayout(image, range, out layout);
+            // The primary may already have written or transitioned this image in
+            // the frame currently being recorded.  Consult its local access state
+            // before the last submitted state so aliased attachments (notably the
+            // G-buffer/forward shared depth image) reopen with LOAD instead of
+            // being treated as first-use UNDEFINED.
+            if (commandBuffer.Handle != 0 &&
+                TryGetRecordedImageLayout(commandBuffer, image, in range, out layout))
+            {
+                return true;
+            }
+
+            return TryGetTrackedImageLayout(image, in range, out layout);
         }
 
         private static ImageAspectFlags ResolveFrameBufferAttachmentAspectMask(EFrameBufferAttachment attachment)
@@ -803,71 +819,6 @@ namespace XREngine.Rendering.Vulkan
                 EFrameBufferAttachment.StencilAttachment => ImageAspectFlags.StencilBit,
                 _ => ImageAspectFlags.None
             };
-        }
-
-        /// <summary>
-        /// When the barrier planner has no known passes, emit image memory barriers to
-        /// transition any physical-group images still in <see cref="ImageLayout.Undefined"/>
-        /// to a usable layout inside the current command buffer. Keeping this transition
-        /// in-frame avoids out-of-band one-shot submissions while resource-planner states
-        /// switch between desktop and OpenXR targets.
-        /// </summary>
-        private void EmitInitialImageBarriersForUnknownPass(
-            CommandBuffer commandBuffer,
-            bool skipDesktopSwapchainImages = false)
-        {
-            foreach (VulkanPhysicalImageGroup group in ResourceAllocator.EnumeratePhysicalGroups())
-            {
-                if (!group.IsAllocated || group.Image.Handle == 0)
-                    continue;
-                if (skipDesktopSwapchainImages && IsDesktopSwapchainImage(group.Image))
-                    continue;
-
-                bool isDepth = VulkanResourceAllocator.IsDepthStencilFormat(group.Format);
-                ImageLayout targetLayout = ResolveInitialPhysicalGroupLayout(group.Usage, isDepth);
-
-                PipelineStageFlags initDstStage = targetLayout switch
-                {
-                    ImageLayout.DepthStencilAttachmentOptimal =>
-                        PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
-                    ImageLayout.ColorAttachmentOptimal =>
-                        PipelineStageFlags.ColorAttachmentOutputBit,
-                    ImageLayout.General =>
-                        PipelineStageFlags.AllGraphicsBit | PipelineStageFlags.ComputeShaderBit,
-                    ImageLayout.ShaderReadOnlyOptimal =>
-                        PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
-                    ImageLayout.TransferDstOptimal or ImageLayout.TransferSrcOptimal =>
-                        PipelineStageFlags.TransferBit,
-                    _ => PipelineStageFlags.AllGraphicsBit | PipelineStageFlags.ComputeShaderBit,
-                };
-                VulkanImageAccessState targetState = ResolveVulkanImageAccessState(
-                    targetLayout,
-                    isDepth ? ImageAspectFlags.DepthBit : ImageAspectFlags.ColorBit);
-                AccessFlags initDstAccess = (AccessFlags)(ulong)targetState.AccessMask;
-
-                if (isDepth)
-                {
-                    EmitInitialImageAspectBarriers(
-                        commandBuffer,
-                        group,
-                        HasStencilComponent(group.Format)
-                            ? ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit
-                            : ImageAspectFlags.DepthBit,
-                        targetLayout,
-                        initDstStage,
-                        initDstAccess);
-                }
-                else
-                {
-                    EmitInitialImageAspectBarriers(
-                        commandBuffer,
-                        group,
-                        ImageAspectFlags.ColorBit,
-                        targetLayout,
-                        initDstStage,
-                        initDstAccess);
-                }
-            }
         }
 
         private void RecordFboAttachmentAccessState(
@@ -894,7 +845,7 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 ImageSubresourceRange range = viewInfo.SubresourceRange;
-                range.AspectMask = NormalizeBarrierAspectMask(signature.Format, range.AspectMask);
+                range.AspectMask = VulkanCommandRuntime.NormalizeBarrierAspectMask(signature.Format, range.AspectMask);
                 range.LevelCount = Math.Max(range.LevelCount, 1u);
                 range.LayerCount = Math.Max(range.LayerCount, 1u);
                 // The published access state must describe the same point in
@@ -923,79 +874,10 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private void EmitInitialImageAspectBarriers(
-            CommandBuffer commandBuffer,
-            VulkanPhysicalImageGroup group,
-            ImageAspectFlags aspect,
-            ImageLayout targetLayout,
-            PipelineStageFlags dstStage,
-            AccessFlags dstAccess)
-        {
-            uint mipLevels = Math.Max(1u, group.MipLevels);
-            uint layers = Math.Max(1u, group.Template.Layers);
-            for (uint mip = 0; mip < mipLevels; mip++)
-            {
-                uint layer = 0;
-                while (layer < layers)
-                {
-                    ImageSubresourceRange single = new()
-                    {
-                        AspectMask = aspect,
-                        BaseMipLevel = mip,
-                        LevelCount = 1,
-                        BaseArrayLayer = layer,
-                        LayerCount = 1,
-                    };
-                    if (TryGetRecordedImageAccessState(commandBuffer, group.Image, single, out _))
-                    {
-                        layer++;
-                        continue;
-                    }
-
-                    uint firstUnknownLayer = layer++;
-                    while (layer < layers)
-                    {
-                        single.BaseArrayLayer = layer;
-                        if (TryGetRecordedImageAccessState(commandBuffer, group.Image, single, out _))
-                            break;
-                        layer++;
-                    }
-
-                    ImageMemoryBarrier barrier = new()
-                    {
-                        SType = StructureType.ImageMemoryBarrier,
-                        OldLayout = ImageLayout.Undefined,
-                        NewLayout = targetLayout,
-                        SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                        DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                        Image = group.Image,
-                        SubresourceRange = new ImageSubresourceRange
-                        {
-                            AspectMask = aspect,
-                            BaseMipLevel = mip,
-                            LevelCount = 1,
-                            BaseArrayLayer = firstUnknownLayer,
-                            LayerCount = layer - firstUnknownLayer,
-                        },
-                        SrcAccessMask = AccessFlags.None,
-                        DstAccessMask = dstAccess,
-                    };
-
-                    CmdPipelineBarrierTracked(
-                        commandBuffer,
-                        PipelineStageFlags.TopOfPipeBit,
-                        dstStage,
-                        DependencyFlags.None,
-                        0, null, 0, null,
-                        1, &barrier);
-                }
-            }
-        }
-
         private void EmitPlannedImageBarriers(
             CommandBuffer commandBuffer,
             IReadOnlyList<VulkanBarrierPlanner.PlannedImageBarrier>? plannedBarriers,
-            bool skipDesktopSwapchainImages = false)
+            Image excludedImage = default)
         {
             if (plannedBarriers is null || plannedBarriers.Count == 0)
                 return;
@@ -1003,9 +885,16 @@ namespace XREngine.Rendering.Vulkan
             for (int plannedIndex = 0; plannedIndex < plannedBarriers.Count; plannedIndex++)
             {
                 VulkanBarrierPlanner.PlannedImageBarrier planned = plannedBarriers[plannedIndex];
-                planned.Group.EnsureAllocated(this);
-                if (skipDesktopSwapchainImages && IsDesktopSwapchainImage(planned.Group.Image))
+                if (excludedImage.Handle != 0 && planned.NativeImage.Handle == excludedImage.Handle)
                     continue;
+
+                // Physical resource allocation is a producer responsibility. The
+                // prepared primary input freezes an already-allocated resource
+                // graph; command recording must never reach back into a resource
+                // provider or mutate planner-owned state.
+                if (planned.NativeImage.Handle == 0)
+                    throw new InvalidOperationException(
+                        $"Frozen barrier resource '{planned.ResourceName}' became unavailable after prepared-input validation.");
 
                 // The barrier planner pre-computes OldLayout from the logical dependency
                 // graph, but dynamic rendering, blits, and resource-plan replacement can
@@ -1015,7 +904,7 @@ namespace XREngine.Rendering.Vulkan
                 ImageLayout effectiveOldLayout = planned.Previous.Layout;
                 ImageSubresourceRange range = new()
                 {
-                    AspectMask = NormalizeBarrierAspectMask(planned.Group.Format, planned.Next.AspectMask),
+                    AspectMask = VulkanCommandRuntime.NormalizeBarrierAspectMask(planned.NativeFormat, planned.Next.AspectMask),
                     BaseMipLevel = planned.Range.BaseMipLevel,
                     LevelCount = Math.Max(1u, planned.Range.LevelCount),
                     BaseArrayLayer = planned.Range.BaseArrayLayer,
@@ -1023,7 +912,7 @@ namespace XREngine.Rendering.Vulkan
                 };
                 if (TryGetRecordedImageLayout(
                         commandBuffer,
-                        planned.Group.Image,
+                        planned.NativeImage,
                         range,
                         out ImageLayout recordedLayout) &&
                     recordedLayout != effectiveOldLayout)
@@ -1062,7 +951,7 @@ namespace XREngine.Rendering.Vulkan
                         planned.Previous.AccessMask,
                         planned.Next.AccessMask,
                         range.AspectMask,
-                        planned.Group.Image.Handle);
+                        planned.NativeImage.Handle);
                 }
 
                 ImageMemoryBarrier barrier = new()
@@ -1074,7 +963,7 @@ namespace XREngine.Rendering.Vulkan
                     NewLayout = planned.Next.Layout,
                     SrcQueueFamilyIndex = planned.SrcQueueFamilyIndex,
                     DstQueueFamilyIndex = planned.DstQueueFamilyIndex,
-                    Image = planned.Group.Image,
+                    Image = planned.NativeImage,
                     SubresourceRange = range
                 };
 
@@ -1096,18 +985,6 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private bool IsDesktopSwapchainImage(Image image)
-        {
-            if (image.Handle == 0 || OutputRuntime.Desktop.Images is null)
-                return false;
-
-            for (int i = 0; i < OutputRuntime.Desktop.Images.Length; i++)
-                if (OutputRuntime.Desktop.Images[i].Handle == image.Handle)
-                    return true;
-
-            return false;
-        }
-
         private void EmitPlannedBufferBarriers(CommandBuffer commandBuffer, IReadOnlyList<VulkanBarrierPlanner.PlannedBufferBarrier>? plannedBarriers)
         {
             if (plannedBarriers is null || plannedBarriers.Count == 0)
@@ -1116,8 +993,9 @@ namespace XREngine.Rendering.Vulkan
             for (int plannedIndex = 0; plannedIndex < plannedBarriers.Count; plannedIndex++)
             {
                 VulkanBarrierPlanner.PlannedBufferBarrier planned = plannedBarriers[plannedIndex];
-                if (!TryResolveTrackedBuffer(planned.ResourceName, out Silk.NET.Vulkan.Buffer buffer, out ulong size) || buffer.Handle == 0)
-                    continue;
+                if (planned.NativeBuffer.Handle == 0)
+                    throw new InvalidOperationException(
+                        $"Frozen buffer barrier resource '{planned.ResourceName}' has no native binding.");
 
                 BufferMemoryBarrier barrier = new()
                 {
@@ -1126,9 +1004,9 @@ namespace XREngine.Rendering.Vulkan
                     DstAccessMask = FilterAccessFlagsForStages(planned.Next.AccessMask, planned.Next.StageMask),
                     SrcQueueFamilyIndex = planned.SrcQueueFamilyIndex,
                     DstQueueFamilyIndex = planned.DstQueueFamilyIndex,
-                    Buffer = buffer,
-                    Offset = 0,
-                    Size = size > 0 ? size : Vk.WholeSize
+                    Buffer = planned.NativeBuffer,
+                    Offset = planned.NativeOffset,
+                    Size = planned.NativeSize > 0 ? planned.NativeSize : Vk.WholeSize
                 };
 
                 PipelineStageFlags srcStages = NormalizePipelineStages(planned.Previous.StageMask);
@@ -1226,7 +1104,6 @@ namespace XREngine.Rendering.Vulkan
                         meshDraw.Draw);
                     using var pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(
                         meshDraw.Context.PipelineInstance);
-                    using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(meshDraw.Context);
                     transitionedPublishedDescriptors = meshDraw.Draw.Renderer.TryTransitionPreparedDescriptorImagesForSampling(
                         commandBuffer,
                         meshDraw.Draw,
@@ -1247,7 +1124,6 @@ namespace XREngine.Rendering.Vulkan
                         indirectDraw.Draw);
                     using var pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(
                         indirectDraw.Context.PipelineInstance);
-                    using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(indirectDraw.Context);
                     transitionedPublishedDescriptors = indirectDraw.MeshRenderer.TryTransitionPreparedDescriptorImagesForSampling(
                         commandBuffer,
                         indirectDraw.Draw,
@@ -1336,12 +1212,310 @@ namespace XREngine.Rendering.Vulkan
             return true;
         }
 
+        /// <summary>
+        /// Freezes the descriptor payload and sampled-image entry contract used
+        /// by a recorded secondary command buffer. The primary recorder uses the
+        /// contract to establish exact image layouts before executing the
+        /// secondary, while the payload generation prevents reuse after an
+        /// update-after-bind descriptor mutation.
+        /// </summary>
+        private bool CaptureSecondaryDescriptorSetImageRequirements(
+            CommandBuffer secondary,
+            DescriptorSet descriptorSet,
+            XRFrameBuffer? target,
+            out string failureReason)
+        {
+            failureReason = string.Empty;
+            ulong secondaryHandle = unchecked((ulong)secondary.Handle);
+            ulong descriptorSetHandle = descriptorSet.Handle;
+            if (secondaryHandle == 0 || descriptorSetHandle == 0)
+            {
+                failureReason = "the command buffer or descriptor set handle is null";
+                return false;
+            }
+
+            if (!CommandBuffers.TrackingBatches.TryGetValue(
+                    secondaryHandle,
+                    out VulkanCommandBufferTrackingBatch? trackingBatch))
+            {
+                failureReason = "the secondary has no recording tracking batch";
+                return false;
+            }
+            ulong trackingGeneration;
+            lock (trackingBatch)
+                trackingGeneration = trackingBatch.RecordingGeneration;
+
+            lock (ResourceRuntime.Lifetime.Tracker.SyncRoot)
+            {
+                VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
+                if (!tracker.CommandBufferLifetimes.TryGetValue(
+                        secondaryHandle,
+                        out VulkanCommandBufferLifetimeRecord? lifetime))
+                {
+                    failureReason = "the secondary has no published lifetime record";
+                    return false;
+                }
+                if (lifetime.Level != CommandBufferLevel.Secondary)
+                {
+                    failureReason = $"the command-buffer lifetime level is {lifetime.Level}";
+                    return false;
+                }
+                if (!lifetime.Dependencies.ContainsKey(
+                        new VulkanResourceLifetimeKey(
+                            ObjectType.DescriptorSet,
+                            descriptorSetHandle)))
+                {
+                    failureReason = "the recorded dependency snapshot does not contain the descriptor set";
+                    return false;
+                }
+                if (!tracker.PublishedDescriptorSets.TryGetValue(
+                        descriptorSetHandle,
+                        out VulkanPublishedDescriptorSetSnapshot? snapshot))
+                {
+                    failureReason = "the descriptor set has no published payload snapshot";
+                    return false;
+                }
+                if (snapshot.Generation == 0)
+                {
+                    failureReason = "the published descriptor payload generation is zero";
+                    return false;
+                }
+
+                lock (Synchronization._vulkanImageLayoutLock)
+                {
+                    if (!Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(
+                            secondaryHandle,
+                            out VulkanRecordedImageLayoutState? recorded))
+                    {
+                        failureReason = "the secondary has no image-layout journal";
+                        return false;
+                    }
+                    if (recorded.RecordingGeneration != trackingGeneration)
+                    {
+                        failureReason =
+                            $"the image-layout journal generation {recorded.RecordingGeneration} does not match tracking generation {trackingGeneration}";
+                        return false;
+                    }
+
+                    if (recorded.SecondaryDescriptorImagePayloadGenerations.TryGetValue(
+                            descriptorSetHandle,
+                            out ulong capturedGeneration) &&
+                        capturedGeneration != snapshot.ImagePayloadGeneration)
+                    {
+                        failureReason =
+                            $"descriptor image-payload generation changed from {capturedGeneration} to {snapshot.ImagePayloadGeneration} during recording";
+                        return false;
+                    }
+                    recorded.SecondaryDescriptorImagePayloadGenerations[descriptorSetHandle] =
+                        snapshot.ImagePayloadGeneration;
+
+                    for (int imageIndex = 0;
+                         imageIndex < snapshot.ImageReferences.Length;
+                         imageIndex++)
+                    {
+                        VulkanPublishedDescriptorImageReference published =
+                            snapshot.ImageReferences[imageIndex];
+                        VulkanDescriptorImageReference imageReference = published.Reference;
+                        if (snapshot.HasReflection &&
+                            Array.IndexOf(
+                                snapshot.ReflectedImageBindings,
+                                published.Binding) < 0)
+                        {
+                            continue;
+                        }
+                        if (imageReference.Type is not (
+                            DescriptorType.CombinedImageSampler or
+                            DescriptorType.SampledImage or
+                            DescriptorType.InputAttachment))
+                        {
+                            continue;
+                        }
+                        if (imageReference.Layout == ImageLayout.Undefined ||
+                            !TryGetDescriptorHeapImageViewCreateInfo(
+                                imageReference.View,
+                                out ImageViewCreateInfo viewInfo) ||
+                            viewInfo.Image.Handle == 0)
+                        {
+                            failureReason =
+                                $"binding {published.Binding}[{published.Element}] has no complete image-view publication (view=0x{imageReference.View.Handle:X}, layout={imageReference.Layout})";
+                            return false;
+                        }
+
+                        ImageSubresourceRange range = viewInfo.SubresourceRange;
+                        range.AspectMask = NormalizeBarrierAspectMask(
+                            viewInfo.Format,
+                            range.AspectMask);
+                        range.LevelCount = Math.Max(range.LevelCount, 1u);
+                        range.LayerCount = Math.Max(range.LayerCount, 1u);
+                        if (IsImageRangeAttachedToFrameBuffer(
+                                target,
+                                viewInfo.Image,
+                                range))
+                        {
+                            continue;
+                        }
+
+                        ulong resourceGeneration =
+                            ResourceRuntime.GetPublishedGeneration(
+                                ObjectType.Image,
+                                viewInfo.Image.Handle);
+                        if (resourceGeneration == 0)
+                        {
+                            failureReason =
+                                $"binding {published.Binding}[{published.Element}] image 0x{viewInfo.Image.Handle:X} has no published lifetime generation";
+                            return false;
+                        }
+
+                        for (uint mipOffset = 0;
+                             mipOffset < range.LevelCount;
+                             mipOffset++)
+                        for (uint layerOffset = 0;
+                             layerOffset < range.LayerCount;
+                             layerOffset++)
+                        {
+                            uint mipLevel = range.BaseMipLevel + mipOffset;
+                            uint arrayLayer = range.BaseArrayLayer + layerOffset;
+                            if (!CaptureSecondaryDescriptorImageAspectRequirement(
+                                    recorded,
+                                    viewInfo.Image.Handle,
+                                    mipLevel,
+                                    arrayLayer,
+                                    range.AspectMask,
+                                    ImageAspectFlags.ColorBit,
+                                    imageReference.Layout,
+                                    resourceGeneration) ||
+                                !CaptureSecondaryDescriptorImageAspectRequirement(
+                                    recorded,
+                                    viewInfo.Image.Handle,
+                                    mipLevel,
+                                    arrayLayer,
+                                    range.AspectMask,
+                                    ImageAspectFlags.DepthBit,
+                                    imageReference.Layout,
+                                    resourceGeneration) ||
+                                !CaptureSecondaryDescriptorImageAspectRequirement(
+                                    recorded,
+                                    viewInfo.Image.Handle,
+                                    mipLevel,
+                                    arrayLayer,
+                                    range.AspectMask,
+                                    ImageAspectFlags.StencilBit,
+                                    imageReference.Layout,
+                                    resourceGeneration))
+                            {
+                                failureReason =
+                                    $"binding {published.Binding}[{published.Element}] publishes conflicting requirements for image 0x{viewInfo.Image.Handle:X} mip {mipLevel} layer {arrayLayer}";
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+
+            failureReason = "Ready";
+            return true;
+        }
+
+        /// <remarks>
+        /// The caller holds both the lifetime-tracker and image-layout locks.
+        /// </remarks>
+        private bool CaptureSecondaryDescriptorImageAspectRequirement(
+            VulkanRecordedImageLayoutState recorded,
+            ulong imageHandle,
+            uint mipLevel,
+            uint arrayLayer,
+            ImageAspectFlags rangeAspect,
+            ImageAspectFlags trackedAspect,
+            ImageLayout descriptorLayout,
+            ulong resourceGeneration)
+        {
+            if ((rangeAspect & trackedAspect) == 0)
+                return true;
+
+            VulkanTrackedImageSubresource key = new(
+                imageHandle,
+                mipLevel,
+                arrayLayer,
+                trackedAspect);
+            uint queueFamilyIndex = Vk.QueueFamilyIgnored;
+            ulong serial = 0;
+            EVulkanExternalImageOwnership ownership =
+                EVulkanExternalImageOwnership.EngineOwned;
+            if (Synchronization._trackedImageSubresourceStates.TryGetValue(
+                    key,
+                    out VulkanImageSubresourceState? tracked) &&
+                (tracked.Submitted.ResourceGeneration == 0 ||
+                 tracked.Submitted.ResourceGeneration == resourceGeneration))
+            {
+                queueFamilyIndex = tracked.Submitted.QueueFamilyIndex;
+                serial = tracked.Submitted.Serial;
+                ownership = tracked.Submitted.ExternalOwnership;
+            }
+            else if (Synchronization._externalImageOwnershipByHandle.TryGetValue(
+                         imageHandle,
+                         out var external) &&
+                     (external.ResourceGeneration == 0 ||
+                      external.ResourceGeneration == resourceGeneration))
+            {
+                ownership = external.Ownership;
+            }
+
+            VulkanImageAccessState requiredState = ResolveCommandImageAccessState(
+                descriptorLayout,
+                trackedAspect,
+                queueFamilyIndex: queueFamilyIndex,
+                generation: resourceGeneration) with
+            {
+                Serial = serial,
+                ExternalOwnership = ownership,
+            };
+            if (!recorded.SecondaryDescriptorRequirements.TryGetValue(
+                    key,
+                    out VulkanImageAccessState existing))
+            {
+                recorded.SecondaryDescriptorRequirements.Add(key, requiredState);
+                return true;
+            }
+
+            bool queueFamiliesConflict =
+                existing.QueueFamilyIndex != Vk.QueueFamilyIgnored &&
+                requiredState.QueueFamilyIndex != Vk.QueueFamilyIgnored &&
+                existing.QueueFamilyIndex != requiredState.QueueFamilyIndex;
+            bool resourceGenerationsConflict =
+                existing.ResourceGeneration != 0 &&
+                requiredState.ResourceGeneration != 0 &&
+                existing.ResourceGeneration != requiredState.ResourceGeneration;
+            if (existing.Layout != requiredState.Layout ||
+                queueFamiliesConflict ||
+                resourceGenerationsConflict ||
+                existing.ExpectedDescriptorLayout !=
+                    requiredState.ExpectedDescriptorLayout ||
+                existing.ExternalOwnership != requiredState.ExternalOwnership)
+            {
+                return false;
+            }
+
+            recorded.SecondaryDescriptorRequirements[key] = existing with
+            {
+                StageMask = existing.StageMask | requiredState.StageMask,
+                AccessMask = existing.AccessMask | requiredState.AccessMask,
+                QueueFamilyIndex = existing.QueueFamilyIndex != Vk.QueueFamilyIgnored
+                    ? existing.QueueFamilyIndex
+                    : requiredState.QueueFamilyIndex,
+                Serial = Math.Max(existing.Serial, requiredState.Serial),
+                ResourceGeneration = existing.ResourceGeneration != 0
+                    ? existing.ResourceGeneration
+                    : requiredState.ResourceGeneration,
+            };
+            return true;
+        }
+
         private void TransitionDescriptorTextureForSampling(
             CommandBuffer commandBuffer,
             XRTexture texture,
             XRFrameBuffer? target)
         {
-            if (GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkImageDescriptorSource source ||
+            if (ResourceRuntime.BackendObjects.Get(texture) is not IVkImageDescriptorSource source ||
                 source.DescriptorView.Handle == 0 ||
                 !TryGetDescriptorHeapImageViewCreateInfo(source.DescriptorView, out ImageViewCreateInfo viewInfo) ||
                 viewInfo.Image.Handle == 0)
@@ -1349,7 +1523,9 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            ImageLayout targetLayout = ResolveDescriptorImageLayout(source, DescriptorType.CombinedImageSampler);
+            ImageLayout targetLayout = ResourceRuntime.Descriptors.ResolveDescriptorImageLayout(
+                source,
+                DescriptorType.CombinedImageSampler);
             TransitionDescriptorImageForSampling(commandBuffer, source.DescriptorView, targetLayout, target);
         }
 
@@ -1368,7 +1544,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             ImageSubresourceRange range = viewInfo.SubresourceRange;
-            range.AspectMask = NormalizeBarrierAspectMask(viewInfo.Format, range.AspectMask);
+            range.AspectMask = VulkanCommandRuntime.NormalizeBarrierAspectMask(viewInfo.Format, range.AspectMask);
             range.LevelCount = Math.Max(range.LevelCount, 1u);
             range.LayerCount = Math.Max(range.LayerCount, 1u);
             if (IsImageRangeAttachedToFrameBuffer(target, viewInfo.Image, range))
@@ -1459,7 +1635,7 @@ namespace XREngine.Rendering.Vulkan
 
         private static bool PrepareQueryFrameOpsForCommandBufferReuse(
             CommandBuffer commandBuffer,
-            FrameOp[] ops)
+            ReadOnlySpan<FrameOp> ops)
         {
             for (int index = 0; index < ops.Length; index++)
             {
@@ -1593,7 +1769,7 @@ namespace XREngine.Rendering.Vulkan
         /// Rehydrates a frozen local-read mapping into caller-owned stack
         /// storage for secondary-command-buffer inheritance.
         /// </summary>
-        private bool TryAppendDynamicRenderingLocalReadInheritancePNext(
+        internal bool TryAppendDynamicRenderingLocalReadInheritancePNext(
             in DynamicRenderingLocalReadSignature signature,
             uint colorAttachmentCount,
             ref void* pNext,

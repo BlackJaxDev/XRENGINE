@@ -1231,6 +1231,10 @@ public static partial class Engine
             AppendVulkanCpuStageFields(s_lineBuilder, "command_chain_fast_signature", EVulkanCpuStage.CommandChainFastSignature, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "command_chain_packet_lowering", EVulkanCpuStage.CommandChainPacketLowering, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "command_chain_schedule_evaluation", EVulkanCpuStage.CommandChainScheduleEvaluation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "command_chain_compatibility_scan", EVulkanCpuStage.CommandChainCompatibilityScan, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "command_chain_capacity_planning", EVulkanCpuStage.CommandChainCapacityPlanning, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "command_chain_dependency_aggregation", EVulkanCpuStage.CommandChainDependencyAggregation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "command_chain_recorded_key_capture", EVulkanCpuStage.CommandChainRecordedKeyCapture, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_frame_data_manifest", EVulkanCpuStage.PrimaryFrameDataManifest, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_prewarm", EVulkanCpuStage.PrimaryPrewarm, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_command_encoding", EVulkanCpuStage.PrimaryCommandEncoding, ref first);

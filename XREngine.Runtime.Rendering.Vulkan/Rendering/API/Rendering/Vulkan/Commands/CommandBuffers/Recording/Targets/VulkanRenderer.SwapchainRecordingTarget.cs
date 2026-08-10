@@ -12,7 +12,10 @@ namespace XREngine.Rendering.Vulkan
         Format DepthFormat,
         ImageAspectFlags DepthAspect,
         ImageLayout InitialColorLayout,
-        bool ImageEverPresentedAtRecordStart)
+        bool ImageEverPresentedAtRecordStart,
+        RenderPass RenderPass = default,
+        RenderPass LoadRenderPass = default,
+        Framebuffer Framebuffer = default)
     {
         public bool IsValid =>
             Image.Handle != 0 &&

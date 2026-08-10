@@ -168,7 +168,10 @@ public unsafe partial class VulkanRenderer
         int currentRegistryRevision = fastPathKey.Registry?.DescriptorRevision ?? 0;
         int currentPassMetadataRevision = ComputePassMetadataRevisionStamp(fastPathKey.ActivePassMetadata);
         VulkanBarrierPlanner.QueueOwnershipConfig currentQueueOwnership =
-            BuildQueueOwnershipConfig(fastPathKey.ActivePassMetadata);
+            _framePlanner.BuildQueueOwnershipConfig(
+                _deviceContext,
+                fastPathKey.ActivePassMetadata,
+                VulkanFeatureProfile.ActiveProfile);
         if (currentRegistryRevision != fastPathKey.RegistryDescriptorRevision ||
             currentPassMetadataRevision != fastPathKey.ActivePassMetadataRevision ||
             !currentQueueOwnership.Equals(fastPathKey.QueueOwnership) ||

@@ -171,7 +171,10 @@ internal static partial class VulkanShaderAutoUniforms
 
         if (!enableAutoUniformRewrite)
         {
-            string rewrittenEarly = RewriteOpaqueUniformBindings(source, shaderType);
+            string rewrittenEarly = RewriteOpaqueUniformBindings(
+                source,
+                shaderType,
+                explicitFrequencyHints);
             rewrittenEarly = HoistOpaqueUniforms(rewrittenEarly);
             return new AutoUniformRewriteResult(
                 rewrittenEarly,
@@ -266,7 +269,10 @@ internal static partial class VulkanShaderAutoUniforms
 
         output.Append(source, lastIndex, source.Length - lastIndex);
         string rewritten = output.ToString();
-        rewritten = RewriteOpaqueUniformBindings(rewritten, shaderType);
+        rewritten = RewriteOpaqueUniformBindings(
+            rewritten,
+            shaderType,
+            explicitFrequencyHints);
         rewritten = HoistOpaqueUniforms(rewritten);
 
         if (members.Count == 0)
@@ -364,7 +370,7 @@ internal static partial class VulkanShaderAutoUniforms
                 new AutoUniformBlockInfo(
                     blockName,
                     instanceName,
-                    VulkanRenderer.DescriptorSetGlobals,
+                    VulkanDescriptorManager.GlobalsSetIndex,
                     binding,
                     blockSize,
                     layoutMembers,

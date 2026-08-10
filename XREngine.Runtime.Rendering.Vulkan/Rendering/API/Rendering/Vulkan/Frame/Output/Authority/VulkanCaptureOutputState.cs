@@ -4,11 +4,16 @@ using System.Threading;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Owns bounded desktop/capture-output queues and capture readiness.</summary>
-internal sealed class VulkanCaptureOutputState(int readbackSlotCount)
+internal sealed class VulkanCaptureOutputState(
+    int screenshotReadbackSlotCount,
+    int gpuStatsReadbackSlotCount)
 {
     internal VulkanScreenshotReadbackSlot?[] ScreenshotReadbackSlots { get; } =
-        new VulkanScreenshotReadbackSlot?[readbackSlotCount];
+        new VulkanScreenshotReadbackSlot?[screenshotReadbackSlotCount];
+    internal GpuRenderStatsReadbackSlot?[] GpuStatsReadbackSlots { get; } =
+        new GpuRenderStatsReadbackSlot?[gpuStatsReadbackSlotCount];
     internal int ScreenshotReadbackCursor;
+    internal int GpuStatsReadbackCursor;
     internal long ScreenshotReadbackReservedRawBytes;
     internal long ScreenshotReadbackQueuedCount;
     internal long ScreenshotReadbackCompletedCount;
@@ -62,7 +67,7 @@ internal sealed class VulkanCaptureOutputState(int readbackSlotCount)
         {
             callback(ScreenshotReadbackResult.Failure(
                 error,
-                "VulkanRenderer",
+                "Vulkan",
                 slot.Width,
                 slot.Height,
                 slot.SourceFormat.ToString(),

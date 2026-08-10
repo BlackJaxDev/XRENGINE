@@ -15,7 +15,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanCommandRuntime
     {
 
         private ImageLayout ResolveCurrentSwapchainColorLayout(scoped ref PrimaryCommandBufferRecordingState recordingState)
@@ -262,7 +262,7 @@ namespace XREngine.Rendering.Vulkan
         private bool TryRefreshUnwrittenSwapchainFromLastWindowPresentSource(scoped ref PrimaryCommandBufferRecordingState recordingState)
         {
             VulkanPresentationSourceTuple presentationSource =
-                _windowPresentSource.CaptureAnyCompleteBinding();
+                recordingState.PresentationSource;
             XRFrameBuffer? sourceFrameBuffer = presentationSource.FrameBuffer;
             string? unavailableReason = !presentationSource.HasLogicalSource
                 ? "no published presentation source"
@@ -297,18 +297,14 @@ namespace XREngine.Rendering.Vulkan
                 : recordingState.HasActiveContext
                     ? recordingState.ActiveContext
                     : recordingState.InitialContext;
-            bool blitRecorded;
             CmdBeginLabel(recordingState.CommandBuffer, "RefreshSwapchainFromLastPresentSource");
-            using (EnterFrameOpResourcePlannerReadbackScope(blitContext))
-            {
-                blitRecorded = RecordPresentationSourceBlit(
-                    recordingState.CommandBuffer,
-                    recordingState.ImageIndex,
-                    presentationSource,
-                    in recordingState.SwapchainTarget,
-                    passIndex,
-                    blitContext);
-            }
+            bool blitRecorded = RecordPresentationSourceBlit(
+                recordingState.CommandBuffer,
+                recordingState.ImageIndex,
+                presentationSource,
+                in recordingState.SwapchainTarget,
+                passIndex,
+                blitContext);
             CmdEndLabel(recordingState.CommandBuffer);
             if (!blitRecorded)
             {

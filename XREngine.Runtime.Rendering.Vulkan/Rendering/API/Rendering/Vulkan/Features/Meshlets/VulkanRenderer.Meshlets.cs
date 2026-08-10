@@ -92,7 +92,7 @@ public unsafe partial class VulkanRenderer
             stride,
             byteOffset,
             countByteOffset,
-            CaptureGlobalMaterialTextureDescriptorBindingForNextFrameOp(),
+            ResourceRuntime.Descriptors.CaptureGlobalMaterialTextureDescriptorBindingForNextFrameOp(),
             context));
 
         failureReason = string.Empty;
@@ -113,7 +113,7 @@ public unsafe partial class VulkanRenderer
     /// Gets the descriptor backend used by the RVC (Retinal Visibility Cache) system.
     /// </summary>
     public override ERvcDescriptorBackend RvcDescriptorBackend
-        => ActiveDescriptorBackend switch
+        => ResourceRuntime.Descriptors.ActiveDescriptorBackend switch
         {
             EVulkanDescriptorBackend.DescriptorHeap => ERvcDescriptorBackend.DescriptorHeap,
             EVulkanDescriptorBackend.DescriptorIndexing => ERvcDescriptorBackend.DescriptorIndexing,

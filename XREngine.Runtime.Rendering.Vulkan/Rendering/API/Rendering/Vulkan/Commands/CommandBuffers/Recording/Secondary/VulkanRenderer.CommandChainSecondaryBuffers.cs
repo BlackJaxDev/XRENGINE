@@ -13,7 +13,7 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed unsafe partial class VulkanCommandRuntime
 {
     private bool TryEnsureCommandChainSecondaryCommandBuffer(
         CommandChain chain,
@@ -38,7 +38,7 @@ public unsafe partial class VulkanRenderer
             CommandBufferCount = 1
         };
 
-        Result allocateResult = AllocateVulkanCommandBuffersTracked(ref allocInfo, out secondary, "CommandChain.Secondary");
+        Result allocateResult = AllocateVulkanCommandBufferTracked(ref allocInfo, out secondary, "CommandChain.Secondary");
         if (allocateResult != Result.Success || secondary.Handle == 0)
         {
             if (pool.Handle != 0)
@@ -54,8 +54,8 @@ public unsafe partial class VulkanRenderer
             ownsPool: true);
         TrackOwnedCommandChainSecondaryCommandBuffer(pool, secondary);
         RegisterCommandBufferImageIndex(secondary, imageIndex);
-        SetDebugObjectName(ObjectType.CommandPool, pool.Handle, BuildCommandChainSecondaryDebugName(chain, imageIndex, "Pool"));
-        SetDebugObjectName(ObjectType.CommandBuffer, unchecked((ulong)secondary.Handle), BuildCommandChainSecondaryDebugName(chain, imageIndex, "Secondary"));
+        SetSecondaryDebugObjectName(ObjectType.CommandPool, pool.Handle, BuildCommandChainSecondaryDebugName(chain, imageIndex, "Pool"));
+        SetSecondaryDebugObjectName(ObjectType.CommandBuffer, unchecked((ulong)secondary.Handle), BuildCommandChainSecondaryDebugName(chain, imageIndex, "Secondary"));
         return true;
     }
 
@@ -76,7 +76,7 @@ public unsafe partial class VulkanRenderer
 
         if (secondary.Handle != 0 &&
             !executedSecondaryHandles.Contains(secondary.Handle) &&
-            CanResetVulkanCommandBuffer(secondary, out _))
+            CanResetSecondaryCommandBuffer(secondary))
             return true;
 
         CommandPool pool = chain.SecondaryCommandPool;
@@ -91,7 +91,7 @@ public unsafe partial class VulkanRenderer
             CommandBufferCount = 1
         };
 
-        Result allocateResult = AllocateVulkanCommandBuffersTracked(ref allocInfo, out CommandBuffer replacement, "CommandChain.SecondaryReplacement");
+        Result allocateResult = AllocateVulkanCommandBufferTracked(ref allocInfo, out CommandBuffer replacement, "CommandChain.SecondaryReplacement");
         if (allocateResult != Result.Success || replacement.Handle == 0)
             return false;
 
@@ -100,7 +100,7 @@ public unsafe partial class VulkanRenderer
         DeferRecordedCommandArtifactRetirement(imageIndex, retirement);
         TrackOwnedCommandChainSecondaryCommandBuffer(pool, replacement);
         RegisterCommandBufferImageIndex(replacement, imageIndex);
-        SetDebugObjectName(ObjectType.CommandBuffer, unchecked((ulong)replacement.Handle), BuildCommandChainSecondaryDebugName(chain, imageIndex, "Secondary"));
+        SetSecondaryDebugObjectName(ObjectType.CommandBuffer, unchecked((ulong)replacement.Handle), BuildCommandChainSecondaryDebugName(chain, imageIndex, "Secondary"));
         chain.RecordedArtifact.AssignNativeBuffer(
             replacement,
             pool,
@@ -139,7 +139,7 @@ public unsafe partial class VulkanRenderer
                 Level = CommandBufferLevel.Secondary,
                 CommandBufferCount = 1,
             };
-            Result allocateResult = AllocateVulkanCommandBuffersTracked(
+            Result allocateResult = AllocateVulkanCommandBufferTracked(
                 ref allocInfo,
                 out secondary,
                 "CommandChain.WorkerSecondary");
@@ -159,14 +159,14 @@ public unsafe partial class VulkanRenderer
                 workerArena);
             TrackOwnedCommandChainSecondaryCommandBuffer(workerPool, secondary);
             RegisterCommandBufferImageIndex(secondary, imageIndex);
-            SetDebugObjectName(
+            SetSecondaryDebugObjectName(
                 ObjectType.CommandBuffer,
                 unchecked((ulong)secondary.Handle),
                 BuildCommandChainSecondaryDebugName(chain, imageIndex, "WorkerSecondary"));
         }
 
         if (!executedSecondaryHandles.Contains(secondary.Handle) &&
-            CanResetVulkanCommandBuffer(secondary, out _))
+            CanResetSecondaryCommandBuffer(secondary))
             return true;
 
         CommandBufferAllocateInfo replacementAllocInfo = new()
@@ -176,7 +176,7 @@ public unsafe partial class VulkanRenderer
             Level = CommandBufferLevel.Secondary,
             CommandBufferCount = 1,
         };
-        Result replacementResult = AllocateVulkanCommandBuffersTracked(
+        Result replacementResult = AllocateVulkanCommandBufferTracked(
             ref replacementAllocInfo,
             out CommandBuffer replacement,
             "CommandChain.WorkerSecondaryReplacement");
@@ -190,7 +190,7 @@ public unsafe partial class VulkanRenderer
             chain.RecordedArtifact.CaptureRetirement();
         DeferRecordedCommandArtifactRetirement(imageIndex, retirement);
         RegisterCommandBufferImageIndex(replacement, imageIndex);
-        SetDebugObjectName(
+        SetSecondaryDebugObjectName(
             ObjectType.CommandBuffer,
             unchecked((ulong)replacement.Handle),
             BuildCommandChainSecondaryDebugName(chain, imageIndex, "WorkerSecondary"));
@@ -207,7 +207,7 @@ public unsafe partial class VulkanRenderer
     private static string BuildCommandChainSecondaryDebugName(CommandChain chain, uint imageIndex, string suffix)
         => $"CommandChain.{suffix} image={imageIndex} frameSlot={chain.Key.FrameSlot} pass={chain.Key.PassIndex} target={chain.Key.TargetIdentity} view={chain.Key.ViewKey.Kind}:{chain.Key.ViewKey.ViewIndex} ordinal={chain.Key.ChainOrdinal}";
 
-    private void MarkCommandChainSecondaryCommandBufferRecorded(CommandChain chain)
+    internal void MarkCommandChainSecondaryCommandBufferRecorded(CommandChain chain)
     {
         VulkanRecordedCommandArtifact artifact = chain.RecordedArtifact;
         ulong handle = unchecked((ulong)artifact.NativeBuffer.Handle);
@@ -241,8 +241,10 @@ public unsafe partial class VulkanRenderer
                     resource.Pins.RecordedReferenceCount;
             }
 
+            ref readonly CommandRecordingDependencySignature dependencySignature =
+                ref chain.DependencySignatureReference;
             artifact.PublishExecutable(
-                chain.DependencySignature,
+                in dependencySignature,
                 dependencies,
                 recordingGeneration,
                 queuedSubmissionCount,
@@ -250,7 +252,7 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private void MarkCommandChainSecondaryRecording(
+    internal void MarkCommandChainSecondaryRecording(
         CommandChain chain,
         CommandBuffer commandBuffer)
         => chain.RecordedArtifact.BeginRecording(
@@ -288,7 +290,7 @@ public unsafe partial class VulkanRenderer
             artifact.Inheritance.Framebuffer.Handle == framebuffer.Handle;
     }
 
-    private static void StoreCommandChainSecondaryInheritance(
+    internal static void StoreCommandChainSecondaryInheritance(
         CommandChain chain,
         bool dynamicRendering,
         RenderPass renderPass,
@@ -311,7 +313,7 @@ public unsafe partial class VulkanRenderer
                 dynamicRendering ? renderingFlags : 0));
     }
 
-    private static void MarkCommandChainSecondaryCommandBufferInvalid(
+    internal static void MarkCommandChainSecondaryCommandBufferInvalid(
         CommandChain chain,
         EVulkanRecordedCommandArtifactInvalidationReason reason =
             EVulkanRecordedCommandArtifactInvalidationReason.RecordingStarted)

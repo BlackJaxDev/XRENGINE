@@ -19,13 +19,6 @@ internal static class VulkanImageEntryStateContract
         in VulkanImageAccessState actual,
         in VulkanImageAccessState expected)
     {
-        if (expected.Layout == ImageLayout.Undefined)
-            return EVulkanPrimaryEntryStateMismatch.UnknownExpectedLayout;
-        if (actual.Layout == ImageLayout.Undefined)
-            return EVulkanPrimaryEntryStateMismatch.UnknownActualLayout;
-        if (actual.Layout != expected.Layout)
-            return EVulkanPrimaryEntryStateMismatch.Layout;
-
         if (actual.ResourceGeneration != expected.ResourceGeneration &&
             (actual.ResourceGeneration != 0 || expected.ResourceGeneration != 0))
         {
@@ -41,6 +34,20 @@ internal static class VulkanImageEntryStateContract
 
         if (actual.ExternalOwnership != expected.ExternalOwnership)
             return EVulkanPrimaryEntryStateMismatch.ExternalOwnership;
+
+        // UNDEFINED with an exact image generation is a deliberate Vulkan
+        // discard contract, not missing tracker information. The encoded
+        // transition may execute regardless of the image's current contents or
+        // access history because those contents are discarded. Ownership and
+        // generation still have to match, as checked above.
+        if (expected.Layout == ImageLayout.Undefined)
+            return expected.ResourceGeneration == 0
+                ? EVulkanPrimaryEntryStateMismatch.UnknownExpectedLayout
+                : EVulkanPrimaryEntryStateMismatch.None;
+        if (actual.Layout == ImageLayout.Undefined)
+            return EVulkanPrimaryEntryStateMismatch.UnknownActualLayout;
+        if (actual.Layout != expected.Layout)
+            return EVulkanPrimaryEntryStateMismatch.Layout;
 
         // A recorded source dependency may be broader than the state that is
         // actually present. It must never be narrower, or a producer stage or

@@ -26,11 +26,11 @@ internal sealed record ClearOp(
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.Clear;
 
     internal override int RecordPrimary(
-        VulkanRenderer renderer,
+        VulkanCommandRuntime renderer,
         scoped ref PrimaryCommandBufferRecordingState recordingState,
         in VulkanPrimaryOperationRecordingInfo recordingInfo)
     {
-        if (VulkanRenderer.CommandRecordingDiagnosticsEnabled &&
+        if (VulkanCommandRuntime.CommandRecordingDiagnosticsEnabled &&
             Target?.Name == "ForwardPassFBO")
         {
             Debug.VulkanEvery(

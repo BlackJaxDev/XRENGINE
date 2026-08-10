@@ -15,7 +15,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanCommandRuntime
     {
         private bool TryReuseCleanCommandChainPrimaryVariant(
             uint imageIndex,
@@ -28,29 +28,27 @@ namespace XREngine.Rendering.Vulkan
             ulong imageLayoutStartSignature,
             bool gpuPipelineProfilingActive,
             int commandBufferImageSlot,
-            in CommandBufferGenerationDomains currentGenerations,
-            in CommandRecordingDependencySignature currentDependencySignature,
-            FrameOp[] ops,
+            ReadOnlySpan<FrameOp> ops,
             FrameOp[] dynamicUiBatchTextOps,
+            FrameOperationSequence sealedDynamicUiBatchTextOps,
             bool delayDynamicUiSecondaryRecording,
             bool preserveSwapchainForOverlay,
             bool requiresTrackedPresentSourceRefresh,
             bool swapchainImageEverPresented,
+            CommandChainSchedule? preparedSchedule,
+            SwapchainRecordingTarget recordingTarget,
+            VulkanCommandRecordingPolicySnapshot recordingPolicy,
             out CommandBuffer commandBuffer,
             out CommandBuffer dynamicUiBatchTextSecondaryCommandBuffer,
             out int dynamicUiBatchTextOverlayOpCount,
             out PrimaryCommandArtifactOwner? dynamicUiBatchTextOverlayVariant,
-            out ImageLayout swapchainLayoutAfterCommandBuffer,
-            out ulong preparedFastScheduleSignature,
-            out bool hasPreparedFastScheduleSignature)
+            out ImageLayout swapchainLayoutAfterCommandBuffer)
         {
             commandBuffer = default;
             dynamicUiBatchTextSecondaryCommandBuffer = default;
             dynamicUiBatchTextOverlayOpCount = 0;
             dynamicUiBatchTextOverlayVariant = null;
             swapchainLayoutAfterCommandBuffer = ImageLayout.PresentSrcKhr;
-            preparedFastScheduleSignature = 0;
-            hasPreparedFastScheduleSignature = false;
             CommandBufferRecordingScratch frameDataScratch =
                 _commandBufferRecordingScratch.Value!;
             using VulkanCpuStageScope commandBufferReuseStage = new(_frameTelemetry, EVulkanCpuStage.CommandBufferReuse);
@@ -62,116 +60,191 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            FrameOp[] scheduledDynamicUiBatchTextOps = preserveSwapchainForOverlay
-                ? Array.Empty<FrameOp>()
-                : dynamicUiBatchTextOps;
-            ulong fastScheduleSignature;
-            using (VulkanCpuStageScope cpuStage = new(_frameTelemetry, EVulkanCpuStage.CommandChainFastSignature))
+            if (preparedSchedule is not { } cachedSchedule)
             {
-                fastScheduleSignature = ComputeCommandChainFastScheduleSignature(
+                TraceCommandChainPrimaryReuseRejection(
                     imageIndex,
-                    ops,
-                    scheduledDynamicUiBatchTextOps,
-                    plannerRevision);
-            }
-            hasPreparedFastScheduleSignature = true;
-            ulong scheduledDynamicUiSignature = preserveSwapchainForOverlay
-                ? 0UL
-                : dynamicUiBatchTextSignature;
-            CommandChainSchedule? cachedSchedule = TryBuildCommandChainSchedule(
-                imageIndex,
-                ops,
-                scheduledDynamicUiBatchTextOps,
-                frameOpsSignature,
-                scheduledDynamicUiSignature,
-                plannerRevision,
-                allowExternalSwapchainTarget: false,
-                out _,
-                fastScheduleSignature);
-            if (cachedSchedule is null)
+                    "MissingPreparedSchedule");
                 return false;
+            }
 
             PrimaryCommandArtifactOwner variant = _primaryCommandArtifactOwners[imageIndex];
-            Dictionary<CommandChainKey, CommandChain> commandChainCache = GetCommandChainCache(imageIndex);
-            if (!TryValidatePrimaryCommandBufferGroupSharedDependencies(
-                    variant.RecordedSecondaryArtifactSequence,
-                    commandChainCache,
-                    out _))
+            if (variant.Dirty)
             {
+                TraceCommandChainPrimaryReuseRejection(
+                    imageIndex,
+                    "VariantDirty",
+                    variant.DirtyReason);
+                return false;
+            }
+
+            // The scheduler's cache identity covers the sealed operation streams,
+            // resource/descriptor versions, planner revision, and native output
+            // target. The artifact authority clock advances inside every secondary
+            // allocation, record, executable publication, invalidation, and
+            // retirement. Together these two immutable publications replace the
+            // former O(chains + operations + reflected bindings) validation walk.
+            if (variant.RecordedCommandChainScheduleCacheIdentity !=
+                cachedSchedule.CacheIdentity)
+            {
+                if (VulkanFrameDiagnosticsTraceEnabled)
+                {
+                    CommandChainScheduleCacheIdentity recordedIdentity =
+                        variant.RecordedCommandChainScheduleCacheIdentity;
+                    CommandChainScheduleCacheIdentity currentIdentity =
+                        cachedSchedule.CacheIdentity;
+                    TraceCommandChainPrimaryScheduleIdentityRejection(
+                        imageIndex,
+                        in recordedIdentity,
+                        in currentIdentity);
+                }
+                if (variant.FrameOpsSignature != frameOpsSignature)
+                {
+                    LogFrameOpSignatureDiff(
+                        imageIndex,
+                        variant,
+                        frameOpsSignature,
+                        ops);
+                }
+                return false;
+            }
+
+            long artifactMutationGeneration =
+                CommandChains.SnapshotArtifactMutationGeneration();
+            if (variant.RecordedCommandChainArtifactMutationGeneration !=
+                    artifactMutationGeneration ||
+                cachedSchedule.ArtifactMutationGeneration !=
+                    artifactMutationGeneration)
+            {
+                TraceCommandChainPrimaryReuseRejection(
+                    imageIndex,
+                    "SecondaryArtifactGeneration");
+                return false;
+            }
+
+            if (variant.FrameOpsSignature != frameOpsSignature ||
+                variant.PlannerRevision != plannerRevision ||
+                variant.RecordedFrameOpContextFingerprint !=
+                    frameOpContextFingerprint)
+            {
+                TraceCommandChainPrimaryReuseRejection(
+                    imageIndex,
+                    "PrimaryPublicationIdentity");
                 return false;
             }
 
             VulkanCommandIdentityComponents currentPrimaryIdentityComponents =
-                ComputePrimaryCommandBufferGroupIdentity(
-                    cachedSchedule,
-                    commandChainCache);
+                variant.CommandChainPrimaryIdentityComponents;
             ulong currentPrimaryGroupSignature =
-                currentPrimaryIdentityComponents.Combined;
-            int currentPrimaryGroupCount = cachedSchedule.Groups.Length;
-            ulong currentPrimarySkeletonSignature = ComputeCommandChainPrimarySkeletonSignature(ops);
-            bool allPreparedDrawBindingsUseSecondaryBuffers =
-                AreAllPreparedDrawBindingsSecondaryOwned(cachedSchedule, ops);
+                variant.CommandChainPrimaryGroupSignature;
+            int currentPrimaryGroupCount =
+                variant.CommandChainPrimaryGroupCount;
+            ulong currentPrimarySkeletonSignature =
+                variant.CommandChainPrimarySkeletonSignature;
+            // The equality check above proves this exact sealed resource and
+            // descriptor publication is the one baked into the cached primary.
+            // That proof applies to inline post-process draws as well as mesh
+            // secondaries; a physical frame-source replacement changes the
+            // resource/descriptor versions and rejects reuse before this point.
+            bool descriptorResourcesCapturedByFrameSignature =
+                cachedSchedule.CacheIdentity.IsReusable;
             CommandRecordingDependencySignature currentPrimaryDependencySignature =
-                CaptureCommandChainPrimaryPreparedBindingDependencies(
-                    currentDependencySignature,
-                    ops) with
-                {
-                    // The primary executes packet-owned secondaries. Carry their
-                    // complete native key through the primary cache comparison so
-                    // a variant cannot bypass descriptor/target/buffer generation
-                    // validation merely because its topology is unchanged.
-                    RenderTargetSnapshot = cachedSchedule.DependencySignature.RenderTargetSnapshot,
-                    RecordedPacketKey = cachedSchedule.DependencySignature.RecordedPacketKey,
-                };
+                variant.RecordedDependencySignature;
+            Dictionary<CommandChainKey, CommandChain> commandChainCache =
+                GetCommandChainCache(imageIndex);
+            VulkanReusableFrameDataRefreshBatchInfo primaryBatchInfo =
+                frameDataScratch.PrimaryReusableFrameDataRefreshBatchInfo;
+            bool primaryOwnerOnlyRefresh =
+                (primaryBatchInfo.MeshRequestCount > 0 &&
+                 primaryBatchInfo.SupportsDirectOwnerOnlyRefresh) ||
+                variant.PrimaryFrameDataRefreshState.CanUseOwnerOnlyRefresh(
+                    primaryBatchInfo);
             ReadOnlySpan<CommandChainKey> scheduledCommandChainKeys =
-                PrepareReusableCommandChainKeysByOpIndex(
-                    cachedSchedule,
-                    commandChainCache,
-                    ops.Length,
-                    frameDataScratch);
+                primaryOwnerOnlyRefresh
+                    ? ReadOnlySpan<CommandChainKey>.Empty
+                    : PrepareReusableCommandChainKeysByOpIndex(
+                        cachedSchedule,
+                        commandChainCache,
+                        ops.Length,
+                        frameDataScratch);
 
             bool hasDynamicUiBatchTextOverlay = dynamicUiBatchTextOpCount > 0;
-            CommandRecordingDependencyMismatch dependencyMismatch =
-                    variant.RecordedDependencySignature.CompareCommandChainPrimary(
-                        currentPrimaryDependencySignature);
-                if (dependencyMismatch.RequiresRecording && VulkanFrameDiagnosticsTraceEnabled)
+                if (variant.CommandChainScheduleSignature !=
+                    cachedSchedule.StructuralSignature)
                 {
-                    Debug.VulkanEvery(
-                        $"Vulkan.PrimaryReuse.DependencyMiss.{GetHashCode()}.{imageIndex}.{dependencyMismatch.Field}",
-                        TimeSpan.FromSeconds(1),
-                        "[Vulkan] Cached primary dependency mismatch. Image={0} Field={1} Class={2} " +
-                        "PipelineLayout=0x{3:X16}->0x{4:X16} SecondaryGroups={5} SecondaryDraws={6}",
+                    TraceCommandChainPrimaryReuseRejection(
                         imageIndex,
-                        dependencyMismatch.Field,
-                        dependencyMismatch.InvalidationClass,
-                        variant.RecordedDependencySignature.PipelineLayoutGeneration,
-                        currentPrimaryDependencySignature.PipelineLayoutGeneration,
-                        cachedSchedule.InlineFrameOpCount == 0,
-                        allPreparedDrawBindingsUseSecondaryBuffers);
+                        "ScheduleSignature");
+                    return false;
                 }
-                if (variant.Dirty ||
-                    dependencyMismatch.RequiresRecording ||
-                    variant.CommandChainScheduleSignature !=
-                        cachedSchedule.StructuralSignature ||
-                    variant.CommandChainPrimaryGroupSignature != currentPrimaryGroupSignature ||
-                    !variant.RecordedSecondaryArtifactSequence.MatchesCurrentArtifacts(
-                        commandChainCache) ||
-                    variant.CommandChainPrimarySkeletonSignature != currentPrimarySkeletonSignature ||
-                    variant.CommandChainPrimaryGroupCount != currentPrimaryGroupCount ||
-                    // Query brackets stay inline and are deliberately omitted from the
-                    // command-chain schedule. They therefore need their own primary-cache
-                    // identity; otherwise a primary recorded for query A can be replayed
-                    // while the current frame refreshes proxy data for query B.
-                    variant.RecordedGenerations.Query != currentGenerations.Query ||
-                    IsCommandBufferVariantImageLayoutStateDirty(variant, imageLayoutStartSignature) ||
-                    variant.PreserveSwapchainForOverlay != preserveSwapchainForOverlay ||
-                    (requiresTrackedPresentSourceRefresh && !variant.RecordedSwapchainRefreshFromLastPresentSource) ||
-                    variant.RecordedSwapchainImageEverPresented != swapchainImageEverPresented ||
-                    (variant.DynamicUiOpCount > 0) != hasDynamicUiBatchTextOverlay ||
-                    (!delayDynamicUiSecondaryRecording &&
-                        IsDynamicUiBatchTextSecondaryDirty(variant, dynamicUiBatchTextSignature)) ||
-                    IsCommandBufferVariantGpuProfilerStateDirty(variant, gpuPipelineProfilingActive, commandBufferImageSlot))
+                if (IsCommandBufferVariantImageLayoutStateDirty(
+                        variant,
+                        imageLayoutStartSignature))
                 {
+                    string? imageStateDetail = null;
+                    if (VulkanFrameDiagnosticsTraceEnabled &&
+                        TryGetRecordedImageEntryStateMismatch(
+                            variant.PrimaryCommandBuffer,
+                            out VulkanImageEntryStateMismatch imageStateMismatch))
+                    {
+                        imageStateDetail = DescribePrimaryImageEntryStateMismatch(
+                            imageStateMismatch,
+                            variant.RecordedImageLayoutStartSignature,
+                            imageLayoutStartSignature);
+                    }
+                    TraceCommandChainPrimaryReuseRejection(
+                        imageIndex,
+                        "ImageLayoutEntryState",
+                        imageStateDetail);
+                    return false;
+                }
+                if (variant.PreserveSwapchainForOverlay != preserveSwapchainForOverlay)
+                {
+                    TraceCommandChainPrimaryReuseRejection(
+                        imageIndex,
+                        "PreserveSwapchainForOverlay");
+                    return false;
+                }
+                if (requiresTrackedPresentSourceRefresh &&
+                    !variant.RecordedSwapchainRefreshFromLastPresentSource)
+                {
+                    TraceCommandChainPrimaryReuseRejection(
+                        imageIndex,
+                        "PresentSourceRefresh");
+                    return false;
+                }
+                if (variant.RecordedSwapchainImageEverPresented != swapchainImageEverPresented)
+                {
+                    TraceCommandChainPrimaryReuseRejection(
+                        imageIndex,
+                        "SwapchainPresentationHistory");
+                    return false;
+                }
+                if ((variant.DynamicUiOpCount > 0) != hasDynamicUiBatchTextOverlay)
+                {
+                    TraceCommandChainPrimaryReuseRejection(
+                        imageIndex,
+                        "DynamicUiPresence");
+                    return false;
+                }
+                if (!delayDynamicUiSecondaryRecording &&
+                    IsDynamicUiBatchTextSecondaryDirty(
+                        variant,
+                        dynamicUiBatchTextSignature))
+                {
+                    TraceCommandChainPrimaryReuseRejection(
+                        imageIndex,
+                        "DynamicUiSecondary");
+                    return false;
+                }
+                if (IsCommandBufferVariantGpuProfilerStateDirty(
+                        variant,
+                        gpuPipelineProfilingActive,
+                        commandBufferImageSlot))
+                {
+                    TraceCommandChainPrimaryReuseRejection(
+                        imageIndex,
+                        "GpuProfilerState");
                     return false;
                 }
 
@@ -191,7 +264,7 @@ namespace XREngine.Rendering.Vulkan
                                 variant.PrimaryFrameDataRefreshState,
                                 dynamicUi: false,
                                 descriptorResourcesCapturedByFrameSignature:
-                                allPreparedDrawBindingsUseSecondaryBuffers,
+                                descriptorResourcesCapturedByFrameSignature,
                                 commandChainCache: commandChainCache,
                                 scheduledCommandChainKeys:
                                     scheduledCommandChainKeys);
@@ -239,25 +312,49 @@ namespace XREngine.Rendering.Vulkan
                         dynamicUiSecondaryReady = RecordDynamicUiBatchTextSecondaryCommandBuffer(
                             imageIndex,
                             variant,
-                            dynamicUiBatchTextOps,
+                            sealedDynamicUiBatchTextOps,
                             dynamicUiBatchTextSignature,
-                            forceRecord: dynamicUiFrameDataNeedsRerecord);
+                            forceRecord: dynamicUiFrameDataNeedsRerecord,
+                            recordingTarget: recordingTarget,
+                            policy: recordingPolicy);
                 }
-                else
+                else if (dynamicUiBatchTextOpCount > 0)
                 {
-                    variant.DynamicUiSecondaryRecorded = false;
+                    ReleaseDeferredSecondaryCommandBuffers(imageIndex);
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                               "Vulkan.RecordCommandBuffer.FastReuse.RecordDeferredDynamicUiSecondary"))
+                    using (VulkanCpuStageScope cpuStage =
+                           new(_frameTelemetry, EVulkanCpuStage.SecondaryRecording))
+                    {
+                        dynamicUiSecondaryReady = RecordDynamicUiBatchTextSecondaryCommandBuffer(
+                            imageIndex,
+                            variant,
+                            sealedDynamicUiBatchTextOps,
+                            dynamicUiBatchTextSignature,
+                            forceRecord: dynamicUiFrameDataNeedsRerecord,
+                            includeDepthAttachment: false,
+                            recordingTarget: recordingTarget,
+                            policy: recordingPolicy);
+                    }
                 }
 
-                if (dynamicUiBatchTextOpCount > 0 &&
-                    !delayDynamicUiSecondaryRecording &&
-                    !dynamicUiSecondaryReady)
+                if (dynamicUiBatchTextOpCount > 0 && !dynamicUiSecondaryReady)
                 {
                     return false;
                 }
 
-                variant.DynamicUiSignature = delayDynamicUiSecondaryRecording
-                    ? 0
-                    : dynamicUiBatchTextSignature;
+                if (CommandChains.SnapshotArtifactMutationGeneration() !=
+                    artifactMutationGeneration)
+                {
+                    TraceCommandChainPrimaryReuseRejection(
+                        imageIndex,
+                        "ConcurrentSecondaryArtifactMutation");
+                    return false;
+                }
+
+                variant.DynamicUiSignature = dynamicUiSecondaryReady
+                    ? dynamicUiBatchTextSignature
+                    : 0;
                 variant.DynamicUiOpCount = dynamicUiBatchTextOpCount;
                 variant.PreserveSwapchainForOverlay = preserveSwapchainForOverlay;
                 variant.FrameOpsSignature = frameOpsSignature;
@@ -270,7 +367,6 @@ namespace XREngine.Rendering.Vulkan
                 variant.PlannerRevision = plannerRevision;
                 variant.GpuProfilerActive = gpuPipelineProfilingActive;
                 variant.GpuProfilerFrameSlot = gpuPipelineProfilingActive ? commandBufferImageSlot : -1;
-                variant.RecordedGenerations = currentGenerations;
                 // Preserve the same inline-only binding scope used by the primary
                 // comparison. Publishing the aggregate draw signature here poisoned
                 // the clean variant after one reuse and made the next camera frame
@@ -323,7 +419,38 @@ namespace XREngine.Rendering.Vulkan
                 return true;
         }
 
-        private bool TryRefreshReusableCommandBufferFrameData(
+        private void TraceCommandChainPrimaryReuseRejection(
+            uint imageIndex,
+            string reason,
+            string? detail = null)
+        {
+            if (!VulkanFrameDiagnosticsTraceEnabled)
+                return;
+
+            Debug.VulkanEvery(
+                $"Vulkan.PrimaryReuse.Rejection.{GetHashCode()}.{imageIndex}.{reason}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Cached primary rejected. Image={0} Reason={1} Detail={2}",
+                imageIndex,
+                reason,
+                detail ?? "<none>");
+        }
+
+        private void TraceCommandChainPrimaryScheduleIdentityRejection(
+            uint imageIndex,
+            in CommandChainScheduleCacheIdentity recorded,
+            in CommandChainScheduleCacheIdentity current)
+        {
+            if (!VulkanFrameDiagnosticsTraceEnabled)
+                return;
+
+            TraceCommandChainPrimaryReuseRejection(
+                imageIndex,
+                "ScheduleCacheIdentity",
+                recorded.DescribeFirstMismatch(in current));
+        }
+
+        internal bool TryRefreshReusableCommandBufferFrameData(
             uint imageIndex,
             ReadOnlySpan<VulkanReusableFrameDataRefreshRequest> requests,
             ReadOnlySpan<VulkanReusableFrameDataRefreshRequest>
@@ -371,10 +498,6 @@ namespace XREngine.Rendering.Vulkan
                     packetEnd++;
                 }
 
-                // Resource-planner state is packet state, not draw state. Keep one
-                // readback scope for a contiguous compatible range so warmed primary
-                // reuse does not serialize a full planner save/restore around every op.
-                using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(packetContext);
                 for (int i = packetStart; i < packetEnd; i++)
                 {
                     ref readonly VulkanReusableFrameDataRefreshRequest request =
@@ -474,6 +597,13 @@ namespace XREngine.Rendering.Vulkan
                         case EVulkanReusableFrameDataRefreshKind
                             .FrequencyOwnerMesh:
                             {
+                                if (refreshState.IsOwnerGenerationPublished(
+                                        imageIndex,
+                                        request.OwnerKey))
+                                {
+                                    break;
+                                }
+
                                 VkMeshRenderer meshRenderer =
                                     request.MeshRenderer!;
                                 if (!meshRenderer
@@ -489,6 +619,9 @@ namespace XREngine.Rendering.Vulkan
                                     refreshState.Invalidate();
                                     return false;
                                 }
+                                refreshState.PublishOwnerGeneration(
+                                    imageIndex,
+                                    request.OwnerKey);
                                 break;
                             }
                         case EVulkanReusableFrameDataRefreshKind.Compute:
@@ -546,9 +679,24 @@ namespace XREngine.Rendering.Vulkan
 
                     ref readonly VulkanReusableFrameDataRefreshRequest request =
                         ref requests[requestIndex];
-                    using var plannerScope =
-                        EnterFrameOpResourcePlannerReadbackScope(
-                            request.Context);
+                    if (descriptorResourcesCapturedByFrameSignature &&
+                        request.Kind is
+                            (EVulkanReusableFrameDataRefreshKind.Mesh or
+                             EVulkanReusableFrameDataRefreshKind.IndirectMesh) &&
+                        request.MeshRenderer is { } planOwnedMeshRenderer &&
+                        planOwnedMeshRenderer
+                            .SupportsOwnerOnlyReusableFrameDataRefresh(
+                                request.Draw,
+                                allowPlanOwnedFrameSourceSamplers: true))
+                    {
+                        // Cached secondary authority includes the exact frame
+                        // resource plan and descriptor publication identities.
+                        // A resize/replan invalidates that authority, so stable
+                        // post-process sources do not need a second per-draw
+                        // descriptor fingerprint walk on every reuse frame.
+                        continue;
+                    }
+
                     if (!TryRefreshReusableFallbackMeshRequest(
                             imageIndex,
                             request,

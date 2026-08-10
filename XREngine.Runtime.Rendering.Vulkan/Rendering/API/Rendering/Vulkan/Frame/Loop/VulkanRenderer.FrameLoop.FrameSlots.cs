@@ -51,7 +51,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 _commandRuntime.DrainInvalidatedCommandBufferRecordings(
                     Api, ResourceRuntime);
-                DrainRetiredSwapchainGenerations();
+                OutputRuntime.DrainRetiredDesktopSwapchainGenerations();
                 _commandRuntime.DrainRetiredCommandBuffers(
                     Api,
                     _deviceContext.Device,
@@ -76,17 +76,23 @@ namespace XREngine.Rendering.Vulkan
                     Api, _deviceContext.Device, attempt.FrameSlot);
                 ResourceRuntime.DrainRetiredBufferViews(
                     Api, _deviceContext.Device, attempt.FrameSlot);
-                ResourceRuntime.DrainRetiredBuffers(
+                int pooledBuffers = ResourceRuntime.DrainRetiredBuffers(
                     Api,
                     _deviceContext.Device,
-                    OutputRuntime,
                     _frameTelemetry,
                     attempt.FrameSlot);
+                if (pooledBuffers != 0)
+                    ResourceRuntime.Allocations.Staging.Trim(OutputRuntime);
                 ResourceRuntime.DrainRetiredFramebuffers(
                     Api, _deviceContext.Device, attempt.FrameSlot);
                 ResourceRuntime.DrainRetiredImages(
                     Api, _deviceContext.Device, attempt.FrameSlot);
-                DrainCompletedRecordedTextureUploadPublications();
+                ResourceRuntime.Uploads.DrainCompletedRecordedTextureUploadPublications(
+                    Api,
+                    _deviceContext,
+                    _commandRuntime,
+                    ResourceRuntime,
+                    IsDeviceLost);
             }
 
             attempt.Timing.DrainRetiredResources +=

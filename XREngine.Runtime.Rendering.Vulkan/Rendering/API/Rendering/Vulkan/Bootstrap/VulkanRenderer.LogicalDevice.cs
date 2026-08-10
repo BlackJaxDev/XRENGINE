@@ -58,7 +58,7 @@ public unsafe partial class VulkanRenderer
 
     private void DestroyLogicalDevice()
     {
-        ClearPendingDeviceReadyProgramLinks();
+        ResourceRuntime.PipelineManager.ClearPendingDeviceReadyProgramLinks();
 
         if (!_deviceContext.HasLogicalDevice)
         {
@@ -70,13 +70,13 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        DestroyGlobalMaterialTextureDescriptorTable();
-        DestroyDescriptorHeapBackend();
-        DestroyDescriptorUpdateTemplateCache();
-        DestroyCachedDescriptorSetLayouts();
-        DestroyVulkanPipelineCache();
-        DestroyCanonicalImmutableSamplers();
-        DestroyRemainingTrackedSamplers();
+        ResourceRuntime.Descriptors.DestroyGlobalMaterialTextureDescriptorTable();
+        ResourceRuntime.Descriptors.DestroyDescriptorHeapBackend();
+        ResourceRuntime.DescriptorLifetime.DestroyUpdateTemplateCache();
+        ResourceRuntime.Descriptors.DestroyCachedDescriptorSetLayouts();
+        ResourceRuntime.PipelineManager.DestroyPipelineCache();
+        VulkanCanonicalImmutableSamplerService.Destroy(ResourceRuntime, Api!, _deviceContext.Device);
+        ResourceRuntime.Samplers.DestroyRemaining(Api!, _deviceContext.Device);
         ReleaseVulkanDiagnosticStorage();
         MarkDeviceDisposed();
         _deviceContext.Destroy(Api!);
@@ -1185,15 +1185,15 @@ public unsafe partial class VulkanRenderer
         PhysicalDeviceFeatures supportedFeatures = queriedCapabilities.CoreFeatures;
 
         PhysicalDeviceFeatures deviceFeatures = new();
-        _queryOcclusionPreciseAdvertised = supportedFeatures.OcclusionQueryPrecise;
-        _queryOcclusionPreciseEnabled = supportedFeatures.OcclusionQueryPrecise;
-        deviceFeatures.OcclusionQueryPrecise = _queryOcclusionPreciseEnabled;
-        _queryPipelineStatisticsAdvertised = supportedFeatures.PipelineStatisticsQuery;
-        _queryPipelineStatisticsEnabled = supportedFeatures.PipelineStatisticsQuery;
-        deviceFeatures.PipelineStatisticsQuery = _queryPipelineStatisticsEnabled;
-        _queryInheritedQueriesAdvertised = supportedFeatures.InheritedQueries;
-        _queryInheritedQueriesEnabled = supportedFeatures.InheritedQueries;
-        deviceFeatures.InheritedQueries = _queryInheritedQueriesEnabled;
+        ResourceRuntime.Queries.OcclusionPreciseAdvertised = supportedFeatures.OcclusionQueryPrecise;
+        ResourceRuntime.Queries.OcclusionPreciseEnabled = supportedFeatures.OcclusionQueryPrecise;
+        deviceFeatures.OcclusionQueryPrecise = ResourceRuntime.Queries.OcclusionPreciseEnabled;
+        ResourceRuntime.Queries.PipelineStatisticsAdvertised = supportedFeatures.PipelineStatisticsQuery;
+        ResourceRuntime.Queries.PipelineStatisticsEnabled = supportedFeatures.PipelineStatisticsQuery;
+        deviceFeatures.PipelineStatisticsQuery = ResourceRuntime.Queries.PipelineStatisticsEnabled;
+        ResourceRuntime.Queries.InheritedQueriesAdvertised = supportedFeatures.InheritedQueries;
+        ResourceRuntime.Queries.InheritedQueriesEnabled = supportedFeatures.InheritedQueries;
+        deviceFeatures.InheritedQueries = ResourceRuntime.Queries.InheritedQueriesEnabled;
         if (supportedFeatures.RobustBufferAccess)
             deviceFeatures.RobustBufferAccess = Vk.True;
 
@@ -1663,7 +1663,7 @@ public unsafe partial class VulkanRenderer
              ((maintenance5FeatureSupported || extendedFlagsExtensionAvailable) &&
               (bufferDeviceAddressFeatureSupported || vulkan12PromotedToCore))) &&
             shaderUntypedPointersExtensionAvailable;
-        QueryDescriptorHeapCapabilities(
+        ResourceRuntime.Descriptors.QueryDescriptorHeapCapabilities(
             descriptorHeapExtensionAvailable,
             shaderUntypedPointersExtensionAvailable,
             out bool descriptorHeapFeatureSupported,
@@ -2276,7 +2276,7 @@ public unsafe partial class VulkanRenderer
         bool descriptorHeapNativeApiAvailable = false;
         string descriptorHeapNativeApiReason = string.Empty;
         if (enableDescriptorHeapFeature)
-            descriptorHeapNativeApiAvailable = TryInitializeDescriptorHeapNativeApi(out descriptorHeapNativeApiReason);
+            descriptorHeapNativeApiAvailable = ResourceRuntime.Descriptors.TryInitializeDescriptorHeapNativeApi(out descriptorHeapNativeApiReason);
 
         _deviceContext.MutableCapabilities._supportsDescriptorIndexing = enableDescriptorIndexing;
         _deviceContext.MutableCapabilities._supportsNvMemoryDecompression = enableNvMemoryDecompression;
@@ -2294,9 +2294,9 @@ public unsafe partial class VulkanRenderer
         _deviceContext.MutableCapabilities._supportsMaintenance4 = enableMaintenance4Feature;
         _deviceContext.MutableCapabilities._supportsMaintenance5 = enableMaintenance5Feature;
         _deviceContext.MutableCapabilities._supportsExtendedFlags = extendedFlagsExtensionEnabled;
-        _descriptorHeapFeatureSupported = descriptorHeapFeatureSupported;
-        _descriptorHeapCaptureReplaySupported = descriptorHeapCaptureReplaySupported;
-        _descriptorHeapProperties = descriptorHeapFeatureSupported ? descriptorHeapProperties : default;
+        ResourceRuntime.Descriptors._descriptorHeapFeatureSupported = descriptorHeapFeatureSupported;
+        ResourceRuntime.Descriptors._descriptorHeapCaptureReplaySupported = descriptorHeapCaptureReplaySupported;
+        ResourceRuntime.Descriptors._descriptorHeapProperties = descriptorHeapFeatureSupported ? descriptorHeapProperties : default;
         _deviceContext.MutableCapabilities._supportsDescriptorHeap = enableDescriptorHeapFeature && descriptorHeapNativeApiAvailable;
         _deviceContext.MutableCapabilities._supportsShaderObject = shaderObjectFeatureSupported;
         _deviceContext.MutableCapabilities._supportsMemoryBudget = memoryBudgetExtensionAvailable && memoryBudgetExtensionEnabled;
@@ -2336,15 +2336,16 @@ public unsafe partial class VulkanRenderer
         _deviceContext.MutableCapabilities._supportsVulkanFragmentDensityMapDynamic = enableFragmentDensityMapFeature && fragmentDensityMapDynamicSupported;
         _deviceContext.MutableCapabilities._supportsVulkanTaskShaderFeature = enableMeshShaderFeature;
         _deviceContext.MutableCapabilities._supportsVulkanMeshShaderFeature = enableMeshShaderFeature;
-        _queryMeshShaderQueriesEnabled = enableMeshShaderQueries;
-        _queryHostResetAdvertised = hostQueryResetFeatureSupported;
-        _queryPrimitivesGeneratedAdvertised = primitivesGeneratedFeatures.PrimitivesGeneratedQuery;
-        _queryPrimitivesGeneratedEnabled = enablePrimitivesGeneratedQuery;
-        _queryPrimitivesGeneratedNonZeroStreamsEnabled = primitivesGeneratedFeatureEnable.PrimitivesGeneratedQueryWithNonZeroStreams;
+        ResourceRuntime.Queries.MeshShaderQueriesEnabled = enableMeshShaderQueries;
+        ResourceRuntime.Queries.HostResetAdvertised = hostQueryResetFeatureSupported;
+        ResourceRuntime.Queries.PrimitivesGeneratedAdvertised = primitivesGeneratedFeatures.PrimitivesGeneratedQuery;
+        ResourceRuntime.Queries.PrimitivesGeneratedEnabled = enablePrimitivesGeneratedQuery;
+        ResourceRuntime.Queries.PrimitivesGeneratedNonZeroStreamsEnabled = primitivesGeneratedFeatureEnable.PrimitivesGeneratedQueryWithNonZeroStreams;
 
         // Load optional extension command tables before resolving backend modes that depend on them.
         LoadOptionalDeviceExtensions(extensionsArray, enableDrawIndirectCountFeature);
-        RefreshVulkanQueryCapabilities();
+        ResourceRuntime.Queries.BindBackendContext(BackendObjectContext);
+        ResourceRuntime.Queries.RefreshCapabilities();
         LogVulkanDiagnosticDeviceCapabilities(
             khrDeviceFaultExtensionAvailable,
             khrDeviceFaultExtensionEnabled,
@@ -2366,7 +2367,7 @@ public unsafe partial class VulkanRenderer
             nvDiagnosticsConfigExtensionEnabled,
             nvDiagnosticsConfigFeatureSupported);
 
-        ResolveDescriptorBackendAfterDeviceCreate(
+        ResourceRuntime.Descriptors.ResolveDescriptorBackendAfterDeviceCreate(
             VulkanFeatureProfile.RequestedDescriptorBackend,
             enableDescriptorIndexing,
             descriptorHeapExtensionAvailable,
@@ -2424,7 +2425,7 @@ public unsafe partial class VulkanRenderer
                 "[Vulkan] Descriptor indexing enabled without storage-image update-after-bind support; storage image bindings will not use UPDATE_AFTER_BIND flags.");
             }
 
-            ValidateRequiredVulkanBindlessMaterialCapability();
+            ResourceRuntime.Descriptors.ValidateRequiredVulkanBindlessMaterialCapability();
 
             if (!enableShaderDrawParametersFeature && !shaderDrawParametersExtensionEnabled)
             {
@@ -2983,7 +2984,7 @@ public unsafe partial class VulkanRenderer
             _deviceContext.MutableCapabilities._supportsDynamicRendering,
             VulkanRenderTargetModeEnvVar);
 
-        CreateVulkanPipelineCache();
+        ResourceRuntime.PipelineManager.CreatePipelineCache();
 
         RuntimeEngine.Rendering.State.HasVulkanMemoryDecompression = SupportsNvMemoryDecompression;
         RuntimeEngine.Rendering.State.HasVulkanCopyMemoryIndirect = SupportsNvCopyMemoryIndirect;
@@ -3139,7 +3140,7 @@ public unsafe partial class VulkanRenderer
             vulkan14OptInTierReady &&
             descriptorHeapExtensionAvailable &&
             descriptorHeapDependenciesReady &&
-            _descriptorHeapNativeApiAvailable &&
+            ResourceRuntime.Descriptors._descriptorHeapNativeApiAvailable &&
             shaderObjectFeatureSupported;
 
         if (VulkanFeatureProfile.TryGetCapabilityTierEnvOverride(out EVulkanCapabilityTier tier))
@@ -3187,8 +3188,8 @@ public unsafe partial class VulkanRenderer
                         ? "VK_EXT_descriptor_heap dependencies are incomplete; the path needs Vulkan 1.4 or maintenance5/extended flags plus buffer device address/Vulkan 1.2 and shader untyped pointers support."
                         : !SupportsDescriptorHeap
                             ? "VK_EXT_descriptor_heap is exposed, but native entry points, feature enablement, or heap storage initialization failed."
-                            : _activeDescriptorBackend != EVulkanDescriptorBackend.DescriptorHeap
-                                ? _descriptorBackendFallbackReason
+                            : ResourceRuntime.Descriptors._activeDescriptorBackend != EVulkanDescriptorBackend.DescriptorHeap
+                                ? ResourceRuntime.Descriptors._descriptorBackendFallbackReason
                                 : string.Empty;
 
                 if (string.IsNullOrWhiteSpace(reason))
@@ -3291,7 +3292,7 @@ public unsafe partial class VulkanRenderer
         bool HasEnabledExtension(string extensionName) => enabledExtensions.Contains(extensionName);
 
         EVulkanDescriptorBackend requestedDescriptorBackend = VulkanFeatureProfile.RequestedDescriptorBackend;
-        EVulkanDescriptorBackend descriptorBackend = _activeDescriptorBackend;
+        EVulkanDescriptorBackend descriptorBackend = ResourceRuntime.Descriptors._activeDescriptorBackend;
         EVulkanProgramBindingBackend programBindingBackend = VulkanFeatureProfile.RequestedProgramBindingBackend;
         EVulkanFoveationBackend foveationBackend = VulkanFeatureProfile.RequestedFoveationBackend;
         EVulkanRayTracingBackend rayTracingBackend = VulkanFeatureProfile.RequestedRayTracingBackend;
@@ -3301,7 +3302,7 @@ public unsafe partial class VulkanRenderer
             SupportsSynchronization2 &&
             _deviceContext.MutableCapabilities._supportsTimelineSemaphores &&
             SupportsMaintenance4 &&
-            SupportsDescriptorIndexing &&
+            ResourceRuntime.Descriptors.SupportsDescriptorIndexing &&
             SupportsBufferDeviceAddress &&
             _deviceContext.MutableCapabilities._supportsDrawIndirectCount;
         bool vulkan14OptInTierReady =
@@ -3311,7 +3312,7 @@ public unsafe partial class VulkanRenderer
         bool vulkan14ExperimentalTierReady =
             vulkan14OptInTierReady &&
             HasExtension(VulkanDescriptorHeapExt.ExtensionName) &&
-            _descriptorHeapNativeApiAvailable &&
+            ResourceRuntime.Descriptors._descriptorHeapNativeApiAvailable &&
             SupportsShaderObject;
 
         Debug.Vulkan(
@@ -3360,7 +3361,7 @@ public unsafe partial class VulkanRenderer
             "Vulkan 1.4 + VK_EXT_descriptor_heap + VK_EXT_shader_object",
             "descriptorHeap+shaderObject",
             VulkanFeatureProfile.RequestedCapabilityTier.ToString(),
-            $"ready={vulkan14ExperimentalTierReady};descriptorHeapNativeApi={_descriptorHeapNativeApiAvailable};descriptorHeapStorage={_descriptorHeapStorageReady}",
+            $"ready={vulkan14ExperimentalTierReady};descriptorHeapNativeApi={ResourceRuntime.Descriptors._descriptorHeapNativeApiAvailable};descriptorHeapStorage={ResourceRuntime.Descriptors._descriptorHeapStorageReady}",
             vulkan14ExperimentalTierReady ? string.Empty : "Experimental tier remains disabled until descriptor heap native API/storage and shader-object backend exist.");
 
         LogCapability(
@@ -3413,20 +3414,20 @@ public unsafe partial class VulkanRenderer
             "DescriptorIndexing",
             CapabilityState(
                 HasExtension("VK_EXT_descriptor_indexing") || IsVulkanApiVersionAtLeast(properties.ApiVersion, 1u, 2u),
-                SupportsDescriptorIndexing,
-                SupportsDescriptorIndexing && descriptorBackend == EVulkanDescriptorBackend.DescriptorIndexing),
+                ResourceRuntime.Descriptors.SupportsDescriptorIndexing,
+                ResourceRuntime.Descriptors.SupportsDescriptorIndexing && descriptorBackend == EVulkanDescriptorBackend.DescriptorIndexing),
             apiVersion,
             "VK_EXT_descriptor_indexing / Vulkan 1.2",
             "descriptorIndexing+runtimeDescriptorArray+partiallyBound+updateAfterBind",
             descriptorBackend.ToString(),
             $"runtimeArray={_deviceContext.MutableCapabilities._supportsRuntimeDescriptorArray};partiallyBound={_deviceContext.MutableCapabilities._supportsDescriptorBindingPartiallyBound};updateAfterBind={_deviceContext.MutableCapabilities._supportsDescriptorBindingUpdateAfterBind};storageImageUpdateAfterBind={_deviceContext.MutableCapabilities._supportsDescriptorBindingStorageImageUpdateAfterBind}",
-            SupportsDescriptorIndexing ? string.Empty : "Descriptor sets remain on the non-indexed path.");
+            ResourceRuntime.Descriptors.SupportsDescriptorIndexing ? string.Empty : "Descriptor sets remain on the non-indexed path.");
 
-        VulkanBindlessMaterialCapability bindlessMaterialCapability = RefreshBindlessMaterialCapability();
+        VulkanBindlessMaterialCapability bindlessMaterialCapability = ResourceRuntime.Descriptors.RefreshBindlessMaterialCapability();
         LogCapability(
             "BindlessMaterialTextures",
             CapabilityState(
-                SupportsDescriptorIndexing,
+                ResourceRuntime.Descriptors.SupportsDescriptorIndexing,
                 bindlessMaterialCapability.Tier >= EVulkanBindlessMaterialCapabilityTier.DescriptorIndexingReady,
                 bindlessMaterialCapability.DrawPathReady),
             apiVersion,
@@ -3438,14 +3439,14 @@ public unsafe partial class VulkanRenderer
 
         LogCapability(
             "DescriptorHeap",
-            CapabilityState(HasExtension(VulkanDescriptorHeapExt.ExtensionName), SupportsDescriptorHeap, _activeDescriptorBackend == EVulkanDescriptorBackend.DescriptorHeap),
+            CapabilityState(HasExtension(VulkanDescriptorHeapExt.ExtensionName), SupportsDescriptorHeap, ResourceRuntime.Descriptors._activeDescriptorBackend == EVulkanDescriptorBackend.DescriptorHeap),
             apiVersion,
             "VK_EXT_descriptor_heap",
             "descriptorHeap",
             $"{requestedDescriptorBackend}->{descriptorBackend}",
-            $"feature={_descriptorHeapFeatureSupported};captureReplay={_descriptorHeapCaptureReplaySupported};nativeApi={_descriptorHeapNativeApiAvailable};storage={_descriptorHeapStorageReady};shaderUntypedPointers={_descriptorHeapShaderUntypedPointersAvailable};samplerHeapBytes={DescriptorHeapSamplerCapacityBytes};resourceHeapBytes={DescriptorHeapResourceCapacityBytes};samplerDescriptorSize={_descriptorHeapProperties.SamplerDescriptorSize};imageDescriptorSize={_descriptorHeapProperties.ImageDescriptorSize};bufferDescriptorSize={_descriptorHeapProperties.BufferDescriptorSize};samplerWrites={_descriptorHeapSamplerWriteCount};resourceWrites={_descriptorHeapResourceWriteCount};samplerBinds={_descriptorHeapSamplerBindCount};resourceBinds={_descriptorHeapResourceBindCount}",
+            $"feature={ResourceRuntime.Descriptors._descriptorHeapFeatureSupported};captureReplay={ResourceRuntime.Descriptors._descriptorHeapCaptureReplaySupported};nativeApi={ResourceRuntime.Descriptors._descriptorHeapNativeApiAvailable};storage={ResourceRuntime.Descriptors._descriptorHeapStorageReady};shaderUntypedPointers={ResourceRuntime.Descriptors._descriptorHeapShaderUntypedPointersAvailable};samplerHeapBytes={ResourceRuntime.Descriptors.DescriptorHeapSamplerCapacityBytes};resourceHeapBytes={ResourceRuntime.Descriptors.DescriptorHeapResourceCapacityBytes};samplerDescriptorSize={ResourceRuntime.Descriptors._descriptorHeapProperties.SamplerDescriptorSize};imageDescriptorSize={ResourceRuntime.Descriptors._descriptorHeapProperties.ImageDescriptorSize};bufferDescriptorSize={ResourceRuntime.Descriptors._descriptorHeapProperties.BufferDescriptorSize};samplerWrites={ResourceRuntime.Descriptors._descriptorHeapSamplerWriteCount};resourceWrites={ResourceRuntime.Descriptors._descriptorHeapResourceWriteCount};samplerBinds={ResourceRuntime.Descriptors._descriptorHeapSamplerBindCount};resourceBinds={ResourceRuntime.Descriptors._descriptorHeapResourceBindCount}",
             HasExtension(VulkanDescriptorHeapExt.ExtensionName)
-                ? _descriptorBackendFallbackReason
+                ? ResourceRuntime.Descriptors._descriptorBackendFallbackReason
                 : "VK_EXT_descriptor_heap is not exposed by the selected physical device.");
 
         LogCapability(
@@ -3661,13 +3662,13 @@ public unsafe partial class VulkanRenderer
 
         LogCapability(
             "ShaderUntypedPointers",
-            CapabilityState(HasExtension(VulkanDescriptorHeapExt.ShaderUntypedPointersExtensionName), _descriptorHeapShaderUntypedPointersAvailable, false),
+            CapabilityState(HasExtension(VulkanDescriptorHeapExt.ShaderUntypedPointersExtensionName), ResourceRuntime.Descriptors._descriptorHeapShaderUntypedPointersAvailable, false),
             apiVersion,
             VulkanDescriptorHeapExt.ShaderUntypedPointersExtensionName,
             "shaderUntypedPointers",
             "DescriptorHeapDependency",
-            $"available={_descriptorHeapShaderUntypedPointersAvailable}",
-            _descriptorHeapShaderUntypedPointersAvailable
+            $"available={ResourceRuntime.Descriptors._descriptorHeapShaderUntypedPointersAvailable}",
+            ResourceRuntime.Descriptors._descriptorHeapShaderUntypedPointersAvailable
                 ? "Descriptor heap dependency is present; legacy set/binding mappings do not require enabling it."
                 : "Descriptor heap requires shader untyped pointers support.");
 

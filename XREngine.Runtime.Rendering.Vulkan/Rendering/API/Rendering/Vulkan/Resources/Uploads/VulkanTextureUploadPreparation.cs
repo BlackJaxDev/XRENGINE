@@ -488,7 +488,7 @@ internal sealed partial class VulkanTextureUploadService
         VulkanImportedTextureUploadRequest request = pendingUpload.Request;
         string? transferFailure = null;
         if (RenderDiagnosticsFlags.VkTextureUploadTransferQueue
-            && renderer.TrySubmitImportedTextureUploadToTransferQueue(
+            && renderer.CommandRuntime.TrySubmitImportedTextureUploadToTransferQueue(
                 pendingUpload,
                 out VulkanSubmittedImportedTextureUpload? submitted,
                 out transferFailure)

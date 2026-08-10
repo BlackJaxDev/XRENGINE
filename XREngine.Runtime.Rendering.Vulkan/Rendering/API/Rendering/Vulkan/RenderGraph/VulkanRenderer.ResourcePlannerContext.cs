@@ -836,7 +836,10 @@ public unsafe partial class VulkanRenderer
     }
 
     private uint ResolveFrameOpSubmissionQueueFamily(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
-        => BuildQueueOwnershipConfig(passMetadata).GraphicsQueueFamilyIndex;
+        => _framePlanner.BuildQueueOwnershipConfig(
+            _deviceContext,
+            passMetadata,
+            VulkanFeatureProfile.ActiveProfile).GraphicsQueueFamilyIndex;
 
     internal static bool ResolveFrameOpContextStereoEnabled(in FrameOpContext context)
         => context.PipelineInstance?.RenderState.StereoPass

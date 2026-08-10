@@ -8,7 +8,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Each element in <c>Data.Textures</c> maps to an array layer. Provides per-layer
 /// attachment views suitable for framebuffer targets (e.g. shadow cascades).
 /// </summary>
-internal sealed class VkTexture2DArray(VulkanRenderer api, XRTexture2DArray data) : VkImageBackedTexture<XRTexture2DArray>(api, data)
+internal sealed class VkTexture2DArray(VulkanBackendObjectContext backendContext, IRenderApiWrapperOwner owner, XRTexture2DArray data) : VkImageBackedTexture<XRTexture2DArray>(backendContext, owner, data)
 {
     protected override ImageViewType DefaultImageViewType => ImageViewType.Type2DArray;
 

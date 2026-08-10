@@ -21,72 +21,10 @@ public unsafe partial class VulkanRenderer
 
         try
         {
-            using CommandScope scope = NewCommandScope();
-            CommandBuffer commandBuffer = scope.CommandBuffer;
-
-            ImageSubresourceRange range = new()
-            {
-                AspectMask = ImageAspectFlags.ColorBit,
-                BaseMipLevel = 0,
-                LevelCount = 1,
-                BaseArrayLayer = 0,
-                LayerCount = 1
-            };
-
-            ImageMemoryBarrier toTransfer = new()
-            {
-                SType = StructureType.ImageMemoryBarrier,
-                SrcAccessMask = 0,
-                DstAccessMask = AccessFlags.TransferWriteBit,
-                OldLayout = ImageLayout.Undefined,
-                NewLayout = ImageLayout.TransferDstOptimal,
-                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                Image = image,
-                SubresourceRange = range
-            };
-
-            CmdPipelineBarrierTracked(
-                commandBuffer,
-                PipelineStageFlags.TopOfPipeBit,
-                PipelineStageFlags.TransferBit,
-                0,
-                0,
-                null,
-                0,
-                null,
-                1,
-                &toTransfer);
-
-            ClearColorValue clearColor = new(color.R, color.G, color.B, color.A);
-            CmdClearColorImageTracked(commandBuffer, image, ImageLayout.TransferDstOptimal, ref clearColor, 1, ref range);
-
-            ImageMemoryBarrier toColorAttachment = new()
-            {
-                SType = StructureType.ImageMemoryBarrier,
-                SrcAccessMask = AccessFlags.TransferWriteBit,
-                DstAccessMask = AccessFlags.ColorAttachmentReadBit,
-                OldLayout = ImageLayout.TransferDstOptimal,
-                NewLayout = ImageLayout.ColorAttachmentOptimal,
-                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                Image = image,
-                SubresourceRange = range
-            };
-
-            CmdPipelineBarrierTracked(
-                commandBuffer,
-                PipelineStageFlags.TransferBit,
-                PipelineStageFlags.ColorAttachmentOutputBit,
-                0,
-                0,
-                null,
-                0,
-                null,
-                1,
-                &toColorAttachment);
-
-            return true;
+            return _commandRuntime.ExecuteOpenXrDiagnosticClear(
+                image,
+                extent,
+                color);
         }
         catch (Exception ex)
         {
@@ -218,7 +156,7 @@ public unsafe partial class VulkanRenderer
 
     private static ImageAspectFlags NormalizeOpenXrMirrorAspect(Format format, ImageAspectFlags aspect)
     {
-        if (!IsDepthStencilFormat(format))
+        if (!VulkanDesktopSwapchainService.IsDepthStencilFormatForOutput(format))
             return ImageAspectFlags.ColorBit;
 
         ImageAspectFlags normalized = aspect & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit);
@@ -232,7 +170,7 @@ public unsafe partial class VulkanRenderer
         ImageLayout oldLayout,
         ImageLayout newLayout,
         ImageAspectFlags aspectMask)
-        => TransitionOpenXrMirrorImage(
+        => _commandRuntime.TransitionOpenXrMirrorImage(
             commandBuffer,
             image,
             format,
@@ -251,83 +189,15 @@ public unsafe partial class VulkanRenderer
         ImageAspectFlags aspectMask,
         uint baseArrayLayer,
         uint layerCount)
-    {
-        if (oldLayout == newLayout)
-            return;
-
-        OpenXrMirrorBarrierAccess(oldLayout, out AccessFlags srcAccess, out PipelineStageFlags srcStage);
-        OpenXrMirrorBarrierAccess(newLayout, out AccessFlags dstAccess, out PipelineStageFlags dstStage);
-
-        ImageMemoryBarrier barrier = new()
-        {
-            SType = StructureType.ImageMemoryBarrier,
-            SrcAccessMask = srcAccess,
-            DstAccessMask = dstAccess,
-            OldLayout = oldLayout,
-            NewLayout = newLayout,
-            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-            Image = image,
-            SubresourceRange = new ImageSubresourceRange
-            {
-                AspectMask = NormalizeOpenXrMirrorAspect(format, aspectMask),
-                BaseMipLevel = 0,
-                LevelCount = 1,
-                BaseArrayLayer = baseArrayLayer,
-                LayerCount = Math.Max(layerCount, 1u)
-            }
-        };
-
-        CmdPipelineBarrierTracked(
+        => _commandRuntime.TransitionOpenXrMirrorImage(
             commandBuffer,
-            srcStage,
-            dstStage,
-            DependencyFlags.None,
-            0,
-            null,
-            0,
-            null,
-            1,
-            &barrier);
-    }
-
-    private static void OpenXrMirrorBarrierAccess(
-        ImageLayout layout,
-        out AccessFlags access,
-        out PipelineStageFlags stage)
-    {
-        switch (layout)
-        {
-            case ImageLayout.Undefined:
-                access = 0;
-                stage = PipelineStageFlags.TopOfPipeBit;
-                break;
-            case ImageLayout.ColorAttachmentOptimal:
-                access = AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit;
-                stage = PipelineStageFlags.ColorAttachmentOutputBit;
-                break;
-            case ImageLayout.TransferSrcOptimal:
-                access = AccessFlags.TransferReadBit;
-                stage = PipelineStageFlags.TransferBit;
-                break;
-            case ImageLayout.TransferDstOptimal:
-                access = AccessFlags.TransferWriteBit;
-                stage = PipelineStageFlags.TransferBit;
-                break;
-            case ImageLayout.ShaderReadOnlyOptimal:
-                access = AccessFlags.ShaderReadBit;
-                stage = PipelineStageFlags.FragmentShaderBit;
-                break;
-            case ImageLayout.General:
-                access = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit;
-                stage = PipelineStageFlags.AllCommandsBit;
-                break;
-            default:
-                access = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit;
-                stage = PipelineStageFlags.AllCommandsBit;
-                break;
-        }
-    }
+            image,
+            format,
+            oldLayout,
+            newLayout,
+            aspectMask,
+            baseArrayLayer,
+            layerCount);
 
     private void DrainRetiredResourcesFromCompletedSubmittedFrameSlots()
     {
@@ -336,7 +206,8 @@ public unsafe partial class VulkanRenderer
         ReadOnlySpan<ulong> timelineValues = retirement.TimelineValues;
         if (timelineValues.IsEmpty)
         {
-            DrainCompletedRecordedTextureUploadPublications();
+            ResourceRuntime.Uploads.DrainCompletedRecordedTextureUploadPublications(
+                Api!, _deviceContext, _commandRuntime, ResourceRuntime, IsDeviceLost);
             return;
         }
 
@@ -396,10 +267,10 @@ public unsafe partial class VulkanRenderer
                 DrainRetiredPipelines(i, int.MaxValue);
         for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
-                DrainRetiredPipelineLayouts(i, int.MaxValue);
+                ResourceRuntime.DrainRetiredPipelineLayouts(Api!, _deviceContext.Device, i, int.MaxValue);
         for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
-                DrainRetiredDescriptorSetLayouts(i, int.MaxValue);
+                ResourceRuntime.DrainRetiredDescriptorSetLayouts(Api!, _deviceContext.Device, i, int.MaxValue);
         for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
                 DrainRetiredQueryPools(i, int.MaxValue);
@@ -415,9 +286,14 @@ public unsafe partial class VulkanRenderer
         for (int pass = 0; pass < frameSlotCount; pass++)
             for (int i = 0; i < frameSlotCount; i++)
                 if (drainableSlots[i])
-                    DrainRetiredImages(i, int.MaxValue);
+                    ResourceRuntime.DrainRetiredImages(
+                        Api!,
+                        _deviceContext.Device,
+                        i,
+                        int.MaxValue);
 
-        DrainCompletedRecordedTextureUploadPublications();
+        ResourceRuntime.Uploads.DrainCompletedRecordedTextureUploadPublications(
+            Api!, _deviceContext, _commandRuntime, ResourceRuntime, IsDeviceLost);
     }
     private bool WaitForOpenXrFrameDataSlot(uint frameDataImageIndex, string reason)
     {
@@ -453,22 +329,12 @@ public unsafe partial class VulkanRenderer
         return true;
     }
     private ImageView GetOrCreateOpenXrSwapchainImageView(Image image, Format format)
-    {
-        ulong key = image.Handle;
-        if (OutputRuntime.OpenXrBackend.SwapchainImageViews.TryGetValue(key, out VulkanOpenXrSwapchainImageViewCacheEntry cached))
-        {
-            if (cached.Format == format && cached.View.Handle != 0)
-                return cached.View;
-
-            if (cached.View.Handle != 0 && TryBeginDestroyImageView(cached.View, "OpenXR.SwapchainImageViewFormatChanged"))
-                Api!.DestroyImageView(_deviceContext.Device, cached.View, null);
-            OutputRuntime.OpenXrBackend.SwapchainImageViews.Remove(key);
-        }
-
-        ImageView imageView = CreateOpenXrSwapchainImageView(image, format);
-        OutputRuntime.OpenXrBackend.SwapchainImageViews[key] = new VulkanOpenXrSwapchainImageViewCacheEntry(imageView, format);
-        return imageView;
-    }
+        => OutputRuntime.GetOpenXrOutputResourceService(
+            Api!,
+            _deviceContext,
+            _commandRuntime,
+            ResourceRuntime,
+            _frameTelemetry).GetOrCreateSwapchainImageView(image, format);
 
     private ImageView CreateOpenXrSwapchainImageView(Image image, Format format)
     {
@@ -491,7 +357,7 @@ public unsafe partial class VulkanRenderer
         if (Api!.CreateImageView(_deviceContext.Device, ref viewInfo, null, out ImageView imageView) != Result.Success)
             throw new InvalidOperationException("Failed to create OpenXR Vulkan swapchain image view.");
 
-        TrackLiveImageView(imageView, in viewInfo, "OpenXR.SwapchainImageView");
+        ResourceRuntime.Images.RegisterView(imageView, in viewInfo, "OpenXR.SwapchainImageView");
         SetDebugObjectName(ObjectType.ImageView, imageView.Handle, $"OpenXR.SwapchainImageView.0x{image.Handle:X}.{format}");
         return imageView;
     }
@@ -499,23 +365,18 @@ public unsafe partial class VulkanRenderer
     private VulkanOpenXrDepthTarget GetOrCreateOpenXrDepthTarget(uint openXrViewIndex, Extent2D extent)
     {
         int targetIndex = ResolveOpenXrEyeUploadPublicationBufferIndex(openXrViewIndex);
-        ref VulkanOpenXrDepthTarget cachedTarget = ref OutputRuntime.OpenXrBackend.CachedDepthTargets[targetIndex];
-        ref Extent2D cachedExtent = ref OutputRuntime.OpenXrBackend.CachedDepthExtents[targetIndex];
-        if (cachedTarget.Image.Handle != 0 &&
-            cachedExtent.Width == extent.Width &&
-            cachedExtent.Height == extent.Height)
-            return cachedTarget;
-
-        DestroyOpenXrDepthTarget(cachedTarget);
-        cachedTarget = CreateOpenXrDepthTarget(extent);
-        cachedExtent = extent;
-        return cachedTarget;
+        return OutputRuntime.GetOpenXrOutputResourceService(
+            Api!,
+            _deviceContext,
+            _commandRuntime,
+            ResourceRuntime,
+            _frameTelemetry).GetOrCreateDepthTarget(targetIndex, extent);
     }
 
     private VulkanOpenXrDepthTarget CreateOpenXrDepthTarget(Extent2D extent)
     {
-        Format depthFormat = FindDepthFormat();
-        ImageAspectFlags depthAspect = IsDepthStencilFormat(depthFormat)
+        Format depthFormat = OutputRuntime.DesktopSwapchainService.FindDepthFormatForOutput();
+        ImageAspectFlags depthAspect = VulkanDesktopSwapchainService.IsDepthStencilFormatForOutput(depthFormat)
             ? ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit
             : ImageAspectFlags.DepthBit;
 
@@ -542,7 +403,6 @@ public unsafe partial class VulkanRenderer
             if (CreateVulkanImageTracked(ref imageInfo, out depthImage, "OpenXR.DepthTarget") != Result.Success)
                 throw new InvalidOperationException("Failed to create OpenXR Vulkan depth image.");
 
-            ClearTrackedImageLayouts(depthImage);
             allocation = AllocateImageMemoryWithFallback(depthImage, MemoryPropertyFlags.DeviceLocalBit);
             ResourceRuntime.Allocations.Images.Allocations[depthImage.Handle] = allocation;
 
@@ -568,12 +428,12 @@ public unsafe partial class VulkanRenderer
             if (Api!.CreateImageView(_deviceContext.Device, ref viewInfo, null, out depthView) != Result.Success)
                 throw new InvalidOperationException("Failed to create OpenXR Vulkan depth image view.");
 
-            TrackLiveImageView(depthView, in viewInfo, "OpenXR.DepthTarget");
+            ResourceRuntime.Images.RegisterView(depthView, in viewInfo, "OpenXR.DepthTarget");
             return new VulkanOpenXrDepthTarget(depthImage, allocation.Memory, depthView, depthFormat, depthAspect);
         }
         catch
         {
-            if (depthView.Handle != 0 && TryBeginDestroyImageView(depthView, "CreateOpenXrDepthTargetFailed"))
+            if (depthView.Handle != 0 && ResourceRuntime.Images.TryBeginDestroy(depthView, "CreateOpenXrDepthTargetFailed"))
                 Api!.DestroyImageView(_deviceContext.Device, depthView, null);
 
             if (depthImage.Handle != 0)
@@ -591,7 +451,7 @@ public unsafe partial class VulkanRenderer
 
     private void DestroyOpenXrDepthTarget(VulkanOpenXrDepthTarget target)
     {
-        RetireImageResources(new RetiredImageResources(
+                    ResourceRuntime.Images.RetireOwnedResources(new RetiredImageResources(
             target.Image,
             target.Memory,
             target.View,
@@ -606,18 +466,12 @@ public unsafe partial class VulkanRenderer
         DestroyOpenXrPrimaryCommandBufferCache();
         DestroyOpenXrResourcePlannerState();
 
-        foreach (VulkanOpenXrSwapchainImageViewCacheEntry entry in OutputRuntime.OpenXrBackend.SwapchainImageViews.Values)
-            if (entry.View.Handle != 0 && TryBeginDestroyImageView(entry.View, "DestroyOpenXrSwapchainImageViewCache"))
-                Api!.DestroyImageView(_deviceContext.Device, entry.View, null);
-        
-        OutputRuntime.OpenXrBackend.SwapchainImageViews.Clear();
-
-        for (int i = 0; i < OutputRuntime.OpenXrBackend.CachedDepthTargets.Length; i++)
-        {
-            DestroyOpenXrDepthTarget(OutputRuntime.OpenXrBackend.CachedDepthTargets[i]);
-            OutputRuntime.OpenXrBackend.CachedDepthTargets[i] = default;
-            OutputRuntime.OpenXrBackend.CachedDepthExtents[i] = default;
-        }
+        OutputRuntime.GetOpenXrOutputResourceService(
+            Api!,
+            _deviceContext,
+            _commandRuntime,
+            ResourceRuntime,
+            _frameTelemetry).RetireResources();
 
     }
 
@@ -655,15 +509,15 @@ public unsafe partial class VulkanRenderer
         if (_deviceLost || Api is null || _deviceContext.Device.Handle == 0)
             throw new InvalidOperationException("Cannot initialize OpenXR Vulkan session resources after the Vulkan device was lost.");
 
-        long lockWaitStart = Stopwatch.GetTimestamp();
-        bool queueLockTaken = false;
-        try
-        {
-            Monitor.Enter(_oneTimeSubmitLock, ref queueLockTaken);
-            LogOpenXrSerializedCriticalSectionWait("RuntimeGraphicsTransition", lockWaitStart, Stopwatch.GetTimestamp());
+        using VulkanQueueOperationLease commandSection =
+            _commandRuntime.EnterSerializedOpenXrCommandSection(
+                "RuntimeGraphicsTransition");
+        if (!commandSection.Acquired)
+            throw new InvalidOperationException(
+                "Vulkan device became unavailable while entering the OpenXR runtime graphics transition.");
 
-            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RuntimeGraphicsTransition"))
-            {
+        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RuntimeGraphicsTransition"))
+        {
                 Debug.Vulkan(
                     "[OpenXR] Beginning Vulkan runtime graphics transition. Reason={0}",
                     string.IsNullOrWhiteSpace(reason) ? "<unspecified>" : reason);
@@ -684,12 +538,6 @@ public unsafe partial class VulkanRenderer
                 Debug.Vulkan(
                     "[OpenXR] Completed Vulkan runtime graphics transition. Reason={0}",
                     string.IsNullOrWhiteSpace(reason) ? "<unspecified>" : reason);
-            }
-        }
-        finally
-        {
-            if (queueLockTaken)
-                Monitor.Exit(_oneTimeSubmitLock);
         }
     }
 
@@ -1042,46 +890,7 @@ public unsafe partial class VulkanRenderer
         return false;
     }
     private void DestroyOpenXrPrimaryCommandBufferCache()
-    {
-        lock (OutputRuntime.OpenXrBackend.PrimaryCommandArtifactOwnersLock)
-        {
-            if (OpenXrPrimaryCommandArtifactOwners.Count != 0)
-            {
-                foreach (PrimaryCommandArtifactOwner variant in OpenXrPrimaryCommandArtifactOwners.Values)
-                {
-                    CommandBuffer primary = variant.PrimaryCommandBuffer;
-                    if (primary.Handle != 0)
-                    {
-                        if (variant.OwnsPrimaryCommandBuffer && !_deviceLost)
-                        {
-                            CommandPool ownerPool = variant.PrimaryCommandPool.Handle != 0
-                                ? variant.PrimaryCommandPool
-                                : commandPool;
-                            FreeVulkanCommandBufferTracked(ownerPool, ref primary, "OpenXR.PrimaryOwner");
-                        }
-                        RemoveCommandBufferBindState(variant.PrimaryCommandBuffer);
-                    }
-
-                    CommandBuffer dynamicSecondary = variant.DynamicUiSecondaryCommandBuffer;
-                    if (dynamicSecondary.Handle != 0)
-                    {
-                        if (variant.OwnsDynamicUiSecondaryCommandBuffer && !_deviceLost)
-                        {
-                            CommandPool ownerPool = variant.DynamicUiSecondaryCommandPool.Handle != 0
-                                ? variant.DynamicUiSecondaryCommandPool
-                                : commandPool;
-                            FreeVulkanCommandBufferTracked(ownerPool, ref dynamicSecondary, "OpenXR.DynamicSecondaryOwner");
-                        }
-                        RemoveCommandBufferBindState(variant.DynamicUiSecondaryCommandBuffer);
-                    }
-                }
-
-                OpenXrPrimaryCommandArtifactOwners.Clear();
-            }
-        }
-
-        DestroyOpenXrEyeCommandPools();
-    }
+        => _commandRuntime.DestroyOpenXrPrimaryCommandArtifacts();
 
     private void DestroyOpenXrResourcePlannerState()
     {

@@ -35,7 +35,8 @@ internal sealed class CommandChainRecordingWorkerState(int workerIndex)
                 return;
 
             VulkanCommandChainRecordingBatch? batch = Batch;
-            batch?.WorkerProcedure?.Invoke(this);
+            if (batch?.PreparedWorkerContext.Runtime is { } runtime)
+                runtime.ExecuteCommandChainRecordingWorker(this);
         }
     }
 }

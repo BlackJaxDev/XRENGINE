@@ -13,11 +13,11 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed unsafe partial class VulkanCommandRuntime
 {
     // Cold pre-plan/OpenXR compatibility only. Desktop lifecycle scheduling
     // calls the stream overload below after FramePlan sealing.
-    private CommandChainSchedule? TryBuildCommandChainSchedule(
+    internal CommandChainSchedule? TryBuildCommandChainSchedule(
         uint imageIndex,
         FrameOp[] staticOps,
         FrameOp[] volatileOps,
@@ -26,7 +26,10 @@ public unsafe partial class VulkanRenderer
         ulong resourcePlanRevision,
         bool allowExternalSwapchainTarget,
         out CommandChainLoweringStats stats,
-        ulong? preparedFastScheduleSignature = null)
+        ulong? preparedFastScheduleSignature = null,
+        VulkanRecordedRenderTargetSnapshot preparedRecordingTarget = default,
+        ulong resourceVersionSignature = 0UL,
+        ulong descriptorVersionSignature = 0UL)
         => TryBuildCommandChainSchedule(
             imageIndex,
             FrameOperationStream.CreateCompatibility(staticOps),
@@ -36,9 +39,12 @@ public unsafe partial class VulkanRenderer
             resourcePlanRevision,
             allowExternalSwapchainTarget,
             out stats,
-            preparedFastScheduleSignature);
+            preparedFastScheduleSignature,
+            preparedRecordingTarget,
+            resourceVersionSignature,
+            descriptorVersionSignature);
 
-    private CommandChainSchedule? TryBuildCommandChainSchedule(
+    internal CommandChainSchedule? TryBuildCommandChainSchedule(
         uint imageIndex,
         FrameOperationStream staticOps,
         FrameOperationStream volatileOps,
@@ -47,7 +53,10 @@ public unsafe partial class VulkanRenderer
         ulong resourcePlanRevision,
         bool allowExternalSwapchainTarget,
         out CommandChainLoweringStats stats,
-        ulong? preparedFastScheduleSignature = null)
+        ulong? preparedFastScheduleSignature = null,
+        VulkanRecordedRenderTargetSnapshot preparedRecordingTarget = default,
+        ulong resourceVersionSignature = 0UL,
+        ulong descriptorVersionSignature = 0UL)
     {
         stats = default;
         // Generic external targets do not have the cache/lifetime contract required
@@ -66,8 +75,8 @@ public unsafe partial class VulkanRenderer
         // Stable mesh-draw ranges on either side are still lowered to reusable
         // secondaries, producing the production mixed primary/secondary schedule.
         bool requiresFreshPrimary =
-            HasMutableGpuDrivenFrameOps(staticOps) ||
-            HasMutableGpuDrivenFrameOps(volatileOps);
+            HasMutableCommandChainFrameOps(staticOps) ||
+            HasMutableCommandChainFrameOps(volatileOps);
 
         // Dynamic overlays are not expected to contain query brackets. Keep the
         // conservative all-inline fallback if one appears there because overlay
@@ -95,27 +104,22 @@ public unsafe partial class VulkanRenderer
         }
 
         bool traceCommandChains = CommandChainTraceEnabled;
-        FrameOpResourcePlannerSwitchingState frameOpSwitchingState = ActiveFrameOpResourcePlannerSwitchingState;
-        if (frameOpSwitchingState.SwitchingActive && traceCommandChains)
-        {
-            Debug.VulkanEvery(
-                $"Vulkan.CommandChains.ResourcePlannerSwitching.{GetHashCode()}",
-                TimeSpan.FromSeconds(1),
-                "[Vulkan.CommandChains] Scheduling with {0} active frame-op resource planner states.",
-                frameOpSwitchingState.ActiveKeys.Count);
-        }
-
-        using CommandChainResourcePlanReadScope resourcePlanReadScope = BeginCommandChainResourcePlanReadScope(resourcePlanRevision);
-        ulong fastScheduleSignature = preparedFastScheduleSignature ?? 0UL;
-        if (!preparedFastScheduleSignature.HasValue)
-        {
-            using VulkanCpuStageScope cpuStage =
-                new(_frameTelemetry, EVulkanCpuStage.CommandChainFastSignature);
-            fastScheduleSignature = ComputeCommandChainFastScheduleSignature(
+        CommandChainScheduleCacheIdentity cacheIdentity = new(
+            staticOps.Count,
+            volatileOps.Count,
+            frameOpsSignature,
+            volatileSignature,
+            resourcePlanRevision,
+            resourceVersionSignature,
+            descriptorVersionSignature,
+            preparedRecordingTarget);
+        if (TryReuseCachedCommandChainSchedule(
                 imageIndex,
-                staticOps,
-                volatileOps,
-                resourcePlanRevision);
+                in cacheIdentity,
+                out CommandChainSchedule? cachedSchedule,
+                out stats))
+        {
+            return cachedSchedule;
         }
         if (ShouldBypassCommandChainScheduleForStabilityGuard(
                 imageIndex,
@@ -150,7 +154,8 @@ public unsafe partial class VulkanRenderer
                 volatileOps,
                 resourcePlanRevision,
                 excludeStaticQueryBrackets,
-                packets);
+                packets,
+                preparedRecordingTarget);
         }
         using VulkanCpuStageScope scheduleEvaluationStage =
             new(_frameTelemetry, EVulkanCpuStage.CommandChainScheduleEvaluation);
@@ -181,7 +186,10 @@ public unsafe partial class VulkanRenderer
                 0,
                 resourcePlanRevision,
                 ReadOnlySpan<RenderPassChainGroup>.Empty);
-            CacheCommandChainSchedule(imageIndex, fastScheduleSignature, emptySchedule);
+            emptySchedule.PublishCacheIdentity(in cacheIdentity);
+            emptySchedule.PublishArtifactMutationGeneration(
+                CommandChains.SnapshotArtifactMutationGeneration());
+            CacheCommandChainSchedule(imageIndex, emptySchedule);
             ObserveCommandChainScheduleForStabilityGuard(imageIndex, resourcePlanRevision, in stats);
             return emptySchedule;
         }
@@ -253,19 +261,59 @@ public unsafe partial class VulkanRenderer
             {
                 dirtyReason = EvaluateCommandChainDirtyReason(chain, packet);
             }
+            if (dirtyReason != CommandChainDirtyReason.None &&
+                FrameDataReuseDiagnosticsEnabled)
+            {
+                Debug.VulkanEvery(
+                    $"Vulkan.CommandChains.DependencyMismatch.{GetHashCode()}.{dirtyReason}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan.CommandChains] Secondary dependency changed key={0}: {1}",
+                    key,
+                    DescribeCommandChainDirtyReason(chain, packet));
+            }
             if (CommandChainBenchmarkForceRerecord)
                 dirtyReason |= CommandChainDirtyReason.BenchmarkForced;
             bool secondaryExecutable = chain.SecondaryCommandBuffer.Handle != 0 && chain.SecondaryCommandBufferExecutable;
+            if (!secondaryExecutable &&
+                chain.SecondaryCommandBuffer.Handle != 0 &&
+                FrameDataReuseDiagnosticsEnabled)
+            {
+                Debug.VulkanEvery(
+                    $"Vulkan.CommandChains.ArtifactInvalid.{GetHashCode()}.{chain.RecordedArtifact.InvalidationReason}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan.CommandChains] Secondary artifact is not executable key={0} commandBuffer=0x{1:X} state={2} invalidation={3} generation={4}.",
+                    key,
+                    chain.SecondaryCommandBuffer.Handle,
+                    chain.RecordedArtifact.State,
+                    chain.RecordedArtifact.InvalidationReason,
+                    chain.RecordedArtifact.Generation);
+            }
+            VulkanImageEntryStateMismatch imageEntryFailure = default;
             if (secondaryExecutable &&
-                !HasCompleteRecordedImageEntrySnapshot(
+                !HasCompleteCommandChainImageEntrySnapshot(
                     chain.SecondaryCommandBuffer,
-                    out _))
+                    out imageEntryFailure))
             {
                 // A first-use secondary can be executed once while its old
                 // image state is unknown, but it is not a reusable artifact.
                 // Re-record after successful submission establishes the
                 // per-image state instead of poisoning every merged primary.
                 secondaryExecutable = false;
+                if (traceCommandChains || FrameDataReuseDiagnosticsEnabled)
+                {
+                    Debug.VulkanEvery(
+                        $"Vulkan.CommandChains.ImageEntry.{GetHashCode()}.{imageEntryFailure.Kind}",
+                        TimeSpan.FromSeconds(2),
+                        "[Vulkan.CommandChains] Secondary image-entry snapshot is not reusable reason={0} commandBuffer=0x{1:X} image=0x{2:X} mip={3} layer={4} aspect={5} expected={6} actual={7}.",
+                        imageEntryFailure.Kind,
+                        chain.SecondaryCommandBuffer.Handle,
+                        imageEntryFailure.ImageHandle,
+                        imageEntryFailure.MipLevel,
+                        imageEntryFailure.ArrayLayer,
+                        imageEntryFailure.Aspect,
+                        imageEntryFailure.Expected,
+                        imageEntryFailure.Actual);
+                }
             }
             CommandChainDirtyReason effectiveDirtyReason = dirtyReason == CommandChainDirtyReason.None && !secondaryExecutable
                 ? CommandChainDirtyReason.SecondaryCommandBufferInvalid
@@ -404,6 +452,9 @@ public unsafe partial class VulkanRenderer
                 ResourcePlanGeneration = resourcePlanRevision,
             };
         schedule.PublishDependencySignature(scheduleDependencySignature);
+        schedule.PublishCacheIdentity(in cacheIdentity);
+        schedule.PublishArtifactMutationGeneration(
+            CommandChains.SnapshotArtifactMutationGeneration());
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
             reusedClean: false,
             recorded: false,
@@ -428,7 +479,7 @@ public unsafe partial class VulkanRenderer
             CommandChainQueueSchedule queueSchedule = BuildCommandChainQueueSchedule(
                 schedule,
                 CommandChainMultiQueueEnabled,
-                HasSecondaryGraphicsQueue,
+                DeviceContext.HasSecondaryGraphicsQueue,
                 families.ComputeFamilyIndex.HasValue,
                 families.TransferFamilyIndex.HasValue);
             ValidateCommandChainQueueSchedule(queueSchedule);
@@ -446,7 +497,7 @@ public unsafe partial class VulkanRenderer
             firstStructuralDirtyReason,
             firstDescriptorMismatch,
             firstResourcePlanMismatch);
-        CacheCommandChainSchedule(imageIndex, fastScheduleSignature, schedule);
+        CacheCommandChainSchedule(imageIndex, schedule);
         ObserveCommandChainScheduleForStabilityGuard(imageIndex, resourcePlanRevision, in stats);
         return schedule;
 

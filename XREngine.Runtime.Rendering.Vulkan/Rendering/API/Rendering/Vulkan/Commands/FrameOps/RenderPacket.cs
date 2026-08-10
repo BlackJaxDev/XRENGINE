@@ -14,6 +14,7 @@ internal sealed class RenderPacket
     private RenderPacketPayloadArena? _standalonePayloadArena;
     private RenderPacketPayloadArena? _payloadArena;
     private int _leaseCount;
+    private RecordedPacketKey _recordedPacketKey;
 
     public RenderViewKey ViewKey { get; private set; }
     public int PassIndex { get; private set; }
@@ -26,7 +27,8 @@ internal sealed class RenderPacket
     public int DispatchCount { get; private set; }
     public DescriptorBindingSnapshot DescriptorSnapshot { get; private set; }
     public ResourcePlanSnapshot ResourcePlanSnapshot { get; private set; }
-    public RecordedPacketKey RecordedPacketKey { get; private set; }
+    public ref readonly RecordedPacketKey RecordedPacketKey
+        => ref _recordedPacketKey;
     public ulong StructuralSignature { get; private set; }
     public ulong FrameDataSignature { get; private set; }
     public int SourceStartIndex { get; private set; }
@@ -114,7 +116,7 @@ internal sealed class RenderPacket
         DispatchCount = dispatches.Length;
         DescriptorSnapshot = descriptorSnapshot;
         ResourcePlanSnapshot = resourcePlanSnapshot;
-        RecordedPacketKey = default;
+        _recordedPacketKey = default;
         StructuralSignature = structuralSignature;
         FrameDataSignature = frameDataSignature;
         SourceStartIndex = sourceStartIndex;
@@ -209,7 +211,7 @@ internal sealed class RenderPacket
     internal void SetRecordedPacketKey(in RecordedPacketKey key)
     {
         EnsureMutable();
-        RecordedPacketKey = key;
+        _recordedPacketKey = key;
     }
 
     internal void Seal()

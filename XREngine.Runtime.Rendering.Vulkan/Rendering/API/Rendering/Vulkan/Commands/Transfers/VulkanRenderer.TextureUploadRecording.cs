@@ -14,7 +14,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanCommandRuntime
     {
         private VulkanTextureUploadPublicationState _textureUploadPublicationState
             => ResourceRuntime.Uploads.PublicationState;
@@ -197,12 +197,11 @@ namespace XREngine.Rendering.Vulkan
             {
                 VulkanImportedTextureUploadStagingResource staging = upload.StagingResources[i];
                 BufferImageCopy copyRegion = staging.CopyRegion;
-                CmdCopyBufferToImageTracked(
+                CopyPreparedUploadBufferToImage(
                     commandBuffer,
                     staging.Buffer,
                     upload.Image,
                     ImageLayout.TransferDstOptimal,
-                    1,
                     ref copyRegion);
             }
 
@@ -321,7 +320,6 @@ namespace XREngine.Rendering.Vulkan
             // these staging resources. They cannot remain reusable after the
             // canceled upload retires those buffers, images, or descriptors.
             _ = InvalidateCommandChainSecondaryCommandBuffersForDescriptorReferenceRelease();
-            MarkOpenXrPrimaryCommandArtifactOwnersDirty();
             MarkCommandBuffersDirty(reason);
 
             for (int i = 0; i < uploads.Count; i++)
@@ -330,7 +328,7 @@ namespace XREngine.Rendering.Vulkan
             uploads.Clear();
         }
 
-        private void CancelRecordedTextureUploadPublications(string reason)
+        internal void CancelRecordedTextureUploadPublications(string reason)
         {
             CancelRecordedTextureUploadSubmitBatch(reason);
 
@@ -343,32 +341,6 @@ namespace XREngine.Rendering.Vulkan
             _textureUploadPublicationState.PendingTimelinePublications.Clear();
         }
 
-        private void DrainCompletedRecordedTextureUploadPublications()
-        {
-            if (_textureUploadPublicationState.PendingTimelinePublications.Count == 0 || IsDeviceLost)
-                return;
-
-            for (int i = _textureUploadPublicationState.PendingTimelinePublications.Count - 1; i >= 0; i--)
-            {
-                PendingRecordedTextureUploadPublication pending = _textureUploadPublicationState.PendingTimelinePublications[i];
-                bool completed;
-                try
-                {
-                    completed = HasTimelineValueCompleted(_commandRuntime.Synchronization._graphicsTimelineSemaphore, pending.TimelineValue);
-                }
-                catch (InvalidOperationException)
-                {
-                    return;
-                }
-
-                if (!completed)
-                    continue;
-
-                _textureUploadPublicationState.PendingTimelinePublications.RemoveAt(i);
-                PublishRecordedTextureUploadAfterGpuCompletion(pending.Upload, pending.UploadSource);
-            }
-        }
-
         private void CancelRecordedTextureUpload(
             VulkanImportedTexturePendingUpload upload,
             string reason)
@@ -379,7 +351,7 @@ namespace XREngine.Rendering.Vulkan
                 VulkanTextureUploadGenerationState.Canceled,
                 reason);
 
-            if (!IsDeviceLost)
+            if (!_deviceLost)
                 upload.Texture.ReleasePreparedImportedUploadResources(upload);
 
             InvokeTextureUploadCanceled(upload);
@@ -447,7 +419,10 @@ namespace XREngine.Rendering.Vulkan
             for (int i = 0; i < upload.StagingResources.Length; i++)
             {
                 VulkanImportedTextureUploadStagingResource staging = upload.StagingResources[i];
-                RetireBuffer(staging.Buffer, staging.Memory);
+                RetireUploadBuffer(
+                    staging.Buffer,
+                    staging.Memory,
+                    "TextureUpload.Staging");
             }
         }
 

@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Threading;
+using System.Diagnostics;
 using Silk.NET.Vulkan;
 using XREngine.Rendering.Resources;
 
@@ -10,11 +11,17 @@ namespace XREngine.Rendering.Vulkan;
 /// persistent schedule artifacts. Native command execution remains supplied by
 /// the facade at the call boundary.
 /// </summary>
-internal sealed class VulkanCommandRuntime
+internal sealed unsafe partial class VulkanCommandRuntime
 {
+    private VulkanDeviceContext? _configuredDeviceContext;
+    private VulkanResourceRuntime? _configuredResourceRuntime;
+    private VulkanFrameTelemetry? _configuredFrameTelemetry;
+    private VulkanTrackedCommandEncoder? _primaryCommandEncoder;
+    private VulkanQueryCommandService? _queryCommandService;
     private CommandChainSchedule?[]? _scheduleCache;
     private readonly Dictionary<Type, object> _threadWorkspaces = [];
     private readonly object _threadWorkspacesGate = new();
+    private readonly VulkanFrameOperationScheduler _primaryOperationScheduler = new();
 
     internal VulkanProducerCompleteIndirectStream? PendingProducerCompleteIndirectStream { get; set; }
     internal bool ThreadLocalScratchDisposed { get; set; }
@@ -27,11 +34,253 @@ internal sealed class VulkanCommandRuntime
     public VulkanCommandBufferState CommandBuffers { get; } = new();
     public VulkanStateTracker StateTracker { get; } = new();
     public VulkanCommandSynchronizationState Synchronization { get; } = new();
+    public VulkanDynamicUiBatchTextOverlayRecorder DynamicUiOverlayRecorder { get; } = new();
+    public VulkanOpenXrCommandRecordingService OpenXrRecording { get; } = new();
+    public VulkanOpenXrEyeWorkerCommandService OpenXrEyeWorkers { get; } = new();
+
+    /// <summary>
+    /// Publishes the stable authorities used by native command encoding. Output
+    /// and planner authorities are deliberately absent: their frame-local facts
+    /// arrive only through frozen prepared inputs.
+    /// </summary>
+    internal void ConfigurePrimaryRecording(
+        VulkanDeviceContext deviceContext,
+        VulkanResourceRuntime resourceRuntime,
+        VulkanFrameTelemetry telemetry)
+    {
+        ArgumentNullException.ThrowIfNull(deviceContext);
+        ArgumentNullException.ThrowIfNull(resourceRuntime);
+        ArgumentNullException.ThrowIfNull(telemetry);
+
+        if (_configuredDeviceContext is not null &&
+            (!ReferenceEquals(_configuredDeviceContext, deviceContext) ||
+             !ReferenceEquals(_configuredResourceRuntime, resourceRuntime) ||
+             !ReferenceEquals(_configuredFrameTelemetry, telemetry)))
+        {
+            throw new InvalidOperationException(
+                "The Vulkan command runtime cannot be rebound to different authorities.");
+        }
+
+        _configuredDeviceContext = deviceContext;
+        _configuredResourceRuntime = resourceRuntime;
+        _configuredFrameTelemetry = telemetry;
+        resourceRuntime.ConfigureLifetimeCommandRuntime(this);
+        _queryCommandService ??= new VulkanQueryCommandService(this);
+        resourceRuntime.Queries.BindCommands(_queryCommandService);
+        OpenXrRecording.Configure(this, resourceRuntime, deviceContext);
+        OpenXrEyeWorkers.Configure(this, OpenXrRecording, deviceContext);
+    }
+
+    private VulkanDeviceContext DeviceContext
+        => _configuredDeviceContext ?? throw new InvalidOperationException(
+            "The Vulkan command runtime has not been configured for primary recording.");
+
+    private VulkanResourceRuntime ResourceRuntime
+        => _configuredResourceRuntime ?? throw new InvalidOperationException(
+            "The Vulkan command runtime has not been configured for primary recording.");
+
+    private VulkanFrameTelemetry FrameTelemetry
+        => _configuredFrameTelemetry ?? throw new InvalidOperationException(
+            "The Vulkan command runtime has not been configured for primary recording.");
+
+    private VulkanTrackedCommandEncoder PrimaryCommandEncoder
+        => _primaryCommandEncoder ??= new VulkanTrackedCommandEncoder(
+            DeviceContext.Api,
+            DeviceContext,
+            this,
+            ResourceRuntime,
+            FrameTelemetry);
+
+    private Vk Api => DeviceContext.Api;
+    private Vk VulkanApi => Api;
+    private VulkanCommandRuntime _commandRuntime => this;
+    private VulkanDeviceContext _deviceContext => DeviceContext;
+    private VulkanResourceRuntime _resourceRuntime => ResourceRuntime;
+    private VulkanFrameTelemetry _frameTelemetry => FrameTelemetry;
+
+    /// <summary>
+    /// Admits and begins a command-buffer recording without exposing device lifetime
+    /// state to the command encoder.
+    /// </summary>
+    internal void BeginRecording(
+        Vk api,
+        VulkanDeviceStateMachine deviceState,
+        CommandBuffer commandBuffer,
+        string operation,
+        CommandBufferUsageFlags flags = 0)
+    {
+        if (!deviceState.IsOperational)
+        {
+            throw new InvalidOperationException(
+                $"Cannot start Vulkan operation '{operation}' while device state is {deviceState.State}.");
+        }
+
+        Recorder.Begin(api, commandBuffer, flags);
+    }
+
+    /// <summary>
+    /// Resets renderer-independent bind and dependency state for a newly begun
+    /// command buffer. The caller supplies the encoder that owns lifetime
+    /// tracking, so no renderer facade participates in the recording path.
+    /// </summary>
+    internal void ResetBindState(VulkanTrackedCommandEncoder encoder, CommandBuffer commandBuffer)
+    {
+        ArgumentNullException.ThrowIfNull(encoder);
+        ulong handle = unchecked((ulong)commandBuffer.Handle);
+        if (handle == 0)
+            return;
+
+        CommandBufferBindState state = new()
+        {
+            RecordingGeneration = unchecked((ulong)Interlocked.Increment(ref CommandBuffers.RecordingGeneration)),
+        };
+        lock (CommandBuffers.BindStateGate)
+            CommandBuffers.BindStates[handle] = state;
+        encoder.BeginTracking(commandBuffer);
+    }
+
+    /// <summary>Returns a generation-owned graphics command pool for the calling thread.</summary>
+    internal unsafe CommandPool GetThreadGraphicsCommandPool(
+        Vk api,
+        VulkanDeviceContext deviceContext,
+        VulkanResourceRuntime resources)
+    {
+        if (!deviceContext.IsOperational)
+            throw new InvalidOperationException($"Cannot create a command pool while device state is {deviceContext.State}.");
+
+        int threadId = Environment.CurrentManagedThreadId;
+        lock (Pools.Gate)
+        {
+            if (Pools.GraphicsByThread.TryGetValue(threadId, out CommandPool pool) && pool.Handle != 0)
+                return pool;
+
+            uint queueFamily = deviceContext.QueueFamilies.GraphicsFamilyIndex
+                ?? throw new InvalidOperationException("Graphics queue family is not available.");
+            CommandPoolCreateInfo createInfo = new()
+            {
+                SType = StructureType.CommandPoolCreateInfo,
+                QueueFamilyIndex = queueFamily,
+                Flags = CommandPoolCreateFlags.ResetCommandBufferBit | CommandPoolCreateFlags.TransientBit,
+            };
+            if (api.CreateCommandPool(deviceContext.Device, ref createInfo, null, out pool) != Result.Success)
+                throw new InvalidOperationException("Failed to create a Vulkan graphics command pool.");
+
+            resources.Lifetime.Tracker.RegisterResource(
+                new VulkanResourceLifetimeKey(ObjectType.CommandPool, pool.Handle),
+                $"CommandPool.QueueFamily.{queueFamily}",
+                externallyOwned: false);
+            Pools.GraphicsByThread[threadId] = pool;
+            if (Pools.PrimaryGraphics.Handle == 0)
+                Pools.PrimaryGraphics = pool;
+            return pool;
+        }
+    }
+
+    internal CommandBuffer AllocateTrackedCommandBuffer(
+        Vk api,
+        VulkanDeviceContext deviceContext,
+        VulkanResourceRuntime resources,
+        CommandPool pool,
+        CommandBufferLevel level,
+        string owner)
+    {
+        if (!deviceContext.IsOperational)
+            throw new InvalidOperationException($"Cannot allocate a command buffer while device state is {deviceContext.State}.");
+        if (pool.Handle == 0)
+            throw new ArgumentException("A live command pool is required.", nameof(pool));
+
+        CommandBufferAllocateInfo allocateInfo = new()
+        {
+            SType = StructureType.CommandBufferAllocateInfo,
+            CommandPool = pool,
+            Level = level,
+            CommandBufferCount = 1,
+        };
+        if (api.AllocateCommandBuffers(deviceContext.Device, ref allocateInfo, out CommandBuffer commandBuffer) != Result.Success ||
+            commandBuffer.Handle == 0)
+        {
+            throw new InvalidOperationException($"Failed to allocate Vulkan command buffer for {owner}.");
+        }
+
+        resources.RegisterSynchronousCommandBuffer(
+            commandBuffer,
+            pool,
+            level,
+            owner);
+        return commandBuffer;
+    }
+
+    /// <summary>
+    /// Performs the native portion of a tracked queue submission under the
+    /// command authority's device-admission and queue-serialization boundary.
+    /// Lifetime and image-state publication are intentionally owned by the
+    /// resource and synchronization authorities immediately around this call.
+    /// </summary>
+    internal Result SubmitToQueueTracked(
+        Vk api,
+        VulkanDeviceContext deviceContext,
+        VulkanFrameTelemetry telemetry,
+        Queue queue,
+        ref SubmitInfo submitInfo,
+        Fence fence,
+        string operation)
+    {
+        if (!deviceContext.IsOperational)
+        {
+            Synchronization.RecordQueueOperation(
+                deviceContext.State,
+                "submit-rejected",
+                queue,
+                Result.ErrorDeviceLost,
+                0,
+                operation);
+            return Result.ErrorDeviceLost;
+        }
+
+        using VulkanQueueOperationLease queueOperation = VulkanQueueOperationLease.TryEnter(
+            CommandBuffers.OneTimeSubmitGate,
+            deviceContext.StateMachine,
+            telemetry);
+        if (!queueOperation.Acquired)
+        {
+            Synchronization.RecordQueueOperation(
+                deviceContext.State,
+                "submit-rejected",
+                queue,
+                Result.ErrorDeviceLost,
+                0,
+                operation);
+            return Result.ErrorDeviceLost;
+        }
+
+        Result result;
+        using (VulkanCpuStageScope cpuStage = new(telemetry, EVulkanCpuStage.QueueSubmit))
+            result = api.QueueSubmit(queue, 1, ref submitInfo, fence);
+
+        deviceContext.ObserveNativeResult(operation, result);
+        Synchronization.RecordQueueOperation(
+            deviceContext.State,
+            "submit",
+            queue,
+            result,
+            0,
+            operation);
+        if (result == Result.Success)
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanQueueSubmit();
+        return result;
+    }
 
     internal VulkanExactInvalidationResult InvalidateCachedCommandBuffers(
         ReadOnlySpan<ulong> dependentCommandBuffers,
+        string reason)
+        => InvalidateCachedCommandBuffersCore(
+            dependentCommandBuffers,
+            reason,
+            FrameTelemetry);
+
+    private VulkanExactInvalidationResult InvalidateCachedCommandBuffersCore(
+        ReadOnlySpan<ulong> dependentCommandBuffers,
         string reason,
-        VulkanOutputRuntime outputRuntime,
         VulkanFrameTelemetry telemetry)
     {
         using VulkanCpuStageScope dirtyPropagationStage =
@@ -72,12 +321,10 @@ internal sealed class VulkanCommandRuntime
             }
         }
 
-        lock (outputRuntime.OpenXrBackend.PrimaryCommandArtifactOwnersLock)
+        lock (CommandBuffers.OpenXrPrimaryOwnersGate)
         {
-            Dictionary<ulong, PrimaryCommandArtifactOwner> owners =
-                outputRuntime.OpenXrBackend
-                    .GetPrimaryCommandArtifactOwners<PrimaryCommandArtifactOwner>();
-            foreach (PrimaryCommandArtifactOwner owner in owners.Values)
+            foreach (PrimaryCommandArtifactOwner owner in
+                     CommandBuffers.OpenXrPrimaryOwners.Values)
             {
                 if (!ContainsHandle(
                         dependentCommandBuffers,
@@ -289,6 +536,7 @@ internal sealed class VulkanCommandRuntime
         CommandBuffer retiring = commandBuffer;
         VulkanRetirementTicket ticket =
             resourceRuntime.PrepareCommandBufferRetirement(
+                this,
                 retiring,
                 owner);
         if (!resourceRuntime.IsCommandBufferRetirementReady(
@@ -326,6 +574,66 @@ internal sealed class VulkanCommandRuntime
     {
         CommandBuffers.RemoveBindState(commandBuffer);
         Synchronization.RemoveRecordedImageLayouts(commandBuffer);
+    }
+
+    /// <summary>
+    /// Executes the common worker lifecycle for an already-frozen recording batch.
+    /// </summary>
+    internal void ExecuteCommandChainRecordingWorker(CommandChainRecordingWorkerState worker)
+    {
+        VulkanCommandChainRecordingBatch? batch = worker.Batch;
+        VulkanPreparedWorkerRecordingContext? context = batch?.PreparedWorkerContext;
+        if (batch is null || context?.Telemetry is null)
+            return;
+
+        using VulkanCpuStageScope cpuStage = new(context.Telemetry, EVulkanCpuStage.SecondaryRecording);
+        long workerStart = Stopwatch.GetTimestamp();
+        Interlocked.Increment(ref batch.WorkersStarted);
+        UpdateMinimum(ref batch.FirstWorkerStartTimestamp, workerStart);
+        UpdateMaximum(ref batch.MaximumQueueDelayTimestamp, workerStart - batch.DispatchTimestamp);
+        int concurrentWorkers = Interlocked.Increment(ref batch.ConcurrentWorkers);
+        UpdateMaximum(ref batch.PeakConcurrentWorkers, concurrentWorkers);
+        try
+        {
+            worker.LastFrameId = context.FrameId;
+            for (int jobIndex = 0; jobIndex < batch.JobCount; jobIndex++)
+            {
+                if (Volatile.Read(ref batch.Error) is not null ||
+                    Volatile.Read(ref batch.CancelRequested) != 0)
+                    break;
+                if (batch.RecordJobWorkerIndices[jobIndex] != worker.WorkerIndex)
+                    continue;
+
+                try
+                {
+                    RecordPreparedMeshCommandChain(
+                        batch,
+                        batch.RecordJobChainIndices[jobIndex]);
+                }
+                catch (Exception ex)
+                {
+                    Interlocked.CompareExchange(ref batch.Error, ex, null);
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            long workerCompletion = Stopwatch.GetTimestamp();
+            Interlocked.Add(ref batch.WorkerRecordTimestampTotal, workerCompletion - workerStart);
+            UpdateMaximum(ref batch.LastWorkerCompletionTimestamp, workerCompletion);
+            Interlocked.Decrement(ref batch.ConcurrentWorkers);
+            Interlocked.Increment(ref batch.WorkersCompleted);
+            worker.Batch = null;
+            bool lastWorker = Workers.Countdown.Signal();
+            if (lastWorker)
+            {
+                Volatile.Write(ref Workers.ActiveWorkerCount, 0);
+                Workers.Idle.Set();
+                if (batch.Abandoned)
+                    batch.ClearReferences();
+            }
+        }
     }
 
     internal void DeferSecondaryCommandBufferFree(
@@ -372,6 +680,42 @@ internal sealed class VulkanCommandRuntime
                 return true;
 
         return false;
+    }
+
+    private static void UpdateMaximum(ref long target, long candidate)
+    {
+        long current = Volatile.Read(ref target);
+        while (candidate > current)
+        {
+            long observed = Interlocked.CompareExchange(ref target, candidate, current);
+            if (observed == current)
+                return;
+            current = observed;
+        }
+    }
+
+    private static void UpdateMaximum(ref int target, int candidate)
+    {
+        int current = Volatile.Read(ref target);
+        while (candidate > current)
+        {
+            int observed = Interlocked.CompareExchange(ref target, candidate, current);
+            if (observed == current)
+                return;
+            current = observed;
+        }
+    }
+
+    private static void UpdateMinimum(ref long target, long candidate)
+    {
+        long current = Volatile.Read(ref target);
+        while (candidate < current)
+        {
+            long observed = Interlocked.CompareExchange(ref target, candidate, current);
+            if (observed == current)
+                return;
+            current = observed;
+        }
     }
 
     public CommandChainSchedule? GetReusableSchedule(int slot, int slotCount)

@@ -42,7 +42,7 @@ namespace XREngine.Rendering.Vulkan
                 "[Vulkan] Recreating swapchain immediately. Reason={0}",
                 reason);
 
-            if (!RecreateDesktopSwapchainCore())
+            if (!OutputRuntime.TryRecreateDesktopSwapchain())
             {
                 TimeSpan failedElapsed = Stopwatch.GetElapsedTime(recreateStart);
                 Debug.VulkanEvery(

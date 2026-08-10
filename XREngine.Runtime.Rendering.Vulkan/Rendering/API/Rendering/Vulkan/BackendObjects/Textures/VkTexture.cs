@@ -5,7 +5,10 @@ using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan;
-internal abstract class VkTexture<T>(VulkanRenderer api, T data) : VkObject<T>(api, data) where T : XRTexture
+internal abstract class VkTexture<T>(
+    VulkanBackendObjectContext backendContext,
+    IRenderApiWrapperOwner owner,
+    T data) : VkObject<T>(backendContext, owner, data) where T : XRTexture
 {
     public XREvent<VulkanPrePushDataCallback>? PrePushData;
     public XREvent<VkTexture<T>>? PostPushData;
@@ -250,7 +253,7 @@ internal abstract class VkTexture<T>(VulkanRenderer api, T data) : VkObject<T>(a
             return;
         }
 
-        if (Renderer.GetOrCreateAPIRenderObject(fbo, generateNow: true) is not VkFrameBuffer vkFrameBuffer || !vkFrameBuffer.IsGenerated)
+        if (GetBackendWrapper(fbo, generateNow: true) is not VkFrameBuffer vkFrameBuffer || !vkFrameBuffer.IsGenerated)
         {
             Debug.VulkanWarningEvery(
                 $"Vulkan.Texture.AttachFboUnavailable.{fbo.GetHashCode()}",
@@ -343,11 +346,11 @@ internal abstract class VkTexture<T>(VulkanRenderer api, T data) : VkObject<T>(a
         if (string.IsNullOrWhiteSpace(resourceName))
             return true;
 
-        if (!Renderer.ResourceAllocator.TryGetPhysicalGroupForResource(resourceName, out group) || group is null)
+        if (!BackendContext.Planner.TryGetPhysicalImageGroup(resourceName, out group) || group is null)
             return true;
 
         if (ensureAllocated &&
-            !group.TryEnsureAllocated(Renderer, out string allocationFailureReason))
+            !group.TryEnsureAllocated(BackendContext, out string allocationFailureReason))
         {
             failureReason = allocationFailureReason;
             group = null;

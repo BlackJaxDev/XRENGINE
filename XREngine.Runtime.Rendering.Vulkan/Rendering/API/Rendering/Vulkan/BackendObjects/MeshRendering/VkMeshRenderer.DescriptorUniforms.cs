@@ -56,7 +56,7 @@ private bool TryResolveEngineUniformBuffer(DescriptorBindingInfo binding, int fr
 			{
 				Buffer = target.Buffer,
 				Offset = binding.DescriptorType == DescriptorType.UniformBufferDynamic &&
-					!Renderer.IsDescriptorHeapDrawBindingActive ? 0UL : target.Offset,
+					BackendContext.Descriptors.Heap.ActiveBackend != EVulkanDescriptorBackend.DescriptorHeap ? 0UL : target.Offset,
 				Range = size,
 			};
 
@@ -95,7 +95,7 @@ private bool TryResolveEngineUniformBuffer(DescriptorBindingInfo binding, int fr
 			{
 				Buffer = target.Buffer,
 				Offset = binding.DescriptorType == DescriptorType.UniformBufferDynamic &&
-					!Renderer.IsDescriptorHeapDrawBindingActive ? 0UL : target.Offset,
+					BackendContext.Descriptors.Heap.ActiveBackend != EVulkanDescriptorBackend.DescriptorHeap ? 0UL : target.Offset,
 				Range = size,
 			};
 

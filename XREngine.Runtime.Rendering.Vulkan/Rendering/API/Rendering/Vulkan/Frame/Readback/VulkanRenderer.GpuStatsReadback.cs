@@ -11,7 +11,9 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private const int GpuRenderStatsReadbackRingSize = 32;
+    private static bool IndirectTraceEnabled
+        => XREnvironment.IsEnabled(
+            XREngineEnvironmentVariables.VulkanIndirectTrace);
     private const uint GpuRenderStatsReadbackInlineUIntCapacity = 64u;
 
 
@@ -26,9 +28,10 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        for (int i = 0; i < _frameTelemetry._gpuRenderStatsReadbackSlots.Length; ++i)
+        GpuRenderStatsReadbackSlot?[] slots = OutputRuntime.Capture.GpuStatsReadbackSlots;
+        for (int i = 0; i < slots.Length; ++i)
         {
-            GpuRenderStatsReadbackSlot? slot = _frameTelemetry._gpuRenderStatsReadbackSlots[i];
+            GpuRenderStatsReadbackSlot? slot = slots[i];
             if (slot is not null && slot.Active)
                 TryConsumeGpuRenderStatsReadback(slot);
         }
@@ -159,7 +162,7 @@ public unsafe partial class VulkanRenderer
         };
         CmdCopyBufferTracked(slot.CommandBuffer, sourceHandle, slot.StagingBuffer, 1, &copy);
 
-        if (Api.EndCommandBuffer(slot.CommandBuffer) != Result.Success)
+        if (EndCommandBufferTracked(slot.CommandBuffer) != Result.Success)
             return false;
 
         CommandBuffer readbackCommandBuffer = slot.CommandBuffer;
@@ -197,14 +200,15 @@ public unsafe partial class VulkanRenderer
 
     private GpuRenderStatsReadbackSlot? AcquireGpuRenderStatsReadbackSlot()
     {
-        for (int i = 0; i < _frameTelemetry._gpuRenderStatsReadbackSlots.Length; ++i)
+        GpuRenderStatsReadbackSlot?[] slots = OutputRuntime.Capture.GpuStatsReadbackSlots;
+        for (int i = 0; i < slots.Length; ++i)
         {
-            int index = (_frameTelemetry._gpuRenderStatsReadbackCursor + i) % _frameTelemetry._gpuRenderStatsReadbackSlots.Length;
-            GpuRenderStatsReadbackSlot slot = _frameTelemetry._gpuRenderStatsReadbackSlots[index] ??= new GpuRenderStatsReadbackSlot();
+            int index = (OutputRuntime.Capture.GpuStatsReadbackCursor + i) % slots.Length;
+            GpuRenderStatsReadbackSlot slot = slots[index] ??= new GpuRenderStatsReadbackSlot();
             if (slot.Active && !TryConsumeGpuRenderStatsReadback(slot))
                 continue;
 
-            _frameTelemetry._gpuRenderStatsReadbackCursor = (index + 1) % _frameTelemetry._gpuRenderStatsReadbackSlots.Length;
+            OutputRuntime.Capture.GpuStatsReadbackCursor = (index + 1) % slots.Length;
             return slot;
         }
 
@@ -234,12 +238,9 @@ public unsafe partial class VulkanRenderer
 
         if (slot.Fence.Handle == 0)
         {
-            FenceCreateInfo fenceCreateInfo = new()
-            {
-                SType = StructureType.FenceCreateInfo,
-                Flags = FenceCreateFlags.SignaledBit,
-            };
-            if (Api!.CreateFence(_deviceContext.Device, in fenceCreateInfo, null, out slot.Fence) != Result.Success)
+            if (ReadbackOutputResources.EnsureFence(
+                    ref slot.Fence,
+                    "GpuStatsReadback") != Result.Success)
                 return false;
 
             SetDebugObjectName(ObjectType.Fence, slot.Fence.Handle, "GpuStatsReadback.Fence");
@@ -249,9 +250,16 @@ public unsafe partial class VulkanRenderer
             return true;
 
         if (slot.StagingBuffer.Handle != 0)
-            DestroyBuffer(slot.StagingBuffer, slot.StagingMemory);
+            ReadbackOutputResources.RetireStagingBuffer(
+                BackendObjectContext,
+                slot.StagingBuffer,
+                slot.StagingMemory,
+                "GpuStatsReadback.StagingResize");
 
-        (slot.StagingBuffer, slot.StagingMemory) = CreateReadbackBuffer(byteCount);
+        (slot.StagingBuffer, slot.StagingMemory) = ReadbackOutputResources.CreateStagingBuffer(
+            BackendObjectContext,
+            byteCount,
+            "GpuStatsReadback.Staging");
         slot.CapacityBytes = byteCount;
         SetDebugObjectName(ObjectType.Buffer, slot.StagingBuffer.Handle, "GpuStatsReadback.Staging");
         return slot.StagingBuffer.Handle != 0;
@@ -436,14 +444,14 @@ public unsafe partial class VulkanRenderer
 
     private void DisposeGpuRenderStatsReadbacks()
     {
-        for (int i = 0; i < _frameTelemetry._gpuRenderStatsReadbackSlots.Length; ++i)
+        GpuRenderStatsReadbackSlot?[] slots = OutputRuntime.Capture.GpuStatsReadbackSlots;
+        for (int i = 0; i < slots.Length; ++i)
         {
-            GpuRenderStatsReadbackSlot? slot = _frameTelemetry._gpuRenderStatsReadbackSlots[i];
+            GpuRenderStatsReadbackSlot? slot = slots[i];
             if (slot is null)
                 continue;
 
-            if (slot.Fence.Handle != 0)
-                Api!.DestroyFence(_deviceContext.Device, slot.Fence, null);
+            ReadbackOutputResources.DestroyFence(ref slot.Fence);
             if (slot.CommandBuffer.Handle != 0)
             {
                 CommandBuffer commandBuffer = slot.CommandBuffer;
@@ -451,7 +459,11 @@ public unsafe partial class VulkanRenderer
                 RemoveCommandBufferBindState(slot.CommandBuffer);
             }
             if (slot.StagingBuffer.Handle != 0)
-                DestroyBuffer(slot.StagingBuffer, slot.StagingMemory);
+                ReadbackOutputResources.RetireStagingBuffer(
+                    BackendObjectContext,
+                    slot.StagingBuffer,
+                    slot.StagingMemory,
+                    "GpuStatsReadback.Dispose");
 
             slot.Active = false;
             slot.Fence = default;

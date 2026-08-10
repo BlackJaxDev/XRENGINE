@@ -18,6 +18,11 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
+    private static bool VulkanFrameDiagnosticsTraceEnabled
+        => XREnvironment.IsEnabled(
+               XREngineEnvironmentVariables.VulkanRecordingDiag) ||
+           XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||
+           XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw;
     private const int MaxMergedFrameOpRegistryCacheEntries = 8;
     private const int MaxActivePassMetadataFilterCacheEntries = 32;
 
@@ -58,25 +63,25 @@ public unsafe partial class VulkanRenderer
 
     private void ReleaseCurrentThreadStateTrackingCaches()
     {
-        if (ReferenceEquals(CommandThreadContext.RenderStateOwner, this))
+        if (IsCommandThreadOwner(CommandThreadContext.RenderStateOwner))
         {
             CommandThreadContext.RenderStateOwner = null;
             CommandThreadContext.RenderState = null;
         }
 
-        if (ReferenceEquals(CommandThreadContext.ResourcePlannerRuntimeStateOwner, this))
+        if (IsCommandThreadOwner(CommandThreadContext.ResourcePlannerRuntimeStateOwner))
         {
             CommandThreadContext.ResourcePlannerRuntimeStateOwner = null;
             CommandThreadContext.ResourcePlannerRuntimeState = null;
         }
 
-        if (ReferenceEquals(CommandThreadContext.FrameOpResourcePlannerSwitchingStateOwner, this))
+        if (IsCommandThreadOwner(CommandThreadContext.FrameOpResourcePlannerSwitchingStateOwner))
         {
             CommandThreadContext.FrameOpResourcePlannerSwitchingStateOwner = null;
             CommandThreadContext.FrameOpResourcePlannerSwitchingState = null;
         }
 
-        if (ReferenceEquals(CommandThreadContext.BindingCaptureWorkspaceOwner, this))
+        if (IsCommandThreadOwner(CommandThreadContext.BindingCaptureWorkspaceOwner))
         {
             CommandThreadContext.BindingCaptureWorkspaceOwner = null;
             CommandThreadContext.BindingCaptureWorkspace = null;
@@ -85,7 +90,7 @@ public unsafe partial class VulkanRenderer
         CommandThreadContext.FrameOpWorkspace?.Reset();
         CommandThreadContext.FrameOpWorkspace = null;
 
-        if (!ReferenceEquals(CommandThreadContext.FramebufferBindingOwner, this))
+        if (!IsCommandThreadOwner(CommandThreadContext.FramebufferBindingOwner))
             return;
 
         CommandThreadContext.FramebufferBindingOwner = null;
@@ -112,22 +117,25 @@ public unsafe partial class VulkanRenderer
     private VulkanFramePlannerMutableState<
         VulkanFrameOpPlannerStateKey,
         FrameOpResourcePlannerSwitchingState,
-        QueueOwnershipConfigCacheEntry,
+        VulkanQueueOwnershipConfigCacheEntry,
         MergedFrameOpRegistryCacheEntry,
         FrameOpRegistryCacheSource,
         ActivePassMetadataFilterCacheEntry> PlannerMutableState
         => _framePlanner.MutableState;
     private FrameOpResourcePlannerSwitchingState _frameOpResourcePlannerSwitchingState => PlannerMutableState.DefaultSwitchingState;
+    private bool IsCommandThreadOwner(object? owner)
+        => ReferenceEquals(owner, this) || ReferenceEquals(owner, _commandRuntime);
+
     private VulkanStateTracker ActiveState =>
-        ReferenceEquals(CommandThreadContext.RenderStateOwner, this) &&
+        IsCommandThreadOwner(CommandThreadContext.RenderStateOwner) &&
         CommandThreadContext.RenderState is not null
             ? CommandThreadContext.RenderState
             : _state;
     private bool HasThreadResourcePlannerRuntimeState =>
-        ReferenceEquals(CommandThreadContext.ResourcePlannerRuntimeStateOwner, this) &&
+        IsCommandThreadOwner(CommandThreadContext.ResourcePlannerRuntimeStateOwner) &&
         CommandThreadContext.ResourcePlannerRuntimeState.HasValue;
     private FrameOpResourcePlannerSwitchingState ActiveFrameOpResourcePlannerSwitchingState =>
-        ReferenceEquals(CommandThreadContext.FrameOpResourcePlannerSwitchingStateOwner, this) &&
+        IsCommandThreadOwner(CommandThreadContext.FrameOpResourcePlannerSwitchingStateOwner) &&
         CommandThreadContext.FrameOpResourcePlannerSwitchingState is not null
             ? CommandThreadContext.FrameOpResourcePlannerSwitchingState
             : PublishedResourcePlannerRuntimeState.FrameOpResourcePlannerSwitchingState ??
@@ -143,7 +151,7 @@ public unsafe partial class VulkanRenderer
             "Allocate persistent resources during planning or upload preparation.");
     }
     private bool HasThreadFramebufferBindingState
-        => ReferenceEquals(CommandThreadContext.FramebufferBindingOwner, this);
+        => IsCommandThreadOwner(CommandThreadContext.FramebufferBindingOwner);
     private XRFrameBuffer? ActiveBoundDrawFrameBuffer
     {
         get => HasThreadFramebufferBindingState
@@ -540,7 +548,7 @@ public unsafe partial class VulkanRenderer
     private ref double _queueOverlapFrameDeltaEmaMs => ref _framePlanner.QueueOverlapFrameDeltaEmaMilliseconds;
     private ref double _queueOverlapModeStartFrameDeltaMs => ref _framePlanner.QueueOverlapModeStartFrameDeltaMilliseconds;
     private ref ulong _queueOwnershipConfigCacheFrameId => ref _framePlanner.QueueOwnershipConfigCacheFrameId;
-    private List<QueueOwnershipConfigCacheEntry> _queueOwnershipConfigCache => PlannerMutableState.QueueOwnershipCache;
+    private List<VulkanQueueOwnershipConfigCacheEntry> _queueOwnershipConfigCache => PlannerMutableState.QueueOwnershipCache;
     private List<MergedFrameOpRegistryCacheEntry> _mergedFrameOpRegistryCache => PlannerMutableState.MergedRegistryCache;
     private List<VulkanFrameOpPlannerStateKey> _frameOpPlannerStateKeyScratch => PlannerMutableState.PlannerStateKeyScratch;
     private List<VulkanFrameOpPlannerStateKey> _frameOpPlannerStateEvictionScratch => PlannerMutableState.PlannerStateEvictionScratch;
@@ -583,15 +591,6 @@ public unsafe partial class VulkanRenderer
         "AtmosphereColor",
         "VolumetricFogColor"
     };
-
-    private readonly record struct QueueOverlapMetrics(
-        int ComputePassCount,
-        int TransferUsageCount,
-        int OverlapCandidatePassCount,
-        int TransferCost,
-        int QueueOwnershipTransfers,
-        int BarrierStageFlushes,
-        TimeSpan FrameDelta);
 
     internal readonly record struct FrameOpRegistryCacheSource(
         RenderResourceRegistry Registry,
@@ -638,29 +637,6 @@ public unsafe partial class VulkanRenderer
         public ulong FrameOpsSignature { get; set; } = frameOpsSignature;
         public RenderResourceRegistry MergedRegistry { get; set; } = mergedRegistry;
         public ulong LastUsedFrameId { get; set; } = lastUsedFrameId;
-    }
-
-    internal sealed class FrameOpResourcePlannerSwitchingState
-    {
-        public Dictionary<VulkanFrameOpPlannerStateKey, ResourcePlannerRuntimeState> States { get; } =
-            new(VulkanFrameOpPlannerStateKeyComparer.Instance);
-        public Dictionary<VulkanFrameOpPlannerStateKey, ulong> LastUsedSerials { get; } =
-            new(VulkanFrameOpPlannerStateKeyComparer.Instance);
-        public HashSet<VulkanFrameOpPlannerStateKey> ActiveKeys { get; } =
-            new(VulkanFrameOpPlannerStateKeyComparer.Instance);
-        public ulong UsageSerial;
-        public bool SwitchingActive;
-        public bool MergedPlanActive;
-        public bool RecordingScopeActive;
-        public bool HasActiveKey;
-        public VulkanFrameOpPlannerStateKey ActiveKey;
-        public bool HasActiveContext;
-        public FrameOpContext ActiveContext;
-        public ResourcePlannerRuntimeState PreparationState;
-        public bool HasPreparationState;
-        public ulong PreparedFrameOpsSignature;
-        public ulong PreparedPlanRevision;
-        public bool HasPreparedPlan;
     }
 
     private Dictionary<VulkanFrameOpPlannerStateKey, FrameOp[]> _frameOpPlannerPartitionCache => PlannerMutableState.PartitionCache;
@@ -1348,6 +1324,10 @@ public unsafe partial class VulkanRenderer
 
             state.ResourceAllocator.CommitReusedPhysicalImageMetadata();
             RestoreResourcePlannerRuntimeStateCore(in state);
+            _framePlanner.PublishPlan(
+                state.ResourcePlannerRevision,
+                state.CompiledRenderGraph,
+                state.BarrierPlanner);
             return switchingState;
         }
     }
@@ -1356,6 +1336,7 @@ public unsafe partial class VulkanRenderer
     {
         ResourcePlannerRuntimeState publishedState = state;
         publishedState.FrameOpResourcePlannerSwitchingState ??= _frameOpResourcePlannerSwitchingState;
+        ResourceRuntime.Planner.Publish(publishedState.ResourceAllocator);
         _framePlanner.PublishResourcePlannerGeneration(
             new ResourcePlannerRuntimeGeneration(publishedState));
     }

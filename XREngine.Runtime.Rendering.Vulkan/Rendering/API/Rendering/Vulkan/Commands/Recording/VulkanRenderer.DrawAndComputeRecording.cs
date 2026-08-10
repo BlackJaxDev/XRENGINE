@@ -14,19 +14,13 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanCommandRuntime
     {
         private void RecordIndirectDrawOp(CommandBuffer commandBuffer, IndirectDrawOp op, bool allowInlineBarrier = true)
         {
-            var indirectBuffer = op.IndirectBuffer.BufferHandle;
-            if (indirectBuffer is null || !indirectBuffer.HasValue)
-            {
-                Debug.VulkanWarning("RecordIndirectDrawOp: Invalid indirect buffer.");
-                return;
-            }
+            Silk.NET.Vulkan.Buffer indirectBuffer = RequirePreparedBuffer(op.IndirectBuffer, "indirect draw command");
 
-            bool plannerCoversIndirectBarrier = PlannerCoversIndirectBufferTransition(op.PassIndex, indirectBuffer.Value);
-            if (!plannerCoversIndirectBarrier && allowInlineBarrier)
+            if (allowInlineBarrier)
             {
                 MemoryBarrier memoryBarrier = new()
                 {
@@ -49,19 +43,9 @@ namespace XREngine.Rendering.Vulkan
 
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAdhocBarrier(emittedCount: 1, redundantCount: 0);
             }
-            else if (!plannerCoversIndirectBarrier)
-            {
-                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAdhocBarrier(emittedCount: 0, redundantCount: 1);
-            }
             else
             {
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAdhocBarrier(emittedCount: 0, redundantCount: 1);
-                Debug.VulkanWarningEvery(
-                    "Vulkan.IndirectBarrier.Overlap",
-                    TimeSpan.FromSeconds(2),
-                    "Indirect barrier overlap detected and suppressed: pass={0} drawCount={1}",
-                    op.PassIndex,
-                    op.DrawCount);
             }
 
             // Calculate the byte offset into the indirect buffer
@@ -69,7 +53,7 @@ namespace XREngine.Rendering.Vulkan
             TrackVulkanCommandBufferResource(
                 commandBuffer,
                 ObjectType.Buffer,
-                indirectBuffer.Value.Handle,
+                indirectBuffer.Handle,
                 "IndirectDraw.Commands");
 
             if (IndirectTraceEnabled)
@@ -80,7 +64,7 @@ namespace XREngine.Rendering.Vulkan
                     ResolvePassName(op.Context.PassMetadata, op.PassIndex),
                     op.Target?.Name ?? "<swapchain>",
                     op.Target?.GetHashCode() ?? 0,
-                    indirectBuffer.Value.Handle,
+                    indirectBuffer.Handle,
                     op.ParameterBuffer?.BufferHandle?.Handle ?? 0UL,
                     op.ByteOffset,
                     op.CountByteOffset,
@@ -102,7 +86,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             if (op.BindlessMaterialTextures is { } bindlessMaterialTextures &&
-                !TryBindGlobalMaterialTextureDescriptorSet(
+                !TryBindPreparedGlobalMaterialTextureDescriptorSet(
                     commandBuffer,
                     bindlessMaterialTextures.Program,
                     bindlessMaterialTextures.Consumer))
@@ -112,37 +96,34 @@ namespace XREngine.Rendering.Vulkan
 
             if (op.UseCount && _deviceContext.Capabilities.Supports(EVulkanDeviceCapability.DrawIndirectCount))
             {
-                var parameterBuffer = op.ParameterBuffer?.BufferHandle;
-                if (parameterBuffer is null || !parameterBuffer.HasValue)
-                {
-                    Debug.VulkanWarning("RecordIndirectDrawOp: Invalid parameter buffer for count draw.");
-                    return;
-                }
+                VkDataBuffer parameterResource = op.ParameterBuffer ?? throw new VulkanPlanPreconditionException(
+                    "The prepared indirect-count draw no longer has a parameter buffer.");
+                Silk.NET.Vulkan.Buffer parameterBuffer = RequirePreparedBuffer(parameterResource, "indirect draw count");
 
                 // The parameter buffer contains the draw count at offset 0 (uint)
                 TrackVulkanCommandBufferResource(
                     commandBuffer,
                     ObjectType.Buffer,
-                    parameterBuffer.Value.Handle,
+                    parameterBuffer.Handle,
                     "IndirectDraw.Count");
                 if (_deviceContext.MutableCapabilities._usesCoreDrawIndirectCountCommands)
                 {
                     Api!.CmdDrawIndexedIndirectCount(
                         commandBuffer,
-                        indirectBuffer.Value,
+                        indirectBuffer,
                         bufferOffset,
-                        parameterBuffer.Value,
+                        parameterBuffer,
                         (ulong)op.CountByteOffset,
                         op.DrawCount,
                         op.Stride);
                 }
-                else if (_khrDrawIndirectCount is not null)
+                else if (DeviceContext.ExtensionFunctions.KhrDrawIndirectCount is { } drawIndirectCount)
                 {
-                    _khrDrawIndirectCount.CmdDrawIndexedIndirectCount(
+                    drawIndirectCount.CmdDrawIndexedIndirectCount(
                         commandBuffer,
-                        indirectBuffer.Value,
+                        indirectBuffer,
                         bufferOffset,
-                        parameterBuffer.Value,
+                        parameterBuffer,
                         (ulong)op.CountByteOffset,
                         op.DrawCount,
                         op.Stride);
@@ -164,7 +145,7 @@ namespace XREngine.Rendering.Vulkan
                 // Prefer contiguous multi-draw in the non-count path.
                 Api!.CmdDrawIndexedIndirect(
                     commandBuffer,
-                    indirectBuffer.Value,
+                    indirectBuffer,
                     bufferOffset,
                     op.DrawCount,
                     op.Stride);
@@ -262,39 +243,29 @@ namespace XREngine.Rendering.Vulkan
 			if (dataBuffer is null)
 				return false;
 
-			bool allowSynchronousBufferUpload = AllowSynchronousResourceUploads;
-			if (GetOrCreateAPIRenderObject(dataBuffer, generateNow: allowSynchronousBufferUpload) is VkDataBuffer vkBuffer &&
-				vkBuffer.TryEnsureReadyForRendering(allowSynchronousBufferUpload))
-			{
-				buffer = vkBuffer;
-				return true;
-			}
+            if (ResourceRuntime.BackendObjects.Get(dataBuffer) is not VkDataBuffer vkBuffer ||
+                vkBuffer.BufferHandle is not { } publishedBuffer ||
+                publishedBuffer.Handle == 0)
+            {
+                throw new VulkanPlanPreconditionException(
+                    $"The prepared transform-feedback {role} buffer is missing its published Vulkan buffer.");
+            }
 
-            Debug.VulkanWarning($"Failed to resolve Vulkan transform feedback {role} buffer.");
-            return false;
+            buffer = vkBuffer;
+            return true;
         }
 
         internal void RecordMeshTaskDispatchIndirectCountOp(CommandBuffer commandBuffer, MeshTaskDispatchIndirectCountOp op)
         {
-            if (!SupportsVulkanMeshTaskIndirectCount || _extMeshShader is null)
+            if (!DeviceContext.Capabilities.Supports(EVulkanDeviceCapability.MeshShader) ||
+                DeviceContext.ExtensionFunctions.ExtMeshShader is not { } meshShader)
             {
                 Debug.VulkanWarning("RecordMeshTaskDispatchIndirectCountOp: VK_EXT_mesh_shader indirect-count dispatch is unavailable.");
                 return;
             }
 
-            var indirectBuffer = op.IndirectBuffer.BufferHandle;
-            if (indirectBuffer is null || !indirectBuffer.HasValue)
-            {
-                Debug.VulkanWarning("RecordMeshTaskDispatchIndirectCountOp: Invalid indirect buffer.");
-                return;
-            }
-
-            var countBuffer = op.CountBuffer.BufferHandle;
-            if (countBuffer is null || !countBuffer.HasValue)
-            {
-                Debug.VulkanWarning("RecordMeshTaskDispatchIndirectCountOp: Invalid count buffer.");
-                return;
-            }
+            Silk.NET.Vulkan.Buffer indirectBuffer = RequirePreparedBuffer(op.IndirectBuffer, "mesh-task indirect command");
+            Silk.NET.Vulkan.Buffer countBuffer = RequirePreparedBuffer(op.CountBuffer, "mesh-task indirect count");
 
             if (op.MaxDrawCount == 0u)
             {
@@ -306,7 +277,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             if (op.BindlessMaterialTextures is { } bindlessMaterialTextures &&
-                !TryBindGlobalMaterialTextureDescriptorSet(
+                !TryBindPreparedGlobalMaterialTextureDescriptorSet(
                     commandBuffer,
                     bindlessMaterialTextures.Program,
                     bindlessMaterialTextures.Consumer))
@@ -314,52 +285,41 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            bool plannerCoversIndirectBarrier =
-                PlannerCoversIndirectBufferTransition(op.PassIndex, indirectBuffer.Value) &&
-                PlannerCoversIndirectBufferTransition(op.PassIndex, countBuffer.Value);
-            if (!plannerCoversIndirectBarrier)
+            MemoryBarrier memoryBarrier = new()
             {
-                MemoryBarrier memoryBarrier = new()
-                {
-                    SType = StructureType.MemoryBarrier,
-                    SrcAccessMask = AccessFlags.ShaderWriteBit | AccessFlags.TransferWriteBit,
-                    DstAccessMask = AccessFlags.IndirectCommandReadBit,
-                };
+                SType = StructureType.MemoryBarrier,
+                SrcAccessMask = AccessFlags.ShaderWriteBit | AccessFlags.TransferWriteBit,
+                DstAccessMask = AccessFlags.IndirectCommandReadBit,
+            };
 
-                CmdPipelineBarrierTracked(
-                    commandBuffer,
-                    PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.TransferBit,
-                    PipelineStageFlags.DrawIndirectBit,
-                    DependencyFlags.None,
-                    1,
-                    &memoryBarrier,
-                    0,
-                    null,
-                    0,
-                    null);
-
-                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAdhocBarrier(emittedCount: 1, redundantCount: 0);
-            }
-            else
-            {
-                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAdhocBarrier(emittedCount: 0, redundantCount: 1);
-            }
+            CmdPipelineBarrierTracked(
+                commandBuffer,
+                PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.TransferBit,
+                PipelineStageFlags.DrawIndirectBit,
+                DependencyFlags.None,
+                1,
+                &memoryBarrier,
+                0,
+                null,
+                0,
+                null);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAdhocBarrier(emittedCount: 1, redundantCount: 0);
 
             TrackVulkanCommandBufferResource(
                 commandBuffer,
                 ObjectType.Buffer,
-                indirectBuffer.Value.Handle,
+                indirectBuffer.Handle,
                 "MeshTaskIndirect.Commands");
             TrackVulkanCommandBufferResource(
                 commandBuffer,
                 ObjectType.Buffer,
-                countBuffer.Value.Handle,
+                countBuffer.Handle,
                 "MeshTaskIndirect.Count");
-            _extMeshShader.CmdDrawMeshTasksIndirectCount(
+            meshShader.CmdDrawMeshTasksIndirectCount(
                 commandBuffer,
-                indirectBuffer.Value,
+                indirectBuffer,
                 (ulong)op.ByteOffset,
-                countBuffer.Value,
+                countBuffer,
                 (ulong)op.CountByteOffset,
                 op.MaxDrawCount,
                 op.Stride);
@@ -418,7 +378,10 @@ namespace XREngine.Rendering.Vulkan
                     skippedDraw: false,
                     skippedDispatch: true,
                     "compute dispatch skipped because descriptor binding failed");
-                return;
+                throw new VulkanPlanPreconditionException(
+                    $"Prepared compute descriptors became unavailable while recording " +
+                    $"'{op.Program.Data.Name ?? "UnnamedProgram"}'. The frame must be retried; " +
+                    "publishing a secondary without its dispatch would cache incomplete scene work.");
             }
 
             _commandBufferRecordingScratch.Value!.PreparedComputePayload =
@@ -436,8 +399,9 @@ namespace XREngine.Rendering.Vulkan
                 if (texture is null)
                     continue;
 
-                if (GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkImageDescriptorSource source)
-                    continue;
+                if (ResourceRuntime.BackendObjects.Get(texture) is not IVkImageDescriptorSource source)
+                    throw new VulkanPlanPreconditionException(
+                        $"Compute storage image '{texture.Name ?? "<unnamed>"}' has no prepared Vulkan image wrapper.");
 
                 if (!source.UsesAllocatorImage)
                     continue;
@@ -452,7 +416,8 @@ namespace XREngine.Rendering.Vulkan
                 uint layerCount = binding.Layered || binding.Layer < 0 ? arrayLayers - baseArrayLayer : 1u;
                 Image image = source.DescriptorImage;
                 if (image.Handle == 0)
-                    continue;
+                    throw new VulkanPlanPreconditionException(
+                        $"Compute storage image '{texture.Name ?? "<unnamed>"}' has no published Vulkan image handle.");
 
                 ImageAspectFlags aspect = source.DescriptorAspect;
                 if (aspect == 0)

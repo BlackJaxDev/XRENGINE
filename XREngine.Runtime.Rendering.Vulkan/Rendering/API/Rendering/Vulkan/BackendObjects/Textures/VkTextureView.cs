@@ -5,7 +5,7 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal unsafe class VkTextureView(VulkanRenderer api, XRTextureViewBase data) : VkTexture<XRTextureViewBase>(api, data), IVkFrameBufferAttachmentSource, IVkTexelBufferDescriptorSource
+    internal unsafe class VkTextureView(VulkanBackendObjectContext backendContext, IRenderApiWrapperOwner owner, XRTextureViewBase data) : VkTexture<XRTextureViewBase>(backendContext, owner, data), IVkFrameBufferAttachmentSource, IVkTexelBufferDescriptorSource
     {
         private Image _image;
         private ImageView _view;
@@ -65,7 +65,7 @@ namespace XREngine.Rendering.Vulkan
                 if (viewedTexture is null)
                     return default;
 
-                return Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true) is IVkImageDescriptorSource source
+                return GetBackendWrapper(viewedTexture, generateNow: true) is IVkImageDescriptorSource source
                     ? source.DescriptorMemory
                     : default;
             }
@@ -171,7 +171,7 @@ namespace XREngine.Rendering.Vulkan
                 if (viewedTexture is null)
                     return ImageLayout.Undefined;
 
-                return Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true) is IVkImageDescriptorSource source
+                return GetBackendWrapper(viewedTexture, generateNow: true) is IVkImageDescriptorSource source
                     ? source.TrackedImageLayout
                     : ImageLayout.Undefined;
             }
@@ -184,7 +184,7 @@ namespace XREngine.Rendering.Vulkan
                 if (viewedTexture is null)
                     return false;
 
-                return Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true) is IVkImageDescriptorSource source
+                return GetBackendWrapper(viewedTexture, generateNow: true) is IVkImageDescriptorSource source
                     && source.UsesAllocatorImage;
             }
         }
@@ -247,7 +247,7 @@ namespace XREngine.Rendering.Vulkan
 
         private ImageView GetAspectOnlyDescriptorView(ImageAspectFlags aspect, ref ImageView cached)
         {
-            if (Renderer.IsDeviceLost)
+            if (!BackendContext.IsDeviceOperational)
                 return default;
 
             if (!IsCombinedDepthStencilFormat(_format) ||
@@ -262,7 +262,7 @@ namespace XREngine.Rendering.Vulkan
 
             lock (_viewLifetimeLock)
             {
-                if (Renderer.IsDeviceLost)
+                if (!BackendContext.IsDeviceOperational)
                     return default;
 
                 if (cached.Handle != 0 && IsViewBackedByCurrentImage(cached))
@@ -284,7 +284,7 @@ namespace XREngine.Rendering.Vulkan
                     SubresourceRange = subresourceRange,
                 };
 
-                if (!Renderer.TryAcquireInternedImageView(in depthViewInfo, "VkTextureView.AspectOnlyDescriptor", out cached))
+                if (!BackendContext.Images.TryAcquireInternedView(BackendContext, in depthViewInfo, "VkTextureView.AspectOnlyDescriptor", out cached))
                     return default;
                 return cached;
             }
@@ -299,10 +299,10 @@ namespace XREngine.Rendering.Vulkan
             if (view.Handle == 0 || _image.Handle == 0)
                 return false;
 
-            return Renderer.TryGetImageViewBackingImage(view, out Image backingImage) &&
+            return BackendContext.Images.TryGetBackingImage(view, out Image backingImage) &&
                 backingImage.Handle == _image.Handle &&
-                Renderer.IsLiveImageViewBackedByLiveImage(view) &&
-                Renderer.IsImageViewAvailableForDescriptor(view);
+                BackendContext.Images.IsLiveBackedByLiveImage(view) &&
+                BackendContext.Images.IsAvailableForDescriptor(view);
         }
 
         private DeviceMemory TryResolveViewedDescriptorMemoryNoLock()
@@ -311,7 +311,7 @@ namespace XREngine.Rendering.Vulkan
             if (viewedTexture is null)
                 return default;
 
-            return Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true) is IVkImageDescriptorSource source
+            return GetBackendWrapper(viewedTexture, generateNow: true) is IVkImageDescriptorSource source
                 ? source.DescriptorMemory
                 : default;
         }
@@ -322,7 +322,7 @@ namespace XREngine.Rendering.Vulkan
             if (viewedTexture is null)
                 return false;
 
-            return Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true) is IVkImageDescriptorSource source
+            return GetBackendWrapper(viewedTexture, generateNow: true) is IVkImageDescriptorSource source
                 && source.UsesAllocatorImage;
         }
 
@@ -359,7 +359,7 @@ namespace XREngine.Rendering.Vulkan
 
         protected override uint CreateObjectInternal()
         {
-            if (Renderer.IsDeviceLost)
+            if (!BackendContext.IsDeviceOperational)
                 return InvalidBindingId;
 
             CreateView();
@@ -436,7 +436,7 @@ namespace XREngine.Rendering.Vulkan
             if (viewedTexture is null)
                 return;
 
-            if (Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true) is IVkFrameBufferAttachmentSource source)
+            if (GetBackendWrapper(viewedTexture, generateNow: true) is IVkFrameBufferAttachmentSource source)
                 source.EnsureAttachmentLayout(depthStencil);
         }
 
@@ -513,7 +513,7 @@ namespace XREngine.Rendering.Vulkan
             if (viewedTexture is null)
                 return false;
 
-            return Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true) is IVkImageDescriptorSource source &&
+            return GetBackendWrapper(viewedTexture, generateNow: true) is IVkImageDescriptorSource source &&
                 source.TryTransitionDedicatedImageLayout(oldLayout, newLayout);
         }
 
@@ -521,7 +521,7 @@ namespace XREngine.Rendering.Vulkan
         {
             XRTexture viewedTexture = Data.GetViewedTexture();
             if (viewedTexture is not null &&
-                Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true) is IVkFrameBufferAttachmentSource attachmentSource)
+                GetBackendWrapper(viewedTexture, generateNow: true) is IVkFrameBufferAttachmentSource attachmentSource)
             {
                 source = attachmentSource;
                 return true;
@@ -578,7 +578,7 @@ namespace XREngine.Rendering.Vulkan
 
         public override void PushData()
         {
-            if (Renderer.IsDeviceLost)
+            if (!BackendContext.IsDeviceOperational)
                 return;
 
             if (!TryBeginPushData(out bool allowPostPushCallback))
@@ -730,19 +730,19 @@ namespace XREngine.Rendering.Vulkan
 
         private void CreateView()
         {
-            if (Renderer.IsDeviceLost)
+            if (!BackendContext.IsDeviceOperational)
                 return;
 
             lock (_viewLifetimeLock)
             {
-                if (Renderer.IsDeviceLost)
+                if (!BackendContext.IsDeviceOperational)
                     return;
 
             XRTexture? viewedTexture = Data.GetViewedTexture();
             if (viewedTexture is null)
                 throw new InvalidOperationException("Texture view requires a valid viewed texture.");
 
-            AbstractRenderAPIObject? apiObject = Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true);
+            AbstractRenderAPIObject? apiObject = GetBackendWrapper(viewedTexture, generateNow: true);
             if (apiObject is IVkTexelBufferDescriptorSource texelSource)
             {
                 if (Data.TextureTarget != ETextureTarget.TextureBuffer)
@@ -797,7 +797,7 @@ namespace XREngine.Rendering.Vulkan
                 SubresourceRange = subresourceRange,
             };
 
-            if (!Renderer.TryAcquireInternedImageView(in viewInfo, "VkTextureView.View", out _view))
+            if (!BackendContext.Images.TryAcquireInternedView(BackendContext, in viewInfo, "VkTextureView.View", out _view))
                 throw new InvalidOperationException("Failed to create Vulkan texture view.");
 
             // For depth/stencil formats with both aspects, create a depth-only view for
@@ -812,7 +812,7 @@ namespace XREngine.Rendering.Vulkan
                         AspectMask = ImageAspectFlags.DepthBit,
                     },
                 };
-                if (!Renderer.TryAcquireInternedImageView(in depthOnlyViewInfo, "VkTextureView.DepthOnlyDescriptor", out _depthOnlyView))
+                if (!BackendContext.Images.TryAcquireInternedView(BackendContext, in depthOnlyViewInfo, "VkTextureView.DepthOnlyDescriptor", out _depthOnlyView))
                     throw new InvalidOperationException("Failed to create depth-only descriptor view for texture view.");
             }
 
@@ -825,7 +825,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void RefreshFromViewedTextureIfStale()
         {
-            if (Renderer.IsDeviceLost)
+            if (!BackendContext.IsDeviceOperational)
                 return;
 
             if (_texelBufferView.Handle != 0)
@@ -835,7 +835,7 @@ namespace XREngine.Rendering.Vulkan
             if (viewedTexture is null)
                 return;
 
-            AbstractRenderAPIObject? apiObject = Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true);
+            AbstractRenderAPIObject? apiObject = GetBackendWrapper(viewedTexture, generateNow: true);
             if (apiObject is not IVkImageDescriptorSource source)
                 return;
 
@@ -856,7 +856,7 @@ namespace XREngine.Rendering.Vulkan
 
             lock (_viewLifetimeLock)
             {
-                if (Renderer.IsDeviceLost)
+                if (!BackendContext.IsDeviceOperational)
                     return;
 
                 liveImage = source.DescriptorImage;
@@ -895,7 +895,7 @@ namespace XREngine.Rendering.Vulkan
                     SubresourceRange = subresourceRange,
                 };
 
-                if (!Renderer.TryAcquireInternedImageView(in viewInfo, "VkTextureView.RefreshedView", out _view))
+                if (!BackendContext.Images.TryAcquireInternedView(BackendContext, in viewInfo, "VkTextureView.RefreshedView", out _view))
                     _view = default;
 
                 bool hasStencil = _format is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
@@ -908,7 +908,7 @@ namespace XREngine.Rendering.Vulkan
                             AspectMask = ImageAspectFlags.DepthBit,
                         },
                     };
-                    if (!Renderer.TryAcquireInternedImageView(in depthOnlyViewInfo, "VkTextureView.RefreshedDepthOnlyDescriptor", out _depthOnlyView))
+                    if (!BackendContext.Images.TryAcquireInternedView(BackendContext, in depthOnlyViewInfo, "VkTextureView.RefreshedDepthOnlyDescriptor", out _depthOnlyView))
                         _depthOnlyView = default;
                 }
 
@@ -1007,9 +1007,9 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            bool retirePrimary = Renderer.ReleaseInternedImageView(_view);
-            bool retireDepth = Renderer.ReleaseInternedImageView(_depthOnlyView);
-            bool retireStencil = Renderer.ReleaseInternedImageView(_stencilOnlyView);
+            bool retirePrimary = BackendContext.Images.ReleaseInternedView(_view);
+            bool retireDepth = BackendContext.Images.ReleaseInternedView(_depthOnlyView);
+            bool retireStencil = BackendContext.Images.ReleaseInternedView(_stencilOnlyView);
 
             int attachmentCount = 0;
             if (retireDepth)
@@ -1024,13 +1024,13 @@ namespace XREngine.Rendering.Vulkan
             if (retireStencil)
                 attachmentViews[index] = _stencilOnlyView;
 
-            Renderer.RetireImageResources(new RetiredImageResources(
+            BackendContext.Images.RetireOwnedResources(new RetiredImageResources(
                 default,
                 default,
                 retirePrimary ? _view : default,
                 attachmentViews,
                 default,
-                0));
+                0), nameof(VkTextureView));
 
             _view = default;
             _depthOnlyView = default;
@@ -1042,25 +1042,25 @@ namespace XREngine.Rendering.Vulkan
             if (view.Handle == 0)
                 return;
 
-            if (!Renderer.ReleaseInternedImageView(view))
+            if (!BackendContext.Images.ReleaseInternedView(view))
             {
                 view = default;
                 return;
             }
 
-            Renderer.RetireImageResources(new RetiredImageResources(
+            BackendContext.Images.RetireOwnedResources(new RetiredImageResources(
                 default,
                 default,
                 view,
                 [],
                 default,
-                0));
+                0), nameof(VkTextureView));
             view = default;
         }
 
         private void CreateSampler()
         {
-            if (Renderer.IsDeviceLost)
+            if (!BackendContext.IsDeviceOperational)
                 return;
 
             DestroySampler();
@@ -1088,7 +1088,7 @@ namespace XREngine.Rendering.Vulkan
                 UnnormalizedCoordinates = Vk.False,
             };
 
-            if (Renderer.SamplerAnisotropyEnabled)
+            if (BackendContext.Supports(EVulkanDeviceCapability.Anisotropy))
             {
                 Api!.GetPhysicalDeviceProperties(PhysicalDevice, out PhysicalDeviceProperties props);
                 if (props.Limits.MaxSamplerAnisotropy > 1f)
@@ -1109,7 +1109,7 @@ namespace XREngine.Rendering.Vulkan
             if (_sampler.Handle == 0)
                 return;
 
-            Renderer.RetireSampler(_sampler);
+        BackendContext.Samplers.Retire(_sampler, GetType().Name);
             _sampler = default;
         }
 

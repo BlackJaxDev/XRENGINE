@@ -13,7 +13,7 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed unsafe partial class VulkanCommandRuntime
 {
     internal const string CommandChainsEnvVar = XREngineEnvironmentVariables.VulkanCommandChains;
     internal const string CommandChainsSingleThreadEnvVar = XREngineEnvironmentVariables.VulkanCommandChainsSingleThread;
@@ -62,7 +62,12 @@ public unsafe partial class VulkanRenderer
     private const int MaxCachedScheduledCommandChainsPerFrameSlot = MaxCommandChainsPerSchedule * 2;
     internal const int MinMeshDrawsPerRenderPacket = 10;
     internal const int MaxMeshDrawsPerRenderPacket = 64;
-    internal const int MaxShadowMeshDrawsPerRenderPacket = 24;
+    // Directional-cascade membership changes continuously while the camera moves.
+    // Stable buckets limit that churn to one portion of the caster set, while this
+    // deliberately smaller packet cap bounds how many otherwise-stable draws a
+    // membership change can re-record. Per-caster packets made scheduling and
+    // dependency publication O(casters) and were substantially slower in motion.
+    internal const int MaxShadowMeshDrawsPerRenderPacket = 16;
     private const int ShadowCommandChainBucketCount = 8;
 
     /// <summary>
@@ -138,7 +143,6 @@ public unsafe partial class VulkanRenderer
         CommandChainsEnvironmentOverride == true;
     private bool CommandChainsEnabledForCurrentRecording =>
         !FreshSerialRecordingEnabled &&
-        !IsRenderingExternalSwapchainTarget &&
         ((CommandChainsRequested && !ShouldBypassCommandChainsForOpenXrIndependentDesktop) ||
          ShouldUseCommandChainsForOpenXrIndependentDesktop);
 
@@ -266,8 +270,5 @@ public unsafe partial class VulkanRenderer
 
         return false;
     }
-
-    private CommandChainResourcePlanReadScope BeginCommandChainResourcePlanReadScope(ulong resourcePlanRevision)
-        => new(this, resourcePlanRevision);
 
 }

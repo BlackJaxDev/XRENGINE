@@ -20,11 +20,25 @@ internal abstract class VkObject<T> : VkObjectBase
     public VkObject<T>? GetCachedObject(uint id)
         => BackendContext.Registry.Get<T>(id);
 
+    /// <summary>
+    /// Resolves or creates a context-owned wrapper without routing through the
+    /// renderer facade. Cross-wrapper dependencies therefore share the same
+    /// generation-local backend registry and factory.
+    /// </summary>
+    protected AbstractRenderAPIObject? GetBackendWrapper(GenericRenderObject data, bool generateNow)
+        => BackendContext.GetOrCreateAPIRenderObject(data, generateNow);
+
     public void RemoveCachedObject(uint id)
         => BackendContext.Registry.Remove<T>(id);
 
-    // Assign through the property so subclass hooks and wrapper links remain consistent.
-    public VkObject(VulkanRenderer renderer, T data) : base(renderer.BackendObjectContext, renderer)
+    /// <summary>
+    /// Creates a context-owned wrapper. The backend context is both the native
+    /// facility provider and the wrapper cache owner, so no renderer backlink is
+    /// retained by migrated wrapper families.
+    /// </summary>
+    protected VkObject(
+        VulkanBackendObjectContext backendContext,
+        T data) : base(backendContext, backendContext)
         => Data = data;
 
     protected VkObject(
@@ -33,17 +47,10 @@ internal abstract class VkObject<T> : VkObjectBase
         T data) : base(backendContext, owner)
         => Data = data;
 
-    /// <summary>
-    /// Transitional compatibility for wrapper families that still need renderer-owned
-    /// behavior. New wrappers should consume explicit backend facilities instead.
-    /// </summary>
-    protected VulkanRenderer Renderer => Owner as VulkanRenderer
-        ?? throw new InvalidOperationException("Vulkan wrapper owner is not a VulkanRenderer.");
-
     protected override GenericRenderObject Data_Internal => Data;
 
-    // Both constructors assign through the virtual Data property so wrapper links
-    // are established consistently; the field is never observed before that assignment.
+    // Constructors assign through the virtual Data property so wrapper links are
+    // established consistently; the field is never observed before that assignment.
     private T _data = null!;
     private bool _dataLinked;
     public virtual T Data
@@ -96,6 +103,7 @@ internal abstract class VkObject<T> : VkObjectBase
 
     protected internal override void PostDeleted()
     {
+        BackendContext.Registry.Remove(Data);
         BackendContext.Registry.Remove<T>(BindingId);
         base.PostDeleted();
     }

@@ -25,6 +25,10 @@ namespace XREngine.Rendering.Vulkan;
 
 internal unsafe partial class VkMeshRenderer
 {
+	private static long _nextPipelineCompileOwnerId;
+	internal long PipelineCompileOwnerId { get; } =
+		Interlocked.Increment(ref _nextPipelineCompileOwnerId);
+
 	#region Shader Program Management
 
 	/// <summary>
@@ -112,7 +116,8 @@ internal unsafe partial class VkMeshRenderer
 				shaderStageList));
 			generatedProgram.AllowLink();
 
-			VkRenderProgram? vkProgram = Renderer.GenericToAPI<VkRenderProgram>(generatedProgram);
+			VkRenderProgram? vkProgram = BackendContext
+				.GetOrCreateAPIRenderObject(generatedProgram, generateNow: true) as VkRenderProgram;
 			if (vkProgram is null)
 			{
 				generatedProgram.Destroy();
@@ -588,7 +593,7 @@ internal unsafe partial class VkMeshRenderer
 		hash.Add((int)RuntimeEngine.Rendering.EffectiveClipDepthRange);
 		hash.Add((int)RuntimeEngine.Rendering.Settings.ClipSpaceYDirection);
 		hash.Add(RuntimeEngine.Rendering.ShouldUseNativeVulkanDepthClipControl);
-		hash.Add(Renderer.SupportsIndexTypeUint8);
+		hash.Add(BackendContext.Supports(EVulkanDeviceCapability.IndexTypeUint8));
 		return hash.Value;
 	}
 
@@ -650,7 +655,7 @@ internal unsafe partial class VkMeshRenderer
 
 	/// <summary>
 	/// Ensures a valid Vulkan graphics pipeline for the given material, topology,
-	/// and draw state. Pipelines are cached by <see cref="PipelineKey"/>. If no
+	/// and draw state. Pipelines are cached by <see cref="VulkanGraphicsPipelineKey"/>. If no
 	/// cached pipeline matches, a new one is created with the current shader
 	/// program, vertex layout, and fixed-function state.
 	/// </summary>
@@ -683,7 +688,7 @@ internal unsafe partial class VkMeshRenderer
 		bool pipelineInvalidated = _pipelineDirty;
 		uint colorAttachmentCount = useDynamicRendering
 			? dynamicRenderingFormats.ColorAttachmentCount
-			: Renderer.GetRenderPassColorAttachmentCount(renderPass);
+			: BackendContext.ProgramServices.GetRenderPassColorAttachmentCount(renderPass);
 		PendingMeshDraw effectiveDraw = ResolveAttachmentCompatibleDrawState(
 			draw,
 			passIndex,
@@ -700,7 +705,7 @@ internal unsafe partial class VkMeshRenderer
 		ulong featureProfileHash = ComputeFeatureProfileHash();
 		bool useNativeNegativeOneToOneDepth = RuntimeEngine.Rendering.ShouldUseNativeVulkanDepthClipControl;
 
-		PipelineKey key = new(
+		VulkanGraphicsPipelineKey key = new(
 			topology,
 			useDynamicRendering,
 			useDynamicRendering ? 0UL : renderPass.Handle,
@@ -829,8 +834,8 @@ internal unsafe partial class VkMeshRenderer
 			PipelineColorBlendAttachmentState attachmentBlend = colorBlendAttachment;
 			Format attachmentFormat = useDynamicRendering
 				? dynamicRenderingFormats.GetColorAttachmentFormat((uint)i)
-				: Renderer.GetRenderPassColorAttachmentFormat(renderPass, (uint)i);
-			if (!Renderer.SupportsColorAttachmentBlend(attachmentFormat))
+				: BackendContext.ProgramServices.GetRenderPassColorAttachmentFormat(renderPass, (uint)i);
+			if (!BackendContext.ProgramServices.SupportsColorAttachmentBlend(attachmentFormat))
 				attachmentBlend.BlendEnable = Vk.False;
 
 			blendAttachments[i] = attachmentBlend;
@@ -843,7 +848,7 @@ internal unsafe partial class VkMeshRenderer
 		];
 
 		VkRenderProgram program = _program ?? throw new InvalidOperationException("Graphics program was not initialized.");
-		GraphicsPipelineBuildRequest request;
+		VulkanGraphicsPipelineBuildRequest request;
 		try
 		{
 			request = CreateGraphicsPipelineBuildRequest(
@@ -874,9 +879,12 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		if (Renderer.IsVulkanPipelineAsyncCompilationEnabled)
+		if (BackendContext.Pipelines.IsAsyncCompilationEnabled(
+				BackendContext.IsLogicalDeviceReady,
+				BackendContext.IsDeviceOperational,
+				RuntimeEngine.Rendering.Settings.AsyncProgramCompilation))
 		{
-			if (Renderer.TryTakeCompletedVulkanGraphicsPipeline(request.CompileKey, out VulkanGraphicsPipelineCompileResult asyncResult))
+			if (BackendContext.Pipelines.TryTakeCompletedGraphicsPipeline(request.CompileKey, out VulkanGraphicsPipelineCompileResult asyncResult))
 			{
 				if (!asyncResult.Success || asyncResult.Pipeline.Handle == 0)
 				{
@@ -898,13 +906,13 @@ internal unsafe partial class VkMeshRenderer
 					return false;
 				}
 
-				pipeline = Renderer.StoreOrRetireSharedGraphicsPipeline(key, asyncResult.Pipeline);
+				pipeline = BackendContext.Pipelines.StoreOrRetireSharedGraphicsPipeline(key, asyncResult.Pipeline);
 				_pipelines[key] = pipeline;
 				_pipelineDirty = false;
 				return true;
 			}
 
-			if (Renderer.IsVulkanGraphicsPipelineCompileInFlight(request.CompileKey))
+			if (BackendContext.Pipelines.IsGraphicsPipelineCompileInFlight(request.CompileKey))
 			{
 				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
 					EVulkanPipelineTelemetryEvent.DrawNotReady,
@@ -942,7 +950,11 @@ internal unsafe partial class VkMeshRenderer
 				key,
 				effectiveDraw);
 
-			if (!Renderer.TryEnqueueVulkanGraphicsPipelineCompile(request, out string rejectReason))
+			if (!BackendContext.Pipelines.TryEnqueueGraphicsPipelineCompile(
+					request,
+					BackendContext.IsDeviceOperational,
+					RuntimeEngine.Rendering.Settings.AsyncProgramCompilation,
+					out string rejectReason))
 			{
 				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
 					EVulkanPipelineTelemetryEvent.DrawNotReady,
@@ -985,7 +997,10 @@ internal unsafe partial class VkMeshRenderer
 
 		try
 		{
-			pipeline = CreateGraphicsPipelineFromRequest(request, Renderer.ActivePipelineCache, backgroundCompile: false);
+			pipeline = BackendContext.Pipelines.CreateGraphicsPipelineFromRequest(
+				request,
+				BackendContext.Pipelines.ActivePipelineCache,
+				backgroundCompile: false);
 		}
 		catch (VulkanPipelineCompilationDeferredException)
 		{
@@ -1000,7 +1015,7 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		pipeline = Renderer.StoreOrRetireSharedGraphicsPipeline(key, pipeline);
+		pipeline = BackendContext.Pipelines.StoreOrRetireSharedGraphicsPipeline(key, pipeline);
 		_pipelines[key] = pipeline;
 		_pipelineDirty = false;
 		return pipeline.Handle != 0;
@@ -1021,10 +1036,10 @@ internal unsafe partial class VkMeshRenderer
 		ulong vertexLayoutHash,
 		ulong descriptorLayoutHash,
 		uint colorAttachmentCount,
-		in PipelineKey key,
+		in VulkanGraphicsPipelineKey key,
 		in PendingMeshDraw effectiveDraw)
 	{
-		bool knownAtStartup = Renderer.RecordVulkanGraphicsPipelineCacheMiss(
+		bool knownAtStartup = BackendContext.Pipelines.RecordGraphicsPipelineCacheMiss(
 			passIndex,
 			passMetadata,
 			pipelineName,
@@ -1069,7 +1084,7 @@ internal unsafe partial class VkMeshRenderer
 		return knownAtStartup;
 	}
 
-	private static ulong ComputeStableFixedFunctionStateHash(in PipelineKey key)
+	private static ulong ComputeStableFixedFunctionStateHash(in VulkanGraphicsPipelineKey key)
 	{
 		VulkanStableHash64 hash = new(schemaVersion: 2);
 
@@ -1114,11 +1129,11 @@ internal unsafe partial class VkMeshRenderer
 	private bool ShouldUseGraphicsPipelineLibraries()
 		=> RuntimeEngine.Rendering.Settings.AllowShaderPipelines &&
 		   Data.AllowShaderPipelines &&
-		   Renderer.SupportsGraphicsPipelineLibrary;
+			   BackendContext.Supports(EVulkanDeviceCapability.GraphicsPipelineLibrary);
 
-	private GraphicsPipelineBuildRequest CreateGraphicsPipelineBuildRequest(
+	private VulkanGraphicsPipelineBuildRequest CreateGraphicsPipelineBuildRequest(
 		VkRenderProgram program,
-		PipelineKey key,
+		VulkanGraphicsPipelineKey key,
 		string pipelineName,
 		uint colorAttachmentCount,
 		PipelineInputAssemblyStateCreateInfo inputAssembly,
@@ -1133,9 +1148,9 @@ internal unsafe partial class VkMeshRenderer
 		bool useDynamicRendering,
 		DynamicRenderingFormatSignature dynamicRenderingFormats)
 	{
-		return Renderer.CaptureVulkanPipelineCompilationDependencies(
-			dependencyGeneration =>
-			{
+		using VulkanPipelineCompilationDependencyLease dependencyLease =
+			BackendContext.Pipelines.AcquireCompilationDependencyLease();
+		long dependencyGeneration = dependencyLease.Generation;
 				if (!program.IsLinked ||
 					program.PipelineLayout.Handle == 0 ||
 					program.ComputeGraphicsPipelineFingerprint() != key.ProgramPipelineHash ||
@@ -1145,7 +1160,7 @@ internal unsafe partial class VkMeshRenderer
 						"The Vulkan program interface changed while the graphics pipeline request was being prepared.");
 				}
 
-				PipelineShaderStageCreateInfo[] graphicsStages = GetGraphicsPipelineLibraryStages(
+				PipelineShaderStageCreateInfo[] graphicsStages = VulkanGraphicsPipelineFactory.GetGraphicsPipelineLibraryStages(
 					program,
 					EProgramStageMask.VertexShaderBit |
 					EProgramStageMask.TessControlShaderBit |
@@ -1169,7 +1184,7 @@ internal unsafe partial class VkMeshRenderer
 					}
 				}
 
-				PipelineShaderStageCreateInfo[] preRasterStages = GetGraphicsPipelineLibraryStages(
+				PipelineShaderStageCreateInfo[] preRasterStages = VulkanGraphicsPipelineFactory.GetGraphicsPipelineLibraryStages(
 					program,
 					EProgramStageMask.VertexShaderBit |
 					EProgramStageMask.TessControlShaderBit |
@@ -1179,14 +1194,16 @@ internal unsafe partial class VkMeshRenderer
 					EProgramStageMask.MeshShaderBit,
 					colorAttachmentCount);
 
-				PipelineShaderStageCreateInfo[] fragmentStages = GetGraphicsPipelineLibraryStages(
+				PipelineShaderStageCreateInfo[] fragmentStages = VulkanGraphicsPipelineFactory.GetGraphicsPipelineLibraryStages(
 					program,
 					EProgramStageMask.FragmentShaderBit,
 					colorAttachmentCount);
 
-				return new GraphicsPipelineBuildRequest(
-					this,
+		return new VulkanGraphicsPipelineBuildRequest(
+					PipelineCompileOwnerId,
 					program,
+					BackendContext.ProgramServices,
+					ShouldUseGraphicsPipelineLibraries(),
 					dependencyGeneration,
 					key,
 					pipelineName,
@@ -1206,8 +1223,7 @@ internal unsafe partial class VkMeshRenderer
 					useDynamicRendering ? dynamicRenderingFormats : default,
 					graphicsStages,
 					preRasterStages,
-					fragmentStages);
-			});
+			fragmentStages);
 	}
 
 	private void ReportPipelineCreateFailure(
@@ -1232,531 +1248,11 @@ internal unsafe partial class VkMeshRenderer
 			ex.Message);
 	}
 
-	internal Pipeline CreateGraphicsPipelineFromRequest(
-		GraphicsPipelineBuildRequest request,
-		PipelineCache pipelineCache,
-		bool backgroundCompile)
-	{
-		if (!Renderer.IsVulkanPipelineCompileDependencyGenerationCurrent(
-				request.DependencyGeneration))
-		{
-			throw new VulkanPipelineCompilationDeferredException(
-				"Graphics pipeline request captured shader or layout handles from a retired dependency generation.");
-		}
+}
 
-		PipelineVertexInputStateCreateInfo vertexInput = new()
-		{
-			SType = StructureType.PipelineVertexInputStateCreateInfo,
-			VertexBindingDescriptionCount = (uint)request.VertexBindings.Length,
-			VertexAttributeDescriptionCount = (uint)request.VertexAttributes.Length,
-		};
 
-		PipelineViewportStateCreateInfo viewportState = new()
-		{
-			SType = StructureType.PipelineViewportStateCreateInfo,
-			ViewportCount = request.ViewportScissorCount,
-			ScissorCount = request.ViewportScissorCount,
-		};
-
-		PipelineViewportDepthClipControlCreateInfoEXTNative depthClipControlInfo = new()
-		{
-			SType = VulkanDepthClipControlExt.PipelineViewportCreateInfoSType,
-			PNext = null,
-			NegativeOneToOne = request.NativeNegativeOneToOneDepth,
-		};
-
-		if (request.NativeNegativeOneToOneDepth)
-			viewportState.PNext = &depthClipControlInfo;
-
-		PipelineColorBlendStateCreateInfo colorBlending = new()
-		{
-			SType = StructureType.PipelineColorBlendStateCreateInfo,
-			LogicOpEnable = Vk.False,
-			LogicOp = LogicOp.Copy,
-			AttachmentCount = (uint)request.BlendAttachments.Length,
-		};
-
-		fixed (VertexInputBindingDescription* bindingsPtr = request.VertexBindings)
-		fixed (VertexInputAttributeDescription* attrsPtr = request.VertexAttributes)
-		fixed (PipelineColorBlendAttachmentState* blendPtr = request.BlendAttachments)
-		fixed (DynamicState* dynPtr = request.DynamicStates)
-		{
-			vertexInput.PVertexBindingDescriptions = request.VertexBindings.Length > 0 ? bindingsPtr : null;
-			vertexInput.PVertexAttributeDescriptions = request.VertexAttributes.Length > 0 ? attrsPtr : null;
-			colorBlending.PAttachments = request.BlendAttachments.Length > 0 ? blendPtr : null;
-
-			PipelineDynamicStateCreateInfo dynamicState = new()
-			{
-				SType = StructureType.PipelineDynamicStateCreateInfo,
-				DynamicStateCount = (uint)request.DynamicStates.Length,
-				PDynamicStates = request.DynamicStates.Length > 0 ? dynPtr : null,
-			};
-
-			PipelineInputAssemblyStateCreateInfo inputAssembly = request.InputAssembly;
-			PipelineRasterizationStateCreateInfo rasterizer = request.Rasterizer;
-			PipelineMultisampleStateCreateInfo multisampling = request.Multisampling;
-			PipelineDepthStencilStateCreateInfo depthStencil = request.DepthStencil;
-
-			GraphicsPipelineCreateInfo pipelineInfo = new()
-			{
-				SType = StructureType.GraphicsPipelineCreateInfo,
-				PVertexInputState = &vertexInput,
-				PInputAssemblyState = &inputAssembly,
-				PViewportState = &viewportState,
-				PRasterizationState = &rasterizer,
-				PMultisampleState = &multisampling,
-				PDepthStencilState = &depthStencil,
-				PColorBlendState = &colorBlending,
-				PDynamicState = &dynamicState,
-				RenderPass = request.Key.UseDynamicRendering ? default : request.RenderPass,
-				Subpass = 0,
-			};
-
-			if (request.Key.UseDynamicRendering)
-			{
-				Format* colorFormats = stackalloc Format[(int)request.ColorAttachmentCount];
-				request.DynamicRenderingFormats.CopyColorAttachmentFormats(colorFormats, request.ColorAttachmentCount);
-
-				PipelineRenderingCreateInfo renderingInfo = new()
-				{
-					SType = StructureType.PipelineRenderingCreateInfo,
-					ViewMask = request.DynamicRenderingFormats.ViewMask,
-					ColorAttachmentCount = request.ColorAttachmentCount,
-					PColorAttachmentFormats = request.ColorAttachmentCount > 0 ? colorFormats : null,
-					DepthAttachmentFormat = request.DynamicRenderingFormats.DepthAttachmentFormat,
-					StencilAttachmentFormat = request.DynamicRenderingFormats.StencilAttachmentFormat,
-				};
-
-				pipelineInfo.PNext = &renderingInfo;
-				return CreateGraphicsPipeline(request, ref pipelineInfo, pipelineCache, backgroundCompile);
-			}
-
-			return CreateGraphicsPipeline(request, ref pipelineInfo, pipelineCache, backgroundCompile);
-		}
-	}
-
-	private Pipeline CreateGraphicsPipeline(
-		GraphicsPipelineBuildRequest request,
-		ref GraphicsPipelineCreateInfo pipelineInfo,
-		PipelineCache pipelineCache,
-		bool backgroundCompile)
-	{
-		if (request.Key.UseDynamicRendering && request.ColorAttachmentCount == 0)
-		{
-			Debug.VulkanWarningEvery(
-				"Vulkan.PipelineLibrary.DepthOnlyMonolithic",
-				TimeSpan.FromSeconds(5),
-				"[Vulkan] Using monolithic dynamic-rendering pipeline for depth-only pass '{0}' program='{1}'; graphics pipeline libraries are bypassed for zero-color pipelines to keep depth/stencil validation correct.",
-				request.PipelineName,
-				request.Program.Data.Name ?? "<unnamed program>");
-			return CreateMonolithicGraphicsPipeline(request, ref pipelineInfo, pipelineCache, backgroundCompile);
-		}
-
-		if (!ShouldUseGraphicsPipelineLibraries())
-			return CreateMonolithicGraphicsPipeline(request, ref pipelineInfo, pipelineCache, backgroundCompile);
-
-		try
-		{
-			return CreateGraphicsPipelineFromLibraries(request, ref pipelineInfo, pipelineCache, backgroundCompile);
-		}
-		catch (InvalidOperationException ex)
-		{
-			Debug.VulkanWarningEvery(
-				$"Vulkan.PipelineLibrary.Fallback.{request.Program.Data.Name ?? "UnknownProgram"}",
-				TimeSpan.FromSeconds(5),
-				"[Vulkan] Graphics pipeline library creation failed for pipeline '{0}' program='{1}'; falling back to monolithic pipeline. {2}",
-				request.PipelineName,
-				request.Program.Data.Name ?? "<unnamed program>",
-				ex.Message);
-			return CreateMonolithicGraphicsPipeline(request, ref pipelineInfo, pipelineCache, backgroundCompile);
-		}
-	}
-
-	private Pipeline CreateMonolithicGraphicsPipeline(
-		GraphicsPipelineBuildRequest request,
-		ref GraphicsPipelineCreateInfo pipelineInfo,
-		PipelineCache pipelineCache,
-		bool backgroundCompile)
-	{
-		if (request.GraphicsStages.Length == 0)
-			throw new InvalidOperationException("graphics pipeline creation requires at least one graphics shader stage.");
-
-		fixed (PipelineShaderStageCreateInfo* stagesPtr = request.GraphicsStages)
-		{
-			pipelineInfo.StageCount = (uint)request.GraphicsStages.Length;
-			pipelineInfo.PStages = stagesPtr;
-			pipelineInfo.Layout = request.PipelineLayout;
-
-			Result result = Renderer.CreateGraphicsPipelineWithCachePolicy(
-				ref pipelineInfo,
-				pipelineCache,
-				backgroundCompile,
-				out Pipeline pipeline);
-			if (result != Result.Success)
-				throw new InvalidOperationException($"failed to create graphics pipeline ({result}).");
-
-			Renderer.RegisterVulkanPipeline(pipeline, "VkMeshRenderer.Graphics");
-			Renderer.NotifyVulkanPipelineCreated("graphics");
-			return pipeline;
-		}
-	}
-
-	private Pipeline CreateGraphicsPipelineFromLibraries(
-		GraphicsPipelineBuildRequest request,
-		ref GraphicsPipelineCreateInfo pipelineInfo,
-		PipelineCache pipelineCache,
-		bool backgroundCompile)
-	{
-		if (request.PreRasterStages.Length == 0)
-			throw new InvalidOperationException("graphics pipeline libraries require a pre-rasterization shader stage.");
-
-		if (!request.PreRasterStages.Any(static stage => stage.Stage == ShaderStageFlags.VertexBit))
-			throw new InvalidOperationException("graphics pipeline library path currently supports vertex-input mesh pipelines only.");
-
-		Pipeline vertexInput = EnsureGraphicsPipelineLibrary(
-			request,
-			CreateGraphicsPipelineLibraryKey(GraphicsPipelineLibrarySubset.VertexInputInterface, request.Key),
-			ref pipelineInfo,
-			Array.Empty<PipelineShaderStageCreateInfo>(),
-			GraphicsPipelineLibraryFlagsEXT.VertexInputInterfaceBitExt,
-			pipelineCache,
-			backgroundCompile);
-
-		Pipeline preRasterization = EnsureGraphicsPipelineLibrary(
-			request,
-			CreateGraphicsPipelineLibraryKey(GraphicsPipelineLibrarySubset.PreRasterizationShaders, request.Key),
-			ref pipelineInfo,
-			request.PreRasterStages,
-			GraphicsPipelineLibraryFlagsEXT.PreRasterizationShadersBitExt,
-			pipelineCache,
-			backgroundCompile);
-
-		List<Pipeline> libraries =
-		[
-			vertexInput,
-			preRasterization,
-		];
-
-		if (request.FragmentStages.Length > 0)
-		{
-			Pipeline fragmentShader = EnsureGraphicsPipelineLibrary(
-				request,
-				CreateGraphicsPipelineLibraryKey(GraphicsPipelineLibrarySubset.FragmentShader, request.Key),
-				ref pipelineInfo,
-				request.FragmentStages,
-				GraphicsPipelineLibraryFlagsEXT.FragmentShaderBitExt,
-				pipelineCache,
-				backgroundCompile);
-			libraries.Add(fragmentShader);
-		}
-
-		Pipeline fragmentOutput = EnsureGraphicsPipelineLibrary(
-			request,
-			CreateGraphicsPipelineLibraryKey(GraphicsPipelineLibrarySubset.FragmentOutputInterface, request.Key),
-			ref pipelineInfo,
-			Array.Empty<PipelineShaderStageCreateInfo>(),
-			GraphicsPipelineLibraryFlagsEXT.FragmentOutputInterfaceBitExt,
-			pipelineCache,
-			backgroundCompile);
-		libraries.Add(fragmentOutput);
-
-		Pipeline[] libraryArray = [.. libraries];
-		fixed (Pipeline* librariesPtr = libraryArray)
-		{
-			PipelineLibraryCreateInfoKHR libraryInfo = new()
-			{
-				SType = StructureType.PipelineLibraryCreateInfoKhr,
-				LibraryCount = (uint)libraryArray.Length,
-				PLibraries = librariesPtr,
-			};
-
-			bool linkUsesDynamicRenderingInfo =
-				request.Key.UseDynamicRendering &&
-				pipelineInfo.PNext != null &&
-				((PipelineRenderingCreateInfo*)pipelineInfo.PNext)->SType == StructureType.PipelineRenderingCreateInfo;
-			PipelineRenderingCreateInfo linkedRenderingInfo = default;
-			if (linkUsesDynamicRenderingInfo)
-			{
-				linkedRenderingInfo = *((PipelineRenderingCreateInfo*)pipelineInfo.PNext);
-				linkedRenderingInfo.PNext = &libraryInfo;
-			}
-
-			GraphicsPipelineCreateInfo linkedInfo = pipelineInfo;
-			linkedInfo.PNext = &libraryInfo;
-			if (linkUsesDynamicRenderingInfo)
-				linkedInfo.PNext = &linkedRenderingInfo;
-			linkedInfo.StageCount = 0;
-			linkedInfo.PStages = null;
-			linkedInfo.PVertexInputState = null;
-			linkedInfo.PInputAssemblyState = null;
-			linkedInfo.PViewportState = null;
-			linkedInfo.PRasterizationState = null;
-			linkedInfo.PDynamicState = null;
-			linkedInfo.Layout = request.PipelineLayout;
-
-			long linkStart = global::System.Diagnostics.Stopwatch.GetTimestamp();
-			Result result = Renderer.CreateGraphicsPipelineWithCachePolicy(
-				ref linkedInfo,
-				pipelineCache,
-				backgroundCompile,
-				out Pipeline pipeline);
-			TimeSpan linkElapsed = global::System.Diagnostics.Stopwatch.GetElapsedTime(linkStart);
-			if (result != Result.Success)
-				throw new InvalidOperationException($"failed to link graphics pipeline libraries ({result}) after {linkElapsed.TotalMilliseconds:F2} ms.");
-
-			Renderer.RegisterVulkanPipeline(pipeline, "VkMeshRenderer.GraphicsLibraryLink");
-			if (linkElapsed.TotalMilliseconds >= 16.0)
-			{
-				Debug.VulkanWarningEvery(
-					$"Vulkan.PipelineLibrary.LinkSlow.{request.Program.Data.Name ?? "UnknownProgram"}",
-					TimeSpan.FromSeconds(2),
-					"[Vulkan] Graphics pipeline library link took {0:F2} ms: program='{1}' libraries={2} dynamicRendering={3} renderPass=0x{4:X}",
-					linkElapsed.TotalMilliseconds,
-					request.Program.Data.Name ?? "<unnamed program>",
-					libraryArray.Length,
-					request.Key.UseDynamicRendering,
-					request.Key.RenderPassHandle);
-			}
-
-			Renderer.NotifyVulkanPipelineCreated("graphics-library-linked");
-			return pipeline;
-		}
-	}
-
-	private static GraphicsPipelineLibraryKey CreateGraphicsPipelineLibraryKey(
-		GraphicsPipelineLibrarySubset subset,
-		in PipelineKey pipeline)
-	{
-		bool hasRenderPassIdentity = subset is
-			GraphicsPipelineLibrarySubset.PreRasterizationShaders or
-			GraphicsPipelineLibrarySubset.FragmentShader or
-			GraphicsPipelineLibrarySubset.FragmentOutputInterface;
-		bool usesDynamicRenderingIdentity = hasRenderPassIdentity && pipeline.UseDynamicRendering;
-		DynamicRenderingFormatSignature dynamicRenderingFormats = CreateGraphicsPipelineLibraryDynamicRenderingFormatSignature(subset, pipeline);
-		bool hasTopology = subset == GraphicsPipelineLibrarySubset.VertexInputInterface;
-		bool hasProgram = subset is GraphicsPipelineLibrarySubset.PreRasterizationShaders or GraphicsPipelineLibrarySubset.FragmentShader;
-		bool hasVertexLayout = subset == GraphicsPipelineLibrarySubset.VertexInputInterface;
-		bool hasDepthStencil = subset is GraphicsPipelineLibrarySubset.FragmentShader or GraphicsPipelineLibrarySubset.FragmentOutputInterface;
-		bool hasRasterState = subset == GraphicsPipelineLibrarySubset.PreRasterizationShaders;
-		bool hasBlendState = subset == GraphicsPipelineLibrarySubset.FragmentOutputInterface;
-		bool hasSampleState = subset is GraphicsPipelineLibrarySubset.FragmentShader or GraphicsPipelineLibrarySubset.FragmentOutputInterface;
-
-		return new GraphicsPipelineLibraryKey(
-			subset,
-			usesDynamicRenderingIdentity,
-			hasRenderPassIdentity && !pipeline.UseDynamicRendering ? pipeline.RenderPassHandle : 0UL,
-			usesDynamicRenderingIdentity ? dynamicRenderingFormats : default,
-			hasTopology ? pipeline.Topology : default,
-			hasProgram ? pipeline.ProgramPipelineHash : 0UL,
-			hasProgram ? pipeline.ProgramLinkGeneration : 0UL,
-			hasVertexLayout ? pipeline.VertexLayoutHash : 0UL,
-			hasProgram ? pipeline.DescriptorLayoutHash : 0UL,
-			hasProgram || hasVertexLayout || hasRasterState ? pipeline.FeatureProfileHash : 0UL,
-			hasSampleState ? pipeline.RasterizationSamples : default,
-			hasDepthStencil && pipeline.DepthTestEnabled,
-			hasDepthStencil && pipeline.DepthWriteEnabled,
-			hasDepthStencil ? pipeline.DepthCompareOp : default,
-			hasDepthStencil && pipeline.StencilTestEnabled,
-			hasDepthStencil ? pipeline.FrontStencilState : default,
-			hasDepthStencil ? pipeline.BackStencilState : default,
-			hasDepthStencil ? pipeline.StencilWriteMask : 0u,
-			hasRasterState ? pipeline.CullMode : default,
-			hasRasterState ? pipeline.FrontFace : default,
-			hasBlendState && pipeline.BlendEnabled,
-			hasBlendState && pipeline.AlphaToCoverageEnabled,
-			hasBlendState ? pipeline.ColorBlendOp : default,
-			hasBlendState ? pipeline.AlphaBlendOp : default,
-			hasBlendState ? pipeline.SrcColorBlendFactor : default,
-			hasBlendState ? pipeline.DstColorBlendFactor : default,
-			hasBlendState ? pipeline.SrcAlphaBlendFactor : default,
-			hasBlendState ? pipeline.DstAlphaBlendFactor : default,
-			hasBlendState ? pipeline.ColorWriteMask : default,
-			hasRasterState ? Math.Max(pipeline.ViewportScissorCount, 1u) : 1u,
-			hasRasterState && pipeline.NativeNegativeOneToOneDepth);
-	}
-
-	private static DynamicRenderingFormatSignature CreateGraphicsPipelineLibraryDynamicRenderingFormatSignature(
-		GraphicsPipelineLibrarySubset subset,
-		in PipelineKey pipeline)
-	{
-		if (!pipeline.UseDynamicRendering)
-			return default;
-
-		return subset switch
-		{
-			GraphicsPipelineLibrarySubset.PreRasterizationShaders or
-			GraphicsPipelineLibrarySubset.FragmentShader => new DynamicRenderingFormatSignature(
-				ReadOnlySpan<Format>.Empty,
-				Format.Undefined,
-				Format.Undefined,
-				pipeline.DynamicRenderingFormats.ViewMask,
-				pipeline.DynamicRenderingFormats.LayerCount),
-			GraphicsPipelineLibrarySubset.FragmentOutputInterface => pipeline.DynamicRenderingFormats,
-			_ => default,
-		};
-	}
-
-	private Pipeline EnsureGraphicsPipelineLibrary(
-		GraphicsPipelineBuildRequest request,
-		GraphicsPipelineLibraryKey key,
-		ref GraphicsPipelineCreateInfo baseInfo,
-		PipelineShaderStageCreateInfo[] stages,
-		GraphicsPipelineLibraryFlagsEXT libraryFlags,
-		PipelineCache pipelineCache,
-		bool backgroundCompile)
-	{
-		if (BackendContext.Pipelines.TryGetOrReserveSharedGraphicsPipelineLibrary(
-				key,
-				out Pipeline cachedLibrary,
-				out bool creationReserved))
-		{
-			return cachedLibrary;
-		}
-
-		if (!creationReserved)
-		{
-			throw new VulkanPipelineCompilationDeferredException(
-				$"{key.Subset} graphics pipeline library creation is already in flight.");
-		}
-
-		try
-		{
-			fixed (PipelineShaderStageCreateInfo* stagesPtr = stages)
-			{
-				bool includeDynamicRenderingInfo = key.UseDynamicRendering;
-				PipelineRenderingCreateInfo libraryRenderingInfo = default;
-				uint libraryColorAttachmentCount = includeDynamicRenderingInfo
-					? key.DynamicRenderingFormats.ColorAttachmentCount
-					: 0u;
-				Format* libraryColorFormats = stackalloc Format[(int)Math.Max(libraryColorAttachmentCount, 1u)];
-				if (libraryColorAttachmentCount > 0u)
-					key.DynamicRenderingFormats.CopyColorAttachmentFormats(libraryColorFormats, libraryColorAttachmentCount);
-
-				if (includeDynamicRenderingInfo)
-				{
-					libraryRenderingInfo = new PipelineRenderingCreateInfo
-					{
-						SType = StructureType.PipelineRenderingCreateInfo,
-						ViewMask = key.DynamicRenderingFormats.ViewMask,
-						ColorAttachmentCount = libraryColorAttachmentCount,
-						PColorAttachmentFormats = libraryColorAttachmentCount > 0u ? libraryColorFormats : null,
-						DepthAttachmentFormat = key.DynamicRenderingFormats.DepthAttachmentFormat,
-						StencilAttachmentFormat = key.DynamicRenderingFormats.StencilAttachmentFormat,
-					};
-				}
-
-				GraphicsPipelineLibraryCreateInfoEXT libraryInfo = new()
-				{
-					SType = StructureType.GraphicsPipelineLibraryCreateInfoExt,
-					PNext = includeDynamicRenderingInfo ? &libraryRenderingInfo : null,
-					Flags = libraryFlags,
-				};
-
-				GraphicsPipelineCreateInfo libraryPipelineInfo = baseInfo;
-				libraryPipelineInfo.Flags |= PipelineCreateFlags.CreateLibraryBitKhr;
-				libraryPipelineInfo.PNext = &libraryInfo;
-				libraryPipelineInfo.StageCount = (uint)stages.Length;
-				libraryPipelineInfo.PStages = stages.Length > 0 ? stagesPtr : null;
-				libraryPipelineInfo.Layout = request.PipelineLayout;
-
-				ApplyGraphicsPipelineLibrarySubset(ref libraryPipelineInfo, key.Subset);
-
-				long createStart = global::System.Diagnostics.Stopwatch.GetTimestamp();
-				Result result = Renderer.CreateGraphicsPipelineWithCachePolicy(
-					ref libraryPipelineInfo,
-					pipelineCache,
-					backgroundCompile,
-					out Pipeline library);
-				TimeSpan createElapsed = global::System.Diagnostics.Stopwatch.GetElapsedTime(createStart);
-				if (result != Result.Success)
-					throw new InvalidOperationException($"failed to create {key.Subset} graphics pipeline library ({result}) after {createElapsed.TotalMilliseconds:F2} ms.");
-
-				Renderer.RegisterVulkanPipeline(library, $"VkMeshRenderer.GraphicsLibrary.{key.Subset}");
-				Pipeline cachedOrCreated = BackendContext.Pipelines.CompleteSharedGraphicsPipelineLibraryCreation(key, library);
-				if (cachedOrCreated.Handle != library.Handle)
-				{
-					Renderer.RetirePipeline(library);
-					return cachedOrCreated;
-				}
-
-				if (createElapsed.TotalMilliseconds >= 16.0)
-				{
-					Debug.VulkanWarningEvery(
-						$"Vulkan.PipelineLibrary.CreateSlow.{key.Subset}.{request.Program.Data.Name ?? "UnknownProgram"}",
-						TimeSpan.FromSeconds(2),
-						"[Vulkan] Graphics pipeline library create took {0:F2} ms: subset={1} program='{2}' dynamicRendering={3} renderPass=0x{4:X} colors={5} depth={6} stencil={7}",
-						createElapsed.TotalMilliseconds,
-						key.Subset,
-						request.Program.Data.Name ?? "<unnamed program>",
-						key.UseDynamicRendering,
-						key.RenderPassHandle,
-						key.DynamicRenderingFormats.DescribeColorFormats(),
-						key.DynamicRenderingFormats.DepthAttachmentFormat,
-						key.DynamicRenderingFormats.StencilAttachmentFormat);
-				}
-
-				Renderer.NotifyVulkanPipelineCreated($"graphics-library:{key.Subset}");
-				return library;
-			}
-		}
-		catch
-		{
-			BackendContext.Pipelines.CancelSharedGraphicsPipelineLibraryCreation(key);
-			throw;
-		}
-	}
-
-	private static PipelineShaderStageCreateInfo[] GetGraphicsPipelineLibraryStages(
-		VkRenderProgram program,
-		EProgramStageMask mask,
-		uint colorAttachmentCount)
-	{
-		PipelineShaderStageCreateInfo[] stages = program.GetShaderStages(mask).ToArray();
-		if (colorAttachmentCount == 0)
-			stages = stages.Where(static stage => stage.Stage != ShaderStageFlags.FragmentBit).ToArray();
-
-		return stages;
-	}
-
-	private static void ApplyGraphicsPipelineLibrarySubset(
-		ref GraphicsPipelineCreateInfo pipelineInfo,
-		GraphicsPipelineLibrarySubset subset)
-	{
-		switch (subset)
-		{
-			case GraphicsPipelineLibrarySubset.VertexInputInterface:
-				pipelineInfo.PViewportState = null;
-				pipelineInfo.PRasterizationState = null;
-				pipelineInfo.PMultisampleState = null;
-				pipelineInfo.PDepthStencilState = null;
-				pipelineInfo.PColorBlendState = null;
-				pipelineInfo.PDynamicState = null;
-				break;
-			case GraphicsPipelineLibrarySubset.PreRasterizationShaders:
-				pipelineInfo.PVertexInputState = null;
-				pipelineInfo.PInputAssemblyState = null;
-				pipelineInfo.PDepthStencilState = null;
-				pipelineInfo.PColorBlendState = null;
-				break;
-			case GraphicsPipelineLibrarySubset.FragmentShader:
-				pipelineInfo.PVertexInputState = null;
-				pipelineInfo.PInputAssemblyState = null;
-				pipelineInfo.PViewportState = null;
-				pipelineInfo.PRasterizationState = null;
-				pipelineInfo.PColorBlendState = null;
-				pipelineInfo.PDynamicState = null;
-				break;
-			case GraphicsPipelineLibrarySubset.FragmentOutputInterface:
-				pipelineInfo.StageCount = 0;
-				pipelineInfo.PStages = null;
-				pipelineInfo.PVertexInputState = null;
-				pipelineInfo.PInputAssemblyState = null;
-				pipelineInfo.PViewportState = null;
-				pipelineInfo.PRasterizationState = null;
-				pipelineInfo.PDynamicState = null;
-				break;
-		}
-	}
+internal unsafe partial class VkMeshRenderer
+{
 
 	private static PendingMeshDraw ResolveAttachmentCompatibleDrawState(
 		in PendingMeshDraw draw,

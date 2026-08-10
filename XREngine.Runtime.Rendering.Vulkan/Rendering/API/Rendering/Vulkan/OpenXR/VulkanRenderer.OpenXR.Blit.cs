@@ -53,7 +53,7 @@ public unsafe partial class VulkanRenderer
             if (sourceOldLayout == ImageLayout.Undefined)
                 sourceOldLayout = ImageLayout.ColorAttachmentOptimal;
 
-            using CommandScope scope = NewCommandScope();
+            using VulkanCommandRuntime.CommandScope scope = _commandRuntime.NewCommandScope();
             CommandBuffer commandBuffer = scope.CommandBuffer;
 
             TransitionOpenXrMirrorImage(
@@ -226,7 +226,7 @@ public unsafe partial class VulkanRenderer
                     destinationExtent.Height);
             }
 
-            using CommandScope scope = NewCommandScope();
+            using VulkanCommandRuntime.CommandScope scope = _commandRuntime.NewCommandScope();
             CommandBuffer commandBuffer = scope.CommandBuffer;
 
             TransitionOpenXrMirrorImage(
@@ -362,7 +362,7 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
-            using CommandScope scope = NewCommandScope();
+            using VulkanCommandRuntime.CommandScope scope = _commandRuntime.NewCommandScope();
             RecordStereoLayerBlits(scope.CommandBuffer, in plan);
             UpdateStereoLayerBlitTrackedLayouts(in plan);
 

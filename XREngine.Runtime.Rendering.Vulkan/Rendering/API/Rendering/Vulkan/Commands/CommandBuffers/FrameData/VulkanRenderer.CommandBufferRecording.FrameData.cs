@@ -15,13 +15,13 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanCommandRuntime
     {
         /// <summary>
         /// Normalizes producer-owned pass indices before a frame plan is sealed.
         /// </summary>
         /// <param name="operations">The array of frame operations whose pass indices need to be normalized.</param>
-        private void NormalizePrimaryPlanPassIndicesForPublication(FrameOp[] operations)
+        internal void NormalizePrimaryPlanPassIndicesForPublication(FrameOp[] operations)
         {
             // The pass index of each operation must be valid and consistent with the pass metadata.
             // If an operation's pass index is invalid, it will be adjusted to a valid value based on the pass metadata.
@@ -56,7 +56,7 @@ namespace XREngine.Rendering.Vulkan
                     operation.Context.PassMetadata);
                 if (resolvedPassIndex != operation.PassIndex)
                 {
-                    throw new InvalidOperationException(
+                    throw new VulkanPlanPreconditionException(
                         $"Sealed frame-plan operation {index} has pass index {operation.PassIndex}, but recording requires {resolvedPassIndex}.");
                 }
             }
@@ -177,7 +177,7 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private static int GetFrameWideMeshDrawUniformSlot(
+        internal static int GetFrameWideMeshDrawUniformSlot(
             Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> slotsByRendererFamily,
             Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> familyBases,
             VkMeshRenderer renderer,
@@ -191,7 +191,7 @@ namespace XREngine.Rendering.Vulkan
             VulkanMeshFrameDataRendererFamilyKey rendererFamily = new(renderer, family);
             if (!familyBases.TryGetValue(rendererFamily, out int baseSlot))
             {
-                throw new InvalidOperationException(
+                throw new VulkanPlanPreconditionException(
                     $"Mesh frame-data output family {family} was not published before draw-slot resolution.");
             }
 
@@ -204,7 +204,7 @@ namespace XREngine.Rendering.Vulkan
             return slot;
         }
 
-        private bool TryRegisterFrameWideMeshFrameDataRequirements(
+        internal bool TryRegisterFrameWideMeshFrameDataRequirements(
             FrameOperationSequence primaryOps,
             FrameOperationSequence secondaryOps,
             int frameDataSlot,
@@ -299,7 +299,8 @@ namespace XREngine.Rendering.Vulkan
             {
                 FrameOp operation = operations[operationIndex];
                 VulkanFrameOpPlannerStateKey plannerKey =
-                    BuildFrameOpPlannerStateKey(operation.Context);
+                    VulkanFrameOpSnapshotSignatures.BuildPlannerStateKey(
+                        operation.Context);
                 VulkanReusableFrameDataRefreshRequest request;
                 switch (operation)
                 {
@@ -465,7 +466,8 @@ namespace XREngine.Rendering.Vulkan
                     meshRenderer,
                     request.Draw,
                     request.DrawUniformSlot,
-                    frequencyMask);
+                    frequencyMask,
+                    ownerKey);
                 if (scheduledCommandChain)
                 {
                     scratch.TryAddScheduledCommandChainFrameDataOwnerWorkRequest(
@@ -562,7 +564,9 @@ namespace XREngine.Rendering.Vulkan
                 return;
 
             int secondaryCount = InvalidateCommandChainSecondaryCommandBuffersForFrameDataLayoutChange();
-            MarkOpenXrPrimaryCommandArtifactOwnersDirty();
+            // The command dirty generation is part of every primary artifact's
+            // dependency signature, including OpenXR variants. Publishing it
+            // invalidates all owners without reaching into output-owned caches.
             MarkCommandBuffersDirty("mesh frame-data layout generation changed");
             Debug.Vulkan(
                 "[Vulkan] Mesh frame-data layout generation advanced from {0} to {1}; invalidated {2} cached command-chain secondaries with baked dynamic offsets.",

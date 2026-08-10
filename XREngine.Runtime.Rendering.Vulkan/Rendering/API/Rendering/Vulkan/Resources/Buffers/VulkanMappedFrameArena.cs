@@ -16,7 +16,7 @@ internal unsafe sealed class VulkanMappedFrameArena
     private static long s_nextArenaIdentity;
 
     private readonly VulkanMappedFrameArenaBackend _backend;
-    private readonly object _reservationLock = new();
+    private readonly Lock _reservationLock = new();
     private readonly Dictionary<VulkanMappedFrameReservationKey, VulkanMappedFrameReservation> _reservations = [];
     private readonly Dictionary<VulkanFrequencyAutoUniformReservationKey, VulkanFrequencyAutoUniformReservation> _frequencyReservations = [];
     private Chunk?[] _chunks = [];
@@ -276,6 +276,16 @@ internal unsafe sealed class VulkanMappedFrameArena
     {
         VulkanMappedFrameReservation reservation = new(offset, length, DynamicOffsetAlignment, Generation);
         return TryGetSlice(frameSlot, reservation, out slice);
+    }
+
+    internal string DescribeSliceRejection(int frameSlot, ulong offset, uint length)
+    {
+        ulong generation = Generation;
+        bool frameSlotInRange = (uint)frameSlot < (uint)_chunks.Length;
+        Chunk? chunk = frameSlotInRange ? _chunks[frameSlot] : null;
+        return $"active={IsActive}, operational={_backend.IsOperational}, generation={generation}, " +
+            $"frameSlot={frameSlot}/{_chunks.Length}, chunk={(chunk is null ? "missing" : "ready")}, " +
+            $"offset={offset}, length={length}, alignment={DynamicOffsetAlignment}, capacity={chunk?.Capacity ?? 0UL}";
     }
 
     internal bool TryBeginWrite(VulkanMappedFrameSlice slice, out VulkanMappedFrameWriteScope scope)

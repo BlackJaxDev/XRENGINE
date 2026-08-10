@@ -13,7 +13,7 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed unsafe partial class VulkanCommandRuntime
 {
     internal static bool TryGetCommandChainScheduleFrameSlot(
         CommandChainSchedule schedule,
@@ -193,6 +193,45 @@ public unsafe partial class VulkanRenderer
         AppendIfChanged(details, "physical-image-signature", chain.PhysicalImageSignature, packet.ResourcePlanSnapshot.PhysicalImageSignature);
         AppendIfChanged(details, "framebuffer-signature", chain.FramebufferSignature, packet.ResourcePlanSnapshot.FramebufferSignature);
         AppendIfChanged(details, "pipeline-generation", chain.PipelineGeneration, packet.ResourcePlanSnapshot.PipelineGeneration);
+        if (!packet.RecordedPacketKey.IsComplete)
+        {
+            AppendDetail(details, "packet-key-complete", bool.FalseString);
+            AppendDetail(
+                details,
+                "packet-key-first-incomplete",
+                packet.RecordedPacketKey.DescribeFirstIncompleteField());
+            VulkanPreparedCommandChainAuthority? authority = chain.PreparedAuthority;
+            AppendDetail(details, "prepared-authority", (authority is not null).ToString());
+            AppendDetail(details, "prepared-key-complete", chain.PreparedKey.IsComplete.ToString());
+            if (!chain.PreparedKey.RecordedPacketKey.IsComplete)
+            {
+                AppendDetail(
+                    details,
+                    "prepared-key-first-incomplete",
+                    chain.PreparedKey.RecordedPacketKey.DescribeFirstIncompleteField());
+            }
+            if (authority is not null)
+            {
+                RecordedPacketKey authorityRecordedKey =
+                    authority.PreparedKey.RecordedPacketKey;
+                RecordedPacketKey completedPacketKey = packet.RecordedPacketKey with
+                {
+                    DescriptorSets = authorityRecordedKey.DescriptorSets,
+                    Programs = authorityRecordedKey.Programs,
+                };
+                AppendDetail(details, "packet-with-authority-complete", completedPacketKey.IsComplete.ToString());
+                AppendDetail(details, "authority-recorded-key-complete", authorityRecordedKey.IsComplete.ToString());
+                if (completedPacketKey.IsComplete &&
+                    authorityRecordedKey.IsComplete &&
+                    !completedPacketKey.Matches(in authorityRecordedKey))
+                {
+                    AppendDetail(
+                        details,
+                        "authority-mismatch",
+                        completedPacketKey.DescribeFirstMismatch(in authorityRecordedKey));
+                }
+            }
+        }
         CommandRecordingDependencyMismatch dependencyMismatch = chain.DependencySignature.Compare(
             BuildCommandChainDependencySignature(packet, chain.Key));
         if (dependencyMismatch.Field != CommandRecordingDependencyField.None)

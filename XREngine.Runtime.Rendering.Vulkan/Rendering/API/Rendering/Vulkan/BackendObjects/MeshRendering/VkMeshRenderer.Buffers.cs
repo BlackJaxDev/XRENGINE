@@ -41,13 +41,13 @@ internal unsafe partial class VkMeshRenderer
 			var meshBuffers = Mesh?.Buffers as IEventDictionary<string, XRDataBuffer>;
 			if (meshBuffers is not null)
 				foreach (var pair in meshBuffers)
-					if (Renderer.GenericToAPI<VkDataBuffer>(pair.Value) is { } vkBuffer)
+					if (BackendContext.GetOrCreateAPIRenderObject(pair.Value) is VkDataBuffer vkBuffer)
 						_bufferCache[pair.Key] = vkBuffer;
 
 			var rendererBuffers = MeshRenderer.Buffers as IEventDictionary<string, XRDataBuffer>;
 			if (rendererBuffers is not null)
 				foreach (var pair in rendererBuffers)
-					if (Renderer.GenericToAPI<VkDataBuffer>(pair.Value) is { } vkBuffer)
+					if (BackendContext.GetOrCreateAPIRenderObject(pair.Value) is VkDataBuffer vkBuffer)
 						_bufferCache[pair.Key] = vkBuffer;
 
 			FilterRuntimeDeformationSourceBuffers();
@@ -56,12 +56,13 @@ internal unsafe partial class VkMeshRenderer
 			CaptureRuntimeDeformationBufferReferences();
 
 			bool structuralBindingsChanged = UpdateBufferStructuralIdentitySnapshot();
+			PublishCachedBufferResourceFingerprint();
 			if (structuralBindingsChanged)
 			{
 				_buffersDirty = true;
 				_descriptorDirty = true;
 				_vertexInputStateDirty = true;
-				Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
+				BackendContext.ProgramServices.CommandRuntime.MarkCommandBuffersDirtyForLegacyMeshState();
 			}
 
 			PublishBufferReadinessSnapshot();
@@ -77,7 +78,7 @@ internal unsafe partial class VkMeshRenderer
 		ulong handle = buffer.BufferHandle?.Handle ?? 0UL;
 		return new BufferStructuralIdentity(
 			handle,
-			Renderer.GetCurrentVulkanResourceGeneration(ObjectType.Buffer, handle),
+			GetResourceGeneration(ObjectType.Buffer, handle),
 			buffer.AllocatedByteSize,
 			data.BindingIndexOverride ?? uint.MaxValue,
 			data.Target,
@@ -89,7 +90,7 @@ internal unsafe partial class VkMeshRenderer
 	private BufferStructuralIdentity CaptureBufferStructuralIdentity(XRDataBuffer? buffer)
 		=> buffer is null
 			? default
-			: CaptureBufferStructuralIdentity(Renderer.GenericToAPI<VkDataBuffer>(buffer));
+			: CaptureBufferStructuralIdentity(BackendContext.GetOrCreateAPIRenderObject(buffer) as VkDataBuffer);
 
 	private bool UpdateBufferStructuralIdentitySnapshot()
 	{
@@ -175,7 +176,7 @@ internal unsafe partial class VkMeshRenderer
 			|| MeshRenderer.ActiveSkinPaletteBuffer is not { } activeSkinPalette)
 			return;
 
-		if (Renderer.GenericToAPI<VkDataBuffer>(activeSkinPalette) is { } vkBuffer)
+		if (BackendContext.GetOrCreateAPIRenderObject(activeSkinPalette) is VkDataBuffer vkBuffer)
 			_bufferCache[shaderName] = vkBuffer;
 	}
 
@@ -248,7 +249,7 @@ internal unsafe partial class VkMeshRenderer
 
 		if (assignBindingOverride)
 			dataBuffer.BindingIndexOverride = binding;
-		if (Renderer.GenericToAPI<VkDataBuffer>(dataBuffer) is { } vkBuffer)
+		if (BackendContext.GetOrCreateAPIRenderObject(dataBuffer) is VkDataBuffer vkBuffer)
 			_bufferCache[shaderName] = vkBuffer;
 	}
 
@@ -317,10 +318,10 @@ internal unsafe partial class VkMeshRenderer
 			if (!_buffersDirty)
 			{
 				_descriptorDirty = true;
-				Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
+				BackendContext.ProgramServices.CommandRuntime.MarkCommandBuffersDirtyForLegacyMeshState();
 			}
 
-			bool allowSynchronousBufferUpload = Renderer.AllowSynchronousResourceUploads;
+			bool allowSynchronousBufferUpload = BackendContext.AllowSynchronousResourceUploads;
 			foreach (var buffer in _bufferCache.Values)
 				buffer.TryEnsureReadyForRendering(allowSynchronousBufferUpload);
 
@@ -340,15 +341,21 @@ internal unsafe partial class VkMeshRenderer
 			{
 				_triangleIndexBufferExternallyProvided = false;
 				var tri = GetIndexBufferForBinding(EPrimitiveType.Triangles, out _triangleIndexSize, _triangleIndexBuffer);
-				_triangleIndexBuffer = tri is not null ? Renderer.GenericToAPI<VkDataBuffer>(tri) : null;
+				_triangleIndexBuffer = tri is not null
+					? BackendContext.GetOrCreateAPIRenderObject(tri, generateNow: allowSynchronousBufferUpload) as VkDataBuffer
+					: null;
 				_triangleIndexBuffer?.TryEnsureReadyForRendering(allowSynchronousBufferUpload);
 
 				var line = GetIndexBufferForBinding(EPrimitiveType.Lines, out _lineIndexSize, _lineIndexBuffer);
-				_lineIndexBuffer = line is not null ? Renderer.GenericToAPI<VkDataBuffer>(line) : null;
+				_lineIndexBuffer = line is not null
+					? BackendContext.GetOrCreateAPIRenderObject(line, generateNow: allowSynchronousBufferUpload) as VkDataBuffer
+					: null;
 				_lineIndexBuffer?.TryEnsureReadyForRendering(allowSynchronousBufferUpload);
 
 				var point = GetIndexBufferForBinding(EPrimitiveType.Points, out _pointIndexSize, _pointIndexBuffer);
-				_pointIndexBuffer = point is not null ? Renderer.GenericToAPI<VkDataBuffer>(point) : null;
+				_pointIndexBuffer = point is not null
+					? BackendContext.GetOrCreateAPIRenderObject(point, generateNow: allowSynchronousBufferUpload) as VkDataBuffer
+					: null;
 				_pointIndexBuffer?.TryEnsureReadyForRendering(allowSynchronousBufferUpload);
 				_indexBuffersSkippedForShaderGeneratedVertices = false;
 			}
@@ -495,7 +502,7 @@ internal unsafe partial class VkMeshRenderer
 			_descriptorDirty = true;
 			_vertexInputStateDirty = true;
 			_geometryLayoutSignature = MeshGeometryLayoutSignature.Empty;
-			Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
+			BackendContext.ProgramServices.CommandRuntime.MarkCommandBuffersDirtyForLegacyMeshState();
 		}
 	}
 
@@ -515,7 +522,7 @@ internal unsafe partial class VkMeshRenderer
 			_indexBuffersSkippedForShaderGeneratedVertices = false;
 			if (changed)
 				_vertexInputStateDirty = true;
-			_triangleIndexBuffer?.TryEnsureReadyForRendering(Renderer.AllowSynchronousResourceUploads);
+			_triangleIndexBuffer?.TryEnsureReadyForRendering(BackendContext.AllowSynchronousResourceUploads);
 			PublishBufferReadinessSnapshot();
 			return changed;
 		}
@@ -589,7 +596,7 @@ internal unsafe partial class VkMeshRenderer
 		if (!HasIndexData(buffer))
 			return false;
 
-		if (!buffer!.TryEnsureReadyForRendering(Renderer.AllowSynchronousResourceUploads))
+		if (!buffer!.TryEnsureReadyForRendering(BackendContext.AllowSynchronousResourceUploads))
 			return false;
 		if (buffer.BufferHandle is not { } bufferHandle)
 			return false;

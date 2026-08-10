@@ -52,10 +52,7 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
-            using CommandScope scope = NewCommandScope();
-            RecordOpenXrEyeSwapchainPreviewCopy(scope.CommandBuffer, in plan);
-
-            return true;
+            return _commandRuntime.ExecuteOpenXrPreviewCopy(in plan);
         }
         catch (Exception ex)
         {
@@ -134,96 +131,6 @@ public unsafe partial class VulkanRenderer
         return true;
     }
 
-    private void RecordOpenXrEyeSwapchainPreviewCopy(
-        CommandBuffer commandBuffer,
-        in OpenXrEyePreviewCopyPlan plan)
-    {
-        TransitionOpenXrMirrorImage(
-            commandBuffer,
-            plan.SourceImage,
-            plan.SourceFormat,
-            plan.SourceOldLayout,
-            ImageLayout.TransferSrcOptimal,
-            ImageAspectFlags.ColorBit);
-
-        TransitionOpenXrMirrorImage(
-            commandBuffer,
-            plan.DestinationImage,
-            plan.DestinationSource.DescriptorFormat,
-            plan.DestinationOldLayout,
-            ImageLayout.TransferDstOptimal,
-            plan.DestinationAspect);
-
-        ImageBlit blit = new()
-        {
-            SrcSubresource = new ImageSubresourceLayers
-            {
-                AspectMask = ImageAspectFlags.ColorBit,
-                MipLevel = 0,
-                BaseArrayLayer = 0,
-                LayerCount = 1
-            },
-            DstSubresource = new ImageSubresourceLayers
-            {
-                AspectMask = plan.DestinationAspect,
-                MipLevel = 0,
-                BaseArrayLayer = 0,
-                LayerCount = 1
-            }
-        };
-        blit.SrcOffsets.Element0 = new Offset3D { X = 0, Y = 0, Z = 0 };
-        blit.SrcOffsets.Element1 = new Offset3D
-        {
-            X = checked((int)Math.Min(plan.SourceExtent.Width, (uint)int.MaxValue)),
-            Y = checked((int)Math.Min(plan.SourceExtent.Height, (uint)int.MaxValue)),
-            Z = 1
-        };
-
-        int destinationWidth = checked((int)Math.Min(plan.DestinationExtent.Width, (uint)int.MaxValue));
-        int destinationHeight = checked((int)Math.Min(plan.DestinationExtent.Height, (uint)int.MaxValue));
-        blit.DstOffsets.Element0 = new Offset3D
-        {
-            X = 0,
-            Y = plan.FlipY ? destinationHeight : 0,
-            Z = 0
-        };
-        blit.DstOffsets.Element1 = new Offset3D
-        {
-            X = destinationWidth,
-            Y = plan.FlipY ? 0 : destinationHeight,
-            Z = 1
-        };
-
-        CmdBlitImageTracked(
-            commandBuffer,
-            plan.SourceImage,
-            ImageLayout.TransferSrcOptimal,
-            plan.DestinationImage,
-            ImageLayout.TransferDstOptimal,
-            1,
-            ref blit,
-            Filter.Nearest);
-
-        TransitionOpenXrMirrorImage(
-            commandBuffer,
-            plan.SourceImage,
-            plan.SourceFormat,
-            ImageLayout.TransferSrcOptimal,
-            ImageLayout.ColorAttachmentOptimal,
-            ImageAspectFlags.ColorBit);
-
-        TransitionOpenXrMirrorImage(
-            commandBuffer,
-            plan.DestinationImage,
-            plan.DestinationSource.DescriptorFormat,
-            ImageLayout.TransferDstOptimal,
-            ImageLayout.ShaderReadOnlyOptimal,
-            plan.DestinationAspect);
-
-        if (plan.DestinationSource is IVkFrameBufferAttachmentSource attachmentSource)
-            attachmentSource.UpdateAttachmentTrackedLayout(ImageLayout.ShaderReadOnlyOptimal, 0, 0);
-    }
-
     internal bool TryPublishOpenXrEyeMirrorTextures(
         in OpenXrEyeMirrorPublishRequest firstEye,
         in OpenXrEyeMirrorPublishRequest secondEye,
@@ -241,10 +148,11 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
-            using CommandScope scope = NewCommandScope();
-            RecordOpenXrEyeMirrorPublish(scope.CommandBuffer, in firstPlan, out firstPreviewCopied);
-            RecordOpenXrEyeMirrorPublish(scope.CommandBuffer, in secondPlan, out secondPreviewCopied);
-            return true;
+            return _commandRuntime.ExecuteOpenXrMirrorPublish(
+                in firstPlan,
+                in secondPlan,
+                out firstPreviewCopied,
+                out secondPreviewCopied);
         }
         catch (Exception ex)
         {
@@ -263,95 +171,19 @@ public unsafe partial class VulkanRenderer
         out CommandBuffer commandBuffer,
         out bool firstPreviewCopied,
         out bool secondPreviewCopied)
-    {
-        commandBuffer = default;
-        firstPreviewCopied = false;
-        secondPreviewCopied = false;
-
-        CommandBufferAllocateInfo allocateInfo = new()
-        {
-            SType = StructureType.CommandBufferAllocateInfo,
-            Level = CommandBufferLevel.Primary,
-            CommandPool = commandPool,
-            CommandBufferCount = 1,
-        };
-
-        Result allocateResult = AllocateVulkanCommandBuffersTracked(ref allocateInfo, out commandBuffer, "OpenXR.CommandBuffer");
-        if (allocateResult != Result.Success || commandBuffer.Handle == 0)
-        {
-            Debug.VulkanWarning($"[OpenXR] Failed to allocate eye mirror publish command buffer: {allocateResult}");
-            commandBuffer = default;
-            return false;
-        }
-
-        bool begun = false;
-        try
-        {
-            CommandBufferBeginInfo beginInfo = new()
-            {
-                SType = StructureType.CommandBufferBeginInfo,
-                Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
-            };
-
-            ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.OpenXR.PreviewPublish");
-            Result beginResult = Api!.BeginCommandBuffer(commandBuffer, ref beginInfo);
-            if (beginResult != Result.Success)
-            {
-                Debug.VulkanWarning($"[OpenXR] Failed to begin eye mirror publish command buffer: {beginResult}");
-                FreeOpenXrMirrorPublishCommandBuffer(
-                    commandBuffer,
-                    EVulkanQueueSubmissionDisposition.Completed);
-                commandBuffer = default;
-                return false;
-            }
-
-            begun = true;
-            ResetCommandBufferBindState(commandBuffer);
-            RecordOpenXrEyeMirrorPublish(commandBuffer, in firstPlan, out firstPreviewCopied);
-            RecordOpenXrEyeMirrorPublish(commandBuffer, in secondPlan, out secondPreviewCopied);
-
-            Result endResult = EndCommandBufferTracked(commandBuffer);
-            if (endResult != Result.Success)
-            {
-                Debug.VulkanWarning($"[OpenXR] Failed to end eye mirror publish command buffer: {endResult}");
-                FreeOpenXrMirrorPublishCommandBuffer(
-                    commandBuffer,
-                    EVulkanQueueSubmissionDisposition.Completed);
-                commandBuffer = default;
-                return false;
-            }
-
-            return true;
-        }
-        catch
-        {
-            if (begun)
-                RemoveCommandBufferBindState(commandBuffer);
-            FreeOpenXrMirrorPublishCommandBuffer(
-                commandBuffer,
-                EVulkanQueueSubmissionDisposition.Completed);
-            commandBuffer = default;
-
-            throw;
-        }
-    }
+        => _commandRuntime.TryRecordOpenXrEyeMirrorPublishCommandBuffer(
+            in firstPlan,
+            in secondPlan,
+            out commandBuffer,
+            out firstPreviewCopied,
+            out secondPreviewCopied);
 
     private void FreeOpenXrMirrorPublishCommandBuffer(
         CommandBuffer commandBuffer,
         EVulkanQueueSubmissionDisposition submissionDisposition)
-    {
-        if (commandBuffer.Handle == 0)
-            return;
-
-        if (!ShouldFreeTemporaryOpenXrCommandBuffer(submissionDisposition))
-        {
-            RemoveCommandBufferBindState(commandBuffer);
-            return;
-        }
-
-        FreeVulkanCommandBufferTracked(commandPool, ref commandBuffer, "OpenXR.Temporary");
-        RemoveCommandBufferBindState(commandBuffer);
-    }
+        => _commandRuntime.ReleaseOpenXrTemporaryCommandBuffer(
+            commandBuffer,
+            submissionDisposition);
 
     private bool TryPrepareOpenXrEyeMirrorPublish(
         in OpenXrEyeMirrorPublishRequest request,
@@ -448,158 +280,6 @@ public unsafe partial class VulkanRenderer
         return true;
     }
 
-    private void RecordOpenXrEyeMirrorPublish(
-        CommandBuffer commandBuffer,
-        in OpenXrEyeMirrorPublishPlan plan,
-        out bool previewCopied)
-    {
-        previewCopied = false;
-
-        TransitionOpenXrMirrorImage(
-            commandBuffer,
-            plan.SourceImage,
-            plan.SourceFormat,
-            plan.SourceOldLayout,
-            ImageLayout.TransferSrcOptimal,
-            plan.SourceAspect);
-
-        TransitionOpenXrMirrorImage(
-            commandBuffer,
-            plan.SwapchainImage,
-            plan.SwapchainFormat,
-            ImageLayout.Undefined,
-            ImageLayout.TransferDstOptimal,
-            ImageAspectFlags.ColorBit);
-
-        ImageBlit swapchainBlit = CreateOpenXrMirrorBlit(
-            plan.SourceAspect,
-            ImageAspectFlags.ColorBit,
-            plan.SourceExtent,
-            plan.SwapchainExtent,
-            flipDestinationY: false);
-
-        CmdBlitImageTracked(
-            commandBuffer,
-            plan.SourceImage,
-            ImageLayout.TransferSrcOptimal,
-            plan.SwapchainImage,
-            ImageLayout.TransferDstOptimal,
-            1,
-            ref swapchainBlit,
-            Filter.Nearest);
-
-        TransitionOpenXrMirrorImage(
-            commandBuffer,
-            plan.SwapchainImage,
-            plan.SwapchainFormat,
-            ImageLayout.TransferDstOptimal,
-            ImageLayout.ColorAttachmentOptimal,
-            ImageAspectFlags.ColorBit);
-
-        if (plan.PreviewSource is not null && plan.PreviewImage.Handle != 0)
-        {
-            TransitionOpenXrMirrorImage(
-                commandBuffer,
-                plan.PreviewImage,
-                plan.PreviewSource.DescriptorFormat,
-                plan.PreviewOldLayout,
-                ImageLayout.TransferDstOptimal,
-                plan.PreviewAspect);
-
-            ImageBlit previewBlit = CreateOpenXrMirrorBlit(
-                plan.SourceAspect,
-                plan.PreviewAspect,
-                plan.SourceExtent,
-                plan.PreviewExtent,
-                plan.FlipPreviewY);
-
-            CmdBlitImageTracked(
-                commandBuffer,
-                plan.SourceImage,
-                ImageLayout.TransferSrcOptimal,
-                plan.PreviewImage,
-                ImageLayout.TransferDstOptimal,
-                1,
-                ref previewBlit,
-                Filter.Nearest);
-
-            TransitionOpenXrMirrorImage(
-                commandBuffer,
-                plan.PreviewImage,
-                plan.PreviewSource.DescriptorFormat,
-                ImageLayout.TransferDstOptimal,
-                ImageLayout.ShaderReadOnlyOptimal,
-                plan.PreviewAspect);
-
-            if (plan.PreviewSource is IVkFrameBufferAttachmentSource previewAttachmentSource)
-                previewAttachmentSource.UpdateAttachmentTrackedLayout(ImageLayout.ShaderReadOnlyOptimal, 0, 0);
-
-            previewCopied = true;
-        }
-
-        TransitionOpenXrMirrorImage(
-            commandBuffer,
-            plan.SourceImage,
-            plan.SourceFormat,
-            ImageLayout.TransferSrcOptimal,
-            plan.SourceOldLayout,
-            plan.SourceAspect);
-
-        if (plan.Source is IVkFrameBufferAttachmentSource sourceAttachmentSource)
-            sourceAttachmentSource.UpdateAttachmentTrackedLayout(plan.SourceOldLayout, 0, 0);
-    }
-
-    private static ImageBlit CreateOpenXrMirrorBlit(
-        ImageAspectFlags sourceAspect,
-        ImageAspectFlags destinationAspect,
-        Extent2D sourceExtent,
-        Extent2D destinationExtent,
-        bool flipDestinationY)
-    {
-        ImageBlit blit = new()
-        {
-            SrcSubresource = new ImageSubresourceLayers
-            {
-                AspectMask = sourceAspect,
-                MipLevel = 0,
-                BaseArrayLayer = 0,
-                LayerCount = 1
-            },
-            DstSubresource = new ImageSubresourceLayers
-            {
-                AspectMask = destinationAspect,
-                MipLevel = 0,
-                BaseArrayLayer = 0,
-                LayerCount = 1
-            }
-        };
-
-        blit.SrcOffsets.Element0 = new Offset3D { X = 0, Y = 0, Z = 0 };
-        blit.SrcOffsets.Element1 = new Offset3D
-        {
-            X = checked((int)Math.Min(sourceExtent.Width, (uint)int.MaxValue)),
-            Y = checked((int)Math.Min(sourceExtent.Height, (uint)int.MaxValue)),
-            Z = 1
-        };
-
-        int destinationWidth = checked((int)Math.Min(destinationExtent.Width, (uint)int.MaxValue));
-        int destinationHeight = checked((int)Math.Min(destinationExtent.Height, (uint)int.MaxValue));
-        blit.DstOffsets.Element0 = new Offset3D
-        {
-            X = 0,
-            Y = flipDestinationY ? destinationHeight : 0,
-            Z = 0
-        };
-        blit.DstOffsets.Element1 = new Offset3D
-        {
-            X = destinationWidth,
-            Y = flipDestinationY ? 0 : destinationHeight,
-            Z = 1
-        };
-
-        return blit;
-    }
-
     internal bool TryCopyOpenXrEyeMirrorTexture(
         XRTexture? sourceTexture,
         XRTexture2D? destinationTexture,
@@ -662,101 +342,20 @@ public unsafe partial class VulkanRenderer
             ImageAspectFlags destinationAspect = NormalizeOpenXrMirrorAspect(destination.DescriptorFormat, destination.DescriptorAspect);
             uint sourceBaseArrayLayer = ResolveOpenXrMirrorBaseArrayLayer(sourceTexture);
 
-            using CommandScope scope = NewCommandScope();
-            CommandBuffer commandBuffer = scope.CommandBuffer;
-
-            TransitionOpenXrMirrorImage(
-                commandBuffer,
+            return _commandRuntime.ExecuteOpenXrMirrorTextureCopy(
+                source,
                 sourceImage,
                 source.DescriptorFormat,
+                sourceExtent,
                 sourceOldLayout,
-                ImageLayout.TransferSrcOptimal,
                 sourceAspect,
                 sourceBaseArrayLayer,
-                1u);
-
-            TransitionOpenXrMirrorImage(
-                commandBuffer,
+                destination,
                 destinationImage,
-                destination.DescriptorFormat,
+                destinationExtent,
                 destinationOldLayout,
-                ImageLayout.TransferDstOptimal,
-                destinationAspect);
-
-            ImageBlit blit = new()
-            {
-                SrcSubresource = new ImageSubresourceLayers
-                {
-                    AspectMask = sourceAspect,
-                    MipLevel = 0,
-                    BaseArrayLayer = sourceBaseArrayLayer,
-                    LayerCount = 1
-                },
-                DstSubresource = new ImageSubresourceLayers
-                {
-                    AspectMask = destinationAspect,
-                    MipLevel = 0,
-                    BaseArrayLayer = 0,
-                    LayerCount = 1
-                }
-            };
-            blit.SrcOffsets.Element0 = new Offset3D { X = 0, Y = 0, Z = 0 };
-            blit.SrcOffsets.Element1 = new Offset3D
-            {
-                X = checked((int)Math.Min(sourceExtent.Width, (uint)int.MaxValue)),
-                Y = checked((int)Math.Min(sourceExtent.Height, (uint)int.MaxValue)),
-                Z = 1
-            };
-
-            int destinationWidth = checked((int)Math.Min(destinationExtent.Width, (uint)int.MaxValue));
-            int destinationHeight = checked((int)Math.Min(destinationExtent.Height, (uint)int.MaxValue));
-            blit.DstOffsets.Element0 = new Offset3D
-            {
-                X = 0,
-                Y = flipY ? destinationHeight : 0,
-                Z = 0
-            };
-            blit.DstOffsets.Element1 = new Offset3D
-            {
-                X = destinationWidth,
-                Y = flipY ? 0 : destinationHeight,
-                Z = 1
-            };
-
-            CmdBlitImageTracked(
-                commandBuffer,
-                sourceImage,
-                ImageLayout.TransferSrcOptimal,
-                destinationImage,
-                ImageLayout.TransferDstOptimal,
-                1,
-                ref blit,
-                Filter.Nearest);
-
-            TransitionOpenXrMirrorImage(
-                commandBuffer,
-                sourceImage,
-                source.DescriptorFormat,
-                ImageLayout.TransferSrcOptimal,
-                sourceOldLayout,
-                sourceAspect,
-                sourceBaseArrayLayer,
-                1u);
-
-            TransitionOpenXrMirrorImage(
-                commandBuffer,
-                destinationImage,
-                destination.DescriptorFormat,
-                ImageLayout.TransferDstOptimal,
-                ImageLayout.ShaderReadOnlyOptimal,
-                destinationAspect);
-
-            if (destination is IVkFrameBufferAttachmentSource destinationAttachmentSource)
-                destinationAttachmentSource.UpdateAttachmentTrackedLayout(ImageLayout.ShaderReadOnlyOptimal, 0, 0);
-            if (source is IVkFrameBufferAttachmentSource sourceAttachmentSource)
-                sourceAttachmentSource.UpdateAttachmentTrackedLayout(sourceOldLayout, 0, 0);
-
-            return true;
+                destinationAspect,
+                flipY);
         }
         catch (Exception ex)
         {

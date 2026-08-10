@@ -201,12 +201,14 @@ namespace XREngine.Rendering.Vulkan
                                 frameOpContextId,
                                 resourceGeneration,
                                 descriptorGeneration);
-                        submitResult = SubmitToQueueTracked(
+                        submitResult = _commandRuntime.SubmitToQueueTracked(
+                            Api,
+                            _deviceContext,
+                            _frameTelemetry,
                             _deviceContext.GraphicsQueue,
                             ref submitInfo,
                             default,
-                            diagnosticContext,
-                            caller: "RenderFrameCallback");
+                            "RenderFrameCallback");
                         if (submitResult == Result.Success)
                         {
                             // The queue owns this frame as soon as vkQueueSubmit accepts it. Set
@@ -462,9 +464,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 _ = _commandRuntime.InvalidateCachedCommandBuffers(
                     handles[..count],
-                    reason,
-                    OutputRuntime,
-                    _frameTelemetry);
+                    reason);
                 if (!IsDeviceLost)
                     _commandRuntime.DrainInvalidatedCommandBufferRecordings(
                         Api,

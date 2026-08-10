@@ -91,7 +91,7 @@ public unsafe partial class VulkanRenderer
         var stopwatch = Stopwatch.StartNew();
         try
         {
-            using var scope = NewCommandScope();
+            using var scope = _commandRuntime.NewCommandScope();
             _nvMemoryDecompression!.CmdDecompressMemory(scope.CommandBuffer, regions);
             RuntimeEngine.Rendering.Stats.RtxIo.RecordRtxIoDecompression(compressedBytes, decompressedBytes, stopwatch.Elapsed);
             return true;
@@ -117,7 +117,7 @@ public unsafe partial class VulkanRenderer
         var stopwatch = Stopwatch.StartNew();
         try
         {
-            using var scope = NewCommandScope();
+            using var scope = _commandRuntime.NewCommandScope();
             _nvMemoryDecompression!.CmdDecompressMemoryIndirectCount(
                 scope.CommandBuffer,
                 indirectCommandsAddress,

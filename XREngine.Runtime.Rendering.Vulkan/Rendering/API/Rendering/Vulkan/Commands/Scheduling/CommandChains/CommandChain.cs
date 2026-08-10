@@ -2,14 +2,18 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed class CommandChain(CommandChainKey key)
+internal sealed class CommandChain(
+    CommandChainKey key,
+    VulkanCommandChainState? mutationAuthority = null)
 {
     private RenderPacket? _packetSnapshot;
+    private CommandRecordingDependencySignature _dependencySignature;
+    private VulkanPreparedCommandChainKey _preparedKey;
 
     public CommandChainKey Key { get; } = key;
     public CommandChainState State { get; set; }
     public VulkanRecordedCommandArtifact RecordedArtifact { get; } =
-        new(CommandBufferLevel.Secondary, key.FrameSlot);
+        new(CommandBufferLevel.Secondary, key.FrameSlot, mutationAuthority);
     public CommandBuffer SecondaryCommandBuffer => RecordedArtifact.NativeBuffer;
     public CommandPool SecondaryCommandPool => RecordedArtifact.OwnerPool;
     public bool OwnsSecondaryCommandPool => RecordedArtifact.OwnsPool;
@@ -35,7 +39,15 @@ internal sealed class CommandChain(CommandChainKey key)
     public ulong FramebufferSignature { get; set; }
     public ulong DescriptorGeneration { get; set; }
     public ulong PipelineGeneration { get; set; }
-    public CommandRecordingDependencySignature DependencySignature { get; set; }
+    public CommandRecordingDependencySignature DependencySignature
+    {
+        get => _dependencySignature;
+        set => _dependencySignature = value;
+    }
+    internal ref readonly CommandRecordingDependencySignature DependencySignatureReference
+        => ref _dependencySignature;
+    internal void SetDependencySignature(in CommandRecordingDependencySignature signature)
+        => _dependencySignature = signature;
     public int DrawCount { get; set; }
     public int DispatchCount { get; set; }
     public ulong InstanceCountSignature { get; set; }
@@ -45,7 +57,15 @@ internal sealed class CommandChain(CommandChainKey key)
     /// Exact prepared native pipeline/layout and descriptor publication state
     /// used by the executable secondary artifact.
     /// </summary>
-    public VulkanPreparedCommandChainKey PreparedKey { get; set; }
+    public VulkanPreparedCommandChainKey PreparedKey
+    {
+        get => _preparedKey;
+        set => _preparedKey = value;
+    }
+    internal ref readonly VulkanPreparedCommandChainKey PreparedKeyReference
+        => ref _preparedKey;
+    internal void SetPreparedKey(in VulkanPreparedCommandChainKey preparedKey)
+        => _preparedKey = preparedKey;
     public VulkanPreparedCommandChainAuthority? PreparedAuthority { get; set; }
     public ulong RecordedUniformSlotSignature { get; set; }
     public VulkanIndirectSecondaryRecordingContract RecordedIndirectSecondaryContract { get; set; }

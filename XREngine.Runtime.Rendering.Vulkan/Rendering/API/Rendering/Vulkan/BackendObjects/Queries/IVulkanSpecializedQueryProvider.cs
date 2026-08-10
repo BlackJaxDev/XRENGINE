@@ -13,7 +13,7 @@ internal interface IVulkanSpecializedQueryProvider
     bool HasRequiredExternalOwnership { get; }
 
     bool TryRecord(
-        VulkanRenderer renderer,
+        VulkanTrackedCommandEncoder encoder,
         CommandBuffer commandBuffer,
         QueryPool queryPool,
         uint firstQuery,

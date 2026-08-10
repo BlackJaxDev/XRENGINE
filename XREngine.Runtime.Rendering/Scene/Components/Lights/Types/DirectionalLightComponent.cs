@@ -467,6 +467,19 @@ namespace XREngine.Components.Lights
                 return;
             }
 
+            // Vulkan mesh packets already carry an immutable copy of every
+            // cascade matrix in LayeredShadowUniformState. Re-reading the live
+            // light state here for every caster duplicated those values and
+            // serialized the render thread on _cascadeDataLock. The material
+            // resolver publishes the captured matrices after this callback for
+            // layered variants; sequential Vulkan passes do not consume the
+            // callback's cascade array.
+            if (IsVulkanDirectionalShadowBackend())
+            {
+                program.Uniform("CascadeLayerCount", 0);
+                return;
+            }
+
             // Acquire the cascade data lock to safely access the cascade state and set the view-projection matrices for each cascade.
             int cascadeCount;
             lock (_cascadeDataLock)

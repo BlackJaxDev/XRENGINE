@@ -20,13 +20,21 @@ internal readonly record struct VulkanRecordedDescriptorSetIdentity(
         init => _resources = value;
     }
 
-    private static ref readonly VulkanRecordedDescriptorResourceIdentityBuffer
+    internal static ref readonly VulkanRecordedDescriptorResourceIdentityBuffer
         GetResourcesReference(in VulkanRecordedDescriptorSetIdentity identity)
         => ref identity._resources;
 
-    public bool IsComplete => DescriptorSetHandle != 0UL &&
-        DescriptorSetLifetimeGeneration != 0UL && PayloadGeneration != 0UL &&
-        PublicationGeneration != 0UL && Resources.IsComplete;
+    public bool IsComplete
+    {
+        get
+        {
+            ref readonly VulkanRecordedDescriptorResourceIdentityBuffer resources =
+                ref GetResourcesReference(in this);
+            return DescriptorSetHandle != 0UL &&
+                DescriptorSetLifetimeGeneration != 0UL && PayloadGeneration != 0UL &&
+                PublicationGeneration != 0UL && resources.IsComplete;
+        }
+    }
 
     internal bool Matches(in VulkanRecordedDescriptorSetIdentity other)
     {

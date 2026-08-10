@@ -9,7 +9,10 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal struct VulkanRecordedProgramIdentityBuffer : IEquatable<VulkanRecordedProgramIdentityBuffer>
 {
-    public const int Capacity = 16;
+    // Shadow packets may intentionally span multiple material programs. Keep
+    // enough exact native identities for the bounded shadow packet while still
+    // retaining an allocation-free value key.
+    public const int Capacity = 32;
 
     private VulkanRecordedProgramIdentityInlineArray _identities;
 

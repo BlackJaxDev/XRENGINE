@@ -10,10 +10,7 @@ public unsafe partial class VulkanRenderer
 {
     /// <summary>Whether the active device and graphics queue can accept compute frame work.</summary>
     public bool SupportsOrderedComputeWork
-        => _deviceContext.IsOperational
-        && _deviceContext.GraphicsQueue.Handle != 0
-        && _commandRuntime.Synchronization._graphicsTimelineSemaphore.Handle != 0
-        && _deviceContext.QueueFamilies.GraphicsFamilySupportsCompute;
+        => VulkanOrderedComputeProducer.Supports(_deviceContext, _commandRuntime);
 
     public ERendererComputeEnqueueStatus TryDispatchComputeIndirect(
         XRRenderProgram program,
@@ -38,39 +35,24 @@ public unsafe partial class VulkanRenderer
                 out Buffer argumentBuffer))
             return ERendererComputeEnqueueStatus.InvalidResource;
 
-        const ulong commandSize = sizeof(uint) * 3UL;
         ulong offset = (ulong)byteOffset;
-        if (offset > argumentOwner.AllocatedByteSize || commandSize > argumentOwner.AllocatedByteSize - offset)
-            return ERendererComputeEnqueueStatus.InvalidResource;
-
         FrameOpContext context = CaptureFrameOpContextOrLastActive();
         int passIndex = ResolveOrderedPrimaryWorkPassIndex(label, context.PassMetadata);
         if (passIndex == int.MinValue)
             return ERendererComputeEnqueueStatus.NoPassContext;
 
-        ComputeDispatchSnapshot snapshot = vkProgram.CaptureComputeSnapshot();
-        if (!vkProgram.ValidateComputeSnapshot(snapshot, out _))
-            return ERendererComputeEnqueueStatus.DescriptorInvalid;
-        try
-        {
-            if (vkProgram.GetOrCreateComputePipeline(passIndex, context.PassMetadata).Handle == 0)
-                return ERendererComputeEnqueueStatus.ProgramPending;
-        }
-        catch
-        {
-            return ERendererComputeEnqueueStatus.ProgramPending;
-        }
-
-        EnqueueFrameOp(new ComputeDispatchIndirectOp(
-            passIndex,
+        ERendererComputeEnqueueStatus status = VulkanOrderedComputeProducer.TryCreateIndirectDispatch(
             vkProgram,
-            snapshot,
             argumentOwner,
             argumentBuffer,
             offset,
+            passIndex,
             label,
-            context));
-        return ERendererComputeEnqueueStatus.Enqueued;
+            context,
+            out ComputeDispatchIndirectOp? operation);
+        if (operation is not null)
+            EnqueueFrameOp(operation);
+        return status;
     }
 
     public ERendererComputeEnqueueStatus TryEnqueueBufferCopy(
@@ -92,21 +74,12 @@ public unsafe partial class VulkanRenderer
         ulong sourceStart = (ulong)sourceOffset;
         ulong destinationStart = (ulong)destinationOffset;
         ulong count = (ulong)byteCount;
-        if (!IsBufferRangeValid(sourceOwner.AllocatedByteSize, sourceStart, count)
-            || !IsBufferRangeValid(destinationOwner.AllocatedByteSize, destinationStart, count))
-            return ERendererComputeEnqueueStatus.InvalidResource;
-        if (sourceBuffer.Handle == destinationBuffer.Handle
-            && sourceStart < destinationStart + count
-            && destinationStart < sourceStart + count)
-            return ERendererComputeEnqueueStatus.InvalidResource;
-
         FrameOpContext context = CaptureFrameOpContextOrLastActive();
         int passIndex = ResolveOrderedPrimaryWorkPassIndex(label, context.PassMetadata);
         if (passIndex == int.MinValue)
             return ERendererComputeEnqueueStatus.NoPassContext;
 
-        EnqueueFrameOp(new BufferCopyOp(
-            passIndex,
+        ERendererComputeEnqueueStatus status = VulkanOrderedComputeProducer.TryCreateBufferCopy(
             sourceOwner,
             sourceBuffer,
             sourceStart,
@@ -114,9 +87,13 @@ public unsafe partial class VulkanRenderer
             destinationBuffer,
             destinationStart,
             count,
+            passIndex,
             label,
-            context));
-        return ERendererComputeEnqueueStatus.Enqueued;
+            context,
+            out BufferCopyOp? operation);
+        if (operation is not null)
+            EnqueueFrameOp(operation);
+        return status;
     }
 
     /// <summary>
@@ -209,9 +186,6 @@ public unsafe partial class VulkanRenderer
         return true;
     }
 
-    private static bool IsBufferRangeValid(ulong capacity, ulong offset, ulong count)
-        => offset <= capacity && count <= capacity - offset;
-
     /// <summary>
     /// Resolves ordered primary-command-buffer work to the active pass, or to the
     /// explicit pre-render bucket when it is submitted outside a render pass.
@@ -229,55 +203,4 @@ public unsafe partial class VulkanRenderer
         return EnsureValidPassIndex(passIndex, opName, passMetadata);
     }
 
-    internal void RecordComputeDispatchIndirectOp(
-        CommandBuffer commandBuffer,
-        uint imageIndex,
-        ComputeDispatchIndirectOp op)
-    {
-        // The enqueue/preparation phases own program linking and pipeline
-        // creation. The recorder may only consume the warmed pipeline handle.
-        Pipeline pipeline = op.Program.ComputePipeline;
-        if (pipeline.Handle == 0)
-            throw new InvalidOperationException($"Compute pipeline '{op.Program.Data.Name ?? "UnnamedProgram"}' is unavailable.");
-
-        BindPipelineTracked(commandBuffer, PipelineBindPoint.Compute, pipeline);
-        EnsureComputeStorageImageLayoutsForDispatch(commandBuffer, op.Snapshot);
-        PushConstantsTracked(
-            commandBuffer,
-            op.Program.PipelineLayout,
-            CommonPushConstantStageFlags,
-            0,
-            new ComputeDispatchPushConstants(0u, 0u, 0u, 0u));
-
-        if (!op.Program.TryBuildAndBindComputeDescriptorSets(commandBuffer, imageIndex, op.Snapshot, 0, out _, out DescriptorSet[] boundDescriptorSets, out var tempBuffers))
-        {
-            foreach ((Buffer buffer, DeviceMemory memory) in tempBuffers)
-                DestroyBuffer(buffer, memory);
-
-            throw new InvalidOperationException(
-                $"Descriptor binding failed for indirect compute program '{op.Program.Data.Name ?? "UnnamedProgram"}'.");
-        }
-
-        _commandBufferRecordingScratch.Value!.PreparedComputePayload =
-            new VulkanPreparedComputePayload(boundDescriptorSets);
-
-        RegisterComputeTransientUniformBuffers(imageIndex, tempBuffers);
-        TrackVulkanCommandBufferResource(
-            commandBuffer,
-            ObjectType.Buffer,
-            op.ArgumentBuffer.Handle,
-            $"{op.Label}.Arguments");
-        Api!.CmdDispatchIndirect(commandBuffer, op.ArgumentBuffer, op.ArgumentOffset);
-    }
-
-    internal void RecordBufferCopyOp(CommandBuffer commandBuffer, BufferCopyOp op)
-    {
-        BufferCopy copy = new()
-        {
-            SrcOffset = op.SourceOffset,
-            DstOffset = op.DestinationOffset,
-            Size = op.ByteCount,
-        };
-        CmdCopyBufferTracked(commandBuffer, op.SourceBuffer, op.DestinationBuffer, 1, &copy);
-    }
 }

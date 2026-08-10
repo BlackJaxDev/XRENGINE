@@ -15,7 +15,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed unsafe partial class VulkanCommandRuntime
     {
 
         internal int GetMeshDrawUniformSlot(scoped ref PrimaryCommandBufferRecordingState recordingState,
@@ -44,7 +44,6 @@ namespace XREngine.Rendering.Vulkan
             int passIndex,
             int drawUniformSlot)
         {
-            using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(drawOp.Context);
             Viewport viewport = drawOp.Draw.Viewport;
             Rect2D scissor = drawOp.Draw.Scissor;
             uint viewportScissorCount = drawOp.Draw.ViewportScissorCount;
@@ -163,7 +162,6 @@ namespace XREngine.Rendering.Vulkan
             int passIndex,
             int opIndex)
         {
-            using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(indirectOp.Context);
             Viewport viewport = indirectOp.Draw.Viewport;
             Rect2D scissor = indirectOp.Draw.Scissor;
             uint viewportScissorCount = indirectOp.Draw.ViewportScissorCount;
@@ -295,7 +293,7 @@ namespace XREngine.Rendering.Vulkan
                     break;
                 if (ResolveIndirectRunCandidatePassIndex(ref recordingState, candidate) != passIndex)
                     break;
-                if (EvaluateIndirectSecondaryRecordingContract(candidate) != EVulkanIndirectSecondaryEligibility.EligibleProducerComplete)
+                if (_commandRuntime.EvaluateIndirectSecondaryRecordingContract(candidate) != EVulkanIndirectSecondaryEligibility.EligibleProducerComplete)
                     break;
 
                 count++;

@@ -3,8 +3,27 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed unsafe partial class VulkanCommandRuntime
 {
+    internal Result ResetTrackedCommandBuffer(CommandBuffer commandBuffer)
+    {
+        if (!ResourceRuntime.CanResetCommandBuffer(this, commandBuffer))
+        {
+            throw new InvalidOperationException(
+                $"Command buffer 0x{unchecked((ulong)commandBuffer.Handle):X} cannot be reset while recording, queued, submitted, retired, or referenced.");
+        }
+
+        Result result = Api.ResetCommandBuffer(commandBuffer, 0);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResetCommandBufferCall();
+        if (result == Result.Success)
+        {
+            ulong handle = unchecked((ulong)commandBuffer.Handle);
+            CommandBuffers.InvalidatedBuffersPendingReset.TryRemove(handle, out _);
+            ResourceRuntime.CompleteCommandBufferReset(handle);
+            ResetCommandBufferImageLayoutJournal(commandBuffer);
+        }
+        return result;
+    }
 
 
 
@@ -116,17 +135,11 @@ public unsafe partial class VulkanRenderer
                 abandoned = true;
             }
 
-            if (ResourceRuntime.Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(
-                    handle,
-                    out VulkanCommandBufferLifetimeRecord? lifetime))
-            {
-                lifetime.FrameDataLease.AbandonRecording();
-                ReleaseVulkanCommandBufferDependencies_NoLock(handle, lifetime);
-            }
+            ResourceRuntime.AbandonCommandBufferRecording(commandBuffer);
         }
 
         if (abandoned)
-            ResetRecordedImageLayoutState(commandBuffer);
+            ResetCommandBufferImageLayoutJournal(commandBuffer);
         return abandoned;
     }
 
@@ -200,14 +213,14 @@ public unsafe partial class VulkanRenderer
                     ? ImageAspectFlags.DepthBit
                     : ImageAspectFlags.StencilBit;
             ulong serial = unchecked((ulong)Interlocked.Increment(ref _frameTelemetry._vulkanImageLayoutTransitionSerial));
-            VulkanImageAccessState resolved = ResolveRecordedVulkanImageAccessState(
+            VulkanImageAccessState resolved = ResolveRecordedCommandImageAccessState(
                 layout,
                 primaryAspect,
                 stageMask,
                 accessMask,
                 queueFamilyIndex,
                 serial,
-                GetCurrentVulkanResourceGeneration(ObjectType.Image, image.Handle));
+                ResourceRuntime.GetPublishedGeneration(ObjectType.Image, image.Handle));
             if (batch.LatestImageAccessStates.TryGet(
                     image.Handle,
                     range,
@@ -222,7 +235,7 @@ public unsafe partial class VulkanRenderer
             {
                 resolved = resolved with
                 {
-                    ExternalOwnership = ResolveTrackedExternalImageOwnership(
+                    ExternalOwnership = ResolveTrackedExternalImageOwnershipForRecording(
                         image,
                         range,
                         resolved.ResourceGeneration),
@@ -231,6 +244,81 @@ public unsafe partial class VulkanRenderer
 
             batch.RecordImageAccess(new VulkanImageAccessRangeDelta(image.Handle, range, resolved));
             return true;
+        }
+    }
+
+    private static VulkanImageAccessState ResolveRecordedCommandImageAccessState(
+        ImageLayout layout,
+        ImageAspectFlags aspectMask,
+        PipelineStageFlags stageMask,
+        AccessFlags accessMask,
+        uint queueFamilyIndex,
+        ulong serial,
+        ulong resourceGeneration)
+    {
+        VulkanImageAccessState canonical = ResolveCommandImageAccessState(
+            layout,
+            aspectMask,
+            requestedStages: 0,
+            requestedAccess: 0,
+            queueFamilyIndex,
+            resourceGeneration);
+        PipelineStageFlags2 requestedStages = (PipelineStageFlags2)(ulong)stageMask;
+        AccessFlags2 requestedAccess = (AccessFlags2)(ulong)accessMask;
+        if (layout == ImageLayout.General)
+        {
+            return canonical with
+            {
+                StageMask = requestedStages == 0 ? canonical.StageMask : requestedStages,
+                AccessMask = requestedAccess == 0 ? canonical.AccessMask : requestedAccess,
+                Serial = serial,
+            };
+        }
+
+        bool stagesAreCompatible = requestedStages != 0 &&
+            (requestedStages & ~canonical.StageMask) == 0;
+        bool accessIsCompatible = requestedAccess != 0 &&
+            (requestedAccess & ~canonical.AccessMask) == 0;
+        return stagesAreCompatible && accessIsCompatible
+            ? canonical with
+            {
+                StageMask = requestedStages,
+                AccessMask = requestedAccess,
+                Serial = serial,
+            }
+            : canonical with { Serial = serial };
+    }
+
+    private EVulkanExternalImageOwnership ResolveTrackedExternalImageOwnershipForRecording(
+        Image image,
+        in ImageSubresourceRange range,
+        ulong resourceGeneration)
+    {
+        ImageAspectFlags aspect = (range.AspectMask & ImageAspectFlags.ColorBit) != 0
+            ? ImageAspectFlags.ColorBit
+            : (range.AspectMask & ImageAspectFlags.DepthBit) != 0
+                ? ImageAspectFlags.DepthBit
+                : ImageAspectFlags.StencilBit;
+        VulkanTrackedImageSubresource key = new(
+            image.Handle,
+            range.BaseMipLevel,
+            range.BaseArrayLayer,
+            aspect);
+        lock (Synchronization._vulkanImageLayoutLock)
+        {
+            if (Synchronization._trackedImageSubresourceStates.TryGetValue(
+                    key,
+                    out VulkanImageSubresourceState? state))
+                return state.Submitted.ExternalOwnership;
+
+            return Synchronization._externalImageOwnershipByHandle.TryGetValue(
+                    image.Handle,
+                    out var externalState) &&
+                (externalState.ResourceGeneration == 0 ||
+                 resourceGeneration == 0 ||
+                 externalState.ResourceGeneration == resourceGeneration)
+                    ? externalState.Ownership
+                    : EVulkanExternalImageOwnership.EngineOwned;
         }
     }
 
@@ -355,7 +443,7 @@ public unsafe partial class VulkanRenderer
     /// so waiting for the submission gateway to close their recording ownership would
     /// retain one lease for every recorded secondary indefinitely.
     /// </summary>
-    private Result EndCommandBufferTracked(CommandBuffer commandBuffer, bool cacheVariant = true)
+    internal Result EndCommandBufferTracked(CommandBuffer commandBuffer, bool cacheVariant = true)
     {
         Result result = EndCommandBufferTracked(
             commandBuffer,
@@ -394,23 +482,17 @@ public unsafe partial class VulkanRenderer
                     batch.IsRecording = false;
             }
 
-            if (ResourceRuntime.Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(handle, out VulkanCommandBufferLifetimeRecord? lifetime))
-            {
-                if (result == Result.Success && trackingPublished)
-                    lifetime.FrameDataLease.CompleteRecording(cacheVariant);
-                else
-                {
-                    lifetime.FrameDataLease.AbandonRecording();
-                    ReleaseVulkanCommandBufferDependencies_NoLock(handle, lifetime);
-                }
-            }
+            if (result == Result.Success && trackingPublished)
+                ResourceRuntime.CompleteCommandBufferRecording(commandBuffer, cacheVariant);
+            else
+                ResourceRuntime.AbandonCommandBufferRecording(commandBuffer);
 
             if (discarded)
                 CommandBufferTrackingBatches.TryRemove(handle, out _);
         }
 
         if (discarded)
-            ResetRecordedImageLayoutState(commandBuffer);
+            ResetCommandBufferImageLayoutJournal(commandBuffer);
 
         return result;
     }
@@ -422,85 +504,36 @@ public unsafe partial class VulkanRenderer
         if (handle == 0 || !CommandBufferTrackingBatches.TryGetValue(handle, out VulkanCommandBufferTrackingBatch? batch))
             return true;
 
-        int newUniqueDependencies = 0;
-        int newCompactImageRanges = 0;
+        int newUniqueDependencies;
+        int newCompactImageRanges;
+        lock (batch)
+        {
+            if (!CommandBufferTrackingBatches.TryGetValue(
+                    handle,
+                    out VulkanCommandBufferTrackingBatch? currentBatch) ||
+                !ReferenceEquals(batch, currentBatch))
+                return true;
+
+            if (batch.Dependencies.Count == 0 &&
+                batch.PublishedImageDeltaCount == batch.ImageAccessDeltas.Count)
+                return true;
+
+            newUniqueDependencies = batch.Dependencies.Count;
+            newCompactImageRanges = batch.ImageAccessDeltas.Count - batch.PublishedImageDeltaCount;
+        }
+
         bool lifetimeLockContended = !Monitor.TryEnter(ResourceRuntime.Lifetime.Tracker.SyncRoot);
-        if (lifetimeLockContended)
-            Monitor.Enter(ResourceRuntime.Lifetime.Tracker.SyncRoot);
-        try
-        {
-            lock (batch)
-            {
-                if (!CommandBufferTrackingBatches.TryGetValue(
-                        handle,
-                        out VulkanCommandBufferTrackingBatch? currentBatch) ||
-                    !ReferenceEquals(batch, currentBatch))
-                {
-                    return true;
-                }
-
-                if (batch.Dependencies.Count == 0 &&
-                    batch.PublishedImageDeltaCount == batch.ImageAccessDeltas.Count)
-                {
-                    return true;
-                }
-
-                newUniqueDependencies = batch.Dependencies.Count;
-                newCompactImageRanges =
-                    batch.ImageAccessDeltas.Count - batch.PublishedImageDeltaCount;
-
-                if (!ResourceRuntime.Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(
-                        handle,
-                        out VulkanCommandBufferLifetimeRecord? lifetime))
-                {
-                    lifetime = new VulkanCommandBufferLifetimeRecord();
-                    ResourceRuntime.Lifetime.Tracker.CommandBufferLifetimes[handle] = lifetime;
-                }
-
-                foreach (VulkanResourceLifetimeKey key in batch.Dependencies)
-                {
-                    if (!TryValidateVulkanCommandBufferResource_NoLock(
-                            handle,
-                            key,
-                            "CommandBuffer.LocalBatch",
-                            out failureReason,
-                            allowQueuedSubmission: true))
-                    {
-                        return false;
-                    }
-                }
-
-                foreach (VulkanResourceLifetimeKey key in batch.Dependencies)
-                {
-                    // Validation and publication occur under the same lifetime lock;
-                    // this second pass therefore cannot partially fail.
-                    if (!TryTrackVulkanCommandBufferResource_NoLock(
-                            handle,
-                            key,
-                            "CommandBuffer.LocalBatch",
-                            out failureReason,
-                            allowQueuedSubmission: true))
-                    {
-                        throw new InvalidOperationException(
-                            $"Validated Vulkan dependency {key} failed transactional publication: {failureReason}");
-                    }
-                }
-
-                lifetime.RefreshTouchedDependencies();
-                batch.Dependencies.Clear();
-            }
-        }
-        finally
-        {
+        if (!lifetimeLockContended)
             Monitor.Exit(ResourceRuntime.Lifetime.Tracker.SyncRoot);
-        }
+        if (!ResourceRuntime.TryPublishCommandBufferTrackingBatch(this, commandBuffer, batch, out failureReason))
+            return false;
 
         bool layoutLockContended;
         int dependencyBinds;
         int imageAccessWrites;
         lock (batch)
         {
-            layoutLockContended = FlushCommandBufferImageAccessBatch(commandBuffer, batch);
+            layoutLockContended = FlushImageAccessBatch(commandBuffer, batch, FrameTelemetry);
             dependencyBinds = batch.DependencyBindCount - batch.ReportedDependencyBindCount;
             imageAccessWrites = batch.ImageAccessWriteCount - batch.ReportedImageAccessWriteCount;
             batch.ReportedDependencyBindCount = batch.DependencyBindCount;
@@ -526,7 +559,7 @@ public unsafe partial class VulkanRenderer
     /// window before it captures retirement pins; otherwise a resource used earlier in
     /// the command buffer can be destroyed while that command buffer is still recording.
     /// </summary>
-    private void PublishCommandBufferTrackingDependenciesBeforeResourceRetirement(
+    internal void PublishTrackingDependenciesBeforeResourceRetirement(
         VulkanResourceLifetimeKey resourceKey)
     {
         List<ulong>? pendingCommandBuffers = null;
@@ -556,9 +589,15 @@ public unsafe partial class VulkanRenderer
             if (!TryFlushCommandBufferTrackingBatch(commandBuffer, out string failureReason))
             {
                 ulong commandBufferHandle = pendingCommandBuffers[i];
-                _ = InvalidateCachedCommandBuffersByHandle(
+                VulkanExactInvalidationResult invalidation =
+                    InvalidateCachedCommandBuffersByHandle(
                     [commandBufferHandle],
                     $"retirement dependency publication rejected: {failureReason}");
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanExactResourceInvalidation(
+                    invalidation.ExactVariantsDirtied,
+                    invalidation.ExactCommandChainsDirtied,
+                    invalidation.UnrelatedVariantsPreserved,
+                    invalidation.GlobalFallbackInvalidations);
 
                 // The batch can no longer be submitted: one of its dependencies crossed
                 // retirement before the deferred publication completed. Discarding only

@@ -44,11 +44,14 @@ namespace XREngine.Rendering.Vulkan
                 PSignalSemaphores = signalSemaphores,
             };
 
-            return SubmitToQueueTracked(
+            return _commandRuntime.SubmitToQueueTracked(
+                Api,
+                _deviceContext,
+                _frameTelemetry,
                 _deviceContext.GraphicsQueue,
                 ref submit,
                 default,
-                caller: nameof(SubmitAcquireSemaphoreBridge));
+                nameof(SubmitAcquireSemaphoreBridge));
         }
 
     }

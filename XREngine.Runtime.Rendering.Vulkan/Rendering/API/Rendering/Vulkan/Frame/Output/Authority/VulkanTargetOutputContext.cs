@@ -35,6 +35,7 @@ internal sealed unsafe class VulkanTargetOutputContext
     internal Queue PresentQueue => _services.PresentQueue;
     internal SurfaceKHR TargetSurface => _services.TargetSurface;
     internal VulkanDeviceContext DeviceContext => _services.DeviceContext;
+    internal VulkanResourceRuntime ResourceRuntime => _services.ResourceRuntime;
 
     internal KhrSurface RequireSurfaceApi()
         => _services.RequireSurfaceApi();
@@ -58,6 +59,9 @@ internal sealed unsafe class VulkanTargetOutputContext
 
     internal Result ResetVulkanCommandPoolTracked(CommandPool pool, string owner)
         => _services.ResetVulkanCommandPoolTracked(pool, owner);
+
+    internal Result EndCommandBufferTracked(CommandBuffer commandBuffer)
+        => _services.EndCommandBufferTracked(commandBuffer);
 
     internal void DestroyCommandPoolHostSynchronized(CommandPool pool)
         => _services.DestroyCommandPoolHostSynchronized(pool);

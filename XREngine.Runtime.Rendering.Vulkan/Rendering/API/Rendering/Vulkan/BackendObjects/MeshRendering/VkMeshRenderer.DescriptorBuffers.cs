@@ -138,7 +138,7 @@ internal unsafe partial class VkMeshRenderer
 		if (buffer is null)
 			return TryResolveFallbackDescriptorBuffer(binding, frameIndex, drawUniformSlot, out bufferInfo);
 
-		bool allowSynchronousBufferUpload = Renderer.AllowSynchronousResourceUploads;
+		bool allowSynchronousBufferUpload = BackendContext.AllowSynchronousResourceUploads;
 		if (!buffer.TryEnsureReadyForRendering(allowSynchronousBufferUpload))
 		{
 			if (IsOptionalPipelineStorageBuffer(binding))
@@ -212,9 +212,9 @@ internal unsafe partial class VkMeshRenderer
 			}
 		}
 
-		Renderer.TrackBufferBinding(dataBuffer);
-		bool allowSynchronousBufferUpload = Renderer.AllowSynchronousResourceUploads;
-		if (Renderer.GetOrCreateAPIRenderObject(dataBuffer, generateNow: allowSynchronousBufferUpload) is not VkDataBuffer vkBuffer)
+		BackendContext.ProgramServices.TrackBufferBinding(dataBuffer);
+		bool allowSynchronousBufferUpload = BackendContext.AllowSynchronousResourceUploads;
+		if (BackendContext.GetOrCreateAPIRenderObject(dataBuffer, generateNow: allowSynchronousBufferUpload) is not VkDataBuffer vkBuffer)
 			return false;
 
 		buffer = vkBuffer;
@@ -267,9 +267,9 @@ internal unsafe partial class VkMeshRenderer
 		if (!targetMatches)
 			return false;
 
-		Renderer.TrackBufferBinding(dataBuffer);
-		bool allowSynchronousBufferUpload = Renderer.AllowSynchronousResourceUploads;
-		if (Renderer.GetOrCreateAPIRenderObject(dataBuffer, generateNow: allowSynchronousBufferUpload) is not VkDataBuffer vkBuffer)
+		BackendContext.ProgramServices.TrackBufferBinding(dataBuffer);
+		bool allowSynchronousBufferUpload = BackendContext.AllowSynchronousResourceUploads;
+		if (BackendContext.GetOrCreateAPIRenderObject(dataBuffer, generateNow: allowSynchronousBufferUpload) is not VkDataBuffer vkBuffer)
 			return false;
 
 		buffer = vkBuffer;

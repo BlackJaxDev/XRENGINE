@@ -14,18 +14,18 @@ internal sealed class VulkanTextureDescriptorSignaturePlan
     public void Clear() => _sources.Clear();
 
     public void Capture(
-        VulkanRenderer renderer,
+        VulkanBackendObjectContext backendContext,
         Dictionary<uint, XRTexture> samplers,
         Dictionary<string, XRTexture> samplersByName,
         Dictionary<uint, ProgramImageBinding> images)
     {
         _sources.Clear();
         foreach (XRTexture texture in samplers.Values)
-            Capture(renderer, texture);
+            Capture(backendContext, texture);
         foreach (XRTexture texture in samplersByName.Values)
-            Capture(renderer, texture);
+            Capture(backendContext, texture);
         foreach (ProgramImageBinding binding in images.Values)
-            Capture(renderer, binding.Texture);
+            Capture(backendContext, binding.Texture);
     }
 
     public void CopyFrom(VulkanTextureDescriptorSignaturePlan source)
@@ -67,13 +67,13 @@ internal sealed class VulkanTextureDescriptorSignaturePlan
         return hash.ToHash();
     }
 
-    private void Capture(VulkanRenderer renderer, XRTexture? texture)
+    private void Capture(VulkanBackendObjectContext backendContext, XRTexture? texture)
     {
         if (texture is null || _sources.ContainsKey(texture))
             return;
 
         IVkImageDescriptorSource? source =
-            renderer.GetOrCreateAPIRenderObject(texture, generateNow: false) as IVkImageDescriptorSource;
+            backendContext.GetOrCreateAPIRenderObject(texture, generateNow: false) as IVkImageDescriptorSource;
         _sources.Add(texture, source);
     }
 }

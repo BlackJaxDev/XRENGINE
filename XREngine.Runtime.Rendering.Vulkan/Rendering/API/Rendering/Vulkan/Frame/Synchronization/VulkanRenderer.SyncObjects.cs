@@ -117,7 +117,7 @@ public unsafe partial class VulkanRenderer
         // Device-loss observation may stop the normal frame poll immediately. Complete
         // screenshot consumers now so MCP sessions cannot remain stuck waiting on fences
         // that Vulkan guarantees will never signal after logical-device loss.
-        FailPendingScreenshotReadbacksForDeviceLoss(deviceLostReason);
+        OutputRuntime.Capture.FailPendingScreenshotReadbacksForDeviceLoss(deviceLostReason);
     }
 
     private void MarkDeviceDisposed()
@@ -329,11 +329,9 @@ public unsafe partial class VulkanRenderer
                 Api!.DestroySemaphore(_deviceContext.Device, _commandRuntime.Synchronization.acquireBridgeSemaphores[i], null);
         }
 
-        if (OutputRuntime.Desktop.PresentBridgeSemaphores is not null)
-        {
-            for (int i = 0; i < OutputRuntime.Desktop.PresentBridgeSemaphores.Length; i++)
-                Api!.DestroySemaphore(_deviceContext.Device, OutputRuntime.Desktop.PresentBridgeSemaphores[i], null);
-        }
+        if (OutputRuntime.Desktop.PresentBridgeSemaphores is not null &&
+            OutputRuntime.TargetDriver.RequiresSwapchainOutput)
+            OutputRuntime.DestroyDesktopPresentBridgeSemaphores();
 
         if (_commandRuntime.Synchronization._graphicsTimelineSemaphore.Handle != 0)
             Api!.DestroySemaphore(_deviceContext.Device, _commandRuntime.Synchronization._graphicsTimelineSemaphore, null);
@@ -343,7 +341,6 @@ public unsafe partial class VulkanRenderer
             Api!.DestroySemaphore(_deviceContext.Device, _commandRuntime.Synchronization._transferTimelineSemaphore, null);
 
         _commandRuntime.Synchronization.acquireBridgeSemaphores = null;
-        OutputRuntime.Desktop.PresentBridgeSemaphores = null;
         _commandRuntime.Synchronization._graphicsTimelineSemaphore = default;
         _commandRuntime.Synchronization._presentTimelineSemaphore = default;
         _commandRuntime.Synchronization._transferTimelineSemaphore = default;
@@ -402,29 +399,7 @@ public unsafe partial class VulkanRenderer
             SetDebugObjectName(ObjectType.Semaphore, _commandRuntime.Synchronization.acquireBridgeSemaphores[i].Handle, $"AcquireBridge[{i}]");
         }
 
-        OutputRuntime.Desktop.PresentBridgeSemaphores = CreatePresentBridgeSemaphores(presentSemaphoreCount);
-    }
-
-    private Semaphore[] CreatePresentBridgeSemaphores(int count)
-    {
-        Semaphore[] semaphores = new Semaphore[Math.Max(1, count)];
-        SemaphoreCreateInfo semaphoreInfo = new()
-        {
-            SType = StructureType.SemaphoreCreateInfo,
-        };
-
-        for (int i = 0; i < semaphores.Length; i++)
-        {
-            if (Api!.CreateSemaphore(_deviceContext.Device, ref semaphoreInfo, null, out semaphores[i]) != Result.Success)
-            {
-                for (int createdIndex = 0; createdIndex < i; createdIndex++)
-                    Api.DestroySemaphore(_deviceContext.Device, semaphores[createdIndex], null);
-                throw new Exception("failed to create frame bridge synchronization semaphores.");
-            }
-
-            SetDebugObjectName(ObjectType.Semaphore, semaphores[i].Handle, $"PresentBridge[{i}]");
-        }
-
-        return semaphores;
+        if (OutputRuntime.TargetDriver.RequiresSwapchainOutput)
+            OutputRuntime.CreateDesktopPresentBridgeSemaphores(presentSemaphoreCount);
     }
 }

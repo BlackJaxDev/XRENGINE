@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Globalization;
@@ -142,7 +142,7 @@ internal static class VulkanShaderReflection
                 // Vulkan-only forwarding macro. Preserve its authored set so
                 // source names and optional-resource policy can merge with the
                 // otherwise anonymous SPIR-V storage-buffer declarations.
-                set = VulkanRenderer.DescriptorSetPerPass;
+                set = VulkanDescriptorManager.PerPassSetIndex;
             }
 
             DescriptorType descriptorType = ClassifyDescriptor(storage, declaration, source, match.Index + match.Length);

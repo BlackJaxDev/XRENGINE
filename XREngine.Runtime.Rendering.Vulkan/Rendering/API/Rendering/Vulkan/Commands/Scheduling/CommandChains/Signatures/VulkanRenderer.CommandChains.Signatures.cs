@@ -13,7 +13,7 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed unsafe partial class VulkanCommandRuntime
 {
     private static ulong ComputeScheduleStructuralSignature(
         ReadOnlySpan<RenderPassChainGroup> groups,
@@ -63,7 +63,7 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     internal static bool AreAllPreparedDrawBindingsSecondaryOwned(
         CommandChainSchedule schedule,
-        FrameOp[] ops)
+        ReadOnlySpan<FrameOp> ops)
     {
         ReadOnlySpan<RenderPassChainGroup> groups = schedule.Groups.Span;
         if (groups.Length == 0)
@@ -107,7 +107,8 @@ public unsafe partial class VulkanRenderer
         return foundPreparedDraw;
     }
 
-    internal static ulong ComputeCommandChainPrimarySkeletonSignature(FrameOp[] ops)
+    internal static ulong ComputeCommandChainPrimarySkeletonSignature(
+        ReadOnlySpan<FrameOp> ops)
     {
         FrameOpSignatureHasher hash = new();
         hash.Add(0x5052494D534B454CUL);
@@ -261,8 +262,10 @@ public unsafe partial class VulkanRenderer
             }
         }
 
+        ref readonly CommandRecordingDependencySignature scheduleDependency =
+            ref schedule.DependencySignatureReference;
         VulkanCommandIdentityComponents scheduleComponents =
-            schedule.DependencySignature.CaptureIdentityComponents();
+            scheduleDependency.CaptureIdentityComponents();
         return new VulkanCommandIdentityComponents(
             orderedNodes.ToHash(),
             ResourceGenerations: 0,
@@ -292,14 +295,20 @@ public unsafe partial class VulkanRenderer
                     return false;
                 }
 
+                ref readonly CommandRecordingDependencySignature expectedDependency =
+                    ref chain.DependencySignatureReference;
                 if (!chain.RecordedArtifact.TryValidateSharedDependency(
-                        chain.DependencySignature,
+                        in expectedDependency,
                         out mismatch))
                 {
-                    RecordedPacketKey recordedKey =
-                        chain.RecordedArtifact.DependencyIdentity.RecordedPacketKey;
-                    RecordedPacketKey expectedKey =
-                        chain.DependencySignature.RecordedPacketKey;
+                    ref readonly CommandRecordingDependencySignature recordedDependency =
+                        ref chain.RecordedArtifact.DependencyIdentityReference;
+                    ref readonly RecordedPacketKey recordedKey =
+                        ref CommandRecordingDependencySignature.GetRecordedPacketKeyReference(
+                            in recordedDependency);
+                    ref readonly RecordedPacketKey expectedKey =
+                        ref CommandRecordingDependencySignature.GetRecordedPacketKeyReference(
+                            in expectedDependency);
                     VulkanRecordedRenderTargetSnapshot expectedRenderTarget =
                         expectedKey.RenderTarget;
                     Debug.VulkanWarningEvery(
@@ -335,17 +344,23 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
+            ref readonly CommandRecordingDependencySignature expectedDependency =
+                ref chain.DependencySignatureReference;
             if (chain.RecordedArtifact.TryValidateSharedDependency(
-                    chain.DependencySignature,
+                    in expectedDependency,
                     out mismatch))
             {
                 continue;
             }
 
-            RecordedPacketKey recordedKey =
-                chain.RecordedArtifact.DependencyIdentity.RecordedPacketKey;
-            RecordedPacketKey expectedKey =
-                chain.DependencySignature.RecordedPacketKey;
+            ref readonly CommandRecordingDependencySignature recordedDependency =
+                ref chain.RecordedArtifact.DependencyIdentityReference;
+            ref readonly RecordedPacketKey recordedKey =
+                ref CommandRecordingDependencySignature.GetRecordedPacketKeyReference(
+                    in recordedDependency);
+            ref readonly RecordedPacketKey expectedKey =
+                ref CommandRecordingDependencySignature.GetRecordedPacketKeyReference(
+                    in expectedDependency);
             VulkanRecordedRenderTargetSnapshot expectedRenderTarget =
                 expectedKey.RenderTarget;
             Debug.VulkanWarningEvery(
@@ -376,13 +391,17 @@ public unsafe partial class VulkanRenderer
                 groups[groupIndex].ChainKeys.Span;
             for (int keyIndex = 0; keyIndex < keys.Length; keyIndex++)
             {
-                if (!chains.TryGetValue(keys[keyIndex], out CommandChain? chain) ||
-                    chain.RecordedArtifact.TryValidateSharedDependency(
-                        chain.DependencySignature,
-                        out CommandRecordingDependencyMismatch mismatch))
+                if (!chains.TryGetValue(keys[keyIndex], out CommandChain? chain))
                 {
                     continue;
                 }
+
+                ref readonly CommandRecordingDependencySignature expectedDependency =
+                    ref chain.DependencySignatureReference;
+                if (chain.RecordedArtifact.TryValidateSharedDependency(
+                        in expectedDependency,
+                        out CommandRecordingDependencyMismatch mismatch))
+                    continue;
 
                 MarkCommandChainSecondaryCommandBufferInvalid(
                     chain,
@@ -408,13 +427,18 @@ public unsafe partial class VulkanRenderer
         {
             ref readonly VulkanPrimarySecondaryArtifactSequenceEntry entry =
                 ref executedArtifacts.GetEntry(artifactIndex);
-            if (!chains.TryGetValue(entry.Key, out CommandChain? chain) ||
-                chain.RecordedArtifact.TryValidateSharedDependency(
-                    chain.DependencySignature,
-                    out CommandRecordingDependencyMismatch mismatch))
+            if (!chains.TryGetValue(entry.Key, out CommandChain? chain))
             {
                 continue;
             }
+
+
+            ref readonly CommandRecordingDependencySignature expectedDependency =
+                ref chain.DependencySignatureReference;
+            if (chain.RecordedArtifact.TryValidateSharedDependency(
+                    in expectedDependency,
+                    out CommandRecordingDependencyMismatch mismatch))
+                continue;
 
             MarkCommandChainSecondaryCommandBufferInvalid(
                 chain,
@@ -547,7 +571,8 @@ public unsafe partial class VulkanRenderer
             case ComputeDispatchOp compute:
                 hash.Add(compute.Snapshot.HasPublishedBindingLayoutSignatures
                     ? compute.Snapshot.RuntimeUniformValueSignature
-                    : HashUniformBindings(compute.Snapshot.Uniforms));
+                    : VulkanFrameOpSnapshotSignatures.HashUniformBindings(
+                        compute.Snapshot.Uniforms));
                 break;
             case ClearOp clear:
                 hash.Add(clear.Color.R);
@@ -644,7 +669,7 @@ public unsafe partial class VulkanRenderer
             return hash.ToHash();
         }
 
-        HashProgramBindingSnapshot(ref hash, snapshot, includeMutableFrameSourceDescriptors: true);
+        HashCommandChainProgramBindingSnapshot(ref hash, snapshot);
         return hash.ToHash();
     }
 
@@ -671,10 +696,16 @@ public unsafe partial class VulkanRenderer
             FrameOpSignatureHasher item = new();
             item.Add(pair.Key);
             item.Add(samplerNamesByUnit.TryGetValue(pair.Key, out string? name) ? name : string.Empty);
-            AddUnorderedItemHash(ref xor, ref sum, item.ToHash());
+            VulkanFrameOpSnapshotSignatures.AddUnorderedItemHash(
+                ref xor,
+                ref sum,
+                item.ToHash());
         }
 
-        return FinishUnorderedHash(samplers.Count, xor, sum);
+        return VulkanFrameOpSnapshotSignatures.FinishUnorderedHash(
+            samplers.Count,
+            xor,
+            sum);
     }
 
     internal static ulong HashSamplerNameBindingLayout(Dictionary<string, XRTexture> samplers)
@@ -685,10 +716,16 @@ public unsafe partial class VulkanRenderer
         {
             FrameOpSignatureHasher item = new();
             item.Add(pair.Key);
-            AddUnorderedItemHash(ref xor, ref sum, item.ToHash());
+            VulkanFrameOpSnapshotSignatures.AddUnorderedItemHash(
+                ref xor,
+                ref sum,
+                item.ToHash());
         }
 
-        return FinishUnorderedHash(samplers.Count, xor, sum);
+        return VulkanFrameOpSnapshotSignatures.FinishUnorderedHash(
+            samplers.Count,
+            xor,
+            sum);
     }
 
     internal static ulong HashImageBindingLayout(Dictionary<uint, ProgramImageBinding> images)
@@ -705,10 +742,16 @@ public unsafe partial class VulkanRenderer
             item.Add(binding.Layer);
             item.Add((int)binding.Access);
             item.Add((int)binding.Format);
-            AddUnorderedItemHash(ref xor, ref sum, item.ToHash());
+            VulkanFrameOpSnapshotSignatures.AddUnorderedItemHash(
+                ref xor,
+                ref sum,
+                item.ToHash());
         }
 
-        return FinishUnorderedHash(images.Count, xor, sum);
+        return VulkanFrameOpSnapshotSignatures.FinishUnorderedHash(
+            images.Count,
+            xor,
+            sum);
     }
 
     internal static ulong HashBufferBindingLayout(Dictionary<uint, VulkanComputeBufferBinding> buffers)
@@ -719,10 +762,16 @@ public unsafe partial class VulkanRenderer
         {
             FrameOpSignatureHasher item = new();
             item.Add(pair.Key);
-            AddUnorderedItemHash(ref xor, ref sum, item.ToHash());
+            VulkanFrameOpSnapshotSignatures.AddUnorderedItemHash(
+                ref xor,
+                ref sum,
+                item.ToHash());
         }
 
-        return FinishUnorderedHash(buffers.Count, xor, sum);
+        return VulkanFrameOpSnapshotSignatures.FinishUnorderedHash(
+            buffers.Count,
+            xor,
+            sum);
     }
 
     private static ulong MixSignature(ulong left, ulong right)

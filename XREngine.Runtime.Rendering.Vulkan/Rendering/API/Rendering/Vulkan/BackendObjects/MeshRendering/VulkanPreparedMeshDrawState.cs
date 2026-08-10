@@ -9,7 +9,6 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal readonly record struct VulkanPreparedMeshDrawState(
     VkMeshRenderer OwnerIdentity,
-    VulkanRenderer Renderer,
     VkRenderProgram Program,
     PipelineLayout PipelineLayout,
     bool UsesDescriptorHeap,

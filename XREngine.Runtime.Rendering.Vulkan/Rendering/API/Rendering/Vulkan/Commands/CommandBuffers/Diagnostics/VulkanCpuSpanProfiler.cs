@@ -73,9 +73,18 @@ internal static partial class VulkanCpuSpanProfiler
 
     public static void Disarm() => Volatile.Write(ref s_enabled, 0);
 
+    /// <summary>
+    /// Reports whether a specific fine-grained stage is currently armed. The
+    /// hot-path scope uses this to stay dormant in ordinary editor frames while
+    /// preserving targeted capture on demand.
+    /// </summary>
+    internal static bool IsStageCaptureEnabled(EVulkanCpuStage stage)
+        => Volatile.Read(ref s_enabled) != 0 &&
+           (Volatile.Read(ref s_targetMask) & (1L << (int)stage)) != 0;
+
     public static VulkanCpuSpanToken Begin(EVulkanCpuStage stage, long startTimestamp, long startAllocatedBytes)
     {
-        if (Volatile.Read(ref s_enabled) == 0 || (Volatile.Read(ref s_targetMask) & (1L << (int)stage)) == 0)
+        if (!IsStageCaptureEnabled(stage))
             return default;
 
         ThreadBuffer? buffer = FindThreadBuffer(Environment.CurrentManagedThreadId);

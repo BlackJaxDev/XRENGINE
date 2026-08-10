@@ -41,14 +41,17 @@ public unsafe partial class VulkanRenderer
             extent.Height,
             BuildOpenXrExternalSwapchainPlannerTargetIdentity(prewarmViewIndex),
             ResolveOpenXrExternalSwapchainTargetName(prewarmViewIndex));
-        using ThreadRenderStateScope renderStateScope = EnterThreadRenderStateScope(
-            CreateOpenXrPrewarmRenderStateTracker(extent));
+        using VulkanOpenXrThreadRenderStateScope renderStateScope =
+            _commandRuntime.OpenXrRecording.EnterThreadRenderStateScope(
+                CreateOpenXrThreadRenderStateData(),
+                CreateOpenXrPrewarmRenderStateTracker(extent));
         OutputRuntime.OpenXrBackend.ExternalSwapchainPrewarmDepth++;
 
         try
         {
             EnsureOpenXrFrameDataSlotCapacity(openXrFrameDataSlotCount);
-            EnsureDescriptorFrameSlotFrameCountFloor(openXrFrameDataSlotCount);
+            _commandRuntime.EnsureOpenXrDescriptorFrameSlotFloor(
+                openXrFrameDataSlotCount);
             DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
 
             using (EnterOpenXrResourcePlannerThreadScope(
@@ -166,7 +169,8 @@ public unsafe partial class VulkanRenderer
         try
         {
             EnsureOpenXrFrameDataSlotCapacity(openXrFrameDataSlotCount);
-            EnsureDescriptorFrameSlotFrameCountFloor(openXrFrameDataSlotCount);
+            _commandRuntime.EnsureOpenXrDescriptorFrameSlotFloor(
+                openXrFrameDataSlotCount);
             DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
 
             using (EnterOpenXrResourcePlannerThreadScope(
@@ -720,7 +724,7 @@ public unsafe partial class VulkanRenderer
         // draw-slot capacity destroys its old descriptors and uniform buffers; doing that midway
         // through this loop can retire resources captured by an earlier draw in the same command
         // buffer. Use the same count-then-reserve contract as normal Vulkan recording.
-        if (!TryRegisterFrameWideMeshFrameDataRequirements(
+        if (!_commandRuntime.TryRegisterFrameWideMeshFrameDataRequirements(
                 ops,
                 Array.Empty<FrameOp>(),
                 unchecked((int)Math.Min(frameDataImageIndex, int.MaxValue)),
@@ -767,7 +771,7 @@ public unsafe partial class VulkanRenderer
 
         void PrewarmDraw(VkMeshRenderer renderer, in PendingMeshDraw draw, in FrameOpContext context)
         {
-            int drawUniformSlot = GetFrameWideMeshDrawUniformSlot(
+            int drawUniformSlot = VulkanCommandRuntime.GetFrameWideMeshDrawUniformSlot(
                 meshDrawSlotsByRendererFamily,
                 meshFrameDataFamilyBases,
                 renderer,
@@ -796,13 +800,28 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private OpenXrResourcePlannerThreadScope EnterOpenXrResourcePlannerThreadScope(
+    private VulkanOpenXrResourcePlannerThreadScope EnterOpenXrResourcePlannerThreadScope(
         int stateIndex,
         EVulkanOpenXrResourcePlannerPurpose purpose)
-        => new(this, CreateLegacyOpenXrResourcePlannerContextKey(stateIndex, purpose));
+        => _commandRuntime.OpenXrRecording.EnterPlannerScope(
+            CreateOpenXrResourcePlannerThreadData(),
+            CreateLegacyOpenXrResourcePlannerContextKey(stateIndex, purpose));
 
-    private OpenXrResourcePlannerThreadScope EnterOpenXrResourcePlannerThreadScope(in VulkanOpenXrViewResourcePlannerContextKey contextKey)
-        => new(this, contextKey);
+    private VulkanOpenXrResourcePlannerThreadScope EnterOpenXrResourcePlannerThreadScope(in VulkanOpenXrViewResourcePlannerContextKey contextKey)
+        => _commandRuntime.OpenXrRecording.EnterPlannerScope(
+            CreateOpenXrResourcePlannerThreadData(),
+            contextKey);
+
+    private VulkanOpenXrResourcePlannerThreadData CreateOpenXrResourcePlannerThreadData()
+        => new(
+            OutputRuntime.OpenXrBackend,
+            _deviceContext,
+            OpenXrResourcePlannerStates,
+            CommandThreadContext,
+            _commandRuntime);
+
+    private VulkanOpenXrThreadRenderStateData CreateOpenXrThreadRenderStateData()
+        => new(CommandThreadContext, _commandRuntime);
 
     private static int NormalizeOpenXrResourcePlannerStateIndex(int stateIndex)
         => (uint)stateIndex < OpenXrEyeResourcePlannerStateCount ? stateIndex : 0;
